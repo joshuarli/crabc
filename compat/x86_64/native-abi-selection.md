@@ -817,6 +817,20 @@ ambient allocator. The focused physical link reader in
 link receipts, input bytes, trace extraction, and mapped handler sections
 when those retained receipts are supplied.
 
+The three `crabc_x86_math_complex_internal_mul*` bodies form one private
+complex multiplication boundary. `math_complex_complete_musl_x86_64.S` owns
+their named source sections, and `math_complex_complete.rs` includes that
+assembly in the x86 math implementation. The
+`private_complex_mul_helpers` rule in `native-abi-selection.toml` selects
+the class only when `native_abi_selection.py` finds all three hidden static
+providers in one authenticated Rust archive member, one ordinary static
+import for each from another authenticated member, and one local shared
+symbol for each. The reader compares source sections and both ELF placements
+as one class; a missing or foreign row leaves all three unresolved. The
+physical facts test in `tests/test_native_abi_selection.py` can reread a
+retained archive and shared libc with the pinned ELF tools when
+`CRABC_COMPLEX_HELPER_ELF_DIR` names their containing directory.
+
 The private feature witnesses have actual evidence consumers. Crypt helper
 names, private musl alias targets, process/runtime seams, and compiler helpers
 also require their own physical visibility and consumer decisions. They do

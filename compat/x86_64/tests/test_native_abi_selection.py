@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -1703,6 +1704,172 @@ class RustAllocationHandlerPhysicalLinkTests(unittest.TestCase):
                     self.assertEqual(traced.count(f'{archive_input}({member})'), 1)
                     section = '.text.' if name == selection.RUST_ALLOC_HANDLER_NAMES[2] else '.text.unlikely.'
                     self.assertEqual(mapped.count(f'{archive_input}({member}):({section}{name})'), 1)
+
+
+class PrivateComplexMultiplyBindingTests(unittest.TestCase):
+    """The three compiler complex helpers share one source and ELF boundary."""
+
+    NAMES = ('crabc_x86_math_complex_internal_mulsc3',
+             'crabc_x86_math_complex_internal_muldc3',
+             'crabc_x86_math_complex_internal_mulxc3')
+    SIZES = (1411, 1558, 1359)
+    MEMBER = 'c.c.example-cgu.1382.rcgu.o'
+
+    def fixture(self):
+        rule = {'id': 'source-owned-complex-multiply-support',
+                'owner': 'x86-math-complex-multiply-support', 'names': list(self.NAMES),
+                'sources': ['libc/src/c_abi/x86_64/math_complex_complete.rs',
+                            'libc/src/c_abi/x86_64/math_complex_complete_musl_x86_64.S'],
+                'reason': 'The three compiler complex-multiply bodies are private to the owned math implementation.'}
+        static_sha, shared_sha = 'a' * 64, 'b' * 64
+        accounting = {'identities': [], 'occurrences': [], 'placement_joins': [], 'blockers': [],
+                      'artifacts': {
+                          'candidate-static': {'artifact': {'identity': {'sha256': static_sha}}},
+                          'candidate-shared': {'artifact': {'identity': {'sha256': shared_sha}}},
+                      }}
+        rust_members = [self.MEMBER]
+        reasons = ['candidate binding ownership is unresolved',
+                   'candidate definition placement is not selected: candidate-static',
+                   selection.ORDINARY_IMPORT_REASON]
+        for number, (name, size) in enumerate(zip(self.NAMES, self.SIZES)):
+            ident = identity(name)
+            accounting['identities'].append({'identity': ident,
+                'selection': {'disposition': 'unresolved', 'owner': None},
+                'expected_placements': [], 'unresolved': list(reasons)})
+            accounting['blockers'].extend({'code': 'identity-unresolved', 'identity': ident, 'reason': reason}
+                                          for reason in reasons)
+            importer = f'c.c.example-cgu.{number}.rcgu.o'
+            rust_members.append(importer)
+            for artifact, member, role, binding, visibility, section, index in (
+                ('candidate-static', importer, 'import', 'GLOBAL', 'DEFAULT', 'UND', None),
+                ('candidate-static', self.MEMBER, 'definition', 'GLOBAL', 'HIDDEN', str(6 + number * 2), 6 + number * 2),
+                ('candidate-shared', None, 'local-definition', 'LOCAL', 'DEFAULT', '9', 9),
+            ):
+                occurrence = {'index': len(accounting['occurrences']), 'artifact_key': artifact,
+                              'artifact_sha256': static_sha if artifact == 'candidate-static' else shared_sha,
+                              'member_name': member, 'member_occurrence': 0 if member else None,
+                              'role': role, 'table': '.symtab',
+                              'row': symbol(name, binding=binding, visibility=visibility, section=section,
+                                            kind='NOTYPE' if role == 'import' else 'FUNC',
+                                            size=0 if role == 'import' else size),
+                              'definition_section': None if role == 'import' else {
+                                  'index': index, 'name': ('.text.__mul' + ('sc3', 'dc3', 'xc3')[number]
+                                                  + '.crabc_x86_math_complex_compiler_rt_complex_mul_support')
+                                                  if artifact == 'candidate-static' else '.text',
+                                  'type': 'PROGBITS', 'flags': 'AX'}}
+                accounting['occurrences'].append(occurrence)
+        return rule, accounting, rust_members
+
+    def test_exact_source_and_elf_class_selects_all_three_private_providers(self):
+        rule, accounting, rust_members = self.fixture()
+        joins = selection.attach_private_complex_mul_helpers(accounting, rule, rust_members)
+        self.assertEqual([row['identity']['name'] for row in joins], list(self.NAMES))
+        self.assertEqual(accounting['blockers'], [])
+        self.assertTrue(all(row['selection']['owner'] == rule['owner'] for row in accounting['identities']))
+
+    def test_foreign_member_or_placement_retains_whole_class(self):
+        cases = {
+            'foreign provider member': lambda a, m: a['occurrences'][1].update(member_name='foreign.o'),
+            'shared export': lambda a, m: a['occurrences'][2]['row'].update(binding='GLOBAL'),
+            'shared dynsym': lambda a, m: a['occurrences'][2].update(table='.dynsym'),
+            'wrong section': lambda a, m: a['occurrences'][4]['definition_section'].update(name='.text.foreign'),
+            'foreign import': lambda a, m: a['occurrences'][6].update(member_name='foreign.o'),
+            'duplicate definition': lambda a, m: a['occurrences'].append({**copy.deepcopy(a['occurrences'][1]), 'index': 9}),
+            'foreign archive': lambda a, m: a['occurrences'][1].update(artifact_sha256='0' * 64),
+        }
+        for label, alter in cases.items():
+            with self.subTest(label=label):
+                rule, accounting, rust_members = self.fixture()
+                alter(accounting, rust_members)
+                self.assertEqual(selection.attach_private_complex_mul_helpers(accounting, rule, rust_members), [])
+                self.assertEqual(len(accounting['blockers']), 9)
+
+
+class PrivateComplexMultiplyPhysicalFactsTests(unittest.TestCase):
+    """Reread the installed archive and shared image with the pinned ELF tools."""
+
+    def test_retained_complex_helper_rows_replay_from_physical_products(self):
+        retained = os.environ.get('CRABC_COMPLEX_HELPER_ELF_DIR')
+        if retained is None:
+            self.skipTest('retained static and shared ELF products were not supplied')
+        work = Path(retained)
+        self.assertTrue(work.is_dir() and not work.is_symlink())
+        report = json.loads((work / 'elf-report.json').read_text())
+        provenance = json.loads((work / 'libc-static.provenance.json').read_text())
+        archive, shared = work / 'libc.a', work / 'libc.so'
+        self.assertEqual(PrivateComplexMultiplyBindingTests.NAMES,
+                         tuple(selection.load_contract()['private_complex_mul_helpers']['names']))
+        for key, path in (('candidate-static', archive), ('candidate-shared', shared)):
+            self.assertTrue(path.is_file() and not path.is_symlink())
+            self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),
+                             report['artifacts'][key]['identity']['sha256'])
+        self.assertEqual(provenance['archive']['sha256'], report['artifacts']['candidate-static']['identity']['sha256'])
+        for tool in ('ar', 'readelf'):
+            path = Path('/usr/bin') / tool
+            self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(),
+                             report['tools'][tool]['original']['sha256'])
+
+        def captured(tool, flag, path):
+            result = subprocess.run([f'/usr/bin/{tool}', flag, str(path)], check=True,
+                                    capture_output=True, text=True)
+            self.assertEqual(result.stderr, '')
+            return result.stdout
+
+        inventory = selection.inventory
+        roster = inventory.parse_archive_members(captured('ar', 't', archive))
+        current = inventory.parse_archive_elf_facts(
+            captured('readelf', '-hW', archive), captured('readelf', '-SW', archive),
+            captured('readelf', '-sW', archive), roster, expected_archive=str(archive))
+        expected = report['facts']['candidate-static']
+        self.assertEqual([row['member'] for row in current], [row['member'] for row in expected])
+        names = set(PrivateComplexMultiplyBindingTests.NAMES)
+        relevant = {member['member'] for member in expected for table in member['symbol_tables']
+                    for row in table['rows'] if row['name'] in names}
+        self.assertEqual(len(relevant), 4)
+        for observed, retained_member in zip(current, expected):
+            if observed['member'] in relevant:
+                observed['archive'] = retained_member['archive']
+                self.assertEqual(observed, retained_member)
+        shared_facts = inventory.parse_elf_facts(
+            captured('readelf', '-hW', shared), captured('readelf', '-SW', shared),
+            captured('readelf', '-sW', shared), expected_type='DYN')
+        self.assertEqual(shared_facts, report['facts']['candidate-shared'])
+        selected = provenance['selected_members']
+        self.assertEqual([row['name'] for row in selected], roster)
+        installed = {row['name']: row['sha256'] for row in selected}
+        for member in relevant:
+            extracted = subprocess.run(['/usr/bin/ar', 'p', str(archive), member], check=True,
+                                       capture_output=True).stdout
+            self.assertEqual(hashlib.sha256(extracted).hexdigest(), installed[member])
+
+        rule, accounting, _ = PrivateComplexMultiplyBindingTests().fixture()
+        static_sha = report['artifacts']['candidate-static']['identity']['sha256']
+        shared_sha = report['artifacts']['candidate-shared']['identity']['sha256']
+        accounting['artifacts']['candidate-static']['artifact']['identity']['sha256'] = static_sha
+        accounting['artifacts']['candidate-shared']['artifact']['identity']['sha256'] = shared_sha
+        accounting['occurrences'] = []
+        for artifact_key, members, digest in (
+            ('candidate-static', current, static_sha),
+            ('candidate-shared', [shared_facts], shared_sha),
+        ):
+            for member in members:
+                sections = {str(row['index']): row for row in member['sections']}
+                for table in member['symbol_tables']:
+                    for row in table['rows']:
+                        if row['name'] not in names:
+                            continue
+                        accounting['occurrences'].append({
+                            'index': len(accounting['occurrences']), 'artifact_key': artifact_key,
+                            'artifact_sha256': digest, 'member_name': member.get('member'),
+                            'member_occurrence': member.get('member_occurrence'), 'table': table['name'],
+                            'role': selection.row_role(row), 'row': row,
+                            'definition_section': sections.get(row['section_index']),
+                        })
+        self.assertEqual(len(accounting['occurrences']), 9)
+        rust_members = [row['name'] for row in selected if row['name'].startswith('c.')]
+        joins = selection.attach_private_complex_mul_helpers(accounting, rule, rust_members)
+        self.assertEqual([row['identity']['name'] for row in joins], list(PrivateComplexMultiplyBindingTests.NAMES))
+        self.assertEqual(accounting['blockers'], [])
 
 
 class CompanionRejectionTests(unittest.TestCase):

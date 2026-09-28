@@ -941,6 +941,13 @@ names = ["_RNvCs6HbitnLHj0h_7___rustc25___rdl_alloc_error_handler", "_RNvCs6Hbit
 sources = ["rust-toolchain.toml", "scripts/build_x86_64_owned_sysroot.py"]
 reason = "Pinned Rust alloc default and compiler shim conditionally resolve through the owned static archive."
 
+[private_complex_mul_helpers]
+id = "source-owned-complex-multiply-support"
+owner = "x86-math-complex-multiply-support"
+names = ["crabc_x86_math_complex_internal_mulsc3", "crabc_x86_math_complex_internal_muldc3", "crabc_x86_math_complex_internal_mulxc3"]
+sources = ["libc/src/c_abi/x86_64/math_complex_complete.rs", "libc/src/c_abi/x86_64/math_complex_complete_musl_x86_64.S"]
+reason = "The three compiler complex-multiply bodies are private to the owned math implementation."
+
 [[structural_groups]]
 id = "loader-entry-stages"
 members = ["__dls2b", "__dls3", "_dlstart"]

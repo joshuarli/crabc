@@ -62,6 +62,15 @@ RUST_ALLOC_HANDLER_NAMES = (
     '_RNvCs6HbitnLHj0h_7___rustc26___rust_alloc_error_handler',
     '_RNvCs6HbitnLHj0h_7___rustc35___rust_no_alloc_shim_is_unstable_v2',
 )
+PRIVATE_COMPLEX_MUL_NAMES = (
+    'crabc_x86_math_complex_internal_mulsc3',
+    'crabc_x86_math_complex_internal_muldc3',
+    'crabc_x86_math_complex_internal_mulxc3',
+)
+PRIVATE_COMPLEX_MUL_SOURCES = (
+    'libc/src/c_abi/x86_64/math_complex_complete.rs',
+    'libc/src/c_abi/x86_64/math_complex_complete_musl_x86_64.S',
+)
 INPUT_PATHS = {
     'frozen_baseline': 'compat/x86_64/aarch64_frozen_baseline.json',
     'coverage': 'compat/crabc-rs/coverage.toml',
@@ -600,7 +609,7 @@ def validate_contract(value: Any) -> dict[str, Any]:
     result = exact(value, {'schema', 'target', 'inputs', 'profiles', 'owner_groups', 'structural_groups',
                            'object_contracts', 'private_protocols', 'module_private_symbols',
                            'process_exit_static_imports', 'linker_dynamic_table', 'crt_init_fini_binding',
-                           'rust_allocation_handlers',
+                           'rust_allocation_handlers', 'private_complex_mul_helpers',
                            'requirements'},
                    'selection contract')
     module_private = exact(result['module_private_symbols'], {'id', 'owner', 'family', 'sources', 'reason'},
@@ -654,6 +663,16 @@ def validate_contract(value: Any) -> dict[str, Any]:
             'Rust allocation handler rule identity differs')
     string(rust_handlers['reason'], 'Rust allocation handler reason')
     for path in strings(rust_handlers['sources'], 'Rust allocation handler sources', empty=False):
+        source_path(path)
+    complex_mul = exact(result['private_complex_mul_helpers'],
+                        {'id', 'owner', 'names', 'sources', 'reason'}, 'private complex multiply rule')
+    require(complex_mul['id'] == 'source-owned-complex-multiply-support'
+            and complex_mul['owner'] == 'x86-math-complex-multiply-support'
+            and complex_mul['names'] == list(PRIVATE_COMPLEX_MUL_NAMES)
+            and complex_mul['sources'] == list(PRIVATE_COMPLEX_MUL_SOURCES),
+            'private complex multiply rule identity differs')
+    string(complex_mul['reason'], 'private complex multiply reason')
+    for path in strings(complex_mul['sources'], 'private complex multiply sources', empty=False):
         source_path(path)
     require(result['schema'] == CONTRACT_SCHEMA and result['target'] == TARGET, 'selection schema/target changed')
     require(same(result['inputs'], INPUT_PATHS), 'selection input roster differs')
@@ -7897,6 +7916,123 @@ def attach_rust_allocation_handlers(accounting: Mapping[str, Any], rule: Mapping
     return joins
 
 
+def attach_private_complex_mul_helpers(accounting: Mapping[str, Any], rule: Mapping[str, Any],
+                                       rust_members: Sequence[str]) -> list[dict[str, Any]]:
+    """Select the three source-owned complex helpers and their archive imports.
+
+    The source assembly places each private body in a named static section.
+    The shared image retains only a local symbol for each body, while another
+    owned Rust archive member imports each static body through normal archive
+    extraction. All three must occupy the same defining archive member.
+    """
+    rule = exact(rule, {'id', 'owner', 'names', 'sources', 'reason'}, 'private complex multiply rule')
+    require(rule['id'] == 'source-owned-complex-multiply-support'
+            and rule['owner'] == 'x86-math-complex-multiply-support'
+            and rule['names'] == list(PRIVATE_COMPLEX_MUL_NAMES)
+            and rule['sources'] == list(PRIVATE_COMPLEX_MUL_SOURCES),
+            'private complex multiply rule differs')
+    rust = set(strings(list(rust_members), 'complex helper static Rust members', empty=False))
+    records, placements, occurrences = _accounting_indexes(accounting, description='private complex multiplication')
+    artifacts = accounting.get('artifacts', {})
+    static_sha = artifacts.get('candidate-static', {}).get('artifact', {}).get('identity', {}).get('sha256')
+    shared_sha = artifacts.get('candidate-shared', {}).get('artifact', {}).get('identity', {}).get('sha256')
+    if not (type(static_sha) is str and type(shared_sha) is str):
+        return []
+    reasons = {'candidate binding ownership is unresolved',
+               'candidate definition placement is not selected: candidate-static',
+               ORDINARY_IMPORT_REASON}
+    bound = []
+    provider_members = set()
+    for name, helper in zip(PRIVATE_COMPLEX_MUL_NAMES, ('mulsc3', 'muldc3', 'mulxc3')):
+        key = (name, None, False)
+        record = records.get(key)
+        if (record is None or record.get('selection', {}).get('disposition') != 'unresolved'
+                or record['selection'].get('owner') is not None
+                or record.get('expected_placements') != []
+                or len(record.get('unresolved', [])) != len(reasons)
+                or set(record['unresolved']) != reasons
+                or (key, 'candidate-static') in placements or (key, 'candidate-shared') in placements):
+            return []
+        rows = [row for row in occurrences.values() if row.get('role') != 'unnamed'
+                and identity_key(row_identity(row['row'])) == key]
+        if len(rows) != 3:
+            return []
+        static = [row for row in rows if row.get('artifact_key') == 'candidate-static']
+        shared = [row for row in rows if row.get('artifact_key') == 'candidate-shared']
+        providers = [row for row in static if row.get('role') == 'definition']
+        imports = [row for row in static if row.get('role') == 'import']
+        if len(static) != 2 or len(shared) != 1 or len(providers) != 1 or len(imports) != 1:
+            return []
+        provider, imported, local = providers[0], imports[0], shared[0]
+        if (provider.get('artifact_sha256') != static_sha
+                or imported.get('artifact_sha256') != static_sha
+                or local.get('artifact_sha256') != shared_sha
+                or any(row.get('table') != '.symtab' for row in rows)
+                or provider.get('member_name') not in rust
+                or imported.get('member_name') not in rust
+                or provider.get('member_name') == imported.get('member_name')
+                or provider.get('member_occurrence') != 0
+                or imported.get('member_occurrence') != 0
+                or local.get('member_name') is not None
+                or local.get('role') != 'local-definition'
+                or local.get('member_occurrence') is not None):
+            return []
+        provider_members.add(provider['member_name'])
+        provider_row, import_row, local_row = provider['row'], imported['row'], local['row']
+        size = provider_row.get('size_bytes')
+        if (provider_row.get('type') != 'FUNC' or provider_row.get('binding') != 'GLOBAL'
+                or provider_row.get('visibility') != 'HIDDEN'
+                or type(size) is not int or size <= 0
+                or import_row.get('type') != 'NOTYPE' or import_row.get('binding') != 'GLOBAL'
+                or import_row.get('visibility') != 'DEFAULT' or import_row.get('section_index') != 'UND'
+                or import_row.get('size_bytes') != 0
+                or local_row.get('type') != 'FUNC' or local_row.get('binding') != 'LOCAL'
+                or local_row.get('visibility') != 'DEFAULT' or local_row.get('size_bytes') != size):
+            return []
+        for row, section_name in ((provider, f'.text.__{helper}.crabc_x86_math_complex_compiler_rt_complex_mul_support'),
+                                  (local, '.text')):
+            section = row.get('definition_section')
+            if (type(section) is not dict or section.get('name') != section_name
+                    or section.get('type') != 'PROGBITS' or section.get('flags') != 'AX'
+                    or row['row'].get('section_index') != str(section.get('index'))):
+                return []
+        bound.append((record, provider, imported, local, size))
+    if len(provider_members) != 1:
+        return []
+    joins = []
+    for record, provider, imported, local, size in bound:
+        record['selection'] = {'disposition': 'private-provider', 'owner': rule['owner'],
+                               'group': rule['id'], 'sources': list(rule['sources']), 'reason': rule['reason']}
+        placements_for_identity = (
+            ('candidate-static', provider, {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'HIDDEN', 'size_bytes': size}),
+            ('candidate-shared', local, {'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'DEFAULT', 'size_bytes': size}),
+        )
+        record['expected_placements'] = []
+        for artifact_key, definition, metadata in placements_for_identity:
+            record['expected_placements'].append({'artifact_key': artifact_key, 'metadata': metadata,
+                                                   'metadata_rule': 'explicit'})
+            accounting['placement_joins'].append({
+                'identity': copy.deepcopy(record['identity']), 'artifact_key': artifact_key,
+                'definition_count': 1, 'occurrence_indices': [definition['index']],
+                'expected_metadata': metadata, 'metadata_differences': [],
+                'metadata_origin': None, 'placement_observed': True,
+            })
+            definition['accounting'] = {'disposition': 'private-provider', 'owner': rule['owner'],
+                                        'scope': artifact_key}
+        imported['accounting'] = {'disposition': 'private-provider', 'owner': rule['owner'],
+                                  'scope': 'candidate-static', 'resolution': {
+                                      'kind': 'archive-sibling', 'provider_occurrence_index': provider['index']},
+                                  'resolution_proven': True}
+        discharged = list(record['unresolved'])
+        _remove_identity_requirements(accounting, record, discharged,
+                                      description=f'private complex multiply {record["identity"]["name"]}')
+        joins.append({'identity': copy.deepcopy(record['identity']), 'owner': rule['owner'],
+                      'static_provider_index': provider['index'], 'static_import_index': imported['index'],
+                      'shared_local_index': local['index'], 'provider_member': provider['member_name'],
+                      'import_member': imported['member_name'], 'discharged_reasons': discharged})
+    return joins
+
+
 def attach_native_crt_descriptor_handoff(accounting: Mapping[str, Any],
                                          companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     """Discharge only the current main-image descriptor transport evidence.
@@ -11112,6 +11248,10 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         accounting, contract['process_exit_static_imports'],
         fixed_c_producer_metadata_companion['account']['archive_map']['static_rust_members'],
     )
+    private_complex_mul_joins = attach_private_complex_mul_helpers(
+        accounting, contract['private_complex_mul_helpers'],
+        fixed_c_producer_metadata_companion['account']['archive_map']['static_rust_members'],
+    )
     fixed_c_producer_metadata_joins = bind_fixed_c_producer_metadata_joins(
         accounting, fixed_c_producer_metadata_pending,
     )
@@ -11310,6 +11450,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'fixed_c_producer_metadata_joins': fixed_c_producer_metadata_joins,
             'module_private_joins': module_private_joins,
             'process_exit_static_import_joins': process_exit_static_import_joins,
+            'private_complex_mul_joins': private_complex_mul_joins,
             'public_data_linkage_companion': public_data_linkage_companion,
             'public_data_linkage_joins': public_data_linkage_joins,
             'public_data_declaration_runtime_companion': public_data_declaration_runtime_companion,
