@@ -1941,7 +1941,8 @@ unsafe fn parse_mapped(
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     {
         let sysv = match hash_virtual_address {
-            Some(address) => Some(unsafe { decode_sysv_hash(phdr, phnum, base, address, symtab_address) }?),
+            Some(address) => Some(unsafe { decode_sysv_hash(phdr, phnum, base, address,
+                symtab_address, object.symtab_file_load) }?),
             None => None,
         };
         let gnu = match gnu_hash_virtual_address {
@@ -4905,6 +4906,7 @@ unsafe fn decode_sysv_hash(
     base: u64,
     address: u64,
     symtab_address: u64,
+    symtab_file_load: Option<(u64, u64)>,
 ) -> Option<SymbolLookupTable> {
     if !unsafe { virtual_range_in_readable_file_load(phdr, phnum, address, 8) } {
         return None;
@@ -4919,7 +4921,15 @@ unsafe fn decode_sysv_hash(
     }
     if symbol_count != 0 {
         let symtab_len = u64::try_from(symbol_count.checked_mul(24)?).ok()?;
-        if !unsafe { virtual_range_in_readable_file_load(phdr, phnum, symtab_address, symtab_len) } {
+        let in_known_load = symtab_file_load.is_some_and(|(start, file_end)| {
+            symtab_address >= start
+                && symtab_address.checked_add(symtab_len).is_some_and(|end| end <= file_end)
+        });
+        // A larger dynsym span may fit a later overlapping PT_LOAD even when
+        // the null entry's retained segment ends earlier.
+        if !in_known_load
+            && !unsafe { virtual_range_in_readable_file_load(phdr, phnum, symtab_address, symtab_len) }
+        {
             return None;
         }
     }
@@ -5346,6 +5356,23 @@ mod readable_file_load_tests {
         assert!(!unsafe { virtual_range_in_readable_file_load(headers.as_ptr(), 2, u64::MAX - 12, 1) });
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         assert_eq!(unsafe { readable_file_load_segment(headers.as_ptr(), 2, u64::MAX - 12, 1) }, None);
+    }
+
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    #[test]
+    fn sysv_hash_full_dynsym_range_may_use_an_overlapping_readable_load() {
+        let mut headers = [0u8; 112];
+        load(&mut headers, 0, PF_R, 0, 0x118, 0x118);
+        load(&mut headers, 1, PF_R, 0x100, 0x80, 0x80);
+        let mut image = [0u8; 0x200];
+        image[0x80..0x88].copy_from_slice(&[1, 0, 0, 0, 2, 0, 0, 0]);
+        let base = image.as_ptr() as u64;
+        let null_load = unsafe { readable_file_load_segment(headers.as_ptr(), 2, 0x100, 24) };
+        assert_eq!(null_load, Some((0, 0x118)));
+        let decoded = unsafe { decode_sysv_hash(headers.as_ptr(), 2, base, 0x80, 0x100, null_load) };
+        assert!(matches!(decoded, Some(SymbolLookupTable::Sysv { symbol_count: 2, .. })));
+        load(&mut headers, 1, PF_R, 0x100, 0x20, 0x20);
+        assert!(unsafe { decode_sysv_hash(headers.as_ptr(), 2, base, 0x80, 0x100, null_load) }.is_none());
     }
 }
 
