@@ -38,7 +38,7 @@ use crate::source_api::{Block, SourceErrno, Sourced};
 use crate::subproc::main_heaps;
 use crate::subproc::MainSubprocess;
 use crate::types::heap_registry::lifecycle::HeapReleaseOutcome;
-use crate::types::Heap;
+use crate::types::{Heap, Page};
 
 /// `mi_heap_main()`: the calling thread's subprocess main Heap.
 pub fn heap_main() -> *mut c_void {
@@ -86,6 +86,186 @@ pub unsafe fn heap_contains(heap: *mut c_void, pointer: *const u8) -> bool {
     let heap = if heap.is_null() { heap_main() } else { heap };
     // SAFETY: forwarded pointer and Heap-lifetime obligations.
     !heap.is_null() && heap == unsafe { heap_of(pointer) }
+}
+
+/// The C `mi_heap_area_t` image passed only while one visitor call runs.
+#[repr(C)]
+pub struct HeapArea {
+    blocks: *mut c_void,
+    reserved: usize,
+    committed: usize,
+    used: usize,
+    block_size: usize,
+    full_block_size: usize,
+    reserved1: *mut c_void,
+}
+
+/// The C `mi_block_visit_fun` callback.
+///
+/// # Safety
+/// `heap`, `area`, and `block` belong to the current live visitor step;
+/// the callee may inspect them only before returning. `argument` is the
+/// caller-supplied pointer and must be used under that caller's contract.
+pub type HeapBlockVisitor = unsafe extern "C" fn(
+    heap: *const c_void,
+    area: *const HeapArea,
+    block: *mut c_void,
+    block_size: usize,
+    argument: *mut c_void,
+) -> bool;
+
+/// Marks one free block in the page-local visit bitmap.
+fn mark_heap_visit_free_block(bitmap: &mut [usize], index: usize) -> bool {
+    let word = index / usize::BITS as usize;
+    let mask = 1usize << (index % usize::BITS as usize);
+    if bitmap[word] & mask != 0 { return false; }
+    bitmap[word] |= mask;
+    true
+}
+
+/// Visits one page's area before any of its live blocks.
+///
+/// # Safety
+/// `page` is a live page of `heap`, and no callback may retire or move that
+/// page, mutate its free lists, or race its ordinary-field owner. The caller
+/// keeps the page's arena slice registered for the whole call.
+unsafe fn visit_heap_page(
+    heap: NonNull<Heap>,
+    page: NonNull<Page>,
+    visit_blocks: bool,
+    visitor: HeapBlockVisitor,
+    argument: *mut c_void,
+) -> bool {
+    let (blocks, area, full_block_size) = {
+        // SAFETY: the caller holds the live page and excludes ordinary-field
+        // mutation while these source geometry scalars are copied.
+        let page_ref = unsafe { page.as_ref() };
+        if page_ref.heap() != heap.as_ptr() { return false; }
+        let full_block_size = page_ref.block_size();
+        let Some(reserved) = full_block_size.checked_mul(page_ref.reserved() as usize) else { return false };
+        let Some(committed) = full_block_size.checked_mul(page_ref.capacity() as usize) else { return false };
+        // SAFETY: the caller's live page geometry covers the complete area.
+        let blocks = unsafe { page_ref.start() };
+        let area = HeapArea {
+            blocks: blocks.cast(), reserved, committed, used: page_ref.used(),
+            block_size: full_block_size, full_block_size, reserved1: page.as_ptr().cast(),
+        };
+        (blocks, area, full_block_size)
+    };
+    // SAFETY: the C caller supplied a live callback and argument; the area
+    // image stays on this stack until it returns.
+    if !unsafe { visitor(heap.as_ptr().cast(), &area, null_mut(), area.block_size, argument) } {
+        return false;
+    }
+    if !visit_blocks { return true; }
+    // SAFETY: this is the sole ordinary-field owner of the stable live page.
+    if !unsafe { Page::collect_for_heap_visit_at(page) } { return false; }
+    // SAFETY: collection completed and callback did not mutate this page.
+    let page_ref = unsafe { page.as_ref() };
+    let capacity = page_ref.capacity() as usize;
+    let used = page_ref.used();
+    if used == 0 { return true; }
+    if capacity == 1 {
+        // SAFETY: the one live block is the page area's first block.
+        return unsafe { visitor(heap.as_ptr().cast(), &area, blocks.cast(), area.block_size, argument) };
+    }
+    const MAX_BLOCKS: usize = crate::config::SMALL_PAGE_SIZE / core::mem::size_of::<usize>();
+    const WORD_BITS: usize = usize::BITS as usize;
+    if capacity > MAX_BLOCKS || full_block_size == 0 { return false; }
+    let mut free_map = [0usize; MAX_BLOCKS.div_ceil(WORD_BITS)];
+    let mut free = page_ref.free_list_head();
+    let mut free_count = 0usize;
+    while !free.is_null() {
+        let Some(offset) = (free as usize).checked_sub(blocks as usize) else { return false };
+        if offset >= area.committed || offset % full_block_size != 0 || free_count >= capacity { return false; }
+        let index = offset / full_block_size;
+        if !mark_heap_visit_free_block(&mut free_map, index) { return false; }
+        free_count += 1;
+        // SAFETY: the validated free-list node stores an unencoded next word
+        // in this frozen profile; the node remains owned by this page.
+        free = unsafe { core::ptr::read(free.cast::<*mut crate::types::Block>()) };
+    }
+    if free_count + used != capacity { return false; }
+    for index in 0..capacity {
+        if free_map[index / WORD_BITS] & (1usize << (index % WORD_BITS)) != 0 { continue; }
+        // SAFETY: every index below capacity names a live block in the
+        // caller-retained page area, and the callback cannot retire it.
+        let block = unsafe { blocks.add(index * full_block_size) };
+        if !unsafe { visitor(heap.as_ptr().cast(), &area, block.cast(), area.block_size, argument) } {
+            return false;
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+mod heap_visit_tests {
+    #[test]
+    fn duplicate_free_block_index_is_rejected_before_a_live_callback() {
+        let mut bitmap = [0usize; 1];
+        assert!(super::mark_heap_visit_free_block(&mut bitmap, 3));
+        assert!(!super::mark_heap_visit_free_block(&mut bitmap, 3));
+        assert_eq!(bitmap, [1usize << 3]);
+    }
+}
+
+/// `mi_heap_visit_blocks` for a quiescent non-main Heap of the process main
+/// subprocess. A null visitor is refused before Heap selection.
+///
+/// # Safety
+/// `heap` is null or a live Heap of the calling thread's subprocess.
+/// Every page of the selected Heap, its arena bitmap, and its block area stay
+/// mapped and stable throughout traversal; no other thread owns or mutates
+/// their ordinary fields. The callback and `argument` remain callable, and
+/// the callback does not free, move, or mutate a visited page or its blocks.
+pub unsafe fn heap_visit_blocks(
+    heap: *mut c_void,
+    visit_blocks: bool,
+    visitor: Option<HeapBlockVisitor>,
+    argument: *mut c_void,
+) -> bool {
+    let Some(visitor) = visitor else { return false };
+    let selected = if heap.is_null() { heap_main() } else { heap };
+    let Some(heap) = NonNull::new(selected.cast::<Heap>()) else { return false };
+    // SAFETY: caller keeps the Heap live and traversal quiescent.
+    let heap_ref = unsafe { heap.as_ref() };
+    if !heap_ref.is_bound_to_main_subprocess(MainSubprocess::global()) || heap_ref.is_subprocess_main() {
+        return false;
+    }
+    let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
+        .ready_child_subprocess_inputs() else { return false };
+    let registry = MainSubprocess::global().identity().arena_backing().registry();
+    for index in 0..registry.count() {
+        // SAFETY: the caller excludes arena retirement for this traversal.
+        let Some(arena) = (unsafe { registry.arena_at(index) }) else { continue };
+        // SAFETY: the registered arena remains mapped and published.
+        let Some(view) = (unsafe { crate::arena::ArenaView::from_ptr(core::ptr::from_ref(arena).cast_mut()) }) else {
+            return false;
+        };
+        // SAFETY: the Heap's installed bitmap and its arena remain live.
+        let Some(pages) = (unsafe { heap_ref.non_main_arena_pages_bitmap(&view, 0) }) else { continue };
+        let complete = pages.visit_set_bits(|slice, _| {
+            let Some(start) = view.slice_start(slice) else { return false };
+            // SAFETY: a set Heap bit retains the registered page at this
+            // slice; caller exclusion keeps its mapping stable.
+            let Some(page) = (unsafe { binding.page_map().lookup_registered_page(start) }).ok().flatten() else {
+                return false;
+            };
+            // SAFETY: forwarded Heap, page, and callback stability.
+            unsafe { visit_heap_page(heap, page, visit_blocks, visitor, argument) }
+        });
+        if !complete { return false; }
+    }
+    // Source visits the Heap's OS-abandoned list after all arena bitmaps.
+    // SAFETY: caller exclusion keeps the private list stable.
+    let mut current = unsafe { Heap::os_abandoned_head_at(heap) };
+    while let Some(page) = NonNull::new(current) {
+        // SAFETY: read the successor before invoking the callback.
+        current = unsafe { Page::next_at(page) };
+        // SAFETY: forwarded stable Heap and page obligations.
+        if !unsafe { visit_heap_page(heap, page, visit_blocks, visitor, argument) } { return false; }
+    }
+    true
 }
 
 fn is_main_heap(heap: NonNull<Heap>) -> bool {

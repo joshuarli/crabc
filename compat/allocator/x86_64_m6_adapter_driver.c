@@ -444,6 +444,85 @@ static void thread_section(void) {
   printf("thread.destroy.heaps=%lld\n", (long long)(after.heaps.current - before.heaps.current));
 }
 
+typedef struct heap_visit_probe_s {
+  mi_heap_t* heap;
+  void* first;
+  void* second;
+  void* third;
+  void* freed;
+  int areas;
+  int blocks;
+  int matched;
+  int area_before_block;
+  uintptr_t previous_block;
+  int stop_after;
+  char area_order[4];
+  size_t area_64[5];
+  size_t area_256[5];
+} heap_visit_probe_t;
+
+static bool record_heap_block(const mi_heap_t* heap, const mi_heap_area_t* area,
+                              void* block, size_t block_size, void* argument) {
+  heap_visit_probe_t* probe = (heap_visit_probe_t*)argument;
+  if (heap != probe->heap || area == NULL || block_size != area->block_size) probe->matched = 0;
+  if (block == NULL) {
+    probe->areas++;
+    if (probe->areas <= 3) probe->area_order[probe->areas - 1] = area->block_size == 64 ? 'a' :
+                                                                 area->block_size == 256 ? 'b' : '?';
+    probe->previous_block = 0;
+    if (area->blocks == NULL || area->used == 0 || area->block_size == 0) probe->matched = 0;
+    size_t* image = area->block_size == 64 ? probe->area_64 :
+                    area->block_size == 256 ? probe->area_256 : NULL;
+    if (image != NULL) {
+      image[0] = area->reserved;
+      image[1] = area->committed;
+      image[2] = area->used;
+      image[3] = area->block_size;
+      image[4] = area->full_block_size;
+    }
+  } else {
+    probe->blocks++;
+    if (probe->areas == 0) probe->area_before_block = 0;
+    if (block != probe->first && block != probe->second && block != probe->third) probe->matched = 0;
+    if (block == probe->freed || (uintptr_t)block <= probe->previous_block) probe->matched = 0;
+    probe->previous_block = (uintptr_t)block;
+  }
+  return probe->stop_after == 0 || probe->areas + probe->blocks < probe->stop_after;
+}
+
+static void heap_visit_section(void) {
+  mi_heap_t* heap = mi_heap_new();
+  void* first = mi_heap_malloc(heap, 64);
+  void* freed = mi_heap_malloc(heap, 64);
+  void* second = mi_heap_malloc(heap, 64);
+  void* third = mi_heap_malloc(heap, 256);
+  mi_free(freed);
+  heap_visit_probe_t probe = { heap, first, second, third, freed, 0, 0, 1, 1, 0, 0 };
+  bool complete = mi_heap_visit_blocks(heap, true, record_heap_block, &probe);
+  printf("visit.heap.full=%d,%d,%d,%d,%d\n", complete, probe.areas, probe.blocks,
+         probe.matched, probe.area_before_block);
+  printf("visit.heap.area_order=%s\n", probe.area_order);
+  printf("visit.heap.area64=%zu,%zu,%zu,%zu,%zu\n", probe.area_64[0], probe.area_64[1],
+         probe.area_64[2], probe.area_64[3], probe.area_64[4]);
+  printf("visit.heap.area256=%zu,%zu,%zu,%zu,%zu\n", probe.area_256[0], probe.area_256[1],
+         probe.area_256[2], probe.area_256[3], probe.area_256[4]);
+  probe = (heap_visit_probe_t){ heap, first, second, third, freed, 0, 0, 1, 1, 0, 0 };
+  bool areas_only = mi_heap_visit_blocks(heap, false, record_heap_block, &probe);
+  printf("visit.heap.areas_only=%d,%d,%d,%s\n", areas_only, probe.areas, probe.blocks,
+         probe.area_order);
+  probe = (heap_visit_probe_t){ heap, first, second, third, freed, 0, 0, 1, 1, 0, 1 };
+  bool area_stop = mi_heap_visit_blocks(heap, false, record_heap_block, &probe);
+  printf("visit.heap.area_stop=%d,%d,%d\n", area_stop, probe.areas, probe.blocks);
+  probe = (heap_visit_probe_t){ heap, first, second, third, freed, 0, 0, 1, 1, 0, 2 };
+  bool block_stop = mi_heap_visit_blocks(heap, true, record_heap_block, &probe);
+  printf("visit.heap.block_stop=%d,%d,%d,%d\n", block_stop, probe.areas, probe.blocks,
+         probe.matched && probe.area_before_block);
+  mi_free(first);
+  mi_free(second);
+  mi_free(third);
+  mi_heap_destroy(heap);
+}
+
 
 static int visit_count;
 static int visit_limit;
@@ -812,6 +891,7 @@ int main(void) {
   realloc_section();
   delete_section();
   thread_section();
+  heap_visit_section();
   subproc_section();
   subproc_destroy_live_section();
   membership_section();

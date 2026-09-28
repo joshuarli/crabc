@@ -1088,6 +1088,25 @@ pub unsafe extern "C" fn mi_heap_contains(heap: HeapPointer, pointer: *const c_v
     unsafe { heaps::heap_contains(heap, pointer.cast()) }
 }
 
+#[no_mangle]
+/// # Safety
+/// `heap` is null or live throughout the call. Its pages, arena bitmaps,
+/// block areas, and free-list state remain stable: no concurrent owner or
+/// visitor may move, free, or mutate them. `visitor` and `argument` remain
+/// callable through the final callback, and the visitor may inspect the
+/// offered area and block only during that callback.
+pub unsafe extern "C" fn mi_heap_visit_blocks(
+    heap: HeapPointer,
+    visit_blocks: bool,
+    visitor: Option<heaps::HeapBlockVisitor>,
+    argument: *mut c_void,
+) -> bool {
+    bind_thread();
+    // SAFETY: the C caller holds the selected Heap and its pages quiescent
+    // and retains the callback and argument for every invocation.
+    unsafe { heaps::heap_visit_blocks(heap, visit_blocks, visitor, argument) }
+}
+
 #[inline]
 fn heap_released(released: bool) {
     if !released {

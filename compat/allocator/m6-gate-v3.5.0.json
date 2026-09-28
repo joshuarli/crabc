@@ -208,11 +208,12 @@
       ],
       "acceptance": "Heap statistics merge Theap statistics into their Heap and subprocess exactly as source, and Heap visitation walks the Heap's per-arena page bitmaps, abandoned bitmaps, and OS abandoned list with source area images and early-stop results. M7 separately owns the process-wide statistics, visitation, and output machinery these entries share.",
       "evidence": [
+        "differential:public-heap-adapter",
         "differential:public-heap-lifecycle",
         "unit:heap-statistics-visitation"
       ],
       "blocked_by": [
-        "No public-shaped Heap statistics or Heap visitation entry exists, and M7 statistics/visitation output remains open."
+        "mi_heap_visit_blocks is exported for a quiescent non-main Heap of the process main subprocess; selected area images, live-block order, free-block filtering, and early-stop results match pinned C. Main-Heap, child-subprocess, abandoned/cross-thread page visitation, Heap statistics, mi_heap_visit_abandoned_blocks, and complete lifetime evidence remain open."
       ]
     },
     {

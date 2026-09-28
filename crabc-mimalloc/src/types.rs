@@ -4420,6 +4420,43 @@ impl Page {
         self.free
     }
 
+    /// Applies `_mi_page_free_collect(page, true)` before Heap block
+    /// visitation. The returned list is read separately after this call.
+    ///
+    /// # Safety
+    /// `page` names one stable, initialized associated page. The caller is
+    /// its sole ordinary-field owner through this operation and excludes
+    /// page retirement, Heap movement, and concurrent owner collection.
+    /// Remote producers may use only their disjoint atomic projection and
+    /// current blocks, whose lifetime keeps the page mapped until collection.
+    pub(crate) unsafe fn collect_for_heap_visit_at(page: NonNull<Self>) -> bool {
+        // SAFETY: the caller's page and sole-owner obligations authorize the
+        // source remote detach without a whole-Page mutable reference.
+        let Some(owner) = (unsafe { Self::remote_free_owner_state_at(page) }) else {
+            return false;
+        };
+        if unsafe { crate::remote_free::collect_live_page(owner) }.is_err() {
+            return false;
+        }
+        // SAFETY: the page stays stable and the source owner identity is an
+        // initialized atomic subobject; no whole-Page reference is formed.
+        let thread_word = unsafe { &*core::ptr::addr_of!((*page.as_ptr()).xthread_id) }
+            .load(Ordering::Acquire) & !PAGE_FLAG_MASK;
+        let expected = if thread_word == THREAD_ID_DETACHED {
+            None
+        } else {
+            let Some(thread) = LiveThreadId::new(thread_word) else { return false };
+            Some(thread)
+        };
+        // SAFETY: the source-associated owner and live area remain stable.
+        let Some(local) = (unsafe { Self::local_collect_state_for_owner_at(page, expected) }) else {
+            return false;
+        };
+        // SAFETY: the caller's exclusive ordinary-field ownership covers
+        // both lists and every already-freed block link.
+        unsafe { crate::free_list::collect_local(local, true) }.is_ok()
+    }
+
     /// Whether the source owner-exit force collector can leave this page with
     /// an immediately reusable local free block.
     ///
