@@ -196,7 +196,7 @@ PUBLIC_DATA_DECLARATION_RUNTIME_ACCESSOR_REQUIREMENT = (
     'selected accessor callable linkage and runtime-to-storage semantics remain unverified'
 )
 RUNTIME_REGISTRY_LIMITS = [
-    'Only the selected nine shared-libc source-dispatch imports are attached; no loader symbol is selected as an installed provider.',
+    'Only the selected ten shared-libc source-dispatch imports are attached; no loader symbol is selected as an installed provider.',
     'RuntimeV1 worker protocol, CRT structure, general loader qualification, family completion and promotion remain open.',
 ]
 PTHREAD_ALIAS_LIMITS = [
@@ -805,6 +805,22 @@ def validate_contract(value: Any) -> dict[str, Any]:
                         require(entry['abi'] == 'C' and entry['unsafe'] is True, 'operation ABI/unsafe source observation invalid')
                 require(len(operation_names) == len(set(operation_names)), 'duplicate private operation')
                 require(set(operation_names) == (set(record['members']) if record['endpoint_kind'] == 'source-dispatch-operation' else set()), 'private operation/member coverage differs')
+                if record['id'] == 'loader-runtime-operations':
+                    name = '__crabc_x86_64_runtime_publish_initial_tid'
+                    operation = next((row for row in record['operations'] if row['name'] == name), None)
+                    require(same(operation, {
+                        'name': name,
+                        'producer': {
+                            'source': 'ldso/src/x86_64_runtime_registry.rs',
+                            'function': 'runtime_publish_initial_tid', 'parameters': ['i32'],
+                            'result': 'i32', 'abi': 'C', 'unsafe': True,
+                        },
+                        'consumer': {
+                            'source': 'libc/src/c_abi/x86_64/dynamic_tls.rs',
+                            'function': name, 'parameters': ['i32'],
+                            'result': 'i32', 'abi': 'C', 'unsafe': True,
+                        },
+                    }), 'initial TID private operation source ABI differs')
                 strings(record['requirements'], 'private requirements', empty=False)
     exact(result['requirements'], {'declaration_companion', 'semantic_receipts', 'family_receipts', 'same_source_products'}, 'requirements')
     require(all(value is True for value in result['requirements'].values()), 'selection requirements cannot be disabled')
@@ -4407,6 +4423,30 @@ def attach_loader_runtime_registry(accounting: Mapping[str, Any], companion: Map
     imports = inputs['imports']
     require(type(imports) is dict and set(imports) == set(runtime_registry_evidence.RESOLVERS),
             'runtime registry companion import roster differs')
+    # Source dispatch owns this one-shot call. A same-name archive member,
+    # loader definition, or CRT/builtins reference would change that boundary.
+    initial_tid = '__crabc_x86_64_runtime_publish_initial_tid'
+    initial_tid_occurrences = [row for row in accounting['occurrences']
+                               if row['artifact_key'] not in {'reference-static', 'reference-shared'}
+                               and row['row'].get('name') == initial_tid]
+    require(len(initial_tid_occurrences) == 2
+            and {row['table'] for row in initial_tid_occurrences} == {'.dynsym', '.symtab'},
+            'initial TID private ELF placement differs')
+    for occurrence in initial_tid_occurrences:
+        row = occurrence['row']
+        require(occurrence['artifact_key'] == 'candidate-shared'
+                and occurrence['role'] == 'import'
+                and all(occurrence.get(key) is None for key in
+                        ('member_index', 'member_occurrence', 'member_name'))
+                and row.get('type') == 'NOTYPE'
+                and row.get('binding') == 'GLOBAL'
+                and row.get('visibility') == 'DEFAULT'
+                and row.get('section_index') == 'UND'
+                and row.get('size_bytes') == 0
+                and row.get('value') == '0000000000000000'
+                and row.get('version') is None
+                and row.get('version_default') is False,
+                'initial TID private ELF placement differs')
     records = {identity_key(record['identity']): record for record in accounting['identities']}
     require(len(records) == len(accounting['identities']), 'duplicate identities before runtime registry attachment')
     protocol_joins = accounting['private_protocol_joins']
@@ -4432,8 +4472,12 @@ def attach_loader_runtime_registry(accounting: Mapping[str, Any], companion: Map
                 and protocol.get('provider_artifacts') == [],
                 f'runtime registry protocol scope differs: {name}')
         operations = protocol.get('operations')
-        require(type(operations) is list and len(operations) == len(runtime_registry_evidence.RESOLVERS)
-                and next((row for row in operations if isinstance(row, dict) and row.get('name') == name), None) is not None,
+        require(type(operations) is list and len(operations) == len(runtime_registry_evidence.RESOLVERS),
+                f'runtime registry protocol operation roster differs: {name}')
+        operation = next((row for row in operations if isinstance(row, dict) and row.get('name') == name), None)
+        require(type(operation) is dict
+                and type(operation.get('producer')) is dict
+                and operation['producer'].get('function') == resolver,
                 f'runtime registry protocol operation differs: {name}')
         expected_tables = exact(imports[name], set(runtime_registry_evidence.SYMBOL_TABLES),
                                 f'runtime registry attachment import {name}')
@@ -4458,8 +4502,7 @@ def attach_loader_runtime_registry(accounting: Mapping[str, Any], companion: Map
             resolution = observed_account.get('resolution')
             require(type(resolution) is dict
                     and resolution.get('kind') == 'source-dispatch-operation'
-                    and type(resolution.get('operation')) is dict
-                    and resolution['operation'].get('name') == name
+                    and same(resolution.get('operation'), operation)
                     and observed_account.get('resolution_proven') is False,
                     f'runtime registry selected occurrence resolution differs: {name} {table}')
             observed_account['resolution_proven'] = True

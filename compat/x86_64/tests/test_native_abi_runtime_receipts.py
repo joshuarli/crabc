@@ -1087,6 +1087,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                         if row['id'] == 'loader-runtime-operations')
         identities, occurrences, joins, blockers = [], [], [], []
         for name in selection.runtime_registry_evidence.RESOLVERS:
+            operation = next(row for row in protocol['operations'] if row['name'] == name)
             item = {
                 'identity': selection.identity(name), 'selection': {
                     'disposition': 'private-resolution-operation', 'owner': 'loader-runtime-operations',
@@ -1105,7 +1106,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                     'accounting': {
                         'disposition': 'private-resolution-operation', 'owner': 'loader-runtime-operations',
                         'scope': 'candidate-shared', 'resolution': {
-                            'kind': 'source-dispatch-operation', 'operation': {'name': name},
+                            'kind': 'source-dispatch-operation', 'operation': copy.deepcopy(operation),
                         }, 'resolution_proven': False,
                     },
                 })
@@ -1140,7 +1141,9 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         accounting['occurrences'].append(copy.deepcopy(unnamed))
         joins = selection.attach_loader_runtime_registry(accounting, companion)
         self.assertEqual(accounting['occurrences'][-1], unnamed)
-        self.assertEqual(len(joins), 9)
+        self.assertEqual(len(joins), len(selection.runtime_registry_evidence.RESOLVERS))
+        self.assertEqual({(row['identity']['name'], row['resolver']) for row in joins},
+                         set(selection.runtime_registry_evidence.RESOLVERS.items()))
         self.assertFalse(accounting['blockers'])
         self.assertTrue(all(not row['unresolved'] for row in accounting['identities']))
         self.assertTrue(all(row['accounting']['resolution_proven'] for row in accounting['occurrences']
@@ -1157,6 +1160,68 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         accounting = self.registry_accounting()
         accounting['occurrences'].pop(1)
         with self.assertRaisesRegex(selection.SelectionError, 'selected occurrences differ'):
+            selection.attach_loader_runtime_registry(accounting, companion)
+
+    def test_registry_join_rejects_initial_tid_foreign_provider_or_import(self):
+        report = self.registry_report()
+        with mock.patch.object(selection.runtime_registry_evidence, 'validate_report', return_value=report):
+            companion = selection.loader_runtime_registry_adapter(
+                self.registry_report_path, facts=self.facts, measurement=self.measurement,
+                paths=self.paths, source=self.source,
+            )
+        name = '__crabc_x86_64_runtime_publish_initial_tid'
+        for artifact, role, section in (
+            ('candidate-static', 'import', 'UND'),
+            ('candidate-loader', 'definition', '1'),
+            ('dynamic-builtins', 'definition', '1'),
+            ('static-crt1.o', 'import', 'UND'),
+        ):
+            with self.subTest(artifact=artifact):
+                accounting = self.registry_accounting()
+                accounting['occurrences'].append({
+                    'index': len(accounting['occurrences']), 'artifact_key': artifact,
+                    'table': '.symtab', 'role': role,
+                    'member_index': 0 if artifact.endswith('builtins') or artifact == 'candidate-static' else None,
+                    'member_occurrence': 0 if artifact.endswith('builtins') or artifact == 'candidate-static' else None,
+                    'member_name': 'foreign.o' if artifact.endswith('builtins') or artifact == 'candidate-static' else None,
+                    'row': {'name': name, 'version': None, 'version_default': False,
+                            **self._runtime_row(), 'section_index': section},
+                })
+                with self.assertRaisesRegex(selection.SelectionError, 'initial TID.*placement'):
+                    selection.attach_loader_runtime_registry(accounting, companion)
+
+    def test_registry_join_rejects_initial_tid_versioned_or_defined_shared_row(self):
+        report = self.registry_report()
+        with mock.patch.object(selection.runtime_registry_evidence, 'validate_report', return_value=report):
+            companion = selection.loader_runtime_registry_adapter(
+                self.registry_report_path, facts=self.facts, measurement=self.measurement,
+                paths=self.paths, source=self.source,
+            )
+        name = '__crabc_x86_64_runtime_publish_initial_tid'
+        for field, value in (('version', 'FOREIGN_1'), ('section_index', '1'), ('type', 'FUNC')):
+            with self.subTest(field=field):
+                accounting = self.registry_accounting()
+                occurrence = next(row for row in accounting['occurrences']
+                                  if row['row']['name'] == name and row['table'] == '.dynsym')
+                occurrence['row'][field] = value
+                if field == 'section_index':
+                    occurrence['role'] = 'definition'
+                with self.assertRaisesRegex(selection.SelectionError, 'initial TID.*placement'):
+                    selection.attach_loader_runtime_registry(accounting, companion)
+
+    def test_registry_join_rejects_initial_tid_operation_substitution(self):
+        report = self.registry_report()
+        with mock.patch.object(selection.runtime_registry_evidence, 'validate_report', return_value=report):
+            companion = selection.loader_runtime_registry_adapter(
+                self.registry_report_path, facts=self.facts, measurement=self.measurement,
+                paths=self.paths, source=self.source,
+            )
+        accounting = self.registry_accounting()
+        name = '__crabc_x86_64_runtime_publish_initial_tid'
+        occurrence = next(row for row in accounting['occurrences']
+                          if row['row']['name'] == name and row['table'] == '.dynsym')
+        occurrence['accounting']['resolution']['operation']['producer']['function'] = 'runtime_open'
+        with self.assertRaisesRegex(selection.SelectionError, 'selected occurrence resolution differs'):
             selection.attach_loader_runtime_registry(accounting, companion)
 
     def test_pthread_adapter_replays_the_owner_and_binds_each_selected_product_file(self):

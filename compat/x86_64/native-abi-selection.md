@@ -618,10 +618,18 @@ future facade contract.
 The selection reader can independently attach either current-product receipt
 without replaying the header declaration envelope.
 
-- `loader_runtime_registry_evidence.py` is the sole reader for the nine
+- `loader_runtime_registry_evidence.py` is the sole reader for the ten
   `loader-runtime-operations` imports. The attachment binds its exact shared
   libc occurrences and selected loader provenance, then discharges only the
   protocol’s source-dispatch admission and finite runtime-behavior reasons.
+  The initial TID handoff is an `i32 -> i32` C ABI call from dynamic libc to
+  `runtime_publish_initial_tid` in the loader's closed source dispatch table.
+  Its ELF boundary is exactly one unversioned `NOTYPE GLOBAL DEFAULT UND`
+  occurrence in each of libc.so's `.dynsym` and `.symtab`, with one zero-addend
+  `R_X86_64_GLOB_DAT` relocation. The selected static archive, loader ELF,
+  builtins, and CRT artifacts cannot supply another occurrence or a provider
+  definition. The loader endpoint is selected through the source table, not
+  through an exported loader ELF symbol.
   Its v2 receipt retains the tools and preprocessing inputs needed by the
   owning host reader. The selector binds the retained ELF report's exact
   `/workspace` path, bytes, size, and mode to the supplied checkout file and

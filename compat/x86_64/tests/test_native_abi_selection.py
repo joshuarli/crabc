@@ -41,6 +41,39 @@ def symbol(name, *, binding='GLOBAL', visibility='DEFAULT', section='1', kind='F
 
 
 class SelectionContractTests(unittest.TestCase):
+    def test_initial_tid_operation_has_exact_source_abi_and_shared_only_endpoint(self):
+        contract = selection.load_contract()
+        protocol = next(row for row in contract['private_protocols']
+                        if row['id'] == 'loader-runtime-operations')
+        name = '__crabc_x86_64_runtime_publish_initial_tid'
+        self.assertIn(name, protocol['members'])
+        self.assertEqual(protocol['consumer_artifacts'], ['candidate-shared'])
+        self.assertEqual(protocol['provider_artifacts'], [])
+        operation = next(row for row in protocol['operations'] if row['name'] == name)
+        self.assertEqual(operation['producer'], {
+            'source': 'ldso/src/x86_64_runtime_registry.rs',
+            'function': 'runtime_publish_initial_tid', 'parameters': ['i32'],
+            'result': 'i32', 'abi': 'C', 'unsafe': True,
+        })
+        self.assertEqual(operation['consumer'], {
+            'source': 'libc/src/c_abi/x86_64/dynamic_tls.rs',
+            'function': name, 'parameters': ['i32'],
+            'result': 'i32', 'abi': 'C', 'unsafe': True,
+        })
+        for endpoint, field, replacement in (
+            ('producer', 'function', 'runtime_fork_prepare'),
+            ('producer', 'parameters', ['u64']),
+            ('consumer', 'source', 'libc/src/c_abi/x86_64/general_dlfcn.rs'),
+            ('consumer', 'result', 'u32'),
+        ):
+            with self.subTest(endpoint=endpoint, field=field):
+                changed = copy.deepcopy(contract)
+                selected = next(row for row in changed['private_protocols']
+                                if row['id'] == 'loader-runtime-operations')
+                next(row for row in selected['operations'] if row['name'] == name)[endpoint][field] = replacement
+                with self.assertRaisesRegex(selection.SelectionError, 'initial TID'):
+                    selection.validate_contract(changed)
+
     def test_public_data_runtime_reader_report_bridges_only_the_fixed_receipt_name(self):
         work = ROOT / '.work/x86_64/native-abi-selection-tests'
         work.mkdir(parents=True, exist_ok=True)
