@@ -585,6 +585,9 @@ def base_evidence(work: Path, manifests: dict[str, str]) -> dict[str, str]:
     require((work / "oracle.stdout").read_bytes() == expected, "base musl observation differs")
     result = {relative(work / name): digest(work / name) for name in ("expected.stdout", "oracle.stdout")}
     for product in PRODUCTS:
+        dso = work / f"lib{product}.so"
+        dso_sha256 = digest(dso)
+        result[relative(dso)] = dso_sha256
         for name, observation in ((f"{product}-consumer", expected), (f"non-pie-{product}", expected), (f"spawn-{product}", b"")):
             binary, output = work / name, work / (name + ".stdout")
             require(output.read_bytes() == observation, f"base observation differs: {name}")
@@ -624,6 +627,12 @@ def base_evidence(work: Path, manifests: dict[str, str]) -> dict[str, str]:
             require(facts["interpreter"] == "/lib/ld-crabc-x86_64.so.1" and facts["needed"] == needed
                     and facts["elf_type"] == ("ET_EXEC" if name.startswith("non-pie-") else "ET_DYN"),
                     "base executable inspection does not show its declared product shape")
+            # The executable's replayed DT_NEEDED name must identify the
+            # retained DSO bytes claimed by its link receipt.
+            application_dsos = ({} if name.startswith("spawn-") else
+                                {dso.name: dso_sha256})
+            require(receipt.get("application_dsos") == application_dsos,
+                    "base application DSO identity differs from retained bytes")
             for path in (binary, output, receipt_path, inspection_path, map_path):
                 result[relative(path)] = digest(path)
     return result

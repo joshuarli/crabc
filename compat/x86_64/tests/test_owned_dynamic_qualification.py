@@ -70,6 +70,7 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         for product in qualification.PRODUCTS:
             (self.work / product).mkdir()
             self.put(f"{product}/payload", b"runtime")
+            self.put(f"lib{product}.so", f"{product} application DSO".encode())
             installed_manifest = {"files": {"payload": qualification.digest(self.work / product / "payload")}, "symlinks": {}}
             self.put(f"{product}/share/crabc/manifest.json", installed_manifest)
             for name, output in ((f"{product}-consumer", expected), (f"non-pie-{product}", expected), (f"spawn-{product}", b"")):
@@ -83,7 +84,9 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
                 }})
                 self.put(name + ".crabc-link.json", {
                     "schema": 1, "format": driver.FORMAT, "runtime_imports": [],
-                    "application_runpath": "/usr/lib", "application_dsos": {},
+                    "application_runpath": "/usr/lib", "application_dsos": (
+                        {} if name.startswith("spawn-") else
+                        {f"lib{product}.so": qualification.digest(self.work / f"lib{product}.so")}),
                     "output_path": str(self.work / name),
                     "output_sha256": qualification.digest(self.work / name),
                     "manifest_sha256": self.manifest,
@@ -572,6 +575,16 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             path.write_text(json.dumps({**original, key: value}))
             with self.assertRaisesRegex(qualification.QualificationError, "base driver"):
                 qualification.collect(self.work)
+
+    def test_resealed_base_receipt_cannot_claim_another_application_dso(self):
+        receipt = qualification.collect(self.work)
+        path = self.work / "installed-consumer.crabc-link.json"
+        original = qualification.read(path)
+        path.write_text(json.dumps({**original, "application_dsos": {"libinstalled.so": "0" * 64}}))
+        receipt["base_evidence"][qualification.relative(path)] = qualification.digest(path)
+        qualification_path = self.put("qualification.json", receipt)
+        with self.assertRaisesRegex(qualification.QualificationError, "application DSO identity"):
+            qualification.validate_receipt(qualification_path)
 
     def test_base_evidence_accepts_a_closed_schema_two_default_receipt(self):
         path = self.work / "installed-consumer.crabc-link.json"
