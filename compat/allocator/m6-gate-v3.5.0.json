@@ -90,6 +90,10 @@
       "runner": null,
       "scope": "Pinned-C/Rust reservation, managed-memory, exclusive-arena, and arena query traces."
     },
+    "differential:public-reservation-warning": {
+      "runner": "compat/allocator/x86_64_m6_reservation_warning.py",
+      "scope": "Source-built pinned-C/native-adapter mi_reserve_os_memory_ex aligned OS map failure in the process main subprocess and a fresh child member: ENOMEM return, cleared arena output, errno from the failing primitive, ordered direct-map, aligned-fallback, and over-allocation warnings, and joined child teardown."
+    },
     "differential:subprocess-lifecycle": {
       "runner": "compat/allocator/subprocess_lifecycle.py",
       "scope": "Pinned-C/Rust root-child subprocess create/add-thread/visit/statistics/destroy traces: list order and sequence, child main Heap and metadata Theap membership, first child arena, refusal of a thread already in the main subprocess, a fresh thread's admission, allocation, and thread-done statistics, Heap visitation with early stop, the destroy-time statistics merge, destruction with a live metadata block, and the page handoff of a thread that finishes with live blocks (mapped abandonment and abandoned counts, a non-reclaiming free that keeps a page abandoned, one that releases it, and destruction with a live abandoned block)."
@@ -341,12 +345,13 @@
         "differential:arena-destroy",
         "differential:child-heap-in-arena",
         "differential:public-heap-adapter",
+        "differential:public-reservation-warning",
         "differential:public-arena",
         "upstream:test-api-heaps",
         "unit:arena"
       ],
       "blocked_by": [
-        "mi_reserve_os_memory and mi_reserve_os_memory_ex are exported for main and child subprocess threads, with bounded source-built exclusive Heap traces; OS-layer and manage warnings of a failed reservation are not rendered. Huge-page reservation, managed-memory registration, and several arena query entries remain absent or unproved."
+        "A main and child public aligned OS map failure now matches the source return, null arena output, primitive errno, and ordered direct-map, fallback, and over-allocation warnings. Other OS failure branches and manage rejection or cleanup warnings remain unproved. Complete huge-page reservation, callback-managed memory, arena queries, and lifetime coverage remain open."
       ]
     },
     {

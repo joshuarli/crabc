@@ -50,10 +50,12 @@ class M6GateContractTests(unittest.TestCase):
             "differential:arena-destroy": "compat/allocator/arena_destroy.py",
             "differential:heap-destroy": "compat/allocator/heap_destroy.py",
             "differential:heap-in-arena": "compat/allocator/x86_64_m6_heap_in_arena.py",
+            "differential:child-heap-in-arena": "compat/allocator/x86_64_m6_child_heap_in_arena.py",
             "differential:main-heap-visitor-population": "compat/allocator/x86_64_m6_main_visitor_population.py",
             "differential:public-heap-adapter": "compat/allocator/x86_64_m6_adapter.py",
             "differential:public-heap-lifecycle": "compat/allocator/heap_lifecycle.py",
             "differential:public-theap": "compat/allocator/x86_64_m6_public_theap.py",
+            "differential:public-reservation-warning": "compat/allocator/x86_64_m6_reservation_warning.py",
             "differential:subprocess-lifecycle": "compat/allocator/subprocess_lifecycle.py",
             "unit:heap-membership": "compat/allocator/heap_membership.py",
             "upstream:test-api-heaps": "compat/allocator/x86_64_m6_test_api.py",
@@ -114,6 +116,21 @@ class M6GateContractTests(unittest.TestCase):
         absent_runner["evidence"]["unit:arena"]["runner"] = "compat/allocator/absent.py"
         with self.assertRaisesRegex(harness.HarnessError, "absent runner"):
             self.validate(absent_runner)
+
+    def test_public_reservation_warning_row_is_required_and_failure_is_visible(self) -> None:
+        row = "differential:public-reservation-warning"
+        removed = copy.deepcopy(self.contract)
+        self.gate_record(removed, "m6.arena")["evidence"].remove(row)
+        with self.assertRaisesRegex(harness.HarnessError, "declared but unused"):
+            self.validate(removed)
+
+        summary = self.validate()
+        results = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
+        results[row] = {"status": "failed"}
+        report = gate.gate_report(self.contract, summary, results)
+        arena = self.gate_record(report, "m6.arena")
+        self.assertEqual(arena["status"], "failed")
+        self.assertEqual(arena["evidence"][row], "failed")
 
     def test_passing_runnable_evidence_never_removes_a_reviewed_blocker(self) -> None:
         summary = self.validate()
