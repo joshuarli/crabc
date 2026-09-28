@@ -53,6 +53,12 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         manifest_path = root / "share/crabc/manifest.json"
         manifest = json.loads(manifest_path.read_text())
         source = qualification.source_digest()
+        provenance_path = root / "share/crabc/libc-shared.provenance.json"
+        provenance_path.write_text(json.dumps({
+            "allocator_backend": qualification.MATERIALIZATION_ALLOCATOR_BACKEND,
+        }))
+        manifest["files"]["share/crabc/libc-shared.provenance.json"] = hashlib.sha256(
+            provenance_path.read_bytes()).hexdigest()
         state = {
             "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
             "status": "materialized-unqualified", "source_sha256": source,
