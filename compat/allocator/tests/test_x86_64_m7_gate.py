@@ -67,6 +67,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:statistics-level-two-requested",
             "differential:statistics-page-extend",
             "differential:statistics-remote-normal",
+            "differential:statistics-requested-production",
             "differential:thread-init-failure",
         ])
         # The options/environment and baseline gates have executable evidence.
@@ -337,6 +338,42 @@ class M7GateContractTests(unittest.TestCase):
         statistics = self.gate_record(self.contract, "m7.statistics")
         self.assertIn("differential:statistics-aligned-huge", statistics["evidence"])
         self.assertIn("differential:statistics-aligned-huge", summary["runnable_evidence"])
+
+    def test_statistics_requested_production_requires_source_built_profile(self) -> None:
+        summary = self.validate()
+        statistics = self.gate_record(self.contract, "m7.statistics")
+        self.assertIn("differential:statistics-requested-production", statistics["evidence"])
+        self.assertIn("differential:statistics-requested-production", summary["runnable_evidence"])
+
+    def test_statistics_requested_production_reader_rejects_missing_free_and_merge(self) -> None:
+        trace = {
+            "profile.level": "2", "ordinary.request": "63", "ordinary.usable": "64",
+            "ordinary.bin": "8", "aligned.request": "100", "aligned.usable": "4096",
+            "aligned.bin": "32", "aligned.pointer": "1",
+        }
+        stages = {
+            "ordinary": ("63,63,63", "1,1,1", "0,0,0", 1, 0),
+            "ordinary_merged": ("63,63,63", "1,1,1", "0,0,0", 1, 0),
+            "aligned": ("1088,1088,1088", "1,1,1", "1,1,1", 2, 1),
+            "aligned_merged": ("1088,1088,1088", "1,1,1", "1,1,1", 2, 1),
+            "ordinary_freed": ("1088,1088,1088", "1,1,0", "1,1,1", 2, 1),
+            "aligned_freed": ("1088,1088,1088", "1,1,0", "1,1,0", 2, 1),
+            "final_merged": ("1088,1088,1088", "1,1,0", "1,1,0", 2, 1),
+        }
+        for stage, values in stages.items():
+            for field, value in zip(("requested", "ordinary_bin", "aligned_bin",
+                                     "normal_count", "huge_count"), values):
+                trace[f"{stage}.{field}"] = str(value)
+        gate.require_statistics_requested_production(trace, "complete")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_requested_production(
+                {**trace, "ordinary_freed.ordinary_bin": "1,1,1"}, "missing free")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_requested_production(
+                {**trace, "ordinary_merged.requested": "0,0,0"}, "missing merge")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_requested_production(
+                {**trace, "final_merged.requested": "1088,1088,0"}, "lost requested current")
 
     def test_statistics_aligned_huge_reader_rejects_lost_units_and_merge(self) -> None:
         row = "  huge      :   578.2 KiB   578.2 KiB   578.2 KiB                          not all freed"

@@ -37891,7 +37891,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             let Some(page) = NonNull::new(direct) else {
                 return DeferredFreeAllocationPhase::Complete(None);
             };
-            match self.pop_immediate_local(page, zero) {
+            match self.pop_immediate_local(page, request, zero) {
                 Ok(Some(block)) => return DeferredFreeAllocationPhase::Complete(Some(block)),
                 Ok(None) => {}
                 Err(_) => return DeferredFreeAllocationPhase::Complete(None),
@@ -38011,6 +38011,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         match continuation {
             DeferredFreeAllocationContinuation::Generic(continuation) => {
                 self.allocate_generic_once(
+                    continuation.request,
                     continuation.bin,
                     continuation.block_size,
                     continuation.kind,
@@ -38022,6 +38023,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 completion,
             } => {
                 let base = self.allocate_generic_once(
+                    generic.request,
                     generic.bin,
                     generic.block_size,
                     generic.kind,
@@ -38110,6 +38112,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 // generic fresh-page fallback.
                 return self.allocate_generic_with_retry(
                     bin,
+                    request,
                     block_size,
                     PageKind::Small,
                     zero,
@@ -38118,7 +38121,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             }
 
             let page = NonNull::new(direct)?;
-            match self.pop_immediate_local(page, zero) {
+            match self.pop_immediate_local(page, request, zero) {
                 Ok(Some(block)) => return Some(block),
                 Ok(None) => {
                     // `mi_page_malloc_zero` falls through to generic search
@@ -38129,6 +38132,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     let block_size = size_class::bin_size(bin)?;
                     return self.allocate_generic_with_retry(
                         bin,
+                        request,
                         block_size,
                         PageKind::Small,
                         zero,
@@ -38153,6 +38157,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             }
             return self.allocate_generic_with_retry(
                 bin,
+                request,
                 block_size,
                 PageKind::Singleton,
                 zero,
@@ -38171,6 +38176,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
         self.allocate_generic_with_retry(
             bin,
+            request,
             block_size,
             kind,
             zero,
@@ -38188,20 +38194,21 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     fn allocate_generic_with_retry(
         &mut self,
         bin: usize,
+        request: usize,
         block_size: usize,
         kind: PageKind,
         zero: bool,
         search_first: bool,
     ) -> Option<NonNull<u8>> {
         if search_first {
-            match self.allocate_generic_once(bin, block_size, kind, zero) {
+            match self.allocate_generic_once(request, bin, block_size, kind, zero) {
                 Ok(Some(block)) => return Some(block),
                 Err(_) => return None,
                 Ok(None) => {}
             }
         }
         for attempt in 0..2 {
-            match self.allocate_generic_once(bin, block_size, kind, zero) {
+            match self.allocate_generic_once(request, bin, block_size, kind, zero) {
                 Ok(Some(block)) => return Some(block),
                 // Only the source no-page/OOM result may force collection
                 // and retry. A collection/list/queue error can have crossed
@@ -38218,6 +38225,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 
     fn allocate_generic_once(
         &mut self,
+        request: usize,
         bin: usize,
         block_size: usize,
         kind: PageKind,
@@ -38239,7 +38247,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             }
             self.push_regular_page(bin, page);
             let block = self
-                .pop_or_extend(page, zero)
+                .pop_or_extend(page, request, zero)
                 ?
                 .ok_or(GenericPathError::Lifecycle)?;
             self.move_regular_to_full(bin, page.as_ptr(), Some(block))
@@ -38250,7 +38258,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let Some(page) = self.find_generic_queue_page(bin, block_size, kind)? else {
             return Ok(None);
         };
-        match self.pop_or_extend(page, zero) {
+        match self.pop_or_extend(page, request, zero) {
             Ok(Some(block)) => {
                 // `mi_malloc_generic_fallback` moves a full medium, large,
                 // or singleton page immediately. Small pages use the source
@@ -39458,7 +39466,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             let physical_size = unsafe { page.as_ref().block_size() };
             self.session.theap().record_malloc_huge_allocated(physical_size);
         }
-        match self.pop_or_extend(page, zero) {
+        match self.pop_or_extend(page, request, zero) {
             Ok(Some(block)) => {
                 // `page.c` creates this aligned singleton in `BIN_HUGE`, but
                 // `alloc.c:1077-1080` still applies the generic post-pop
@@ -39510,7 +39518,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         if head.as_ptr().addr().wrapping_add(offset) & (alignment - 1) != 0 {
             return None;
         }
-        let block = self.pop_or_extend(NonNull::new(page)?, zero).ok()??;
+        let block = self.pop_or_extend(NonNull::new(page)?, size, zero).ok()??;
         debug_assert_eq!(block, head);
         Some(block)
     }
@@ -40017,6 +40025,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         #[cfg(feature = "mi-stat-1")]
         if block_size <= LARGE_MAX_OBJ_SIZE {
             self.session.theap().record_malloc_normal_freed(block_size);
+            #[cfg(feature = "mi-stat-2")]
+            self.session.theap().record_malloc_normal_level_two_freed(
+                size_class::bin_for_regular_page_block_size(block_size),
+            );
         } else {
             self.session.theap().record_malloc_huge_freed(block_size);
         }
@@ -40972,6 +40984,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     fn pop_or_extend(
         &mut self,
         page: NonNull<Page>,
+        request: usize,
         zero: bool,
     ) -> Result<Option<NonNull<u8>>, GenericPathError> {
         {
@@ -40983,12 +40996,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // `retire_expire`; queue selection (`mi_page_queue_find_free`)
             // and `_mi_theap_collect_retired` own that byte.
             if let Some(block) = free_list.pop(zero).map_err(GenericPathError::Local)? {
-                self.record_level_one_normal_allocation(page);
+                self.record_level_one_normal_allocation(page, request);
                 return Ok(Some(block));
             }
             if free_list.quick_collect().map_err(GenericPathError::Local)? {
                 if let Some(block) = free_list.pop(zero).map_err(GenericPathError::Local)? {
-                    self.record_level_one_normal_allocation(page);
+                    self.record_level_one_normal_allocation(page, request);
                     return Ok(Some(block));
                 }
             }
@@ -41004,7 +41017,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             let mut free_list = unsafe { LocalFreeList::from_page_at(page) }
                 .map_err(GenericPathError::Local)?;
             if let Some(block) = free_list.pop(zero).map_err(GenericPathError::Local)? {
-                self.record_level_one_normal_allocation(page);
+                self.record_level_one_normal_allocation(page, request);
                 return Ok(Some(block));
             }
         }
@@ -41020,6 +41033,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     fn pop_immediate_local(
         &mut self,
         page: NonNull<Page>,
+        request: usize,
         zero: bool,
     ) -> Result<Option<NonNull<u8>>, FreeListError> {
         // SAFETY: the direct page retains initialized local-list geometry and
@@ -41031,13 +41045,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // queue selection or `_mi_theap_collect_retired` clears it.
         let block = free_list.pop(zero)?;
         if block.is_some() {
-            self.record_level_one_normal_allocation(page);
+            self.record_level_one_normal_allocation(page, request);
         }
         Ok(block)
     }
 
     #[inline]
-    fn record_level_one_normal_allocation(&self, page: NonNull<Page>) {
+    fn record_level_one_normal_allocation(&self, page: NonNull<Page>, request: usize) {
         #[cfg(feature = "mi-stat-1")]
         {
             // SAFETY: the selected page is owned by this exact local Theap
@@ -41045,10 +41059,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             let block_size = unsafe { page.as_ref().block_size() };
             if block_size <= LARGE_MAX_OBJ_SIZE {
                 self.session.theap().record_malloc_normal_allocated(block_size);
+                #[cfg(feature = "mi-stat-2")]
+                self.session.theap().record_malloc_normal_level_two_allocated(
+                    request, size_class::bin_for_regular_page_block_size(block_size),
+                );
             }
         }
         #[cfg(not(feature = "mi-stat-1"))]
-        let _ = page;
+        let _ = (page, request);
     }
 
     /// Performs the `alloc-aligned.c`/`arena.c` fresh OS-singleton sequence.

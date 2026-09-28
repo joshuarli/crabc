@@ -354,6 +354,10 @@ unsafe fn record_normal_free(theap: NonNull<Theap>, page: NonNull<Page>) {
     let block_size = unsafe { page.as_ref() }.block_size();
     if block_size <= LARGE_MAX_OBJ_SIZE {
         unsafe { theap.as_ref() }.record_malloc_normal_freed(block_size);
+        #[cfg(feature = "mi-stat-2")]
+        unsafe { theap.as_ref() }.record_malloc_normal_level_two_freed(
+            size_class::bin_for_regular_page_block_size(block_size),
+        );
     }
 }
 

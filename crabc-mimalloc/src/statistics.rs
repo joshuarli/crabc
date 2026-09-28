@@ -916,6 +916,27 @@ impl HeapTheapStatistics {
         }
     }
 
+    /// Pinned `mi_page_malloc_zero` records the internal request after a
+    /// successful normal-sized pop, including a singleton chosen for a large
+    /// alignment. Its bin and count use the usable block size.
+    #[cfg(feature = "mi-stat-2")]
+    #[inline]
+    pub(crate) fn malloc_normal_level_two_allocated(
+        &self, requested_size: usize, bin: usize,
+    ) {
+        self.malloc_normal_count.increase_owner_local(1);
+        self.malloc_bins[bin].update_owner_local(1);
+        self.malloc_requested.update_owner_local(bytes_to_i64(requested_size));
+    }
+
+    /// Pinned `mi_stat_free` decrements the usable block's bin; its requested
+    /// size decrement is disabled in the source, so that count stays live.
+    #[cfg(feature = "mi-stat-2")]
+    #[inline]
+    pub(crate) fn malloc_normal_level_two_freed(&self, bin: usize) {
+        self.malloc_bins[bin].update_owner_local(-1);
+    }
+
     /// Pinned `mi_huge_page_alloc` records the physical page block size and
     /// one huge-page allocation immediately after the fresh page succeeds.
     #[inline]

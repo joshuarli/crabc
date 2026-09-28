@@ -975,6 +975,55 @@ STATISTICS_REMOTE_NORMAL_TRACE_END = "CRABC_MI_M7_STATISTICS_REMOTE_NORMAL_TRACE
 STATISTICS_ALIGNED_HUGE_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_aligned_huge_driver.c"
 STATISTICS_ALIGNED_HUGE_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_ALIGNED_HUGE_TRACE_BEGIN"
 STATISTICS_ALIGNED_HUGE_TRACE_END = "CRABC_MI_M7_STATISTICS_ALIGNED_HUGE_TRACE_END"
+STATISTICS_REQUESTED_PRODUCTION_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_requested_production_driver.c"
+STATISTICS_REQUESTED_PRODUCTION_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_REQUESTED_PRODUCTION_TRACE_BEGIN"
+STATISTICS_REQUESTED_PRODUCTION_TRACE_END = "CRABC_MI_M7_STATISTICS_REQUESTED_PRODUCTION_TRACE_END"
+
+
+def require_statistics_requested_production(trace: Mapping[str, str], description: str) -> None:
+    """Require the owner merges and two distinct allocation-bin lifetimes."""
+
+    stages = ("ordinary", "ordinary_merged", "aligned", "aligned_merged",
+              "ordinary_freed", "aligned_freed", "final_merged")
+    fields = ("requested", "ordinary_bin", "aligned_bin", "normal_count", "huge_count")
+    expected = {"profile.level", "ordinary.request", "ordinary.usable", "ordinary.bin",
+                "aligned.request", "aligned.usable", "aligned.bin", "aligned.pointer",
+                *(f"{stage}.{field}" for stage in stages for field in fields)}
+    if set(trace) != expected or trace["profile.level"] != "2":
+        raise harness.HarnessError(f"{description} lacks the requested-size production image: {trace}")
+    try:
+        ordinary_request = int(trace["ordinary.request"])
+        aligned_request = int(trace["aligned.request"])
+        ordinary_usable = int(trace["ordinary.usable"])
+        aligned_usable = int(trace["aligned.usable"])
+        ordinary_bin = int(trace["ordinary.bin"])
+        aligned_bin = int(trace["aligned.bin"])
+        counts = {stage: {field: tuple(int(part) for part in trace[f"{stage}.{field}"].split(","))
+                          if field in ("requested", "ordinary_bin", "aligned_bin")
+                          else int(trace[f"{stage}.{field}"])
+                          for field in fields} for stage in stages}
+    except ValueError as error:
+        raise harness.HarnessError(f"{description} has a nonnumeric production field: {trace}") from error
+    if (ordinary_request != 63 or ordinary_usable != 64 or aligned_request != 100
+            or aligned_usable <= aligned_request or trace["aligned.pointer"] != "1"
+            or ordinary_bin == aligned_bin or ordinary_bin <= 0 or aligned_bin <= 0
+            or any(len(counts[stage][field]) != 3 for stage in stages for field in fields[:3])):
+        raise harness.HarnessError(f"{description} did not select two physical bins: {trace}")
+    internal_aligned_request = counts["aligned"]["requested"][0] - ordinary_request
+    expected_by_stage = {
+        "ordinary": ((ordinary_request,) * 3, (1, 1, 1), (0, 0, 0), 1, 0),
+        "ordinary_merged": ((ordinary_request,) * 3, (1, 1, 1), (0, 0, 0), 1, 0),
+        "aligned": ((ordinary_request + internal_aligned_request,) * 3, (1, 1, 1), (1, 1, 1), 2, 1),
+        "aligned_merged": ((ordinary_request + internal_aligned_request,) * 3, (1, 1, 1), (1, 1, 1), 2, 1),
+        "ordinary_freed": ((ordinary_request + internal_aligned_request,) * 3, (1, 1, 0), (1, 1, 1), 2, 1),
+        "aligned_freed": ((ordinary_request + internal_aligned_request,) * 3, (1, 1, 0), (1, 1, 0), 2, 1),
+        "final_merged": ((ordinary_request + internal_aligned_request,) * 3, (1, 1, 0), (1, 1, 0), 2, 1),
+    }
+    if internal_aligned_request != 1025 or any(
+        tuple(counts[stage][field] for field in fields) != expected_by_stage[stage]
+        for stage in stages
+    ):
+        raise harness.HarnessError(f"{description} lost a source requested/bin/count transition: {trace}")
 
 
 def require_statistics_level_one(trace: Mapping[str, str], description: str) -> None:
@@ -1395,9 +1444,9 @@ def run_statistics_json_differential(offline: bool) -> dict[str, Any]:
 
 def run_public_level_one_statistics_differential(
     offline: bool, *, subject: str, driver: Path, begin: str, end: str,
-    report_name: str, require_complete: Any | None = None,
+    report_name: str, require_complete: Any | None = None, stat_level: int = 1,
 ) -> dict[str, Any]:
-    """Run one public statistics driver with pinned C and the level-one adapter."""
+    """Run one public statistics driver with pinned C and the selected adapter profile."""
 
     import x86_64_m4_gate as m4
 
@@ -1411,7 +1460,7 @@ def run_public_level_one_statistics_differential(
         c_binary = temporary / f"{subject}-c"
         c_build = harness.command_record(
             [compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
-             *harness.CONFIGURATION_PROFILES["release"], "-DMI_STAT=1",
+             *harness.CONFIGURATION_PROFILES["release"], f"-DMI_STAT={stat_level}",
              "-I", str(source / "include"), str(driver),
              str(source / "src/static.c"), "-pthread", "-o", str(c_binary)], cwd=source,
         )
@@ -1419,7 +1468,7 @@ def run_public_level_one_statistics_differential(
         target = temporary / "cargo-target"
         rust_build = harness.command_record(
             [harness.require_tool("cargo"), "build", "--locked", "--release", "--target",
-             RUST_TARGET, "-p", m4.ADAPTER_PACKAGE, "--features", "crabc-mimalloc/mi-stat-1",
+             RUST_TARGET, "-p", m4.ADAPTER_PACKAGE, "--features", f"crabc-mimalloc/mi-stat-{stat_level}",
              "--target-dir", str(target)], cwd=harness.ROOT, env=dict(os.environ),
              timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
         )
@@ -1480,6 +1529,16 @@ def run_statistics_aligned_huge_differential(offline: bool) -> dict[str, Any]:
         offline, subject="aligned-huge", driver=STATISTICS_ALIGNED_HUGE_DRIVER,
         begin=STATISTICS_ALIGNED_HUGE_TRACE_BEGIN, end=STATISTICS_ALIGNED_HUGE_TRACE_END,
         report_name="statistics-aligned-huge.json", require_complete=require_statistics_aligned_huge,
+    )
+
+
+def run_statistics_requested_production_differential(offline: bool) -> dict[str, Any]:
+    return run_public_level_one_statistics_differential(
+        offline, subject="requested-production", driver=STATISTICS_REQUESTED_PRODUCTION_DRIVER,
+        begin=STATISTICS_REQUESTED_PRODUCTION_TRACE_BEGIN,
+        end=STATISTICS_REQUESTED_PRODUCTION_TRACE_END,
+        report_name="statistics-requested-production.json", stat_level=2,
+        require_complete=require_statistics_requested_production,
     )
 
 
@@ -1627,6 +1686,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="compare pinned-C/Rust cross-thread normal free statistics under MI_STAT=1")
     mode.add_argument("--statistics-aligned-huge-differential", action="store_true",
         help="compare pinned-C/Rust OS-aligned huge statistics under MI_STAT=1")
+    mode.add_argument("--statistics-requested-production-differential", action="store_true",
+        help="compare pinned-C/Rust ordinary and OS-aligned requested-size producers under MI_STAT=2")
     mode.add_argument("--adapter-differential", action="store_true",
         help="run the shared-driver pinned-C/native-adapter M7 differential")
     mode.add_argument("--option-profiles-differential", action="store_true",
@@ -1713,6 +1774,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.statistics_aligned_huge_differential:
         report = run_statistics_aligned_huge_differential(arguments.offline)
         print(f"M7 aligned huge statistics differential passed: {len(report['c_trace'])} keys")
+        return 0
+    if arguments.statistics_requested_production_differential:
+        report = run_statistics_requested_production_differential(arguments.offline)
+        print(f"M7 requested-size production differential passed: {len(report['c_trace'])} keys")
         return 0
     if arguments.adapter_differential:
         report = run_adapter_differential(arguments.offline)

@@ -6768,6 +6768,21 @@ impl Theap {
         self.statistics.malloc_normal_freed(block_size);
     }
 
+    /// Carries the internal request from the successful page pop into the
+    /// selected owner statistics image.
+    #[cfg(feature = "mi-stat-2")]
+    #[inline]
+    pub(crate) fn record_malloc_normal_level_two_allocated(&self, requested_size: usize, bin: usize) {
+        self.statistics.malloc_normal_level_two_allocated(requested_size, bin);
+    }
+
+    /// Balances the allocated size bin before the local block becomes free.
+    #[cfg(feature = "mi-stat-2")]
+    #[inline]
+    pub(crate) fn record_malloc_normal_level_two_freed(&self, bin: usize) {
+        self.statistics.malloc_normal_level_two_freed(bin);
+    }
+
     /// Records a successfully fresh huge page before its single block is
     /// popped, using the page's physical block size.
     #[cfg(feature = "mi-stat-1")]
