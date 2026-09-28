@@ -822,6 +822,47 @@ fn ordinary_symbol_type_and_full_definition_extent_are_checked_before_write() {
     }
 }
 
+#[test]
+fn function_definition_extent_keeps_load_order_and_executable_admission() {
+    let mut provider = Image::new();
+    let objects = [provider.object(true)];
+    let function = Definition {
+        owner: 0, value: 0x1000, size: 8, kind: 2,
+        binding: 1, visibility: 0, section: 1,
+    };
+    assert_eq!(unsafe { ordinary_address(&objects, function) },
+               Some(provider.data.as_ptr() as u64));
+    provider.put_u32(56 + 4, PF_R | PF_W);
+    assert!(unsafe { ordinary_address(&objects, function) }.is_none());
+    assert_eq!(unsafe { ordinary_address(&objects, Definition { kind: 1, ..function }) },
+               Some(provider.data.as_ptr() as u64));
+    provider.put_u32(56 + 4, PF_R | PF_W | PF_X);
+    provider.put_u32(4, PF_R);
+    provider.put_u64(16, u64::MAX - 4);
+    provider.put_u64(40, 16);
+    assert!(unsafe { ordinary_address(&objects, function) }.is_none());
+
+    // A later malformed non-executable load is irrelevant after an ordinary
+    // load has matched; a malformed executable load still blocks resolution.
+    let mut overlap = Image::new();
+    overlap.put_u32(4, PF_R);
+    overlap.put_u64(16, 0x1000);
+    overlap.put_u64(40, 8);
+    overlap.put_u32(56 + 4, PF_R);
+    overlap.put_u64(56 + 16, u64::MAX - 4);
+    overlap.put_u64(56 + 40, 16);
+    overlap.put_u32(112, PT_LOAD);
+    overlap.put_u32(112 + 4, PF_R | PF_X);
+    overlap.put_u64(112 + 16, 0x1000);
+    overlap.put_u64(112 + 40, 8);
+    let mut object = overlap.object(true);
+    object.phnum = 3;
+    assert_eq!(unsafe { ordinary_address(&[object], function) },
+               Some(overlap.data.as_ptr() as u64));
+    overlap.put_u32(56 + 4, PF_R | PF_X);
+    assert!(unsafe { ordinary_address(&[object], function) }.is_none());
+}
+
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[test]
 fn ordered_lookup_reuses_name_across_sysv_and_gnu_tables() {

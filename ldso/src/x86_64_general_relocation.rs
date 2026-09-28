@@ -473,6 +473,29 @@ unsafe fn lookup_result_at(
     }
 }
 
+/// Check a function's full extent in one executable PT_LOAD. Before the first
+/// containing load, every malformed load rejects the definition. After that
+/// match, only executable loads affect whether the function is callable.
+unsafe fn function_extent_in_executable_load(
+    phdr: *const u8, phnum: usize, address: u64, byte_len: u64,
+) -> bool {
+    let Some(end) = address.checked_add(byte_len) else { return false; };
+    let mut contained = false;
+    for index in 0..phnum {
+        let header = unsafe { phdr.add(index * 56) };
+        if unsafe { read_u32(header) } != PT_LOAD { continue; }
+        let executable = unsafe { read_u32(header.add(4)) } & PF_X != 0;
+        if contained && !executable { continue; }
+        let start = unsafe { read_u64(header.add(16)) };
+        let Some(load_end) = start.checked_add(unsafe { read_u64(header.add(40)) }) else { return false; };
+        if address >= start && end <= load_end {
+            if executable { return true; }
+            contained = true;
+        }
+    }
+    false
+}
+
 unsafe fn ordinary_address(objects: &[Object], symbol: Definition) -> Option<u64> {
     if symbol.section == SHN_ABS && matches!(symbol.kind, 0 | 1) {
         return Some(symbol.value);
@@ -480,10 +503,12 @@ unsafe fn ordinary_address(objects: &[Object], symbol: Definition) -> Option<u64
     if symbol.section == 0 || symbol.section >= 0xff00 { return None; }
     let object = &objects[symbol.owner];
     let length = symbol.size.max(1);
-    if !unsafe { virtual_range_in_load(object.phdr, object.phnum, symbol.value, length) }
-        || (symbol.kind == 2
-            && !unsafe { virtual_range_in_executable_load(object.phdr, object.phnum, symbol.value, length) })
-    { return None; }
+    let admitted = if symbol.kind == 2 {
+        unsafe { function_extent_in_executable_load(object.phdr, object.phnum, symbol.value, length) }
+    } else {
+        unsafe { virtual_range_in_load(object.phdr, object.phnum, symbol.value, length) }
+    };
+    if !admitted { return None; }
     runtime_address(object.base, symbol.value)
 }
 
