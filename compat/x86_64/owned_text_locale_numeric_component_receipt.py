@@ -24,6 +24,7 @@ from typing import Any, Mapping
 
 import locale_alias_contract_symbols as alias_symbols
 import owned_crypt_runtime_evidence as payload_evidence
+import owned_dynamic_qualification as qualification
 import owned_posix_family_execution as family
 import owned_posix_product_evidence as product_evidence
 import owned_posix_static_products as static_products
@@ -264,6 +265,20 @@ def product_identity(root: Path, product: Path, kind: str) -> dict[str, object]:
 def source_product_seal(root: Path, static: Path, dynamic: Path) -> dict[str, object]:
     """Seal the finite component sources and both supplied product trees."""
 
+    require(root.resolve(strict=True) == qualification.ROOT,
+            "component checkout differs from reader source checkout")
+    state_path = physical_file(root, relative(root, dynamic / "share/crabc/dynamic-product-state.json",
+                                              "dynamic product state"), "dynamic product state")
+    state = read_json(state_path, "dynamic product state")
+    require(isinstance(state, dict) and
+            state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1" and
+            state.get("status") == "materialized-unqualified", "dynamic product state differs")
+    try:
+        current_source = qualification.source_digest()
+    except Exception as error:
+        raise ReceiptError("current source digest is unreadable") from error
+    require(state.get("source_sha256") == current_source,
+            "dynamic product source differs from current checkout")
     sources: dict[str, dict[str, object]] = {}
     for source in contract.direct_sources():
         name = source.as_posix()
