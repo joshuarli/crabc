@@ -213,6 +213,107 @@ def ordered_evidence(runnable: Mapping[str, Sequence[str]], producer: str) -> li
     return [producer, *(entry for entry in runnable if entry != producer)]
 
 
+def read_native_allocator_policy_receipt(command: Sequence[str], output: str) -> dict[str, Any]:
+    """Bind the allocator-policy transcript matrix to the sysroots it supplies."""
+
+    runner = "owned-native-allocator-policy"
+    if list(command) != [DISPATCHER, runner]:
+        raise harness.HarnessError("native allocator policy used non-canonical arguments")
+    evidence = product_directory(output, "native-allocator-policy evidence: ")
+    if evidence is None:
+        raise harness.HarnessError("native allocator policy did not emit one evidence directory")
+    try:
+        relative = Path(evidence).relative_to(CONTAINER_ROOT / ".work/x86_64/tmp")
+        if len(relative.parts) != 1 or not relative.name.startswith(f"{runner}."):
+            raise harness.HarnessError("native allocator policy evidence escaped its runner root")
+        work = consumer.owned_cleanup.work_child(
+            harness.ROOT / ".work/x86_64/tmp" / relative, "native allocator policy evidence", existing=True)
+        receipt = native_shadow_receipt.read_receipt(harness.ROOT, runner)
+        raw = json.loads(receipt.path.read_text(encoding="utf-8"))
+        if raw.get("work") != work.relative_to(harness.ROOT).as_posix():
+            raise harness.HarnessError("native allocator policy receipt names another execution root")
+        expected_parameters = {
+            "CASE_TIMEOUT": "120", "PROGRAMS": "basic,observability,policy",
+            "STATIC_MODES": "static,static-pie",
+            "DYNAMIC_MODES": "kernel-pie,direct-pie,kernel-non-pie,direct-non-pie",
+            "ENVIRONMENT": "empty-with-pinned-PATH",
+        }
+        if dict(receipt.parameters) != expected_parameters:
+            raise harness.HarnessError("native allocator policy receipt has non-canonical workloads")
+        programs = ("basic", "observability", "policy")
+        modes = ("oracle", "static", "static-pie", "kernel-pie", "direct-pie",
+                 "kernel-non-pie", "direct-non-pie")
+        expected_cases = [f"{mode}-{program}" for program in programs for mode in modes]
+        if receipt.case_ids() != [*expected_cases, "runner"]:
+            raise harness.HarnessError("native allocator policy receipt omits a program or product mode")
+        expected_products = {
+            "static-build", "static-manifest", "static-libc-provenance", "static-libc-archive",
+            "dynamic-build", "dynamic-manifest", "dynamic-product-state",
+            "dynamic-libc-provenance", "dynamic-libc", "dynamic-loader",
+            *(f"{mode}-{program}" for program in programs
+              for mode in ("oracle", "static", "static-pie", "dynamic-pie", "dynamic-non-pie")),
+        }
+        if set(receipt.products) != expected_products:
+            raise harness.HarnessError("native allocator policy receipt has an incomplete product roster")
+        static = work / "static-sysroot"
+        dynamic = work / "dynamic-sysroot"
+        consumer.owned_cleanup.product_snapshot(static, "static")
+        consumer.owned_cleanup.product_snapshot(dynamic, "dynamic")
+        originals = {
+            "static-build": work / "static-build.json",
+            "static-manifest": static / "share/crabc/manifest.json",
+            "static-libc-provenance": static / "share/crabc/libc-static.provenance.json",
+            "static-libc-archive": static / "usr/lib/libc.a",
+            "dynamic-build": work / "dynamic-build.json",
+            "dynamic-manifest": dynamic / "share/crabc/manifest.json",
+            "dynamic-product-state": dynamic / "share/crabc/dynamic-product-state.json",
+            "dynamic-libc-provenance": dynamic / "share/crabc/libc-shared.provenance.json",
+            "dynamic-libc": dynamic / "usr/lib/libc.so",
+            "dynamic-loader": dynamic / "lib/ld-crabc-x86_64.so.1",
+        }
+        for program in programs:
+            for mode in ("oracle", "static", "static-pie", "dynamic-pie", "dynamic-non-pie"):
+                name = f"{mode}-{program}"
+                originals[name] = work / f"{name}.exe"
+        for name, original in originals.items():
+            original = consumer.owned_cleanup.physical(original, f"native allocator policy {name}")
+            if {"sha256": consumer.owned_cleanup.digest(original),
+                    "size": original.stat().st_size} != receipt.products[name]:
+                raise harness.HarnessError(f"native allocator policy original product changed: {name}")
+        state = json.loads(originals["dynamic-product-state"].read_text(encoding="utf-8"))
+        static_manifest = json.loads(originals["static-manifest"].read_text(encoding="utf-8"))
+        dynamic_provenance = json.loads(originals["dynamic-libc-provenance"].read_text(encoding="utf-8"))
+        source_sha256 = qualification.source_digest()
+        if (static_manifest.get("allocator_backend") != "native-shadow"
+                or dynamic_provenance.get("allocator_backend") != "native-shadow"
+                or state.get("allocator_backend") != "native-shadow"
+                or state.get("source_sha256") != source_sha256):
+            raise harness.HarnessError("native allocator policy product is not current native-shadow source")
+        logs = receipt.path.parent / "logs"
+        for case in receipt.cases:
+            name = str(case["id"])
+            expected_logs = ({"runner.status"} if name == "runner" else
+                             {f"{name}.status", f"{name}.stdout", f"{name}.stderr"})
+            if set(case["logs"]) != expected_logs or (logs / f"{name}.status").read_bytes() != b"0\n":
+                raise harness.HarnessError(f"native allocator policy {name} lacks its successful raw status")
+            if name == "runner":
+                continue
+            if (logs / f"{name}.stderr").read_bytes():
+                raise harness.HarnessError(f"native allocator policy {name} wrote stderr")
+            if not name.startswith("oracle-"):
+                program = name.rsplit("-", 1)[-1]
+                if (logs / f"{name}.stdout").read_bytes() != (logs / f"oracle-{program}.stdout").read_bytes():
+                    raise harness.HarnessError(f"native allocator policy {name} differs from pinned musl")
+        return {"path": str(receipt.path), "sha256": consumer.sha256_file(receipt.path),
+                "source": dict(receipt.source), "source_sha256": source_sha256,
+                "products": {mode: consumer.sha256_file(root / "share/crabc/manifest.json")
+                             for mode, root in (("static", static), ("dynamic", dynamic))},
+                "case_count": len(receipt.cases)}
+    except (native_shadow_receipt.ReceiptError, consumer.owned_cleanup.OwnedCleanupError,
+            qualification.QualificationError, OSError, ValueError, KeyError, TypeError) as error:
+        raise harness.HarnessError(f"native allocator policy physical receipt is invalid: {error}") from error
+
+
 def read_native_shadow_receipt(command: Sequence[str], expected_source: str) -> dict[str, str]:
     """Bind the completed consumer to current source, its products, and retained bytes."""
 
@@ -970,6 +1071,15 @@ def run_evidence(
             directory = product_directory(str(record["stdout"]) + str(record["stderr"]), products["evidence_line"])
             passed = directory is not None
         receipt: dict[str, str] | None = None
+        if evidence_id == "product:native-allocator-policy" and passed:
+            try:
+                receipt = read_native_allocator_policy_receipt(
+                    command, str(record["stdout"]) + str(record["stderr"]))
+            except harness.HarnessError as error:
+                with log.open("a", encoding="utf-8") as stream:
+                    stream.write(f"native allocator policy receipt reader: {error}\n")
+                passed = False
+                directory = None
         if evidence_id == "consumer:rust-std-lto" and passed:
             try:
                 receipt = read_native_shadow_receipt(command, qualification.source_digest())

@@ -154,6 +154,31 @@ class M8ProductBindingTests(unittest.TestCase):
             self.assertEqual(set(results), {"product:c"})
 
 
+class M8NativeAllocatorPolicyReceiptTests(unittest.TestCase):
+    def test_successful_products_command_without_its_physical_receipt_fails(self) -> None:
+        products = {"evidence": "product:native-allocator-policy",
+                    "evidence_line": "native-allocator-policy evidence: ",
+                    "static_sysroot": "static-sysroot", "dynamic_sysroot": "dynamic-sysroot"}
+        runnable = {"product:native-allocator-policy":
+                    ["scripts/dev-x86_64.sh", "owned-native-allocator-policy"]}
+
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory, \
+                tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64/tmp",
+                                            prefix="owned-native-allocator-policy.") as evidence:
+            evidence_path = gate.CONTAINER_ROOT / Path(evidence).relative_to(ROOT)
+
+            def command_record(_command, **_kwargs):
+                return {"status": 0, "stdout": f"native-allocator-policy evidence: {evidence_path}\n",
+                        "stderr": ""}
+
+            with mock.patch.object(harness, "command_record", command_record), \
+                    mock.patch.object(gate.native_shadow_receipt, "read_receipt",
+                                      side_effect=gate.native_shadow_receipt.ReceiptError("no receipt")) as reader:
+                result = gate.run_evidence(runnable, products, list(runnable), Path(directory))
+        reader.assert_called_once()
+        self.assertEqual(result["product:native-allocator-policy"]["status"], "failed")
+
+
 class M8RustStdReceiptTests(unittest.TestCase):
     def test_native_shadow_receipt_binds_current_source_products_and_retained_bytes(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
