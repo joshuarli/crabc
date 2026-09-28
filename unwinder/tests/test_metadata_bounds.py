@@ -42,6 +42,12 @@ class MetadataBoundsExecutionContract(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'status'):
             metadata_bounds.assert_execution(-11, '', expected)
 
+    def test_guarded_register_rule_returns_a_phase_error_without_a_fault(self):
+        expected = 'guarded register rule rejected\n'
+        metadata_bounds.assert_execution(0, expected, expected)
+        with self.assertRaisesRegex(RuntimeError, 'status'):
+            metadata_bounds.assert_execution(-11, '', expected)
+
     def test_provider_provenance_must_name_the_compiled_overlay(self):
         patches = []
         files = []

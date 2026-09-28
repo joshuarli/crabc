@@ -46,6 +46,63 @@ fn validate_register(register: Register) -> Result<(), gimli::Error> {
 // Exhaustion is gimli::Error::TooManyIterations, propagated as a phase error.
 const MAX_EXPRESSION_ITERATIONS: u32 = 4096;
 
+// A CFI rule may name stack memory or an address computed by an expression.
+// Program headers cannot establish readability for either one. The kernel's
+// self-read returns an error or a short count for an inaccessible range without
+// delivering a fault to the unwinder; never continue after a partial word.
+#[cfg(target_arch = "x86_64")]
+fn read_unwind_bytes(address: usize, bytes: &mut [u8]) -> Result<(), gimli::Error> {
+    use core::arch::asm;
+
+    if bytes.is_empty() || address.checked_add(bytes.len()).is_none() {
+        return Err(gimli::Error::OffsetOutOfBounds(address as u64));
+    }
+    let mut pid = libc::SYS_getpid as isize;
+    unsafe {
+        asm!("syscall", inlateout("rax") pid, lateout("rcx") _, lateout("r11") _, options(nostack));
+    }
+    if pid <= 0 {
+        return Err(gimli::Error::OffsetOutOfBounds(address as u64));
+    }
+    let local = libc::iovec { iov_base: bytes.as_mut_ptr().cast(), iov_len: bytes.len() };
+    let remote = libc::iovec { iov_base: address as *mut _, iov_len: bytes.len() };
+    let mut copied = libc::SYS_process_vm_readv as isize;
+    unsafe {
+        asm!(
+            "syscall",
+            inlateout("rax") copied,
+            in("rdi") pid,
+            in("rsi") &local,
+            in("rdx") 1usize,
+            in("r10") &remote,
+            in("r8") 1usize,
+            in("r9") 0usize,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
+    if copied == bytes.len() as isize {
+        Ok(())
+    } else {
+        Err(gimli::Error::OffsetOutOfBounds(address as u64))
+    }
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn read_unwind_bytes(address: usize, bytes: &mut [u8]) -> Result<(), gimli::Error> {
+    // Preserve the existing caller-owned memory obligation outside the selected
+    // x86 runtime; these targets have no fault-contained read in this overlay.
+    unsafe { core::ptr::copy_nonoverlapping(address as *const u8, bytes.as_mut_ptr(), bytes.len()) };
+    Ok(())
+}
+
+fn read_unwind_word(address: usize) -> Result<usize, gimli::Error> {
+    let mut bytes = [0u8; mem::size_of::<usize>()];
+    read_unwind_bytes(address, &mut bytes)?;
+    Ok(usize::from_ne_bytes(bytes))
+}
+
 struct StoreOnStack;
 
 // gimli's MSRV doesn't allow const generics, so we need to pick a supported array size.
@@ -304,19 +361,13 @@ impl Frame {
                         return Err(gimli::Error::UnsupportedEvaluation);
                     }
                     // DW_OP_deref_size reads exactly its encoded width, not a
-                    // native word. Address readability remains a caller
-                    // obligation until a fault-contained memory owner exists.
+                    // native word. A failed or short x86 self-read is an
+                    // unwind error instead of an incomplete evaluator value.
                     if !(1..=8).contains(&size) {
                         return Err(gimli::Error::UnsupportedEvaluation);
                     }
                     let mut bytes = [0u8; 8];
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            address as *const u8,
-                            bytes.as_mut_ptr(),
-                            size as usize,
-                        );
-                    }
+                    read_unwind_bytes(address as usize, &mut bytes[..size as usize])?;
                     result = eval.resume_with_memory(Value::Generic(u64::from_le_bytes(bytes)))?;
                 }
                 EvaluationResult::RequiresRegister { register, base_type } => {
@@ -386,9 +437,7 @@ impl Frame {
                 // `Undefined` it indicates that the unwinding is complete.
                 RegisterRule::Undefined => 0,
                 RegisterRule::SameValue => ctx[*reg],
-                RegisterRule::Offset(offset) => unsafe {
-                    *((cfa.wrapping_add(offset as usize)) as *const usize)
-                },
+                RegisterRule::Offset(offset) => read_unwind_word(cfa.wrapping_add(offset as usize))?,
                 RegisterRule::ValOffset(offset) => cfa.wrapping_add(offset as usize),
                 RegisterRule::Register(r) => {
                     validate_register(r)?;
@@ -396,7 +445,7 @@ impl Frame {
                 },
                 RegisterRule::Expression(expr) => {
                     let addr = self.evaluate_expression(ctx, expr)?;
-                    unsafe { *(addr as *const usize) }
+                    read_unwind_word(addr)?
                 }
                 RegisterRule::ValExpression(expr) => self.evaluate_expression(ctx, expr)?,
                 RegisterRule::Architectural => return Err(gimli::Error::UnsupportedEvaluation),

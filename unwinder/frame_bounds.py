@@ -12,6 +12,14 @@ def main() -> None:
         'frame-rules-execution.log',
         'frame-rules',
     ))
+    print(run_fixture(
+        'unwinder-frame-bounds-runs',
+        'guarded_register_rule.rs',
+        'guarded register rule rejected\n',
+        'standalone guarded register-rule provider regression',
+        'guarded-register-rule-execution.log',
+        'guarded-register-rule',
+    ))
 
 
 if __name__ == '__main__':
