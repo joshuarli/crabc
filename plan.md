@@ -26,9 +26,10 @@ are not transferable passes for a different revision.
   ordered qualification gates are executable and fail closed on named unmet
   conditions. `compat.abi-differential` reads all its evidence rows from one
   published set (`abi-differential-evidence assemble`); only the selection
-  closure stays unmet: a clean `299ca30e3` assembly named 570 blockers
-  (552 identities, 17 unadmitted families, one missing semantic receipt) and
-  rejected no companion. `libc.c-abi-compat` now runs a physical same-cohort
+  closure stays unmet: a clean `d713e5e89` pinned-image assembly named 569
+  blockers (551 identities, 17 unadmitted families, one missing semantic
+  receipt) after binding the owned `__errno_location` static imports; all
+  18 companions were accepted. `libc.c-abi-compat` now runs a physical same-cohort
   text/math/locale/stdio family admission; its retained receipt is still
   pending on the final candidate revision. `consumer.rust-std-lto` and
   `consumer.source-build` pass their evidence on development cohorts and
@@ -78,7 +79,9 @@ are not transferable passes for a different revision.
   and failed cleanup, including warning timing and accounting. A fresh OS
   singleton publication, terminal release, and failed terminal unmap receiver
   matches 115 C/Rust relations for mapping extent, PageMap state, warning
-  order, counters, and exact unmap or retained raw-only retry.
+  order, counters, and exact unmap or retained raw-only retry. Policy-first
+  arena failed prefix/suffix trim paths match 16 more C/Rust observations,
+  including escaped live mappings and warning-time counters.
   Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). On an idle host the development engine harness
