@@ -330,7 +330,9 @@ impl OwnerExitUnownRemoteFreeInjection {
     ) -> Result<AbandonedRemotePush, RemoteFreeError> {
         // SAFETY: the token's construction and caller contract preserve the
         // same source producer/block lifetime through this one publication.
-        let was_owned = unsafe { push_source_block_mt(self.producer, self.canonical_block, true) }?;
+        let was_owned = unsafe {
+            push_source_block_mt::<false>(self.producer, self.canonical_block, true)
+        }?;
         Ok(if was_owned {
             AbandonedRemotePush::PublishedToExistingOwner
         } else {
@@ -377,8 +379,9 @@ unsafe fn publish_canonical_source_block(
     canonical_block: NonNull<u8>,
 ) -> Result<LiveRemoteFreePublish, RemoteFreeError> {
     // SAFETY: the caller supplies the coherent current allocation and source
-    // state. The helper performs the one source `allow_collect=true` CAS.
-    let was_owned = unsafe { push_source_block_mt(producer, canonical_block, true) }?;
+    // state. Its canonical allocator block is aligned before this one source
+    // `allow_collect=true` CAS.
+    let was_owned = unsafe { push_source_block_mt::<true>(producer, canonical_block, true) }?;
     Ok(if was_owned {
         LiveRemoteFreePublish::PublishedToOwner
     } else {
@@ -669,7 +672,7 @@ pub(crate) unsafe fn push_detached_metadata_allocation(
     // head to one stable detached metadata page. Its permanent owner bit is
     // already set, making this the source remote publication without a claim.
     let (_, producer, block, _) = unsafe { page_map_live_allocation_parts(&allocation) };
-    let was_owned = unsafe { push_source_block_mt(producer, block, false) }?;
+    let was_owned = unsafe { push_source_block_mt::<false>(producer, block, false) }?;
     debug_assert!(was_owned);
     Ok(())
 }
@@ -776,7 +779,7 @@ pub(crate) unsafe fn push(
     // SAFETY: the caller proves this page remains live and owner-associated,
     // so preserving the observed source low bit is the exact bounded
     // `allow_collect=false` transition.
-    unsafe { push_source_block_mt(state, block, false) }.map(|_| ())
+    unsafe { push_source_block_mt::<false>(state, block, false) }.map(|_| ())
 }
 
 /// Raw source `mi_free_block_mt` publication over disjoint page fields.
@@ -790,35 +793,38 @@ pub(crate) unsafe fn push(
 ///
 /// `state` must name the initialized atomic producer fields of one live,
 /// address-stable page. No whole-page reference may coexist with its use.
-/// `block` must be one distinct aligned current allocation from that page and
-/// exclusively owned by this caller. Its first word must remain writable until
-/// publication succeeds and inaccessible afterward. If `allow_collect` is
+/// `block` must be one distinct current allocation from that page and
+/// exclusively owned by this caller. `CANONICAL_ALIGNED=true` requires its
+/// canonical aligned block start; `false` rejects a misaligned address before
+/// dereferencing it. Its first word must remain writable until publication
+/// succeeds and inaccessible afterward. If `allow_collect` is
 /// false, the page must remain owner-associated with its low remote-head bit
 /// set. If it is true, the caller must complete the source abandoned-page
-/// owner obligation when this returns `Ok(false)`.
-unsafe fn push_source_block_mt(
+/// owner obligation when this returns `Ok(false)`. The trusted form is for
+/// the canonical block of a checked current allocation; other callers keep
+/// the low-bit check before the source publication loop.
+unsafe fn push_source_block_mt<const CANONICAL_ALIGNED: bool>(
     state: PageRemoteFreeProducerState,
     block: NonNull<u8>,
     allow_collect: bool,
 ) -> Result<bool, RemoteFreeError> {
-    if block.as_ptr().addr() & THREAD_FREE_OWNED != 0 {
-        return Err(RemoteFreeError::UnalignedBlock);
-    }
     // SAFETY: `state` names the initialized `xthread_free` atomic field.
     let word = unsafe { state.xthread_free.as_ref() };
     let block = block.cast::<Block>();
     let block_address = block.as_ptr().expose_provenance();
-    publish_to_head_with_owner(
-        word,
-        block_address,
-        |previous| allow_collect || is_owned(previous),
-        |previous_block| {
-            // SAFETY: the caller retains exclusive ownership of `block`; the
-            // source normal-release profile stores its unencoded next pointer
-            // before the release half of the publishing compare/exchange.
-            unsafe { block_set_next(block, thread_free_block(previous_block)) };
-        },
-    )
+    let owner_after_publication = |previous| allow_collect || is_owned(previous);
+    let set_next = |previous_block| {
+        // SAFETY: the caller retains exclusive ownership of `block`; the
+        // source normal-release profile stores its unencoded next pointer
+        // before the release half of the publishing compare/exchange.
+        unsafe { block_set_next(block, thread_free_block(previous_block)) };
+    };
+    if CANONICAL_ALIGNED {
+        // The checked current allocation supplies an aligned canonical block.
+        publish_to_aligned_head_with_owner(word, block_address, owner_after_publication, set_next)
+    } else {
+        publish_to_head_with_owner(word, block_address, owner_after_publication, set_next)
+    }
 }
 
 /// Atomically detaches remote frees and merges them into the owner's local
@@ -1015,7 +1021,7 @@ pub(crate) unsafe fn push_abandoned(
     // helper performs pinned `allow_collect=true` publication regardless of
     // whether a concurrent claimant has since installed a live identity.
     let producer = unsafe { Page::remote_free_producer_state_at(page) };
-    let was_owned = unsafe { push_source_block_mt(producer, block, true) }?;
+    let was_owned = unsafe { push_source_block_mt::<false>(producer, block, true) }?;
     Ok(if was_owned {
         AbandonedRemotePush::PublishedToExistingOwner
     } else {
@@ -1343,7 +1349,27 @@ where
 /// ownership claim without duplicating any CAS transition. `set_next` is the
 /// source store to the producer-owned block's first word and runs again after
 /// each failed CAS.
+///
 fn publish_to_head_with_owner<H, O, F>(
+    head: &H,
+    block: ThreadFree,
+    owner_after_publication: O,
+    set_next: F,
+) -> Result<bool, RemoteFreeError>
+where
+    H: ThreadFreeHead + ?Sized,
+    O: Fn(ThreadFree) -> bool,
+    F: FnMut(ThreadFree),
+{
+    if block & THREAD_FREE_OWNED != 0 {
+        return Err(RemoteFreeError::UnalignedBlock);
+    }
+    publish_to_aligned_head_with_owner(head, block, owner_after_publication, set_next)
+}
+
+/// The source head loop after a checked current allocation or raw validation
+/// established the free-list block's low-bit alignment.
+fn publish_to_aligned_head_with_owner<H, O, F>(
     head: &H,
     block: ThreadFree,
     owner_after_publication: O,
@@ -1354,9 +1380,7 @@ where
     O: Fn(ThreadFree) -> bool,
     F: FnMut(ThreadFree),
 {
-    if block & THREAD_FREE_OWNED != 0 {
-        return Err(RemoteFreeError::UnalignedBlock);
-    }
+    debug_assert_eq!(block & THREAD_FREE_OWNED, 0);
 
     let mut previous = head.load_relaxed();
     loop {
@@ -1369,8 +1393,9 @@ where
             }
         }
         set_next(thread_free_block_address(previous));
-        let replacement = thread_free_create_address(block, owner_after_publication(previous))
-            .expect("the checked block alignment preserves the low owner bit");
+        // The caller checked the raw block or supplied a current allocation's
+        // canonical block. The source head word reserves only its low bit.
+        let replacement = block | usize::from(owner_after_publication(previous));
         if head.cas_weak_acq_rel(&mut previous, replacement) {
             return Ok(is_owned(previous));
         }
@@ -1761,6 +1786,24 @@ mod tests {
     }
 
     #[test]
+    fn raw_source_publisher_rejects_an_unaligned_block_before_changing_the_head() {
+        let mut page = Page::remote_free_test_page(1, 1);
+        let page_raw = NonNull::from(&mut page);
+        let mut block = TestBlock([0; 16]);
+        // SAFETY: one byte inside this live test block remains addressable.
+        let unaligned = unsafe { NonNull::new_unchecked(block.pointer().as_ptr().add(1)) };
+        // SAFETY: the raw publisher checks the low bit before touching the
+        // block. The fixture keeps the page and block live for the call.
+        let producer = unsafe { Page::remote_free_producer_state_at(page_raw) };
+        assert_eq!(
+            unsafe { push_source_block_mt::<false>(producer, unaligned, true) },
+            Err(RemoteFreeError::UnalignedBlock)
+        );
+        assert_eq!(page.remote_free_test_head(), 1);
+        assert_eq!(block.0, [0; 16]);
+    }
+
+    #[test]
     fn remote_push_rejects_an_abandoned_page_even_if_the_old_theap_pointer_remains() {
         let mut page = Page::remote_free_test_page(1, 1);
         let page_raw = NonNull::from(&mut page);
@@ -1822,7 +1865,7 @@ mod tests {
         }
     }
 
-    /// Test-only stand-in for W02's coherent PageMap lookup result.
+    /// Test-only stand-in for a coherent PageMap live-allocation observation.
     ///
     /// Construction stays inside each producer after it has taken exclusive
     /// ownership of one block, so the test cannot accidentally pass a page
