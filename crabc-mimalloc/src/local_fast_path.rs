@@ -201,9 +201,9 @@ pub(crate) unsafe fn allocate(
     let regular_medium = size > SMALL_MAX_OBJ_SIZE;
     let bin = size_class::bin(size)?;
     let first = NonNull::new(theap_ref.queue(bin)?.first())?;
-    // SAFETY: the queue head is a live page of this Theap.
-    let first_ref = unsafe { first.as_ref() };
     if regular_medium {
+        // SAFETY: the queue head is a live page of this Theap.
+        let first_ref = unsafe { first.as_ref() };
         if first_ref.block_size() <= SMALL_MAX_OBJ_SIZE
             || first_ref.block_size() > MEDIUM_MAX_OBJ_SIZE
             || first_ref.used() + 1 >= usize::from(first_ref.reserved())
@@ -213,9 +213,9 @@ pub(crate) unsafe fn allocate(
             // owner path.
             return None;
         }
-    } else if first_ref.block_size() > SMALL_MAX_OBJ_SIZE {
-        return None;
     }
+    // A small queue's bin already fixes its page class; the source's
+    // queue-head lookup does not recheck the page's block size.
     // The counter step below touches only the Theap. Keep the owner-only
     // local head observed during this preflight for the source quick collect;
     // no other owner can change either ordinary free-list field between them.
@@ -247,6 +247,9 @@ pub(crate) unsafe fn allocate(
         Page::set_retire_expire_at(first, 0);
         pop_immediate(first, zero)
     };
+    // SAFETY: the queue head remains live through the owner-local pop.
+    #[cfg(any(feature = "mi-stat-1", feature = "mi-stat-2"))]
+    let first_ref = unsafe { first.as_ref() };
     #[cfg(feature = "mi-stat-1")]
     theap_ref.record_malloc_normal_allocated(first_ref.block_size());
     #[cfg(feature = "mi-stat-2")]
