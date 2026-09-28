@@ -20681,7 +20681,7 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     fn native_owner_exit_traverses_full_medium_and_os_singleton_before_survivor_frees() {
         native_owner_exit_mixed_full_queue_fixture(
-            false,
+            MixedOwnerExitMode::DormantPreExitRemote,
             "runtime_lifecycle::tests::native_owner_exit_traverses_full_medium_and_os_singleton_before_survivor_frees",
         );
     }
@@ -20690,13 +20690,30 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     fn native_owner_exit_active_survivor_reclaims_full_medium_then_retires() {
         native_owner_exit_mixed_full_queue_fixture(
-            true,
+            MixedOwnerExitMode::ActivePreExitRemote,
             "runtime_lifecycle::tests::native_owner_exit_active_survivor_reclaims_full_medium_then_retires",
         );
     }
 
+    #[test]
     #[cfg(target_arch = "x86_64")]
-    fn native_owner_exit_mixed_full_queue_fixture(active_survivor: bool, test_name: &'static str) {
+    fn native_owner_exit_active_survivor_reclaims_late_remote_full_medium() {
+        native_owner_exit_mixed_full_queue_fixture(
+            MixedOwnerExitMode::ActiveLateRemote,
+            "runtime_lifecycle::tests::native_owner_exit_active_survivor_reclaims_late_remote_full_medium",
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[derive(Clone, Copy, Eq, PartialEq)]
+    enum MixedOwnerExitMode {
+        DormantPreExitRemote,
+        ActivePreExitRemote,
+        ActiveLateRemote,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn native_owner_exit_mixed_full_queue_fixture(mode: MixedOwnerExitMode, test_name: &'static str) {
         crate::test_process::run_in_fresh_process(
             test_name,
             || {
@@ -20704,6 +20721,7 @@ mod tests {
                 assert!(initialize_process());
                 assert!(native_round_trip(48));
                 assert!(prepare_native_later_thread_arena());
+                let active_survivor = mode != MixedOwnerExitMode::DormantPreExitRemote;
                 if active_survivor {
                     assert!(native_round_trip(48), "the survivor reactivates its default Theap before worker admission");
                 }
@@ -20823,7 +20841,9 @@ mod tests {
                 };
                 // SAFETY: the surviving thread exclusively owns the first
                 // medium client, and the worker is waiting before owner exit.
-                assert_eq!(unsafe { native_free(client(medium[0])) }, NativePageFreeResult::Freed);
+                if mode != MixedOwnerExitMode::ActiveLateRemote {
+                    assert_eq!(unsafe { native_free(client(medium[0])) }, NativePageFreeResult::Freed);
+                }
                 exit_sender.send(()).expect("the source owner begins its full queue traversal");
                 owner.join().expect("the mixed source owner completes its normal exit");
 
@@ -20836,8 +20856,27 @@ mod tests {
                 assert!(!unsafe {
                     page_map.page_map().unwrap().checked_lookup(singleton as *mut u8)
                 }.is_null());
-                assert_eq!(unsafe { (*medium_page).used() }, medium.len() - 1,
-                    "owner exit force-collects the medium remote publication");
+                if mode == MixedOwnerExitMode::ActiveLateRemote {
+                    // The worker has completed its source TLS exit. Both
+                    // client pages remain registered, but the full medium
+                    // page is now queue-detached and abandoned.
+                    assert_eq!(unsafe { (*medium_page).used() }, medium.len());
+                    assert!(!unsafe { crate::types::page_queue::page_is_in_full(&*medium_page) });
+                    let abandoned_page = unsafe { &*medium_page };
+                    let source_id = abandoned_page.abandoned_test_thread_id();
+                    assert!(matches!(source_id,
+                        crate::types::THREAD_ID_ABANDONED | crate::types::THREAD_ID_ABANDONED_MAPPED));
+                    assert_eq!(abandoned_page.remote_free_test_head() & 1, 0);
+                    assert_eq!(unsafe { native_free(client(medium[0])) }, NativePageFreeResult::Freed);
+                    assert_eq!(unsafe { (*medium_page).used() }, medium.len() - 1);
+                    assert!(unsafe { crate::types::Page::is_live_owner_for_thread_at(
+                        NonNull::new(medium_page).unwrap(),
+                        RUNTIME_PROCESS.initial_live_thread_identity().unwrap(),
+                    ) }, "the late remote free reclaims into the active survivor");
+                } else {
+                    assert_eq!(unsafe { (*medium_page).used() }, medium.len() - 1,
+                        "owner exit force-collects the medium remote publication");
+                }
 
                 // SAFETY: these exact clients have not been freed; each
                 // post-exit call consumes one independent survivor claim.
@@ -20850,7 +20889,7 @@ mod tests {
                 }, medium_page);
                 for (index, address) in medium.iter().copied().skip(1).enumerate() {
                     assert_eq!(unsafe { native_free(client(address)) }, NativePageFreeResult::Freed);
-                    if active_survivor && index == 0 {
+                    if mode == MixedOwnerExitMode::ActivePreExitRemote && index == 0 {
                         // SAFETY: at least four medium clients remain live,
                         // and the survivor has finished this exact free.
                         let page = unsafe {
@@ -20879,6 +20918,33 @@ mod tests {
                         NonNull::from(retired),
                         RUNTIME_PROCESS.initial_live_thread_identity().unwrap(),
                     ) });
+                    if mode == MixedOwnerExitMode::ActiveLateRemote {
+                        std::println!("CRABC_MI_LATE_REMOTE_OWNER_EXIT_BEGIN");
+                        std::println!("full_retain=-1");
+                        std::println!("medium_capacity={}", medium.len());
+                        std::println!("medium_full_before_exit=1");
+                        std::println!("medium_registered_after_exit=1");
+                        std::println!("medium_used_after_exit={}", medium.len());
+                        std::println!("medium_abandoned_after_exit=1");
+                        std::println!("medium_unowned_after_exit=1");
+                        std::println!("medium_queue_detached_after_exit=1");
+                        std::println!("singleton_registered_after_exit=1");
+                        std::println!("medium_reclaimed_after_late_free=1");
+                        std::println!("medium_used_after_late_free={}", medium.len() - 1);
+                        std::println!("singleton_released=1");
+                        std::println!("medium_retired_used=0");
+                        std::println!("medium_retired_expire={}", retired.retire_expire());
+                        std::println!("medium_registered_before_collect=1");
+                        native_collect(true);
+                        assert!(unsafe {
+                            page_map.page_map().unwrap().checked_lookup(medium[1] as *mut u8)
+                        }.is_null(), "forced collection releases the retired medium page");
+                        std::println!("medium_released_after_collect=1");
+                        assert!(native_round_trip(64), "the surviving owner remains usable");
+                        std::println!("survivor_usable=1");
+                        std::println!("CRABC_MI_LATE_REMOTE_OWNER_EXIT_END");
+                        return;
+                    }
                     std::println!("CRABC_MI_ACTIVE_MIXED_OWNER_EXIT_BEGIN");
                     std::println!("full_retain=-1");
                     std::println!("medium_capacity={}", medium.len());

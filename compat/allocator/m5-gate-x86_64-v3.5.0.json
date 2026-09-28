@@ -115,6 +115,15 @@
       ],
       "scope": "Pinned C and native Rust keep the survivor's default Theap active while a later owner exits with a full medium page and OS singleton; after one remote publication, the survivor reclaims the medium page on free, retires it at used=0, and releases it on forced collection."
     },
+    "differential:nonabandoning-late-remote-owner-exit": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_nonabandoning_late_remote_owner_exit_evidence.py",
+        "--report",
+        "{scratch}/nonabandoning-late-remote-owner-exit.json"
+      ],
+      "scope": "Pinned C and native Rust keep an active survivor while a full medium page and independent OS singleton finish owner exit before the first remote medium free; the late free reclaims the abandoned page, whose final free retires it until forced collection."
+    },
     "lifecycle:bounded-laboratory": {
       "command": [
         "python3",
@@ -198,7 +207,8 @@
       "evidence": [
         "native:generic-exit",
         "differential:nonabandoning-mixed-owner-exit",
-        "differential:nonabandoning-active-survivor-owner-exit"
+        "differential:nonabandoning-active-survivor-owner-exit",
+        "differential:nonabandoning-late-remote-owner-exit"
       ],
       "blocked_by": []
     },
