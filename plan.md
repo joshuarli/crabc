@@ -255,6 +255,9 @@ are not transferable passes for a different revision.
   A sequential full-RELR-bitmap path saves another paired median 568 user
   instructions in both startup rows, with unchanged syscalls and 64 more
   release-text bytes.
+  Initial TLS now uses zeroed builtin or fresh anonymous backing for module
+  tails; that saves 19 median instructions and 64 release-text bytes in the
+  same paired development rows.
   These remain unqualified under host contention. Allocator rows stay
   6.5–8× on the selected
   accepted-C backend, whose arena the host's THP `always` mode backs with
