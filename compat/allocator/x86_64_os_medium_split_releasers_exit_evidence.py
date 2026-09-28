@@ -42,13 +42,14 @@ EXPECTED = {
     "registered_after_exit": 1,
     "medium_used_after_exit": 1,
     "first_free_completed": 1,
+    "first_reclaimed_before_exit": 1,
     "first_registered": 1,
     "second_client_live": 1,
     "second_free_completed": 1,
     "terminal_map_clear": 1,
 }
 C_OS_KEYS = (
-    "os_list_abandoned", "first_reclaimed_before_exit", "first_used_one", "terminal_region_clear",
+    "os_list_abandoned", "first_used_one", "terminal_region_clear",
 )
 SOURCE_ANCHORS = (
     ("src/arena.c", 819, 855, "8deb9d795b71ad70a008b538c5be49b15f35371bc2d249aeb69b66f2c29a614d"),

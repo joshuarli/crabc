@@ -160,7 +160,7 @@
         "--report",
         "{scratch}/os-medium-split-releasers-exit.json"
       ],
-      "scope": "Pinned C and native Rust select a non-arena OS-backed regular medium page with two live clients. Two independent attached survivors free only after owner exit; the first release retains the other client's PageMap registration and the second clears the complete OS page range."
+      "scope": "Pinned C and native Rust select a non-arena OS-backed regular medium page with two live clients. Two independent attached survivors free only after owner exit; the first reclaims the page before its own exit while retaining the other client's PageMap registration, and the second clears the complete OS page range."
     },
     "lifecycle:bounded-laboratory": {
       "command": [

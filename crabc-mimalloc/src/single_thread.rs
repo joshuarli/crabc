@@ -619,6 +619,12 @@ enum ProcessPostOwnerExitRemoteClaimResult {
         release: abandoned::ClaimedPostOwnerExitRegularRelease,
         mutation: Option<ProcessPageMapMutationLease>,
     },
+    /// A regular OS page crossed its list boundary before the terminal OS
+    /// mapping release failed. Both the claim and exact backing stay sealed.
+    RegularNonArenaTerminalRetained {
+        owner: ProcessPostOwnerExitNonArenaTerminalOwner<abandoned::ClaimedPostOwnerExitRegularRelease>,
+        mutation: Option<ProcessPageMapMutationLease>,
+    },
     Regular(abandoned::ClaimedPostOwnerExitRegularFreeResult),
     /// The singleton terminal callback retained W07's exact wrapper. As with
     /// the regular form, the optional mutation lease begins only at the
@@ -641,7 +647,7 @@ enum ProcessPostOwnerExitRemoteClaimResult {
     MutationLeaseReleaseFailure,
 }
 
-/// The last source-visible stage completed before a non-arena singleton
+/// The last source-visible stage completed before a non-arena page's
 /// terminal release became retained.
 ///
 /// This is deliberately an observation, not a retry selector. The enclosing
@@ -677,22 +683,22 @@ impl ProcessPostOwnerExitNonArenaTerminalStage {
     }
 }
 
-/// One retained non-arena singleton terminal transition after list removal.
+/// One retained non-arena terminal transition after list removal.
 ///
-/// `release` is W07's exact singleton wrapper around the original
-/// [`remote_free::ClaimedAbandonedRemoteFree`]. `backing` is either the same
+/// `release` is the exact wrapper around the original claimed remote free.
+/// `backing` is either the same
 /// published OS mapping token validated before list removal or the exact
 /// external PageMap span that requires no backing unmap. Keeping them opaque
 /// prevents a post-list failure from losing source authority or exposing an
 /// unsafe partial-release retry API.
 #[must_use = "a non-arena terminal owner must remain intact after list removal"]
-struct ProcessPostOwnerExitNonArenaTerminalOwner {
-    release: abandoned::ClaimedPostOwnerExitSingletonRelease,
+struct ProcessPostOwnerExitNonArenaTerminalOwner<R = abandoned::ClaimedPostOwnerExitSingletonRelease> {
+    release: R,
     backing: ProcessPostOwnerExitNonArenaTerminalBacking,
     stage: ProcessPostOwnerExitNonArenaTerminalStage,
 }
 
-impl ProcessPostOwnerExitNonArenaTerminalOwner {
+impl<R> ProcessPostOwnerExitNonArenaTerminalOwner<R> {
     #[inline]
     const fn stage(&self) -> ProcessPostOwnerExitNonArenaTerminalStage { self.stage }
 }
@@ -789,6 +795,10 @@ enum ProcessPostOwnerExitClaimTerminalRetained {
     Uncontinued(remote_free::ClaimedAbandonedRemoteFree),
     Regular {
         release: abandoned::ClaimedPostOwnerExitRegularRelease,
+        mutation: Option<ProcessPageMapMutationLease>,
+    },
+    NonArenaRegular {
+        owner: ProcessPostOwnerExitNonArenaTerminalOwner<abandoned::ClaimedPostOwnerExitRegularRelease>,
         mutation: Option<ProcessPageMapMutationLease>,
     },
     Singleton {
@@ -915,6 +925,9 @@ impl ProcessPostOwnerExitTerminalRetained {
                 owner: ProcessPostOwnerExitClaimTerminalRetained::Regular { .. },
             } => ProcessPostOwnerExitTerminalAuditCategory::RegularClaim,
             Self::Claimed {
+                owner: ProcessPostOwnerExitClaimTerminalRetained::NonArenaRegular { .. },
+            } => ProcessPostOwnerExitTerminalAuditCategory::RegularClaim,
+            Self::Claimed {
                 owner: ProcessPostOwnerExitClaimTerminalRetained::Singleton { .. },
             } => ProcessPostOwnerExitTerminalAuditCategory::SingletonClaim,
             Self::Claimed {
@@ -942,6 +955,9 @@ impl ProcessPostOwnerExitRemoteClaimResult {
         match self {
             Self::RegularTerminalRetained { release, mutation } => {
                 Err(ProcessPostOwnerExitClaimTerminalRetained::Regular { release, mutation })
+            }
+            Self::RegularNonArenaTerminalRetained { owner, mutation } => {
+                Err(ProcessPostOwnerExitClaimTerminalRetained::NonArenaRegular { owner, mutation })
             }
             Self::Regular(
                 abandoned::ClaimedPostOwnerExitRegularFreeResult::PublishedToExistingOwner,
@@ -1061,11 +1077,72 @@ fn terminalize_post_owner_exit_retained(
     core::mem::forget(owner);
 }
 
-/// A claimed, still-used abandoned process-arena page offered to the freeing
-/// thread by `mi_abandoned_page_try_reclaim`. Its bitmap capability is the
-/// static-main mapped-abandoned selection used by the rest of the W03 tail.
+/// The process-main bitmap selector for an arena page, or the source OS-list
+/// identity of a non-arena regular page. OS pages never publish a bitmap bit.
+pub(crate) enum ProcessAbandonedPages {
+    Arena(MainArenaMappedAbandonedPage<'static>),
+    Os,
+}
+
+impl abandoned::MappedAbandonedPages for ProcessAbandonedPages {
+    fn bin(&self) -> usize {
+        match self {
+            Self::Arena(map) => abandoned::MappedAbandonedPages::bin(map),
+            Self::Os => ARENA_BIN_COUNT,
+        }
+    }
+
+    fn page_slice_index(&self, memory: MemoryId) -> Option<usize> {
+        match self {
+            Self::Arena(map) => abandoned::MappedAbandonedPages::page_slice_index(map, memory),
+            Self::Os => None,
+        }
+    }
+
+    fn is_clear(&self, slice_index: usize) -> bool {
+        match self {
+            Self::Arena(map) => abandoned::MappedAbandonedPages::is_clear(map, slice_index),
+            Self::Os => false,
+        }
+    }
+
+    fn publish(&self, slice_index: usize) -> bool {
+        match self {
+            Self::Arena(map) => abandoned::MappedAbandonedPages::publish(map, slice_index),
+            Self::Os => false,
+        }
+    }
+
+    fn try_claim<F>(&self, thread_sequence: usize, claim: F) -> abandoned::MappedAbandonedClaim
+    where
+        F: FnMut(usize) -> crate::bitmap::AbandonedBitmapClaim,
+    {
+        match self {
+            Self::Arena(map) => abandoned::MappedAbandonedPages::try_claim(map, thread_sequence, claim),
+            Self::Os => abandoned::MappedAbandonedClaim::None,
+        }
+    }
+
+    fn clear_once_set(&self, slice_index: usize) -> bool {
+        match self {
+            Self::Arena(map) => abandoned::MappedAbandonedPages::clear_once_set(map, slice_index),
+            Self::Os => false,
+        }
+    }
+
+    fn decrement_after_identity_clear(&self) -> bool {
+        match self {
+            Self::Arena(map) => abandoned::MappedAbandonedPages::decrement_after_identity_clear(map),
+            Self::Os => false,
+        }
+    }
+}
+
+/// A claimed, still-used abandoned process page offered to the freeing
+/// thread by `mi_abandoned_page_try_reclaim`. Its selector retains either the
+/// exact static-main arena bitmap or the non-mappable OS-list identity.
 pub(crate) type ProcessReclaimOnFreeCandidate<'a> =
-    abandoned::ReclaimOnFreeCandidate<'a, MainArenaMappedAbandonedPage<'static>>;
+    abandoned::ReclaimOnFreeCandidate<'a, ProcessAbandonedPages>;
 
 /// A process-fact or source-continuation rejection that preserves its claim.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1151,6 +1228,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
     // full abandoned identity and geometry before touching mutable state.
     let singleton = unsafe { Page::abandonment_state_at(claim.page()) }.reserved == 1;
     if !singleton {
+        let mut failed_non_arena_release = None;
         let mut retained_mutation = None;
         let mut mutation_lease_release_failed = false;
         // SAFETY: the exact claim begins this source tail after publication;
@@ -1161,17 +1239,28 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
             abandoned::continue_post_owner_exit_remote_claim(
                 claim,
                 |memory, block_size| {
-                    let arena = backing.arena_for_memory(memory)
-                        .ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)?;
-                    select_process_main_mapped_abandoned_page(
-                        &arena,
-                        main_heap,
-                        memory,
-                        block_size,
-                    )
+                    match memory.kind() {
+                        MemoryKind::Arena => {
+                            let arena = backing.arena_for_memory(memory)
+                                .ok_or(AbandonError::ArenaBitmapDoesNotMatchPage)?;
+                            select_process_main_mapped_abandoned_page(
+                                &arena, main_heap, memory, block_size,
+                            ).map(ProcessAbandonedPages::Arena)
+                        }
+                        MemoryKind::Os => Ok(ProcessAbandonedPages::Os),
+                        _ => Err(AbandonError::InvalidPageGeometry),
+                    }
                 },
                 |page| abandoned::collect_post_owner_exit_local_free_false(page),
                 reclaim_on_free,
+                |page| {
+                    // SAFETY: the remote-free claim retains this exact OS
+                    // page and its Heap list link until reclaim consumes it.
+                    match unsafe { remove_non_arena_page_from_main_heap(main_heap, page) } {
+                        NonArenaSingletonListRemoval::Removed => Ok(()),
+                        _ => Err(AbandonError::OsAbandonedListRemoval),
+                    }
+                },
                 |release| {
                     let mutation = match process.begin_blocking_exact_post_owner_exit_mutation() {
                         Ok(mutation) => mutation,
@@ -1190,48 +1279,59 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                             );
                         }
                     };
-                    match release_claimed_process_regular_arena_page(
-                        page_map,
-                        &backing,
-                        release.page(),
-                        release.memory(),
-                    ) {
-                        ClaimedProcessArenaTerminalRelease::Released => {}
-                        ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap => {
-                            // The terminal callback acquired the short map
-                            // lease, but its source validation stopped before
-                            // an unregister attempt.  Releasing the untouched
-                            // boundary is sound; W07 retains the exact claim.
-                            // A failed wake poisons the process-root lease,
-                            // but this W07 claim is still the exact terminal
-                            // source owner. The scalar outer layer will seal
-                            // it and publish the exception marker; do not
-                            // misclassify it as a completed-tail unlock
-                            // failure or trip a debug assertion below.
-                            let _ = mutation.finish_after_exact_post_owner_exit_operation();
-                            return abandoned::ClaimedPostOwnerExitRegularTerminalRelease::Retained(
-                                release,
-                            );
+                    if release.memory().kind() == MemoryKind::Os {
+                        // SAFETY: the all-free regular wrapper retains the
+                        // claimed page, its published OS mapping, and this
+                        // short PageMap mutation lease through the tail.
+                        match unsafe { release_claimed_non_arena_page_with_list_removal(
+                            page_map, backing.process(), release.page(), release.memory(), true,
+                            |page| remove_non_arena_page_from_main_heap(main_heap, page),
+                        ) } {
+                            ClaimedProcessNonArenaPageRelease::Released => {}
+                            ClaimedProcessNonArenaPageRelease::RetainedAfterList(retained) => {
+                                let page_map_tail_completed = retained.stage.page_map_tail_completed();
+                                failed_non_arena_release = Some(retained);
+                                if page_map_tail_completed {
+                                    let _ = mutation.finish_after_exact_post_owner_exit_operation();
+                                } else {
+                                    retained_mutation = Some(mutation);
+                                }
+                                return abandoned::ClaimedPostOwnerExitRegularTerminalRelease::Retained(release);
+                            }
+                            ClaimedProcessNonArenaPageRelease::RetainedBeforeList => {
+                                let _ = mutation.finish_after_exact_post_owner_exit_operation();
+                                return abandoned::ClaimedPostOwnerExitRegularTerminalRelease::Retained(release);
+                            }
                         }
-                        ClaimedProcessArenaTerminalRelease::RetainedDuringPageMapMutation => {
-                            // `unregister_range` may have changed one or more
-                            // plain entries before it reports an error.  Keep
-                            // this exact lease with the W07 claim rather than
-                            // reopening a partially released range.
-                            retained_mutation = Some(mutation);
-                            return abandoned::ClaimedPostOwnerExitRegularTerminalRelease::Retained(
-                                release,
-                            );
-                        }
-                        ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease => {
-                            // PageMap unregistration has completed. Retain
-                            // the exact regular backing owner, but release
-                            // the short mutation boundary so its source state
-                            // remains auditable without offering a retry.
-                            let _ = mutation.finish_after_exact_post_owner_exit_operation();
-                            return abandoned::ClaimedPostOwnerExitRegularTerminalRelease::Retained(
-                                release,
-                            );
+                    } else {
+                        match release_claimed_process_regular_arena_page(
+                            page_map, &backing, release.page(), release.memory(),
+                        ) {
+                            ClaimedProcessArenaTerminalRelease::Released => {}
+                            ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap => {
+                                // Validation stopped before PageMap mutation;
+                                // the exact claim still owns its full range.
+                                let _ = mutation.finish_after_exact_post_owner_exit_operation();
+                                return abandoned::ClaimedPostOwnerExitRegularTerminalRelease::Retained(
+                                    release,
+                                );
+                            }
+                            ClaimedProcessArenaTerminalRelease::RetainedDuringPageMapMutation => {
+                                // An unregister failure may have changed a
+                                // leading range, so retain its exact lease.
+                                retained_mutation = Some(mutation);
+                                return abandoned::ClaimedPostOwnerExitRegularTerminalRelease::Retained(
+                                    release,
+                                );
+                            }
+                            ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease => {
+                                // The map tail completed; only the exact
+                                // backing owner remains to be sealed.
+                                let _ = mutation.finish_after_exact_post_owner_exit_operation();
+                                return abandoned::ClaimedPostOwnerExitRegularTerminalRelease::Retained(
+                                    release,
+                                );
+                            }
                         }
                     }
                     // SAFETY: this exact W07 claim serialized every plain
@@ -1250,10 +1350,17 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                 release,
             )) => {
                 debug_assert!(!mutation_lease_release_failed);
-                Ok(ProcessPostOwnerExitRemoteClaimResult::RegularTerminalRetained {
-                    release,
-                    mutation: retained_mutation,
-                })
+                match failed_non_arena_release {
+                    Some(retained) => Ok(ProcessPostOwnerExitRemoteClaimResult::RegularNonArenaTerminalRetained {
+                        owner: ProcessPostOwnerExitNonArenaTerminalOwner {
+                            release, backing: retained.backing, stage: retained.stage,
+                        },
+                        mutation: retained_mutation,
+                    }),
+                    None => Ok(ProcessPostOwnerExitRemoteClaimResult::RegularTerminalRetained {
+                        release, mutation: retained_mutation,
+                    }),
+                }
             }
             Ok(result) if mutation_lease_release_failed => {
                 debug_assert!(retained_mutation.is_none());
@@ -1353,8 +1460,8 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                         release.page(),
                         release.memory(),
                     ) {
-                        ClaimedProcessNonArenaSingletonRelease::Released => {}
-                        ClaimedProcessNonArenaSingletonRelease::RetainedAfterList(backing) => {
+                        ClaimedProcessNonArenaPageRelease::Released => {}
+                        ClaimedProcessNonArenaPageRelease::RetainedAfterList(backing) => {
                             let page_map_tail_completed = backing.stage.page_map_tail_completed();
                             failed_non_arena_release = Some(backing);
                             if page_map_tail_completed {
@@ -1374,7 +1481,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                                 release,
                             );
                         }
-                        ClaimedProcessNonArenaSingletonRelease::RetainedBeforeList => {
+                        ClaimedProcessNonArenaPageRelease::RetainedBeforeList => {
                             // No list or PageMap mutation completed. The
                             // wrapper is still the terminal source owner; a
                             // failed short-lease wake is terminal but has no
@@ -1512,22 +1619,23 @@ pub(crate) unsafe fn free_child_page_block_nonlocal(
                         }
                     }
                     abandoned::ClaimedPostOwnerExitSingletonBacking::OsOrExternal => {
-                        match release_claimed_non_arena_singleton_page_with_list_removal(
+                        match release_claimed_non_arena_page_with_list_removal(
                             page_map, backing.process(), release.page(), release.memory(),
+                            false,
                             |page| if Heap::remove_os_abandoned_page_at(heap, page) {
                                 NonArenaSingletonListRemoval::Removed
                             } else {
                                 NonArenaSingletonListRemoval::NotRemoved
                             },
                         ) {
-                            ClaimedProcessNonArenaSingletonRelease::Released => {
+                            ClaimedProcessNonArenaPageRelease::Released => {
                                 abandoned::ClaimedPostOwnerExitSingletonFreeResult::Released
                             }
-                            ClaimedProcessNonArenaSingletonRelease::RetainedAfterList(retained) => {
+                            ClaimedProcessNonArenaPageRelease::RetainedAfterList(retained) => {
                                 core::mem::forget(retained);
                                 abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(release)
                             }
-                            ClaimedProcessNonArenaSingletonRelease::RetainedBeforeList => {
+                            ClaimedProcessNonArenaPageRelease::RetainedBeforeList => {
                                 abandoned::ClaimedPostOwnerExitSingletonFreeResult::TerminalReleaseRetained(release)
                             }
                         }
@@ -1561,6 +1669,7 @@ pub(crate) unsafe fn free_child_page_block_nonlocal(
             },
             |page| abandoned::collect_post_owner_exit_local_free_false(page),
             reclaim,
+            |_page| Err(AbandonError::InvalidPageGeometry),
             |release| match release_claimed_process_regular_arena_page_with_ordinary_clear(
                 page_map, backing, release.page(), release.memory(),
                 |arena, slice_index| clear_child_heap_ordinary_bit(heap, arena, slice_index),
@@ -1766,8 +1875,8 @@ pub(crate) unsafe fn delete_non_main_heap_pages(
             unsafe { Page::discard_used_for_heap_destroy(page) };
             // SAFETY: the claimed, list-member, zero-use OS page.
             let released = unsafe {
-                release_claimed_non_arena_singleton_page_with_list_removal(
-                    page_map, backing.process(), page, memory,
+                release_claimed_non_arena_page_with_list_removal(
+                    page_map, backing.process(), page, memory, false,
                     |page| if Heap::remove_os_abandoned_page_at(heap, page) {
                         NonArenaSingletonListRemoval::Removed
                     } else {
@@ -1776,12 +1885,12 @@ pub(crate) unsafe fn delete_non_main_heap_pages(
                 )
             };
             match released {
-                ClaimedProcessNonArenaSingletonRelease::Released => continue,
-                ClaimedProcessNonArenaSingletonRelease::RetainedAfterList(retained) => {
+                ClaimedProcessNonArenaPageRelease::Released => continue,
+                ClaimedProcessNonArenaPageRelease::RetainedAfterList(retained) => {
                     core::mem::forget(retained);
                     return false;
                 }
-                ClaimedProcessNonArenaSingletonRelease::RetainedBeforeList => return false,
+                ClaimedProcessNonArenaPageRelease::RetainedBeforeList => return false,
             }
         }
         let Some(target) = target else { return false };
@@ -2423,7 +2532,7 @@ unsafe fn release_claimed_process_arena_singleton_page_with_ordinary_clear(
 
 /// Terminal disposition after W07 passes its exact singleton release wrapper
 /// to this lower process-owned non-arena seam.
-enum ClaimedProcessNonArenaSingletonRelease {
+enum ClaimedProcessNonArenaPageRelease {
     Released,
     /// No source list mutation completed, so W07 can retain its ordinary
     /// release wrapper and retry only from the unabandon boundary.
@@ -2431,18 +2540,18 @@ enum ClaimedProcessNonArenaSingletonRelease {
     /// The static Heap list mutation did complete. The opaque payload keeps
     /// the exact backing and stage so the outer result cannot silently drop a
     /// mapping or restart from a now-invalid list member.
-    RetainedAfterList(RetainedProcessNonArenaSingleton),
+    RetainedAfterList(RetainedProcessNonArenaPage),
 }
 
 /// Private handoff from the terminal callback to its W07 wrapper result.
-struct RetainedProcessNonArenaSingleton {
+struct RetainedProcessNonArenaPage {
     backing: ProcessPostOwnerExitNonArenaTerminalBacking,
     stage: ProcessPostOwnerExitNonArenaTerminalStage,
 }
 
 /// Validated non-arena facts before `_mi_arenas_page_unabandon` removes the
 /// page from the static Heap list.
-enum ProcessNonArenaSingletonPreflight {
+enum ProcessNonArenaPagePreflight {
     Os(PublishedOsAlignedPage),
     External(ExternalPostOwnerExitTerminalFacts),
 }
@@ -2465,25 +2574,25 @@ fn same_non_arena_memory(left: MemoryId, right: MemoryId) -> bool {
     )
 }
 
-/// Checks the non-arena singleton facts that are stable before source list
+/// Checks the non-arena page facts that are stable before source list
 /// removal. Queue detachment is intentionally checked only after removal
 /// because the non-arena list itself owns the page's intrusive links until
 /// that point.
 ///
-/// This deliberately does not infer singleton identity from the ordinary
-/// size bin. A `MemoryKind::Os` alignment-forced page has `reserved == 1` yet
-/// can retain `PageKind::Small`; its exact [`OsAlignedPageLayout`] provenance
-/// is reconstructed by the OS preflight below. External memory has no such
-/// source layout proof and retains the size-forced check at its own boundary.
-unsafe fn non_arena_singleton_liveness_matches(
+/// Singleton identity comes from `reserved == 1`: an aligned OS singleton can
+/// retain an ordinary size bin. A regular page instead has more than one
+/// reserved block. The OS preflight reconstructs the exact mapping layout;
+/// external memory retains the size-forced singleton check.
+unsafe fn non_arena_page_liveness_matches(
     page: NonNull<Page>,
     expected_memory: MemoryId,
+    regular: bool,
 ) -> bool {
     // SAFETY: the W07 release wrapper retains this exact claimed page through
     // the preflight. It grants observation only; no former Theap is read.
     let page_ref = unsafe { page.as_ref() };
     same_non_arena_memory(page_ref.memid(), expected_memory)
-        && page_ref.reserved() == 1
+        && (if regular { page_ref.reserved() > 1 } else { page_ref.reserved() == 1 })
         && page_ref.used() == 0
 }
 
@@ -2512,7 +2621,7 @@ unsafe fn external_singleton_terminal_facts(
     expected_memory: MemoryId,
 ) -> Option<ExternalPostOwnerExitTerminalFacts> {
     if expected_memory.kind() != MemoryKind::External
-        || !unsafe { non_arena_singleton_liveness_matches(page, expected_memory) }
+        || !unsafe { non_arena_page_liveness_matches(page, expected_memory, false) }
         || !external_size_forced_singleton_matches(unsafe { page.as_ref() })
     {
         return None;
@@ -2555,13 +2664,15 @@ unsafe fn external_singleton_terminal_facts(
 }
 
 /// Prevalidates the exact non-arena source backing before list removal makes
-/// the terminal sequence irreversible.
-unsafe fn preflight_non_arena_singleton(
+/// the terminal sequence irreversible. A regular OS page uses its process
+/// mapping layout; singleton and external pages keep their existing shape.
+unsafe fn preflight_non_arena_page(
     page_map: &PageMap,
     process: Option<crate::os::VmProcess<'static>>,
     page: NonNull<Page>,
     expected_memory: MemoryId,
-) -> Option<ProcessNonArenaSingletonPreflight> {
+    regular: bool,
+) -> Option<ProcessNonArenaPagePreflight> {
     match expected_memory.kind() {
         // This bounded tail owns only normal `MI_MEM_OS` mappings constructed
         // by `OsAlignedPageClaim`. Pinned `MI_MEM_OS_HUGE` has its distinct
@@ -2577,17 +2688,22 @@ unsafe fn preflight_non_arena_singleton(
                     PublishedOsAlignedPage::from_page_for_process(process, page_map.memory_config(), page)
                 } else { PublishedOsAlignedPage::from_page(page_map.memory_config(), page) }
             }?;
-            if !unsafe { non_arena_singleton_liveness_matches(page, expected_memory) }
+            if !unsafe { non_arena_page_liveness_matches(page, expected_memory, regular) }
+                || (regular && !matches!(
+                    size_class::page_kind_for_block_size(unsafe { page.as_ref() }.block_size()),
+                    Some(PageKind::Small | PageKind::Medium | PageKind::Large),
+                ))
                 || !same_non_arena_memory(published.memory_id(), expected_memory)
                 || !unsafe { published.page_map_entries_match(page_map) }
             {
                 return None;
             }
-            Some(ProcessNonArenaSingletonPreflight::Os(published))
+            Some(ProcessNonArenaPagePreflight::Os(published))
         }
         MemoryKind::External => {
+            if regular { return None; }
             unsafe { external_singleton_terminal_facts(page_map, page, expected_memory) }
-                .map(ProcessNonArenaSingletonPreflight::External)
+                .map(ProcessNonArenaPagePreflight::External)
         }
         _ => None,
     }
@@ -2611,14 +2727,14 @@ enum NonArenaSingletonListRemoval {
 /// remains irreversible even when either guard's unlock reports an error;
 /// callers must retain the post-list terminal owner in that case rather than
 /// treating it as an untouched list member.
-unsafe fn remove_non_arena_singleton_from_main_heap(
+unsafe fn remove_non_arena_page_from_main_heap(
     main_heap: MainStaticHeapLease<'static>,
     page: NonNull<Page>,
 ) -> NonArenaSingletonListRemoval {
     let Ok(mut heap) = main_heap.lock_heap() else {
         return NonArenaSingletonListRemoval::NotRemoved;
     };
-    // SAFETY: preflight retained the exact claimed page and this guard
+    // SAFETY: the caller's low-bit claim retains this exact page and the guard
     // serializes the one `_mi_arenas_page_unabandon` list removal.
     let removed = unsafe {
         heap.heap_mut()
@@ -2658,32 +2774,34 @@ unsafe fn release_claimed_process_non_arena_singleton_page(
     main_heap: MainStaticHeapLease<'static>,
     page: NonNull<Page>,
     expected_memory: MemoryId,
-) -> ClaimedProcessNonArenaSingletonRelease {
+) -> ClaimedProcessNonArenaPageRelease {
     // SAFETY: forwarded; the process main Heap's list.
     unsafe {
-        release_claimed_non_arena_singleton_page_with_list_removal(page_map, process, page, expected_memory, |page| {
-            remove_non_arena_singleton_from_main_heap(main_heap, page)
+        release_claimed_non_arena_page_with_list_removal(page_map, process, page, expected_memory, false, |page| {
+            remove_non_arena_page_from_main_heap(main_heap, page)
         })
     }
 }
 
-/// [`release_claimed_process_non_arena_singleton_page`] with the page's
-/// OS-abandoned list removal supplied by `remove_from_list`.
-unsafe fn release_claimed_non_arena_singleton_page_with_list_removal(
+/// Completes source non-arena list removal and terminal release for a claimed
+/// regular OS page or the established singleton shape. `regular` selects the
+/// former; the caller supplies the exact Heap list splice.
+unsafe fn release_claimed_non_arena_page_with_list_removal(
     page_map: &PageMap,
     process: Option<crate::os::VmProcess<'static>>,
     mut page: NonNull<Page>,
     expected_memory: MemoryId,
+    regular: bool,
     remove_from_list: impl FnOnce(NonNull<Page>) -> NonArenaSingletonListRemoval,
-) -> ClaimedProcessNonArenaSingletonRelease {
+) -> ClaimedProcessNonArenaPageRelease {
     let Some(preflight) = (unsafe {
-        preflight_non_arena_singleton(page_map, process, page, expected_memory)
+        preflight_non_arena_page(page_map, process, page, expected_memory, regular)
     }) else {
-        return ClaimedProcessNonArenaSingletonRelease::RetainedBeforeList;
+        return ClaimedProcessNonArenaPageRelease::RetainedBeforeList;
     };
     let list_removal = remove_from_list(page);
     if list_removal == NonArenaSingletonListRemoval::NotRemoved {
-        return ClaimedProcessNonArenaSingletonRelease::RetainedBeforeList;
+        return ClaimedProcessNonArenaPageRelease::RetainedBeforeList;
     }
 
     if list_removal == NonArenaSingletonListRemoval::RemovedUnlockFailed {
@@ -2693,9 +2811,9 @@ unsafe fn release_claimed_non_arena_singleton_page_with_list_removal(
         // longer healthy; retain the exact backing at the first post-list
         // stage with the callback's mutation lease.
         return match preflight {
-            ProcessNonArenaSingletonPreflight::Os(published) => {
-                ClaimedProcessNonArenaSingletonRelease::RetainedAfterList(
-                    RetainedProcessNonArenaSingleton {
+            ProcessNonArenaPagePreflight::Os(published) => {
+                ClaimedProcessNonArenaPageRelease::RetainedAfterList(
+                    RetainedProcessNonArenaPage {
                         backing: ProcessPostOwnerExitNonArenaTerminalBacking::Os(
                             OsAlignedPageOwner::Published(published),
                         ),
@@ -2703,9 +2821,9 @@ unsafe fn release_claimed_non_arena_singleton_page_with_list_removal(
                     },
                 )
             }
-            ProcessNonArenaSingletonPreflight::External(facts) => {
-                ClaimedProcessNonArenaSingletonRelease::RetainedAfterList(
-                    RetainedProcessNonArenaSingleton {
+            ProcessNonArenaPagePreflight::External(facts) => {
+                ClaimedProcessNonArenaPageRelease::RetainedAfterList(
+                    RetainedProcessNonArenaPage {
                         backing: ProcessPostOwnerExitNonArenaTerminalBacking::External(facts),
                         stage: ProcessPostOwnerExitNonArenaTerminalStage::OsListRemoved,
                     },
@@ -2715,10 +2833,10 @@ unsafe fn release_claimed_non_arena_singleton_page_with_list_removal(
     }
 
     match preflight {
-        ProcessNonArenaSingletonPreflight::Os(published) => {
+        ProcessNonArenaPagePreflight::Os(published) => {
             let retain = |mapping, stage| {
-                ClaimedProcessNonArenaSingletonRelease::RetainedAfterList(
-                    RetainedProcessNonArenaSingleton {
+                ClaimedProcessNonArenaPageRelease::RetainedAfterList(
+                    RetainedProcessNonArenaPage {
                         backing: ProcessPostOwnerExitNonArenaTerminalBacking::Os(mapping),
                         stage,
                     },
@@ -2773,17 +2891,17 @@ unsafe fn release_claimed_non_arena_singleton_page_with_list_removal(
             // SAFETY: `published` now owns the sole raw mapping release
             // right after every PageMap/metadata predecessor completed.
             match unsafe { published.reclaim() } {
-                Ok(()) => ClaimedProcessNonArenaSingletonRelease::Released,
+                Ok(()) => ClaimedProcessNonArenaPageRelease::Released,
                 Err(failure) => retain(
                     failure.into_owner(),
                     ProcessPostOwnerExitNonArenaTerminalStage::PrimaryRetired,
                 ),
             }
         }
-        ProcessNonArenaSingletonPreflight::External(facts) => {
+        ProcessNonArenaPagePreflight::External(facts) => {
             let retain = |stage| {
-                ClaimedProcessNonArenaSingletonRelease::RetainedAfterList(
-                    RetainedProcessNonArenaSingleton {
+                ClaimedProcessNonArenaPageRelease::RetainedAfterList(
+                    RetainedProcessNonArenaPage {
                         backing: ProcessPostOwnerExitNonArenaTerminalBacking::External(facts),
                         stage,
                     },
@@ -2815,7 +2933,7 @@ unsafe fn release_claimed_non_arena_singleton_page_with_list_removal(
                 return retain(ProcessPostOwnerExitNonArenaTerminalStage::SecondaryAliasesCleared);
             };
             debug_assert!(same_non_arena_memory(retired, expected_memory));
-            ClaimedProcessNonArenaSingletonRelease::Released
+            ClaimedProcessNonArenaPageRelease::Released
         }
     }
 }

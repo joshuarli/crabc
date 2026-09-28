@@ -8,17 +8,11 @@
 // `src/arena.c:631-671,725-778,1304-1409`, `src/free.c:372-514`, and
 // `include/mimalloc/internal.h:1008-1039,1111-1119`.
 //
-// This Milestone 5 substrate models one page's abandoned-owner decisions.
-// It deliberately excludes general allocation/free routing, queues, and
-// TLS/theap registration. It does not itself own raw page-map/span release:
-// `single_thread.rs` supplies that distinct authority for a bounded mapped
-// regular handoff, a sole mapped one-block later-main owner-exit handoff, one
-// sole full-medium later-main route that first remains unmapped and then may
-// reabandon into the static-main bitmap, one sole small-or-medium later-main
-// process route and one aggregate regular-pages process registry after their
-// Theap/TLD tears down, and one post-TLS full singleton owner-exit handoff.
-// Metadata reuse and every general terminal-release route remain outside this
-// substrate.
+// This substrate models page-local abandoned-owner decisions after the
+// remote-free low-bit claim. It collects deferred frees, reclaims into an
+// active Theap when the source permits, or returns an exact claim to its
+// caller for PageMap, arena, OS-list, metadata, and mapping release. It does
+// not create a replacement owner from a former Theap pointer.
 
 use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
@@ -219,6 +213,9 @@ pub(crate) enum AbandonError {
     PreUnownPublication,
     AbandonedCountDecrementFailed,
     InvalidPageGeometry,
+    /// The claimed page could not leave its Heap's OS-abandoned list before
+    /// source reclaim or terminal release. The low-bit claim remains owned.
+    OsAbandonedListRemoval,
     /// A bounded mapped one-block owner-exit handoff acquired its source low
     /// owner bit, but source collection left the page live. Reclaim/requeue is
     /// outside that handoff's contract, so it must remain terminally retained.
@@ -547,6 +544,7 @@ pub(crate) struct ReclaimOnFreeCandidate<'a, M: MappedAbandonedPages> {
     state: &'a PageAbandonmentState,
     map: &'a M,
     bin: usize,
+    remove_non_arena_from_list: Option<&'a dyn Fn(NonNull<Page>) -> Result<(), AbandonError>>,
 }
 
 /// The freeing thread's answer to a [`ReclaimOnFreeCandidate`].
@@ -603,7 +601,9 @@ impl<M: MappedAbandonedPages> ReclaimOnFreeCandidate<'_, M> {
     ///
     /// This is `_mi_arenas_page_unabandon(page, theap)` followed by
     /// `mi_page_set_theap(page, theap)` and `_mi_page_free_collect(page,
-    /// false)`. The claim's low owner bit becomes the live owner's bit.
+    /// false)`. Arena pages clear their abandoned bitmap; non-arena pages
+    /// leave the Heap's OS-abandoned list before reassociation. The claim's
+    /// low owner bit becomes the live owner's bit.
     ///
     /// # Safety
     ///
@@ -616,10 +616,12 @@ impl<M: MappedAbandonedPages> ReclaimOnFreeCandidate<'_, M> {
         theap: NonNull<Theap>,
         thread: LiveThreadId,
     ) -> Result<NonNull<Page>, AbandonError> {
-        // The unmapped arena branch of `_mi_arenas_page_unabandon` changes no
-        // page or bitmap state; the mapped branch clears the bit once any
-        // concurrent arena reader has restored it.
+        // The mapped arena branch clears its bit after concurrent readers
+        // restore it. A non-arena page instead leaves the Heap's OS list.
         unabandon_mapped(self.state, Some(self.map))?;
+        if let Some(remove) = self.remove_non_arena_from_list {
+            remove(self.page)?;
+        }
         // SAFETY: the held low owner bit makes this ordinary field writable.
         unsafe { ptr::write(self.state.theap.as_ptr(), theap.as_ptr()) };
         set_thread_identity(self.state, thread.get());
@@ -1337,6 +1339,7 @@ where
             select_map,
             collect_owner_deferred_frees,
             |_candidate: ReclaimOnFreeCandidate<'_, M>| ReclaimOnFreeOutcome::Declined,
+            |_page| Err(AbandonError::InvalidPageGeometry),
         )
     }?;
     match tail {
@@ -1366,6 +1369,7 @@ unsafe fn finish_regular_after_remote_claim<M, F, C, T>(
     select_map: F,
     mut collect_owner_deferred_frees: C,
     try_reclaim: T,
+    remove_non_arena_from_list: impl Fn(NonNull<Page>) -> Result<(), AbandonError>,
 ) -> Result<RegularClaimTail, AbandonError>
 where
     M: MappedAbandonedPages,
@@ -1386,7 +1390,10 @@ where
     {
         return Err(AbandonError::NotAbandoned);
     }
-    if state.reserved <= 1 || state.block_size == 0 || state.memid.kind() != MemoryKind::Arena {
+    let non_arena = state.memid.kind() == MemoryKind::Os;
+    if state.reserved <= 1 || state.block_size == 0
+        || (!non_arena && state.memid.kind() != MemoryKind::Arena)
+    {
         return Err(AbandonError::InvalidPageGeometry);
     }
     let kind = size_class::page_kind_for_block_size(state.block_size);
@@ -1400,10 +1407,10 @@ where
     if state.block_size <= SMALL_SIZE_MAX && state.reserved < 16 {
         return Err(AbandonError::InvalidPageGeometry);
     }
-    // An already-mapped page must have been published by the source's
-    // nonfull branch. A full page starts unmapped and may become mapped only
-    // below through `terminal_or_reabandon_unmapped`.
-    if source_identity == THREAD_ID_ABANDONED_MAPPED && page_is_full(&state) {
+    // Only a nonfull arena page can have a mapped abandoned identity. Full
+    // arena and every OS-list page start unmapped and may enter the mapped
+    // state only through the arena reabandon decision below.
+    if source_identity == THREAD_ID_ABANDONED_MAPPED && (page_is_full(&state) || non_arena) {
         return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
     }
     // `_mi_page_free_collect_partly` retains the just-published direct-small
@@ -1445,7 +1452,10 @@ where
     }
 
     let map = select_map(state.memid, state.block_size)?;
-    if map.bin() != bin || map.page_slice_index(state.memid).is_none() {
+    if (!non_arena && (map.bin() != bin || map.page_slice_index(state.memid).is_none()))
+        || (non_arena
+            && (map.bin() != ARENA_BIN_COUNT || map.page_slice_index(state.memid).is_some()))
+    {
         return Err(AbandonError::ArenaBitmapDoesNotMatchPage);
     }
 
@@ -1453,7 +1463,12 @@ where
     // thread's Theap before it may reabandon or unown it. The frozen default
     // `page_reclaim_on_free = 0` keeps that offer enabled (`>= 0`).
     if state.block_size <= MEDIUM_MAX_OBJ_SIZE {
-        let candidate = ReclaimOnFreeCandidate { page, state: &state, map: &map, bin };
+        let candidate = ReclaimOnFreeCandidate {
+            page, state: &state, map: &map, bin,
+            remove_non_arena_from_list: non_arena.then_some(
+                &remove_non_arena_from_list as &dyn Fn(NonNull<Page>) -> Result<(), AbandonError>
+            ),
+        };
         match try_reclaim(candidate) {
             ReclaimOnFreeOutcome::Declined => {}
             ReclaimOnFreeOutcome::Reclaimed => return Ok(RegularClaimTail::Reclaimed),
@@ -1690,6 +1705,7 @@ pub(crate) unsafe fn continue_post_owner_exit_remote_claim<M, F, C, T, R>(
     select_map: F,
     collect_owner_deferred_frees: C,
     try_reclaim: T,
+    remove_non_arena_from_list: impl Fn(NonNull<Page>) -> Result<(), AbandonError>,
     terminal_release: R,
 ) -> Result<
     ClaimedPostOwnerExitRegularFreeResult,
@@ -1714,6 +1730,7 @@ where
             select_map,
             collect_owner_deferred_frees,
             try_reclaim,
+            remove_non_arena_from_list,
         )
     };
     let result = match result {
@@ -4712,6 +4729,7 @@ mod tests {
                         Ok(())
                     },
                     |_candidate| ReclaimOnFreeOutcome::Declined,
+                    |_page| Err(AbandonError::InvalidPageGeometry),
                     |release| {
                         assert_eq!(release.page(), page);
                         assert_eq!(release.memory().kind(), MemoryKind::Arena);

@@ -124,7 +124,7 @@ fn two_survivors_release_os_medium_page_after_owner_exit() {
     let (clients, reserved) = clients_receiver.recv().expect("the source owner publishes two clients");
     let mut survivor_threads = Vec::new();
     let mut survivor_go = Vec::new();
-    for address in clients {
+    for (index, address) in clients.into_iter().enumerate() {
         let (ready_sender, ready_receiver) = mpsc::sync_channel(0);
         let (go_sender, go_receiver) = mpsc::sync_channel(0);
         let survivor = std::thread::spawn(move || {
@@ -133,6 +133,14 @@ fn two_survivors_release_os_medium_page_after_owner_exit() {
             go_receiver.recv().expect("the owner has completed source exit");
             // SAFETY: this survivor alone owns its transferred exact client.
             assert_eq!(unsafe { native_free(client(address)) }, NativePageFreeResult::Freed);
+            if index == 0 {
+                // SAFETY: the other survivor is parked with its exact live
+                // client; this free has just claimed the shared source page.
+                let local = unsafe { native_runtime_current_local_page_test_audit(client(clients[1])) }
+                    .expect("the first releaser reclaimed the OS page into its Theap");
+                assert_eq!(local.used, 1);
+                assert_eq!(local.reserved, 6);
+            }
             assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
         });
         ready_receiver.recv().expect("both releasers survive their source owner");
@@ -171,7 +179,7 @@ fn two_survivors_release_os_medium_page_after_owner_exit() {
     std::println!("map_count={}", medium_map_counts(after_exit).0 - medium_map_counts(baseline).0);
     for key in ["owner_setup_valid", "two_releasers_ready", "owner_joined_before_free",
                 "os_backed", "registered_after_exit", "medium_used_after_exit",
-                "first_free_completed", "first_registered", "second_client_live",
+                "first_free_completed", "first_reclaimed_before_exit", "first_registered", "second_client_live",
                 "second_free_completed", "terminal_map_clear"] {
         std::println!("{key}=1");
     }

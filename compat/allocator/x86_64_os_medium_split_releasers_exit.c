@@ -152,12 +152,12 @@ int main(void) {
   printf("owner_setup_valid=%d\ntwo_releasers_ready=1\nowner_joined_before_free=1\n", setup_valid);
   printf("os_backed=1\nregistered_after_exit=%d\nmedium_used_after_exit=%d\n",
       registered_after_exit, used_after_exit);
-  printf("first_free_completed=%d\nfirst_registered=%d\nsecond_client_live=%d\n",
-      releaser_freed[0], first_registered, second_client_live);
+  printf("first_free_completed=%d\nfirst_reclaimed_before_exit=%d\nfirst_registered=%d\nsecond_client_live=%d\n",
+      releaser_freed[0], first_reclaimed_before_exit, first_registered, second_client_live);
   printf("second_free_completed=%d\nterminal_map_clear=%d\n",
       releaser_freed[1], terminal_map_clear);
   printf("CRABC_MI_OS_MEDIUM_SPLIT_EXIT_END\n");
-  printf("CRABC_MI_C_OS_MEDIUM_STATE os_list_abandoned=%d first_reclaimed_before_exit=%d first_used_one=%d terminal_region_clear=%d\n",
-      os_list_abandoned, first_reclaimed_before_exit, first_used_one, terminal_region_clear);
+  printf("CRABC_MI_C_OS_MEDIUM_STATE os_list_abandoned=%d first_used_one=%d terminal_region_clear=%d\n",
+      os_list_abandoned, first_used_one, terminal_region_clear);
   return 0;
 }
