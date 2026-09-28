@@ -13,6 +13,9 @@ larger than ``MAX_ARCHIVE_MEMBER_BYTES``, and no aggregate regular payload
 larger than ``MAX_ARCHIVE_TOTAL_BYTES``.  The fixed Linux/x86-64 5.10 baseline
 supplies ``renameat2(RENAME_NOREPLACE)`` for the final no-replace publication
 of both files and directories; no replacement fallback is admitted.
+
+These packages are local source-bound evidence. Creation and extraction require
+the installed manifest to name the current checkout's complete source digest.
 """
 
 from __future__ import annotations
@@ -25,10 +28,15 @@ import json
 import os
 import shutil
 import stat
+import sys
 import tarfile
 import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from compat.x86_64 import static_product_contract
 
 
 PACKAGE_FORMAT = "crabc-x86-64-owned-static-sysroot-package/v1"
@@ -170,6 +178,12 @@ def manifest_payload_hashes(manifest: object) -> dict[str, str]:
         raise PackageError("installed manifest is not an object")
     if manifest.get("format") != SYSROOT_FORMAT or manifest.get("target") != TARGET:
         raise PackageError("installed manifest does not identify the x86 owned static sysroot")
+    source_sha256 = manifest.get("source_sha256")
+    if (not isinstance(source_sha256, str) or len(source_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in source_sha256)):
+        raise PackageError("installed manifest source seal is missing or invalid")
+    if source_sha256 != static_product_contract.source_digest():
+        raise PackageError("installed manifest source seal differs from the current checkout")
     package = manifest.get("package")
     if package != {"format": PACKAGE_FORMAT, "archive_root": ARCHIVE_ROOT}:
         raise PackageError("installed manifest private package contract drifted")

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import importlib.util
 import io
@@ -13,6 +14,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+
+from compat.x86_64 import static_product_contract
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -46,6 +49,7 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
         manifest = {
             "format": "crabc-x86-64-owned-static-sysroot-v1",
             "target": "x86_64-unknown-linux-musl",
+            "source_sha256": static_product_contract.source_digest(),
             "installed": {
                 "headers": "usr/include",
                 "crt_objects": [
@@ -75,6 +79,48 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
         manifest_path.write_text(
             json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8"
         )
+
+    def test_rehashed_foreign_or_missing_source_seal_cannot_be_packaged_or_extracted(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            workspace = Path(temporary)
+            source = workspace / "source"
+            self.populate_tree(source)
+            control = workspace / "control.tar.xz"
+            package.create_archive(source, control)
+            package.extract_archive(control, workspace / "control-extracted")
+            with tarfile.open(control, "r:xz") as archive:
+                members = [(copy.copy(member), archive.extractfile(member).read() if member.isfile() else None)
+                           for member in archive.getmembers()]
+            manifest_member = f"{package.ARCHIVE_ROOT}/share/crabc/manifest.json"
+            for name in ("foreign", "stripped"):
+                with self.subTest(name=name):
+                    altered = workspace / name
+                    package.extract_archive(control, altered)
+                    manifest_path = altered / package.ARCHIVE_ROOT / "share/crabc/manifest.json"
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    if name == "foreign":
+                        manifest["source_sha256"] = "b" * 64
+                    else:
+                        del manifest["source_sha256"]
+                    changed = (json.dumps(manifest, sort_keys=True) + "\n").encode()
+                    manifest_path.write_bytes(changed)
+                    with self.assertRaisesRegex(package.PackageError, "source seal"):
+                        package.create_archive(altered / package.ARCHIVE_ROOT,
+                                               workspace / f"{name}-repack.tar.xz")
+                    forged = workspace / f"{name}.tar.xz"
+                    with tarfile.open(forged, "w:xz") as archive:
+                        for original, payload in members:
+                            member = copy.copy(original)
+                            if member.name == manifest_member:
+                                payload = changed
+                                member.size = len(changed)
+                            archive.addfile(member, None if payload is None else io.BytesIO(payload))
+                    destination = workspace / f"{name}-extracted"
+                    with self.assertRaisesRegex(package.PackageError, "source seal"):
+                        package.extract_archive(forged, destination)
+                    self.assertFalse(destination.exists())
 
     def test_archive_is_byte_reproducible_and_extraction_is_regular_only(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

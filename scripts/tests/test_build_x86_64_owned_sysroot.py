@@ -771,6 +771,26 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             self.assertEqual(completed.stdout, "")
             self.assertIn("payload hash mismatch: usr/lib/libc.a", completed.stderr)
 
+    def test_static_driver_rejects_a_missing_or_malformed_source_seal_before_planning(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            for name, replacement in (("missing", None), ("malformed", "z" * 64)):
+                with self.subTest(name=name):
+                    root = Path(temporary) / name
+                    installed = self.materialize_static_driver_sysroot(root)
+                    manifest_path = root / "share/crabc/manifest.json"
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    if replacement is None:
+                        del manifest["source_sha256"]
+                    else:
+                        manifest["source_sha256"] = replacement
+                    builder.write_json(manifest_path, manifest)
+                    completed = subprocess.run([str(installed), "--print-link-plan", "-static"],
+                                               capture_output=True, text=True, check=False)
+                    self.assertNotEqual(completed.returncode, 0)
+                    self.assertIn("source seal", completed.stderr)
+
     def test_static_driver_rejects_undeclared_or_linked_installed_payload_before_planning(self) -> None:
         """An installed include path is closed to the manifest's regular-file payload."""
 

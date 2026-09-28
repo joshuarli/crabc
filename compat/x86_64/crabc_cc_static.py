@@ -241,10 +241,18 @@ def payload_hashes(files: object, description: str) -> dict[str, str]:
 
 
 def static_product_payload_files(manifest: dict) -> dict[str, str]:
-    """Validate one static product manifest record and return its payload."""
+    """Validate one static product manifest record and return its payload.
+
+    The installed driver can verify seal syntax and installed bytes; source
+    identity is checked while the product is built and qualified.
+    """
 
     if manifest.get("format") != SYSROOT_FORMAT or manifest.get("target") != TARGET:
         raise DriverError("owned manifest does not identify this x86 static sysroot")
+    source_sha256 = manifest.get("source_sha256")
+    if (not isinstance(source_sha256, str) or len(source_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in source_sha256)):
+        raise DriverError("owned static manifest source seal is missing or invalid")
     installed = manifest.get("installed")
     driver = manifest.get("sealed_static_driver")
     if not isinstance(installed, dict) or installed.get("sealed_static_driver") != "bin/crabc-cc":
