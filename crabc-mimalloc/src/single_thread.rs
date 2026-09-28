@@ -2048,6 +2048,45 @@ fn child_mapped_abandoned_page<'arena>(
     }
 }
 
+/// Searches the child's arenas in order and transfers the first mapped page
+/// claim to its current Theap. The returned map still names the same arena
+/// record, so the caller can reabandon that exact page if extension fails.
+#[inline(never)]
+fn claim_child_mapped_regular_from_arenas<'arena>(
+    candidates: crate::page_backing::PageArenaSearch<'arena>,
+    heap: NonNull<Heap>,
+    bin: usize,
+    thread_sequence: usize,
+    target_theap: NonNull<Theap>,
+    target_thread: LiveThreadId,
+    page_map: &PageMap,
+) -> Result<Option<(NonNull<Page>, ChildMappedAbandonedPage<'arena>)>, GenericPathError> {
+    for arena in candidates {
+        let Some(map) = child_mapped_abandoned_page(&arena, heap, bin) else { continue };
+        // SAFETY: the caller retains the target Theap, its owner thread, and
+        // each candidate arena while this synchronous claim is attempted.
+        let adopted = unsafe {
+            abandoned::try_adopt_retained_with_after_claim(
+                &map,
+                thread_sequence,
+                target_theap,
+                target_thread,
+                |slice_index| {
+                    let start = arena.slice_start(slice_index)?;
+                    NonNull::new(page_map.checked_lookup(start))
+                },
+                || unsafe { target_theap.as_ref().record_mapped_page_reclaimed_on_alloc() },
+            )
+        };
+        match adopted {
+            Ok(None) => continue,
+            Ok(Some(adopted)) => return Ok(Some((adopted.page(), map))),
+            Err(_) => return Err(GenericPathError::Lifecycle),
+        }
+    }
+    Ok(None)
+}
+
 /// Consumes a coherent PageMap pointer observation through the source
 /// post-owner-exit publication and lower process-facts continuation.
 ///
@@ -38596,66 +38635,52 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let target_theap = NonNull::from(self.session.theap());
         let page_map = self.page_map;
         let candidates = self.arena.reclaim_arenas(self.requested_arena, self.thread_sequence);
-        for arena in candidates {
-            let Some(map) = child_mapped_abandoned_page(&arena, heap, bin) else { continue };
-            // SAFETY: `target_theap` is this engine's live Theap for `heap`
-            // and `target_thread` its owner; the resolver maps each claimed
-            // slice to its registered page metadata.
-            let adopted = unsafe {
-                abandoned::try_adopt_retained_with_after_claim(
-                    &map,
-                    self.thread_sequence,
-                    target_theap,
-                    target_thread,
-                    |slice_index| {
-                        let start = arena.slice_start(slice_index)?;
-                        NonNull::new(page_map.checked_lookup(start))
-                    },
-                    || unsafe { target_theap.as_ref().record_mapped_page_reclaimed_on_alloc() },
-                )
-            };
-            let page = match adopted {
-                Ok(None) => continue,
-                Ok(Some(adopted)) => adopted.page(),
-                Err(_) => return Err(GenericPathError::Lifecycle),
-            };
-            // SAFETY: the adopted page is claimed, reassociated with this
-            // Theap, and in no queue; this engine owns the queue.
-            let valid = unsafe {
-                let page_ref = page.as_ref();
-                page_ref.block_size() == block_size && page_ref.is_queue_detached()
-            };
-            let Some(queue) = self.session.queue_mut(bin) else { return Err(GenericPathError::Lifecycle) };
-            if !valid {
-                return Err(GenericPathError::Lifecycle);
-            }
-            // SAFETY: as above.
-            unsafe { page_queue_push_at_end_metadata(queue, page.as_ptr()) };
-            self.update_direct_cache(bin);
-            self.session.note_page_added();
-            // SAFETY: the page is now a member of this engine's queue.
-            if !unsafe { page.as_ref() }.free_list_head().is_null() {
-                return Ok(MappedRegularReclaimBeforeFresh::Reclaimed(page));
-            }
-            if unsafe { page.as_ref() }.capacity() >= unsafe { page.as_ref() }.reserved() {
-                return Err(GenericPathError::Lifecycle);
-            }
-            return match self.extend_page_before_allocation(page) {
-                Ok(()) if !unsafe { page.as_ref() }.free_list_head().is_null() => {
-                    Ok(MappedRegularReclaimBeforeFresh::Reclaimed(page))
-                }
-                Ok(()) => Err(GenericPathError::Lifecycle),
-                // `page.c:322-327`: a reclaimed page that cannot commit its
-                // extension is abandoned again and the fresh-page attempt
-                // returns null, after which the generic path retries.
-                Err(GenericPathError::PageCommit(_)) => {
-                    self.reabandon_child_reclaimed_page(bin, page, &map)?;
-                    Ok(MappedRegularReclaimBeforeFresh::RetryAfterReabandon)
-                }
-                Err(error) => Err(error),
-            };
+        let Some((page, map)) = claim_child_mapped_regular_from_arenas(
+            candidates,
+            heap,
+            bin,
+            self.thread_sequence,
+            target_theap,
+            target_thread,
+            page_map,
+        )? else {
+            return Ok(MappedRegularReclaimBeforeFresh::NoCandidate);
+        };
+        // SAFETY: the adopted page is claimed, reassociated with this
+        // Theap, and in no queue; this engine owns the queue.
+        let valid = unsafe {
+            let page_ref = page.as_ref();
+            page_ref.block_size() == block_size && page_ref.is_queue_detached()
+        };
+        let Some(queue) = self.session.queue_mut(bin) else { return Err(GenericPathError::Lifecycle) };
+        if !valid {
+            return Err(GenericPathError::Lifecycle);
         }
-        Ok(MappedRegularReclaimBeforeFresh::NoCandidate)
+        // SAFETY: as above.
+        unsafe { page_queue_push_at_end_metadata(queue, page.as_ptr()) };
+        self.update_direct_cache(bin);
+        self.session.note_page_added();
+        // SAFETY: the page is now a member of this engine's queue.
+        if !unsafe { page.as_ref() }.free_list_head().is_null() {
+            return Ok(MappedRegularReclaimBeforeFresh::Reclaimed(page));
+        }
+        if unsafe { page.as_ref() }.capacity() >= unsafe { page.as_ref() }.reserved() {
+            return Err(GenericPathError::Lifecycle);
+        }
+        match self.extend_page_before_allocation(page) {
+            Ok(()) if !unsafe { page.as_ref() }.free_list_head().is_null() => {
+                Ok(MappedRegularReclaimBeforeFresh::Reclaimed(page))
+            }
+            Ok(()) => Err(GenericPathError::Lifecycle),
+            // `page.c:322-327`: a reclaimed page that cannot commit its
+            // extension is abandoned again and the fresh-page attempt
+            // returns null, after which the generic path retries.
+            Err(GenericPathError::PageCommit(_)) => {
+                self.reabandon_child_reclaimed_page(bin, page, &map)?;
+                Ok(MappedRegularReclaimBeforeFresh::RetryAfterReabandon)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// `_mi_page_abandon(page, pq)` (`page.c:291-304`) of a just-reclaimed
