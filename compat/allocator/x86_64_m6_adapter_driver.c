@@ -458,6 +458,7 @@ static int visit(mi_subproc_id_t subproc, int limit, bool* result) {
 static mi_subproc_id_t child;
 static int child_facts[12];
 static int child_heap_variants[5];
+static int child_heap_realloc[10];
 
 static void* child_worker(void* argument) {
   (void)argument;
@@ -486,6 +487,38 @@ static void* child_worker(void* argument) {
   unsigned char* ca = (unsigned char*)mi_heap_calloc_aligned_at(h, 4, 23, 64, 5);
   child_heap_variants[4] = ca != NULL && (((uintptr_t)ca + 5) % 64) == 0
                            && zeroed(ca, 92) && mi_heap_of(ca) == h;
+  unsigned char* rp = (unsigned char*)mi_heap_malloc(h, 100);
+  memset(rp, 0x31, 100);
+  unsigned char* shrunk = (unsigned char*)mi_heap_realloc(h, rp, 80);
+  child_heap_realloc[0] = shrunk == rp && filled(shrunk, 80, 0x31);
+  if (shrunk == NULL) shrunk = rp;
+  unsigned char* grown = (unsigned char*)mi_heap_realloc(h, shrunk, 5000);
+  child_heap_realloc[1] = grown != NULL && filled(grown, 80, 0x31) && mi_heap_of(grown) == h;
+  if (grown == NULL) grown = shrunk;
+  unsigned char* rz = (unsigned char*)mi_heap_rezalloc(h, NULL, 40);
+  child_heap_realloc[2] = rz != NULL && zeroed(rz, 40) && mi_heap_of(rz) == h;
+  if (rz != NULL) memset(rz, 0x42, 40);
+  unsigned char* rz_grown = (unsigned char*)mi_heap_rezalloc(h, rz, 400);
+  child_heap_realloc[3] = rz_grown != NULL && filled(rz_grown, 40, 0x42)
+                          && zeroed(rz_grown + 40, 360) && mi_heap_of(rz_grown) == h;
+  if (rz_grown == NULL) rz_grown = rz;
+  unsigned char* ra = (unsigned char*)mi_heap_malloc_aligned(h, 200, 64);
+  memset(ra, 0x53, 200);
+  unsigned char* ra_fit = (unsigned char*)mi_heap_realloc_aligned(h, ra, 180, 64);
+  child_heap_realloc[4] = ra_fit == ra && filled(ra_fit, 180, 0x53);
+  if (ra_fit == NULL) ra_fit = ra;
+  unsigned char* ra_at = (unsigned char*)mi_heap_realloc_aligned_at(h, ra_fit, 500, 256, 7);
+  child_heap_realloc[5] = ra_at != NULL && (((uintptr_t)ra_at + 7) % 256) == 0
+                          && filled(ra_at, 180, 0x53) && mi_heap_of(ra_at) == h;
+  if (ra_at == NULL) ra_at = ra_fit;
+  errno = 0;
+  void* overflow = mi_heap_recalloc(h, grown, SIZE_MAX / 2, 3);
+  child_heap_realloc[6] = overflow == NULL && errno == 0;
+  child_heap_realloc[7] = filled(grown, 80, 0x31) && mi_heap_of(grown) == h;
+  void* rn = mi_heap_reallocn(h, NULL, 4, 16);
+  child_heap_realloc[8] = rn != NULL && mi_heap_of(rn) == h;
+  void* rca = mi_heap_recalloc_aligned_at(h, NULL, 4, 23, 64, 5);
+  child_heap_realloc[9] = rca != NULL && (((uintptr_t)rca + 5) % 64) == 0 && zeroed(rca, 92);
   child_facts[11] = mi_heap_of(q) == h && mi_heap_contains(h, q)
                  && !mi_heap_contains(NULL, q) && mi_any_heap_contains(q);
   bool ok;
@@ -502,6 +535,11 @@ static void* child_worker(void* argument) {
   mi_free(a);
   mi_free(at);
   mi_free(ca);
+  mi_free(grown);
+  mi_free(rz_grown);
+  mi_free(ra_at);
+  mi_free(rn);
+  mi_free(rca);
   mi_heap_delete(h);
   child_facts[10] = visit(child, 0, NULL);
   return NULL;
@@ -553,6 +591,10 @@ static void subproc_section(void) {
   printf("subproc.child.membership=%d\n", child_facts[11]);
   printf("subproc.child.heap_variants=%d,%d,%d,%d,%d\n", child_heap_variants[0], child_heap_variants[1],
          child_heap_variants[2], child_heap_variants[3], child_heap_variants[4]);
+  printf("subproc.child.heap_realloc=%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+         child_heap_realloc[0], child_heap_realloc[1], child_heap_realloc[2], child_heap_realloc[3],
+         child_heap_realloc[4], child_heap_realloc[5], child_heap_realloc[6], child_heap_realloc[7],
+         child_heap_realloc[8], child_heap_realloc[9]);
   mi_subproc_destroy(child);
   mi_stats_t after = stats_now();
   printf("subproc.child.destroyed.threads=%lld\n", (long long)(after.threads.total - before.threads.total));

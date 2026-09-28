@@ -189,7 +189,7 @@
         "unit:heap-allocation"
       ],
       "blocked_by": [
-        "Every Heap-scoped allocation entry is exported for main-subprocess threads and follows its source path through the Heap's Theap; a child-subprocess thread now routes plain, zeroing, and bounded aligned allocation through its non-main Heap's Theap, while larger aligned requests and reallocation on that Heap remain unproved."
+        "Every Heap-scoped allocation entry is exported for main-subprocess threads and follows its source path through the Heap's Theap; child-subprocess threads now route plain, zeroing, bounded aligned, and owned-block reallocation through their non-main Heap's Theap, while larger alignments and cross-Heap reallocation remain unproved."
       ]
     },
     {

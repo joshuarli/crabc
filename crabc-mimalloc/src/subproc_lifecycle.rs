@@ -1169,6 +1169,29 @@ pub(crate) unsafe fn native_child_heap_allocate_variant(
     Some(allocated.ok().flatten())
 }
 
+/// Resolve the current child thread's Theap for `heap` before a Heap
+/// reallocation checks its old block, alignment, or multiplied size.
+///
+/// # Safety
+/// `heap` is a live non-main Heap of the current thread's child and remains
+/// live for the call.
+pub(crate) unsafe fn native_child_heap_select_theap(heap: core::ptr::NonNull<crate::types::Heap>) -> bool {
+    // SAFETY: the current thread alone accesses its membership slot.
+    let Some(current) = (unsafe { current_child_member() }).as_mut() else { return false };
+    let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else { return false };
+    let (id, binding) = (current.id, current.binding);
+    let member = &mut current.member;
+    // SAFETY: the child record lock excludes another context operation,
+    // and the current thread owns its Theap and dynamic local slot.
+    let selected = unsafe {
+        id.with_owner(|child| match child.as_mut() {
+            Some(child) => member.owner_mut().heap_theap(child, binding, heap).is_ok(),
+            None => false,
+        })
+    };
+    selected == Ok(true)
+}
+
 /// Frees a block on a page of a child subprocess's main Heap that the
 /// current thread does not own (`mi_free_block_mt` with collection); see
 /// `single_thread::free_child_page_block_nonlocal`. `None` when the block's

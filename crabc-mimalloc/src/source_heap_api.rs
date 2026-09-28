@@ -355,8 +355,15 @@ fn target(heap: *mut c_void) -> Option<Target> {
 
 /// Heap realloc wrappers resolve their Theap before the realloc kernel can
 /// reuse a block, reject an alignment, or reject a multiplied size.
-fn realloc_target(heap: *mut c_void) -> Option<Target> {
+///
+/// # Safety
+/// `heap` is null or a live Heap of the calling thread's subprocess.
+unsafe fn realloc_target(heap: *mut c_void) -> Option<Target> {
     match target(heap) {
+        Some(Target::NonMain(heap)) if crate::subproc::lifecycle::current_thread_is_child_member() => {
+            // SAFETY: the public Heap wrapper holds its live Heap argument.
+            unsafe { crate::subproc::lifecycle::native_child_heap_select_theap(heap) }.then_some(Target::NonMain(heap))
+        }
         Some(Target::NonMain(heap)) if !main_heaps::native_heap_select_theap(heap) => None,
         other => other,
     }
@@ -466,7 +473,8 @@ unsafe fn heap_realloc_zero_aligned_at(
 /// is null or an exact live block no other thread uses, consumed on a
 /// non-null result.
 pub unsafe fn heap_realloc(heap: *mut c_void, block: *mut u8, new_size: usize, zero: bool) -> Sourced<(Block, FreeOutcome)> {
-    match realloc_target(heap) {
+    // SAFETY: forwarded public Heap contract.
+    match unsafe { realloc_target(heap) } {
         None => Sourced { value: (None, FreeOutcome::Freed), errno: SourceErrno::Unchanged },
         // SAFETY: forwarded.
         Some(Target::Main) if zero => freed_with(unsafe { crate::source_api::rezalloc(block, new_size) }),
@@ -486,7 +494,8 @@ pub unsafe fn heap_reallocn(heap: *mut c_void, block: *mut u8, count: usize, siz
         // SAFETY: forwarded.
         Some(total) => unsafe { heap_realloc(heap, block, total, zero) },
         None => {
-            let _ = realloc_target(heap);
+            // SAFETY: forwarded public Heap contract.
+            let _ = unsafe { realloc_target(heap) };
             Sourced { value: (None, FreeOutcome::Freed), errno: SourceErrno::Unchanged }
         }
     }
@@ -526,7 +535,8 @@ pub unsafe fn heap_realloc_aligned(
         return unsafe { heap_realloc(heap, block, new_size, zero) };
     }
     let offset = offset.unwrap_or(0);
-    match realloc_target(heap) {
+    // SAFETY: forwarded public Heap contract.
+    match unsafe { realloc_target(heap) } {
         None => Sourced { value: (None, FreeOutcome::Freed), errno: SourceErrno::Unchanged },
         // SAFETY: forwarded.
         Some(Target::Main) if zero => freed_with(unsafe { crate::source_api::rezalloc_aligned_at(block, new_size, alignment, offset) }),
@@ -553,7 +563,8 @@ pub unsafe fn heap_recalloc_aligned(
         // SAFETY: forwarded.
         Some(total) => unsafe { heap_realloc_aligned(heap, block, total, alignment, offset, true) },
         None => {
-            let _ = realloc_target(heap);
+            // SAFETY: forwarded public Heap contract.
+            let _ = unsafe { realloc_target(heap) };
             Sourced { value: (None, FreeOutcome::Freed), errno: SourceErrno::Unchanged }
         }
     }
