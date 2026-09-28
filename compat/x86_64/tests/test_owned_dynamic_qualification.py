@@ -74,6 +74,7 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             installed_manifest = {"files": {"payload": qualification.digest(self.work / product / "payload")}, "symlinks": {}}
             self.put(f"{product}/share/crabc/manifest.json", installed_manifest)
             for name, output in ((f"{product}-consumer", expected), (f"non-pie-{product}", expected), (f"spawn-{product}", b"")):
+                application_dso = None if name.startswith("spawn-") else self.work / f"lib{product}.so"
                 self.put(name, b"owned ELF fixture")
                 self.put(name + ".stdout", output)
                 self.put(name + ".crabc-link.map", b"owned link map\n")
@@ -92,10 +93,12 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
                     "manifest_sha256": self.manifest,
                     "mode": "exec" if name.startswith("non-pie-") else "pie",
                     "campaign_complete": False, "binding": "now",
-                    "input_receipts": [],
+                    "input_receipts": ([] if application_dso is None else [{
+                        "path": str(application_dso), "sha256": qualification.digest(application_dso),
+                    }]),
                     "resolved_linker": {"path": "/owned/ld.lld", "sha256": "0" * 64},
-                    "link_command": [],
-                    "link_trace": ["declared input"],
+                    "link_command": [] if application_dso is None else [str(application_dso)],
+                    "link_trace": ["declared input", *([] if application_dso is None else [str(application_dso)])],
                     "owned_runtime_inputs": sorted("usr/lib/" + entry for entry in
                         (("crt1.o" if name.startswith("non-pie-") else "Scrt1.o"),
                          "crabc-dynamic-attach.o", "crti.o", "libc.so", "libcrabc-builtins.a", "crtn.o")),
@@ -583,7 +586,7 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         path.write_text(json.dumps({**original, "application_dsos": {"libinstalled.so": "0" * 64}}))
         receipt["base_evidence"][qualification.relative(path)] = qualification.digest(path)
         qualification_path = self.put("qualification.json", receipt)
-        with self.assertRaisesRegex(qualification.QualificationError, "application DSO identity"):
+        with self.assertRaisesRegex(qualification.QualificationError, "application DSO.*identity"):
             qualification.validate_receipt(qualification_path)
 
     def test_base_evidence_accepts_a_closed_schema_two_default_receipt(self):

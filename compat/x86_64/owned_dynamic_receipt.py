@@ -170,6 +170,33 @@ def _application_closure(
     return tuple(closure)
 
 
+def _direct_application_inputs(
+    record: Mapping[str, Any], *, label: str, fail: Callable[[str], None]
+) -> None:
+    """Bind each legacy direct DSO claim to its selected linker input."""
+
+    identities = record["application_dsos"]
+    inputs = record["input_receipts"]
+    _require(type(identities) is dict, f"{label} application DSO identities are invalid", fail)
+    _require(type(inputs) is list, f"{label} input receipts are invalid", fail)
+    if identities:
+        _require(type(record["link_command"]) is list and type(record["link_trace"]) is list,
+                 f"{label} link evidence is invalid", fail)
+    for name, digest in identities.items():
+        _require(type(name) is str and _APPLICATION_DSO_BASENAME.fullmatch(name) is not None
+                 and not is_reserved_application_dso_name(name)
+                 and type(digest) is str and _SHA256.fullmatch(digest) is not None,
+                 f"{label} application DSO identity is invalid", fail)
+        selected = [item for item in inputs if type(item) is dict
+                    and type(item.get("path")) is str and Path(item["path"]).name == name]
+        _require(len(selected) == 1 and set(selected[0]) == {"path", "sha256"}
+                 and selected[0]["sha256"] == digest,
+                 f"{label} application DSO input identity differs", fail)
+        path = selected[0]["path"]
+        _require(record["link_command"].count(path) == 1 and record["link_trace"].count(path) == 1,
+                 f"{label} application DSO is not an exact linker input", fail)
+
+
 def validate(
     record: Mapping[str, Any], *, format: str, label: str, fail: Callable[[str], None],
     allow_application_dso_closure: bool = False,
@@ -194,6 +221,8 @@ def validate(
         _require(allow_application_dso_closure,
                  f"{label} does not admit an application DSO closure", fail)
         closure = _application_closure(record, label=label, fail=fail)
+    else:
+        _direct_application_inputs(record, label=label, fail=fail)
 
     if schema == 1:
         path = record["application_runpath"]

@@ -196,6 +196,25 @@ class OwnedDynamicReceiptConsumerTests(unittest.TestCase):
                 result = self._run(label, self._receipt(1))
                 self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_direct_application_dso_input_hash_matches_its_retained_identity(self) -> None:
+        dso = self.work / "libapp.so"
+        dso.write_bytes(b"selected application DSO bytes\n")
+        for schema in (1, 2):
+            with self.subTest(schema=schema):
+                record = self._receipt(schema)
+                record["application_dsos"] = {dso.name: sha256(dso)}
+                record["input_receipts"].append({"path": str(dso), "sha256": sha256(dso)})
+                record["link_command"].append(str(dso))
+                record["link_trace"].append(str(dso))
+                self.assertEqual(receipt_contract.validate(
+                    record, format=FORMAT, label="direct DSO receipt", fail=self._contract_failure,
+                ).schema, schema)
+                record["input_receipts"][-1]["sha256"] = "0" * 64
+                with self.assertRaisesRegex(ValueError, "application DSO input identity"):
+                    receipt_contract.validate(
+                        record, format=FORMAT, label="forged direct DSO receipt", fail=self._contract_failure,
+                    )
+
     def test_schema_three_closure_requires_explicit_reader_admission_and_typed_roles(self) -> None:
         receipt = self._transitive_receipt()
         with self.assertRaisesRegex(ValueError, "application DSO closure"):
