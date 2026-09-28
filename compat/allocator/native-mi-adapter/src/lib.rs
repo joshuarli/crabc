@@ -1092,9 +1092,9 @@ pub unsafe extern "C" fn mi_heap_contains(heap: HeapPointer, pointer: *const c_v
 /// # Safety
 /// `heap` is null or live throughout the call. Its pages, arena bitmaps,
 /// block areas, and free-list state remain stable: no concurrent owner or
-/// visitor may move, free, or mutate them. `visitor` and `argument` remain
-/// callable through the final callback, and the visitor may inspect the
-/// offered area and block only during that callback.
+/// producer may move, free, mutate, or publish a remote free to them.
+/// `visitor` and `argument` remain callable through the final callback. The
+/// visitor may inspect an offered area or block only during that callback.
 pub unsafe extern "C" fn mi_heap_visit_blocks(
     heap: HeapPointer,
     visit_blocks: bool,

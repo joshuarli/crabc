@@ -4424,12 +4424,66 @@ impl Page {
     /// visitation. The returned list is read separately after this call.
     ///
     /// # Safety
-    /// `page` names one stable, initialized associated page. The caller is
-    /// its sole ordinary-field owner through this operation and excludes
-    /// page retirement, Heap movement, and concurrent owner collection.
-    /// Remote producers may use only their disjoint atomic projection and
-    /// current blocks, whose lifetime keeps the page mapped until collection.
+    /// `page` names one stable, initialized associated, detached, or
+    /// abandoned page.
+    /// The caller owns its ordinary fields and excludes page retirement,
+    /// Heap movement, and concurrent owner collection. For an abandoned
+    /// page, no remote producer may publish during this visitor operation;
+    /// its block area remains mapped until the temporary claim is released.
+    /// An associated page may have producers using only their disjoint
+    /// atomic projection and current blocks during collection. A detached
+    /// page must have an empty remote head and no remote producer.
     pub(crate) unsafe fn collect_for_heap_visit_at(page: NonNull<Self>) -> bool {
+        // SAFETY: the caller keeps this initialized page mapped and excludes
+        // identity changes while the atomic owner word is observed.
+        let thread_word = unsafe { &*core::ptr::addr_of!((*page.as_ptr()).xthread_id) }
+            .load(Ordering::Acquire) & !PAGE_FLAG_MASK;
+        if matches!(thread_word, THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED) {
+            // SAFETY: the caller's quiescence guarantee retains the abandoned
+            // page and its remote blocks through claim, collection, and unown.
+            let state = unsafe { Self::abandonment_atomic_state_at(page) };
+            // SAFETY: `state` projects only the initialized atomic head.
+            let head = unsafe { state.xthread_free.as_ref() };
+            if crate::remote_free::claim_abandoned_owner(head)
+                != crate::remote_free::AbandonedOwnerClaim::ClaimedUnowned
+            {
+                return false;
+            }
+            // SAFETY: the claimed low bit grants sole ordinary-field access
+            // without reading the former Theap pointer.
+            let remote_ok = unsafe { crate::remote_free::collect_abandoned(page) }.is_ok();
+            let local_ok = if remote_ok {
+                // SAFETY: the claim remains held and the complete area stays
+                // mapped while the forced local-list append runs.
+                match unsafe { Self::abandoned_local_collect_state_at(page) } {
+                    Some(local) => unsafe { crate::free_list::collect_local(local, true) }.is_ok(),
+                    None => false,
+                }
+            } else {
+                false
+            };
+            let mut no_hook: Option<fn()> = None;
+            let released = crate::remote_free::try_unown_abandoned_head(head, &mut no_hook)
+                == crate::remote_free::AbandonedOwnerHeadTransition::Released;
+            return remote_ok && local_ok && released;
+        }
+        if thread_word == THREAD_ID_DETACHED {
+            // The remote half is a no-op for this serialized detached page;
+            // its forced local half still has to move the pending free list.
+            // SAFETY: the caller keeps this initialized detached page stable
+            // while the exact atomic head is inspected.
+            if !unsafe { page.as_ref() }.remote_free_head_is_owner_only() {
+                return false;
+            }
+            // SAFETY: the caller exclusively owns the detached page's local
+            // fields and retains its complete block area through collection.
+            let Some(local) = (unsafe { Self::local_collect_state_for_owner_at(page, None) }) else {
+                return false;
+            };
+            // SAFETY: the no-producer detached state and exclusive ordinary
+            // fields satisfy the forced local-list transfer.
+            return unsafe { crate::free_list::collect_local(local, true) }.is_ok();
+        }
         // SAFETY: the caller's page and sole-owner obligations authorize the
         // source remote detach without a whole-Page mutable reference.
         let Some(owner) = (unsafe { Self::remote_free_owner_state_at(page) }) else {
@@ -4440,16 +4494,9 @@ impl Page {
         }
         // SAFETY: the page stays stable and the source owner identity is an
         // initialized atomic subobject; no whole-Page reference is formed.
-        let thread_word = unsafe { &*core::ptr::addr_of!((*page.as_ptr()).xthread_id) }
-            .load(Ordering::Acquire) & !PAGE_FLAG_MASK;
-        let expected = if thread_word == THREAD_ID_DETACHED {
-            None
-        } else {
-            let Some(thread) = LiveThreadId::new(thread_word) else { return false };
-            Some(thread)
-        };
+        let Some(expected) = LiveThreadId::new(thread_word) else { return false };
         // SAFETY: the source-associated owner and live area remain stable.
-        let Some(local) = (unsafe { Self::local_collect_state_for_owner_at(page, expected) }) else {
+        let Some(local) = (unsafe { Self::local_collect_state_for_owner_at(page, Some(expected)) }) else {
             return false;
         };
         // SAFETY: the caller's exclusive ordinary-field ownership covers
@@ -7341,6 +7388,72 @@ mod tests {
     use crate::free_list::LocalFreeList;
     use crate::remote_free;
     use core::mem::{align_of, offset_of, size_of, MaybeUninit};
+
+    #[test]
+    fn heap_visitor_collects_abandoned_remote_block_without_retaining_owner_claim() {
+        const BLOCK_SIZE: usize = 64;
+        const PAGE_OFFSET: usize = size_of::<Page>();
+        const WORDS: usize = (PAGE_OFFSET + 2 * BLOCK_SIZE) / size_of::<usize>();
+        for identity in [THREAD_ID_ABANDONED, THREAD_ID_ABANDONED_MAPPED] {
+            let mut storage = [MaybeUninit::<usize>::uninit(); WORDS];
+            let page_pointer = storage.as_mut_ptr().cast::<Page>();
+            let mut initial = Page::remote_free_test_page(2, 2);
+            initial.block_size = BLOCK_SIZE;
+            initial.page_offset = PAGE_OFFSET;
+            initial.xthread_id.store(identity, Ordering::Relaxed);
+            let remote = unsafe { page_pointer.cast::<u8>().add(PAGE_OFFSET + BLOCK_SIZE).cast::<Block>() };
+            // SAFETY: the aligned second block lies in the fixture's retained
+            // area and its initialized link terminates the remote list.
+            unsafe { remote.write(Block { next: Encoded(0) }) };
+            initial.xthread_free.store(remote.addr(), Ordering::Release);
+            // SAFETY: this word-aligned backing holds the complete Page and
+            // both blocks for the entire sole-owner visitor operation.
+            unsafe { page_pointer.write(initial) };
+            let page = NonNull::new(page_pointer).expect("the fixture page is address-stable");
+            // SAFETY: no producer remains, the Page and its two-block area
+            // stay live, and this test owns every ordinary free-list field.
+            assert!(unsafe { Page::collect_for_heap_visit_at(page) });
+            // SAFETY: visitor collection finished before these sole-owner
+            // observations and did not retire the retained fixture.
+            let page_ref = unsafe { page.as_ref() };
+            assert_eq!(page_ref.used(), 1);
+            assert_eq!(page_ref.free_list_head(), remote);
+            assert!(page_ref.local_free.is_null());
+            assert_eq!(page_ref.xthread_free.load(Ordering::Acquire), 0);
+            assert_eq!(page_ref.owner_thread_id(), identity);
+        }
+    }
+
+    #[test]
+    fn heap_visitor_collects_detached_local_free_without_remote_owner() {
+        const BLOCK_SIZE: usize = 64;
+        const PAGE_OFFSET: usize = size_of::<Page>();
+        const WORDS: usize = (PAGE_OFFSET + 2 * BLOCK_SIZE) / size_of::<usize>();
+        let mut storage = [MaybeUninit::<usize>::uninit(); WORDS];
+        let page_pointer = storage.as_mut_ptr().cast::<Page>();
+        let local = unsafe { page_pointer.cast::<u8>().add(PAGE_OFFSET + BLOCK_SIZE).cast::<Block>() };
+        // SAFETY: the second retained block is aligned and its local-list
+        // link terminates within the complete fixture area.
+        unsafe { local.write(Block { next: Encoded(0) }) };
+        let mut initial = Page::remote_free_test_page(2, 1);
+        initial.block_size = BLOCK_SIZE;
+        initial.page_offset = PAGE_OFFSET;
+        initial.xthread_id.store(THREAD_ID_DETACHED, Ordering::Release);
+        initial.local_free = local;
+        // SAFETY: this backing holds the initialized Page and both blocks
+        // throughout the sole-owner, no-producer collection operation.
+        unsafe { page_pointer.write(initial) };
+        let page = NonNull::new(page_pointer).expect("the fixture page is address-stable");
+        // SAFETY: no producer can publish to this detached page, and this
+        // test owns its ordinary free-list fields and complete block area.
+        assert!(unsafe { Page::collect_for_heap_visit_at(page) });
+        // SAFETY: the retained page is stable after local collection.
+        let page_ref = unsafe { page.as_ref() };
+        assert_eq!(page_ref.free_list_head(), local);
+        assert!(page_ref.local_free.is_null());
+        assert_eq!(page_ref.used(), 1);
+        assert_eq!(page_ref.xthread_free.load(Ordering::Acquire), 1);
+    }
 
     #[test]
     fn shared_theap_observation_survives_locked_source_heap_prepend() {

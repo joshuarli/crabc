@@ -17,6 +17,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <sched.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "mimalloc.h"
@@ -523,6 +524,122 @@ static void heap_visit_section(void) {
   mi_heap_destroy(heap);
 }
 
+static void* main_visit_os_block;
+
+static void* main_visit_os_worker(void* argument) {
+  (void)argument;
+  mi_option_enable(mi_option_disallow_arena_alloc);
+  main_visit_os_block = mi_heap_malloc(mi_heap_main(), MIB);
+  mi_option_disable(mi_option_disallow_arena_alloc);
+  return NULL;
+}
+
+typedef struct main_visit_probe_s {
+  const mi_heap_t* heap;
+  void* regular_first;
+  void* regular_freed;
+  void* regular_second;
+  void* os_block;
+  int regular_area;
+  int os_area;
+  int regular_live;
+  int regular_freed_seen;
+  int os_live;
+  int area_before_block;
+  int heap_matched;
+  int stop_on_os_area;
+  int stop_on_os_block;
+  char order[4];
+  int order_length;
+  int all_areas;
+} main_visit_probe_t;
+
+static bool main_visit_record(const mi_heap_t* heap, const mi_heap_area_t* area,
+                              void* block, size_t block_size, void* argument) {
+  main_visit_probe_t* probe = (main_visit_probe_t*)argument;
+  if (heap != probe->heap || area == NULL || block_size != area->block_size) probe->heap_matched = 0;
+  uintptr_t start = (uintptr_t)area->blocks;
+  uintptr_t end = start + area->committed;
+  bool regular = (uintptr_t)probe->regular_first >= start && (uintptr_t)probe->regular_first < end;
+  bool os = (uintptr_t)probe->os_block >= start && (uintptr_t)probe->os_block < end;
+  if (block == NULL) {
+    probe->all_areas++;
+    if (regular) {
+      probe->regular_area++;
+      if (probe->order_length < 3) probe->order[probe->order_length++] = 'r';
+    }
+    if (os) {
+      probe->os_area++;
+      if (probe->order_length < 3) probe->order[probe->order_length++] = 'o';
+      if (probe->stop_on_os_area) return false;
+    }
+  } else {
+    if (block == probe->regular_first || block == probe->regular_second) {
+      probe->regular_live++;
+      if (probe->regular_area == 0) probe->area_before_block = 0;
+    }
+    if (block == probe->regular_freed) probe->regular_freed_seen++;
+    if (block == probe->os_block) {
+      probe->os_live++;
+      if (probe->os_area == 0) probe->area_before_block = 0;
+      if (probe->stop_on_os_block) return false;
+    }
+  }
+  return true;
+}
+
+static bool count_main_areas(const mi_heap_t* heap, const mi_heap_area_t* area,
+                             void* block, size_t block_size, void* argument) {
+  (void)heap; (void)area; (void)block_size;
+  if (block == NULL) (*(int*)argument)++;
+  return true;
+}
+
+static void main_heap_visit_section(void) {
+  mi_heap_t* heap = mi_heap_main();
+  int baseline_areas = 0;
+  bool baseline = mi_heap_visit_blocks(heap, false, count_main_areas, &baseline_areas);
+  printf("visit.main.baseline=%d,%d\n", baseline, baseline_areas);
+  void* regular_first = mi_heap_malloc(heap, 64);
+  void* regular_freed = mi_heap_malloc(heap, 64);
+  void* regular_second = mi_heap_malloc(heap, 64);
+  mi_free(regular_freed);
+  pthread_t worker;
+  bool joined = pthread_create(&worker, NULL, main_visit_os_worker, NULL) == 0 &&
+                pthread_join(worker, NULL) == 0;
+  printf("visit.main.setup=%d,%d,%d\n", regular_first != NULL && regular_second != NULL,
+         joined, main_visit_os_block != NULL);
+  if (!joined || main_visit_os_block == NULL) return;
+  main_visit_probe_t initial = { .heap = heap, .regular_first = regular_first,
+    .regular_freed = regular_freed, .regular_second = regular_second,
+    .os_block = main_visit_os_block, .area_before_block = 1, .heap_matched = 1 };
+  main_visit_probe_t probe = initial;
+  bool full = mi_heap_visit_blocks(NULL, true, main_visit_record, &probe);
+  printf("visit.main.population=%d,%d,%d\n", baseline_areas, probe.all_areas,
+         probe.all_areas - baseline_areas);
+  printf("visit.main.full=%d,%d,%d,%d,%d,%d,%d,%d,%s\n", full,
+         probe.regular_area, probe.os_area, probe.regular_live,
+         probe.regular_freed_seen, probe.os_live, probe.area_before_block,
+         probe.heap_matched, probe.order);
+  probe = initial;
+  bool areas = mi_heap_visit_blocks(heap, false, main_visit_record, &probe);
+  printf("visit.main.areas=%d,%d,%d,%d,%d,%s\n", areas,
+         probe.regular_area, probe.os_area, probe.regular_live, probe.os_live, probe.order);
+  probe = initial;
+  probe.stop_on_os_area = 1;
+  bool area_stop = mi_heap_visit_blocks(heap, false, main_visit_record, &probe);
+  printf("visit.main.area_stop=%d,%d,%d,%s\n", area_stop,
+         probe.regular_area, probe.os_area, probe.order);
+  probe = initial;
+  probe.stop_on_os_block = 1;
+  bool block_stop = mi_heap_visit_blocks(heap, true, main_visit_record, &probe);
+  printf("visit.main.block_stop=%d,%d,%d,%d,%d,%s\n", block_stop,
+         probe.regular_area, probe.os_area, probe.regular_live, probe.os_live, probe.order);
+  mi_free(regular_first);
+  mi_free(regular_second);
+  mi_free(main_visit_os_block);
+}
+
 
 static int visit_count;
 static int visit_limit;
@@ -882,6 +999,14 @@ int main(void) {
   mi_register_error(&record_error, NULL);
   snprintf(thread_text, sizeof(thread_text), "0x%02lX", (unsigned long)(uintptr_t)pthread_self());
   printf("CRABC_MI_M6_ADAPTER_TRACE_BEGIN\n");
+  pid_t visitor_child = fork();
+  if (visitor_child == 0) {
+    main_heap_visit_section();
+    _exit(0);
+  }
+  int visitor_status = -1;
+  bool visitor_joined = visitor_child > 0 && waitpid(visitor_child, &visitor_status, 0) == visitor_child;
+  printf("visit.main.child=%d\n", visitor_joined && WIFEXITED(visitor_status) && WEXITSTATUS(visitor_status) == 0);
   /* The reservation section keeps show_errors off: the OS-layer warnings of
      a failed reservation are not all rendered by the port yet. */
   reserve_section();
