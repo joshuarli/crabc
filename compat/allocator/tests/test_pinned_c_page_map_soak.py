@@ -33,6 +33,21 @@ def output(*, first: int = 900, second: int = 990, missing: int | None = None,
 
 
 class PageMapSoakReaderTests(unittest.TestCase):
+    def test_static_pie_uses_only_the_self_relocating_startfile(self) -> None:
+        installed = f"*startfile:\n{soak.SHARED_STARTFILE} crti.o crtbeginS.o\n"
+        corrected = soak.static_pie_specs(installed)
+        self.assertEqual(
+            corrected, f"*startfile:\n{soak.PIE_STARTFILE} crti.o crtbeginS.o\n"
+        )
+        with self.assertRaisesRegex(ValueError, "startup selection"):
+            soak.static_pie_specs(installed.replace(soak.SHARED_STARTFILE, "crt1.o"))
+
+    def test_link_modes_keep_the_original_raw_series_separate(self) -> None:
+        self.assertEqual(soak.artifact_dir("static"), soak.ARTIFACTS)
+        self.assertEqual(soak.artifact_dir("static-pie"), soak.ARTIFACTS / "static-pie")
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            soak.artifact_dir("dynamic")
+
     def test_equal_ten_percent_growth_is_within_the_existing_bound(self) -> None:
         result = soak.parse_soak(output())
         self.assertEqual(result["first_half_max"], 900)
