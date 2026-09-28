@@ -13,6 +13,22 @@ WORK = Path(__file__).parents[2] / ".work/x86_64/unwinder-output-tests"
 
 
 class InstalledBacktraceReplay(unittest.TestCase):
+    def test_panic_dso_requires_control_cleanup_resume_and_worker_completion(self):
+        self.assertEqual(backtrace.panic_dso_result(0, backtrace.PANIC_DSO_OUTPUT, ""),
+                         {"status": 0, "mapped_control": 8, "direct_drops": 2,
+                          "resume_drops": 3, "worker_join": 0})
+        for output in (
+            backtrace.PANIC_DSO_OUTPUT.replace("panic mapped-control=8\n", ""),
+            backtrace.PANIC_DSO_OUTPUT.replace("panic direct worker drops=2", "panic direct worker drops=1"),
+            backtrace.PANIC_DSO_OUTPUT.replace("panic resume main drops=3", "panic resume main drops=2"),
+            backtrace.PANIC_DSO_OUTPUT.replace("panic worker-join=0", "panic worker-join=139"),
+            backtrace.PANIC_DSO_OUTPUT + "extra\n",
+        ):
+            with self.subTest(output=output), self.assertRaises(backtrace.owned.OwnedCleanupError):
+                backtrace.panic_dso_result(0, output, "")
+        with self.assertRaises(backtrace.owned.OwnedCleanupError):
+            backtrace.panic_dso_result(-11, backtrace.PANIC_DSO_OUTPUT, "")
+
     def test_guarded_dso_cfi_requires_phase_error_without_child_fault(self):
         self.assertEqual(backtrace.guarded_cfi_result(0, backtrace.GUARDED_CFI_OUTPUT, ""),
                          {"mapped": {"unwind": 5, "wait": 0},

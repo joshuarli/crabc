@@ -29,6 +29,11 @@ STATIC_LABELS = ("static-nested",)
 GUARDED_CFI_OUTPUT = "mapped unwind=5\nmapped wait=0\nunreadable unwind=3\nunreadable wait=0\n"
 GUARDED_CFI_HOST = owned.ROOT / "fixtures/guarded_dso_cfi_host.c"
 GUARDED_CFI_PLUGIN = owned.ROOT / "fixtures/guarded_dso_cfi_plugin.c"
+PANIC_DSO_FRAME = owned.ROOT / "fixtures/cross_dso/frame.c"
+PANIC_DSO_HOST = owned.ROOT / "fixtures/installed_panic_dso.rs"
+PANIC_DSO_OUTPUT = ("panic mapped-control=8\npanic direct main drops=2\n"
+                    "panic resume main drops=3\npanic direct worker drops=2\n"
+                    "panic resume worker drops=3\npanic worker-join=0\n")
 
 
 def require_record(record: dict[str, str], description: str) -> Path:
@@ -77,9 +82,12 @@ def source_products(static_path: Path, dynamic_path: Path) -> tuple[dict[str, st
     return {"revision": revision, "content_sha256": source}, products, static, dynamic
 
 
-def capture(command: list[str], output: Path, *, timeout: int = 90) -> dict[str, Any]:
+def capture(command: list[str], output: Path, *, timeout: int = 90,
+            extra_environment: dict[str, str] | None = None) -> dict[str, Any]:
+    environment = owned.clean_environment()
+    environment.update(extra_environment or {})
     try:
-        result = subprocess.run(command, env=owned.clean_environment(), text=True,
+        result = subprocess.run(command, env=environment, text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
         code, out, err = result.returncode, result.stdout, result.stderr
     except subprocess.TimeoutExpired as error:
@@ -92,10 +100,13 @@ def capture(command: list[str], output: Path, *, timeout: int = 90) -> dict[str,
     for path, value in ((stdout, out), (stderr, err), (status, f"{code}\n")):
         with path.open("x", encoding="utf-8") as stream:
             stream.write(value)
-    return {"command": command, "status": code,
-            "stdout": owned.record_file(stdout, "backtrace replay stdout"),
-            "stderr": owned.record_file(stderr, "backtrace replay stderr"),
-            "status_file": owned.record_file(status, "backtrace replay status")}
+    record = {"command": command, "status": code,
+              "stdout": owned.record_file(stdout, "backtrace replay stdout"),
+              "stderr": owned.record_file(stderr, "backtrace replay stderr"),
+              "status_file": owned.record_file(status, "backtrace replay status")}
+    if extra_environment is not None:
+        record["extra_environment"] = extra_environment
+    return record
 
 
 def capture_record(record: dict[str, Any]) -> tuple[int, str, str]:
@@ -126,6 +137,120 @@ def guarded_cfi_result(status: int, stdout: str, stderr: str) -> dict[str, dict[
     owned.require(status == 0 and stderr == "" and stdout == GUARDED_CFI_OUTPUT,
                   "guarded DSO CFI child faulted or changed its unwind phase result")
     return {"mapped": {"unwind": 5, "wait": 0}, "unreadable": {"unwind": 3, "wait": 0}}
+
+
+def panic_dso_result(status: int, stdout: str, stderr: str) -> dict[str, Any]:
+    owned.require(status == 0 and stderr == "" and stdout == PANIC_DSO_OUTPUT,
+                  "panic DSO control, cleanup, resume, or worker phase changed")
+    return {"status": status, "mapped_control": 8, "direct_drops": 2,
+            "resume_drops": 3, "worker_join": 0}
+
+
+def panic_dso_case(product: dict[str, Any], provider: dict[str, Any], output: Path) -> dict[str, Any]:
+    """Run the selected provider through a mapped C DSO frame on both threads."""
+    output = owned.work_child(output, "panic DSO replay output")
+    output.mkdir(mode=0o755)
+    output = owned.physical(output, "panic DSO replay output", directory=True)
+    root = Path(product["root"])
+    channel = tomllib.loads((owned.CHECKOUT / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
+    target = capture(["rustup", "run", channel, "rustc", "--target", owned.TARGET,
+                      "--print", "target-libdir"], output / "target-libdir")
+    status, target_text, stderr = capture_record(target)
+    owned.require(status == 0 and stderr == "", "panic DSO target library discovery failed")
+    libdir = owned.physical(Path(target_text.strip()), "pinned target library directory", directory=True)
+    plugin = output / "libcrabc_unwind_frame_runtime.so"
+    host = output / "panic-dso-host"
+    environment = {
+        "CRABC_OWNED_RUST_LINK_MODE": "dynamic",
+        "CRABC_OWNED_RUST_PRODUCT": str(root),
+        "CRABC_OWNED_RUST_APPLICATION_ROOT": str(output),
+        "CRABC_OWNED_RUST_PROVIDER": provider["archive"]["path"],
+        "CRABC_OWNED_RUST_STOCK_LIBDIR": str(libdir),
+        "CRABC_OWNED_RUST_CHANNEL": channel,
+    }
+    steps = {"target": target}
+    for name, command, extra in (
+        ("plugin", [str(root / "bin/crabc-cc-dynamic"), "--dynamic-shared-object",
+                    str(PANIC_DSO_FRAME), "-o", str(plugin)], None),
+        ("host", ["rustup", "run", channel, "rustc", "--edition=2024", "--target", owned.TARGET,
+                  "-C", "panic=unwind", "-C", "force-unwind-tables=yes", "-C", "link-self-contained=no",
+                  "-C", "target-feature=-crt-static", "-C", f"linker={owned.ROOT / 'owned_rust_link.py'}",
+                  "-C", "link-arg=-Wl,--eh-frame-hdr", str(PANIC_DSO_HOST), "-o", str(host)], environment),
+        ("phdr", ["readelf", "-lW", str(plugin)], None),
+    ):
+        step = capture(command, output / name, extra_environment=extra)
+        step_status, _, step_stderr = capture_record(step)
+        owned.require(step_status == 0 and step_stderr == "", f"panic DSO {name} failed: {step_stderr[-1200:]}")
+        steps[name] = step
+    loader = owned.physical(root / "lib/ld-crabc-x86_64.so.1", "owned loader", executable=True)
+    steps["execution"] = capture([str(loader), "--library-path", f"{output}:{root / 'usr/lib'}",
+                                  str(host)], output / "execution", timeout=20)
+    record = {
+        "sources": [owned.record_file(path, "panic DSO source") for path in (PANIC_DSO_FRAME, PANIC_DSO_HOST)],
+        "plugin": owned.record_file(plugin, "panic DSO plugin"),
+        "plugin_link": owned.record_file(Path(str(plugin) + ".crabc-link.json"), "panic DSO link receipt"),
+        "host": owned.record_file(host, "panic DSO host"),
+        "host_link": owned.record_file(Path(str(host) + ".crabc-owned-rust-link.json"), "panic DSO host link receipt"),
+        "steps": steps,
+        "observed": panic_dso_result(*capture_record(steps["execution"])),
+    }
+    validate_panic_dso_case(record, product, provider)
+    return record
+
+
+def validate_panic_dso_case(record: dict[str, Any], product: dict[str, Any], provider: dict[str, Any]) -> None:
+    root = Path(product["root"])
+    owned.require([require_record(item, "panic DSO source") for item in record["sources"]]
+                  == [PANIC_DSO_FRAME, PANIC_DSO_HOST], "panic DSO sources changed")
+    plugin = require_record(record["plugin"], "panic DSO plugin")
+    host = require_record(record["host"], "panic DSO host")
+    plugin_link = owned.json_object(require_record(record["plugin_link"], "panic DSO link receipt"),
+                                    "panic DSO link receipt")
+    host_link = owned.json_object(require_record(record["host_link"], "panic DSO host link receipt"),
+                                  "panic DSO host link receipt")
+    owned.require(plugin_link.get("output_sha256") == owned.digest(plugin)
+                  and plugin_link.get("manifest_sha256") == product["manifest"]["sha256"]
+                  and plugin_link.get("runtime_imports") == []
+                  and not any(name in plugin_link.get("link_trace", "") for name in ("libgcc", "libunwind")),
+                  "panic DSO plugin link changed")
+    owned.require(host_link.get("output") == owned.record_file(host, "panic DSO host")
+                  and host_link.get("product") == product
+                  and host_link.get("provider_archive") == provider["archive"]
+                  and host_link.get("rust_requested_mode") == "pie"
+                  and host_link.get("rust_library_origin") == "stock"
+                  and "libcrabc-unwind.a" in host_link.get("resolved_input_trace", "")
+                  and not any(name in host_link.get("resolved_input_trace", "") for name in ("libgcc", "libunwind")),
+                  "panic DSO host selected another provider")
+    steps = record["steps"]
+    for name in ("target", "plugin", "host", "phdr"):
+        status, _, stderr = capture_record(steps[name])
+        owned.require(status == 0 and stderr == "", f"panic DSO {name} observation changed")
+    libdir = owned.physical(Path(capture_record(steps["target"])[1].strip()),
+                            "pinned target library directory", directory=True)
+    channel = tomllib.loads((owned.CHECKOUT / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
+    expected_environment = {
+        "CRABC_OWNED_RUST_LINK_MODE": "dynamic", "CRABC_OWNED_RUST_PRODUCT": str(root),
+        "CRABC_OWNED_RUST_APPLICATION_ROOT": str(plugin.parent),
+        "CRABC_OWNED_RUST_PROVIDER": provider["archive"]["path"],
+        "CRABC_OWNED_RUST_STOCK_LIBDIR": str(libdir), "CRABC_OWNED_RUST_CHANNEL": channel,
+    }
+    owned.require(steps["target"]["command"] == ["rustup", "run", channel, "rustc", "--target", owned.TARGET,
+                                                   "--print", "target-libdir"]
+                  and steps["plugin"]["command"] == [str(root / "bin/crabc-cc-dynamic"),
+                         "--dynamic-shared-object", str(PANIC_DSO_FRAME), "-o", str(plugin)]
+                  and steps["host"]["extra_environment"] == expected_environment
+                  and steps["phdr"]["command"] == ["readelf", "-lW", str(plugin)]
+                  and steps["host"]["command"] == ["rustup", "run", channel, "rustc", "--edition=2024",
+                         "--target", owned.TARGET, "-C", "panic=unwind", "-C", "force-unwind-tables=yes",
+                         "-C", "link-self-contained=no", "-C", "target-feature=-crt-static", "-C",
+                         f"linker={owned.ROOT / 'owned_rust_link.py'}", "-C", "link-arg=-Wl,--eh-frame-hdr",
+                         str(PANIC_DSO_HOST), "-o", str(host)]
+                  and "GNU_EH_FRAME" in capture_record(steps["phdr"])[1],
+                  "panic DSO build command or frame header changed")
+    owned.require(steps["execution"]["command"] == [str(root / "lib/ld-crabc-x86_64.so.1"),
+                  "--library-path", f"{plugin.parent}:{root / 'usr/lib'}", str(host)]
+                  and panic_dso_result(*capture_record(steps["execution"])) == record["observed"],
+                  "panic DSO worker result changed")
 
 
 def guarded_cfi_link_command(linker: Path, inputs: list[Path], plugin: Path) -> list[str]:
@@ -320,6 +445,8 @@ def run(static_path: Path, dynamic_path: Path, vendor: Path, image_inspect: Path
         dso_replays[name] = replay(command, output / f"{name}-dso-replay", DSO_LABELS)
     dso_replays["guarded-cfi-installed"] = guarded_cfi_case(
         products["dynamic"], selected["provider"], output / "guarded-cfi-installed")
+    dso_replays["panic-cleanup-installed"] = panic_dso_case(
+        products["dynamic"], selected["provider"], output / "panic-cleanup-installed")
     owned.require([entry["label"] for entry in dso_replays["installed"]["backtrace"]]
                   == [entry["label"] for entry in dso_replays["extracted"]["backtrace"]],
                   "installed and extracted DSO completion differs")
@@ -374,6 +501,8 @@ def validate(path: Path) -> dict[str, Any]:
         replay_record(entry, DSO_LABELS)
     validate_guarded_cfi_case(receipt["dso_replays"]["guarded-cfi-installed"],
                               products["dynamic"], selected["provider"])
+    validate_panic_dso_case(receipt["dso_replays"]["panic-cleanup-installed"],
+                            products["dynamic"], selected["provider"])
     return receipt
 
 
