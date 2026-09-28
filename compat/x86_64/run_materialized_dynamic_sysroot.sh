@@ -163,6 +163,14 @@ if [ "$supplied" -eq 0 ]; then
 fi
 cmp "$work/installed/share/crabc/manifest.json" "$work/second/share/crabc/manifest.json"
 cmp "$work/runtime.tar" "$work/second-runtime.tar"
+if [ "$explicit_work" -eq 1 ]; then
+    # Case receipts hash their leaf artifact trees, so the runner's own scratch
+    # must remain beside the retained products when this cohort is durable.
+    mkdir "$work/qualification-scratch"
+    mkdir "$work/qualification-scratch/tmp"
+    export CRABC_WORK_DIR="$work/qualification-scratch"
+    export TMPDIR="$work/qualification-scratch/tmp"
+fi
 printf 'installed dynamic: allocation errno stdio threads\nordinary exit\n' >"$work/expected.stdout"
 for label in installed second extracted; do
     check_basic_product "$work/$label" "$label"
