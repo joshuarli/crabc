@@ -13,6 +13,10 @@ static mi_stats_t before, allocated, reset, freed, exited;
 static size_t usable, second_usable;
 #if CRABC_WORKER_STAT_LEVEL > 1
 static size_t first_bin, second_bin;
+static struct {
+  size_t current_commit, peak_commit, current_rss, peak_rss;
+  size_t elapsed, faults;
+} process_info[4];
 #endif
 static char output[4][32768];
 static size_t output_length;
@@ -37,6 +41,13 @@ static size_t bin_for_size(size_t size) {
     if (mi_stats_get_bin_size(bin) == size) return bin;
   }
   abort();
+}
+
+static void read_process_info(unsigned index) {
+  mi_process_info(&process_info[index].elapsed, NULL, NULL,
+                  &process_info[index].current_rss, &process_info[index].peak_rss,
+                  &process_info[index].current_commit, &process_info[index].peak_commit,
+                  &process_info[index].faults);
 }
 #endif
 
@@ -64,6 +75,9 @@ static void* worker(void* argument) {
 #endif
   print_worker(0);
   read_stats(&allocated);
+#if CRABC_WORKER_STAT_LEVEL > 1
+  read_process_info(1);
+#endif
   /* Printing merged the first block into the Heap. The second block leaves
      a fresh Theap record whose reset merge is visible in the next print. */
   void* second = mi_malloc(CRABC_WORKER_STAT_LEVEL > 1 ? 32768 : 64);
@@ -75,6 +89,9 @@ static void* worker(void* argument) {
   mi_stats_reset();
   print_worker(1);
   read_stats(&reset);
+#if CRABC_WORKER_STAT_LEVEL > 1
+  read_process_info(2);
+#endif
   mi_free(second);
   mi_free(block);
   print_worker(2);
@@ -105,6 +122,29 @@ static void stage(const char* name, const mi_stats_t* stats) {
   count(name, "second_page_bin", &stats->page_bins[second_bin], &before.page_bins[second_bin]);
 #endif
 }
+
+#if CRABC_WORKER_STAT_LEVEL > 1
+static void absolute_count(const char* stage, const char* field, const mi_stat_count_t* count) {
+  printf("snapshot.%s.%s=%lld,%lld,%lld\n", stage, field,
+         (long long)count->current, (long long)count->total, (long long)count->peak);
+}
+
+static void snapshot(unsigned index, const char* name, const mi_stats_t* stats) {
+  absolute_count(name, "reserved", &stats->reserved);
+  absolute_count(name, "committed", &stats->committed);
+  absolute_count(name, "theaps", &stats->theaps);
+  absolute_count(name, "threads", &stats->threads);
+  printf("snapshot.%s.mmap_calls=%lld\n", name, (long long)stats->mmap_calls.total);
+  printf("snapshot.%s.commit_calls=%lld\n", name, (long long)stats->commit_calls.total);
+  printf("snapshot.%s.arena_count=%lld\n", name, (long long)stats->arena_count.total);
+  printf("snapshot.%s.process_commit=%zu,%zu\n", name,
+         process_info[index].current_commit, process_info[index].peak_commit);
+  printf("snapshot.%s.current_rss=%zu\n", name, process_info[index].current_rss);
+  printf("snapshot.%s.peak_rss=%zu\n", name, process_info[index].peak_rss);
+  printf("snapshot.%s.elapsed=%zu\n", name, process_info[index].elapsed);
+  printf("snapshot.%s.faults=%zu\n", name, process_info[index].faults);
+}
+#endif
 
 static void output_row(unsigned index, const char* key, const char* label) {
   char prefix[32];
@@ -137,9 +177,15 @@ static void output_full(unsigned index, const char* key) {
 int main(void) {
   pthread_t thread;
   read_stats(&before);
+#if CRABC_WORKER_STAT_LEVEL > 1
+  read_process_info(0);
+#endif
   if (pthread_create(&thread, NULL, &worker, NULL) != 0) abort();
   if (pthread_join(thread, NULL) != 0) abort();
   read_stats(&exited);
+#if CRABC_WORKER_STAT_LEVEL > 1
+  read_process_info(3);
+#endif
   print_process();
   printf("CRABC_MI_M7_STATISTICS_WORKER_RESET_TRACE_BEGIN\n");
   printf("profile.level=%d\n", CRABC_WORKER_STAT_LEVEL);
@@ -166,6 +212,10 @@ int main(void) {
   output_row(3, "process.exited_binned", "binned");
   output_row(3, "process.exited_total", "total");
 #if CRABC_WORKER_STAT_LEVEL > 1
+  snapshot(0, "preworker", &before);
+  snapshot(1, "first_allocation", &allocated);
+  snapshot(2, "reset", &reset);
+  snapshot(3, "exit", &exited);
   char first_label[32], second_label[32];
   snprintf(first_label, sizeof(first_label), "bin%2s  %3zu", "S", first_bin);
   snprintf(second_label, sizeof(second_label), "bin%2s  %3zu", "M", second_bin);

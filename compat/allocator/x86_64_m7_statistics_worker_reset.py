@@ -144,6 +144,16 @@ def main() -> int:
         raw_output_keys = {"worker.live_full", "worker.reset_full", "worker.freed_full",
                            "process.exited_full"}
         level_two_keys.update(raw_output_keys)
+        snapshot_stages = ("preworker", "first_allocation", "reset", "exit")
+        snapshot_count_fields = ("reserved", "committed", "theaps", "threads")
+        snapshot_scalar_fields = ("mmap_calls", "commit_calls", "arena_count", "current_rss",
+                                  "peak_rss", "elapsed", "faults")
+        snapshot_pair_fields = ("process_commit",)
+        level_two_keys.update(f"snapshot.{stage}.{field}" for stage in snapshot_stages
+                              for field in (*snapshot_count_fields, *snapshot_scalar_fields,
+                                            *snapshot_pair_fields))
+        variable_snapshot_keys = {f"snapshot.{stage}.{field}" for stage in snapshot_stages
+                                  for field in ("elapsed", "faults", "peak_rss")}
         level_two_traces = {}
         level_two_executions = {}
         for side, driver in (("c", level_two_c_driver), ("rust", level_two_rust_driver)):
@@ -157,6 +167,13 @@ def main() -> int:
                               "second_bin", "first_page_bin", "second_page_bin"):
                     if len(trace[f"{stage}.{field}"].split(",")) != 3:
                         raise harness.HarnessError(f"{side} malformed {stage}.{field}")
+            for stage in snapshot_stages:
+                for field in snapshot_count_fields:
+                    if len(trace[f"snapshot.{stage}.{field}"].split(",")) != 3:
+                        raise harness.HarnessError(f"{side} malformed snapshot.{stage}.{field}")
+                for field in snapshot_pair_fields:
+                    if len(trace[f"snapshot.{stage}.{field}"].split(",")) != 2:
+                        raise harness.HarnessError(f"{side} malformed snapshot.{stage}.{field}")
             for key in level_two_keys:
                 if key.startswith(("worker.", "process.")) and trace[key] != "absent":
                     try:
@@ -194,6 +211,11 @@ def main() -> int:
                for key, value in level_two_source_expected.items()):
             raise harness.HarnessError("pinned C lost level-two worker reset accounting")
         level_two_c = level_two_traces["c"]
+        source_theaps = {"preworker": "1,1,1", "first_allocation": "2,2,2",
+                         "reset": "2,2,2", "exit": "1,2,2"}
+        if any(level_two_c[f"snapshot.{stage}.theaps"] != expected
+               for stage, expected in source_theaps.items()):
+            raise harness.HarnessError("pinned C lost static and worker Theap publication")
         if not (level_two_c["worker.live_owner"] == level_two_c["worker.reset_owner"]
                 == level_two_c["worker.freed_owner"]
                 and bytes.fromhex(level_two_c["worker.live_owner"]).startswith(b"heap ")
@@ -205,8 +227,20 @@ def main() -> int:
                 and b"ok" in bytes.fromhex(level_two_c["process.exited_second_bin"])
                 and b"32.1 KiB" in bytes.fromhex(level_two_c["process.exited_requested"])):
             raise harness.HarnessError("pinned C lost level-two worker/process output")
-        level_two_mismatch = sorted(key for key in level_two_traces["c"].keys() - raw_output_keys
+        level_two_mismatch = sorted(key for key in level_two_traces["c"].keys()
+                                    - raw_output_keys - variable_snapshot_keys
                                     if level_two_traces["c"][key] != level_two_traces["rust"][key])
+        variable_snapshot_mismatch = sorted(key for key in variable_snapshot_keys
+                                            if level_two_traces["c"][key] != level_two_traces["rust"][key])
+        first_deterministic_snapshot_difference = next((
+            {"stage": stage, "field": field, "c": level_two_c[f"snapshot.{stage}.{field}"],
+             "rust": level_two_traces["rust"][f"snapshot.{stage}.{field}"]}
+            for stage in snapshot_stages
+            for field in (*snapshot_count_fields, "process_commit", "current_rss",
+                          "mmap_calls", "commit_calls", "arena_count")
+            if level_two_c[f"snapshot.{stage}.{field}"]
+            != level_two_traces["rust"][f"snapshot.{stage}.{field}"]
+        ), None)
         raw_output_mismatch = sorted(key for key in raw_output_keys
                                      if level_two_traces["c"][key] != level_two_traces["rust"][key])
         raw_output_diffs = {
@@ -223,13 +257,15 @@ def main() -> int:
             "pin": {key: pin[key] for key in ("tag", "sha256", "revision")},
             "source_files": harness.source_file_records(source, (
                 "include/mimalloc-stats.h", "src/stats.c", "src/init.c", "src/heap.c",
-                "src/theap.c", "src/alloc.c", "src/free.c", "src/page.c", "src/static.c")),
+                "src/theap.c", "src/alloc.c", "src/free.c", "src/page.c", "src/os.c",
+                "src/prim/unix/prim.c", "src/static.c")),
             "fixture_sha256": hashlib.sha256(FIXTURE.read_bytes()).hexdigest(),
             "reader_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             "rust_source_sha256": {
                 path: hashlib.sha256((harness.ROOT / path).read_bytes()).hexdigest()
                 for path in ("crabc-mimalloc/src/statistics.rs", "crabc-mimalloc/src/runtime_lifecycle.rs",
                              "crabc-mimalloc/src/single_thread.rs", "crabc-mimalloc/src/diagnostic_output.rs",
+                             "crabc-mimalloc/src/os.rs", "crabc-mimalloc/src/subproc_main_heaps.rs",
                              "compat/allocator/native-mi-adapter/src/lib.rs", "Cargo.lock")},
             "c_build_command": c_build["command"], "rust_build_command": rust_build["command"],
             "rust_link_command": rust_link["command"], "executions": executions,
@@ -239,6 +275,8 @@ def main() -> int:
             "level_two_rust_link_command": level_two_rust_link["command"],
             "level_two_executions": level_two_executions,
             "level_two_traces": level_two_traces, "level_two_mismatch_keys": level_two_mismatch,
+            "level_two_variable_snapshot_mismatch_keys": variable_snapshot_mismatch,
+            "first_deterministic_snapshot_difference": first_deterministic_snapshot_difference,
             "level_two_raw_output_mismatch_keys": raw_output_mismatch,
             "level_two_raw_output_status": "unproved" if raw_output_mismatch else "matched",
             "level_two_raw_output_diffs": raw_output_diffs,

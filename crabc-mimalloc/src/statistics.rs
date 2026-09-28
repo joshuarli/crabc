@@ -110,15 +110,20 @@ impl StatCount {
     }
 
     /// Mirrors `mi_stat_adjust_mt`, used to repair source accounting around
-    /// partially committed ranges. It changes current and total without
-    /// changing the peak previously observed by [`Self::update`].
+    /// partially committed ranges. When the prior total equals the sampled
+    /// peak, the correction applies to that peak too, so an aligned mapping's
+    /// discarded over-allocation does not remain its reported peak.
     #[inline]
     pub(crate) fn adjust(&self, amount: i64) {
         if amount == 0 {
             return;
         }
+        let peak = i64_load_relaxed(&self.peak);
         i64_add_relaxed(&self.current, amount);
-        i64_add_relaxed(&self.total, amount);
+        let previous_total = i64_add_relaxed(&self.total, amount);
+        if previous_total == peak {
+            i64_add_relaxed(&self.peak, amount);
+        }
     }
 
     /// Adds one selected source record in `mi_stats_add` order.
@@ -1722,8 +1727,8 @@ mod tests {
         assert_eq!(i64_load_relaxed(&count.total), 8);
         assert_eq!(
             i64_load_relaxed(&count.peak),
-            10,
-            "mi_stat_adjust_mt leaves the observed peak unchanged"
+            8,
+            "mi_stat_adjust_mt repairs the peak when prior total equals it"
         );
         count.adjust(2);
         assert_eq!(i64_load_relaxed(&count.total), 10);
@@ -1731,7 +1736,18 @@ mod tests {
         count.adjust(7);
         assert_eq!(i64_load_relaxed(&count.current), 13);
         assert_eq!(i64_load_relaxed(&count.total), 17);
-        assert_eq!(i64_load_relaxed(&count.peak), 10);
+        assert_eq!(i64_load_relaxed(&count.peak), 17);
+
+        let nonmatching = StatCount::new();
+        nonmatching.update(10);
+        nonmatching.update(-5);
+        nonmatching.update(6);
+        assert_eq!(i64_load_relaxed(&nonmatching.total), 16);
+        assert_eq!(i64_load_relaxed(&nonmatching.peak), 11);
+        nonmatching.adjust(-2);
+        assert_eq!(i64_load_relaxed(&nonmatching.current), 9);
+        assert_eq!(i64_load_relaxed(&nonmatching.total), 14);
+        assert_eq!(i64_load_relaxed(&nonmatching.peak), 11);
     }
 
     #[test]
