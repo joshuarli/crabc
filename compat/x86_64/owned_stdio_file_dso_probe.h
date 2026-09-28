@@ -88,4 +88,7 @@ FILE *crabc_full_dso_open(int *main_errno);
 int crabc_full_dso_close(FILE *stream, int *main_errno);
 FILE *crabc_full_dso_open_pending_close(int *main_errno);
 int crabc_full_dso_close_pending(FILE *stream, int *main_errno);
+FILE *crabc_full_dso_open_recovery(int *main_errno);
+int crabc_full_dso_write_recovery(FILE *stream, int *main_errno);
+int crabc_full_dso_close_recovery(FILE *stream, int *main_errno);
 #endif

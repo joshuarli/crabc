@@ -684,6 +684,58 @@ int crabc_full_dso_close_pending(FILE *stream, int *main_errno)
     return result;
 }
 
+/* The first failed flush discards buffered bytes. Clearing the shared FILE
+ * error permits a clean retry and a later buffered write from this image.
+ */
+static FILE *recovery_dso_stream;
+static char recovery_dso_buffer[64];
+static unsigned recovery_dso_stage;
+
+FILE *crabc_full_dso_open_recovery(int *main_errno)
+{
+    if (main_errno != &errno || errno != EDOM || recovery_dso_stage != 0)
+        return NULL;
+    recovery_dso_stream = fopen("/dev/full", "w");
+    if (recovery_dso_stream == NULL ||
+        setvbuf(recovery_dso_stream, recovery_dso_buffer, _IOFBF,
+                sizeof(recovery_dso_buffer)) != 0)
+        return NULL;
+    if (fileno(recovery_dso_stream) < 0 ||
+        fwrite("first", 1, 5, recovery_dso_stream) != 5 ||
+        ferror(recovery_dso_stream) || feof(recovery_dso_stream))
+        return NULL;
+    recovery_dso_stage = 1;
+    errno = ERANGE;
+    return recovery_dso_stream;
+}
+
+int crabc_full_dso_write_recovery(FILE *stream, int *main_errno)
+{
+    if (stream == NULL || stream != recovery_dso_stream ||
+        main_errno != &errno || errno != EDOM || recovery_dso_stage != 1 ||
+        ferror(stream) || feof(stream))
+        return 1;
+    if (fwrite("second", 1, 6, stream) != 6 || ferror(stream))
+        return 2;
+    recovery_dso_stage = 2;
+    errno = ERANGE;
+    return 0;
+}
+
+int crabc_full_dso_close_recovery(FILE *stream, int *main_errno)
+{
+    int result;
+
+    if (stream == NULL || stream != recovery_dso_stream ||
+        main_errno != &errno || errno != EDOM || recovery_dso_stage != 2 ||
+        ferror(stream) || feof(stream))
+        return 1;
+    result = fclose(stream);
+    recovery_dso_stream = NULL;
+    recovery_dso_stage = 3;
+    return result;
+}
+
 static FILE *exit_stream;
 static char exit_buffer[64];
 static char exit_marker_path[PATH_MAX];

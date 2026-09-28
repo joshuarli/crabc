@@ -23,6 +23,8 @@ A DSO-owned fully buffered stream targets an exact full device. Main observes
 its failed flush, and the DSO alone closes the stream and descriptor.
 A separate DSO-owned buffered stream leaves bytes pending until fclose, which
 reports the full-device failure while still closing its descriptor.
+A third DSO-owned stream clears a failed flush, retries with no pending bytes,
+then buffers and fails a new write before clearing its error for close.
 """
 
 from __future__ import annotations
@@ -60,7 +62,7 @@ MEMSTREAM_FINAL = b"alXYa!\0\0Z"
 WIDE_MEMORY_FINAL = struct.pack("<7I", 0x20AC, 0x03BB, 0x1F600, 0, 0, 0x03A9, 0)
 EXPECTED_STDOUT = (b"memstream-final:" + MEMSTREAM_FINAL +
                    b"\nfixed-final:abcDEFGH\nwide-final:" + WIDE_MEMORY_FINAL +
-                   b"\nstdio-file-dso-full-close-ok\n")
+                   b"\nstdio-file-dso-clearerr-ok\n")
 EXIT_PAYLOAD = b"dso-exit-once\n"
 EXIT_MARKER = b"fini-before-flush:fd-live\n"
 RETAINED_PATHS = ("stream.dso-global", "stream.exit", "stream.fini",
@@ -412,16 +414,31 @@ def audit_runtime(work: Path, dynamic: Path) -> None:
         full_writes = [list(re.finditer(
             r'(?:write|writev|pwrite64)\([^\n]*"' + payload +
             r'"[^\n]*\)\s+=\s+-1 ENOSPC\b', trace))
-            for payload in ("pending", "closing")]
-        require(len(full_opens) == 2 and all(len(writes) == 1 for writes in full_writes)
+            for payload in ("pending", "closing", "first", "second")]
+        require(len(full_opens) == 3 and all(len(writes) == 1 for writes in full_writes)
                 and full_opens[0].start() < full_writes[0][0].start() <
-                full_opens[1].start() < full_writes[1][0].start(),
+                full_opens[1].start() < full_writes[1][0].start() <
+                full_opens[2].start() < full_writes[2][0].start() <
+                full_writes[3][0].start(),
                 f"{case} full-sink buffered failures differ")
-        next_open = re.search(r'\bopen(?:at)?\(', trace[full_writes[1][0].end():])
-        close_bound = (full_writes[1][0].end() + next_open.start()
+        next_open = re.search(r'\bopen(?:at)?\(', trace[full_writes[3][0].end():])
+        close_bound = (full_writes[3][0].end() + next_open.start()
                        if next_open is not None else len(trace))
+        recovery_open = full_opens[2]
+        recovery_close = re.search(
+            r'\bclose\(' + recovery_open.group(1) + r'\)\s+=\s+0\b',
+            trace[full_writes[3][0].end():close_bound])
+        require(recovery_close is not None, f"{case} full-sink descriptor close differs")
+        recovery_close_bound = full_writes[3][0].end() + recovery_close.end()
+        recovery_writes = list(re.finditer(
+            r'\b(?:write|writev|pwrite64)\(' + recovery_open.group(1) + r',',
+            trace[recovery_open.start():recovery_close_bound]))
+        require([recovery_open.start() + item.start() for item in recovery_writes] ==
+                [full_writes[2][0].start(), full_writes[3][0].start()],
+                f"{case} clearerr retry wrote discarded bytes")
         for opening, write, end in ((full_opens[0], full_writes[0][0], full_opens[1].start()),
-                                    (full_opens[1], full_writes[1][0], close_bound)):
+                                    (full_opens[1], full_writes[1][0], full_opens[2].start()),
+                                    (full_opens[2], full_writes[3][0], close_bound)):
             closes = list(re.finditer(
                 r'\bclose\(' + opening.group(1) + r'\)\s+=\s+0\b',
                 trace[write.end():end]))
@@ -481,7 +498,8 @@ def audit_elf(work: Path) -> None:
                           "crabc_orientation_dso_open_byte", "crabc_orientation_dso_use_byte",
                           "crabc_orientation_dso_close_byte", "crabc_full_dso_open",
                           "crabc_full_dso_close", "crabc_full_dso_open_pending_close",
-                          "crabc_full_dso_close_pending"):
+                          "crabc_full_dso_close_pending", "crabc_full_dso_open_recovery",
+                          "crabc_full_dso_write_recovery", "crabc_full_dso_close_recovery"):
                 require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+\d+\s+" + entry + r"\b", symbols) is not None,
                         f"{role} lacks {entry}")
         elif dynamic_main:
@@ -502,7 +520,8 @@ def audit_elf(work: Path) -> None:
                           "crabc_orientation_dso_open_byte", "crabc_orientation_dso_use_byte",
                           "crabc_orientation_dso_close_byte", "crabc_full_dso_open",
                           "crabc_full_dso_close", "crabc_full_dso_open_pending_close",
-                          "crabc_full_dso_close_pending"):
+                          "crabc_full_dso_close_pending", "crabc_full_dso_open_recovery",
+                          "crabc_full_dso_write_recovery", "crabc_full_dso_close_recovery"):
                 require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+UND\s+" + entry + r"\b", symbols) is not None,
                         f"{role} does not import {entry}")
         else:
