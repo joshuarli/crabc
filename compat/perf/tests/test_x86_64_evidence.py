@@ -942,6 +942,26 @@ class CollectorCompositionTests(unittest.TestCase):
                 self.assertEqual(list(checked.blockers), release["blockers"])
 
                 original_last = json.loads(attempt_paths[-1].read_text(encoding="utf-8"))
+                conflicting_work_root = copy.deepcopy(original_last)
+                conflicting_work_root["tools"]["before"]["host"]["environment"]["CRABC_WORK_DIR"] = (
+                    requests[0]["work_dir"])
+                conflicting_work_root["tools"]["after"] = copy.deepcopy(conflicting_work_root["tools"]["before"])
+                attempt_paths[-1].write_text(json.dumps(conflicting_work_root), encoding="utf-8")
+                work_root_rehashed = {**report, "uncontended_host": host, "scorecard": scorecard, "release": release,
+                                      "attempts": [*report["attempts"][:-1],
+                                                   {"index": 3, "report": identity(attempt_paths[-1])}]}
+                report_path.write_text(json.dumps(work_root_rehashed), encoding="utf-8")
+                with self.assertRaisesRegex(evidence.EvidenceError, "environment work root differs"):
+                    evidence.validate_collector_report(ROOT, report_path)
+                matching_work_root = copy.deepcopy(original_last)
+                matching_work_root["tools"]["before"]["host"]["environment"]["CRABC_WORK_DIR"] = (
+                    f"{evidence.SOURCE_MOUNT}/.work/x86_64")
+                matching_work_root["tools"]["after"] = copy.deepcopy(matching_work_root["tools"]["before"])
+                attempt_paths[-1].write_text(json.dumps(matching_work_root), encoding="utf-8")
+                work_root_rehashed["attempts"][-1]["report"] = identity(attempt_paths[-1])
+                report_path.write_text(json.dumps(work_root_rehashed), encoding="utf-8")
+                self.assertTrue(evidence.validate_collector_report(ROOT, report_path).evidence_valid)
+
                 inconsistent_environment = copy.deepcopy(original_last)
                 inconsistent_environment["tools"]["before"]["host"]["environment"]["CRABC_PERF_DOCKER_IMAGE_ID"] = (
                     "sha256:" + "f" * 64)

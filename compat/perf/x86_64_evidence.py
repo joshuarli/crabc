@@ -2703,7 +2703,9 @@ def _verify_governor(record: object, *, index: int) -> None:
                 f"attempt {index} selected governor is absent from available governors")
 
 
-def _verify_attempt_tools(checkout: Path, attempt: Mapping[str, Any], product: Mapping[str, Any], index: int) -> None:
+def _verify_attempt_tools(
+    checkout: Path, attempt: Mapping[str, Any], product: Mapping[str, Any], index: int, *, work_dir: str,
+) -> None:
     tools = attempt["tools"]
     expected = {"before", "after", "host_cpuinfo_diagnostics", "compile_policy", "link_policy"}
     require(isinstance(tools, dict) and set(tools) == expected, f"attempt {index} tool record differs")
@@ -2778,6 +2780,11 @@ def _verify_attempt_tools(checkout: Path, attempt: Mapping[str, Any], product: M
     if "CRABC_PERF_DOCKER_IMAGE_ID" in environment:
         require(environment["CRABC_PERF_DOCKER_IMAGE_ID"] == host["docker_image_id"],
                 f"attempt {index} environment image ID differs from attempt provenance")
+    if "CRABC_WORK_DIR" in environment:
+        # The launcher gives every attempt the shared work boundary; the roster selects its fresh child.
+        work_root = f"{SOURCE_MOUNT}/.work/x86_64"
+        require(work_dir.startswith(work_root + "/") and environment["CRABC_WORK_DIR"] == work_root,
+                f"attempt {index} environment work root differs from immutable attempt work directory")
 
 
 def _verify_attempt_source(
@@ -2915,7 +2922,7 @@ def _replay_attempt(
     # Product identity validation returns a physical path.  Tool replay
     # additionally needs the sealed product record so it can bind the
     # candidate driver's retained identity to ``product[\"driver\"]``.
-    _verify_attempt_tools(checkout, attempt, attempt["product"]["before"], index)
+    _verify_attempt_tools(checkout, attempt, attempt["product"]["before"], index, work_dir=work_dir)
     _verify_attempt_build(checkout, attempt, index)
     _verify_attempt_execution(checkout, attempt, index)
     canonical = list(canonical_workload_invocations(checkout))
