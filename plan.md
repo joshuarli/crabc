@@ -26,8 +26,9 @@ are not transferable passes for a different revision.
   ordered qualification gates are executable and fail closed on named unmet
   conditions. `compat.abi-differential` reads all its evidence rows from one
   published set (`abi-differential-evidence assemble`); only the selection
-  closure (382 named blockers, mostly companion receipts and unadmitted
-  families) stays unmet. `libc.c-abi-compat` now runs a physical same-cohort
+  closure stays unmet: a clean `e7d10c238` assembly named 573 blockers
+  (555 identities, 17 unadmitted families, one missing semantic receipt) and
+  rejected no companion. `libc.c-abi-compat` now runs a physical same-cohort
   text/math/locale/stdio family admission; its retained receipt is still
   pending on the final candidate revision. `consumer.rust-std-lto` and
   `consumer.source-build` pass their evidence on development cohorts and
@@ -37,11 +38,13 @@ are not transferable passes for a different revision.
   backend; allocator M2–M11 remain open. A frozen M5 source run at `e0b9ecbc7`
   passed seven gates, failed its churn and upstream stress gates on one seed-2
   static-PIE PageMap high-water spike, and left codegen/performance blocked;
-  the same binary passed a focused replay, so the spike remains unresolved.
-  A source-bound regression now passes for non-abandoning full-queue owner
-  exit with a full medium page, one remote free, and an OS singleton; a
-  diagnostic seed-2 replay reproduced the high-water failure and localized
-  its growth to medium pages, with the collection cause still under study.
+  the same binary passed a focused replay. A later diagnostic reproduced one
+  breach in sixteen native runs and localized the growth to medium pages;
+  pinned v3.5.0 C also breached once in sixteen static-PIE runs of the same
+  workload and PageMap slice metric. The 10% gate remains unchanged while
+  medium-page collection and scheduling are assessed. Source-built C/Rust
+  differentials pass for both dormant and active survivors of a non-abandoning
+  full-medium/OS-singleton owner exit, including reclaim and retirement.
   The full M2 runner records complete
   metadata, bitmap, PageMap, and allocator-recursion components; VM primitives,
   arenas, initialization, and fault injection remain partial. Every freestanding-C runner builds `libc.a` through
@@ -70,7 +73,9 @@ are not transferable passes for a different revision.
   merged revision remains open. All 57 `native_*` integration targets pass; the earlier attachment
   defect was stale. The M7 options/environment gate passes its source-matched
   profile and 660-key C/Rust differential; its default-artifact baseline audit
-  also passes. Full M7 remains open. Static
+  also passes. A selected `MI_STAT=1` binned allocation, merge/reset, free,
+  and final-print differential passes; page, huge, nonlocal, and higher-level
+  statistics producers remain unproved, so full M7 stays open. Static
   replacement now has a source-bound installed sweep with zero divergent
   functions among 1,406 musl-replaceable entries and all 831 required entries
   passing; the final merged candidate must rerun it. A scoped current-source
