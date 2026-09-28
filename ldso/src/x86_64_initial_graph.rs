@@ -2057,6 +2057,13 @@ unsafe fn parse_mapped(
         // Direct legacy callbacks are validated before relocation. Array
         // storage is bounded here; relocated targets are all preflighted
         // together before any initializer may run.
+        // The owned main's direct callbacks were already checked before its
+        // array metadata; retain that proof when publishing their addresses.
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        let owned_main_callbacks_checked = general_initial_graph
+            && registry_main && object.main_crt_mode == MainCrtMode::Owned;
+        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+        let owned_main_callbacks_checked = false;
         for (address, destination) in [
             (general_init, &mut object.general_init),
             (general_fini, &mut object.general_fini),
@@ -2065,7 +2072,8 @@ unsafe fn parse_mapped(
                 if address == 0 && registry_main {
                     continue;
                 }
-                if address == 0 || !virtual_range_in_executable_load(phdr, phnum, address, 1) {
+                if address == 0 || (!owned_main_callbacks_checked
+                    && !virtual_range_in_executable_load(phdr, phnum, address, 1)) {
                     return None;
                 }
                 *destination = runtime_address(base, address)? as usize;
@@ -5709,6 +5717,50 @@ mod owned_dynamic_symbolic_tag_tests {
 
         let unapproved_flags_one = ParserImage::new(&[(DT_FLAGS_1, 0x2)]);
         assert!(unapproved_flags_one.parse().is_none());
+    }
+
+    #[cfg(crabc_general_initial_lifecycle)]
+    #[test]
+    fn main_callbacks_keep_overlapping_executable_load_and_malformed_boundaries() {
+        const NOTE: usize = 0x280;
+        const EXEC_LOAD: usize = 168;
+        let mut image = ParserImage::new(&[(DT_INIT, 0x40), (DT_FINI, 0x50)]);
+        image.put_u32(112, PT_NOTE);
+        image.put_u64(112 + 16, NOTE as u64);
+        image.put_u64(112 + 32, 24);
+        image.put_u64(112 + 40, 24);
+        image.put_u32(NOTE, OWNED_CRT_NOTE_NAME.len() as u32);
+        image.put_u32(NOTE + 4, 4);
+        image.put_u32(NOTE + 8, OWNED_CRT_NOTE_TYPE);
+        image.bytes[NOTE + 12..NOTE + 18].copy_from_slice(OWNED_CRT_NOTE_NAME);
+        image.put_u32(NOTE + 20, OWNED_CRT_NOTE_REVISION);
+        image.put_u32(EXEC_LOAD, PT_LOAD);
+        image.put_u32(EXEC_LOAD + 4, PF_R | PF_X);
+        image.put_u64(EXEC_LOAD + 16, 0x40);
+        image.put_u64(EXEC_LOAD + 32, 0x80);
+        image.put_u64(EXEC_LOAD + 40, 0x80);
+        let parse_main = |image: &ParserImage| unsafe {
+            parse_mapped(image.bytes.as_ptr() as u64, image.bytes.as_ptr(), 4,
+                ObjectRole::Main, false, true)
+        };
+        let owned = parse_main(&image).unwrap();
+        assert_eq!(owned.main_crt_mode, MainCrtMode::Owned);
+        assert_eq!(owned.general_init, image.bytes.as_ptr() as usize + 0x40);
+        assert_eq!(owned.general_fini, image.bytes.as_ptr() as usize + 0x50);
+
+        image.put_u64(DYNAMIC + 5 * 16 + 8, 0x600);
+        assert!(parse_main(&image).is_none());
+        image.put_u64(DYNAMIC + 5 * 16 + 8, 0x40);
+        image.put_u64(EXEC_LOAD + 16, u64::MAX - 8);
+        image.put_u64(EXEC_LOAD + 40, 16);
+        assert!(parse_main(&image).is_none());
+
+        image.put_u64(EXEC_LOAD + 16, 0x40);
+        image.put_u64(EXEC_LOAD + 40, 0x80);
+        image.put_u32(112, 0);
+        assert_eq!(parse_main(&image).unwrap().main_crt_mode, MainCrtMode::Conventional);
+        image.put_u64(DYNAMIC + 5 * 16 + 8, 0x600);
+        assert!(parse_main(&image).is_none());
     }
 }
 
