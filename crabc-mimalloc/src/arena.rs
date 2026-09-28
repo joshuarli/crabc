@@ -2757,6 +2757,14 @@ impl<'arena> ArenaView<'arena> {
         let all_committed = committed_transition.already_set() == slice_count;
         let needs_recommit = match arena.commit_function {
             Some(commit) => {
+                let Some(subprocess) = NonNull::new(arena.subprocess) else {
+                    return self.restore_failed_purge(slice_index, slice_count);
+                };
+                // The source purge records the attempted raw span before it
+                // asks an external owner whether recommit will be needed.
+                // SAFETY: a published arena retains its bound subprocess for
+                // every scheduled purge of its live in-place bitmap image.
+                unsafe { subprocess.as_ref() }.vm_statistics().purge(size);
                 // SAFETY: external arena initialization recorded this hook and
                 // argument for the exact live backing span. `slices_free` is
                 // clear for this range, giving the hook exclusive ownership.
@@ -2933,6 +2941,160 @@ pub(crate) mod tests {
             unsafe { is_zero.write(script.allocation_is_zero) };
         }
         true
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    struct ExternalRefusalTrace {
+        order: std::sync::atomic::AtomicUsize,
+        calls: std::sync::atomic::AtomicUsize,
+        refuse_first: std::sync::atomic::AtomicBool,
+        null_metadata_zero: std::sync::atomic::AtomicBool,
+        claim_zero_output: std::sync::atomic::AtomicBool,
+        null_purge_zero: std::sync::atomic::AtomicBool,
+        last_start: std::sync::atomic::AtomicUsize,
+        last_size: std::sync::atomic::AtomicUsize,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn external_refusal_callback(
+        commit: bool, start: *mut u8, size: usize, is_zero: *mut bool, argument: *mut c_void,
+    ) -> bool {
+        // SAFETY: the test leaks the trace and keeps its one external range
+        // live for every synchronous callback and arena bitmap observation.
+        let trace = unsafe { &*argument.cast::<ExternalRefusalTrace>() };
+        trace.order.fetch_update(Ordering::AcqRel, Ordering::Acquire,
+            |order| Some(order * 10 + if commit { 1 } else { 2 })).unwrap();
+        let call = trace.calls.fetch_add(1, Ordering::AcqRel) + 1;
+        trace.last_start.store(start as usize, Ordering::Release);
+        trace.last_size.store(size, Ordering::Release);
+        if !commit {
+            trace.null_purge_zero.store(is_zero.is_null(), Ordering::Release);
+            return true;
+        }
+        if call <= 2 {
+            trace.null_metadata_zero.store(is_zero.is_null(), Ordering::Release);
+        } else {
+            trace.claim_zero_output.store(!is_zero.is_null(), Ordering::Release);
+        }
+        if !is_zero.is_null() {
+            // SAFETY: the caller supplied the writable output for a claim.
+            unsafe { is_zero.write(true) };
+        }
+        !trace.refuse_first.swap(false, Ordering::AcqRel)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_external_callback_refusal_c_rust_trace() {
+        use crate::page_map::PageMap;
+        let region = Box::leak(Box::new(AlignedRegion::zeroed(ARENA_MIN_SIZE)));
+        let base = region.as_ptr();
+        let subprocess = MainSubprocess::test_static_owner();
+        let registry = ArenaRegistry::new(subprocess.as_ptr());
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 1024 * 1024, true, false,
+        );
+        let page_map = PageMap::initialize(config, 0, true)
+            .expect("the isolated lookup map initializes");
+        let trace = Box::leak(Box::new(ExternalRefusalTrace {
+            order: std::sync::atomic::AtomicUsize::new(0),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            refuse_first: std::sync::atomic::AtomicBool::new(true),
+            null_metadata_zero: std::sync::atomic::AtomicBool::new(false),
+            claim_zero_output: std::sync::atomic::AtomicBool::new(false),
+            null_purge_zero: std::sync::atomic::AtomicBool::new(false),
+            last_start: std::sync::atomic::AtomicUsize::new(0),
+            last_size: std::sync::atomic::AtomicUsize::new(0),
+        }));
+        let hook = Some(CommitHook::new(
+            external_refusal_callback, (trace as *mut ExternalRefusalTrace).cast(),
+        ));
+        let before = subprocess.vm_statistics().snapshot();
+        // SAFETY: the external range and callback trace are leaked; the
+        // registry's subprocess owner remains live throughout this fixture.
+        let first = unsafe { manage_external_in_place(
+            &registry, base, ARENA_MIN_SIZE, config.page_size(), false, false,
+            false, -1, false, hook,
+        ) };
+        let mut residency = 0u8;
+        // SAFETY: this initialized PageMap and the external mapped page stay
+        // live; `mincore` receives one writable residency byte.
+        let refused = first == Err(ManageArenaError::CommitFailed)
+            && registry.count() == 0
+            && trace.order.load(Ordering::Acquire) == 1
+            && trace.null_metadata_zero.load(Ordering::Acquire)
+            && unsafe { page_map.checked_lookup(base) }.is_null()
+            && unsafe { crabc_core::mm::mincore_raw(base, 4096, &mut residency) }.is_ok()
+            && subprocess.vm_statistics().snapshot() == before;
+        // SAFETY: the refusal published no arena or writes, so the same live
+        // external range and callback retain their original ownership.
+        let managed = unsafe { manage_external_in_place(
+            &registry, base, ARENA_MIN_SIZE, config.page_size(), false, false,
+            false, -1, false, hook,
+        ) }.expect("the returned external range retries without a new map");
+        // SAFETY: the returned arena ID was published by this live registry;
+        // the external backing stays mapped through every bitmap observation.
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }
+            .expect("the retry publishes one arena");
+        let arena = view.arena();
+        let memory = arena.memid;
+        let owner = arena.start == base
+            && memory.kind() == MemoryKind::External
+            && memory.os_memory().is_some_and(|os| os.base == base && os.size == ARENA_MIN_SIZE)
+            && registry.count() == 1 && trace.order.load(Ordering::Acquire) == 11;
+        let info = arena.info_slices;
+        // SAFETY: these are distinct in-place bitmap images and no other
+        // owner accesses the isolated arena while this trace runs.
+        let free = unsafe { view.slices_free() }.unwrap();
+        let committed = unsafe { view.slices_committed() }.unwrap();
+        let dirty = unsafe { view.slices_dirty() }.unwrap();
+        let initial_bitmap = free.is_clear_range(0, info) == Some(true)
+            && free.is_set_range(info, arena.slice_count - info) == Some(true)
+            && committed.is_clear_range(0, arena.slice_count) == Some(true)
+            && dirty.is_set_range(0, arena.slice_count) == Some(true);
+        let claim = view.try_claim_suitable_slices(ArenaId::none(), 2, true, 0)
+            .expect("the external arena commits one live claim");
+        let index = claim.slice_index();
+        let start = claim.start() as usize;
+        let claimed = claim.memory_id().kind() == MemoryKind::Arena
+            && claim.memory_id().arena_memory().is_some_and(|a| a.arena == managed.arena_id().as_ptr())
+            && trace.order.load(Ordering::Acquire) == 111
+            && trace.claim_zero_output.load(Ordering::Acquire)
+            && trace.last_start.load(Ordering::Acquire) == start
+            && trace.last_size.load(Ordering::Acquire) == 2 * ARENA_SLICE_SIZE
+            && free.is_clear_range(index, 2) == Some(true)
+            && committed.is_set_range(index, 2) == Some(true);
+        assert!(claim.release());
+        assert!(view.collect_scheduled_purge(config.page_size(), true));
+        let after = subprocess.vm_statistics().snapshot();
+        let purge_state = trace.order.load(Ordering::Acquire) == 1112
+            && trace.null_purge_zero.load(Ordering::Acquire)
+            && trace.last_start.load(Ordering::Acquire) == start
+            && trace.last_size.load(Ordering::Acquire) == 2 * ARENA_SLICE_SIZE
+            && committed.is_clear_range(index, 2) == Some(true)
+            && after.purge_calls == before.purge_calls + 1
+            && after.purged == before.purged + (2 * ARENA_SLICE_SIZE) as i64;
+        residency = 0;
+        // SAFETY: the lookup map and external base remain live after the
+        // claim's bitmap release; `mincore` writes one residency byte.
+        let released = free.is_set_range(index, 2) == Some(true)
+            && unsafe { page_map.checked_lookup(start as *const u8) }.is_null()
+            && unsafe { crabc_core::mm::mincore_raw(base, 4096, &mut residency) }.is_ok()
+            && after.mmap_calls == before.mmap_calls
+            && after.reserved_current == before.reserved_current;
+        for (field, value) in [
+            ("refused", usize::from(refused)), ("owner", usize::from(owner)),
+            ("initial_bitmap", usize::from(initial_bitmap)),
+            ("claimed", usize::from(claimed)), ("purge_state", usize::from(purge_state)),
+            ("released_external_live", usize::from(released)),
+            ("callback_order", trace.order.load(Ordering::Acquire)),
+            ("callback_count", trace.calls.load(Ordering::Acquire)),
+        ] {
+            std::println!("m2.external_refusal.{field}={value}");
+        }
+        assert!(refused && owner && initial_bitmap && claimed && purge_state && released);
+        assert_eq!(trace.order.load(Ordering::Acquire), 1112);
+        assert_eq!(trace.calls.load(Ordering::Acquire), 4);
     }
 
     /// Runs the external-arena half of a fresh on-demand page's first prefix
