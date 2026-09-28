@@ -4001,6 +4001,238 @@ mod tests {
             && retry_same && retry_committed && retry_dirty && retry_zero_flag && maps_live);
     }
 
+    #[cfg(target_arch = "x86_64")]
+    static SECOND_RESERVE_RETRY_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn second_reserve_retry_environment() -> *const *const core::ffi::c_char {
+        SECOND_RESERVE_RETRY_ENVIRONMENT.load(Ordering::Acquire)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    struct SecondReserveRetryWarnings {
+        active: core::sync::atomic::AtomicBool,
+        subprocess: core::sync::atomic::AtomicPtr<crate::subproc::SubprocessIdentity>,
+        mmap_before: core::sync::atomic::AtomicI64,
+        os: core::sync::atomic::AtomicUsize,
+        aligned: core::sync::atomic::AtomicUsize,
+        order: core::sync::atomic::AtomicUsize,
+        counter_order: core::sync::atomic::AtomicUsize,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn second_reserve_retry_capture_warning(
+        message: *const core::ffi::c_char,
+        argument: *mut core::ffi::c_void,
+    ) {
+        if message.is_null() || argument.is_null() { return; }
+        // SAFETY: output registration retains this process-lived capture and
+        // calls it synchronously with a terminated message.
+        let warnings = unsafe { &*(argument as *const SecondReserveRetryWarnings) };
+        if !warnings.active.load(Ordering::Acquire) { return; }
+        let bytes = unsafe { std::ffi::CStr::from_ptr(message) }.to_bytes();
+        let category = if bytes.starts_with(b"unable to allocate OS memory") {
+            warnings.os.fetch_add(1, Ordering::AcqRel);
+            1
+        } else if bytes.starts_with(b"unable to allocate aligned OS memory directly") {
+            warnings.aligned.fetch_add(1, Ordering::AcqRel);
+            2
+        } else { return };
+        warnings.order.store(warnings.order.load(Ordering::Acquire) * 10 + category,
+            Ordering::Release);
+        let subprocess = warnings.subprocess.load(Ordering::Acquire);
+        if subprocess.is_null() { return; }
+        // SAFETY: the isolated subprocess owns the statistics throughout
+        // this serial failed reservation and its synchronous warnings.
+        let vm = unsafe { &*subprocess }.vm_statistics().snapshot();
+        let offset = vm.mmap_calls - warnings.mmap_before.load(Ordering::Acquire);
+        warnings.counter_order.store(
+            warnings.counter_order.load(Ordering::Acquire) * 10 + offset as usize,
+            Ordering::Release);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_second_arena_reserve_retry_c_rust_trace() {
+        use crate::arena::{ArenaSearch, ArenaView};
+        use crate::diagnostic_output::{OutputCallback, OutputOwner};
+        let entries = std::boxed::Box::leak(std::boxed::Box::new([
+            b"mimalloc_arena_reserve=32M\0".as_ptr().cast(),
+            b"mimalloc_arena_eager_commit=0\0".as_ptr().cast(),
+            b"mimalloc_allow_large_os_pages=0\0".as_ptr().cast(),
+            b"mimalloc_allow_thp=0\0".as_ptr().cast(),
+            b"mimalloc_arena_is_numa_local=0\0".as_ptr().cast(),
+            b"mimalloc_purge_delay=100000\0".as_ptr().cast(),
+            b"mimalloc_show_errors=1\0".as_ptr().cast(),
+            b"mimalloc_max_warnings=100\0".as_ptr().cast(),
+            core::ptr::null(),
+        ]));
+        SECOND_RESERVE_RETRY_ENVIRONMENT.store(entries.as_mut_ptr(), Ordering::Release);
+        let warnings = std::boxed::Box::leak(std::boxed::Box::new(SecondReserveRetryWarnings {
+            active: core::sync::atomic::AtomicBool::new(false),
+            subprocess: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+            mmap_before: core::sync::atomic::AtomicI64::new(0),
+            os: core::sync::atomic::AtomicUsize::new(0),
+            aligned: core::sync::atomic::AtomicUsize::new(0),
+            order: core::sync::atomic::AtomicUsize::new(0),
+            counter_order: core::sync::atomic::AtomicUsize::new(0),
+        }));
+        let output = std::boxed::Box::leak(std::boxed::Box::new(
+            OutputOwner::new(second_purge_default_output),
+        ));
+        // SAFETY: the environment and callback capture outlive this isolated
+        // owner; registration has no concurrent writer.
+        unsafe {
+            output.initialize_source_options(second_reserve_retry_environment);
+            output.register_output(Some(second_reserve_retry_capture_warning as OutputCallback),
+                warnings as *mut SecondReserveRetryWarnings as *mut core::ffi::c_void);
+        }
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 1024 * 1024, true, false,
+        );
+        // SAFETY: the coordinator, subprocess, policy, PageMap, and output
+        // remain live through both regular arena mappings and their claims.
+        let binding = unsafe { ProcessMainInitializationStorage::test_static_owner()
+            .test_prepare_vm_process_backing_binding_with_source_output(
+                config, output, MainSubprocess::test_static_owner(),
+                ProcessPageMapStorage::test_static_owner(),
+            ) }.expect("the second-reservation process initializes");
+        let process = binding.process();
+        process.policy().finish_preloading();
+        let backing = process.subprocess().arena_backing();
+        let search = ArenaSearch {
+            heap_sequence: 0, heap_count: 1, thread_sequence: 0,
+            numa_node: -1, requested: ArenaId::none(), allow_pinned: false,
+        };
+        let mut claims = std::vec::Vec::new();
+        for _ in 0..3 {
+            // SAFETY: all returned source slices remain claimed and their
+            // arena mapping remains published through this test.
+            claims.push(unsafe { backing.try_allocate_slices(
+                process, config, search, 256, ARENA_SLICE_SIZE, false,
+            ) }.expect("three claims fill the first regular arena"));
+        }
+        // SAFETY: the published first arena and its claims remain live.
+        let first = unsafe { backing.registry().arena_at(0) }.unwrap();
+        let first_view = unsafe { ArenaView::from_ptr(core::ptr::from_ref(first).cast_mut()) }.unwrap();
+        let first_free = unsafe { first_view.slices_free() }.unwrap();
+        let first_free_slices = (0..first.slice_count)
+            .filter(|&index| first_free.is_set_range(index, 1) == Some(true)).count();
+        let first_full = backing.registry().count() == 1 && first_free_slices < 256
+            && claims.iter().all(|claim|
+                claim.memory_id().arena_memory().is_some_and(|memory|
+                    memory.arena == core::ptr::from_ref(first).cast_mut())
+                && first_free.is_clear_range(claim.slice_index(), 256) == Some(true));
+        let before = process.subprocess().statistics().snapshot();
+        warnings.subprocess.store(core::ptr::from_ref(process.subprocess()).cast_mut(), Ordering::Release);
+        warnings.mmap_before.store(before.vm.mmap_calls, Ordering::Release);
+        warnings.active.store(true, Ordering::Release);
+        fault.set(fault::Plan::at_pair(fault::Point::Map, 1,
+            fault::Point::Map, 1, Errno::NOMEM));
+        // SAFETY: both source map attempts are refused before they acquire
+        // ownership; the first arena remains claimed and published.
+        let failed = unsafe { backing.try_allocate_slices(
+            process, config, search, 256, ARENA_SLICE_SIZE, false,
+        ) };
+        warnings.active.store(false, Ordering::Release);
+        let failed_null = failed.is_none();
+        let failed_registry = backing.registry().count();
+        let first_claims_live = claims.iter().all(|claim|
+            first_free.is_clear_range(claim.slice_index(), 256) == Some(true));
+        let failed_maps = fault.observed();
+        let after_failed = process.subprocess().statistics().snapshot();
+        let mut residence = 0u8;
+        // SAFETY: the first published mapping remains process-owned.
+        let failed_map_absent = failed_registry == 1
+            && after_failed.vm.reserved_current == before.vm.reserved_current
+            && unsafe { crabc_core::mm::mincore_raw(first.start, 4096, &mut residence) }.is_ok();
+        let failed_mmap_calls = after_failed.vm.mmap_calls - before.vm.mmap_calls;
+        let failed_commit_calls = after_failed.vm.commit_calls - before.vm.commit_calls;
+        let failed_committed_delta = after_failed.vm.committed_current - before.vm.committed_current;
+        let failed_arena_delta = after_failed.arena.arena_count - before.arena.arena_count;
+        let failed_warning_order = warnings.order.load(Ordering::Acquire);
+        let failed_warning_counter_order = warnings.counter_order.load(Ordering::Acquire);
+        fault.set(fault::Plan::disabled());
+        // SAFETY: the failed reservation published no second arena, so the
+        // same unrequested search may reserve and claim on retry.
+        let retry = unsafe { backing.try_allocate_slices(
+            process, config, search, 256, ARENA_SLICE_SIZE, false,
+        ) }.expect("the next second-arena reservation succeeds");
+        let second = unsafe { backing.registry().arena_at(1) }.unwrap();
+        let second_view = unsafe { ArenaView::from_ptr(core::ptr::from_ref(second).cast_mut()) }.unwrap();
+        let second_free = unsafe { second_view.slices_free() }.unwrap();
+        let retry_second = !core::ptr::eq(first, second) && retry.slice_index() == 9
+            && backing.registry().count() == 2;
+        let registry_order = claims.iter().all(|claim|
+            claim.memory_id().arena_memory().is_some_and(|memory|
+                memory.arena == core::ptr::from_ref(first).cast_mut()))
+            && retry.memory_id().arena_memory().is_some_and(|memory|
+                memory.arena == core::ptr::from_ref(second).cast_mut());
+        let mapped_both = unsafe { crabc_core::mm::mincore_raw(first.start, 4096, &mut residence) }.is_ok()
+            && unsafe { crabc_core::mm::mincore_raw(second.start, 4096, &mut residence) }.is_ok();
+        let first_base = first.start;
+        let second_base = second.start;
+        let after_retry = process.subprocess().statistics().snapshot();
+        let reserved_delta = after_retry.vm.reserved_current - before.vm.reserved_current;
+        let arena_delta = after_retry.arena.arena_count - before.arena.arena_count;
+        let purge_calls = after_retry.vm.purge_calls - before.vm.purge_calls;
+        let retry_slice = retry.slice_index();
+        claims.push(retry);
+        let claim_indices: std::vec::Vec<_> = claims.iter().map(|claim| claim.slice_index()).collect();
+        for claim in claims.drain(..) {
+            assert!(claim.release(), "each live source claim releases once");
+        }
+        let released = claim_indices[..3].iter().all(|&index|
+            first_free.is_set_range(index, 256) == Some(true))
+            && second_free.is_set_range(retry_slice, 256) == Some(true);
+        let mappings_retained = unsafe { crabc_core::mm::mincore_raw(first.start, 4096, &mut residence) }.is_ok()
+            && unsafe { crabc_core::mm::mincore_raw(second.start, 4096, &mut residence) }.is_ok()
+            && backing.registry().count() == 2;
+        // SAFETY: all claims have returned, no arena reader or publisher can
+        // race this isolated subprocess's terminal mapping release.
+        let destroyed = unsafe { backing.destroy_all(&mut []) }
+            .expect("the two regular arenas retire after their claims");
+        let terminal_unmapped = destroyed.is_released()
+            && unsafe { crabc_core::mm::mincore_raw(first_base, 4096, &mut residence) }.is_err()
+            && unsafe { crabc_core::mm::mincore_raw(second_base, 4096, &mut residence) }.is_err();
+        let terminal_registry = backing.registry().count();
+        let terminal = process.subprocess().vm_statistics().snapshot();
+        let terminal_reserved_delta = terminal.reserved_current - before.vm.reserved_current;
+        let terminal_committed_delta = terminal.committed_current - before.vm.committed_current;
+        for (field, value) in [
+            ("first_full", i64::from(first_full)), ("failed_null", i64::from(failed_null)),
+            ("failed_registry", failed_registry as i64),
+            ("first_claims_live", i64::from(first_claims_live)),
+            ("failed_map_absent", i64::from(failed_map_absent)),
+            ("failed_mmap_calls", failed_mmap_calls),
+            ("failed_commit_calls", failed_commit_calls),
+            ("failed_committed_delta", failed_committed_delta),
+            ("failed_arena_delta", failed_arena_delta),
+            ("os_warnings", warnings.os.load(Ordering::Acquire) as i64),
+            ("aligned_warnings", warnings.aligned.load(Ordering::Acquire) as i64),
+            ("failed_warning_order", failed_warning_order as i64),
+            ("failed_warning_counter_order", failed_warning_counter_order as i64),
+            ("retry_second", i64::from(retry_second)),
+            ("registry_order", i64::from(registry_order)),
+            ("mapped_both", i64::from(mapped_both)),
+            ("reserved_delta", reserved_delta), ("arena_delta", arena_delta),
+            ("purge_calls", purge_calls), ("released", i64::from(released)),
+            ("mappings_retained", i64::from(mappings_retained)),
+            ("rust_failed_map_attempts", failed_maps as i64),
+            ("terminal_unmapped", i64::from(terminal_unmapped)),
+            ("terminal_registry", terminal_registry as i64),
+            ("terminal_reserved_delta", terminal_reserved_delta),
+            ("terminal_committed_delta", terminal_committed_delta),
+        ] {
+            std::println!("m2.second_reserve_retry.{field}={value}");
+        }
+        assert!(first_full && failed_null && first_claims_live && failed_map_absent
+            && retry_second && registry_order && mapped_both && released && mappings_retained
+            && terminal_unmapped && terminal_registry == 0);
+    }
+
     #[test]
     fn default_os_reservation_releases_both_failed_attempts_before_retrying_from_cold() {
         let config = memory_config();
