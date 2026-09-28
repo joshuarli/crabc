@@ -2984,6 +2984,232 @@ mod tests {
     }
 
     #[cfg(target_arch = "x86_64")]
+    static EXPLICIT_TRIM_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn explicit_trim_environment() -> *const *const core::ffi::c_char {
+        EXPLICIT_TRIM_ENVIRONMENT.load(Ordering::Acquire)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    struct ExplicitTrimWarnings {
+        active: core::sync::atomic::AtomicBool,
+        order: core::sync::atomic::AtomicUsize,
+        count: core::sync::atomic::AtomicUsize,
+        subprocess: core::sync::atomic::AtomicPtr<crate::subproc::SubprocessIdentity>,
+        fallback_reserved: core::sync::atomic::AtomicI64,
+        free_reserved: core::sync::atomic::AtomicI64,
+        fallback_committed: core::sync::atomic::AtomicI64,
+        free_committed: core::sync::atomic::AtomicI64,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn explicit_trim_capture_warning(
+        message: *const core::ffi::c_char,
+        argument: *mut core::ffi::c_void,
+    ) {
+        if message.is_null() || argument.is_null() { return; }
+        // SAFETY: registration retains this process-lived capture, and the
+        // synchronous output route passes a terminated source message.
+        let warnings = unsafe { &*(argument as *const ExplicitTrimWarnings) };
+        if !warnings.active.load(Ordering::Acquire) { return; }
+        let bytes = unsafe { std::ffi::CStr::from_ptr(message) }.to_bytes();
+        let category = if bytes.starts_with(b"unable to allocate aligned OS memory directly") {
+            1
+        } else if bytes.starts_with(b"unable to free OS memory") {
+            2
+        } else {
+            0
+        };
+        if category == 0 { return; }
+        warnings.order.fetch_update(Ordering::AcqRel, Ordering::Acquire,
+            |order| Some(order * 10 + category)).unwrap();
+        warnings.count.fetch_add(1, Ordering::AcqRel);
+        let subprocess = warnings.subprocess.load(Ordering::Acquire);
+        if subprocess.is_null() { return; }
+        // SAFETY: the process identity remains live throughout this serial
+        // reservation and terminal release; output is delivered synchronously.
+        let snapshot = unsafe { &*subprocess }.vm_statistics().snapshot();
+        if category == 1 {
+            warnings.fallback_reserved.store(snapshot.reserved_current, Ordering::Release);
+            warnings.fallback_committed.store(snapshot.committed_current, Ordering::Release);
+        } else {
+            warnings.free_reserved.store(snapshot.reserved_current, Ordering::Release);
+            warnings.free_committed.store(snapshot.committed_current, Ordering::Release);
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_explicit_arena_prefix_trim_c_rust_trace() {
+        use crate::diagnostic_output::{OutputCallback, OutputOwner};
+        let entries = std::boxed::Box::leak(std::boxed::Box::new([
+            b"mimalloc_allow_large_os_pages=0\0".as_ptr().cast(),
+            b"mimalloc_allow_thp=0\0".as_ptr().cast(),
+            b"mimalloc_arena_is_numa_local=0\0".as_ptr().cast(),
+            b"mimalloc_show_errors=1\0".as_ptr().cast(),
+            b"mimalloc_max_warnings=100\0".as_ptr().cast(),
+            core::ptr::null(),
+        ]));
+        EXPLICIT_TRIM_ENVIRONMENT.store(entries.as_mut_ptr(), Ordering::Release);
+        let warnings = std::boxed::Box::leak(std::boxed::Box::new(ExplicitTrimWarnings {
+            active: core::sync::atomic::AtomicBool::new(false),
+            order: core::sync::atomic::AtomicUsize::new(0),
+            count: core::sync::atomic::AtomicUsize::new(0),
+            subprocess: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+            fallback_reserved: core::sync::atomic::AtomicI64::new(i64::MIN),
+            free_reserved: core::sync::atomic::AtomicI64::new(i64::MIN),
+            fallback_committed: core::sync::atomic::AtomicI64::new(i64::MIN),
+            free_committed: core::sync::atomic::AtomicI64::new(i64::MIN),
+        }));
+        let output = std::boxed::Box::leak(std::boxed::Box::new(
+            OutputOwner::new(policy_trim_default_output),
+        ));
+        // SAFETY: the source option image and warning capture remain live
+        // until the isolated process and all of its mappings are retired.
+        unsafe {
+            output.initialize_source_options(explicit_trim_environment);
+            output.register_output(Some(explicit_trim_capture_warning as OutputCallback),
+                warnings as *mut ExplicitTrimWarnings as *mut core::ffi::c_void);
+        }
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 1024 * 1024, true, false,
+        );
+        // SAFETY: all process, PageMap, output, and arena owners are retained
+        // through the terminal destroy operation below.
+        let binding = unsafe { ProcessMainInitializationStorage::test_static_owner()
+            .test_prepare_vm_process_backing_binding_with_source_output(
+                config, output, MainSubprocess::test_static_owner(),
+                ProcessPageMapStorage::test_static_owner(),
+            ) }.expect("the explicit reservation process initializes");
+        let process = binding.process();
+        process.policy().finish_preloading();
+        let backing = process.subprocess().arena_backing();
+        let size = ARENA_MIN_SIZE;
+        let alignment = ARENA_ALIGNMENT;
+        let page = 4096;
+        let span = size + 5 * alignment + 2 * page;
+        // SAFETY: this private PROT_NONE reservation only selects vacant,
+        // page-aligned addresses for later non-replacing fixed mmap calls.
+        let reservation = unsafe { crabc_core::mm::mmap_raw(
+            core::ptr::null_mut(), span, 0, 0x02 | 0x20, -1, 0,
+        ) }.expect("temporary explicit arena map targets");
+        let aligned = (reservation.addr() + alignment - 1) & !(alignment - 1);
+        let direct = aligned + page;
+        let over = aligned + 2 * alignment + page;
+        assert!(over + size + alignment <= reservation.addr() + span);
+        // SAFETY: no reference or owner was built from this temporary span;
+        // a competing claim causes either later fixed map to fail safely.
+        unsafe { crabc_core::mm::munmap_raw(reservation, span) }
+            .expect("release temporary explicit arena targets");
+        let mut selected_config = config;
+        selected_config.test_aligned_overmap_targets(direct, over);
+        let middle = (over + alignment - 1) & !(alignment - 1);
+        let prefix = middle - over;
+        let suffix = alignment - prefix;
+        assert!(prefix > 0 && suffix > 0);
+        let before = process.subprocess().statistics().snapshot();
+        warnings.subprocess.store(core::ptr::from_ref(process.subprocess()).cast_mut(), Ordering::Release);
+        warnings.active.store(true, Ordering::Release);
+        let fault = fault::install(fault::Plan::at(fault::Point::Unmap, 2, Errno::NOMEM));
+        let capture = fault.capture_unmap_ranges();
+        // SAFETY: this fixture is the process's only arena publisher, and
+        // the selected mapping and policy owners outlive terminal destroy.
+        let result = unsafe { backing.reserve_os_memory_for_process(
+            process, selected_config, size, MapAccess::Reserved, false, false, None,
+        ) };
+        let claimed = process.subprocess().statistics().snapshot();
+        let reservation_unmaps = fault.observed();
+        fault.set(fault::Plan::disabled());
+        let registry_claimed = backing.registry().count();
+        let arena = unsafe { backing.registry().arena_at(0) }
+            .expect("the explicit arena remains published");
+        let memory = arena.memid;
+        let memory_exact = result.as_ref().is_ok_and(|id| id.as_ptr() == core::ptr::from_ref(arena).cast_mut())
+            && arena.start as usize == middle
+            && memory.kind() == crate::types::MemoryKind::Os
+            && memory.os_memory().is_some_and(|os| os.base as usize == middle && os.size == size)
+            && !memory.initially_committed() && memory.initially_zero();
+        let (reservation_ranges, reservation_count) = capture.all()
+            .expect("the three bounded reservation releases fit");
+        let geometry = reservation_count == 3 && reservation_unmaps == 3
+            && reservation_ranges[0] == (direct, size)
+            && reservation_ranges[1] == (over, prefix)
+            && reservation_ranges[2] == (middle + size, suffix);
+        let mut residence = 0u8;
+        // SAFETY: the failed prefix is still a live anonymous map, and the
+        // published aligned middle remains live until terminal destruction.
+        let escaped_live = unsafe { crabc_core::mm::mincore_raw(over as *mut u8, page, &mut residence) }.is_ok();
+        let middle_live = unsafe { crabc_core::mm::mincore_raw(middle as *mut u8, page, &mut residence) }.is_ok();
+        let warning_fallback_reserved = warnings.fallback_reserved.load(Ordering::Acquire) - before.vm.reserved_current;
+        let warning_free_reserved = warnings.free_reserved.load(Ordering::Acquire) - before.vm.reserved_current;
+        let warning_fallback_committed = warnings.fallback_committed.load(Ordering::Acquire) - before.vm.committed_current;
+        let warning_free_committed = warnings.free_committed.load(Ordering::Acquire) - before.vm.committed_current;
+        let warning_timing = warning_fallback_reserved == size as i64
+            && warning_free_reserved == (size + alignment) as i64
+            && warning_fallback_committed == 0 && warning_free_committed == 0;
+        // SAFETY: no arena claim or reader overlaps the explicit terminal
+        // destroy; the failed prefix lies outside the published MemoryId.
+        let destroyed = unsafe { backing.destroy_all(&mut []) }
+            .expect("the explicit arena releases its published middle");
+        warnings.active.store(false, Ordering::Release);
+        let (all_ranges, unmap_count) = capture.all().expect("four source unmaps fit");
+        drop(capture);
+        let terminal_exact = destroyed.is_released() && unmap_count == 4
+            && all_ranges[3] == (middle, size);
+        let terminal = process.subprocess().statistics().snapshot();
+        let registry_terminal = backing.registry().count();
+        // SAFETY: terminal destroy released the aligned middle, while the
+        // failed prefix remains mapped outside the retired MemoryId.
+        let middle_gone = unsafe { crabc_core::mm::mincore_raw(middle as *mut u8, page, &mut residence) }.is_err();
+        let escaped_still_live = unsafe { crabc_core::mm::mincore_raw(over as *mut u8, page, &mut residence) }.is_ok();
+        // SAFETY: the failed prefix is represented by no arena or Mapping;
+        // this fixture alone retains its exact address and length for cleanup.
+        let raw_cleanup = unsafe { crabc_core::mm::munmap_raw(over as *mut u8, prefix) }.is_ok();
+        // SAFETY: the former prefix address is page aligned and no mapping
+        // owner or reference remains after the raw cleanup attempt.
+        let escaped_gone = unsafe { crabc_core::mm::mincore_raw(over as *mut u8, page, &mut residence) }.is_err();
+        let raw_stats = process.subprocess().statistics().snapshot();
+        std::println!("CRABC_M2_EXPLICIT_ARENA_PREFIX_TRIM_RUST_TRACE_BEGIN");
+        for (field, value) in [
+            ("size", size as i64), ("alignment", alignment as i64),
+            ("prefix", prefix as i64), ("suffix", suffix as i64),
+            ("reserve_success", i64::from(result.is_ok())),
+            ("memory_exact", i64::from(memory_exact)),
+            ("geometry", i64::from(geometry)),
+            ("warning_order", warnings.order.load(Ordering::Acquire) as i64),
+            ("warning_count", warnings.count.load(Ordering::Acquire) as i64),
+            ("warning_timing", i64::from(warning_timing)),
+            ("warning_fallback_reserved", warning_fallback_reserved),
+            ("warning_free_reserved", warning_free_reserved),
+            ("warning_fallback_committed", warning_fallback_committed),
+            ("warning_free_committed", warning_free_committed),
+            ("registry_claimed", registry_claimed as i64),
+            ("claimed_reserved", claimed.vm.reserved_current - before.vm.reserved_current),
+            ("claimed_committed", claimed.vm.committed_current - before.vm.committed_current),
+            ("claimed_mmap_calls", claimed.vm.mmap_calls - before.vm.mmap_calls),
+            ("claimed_arena_delta", claimed.arena.arena_count - before.arena.arena_count),
+            ("escaped_live", i64::from(escaped_live)),
+            ("middle_live", i64::from(middle_live)),
+            ("terminal_exact", i64::from(terminal_exact)),
+            ("middle_gone", i64::from(middle_gone)),
+            ("escaped_still_live", i64::from(escaped_still_live)),
+            ("registry_terminal", registry_terminal as i64),
+            ("terminal_reserved", terminal.vm.reserved_current - before.vm.reserved_current),
+            ("terminal_committed", terminal.vm.committed_current - before.vm.committed_current),
+            ("terminal_arena_delta", terminal.arena.arena_count - before.arena.arena_count),
+            ("raw_cleanup", i64::from(raw_cleanup)),
+            ("escaped_gone", i64::from(escaped_gone)),
+            ("raw_reserved", raw_stats.vm.reserved_current - before.vm.reserved_current),
+        ] {
+            std::println!("{field}={value}");
+        }
+        std::println!("CRABC_M2_EXPLICIT_ARENA_PREFIX_TRIM_RUST_TRACE_END");
+        assert!(geometry && memory_exact && warning_timing && terminal_exact && raw_cleanup);
+    }
+
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn emit_m2_second_regular_arena_c_rust_trace() {
         use crate::arena::{ArenaSearch, ArenaView};
