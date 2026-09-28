@@ -253,6 +253,10 @@ are not transferable passes for a different revision.
   A later clean run passes all 89 runnable checks, including 50 VM checks;
   the newly registered second-arena metadata fault matches all 34 C/Rust
   fields and the same four partial components retain their named blockers.
+  Direct registered-arena PageMap receivers now match a first lazy commit
+  fault and a two-fault same-call recovery. The latter retains 61 exact
+  C/Rust fields plus five raw header-dependent PageMap counts, each unchanged
+  through four source-ordered warnings; shared gate registration is pending.
   A failed second-arena committed-slice claim and same-slice retry match 24
   C/Rust fields after the regular mapping uses the warning-preserving commit
   path; two additional pinned-C fields bind the attempted `mprotect` range.
@@ -368,6 +372,10 @@ are not transferable passes for a different revision.
   Public `mi_manage_os_memory` now matches five more source-built main and
   child allocation, registration, release, and caller-held unmap observations;
   the newer clean M6 gate passes all nineteen runnable rows.
+  Public main-process callback-managed memory now matches eleven pinned-C
+  lifecycle keys, including callback commit and purge order; the next clean
+  M6 gate passes all twenty runnable rows. Child callback registration and
+  broader callback failure behavior remain open.
   All ten required gates
   remain blocked by 10 named missing API and lifetime evidence entries;
   accumulated mixed-workload main-Heap page-population parity remains unproved.
