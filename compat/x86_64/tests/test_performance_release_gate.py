@@ -76,6 +76,10 @@ HOST_IDENTITY = {
     "cpu_model": "Test CPU", "kernel_release": "5.10.0-test", "allowed_cpus": [0, 1],
     "logical_cpus": 2, "measurement_cpus": [0],
 }
+RUSTC_VERSION = ("rustc 1.100.0-nightly (574ff7d98 2026-09-14)\n"
+                 "binary: rustc\ncommit-hash: 574ff7d98bd6d037e5236a8453029173b32631fd\n"
+                 "release: 1.100.0-nightly\nhost: x86_64-unknown-linux-musl\n")
+CARGO_VERSION = "cargo 1.100.0-nightly (7941be6fb 2026-09-11)"
 
 
 class ThresholdTests(unittest.TestCase):
@@ -164,14 +168,22 @@ class ReceiptTests(unittest.TestCase):
             "attempts": [{"report": {"path": str(self.attempt)}}],
             "uncontended_host": HOST,
         })
+        rustc_stdout = self.directory / "rustc.stdout"
+        rustc_stdout.write_text(RUSTC_VERSION, encoding="utf-8")
+        cargo_stdout = self.directory / "cargo.stdout"
+        cargo_stdout.write_text(CARGO_VERSION + "\n", encoding="utf-8")
         self.native = self.write("native.json", {
             "mode": "full", "status": "complete-evidence", "uncontended_host": HOST,
+            "tools": {name: {"command": {"stdout": {"path": path.relative_to(ROOT).as_posix()}}}
+                      for name, path in (("rustc", rustc_stdout), ("cargo", cargo_stdout))},
             "diagnostics": {"allowed_affinity": HOST_IDENTITY["allowed_cpus"], "client_cpu": 0,
                             "cpuinfo": {"path": str(cpuinfo)}},
         })
         self.allocator = [self.write(f"allocator-{index}.json", {
             "index": index, "uncontended_host": HOST,
-            "provenance": {"git": {"head": SOURCE_REVISION}, "host": HOST_IDENTITY},
+            "provenance": {"git": {"head": SOURCE_REVISION}, "host": HOST_IDENTITY,
+                           "tools": {"rustc": RUSTC_VERSION.strip(), "cargo": CARGO_VERSION,
+                                     "musl-gcc": "pinned C compiler", "readelf": "pinned readelf"}},
             "rows": {"startup": {"cpus": [0], "lanes": {
                 "pinned_c": {"samples": [allocator_timed_sample(index)]},
                 "rust_engine": {"samples": [allocator_timed_sample(index)]}},
@@ -215,8 +227,11 @@ class ReceiptTests(unittest.TestCase):
                 return types.SimpleNamespace()
 
             def reader(root, path):
-                index = json.loads(path.read_text(encoding="utf-8"))["index"]
-                return {"identity": self.identities[index], "metrics": self.allocator_metrics[index]}
+                report = json.loads(path.read_text(encoding="utf-8"))
+                index = report["index"]
+                return {"identity": {**self.identities[index],
+                                     "configuration": {"tools": report["provenance"]["tools"]}},
+                        "metrics": self.allocator_metrics[index]}
             return types.SimpleNamespace(**{gate.ALLOCATOR_READER: reader})
         raise AssertionError(name)
 
@@ -358,6 +373,40 @@ class ReceiptTests(unittest.TestCase):
                 with self.assertRaisesRegex(gate.GateInputError, "performance-evidence-identity"):
                     gate.validate_receipt(ROOT, path)
                 self.identities = [{"source": "source-seal", "host": HOST_IDENTITY}] * 3
+
+    def test_rehashed_allocator_cohort_with_other_rust_tools_is_rejected(self):
+        changed_versions = {
+            "rustc": (RUSTC_VERSION.replace(
+                "574ff7d98bd6d037e5236a8453029173b32631fd", "b" * 40).strip(),
+                      "Rust compiler identity differs"),
+            "cargo": ("cargo 1.99.0-nightly (different 2026-09-01)", "Cargo identity differs"),
+        }
+        for name, (changed, expected) in changed_versions.items():
+            with self.subTest(name=name):
+                for path in self.allocator:
+                    report = json.loads(path.read_text(encoding="utf-8"))
+                    report["provenance"]["tools"][name] = changed
+                    path.write_text(json.dumps(report), encoding="utf-8")
+                receipt = self.receipt()
+                self.assertEqual(receipt["unmet"], ["performance-evidence-identity"])
+                self.assertTrue(any(expected in detail
+                                    for detail in self.details(receipt, "performance-evidence-identity")))
+                path = gate.write_receipt(self.directory / f"gate-other-{name}", receipt)
+                with self.assertRaisesRegex(gate.GateInputError, expected):
+                    gate.validate_receipt(ROOT, path)
+                for report_path in self.allocator:
+                    report = json.loads(report_path.read_text(encoding="utf-8"))
+                    report["provenance"]["tools"][name] = (RUSTC_VERSION.strip() if name == "rustc"
+                                                            else CARGO_VERSION)
+                    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    def test_allocator_c_tools_may_differ_from_native_rust_tools(self):
+        for path in self.allocator:
+            report = json.loads(path.read_text(encoding="utf-8"))
+            report["provenance"]["tools"]["musl-gcc"] = "different pinned C compiler"
+            report["provenance"]["tools"]["readelf"] = "different pinned readelf"
+            path.write_text(json.dumps(report), encoding="utf-8")
+        self.assertTrue(self.receipt()["passed"])
 
     def test_rehashed_allocator_reports_cannot_reuse_one_raw_measurement(self):
         original = json.loads(self.allocator[0].read_text(encoding="utf-8"))

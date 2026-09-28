@@ -34,7 +34,9 @@ cannot pass. The ``performance-release`` publication of
   here; that requires an explicit release decision.
 
 The allocator revision must match runtime C collection, and all three
-measurements must agree on the stable host facts they retain.
+measurements must agree on the stable host facts they retain. The allocator
+and native Rust-facade measurements must use the same recorded Rust compiler
+and Cargo versions.
 
 Every receipt must also carry an ``uncontended_host`` record,
 ``{"status": "uncontended", "evidence": {...nonempty raw observations...}}``,
@@ -379,7 +381,7 @@ def _cpu_models_by_processor(raw: bytes) -> dict[int, str]:
 
 
 def performance_identity_condition(inputs: Mapping[str, Any]) -> dict[str, Any]:
-    """Join owner-validated measurements by source revision and stable host facts."""
+    """Join owner-validated measurements by source, Rust tools, and stable host facts."""
 
     evidence = _module(ROOT / "compat" / "perf", "x86_64_evidence")
     collector = _read_json(inputs["runtime_c_collector"]["path"])
@@ -387,9 +389,17 @@ def performance_identity_condition(inputs: Mapping[str, Any]) -> dict[str, Any]:
     allocator = [(_read_json(item["path"]), item["path"]) for item in inputs["allocator_reports"]]
     revision = collector["collector"]["source_revision"]
     unmet: set[str] = set()
+    native_tools = {
+        name: (ROOT / _checkout_path(native["tools"][name]["command"]["stdout"]["path"]))
+        .read_text(encoding="utf-8").strip()
+        for name in ("rustc", "cargo")
+    }
     for report, path in allocator:
         if report["provenance"]["git"]["head"] != revision:
             unmet.add(f"{path}: allocator source revision differs from runtime C")
+        for name, label in (("rustc", "Rust compiler"), ("cargo", "Cargo")):
+            if report["provenance"]["tools"][name] != native_tools[name]:
+                unmet.add(f"{path}: allocator {label} identity differs from native facade")
 
     native_diagnostics = native["diagnostics"]
     native_cpuinfo = (ROOT / _checkout_path(native_diagnostics["cpuinfo"]["path"])).read_bytes()
@@ -423,7 +433,8 @@ def performance_identity_condition(inputs: Mapping[str, Any]) -> dict[str, Any]:
                     or allocator_host["logical_cpus"] != len(cpu_models)
                     or allocator_host["cpu_model"] != first_model):
                 unmet.add(f"{allocator_path}: allocator host identity differs from runtime C/native facade")
-    return _condition("performance-evidence-identity", sorted(unmet), "source revision and host identities agree")
+    return _condition("performance-evidence-identity", sorted(unmet),
+                      "source revision, Rust tools and host identities agree")
 
 
 # ---------------------------------------------------------------------------
