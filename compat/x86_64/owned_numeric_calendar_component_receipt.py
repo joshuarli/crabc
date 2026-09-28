@@ -31,6 +31,7 @@ import owned_crypt_runtime_evidence as copies
 import installed_compiler_translation as translation_contract
 import owned_posix_family_execution as family
 import owned_posix_product_evidence as products
+import owned_dynamic_qualification as qualification
 
 
 SCHEMA = "crabc.x86_64-owned-numeric-calendar-products/v2"
@@ -159,11 +160,25 @@ def tracked_source_identity(root: Path, relative: str) -> dict[str, object]:
 
 def source_product_seal(root: Path, static: Path | None, dynamic: Path) -> dict[str, object]:
     root = physical_directory(root, "checkout root")
+    require(root == physical_directory(qualification.ROOT, "reader source checkout"),
+            "numeric calendar checkout differs from reader source checkout")
     dynamic = checkout_path(root, dynamic.relative_to(root).as_posix(), "dynamic numeric calendar product", directory=True)
     try:
         dynamic_manifest, _ = products._validate_dynamic_product(dynamic)
     except products.ProductEvidenceError as error:
         raise NumericCalendarReceiptError(f"dynamic numeric calendar product validation failed: {error}") from error
+    state_path = physical_file(dynamic / "share/crabc/dynamic-product-state.json", "dynamic numeric calendar product state")
+    state = read_json(state_path, "dynamic numeric calendar product state")
+    require(isinstance(state, dict) and
+            state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1" and
+            state.get("status") == "materialized-unqualified",
+            "dynamic numeric calendar product state differs")
+    try:
+        current_source = qualification.source_digest()
+    except Exception as error:
+        raise NumericCalendarReceiptError("current numeric calendar source digest is unreadable") from error
+    require(state.get("source_sha256") == current_source,
+            "dynamic numeric calendar product source differs from current checkout")
     result: dict[str, object] = {
         "sources": {name: tracked_source_identity(root, relative) for name, relative in SOURCE_PATHS.items()},
         "dynamic": {"path": dynamic.relative_to(root).as_posix(), "manifest": identity(root, dynamic_manifest),
