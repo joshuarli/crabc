@@ -22,6 +22,7 @@ EXPECTED_VM_CHECK_IDS = (
     "runtime-source-environment-thp-ready-configuration-admission",
     "process-thp-madvise-success-c-rust-differential",
     "process-thp-madvise-failure-c-rust-differential",
+    "process-thp-disabled-policy-c-rust-differential",
     "aligned-hint-source-profile-and-direct-caller-matrix",
     "aligned-overmap-cleanup-c-rust-boundary-matrix",
     "legacy-os-page-suffix-trim-and-raw-release",
@@ -660,6 +661,16 @@ class NativeVmAssemblyTests(unittest.TestCase):
              "process-thp-madvise-failure-c-rust-differential"),
             ("branch_matrix", "unix-regular-map-large-page-and-thp-routing",
              "process-thp-madvise-success-c-rust-differential"),
+            ("bounded_source_definitions", "unix-thp-disable-process-policy",
+             "process-thp-disabled-policy-c-rust-differential"),
+            ("bounded_source_definitions", "os-regular-and-aligned-map-owners",
+             "process-thp-disabled-policy-c-rust-differential"),
+            ("bounded_source_definitions", "os-free-and-full-memory-id-release",
+             "process-thp-disabled-policy-c-rust-differential"),
+            ("branch_matrix", "unix-configuration-and-thp-process-policy",
+             "process-thp-disabled-policy-c-rust-differential"),
+            ("branch_matrix", "unix-regular-map-large-page-and-thp-routing",
+             "process-thp-disabled-policy-c-rust-differential"),
         )
         for section, row_id, check_id in bindings:
             with self.subTest(section=section, row_id=row_id):
@@ -706,7 +717,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
         self.assertEqual(records[6]["id"], "process-os-page-block-commit-rollback-c-rust-differential")
         self.assertEqual(records[6]["comparison_status"], "matched")
 
-    def test_process_thp_receipts_require_both_complete_c_rust_relations(self):
+    def test_process_thp_receipts_require_complete_c_rust_relations(self):
         summary = self.summary()
         evidence = {}
         for check_id, receiver in RUNNER.M2_X86_64_THP_PROCESS_RECEIVERS.items():
@@ -725,15 +736,16 @@ class NativeVmAssemblyTests(unittest.TestCase):
         records = RUNNER._m2_x86_64_vm_check_records(
             summary, self.vm_evidence(summary), thp_process_evidence=evidence
         )
-        self.assertEqual([record["id"] for record in records[-2:]], list(evidence))
-        self.assertTrue(all(record["comparison_status"] == "matched" for record in records[-2:]))
+        self.assertEqual([record["id"] for record in records[-len(evidence):]], list(evidence))
+        self.assertTrue(all(record["comparison_status"] == "matched" for record in records[-len(evidence):]))
         for check_id, receiver in RUNNER.M2_X86_64_THP_PROCESS_RECEIVERS.items():
+            field = sorted(receiver["fields"])[0]
             for changed in (
                 {"status": "passed"},
-                {"mismatches": ["advice_kind"]},
-                {"c": {field: value for field, value in evidence[check_id]["c"].items()
-                    if field != "advice_kind"}},
-                {"rust": {**evidence[check_id]["rust"], "advice_kind": 2}},
+                {"mismatches": [field]},
+                {"c": {key: value for key, value in evidence[check_id]["c"].items()
+                    if key != field}},
+                {"rust": {**evidence[check_id]["rust"], field: 2}},
                 {"command": ["python3", receiver["target"], "--stale"]},
                 {"c_commands": {"build_status": 0, "run_status": 1, "stderr": ""}},
             ):
@@ -1141,6 +1153,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "runtime-source-environment-thp-ready-configuration-admission",
                 "process-thp-madvise-success-c-rust-differential",
                 "process-thp-madvise-failure-c-rust-differential",
+                "process-thp-disabled-policy-c-rust-differential",
             },
             {record["id"] for record in vm_records},
         )

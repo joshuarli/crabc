@@ -112,6 +112,11 @@ CHECKS = (
         "compat/allocator/m2_thp_madvise_failure_x86_64.py",
     ),
     (
+        "process-thp-disabled-policy-c-rust-differential",
+        "c-rust-process-thp-policy-differential",
+        "compat/allocator/m2_thp_disabled_x86_64.py",
+    ),
+    (
         "aligned-hint-source-profile-and-direct-caller-matrix",
         "c-rust-vm-primitives-source-profile-matrix",
         "os::tests::emit_m2_aligned_hint_source_profile_c_rust_trace",
@@ -253,9 +258,10 @@ CHECKS = (
     ),
 )
 CHECK_IDS = tuple(check[0] for check in CHECKS)
-THP_ADVICE_CHECK_IDS = (
+THP_PROCESS_CHECK_IDS = (
     "process-thp-madvise-success-c-rust-differential",
     "process-thp-madvise-failure-c-rust-differential",
+    "process-thp-disabled-policy-c-rust-differential",
 )
 TRACE_CHECK_ID = CHECKS[0][0]
 TRACE_TARGET = CHECKS[0][2]
@@ -668,7 +674,7 @@ def load_fragment(path: Path) -> dict[str, Any]:
         not in thp_branch["evidence_check_ids"]
         or "runtime-source-environment-thp-ready-configuration-admission"
         not in thp_branch["evidence_check_ids"]
-        or any(check_id not in thp_branch["evidence_check_ids"] for check_id in THP_ADVICE_CHECK_IDS)
+        or any(check_id not in thp_branch["evidence_check_ids"] for check_id in THP_PROCESS_CHECK_IDS)
         or "normal RuntimeProcessStorage initialization" not in thp_branch["source_scope"]
         or "explicit Rust ProcessMain traversal" not in thp_branch["source_scope"]
         or "finite direct matrix" not in thp_branch["source_scope"].lower()
@@ -697,7 +703,7 @@ def load_fragment(path: Path) -> dict[str, Any]:
             TRACE_CHECK_ID,
             "thp-direct-policy-outcome-matrix",
             "runtime-source-environment-thp-ready-configuration-admission",
-            *THP_ADVICE_CHECK_IDS,
+            *THP_PROCESS_CHECK_IDS,
         ]
     ):
         raise _error("THP direct-policy matrix source definition lost its exact evidence binding")
@@ -707,7 +713,7 @@ def load_fragment(path: Path) -> dict[str, Any]:
         large_route_branch["disposition"] != "partial-fixed-profile"
         or "large-only-one-gib-failure-no-regular-owner"
         not in large_route_branch["evidence_check_ids"]
-        or any(check_id not in large_route_branch["evidence_check_ids"] for check_id in THP_ADVICE_CHECK_IDS)
+        or any(check_id not in large_route_branch["evidence_check_ids"] for check_id in THP_PROCESS_CHECK_IDS)
         or not any("large_only/MAP_HUGE_1GB" in condition for condition in large_route_branch["missing_conditions"])
     ):
         raise _error("large-only one-GiB route lost its bounded evidence or open frontier")
@@ -715,9 +721,9 @@ def load_fragment(path: Path) -> dict[str, Any]:
     for definition_id in ("os-regular-and-aligned-map-owners", "os-free-and-full-memory-id-release"):
         definition = next((item for item in definitions if item["id"] == definition_id), None)
         if definition is None or any(
-            check_id not in definition["evidence_check_ids"] for check_id in THP_ADVICE_CHECK_IDS
+            check_id not in definition["evidence_check_ids"] for check_id in THP_PROCESS_CHECK_IDS
         ):
-            raise _error("process-owned THP advice lost its allocation or release source boundary")
+            raise _error("process-owned THP policy lost its allocation or release source boundary")
 
     unqualified = component.get("unqualified_failure_matrix")
     if not isinstance(unqualified, list) or not unqualified:

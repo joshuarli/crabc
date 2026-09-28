@@ -260,8 +260,27 @@ class NativeM2VmFragmentTests(unittest.TestCase):
         branch = next(item for item in unbound["component"]["branch_matrix"]
                       if item["id"] == "unix-regular-map-large-page-and-thp-routing")
         branch["evidence_check_ids"].remove("process-thp-madvise-failure-c-rust-differential")
-        for changed in (duplicate, missing_target, unbound):
-            with self.subTest(changed=changed["component"]["checks"][1]["id"]), self.assertRaises(ValueError):
+        disabled_missing_target = copy.deepcopy(self.fragment)
+        disabled_check = next(item for item in disabled_missing_target["component"]["checks"]
+                              if item["id"] == "process-thp-disabled-policy-c-rust-differential")
+        disabled_check["target"] = "compat/allocator/missing-thp-policy-receiver.py"
+        disabled_wrong_kind = copy.deepcopy(self.fragment)
+        disabled_check = next(item for item in disabled_wrong_kind["component"]["checks"]
+                              if item["id"] == "process-thp-disabled-policy-c-rust-differential")
+        disabled_check["kind"] = "c-rust-process-thp-madvise-differential"
+        disabled_unbound = copy.deepcopy(self.fragment)
+        branch = next(item for item in disabled_unbound["component"]["branch_matrix"]
+                      if item["id"] == "unix-configuration-and-thp-process-policy")
+        branch["evidence_check_ids"].remove("process-thp-disabled-policy-c-rust-differential")
+        for name, changed in (
+            ("duplicate", duplicate),
+            ("missing_target", missing_target),
+            ("unbound", unbound),
+            ("disabled_missing_target", disabled_missing_target),
+            ("disabled_wrong_kind", disabled_wrong_kind),
+            ("disabled_unbound", disabled_unbound),
+        ):
+            with self.subTest(changed=name), self.assertRaises(ValueError):
                 load_fragment(self.write_fragment(changed))
 
     def test_deleting_or_reclassifying_a_required_open_branch_fails(self) -> None:
