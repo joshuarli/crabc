@@ -219,6 +219,61 @@ class QualificationPrefixTests(unittest.TestCase):
         process.wait.assert_called_once_with(timeout=3)
         drain.assert_called_once_with()
 
+    def test_kill_wait_expiry_retains_runner_proc_diagnostics(self):
+        scratch = ROOT / ".work/x86_64/tmp/qualification-kill-wait-diagnostic-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            receipts = Path(directory) / "qualification-receipts"
+            transaction = receipts / "transaction"
+            transaction.mkdir(parents=True)
+            report = copy.deepcopy(manifest.load_contract())
+
+            class PrivateRunner:
+                @staticmethod
+                def load_contract():
+                    return (SimpleNamespace(timeout_seconds=1),)
+
+                @staticmethod
+                def active_child_record(cases_root):
+                    return cases_root / ".active-child-pgid"
+
+            process = unittest.mock.Mock(pid=os.getpid(), returncode=None)
+            process.communicate.side_effect = (
+                subprocess.TimeoutExpired(["fixture"], 1),
+                (b"", b""),
+            )
+            process.wait.side_effect = subprocess.TimeoutExpired(["fixture"], 3)
+            source = {"revision": "a" * 40, "content_sha256": "b" * 64}
+            with patch.object(runner, "verify_private_admission_runner"), patch.object(
+                runner, "require_pinned_native_execution"
+            ), patch.object(runner, "source_identity", return_value=source), patch.object(
+                runner, "execution_inputs", return_value={"fixture": "inputs"}
+            ), patch.object(runner, "transaction_directory", return_value=transaction), patch.object(
+                runner, "private_admission_runner_module", return_value=PrivateRunner
+            ), patch.object(runner, "ensure_physical_receipt_directory", return_value=receipts), patch.object(
+                runner.subprocess, "Popen", return_value=process
+            ), patch.object(runner.os, "killpg"), patch.object(
+                runner.PrivateAdmissionDescendantBoundary, "kill_process"
+            ):
+                with self.assertRaisesRegex(runner.QualificationRunError, "prefix timed out"):
+                    runner.run_private_admission(report)
+
+            diagnostic = json.loads((transaction / "runner-exit-timeout.json").read_text())
+            self.assertEqual(diagnostic["pid"], os.getpid())
+            self.assertRegex(diagnostic["process_state"], r"^[A-Z]")
+            self.assertNotEqual(diagnostic["wait_channel"], "unavailable")
+            self.assertIn("State:", diagnostic["task_status"])
+
+    def test_runner_proc_snapshot_limits_each_read(self):
+        scratch = ROOT / ".work/x86_64/tmp/qualification-kill-wait-diagnostic-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            path = Path(directory) / "oversized-status"
+            path.write_bytes(b"x" * 1024)
+            value, error = runner.PrivateAdmissionDescendantBoundary.read_runner_proc_text(path, 128)
+            self.assertEqual(value, "x" * 128)
+            self.assertEqual(error, "truncated")
+
     def test_final_pipe_timeout_drains_again_while_the_subreaper_is_scoped(self):
         with tempfile.TemporaryDirectory() as directory:
             receipts = Path(directory) / "qualification-receipts"

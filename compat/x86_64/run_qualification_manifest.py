@@ -127,11 +127,62 @@ class PrivateAdmissionDescendantBoundary:
     def __init__(self) -> None:
         self._baseline = direct_child_processes()
         self._private_runner_pid: int | None = None
+        self._diagnostics_root: Path | None = None
 
-    def register_private_runner(self, process: subprocess.Popen[bytes]) -> None:
+    def register_private_runner(
+        self, process: subprocess.Popen[bytes], diagnostics_root: Path | None = None
+    ) -> None:
         if process.pid <= 0:
             raise QualificationRunError("private admission runner has an invalid process identifier")
         self._private_runner_pid = process.pid
+        self._diagnostics_root = diagnostics_root
+
+    @staticmethod
+    def read_runner_proc_text(path: Path, limit: int) -> tuple[str | None, str | None]:
+        """Keep a finite kernel snapshot even when a task exposes a large status file."""
+        try:
+            with path.open("rb") as source:
+                value = source.read(limit + 1)
+        except OSError as error:
+            return None, f"{type(error).__name__}: {error.strerror}"
+        if len(value) > limit:
+            value = value[:limit]
+            return value.decode("utf-8", errors="replace"), "truncated"
+        return value.decode("utf-8", errors="replace"), None
+
+    def retain_runner_exit_timeout(self) -> None:
+        """Record the killed runner's kernel state before another wait changes it."""
+        if self._diagnostics_root is None or self._private_runner_pid is None:
+            return
+        pid = self._private_runner_pid
+        proc = Path(f"/proc/{pid}")
+        paths = {
+            "task_status": (proc / "task" / str(pid) / "status", 16 * 1024),
+            "wait_channel": (proc / "wchan", 256),
+            "stack": (proc / "stack", 16 * 1024),
+        }
+        readings = {
+            name: self.read_runner_proc_text(path, limit)
+            for name, (path, limit) in paths.items()
+        }
+        status = readings["task_status"][0]
+        state = None
+        if status is not None:
+            state = next(
+                (line.removeprefix("State:").strip() for line in status.splitlines()
+                 if line.startswith("State:")),
+                None,
+            )
+        wait_channel = readings["wait_channel"][0]
+        diagnostic = {
+            "pid": pid,
+            "process_state": state or "unavailable",
+            "wait_channel": wait_channel.strip() if wait_channel else "unavailable",
+            "stack": readings["stack"][0],
+            "task_status": status,
+            "read_errors": {name: error for name, (_, error) in readings.items() if error},
+        }
+        write_new_json(self._diagnostics_root / "runner-exit-timeout.json", diagnostic)
 
     def adopted_children(self) -> set[int]:
         children = direct_child_processes()
@@ -169,6 +220,10 @@ class PrivateAdmissionDescendantBoundary:
             # can treat an empty adopted-child set as containment evidence.
             process.wait(timeout=3)
         except subprocess.TimeoutExpired as error:
+            try:
+                self.retain_runner_exit_timeout()
+            except (OSError, QualificationRunError) as diagnostic_error:
+                error.add_note(f"could not retain runner exit diagnostics: {diagnostic_error}")
             raise QualificationRunError(
                 "private admission timeout could not observe its runner exit"
             ) from error
@@ -1006,7 +1061,7 @@ def run_private_admission(report: Mapping[str, object]) -> Path:
             stderr=subprocess.PIPE,
             start_new_session=True,
         )
-        descendants.register_private_runner(process)
+        descendants.register_private_runner(process, transaction)
         try:
             stdout, stderr = process.communicate(
                 timeout=sum(case.timeout_seconds for case in private_runner.load_contract())
