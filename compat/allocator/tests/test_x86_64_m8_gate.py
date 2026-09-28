@@ -316,5 +316,27 @@ class M8ThreadsForkReceiptTests(unittest.TestCase):
                     self.assertEqual(result[evidence_id]["status"], "failed")
 
 
+class M8AllocatorOverrideReceiptTests(unittest.TestCase):
+    def test_successful_override_command_without_physical_receipt_fails(self) -> None:
+        products = {"evidence": "product:p", "evidence_line": "p evidence: ",
+                    "static_sysroot": "static-sysroot", "dynamic_sysroot": "dynamic-sysroot"}
+        runnable = {
+            "product:p": ["scripts/dev-x86_64.sh", "produce"],
+            "product:allocator-override": ["scripts/dev-x86_64.sh", "owned-allocator-override",
+                                           "--static-sysroot", "{static_sysroot}", "{dynamic_sysroot}"],
+        }
+
+        def command_record(command, **_kwargs):
+            line = ("p evidence: /workspace/.work/product\n" if command[1] == "produce"
+                    else "allocator-override evidence: "
+                         "/workspace/.work/x86_64/tmp/owned-allocator-override.missing\n")
+            return {"status": 0, "stdout": line, "stderr": ""}
+
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            with mock.patch.object(harness, "command_record", command_record):
+                result = gate.run_evidence(runnable, products, ["product:allocator-override"], Path(directory))
+        self.assertEqual(result["product:allocator-override"]["status"], "failed")
+
+
 if __name__ == "__main__":
     unittest.main()

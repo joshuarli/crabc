@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -747,6 +748,139 @@ def read_threads_fork_receipt(evidence_id: str, command: Sequence[str], output: 
         raise harness.HarnessError(f"{runner} physical receipt is invalid: {error}") from error
 
 
+def read_allocator_override_receipt(command: Sequence[str], output: str) -> dict[str, Any]:
+    """Replay application allocator ownership from the retained native-shadow receipt."""
+
+    runner = "owned-allocator-override"
+    if (len(command) != 5 or command[:3] != [DISPATCHER, runner, "--static-sysroot"]):
+        raise harness.HarnessError("allocator override did not consume two supplied products")
+    evidence = product_directory(output, "allocator-override evidence: ")
+    if evidence is None:
+        raise harness.HarnessError("allocator override did not emit one private evidence directory")
+    try:
+        work = Path(evidence).relative_to(CONTAINER_ROOT)
+        if (work.parent != Path(".work/x86_64/tmp")
+                or not work.name.startswith("owned-allocator-override.")):
+            raise harness.HarnessError("allocator override evidence escaped its private root")
+        roots = []
+        for value in command[3:]:
+            relative = Path(value).relative_to(CONTAINER_ROOT)
+            if not relative.is_relative_to(".work"):
+                raise harness.HarnessError("allocator override product escaped checkout work")
+            roots.append(harness.ROOT / relative)
+        static, dynamic = roots
+        receipt = native_shadow_receipt.read_receipt(harness.ROOT, runner, case_prefix="kernel-")
+        retained = receipt.path.parent
+        raw = json.loads(receipt.path.read_text(encoding="utf-8"))
+        if raw.get("work") != work.as_posix() or receipt.parameters != {
+                "CASE_TIMEOUT": "30", "SCENARIOS": "full,trio",
+                "STATIC_MODES": "static,static-pie",
+                "DYNAMIC_MODES": "kernel-pie,direct-pie,kernel-non-pie,direct-non-pie",
+                "PROVIDERS": "executable,initial-dso",
+        }:
+            raise harness.HarnessError("allocator override receipt names another run or workload")
+        consumer.owned_cleanup.product_snapshot(static, "static")
+        consumer.owned_cleanup.product_snapshot(dynamic, "dynamic")
+        scenarios = ("full", "trio")
+        dynamic_modes = ("kernel-pie", "direct-pie", "kernel-non-pie", "direct-non-pie")
+        expected_cases = []
+        expected_products = {
+            "static-manifest", "static-libc-provenance", "static-libc-archive",
+            "dynamic-manifest", "dynamic-product-state", "dynamic-libc-provenance",
+            "dynamic-libc", "dynamic-loader",
+        }
+        for scenario in scenarios:
+            expected_cases += [f"oracle-{scenario}", f"static-{scenario}", f"static-pie-{scenario}"]
+            expected_cases += [f"{mode}-{scenario}" for mode in dynamic_modes]
+            expected_products.update(f"{name}-{scenario}" for name in (
+                "oracle", "static", "static-pie", "dynamic-pie", "dynamic-non-pie",
+                "oracle-dso-provider", "oracle-dso-client", "override-dso",
+                "dso-client-pie", "dso-client-non-pie"))
+        for scenario in scenarios:
+            expected_cases += [f"oracle-dso-{scenario}"]
+            expected_cases += [f"{mode}-dso-{scenario}" for mode in dynamic_modes]
+        expected_cases.append("runner")
+        if receipt.case_ids() != expected_cases or set(receipt.products) != expected_products:
+            raise harness.HarnessError("allocator override receipt omits a frozen case or ELF product")
+        original_products = {
+            "static-manifest": static / "share/crabc/manifest.json",
+            "static-libc-provenance": static / "share/crabc/libc-static.provenance.json",
+            "static-libc-archive": static / "usr/lib/libc.a",
+            "dynamic-manifest": dynamic / "share/crabc/manifest.json",
+            "dynamic-product-state": dynamic / "share/crabc/dynamic-product-state.json",
+            "dynamic-libc-provenance": dynamic / "share/crabc/libc-shared.provenance.json",
+            "dynamic-libc": dynamic / "usr/lib/libc.so",
+            "dynamic-loader": dynamic / "lib/ld-crabc-x86_64.so.1",
+        }
+        for name, original in original_products.items():
+            original = consumer.owned_cleanup.physical(original, f"allocator override {name}")
+            if {"sha256": consumer.owned_cleanup.digest(original), "size": original.stat().st_size} != receipt.products[name]:
+                raise harness.HarnessError(f"allocator override used another supplied product: {name}")
+        static_manifest = json.loads((retained / "products/static-manifest").read_text())
+        dynamic_provenance = json.loads((retained / "products/dynamic-libc-provenance").read_text())
+        dynamic_state = json.loads((retained / "products/dynamic-product-state").read_text())
+        if (static_manifest.get("allocator_backend") != "native-shadow"
+                or dynamic_provenance.get("allocator_backend") != "native-shadow"
+                or dynamic_state.get("allocator_backend") != "native-shadow"
+                or dynamic_state.get("source_sha256") != qualification.source_digest()):
+            raise harness.HarnessError("allocator override product is not current native-shadow source")
+
+        def symbols(name: str) -> dict[str, set[str]]:
+            path = retained / "products" / name
+            result = subprocess.run(["readelf", "-Ws", str(path)], capture_output=True, text=True, check=False)
+            if result.returncode:
+                raise harness.HarnessError(f"allocator override ELF symbols are unreadable: {name}")
+            definitions: dict[str, set[str]] = {}
+            for line in result.stdout.splitlines():
+                fields = line.split()
+                if (len(fields) >= 8 and fields[0].endswith(":") and fields[3] == "FUNC"
+                        and fields[4] == "GLOBAL" and fields[6] != "UND"):
+                    definitions.setdefault(fields[7].split("@")[0], set()).add(fields[6])
+            return definitions
+
+        trio = {"malloc", "free", "realloc"}
+        full = trio | {"calloc", "aligned_alloc", "posix_memalign", "memalign", "malloc_usable_size"}
+        for scenario in scenarios:
+            required_symbols = full if scenario == "full" else trio
+            for name in (f"static-{scenario}", f"static-pie-{scenario}",
+                         f"dynamic-pie-{scenario}", f"dynamic-non-pie-{scenario}",
+                         f"override-dso-{scenario}"):
+                if not required_symbols <= set(symbols(name)):
+                    raise harness.HarnessError(f"allocator override ELF lacks strong application entries: {name}")
+            for name in (f"dso-client-pie-{scenario}", f"dso-client-non-pie-{scenario}"):
+                if trio & set(symbols(name)):
+                    raise harness.HarnessError(f"allocator override DSO client defines the provider's entries: {name}")
+                dynamic_tags = subprocess.run(["readelf", "-dW", str(retained / "products" / name)],
+                                              capture_output=True, text=True, check=False)
+                if dynamic_tags.returncode or f"[liboverride-{scenario}.so]" not in dynamic_tags.stdout:
+                    raise harness.HarnessError(f"allocator override DSO client lacks its initial provider: {name}")
+
+        logs = retained / "logs"
+        for case in expected_cases:
+            if (logs / f"{case}.status").read_bytes() != b"0\n":
+                raise harness.HarnessError(f"allocator override retained status changed: {case}")
+            if case == "runner":
+                continue
+            if (logs / f"{case}.stderr").read_bytes():
+                raise harness.HarnessError(f"allocator override retained stderr is nonempty: {case}")
+        for scenario in scenarios:
+            for oracle, cases in (
+                    (f"oracle-{scenario}", [f"static-{scenario}", f"static-pie-{scenario}",
+                                           *(f"{mode}-{scenario}" for mode in dynamic_modes)]),
+                    (f"oracle-dso-{scenario}", [f"{mode}-dso-{scenario}" for mode in dynamic_modes])):
+                transcript = (logs / f"{oracle}.stdout").read_bytes()
+                if not transcript or any((logs / f"{case}.stdout").read_bytes() != transcript for case in cases):
+                    raise harness.HarnessError(f"allocator override transcript differs from pinned musl: {scenario}")
+        return {"path": str(receipt.path), "sha256": consumer.sha256_file(receipt.path),
+                "source": dict(receipt.source), "source_sha256": qualification.source_digest(),
+                "products": {mode: consumer.sha256_file(root / "share/crabc/manifest.json")
+                             for mode, root in (("static", static), ("dynamic", dynamic))},
+                "case_count": len(receipt.cases)}
+    except (native_shadow_receipt.ReceiptError, consumer.owned_cleanup.OwnedCleanupError,
+            qualification.QualificationError, OSError, ValueError, KeyError, TypeError) as error:
+        raise harness.HarnessError(f"allocator override physical receipt is invalid: {error}") from error
+
+
 def run_evidence(
     runnable: Mapping[str, Sequence[str]], products: Mapping[str, str], selected: Sequence[str], artifacts: Path,
 ) -> dict[str, dict[str, Any]]:
@@ -807,6 +941,14 @@ def run_evidence(
             except harness.HarnessError as error:
                 with log.open("a", encoding="utf-8") as stream:
                     stream.write(f"native-shadow runner receipt reader: {error}\n")
+                passed = False
+        if evidence_id == "product:allocator-override" and passed:
+            try:
+                receipt = read_allocator_override_receipt(
+                    command, str(record["stdout"]) + str(record["stderr"]))
+            except harness.HarnessError as error:
+                with log.open("a", encoding="utf-8") as stream:
+                    stream.write(f"allocator override receipt reader: {error}\n")
                 passed = False
         if evidence_id in selected:
             results[evidence_id] = {
