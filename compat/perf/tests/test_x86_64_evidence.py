@@ -790,6 +790,15 @@ class CollectorCompositionTests(unittest.TestCase):
             roster_path.write_text(json.dumps(roster), encoding="utf-8")
             attempt_paths: list[Path] = []
             image_id = "sha256:" + "d" * 64
+            cache = directory / "sysfs" / "cpu0" / "cache" / "index0"
+            cache.mkdir(parents=True)
+            for name, value in {
+                "level": "1\n", "coherency_line_size": "64\n", "type": "Data\n",
+                "size": "32K\n", "shared_cpu_list": "0-1\n",
+            }.items():
+                (cache / name).write_text(value, encoding="ascii")
+            contract = evidence._performance_contract(str(ROOT.resolve()))
+            cache_topology = contract.benchmark_cpu_cache_topology(0, directory / "sysfs")
             external_paths = {
                 "musl_compiler": evidence.FIXED_MUSL_COMPILER,
                 "readelf": evidence.FIXED_READELF,
@@ -822,7 +831,7 @@ class CollectorCompositionTests(unittest.TestCase):
                         "system": "Linux", "machine": "x86_64", "kernel_release": "5.10.0-test",
                         "cpuinfo_sha256": evidence.cpuinfo_identity_sha256(cpuinfo.read_bytes()),
                         "benchmark_cpu": 0, "allowed_affinity_before_pin": [0, 1], "peer_cpu": 1,
-                        "affinity": [0], "cache_topology": {},
+                        "affinity": [0], "cache_topology": cache_topology,
                         "governor": {"scaling_governor": "performance", "scaling_available_governors": "performance"},
                         "environment": {"CRABC_PERF_CONTAINER_POLICY": evidence.PERFORMANCE_CONTAINER_POLICY},
                         "docker_image_id": image_id,
@@ -931,6 +940,38 @@ class CollectorCompositionTests(unittest.TestCase):
                 self.assertTrue(checked.evidence_valid)
                 self.assertFalse(checked.release_qualified)
                 self.assertEqual(list(checked.blockers), release["blockers"])
+
+                original_last = json.loads(attempt_paths[-1].read_text(encoding="utf-8"))
+                for change, expected in (("cpu", "cache topology CPU differs"),
+                                         ("shared", "cache shared CPU list differs"),
+                                         ("classification", "cache size classifications differ")):
+                    with self.subTest(change=change):
+                        altered = copy.deepcopy(original_last)
+                        topology = altered["tools"]["before"]["host"]["cache_topology"]
+                        if change == "cpu":
+                            topology["cpu"] = 1
+                        elif change == "shared":
+                            topology["caches"][0]["shared_cpu_list"] = "1"
+                        else:
+                            topology["scalar_matrix_size_classes"]["64"]["classification"] = (
+                                "exceeds-largest-reported-data-cache")
+                        altered["tools"]["after"] = copy.deepcopy(altered["tools"]["before"])
+                        attempt_paths[-1].write_text(json.dumps(altered), encoding="utf-8")
+                        rehashed = {**report, "uncontended_host": host, "scorecard": scorecard, "release": release,
+                                    "attempts": [*report["attempts"][:-1],
+                                                 {"index": 3, "report": identity(attempt_paths[-1])}]}
+                        report_path.write_text(json.dumps(rehashed), encoding="utf-8")
+                        with self.assertRaisesRegex(evidence.EvidenceError, expected):
+                            evidence.validate_collector_report(ROOT, report_path)
+                unsupported = copy.deepcopy(original_last)
+                unsupported["tools"]["before"]["host"]["cache_topology"] = (
+                    contract.benchmark_cpu_cache_topology(0, directory / "missing-sysfs"))
+                unsupported["tools"]["after"] = copy.deepcopy(unsupported["tools"]["before"])
+                attempt_paths[-1].write_text(json.dumps(unsupported), encoding="utf-8")
+                rehashed["attempts"][-1]["report"] = identity(attempt_paths[-1])
+                report_path.write_text(json.dumps(rehashed), encoding="utf-8")
+                self.assertTrue(evidence.validate_collector_report(ROOT, report_path).evidence_valid)
+                attempt_paths[-1].write_text(json.dumps(original_last), encoding="utf-8")
 
                 forged_release = {**report, "uncontended_host": host, "scorecard": scorecard, "release": {"qualified": True, "blockers": []}}
                 report_path.write_text(json.dumps(forged_release), encoding="utf-8")

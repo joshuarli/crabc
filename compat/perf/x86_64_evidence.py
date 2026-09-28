@@ -2612,6 +2612,76 @@ def _verify_stable_cpuinfo_identity(
             f"attempt {index} selected CPU is absent from retained cpuinfo")
 
 
+def _verify_cache_topology(checkout: Path, record: object, *, cpu: int, index: int) -> None:
+    """Replay cache size classes from the selected CPU's recorded sysfs entries."""
+
+    require(isinstance(record, dict), f"attempt {index} cache topology is absent")
+    if record.get("status") == "unsupported":
+        require(set(record) == {"status", "reason"}
+                and isinstance(record["reason"], str) and bool(record["reason"]),
+                f"attempt {index} unsupported cache topology differs")
+        return
+    require(record.get("status") == "ok"
+            and set(record) == {"status", "cpu", "caches", "scalar_matrix_size_classes", "cache_span_size_class"},
+            f"attempt {index} cache topology fields differ")
+    require(type(record["cpu"]) is int and record["cpu"] == cpu,
+            f"attempt {index} cache topology CPU differs from benchmark CPU")
+    caches = record["caches"]
+    require(isinstance(caches, list) and bool(caches), f"attempt {index} cache entries are absent")
+
+    def shared_with_selected(value: str) -> bool:
+        found = False
+        for part in value.split(","):
+            match = re.fullmatch(r"([0-9]+)(?:-([0-9]+))?", part)
+            if match is None:
+                return False
+            start = int(match.group(1))
+            end = int(match.group(2)) if match.group(2) is not None else start
+            if start > end:
+                return False
+            found |= start <= cpu <= end
+        return found
+
+    seen_indices: set[int] = set()
+    for cache in caches:
+        require(isinstance(cache, dict) and set(cache) == {
+            "index", "level", "type", "size_bytes", "line_bytes", "shared_cpu_list",
+        }, f"attempt {index} cache entry fields differ")
+        require(type(cache["index"]) is int and cache["index"] >= 0
+                and cache["index"] not in seen_indices
+                and type(cache["level"]) is int and cache["level"] >= 0
+                and type(cache["size_bytes"]) is int and cache["size_bytes"] > 0
+                and type(cache["line_bytes"]) is int and cache["line_bytes"] >= 0
+                and isinstance(cache["type"], str) and isinstance(cache["shared_cpu_list"], str),
+                f"attempt {index} cache entry does not match sysfs-derived values")
+        require(shared_with_selected(cache["shared_cpu_list"]),
+                f"attempt {index} cache shared CPU list differs from benchmark CPU")
+        seen_indices.add(cache["index"])
+    data_caches = [cache for cache in caches if cache["type"] in ("Data", "Unified")]
+    require(data_caches, f"attempt {index} cache topology has no data or unified entry")
+
+    def classify(size: int) -> dict[str, Any]:
+        fitting = [cache for cache in data_caches if cache["size_bytes"] >= size]
+        if not fitting:
+            return {"bytes": size, "classification": "exceeds-largest-reported-data-cache"}
+        cache = min(fitting, key=lambda item: (item["level"], item["size_bytes"], item["index"]))
+        return {"bytes": size, "classification": "fits-reported-cache", "cache_index": cache["index"],
+                "cache_level": cache["level"], "cache_type": cache["type"]}
+
+    def same_class(actual: object, expected: Mapping[str, Any]) -> bool:
+        return isinstance(actual, dict) and set(actual) == set(expected) and all(
+            type(actual[key]) is type(value) and actual[key] == value for key, value in expected.items()
+        )
+
+    contract = _performance_contract(str(checkout.resolve(strict=True)))
+    scalar = record["scalar_matrix_size_classes"]
+    sizes = contract.SCALAR_MATRIX_SIZES
+    require(isinstance(scalar, dict) and set(scalar) == {str(size) for size in sizes}
+            and all(same_class(scalar[str(size)], classify(size)) for size in sizes)
+            and same_class(record["cache_span_size_class"], classify(contract.CACHE_SPAN_BYTES)),
+            f"attempt {index} cache size classifications differ from cache entries")
+
+
 def _verify_attempt_tools(checkout: Path, attempt: Mapping[str, Any], product: Mapping[str, Any], index: int) -> None:
     tools = attempt["tools"]
     expected = {"before", "after", "host_cpuinfo_diagnostics", "compile_policy", "link_policy"}
@@ -2674,7 +2744,7 @@ def _verify_attempt_tools(checkout: Path, attempt: Mapping[str, Any], product: M
     require(peer_cpu is None or (
         type(peer_cpu) is int and peer_cpu in allowed_affinity and peer_cpu != host["benchmark_cpu"]
     ), f"attempt {index} peer CPU differs from the original allowed affinity")
-    require(isinstance(host["cache_topology"], dict), f"attempt {index} cache topology is absent")
+    _verify_cache_topology(checkout, host["cache_topology"], cpu=host["benchmark_cpu"], index=index)
     require(isinstance(host["governor"], dict) and set(host["governor"]) == {"scaling_governor", "scaling_available_governors"}, f"attempt {index} governor availability differs")
     require(isinstance(host["environment"], dict), f"attempt {index} environment record is absent")
     require(host["environment"].get("CRABC_PERF_CONTAINER_POLICY") == PERFORMANCE_CONTAINER_POLICY, f"attempt {index} container authority differs")
