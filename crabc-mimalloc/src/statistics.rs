@@ -8,13 +8,13 @@
 // `include/mimalloc-stats.h:29-116`, and
 // `include/mimalloc/internal.h:394-398`.
 
-//! Typed unconditional subprocess statistics used by the staged allocator.
+//! Typed subprocess statistics for the selected source profiles.
 //!
-//! These are source event records, not a public `mi_stats_t` layout or an
-//! optional `MI_STAT` reporting implementation.  The pinned macros execute
-//! their count/counter updates even at `MI_STAT=0`; each owner therefore names
-//! only the fields it actually drives and cannot turn a VM event into an
-//! untracked observer callback.
+//! These are source event records, not a public `mi_stats_t` layout. The
+//! pinned macros execute their count/counter updates even at `MI_STAT=0`;
+//! the selected level-one profile also records normal binned allocations.
+//! Each owner names only the fields it actually drives, so a VM event cannot
+//! become an untracked observer callback.
 
 use crate::atomic::{
     i64_add_from_relaxed, i64_add_relaxed, i64_load_relaxed, i64_max_relaxed,
@@ -339,10 +339,10 @@ impl StatCounter {
 /// each source object.  Keeping the complete v3.5.0 field and bin layout here
 /// is necessary for `stats.c:_mi_stats_merge_into`: a filtered prefix could
 /// not truthfully promise the source reset or later declaration-order merge.
-/// The current selected `MI_STAT=0` engine mutates only the event methods
-/// below; the remaining source fields stay present and zero until their
-/// producer is mapped.  This is private state, not a public `mi_stats_t` ABI
-/// or reporting interface.
+/// The default profile mutates its unconditional event fields. The optional
+/// level-one profile also mutates the binned allocation count; other source
+/// fields stay present and zero until their producers are mapped. This is
+/// private state, not a public `mi_stats_t` ABI or reporting interface.
 ///
 /// Every atomically sampled value follows `stats.c`'s relaxed operations.
 /// Consequently a merge is deliberately not a transactional snapshot: a
@@ -812,8 +812,7 @@ impl HeapTheapStatistics {
         self.pages_unabandon_busy_wait.add_from(&source.pages_unabandon_busy_wait);
         self.heaps_delete_wait.add_from(&source.heaps_delete_wait);
 
-        // `stats.c` adds malloc bins only at `MI_STAT > 1`; the selected
-        // normal-release profile is `MI_STAT == 0`.
+        // `stats.c` adds per-bin allocation counts only above level one.
         if STAT_LEVEL > 1 {
             for index in 0..self.malloc_bins.len() {
                 self.malloc_bins[index].add_from(&source.malloc_bins[index]);
@@ -1137,9 +1136,9 @@ impl<'statistics> VmStatistics<'statistics> {
 /// `mi_stats_t`, rather than independent VM, arena, Heap, and Theap statistic
 /// objects. This private source-shaped image retains the header, every field,
 /// and each bin tail so `heap.c` can merge a complete Heap record without
-/// discarding unproduced fields. The selected `MI_STAT=0` producers still
-/// mutate only their applicable fields; unimplemented source producers remain
-/// zero. It is not a public layout, reporting, or callback API.
+/// discarding unproduced fields. Each selected profile mutates only its
+/// applicable fields; unimplemented source producers remain zero. It is not
+/// a public layout, reporting, or callback API.
 pub(crate) struct SubprocessStatistics {
     statistics: HeapTheapStatistics,
 }

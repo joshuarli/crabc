@@ -35,6 +35,8 @@ use crate::config::{
     BIN_HUGE, PAGE_MAX_START_BLOCK_ALIGN2, PAGE_OSPAGE_BLOCK_ALIGN2, PAGES_DIRECT, SMALL_MAX_OBJ_SIZE,
     SMALL_SIZE_MAX, WORD_SIZE,
 };
+#[cfg(feature = "mi-stat-1")]
+use crate::config::LARGE_MAX_OBJ_SIZE;
 use crate::single_thread::{RETIRE_CYCLES, RETIRE_MAX_PAGES};
 use crate::types::{Block, EMPTY_PAGE, Page, Theap};
 use crate::{invariants, size_class};
@@ -167,7 +169,10 @@ pub(crate) unsafe fn allocate(
             }
             // SAFETY: the owner exclusively controls this live page's
             // ordinary local-list fields and its non-null immediate head.
-            return Some(unsafe { pop_immediate(page, zero) });
+            let block = unsafe { pop_immediate(page, zero) };
+            #[cfg(feature = "mi-stat-1")]
+            theap_ref.record_malloc_normal_allocated(unsafe { page.as_ref() }.block_size());
+            return Some(block);
         }
     }
 
@@ -198,6 +203,8 @@ pub(crate) unsafe fn allocate(
         Page::set_retire_expire_at(first, 0);
         pop_immediate(first, zero)
     };
+    #[cfg(feature = "mi-stat-1")]
+    theap_ref.record_malloc_normal_allocated(first_ref.block_size());
     debug_assert!(alignment.is_none_or(|alignment| block.as_ptr().addr() & (alignment - 1) == 0));
     Some(block)
 }
@@ -246,6 +253,8 @@ pub(crate) unsafe fn free(
     }
     // SAFETY: the owner exclusively controls the ordinary local-list fields,
     // and the caller consumes exact live `block` of this page.
+    #[cfg(feature = "mi-stat-1")]
+    unsafe { record_normal_free(theap, page) };
     unsafe { push_local_free(page, block) };
     true
 }
@@ -289,6 +298,8 @@ unsafe fn retire_last_local_free(
     }
     // SAFETY: this consumes the exact live block after all fallbacks have
     // been ruled out; the owner controls the page's local-list fields.
+    #[cfg(feature = "mi-stat-1")]
+    unsafe { record_normal_free(theap, page) };
     unsafe { push_local_free(page, block) };
     // SAFETY: a fresh shared projection after the local-list writes; the
     // flag is the page's atomic `xthread_id` word.
@@ -304,6 +315,23 @@ unsafe fn retire_last_local_free(
         debug_assert!(noted, "an ordinary queue bin is below BIN_FULL");
     }
     true
+}
+
+/// Records a consumed owner-local binned block before its free-list change.
+///
+/// # Safety
+///
+/// `theap` owns the live `page` on this thread and the caller has completed
+/// every preflight that could decline the free.
+#[cfg(feature = "mi-stat-1")]
+#[inline]
+unsafe fn record_normal_free(theap: NonNull<Theap>, page: NonNull<Page>) {
+    // SAFETY: the caller keeps both source objects live and exclusively owns
+    // their ordinary fields through this free.
+    let block_size = unsafe { page.as_ref() }.block_size();
+    if block_size <= LARGE_MAX_OBJ_SIZE {
+        unsafe { theap.as_ref() }.record_malloc_normal_freed(block_size);
+    }
 }
 
 /// `mi_page_malloc_zero`'s pop of the immediate head, with its zeroing
