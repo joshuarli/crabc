@@ -123,7 +123,7 @@ def _elf_mode(path: Path) -> tuple[int, str | None]:
     return kind, interpreters[0] if interpreters else None
 
 
-def _static_main_symbol(path: Path) -> tuple[int, int]:
+def _application_main_symbol(path: Path) -> tuple[int, int]:
     """Read the one defined application entry symbol from an ELF symbol table."""
     data = path.read_bytes()
     _require(len(data) >= 64 and data[:7] == b"\x7fELF\x02\x01\x01",
@@ -161,7 +161,7 @@ def _static_main_symbol(path: Path) -> tuple[int, int]:
     return matches[0]
 
 
-def _static_map_main(path: Path, object_name: str) -> tuple[int, int]:
+def _application_map_main(path: Path, object_name: str) -> tuple[int, int]:
     """Read the application's linked main address and extent from the LLD map."""
     main = []
     application_text = []
@@ -406,9 +406,9 @@ def _check_static_link(retained: Path, hashes: dict[str, str], program: str, mod
     # The output hash in the link receipt can be rewritten with a substituted
     # same-mode ELF. Its main function must also be the one placed from the
     # retained application object at the address recorded by the linker map.
-    object_main = _static_main_symbol(retained / f"object-{name}")
-    map_main = _static_map_main(retained / f"map-{name}", f"object-{name}.o")
-    output_main = _static_main_symbol(retained / name)
+    object_main = _application_main_symbol(retained / f"object-{name}")
+    map_main = _application_map_main(retained / f"map-{name}", f"object-{name}.o")
+    output_main = _application_main_symbol(retained / name)
     _require(output_main == map_main and output_main[1] == object_main[1],
              f"{name} ELF main differs from retained map or application object")
 
@@ -450,6 +450,14 @@ def _check_dynamic_link(retained: Path, hashes: dict[str, str], program: str, mo
              inspection.get("declared", {}).get("mode") == link_mode and
              inspection.get("facts") == owned_dynamic_elf.inspect(retained / name),
              f"{name} ELF inspection or link map differs from the executed product")
+    # A rehashed link and ELF inspection can describe a different executable
+    # with the same loader mode. Check that LLD placed the retained application
+    # object's main function at the address carried by the final ELF.
+    object_main = _application_main_symbol(retained / f"object-{name}")
+    map_main = _application_map_main(retained / f"map-{name}", f"object-{name}.o")
+    output_main = _application_main_symbol(retained / name)
+    _require(output_main == map_main and output_main[1] == object_main[1],
+             f"{name} ELF main differs from retained map or application object")
 
 
 def read_policy_receipt(root: Path) -> native_shadow_receipt.Receipt:

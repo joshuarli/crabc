@@ -98,6 +98,39 @@ class OwnedNativeAllocatorPolicyReceiptTests(unittest.TestCase):
                 path.write_bytes(data)
         policy_receipt.read_policy_receipt(ROOT)
 
+        target = latest / "products/dynamic-pie-basic"
+        link = latest / "products/link-dynamic-pie-basic"
+        inspection = latest / "products/elf-dynamic-pie-basic"
+        saved = {path: path.read_bytes() for path in (receipt_path, target, link, inspection)}
+        try:
+            replacement = (latest / "products/dynamic-pie-observability").read_bytes()
+            target.write_bytes(replacement)
+            output_hash = hashlib.sha256(replacement).hexdigest()
+            changed_link = json.loads(saved[link])
+            changed_link["output_sha256"] = output_hash
+            link.write_text(json.dumps(changed_link))
+            changed_inspection = json.loads(saved[inspection])
+            other_inspection = json.loads((latest / "products/elf-dynamic-pie-observability").read_bytes())
+            changed_inspection["output_sha256"] = output_hash
+            changed_inspection["facts"] = other_inspection["facts"]
+            inspection.write_text(json.dumps(changed_inspection))
+            changed_receipt = json.loads(saved[receipt_path])
+            for name, path in (("dynamic-pie-basic", target),
+                               ("link-dynamic-pie-basic", link),
+                               ("elf-dynamic-pie-basic", inspection)):
+                data = path.read_bytes()
+                changed_receipt["products"][name] = {
+                    "sha256": hashlib.sha256(data).hexdigest(), "size": len(data),
+                }
+            receipt_path.write_text(json.dumps(changed_receipt))
+            receipt.read_receipt(ROOT, RUNNER)
+            with self.assertRaisesRegex(receipt.ReceiptError, "dynamic-pie-basic ELF main differs from retained map"):
+                policy_receipt.read_policy_receipt(ROOT)
+        finally:
+            for path, data in saved.items():
+                path.write_bytes(data)
+        policy_receipt.read_policy_receipt(ROOT)
+
 
 if __name__ == "__main__":
     unittest.main()
