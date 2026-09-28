@@ -178,7 +178,7 @@ pub(crate) unsafe fn allocate(
             }
             // SAFETY: a non-null head excludes the sentinel; the owner controls
             // this live page's ordinary local-list fields and immediate head.
-            let block = unsafe { pop_immediate(page, zero) };
+            let block = unsafe { pop_selected_head(page, head, zero) };
             #[cfg(feature = "mi-stat-1")]
             theap_ref.record_malloc_normal_allocated(unsafe { page.as_ref() }.block_size());
             #[cfg(feature = "mi-stat-2")]
@@ -215,17 +215,17 @@ pub(crate) unsafe fn allocate(
     // The counter step below touches only the Theap. Keep the owner-only
     // local head observed during this preflight for the source quick collect;
     // no other owner can change either ordinary free-list field between them.
-    let (immediate_head, local_head) = unsafe {
+    let (immediate_available, local_head) = unsafe {
         let state = Page::local_free_list_state_at(first);
-        let immediate_head = *state.free.as_ptr();
-        let local_head = if immediate_head.is_null() {
+        let immediate_available = !(*state.free.as_ptr()).is_null();
+        let local_head = if !immediate_available {
             *state.local_free.as_ptr()
         } else {
             core::ptr::null_mut()
         };
-        (immediate_head, local_head)
+        (immediate_available, local_head)
     };
-    if immediate_head.is_null() && local_head.is_null() {
+    if !immediate_available && local_head.is_null() {
         // An empty head needs `mi_page_queue_find_free_ex`.
         return None;
     }
@@ -234,14 +234,19 @@ pub(crate) unsafe fn allocate(
         return None;
     }
     // SAFETY: exclusive ordinary-field ownership, as above. The head has an
-    // immediate or local-free block, so `mi_page_free_quick_collect` leaves
-    // `free` non-null for the pop.
+    // immediate or local-free block, so the selected block remains live
+    // through the source quick collect and pop.
     let block = unsafe {
-        quick_collect(first, local_head);
+        quick_collect_before_pop(first, local_head);
         // `mi_page_queue_lookup_free_first` clears this owner-only byte once
         // it selects the head.
         Page::set_retire_expire_at(first, 0);
-        pop_immediate(first, zero)
+        let selected_head = if local_head.is_null() {
+            *Page::local_free_list_state_at(first).free.as_ptr()
+        } else {
+            local_head
+        };
+        pop_selected_head(first, selected_head, zero)
     };
     // SAFETY: the queue head remains live through the owner-local pop.
     #[cfg(any(feature = "mi-stat-1", feature = "mi-stat-2"))]
@@ -386,22 +391,22 @@ unsafe fn record_normal_free(theap: NonNull<Theap>, page: NonNull<Page>) {
     }
 }
 
-/// `mi_page_malloc_zero`'s pop of the immediate head, with its zeroing
-/// branch (`free_is_zero` pages skip the clear; the link word is always
-/// cleared).
+/// `mi_page_malloc_zero`'s pop of the selected head, with its zeroing branch
+/// (`free_is_zero` pages skip the clear; the link word is always cleared).
 ///
 /// # Safety
 ///
-/// The caller exclusively owns `page`'s ordinary local-list fields, its
-/// immediate list is non-empty, and every link names a block of this page
-/// (the source invariant `mi_block_next` relies on in normal release).
+/// The caller exclusively owns `page`'s ordinary local-list fields. `block`
+/// is its non-null immediate head, or its local head selected while the
+/// immediate list was empty; in the latter case the local list was cleared
+/// before this call. Every link names a block of this page (the source
+/// invariant `mi_block_next` relies on in normal release).
 #[inline(always)]
-unsafe fn pop_immediate(page: NonNull<Page>, zero: bool) -> NonNull<u8> {
+unsafe fn pop_selected_head(page: NonNull<Page>, block: *mut Block, zero: bool) -> NonNull<u8> {
     // SAFETY: forwarded; this projects only the owner's ordinary fields.
     let state = unsafe { Page::local_free_list_state_at(page) };
-    // SAFETY: forwarded non-empty immediate list of valid block links.
+    // SAFETY: forwarded non-empty selected list of valid block links.
     unsafe {
-        let block = *state.free.as_ptr();
         let link = block.cast::<*mut Block>();
         let next = *link;
         *link = core::ptr::null_mut();
@@ -417,22 +422,23 @@ unsafe fn pop_immediate(page: NonNull<Page>, zero: bool) -> NonNull<u8> {
     }
 }
 
-/// `mi_page_free_quick_collect` after the caller saw `free` or `local_free`
-/// non-empty. `local_head` is that exact owner-only local head when the
-/// immediate list was empty, or null when the immediate list was non-empty.
+/// The owner-only part of `mi_page_free_quick_collect` before an immediate
+/// pop. `local_head` is the exact local head when the immediate list was empty,
+/// or null when the immediate list was non-empty. The pop writes the selected
+/// block's successor directly to `free`, omitting the intermediate local-head
+/// store that no other thread can observe.
 ///
 /// # Safety
 ///
-/// Same ownership contract as [`pop_immediate`]. `local_head` must be the
+/// Same ownership contract as [`pop_selected_head`]. `local_head` must be the
 /// page's unchanged local head observed while its immediate head was null,
 /// or null when that immediate head was non-null.
 #[inline(always)]
-unsafe fn quick_collect(page: NonNull<Page>, local_head: *mut Block) {
+unsafe fn quick_collect_before_pop(page: NonNull<Page>, local_head: *mut Block) {
     // SAFETY: forwarded ordinary-field ownership.
     unsafe {
         let state = Page::local_free_list_state_at(page);
         if !local_head.is_null() {
-            *state.free.as_ptr() = local_head;
             *state.local_free.as_ptr() = core::ptr::null_mut();
             *state.free_is_zero.as_ptr() = false;
         }
@@ -443,8 +449,9 @@ unsafe fn quick_collect(page: NonNull<Page>, local_head: *mut Block) {
 ///
 /// # Safety
 ///
-/// Same ownership contract as [`pop_immediate`]; `block` is an exact live
-/// block of `page` that the caller consumes, and `used` is nonzero.
+/// The caller exclusively owns the live page's ordinary local-list fields
+/// and consumes `block`, an exact live block of that page. `used` is nonzero,
+/// and every existing local-free link names a block of this page.
 #[inline(always)]
 unsafe fn push_local_free(page: NonNull<Page>, block: NonNull<u8>) {
     // SAFETY: forwarded ordinary-field ownership and consumed live block.
