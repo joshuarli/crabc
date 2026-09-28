@@ -348,6 +348,70 @@ static void creator_cancellation(void)
     }
     puts("timer creator: pending cancellation, disabled state, non-thread path");
 }
+
+/* Keep the first request in each thread free of diagnostic I/O or smaller
+ * allocations. The later sizes distinguish a general thread refusal from a
+ * size-class refusal after the original 4097-byte observation is retained. */
+static int allocation_isolation_requests(const char *role, int ordinal)
+{
+    static const size_t sizes[] = {4097, 16, 4096, 8192};
+    int failures = 0;
+    int initial = initialized, tail = zeroed;
+    for (size_t i = 0; i < sizeof sizes / sizeof sizes[0]; ++i) {
+        errno = 0;
+        void *block = malloc(sizes[i]);
+        int result_errno = errno;
+        fprintf(stderr, "timer allocator isolation: %s %d tls=%d/%d size=%zu allocated=%d errno=%d\n",
+                role, ordinal, initial, tail, sizes[i], block != NULL, result_errno);
+        if (block) free(block);
+        else ++failures;
+    }
+    return failures;
+}
+
+static void *allocation_isolation_pthread(void *unused)
+{
+    (void)unused;
+    return (void *)(intptr_t)allocation_isolation_requests("pthread", 0);
+}
+
+static atomic_int isolation_callbacks, isolation_completed;
+static void allocation_isolation_notify(union sigval value)
+{
+    CHECK(value.sival_int == 91);
+    int ordinal = atomic_fetch_add(&isolation_callbacks, 1);
+    int failures = allocation_isolation_requests("timer", ordinal);
+    if (failures) _Exit(1);
+    initialized = 99;
+    zeroed = 99;
+    atomic_fetch_add(&isolation_completed, 1);
+}
+
+static int allocation_isolation(void)
+{
+    CHECK(allocation_isolation_requests("main", 0) == 0);
+    pthread_t thread;
+    void *result;
+    CHECK(pthread_create(&thread, NULL, allocation_isolation_pthread, NULL) == 0);
+    CHECK(pthread_join(thread, &result) == 0 && result == NULL);
+    struct sigevent event = {.sigev_notify = SIGEV_THREAD, .sigev_value.sival_int = 91,
+                             .sigev_notify_function = allocation_isolation_notify};
+    pthread_attr_t attr;
+    CHECK(pthread_attr_init(&attr) == 0);
+    CHECK(pthread_attr_setstacksize(&attr, 262144) == 0);
+    event.sigev_notify_attributes = &attr;
+    timer_t timer;
+    CHECK(timer_create(CLOCK_MONOTONIC, &event, &timer) == 0);
+    CHECK(pthread_attr_destroy(&attr) == 0);
+    struct itimerspec arm = {.it_value = {0, 1000000}}, old;
+    for (int ordinal = 0; ordinal < 2; ++ordinal) {
+        CHECK(timer_settime(timer, 0, &arm, &old) == 0);
+        wait_count(&isolation_completed, ordinal + 1);
+    }
+    CHECK(timer_delete(timer) == 0);
+    return 0;
+}
+
 static int failure_once(void)
 {
     struct sigevent event = {.sigev_notify = SIGEV_THREAD, .sigev_notify_function = notify};
@@ -358,6 +422,7 @@ static int failure_once(void)
 }
 int main(int argc, char **argv)
 {
+    if (argc > 1 && !strcmp(argv[1], "allocation-isolation")) return allocation_isolation();
     if (argc > 1 && !strcmp(argv[1], "failure-once")) return failure_once();
     dynamic_tls = argc > 1 && !strcmp(argv[1], "dynamic");
     /* Reclamation paces 32768 detached-worker creations with sleeps, so its
