@@ -1,4 +1,5 @@
 """Raw-file regressions for finite POSIX family observations."""
+import json
 from pathlib import Path
 import shutil
 import sys
@@ -137,7 +138,7 @@ class ObservationsTests(unittest.TestCase):
                 with self.assertRaises(observations.ObservationError):
                     observations._timer_unit_transcript(observations.ROOT, 'tls-reset-tests', {'stdout': invalid, 'stderr': b''})
 
-    def test_timer_oracle_failure_once_rejects_a_rehashed_error_transcript(self):
+    def test_timer_oracle_failure_once_rejects_rehashed_raw_records(self):
         layout = observations.LAYOUTS['posix-timers']
         self.fixture('posix-timers')
         for suffix, data in (('.stdout', b'behavior\n'), (layout.stderr_suffix, b''),
@@ -156,9 +157,9 @@ class ObservationsTests(unittest.TestCase):
             stem = f'oracle-failure-{attempt}'
             for suffix, data in (('.stdout', b''), ('.stderr', b''), ('.status', status)):
                 (self.leaf / (stem + suffix)).write_bytes(data)
-        (self.leaf / 'oracle-failure-2.json').write_text(
-            '{"pid": 1234, "tasks": {"1234": {"status": "sleeping", '
-            '"wchan": "futex_wait", "syscall": "202"}}}\n')
+        (self.leaf / 'oracle-failure-2.json').write_text(json.dumps({
+            'pid': 1234, 'tasks': {'1234': {'status': 'sleeping', 'wchan': 'futex_wait', 'syscall': '202'}}
+        }, indent=2) + '\n')
 
         with patch.object(observations, '_timer_unit_transcript'):
             result = observations.collect('posix-timers', self.leaf, static_required=True)
@@ -169,6 +170,10 @@ class ObservationsTests(unittest.TestCase):
             (self.leaf / 'oracle-failure-1.stderr').write_bytes(b'')
             (self.leaf / 'oracle-failure-2.stdout').write_bytes(b'unexpected output\n')
             with self.assertRaisesRegex(observations.ObservationError, 'timer oracle race transcript'):
+                observations.collect('posix-timers', self.leaf, static_required=True)
+            (self.leaf / 'oracle-failure-2.stdout').write_bytes(b'')
+            (self.leaf / 'oracle-failure-2.json').write_text('{}\n')
+            with self.assertRaisesRegex(observations.ObservationError, 'timer oracle race witness'):
                 observations.collect('posix-timers', self.leaf, static_required=True)
 
     def test_static_fork_requires_both_nested_roles_and_exact_modes(self):

@@ -235,6 +235,26 @@ def _timer_unit_transcript(root, stem, raw):
         raise ObservationError('timer unit transcript did not execute exactly the required test')
 
 
+def _timer_race_witness(path: Path, leaf: Path) -> dict:
+    """Bind a timed-out child to the task sample captured before it was killed."""
+    raw, identity = _file(path, leaf)
+    try:
+        witness = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ObservationError('timer oracle race witness is malformed') from error
+    if (not isinstance(witness, dict) or list(witness) != ['pid', 'tasks']
+            or type(witness['pid']) is not int or witness['pid'] <= 0
+            or not isinstance(witness['tasks'], dict) or not witness['tasks']
+            or str(witness['pid']) not in witness['tasks']
+            or any(not re.fullmatch(r'[1-9][0-9]*', task) or not isinstance(sample, dict)
+                   or list(sample) != ['status', 'wchan', 'syscall']
+                   or any(not isinstance(value, str) or not value for value in sample.values())
+                   for task, sample in witness['tasks'].items())
+            or raw != (json.dumps(witness, indent=2) + '\n').encode('utf-8')):
+        raise ObservationError('timer oracle race witness differs from the captured task sample')
+    return identity
+
+
 def _timers(leaf, root, layout, modes, expected):
     supplemental = {'candidate-reclamation': {}, 'runtime-unit-checks': {}, 'oracle-race-observations': {}}
     for mode in modes:
@@ -255,7 +275,7 @@ def _timers(leaf, root, layout, modes, expected):
             raise ObservationError('timer oracle race transcript differs')
         proc = leaf / (stem + '.json')
         if raw['status'] == b'-9\n':
-            _, record['proc'] = _file(proc, leaf)
+            record['proc'] = _timer_race_witness(proc, leaf)
         elif proc.exists():
             raise ObservationError('completed timer oracle has a timeout witness')
         supplemental['oracle-race-observations'][str(attempt)] = record
