@@ -84,6 +84,8 @@
         "test": false
       },
       "features": {
+        "mi-stat-1": false,
+        "mi-stat-2": false,
         "native-runtime-test-audit": false,
         "native-runtime-test-fault": false,
         "test-adapter": false

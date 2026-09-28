@@ -1142,6 +1142,21 @@ fn hidden_or_selected() {}
                 source, self.manifest["phase_bc_call_graph"]["cfg_environment"]
             )
 
+    def test_default_production_cfg_excludes_optional_statistics(self) -> None:
+        source = '''\
+#[cfg(feature = "mi-stat-1")]
+fn level_one_statistics() {}
+#[cfg(feature = "mi-stat-2")]
+fn level_two_statistics() {}
+fn default_allocator() {}
+'''
+        selected = RATCHET.production_rust_source(
+            source, self.manifest["phase_bc_call_graph"]["cfg_environment"]
+        )
+        self.assertNotIn("level_one_statistics", selected)
+        self.assertNotIn("level_two_statistics", selected)
+        self.assertIn("default_allocator", selected)
+
     def test_canonical_upstream_stress_complete_matrix_is_consumed(self) -> None:
         cargo_target = {
             "kind": ["cdylib", "staticlib"],
