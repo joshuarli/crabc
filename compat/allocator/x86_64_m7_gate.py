@@ -234,7 +234,7 @@ def run_default_baseline_audit(offline: bool, scratch: Path) -> dict[str, Any]:
     configuration_test_command = [
         harness.require_tool("cargo"), "test", "--locked", "--release", "--target", RUST_TARGET,
         "-p", "crabc-mimalloc", "--lib",
-        "config::tests::default_release_constants_match_the_pinned_linux_64_profiles",
+        "config::tests::selected_release_constants_match_the_pinned_linux_64_profiles",
         "--target-dir", str(target_dir), "--", "--exact",
     ]
     configuration_test = harness.command_record(

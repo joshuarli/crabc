@@ -545,7 +545,7 @@
     "components": [
       {
         "check_count": 5,
-        "checks_sha256": "e04490ca91363b12cabcb94a4d61aa4449eee75295bc26684147fb5504eec32e",
+      "checks_sha256": "37d66fadada3c80587b152a0a5974661370bc29878c8f9f09e2be0b740324a99",
         "id": "configuration-and-arithmetic",
         "layout_key_count": 71,
         "layout_keys_sha256": "cff3e3fd23239e8b54a8652a184e198d34ac0beb514cad2c5be45f29a24d92c3",
@@ -609,7 +609,7 @@
     "purpose": "Exact check filters, selected layout-key vectors, source-boundary shapes, once-call-site shapes, prim.h declaration names, and exclusion identities shared as source-shaped M1 inputs only. Their canonical JSON counts and digests are checked before x86 execution; no AArch64 component status, report, or source-map status is imported.",
     "source_contract": {
       "path": "compat/allocator/m1-foundations-v3.5.0.json",
-      "sha256": "73044a9fa746b17002a5c2f73123234a1c4d5a88d090dd8cba8030c3746dbe19"
+      "sha256": "54b20cd75f685da9687781bfb3da48f64234a4144f01d20860a17649c12ca950"
     }
   },
   "schema": "crabc-mimalloc-x86_64-m1-foundations",

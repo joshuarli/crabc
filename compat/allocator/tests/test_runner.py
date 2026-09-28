@@ -3742,6 +3742,7 @@ class ContractTests(unittest.TestCase):
             "pointer-alignment-zero",
             [check["id"] for check in configuration_and_arithmetic["checks"]],
         )
+
         self.assertIn(
             {
                 "kind": "item",
@@ -4086,6 +4087,18 @@ class ContractTests(unittest.TestCase):
                 "--test-threads=1",
             ],
         )
+
+    def test_m1_foundations_checked_filters_resolve_to_current_tests(self) -> None:
+        contract = RUNNER.read_json(RUNNER.M1_FOUNDATIONS_CONTRACT)
+        summary = RUNNER.validate_m1_foundations_contract(
+            contract, RUNNER.load_pin(), RUNNER.load_port_map(),
+        )
+        for component in summary["components"]:
+            for check in component["checks"]:
+                with self.subTest(component=component["id"], check=check["id"]):
+                    RUNNER._m1_foundations_source_test_exists(
+                        check["target"], check["id"],
+                    )
 
     def test_m1_bootstrap_contract_requires_static_image_and_once_callsite_inventory(self) -> None:
         contract = RUNNER.read_json(RUNNER.M1_FOUNDATIONS_CONTRACT)

@@ -5,7 +5,7 @@
         {
           "expected_passed_test_count": 1,
           "id": "release-configuration",
-          "target": "config::tests::default_release_constants_match_the_pinned_linux_64_profiles"
+          "target": "config::tests::selected_release_constants_match_the_pinned_linux_64_profiles"
         },
         {
           "expected_passed_test_count": 1,
