@@ -62,8 +62,9 @@ are not transferable passes for a different revision.
   arenas, initialization, and fault injection remain partial. Its direct fresh
   OS page-area metadata-commit receiver matches pinned C for both successful
   and failed cleanup, including warning timing and accounting. A fresh OS
-  singleton publication and terminal-release receiver matches 107 C/Rust
-  relations for mapping extent, PageMap state, counters, and exact unmap.
+  singleton publication, terminal release, and failed terminal unmap receiver
+  matches 115 C/Rust relations for mapping extent, PageMap state, warning
+  order, counters, and exact unmap or retained raw-only retry.
   Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). On an idle host the development engine harness
