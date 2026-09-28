@@ -3203,10 +3203,15 @@ unsafe fn apply_relr_table(object: &Object) -> Option<()> {
 
         let start = next_virtual_address?;
         let mut bitmap = encoded >> 1;
+        let runtime_start = if bitmap != 0 {
+            validated_relr_bitmap_start(object.base, start, bitmap)?
+        } else {
+            0
+        };
         while bitmap != 0 {
             let bit = bitmap.trailing_zeros() as u64;
-            let target = start.checked_add(bit.checked_mul(ELF64_RELR_SIZE as u64)?)?;
-            apply_relr_target(object, target)?;
+            let slot = (runtime_start + bit * ELF64_RELR_SIZE as u64) as *mut u64;
+            *slot = (*slot).wrapping_add(object.base);
             bitmap &= bitmap - 1;
         }
         next_virtual_address = Some(
@@ -3214,6 +3219,17 @@ unsafe fn apply_relr_table(object: &Object) -> Option<()> {
         );
     }
     Some(())
+}
+
+#[inline(always)]
+fn validated_relr_bitmap_start(base: u64, start: u64, bitmap: u64) -> Option<u64> {
+    if bitmap == 0 { return None; }
+    let runtime_start = base.checked_add(start)?;
+    // The highest selected word bounds every lower address. Unselected bits
+    // cannot force an otherwise valid sparse bitmap beyond the address space.
+    let highest = 63u64 - bitmap.leading_zeros() as u64;
+    runtime_start.checked_add(highest * ELF64_RELR_SIZE as u64)?;
+    Some(runtime_start)
 }
 
 unsafe fn apply_relr_target(object: &Object, virtual_address: u64) -> Option<()> {
@@ -3249,6 +3265,34 @@ mod relr_bitmap_tests {
         object.relr = leading_bitmap.as_ptr().cast::<u8>();
         object.relrsz = ELF64_RELR_SIZE;
         assert!(unsafe { apply_relr_table(&object) }.is_none());
+    }
+
+    #[test]
+    fn relr_rejects_overflowed_runtime_target_and_wraps_existing_addend() {
+        let overflowing = [8u64];
+        let invalid = Object {
+            base: u64::MAX - 7,
+            relr: overflowing.as_ptr().cast::<u8>(),
+            relrsz: ELF64_RELR_SIZE,
+            ..EMPTY_OBJECT
+        };
+        assert!(unsafe { apply_relr_table(&invalid) }.is_none());
+
+        let mut word = u64::MAX;
+        let direct = [0u64];
+        let valid = Object {
+            base: (&mut word as *mut u64) as u64,
+            relr: direct.as_ptr().cast::<u8>(),
+            relrsz: ELF64_RELR_SIZE,
+            ..EMPTY_OBJECT
+        };
+        assert!(unsafe { apply_relr_table(&valid) }.is_some());
+        assert_eq!(word, u64::MAX.wrapping_add(valid.base));
+
+        assert_eq!(validated_relr_bitmap_start(u64::MAX - 8, 0, 1), Some(u64::MAX - 8));
+        assert_eq!(validated_relr_bitmap_start(u64::MAX - 8, 0, 1 << 2), None);
+        assert_eq!(validated_relr_bitmap_start(0, u64::MAX - 4, 1 << 1), None);
+        assert_eq!(validated_relr_bitmap_start(0, 0, 0), None);
     }
 }
 
