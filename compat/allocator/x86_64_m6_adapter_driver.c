@@ -983,12 +983,100 @@ static void membership_section(void) {
          !mi_any_heap_contains(&foreign),
          !mi_heap_contains(heap, &foreign),
          !mi_heap_contains(NULL, &foreign));
+  printf("membership.region=%d,%d,%d,%d\n",
+         !mi_is_in_heap_region(NULL), !mi_is_in_heap_region(&foreign),
+         mi_is_in_heap_region(block), mi_is_in_heap_region(block + 1));
+  printf("membership.utilization=%d,%d,%d,%d\n",
+         !mi_unsafe_heap_page_is_under_utilized(heap, NULL, 100),
+         !mi_unsafe_heap_page_is_under_utilized(heap, &foreign, 100),
+         !mi_unsafe_heap_page_is_under_utilized(mi_heap_main(), block, 100),
+         !mi_unsafe_heap_page_is_under_utilized(heap, block, 100));
   mi_heap_delete(heap);
   printf("membership.moved=%d,%d,%d\n",
          mi_heap_of(block) == mi_heap_main(),
          mi_heap_contains(NULL, block),
          mi_any_heap_contains(block));
+  printf("membership.moved_queries=%d,%d,%d\n",
+         mi_is_in_heap_region(block + 1),
+         !mi_unsafe_heap_page_is_under_utilized(NULL, block, 100),
+         !mi_unsafe_heap_page_is_under_utilized(mi_heap_main(), block, 100));
   mi_free(block);
+}
+
+#define UTILIZATION_BLOCKS 10000
+#define UTILIZATION_PAGES 64
+static void* utilization_blocks[UTILIZATION_BLOCKS];
+static void* utilization_victims[UTILIZATION_PAGES];
+static void* utilization_survivors[UTILIZATION_PAGES];
+static size_t utilization_pages;
+
+static bool utilization_find_page(const mi_heap_t* heap, const mi_heap_area_t* area,
+                                  void* block, size_t block_size, void* argument) {
+  (void)heap; (void)block_size; (void)argument;
+  if (block != NULL || utilization_pages >= UTILIZATION_PAGES) return true;
+  uintptr_t start = (uintptr_t)area->blocks;
+  uintptr_t end = start + area->committed;
+  void* victim = NULL;
+  void* survivor = NULL;
+  for (size_t index = 0; index < UTILIZATION_BLOCKS; index++) {
+    uintptr_t address = (uintptr_t)utilization_blocks[index];
+    if (address >= start && address < end) {
+      if (victim == NULL) {
+        victim = utilization_blocks[index];
+      } else if (survivor == NULL) {
+        survivor = utilization_blocks[index];
+      }
+    }
+  }
+  if (survivor != NULL) {
+    utilization_victims[utilization_pages] = victim;
+    utilization_survivors[utilization_pages] = survivor;
+    utilization_pages++;
+  }
+  return true;
+}
+
+static bool utilization_collect(const mi_heap_t* heap, const mi_heap_area_t* area,
+                                void* block, size_t block_size, void* argument) {
+  (void)heap; (void)area; (void)block; (void)block_size; (void)argument;
+  return true;
+}
+
+static void* utilization_remote_free(void* argument) {
+  (void)argument;
+  for (size_t index = 0; index < utilization_pages; index++) mi_free(utilization_victims[index]);
+  return NULL;
+}
+
+static void utilization_section(void) {
+  mi_heap_t* heap = mi_heap_new();
+  int allocated = heap != NULL;
+  for (size_t index = 0; index < UTILIZATION_BLOCKS && allocated; index++) {
+    utilization_blocks[index] = mi_heap_malloc(heap, 64);
+    if (utilization_blocks[index] == NULL) allocated = 0;
+  }
+  bool found_pages = allocated && mi_heap_visit_blocks(heap, false, utilization_find_page, NULL);
+  pthread_t worker;
+  bool joined = found_pages && pthread_create(&worker, NULL, utilization_remote_free, NULL) == 0
+                && pthread_join(worker, NULL) == 0;
+  bool collected = joined && mi_heap_visit_blocks(heap, true, utilization_collect, NULL);
+  int positive = 0, lower_threshold_refused = 0, wrong_heap_refused = 0, interior_positive = 0;
+  if (collected) {
+    for (size_t index = 0; index < utilization_pages; index++) {
+      unsigned char* survivor = (unsigned char*)utilization_survivors[index];
+      if (mi_unsafe_heap_page_is_under_utilized(heap, survivor, 100)) {
+        positive++;
+        lower_threshold_refused += !mi_unsafe_heap_page_is_under_utilized(heap, survivor, 50);
+        wrong_heap_refused += !mi_unsafe_heap_page_is_under_utilized(mi_heap_main(), survivor, 100);
+        interior_positive += mi_unsafe_heap_page_is_under_utilized(heap, survivor + 1, 100);
+      }
+    }
+  }
+  printf("membership.utilization_nonhead=%d,%d,%d,%d,%d,%d,%d\n",
+         allocated, found_pages && utilization_pages >= 3, joined, collected,
+         positive > 0, lower_threshold_refused == positive && positive > 0,
+         wrong_heap_refused == positive && interior_positive == positive && positive > 0);
+  mi_heap_destroy(heap);
 }
 
 int main(void) {
@@ -1020,6 +1108,7 @@ int main(void) {
   subproc_section();
   subproc_destroy_live_section();
   membership_section();
+  utilization_section();
   print_messages("final.messages");
   printf("CRABC_MI_M6_ADAPTER_TRACE_END\n");
   return 0;

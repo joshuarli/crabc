@@ -77,6 +77,15 @@ pub unsafe fn any_heap_contains(pointer: *const u8) -> bool {
     unsafe { crate::source_api::check_owned(pointer) }
 }
 
+/// `mi_is_in_heap_region`: whether the safe PageMap lookup finds a page.
+///
+/// # Safety
+/// The obligations of [`any_heap_contains`].
+pub unsafe fn is_in_heap_region(pointer: *const u8) -> bool {
+    // SAFETY: the same safe PageMap lookup answers both public queries.
+    unsafe { any_heap_contains(pointer) }
+}
+
 /// `mi_heap_contains`: a null Heap selects this thread's subprocess main
 /// Heap before comparing it with the pointer's page Heap.
 ///
@@ -86,6 +95,35 @@ pub unsafe fn heap_contains(heap: *mut c_void, pointer: *const u8) -> bool {
     let heap = if heap.is_null() { heap_main() } else { heap };
     // SAFETY: forwarded pointer and Heap-lifetime obligations.
     !heap.is_null() && heap == unsafe { heap_of(pointer) }
+}
+
+/// `mi_unsafe_heap_page_is_under_utilized`: checks one page's ordinary
+/// queue, commitment, Heap identity, and used-block count without collecting.
+///
+/// # Safety
+/// `pointer` is null, inside a live allocation retained through this call,
+/// or in caller-owned memory this allocator never mapped. The containing
+/// page and its PageMap slice must remain registered and stable, with no
+/// concurrent allocation, free, collection, queue move, or Heap move. `heap`
+/// is null or a live Heap identity retained through this call.
+pub unsafe fn heap_page_is_under_utilized(
+    heap: *mut c_void,
+    pointer: *mut u8,
+    percentage: usize,
+) -> bool {
+    let Some(pointer) = NonNull::new(pointer) else { return false };
+    let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
+        return false;
+    };
+    let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
+        .ready_child_subprocess_inputs() else { return false };
+    // SAFETY: the caller excludes PageMap entry mutation for this exact slice.
+    let Some(page) = (unsafe { binding.page_map().lookup_registered_page(pointer.as_ptr()) }).ok().flatten() else {
+        return false;
+    };
+    // SAFETY: the caller keeps this page and all of its ordinary fields
+    // stable until the utilization predicate has copied its scalar values.
+    unsafe { page.as_ref() }.is_under_utilized_for_heap(heap.cast(), percentage)
 }
 
 /// The C `mi_heap_area_t` image passed only while one visitor call runs.

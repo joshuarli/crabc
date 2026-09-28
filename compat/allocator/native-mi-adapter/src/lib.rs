@@ -1080,12 +1080,41 @@ pub unsafe extern "C" fn mi_any_heap_contains(pointer: *const c_void) -> bool {
 
 #[no_mangle]
 /// # Safety
+/// `pointer` is null, inside a live allocation retained through this call,
+/// or in caller-owned memory this allocator never mapped. No thread may
+/// register or unregister its containing PageMap slice during the lookup.
+pub unsafe extern "C" fn mi_is_in_heap_region(pointer: *const c_void) -> bool {
+    bind_thread();
+    // SAFETY: the C caller excludes mutation of this PageMap slice.
+    unsafe { heaps::is_in_heap_region(pointer.cast()) }
+}
+
+#[no_mangle]
+/// # Safety
 /// The pointer and its arena slice must satisfy [`mi_heap_of`]'s obligations;
 /// `heap` must be null or a live Heap held through this call.
 pub unsafe extern "C" fn mi_heap_contains(heap: HeapPointer, pointer: *const c_void) -> bool {
     bind_thread();
     // SAFETY: the C caller holds a live Heap and a stable queried page.
     unsafe { heaps::heap_contains(heap, pointer.cast()) }
+}
+
+#[no_mangle]
+/// # Safety
+/// `pointer` is null, inside a live allocation retained through this call,
+/// or in caller-owned memory this allocator never mapped. Its registered
+/// page and queue fields must remain stable without concurrent allocation,
+/// free, collection, or Heap movement. `heap` is null or a live Heap held
+/// through the call.
+pub unsafe extern "C" fn mi_unsafe_heap_page_is_under_utilized(
+    heap: HeapPointer,
+    pointer: *mut c_void,
+    percentage: usize,
+) -> bool {
+    bind_thread();
+    // SAFETY: the C caller keeps both the PageMap slice and ordinary page
+    // fields stable while the source predicate reads them.
+    unsafe { heaps::heap_page_is_under_utilized(heap, pointer.cast(), percentage) }
 }
 
 #[no_mangle]

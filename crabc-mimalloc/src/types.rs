@@ -956,8 +956,8 @@ impl Heap {
         Ok(is_member)
     }
 
-    /// Observes the exact finite Heap-list shape admitted by the M1
-    /// compiler-TLS same-TLD terminal fixture.
+    /// Observes the exact two-member Heap-list shape during compiler-TLS
+    /// teardown of a cached auxiliary and default Theap on one TLD.
     ///
     /// This is intentionally narrower than a general Heap traversal. The
     /// caller supplies the complete fixture-local member count, so a null
@@ -1979,7 +1979,7 @@ impl ThreadLocalData {
         }
     }
 
-    /// Backward-compatible test spelling for the M1 differential fixture.
+    /// Keeps the bounded cached auxiliary/default pair test spelling stable.
     #[cfg(test)]
     #[inline]
     pub(crate) fn test_m1_cached_aux_and_main_pair(
@@ -1987,13 +1987,13 @@ impl ThreadLocalData {
         cached_aux: *mut Theap,
         main_default: *mut Theap,
     ) -> bool {
-        // SAFETY: the finite M1 fixture owns both typed images and invokes
+        // SAFETY: the finite pair fixture owns both typed images and invokes
         // this observation while it exclusively owns the TLD list.
         unsafe { self.has_exact_auxiliary_and_default_pair(cached_aux, main_default) }
     }
 
-    /// Counts at most the two list entries admitted by the M1 terminal
-    /// fixture. Returning `3` means the fixture is malformed; it never
+    /// Counts at most the two list entries admitted by the terminal pair.
+    /// Returning `3` means the fixture is malformed; it never
     /// traverses an unbounded production list.
     #[cfg(test)]
     #[inline]
@@ -2003,7 +2003,7 @@ impl ThreadLocalData {
         while !theap.is_null() && count < 3 {
             count += 1;
             // SAFETY: this finite test-only observation is guarded by the
-            // owning M1 fixture, which retains each permitted node.
+            // owning pair fixture, which retains each permitted node.
             theap = unsafe { (*theap).tnext };
         }
         count
@@ -3105,8 +3105,8 @@ impl ThreadLocalData {
             .map_err(|error| ThreadLocalTheapListError::Heap(HeapTheapListError::Lock(error)))
     }
 
-    /// Performs the finite two-member heap-list pass used only by the M1
-    /// compiler-TLS terminal differential fixture.
+    /// Performs the finite two-member Heap-list pass used only by the
+    /// compiler-TLS terminal pair fixture.
     ///
     /// The pinned `mi_thread_theaps_done` path first leaves its TLD list
     /// intact, then `_mi_tld_detach_theaps` walks each member and
@@ -3137,7 +3137,7 @@ impl ThreadLocalData {
             .theaps_lock
             .lock()
             .map_err(ThreadLocalTheapListError::Lock)?;
-        // SAFETY: the M1 composite retains the two typed Theap allocations
+        // SAFETY: the bounded composite retains the two typed Theap allocations
         // and both address-stable Heap images. The exact list shape is
         // checked before either Heap list is changed, mirroring the saved
         // `tnext` traversal in `_mi_tld_detach_theaps`.
@@ -3174,7 +3174,7 @@ impl ThreadLocalData {
         guard.unlock().map_err(ThreadLocalTheapListError::Lock)
     }
 
-    /// Completes the finite M1 fixture's TLD-list/final-reference pass only
+    /// Completes the finite terminal pair's TLD-list/final-reference pass only
     /// after its complete heap-list pass.
     ///
     /// This mirrors `mi_thread_theaps_done`'s terminal loop precisely enough
@@ -3232,7 +3232,7 @@ impl ThreadLocalData {
             (*cached_aux).tnext = null_mut();
             (*cached_aux).tprev = null_mut();
         }
-        // SAFETY: A remains owned by the M1 fixture. Its TLD/heap/list links
+        // SAFETY: A remains owned by the terminal pair fixture. Its TLD/heap/list links
         // now exactly match the source pre-decref assertion state.
         let cached_cleared = unsafe {
             before_cached_aux_decref(&*cached_aux);
@@ -5479,6 +5479,23 @@ impl Page {
         self.heap
     }
 
+    /// Whether this non-head, fully committed page's integer used-block
+    /// percentage is at or below the threshold for the selected Heap.
+    /// A null Heap accepts any associated page. The caller must hold an
+    /// ordinary-field-stable Page reference for this observation.
+    pub(crate) fn is_under_utilized_for_heap(&self, heap: *const Heap, percentage: usize) -> bool {
+        if self.used == self.capacity as usize || self.capacity < self.reserved || self.prev.is_null() {
+            return false;
+        }
+        if self.heap.is_null() || (!heap.is_null() && !core::ptr::eq(self.heap, heap)) {
+            return false;
+        }
+        let capacity = self.capacity as usize;
+        if capacity == 0 { return false; }
+        if percentage >= 100 { return true; }
+        percentage >= (100 * self.used) / capacity
+    }
+
     /// Whether a joined producer has published at least one remote block to
     /// this live page's source `mi_thread_free_t` head.
     ///
@@ -5989,8 +6006,8 @@ impl Theap {
             .map_err(TheapDynamicInitError::HeapList)
     }
 
-    /// Initializes the one Malloc-backed cached Theap in the finite M1
-    /// same-TLD terminal fixture.
+    /// Initializes one Malloc-backed cached Theap beside the process default
+    /// Theap in a finite same-TLD terminal fixture.
     ///
     /// Pinned `mi_heap_new` can attach an auxiliary Theap to the current
     /// thread's already-live process TLD.  In the selected fixture that TLD
@@ -6008,7 +6025,7 @@ impl Theap {
     /// `heap`, `tld`, and `main_default` must be the exact address-stable
     /// page-free fixture images. The caller retains the Malloc metadata
     /// capability for `self`, owns both list mutations, and must tear the
-    /// pair down through the matching M1 helper before releasing either
+    /// pair down through the matching finite teardown helper before releasing either
     /// image.
     #[cfg(test)]
     #[inline]
@@ -6306,7 +6323,7 @@ impl Theap {
     ///
     /// This is deliberately not a general Theap refcount API. Its sole
     /// production caller, `DynamicTheapAttachment`, and the exact `cfg(test)`
-    /// M1 same-TLD fixture each source-order the compiler-TLS cached-root
+    /// same-TLD pair fixture each source-order the compiler-TLS cached-root
     /// store from the canonical empty Theap to this exact Malloc or Arena image
     /// and retain exclusive current-thread/lifecycle ownership until they
     /// reverse that store. The exact 1 -> 2 CAS turns a violated
@@ -6326,7 +6343,7 @@ impl Theap {
     /// its source-ordered cached-root reset to the canonical static empty
     /// image. This exact 2 -> 1 transition is the inverse of
     /// [`Self::acquire_dynamic_cached_reference`] for the production dynamic
-    /// owner and the exact `cfg(test)` M1 fixture; any other count is an
+    /// owner and the exact `cfg(test)` pair fixture; any other count is an
     /// invalid-owner state and must retain the allocated image terminally.
     #[inline]
     pub(crate) fn release_dynamic_cached_reference(&self) -> bool {
@@ -6366,7 +6383,7 @@ impl Theap {
     /// non-abandoning value for a live Theap is `-1`, which sends every full
     /// page straight to `BIN_FULL`. [`Self::bind_exclusive_single_thread`]
     /// keeps its historical retain-two fixture image for existing focused
-    /// tests; the M3 local-engine differential uses this source image.
+    /// tests; the non-abandoning local engine uses this source image.
     pub(crate) fn bind_exclusive_single_thread_non_abandoning(
         &mut self,
         heap: &mut Heap,
@@ -6979,8 +6996,8 @@ impl Theap {
         }
     }
 
-    /// Address-free terminal-link observation for the finite M1 compiler-TLS
-    /// same-TLD differential. It intentionally exposes only relations that
+    /// Address-free terminal-link observation for the finite compiler-TLS
+    /// same-TLD pair. It intentionally exposes only relations that
     /// the pinned C fixture records before final metadata release.
     #[cfg(test)]
     #[inline]
@@ -7028,7 +7045,7 @@ impl Theap {
     }
 
     /// Copies the source `heartbeat`, `generic_count`, and
-    /// `generic_collect_count` fields for the M3 local-engine trace.
+    /// `generic_collect_count` fields for local collection administration.
     #[cfg(any(test, feature = "native-runtime-test-audit"))]
     #[inline]
     pub(crate) const fn test_generic_administration_image(&self) -> (u64, isize, isize) {
@@ -7342,7 +7359,7 @@ pub(crate) struct TheapMainStaticFields {
 }
 
 /// The source-visible terminal Theap relations observed before its final
-/// `_mi_theap_decref` in the M1 same-TLD differential fixture.
+/// `_mi_theap_decref` in the finite same-TLD terminal pair.
 #[cfg(test)]
 #[derive(Clone, Copy)]
 pub(crate) struct M1TerminalTheapFields {
@@ -7388,6 +7405,28 @@ mod tests {
     use crate::free_list::LocalFreeList;
     use crate::remote_free;
     use core::mem::{align_of, offset_of, size_of, MaybeUninit};
+
+    #[test]
+    fn heap_page_utilization_requires_non_head_committed_matching_page() {
+        let mut heap = Heap::bootstrap_empty();
+        let mut other_heap = Heap::bootstrap_empty();
+        let mut preceding = Page::remote_free_test_page(4, 2);
+        let mut page = Page::remote_free_test_page(4, 2);
+        page.heap = &mut heap;
+        page.prev = &mut preceding;
+        assert!(!page.is_under_utilized_for_heap(&other_heap, 100));
+        assert!(!page.is_under_utilized_for_heap(&heap, 49));
+        assert!(page.is_under_utilized_for_heap(&heap, 50));
+        assert!(page.is_under_utilized_for_heap(core::ptr::null(), 100));
+        page.prev = core::ptr::null_mut();
+        assert!(!page.is_under_utilized_for_heap(&heap, 100));
+        page.prev = &mut preceding;
+        page.reserved = 5;
+        assert!(!page.is_under_utilized_for_heap(&heap, 100));
+        page.reserved = 4;
+        page.used = 4;
+        assert!(!page.is_under_utilized_for_heap(&heap, 100));
+    }
 
     #[test]
     fn heap_visitor_collects_abandoned_remote_block_without_retaining_owner_claim() {
@@ -8219,8 +8258,8 @@ mod tests {
             "offsetof.mi_random_ctx_t.weak",
             TheapRandomImage::WEAK_OFFSET
         );
-        // The M1 record is a selected address-independent state trace from
-        // pinned `src/random.c`, not an extra layout claim. It pairs the
+        // This selected address-independent random-state trace is not an
+        // extra layout claim. It pairs the
         // source's split and no-op reinitialization branches with the weak
         // initializer and 64-bit zero-result retry without leaking a random
         // key, generated child output, or raw address into evidence.
@@ -8440,7 +8479,7 @@ mod tests {
         record!("MI_LARGE_MAX_OBJ_SIZE", crate::config::LARGE_MAX_OBJ_SIZE);
         record!("MI_MAX_ARENAS", crate::config::MAX_ARENAS);
 
-        // Keep the selected scalar M1 vector in the release C/Rust record,
+        // Keep the selected scalar vector in the release C/Rust record,
         // rather than relying on a Rust-only assertion. The operands are
         // intentionally representable before rounding: `Option::None` still
         // represents the separate explicit Rust overflow boundary.
