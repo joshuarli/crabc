@@ -17,6 +17,7 @@ use crabc_mimalloc::__crabc_runtime::{
     TicketZeroPageAllocationResult, finish_current_thread_native_after_user_destructors, native_allocate_aligned,
     native_free, native_runtime_fork_admission_test_audit, native_runtime_lifecycle_test_audit,
     native_runtime_test_fail_next_unmap, prepare_native_later_thread_arena, ticket_zero_allocate,
+    ticket_zero_free, TicketZeroPageFreeResult,
 };
 
 const OS_ALIGNMENT: usize = 128 * 1024;
@@ -149,11 +150,15 @@ fn post_exit_failed_os_release_seals_one_terminal_source_owner() {
         0,
         "B's normal finish leaves no worker admission behind"
     );
-    assert!(
-        matches!(
-            ticket_zero_allocate(73, false),
-            TicketZeroPageAllocationResult::Retained
-        ),
-        "the retained terminal source closes the process state without a retry or fallback route"
+    // The failed unmap retained one raw mapping owner after PageMap removal.
+    // It holds no mutation lease or client registration for the initial owner.
+    let independent = match ticket_zero_allocate(73, false) {
+        TicketZeroPageAllocationResult::Allocated(block) => block,
+        _ => panic!("a retained OS mapping leaves the independent initial owner usable"),
+    };
+    assert_eq!(
+        unsafe { ticket_zero_free(independent) },
+        TicketZeroPageFreeResult::Freed,
+        "the independent owner still releases its local client"
     );
 }

@@ -149,10 +149,12 @@ fn native_free_pointer_first_post_exit_os_release_is_terminal_without_retry() {
             1,
             "the terminal PageMap-owned tail attempts exactly one injected munmap"
         );
+        // PageMap removal completed before the failed unmap. The retained
+        // raw mapping owner has no live client registration to publish again.
         assert_eq!(
             unsafe { native_free(os_singleton) },
-            NativePageFreeResult::Retained,
-            "the retained terminal owner is not reopened into a second source publication"
+            NativePageFreeResult::InvalidPointer,
+            "the completed PageMap removal rejects a second source publication"
         );
         assert_eq!(
             unmap_failure.observed(),

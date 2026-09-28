@@ -7,7 +7,8 @@ use crabc_mimalloc::__crabc_runtime::{
     NativePageAllocationResult, NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
     TicketZeroPageAllocationResult, finish_current_thread_native_after_user_destructors, native_allocate_aligned,
     native_free, native_runtime_fork_admission_test_audit, native_runtime_test_fail_next_unmap,
-    prepare_native_later_thread_arena, ticket_zero_allocate,
+    prepare_native_later_thread_arena, ticket_zero_allocate, ticket_zero_free,
+    TicketZeroPageFreeResult,
 };
 
 fn current_page_size() -> usize {
@@ -108,10 +109,12 @@ fn native_post_exit_failed_os_release_is_terminal_without_retaining_worker_admis
             1,
             "the retained source does not manufacture a second worker admission"
         );
+        // The failed unmap retains its raw owner after PageMap removal, so
+        // this stale client can neither resolve a page nor retry the tail.
         assert_eq!(
             unsafe { native_free(os_singleton) },
-            NativePageFreeResult::Retained,
-            "the retained source cannot be reopened into a retry path"
+            NativePageFreeResult::InvalidPointer,
+            "the completed PageMap removal rejects a retry through the old pointer"
         );
         let finish = finish_current_thread_native_after_user_destructors();
         (unmap_failure.observed(), finish)
@@ -135,11 +138,15 @@ fn native_post_exit_failed_os_release_is_terminal_without_retaining_worker_admis
         "B's finish releases its own admission without reconstructing A's"
     );
 
-    assert!(
-        matches!(
-            ticket_zero_allocate(73, false),
-            TicketZeroPageAllocationResult::Retained
-        ),
-        "the failed PageMap source closes the process owner instead of reporting an old scheduler miss"
+    // The retained raw mapping holds no PageMap mutation lease. An unrelated
+    // initial owner can still allocate and free through its own page state.
+    let independent = match ticket_zero_allocate(73, false) {
+        TicketZeroPageAllocationResult::Allocated(block) => block,
+        _ => panic!("a retained OS mapping leaves the independent initial owner usable"),
+    };
+    assert_eq!(
+        unsafe { ticket_zero_free(independent) },
+        TicketZeroPageFreeResult::Freed,
+        "the independent owner still releases its local client"
     );
 }
