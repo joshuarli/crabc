@@ -935,6 +935,84 @@ class ProcessExitStaticImportTests(unittest.TestCase):
                          ['__funcs_on_exit', '__stdio_exit'])
 
 
+class ErrnoStaticImportBindingTests(unittest.TestCase):
+    """The selected errno accessor binds Rust and fixed C archive imports."""
+
+    RUST_MEMBERS = ['errno.rcgu.o', 'caller.rcgu.o']
+    C_MEMBER = 'fixed-c-static.o'
+
+    @staticmethod
+    def occurrence(index, artifact, role, member, section, *, table='.symtab',
+                   binding='GLOBAL', visibility='DEFAULT', kind='FUNC'):
+        return {'index': index, 'artifact_key': artifact, 'table': table,
+                'member_name': member, 'member_occurrence': 0 if member else None, 'role': role,
+                'row': {'name': '__errno_location', 'version': None, 'version_default': False,
+                        'section_index': section, 'binding': binding, 'visibility': visibility,
+                        'type': kind, 'value': '0000000000000100', 'size_bytes': 16}}
+
+    def accounting(self):
+        name = '__errno_location'
+        ident = selection.identity(name)
+        rows = [
+            self.occurrence(0, 'candidate-static', 'definition', 'errno.rcgu.o', '7'),
+            self.occurrence(1, 'candidate-static', 'import', 'caller.rcgu.o', 'UND', kind='NOTYPE'),
+            self.occurrence(2, 'candidate-static', 'import', self.C_MEMBER, 'UND', kind='NOTYPE'),
+            self.occurrence(3, 'candidate-shared', 'definition', None, '9', table='.dynsym'),
+            self.occurrence(4, 'candidate-shared', 'definition', None, '9'),
+        ]
+        record = {'identity': ident, 'selection': {'disposition': 'public-provider',
+                  'owner': 'checked-header-provider-routing', 'group': 'declared-callable-providers'},
+                  'expected_placements': [{'artifact_key': 'candidate-static'},
+                                          {'artifact_key': 'candidate-shared'}],
+                  'unresolved': [selection.ORDINARY_IMPORT_REASON]}
+        return {'identities': [record], 'occurrences': rows,
+                'placement_joins': [
+                    {'identity': ident, 'artifact_key': 'candidate-static',
+                     'placement_observed': True, 'definition_count': 1, 'occurrence_indices': [0]},
+                    {'identity': ident, 'artifact_key': 'candidate-shared',
+                     'placement_observed': True, 'definition_count': 1, 'occurrence_indices': [3]},
+                ], 'blockers': [{'code': 'identity-unresolved', 'identity': ident,
+                                 'reason': selection.ORDINARY_IMPORT_REASON}]}
+
+    def bind(self, accounting):
+        errno_join = {'public_identities': [{'identity': selection.identity('__errno_location'),
+                       'owner': 'checked-header-provider-routing', 'static_occurrence_index': 0,
+                       'shared_occurrence_index': 3, 'static_placement_observed': True,
+                       'shared_placement_observed': True}]}
+        return selection.attach_errno_static_imports(accounting, errno_join,
+                                                      self.RUST_MEMBERS, self.C_MEMBER)
+
+    def test_unique_errno_provider_binds_rust_and_fixed_c_imports(self):
+        accounting = self.accounting()
+        joins = self.bind(accounting)
+        self.assertEqual(len(joins), 1)
+        self.assertEqual(joins[0]['provider_occurrence_index'], 0)
+        self.assertEqual(joins[0]['import_occurrence_indices'], [1, 2])
+        self.assertEqual(accounting['identities'][0]['unresolved'], [])
+        self.assertEqual(accounting['blockers'], [])
+
+    def test_ambiguous_or_foreign_errno_placement_retains_import_blocker(self):
+        cases = {
+            'second provider': lambda a: a['occurrences'].append(self.occurrence(
+                5, 'candidate-static', 'definition', 'caller.rcgu.o', '8')),
+            'foreign import': lambda a: a['occurrences'].append(self.occurrence(
+                5, 'candidate-static', 'import', 'foreign.o', 'UND', kind='NOTYPE')),
+            'foreign provider': lambda a: a['occurrences'][0].update(member_name='foreign.o'),
+            'duplicate member occurrence': lambda a: a['occurrences'][2].update(member_occurrence=1),
+            'weak import': lambda a: a['occurrences'][2]['row'].update(binding='WEAK'),
+            'shared import': lambda a: a['occurrences'].append(self.occurrence(
+                5, 'candidate-shared', 'import', None, 'UND', kind='NOTYPE')),
+            'unselected provider': lambda a: a['placement_joins'][0].update(placement_observed=False),
+        }
+        for label, alter in cases.items():
+            with self.subTest(label=label):
+                accounting = self.accounting()
+                alter(accounting)
+                self.assertEqual(self.bind(accounting), [])
+                self.assertEqual(accounting['identities'][0]['unresolved'], [selection.ORDINARY_IMPORT_REASON])
+                self.assertEqual(len(accounting['blockers']), 1)
+
+
 class CompanionRejectionTests(unittest.TestCase):
     """One rejected companion is a named blocker, never an aborted report."""
 

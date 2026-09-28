@@ -7776,6 +7776,89 @@ def attach_errno_storage_lifecycle(accounting: Mapping[str, Any], companion: Map
     }]
 
 
+def attach_errno_static_imports(accounting: Mapping[str, Any], errno_join: Mapping[str, Any] | None,
+                                rust_members: Sequence[str], fixed_c_member: str) -> list[dict[str, Any]]:
+    """Bind the public errno accessor's ordinary static archive imports.
+
+    The errno lifecycle join authenticates the unique accessor placements.
+    The archive reconstruction authenticates Rust members and its one fixed C
+    member separately. Every undefined static occurrence must come from one
+    of those members and resolve to the selected defining Rust member.
+    """
+    if errno_join is None:
+        return []
+    rust = set(strings(list(rust_members), 'static Rust members', empty=False))
+    require(type(fixed_c_member) is str and fixed_c_member and fixed_c_member not in rust,
+            'errno static fixed C member differs')
+    records, placements, occurrences = _accounting_indexes(accounting, description='errno static imports')
+    key = ('__errno_location', None, False)
+    record = records.get(key)
+    if (record is None or ORDINARY_IMPORT_REASON not in record['unresolved']
+            or record['selection'].get('disposition') != 'public-provider'
+            or record['selection'].get('owner') != 'checked-header-provider-routing'
+            or record['selection'].get('group') != 'declared-callable-providers'):
+        return []
+    public = [row for row in errno_join.get('public_identities', [])
+              if row.get('identity') == identity('__errno_location')]
+    if (len(public) != 1 or public[0].get('owner') != record['selection']['owner']
+            or public[0].get('static_placement_observed') is not True
+            or public[0].get('shared_placement_observed') is not True):
+        return []
+    static_placement = placements.get((key, 'candidate-static'))
+    shared_placement = placements.get((key, 'candidate-shared'))
+    if (not static_placement or static_placement.get('placement_observed') is not True
+            or static_placement.get('definition_count') != 1
+            or not shared_placement or shared_placement.get('placement_observed') is not True
+            or shared_placement.get('definition_count') != 1):
+        return []
+    rows = [row for row in occurrences.values() if row.get('role') != 'unnamed'
+            and row['row'].get('name') == '__errno_location'
+            and identity_key(row_identity(row['row'])) == key
+            and not row['artifact_key'].startswith('reference-')]
+    static = [row for row in rows if row['artifact_key'] == 'candidate-static']
+    shared = [row for row in rows if row['artifact_key'] == 'candidate-shared']
+    providers = [row for row in static if row['role'] == 'definition']
+    imports = [row for row in static if row['role'] == 'import']
+    if (len(providers) != 1 or not imports or len(static) != 1 + len(imports)
+            or len(rows) != len(static) + len(shared) or len(shared) != 2):
+        return []
+    provider = providers[0]
+    if (static_placement.get('occurrence_indices') != [provider['index']]
+            or public[0].get('static_occurrence_index') != provider['index']
+            or provider['table'] != '.symtab' or provider['member_name'] not in rust
+            or provider['member_occurrence'] != 0
+            or provider['row']['section_index'] == 'UND'
+            or provider['row']['type'] != 'FUNC' or provider['row']['binding'] != 'GLOBAL'
+            or provider['row']['visibility'] != 'DEFAULT'):
+        return []
+    if not (shared_placement.get('occurrence_indices') == [public[0].get('shared_occurrence_index')]
+            and {row['table'] for row in shared} == {'.dynsym', '.symtab'}
+            and all(row['role'] == 'definition' and row['row']['section_index'] != 'UND'
+                    and row['row']['type'] == 'FUNC' and row['row']['binding'] == 'GLOBAL'
+                    and row['row']['visibility'] == 'DEFAULT' for row in shared)
+            and same_definition_domain(shared[0], shared[1])):
+        return []
+    allowed = rust | {fixed_c_member}
+    if not (all(row['table'] == '.symtab' and row['member_name'] in allowed
+                and row['member_name'] != provider['member_name']
+                and row['member_occurrence'] == 0
+                and row['row']['section_index'] == 'UND'
+                and row['row']['type'] == 'NOTYPE'
+                and row['row']['binding'] == 'GLOBAL'
+                and row['row']['visibility'] == 'DEFAULT' for row in imports)
+            and any(row['member_name'] == fixed_c_member for row in imports)):
+        return []
+    _remove_identity_requirements(accounting, record, [ORDINARY_IMPORT_REASON],
+                                  description='errno static import')
+    return [{'identity': copy.deepcopy(record['identity']),
+             'owner': record['selection']['owner'],
+             'provider_occurrence_index': provider['index'],
+             'provider_member': provider['member_name'],
+             'import_occurrence_indices': sorted(row['index'] for row in imports),
+             'import_members': sorted({row['member_name'] for row in imports}),
+             'discharged_reason': ORDINARY_IMPORT_REASON}]
+
+
 def _c_allocator_provider_metadata(value: object, description: str) -> dict[str, Any]:
     """Keep the producer's observed function row distinct from selection policy.
 
@@ -10166,6 +10249,12 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     errno_storage_lifecycle_joins, errno_storage_lifecycle_companion = _attach(
         rejected, 'errno_storage_lifecycle_report', accounting, errno_storage_lifecycle_companion,
         lambda: attach_errno_storage_lifecycle(accounting, errno_storage_lifecycle_companion, inputs))
+    archive_map = fixed_c_producer_metadata_companion['account']['archive_map']
+    errno_static_import_joins = attach_errno_static_imports(
+        accounting,
+        errno_storage_lifecycle_joins[0] if len(errno_storage_lifecycle_joins) == 1 else None,
+        archive_map['static_rust_members'], archive_map['static_c_member'],
+    )
     public_data_declaration_runtime_joins, public_data_declaration_runtime_companion = _attach(
         rejected, 'public_data_declaration_runtime_report', accounting, public_data_declaration_runtime_companion,
         lambda: attach_public_data_declaration_runtime(
@@ -10324,6 +10413,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'prepared_worker_tls_joins': prepared_worker_tls_joins,
             'errno_storage_lifecycle_companion': errno_storage_lifecycle_companion,
             'errno_storage_lifecycle_joins': errno_storage_lifecycle_joins,
+            'errno_static_import_joins': errno_static_import_joins,
             'native_c_allocator_boundary_companion': native_c_allocator_boundary_companion,
             'native_c_allocator_boundary_joins': native_c_allocator_boundary_joins,
             'native_c_allocator_runtime_import_joins': native_c_allocator_runtime_import_joins,
