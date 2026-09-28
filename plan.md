@@ -116,7 +116,7 @@ are not transferable passes for a different revision.
   upstream `test-api.c` through the native adapter. M6 now source-differentiates
   quiescent non-main and isolated process-main Heap block visitation across 138
   adapter keys, including all five exported Heap membership and region queries
-  and the quiescent page-utilization query; eleven
+  and the quiescent page-utilization query; twelve
   runnable evidence rows pass, including fresh-process Heap membership
   regressions and a ten-case source-built main-Heap population differential
   across one to 1000 non-main Heaps, direct/fork execution, and reserved-arena
@@ -126,6 +126,9 @@ are not transferable passes for a different revision.
   observations through `mi_heap_visit_abandoned_blocks`; an abandoned OS
   singleton matches five more rows, including freed-page omission. A combined
   regular-page and OS-singleton visitor preserves their source traversal order.
+  A process-main abandoned regular page is selected from its arena bitmap
+  while a same-size live main-thread page is excluded; six callback rows
+  match pinned C.
   All ten required gates
   remain blocked by 11 named missing API and lifetime evidence entries;
   accumulated mixed-workload main-Heap page-population parity remains unproved.
