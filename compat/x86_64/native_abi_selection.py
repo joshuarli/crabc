@@ -7859,6 +7859,77 @@ def attach_errno_static_imports(accounting: Mapping[str, Any], errno_join: Mappi
              'discharged_reason': ORDINARY_IMPORT_REASON}]
 
 
+def attach_stack_check_static_import(accounting: Mapping[str, Any], rust_members: Sequence[str],
+                                     fixed_c_member: str) -> list[dict[str, Any]]:
+    """Bind the fixed C stack failure import to its selected Rust archive definition.
+
+    The fixed C producer reconstruction authenticates the only importing
+    member and the Rust member roster. The selected source owner and both ELF
+    placements must identify one ordinary, unversioned function definition.
+    """
+    rust = set(strings(list(rust_members), 'static Rust members', empty=False))
+    require(type(fixed_c_member) is str and fixed_c_member and fixed_c_member not in rust,
+            'stack check fixed C member differs')
+    records, placements, occurrences = _accounting_indexes(accounting, description='stack check static import')
+    key = ('__stack_chk_fail', None, False)
+    record = records.get(key)
+    if (record is None or ORDINARY_IMPORT_REASON not in record['unresolved']
+            or record['selection'].get('disposition') != 'public-provider'
+            or record['selection'].get('owner') != 'x86-stack-check-fail'
+            or record['selection'].get('group') != 'source-owned-stack-check-fail-compiler-seam'
+            or record['selection'].get('sources') != ['libc/src/c_abi/x86_64/stack_chk_fail.rs']
+            or len(record['expected_placements']) != 2
+            or {row.get('artifact_key') for row in record['expected_placements']}
+            != {'candidate-static', 'candidate-shared'}):
+        return []
+    static_placement = placements.get((key, 'candidate-static'))
+    shared_placement = placements.get((key, 'candidate-shared'))
+    if (not static_placement or static_placement.get('placement_observed') is not True
+            or static_placement.get('definition_count') != 1
+            or not shared_placement or shared_placement.get('placement_observed') is not True
+            or shared_placement.get('definition_count') != 1):
+        return []
+    rows = [row for row in occurrences.values() if row.get('role') != 'unnamed'
+            and row['row'].get('name') == '__stack_chk_fail'
+            and identity_key(row_identity(row['row'])) == key
+            and not row['artifact_key'].startswith('reference-')]
+    static = [row for row in rows if row['artifact_key'] == 'candidate-static']
+    shared = [row for row in rows if row['artifact_key'] == 'candidate-shared']
+    providers = [row for row in static if row['role'] == 'definition']
+    imports = [row for row in static if row['role'] == 'import']
+    if (len(providers) != 1 or len(imports) != 1 or len(static) != 2
+            or len(shared) != 2 or len(rows) != 4):
+        return []
+    provider, importer = providers[0], imports[0]
+    if (static_placement.get('occurrence_indices') != [provider['index']]
+            or provider['table'] != '.symtab' or provider['member_name'] not in rust
+            or provider['member_occurrence'] != 0
+            or not re.fullmatch(r'[1-9][0-9]*', provider['row']['section_index'])
+            or provider['row']['type'] != 'FUNC' or provider['row']['binding'] != 'GLOBAL'
+            or provider['row']['visibility'] != 'DEFAULT'):
+        return []
+    if (importer['table'] != '.symtab' or importer['member_name'] != fixed_c_member
+            or importer['member_occurrence'] != 0 or importer['row']['section_index'] != 'UND'
+            or importer['row']['type'] != 'NOTYPE' or importer['row']['binding'] != 'GLOBAL'
+            or importer['row']['visibility'] != 'DEFAULT'):
+        return []
+    shared_dynsym = [row for row in shared if row['table'] == '.dynsym']
+    if (len(shared_dynsym) != 1 or {row['table'] for row in shared} != {'.dynsym', '.symtab'}
+            or shared_placement.get('occurrence_indices') != [shared_dynsym[0]['index']]
+            or not all(row['role'] == 'definition' and row['row']['type'] == 'FUNC'
+                       and row['row']['binding'] == 'GLOBAL' and row['row']['visibility'] == 'DEFAULT'
+                       for row in shared)
+            or not same_definition_domain(shared[0], shared[1])):
+        return []
+    _remove_identity_requirements(accounting, record, [ORDINARY_IMPORT_REASON],
+                                  description='stack check static import')
+    return [{'identity': copy.deepcopy(record['identity']), 'owner': record['selection']['owner'],
+             'provider_occurrence_index': provider['index'], 'provider_member': provider['member_name'],
+             'import_occurrence_index': importer['index'], 'import_member': importer['member_name'],
+             'shared_occurrence_indices': sorted(row['index'] for row in shared),
+             'discharged_reason': ORDINARY_IMPORT_REASON}]
+
+
 def _c_allocator_provider_metadata(value: object, description: str) -> dict[str, Any]:
     """Keep the producer's observed function row distinct from selection policy.
 
@@ -10255,6 +10326,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         errno_storage_lifecycle_joins[0] if len(errno_storage_lifecycle_joins) == 1 else None,
         archive_map['static_rust_members'], archive_map['static_c_member'],
     )
+    stack_check_static_import_joins = attach_stack_check_static_import(
+        accounting, archive_map['static_rust_members'], archive_map['static_c_member'],
+    )
     public_data_declaration_runtime_joins, public_data_declaration_runtime_companion = _attach(
         rejected, 'public_data_declaration_runtime_report', accounting, public_data_declaration_runtime_companion,
         lambda: attach_public_data_declaration_runtime(
@@ -10414,6 +10488,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'errno_storage_lifecycle_companion': errno_storage_lifecycle_companion,
             'errno_storage_lifecycle_joins': errno_storage_lifecycle_joins,
             'errno_static_import_joins': errno_static_import_joins,
+            'stack_check_static_import_joins': stack_check_static_import_joins,
             'native_c_allocator_boundary_companion': native_c_allocator_boundary_companion,
             'native_c_allocator_boundary_joins': native_c_allocator_boundary_joins,
             'native_c_allocator_runtime_import_joins': native_c_allocator_runtime_import_joins,

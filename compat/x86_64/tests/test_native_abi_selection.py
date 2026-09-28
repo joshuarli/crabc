@@ -1013,6 +1013,86 @@ class ErrnoStaticImportBindingTests(unittest.TestCase):
                 self.assertEqual(len(accounting['blockers']), 1)
 
 
+class StackCheckStaticImportBindingTests(unittest.TestCase):
+    """The owned stack failure provider binds the fixed C archive import."""
+
+    RUST_MEMBERS = ['stack_chk_fail.rcgu.o']
+    C_MEMBER = 'fixed-c-static.o'
+
+    @staticmethod
+    def occurrence(index, artifact, role, member, section, *, table='.symtab',
+                   binding='GLOBAL', visibility='DEFAULT', kind='FUNC'):
+        return {'index': index, 'artifact_key': artifact, 'table': table,
+                'member_name': member, 'member_occurrence': 0 if member else None, 'role': role,
+                'row': {'name': '__stack_chk_fail', 'version': None, 'version_default': False,
+                        'section_index': section, 'binding': binding, 'visibility': visibility,
+                        'type': kind, 'value': '0000000000000100', 'size_bytes': 1}}
+
+    def accounting(self):
+        ident = selection.identity('__stack_chk_fail')
+        rows = [
+            self.occurrence(0, 'candidate-static', 'definition', self.RUST_MEMBERS[0], '2'),
+            self.occurrence(1, 'candidate-static', 'import', self.C_MEMBER, 'UND', kind='NOTYPE'),
+            self.occurrence(2, 'candidate-shared', 'definition', None, '9', table='.dynsym'),
+            self.occurrence(3, 'candidate-shared', 'definition', None, '9'),
+        ]
+        record = {'identity': ident, 'selection': {'disposition': 'public-provider',
+                  'owner': 'x86-stack-check-fail', 'group': 'source-owned-stack-check-fail-compiler-seam',
+                  'sources': ['libc/src/c_abi/x86_64/stack_chk_fail.rs']},
+                  'expected_placements': [{'artifact_key': 'candidate-static'},
+                                          {'artifact_key': 'candidate-shared'}],
+                  'unresolved': [selection.ORDINARY_IMPORT_REASON]}
+        return {'identities': [record], 'occurrences': rows,
+                'placement_joins': [
+                    {'identity': ident, 'artifact_key': 'candidate-static',
+                     'placement_observed': True, 'definition_count': 1, 'occurrence_indices': [0]},
+                    {'identity': ident, 'artifact_key': 'candidate-shared',
+                     'placement_observed': True, 'definition_count': 1, 'occurrence_indices': [2]},
+                ], 'blockers': [{'code': 'identity-unresolved', 'identity': ident,
+                                 'reason': selection.ORDINARY_IMPORT_REASON}]}
+
+    def bind(self, accounting):
+        return selection.attach_stack_check_static_import(accounting, self.RUST_MEMBERS, self.C_MEMBER)
+
+    def test_owned_provider_binds_fixed_c_import(self):
+        accounting = self.accounting()
+        joins = self.bind(accounting)
+        self.assertEqual(len(joins), 1)
+        self.assertEqual(joins[0]['provider_occurrence_index'], 0)
+        self.assertEqual(joins[0]['import_occurrence_index'], 1)
+        self.assertEqual(accounting['identities'][0]['unresolved'], [])
+        self.assertEqual(accounting['blockers'], [])
+
+    def test_ambiguous_or_foreign_stack_check_placement_retains_import_blocker(self):
+        cases = {
+            'second provider': lambda a: a['occurrences'].append(self.occurrence(
+                4, 'candidate-static', 'definition', 'other.rcgu.o', '4')),
+            'foreign provider': lambda a: a['occurrences'][0].update(member_name='foreign.o'),
+            'foreign import': lambda a: a['occurrences'][1].update(member_name='foreign.o'),
+            'foreign owner': lambda a: a['identities'][0]['selection'].update(owner='foreign-owner'),
+            'foreign source': lambda a: a['identities'][0]['selection'].update(sources=['foreign.rs']),
+            'duplicate provider member': lambda a: a['occurrences'][0].update(member_occurrence=1),
+            'duplicate member occurrence': lambda a: a['occurrences'][1].update(member_occurrence=1),
+            'weak provider': lambda a: a['occurrences'][0]['row'].update(binding='WEAK'),
+            'weak import': lambda a: a['occurrences'][1]['row'].update(binding='WEAK'),
+            'extra import': lambda a: a['occurrences'].append(self.occurrence(
+                4, 'candidate-static', 'import', self.C_MEMBER, 'UND', kind='NOTYPE')),
+            'extra shared view': lambda a: a['occurrences'].append(self.occurrence(
+                4, 'candidate-shared', 'definition', None, '9')),
+            'shared import': lambda a: a['occurrences'].append(self.occurrence(
+                4, 'candidate-shared', 'import', None, 'UND', kind='NOTYPE')),
+            'mismatched shared definition': lambda a: a['occurrences'][3]['row'].update(value='0000000000000200'),
+            'unselected provider': lambda a: a['placement_joins'][0].update(placement_observed=False),
+        }
+        for label, alter in cases.items():
+            with self.subTest(label=label):
+                accounting = self.accounting()
+                alter(accounting)
+                self.assertEqual(self.bind(accounting), [])
+                self.assertEqual(accounting['identities'][0]['unresolved'], [selection.ORDINARY_IMPORT_REASON])
+                self.assertEqual(len(accounting['blockers']), 1)
+
+
 class CompanionRejectionTests(unittest.TestCase):
     """One rejected companion is a named blocker, never an aborted report."""
 
