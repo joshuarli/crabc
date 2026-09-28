@@ -358,7 +358,10 @@ are not transferable passes for a different revision.
   integration targets pass; the earlier attachment
   defect was stale. The M7 options/environment gate passes its source-matched
   profile and 660-key C/Rust differential; its default-artifact baseline audit
-  also passes. A selected `MI_STAT=1` binned allocation, merge/reset, free,
+  also passes. The optional ISA differential matches 51 C/Rust keys across
+  scalar, no-optimization, architecture, and AVX2 bitmap modes, including a
+  stale-candidate retry; the gate still needs uncontended AVX2 throughput
+  evidence. A selected `MI_STAT=1` binned allocation, merge/reset, free,
   and final-print differential passes; a separate level-one merge/final-output
   differential matches 28 C/Rust fields. A default-off `MI_STAT=2` requested-size
   merge/final-output trace also matches pinned C. Nonzero level-two allocation
