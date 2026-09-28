@@ -92,7 +92,11 @@ are not transferable passes for a different revision.
   slice release. A mixed arena-backed and OS-backed regular medium owner exit
   now matches 40 more C/Rust transition values after both remote frees precede
   reclaim, through independent reuse and terminal release. The clean M5
-  generic-exit gate passes all thirteen evidence rows.
+  generic-exit gate passes all thirteen evidence rows. A huge singleton and
+  regular medium split between surviving threads match 36 more C/Rust values,
+  including 84 arena slices for the huge allocation, 63 registered PageMap
+  entries, independent reclaim/release, and no warning or VM loss; the gate
+  passes all fourteen rows on its sealed source.
   A paired medium-churn
   diagnostic matches C/Rust page-class transitions under four option profiles;
   PageMap retirement precedes arena RSS release with the default purge delay,
@@ -185,9 +189,10 @@ are not transferable passes for a different revision.
   traversal order and selection across ten pinned-C callback keys.
   Public default-Theap switching and direct allocation now match 32 pinned-C
   main, worker, and fork observations while retaining same-thread TLD ownership.
-  A child subprocess's public Heap selection and lifecycle now match 12 more
+  A child subprocess's public Heap selection and lifecycle now match 17 more
   pinned-C keys, including Heap list order, dynamic TLS-key reuse, child main
-  Theap cache restoration, and teardown; the prior 161 private lifecycle
+  Theap cache restoration, direct allocation and default substitution, and
+  teardown; the prior 161 private lifecycle
   values remain matched in the same M6 row. All 15 runnable M6 evidence rows
   pass.
   All ten required gates
@@ -225,6 +230,9 @@ are not transferable passes for a different revision.
   A DSO-created `open_memstream` also passes all eleven cells while main
   writes, seeks, flushes, and closes it, with the DSO retaining the published
   buffer until one final free; embedded NUL bytes and length match pinned musl.
+  A DSO-owned fixed-buffer `fmemopen` passes the same matrix through writes,
+  seeks, flushes, a capacity short write, close, and surviving buffer checks;
+  its eight final bytes and error state match pinned musl.
   The complete nine-leaf M8 gate
   passed again on clean `ea0c28759` with all 16 evidence entries passing and
   13 physical receipt identities matching a post-exit reread; the same nine
@@ -316,6 +324,9 @@ are not transferable passes for a different revision.
   Deriving pooled loader block size and free-list index from one exponent
   saves paired medians of 186 and 206 user instructions in simple and graph
   startup with unchanged syscall traces and 16 fewer release-text bytes.
+  Retaining the pool chunk's exclusive end instead of decrementing remaining
+  bytes saves another 80 and 99 paired median instructions in the same startup
+  rows, with unchanged syscalls and 16 fewer release-text bytes.
   These remain unqualified under host contention. Allocator rows stay
   6.5–8× on the selected
   accepted-C backend, whose arena the host's THP `always` mode backs with
