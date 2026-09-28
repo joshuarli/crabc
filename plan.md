@@ -94,7 +94,10 @@ are not transferable passes for a different revision.
   Allocator M5 remains open. C mimalloc remains the selected
   backend; allocator M2–M11 remain open. The six-component M1 gate passed on
   clean frozen `6431e9036` with no unmet conditions; final-candidate replay
-  remains revision-bound. A frozen M5 source run at `e0b9ecbc7`
+  remains revision-bound. A later clean `ce1b3d556` M1 run also passes with
+  the pinned-C bit arithmetic differential matching 71,190 records and
+  120,816 results across zero, boundaries, rotations, and word geometry.
+  A frozen M5 source run at `e0b9ecbc7`
   passed seven gates, failed its churn and upstream stress gates on one seed-2
   static-PIE PageMap high-water spike, and left codegen/performance blocked;
   the same binary passed a focused replay. A later diagnostic reproduced one
