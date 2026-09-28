@@ -5,6 +5,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -14,12 +15,15 @@
 static ssize_t cookie_read(void *opaque, char *buffer, size_t count)
 {
     struct crabc_cookie_state *state = opaque;
-    size_t remaining = state->length - state->position;
+    size_t remaining = state->position < state->length ?
+        state->length - state->position : 0;
+    state->reads++;
+    if (remaining == 0)
+        return 0;
     if (count > remaining)
         count = remaining;
     memcpy(buffer, state->data + state->position, count);
     state->position += count;
-    state->reads++;
     return (ssize_t)count;
 }
 
@@ -41,9 +45,11 @@ static int cookie_seek(void *opaque, off_t *offset, int whence)
     struct crabc_cookie_state *state = opaque;
     int64_t base = whence == SEEK_SET ? 0 : whence == SEEK_CUR ?
         (int64_t)state->position : whence == SEEK_END ? (int64_t)state->length : -1;
-    int64_t target = base + *offset;
-    if (base < 0 || target < 0 || target > (int64_t)sizeof(state->data))
+    /* Bound the offset before addition so an extreme seek cannot overflow. */
+    if (base < 0 || *offset < -base ||
+        *offset > (int64_t)sizeof(state->data) - base)
         return -1;
+    int64_t target = base + *offset;
     state->position = (size_t)target;
     state->seeks++;
     *offset = target;
@@ -74,6 +80,11 @@ static int cookie_dso_roundtrip(void)
         return 10 + result;
     if (errno != ERANGE || state.closes != 0)
         return 2;
+    if (fseek(stream, 12, SEEK_SET) != 0 || fgetc(stream) != EOF ||
+        !feof(stream) || state.position != 12 || state.length != 7)
+        return 5;
+    if (fseek(stream, LONG_MAX, SEEK_END) == 0 || state.position != 12)
+        return 6;
     if (fclose(stream) != 0)
         return 3;
     if (state.closes != 1 || state.length != 7 ||
