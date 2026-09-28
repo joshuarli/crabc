@@ -3041,8 +3041,7 @@ mod tests {
     }
 
     #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn emit_m2_explicit_arena_prefix_trim_c_rust_trace() {
+    fn explicit_arena_trim_case(suffix_case: bool) {
         use crate::diagnostic_output::{OutputCallback, OutputOwner};
         let entries = std::boxed::Box::leak(std::boxed::Box::new([
             b"mimalloc_allow_large_os_pages=0\0".as_ptr().cast(),
@@ -3089,15 +3088,19 @@ mod tests {
         let size = ARENA_MIN_SIZE;
         let alignment = ARENA_ALIGNMENT;
         let page = 4096;
-        let span = size + 5 * alignment + 2 * page;
+        let span = size + (if suffix_case { 7 } else { 5 }) * alignment + 2 * page;
         // SAFETY: this private PROT_NONE reservation only selects vacant,
         // page-aligned addresses for later non-replacing fixed mmap calls.
         let reservation = unsafe { crabc_core::mm::mmap_raw(
             core::ptr::null_mut(), span, 0, 0x02 | 0x20, -1, 0,
         ) }.expect("temporary explicit arena map targets");
         let aligned = (reservation.addr() + alignment - 1) & !(alignment - 1);
-        let direct = aligned + page;
-        let over = aligned + 2 * alignment + page;
+        let direct = aligned + (if suffix_case { alignment + page } else { page });
+        let over = aligned + (if suffix_case {
+            3 * alignment + alignment / 2
+        } else {
+            2 * alignment + page
+        });
         assert!(over + size + alignment <= reservation.addr() + span);
         // SAFETY: no reference or owner was built from this temporary span;
         // a competing claim causes either later fixed map to fail safely.
@@ -3112,7 +3115,9 @@ mod tests {
         let before = process.subprocess().statistics().snapshot();
         warnings.subprocess.store(core::ptr::from_ref(process.subprocess()).cast_mut(), Ordering::Release);
         warnings.active.store(true, Ordering::Release);
-        let fault = fault::install(fault::Plan::at(fault::Point::Unmap, 2, Errno::NOMEM));
+        let fault = fault::install(fault::Plan::at(
+            fault::Point::Unmap, if suffix_case { 3 } else { 2 }, Errno::NOMEM,
+        ));
         let capture = fault.capture_unmap_ranges();
         // SAFETY: this fixture is the process's only arena publisher, and
         // the selected mapping and policy owners outlive terminal destroy.
@@ -3138,19 +3143,21 @@ mod tests {
             && reservation_ranges[1] == (over, prefix)
             && reservation_ranges[2] == (middle + size, suffix);
         let mut residence = 0u8;
-        // SAFETY: the failed prefix is still a live anonymous map, and the
+        let escaped = if suffix_case { middle + size } else { over };
+        let escaped_length = if suffix_case { suffix } else { prefix };
+        // SAFETY: the failed trim is still a live anonymous map, and the
         // published aligned middle remains live until terminal destruction.
-        let escaped_live = unsafe { crabc_core::mm::mincore_raw(over as *mut u8, page, &mut residence) }.is_ok();
+        let escaped_live = unsafe { crabc_core::mm::mincore_raw(escaped as *mut u8, page, &mut residence) }.is_ok();
         let middle_live = unsafe { crabc_core::mm::mincore_raw(middle as *mut u8, page, &mut residence) }.is_ok();
         let warning_fallback_reserved = warnings.fallback_reserved.load(Ordering::Acquire) - before.vm.reserved_current;
         let warning_free_reserved = warnings.free_reserved.load(Ordering::Acquire) - before.vm.reserved_current;
         let warning_fallback_committed = warnings.fallback_committed.load(Ordering::Acquire) - before.vm.committed_current;
         let warning_free_committed = warnings.free_committed.load(Ordering::Acquire) - before.vm.committed_current;
         let warning_timing = warning_fallback_reserved == size as i64
-            && warning_free_reserved == (size + alignment) as i64
+            && warning_free_reserved == (size + (if suffix_case { suffix } else { alignment })) as i64
             && warning_fallback_committed == 0 && warning_free_committed == 0;
         // SAFETY: no arena claim or reader overlaps the explicit terminal
-        // destroy; the failed prefix lies outside the published MemoryId.
+        // destroy; the failed trim lies outside the published MemoryId.
         let destroyed = unsafe { backing.destroy_all(&mut []) }
             .expect("the explicit arena releases its published middle");
         warnings.active.store(false, Ordering::Release);
@@ -3161,17 +3168,21 @@ mod tests {
         let terminal = process.subprocess().statistics().snapshot();
         let registry_terminal = backing.registry().count();
         // SAFETY: terminal destroy released the aligned middle, while the
-        // failed prefix remains mapped outside the retired MemoryId.
+        // failed trim remains mapped outside the retired MemoryId.
         let middle_gone = unsafe { crabc_core::mm::mincore_raw(middle as *mut u8, page, &mut residence) }.is_err();
-        let escaped_still_live = unsafe { crabc_core::mm::mincore_raw(over as *mut u8, page, &mut residence) }.is_ok();
-        // SAFETY: the failed prefix is represented by no arena or Mapping;
+        let escaped_still_live = unsafe { crabc_core::mm::mincore_raw(escaped as *mut u8, page, &mut residence) }.is_ok();
+        // SAFETY: the failed trim is represented by no arena or Mapping;
         // this fixture alone retains its exact address and length for cleanup.
-        let raw_cleanup = unsafe { crabc_core::mm::munmap_raw(over as *mut u8, prefix) }.is_ok();
-        // SAFETY: the former prefix address is page aligned and no mapping
+        let raw_cleanup = unsafe { crabc_core::mm::munmap_raw(escaped as *mut u8, escaped_length) }.is_ok();
+        // SAFETY: the former trim address is page aligned and no mapping
         // owner or reference remains after the raw cleanup attempt.
-        let escaped_gone = unsafe { crabc_core::mm::mincore_raw(over as *mut u8, page, &mut residence) }.is_err();
+        let escaped_gone = unsafe { crabc_core::mm::mincore_raw(escaped as *mut u8, page, &mut residence) }.is_err();
         let raw_stats = process.subprocess().statistics().snapshot();
-        std::println!("CRABC_M2_EXPLICIT_ARENA_PREFIX_TRIM_RUST_TRACE_BEGIN");
+        if suffix_case {
+            std::println!("CRABC_M2_EXPLICIT_ARENA_SUFFIX_TRIM_RUST_TRACE_BEGIN");
+        } else {
+            std::println!("CRABC_M2_EXPLICIT_ARENA_PREFIX_TRIM_RUST_TRACE_BEGIN");
+        }
         for (field, value) in [
             ("size", size as i64), ("alignment", alignment as i64),
             ("prefix", prefix as i64), ("suffix", suffix as i64),
@@ -3205,8 +3216,24 @@ mod tests {
         ] {
             std::println!("{field}={value}");
         }
-        std::println!("CRABC_M2_EXPLICIT_ARENA_PREFIX_TRIM_RUST_TRACE_END");
+        if suffix_case {
+            std::println!("CRABC_M2_EXPLICIT_ARENA_SUFFIX_TRIM_RUST_TRACE_END");
+        } else {
+            std::println!("CRABC_M2_EXPLICIT_ARENA_PREFIX_TRIM_RUST_TRACE_END");
+        }
         assert!(geometry && memory_exact && warning_timing && terminal_exact && raw_cleanup);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_explicit_arena_prefix_trim_c_rust_trace() {
+        explicit_arena_trim_case(false);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_explicit_arena_suffix_trim_c_rust_trace() {
+        explicit_arena_trim_case(true);
     }
 
     #[cfg(target_arch = "x86_64")]
