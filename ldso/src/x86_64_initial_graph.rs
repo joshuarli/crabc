@@ -5121,6 +5121,9 @@ unsafe fn decode_gnu_hash(
         if index < symbol_offset { return None; }
         greatest = Some(greatest.map_or(index, |current: usize| current.max(index)));
     }
+    // Every nonempty bucket is at most `greatest`. The chain walk below
+    // certifies a symbol count strictly beyond it, so no second bucket pass
+    // is needed to check upper bounds.
     let symbol_count = if let Some(mut index) = greatest {
         loop {
             let chain_index = index.checked_sub(symbol_offset)?;
@@ -5139,10 +5142,6 @@ unsafe fn decode_gnu_hash(
     } else {
         0
     };
-    for slot in 0..bucket_count {
-        let index = unsafe { read_u32(buckets.add(slot).cast()) } as usize;
-        if index != 0 && (index < symbol_offset || index >= symbol_count) { return None; }
-    }
     Some(SymbolLookupTable::Gnu {
         bucket_count, symbol_offset, bloom_count, bloom_shift, bloom, buckets, chains, symbol_count,
     })
@@ -5619,6 +5618,50 @@ mod readable_file_load_tests {
         assert!(unsafe { decode_sysv_hash(headers.as_ptr(), 2, base, 0x80, 0x100, record_limit) }.is_some());
         load(&mut headers, 1, PF_R, 0x80, 0x12, 0x12);
         assert!(unsafe { decode_sysv_hash(headers.as_ptr(), 2, base, 0x80, 0x100, record_limit) }.is_none());
+    }
+
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    #[test]
+    fn gnu_hash_preserves_bucket_order_and_checks_overlapping_symbol_records() {
+        let mut headers = [0u8; 112];
+        load(&mut headers, 0, PF_R, 0, 0x120, 0x180);
+        load(&mut headers, 1, PF_R, 0x100, 0x80, 0x80);
+        let mut image = [0u8; 0x200];
+        image[0x80..0x90].copy_from_slice(&[
+            3, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 5, 0, 0, 0,
+        ]);
+        for (slot, index) in [3u32, 1, 2].into_iter().enumerate() {
+            image[0x98 + slot * 4..0x9c + slot * 4].copy_from_slice(&index.to_le_bytes());
+        }
+        image[0xac..0xb0].copy_from_slice(&1u32.to_le_bytes());
+        let base = image.as_ptr() as u64;
+        let object = Object {
+            base,
+            phdr: headers.as_ptr(),
+            phnum: 2,
+            symtab: unsafe { image.as_ptr().add(0x100) },
+            symtab_file_record_limit: 1,
+            ..EMPTY_OBJECT
+        };
+        let decoded = unsafe { decode_gnu_hash(headers.as_ptr(), 2, base, 0x80, &object) };
+        let Some(SymbolLookupTable::Gnu { buckets, symbol_count, .. }) = decoded else {
+            panic!("valid overlapping GNU hash table rejected");
+        };
+        assert_eq!(symbol_count, 4);
+        assert_eq!([
+            unsafe { read_u32(buckets.cast()) },
+            unsafe { read_u32(buckets.add(1).cast()) },
+            unsafe { read_u32(buckets.add(2).cast()) },
+        ], [3, 1, 2]);
+
+        image[0x9c..0xa0].copy_from_slice(&0u32.to_le_bytes());
+        assert!(unsafe { decode_gnu_hash(headers.as_ptr(), 2, base, 0x80, &object) }.is_some());
+        image[0x9c..0xa0].copy_from_slice(&1u32.to_le_bytes());
+        image[0x84..0x88].copy_from_slice(&2u32.to_le_bytes());
+        assert!(unsafe { decode_gnu_hash(headers.as_ptr(), 2, base, 0x80, &object) }.is_none());
+        image[0x84..0x88].copy_from_slice(&1u32.to_le_bytes());
+        load(&mut headers, 1, PF_W, 0x100, 0x80, 0x80);
+        assert!(unsafe { decode_gnu_hash(headers.as_ptr(), 2, base, 0x80, &object) }.is_none());
     }
 }
 
