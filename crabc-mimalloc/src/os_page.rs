@@ -1797,7 +1797,7 @@ mod tests {
         }
     }
 
-    fn fresh_os_area_metadata_commit_relations(cleanup_fails: bool) -> [i64; 5] {
+    fn fresh_os_area_commit_failure_relations(commit_call: usize, cleanup_fails: bool) -> [i64; 11] {
         use crate::diagnostic_output::{OutputCallback, OutputOwner};
         let show_errors = b"mimalloc_show_errors=1\0";
         let max_warnings = b"mimalloc_max_warnings=100\0";
@@ -1832,17 +1832,21 @@ mod tests {
         let process = VmProcess::new(policy, subprocess);
         let before = process.subprocess().vm_statistics().snapshot();
         let plan = if cleanup_fails {
-            fault::Plan::at_pair(fault::Point::Commit, 1,
+            fault::Plan::at_pair(fault::Point::Commit, commit_call,
                 fault::Point::Unmap, 1, Errno::NOMEM)
         } else {
-            fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM)
+            fault::Plan::at(fault::Point::Commit, commit_call, Errno::NOMEM)
         };
         let fault = fault::install(plan);
         let unmaps = fault.capture_unmap_ranges();
         let failure = OsAlignedPageClaim::allocate_for_process(
             process, config(4 * KIB), 4096, 1, crate::arena::ArenaId::none(),
-        ).err().expect("metadata commit fails");
-        assert_eq!(failure.error().stage(), OsAlignedPageFailureStage::MetadataCommit);
+        ).err().expect("selected page-area commit fails");
+        assert_eq!(failure.error().stage(), if commit_call == 1 {
+            OsAlignedPageFailureStage::MetadataCommit
+        } else {
+            OsAlignedPageFailureStage::BlockCommit
+        });
         assert_eq!(failure.error().cleanup(), cleanup_fails.then_some(Errno::NOMEM));
         let owner = failure.into_owner();
         let length = 2 * ARENA_SLICE_SIZE;
@@ -1860,7 +1864,7 @@ mod tests {
             let Some(OsAlignedPageOwner::Claim(claim)) = owner.as_ref() else {
                 panic!("failed cleanup retains one private claim")
             };
-            assert!(claim.memory_id().is_err(), "failed metadata cannot publish");
+            assert!(claim.memory_id().is_err(), "failed page-area commit cannot publish");
             assert_eq!(claim.mapping.base().unwrap().addr(), base);
             assert_eq!(claim.mapping.length().unwrap(), length);
             assert!(mapped.is_ok(), "failed unmap retains the complete range");
@@ -1871,7 +1875,7 @@ mod tests {
         let after = process.subprocess().vm_statistics().snapshot();
         assert_eq!(after.reserved_current - before.reserved_current, 0);
         assert_eq!(after.committed_current - before.committed_current, -(length as i64));
-        assert_eq!(after.commit_calls - before.commit_calls, 1);
+        assert_eq!(after.commit_calls - before.commit_calls, commit_call as i64);
         let fragments = warnings.fragments.lock().unwrap();
         let receiver: std::vec::Vec<_> = fragments.chunks_exact(2).filter(|pair|
             pair[1].starts_with(b"cannot commit OS memory")
@@ -1888,6 +1892,8 @@ mod tests {
             assert!(receiver[3].starts_with(b"unable to free OS memory (error: 12 (0x0C), size: 0x20000 bytes, address: 0x"));
             assert_eq!(warnings.reserved_at_free_warning.load(Ordering::Acquire),
                 before.reserved_current + length as i64);
+            assert_eq!(warnings.committed_at_free_warning.load(Ordering::Acquire),
+                before.committed_current);
         } else {
             assert_eq!(warnings.reserved_at_free_warning.load(Ordering::Acquire), i64::MIN);
         }
@@ -1896,10 +1902,12 @@ mod tests {
         drop(fragments);
         drop(unmaps);
         fault.set(fault::Plan::disabled());
-        if let Some(OsAlignedPageOwner::Claim(claim)) = owner {
-            assert!(claim.release().is_ok(), "the retained owner retries raw only");
-        }
-        assert_eq!(process.subprocess().vm_statistics().snapshot(), after);
+        let raw_release = if let Some(OsAlignedPageOwner::Claim(claim)) = owner {
+            claim.release().is_ok()
+        } else { true };
+        assert!(raw_release, "the retained owner retries raw only");
+        let raw_no_stats = process.subprocess().vm_statistics().snapshot() == after;
+        assert!(raw_no_stats);
         assert_eq!(warnings.fragments.lock().unwrap().len(), fragments_len,
             "raw retry does not repeat a source warning");
         // SAFETY: remove the stack-backed capture before its owner returns;
@@ -1907,19 +1915,43 @@ mod tests {
         unsafe { output.register_output(None, core::ptr::null_mut()) };
         [length as i64, after.reserved_current - before.reserved_current,
             after.committed_current - before.committed_current,
-            (after.commit_calls - before.commit_calls) as i64, receiver_len as i64]
+            (after.commit_calls - before.commit_calls) as i64, receiver_len as i64,
+            i64::from(released_length == length),
+            i64::from(if cleanup_fails { mapped.is_ok() } else { mapped == Err(Errno::NOMEM) }),
+            i64::from(receiver_len == if cleanup_fails { 4 } else { 2 }),
+            i64::from(warnings.reserved_at_commit_warning.load(Ordering::Acquire)
+                == before.reserved_current + length as i64
+                && (!cleanup_fails || (warnings.reserved_at_free_warning.load(Ordering::Acquire)
+                    == before.reserved_current + length as i64
+                    && warnings.committed_at_free_warning.load(Ordering::Acquire)
+                        == before.committed_current))),
+            i64::from(raw_release), i64::from(raw_no_stats)]
     }
 
     #[test]
     fn fresh_os_area_metadata_commit_and_cleanup_failure_warns_before_accounting() {
-        let values = fresh_os_area_metadata_commit_relations(true);
-        assert_eq!(values, [131072, 0, -131072, 1, 4]);
+        let values = fresh_os_area_commit_failure_relations(1, true);
+        assert_eq!(values, [131072, 0, -131072, 1, 4, 1, 1, 1, 1, 1, 1]);
     }
 
     #[test]
     fn fresh_os_area_metadata_commit_failure_releases_exact_range() {
-        let values = fresh_os_area_metadata_commit_relations(false);
-        assert_eq!(values, [131072, 0, -131072, 1, 2]);
+        let values = fresh_os_area_commit_failure_relations(1, false);
+        assert_eq!(values, [131072, 0, -131072, 1, 2, 1, 1, 1, 1, 1, 1]);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_fresh_os_area_block_commit_cleanup_failure_trace() {
+        let values = fresh_os_area_commit_failure_relations(2, true);
+        for (name, value) in [
+            "mapping_length", "reserved_final", "committed_final", "commit_calls",
+            "warning_fragments", "release_exact", "retained", "warning_order",
+            "warning_before_stats", "raw_release", "raw_no_stats",
+        ].into_iter().zip(values) {
+            std::println!("block.rollback.{name}={value}");
+        }
+        assert_eq!(values, [131072, 0, -131072, 2, 4, 1, 1, 1, 1, 1, 1]);
     }
 
     #[test]
@@ -2679,13 +2711,13 @@ mod tests {
             std::println!("arena_on_demand.{field}={}", u8::from(value));
         }
         drop(fault);
-        let cleanup = fresh_os_area_metadata_commit_relations(true);
+        let cleanup = fresh_os_area_commit_failure_relations(1, true);
         for field in ["failed_unpublished", "memory_id_range", "leaked_range",
             "single_commit_and_release", "statistics", "warning_fragments_order",
             "warning_before_statistics", "raw_cleanup"] {
             std::println!("os_area_commit_cleanup.{field}=1");
         }
-        let cleanup_released_values = fresh_os_area_metadata_commit_relations(false);
+        let cleanup_released_values = fresh_os_area_commit_failure_relations(1, false);
         for field in ["failed_unpublished", "memory_id_range", "exact_range",
             "single_commit_and_release", "statistics", "warning_fragments_order",
             "warning_before_statistics", "unmapped_after_cleanup"] {

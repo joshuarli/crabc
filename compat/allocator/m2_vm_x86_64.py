@@ -53,6 +53,8 @@ LEGACY_OS_PAGE_TRIM_ID = "legacy-os-page-suffix-trim-and-raw-release"
 LEGACY_OS_PAGE_TRIM_READER = "compat/allocator/m2_legacy_os_page_trim_x86_64.py"
 PROCESS_OS_PAGE_TRIM_ID = "process-os-page-suffix-trim-and-terminal-release"
 PROCESS_OS_PAGE_TRIM_READER = "compat/allocator/m2_process_os_page_trim_x86_64.py"
+PROCESS_OS_PAGE_BLOCK_COMMIT_ID = "process-os-page-block-commit-rollback-c-rust-differential"
+PROCESS_OS_PAGE_BLOCK_COMMIT_READER = "compat/allocator/m2_process_os_page_block_commit_x86_64.py"
 LARGE_PAGE_RETRY_CAPTURE_REAP_TEST_DEFINE = (
     "-DCRABC_M2_LARGE_PAGE_RETRY_CAPTURE_REAP_TEST=1"
 )
@@ -118,6 +120,11 @@ CHECKS = (
         PROCESS_OS_PAGE_TRIM_ID,
         "c-rust-process-os-page-trim-receiver",
         PROCESS_OS_PAGE_TRIM_READER,
+    ),
+    (
+        PROCESS_OS_PAGE_BLOCK_COMMIT_ID,
+        "c-rust-process-os-page-block-commit-receiver",
+        PROCESS_OS_PAGE_BLOCK_COMMIT_READER,
     ),
     (
         "process-policy-first-arena-clean-primary-fallback",
@@ -1415,6 +1422,28 @@ def run_evidence(
         }
     ):
         raise harness.HarnessError("process OS-page trim receiver receipt is invalid")
+    block_commit_command = [
+        "python3", PROCESS_OS_PAGE_BLOCK_COMMIT_READER,
+        *(["--offline"] if offline else []),
+        "--rust-test-binary", str(rust_binary),
+    ]
+    block_commit_run = harness.command_record(
+        block_commit_command, cwd=harness.ROOT, timeout_seconds=900,
+    )
+    harness.require_success(block_commit_run, "process OS-page block-commit C/Rust receiver")
+    block_commit_evidence = harness.read_json(
+        harness.ARTIFACT_ROOT / "x86_64/m2-process-os-page-block-commit/evidence.json"
+    )
+    if (
+        block_commit_evidence.get("status") != "passed"
+        or block_commit_evidence.get("pinned_revision") != pin["revision"]
+        or block_commit_evidence.get("comparison") != {
+            "status": "matched", "compared_value_count": 11,
+        }
+        or not isinstance(block_commit_evidence.get("rust_trace"), dict)
+        or block_commit_evidence.get("c_trace") != block_commit_evidence.get("rust_trace")
+    ):
+        raise harness.HarnessError("process OS-page block-commit receiver receipt is invalid")
     trace_payload = json.dumps(c_trace, separators=(",", ":"), sort_keys=True).encode("utf-8")
     profile_trace_payload = json.dumps(
         c_profile_trace, separators=(",", ":"), sort_keys=True
@@ -1461,6 +1490,12 @@ def run_evidence(
             "comparison": process_trim_evidence["comparison"],
             "fixture": process_trim_evidence["fixture"],
             "rust_test": "os::tests::emit_process_os_page_suffix_trim_trace",
+        },
+        "process_os_page_block_commit": {
+            "command": block_commit_command,
+            "comparison": block_commit_evidence["comparison"],
+            "fixture": block_commit_evidence["fixture"],
+            "rust_test": "os_page::tests::emit_fresh_os_area_block_commit_cleanup_failure_trace",
         },
         "reset_advice_matrix": {
             "command": reset_advice_command,

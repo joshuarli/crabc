@@ -329,6 +329,7 @@ M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "page-map-initialization-cleanup-leak-c-rust-differential",
     "page-map-startup-statistics-c-rust-differential",
     "page-map-first-map-fallback-c-rust-differential",
+    "page-map-fallback-trim-fault-c-rust-differential",
     "process-page-map-initialization-cleanup-leak",
     "page-map-lazy-extension-commit-owner",
     "page-map-lazy-submap-map-owner",
@@ -455,6 +456,12 @@ M2_X86_64_PAGE_MAP_CHECKS = (
         "id": "page-map-first-map-fallback-c-rust-differential",
         "kind": "c-rust-page-map-first-map-fallback-differential",
         "target": "process_page_map::tests::emit_m2_page_map_first_map_fallback_c_rust_trace",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "page-map-fallback-trim-fault-c-rust-differential",
+        "kind": "c-rust-page-map-fallback-trim-fault-differential",
+        "target": "compat/allocator/m2_page_map_fallback_trim_fault_x86_64.py",
     },
     {
         "expected_passed_test_count": 1,
@@ -12816,34 +12823,66 @@ def _m2_x86_64_page_map_first_map_fallback_producer() -> Any:
     return producer
 
 
-def _run_m2_x86_64_page_map_first_map_fallback_evidence(
+def _run_m2_x86_64_page_map_fallback_evidence(
     *, offline: bool, test_program: Mapping[str, Any], check: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Run the PageMap first-map fallback producer against the aggregate's binary."""
+    """Run either source-built PageMap fallback receiver."""
 
+    if check["id"] == "page-map-fallback-trim-fault-c-rust-differential":
+        command = ["python3", check["target"], *(["--offline"] if offline else [])]
+        run = command_record(command, cwd=ROOT, timeout_seconds=900)
+        require_success(run, "PageMap fallback trim fault C/Rust receiver")
+        evidence = read_json(
+            ARTIFACT_ROOT / "x86_64/m2-page-map-fallback-trim-fault/evidence.json"
+        )
+        return {**evidence, "command": command}
     return _m2_x86_64_page_map_first_map_fallback_producer().run_evidence(
         sys.modules[__name__], offline=offline, test_program=test_program, check=check,
     )
 
 
-def _m2_x86_64_page_map_first_map_fallback_check_record(
-    check: Mapping[str, Any], evidence: Mapping[str, Any]
+def _m2_x86_64_page_map_fallback_check_record(
+    check: Mapping[str, Any], evidence: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Record the executed PageMap first-map fallback differential."""
+    """Record either source-built PageMap fallback differential."""
 
-    if (
-        evidence.get("status") != "passed"
-        or evidence.get("comparison", {}).get("status") != "matched"
-        or evidence.get("rust_passed_test_count") != check["expected_passed_test_count"]
-    ):
-        raise HarnessError("native x86 M2 PageMap first-map fallback receipt is invalid")
+    if evidence.get("status") == "passed":
+        if (
+            check.get("id") != "page-map-first-map-fallback-c-rust-differential"
+            or evidence.get("comparison", {}).get("status") != "matched"
+            or evidence.get("rust_passed_test_count") != check["expected_passed_test_count"]
+        ):
+            raise HarnessError("native x86 M2 PageMap fallback receipt is invalid")
+        command = list(evidence["rust_command"])
+        scope = "pinned-c-rust-page-map-failed-direct-map-aligned-fallback-startup"
+    else:
+        expected_fields = {"output", "initialized", "reserved", "committed", "mmap_calls",
+            "commit_calls", "suffix_length", "suffix_live", "allocated", "raw_cleanup"}
+        c_trace = evidence.get("c")
+        if (
+            evidence.get("status") != "matched"
+            or evidence.get("mismatches") != {}
+            or not isinstance(c_trace, Mapping)
+            or set(c_trace) != expected_fields
+            or not all(isinstance(value, str) for value in c_trace.values())
+            or c_trace != evidence.get("rust")
+            or check.get("expected_passed_test_count") != 1
+            or check.get("id") != "page-map-fallback-trim-fault-c-rust-differential"
+            or evidence.get("command") not in (
+                ["python3", check["target"]],
+                ["python3", check["target"], "--offline"],
+            )
+        ):
+            raise HarnessError("native x86 M2 PageMap fallback receipt is invalid")
+        command = list(evidence["command"])
+        scope = "pinned-c-rust-page-map-fallback-suffix-trim-failure-and-recovery"
     return {
         "comparison_status": "matched",
         "component": "page-map",
-        "command": list(evidence["rust_command"]),
-        "evidence_scope": "pinned-c-rust-page-map-failed-direct-map-aligned-fallback-startup",
+        "command": command,
+        "evidence_scope": scope,
         "id": check["id"],
-        "passed_test_count": evidence["rust_passed_test_count"],
+        "passed_test_count": check["expected_passed_test_count"],
         "target": check["target"],
     }
 
@@ -13304,6 +13343,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-page-map-init-cleanup-differential",
                     "c-rust-startup-statistics-differential",
                     "c-rust-page-map-first-map-fallback-differential",
+                    "c-rust-page-map-fallback-trim-fault-differential",
                     "c-rust-exclusive-arena-theap-differential",
                     "c-rust-native-bitmaps",
                     "c-rust-vm-primitives-fixed-lifecycle",
@@ -13311,6 +13351,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-aligned-overmap-cleanup-boundary-matrix",
                     "c-rust-legacy-os-page-trim-receiver",
                     "c-rust-process-os-page-trim-receiver",
+                    "c-rust-process-os-page-block-commit-receiver",
                     "c-rust-second-arena-reset-advice-matrix",
                     "c-rust-process-arena-purge-differential",
                     "c-rust-arena-lifecycle-differential",
@@ -13472,6 +13513,22 @@ def validate_x86_64_m2_memory_substrate_contract(
                     or not (ROOT / reader).is_file()
                 ):
                     raise HarnessError("native x86 M2 process OS-page receiver is absent")
+            elif raw_check.get("kind") == "c-rust-process-os-page-block-commit-receiver":
+                reader = _m2_x86_64_vm_producer().PROCESS_OS_PAGE_BLOCK_COMMIT_READER
+                if (
+                    component_id != "vm-primitives"
+                    or raw_check.get("target") != reader
+                    or not (ROOT / reader).is_file()
+                ):
+                    raise HarnessError("native x86 M2 process OS-page block-commit receiver is absent")
+            elif raw_check.get("kind") == "c-rust-page-map-fallback-trim-fault-differential":
+                reader = "compat/allocator/m2_page_map_fallback_trim_fault_x86_64.py"
+                if (
+                    component_id != "page-map"
+                    or raw_check.get("target") != reader
+                    or not (ROOT / reader).is_file()
+                ):
+                    raise HarnessError("native x86 M2 PageMap fallback-trim receiver is absent")
             elif component_id != "bitmaps":
                 _m2_memory_substrate_source_test_exists(
                     str(raw_check["target"]), str(raw_check["id"])
@@ -14152,6 +14209,10 @@ def _m2_x86_64_vm_check_records(
         check for check in component["checks"]
         if check["id"] == producer.PROCESS_OS_PAGE_TRIM_ID
     )
+    block_commit_check = next(
+        check for check in component["checks"]
+        if check["id"] == producer.PROCESS_OS_PAGE_BLOCK_COMMIT_ID
+    )
     runtime_thp_check = next(
         check for check in component["checks"]
         if check["id"] == "runtime-source-environment-thp-ready-configuration-admission"
@@ -14444,6 +14505,43 @@ def _m2_x86_64_vm_check_records(
         "id": process_trim_check["id"],
         "passed_test_count": 1,
         "target": process_trim_check["target"],
+    })
+    block_commit = evidence.get("process_os_page_block_commit")
+    block_command = block_commit.get("command") if isinstance(block_commit, Mapping) else None
+    block_fixture = block_commit.get("fixture") if isinstance(block_commit, Mapping) else None
+    if (
+        block_commit_check != {
+            "id": producer.PROCESS_OS_PAGE_BLOCK_COMMIT_ID,
+            "kind": "c-rust-process-os-page-block-commit-receiver",
+            "target": producer.PROCESS_OS_PAGE_BLOCK_COMMIT_READER,
+            "expected_passed_test_count": 1,
+        }
+        or block_command not in (
+            ["python3", producer.PROCESS_OS_PAGE_BLOCK_COMMIT_READER,
+             "--rust-test-binary", str(command[0])],
+            ["python3", producer.PROCESS_OS_PAGE_BLOCK_COMMIT_READER,
+             "--offline", "--rust-test-binary", str(command[0])],
+        )
+        or block_commit.get("comparison") != {"status": "matched", "compared_value_count": 11}
+        or block_commit.get("rust_test") != "os_page::tests::emit_fresh_os_area_block_commit_cleanup_failure_trace"
+        or not isinstance(block_fixture, Mapping)
+        or block_fixture.get("path") != relative(
+            ALLOCATOR_ROOT / "m2_process_os_page_block_commit_x86_64.c"
+        )
+        or type(block_fixture.get("bytes")) is not int
+        or block_fixture["bytes"] <= 0
+        or not isinstance(block_fixture.get("sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", block_fixture["sha256"]) is None
+    ):
+        raise HarnessError("native x86 M2 process OS-page block-commit receipt is invalid")
+    records.append({
+        "comparison_status": "matched",
+        "component": "vm-primitives",
+        "command": list(block_command),
+        "evidence_scope": "bounded-process-os-page-block-commit-rollback-unmap-failure",
+        "id": block_commit_check["id"],
+        "passed_test_count": 1,
+        "target": block_commit_check["target"],
     })
     if runtime_thp_evidence is None:
         return records
@@ -14983,6 +15081,7 @@ def m2_x86_64_memory_substrate_report(
                 "page-map-initialization-cleanup-leak-c-rust-differential": "matched",
                 "page-map-startup-statistics-c-rust-differential": "matched",
                 "page-map-first-map-fallback-c-rust-differential": "matched",
+                "page-map-fallback-trim-fault-c-rust-differential": "matched",
             }:
                 raise HarnessError("native x86 M2 PageMap differential result inventory changed")
         elif component_id == "bitmaps":
@@ -15242,10 +15341,21 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         summary, "page-map-first-map-fallback-c-rust-differential"
     )
     page_map_cleanup_checks.append(
-        _m2_x86_64_page_map_first_map_fallback_check_record(
+        _m2_x86_64_page_map_fallback_check_record(
             first_map_fallback_check,
-            _run_m2_x86_64_page_map_first_map_fallback_evidence(
+            _run_m2_x86_64_page_map_fallback_evidence(
                 offline=offline, test_program=test_program, check=first_map_fallback_check
+            ),
+        )
+    )
+    _, fallback_trim_fault_check = _m2_x86_64_check_by_id(
+        summary, "page-map-fallback-trim-fault-c-rust-differential"
+    )
+    page_map_cleanup_checks.append(
+        _m2_x86_64_page_map_fallback_check_record(
+            fallback_trim_fault_check,
+            _run_m2_x86_64_page_map_fallback_evidence(
+                offline=offline, test_program=test_program, check=fallback_trim_fault_check,
             ),
         )
     )

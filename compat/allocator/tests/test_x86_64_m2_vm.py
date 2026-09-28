@@ -23,6 +23,7 @@ EXPECTED_VM_CHECK_IDS = (
     "aligned-overmap-cleanup-c-rust-boundary-matrix",
     "legacy-os-page-suffix-trim-and-raw-release",
     "process-os-page-suffix-trim-and-terminal-release",
+    "process-os-page-block-commit-rollback-c-rust-differential",
     "process-policy-first-arena-clean-primary-fallback",
     "process-policy-first-arena-trim-leak",
     "selected-subprocess-statistics-aggregation",
@@ -205,6 +206,14 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "fixture": {"path": "compat/allocator/m2_legacy_os_page_trim_x86_64.c",
                     "bytes": 1, "sha256": "b" * 64},
                 "rust_test": "os::tests::emit_process_os_page_suffix_trim_trace",
+            },
+            "process_os_page_block_commit": {
+                "command": ["python3", producer.PROCESS_OS_PAGE_BLOCK_COMMIT_READER,
+                    "--offline", "--rust-test-binary", str(rust_binary)],
+                "comparison": {"status": "matched", "compared_value_count": 11},
+                "fixture": {"path": "compat/allocator/m2_process_os_page_block_commit_x86_64.c",
+                    "bytes": 1, "sha256": "b" * 64},
+                "rust_test": "os_page::tests::emit_fresh_os_area_block_commit_cleanup_failure_trace",
             },
             "reset_advice_matrix": {
                 "command": [
@@ -655,7 +664,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
         records = RUNNER._m2_x86_64_vm_check_records(
             self.summary(), self.vm_evidence(self.summary())
         )
-        self.assertEqual(len(records), 6)
+        self.assertEqual(len(records), 7)
         self.assertEqual(records[0]["id"], "native-vm-fixed-lifecycle-differential")
         self.assertEqual(records[1]["id"], "aligned-hint-source-profile-and-direct-caller-matrix")
         self.assertEqual(records[2]["id"], "aligned-overmap-cleanup-c-rust-boundary-matrix")
@@ -666,6 +675,28 @@ class NativeVmAssemblyTests(unittest.TestCase):
         self.assertEqual(records[4]["comparison_status"], "source-different")
         self.assertEqual(records[5]["id"], "process-os-page-suffix-trim-and-terminal-release")
         self.assertEqual(records[5]["comparison_status"], "matched")
+        self.assertEqual(records[6]["id"], "process-os-page-block-commit-rollback-c-rust-differential")
+        self.assertEqual(records[6]["comparison_status"], "matched")
+
+    def test_page_map_fallback_trim_receipt_requires_its_ten_field_trace(self):
+        check = next(check for check in RUNNER.M2_X86_64_PAGE_MAP_CHECKS
+            if check["id"] == "page-map-fallback-trim-fault-c-rust-differential")
+        fields = {field: "1" for field in (
+            "output", "initialized", "reserved", "committed", "mmap_calls",
+            "commit_calls", "suffix_length", "suffix_live", "allocated", "raw_cleanup",
+        )}
+        evidence = {"status": "matched", "mismatches": {}, "c": fields, "rust": fields,
+            "command": ["python3", check["target"], "--offline"]}
+        record = RUNNER._m2_x86_64_page_map_fallback_check_record(check, evidence)
+        self.assertEqual(record["comparison_status"], "matched")
+        older_shape = {"status": "passed", "comparison": {"status": "matched"},
+            "rust_passed_test_count": 1, "rust_command": ["stale"]}
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER._m2_x86_64_page_map_fallback_check_record(check, older_shape)
+        incomplete = dict(evidence, c={key: value for key, value in fields.items()
+            if key != "suffix_live"})
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER._m2_x86_64_page_map_fallback_check_record(check, incomplete)
 
     def test_rust_binary_binding_accepts_both_cargo_profile_layouts_only(self):
         """The pinned nightly's per-unit test executable remains gate-owned."""
@@ -901,9 +932,9 @@ class NativeVmAssemblyTests(unittest.TestCase):
                     return_value={"id": "page-map-initialization-cleanup-leak-c-rust-differential"}
                 ),
                 _run_m2_x86_64_startup_statistics_evidence=mock.Mock(return_value={}),
-                _run_m2_x86_64_page_map_first_map_fallback_evidence=mock.Mock(return_value={}),
-                _m2_x86_64_page_map_first_map_fallback_check_record=mock.Mock(
-                    return_value={"id": "page-map-first-map-fallback-c-rust-differential"}
+                _run_m2_x86_64_page_map_fallback_evidence=mock.Mock(return_value={}),
+                _m2_x86_64_page_map_fallback_check_record=mock.Mock(
+                    side_effect=lambda check, evidence, **kwargs: {"id": check["id"]}
                 ),
                 _m2_x86_64_startup_statistics_check_record=mock.Mock(
                     return_value={"id": "page-map-startup-statistics-c-rust-differential"}
@@ -986,6 +1017,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "second-arena-reset-advice-c-rust-matrix",
                 "legacy-os-page-suffix-trim-and-raw-release",
                 "process-os-page-suffix-trim-and-terminal-release",
+                "process-os-page-block-commit-rollback-c-rust-differential",
                 "runtime-source-environment-thp-ready-configuration-admission",
             },
             {record["id"] for record in vm_records},
