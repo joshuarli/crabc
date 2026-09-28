@@ -49,7 +49,11 @@ const SOURCE_ENVIRONMENT_ENTRY_LIMIT: usize = 10_000;
 // preprocessor option evaluates to zero in the upstream `#if` expressions.
 pub(crate) const SECURE_LEVEL: usize = 0;
 pub(crate) const DEBUG_LEVEL: usize = 0;
-#[cfg(feature = "mi-stat-1")]
+// The second optional source profile includes the first profile's producers;
+// Cargo's additive feature selection therefore chooses the highest level.
+#[cfg(feature = "mi-stat-2")]
+pub(crate) const STAT_LEVEL: usize = 2;
+#[cfg(all(feature = "mi-stat-1", not(feature = "mi-stat-2")))]
 pub(crate) const STAT_LEVEL: usize = 1;
 #[cfg(not(feature = "mi-stat-1"))]
 pub(crate) const STAT_LEVEL: usize = 0;
@@ -1080,12 +1084,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_release_constants_match_the_pinned_linux_64_profiles() {
+    fn selected_release_constants_match_the_pinned_linux_64_profiles() {
         assert_eq!(WORD_SIZE, 8);
         assert_eq!(MAX_ALIGN_SIZE, 16);
         assert_eq!(SECURE_LEVEL, 0);
         assert_eq!(DEBUG_LEVEL, 0);
-        assert_eq!(STAT_LEVEL, 0);
+        let expected_stat_level = if cfg!(feature = "mi-stat-2") {
+            2
+        } else if cfg!(feature = "mi-stat-1") {
+            1
+        } else {
+            0
+        };
+        assert_eq!(STAT_LEVEL, expected_stat_level);
         assert!(!FREE_IS_CHECKED);
         assert!(!FREE_USE_PAGEMAP);
         assert!(!OPT_FREE_SMALL);

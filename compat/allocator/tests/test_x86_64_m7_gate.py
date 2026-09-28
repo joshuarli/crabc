@@ -59,6 +59,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:statistics",
             "differential:statistics-level-one",
             "differential:statistics-level-one-output-merge",
+            "differential:statistics-level-two-requested",
             "differential:thread-init-failure",
         ])
         # The options/environment and baseline gates have executable evidence.
@@ -155,6 +156,32 @@ class M7GateContractTests(unittest.TestCase):
             gate.require_statistics_level_one_output_merge({**trace, "mixed.huge": "absent"}, "missing huge")
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_level_one_output_merge({**trace, "mixed.process_normal": "160,576,224"}, "lost peak")
+
+    def test_statistics_level_two_requested_requires_source_built_differential(self) -> None:
+        summary = self.validate()
+        statistics = self.gate_record(self.contract, "m7.statistics")
+        self.assertIn("differential:statistics-level-two-requested", statistics["evidence"])
+        self.assertIn("differential:statistics-level-two-requested", summary["runnable_evidence"])
+
+    def test_statistics_level_two_requested_reader_rejects_missing_rows_and_merge(self) -> None:
+        rows = {f"{scenario}.{label}": "absent" if scenario == "empty" else "source row"
+                for scenario in ("empty", "normal", "live", "freed")
+                for label in ("binned", "huge", "total", "malloc_req")}
+        rows.update({f"{scenario}.blocks": "0" if scenario == "empty" else "1"
+                     for scenario in ("empty", "normal", "live", "freed")})
+        rows["live.malloc_req"] = rows["freed.malloc_req"] = "  malloc req: 4.1 KiB"
+        counts = {
+            "normal.source_requested_reset": "0,0,0", "normal.process_requested": "140,280,70",
+            "normal.process_count": "2", "live.source_requested_reset": "0,0,0",
+            "live.process_requested": "3070,4280,2070", "live.process_count": "2,1",
+            "freed.source_requested_reset": "0,0,0", "freed.process_requested": "3070,4280,0",
+        }
+        trace = {"profile.level": "2", **rows, **counts}
+        gate.require_statistics_level_two_requested(trace, "complete")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_level_two_requested({**trace, "live.malloc_req": "absent"}, "missing row")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_level_two_requested({**trace, "freed.process_requested": "3070,4280,10"}, "live free")
 
     def test_default_artifact_reader_rejects_changed_build_or_cpu(self) -> None:
         with harness.temporary_directory("m7-baseline-reader-") as name:

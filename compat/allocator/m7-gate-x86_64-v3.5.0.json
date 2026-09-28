@@ -121,6 +121,10 @@
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-level-one-output-merge-differential"],
       "scope": "Pinned C MI_STAT=1 and Rust merge separate synthetic normal/huge source images into one process image, reset each source, and compare exact empty, live, combined-peak, and freed final malloc rows. Production huge allocation remains outside this fixture."
     },
+    "differential:statistics-level-two-requested": {
+      "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-level-two-requested-differential"],
+      "scope": "Pinned C MI_STAT=2 and Rust merge synthetic normal, huge, and requested-size owner counts into one process image, reset sources, then compare empty/live/freed requested-size rows and surrounding malloc-section presentation. Production requested-size and huge allocation producers remain outside this fixture."
+    },
     "differential:visitation-profiles": {
       "command": null,
       "scope": "Pinned-C/Rust area/block visitation traces under the debug-padding, secure, and guarded profiles."
@@ -302,10 +306,11 @@
         "differential:statistics",
         "differential:statistics-level-one",
         "differential:statistics-level-one-output-merge",
+        "differential:statistics-level-two-requested",
         "differential:adapter"
       ],
       "blocked_by": [
-        "The selected `MI_STAT=1` binned allocation, reset/merge, free, and final-output path is proven; page extension/commit, huge allocation, nonlocal free, and other level-one producers remain unproved. `MI_STAT>1` bin/requested counters and output remain unimplemented."
+        "The selected `MI_STAT=1` binned allocation, reset/merge, free, and final-output path is proven; page extension/commit, huge allocation, nonlocal free, and other level-one producers remain unproved. `MI_STAT=2` requested-size, allocation-count, and bin producers plus nonzero-bin display remain unproved; only synthetic owner merge/reset and final `malloc req` layout are proven."
       ]
     },
     {

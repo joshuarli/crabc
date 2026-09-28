@@ -465,6 +465,12 @@ pub(crate) struct FinalStatisticsSnapshot {
     pub(crate) malloc_normal: FinalStatCount,
     #[cfg(feature = "mi-stat-1")]
     pub(crate) malloc_huge: FinalStatCount,
+    #[cfg(feature = "mi-stat-2")]
+    pub(crate) malloc_requested: FinalStatCount,
+    #[cfg(feature = "mi-stat-2")]
+    pub(crate) malloc_normal_count: i64,
+    #[cfg(feature = "mi-stat-2")]
+    pub(crate) malloc_huge_count: i64,
     pub(crate) pages: FinalStatCount,
     pub(crate) page_committed: FinalStatCount,
     pub(crate) pages_abandoned: FinalStatCount,
@@ -919,6 +925,29 @@ impl HeapTheapStatistics {
         }
     }
 
+    /// Seeds requested-size and allocation-count owner records for a direct
+    /// source merge and renderer comparison, independent of allocation hooks.
+    #[cfg(all(test, feature = "mi-stat-2"))]
+    pub(crate) fn seed_level_two_requested_count(
+        &self, requested: FinalStatCount, normal_count: i64, huge_count: i64,
+    ) {
+        i64_store_relaxed(&self.malloc_requested.peak, requested.peak);
+        i64_store_relaxed(&self.malloc_requested.total, requested.total);
+        i64_store_relaxed(&self.malloc_requested.current, requested.current);
+        i64_store_relaxed(&self.malloc_normal_count.total, normal_count);
+        i64_store_relaxed(&self.malloc_huge_count.total, huge_count);
+    }
+
+    #[cfg(all(test, feature = "mi-stat-2"))]
+    pub(crate) fn level_two_requested_count(&self) -> FinalStatCount {
+        final_stat_count(&self.malloc_requested)
+    }
+
+    #[cfg(all(test, feature = "mi-stat-2"))]
+    pub(crate) fn level_two_allocation_counts(&self) -> (i64, i64) {
+        (i64_load_relaxed(&self.malloc_normal_count.total), i64_load_relaxed(&self.malloc_huge_count.total))
+    }
+
     /// `page.c:_mi_page_retire`'s `mi_theap_stat_counter_increase`; only a
     /// Theap owner records it (see [`StatCounter::increase_owner_local`]).
     #[inline]
@@ -1001,6 +1030,12 @@ impl HeapTheapStatistics {
             malloc_normal: final_stat_count(&self.malloc_normal),
             #[cfg(feature = "mi-stat-1")]
             malloc_huge: final_stat_count(&self.malloc_huge),
+            #[cfg(feature = "mi-stat-2")]
+            malloc_requested: final_stat_count(&self.malloc_requested),
+            #[cfg(feature = "mi-stat-2")]
+            malloc_normal_count: i64_load_relaxed(&self.malloc_normal_count.total),
+            #[cfg(feature = "mi-stat-2")]
+            malloc_huge_count: i64_load_relaxed(&self.malloc_huge_count.total),
             pages: final_stat_count(&self.pages),
             page_committed: final_stat_count(&self.page_committed),
             pages_abandoned: final_stat_count(&self.pages_abandoned),

@@ -2668,6 +2668,23 @@ fn emit_final_stat(output: StatisticsOutput<'_>, statistic: FinalStatCount, name
     unsafe { emit_final_statistics_line(output, &line) };
 }
 
+/// `mi_stat_total_print` leaves the peak column blank and prints only the
+/// requested-size total, regardless of its live current count.
+#[cfg(feature = "mi-stat-2")]
+#[inline]
+fn emit_final_total_stat(output: StatisticsOutput<'_>, statistic: FinalStatCount, name: &[u8]) {
+    let mut line = FinalOutputLine::new();
+    line.append_bytes(b"  ");
+    line.append_left(name, 10);
+    line.append_bytes(b":");
+    line.append_spaces(12);
+    append_final_amount(&mut line, statistic.total, 1, true);
+    line.append_bytes(b"\n");
+    // SAFETY: the caller holds the same serialized source output scope as
+    // the other final-statistics line emitters.
+    unsafe { emit_final_statistics_line(output, &line) };
+}
+
 #[inline]
 fn emit_final_counter(output: StatisticsOutput<'_>, value: i64, name: &[u8], unit: i64) {
     let mut line = FinalOutputLine::new();
@@ -2694,7 +2711,7 @@ fn emit_final_average(output: StatisticsOutput<'_>, count: i64, total: i64, name
 }
 
 /// Pinned `_mi_stats_print(name, id, stats, out, arg)` (`src/stats.c:356-436`)
-/// under the default `MI_STAT == 0` and selected `MI_STAT == 1` profiles.
+/// under the default `MI_STAT == 0` and optional level-one/two profiles.
 ///
 /// `peak_commit` is `mi_process_info`'s main-subprocess committed peak,
 /// which is the printed image's own peak only when that image is the main
@@ -2711,10 +2728,21 @@ unsafe fn render_final_statistics(
 
     #[cfg(feature = "mi-stat-1")]
     if statistics.malloc_normal.total.wrapping_add(statistics.malloc_huge.total) != 0 {
-        // Level one leaves the allocation-count fields at zero, so the
-        // source displays both classes without a per-block-size column.
-        emit_final_stat(output, statistics.malloc_normal, b"binned", -1, FINAL_NOT_ALL_FREED);
-        emit_final_stat(output, statistics.malloc_huge, b"huge", -1, FINAL_NOT_ALL_FREED);
+        #[cfg(feature = "mi-stat-2")]
+        {
+            // The source always prints this header above level one. Bin
+            // rows remain absent while their producer fields are zero.
+            emit_final_header(output, b"blocks");
+        }
+        #[cfg(feature = "mi-stat-2")]
+        let (normal_unit, huge_unit) = (
+            if statistics.malloc_normal_count == 0 { -1 } else { 1 },
+            if statistics.malloc_huge_count == 0 { -1 } else { 1 },
+        );
+        #[cfg(not(feature = "mi-stat-2"))]
+        let (normal_unit, huge_unit) = (-1, -1);
+        emit_final_stat(output, statistics.malloc_normal, b"binned", normal_unit, FINAL_NOT_ALL_FREED);
+        emit_final_stat(output, statistics.malloc_huge, b"huge", huge_unit, FINAL_NOT_ALL_FREED);
         // `mi_stat_count_add_mt` first adds normal into zero, then combines
         // huge using the previous current plus the incoming peak.
         let normal = statistics.malloc_normal;
@@ -2725,6 +2753,8 @@ unsafe fn render_final_statistics(
             peak: normal.peak.max(normal.current.wrapping_add(huge.peak)),
         };
         emit_final_stat(output, total, b"total", 1, FINAL_EXPLICIT_EMPTY_NOT_OK);
+        #[cfg(feature = "mi-stat-2")]
+        emit_final_total_stat(output, statistics.malloc_requested, b"malloc req");
         let mut separator = FinalOutputLine::new();
         separator.append_bytes(b"\n");
         unsafe { emit_final_statistics_line(output, &separator) };
@@ -3162,12 +3192,95 @@ mod tests {
         std::println!("CRABC_MI_M7_STATISTICS_LEVEL_ONE_OUTPUT_MERGE_TRACE_END");
     }
 
+    #[cfg(feature = "mi-stat-2")]
+    fn level_two_requested_output(
+        name: &str, process: &HeapTheapStatistics, owner: &OutputOwner, capture: &Capture,
+    ) {
+        capture.reset();
+        let view = FinalProcessDiagnosticView::new(
+            7, process.final_output_snapshot(), FinalProcessInfo::new(0, 0, 0, 0, 0, 0),
+        );
+        // SAFETY: this test serializes registration and emission, retaining
+        // the capture until the renderer has returned.
+        unsafe {
+            super::render_final_statistics(
+                super::StatisticsOutput::default_route(owner), b"subproc", view, 0,
+            )
+        };
+        let header = (0..capture.count()).any(|index| capture.message(index).starts_with(b" blocks     "));
+        std::println!("{name}.blocks={}", usize::from(header));
+        for label in ["binned", "huge", "total", "malloc req"] {
+            let prefix = std::format!("  {label:<10}:");
+            let key = if label == "malloc req" { "malloc_req" } else { label };
+            let row = (0..capture.count()).find_map(|index| {
+                let message = capture.message(index);
+                message.starts_with(prefix.as_bytes()).then_some(message)
+            });
+            match row {
+                Some(message) => {
+                    let line = std::str::from_utf8(message).expect("source output is ASCII");
+                    std::println!("{name}.{key}={}", line.strip_suffix('\n').expect("one line"));
+                }
+                None => std::println!("{name}.{key}=absent"),
+            }
+        }
+    }
+
+    #[cfg(feature = "mi-stat-2")]
+    #[test]
+    fn level_two_requested_trace_for_pinned_c_comparison() {
+        let mut owner = output_owner();
+        let capture = Capture::new();
+        // SAFETY: the local owner and capture remain live through all
+        // synchronous rendering calls on this test thread.
+        unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
+        let process = HeapTheapStatistics::new();
+        let normal_owner = HeapTheapStatistics::new();
+        let huge_owner = HeapTheapStatistics::new();
+        let freed_owner = HeapTheapStatistics::new();
+
+        std::println!("CRABC_MI_M7_STATISTICS_LEVEL_TWO_REQUESTED_TRACE_BEGIN");
+        std::println!("profile.level=2");
+        level_two_requested_output("empty", &process, &owner, &capture);
+
+        normal_owner.seed_level_one_malloc_counts(final_stat_count(160, 320, 96), final_stat_count(0, 0, 0));
+        normal_owner.seed_level_two_requested_count(final_stat_count(140, 280, 70), 2, 0);
+        process.merge_from_and_reset(&normal_owner);
+        level_one_merge_count("normal.source_requested_reset", normal_owner.level_two_requested_count());
+        level_one_merge_count("normal.process_requested", process.level_two_requested_count());
+        std::println!("normal.process_count={}", process.level_two_allocation_counts().0);
+        level_two_requested_output("normal", &process, &owner, &capture);
+
+        huge_owner.seed_level_one_malloc_counts(final_stat_count(0, 0, 0), final_stat_count(3_072, 4_096, 2_048));
+        huge_owner.seed_level_two_requested_count(final_stat_count(3_000, 4_000, 2_000), 0, 1);
+        process.merge_from_and_reset(&huge_owner);
+        level_one_merge_count("live.source_requested_reset", huge_owner.level_two_requested_count());
+        level_one_merge_count("live.process_requested", process.level_two_requested_count());
+        let (normal_count, huge_count) = process.level_two_allocation_counts();
+        std::println!("live.process_count={normal_count},{huge_count}");
+        level_two_requested_output("live", &process, &owner, &capture);
+
+        freed_owner.seed_level_one_malloc_counts(final_stat_count(0, 0, -96), final_stat_count(0, 0, -2_048));
+        freed_owner.seed_level_two_requested_count(final_stat_count(0, 0, -2_070), 0, 0);
+        process.merge_from_and_reset(&freed_owner);
+        level_one_merge_count("freed.source_requested_reset", freed_owner.level_two_requested_count());
+        level_one_merge_count("freed.process_requested", process.level_two_requested_count());
+        level_two_requested_output("freed", &process, &owner, &capture);
+        std::println!("CRABC_MI_M7_STATISTICS_LEVEL_TWO_REQUESTED_TRACE_END");
+    }
+
     fn final_statistics_fixture() -> FinalStatisticsSnapshot {
         FinalStatisticsSnapshot {
             #[cfg(feature = "mi-stat-1")]
             malloc_normal: final_stat_count(0, 0, 0),
             #[cfg(feature = "mi-stat-1")]
             malloc_huge: final_stat_count(0, 0, 0),
+            #[cfg(feature = "mi-stat-2")]
+            malloc_requested: final_stat_count(0, 0, 0),
+            #[cfg(feature = "mi-stat-2")]
+            malloc_normal_count: 0,
+            #[cfg(feature = "mi-stat-2")]
+            malloc_huge_count: 0,
             pages: final_stat_count(5, 7, 2),
             page_committed: final_stat_count(6_144, 5_120, 4_096),
             pages_abandoned: final_stat_count(1, 2, 0),
