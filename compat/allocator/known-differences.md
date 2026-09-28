@@ -2004,6 +2004,17 @@ transfer capability.
   claim. A focused Rust failed-prefix regression proves that a failed
   protection transition cannot yield a publishable `MemoryId`; a failed
   release retains one raw retry owner and applies statistics once. The pinned
+  direct fresh OS area also fails its first metadata commit and cleanup
+  `munmap` in a separate source-bound receiver. Both sides retain the exact
+  131,072-byte live mapping, record one commit call, return reserved current
+  to baseline, and lower committed current by 131,072 bytes despite the failed
+  unmap. The commit warning's prefix/body precede the free warning's
+  prefix/body; the free body observes reserved current before its decrease.
+  Pinned C's void `_mi_os_free` loses the retry capability, so the fixture
+  releases only the observed range through `_mi_prim_free` after the trace.
+  Rust retains one unpublished claim and retries that exact range raw, without
+  another warning or statistics event. This ownership difference preserves
+  cleanup capability without changing source accounting or warning order. The pinned
   `allocator-unit` lane passes 932 tests. The private native smoke command
   `./compat/allocator/run-x86_64.sh allocator-perf --smoke --label m2-incremental-on-demand`
   completed successfully and emitted

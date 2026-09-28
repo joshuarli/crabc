@@ -697,6 +697,23 @@ impl SourceFormattedMessage {
         Self { bytes, length }
     }
 
+    /// The failed `_mi_os_commit_ex` warning uses the page-rounded primitive
+    /// range, while its statistics charge remains the caller's source span.
+    pub(crate) fn os_commit_failure(errno: Errno, address: usize, size: usize) -> Self {
+        let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
+        let mut length = 0;
+        append_mbind_bytes(&mut bytes, &mut length, b"cannot commit OS memory (error: ");
+        append_mbind_unsigned_decimal(&mut bytes, &mut length, errno.raw() as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b" (0x");
+        append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, errno.raw() as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b"), address: ");
+        append_source_pointer(&mut bytes, &mut length, address);
+        append_mbind_bytes(&mut bytes, &mut length, b", size: 0x");
+        append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, size as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b" bytes)\n");
+        Self { bytes, length }
+    }
+
     /// `"unable to allocate aligned OS memory directly, fall back to
     /// over-allocation (size: 0x%zx bytes, address: %p, alignment: 0x%zx,
     /// commit: %d)\n"` from `mi_os_prim_alloc_aligned` (`src/os.c:376-378`).
@@ -4407,9 +4424,9 @@ mod tests {
         core::str::from_utf8(option.name()).expect("source option names are ASCII")
     }
 
-    /// The fixed environment scenarios mirrored by the pinned C probe in
-    /// `compat/allocator/x86_64_m7_options_oracle.c`. Both halves print the entries,
-    /// so a drift in either literal list fails the comparison.
+    /// These fixed environment scenarios exercise the source option parser's
+    /// defaulting, alias, and length boundaries. Each scenario prints its
+    /// entries so a literal-list drift changes the observable record.
     fn option_trace_scenarios() -> std::vec::Vec<(&'static str, std::vec::Vec<std::vec::Vec<u8>>)> {
         let overlong = {
             let mut entry = b"mimalloc_purge_delay=".to_vec();

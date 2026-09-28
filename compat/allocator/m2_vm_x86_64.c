@@ -4015,6 +4015,102 @@ typedef struct on_demand_os_area_record_s {
   int64_t values[9];
 } on_demand_os_area_record_t;
 
+typedef struct fresh_os_cleanup_record_s {
+  bool facts[8];
+  int64_t values[5];
+} fresh_os_cleanup_record_t;
+
+static struct {
+  mi_subproc_t* subproc;
+  int64_t reserved_at_warning;
+  unsigned fragments;
+  bool prefix_first;
+  bool commit_body_second;
+  bool prefix_third;
+  bool free_body_fourth;
+} fresh_os_cleanup_warning;
+
+static void fresh_os_cleanup_output(const char* message, void* argument) {
+  (void)argument;
+  const unsigned index = fresh_os_cleanup_warning.fragments++;
+  if (index == 0 || index == 2) {
+    const bool prefix = strncmp(message,
+        "mimalloc: warning: thread 0x", sizeof("mimalloc: warning: thread 0x") - 1) == 0;
+    if (index == 0) fresh_os_cleanup_warning.prefix_first = prefix;
+    else fresh_os_cleanup_warning.prefix_third = prefix;
+  }
+  else if (index == 1) {
+    fresh_os_cleanup_warning.commit_body_second = strncmp(message,
+        "cannot commit OS memory (error: 12 (0x0C), address: 0x",
+        sizeof("cannot commit OS memory (error: 12 (0x0C), address: 0x") - 1) == 0;
+  }
+  else if (index == 3) {
+    fresh_os_cleanup_warning.free_body_fourth = strncmp(message,
+        "unable to free OS memory (error: 12 (0x0C), size: 0x20000 bytes, address: 0x",
+        sizeof("unable to free OS memory (error: 12 (0x0C), size: 0x20000 bytes, address: 0x") - 1) == 0;
+    fresh_os_cleanup_warning.reserved_at_warning =
+        fresh_os_cleanup_warning.subproc->stats.reserved.current;
+  }
+}
+
+/* This direct source area call fails its first metadata commit, then its
+ * source rollback free. The C free is void: the observed mapping remains
+ * live until the fixture performs one exact primitive-only cleanup. */
+static int run_fresh_os_cleanup_child(int descriptor) {
+  mi_process_init();
+  mi_option_set(mi_option_disallow_arena_alloc, 1);
+  mi_option_set(mi_option_allow_large_os_pages, 0);
+  mi_option_set_enabled(mi_option_show_errors, true);
+  mi_subproc_t* const subproc = _mi_subproc_main();
+  fresh_os_cleanup_warning.subproc = subproc;
+  mi_register_output(fresh_os_cleanup_output, NULL);
+  fresh_os_cleanup_warning.fragments = 0;
+  const int64_t reserved_before = subproc->stats.reserved.current;
+  const int64_t committed_before = subproc->stats.committed.current;
+  const int64_t commits_before = subproc->stats.commit_calls.total;
+  mi_memid_t memid = _mi_memid_none();
+  mi_arena_pages_t* arena_pages = NULL;
+  memset(&os_publication_probe, 0, sizeof(os_publication_probe));
+  os_publication_probe.selected = 5;
+  os_publication_probe.active = true;
+  uint8_t* const start = mi_arenas_page_alloc_fresh_area(
+      subproc->theap_meta, 1, 1, 1, false, true, &memid, &arena_pages);
+  os_publication_probe.active = false;
+  const size_t length = os_publication_probe.length;
+  const int64_t reserved_after = subproc->stats.reserved.current;
+  const int64_t committed_after = subproc->stats.committed.current;
+  const int64_t commits_after = subproc->stats.commit_calls.total;
+  unsigned char residency = 0;
+  const bool range_live = os_publication_probe.base != NULL
+      && mincore(os_publication_probe.base, _mi_os_page_size(), &residency) == 0;
+  fresh_os_cleanup_record_t result = {0};
+  result.facts[0] = start == NULL && arena_pages == NULL;
+  result.facts[1] = memid.memkind == MI_MEM_OS && memid.mem.os.size == length;
+  result.facts[2] = length == 2 * MI_ARENA_SLICE_SIZE && range_live;
+  result.facts[3] = os_publication_probe.commits == 1
+      && os_publication_probe.releases == 1 && os_publication_probe.retained;
+  result.facts[4] = reserved_after == reserved_before
+      && committed_after - committed_before == -(int64_t)length
+      && commits_after - commits_before == 1;
+  result.facts[5] = fresh_os_cleanup_warning.fragments == 4
+      && fresh_os_cleanup_warning.prefix_first
+      && fresh_os_cleanup_warning.commit_body_second
+      && fresh_os_cleanup_warning.prefix_third
+      && fresh_os_cleanup_warning.free_body_fourth;
+  result.facts[6] = fresh_os_cleanup_warning.reserved_at_warning
+      == reserved_before + (int64_t)length;
+  result.values[0] = (int64_t)length;
+  result.values[1] = reserved_after - reserved_before;
+  result.values[2] = committed_after - committed_before;
+  result.values[3] = commits_after - commits_before;
+  result.values[4] = (int64_t)fresh_os_cleanup_warning.fragments;
+  result.facts[7] = _mi_prim_free(os_publication_probe.base, length) == 0
+      && subproc->stats.reserved.current == reserved_after
+      && subproc->stats.committed.current == committed_after;
+  for (size_t i = 0; i < 8; i++) if (!result.facts[i]) return (int)(20 + i);
+  return write(descriptor, &result, sizeof(result)) == sizeof(result) ? 0 : 40;
+}
+
 /* The ordinary OS fallback reserves a page area and commits only aligned
  * metadata when the caller requests on-demand commitment. This direct area
  * call stops before the pinned fresh-page body would write a free-list link
@@ -4246,6 +4342,14 @@ int main(void) {
       run_on_demand_arena_callback_child, callback_facts, sizeof(callback_facts))) return 1;
   for (size_t i = 0; i < 4; i++)
     printf("arena_on_demand.%s=%u\n", callback_fields[i], (unsigned)callback_facts[i]);
+  const char* cleanup_fields[] = {"failed_unpublished", "memory_id_range",
+      "leaked_range", "single_commit_and_release", "statistics",
+      "warning_fragments_order", "warning_before_statistics", "raw_cleanup"};
+  fresh_os_cleanup_record_t cleanup = {0};
+  if (!capture_large_page_retry_child("fresh OS cleanup child",
+      run_fresh_os_cleanup_child, &cleanup, sizeof(cleanup))) return 1;
+  for (size_t i = 0; i < 8; i++)
+    printf("os_area_commit_cleanup.%s=%u\n", cleanup_fields[i], (unsigned)cleanup.facts[i]);
   puts("CRABC_MI_M2_OS_PUBLICATION_TRACE_END");
   const char* on_demand_value_fields[] = {"mapping_length", "reserved_after_area",
       "committed_after_area", "commit_calls_after_area", "memory_id_initially_committed",
@@ -4255,6 +4359,11 @@ int main(void) {
   for (size_t i = 0; i < 9; i++)
     printf("os_on_demand.%s=%lld\n", on_demand_value_fields[i],
         (long long)on_demand.values[i]);
+  const char* cleanup_value_fields[] = {"mapping_length", "reserved_delta",
+      "committed_delta", "commit_calls", "warning_fragments"};
+  for (size_t i = 0; i < 5; i++)
+    printf("os_area_commit_cleanup.%s=%lld\n", cleanup_value_fields[i],
+        (long long)cleanup.values[i]);
   puts("CRABC_MI_M2_OS_ON_DEMAND_VALUES_END");
   return 0;
 }

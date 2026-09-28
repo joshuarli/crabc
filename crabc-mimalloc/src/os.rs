@@ -1242,8 +1242,8 @@ impl VmPolicy {
     /// The returned integer is an mmap hint, not a reservation or pointer
     /// owner. In the selected normal-release source branch a missing or
     /// uninitialized default Theap must return no hint after the source's
-    /// initial atomic cursor increment; callers must pass that real M1 random
-    /// image rather than supplying an ad-hoc generator.
+    /// initial atomic cursor increment; callers must pass the actual Theap
+    /// random image rather than supplying an ad-hoc generator.
     pub(crate) fn aligned_hint(
         &self,
         config: MemoryConfig,
@@ -1650,9 +1650,9 @@ fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
 /// result, read `mi_option_use_numa_nodes`, normalize a current-node value,
 /// or choose arena placement; those are separate `src/os.c` policy concerns.
 ///
-/// The M1 raw C/Rust trace calls this primitive directly. The separately named
-/// fixed [`os_numa_node_count`] wrapper consumes it only for the selected
-/// cache, leaving this raw observation and its trace unchanged.
+/// The separately named fixed [`os_numa_node_count`] wrapper consumes this
+/// uncached observation for its selected cache and normalization. Direct
+/// callers still receive the raw primitive result.
 #[allow(dead_code)]
 pub(crate) fn numa_node_count() -> usize {
     scan_linux_numa_node_count(linux_numa_node_path_is_readable)
@@ -1740,7 +1740,8 @@ fn write_decimal_node_index(
 /// [`VmPolicy::arena_declines_thp`]) it is advised `MADV_NOHUGEPAGE` instead,
 /// so its pages become resident at small-page granularity as they are first
 /// touched, as a musl heap's do, even when the host's THP mode is `always`.
-/// This is the recorded divergence in `compat/allocator/known-differences.md`.
+/// The arena advice intentionally differs from the source's ordinary mapping
+/// advice, so the arena's first-touch residency uses small-page granularity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ThpAdvice {
     Source,
@@ -2800,6 +2801,27 @@ impl Mapping {
         Ok(outcome)
     }
 
+    /// The fresh OS page-area receiver forwards the source warning after a
+    /// failed primitive commit, using the page-rounded address and size that
+    /// `_mi_os_commit_ex` passed to the kernel.
+    pub(crate) fn commit_for_process_with_warning(
+        &self,
+        process: VmProcess<'_>,
+        offset: usize,
+        length: usize,
+        stat_already_committed: usize,
+    ) -> Result<Option<CommitOutcome>> {
+        let result = self.commit_for_process(process, offset, length, stat_already_committed);
+        if let Err(error) = result {
+            if let Ok(Some(range)) = self.page_range(offset, length, PageAlignment::Covering) {
+                process.policy.source_warning(SourceFormattedMessage::os_commit_failure(
+                    error, range.address.addr(), range.length,
+                ));
+            }
+        }
+        result
+    }
+
     /// Releases physical contents for complete pages inside the requested range.
     ///
     /// This follows the conservative `mi_os_page_align_area_conservative`
@@ -3038,7 +3060,7 @@ impl Mapping {
 
     /// A normal source free warns before its unconditional statistics update.
     /// Other receivers retain their own warning route after this primitive.
-    fn unmap_for_process_with_warning(
+    pub(crate) fn unmap_for_process_with_warning(
         &mut self,
         process: VmProcess<'_>,
         commit_size: usize,
@@ -4931,7 +4953,7 @@ pub(crate) fn numa_node() -> usize {
 ///
 /// This is the no-option part of pinned `src/os.c:_mi_os_numa_node_count`.
 /// It is intentionally distinct from [`numa_node_count`], which remains the
-/// uncached Unix primitive used by the M1 raw C/Rust trace. The first wrapper
+/// uncached Unix primitive available to direct callers. The first wrapper
 /// call uses that raw count, normalizes zero and values above `INT_MAX` to one,
 /// and publishes the result with the source Release store.
 #[allow(dead_code)]
@@ -4973,8 +4995,8 @@ fn os_numa_node_count_with_raw(
 ///
 /// This maps pinned `src/os.c:_mi_os_numa_node` and its private
 /// `mi_os_numa_node_get` helper without options, diagnostics, or arena
-/// placement. It keeps the raw [`numa_node`] observation intact for the M1
-/// trace; the selected static ticket-zero caller consumes this wrapper and its
+/// placement. It keeps the raw [`numa_node`] observation intact for direct
+/// callers; the selected static ticket-zero caller consumes this wrapper and its
 /// cached-single-node shortcut, strict `INT_MAX` current-node boundary, and
 /// modulo normalization.
 #[inline]
@@ -5148,9 +5170,8 @@ pub(crate) mod fault {
     static FAILURE_ERROR: AtomicI32 = AtomicI32::new(Errno::NOMEM.raw());
     static SECOND_FAILURE_ERROR: AtomicI32 = AtomicI32::new(Errno::NOMEM.raw());
     static THIRD_FAILURE_ERROR: AtomicI32 = AtomicI32::new(Errno::NOMEM.raw());
-    // The M2 native release-failure differential captures the selected
-    // `_mi_os_free_ex` primitive arguments, and the aligned-overmap
-    // differential its direct/prefix/suffix `mi_os_prim_free` arguments.
+    // Capture the selected `_mi_os_free_ex` primitive arguments and the
+    // direct/prefix/suffix `mi_os_prim_free` arguments from aligned overmaps.
     // This is separate from `OBSERVED`: a count alone cannot prove that an
     // interior client pointer did not leak into `munmap` instead of the
     // retained full MemoryId, nor name a leaked trim range.
@@ -5510,7 +5531,7 @@ pub(crate) mod fault {
     /// Test-only capture token for two selected `munmap` argument pairs.
     ///
     /// It is constructed only from the serial global fault guard, so the
-    /// fixed M2 trace cannot confuse an unrelated test's map release with
+    /// selected release trace cannot confuse an unrelated test's map release with
     /// the selected normal-offset failure/retry pair.
     pub(crate) struct UnmapRangeCapture<'guard> {
         _guard: core::marker::PhantomData<&'guard Guard>,
@@ -9934,8 +9955,8 @@ mod tests {
                             // `MADV_DONTNEED`. The reset branch must instead
                             // use the source-global cache value that it reads
                             // before this exact call: standalone tests may
-                            // begin at `MADV_FREE`, while the M2 differential
-                            // has already observed the source EINVAL fallback
+                            // begin at `MADV_FREE`, while another observation
+                            // may already have consumed the source EINVAL fallback
                             // and therefore expects `MADV_DONTNEED`.
                             let expected_advice = primitive_expected.then(|| {
                                 if decommit_branch {
@@ -10438,8 +10459,8 @@ mod tests {
         (config, VmProcess::new(policy, subprocess), length, alignment)
     }
 
-    /// One row of the pinned `mi_os_prim_alloc_aligned` matrix that
-    /// `compat/allocator/m2_vm_x86_64.c` runs through `_mi_os_alloc_aligned`.
+    /// One fault selection for the source `_mi_os_alloc_aligned` caller of
+    /// `mi_os_prim_alloc_aligned`.
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum AlignedOvermapCase {
         DirectAligned,
@@ -10582,8 +10603,7 @@ mod tests {
         std::println!("CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_END");
     }
 
-    /// Rust half of `compat/allocator/m2_startup_statistics_x86_64.c`: the
-    /// main subprocess VM statistics after process initialization (the page
+    /// Main subprocess VM statistics after process initialization (the page
     /// map is published), after the first allocation (the first arena is
     /// reserved), and after its free.
     #[cfg(all(target_arch = "x86_64", not(miri)))]
@@ -10662,13 +10682,11 @@ mod tests {
         assert!(entropy_fill(&mut bytes).expect("Linux getrandom"));
     }
 
-    /// Emits the finite, address-independent M1 raw primitive record.
-    ///
-    /// `compat/allocator/run.py` compares this one-test machine record to an
-    /// executable built from the pinned C `src/os.c` and `src/prim/prim.c`.
-    /// It deliberately covers only the frozen normal-success paths below;
-    /// error/fallback paths, option mutation, hints, huge pages, and allocator
-    /// lifecycle ownership remain separate source-map work.
+    /// Emits a finite, address-independent raw primitive record for the
+    /// normal-success paths below. The observed values can be compared with
+    /// source primitives without relying on virtual addresses. It does not
+    /// exercise error/fallback paths, option mutation, hints, huge pages, or
+    /// allocator lifecycle ownership.
     #[test]
     fn emit_m1_raw_c_rust_trace() {
         let _fault = fault::install(fault::Plan::disabled());
@@ -10811,7 +10829,7 @@ mod tests {
         std::println!("CRABC_MI_M1_RAW_TRACE_END");
     }
 
-    /// Emits the native M2 fixed-profile VM lifecycle record.
+    /// Emits the normal-release VM lifecycle record.
     ///
     /// This test deliberately follows every VM transition that the current
     /// typed Linux owner can perform: reserved and committed mappings,

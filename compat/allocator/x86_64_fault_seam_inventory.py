@@ -50,6 +50,11 @@ OS_ON_DEMAND_VALUE_KEYS = tuple(
         "expected_first_prefix", "block_prefix_commit_calls",
         "block_prefix_committed_bytes", "committed_after_release",
     )
+) + tuple(
+    f"os_area_commit_cleanup.{field}" for field in (
+        "mapping_length", "reserved_delta", "committed_delta", "commit_calls",
+        "warning_fragments",
+    )
 )
 OS_PUBLICATION_KEYS = tuple(
     f"os_publication.{selected}.{field}" for selected in range(1, 8)
@@ -65,6 +70,12 @@ OS_PUBLICATION_KEYS = tuple(
     f"arena_on_demand.{field}" for field in (
         "callback_failed", "mapping_retained", "callback_statistics", "recovered",
     )
+) + tuple(
+    f"os_area_commit_cleanup.{field}" for field in (
+        "failed_unpublished", "memory_id_range", "leaked_range",
+        "single_commit_and_release", "statistics", "warning_fragments_order",
+        "warning_before_statistics", "raw_cleanup",
+    )
 )
 OS_PUBLICATION_BOUNDARY = {
     "source": "src/arena.c:781-1120,1220-1297; src/page-map.c:391-515; src/os.c:240-294",
@@ -78,6 +89,7 @@ OS_PUBLICATION_BOUNDARY = {
     "rust_release": "one typed Claim or Published owner; raw retry never repeats source accounting",
     "on_demand_difference": "the direct pinned OS area receiver commits only metadata, marks MemoryId committed, and charges its uncommitted page suffix on release; Rust commits a first writable prefix before publication and charges exactly that prefix",
     "on_demand_callback": "an external arena rejects one first page prefix through its source callback; its backing and free-slice ownership remain live, no OS commit statistics event occurs, and a later claim succeeds",
+    "fresh_os_cleanup": "a direct fresh OS area rejects its metadata commit and cleanup unmap; the retained range and source counters remain observable, commit and free warnings arrive before the reserved decrease, and Rust retries through one raw-only owner",
     "excluded": "corrupted-alias provenance refusal, general metadata allocator, hardware huge/NUMA, and complete M2",
 }
 METADATA_PUBLICATION_PROFILE_DEFINE = "-DCRABC_M2_METADATA_PUBLICATION_PROFILE=1"
@@ -2252,6 +2264,13 @@ def _validate_os_on_demand_difference(c: Mapping[str, int], rust: Mapping[str, i
             rust[key("block_prefix_committed_bytes")], rust[key("committed_after_release")])
             != (0, 1, prefix, 0)):
         raise ValueError(f"on-demand OS correction boundary changed: C {c} Rust {rust}")
+    cleanup = lambda field: f"os_area_commit_cleanup.{field}"
+    expected = (2 * 65536, 0, -(2 * 65536), 1, 4)
+    fields = ("mapping_length", "reserved_delta", "committed_delta", "commit_calls",
+              "warning_fragments")
+    if (tuple(c[cleanup(field)] for field in fields) != expected
+        or tuple(rust[cleanup(field)] for field in fields) != expected):
+        raise ValueError(f"fresh OS metadata/cleanup values differ: C {c} Rust {rust}")
 
 
 def validate_os_publication_report(report: Mapping[str, Any]) -> dict[str, Any]:

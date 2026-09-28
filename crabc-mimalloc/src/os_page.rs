@@ -557,9 +557,9 @@ impl OsAlignedPageClaim {
             ready: false,
         };
         let metadata_size = layout.metadata_commit_size();
-        let result = claim.mapping.commit_for_process(process, 0, metadata_size, metadata_size)
+        let result = claim.mapping.commit_for_process_with_warning(process, 0, metadata_size, metadata_size)
             .map_err(|error| (OsAlignedPageFailureStage::MetadataCommit, error))
-            .and_then(|_| claim.mapping.commit_for_process(process, layout.alignment(), layout.allocation_size(), 0)
+            .and_then(|_| claim.mapping.commit_for_process_with_warning(process, layout.alignment(), layout.allocation_size(), 0)
                 .map_err(|error| (OsAlignedPageFailureStage::BlockCommit, error)));
         if let Err((stage, error)) = result {
             return match claim.release() {
@@ -631,9 +631,9 @@ impl OsAlignedPageClaim {
             release_state: OsPageReleaseState::Unaccounted, ready: false,
         };
         let metadata_size = layout.metadata_commit_size();
-        let result = claim.mapping.commit_for_process(process, 0, metadata_size, metadata_size)
+        let result = claim.mapping.commit_for_process_with_warning(process, 0, metadata_size, metadata_size)
             .map_err(|error| (OsAlignedPageFailureStage::MetadataCommit, error))
-            .and_then(|_| claim.mapping.commit_for_process(process, layout.alignment(),
+            .and_then(|_| claim.mapping.commit_for_process_with_warning(process, layout.alignment(),
                 layout.allocation_size(), 0)
                 .map_err(|error| (OsAlignedPageFailureStage::BlockCommit, error)));
         if let Err((stage, error)) = result {
@@ -697,7 +697,7 @@ impl OsAlignedPageClaim {
             initially_committed: false, release_commit_size: 0,
             release_state: OsPageReleaseState::Unaccounted, ready: false };
         let metadata_size = layout.metadata_commit_size();
-        if let Err(error) = claim.mapping.commit_for_process(process, 0, metadata_size, metadata_size) {
+        if let Err(error) = claim.mapping.commit_for_process_with_warning(process, 0, metadata_size, metadata_size) {
             // SAFETY: this allocation call retains the exact input process
             // identity and sole private claim through rollback.
             return match unsafe { claim.release_for_process(process) } {
@@ -785,7 +785,7 @@ impl OsAlignedPageClaim {
             ready: false,
         };
         let metadata_size = layout.metadata_commit_size();
-        if let Err(error) = claim.mapping.commit_for_process(
+        if let Err(error) = claim.mapping.commit_for_process_with_warning(
             process,
             0,
             metadata_size,
@@ -912,7 +912,7 @@ impl OsAlignedPageClaim {
         {
             return Err(OsAlignedPageError::new(OsAlignedPageFailureStage::Publish, Errno::INVAL));
         }
-        if let Err(error) = self.mapping.commit_for_process(
+        if let Err(error) = self.mapping.commit_for_process_with_warning(
             process, self.layout.alignment(), size, 0,
         ) {
             self.ready = false;
@@ -934,7 +934,7 @@ impl OsAlignedPageClaim {
         {
             return Err(OsAlignedPageError::new(OsAlignedPageFailureStage::Publish, Errno::INVAL));
         }
-        if let Err(error) = self.mapping.commit_for_process(
+        if let Err(error) = self.mapping.commit_for_process_with_warning(
             process, self.layout.alignment(), size, 0,
         ) {
             self.ready = false;
@@ -1078,7 +1078,7 @@ impl OsAlignedPageClaim {
         let result = match (self.process, self.release_state) {
             (Some(process), OsPageReleaseState::Unaccounted) => {
                 self.release_state = OsPageReleaseState::Accounted;
-                self.mapping.unmap_for_process(process, self.release_commit_size, false)
+                self.mapping.unmap_for_process_with_warning(process, self.release_commit_size, false, true)
             }
             (None, OsPageReleaseState::Unaccounted) if self.process_identity.is_some() => {
                 Err(Errno::INVAL)
@@ -1125,7 +1125,7 @@ impl OsAlignedPageClaim {
                 // Pinned `_mi_os_prim_free` applies statistics even when the
                 // syscall fails. Latch before the call so retry is raw-only.
                 self.release_state = OsPageReleaseState::Accounted;
-                self.mapping.unmap_for_process(process, self.release_commit_size, false)
+                self.mapping.unmap_for_process_with_warning(process, self.release_commit_size, false, true)
             }
             OsPageReleaseState::Accounted => self.mapping.unmap(),
             OsPageReleaseState::RetainedPublicationFailure => unreachable!(),
@@ -1600,6 +1600,40 @@ mod tests {
     use crate::config::{KIB, MIB};
     use crate::os::{PageSize, fault};
     use crabc_core::Errno;
+    use core::ffi::{c_char, c_void, CStr};
+    use core::sync::atomic::{AtomicI64, AtomicPtr, Ordering};
+
+    static FRESH_OS_CLEANUP_ENVIRONMENT: AtomicPtr<*const c_char> =
+        AtomicPtr::new(core::ptr::null_mut());
+
+    unsafe fn fresh_os_cleanup_environment() -> *const *const c_char {
+        FRESH_OS_CLEANUP_ENVIRONMENT.load(Ordering::Acquire).cast_const()
+    }
+
+    unsafe extern "C" fn fresh_os_cleanup_default_output(_message: *const c_char) {}
+
+    struct FreshOsCleanupWarnings {
+        fragments: std::sync::Mutex<std::vec::Vec<std::vec::Vec<u8>>>,
+        subprocess: *const crate::subproc::SubprocessIdentity,
+        reserved_at_free_warning: AtomicI64,
+    }
+
+    unsafe extern "C" fn capture_fresh_os_cleanup_warning(
+        message: *const c_char, argument: *mut c_void,
+    ) {
+        // SAFETY: registration and delivery are synchronous; the test retains
+        // the exact capture and subprocess through the complete faulted call.
+        let capture = unsafe { &*(argument as *const FreshOsCleanupWarnings) };
+        let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
+        if bytes.starts_with(b"unable to free OS memory") {
+            let current = unsafe { &*capture.subprocess }
+                .vm_statistics().snapshot().reserved_current;
+            capture.reserved_at_free_warning.store(current, Ordering::Release);
+        }
+        if let Ok(mut fragments) = capture.fragments.lock() {
+            fragments.push(bytes.to_vec());
+        }
+    }
 
     fn process(disallow_os: bool) -> VmProcess<'static> {
         use crate::config::{VmOptions, VmOption, VmOptionEnvironment};
@@ -1715,6 +1749,92 @@ mod tests {
             assert!(claim.release().is_ok());
             assert_eq!(process.subprocess().vm_statistics().snapshot(), after);
         }
+    }
+
+    fn fresh_os_area_metadata_commit_and_cleanup_relations() -> [i64; 5] {
+        use crate::diagnostic_output::{OutputCallback, OutputOwner};
+        let show_errors = b"mimalloc_show_errors=1\0";
+        let max_warnings = b"mimalloc_max_warnings=100\0";
+        let environment = std::boxed::Box::leak(std::boxed::Box::new([
+            show_errors.as_ptr().cast(), max_warnings.as_ptr().cast(), core::ptr::null(),
+        ]));
+        FRESH_OS_CLEANUP_ENVIRONMENT.store(environment.as_mut_ptr(), Ordering::Release);
+        let output = std::boxed::Box::leak(std::boxed::Box::new(
+            OutputOwner::new(fresh_os_cleanup_default_output)));
+        // SAFETY: the leaked environment and output remain live through the
+        // synchronous source option initialization and fault receiver.
+        unsafe { output.initialize_source_options(fresh_os_cleanup_environment) };
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let warnings = FreshOsCleanupWarnings {
+            fragments: std::sync::Mutex::new(std::vec::Vec::new()),
+            subprocess: subprocess.identity(),
+            reserved_at_free_warning: AtomicI64::new(i64::MIN),
+        };
+        // SAFETY: this test retains the capture for every synchronous
+        // callback and does not register another output route.
+        unsafe { output.register_output(Some(capture_fresh_os_cleanup_warning as OutputCallback),
+            &warnings as *const FreshOsCleanupWarnings as *mut c_void) };
+        warnings.fragments.lock().unwrap().clear();
+        let policy = std::boxed::Box::leak(std::boxed::Box::new(
+            unsafe { crate::os::VmPolicy::from_process_options(output) }));
+        policy.finish_preloading();
+        let process = VmProcess::new(policy, subprocess);
+        let before = process.subprocess().vm_statistics().snapshot();
+        let fault = fault::install(fault::Plan::at_pair(
+            fault::Point::Commit, 1, fault::Point::Unmap, 1, Errno::NOMEM));
+        let unmaps = fault.capture_unmap_ranges();
+        let failure = OsAlignedPageClaim::allocate_for_process(
+            process, config(4 * KIB), 4096, 1, crate::arena::ArenaId::none(),
+        ).err().expect("metadata commit fails");
+        assert_eq!(failure.error().stage(), OsAlignedPageFailureStage::MetadataCommit);
+        assert_eq!(failure.error().cleanup(), Some(Errno::NOMEM));
+        let OsAlignedPageOwner::Claim(claim) = failure.into_owner().expect("retained owner")
+            else { panic!("private claim") };
+        assert!(claim.memory_id().is_err(), "failed metadata cannot publish");
+        let base = claim.mapping.base().unwrap();
+        let length = claim.mapping.length().unwrap();
+        assert_eq!(length, 2 * ARENA_SLICE_SIZE);
+        let mut residency = 0;
+        // SAFETY: the retained claim still owns this page-aligned live range.
+        assert!(unsafe { crabc_core::mm::mincore_raw(base, 4096, &mut residency) }.is_ok());
+        let (ranges, count) = unmaps.all().unwrap();
+        assert_eq!(ranges[..count].iter()
+            .filter(|range| **range == (base.addr(), length)).count(), 1,
+            "one source rollback free targets the retained complete range");
+        let after = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(after.reserved_current - before.reserved_current, 0);
+        assert_eq!(after.committed_current - before.committed_current, -(length as i64));
+        assert_eq!(after.commit_calls - before.commit_calls, 1);
+        let fragments = warnings.fragments.lock().unwrap();
+        let receiver: std::vec::Vec<_> = fragments.chunks_exact(2).filter(|pair|
+            pair[1].starts_with(b"cannot commit OS memory")
+                || pair[1].starts_with(b"unable to free OS memory")
+        ).flat_map(|pair| pair.iter()).collect();
+        assert_eq!(receiver.len(), 4, "commit and cleanup each warn in two fragments: {fragments:?}");
+        assert!(receiver[0].starts_with(b"mimalloc: warning: thread 0x"));
+        assert!(receiver[1].starts_with(b"cannot commit OS memory (error: 12 (0x0C), address: 0x"));
+        assert!(receiver[2].starts_with(b"mimalloc: warning: thread 0x"));
+        assert!(receiver[3].starts_with(b"unable to free OS memory (error: 12 (0x0C), size: 0x20000 bytes, address: 0x"));
+        assert_eq!(warnings.reserved_at_free_warning.load(Ordering::Acquire),
+            before.reserved_current + length as i64);
+        let receiver_len = receiver.len();
+        let fragments_len = fragments.len();
+        drop(fragments);
+        drop(unmaps);
+        fault.set(fault::Plan::disabled());
+        assert!(claim.release().is_ok(), "the retained owner retries raw only");
+        assert_eq!(process.subprocess().vm_statistics().snapshot(), after);
+        assert_eq!(warnings.fragments.lock().unwrap().len(), fragments_len,
+            "raw retry does not repeat a source warning");
+        [length as i64, after.reserved_current - before.reserved_current,
+            after.committed_current - before.committed_current,
+            (after.commit_calls - before.commit_calls) as i64, receiver_len as i64]
+    }
+
+    #[test]
+    fn fresh_os_area_metadata_commit_and_cleanup_failure_warns_before_accounting() {
+        let values = fresh_os_area_metadata_commit_and_cleanup_relations();
+        assert_eq!(values, [131072, 0, -131072, 1, 4]);
     }
 
     #[test]
@@ -2088,6 +2208,13 @@ mod tests {
             assert!(value, "on-demand arena receiver: {field}");
             std::println!("arena_on_demand.{field}={}", u8::from(value));
         }
+        drop(fault);
+        let cleanup = fresh_os_area_metadata_commit_and_cleanup_relations();
+        for field in ["failed_unpublished", "memory_id_range", "leaked_range",
+            "single_commit_and_release", "statistics", "warning_fragments_order",
+            "warning_before_statistics", "raw_cleanup"] {
+            std::println!("os_area_commit_cleanup.{field}=1");
+        }
         std::println!("CRABC_MI_M2_OS_PUBLICATION_TRACE_END");
         std::println!("CRABC_MI_M2_OS_ON_DEMAND_VALUES_BEGIN");
         for (field, value) in [
@@ -2102,6 +2229,10 @@ mod tests {
             ("committed_after_release", released.committed_current - before.committed_current),
         ] {
             std::println!("os_on_demand.{field}={value}");
+        }
+        for (field, value) in ["mapping_length", "reserved_delta", "committed_delta",
+            "commit_calls", "warning_fragments"].into_iter().zip(cleanup) {
+            std::println!("os_area_commit_cleanup.{field}={value}");
         }
         std::println!("CRABC_MI_M2_OS_ON_DEMAND_VALUES_END");
     }
