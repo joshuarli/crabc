@@ -38,7 +38,11 @@ are not transferable passes for a different revision.
   startup imports to strong image-local CRT fragments, reducing the blocker
   count to 563. Three pinned Rust allocation-handler identities now bind to
   authenticated static archive members and exact ELF rows, with static ET_EXEC
-  and static-PIE link controls; a current-source full assembly remains open.
+  and static-PIE link controls. Two source-owned private provider classes now
+  bind the three complex multiplication helpers and two float scanner helpers
+  to retained static imports and shared definitions; the historical b879
+  projection has 544 blockers after 23 are discharged. A current-source full
+  assembly remains open.
   `libc.c-abi-compat` now runs a physical same-cohort
   text/math/locale/stdio family admission; its retained receipt is still
   pending on the final candidate revision. `consumer.rust-std-lto` passes its
@@ -285,6 +289,9 @@ are not transferable passes for a different revision.
   all eleven cells return EOF with `ENOSPC` and close the descriptor once. A
   third stream passes all eleven cells across failed `fflush`, main-side
   `clearerr`, a no-write retry, another buffered failure, and owner-side close.
+  A DSO-owned pathname stream also passes the eleven-cell matrix when main
+  reads to EOF, pushes a byte back, saves and restores position, and the DSO
+  reads both the pushed and original bytes before closing it once.
   The complete nine-leaf M8 gate
   passed again on clean `ea0c28759` with all 16 evidence entries passing and
   13 physical receipt identities matching a post-exit reread; the same nine
@@ -413,13 +420,18 @@ are not transferable passes for a different revision.
   reusing the checked canonical block alignment reduces that path to 175
   instructions; sharing the checked source CAS across captured live and
   abandoned states reduces it to 173 with the remote-publication gate passing
-  on sealed source. The
+  on sealed source. Moving claim construction off the owned-head path reduces
+  it further to 168; 100 paired traces, the 25-value differential, and the
+  canonical remote-publication gate pass. The
   three-call versus pinned-C two-call excess remains. The 114-row runtime scorecard runs
   end to end; its older startup measure was 32 whole-process syscalls against
   musl's 11. A later scoped development smoke on the current loader is 27
   calls after canonical-alias reuse; a further same-root SysV header-load
   reuse lowers development instructions by a paired median 117 across
-  100 rotated samples without changing syscall counts. The x86 clock path now
+  100 rotated samples without changing syscall counts. A source-built marked
+  loader trace now has 24 whole-process calls after skipping exit-time
+  `gettid` when no constructor is active; finalizer controls still pass.
+  The x86 clock path now
   receives `AT_SYSINFO_EHDR` from validated startup auxv once, so libc-linked
   core clock lookup avoids reopening procfs; direct-core fallback remains.
   Full qualified CPU/PSS
@@ -428,7 +440,8 @@ are not transferable passes for a different revision.
   facade, and allocator reports by source revision and recorded CPU, kernel,
   and affinity facts; a rehashed allocator cohort from a different source or
   CPU model fails its read-only replay. It also rejects separately rehashed
-  allocator reports that reuse the same raw timed and memory samples; no
+  allocator reports that reuse the same raw timed and memory samples, or whose
+  reported row CPUs exceed the retained host observation set; no
   qualifying performance measurements exist yet.
 - **Resume here, in order:**
   1. Family admissions are the critical path: every selected-private
