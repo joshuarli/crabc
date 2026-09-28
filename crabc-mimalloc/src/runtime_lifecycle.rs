@@ -10014,11 +10014,11 @@ pub(crate) fn test_initialize_process_from_host_environment(
 /// transition when an allocation reaches a still-cold process first. It
 /// consumes only the published raw startup facts and runs the once body
 /// without the loader tail, so `os_preloading` stays set and delayed output
-/// stays buffered until [`initialize_process`]. It then prepares the dormant
-/// first arena that a later worker attachment requires, as the runtime's
-/// explicit startup does. A caller that is unregistered after startup has
-/// begun is an ordinary unattached thread and receives no lazy authority; a
-/// failed lazy startup is retained exactly like a failed explicit one.
+/// stays buffered until [`initialize_process`]. The first arena remains
+/// unreserved until an allocation needs it. A caller that is unregistered
+/// after startup has begun is an ordinary unattached thread and receives no
+/// lazy authority; a failed lazy startup is retained exactly like a failed
+/// explicit one.
 #[cfg(target_arch = "x86_64")]
 fn enter_native_allocation_operation() -> Option<admission::NativeAllocatorOperationGuard> {
     match admission::NativeAllocatorOperationGuard::enter() {
@@ -10029,7 +10029,9 @@ fn enter_native_allocation_operation() -> Option<admission::NativeAllocatorOpera
     if RUNTIME_PROCESS.state.load(Ordering::Acquire) != PROCESS_COLD {
         return None;
     }
-    if !start_process(ProcessStartEntry::FirstAllocation) || !prepare_native_later_thread_arena() {
+    if !start_process(ProcessStartEntry::FirstAllocation)
+        || !prepare_native_initial_thread_owner()
+    {
         return None;
     }
     admission::NativeAllocatorOperationGuard::enter().ok()
@@ -10590,6 +10592,23 @@ unsafe fn native_initial_thread_usable_size(block: core::ptr::NonNull<u8>) -> Op
             None
         }
     }
+}
+
+/// Pins the selected initial thread's source owner before constructors or a
+/// prepared fork without reserving a regular arena. The first allocation
+/// activates that owner and reserves an arena only if its page claim needs
+/// one. Generic source startup leaves this promotion to its caller so the
+/// private ticket-zero route can keep its own cold-owner lifecycle.
+#[doc(hidden)]
+pub fn prepare_native_initial_thread_owner() -> bool {
+    if RUNTIME_PROCESS.page_map_unavailable() {
+        return true;
+    }
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return false;
+    };
+    begin_current_thread_native_initial_persistent_owner().is_ok()
 }
 
 /// Primes the one source first arena before a native-shadow worker can borrow
@@ -18882,6 +18901,33 @@ mod tests {
         // SAFETY: `block` is this thread's exact live native client.
         assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
         true
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn selected_startup_installs_initial_owner_without_reserving_first_arena() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::selected_startup_installs_initial_owner_without_reserving_first_arena",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                assert!(initialize_process());
+                assert!(prepare_native_initial_thread_owner());
+                assert!(RUNTIME_PROCESS.initial_owner_is_installed(),
+                    "a prepared fork needs the initial owner before any allocation");
+                // SAFETY: startup has published the process-lifetime owner;
+                // this fresh fixture has no concurrently running workers.
+                let owner = unsafe { RUNTIME_PROCESS.active_owner() }
+                    .expect("source startup publishes the process owner");
+                let ready = owner.ready().expect("source startup publishes ready witnesses");
+                let registry = ready.process_backing().expect("source startup publishes backing")
+                    .process().subprocess().arena_backing().registry();
+                assert_eq!(registry.count(), 0,
+                    "source process initialization does not reserve a regular arena");
+                assert!(native_round_trip(48));
+                assert_eq!(registry.count(), 1,
+                    "the first ordinary allocation reserves the regular arena");
+            },
+        );
     }
 
     #[cfg(target_arch = "x86_64")]

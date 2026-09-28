@@ -19,7 +19,7 @@ use crabc_mimalloc::__crabc_runtime::{
     attach_current_thread, capture_native_process_destroy_request,
     finish_current_thread_native_after_user_destructors,
     finish_selected_default_release_process_after_user_atexit,
-    initialize_process, prepare_native_later_thread_arena,
+    initialize_process, prepare_native_initial_thread_owner,
     publish_native_process_startup_facts,
     native_process_done_action, prepare_native_process_destroy,
     retain_current_thread_native_owner_after_process_done_nonfinal,
@@ -102,9 +102,9 @@ unsafe fn runtime_source_environment() -> *const *const c_char {
 ///
 /// libc first publishes those raw facts to the engine, then performs the
 /// explicit source startup that a lazy first allocation would otherwise run.
-/// A false result makes selected owned startup reject before constructors:
-/// process initialization can have published an owner before its later-arena
-/// preparation discovers a retained source state. It must not continue with a
+/// Startup leaves the first arena unreserved until an allocation needs it,
+/// matching the source process constructor. A false result makes selected
+/// owned startup reject before constructors; it must not continue with a
 /// partially active native lifecycle, substitute C for a native pointer, or
 /// admit workers. The same-image `.fini_array` entry below owns logical
 /// process finalization; default teardown preserves live allocation backing.
@@ -120,7 +120,7 @@ pub(super) unsafe fn initialize_selected_process(page_size: usize) -> bool {
     };
     let ready = publish_native_process_startup_facts(facts)
         && initialize_process()
-        && prepare_native_later_thread_arena();
+        && prepare_native_initial_thread_owner();
     #[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
     if ready { ALLOCATOR_LIFECYCLE_PHASE.store(1, Ordering::Release); }
     ready
