@@ -197,6 +197,23 @@ unsafe fn checked_symbol_name_equals(
     }
 }
 
+/// Both private startup imports begin with this prefix. When the string
+/// table ends in NUL, every in-range name is terminated, so an unrelated
+/// prefix needs no fixed-name comparison. A table without that final NUL
+/// still needs the full bounded scan to reject an unterminated name.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn could_be_private_startup_import(
+    object: &Object, symbol: *const u8, terminated: bool,
+) -> Option<bool> {
+    if !terminated { return Some(true); }
+    let offset = unsafe { read_u32(symbol) } as usize;
+    if offset >= object.strsz { return None; }
+    let available = object.strsz - offset;
+    if available < 8 { return Some(false); }
+    let prefix = unsafe { core::ptr::read_unaligned(object.strtab.add(offset).cast::<u64>()) };
+    Some(prefix == u64::from_le_bytes(*b"__crabc_"))
+}
+
 unsafe fn symbol_name(object: &Object, index: usize) -> Option<&[u8]> {
     if index == 0 { return None; }
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
@@ -852,6 +869,7 @@ unsafe fn validate_main_private_imports(objects: &[Object], canonical: Option<us
             let index = (info >> 32) as usize;
             if index == 0 { continue; }
             let symbol = unsafe { direct_symbol(main, index) }?;
+            if !unsafe { could_be_private_startup_import(main, symbol, terminated) }? { continue; }
             if unsafe { checked_symbol_name_equals(main, symbol,
                 b"__crabc_x86_64_owned_crt_handoff", terminated) }? {
                 handoffs = handoffs.checked_add(1)?;
@@ -923,6 +941,7 @@ unsafe fn validate_initial_private_imports(
                 let symbol_index = (info >> 32) as usize;
                 if info as u32 == R_NONE || symbol_index == 0 { continue; }
                 let symbol = unsafe { direct_symbol(object, symbol_index) }?;
+                if !unsafe { could_be_private_startup_import(object, symbol, terminated) }? { continue; }
                 if !unsafe { checked_symbol_name_equals(object, symbol,
                     b"__crabc_x86_64_loader_conventional_startup_v1", terminated) }? {
                     continue;

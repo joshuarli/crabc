@@ -338,6 +338,17 @@ fn private_import_selectors_validate_unrelated_names_within_string_table() {
     objects[0] = main.object(false);
     assert!(unsafe { validate_main_private_imports(&objects, None) }.is_some());
 
+    // A short terminated name at the end of the table is valid, while an
+    // offset outside it must still fail before private-name classification.
+    main.put_byte(MappedImage::STRTAB + 126, b'x');
+    main.put_u32(MappedImage::SYMTAB + 24, 126);
+    objects[0] = main.object(false);
+    assert!(unsafe { validate_main_private_imports(&objects, None) }.is_some());
+    main.put_u32(MappedImage::SYMTAB + 24, 128);
+    objects[0] = main.object(false);
+    assert!(unsafe { validate_main_private_imports(&objects, None) }.is_none());
+    main.put_u32(MappedImage::SYMTAB + 24, 1);
+
     // A table without a final NUL can still contain a valid earlier name.
     main.put_byte(MappedImage::STRTAB + 127, b'x');
     objects[0] = main.object(false);
@@ -352,7 +363,7 @@ fn private_import_selectors_validate_unrelated_names_within_string_table() {
     let mut libc = MappedImage::new();
     libc.symbol(1, b"__crabc_x86_64_loader_conventional_startup_v1", 1, 2, 0, 0);
     libc.rela(R_X86_64_GLOB_DAT, 1, 0);
-    libc.put_bytes(MappedImage::STRTAB + 64, b"ordinary_import_with_a_long_name\0");
+    libc.put_bytes(MappedImage::STRTAB + 64, b"__crabc_x86_64_loader_other_import\0");
     libc.put_u32(MappedImage::SYMTAB + 48, 64);
     libc.rela_at(MappedImage::DESTINATION + 8, R_X86_64_GLOB_DAT, 2, 0);
     let conventional_main = MappedImage::new();
