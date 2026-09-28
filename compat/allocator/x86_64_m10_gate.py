@@ -1,34 +1,15 @@
 #!/usr/bin/env python3
-"""Fail-closed native Linux/x86-64 gate for allocator Milestone 10.
+"""Fail-closed allocator default promotion gate for native x86-64.
 
-M10 is the "isolated qualified x86 default switch; C mimalloc absent from
-target production dependencies and artifacts, exact C v3.5.0 retained only as
-oracle, and required native commands rerun at the promotion revision"
-(plan.md Milestones). The switch itself is one line,
-``DEFAULT_ALLOCATOR_BACKEND`` in ``scripts/build_x86_64_owned_sysroot.py``,
-which both product builders use; this gate never edits it.
+The accepted C backend remains selected until the prior evidence, release
+performance, native product purity, and promotion reruns pass. The build
+audit constructs native static and dynamic products and checks their archives,
+symbols, headers, provenance, and resolved Cargo graphs for C mimalloc. Its
+report is sealed to the Git revision that supplied the products.
 
-``--build-audit`` builds the production-shaped ``--allocator-backend native``
-static and dynamic products and audits them for any C mimalloc: archive
-members and symbols of ``libc.a``, static and dynamic symbols of ``libc.so``,
-installed headers, every provenance file, and the resolved Cargo graph of
-the selected features (no ``libmimalloc-sys``). The audit report is sealed
-to the Git HEAD it built.
-
-``--check`` builds nothing. It names every unmet condition:
-
-* ``m10.prior-milestones``: M0 (``run.py --check``) and the retained M1-M9
-  reports all passed;
-* ``m10.promotion-gates``: a ``performance.release`` receipt that its own
-  validator accepts;
-* ``m10.native-artifacts``: a passing ``--build-audit`` report for this HEAD;
-* ``m10.oracle-retained``: the exact pinned C v3.5.0 archive, source map and
-  oracle harness remain in the checkout;
-* ``m10.promotion-rerun``: the required native commands rerun at the
-  promotion revision, which exists only once the switch is committed;
-* ``m10.switch``: the default is still ``accepted-c``; the report records
-  every line the switch changes or that selects ``accepted-c`` by name.
-  A default switched before every other condition passes is an error.
+The check builds nothing. It reports every unmet condition and records the
+default setting and explicit accepted-C selections for review. A default
+switch before the other conditions pass is an error.
 """
 
 from __future__ import annotations
@@ -65,6 +46,7 @@ PRIOR_REPORTS = {
     "M5": harness.ARTIFACT_ROOT / "x86_64/m5-gate/report.json",
     "M6": harness.ARTIFACT_ROOT / "x86_64/m6-gate/report.json",
     "M7": harness.ARTIFACT_ROOT / "x86_64/m7-gate/report.json",
+    "M8": harness.REPORT_ROOT / "x86_64/m8-gate/report.json",
     "M9": harness.ARTIFACT_ROOT / "x86_64/m9-gate/report.json",
 }
 ORACLE_INPUTS = ("compat/upstreams.toml", "crabc-mimalloc/UPSTREAM.md", "compat/allocator/x86_64-source-map-v3.5.0.json",
@@ -206,7 +188,6 @@ def prior_milestones(m0: Mapping[str, Any]) -> dict[str, Any]:
         reason = report_passed(path)
         if reason:
             unmet.append(f"{milestone}: {reason}")
-    unmet.append("M8: allocator M8 has no gate in this launcher")
     return _condition("m10.prior-milestones", unmet, "M0-M9 passed")
 
 

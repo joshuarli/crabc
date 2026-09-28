@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The fail-closed allocator M10 gate: artifact audit, conditions and switch record."""
+"""Artifact purity, prior-evidence, and default-switch gate regressions."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -121,6 +122,16 @@ class ConditionTests(unittest.TestCase):
             self.assertIn("ready-for-native-evidence", gate.report_passed(path))
             path.write_text(json.dumps({"milestone": {"status": "complete"}}), encoding="utf-8")
             self.assertIsNone(gate.report_passed(path))
+
+    def test_prior_milestones_accept_a_passing_m8_gate_report(self) -> None:
+        self.assertIn("M8", gate.PRIOR_REPORTS)
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "report.json"
+            report.write_text(json.dumps({"overall_status": "passed"}), encoding="utf-8")
+            with mock.patch.object(gate, "PRIOR_REPORTS", {"M8": report}):
+                self.assertTrue(gate.prior_milestones({"status": 0})["met"])
+                report.write_text(json.dumps({"overall_status": "unmet"}), encoding="utf-8")
+                self.assertIn("M8: report status is 'unmet'", gate.prior_milestones({"status": 0})["detail"])
 
     def test_the_gate_fails_closed_today(self) -> None:
         result = gate.evaluate(m0={"status": 0}, receipt=None, head={"head": "none", "clean": True})
