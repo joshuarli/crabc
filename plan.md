@@ -119,9 +119,10 @@ are not transferable passes for a different revision.
   freed rows, and empty-bin suppression. Synthetic huge/page merge and final
   rows match 35 more C/Rust fields. The public JSON buffer contract matches
   114 C/Rust trace fields at MI_STAT=0/1/2, including truncation and invalid
-  images; all eight statistics evidence rows pass on a clean source. Page,
-  huge, nonlocal, and higher-level production statistics producers remain
-  unproved, so full M7
+  images. A source-built 64-byte allocation now matches pinned C page-extension
+  attempt and touched-byte counters before and after free; all nine statistics
+  evidence rows pass on a clean source. Other page, huge, nonlocal, and
+  higher-level production statistics producers remain unproved, so full M7
   stays open. Static
   replacement now has a source-bound installed sweep with zero divergent
   functions among 1,406 musl-replaceable entries and all 831 required entries
