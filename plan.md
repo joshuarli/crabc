@@ -63,7 +63,9 @@ are not transferable passes for a different revision.
   `libc.c-abi-compat` now runs a physical
   same-cohort text/math/locale/stdio family admission; its current assessment admits seven
   of ten components and retains three allocator components at the selected C
-  backend. Independent physical replay is pending. `consumer.rust-std-lto` passes its
+  backend. Independent physical replay of that same-source assessment and its
+  three-pair POSIX matrix passes; the C ABI gate remains incomplete at seven
+  components and nine of eleven capabilities. `consumer.rust-std-lto` passes its
   Rust, native-facade, LTO, and unwind leaves on clean `d6733f516`; its
   pinned-image receipt passed independent physical validation and public
   publication. `consumer.source-build` passes on a development cohort and
