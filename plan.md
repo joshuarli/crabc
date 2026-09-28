@@ -226,9 +226,10 @@ are not transferable passes for a different revision.
   trusting the selected small queue's class lowers those paths again to 136
   and 129 instructions, respectively. Reading the immutable empty-page
   sentinel's null free head lowers malloc to 132 and 125 instructions. Moving
-  the medium-size check to queue lookup lowers these again to 131 and 124; the
-  64-byte local free path is 109 and 102 instructions after two source-equivalent
-  retirement changes.
+  the medium-size check to queue lookup lowers these again to 131 and 124;
+  fusing owner-local quick collection with the block pop lowers them to 130
+  and 123. Two source-equivalent retirement changes put the 64-byte local
+  free path at 109 and 102 instructions.
   34,084 source-built C/Rust local allocation and free trace lines match.
   Remote publication is at 165 Rust instructions after source-equivalent
   owner-word and published-PageMap checks, with its 100-trace and 25-value
