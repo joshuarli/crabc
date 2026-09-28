@@ -122,6 +122,31 @@ class OwnedNativeAllocatorDsoReceiptTests(unittest.TestCase):
         receipt_path.write_bytes(original_receipt)
         semantic_receipt.read_native_allocator_dso_receipt(ROOT)
 
+        loader = latest / "products/dynamic-loader"
+        manifest = latest / "products/dynamic-manifest"
+        original_loader = loader.read_bytes()
+        original_manifest = manifest.read_bytes()
+        replacement = (latest / "products/musl-interpreter").read_bytes()
+        loader.write_bytes(replacement)
+        changed_manifest = json.loads(original_manifest)
+        changed_manifest["files"]["lib/ld-crabc-x86_64.so.1"] = hashlib.sha256(replacement).hexdigest()
+        manifest.write_text(json.dumps(changed_manifest))
+        changed = json.loads(original_receipt)
+        changed["products"]["dynamic-loader"] = {
+            "sha256": hashlib.sha256(replacement).hexdigest(), "size": len(replacement),
+        }
+        changed["products"]["dynamic-manifest"] = {
+            "sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(), "size": manifest.stat().st_size,
+        }
+        receipt_path.write_text(json.dumps(changed))
+        receipt.read_receipt(ROOT, RUNNER)
+        with self.assertRaisesRegex(receipt.ReceiptError, "dynamic product payload"):
+            semantic_receipt.read_native_allocator_dso_receipt(ROOT)
+        loader.write_bytes(original_loader)
+        manifest.write_bytes(original_manifest)
+        receipt_path.write_bytes(original_receipt)
+        semantic_receipt.read_native_allocator_dso_receipt(ROOT)
+
 
 if __name__ == "__main__":
     unittest.main()

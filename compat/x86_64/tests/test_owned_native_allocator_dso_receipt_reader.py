@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -24,6 +27,31 @@ def record(path: Path) -> dict[str, object]:
 
 
 class OwnedNativeAllocatorDsoReceiptReaderTests(unittest.TestCase):
+    @unittest.skipUnless(os.environ.get("CRABC_DSO_TEST_NATIVE") == "1", "requires source-built DSO receipt")
+    def test_resealed_prior_checkout_product_is_rejected(self) -> None:
+        latest = shared.receipt_directory(ROOT, reader.RUNNER)
+        self.assertTrue((latest / "receipt.json").is_file(), "run the source-built DSO producer first")
+
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
+            other = Path(temporary)
+            (other / ".gitignore").write_text(".work/\n")
+            (other / "source.c").write_text("int different_source(void) { return 1; }\n")
+            subprocess.run(["git", "init", "-q", str(other)], check=True)
+            subprocess.run(["git", "-C", str(other), "add", ".gitignore", "source.c"], check=True)
+            subprocess.run(["git", "-C", str(other), "-c", "user.name=Receipt Test",
+                            "-c", "user.email=receipt@example.invalid", "commit", "-qm", "source"], check=True)
+            transplanted = shared.receipt_directory(other, reader.RUNNER)
+            transplanted.parent.mkdir(parents=True)
+            shutil.copytree(latest, transplanted)
+            receipt_path = transplanted / "receipt.json"
+            record = json.loads(receipt_path.read_text())
+            record["source"] = shared.source_seal(other)
+            receipt_path.write_text(json.dumps(record))
+
+            shared.read_receipt(other, reader.RUNNER)
+            with self.assertRaisesRegex(shared.ReceiptError, "dynamic product source"):
+                reader.read_native_allocator_dso_receipt(other)
+
     def test_rehashed_omitted_mode_passes_shared_reader_but_fails_semantic_reader(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
             root = Path(temporary)
