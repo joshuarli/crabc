@@ -318,7 +318,8 @@ pub(crate) unsafe fn free(
 ///
 /// The caller exclusively owns `theap` and `page`'s ordinary fields; `page`
 /// belongs to `theap`, has exactly one used block, and `block` is that exact
-/// live allocation. The page's retirement countdown is zero.
+/// live allocation. The page's retirement countdown is zero. The exact raw
+/// owner-word check in [`free`] also proves both page flags are clear.
 #[cold]
 #[inline(never)]
 unsafe fn retire_last_local_free(
@@ -352,9 +353,8 @@ unsafe fn retire_last_local_free(
     #[cfg(feature = "mi-stat-1")]
     unsafe { record_normal_free(theap, page) };
     unsafe { push_local_free(page, block) };
-    // SAFETY: a fresh shared projection after the local-list writes; the
-    // flag is the page's atomic `xthread_id` word.
-    unsafe { page.as_ref() }.set_has_interior_pointers(false);
+    // The general retire path clears the interior-pointer flag here. The
+    // exact raw owner-word check found it clear, and this owner has not set it.
     // SAFETY: exclusive owner-local Theap, as above.
     unsafe { theap.as_ref() }.record_page_retired();
     let cycles = if block_size <= SMALL_MAX_OBJ_SIZE { RETIRE_CYCLES } else { RETIRE_CYCLES / 4 };
