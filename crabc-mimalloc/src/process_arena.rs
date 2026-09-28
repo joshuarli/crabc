@@ -2983,6 +2983,128 @@ mod tests {
         assert!(policy_first_trim_case("suffix", 3));
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_second_regular_arena_c_rust_trace() {
+        use crate::arena::{ArenaSearch, ArenaView};
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 1024 * 1024, true, false,
+        );
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        options.set(VmOption::ArenaReserve, (ARENA_MIN_SIZE / 1024) as i64);
+        options.set(VmOption::ArenaEagerCommit, 0);
+        options.set(VmOption::AllowLargeOsPages, 0);
+        options.set(VmOption::AllowThp, 0);
+        options.set(VmOption::ArenaIsNumaLocal, 0);
+        options.set(VmOption::PurgeDelay, 0);
+        options.set(VmOption::PurgeDecommits, 1);
+        let process_storage = ProcessMainInitializationStorage::test_static_owner();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = ProcessPageMapStorage::test_static_owner();
+        // SAFETY: the isolated process coordinator, subprocess, and PageMap
+        // all have static fixture lifetime through the final arena release.
+        let binding = unsafe { process_storage.test_prepare_vm_process_backing_binding(
+            config, options, subprocess, page_map,
+        ) }.expect("the isolated source process binding initializes");
+        let process = binding.process();
+        process.policy().finish_preloading();
+        let backing = process.subprocess().arena_backing();
+        let search = ArenaSearch {
+            heap_sequence: 0, heap_count: 1, thread_sequence: 0,
+            numa_node: -1, requested: ArenaId::none(), allow_pinned: false,
+        };
+        let before_vm = process.subprocess().vm_statistics().snapshot();
+        let before_arenas = process.subprocess().arena_statistics().snapshot();
+        let mut claims = std::vec::Vec::new();
+        let mut all_claims = true;
+        for ordinal in 0..4 {
+            // SAFETY: the fixture owns one live process registry and each
+            // returned claim stays in `claims` until its explicit release.
+            let claim = unsafe { backing.try_allocate_slices(
+                process, config, search, 256, ARENA_SLICE_SIZE, false,
+            ) }.expect("the fourth claim may reserve a second regular arena");
+            let memory = claim.memory_id();
+            let arena_memory = memory.arena_memory().expect("a claim has arena provenance");
+            // SAFETY: the claim carries a published arena pointer and this
+            // fixture keeps both owner mappings live through every read.
+            let view = unsafe { ArenaView::from_ptr(arena_memory.arena) }
+                .expect("the claim's arena remains published");
+            let occupied = unsafe { view.slices_free() }
+                .and_then(|free| free.is_clear_range(claim.slice_index(), 256)) == Some(true);
+            let registry = backing.registry().count();
+            std::println!("m2.arena_scale.claim{ordinal}_registry={registry}");
+            std::println!("m2.arena_scale.claim{ordinal}_arena={}", view.arena().arena_index);
+            std::println!("m2.arena_scale.claim{ordinal}_slice={}", claim.slice_index());
+            std::println!("m2.arena_scale.claim{ordinal}_count={}", claim.slice_count());
+            std::println!("m2.arena_scale.claim{ordinal}_occupied={}", usize::from(occupied));
+            all_claims &= occupied && claim.slice_count() == 256;
+            claims.push(claim);
+        }
+        let registry_final = backing.registry().count();
+        assert_eq!(registry_final, 2);
+        // SAFETY: the registry's published arenas and the process-owned maps
+        // remain live until after all four claims have been released.
+        let first = unsafe { backing.registry().arena_at(0) }.unwrap();
+        let second = unsafe { backing.registry().arena_at(1) }.unwrap();
+        let ids: std::vec::Vec<_> = claims.iter().map(|claim|
+            claim.memory_id().arena_memory().unwrap().arena).collect();
+        let indices: std::vec::Vec<_> = claims.iter().map(|claim| claim.slice_index()).collect();
+        let distinct = !core::ptr::eq(first, second)
+            && ids[0] == core::ptr::from_ref(first).cast_mut()
+            && ids[1] == ids[0] && ids[2] == ids[0]
+            && ids[3] == core::ptr::from_ref(second).cast_mut();
+        let first_os = first.memid.os_memory();
+        let second_os = second.memid.os_memory();
+        let owners = first.memid.kind() == crate::types::MemoryKind::Os
+            && second.memid.kind() == crate::types::MemoryKind::Os
+            && first_os.is_some_and(|os| os.base == first.start && os.size == 2 * ARENA_MIN_SIZE)
+            && second_os.is_some_and(|os| os.base == second.start && os.size == 2 * ARENA_MIN_SIZE);
+        let first_view = unsafe { ArenaView::from_ptr(core::ptr::from_ref(first).cast_mut()) }.unwrap();
+        let free = unsafe { first_view.slices_free() }.unwrap();
+        let free_slices = (0..first.slice_count)
+            .filter(|&index| free.is_set_range(index, 1) == Some(true)).count();
+        let first_exhausted = free_slices < 256
+            && free.is_clear_range(0, first.info_slices) == Some(true);
+        let during_vm = process.subprocess().vm_statistics().snapshot();
+        let during_arenas = process.subprocess().arena_statistics().snapshot();
+        let arena_size = first_os.unwrap().size;
+        let reserved_bytes = during_vm.reserved_current - before_vm.reserved_current;
+        let arena_count = during_arenas.arena_count - before_arenas.arena_count;
+        for claim in claims.drain(..) {
+            assert!(claim.release(), "the selected source claim releases once");
+        }
+        let after = process.subprocess().vm_statistics().snapshot();
+        let restored = ids.iter().zip(indices).all(|(&arena, index)| {
+            let view = unsafe { ArenaView::from_ptr(arena) }.unwrap();
+            unsafe { view.slices_free() }
+                .and_then(|free| free.is_set_range(index, 256)) == Some(true)
+        });
+        let mut residence = 0u8;
+        let first_live = unsafe { crabc_core::mm::mincore_raw(first.start, 4096, &mut residence) }.is_ok();
+        let second_live = unsafe { crabc_core::mm::mincore_raw(second.start, 4096, &mut residence) }.is_ok();
+        let mapped_both = first_live && second_live;
+        let reserved_still = after.reserved_current - before_vm.reserved_current
+            == 2 * arena_size as i64;
+        let registry_still = backing.registry().count() == 2;
+        for (field, value) in [
+            ("registry_final", registry_final as i64),
+            ("distinct", i64::from(distinct)), ("owners", i64::from(owners)),
+            ("first_exhausted_for_256", i64::from(first_exhausted)),
+            ("arena_size", arena_size as i64), ("reserved_bytes", reserved_bytes),
+            ("arena_count", arena_count), ("restored", i64::from(restored)),
+            ("purge_calls", after.purge_calls - before_vm.purge_calls),
+            ("purged_bytes", after.purged - before_vm.purged),
+            ("mapped_both", i64::from(mapped_both)),
+            ("reserved_still", i64::from(reserved_still)),
+            ("registry_still", i64::from(registry_still)),
+        ] {
+            std::println!("m2.arena_scale.{field}={value}");
+        }
+        assert!(all_claims && distinct && owners && first_exhausted && restored && mapped_both);
+    }
+
     #[test]
     fn default_os_reservation_releases_both_failed_attempts_before_retrying_from_cold() {
         let config = memory_config();
