@@ -177,6 +177,26 @@ unsafe fn terminated_name_equals(string: *const u8, available: usize, name: &[u8
         && unsafe { string.add(name.len()).read() } == 0
 }
 
+/// Match a private import name while retaining bounded-name validation for
+/// string tables that do not end in NUL. A final NUL bounds every in-range
+/// offset, so unrelated names can stop at their first differing byte.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn checked_symbol_name_equals(
+    object: &Object, symbol: *const u8, name: &[u8], terminated: bool,
+) -> Option<bool> {
+    let offset = unsafe { read_u32(symbol) } as usize;
+    if offset >= object.strsz { return None; }
+    let candidate = unsafe { object.strtab.add(offset) };
+    let available = object.strsz - offset;
+    if terminated {
+        Some(unsafe { terminated_name_equals(candidate, available, name) })
+    } else {
+        let length = unsafe { bounded_symbol_name_len(candidate, available) }?;
+        Some(length == name.len()
+            && unsafe { core::slice::from_raw_parts(candidate, length) } == name)
+    }
+}
+
 unsafe fn symbol_name(object: &Object, index: usize) -> Option<&[u8]> {
     if index == 0 { return None; }
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
@@ -818,6 +838,7 @@ pub(super) unsafe fn debugger_pointer_slot(object: &Object) -> Option<*mut usize
 unsafe fn validate_main_crt_mode(objects: &[Object]) -> Option<()> {
     let main = objects.first()?;
     let mut handoffs = 0usize;
+    let terminated = main.strsz != 0 && unsafe { main.strtab.add(main.strsz - 1).read() } == 0;
     for (table, bytes) in [(main.rela, main.relasz), (main.jmprel, main.pltrelsz)] {
         if bytes == 0 { continue; }
         if table.is_null() || bytes % ELF64_RELA_SIZE != 0 { return None; }
@@ -831,13 +852,8 @@ unsafe fn validate_main_crt_mode(objects: &[Object]) -> Option<()> {
             let index = (info >> 32) as usize;
             if index == 0 { continue; }
             let symbol = unsafe { direct_symbol(main, index) }?;
-            let name_offset = unsafe { read_u32(symbol) } as usize;
-            if name_offset >= main.strsz { return None; }
-            let name = unsafe { main.strtab.add(name_offset) };
-            let length = unsafe { bounded_nul(name, main.strsz - name_offset) }?;
-            if length != b"__crabc_x86_64_owned_crt_handoff".len()
-                || !unsafe { bytes_eq(name, b"__crabc_x86_64_owned_crt_handoff".as_ptr(), length) }
-            {
+            if !unsafe { checked_symbol_name_equals(main, symbol,
+                b"__crabc_x86_64_owned_crt_handoff", terminated) }? {
                 continue;
             }
             handoffs = handoffs.checked_add(1)?;
@@ -879,6 +895,7 @@ unsafe fn validate_canonical_libc_startup_import(
     let mut imports = 0usize;
     for owner in 0..graph.object_count() {
         let object = objects.get(owner)?;
+        let terminated = object.strsz != 0 && unsafe { object.strtab.add(object.strsz - 1).read() } == 0;
         for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
             if bytes == 0 { continue; }
             if table.is_null() || bytes % ELF64_RELA_SIZE != 0 { return None; }
@@ -887,13 +904,12 @@ unsafe fn validate_canonical_libc_startup_import(
                 let info = unsafe { read_u64(entry.add(8)) };
                 let symbol_index = (info >> 32) as usize;
                 if info as u32 == R_NONE || symbol_index == 0 { continue; }
-                if unsafe { symbol_name(object, symbol_index) }?
-                    != b"__crabc_x86_64_loader_conventional_startup_v1"
-                {
+                let symbol = unsafe { direct_symbol(object, symbol_index) }?;
+                if !unsafe { checked_symbol_name_equals(object, symbol,
+                    b"__crabc_x86_64_loader_conventional_startup_v1", terminated) }? {
                     continue;
                 }
                 if owner != canonical { return None; }
-                let symbol = unsafe { direct_symbol(object, symbol_index) }?;
                 let exact = info as u32 == R_X86_64_GLOB_DAT
                     && unsafe { read_i64(entry.add(16)) } == 0
                     && unsafe { *symbol.add(4) >> 4 } == 2

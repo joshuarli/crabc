@@ -318,6 +318,45 @@ fn owned_crt_note_and_private_handoff_must_agree_before_relocation() {
     assert!(unsafe { validate_main_crt_mode(&objects) }.is_none());
 }
 
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[test]
+fn private_import_selectors_validate_unrelated_names_within_string_table() {
+    let mut main = MappedImage::new();
+    main.symbol(1, b"ordinary_import_with_a_long_name", 2, 1, 0, 0);
+    main.rela(R_X86_64_GLOB_DAT, 1, 0);
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
+    objects[0] = main.object(false);
+    assert!(unsafe { validate_main_crt_mode(&objects) }.is_some());
+
+    // A table without a final NUL can still contain a valid earlier name.
+    main.put_byte(MappedImage::STRTAB + 127, b'x');
+    objects[0] = main.object(false);
+    assert!(unsafe { validate_main_crt_mode(&objects) }.is_some());
+
+    // An in-range offset with no terminating byte remains malformed even
+    // when the name differs from the private selector in its first byte.
+    main.put_bytes(MappedImage::STRTAB + 1, &[b'x'; 127]);
+    objects[0] = main.object(false);
+    assert!(unsafe { validate_main_crt_mode(&objects) }.is_none());
+
+    let mut libc = MappedImage::new();
+    libc.symbol(1, b"__crabc_x86_64_loader_conventional_startup_v1", 1, 2, 0, 0);
+    libc.rela(R_X86_64_GLOB_DAT, 1, 0);
+    libc.put_bytes(MappedImage::STRTAB + 64, b"ordinary_import_with_a_long_name\0");
+    libc.put_u32(MappedImage::SYMTAB + 48, 64);
+    libc.rela_at(MappedImage::DESTINATION + 8, R_X86_64_GLOB_DAT, 2, 0);
+    let conventional_main = MappedImage::new();
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
+    objects[0] = conventional_main.object(false);
+    objects[1] = libc.object(true);
+    objects[1].canonical_libc_identity = Some(ObjectIdentity { device: 7, inode: 9 });
+    assert!(unsafe { validate_canonical_libc_startup_import(&graph(2), &objects) }.is_some());
+    libc.put_bytes(MappedImage::STRTAB + 64, &[b'x'; 64]);
+    objects[1] = libc.object(true);
+    objects[1].canonical_libc_identity = Some(ObjectIdentity { device: 7, inode: 9 });
+    assert!(unsafe { validate_canonical_libc_startup_import(&graph(2), &objects) }.is_none());
+}
+
 // The installed owned main has one weak, default-visible, undefined NOTYPE
 // GLOB_DAT request with a zero addend.  The descriptor address is private
 // loader state, so accepting a superficially similar data relocation would
