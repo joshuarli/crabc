@@ -558,9 +558,12 @@ unsafe fn word_value(
         Some(symbol) => Some(unsafe { symbol_name_at(object, symbol) }?),
         None => None,
     };
+    // Every loader-private selector begins with two underscores. Decode the
+    // full name first so malformed ordinary imports still fail before lookup.
+    let private_name = requested_name.filter(|name| name.len() >= 2 && name[..2] == *b"__");
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-    if let Some(requested_name) = requested_name {
-        if let Some(address) = x86_64_initial_worker_tls::runtime_function(requested_name) {
+    if let Some(private_name) = private_name {
+        if let Some(address) = x86_64_initial_worker_tls::runtime_function(private_name) {
             let requested = unsafe { definition_at(owner, requested_symbol?) };
             return (matches!(kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT)
                 && addend == 0 && requested.section == 0 && requested.binding == 1
@@ -568,7 +571,7 @@ unsafe fn word_value(
                 .then_some(address);
         }
     }
-    if requested_name.is_some_and(is_private_runtime_symbol) {
+    if private_name.is_some_and(is_private_runtime_symbol) {
         // The loader-to-main RuntimeV1 descriptor is an address capability,
         // not an ordinary private-name lookup. Its resolver below verifies
         // the physical main endpoint; reject a changed relocation form here,

@@ -678,6 +678,8 @@ fn installed_runtime_function_imports_validate_shape_before_any_graph_write() {
         b"\0__crabc_x86_64_runtime_symbol\0".as_slice(),
         b"\0__crabc_x86_64_runtime_close\0".as_slice(),
         b"\0__crabc_x86_64_runtime_address\0".as_slice(),
+        b"\0__crabc_x86_64_runtime_fork_prepare\0".as_slice(),
+        b"\0__crabc_x86_64_runtime_fork_complete\0".as_slice(),
         b"\0__crabc_x86_64_runtime_information\0".as_slice(),
         b"\0__crabc_x86_64_runtime_iterate\0".as_slice(),
     ] {
@@ -710,6 +712,30 @@ fn installed_runtime_function_imports_validate_shape_before_any_graph_write() {
                 assert_eq!(library.destination(), 0xbeef);
             }
         }
+    }
+}
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[test]
+fn ordinary_imports_across_private_prefix_boundary_keep_bounded_lookup() {
+    for name in [b"value".as_slice(), b"_value", b"__ordinary_value"] {
+        let mut main = Image::new();
+        let mut provider = Image::new();
+        for image in [&mut main, &mut provider] {
+            unsafe { core::ptr::write_bytes(image.storage.add(IMAGE_STRTAB), 0, name.len() + 2) };
+            unsafe { core::ptr::copy_nonoverlapping(name.as_ptr(), image.storage.add(IMAGE_STRTAB + 1), name.len()) };
+        }
+        main.symbol(1, 1, 1, 0, 0, 0, 8);
+        provider.symbol(1, 1, 1, 0, 1, 0x1000, 8);
+        let mut objects = [main.object(false), provider.object(true)];
+        objects[0].strsz = name.len() + 2;
+        objects[1].strsz = name.len() + 2;
+        let scope = SymbolScope { indices: &[0, 1], module_count: 0,
+            static_tls_count: 0, initial: true };
+        assert_eq!(unsafe { word_value(&scope, &objects, 0, R_X86_64_GLOB_DAT, 1, 0) },
+                   Some(provider.data.as_ptr() as u64));
+        objects[0].strsz -= 1;
+        assert!(unsafe { word_value(&scope, &objects, 0, R_X86_64_GLOB_DAT, 1, 0) }.is_none());
     }
 }
 
