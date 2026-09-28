@@ -324,7 +324,9 @@ unsafe fn pop_immediate(page: NonNull<Page>, zero: bool) -> NonNull<u8> {
         *state.used.as_ptr() += 1;
         let block = NonNull::new_unchecked(block.cast::<u8>());
         if zero && !*state.free_is_zero.as_ptr() {
-            core::ptr::write_bytes(block.as_ptr(), 0, state.block_size);
+            // SAFETY: the page remains live; its block size is stable under
+            // the owner's ordinary-field mutation above.
+            core::ptr::write_bytes(block.as_ptr(), 0, page.as_ref().block_size());
         }
         block
     }
