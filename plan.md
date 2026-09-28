@@ -24,7 +24,10 @@ are not transferable passes for a different revision.
 - **State:** `campaign-status` reports 9/26 families `foundation-verified` and
   180 implemented, 43 selected-private, and 0 missing capabilities; all eight
   ordered qualification gates are executable and fail closed on named unmet
-  conditions. `compat.abi-differential` reads all its evidence rows from one
+  conditions. On clean `34f742a7a`, capability accounting validates 223
+  capabilities, 65 verified slices, and 381 verified artifacts; its gate still
+  waits on 15 planned prerequisite families and 43 selected-private
+  capabilities. `compat.abi-differential` reads all its evidence rows from one
   published set (`abi-differential-evidence assemble`); only the selection
   closure stays unmet: a clean `d713e5e89` pinned-image assembly named 569
   blockers (551 identities, 17 unadmitted families, one missing semantic
