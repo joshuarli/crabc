@@ -86,6 +86,8 @@ def extract(package_path: Path, output: Path) -> None:
                              0o755 if entry.name in EXECUTABLE_PAYLOADS else 0o644)
             if entry.mode != expected_mode:
                 raise driver.shared.DriverError(f"package member mode differs: {entry.name}")
+            if (entry.mtime, entry.uid, entry.gid, entry.uname, entry.gname) != (1, 0, 0, "", ""):
+                raise driver.shared.DriverError(f"package member metadata differs: {entry.name}")
         manifest_member = archive.getmember("share/crabc/manifest.json")
         if not manifest_member.isfile(): raise driver.shared.DriverError("manifest is not a regular file")
         try:

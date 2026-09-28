@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mode-preserving package/extraction tests for the owned dynamic product."""
+"""Canonical package/extraction tests for the owned dynamic product."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ SPEC.loader.exec_module(package)
 
 
 class OwnedDynamicPackageTests(unittest.TestCase):
-    """Exercise archive modes without building or executing a native product."""
+    """Exercise archive metadata without building or executing a native product."""
 
     def test_rehashed_archive_payload_must_match_materialization_state(self) -> None:
         temporary_root = ROOT / ".work/x86_64/tmp"
@@ -86,8 +86,8 @@ class OwnedDynamicPackageTests(unittest.TestCase):
                     package.extract(forged, workspace / "forged")
                 self.assertFalse((workspace / "forged").exists())
 
-    def test_archive_and_extraction_preserve_the_canonical_dynamic_mode_roster(self) -> None:
-        """The package cannot demote the executable shared-libc link input."""
+    def test_archive_and_extraction_preserve_canonical_dynamic_member_metadata(self) -> None:
+        """Every archive member uses the writer's fixed mode and owner metadata."""
 
         modes = {
             "bin/crabc-cc-dynamic": 0o755,
@@ -140,11 +140,16 @@ class OwnedDynamicPackageTests(unittest.TestCase):
             package.write_archive(source, archive, record, entries)
 
             with tarfile.open(archive, "r:") as opened:
+                archived_members = opened.getmembers()
                 archived_modes = {
                     member.name: member.mode & 0o777
-                    for member in opened.getmembers()
+                    for member in archived_members
                     if member.isfile() and member.name != "share/crabc/manifest.json"
                 }
+                self.assertTrue(all(
+                    (member.mtime, member.uid, member.gid, member.uname, member.gname) == (1, 0, 0, "", "")
+                    for member in archived_members
+                ))
             self.assertEqual(archived_modes, modes)
 
             extracted = workspace / "extracted"
@@ -176,6 +181,29 @@ class OwnedDynamicPackageTests(unittest.TestCase):
                     with mock.patch.object(package.driver, "validate", return_value=record), \
                          mock.patch.object(package.qualification, "product_identity"):
                         with self.assertRaisesRegex(package.driver.shared.DriverError, "package member mode"):
+                            package.extract(forged, output)
+                    self.assertFalse(output.exists())
+
+            for relative, field, changed in (("usr/lib/libc.so", "mtime", 2),
+                                             ("usr/lib/libc.so", "uid", 1000),
+                                             ("usr/lib/libc.so", "gid", 1000),
+                                             ("usr/lib/libc.so", "uname", "forged"),
+                                             ("usr/lib/libc.so", "gname", "forged"),
+                                             (next(iter(sorted(package.driver.ALIASES))), "mtime", 2)):
+                with self.subTest(relative=relative, field=field):
+                    forged = workspace / (relative.replace("/", "-") + "-" + field + ".tar")
+                    with tarfile.open(archive, "r:") as original, \
+                         tarfile.open(forged, "w", format=tarfile.USTAR_FORMAT) as rewritten:
+                        for member in original.getmembers():
+                            projected = copy.copy(member)
+                            if projected.name == relative:
+                                setattr(projected, field, changed)
+                            payload = original.extractfile(member) if member.isfile() else None
+                            rewritten.addfile(projected, payload)
+                    output = workspace / ("rejected-" + relative.replace("/", "-") + "-" + field)
+                    with mock.patch.object(package.driver, "validate", return_value=record), \
+                         mock.patch.object(package.qualification, "product_identity"):
+                        with self.assertRaisesRegex(package.driver.shared.DriverError, "package member metadata"):
                             package.extract(forged, output)
                     self.assertFalse(output.exists())
 
