@@ -339,7 +339,13 @@ unsafe fn retire_last_local_free(
     }
     // A page with multiple reserved blocks uses a word-aligned regular bin
     // size, so its queue number needs no request-size rounding.
-    let bin = size_class::bin_for_regular_page_block_size(block_size);
+    // The eight-word class uses bin eight directly. Avoid the larger-size
+    // classification on this common retirement free.
+    let bin = if block_size == 8 * WORD_SIZE {
+        8
+    } else {
+        size_class::bin_for_regular_page_block_size(block_size)
+    };
     if bin >= BIN_HUGE {
         return false;
     }
