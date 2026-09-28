@@ -253,6 +253,9 @@ are not transferable passes for a different revision.
   A later clean run passes all 89 runnable checks, including 50 VM checks;
   the newly registered second-arena metadata fault matches all 34 C/Rust
   fields and the same four partial components retain their named blockers.
+  The next clean run passes all 90 runnable checks, including 51 VM checks;
+  registered arena PageMap protection failure and recovery match all 44
+  C/Rust fields, with the same four partial components still open.
   Direct registered-arena PageMap receivers now match a first lazy commit
   fault and a two-fault same-call recovery. The latter retains 61 exact
   C/Rust fields plus five raw header-dependent PageMap counts, each unchanged
