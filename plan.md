@@ -131,6 +131,10 @@ are not transferable passes for a different revision.
   isolated EIO, EAGAIN, and EINVAL policies, including advice retry, exact
   slice range, warning order, and live bitmap state. The M2 VM component now
   has 33 matched checks with five conditions still open.
+  The metadata publication receiver also matches 15 recovery observations
+  after three faulted requests, charging each actual lazy PageMap submap by
+  its 64 KiB extent. The M2 fault component has four matched checks and four
+  remaining conditions; its full gate remains partial.
   A failed second-arena committed-slice claim and same-slice retry match 24
   C/Rust fields after the regular mapping uses the warning-preserving commit
   path; two additional pinned-C fields bind the attempted `mprotect` range.
@@ -218,6 +222,9 @@ are not transferable passes for a different revision.
   A cross-DSO `freopen` handoff now passes all eleven cells with exact old and
   replacement pathname bytes. It exposed and fixed a read-on-write-only stream
   defect: pending output must flush before the direction error is set.
+  A DSO-created `open_memstream` also passes all eleven cells while main
+  writes, seeks, flushes, and closes it, with the DSO retaining the published
+  buffer until one final free; embedded NUL bytes and length match pinned musl.
   The complete nine-leaf M8 gate
   passed again on clean `ea0c28759` with all 16 evidence entries passing and
   13 physical receipt identities matching a post-exit reread; the same nine
@@ -306,6 +313,9 @@ are not transferable passes for a different revision.
   Zeroed initial TLS backing also supplies empty DTV and module-size slots,
   saving 28 median instructions in both paired startup rows and 80
   release-text bytes without changing their syscall traces.
+  Deriving pooled loader block size and free-list index from one exponent
+  saves paired medians of 186 and 206 user instructions in simple and graph
+  startup with unchanged syscall traces and 16 fewer release-text bytes.
   These remain unqualified under host contention. Allocator rows stay
   6.5–8× on the selected
   accepted-C backend, whose arena the host's THP `always` mode backs with
