@@ -1220,6 +1220,21 @@ trait ThreadFreeHead {
 
     fn cas_weak_acq_rel(&self, expected: &mut ThreadFree, replacement: ThreadFree) -> bool;
 
+    // This is the same weak CAS with its observed old word returned directly.
+    // The model keeps using its existing atomic boundary and orderings.
+    fn cas_weak_acq_rel_observed(
+        &self,
+        expected: ThreadFree,
+        replacement: ThreadFree,
+    ) -> Result<ThreadFree, ThreadFree> {
+        let mut observed = expected;
+        if self.cas_weak_acq_rel(&mut observed, replacement) {
+            Ok(expected)
+        } else {
+            Err(observed)
+        }
+    }
+
     fn fetch_or_acq_rel(&self, value: ThreadFree) -> ThreadFree;
 }
 
@@ -1232,6 +1247,20 @@ impl ThreadFreeHead for AtomicWord {
     #[inline]
     fn cas_weak_acq_rel(&self, expected: &mut ThreadFree, replacement: ThreadFree) -> bool {
         word_cas_weak_acq_rel(self, expected, replacement)
+    }
+
+    #[inline]
+    fn cas_weak_acq_rel_observed(
+        &self,
+        expected: ThreadFree,
+        replacement: ThreadFree,
+    ) -> Result<ThreadFree, ThreadFree> {
+        self.compare_exchange_weak(
+            expected,
+            replacement,
+            core::sync::atomic::Ordering::AcqRel,
+            core::sync::atomic::Ordering::Acquire,
+        )
     }
 
     #[inline]
@@ -1409,8 +1438,9 @@ where
         // The caller checked the raw block or supplied a current allocation's
         // canonical block. The source head word reserves only its low bit.
         let replacement = block | usize::from(owner_after_publication(previous));
-        if head.cas_weak_acq_rel(&mut previous, replacement) {
-            return Ok(is_owned(previous));
+        match head.cas_weak_acq_rel_observed(previous, replacement) {
+            Ok(old) => return Ok(is_owned(old)),
+            Err(observed) => previous = observed,
         }
     }
 }
