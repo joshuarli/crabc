@@ -73,9 +73,9 @@ are not transferable passes for a different revision.
   provider and physically reread link and execution receipts. Broader
   unwinder integration remains open. A direct Rust backtrace fixture crosses
   owned DSO and pthread frames on a freshly linked installed product, with a
-  passing static control and physical reader. Its full three-product dynamic
-  qualification remains open after the installed arm passed all 73 cases;
-  the producer stopped before the remaining arms under disk pressure. A
+  passing static control and physical reader. An earlier three-product dynamic
+  qualification stopped after the installed arm passed all 73 cases because
+  its producer exhausted disk space. A
   guarded CFI expression in a real installed DSO worker returns a phase error
   for an unreadable saved return address while the mapped control unwinds;
   the retained pre-guard provider faults on the same case. This focused
@@ -86,7 +86,11 @@ are not transferable passes for a different revision.
   guard drops, and physical replay pass. The same matrix now has a focused
   installed static C-frame control for direct cleanup and `resume_unwind` on
   main and pthread workers, with selected-provider and final-ELF physical
-  replay. The full three-product current-source admission remains open.
+  replay. A later clean `a6ada8af0` cohort passes all 219 dynamic cases,
+  independent physical backtrace validation across static and both DSO forms,
+  guarded CFI, and main/worker panic cleanup and resume. Its selected consumer
+  unwind leaves have no unmet condition on primary and extracted pairs, with
+  53 retained files physically reread; final merged-revision replay remains open.
   Allocator M5 remains open. C mimalloc remains the selected
   backend; allocator M2–M11 remain open. The six-component M1 gate passed on
   clean frozen `6431e9036` with no unmet conditions; final-candidate replay
@@ -199,7 +203,10 @@ are not transferable passes for a different revision.
   exact source differences. A process-owned claim now matches 17 C/Rust suffix-trim,
   terminal-unmap, warning, escaped mapping, and accounting relations after
   terminal release charges only the committed block area; other process-owned
-  callers remain separately qualified or open.
+  callers remain separately qualified or open. Separate source-built explicit
+  arena reservation receivers match 31 C/Rust fields each for failed prefix
+  and failed suffix trim, through registry retirement, terminal release, and
+  raw cleanup of the escaped mapping; shared M2 registration is pending.
   The metadata publication receiver also matches 15 recovery observations
   after three faulted requests, charging each actual lazy PageMap submap by
   its 64 KiB extent. The M2 fault component has four matched checks and four
@@ -401,7 +408,11 @@ are not transferable passes for a different revision.
   first allocation each match 41 pinned-C/Rust keys after descriptor-only
   registration preserves delayed attachment. A fresh worker's usable-size
   query before remote free now leaves its default Theap unattached, matching
-  21 source-built C/Rust statistics keys. The prior 16 statistics evidence
+  21 source-built C/Rust statistics keys. A worker reset and local free at
+  `MI_STAT=1` match 29 C/Rust state and output values; its extended `MI_STAT=2`
+  payload, allocation/page bins, requested bytes, and selected output rows also
+  match, while full process output retains VM peak and Theap-count differences.
+  The prior 16 statistics evidence
   rows pass on a clean source, and the focused differentials pass; the
   source-built OS-large remote-free probe matches 35 statistics payload keys;
   its full 50-key stage trace remains unproved because a 64 KiB PageMap submap
