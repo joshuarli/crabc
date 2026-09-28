@@ -33,8 +33,12 @@ are not transferable passes for a different revision.
   `consumer.source-build` pass their evidence on development cohorts and
   publish receipts; `performance.release` is a read-only receipt gate whose
   runtime, native-facade and allocator M9 inputs do not exist yet. Allocator
-  M5 passes six of ten gates. C mimalloc remains the selected
-  backend; allocator M2–M11 remain open. The full M2 runner records complete
+  M5 remains open. C mimalloc remains the selected
+  backend; allocator M2–M11 remain open. A frozen M5 source run at `e0b9ecbc7`
+  passed seven gates, failed its churn and upstream stress gates on one seed-2
+  static-PIE PageMap high-water spike, and left codegen/performance blocked;
+  the same binary passed a focused replay, so the spike remains unresolved.
+  The full M2 runner records complete
   metadata, bitmap, PageMap, and allocator-recursion components; VM primitives,
   arenas, initialization, and fault injection remain partial. Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
@@ -50,8 +54,9 @@ are not transferable passes for a different revision.
   owned-libc integration gate exists; the named `unown_with`
   release-then-classify race has a source-bound regression, and the canonical
   native allocator stress plus three soak seeds pass. `m8.rust-std`,
-  `m8.lua`, `m8.corpus`, `m8.threads-fork`, `m8.weak-interposed`, and
-  `m8.startup-constructors` pass on
+  `m8.lua`, `m8.corpus`, `m8.threads-fork`, `m8.weak-interposed`,
+  `m8.startup-constructors`, `m8.errno-c-abi`, and
+  `m8.static-dynamic-products` pass on
   source-built native-shadow products with physically reread receipts on their respective source revisions;
   the corpus covers all 34 frozen cases. Full M8 and the
   merged-revision qualification remain open. All 57 `native_*` integration targets pass; the earlier attachment
@@ -124,7 +129,9 @@ are not transferable passes for a different revision.
      freestanding C and stock Rust std consumers, and automatic exit selects
      the signed native `destroy_on_exit` behavior; their merged-revision
      qualification remains open. `m8.rust-std`, `m8.lua`, `m8.corpus`,
-     `m8.threads-fork`, `m8.weak-interposed`, and `m8.startup-constructors` pass on source-built native-shadow products; the other M8 leaves and merged-revision
+     `m8.threads-fork`, `m8.weak-interposed`, `m8.startup-constructors`,
+     `m8.errno-c-abi`, and `m8.static-dynamic-products` pass on source-built
+     native-shadow products; the other M8 leaves and merged-revision
      qualification remain open. Known open items from the last lane reports:
      `materialized-dynamic-sysroot` still has load-sensitive deadlines (aio
      fresh-signal and behavior, credentials `threads`, message-queues,
