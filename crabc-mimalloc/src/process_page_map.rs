@@ -3017,6 +3017,89 @@ mod tests {
         );
     }
 
+    /// A failed lazy submap map leaves the process root ready. The source
+    /// rollback pass creates an empty submap, which the next registration
+    /// reuses without another OS mapping.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn emit_m2_page_map_lazy_map_rollback_c_rust_trace() {
+        static CAPTURE: std::sync::Mutex<std::vec::Vec<u8>> = std::sync::Mutex::new(std::vec::Vec::new());
+        unsafe extern "C" fn capture(message: *const core::ffi::c_char) {
+            // SAFETY: the source output owner passes a live NUL-terminated fragment.
+            let bytes = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            CAPTURE.lock().unwrap().extend_from_slice(bytes);
+        }
+        crate::test_process::run_in_fresh_process(
+            "process_page_map::tests::emit_m2_page_map_lazy_map_rollback_c_rust_trace",
+            || {
+                std::env::set_var("mimalloc_show_errors", "1");
+                // SAFETY: the callback consumes each NUL-terminated fragment
+                // synchronously and retains no pointer supplied by the owner.
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+                    4096, unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(capture) },
+                ));
+                let root = ProcessPageMapRoot { storage: &PROCESS_PAGE_MAP };
+                // SAFETY: this child exclusively owns the synthetic index-one
+                // range and never exposes it as a client allocation.
+                let map = unsafe { root.page_map_for_owned_ranges() }.unwrap();
+                assert_eq!(map.test_published_submap_count(), Ok(1));
+                let sentinel = NonNull::new(crate::types::EMPTY_PAGE.as_ptr()).unwrap();
+                let start = core::ptr::without_provenance::<u8>(
+                    crate::config::PAGE_MAP_SUB_COUNT * ARENA_SLICE_SIZE,
+                );
+                let before = MainSubprocess::global().identity().vm_statistics().snapshot();
+                CAPTURE.lock().unwrap().clear();
+                let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+                // SAFETY: the static empty page outlives this child. There is
+                // no concurrent lookup or writer for the synthetic range.
+                let failed = unsafe { map.register_range(start, ARENA_SLICE_SIZE, sentinel) }
+                    == Err(Errno::NOMEM);
+                // SAFETY: registration has returned; no writer overlaps this
+                // lookup, and the static sentinel remains live.
+                let empty_after_failure = map.test_published_submap_count() == Ok(2)
+                    && map.test_registered_entry_count() == Ok(0)
+                    && unsafe { map.checked_lookup(start) }.is_null();
+                let map_attempts = fault.observed();
+                let after_failure = MainSubprocess::global().identity().vm_statistics().snapshot();
+                fault.set(fault::Plan::disabled());
+                let thread = std::format!("0x{:02X}", crate::os::thread_pointer_identity());
+                let output = std::string::String::from_utf8(core::mem::take(&mut *CAPTURE.lock().unwrap()))
+                    .expect("source warnings are ASCII").replace(&thread, "0xTID");
+                let hex: std::string::String = output.bytes().map(|byte| std::format!("{byte:02x}")).collect();
+                std::println!("m2.page_map.lazy_map_rollback.output={hex}");
+                // SAFETY: the same child keeps the static sentinel and range
+                // ownership through its matching unregister below.
+                let retry = unsafe { map.register_range(start, ARENA_SLICE_SIZE, sentinel) }.is_ok();
+                // SAFETY: the retry has finished and no overlapping writer is active.
+                let entry_published = unsafe { map.checked_lookup(start) } == sentinel.as_ptr();
+                // SAFETY: no reader overlaps the synthetic range's removal.
+                let cleared = unsafe { map.unregister_range(start, ARENA_SLICE_SIZE) }.is_ok()
+                    // SAFETY: the unregister has finished and no writer overlaps lookup.
+                    && unsafe { map.checked_lookup(start) }.is_null();
+                let after_retry = MainSubprocess::global().identity().vm_statistics().snapshot();
+                std::println!("m2.page_map.lazy_map_rollback.failed={}", usize::from(failed));
+                std::println!("m2.page_map.lazy_map_rollback.empty_after_failure={}", usize::from(empty_after_failure));
+                std::println!("m2.page_map.lazy_map_rollback.map_attempts={map_attempts}");
+                std::println!("m2.page_map.lazy_map_rollback.reserved_delta={}",
+                    after_failure.reserved_current - before.reserved_current);
+                std::println!("m2.page_map.lazy_map_rollback.committed_delta={}",
+                    after_failure.committed_current - before.committed_current);
+                std::println!("m2.page_map.lazy_map_rollback.mmap_delta={}",
+                    after_failure.mmap_calls - before.mmap_calls);
+                std::println!("m2.page_map.lazy_map_rollback.retry={}", usize::from(retry));
+                std::println!("m2.page_map.lazy_map_rollback.entry_published={}", usize::from(entry_published));
+                std::println!("m2.page_map.lazy_map_rollback.retry_reused={}", usize::from(
+                    after_retry.mmap_calls == after_failure.mmap_calls,
+                ));
+                std::println!("m2.page_map.lazy_map_rollback.cleared={}", usize::from(cleared));
+                std::println!("m2.page_map.lazy_map_rollback.root_ready={}", usize::from(
+                    PROCESS_PAGE_MAP.state.load(Ordering::Acquire) == READY
+                        && PROCESS_PAGE_MAP.root.load().is_some(),
+                ));
+            },
+        );
+    }
+
     /// Emits the Rust half of the failed-first PageMap initialization record.
     ///
     /// Pinned C retains its `mi_page_map_empty` sentinel after the once body
