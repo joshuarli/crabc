@@ -81,9 +81,13 @@ Supply `--compiler-helper-aggregate-report REPORT` to attach the
 Its owning reader joins the clean aggregate source and exact archive bytes to
 both installed builtins roles. The selecting and measuring checkout must be
 the same. With the ordinary-data receipt pair above, the component also checks
-the static and static-PIE extraction maps for `__popcountdi2`. Selection
-discharges its import obligation only when the complete candidate import set
-is that exact static archive member occurrence and symbol-table row. Another
+the static and static-PIE extraction maps for `__popcountdi2`, the unique
+source archive member's direct-call relocations, and every surviving final
+call in both static images and shared libc. It compares each decoded call
+target with the selected helper symbol, requires the shared provider to stay
+local, and rejects a duplicate or foreign map provider. Selection discharges
+the import obligation only when the complete candidate import set is that
+exact static archive member occurrence and symbol-table row. Another
 candidate import keeps the obligation open. An aggregate without ordinary
 maps proves the installed archive ABI component while leaving the import
 obligation unchanged. Shared helper visibility, runtime semantics and family

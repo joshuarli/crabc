@@ -370,6 +370,27 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
                                                           "source_after": expected_inputs, "links": links}))
                 joined = EVIDENCE._ordinary_popcount_maps(ROOT, report, expected_inputs)
                 self.assertEqual(set(joined["static_modes"]), {"static", "static-pie"})
+                static_map = work / "static.map"
+                original_map = static_map.read_bytes()
+                original_receipt = (work / "static.receipt.json").read_bytes()
+                static_map.write_bytes(original_map +
+                    b"libc.a(foreign.o):(.text.__popcountdi2)\n")
+                changed_receipt = json.loads(original_receipt)
+                changed_receipt["map"]["sha256"] = EVIDENCE.digest(static_map)
+                (work / "static.receipt.json").write_text(EVIDENCE.canonical_json(changed_receipt))
+                links["static"]["receipt"] = ordinary.work_file_identity(
+                    ROOT, work / "static.receipt.json", "receipt")
+                report.write_text(EVIDENCE.canonical_json({"source_before": expected_inputs,
+                                                          "source_after": expected_inputs, "links": links}))
+                with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError,
+                                            "provider map is ambiguous"):
+                    EVIDENCE._ordinary_popcount_maps(ROOT, report, expected_inputs)
+                static_map.write_bytes(original_map)
+                (work / "static.receipt.json").write_bytes(original_receipt)
+                links["static"]["receipt"] = ordinary.work_file_identity(
+                    ROOT, work / "static.receipt.json", "receipt")
+                report.write_text(EVIDENCE.canonical_json({"source_before": expected_inputs,
+                                                          "source_after": expected_inputs, "links": links}))
                 for mode in ("static", "static-pie"):
                     # Replay and attachment must still agree on receipt bytes.
                     # Keep the report unchanged while replacing its sealed file.
@@ -402,6 +423,22 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
                     EVIDENCE._ordinary_popcount_maps(ROOT, report, expected_inputs)
         finally:
             EVIDENCE._load_companion_modules = original_loader
+
+    def test_final_direct_call_requires_the_physical_provider_target(self) -> None:
+        elf = object.__new__(EVIDENCE.Elf)
+        image = bytearray(64)
+        call_address, provider = 0x2010, 0x2100
+        image[0x10:0x15] = b"\xe8" + (provider - call_address - 5).to_bytes(4, "little", signed=True)
+        elf.data = bytes(image)
+        elf.programs = [(1, 5, 0, 0x2000, 0, len(image), len(image), 0x1000)]
+        source = [{"section": ".text.caller", "offset": 5}]
+        placement = {".text.caller": (0x200c, 32)}
+        joined = EVIDENCE._final_direct_calls(elf, source, placement, provider)
+        self.assertEqual(joined["resolved_calls"][0]["target_address"], provider)
+        with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "foreign provider"):
+            EVIDENCE._final_direct_calls(elf, source, placement, provider + 1)
+        with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "no selected call"):
+            EVIDENCE._final_direct_calls(elf, source, {}, provider)
 
     def test_writer_then_reader_rejects_mutated_member_and_source(self) -> None:
         contract = EVIDENCE.load_contract(ROOT)

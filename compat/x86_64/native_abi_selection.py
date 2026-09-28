@@ -11552,6 +11552,37 @@ def attach_compiler_helper_import(accounting: Mapping[str, Any], companion: Mapp
     require(claim['identity'] == '__popcountdi2' and claim['consumer_artifact'] == 'candidate-static'
             and claim['provider_placement'] == 'static-builtins' and claim['provider_member'] == 'crabc-builtins.o'
             and claim['provider_section'] == '.text.__popcountdi2', 'compiler-helper ordinary import boundary differs')
+    source_calls = claim.get('source_calls')
+    final_links = claim.get('final_links')
+    require(type(claim.get('source_object_sha256')) is str
+            and re.fullmatch(r'[0-9a-f]{64}', claim['source_object_sha256']) is not None
+            and type(source_calls) is list and source_calls
+            and type(final_links) is dict and set(final_links) == {'static', 'static-pie', 'shared-libc'},
+            'compiler-helper ordinary final-call proof is absent')
+    source_coordinates = {(row.get('section'), row.get('offset')) for row in source_calls if type(row) is dict}
+    require(len(source_coordinates) == len(source_calls)
+            and all(type(section) is str and section.startswith('.text.')
+                    and type(offset) is int and offset > 0 for section, offset in source_coordinates),
+            'compiler-helper ordinary source-call roster differs')
+    for mode, final in final_links.items():
+        require(type(final) is dict
+                and set(final) == {'provider_address', 'resolved_calls', 'discarded_calls'}
+                and type(final['provider_address']) is int and final['provider_address'] > 0
+                and type(final['resolved_calls']) is list and final['resolved_calls']
+                and type(final['discarded_calls']) is list,
+                f'compiler-helper ordinary {mode} final-call proof differs')
+        resolved = final['resolved_calls']
+        discarded = final['discarded_calls']
+        coordinates = {(row.get('section'), row.get('offset')) for row in resolved + discarded
+                       if type(row) is dict}
+        require(len(coordinates) == len(resolved) + len(discarded)
+                and coordinates == source_coordinates
+                and all(type(row) is dict and type(row.get('call_address')) is int
+                        and row['call_address'] > 0
+                        and row.get('target_address') == final['provider_address']
+                        for row in resolved)
+                and all(type(row) is dict and set(row) == {'section', 'offset'} for row in discarded),
+                f'compiler-helper ordinary {mode} final target differs')
     candidate_artifacts = {artifact.key for artifact in elf_facts.ARTIFACTS if artifact.owner != 'reference'}
     joins = []
     for record in accounting['identities']:
@@ -11571,7 +11602,8 @@ def attach_compiler_helper_import(accounting: Mapping[str, Any], companion: Mapp
         )
         joins.append({'identity': copy.deepcopy(record['identity']), 'owner': 'builtins',
                       'occurrence_indices': [row['index'] for row in imports],
-                      'ordinary_link_covered': covered, 'discharged_reason': ORDINARY_IMPORT_REASON if covered else None})
+                      'ordinary_link_covered': covered, 'final_links': copy.deepcopy(final_links),
+                      'discharged_reason': ORDINARY_IMPORT_REASON if covered else None})
         if covered:
             record['unresolved'].remove(ORDINARY_IMPORT_REASON)
             accounting['blockers'][:] = [row for row in accounting['blockers']

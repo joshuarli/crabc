@@ -40,6 +40,15 @@ def supplied_account():
             'consumer_member_occurrence': 0, 'consumer_symtab_row': 979,
             'provider_placement': 'static-builtins', 'provider_member': 'crabc-builtins.o',
             'provider_section': '.text.__popcountdi2',
+            'source_object_sha256': 'a' * 64,
+            'source_calls': [{'section': '.text.caller', 'offset': 4}],
+            'final_links': {
+                mode: {'provider_address': 0x1000, 'resolved_calls': [
+                    {'section': '.text.caller', 'offset': 4,
+                     'call_address': 0x2000, 'target_address': 0x1000}],
+                       'discarded_calls': []}
+                for mode in ('static', 'static-pie', 'shared-libc')
+            },
         },
     }
 
@@ -132,6 +141,19 @@ class NativeAbiCompilerHelperTests(unittest.TestCase):
         before = copy.deepcopy(accounting)
         self.assertEqual(selection.attach_compiler_helper_import(accounting, {'account': account}), [])
         self.assertEqual(accounting, before)
+
+    def test_changed_final_target_or_missing_shared_call_cannot_discharge_import(self):
+        for change in ('foreign-target', 'missing-shared-call', 'duplicate-source-call'):
+            account = supplied_account()
+            claim = account['ordinary_popcount_import']
+            if change == 'foreign-target':
+                claim['final_links']['static']['resolved_calls'][0]['target_address'] = 0x3000
+            elif change == 'missing-shared-call':
+                claim['final_links']['shared-libc']['resolved_calls'] = []
+            else:
+                claim['source_calls'].append(copy.deepcopy(claim['source_calls'][0]))
+            with self.subTest(change=change), self.assertRaises(selection.SelectionError):
+                selection.attach_compiler_helper_import(import_accounting(), {'account': account})
 
 
 if __name__ == '__main__':

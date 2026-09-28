@@ -14,10 +14,17 @@ import json
 from pathlib import Path
 import re
 import shutil
+import struct
 import subprocess
 import sys
+import tempfile
 import tomllib
 from typing import Any, Mapping, Sequence
+
+MODULE_DIR = Path(__file__).resolve().parent
+if str(MODULE_DIR) not in sys.path:
+    sys.path.insert(0, str(MODULE_DIR))
+from loader_debug_abi_evidence import Elf, EvidenceError
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = Path("builtins/x86_64-helper-contract.toml")
@@ -41,9 +48,10 @@ DOCUMENTATION = Path("builtins/x86_64-helper-contract.md")
 BUILTINS_DOCUMENTATION = Path("builtins/README.md")
 MATERIALIZED_DYNAMIC_DOCUMENTATION = Path("compat/x86_64/materialized-dynamic-sysroot.md")
 SELECTION_DOCUMENTATION = Path("compat/x86_64/native-abi-selection.md")
+ELF_READER = Path("compat/x86_64/loader_debug_abi_evidence.py")
 SOURCE_FILES = (CONTRACT, SOURCE, BUILDER, DYNAMIC_BUILDER, DYNAMIC_QUALIFICATION, AGGREGATE_PROBE, AGGREGATE_START, AGGREGATE_RUNNER,
                 SHARED_PLACEMENT_RUNNER, *SHARED_PLACEMENT_FIXTURES, READER, SELECTION, DOCUMENTATION,
-                BUILTINS_DOCUMENTATION, MATERIALIZED_DYNAMIC_DOCUMENTATION, SELECTION_DOCUMENTATION)
+                BUILTINS_DOCUMENTATION, MATERIALIZED_DYNAMIC_DOCUMENTATION, SELECTION_DOCUMENTATION, ELF_READER)
 SCHEMA = "crabc.x86_64-compiler-helper-owner/v1"
 AGGREGATE_SCHEMA = "crabc.x86_64-compiler-helper-aggregate/v1"
 SOURCE_SEAL_SCHEMA = "crabc.x86_64-compiler-helper-source-seal/v1"
@@ -495,6 +503,126 @@ def _load_companion_modules():
     return elf_facts, ordinary_link
 
 
+def _archive_object_bytes(archive: Path, member: str) -> bytes:
+    """Read one physical archive member without admitting a duplicate name."""
+
+    listed = subprocess.run(("/usr/bin/ar", "t", str(archive)), capture_output=True, check=False)
+    require(listed.returncode == 0 and listed.stderr == b""
+            and listed.stdout.decode("ascii").splitlines().count(member) == 1,
+            "ordinary import archive member is absent or duplicated")
+    extracted = subprocess.run(("/usr/bin/ar", "p", str(archive), member), capture_output=True, check=False)
+    require(extracted.returncode == 0 and extracted.stderr == b"" and extracted.stdout,
+            "ordinary import archive member could not be read")
+    return extracted.stdout
+
+
+def _elf_section_name(elf: Elf, index: int) -> str:
+    names_index = elf.unpack("<H", 62)[0]
+    require(0 <= names_index < len(elf.sections) and 0 <= index < len(elf.sections),
+            "ordinary import ELF section index differs")
+    names = elf.sections[names_index]
+    section = elf.sections[index]
+    start = names[4] + section[0]
+    limit = names[4] + names[5]
+    require(names[1] == 3 and start < limit <= len(elf.data),
+            "ordinary import ELF section strings differ")
+    end = elf.data.find(b"\0", start, limit)
+    require(end > start, "ordinary import ELF section name differs")
+    return elf.data[start:end].decode("ascii")
+
+
+def _direct_source_calls(object_bytes: bytes, name: str, work: Path) -> list[dict[str, Any]]:
+    """Read every direct call relocation from the authenticated C object."""
+
+    scratch = work / ".work/x86_64/tmp"
+    scratch.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+        path = Path(temporary) / "importer.o"
+        path.write_bytes(object_bytes)
+        elf = Elf(path)
+    require(elf.elf_type == 1, "ordinary import source is not relocatable ELF")
+    calls: list[dict[str, Any]] = []
+    for relocations in elf.sections:
+        if relocations[1] != 4:
+            continue
+        require(relocations[9] == 24 and relocations[5] % 24 == 0,
+                "ordinary import relocation section differs")
+        target_index = relocations[7]
+        require(target_index < len(elf.sections), "ordinary import relocation target differs")
+        target = elf.sections[target_index]
+        section = _elf_section_name(elf, target_index)
+        for offset in range(0, relocations[5], 24):
+            destination, info, addend = elf.unpack("<QQq", relocations[4] + offset)
+            symbol = elf.symbol_row(relocations[6], info >> 32)
+            if symbol["name"] != name:
+                continue
+            require(symbol["section"] == 0 and symbol["binding"] == "GLOBAL"
+                    and info & 0xffffffff == 4 and addend == -4
+                    and section.startswith(".text.") and target[1] == 1
+                    and 1 <= destination and destination + 4 <= target[5]
+                    and target[4] + destination + 4 <= len(elf.data)
+                    and elf.data[target[4] + destination - 1] == 0xe8,
+                    "ordinary import source is not a direct C call")
+            calls.append({"section": section, "offset": destination})
+    require(calls and len({(row["section"], row["offset"]) for row in calls}) == len(calls),
+            "ordinary import source call roster differs")
+    return calls
+
+
+def _virtual_instruction(elf: Elf, address: int) -> bytes:
+    matches = [elf.data[program[2] + address - program[3]:program[2] + address - program[3] + 5]
+               for program in elf.programs if program[0] == 1 and program[1] & 1
+               and program[3] <= address and address + 5 <= program[3] + program[5]]
+    require(len(matches) == 1 and len(matches[0]) == 5,
+            "ordinary import final call is outside one executable load segment")
+    return matches[0]
+
+
+def _final_direct_calls(elf: Elf, source_calls: Sequence[Mapping[str, Any]],
+                        source_addresses: Mapping[str, tuple[int, int]],
+                        provider_address: int) -> dict[str, Any]:
+    """Resolve surviving source relocations through final ELF call bytes."""
+
+    resolved = []
+    discarded = []
+    for source in source_calls:
+        section, offset = source["section"], source["offset"]
+        placement = source_addresses.get(section)
+        if placement is None:
+            discarded.append(dict(source))
+            continue
+        start, size = placement
+        require(type(start) is int and type(size) is int and start > 0 and size > 0
+                and 1 <= offset and offset + 4 <= size,
+                "ordinary import final source section differs")
+        call_address = start + offset - 1
+        instruction = _virtual_instruction(elf, call_address)
+        require(instruction[0] == 0xe8, "ordinary import final direct-call opcode differs")
+        target = call_address + 5 + struct.unpack_from("<i", instruction, 1)[0]
+        require(target == provider_address, "ordinary import final call resolves to a foreign provider")
+        resolved.append({"section": section, "offset": offset,
+                         "call_address": call_address, "target_address": target})
+    require(resolved, "ordinary import final ELF has no selected call")
+    return {"resolved_calls": resolved, "discarded_calls": discarded}
+
+
+def _final_symbol(elf: Elf, name: str, binding: str) -> dict[str, Any]:
+    symbol = elf.symbol(name, dynamic=False)
+    require(symbol["type"] == "FUNC" and symbol["binding"] == binding
+            and symbol["visibility"] == "DEFAULT" and symbol["value"] > 0
+            and symbol["size"] > 0, "ordinary import final provider metadata differs")
+    for relocations in elf.sections:
+        if relocations[1] != 4:
+            continue
+        require(relocations[9] == 24 and relocations[5] % 24 == 0,
+                "ordinary import final relocation section differs")
+        for offset in range(0, relocations[5], 24):
+            _destination, info, _addend = elf.unpack("<QQq", relocations[4] + offset)
+            require(elf.symbol_row(relocations[6], info >> 32)["name"] != name,
+                    "ordinary import final ELF retains a named relocation")
+    return symbol
+
+
 def _popcount_import_from_facts(facts_report: Mapping[str, Any], placements: Mapping[str, Any]) -> dict[str, Any]:
     """Bind the one static ordinary import to the selected archive member.
 
@@ -586,8 +714,10 @@ def _ordinary_popcount_maps(root: Path, ordinary_report: Path, expected_inputs: 
         require(same(map_identity, _work_identity(work, map_path, f"ordinary-link {mode} map"))
                 and same(trace_identity, _work_identity(work, trace_path, f"ordinary-link {mode} trace")),
                 f"ordinary-link {mode} map/trace changed while reading")
-        require(expected in map_text and re.search(r"\b__popcountdi2\b", map_text) is not None,
-                f"ordinary-link {mode} map does not attribute __popcountdi2")
+        provider_rows = [line for line in map_text.splitlines()
+                         if line.rstrip().endswith(":(.text.__popcountdi2)")]
+        require(len(provider_rows) == 1 and expected in provider_rows[0],
+                f"ordinary-link {mode} __popcountdi2 provider map is ambiguous")
         require(f"libcrabc-builtins.a({ARCHIVE_MEMBER})" in trace_text,
                 f"ordinary-link {mode} trace does not extract the builtins member")
         result[mode] = {"map": map_identity, "trace": trace_identity,
@@ -646,11 +776,63 @@ def validate_supplied_product_evidence(*, root: Path, base_inventory: Path, elf_
         try:
             import_join = _popcount_import_from_facts(facts, placements)
             ordinary_links = _ordinary_popcount_maps(root, Path(ordinary_link_report), ordinary_inputs)
+            importer = import_join["consumer_member"]
+            object_bytes = _archive_object_bytes(Path(static_product) / "usr/lib/libc.a", importer)
+            object_sha256 = hashlib.sha256(object_bytes).hexdigest()
+            provenance = _read_json(Path(dynamic_product) / "share/crabc/libc-shared.provenance.json",
+                                    "shared libc provenance")
+            require(type(provenance.get("selected_members")) is dict
+                    and provenance["selected_members"].get(importer) == object_sha256,
+                    "ordinary import C object differs from the shared libc selected member")
+            source_calls = _direct_source_calls(object_bytes, import_join["identity"], root)
+            work = Path(ordinary_link_report).absolute().parent
+            final_links = {}
+            for mode, elf_type in (("static", 2), ("static-pie", 3)):
+                link = ordinary_links["static_modes"][mode]
+                map_path = _resolve_work_identity(work, link["map"], mode + " final map")
+                map_lines = map_path.read_text(encoding="utf-8").splitlines()
+                elf = Elf(work / mode)
+                require(elf.elf_type == elf_type, "ordinary import final executable kind differs")
+                provider = _final_symbol(elf, import_join["identity"], "GLOBAL")
+                provider_rows = [line for line in map_lines
+                                 if line.rstrip().endswith(f"libcrabc-builtins.a({ARCHIVE_MEMBER}):(.text.__popcountdi2)")]
+                require(len(provider_rows) == 1 and int(provider_rows[0].split()[0], 16) == provider["value"],
+                        "ordinary import final provider map or symbol differs")
+                source_addresses = {}
+                for section in {row["section"] for row in source_calls}:
+                    rows = [line for line in map_lines
+                            if line.rstrip().endswith(f"libc.a({importer}):({section})")]
+                    require(len(rows) <= 1, "ordinary import final C source map is ambiguous")
+                    if rows:
+                        fields = rows[0].split()
+                        require(len(fields) >= 5, "ordinary import final C source map differs")
+                        source_addresses[section] = (int(fields[0], 16), int(fields[2], 16))
+                final_links[mode] = {"provider_address": provider["value"],
+                                     **_final_direct_calls(elf, source_calls, source_addresses, provider["value"])}
+            shared = Elf(Path(dynamic_product) / "usr/lib/libc.so")
+            require(shared.elf_type == 3 and shared.symbol(import_join["identity"],
+                                                            dynamic=True, required=False) is None,
+                    "ordinary import shared provider is exported or is not ELF DYN")
+            shared_provider = _final_symbol(shared, import_join["identity"], "LOCAL")
+            shared_sources = {}
+            for section in {row["section"] for row in source_calls}:
+                caller = shared.symbol(section.removeprefix(".text."), dynamic=False, required=False)
+                if caller is not None:
+                    require(caller["type"] == "FUNC" and caller["binding"] == "LOCAL"
+                            and caller["visibility"] == "DEFAULT", "ordinary import shared C caller differs")
+                    shared_sources[section] = (caller["value"], caller["size"])
+            final_links["shared-libc"] = {"provider_address": shared_provider["value"],
+                                           **_final_direct_calls(shared, source_calls, shared_sources,
+                                                                 shared_provider["value"])}
         except CompilerHelperEvidenceError:
             raise
-        except (ordinary.PublicDataEvidenceError, OSError, ValueError) as error:
+        except (ordinary.PublicDataEvidenceError, EvidenceError, OSError, ValueError) as error:
             raise CompilerHelperEvidenceError("supplied ordinary __popcountdi2 evidence is not current and valid") from error
-        result["ordinary_popcount_import"] = {**import_join, "ordinary_links": ordinary_links}
+        result["ordinary_popcount_import"] = {
+            **import_join, "ordinary_links": ordinary_links,
+            "source_object_sha256": object_sha256, "source_calls": source_calls,
+            "final_links": final_links,
+        }
     else:
         result["ordinary_popcount_import"] = None
     return result

@@ -65,6 +65,12 @@ The ordinary report seals link receipts relative to the checkout; each driver
 receipt names its map and trace relative to its own directory. The helper
 reader uses the ordinary reader's identity resolver for the outer receipt,
 including its recorded hash and size, before reading the adjacent map and trace.
+It extracts the unique C importer from the selected static archive, requires
+its bytes to match the member linked into shared libc, and reads every direct
+`__popcountdi2` relocation. For each retained ET_EXEC, static PIE, and shared
+libc call, the reader decodes the final instruction and compares its target
+with the unique helper definition. Discarded source sections remain explicit;
+an unresolved final relocation, duplicate provider, or foreign target fails.
 
 `shared_libc_archive_policy_from_product` lets the fixed-C producer reader
 admit this exact helper archive rule when their inputs share a product. It
