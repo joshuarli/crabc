@@ -157,6 +157,16 @@ CHECKS = (
         "process_arena::tests::process_default_os_arena_publishes_after_a_leaked_aligned_trim",
     ),
     (
+        "explicit-arena-prefix-trim-c-rust-differential",
+        "c-rust-explicit-arena-trim-differential",
+        "compat/allocator/m2_explicit_arena_prefix_trim_x86_64.py",
+    ),
+    (
+        "explicit-arena-suffix-trim-c-rust-differential",
+        "c-rust-explicit-arena-trim-differential",
+        "compat/allocator/m2_explicit_arena_suffix_trim_x86_64.py",
+    ),
+    (
         "selected-subprocess-statistics-aggregation",
         "rust-unit",
         "statistics::tests::subprocess_statistics_merges_selected_fields_in_source_declaration_order",
@@ -300,6 +310,10 @@ EXTERNAL_OS_CHECK_IDS = (
     "external-os-reset-fallback-c-rust-differential",
     "external-os-no-advice-policy-c-rust-differential",
     "external-os-reset-retry-c-rust-differential",
+)
+EXPLICIT_ARENA_TRIM_CHECK_IDS = (
+    "explicit-arena-prefix-trim-c-rust-differential",
+    "explicit-arena-suffix-trim-c-rust-differential",
 )
 THP_PROCESS_CHECK_IDS = (
     "process-thp-madvise-success-c-rust-differential",
@@ -784,6 +798,31 @@ def load_fragment(path: Path) -> dict[str, Any]:
             check_id not in branch["evidence_check_ids"] for check_id in EXTERNAL_OS_CHECK_IDS
         ):
             raise _error("external OS transition lost its policy branch or open frontier")
+
+    for definition_id in (
+        "os-free-and-full-memory-id-release",
+        "os-regular-and-aligned-map-owners",
+        "os-normal-aligned-and-offset-owners",
+        "arena-policy-regular-map-and-manage",
+        "arena-external-callback-manage",
+    ):
+        definition = next((item for item in definitions if item["id"] == definition_id), None)
+        if definition is None or any(
+            check_id not in definition["evidence_check_ids"]
+            for check_id in EXPLICIT_ARENA_TRIM_CHECK_IDS
+        ):
+            raise _error("explicit arena trim lost its allocation or release source boundary")
+    for branch_id in (
+        "os-free-and-statistics-events",
+        "os-primitive-regular-and-aligned-allocation",
+        "os-normal-aligned-and-offset-allocation",
+    ):
+        branch = next((item for item in branches if item["id"] == branch_id), None)
+        if branch is None or branch["disposition"] != "partial-fixed-profile" or any(
+            check_id not in branch["evidence_check_ids"]
+            for check_id in EXPLICIT_ARENA_TRIM_CHECK_IDS
+        ):
+            raise _error("explicit arena trim lost its aligned map or release branch")
 
     unqualified = component.get("unqualified_failure_matrix")
     if not isinstance(unqualified, list) or not unqualified:

@@ -296,6 +296,18 @@ class NativeM2VmFragmentTests(unittest.TestCase):
         branch = next(item for item in external_unbound["component"]["branch_matrix"]
                       if item["id"] == "os-range-transition-policy-and-failure-owners")
         branch["evidence_check_ids"].remove("external-os-commit-failure-c-rust-differential")
+        explicit_missing_target = copy.deepcopy(self.fragment)
+        explicit_check = next(item for item in explicit_missing_target["component"]["checks"]
+                              if item["id"] == "explicit-arena-prefix-trim-c-rust-differential")
+        explicit_check["target"] = "compat/allocator/missing-explicit-arena-receiver.py"
+        explicit_wrong_kind = copy.deepcopy(self.fragment)
+        explicit_check = next(item for item in explicit_wrong_kind["component"]["checks"]
+                              if item["id"] == "explicit-arena-prefix-trim-c-rust-differential")
+        explicit_check["kind"] = "c-rust-process-external-os-differential"
+        explicit_unbound = copy.deepcopy(self.fragment)
+        branch = next(item for item in explicit_unbound["component"]["branch_matrix"]
+                      if item["id"] == "os-primitive-regular-and-aligned-allocation")
+        branch["evidence_check_ids"].remove("explicit-arena-prefix-trim-c-rust-differential")
         for name, changed in (
             ("duplicate", duplicate),
             ("missing_target", missing_target),
@@ -309,6 +321,9 @@ class NativeM2VmFragmentTests(unittest.TestCase):
             ("external_missing_target", external_missing_target),
             ("external_wrong_kind", external_wrong_kind),
             ("external_unbound", external_unbound),
+            ("explicit_missing_target", explicit_missing_target),
+            ("explicit_wrong_kind", explicit_wrong_kind),
+            ("explicit_unbound", explicit_unbound),
         ):
             with self.subTest(changed=name), self.assertRaises(ValueError):
                 load_fragment(self.write_fragment(changed))
