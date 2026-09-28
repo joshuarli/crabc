@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 
 
@@ -191,6 +192,32 @@ class OwnedLoaderSyntheticReceiptTests(unittest.TestCase):
         raw_path.write_bytes(original_raw)
         receipt_path.write_bytes(original_receipt)
         semantic_receipt.read_loader_synthetic_receipt(ROOT)
+
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+            copied_root = Path(temporary)
+            copied = receipt.receipt_directory(copied_root, RUNNER)
+            copied.parent.mkdir(parents=True)
+            shutil.copytree(latest, copied)
+            copied_report = copied / "logs/report.json"
+            changed_report = json.loads(copied_report.read_text())
+            for name in ("source_before", "source_after"):
+                tree = changed_report[name]
+                fixture = next(entry for entry in tree["entries"] if entry["path"].startswith(
+                    "compat/ldso/fixtures/"))
+                fixture["sha256"] = "0" * 64
+                tree["sha256"] = semantic_receipt.digest(tree["entries"])
+            changed_bytes = (json.dumps(changed_report, indent=2, sort_keys=True) + "\n").encode()
+            copied_report.write_bytes(changed_bytes)
+            copied_receipt = copied / "receipt.json"
+            changed_receipt = json.loads(copied_receipt.read_text())
+            runner = next(case for case in changed_receipt["cases"] if case["id"] == "runner")
+            runner["logs"]["report.json"] = {
+                "sha256": hashlib.sha256(changed_bytes).hexdigest(), "size": len(changed_bytes),
+            }
+            copied_receipt.write_text(json.dumps(changed_receipt, indent=2, sort_keys=True) + "\n")
+            receipt.read_receipt(copied_root, RUNNER, seal=published.source)
+            with self.assertRaisesRegex(receipt.ReceiptError, "source seal differs from checkout"):
+                semantic_receipt.read_loader_synthetic_receipt(copied_root, seal=published.source)
 
 
 if __name__ == "__main__":

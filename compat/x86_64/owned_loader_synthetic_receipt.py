@@ -94,7 +94,7 @@ def _read_loader_synthetic_receipt(
     require(dict(receipt.parameters) == PARAMETERS, "canonical parameters differ")
 
     sys.path.insert(0, str(ROOT / "compat/ldso"))
-    from run_x86 import CASES
+    from run_x86 import CASES, source_seal
 
     roster = list(CASES)
     require([case["id"] for case in receipt.cases] == [*roster, "runner"], "workload roster is incomplete or reordered")
@@ -111,6 +111,7 @@ def _read_loader_synthetic_receipt(
             and set(report["cases"]) == set(roster), "report workload roster differs")
     for name in ("source", "product", "oracle", "producer_linker"):
         require(report.get(name + "_before") == report.get(name + "_after"), f"{name} changed during collection")
+    require(report.get("source_before") == source_seal(), "source seal differs from checkout")
 
     products = receipt.products
     fixed = set(PRODUCT_PATHS) | PINNED_PRODUCTS | {"fixture-map"}
