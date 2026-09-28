@@ -106,6 +106,26 @@ class StaticProductSuiteTests(unittest.TestCase):
         with self.assertRaisesRegex(PRODUCT.StaticProductError, "extracted installed static product source"):
             PRODUCT.require_product_source(manifests, source)
 
+    def test_tree_digest_rows_must_match_every_installed_manifest_byte_claim(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            report = Path(temporary)
+            manifest = {"installed": {"files": {"usr/lib/libc.a": "a" * 64}}}
+            manifest_path = report / "products/primary/manifest.json"
+            manifest_path.parent.mkdir(parents=True)
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            tree_path = report / "reproducibility/primary-tree.sha256"
+            tree_path.parent.mkdir(parents=True)
+            rows = [f"{sha(manifest_path.read_bytes())}  ./share/crabc/manifest.json",
+                    f"{'a' * 64}  ./usr/lib/libc.a"]
+            tree_path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+            PRODUCT.validate_tree_manifest(report, "primary", manifest)
+            tree_path.write_text("\n".join((rows[0], f"{'b' * 64}  ./usr/lib/libc.a")) + "\n",
+                                 encoding="utf-8")
+            with self.assertRaisesRegex(PRODUCT.StaticProductError, "installed tree digest rows"):
+                PRODUCT.validate_tree_manifest(report, "primary", manifest)
+
     def write_case(self, report: Path, product: str, mode: str, case_path: str, *,
                    trace_lines: list[str] | None = None, program_headers: str | None = None,
                    relocations: str | None = None) -> tuple[dict, dict]:

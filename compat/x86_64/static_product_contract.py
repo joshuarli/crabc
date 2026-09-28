@@ -271,6 +271,32 @@ def require_product_source(manifests: Mapping[str, object], source: str) -> None
                 f"{product} installed static product source differs from the receipt")
 
 
+def validate_tree_manifest(report: Path, product: str, manifest: Mapping[str, Any]) -> None:
+    """Join each retained installed-file hash row to its selected product manifest."""
+
+    require(product in ("primary", "reproduction"), "unknown installed tree digest product")
+    installed = manifest.get("installed")
+    files = installed.get("files") if isinstance(installed, Mapping) else None
+    require(isinstance(files, Mapping) and files, f"{product} installed manifest has no file roster")
+    expected: set[str] = set()
+    for relative, value in files.items():
+        require(isinstance(relative, str) and relative != INSTALLED_MANIFEST
+                and all(part not in ("", ".", "..") for part in relative.split("/"))
+                and isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None,
+                f"{product} installed manifest has an invalid file hash")
+        expected.add(f"{value}  ./{relative}")
+    require(len(expected) == len(files), f"{product} installed manifest repeats a tree digest row")
+    expected.add(f"{digest(report / 'products' / product / 'manifest.json')}  ./{INSTALLED_MANIFEST}")
+    tree = report / "reproducibility" / f"{product}-tree.sha256"
+    try:
+        content = tree.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise StaticProductError(f"{product} installed tree digest rows are unreadable") from error
+    rows = content.splitlines()
+    require(content.endswith("\n") and "\r" not in content and len(rows) == len(expected)
+            and set(rows) == expected, f"{product} installed tree digest rows differ from the manifest")
+
+
 def require_clean_source() -> str:
     require(not git("status", "--porcelain", "--untracked-files=all").strip(),
             "static product publication requires clean source")
@@ -486,6 +512,8 @@ def validate_receipt(path: Path) -> dict[str, Any]:
             "installed manifests differ across clean builds and extraction")
     require(manifests["primary"].get("format") == "crabc-x86-64-owned-static-sysroot-v1",
             "installed manifest format drifted")
+    for product in ("primary", "reproduction"):
+        validate_tree_manifest(report, product, manifests[product])
     require(files["reproducibility/primary-tree.sha256"] == files["reproducibility/reproduction-tree.sha256"],
             "two clean installed trees are not byte-identical")
     archives = receipt["archives"]
