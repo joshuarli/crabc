@@ -64,6 +64,68 @@ impl Transcript {
 const LENGTHS: [usize; 16] = [1, 2, 7, 8, 9, 31, 63, 64, 65, 127, 255, 511, 512, 513, 777, 1025];
 
 #[test]
+fn optional_isa_bitmap_allocation_trace() {
+    fn state(name: &str, chunk: &Chunk) {
+        std::println!("{name}.clear={}", chunk.all_are_clear_relaxed() as usize);
+        std::println!("{name}.set={}", chunk.all_are_set_relaxed() as usize);
+        for field in 0..BCHUNK_FIELDS {
+            std::println!("{name}.field{field}={}", word_load_relaxed(chunk.field(field)));
+        }
+    }
+    std::println!("CRABC_MI_M7_OPTIONAL_ISA_TRACE_BEGIN");
+    std::println!("bitmap.bits={BCHUNK_BITS}");
+    std::println!("bitmap.arch={}", if cfg!(target_feature = "avx2") { "avx2" } else { "scalar" });
+    std::println!("bitmap.path={}", if cfg!(feature = "mi-opt-simd") { "avx2" } else { "scalar" });
+    let chunk = Chunk::new();
+    state("empty", &chunk);
+    for field in [0, 4, 7] {
+        word_store_release(chunk.field(field), 1);
+    }
+    std::println!("one.first={}", chunk.try_claim_run(1).unwrap());
+    std::println!("one.second={}", chunk.try_claim_run(1).unwrap());
+    std::println!("one.third={}", chunk.try_claim_run(1).unwrap());
+    state("one_drained", &chunk);
+    chunk.set_run(80, 8).unwrap();
+    chunk.set_run(432, 8).unwrap();
+    std::println!("byte.first={}", chunk.try_claim_run(8).unwrap());
+    std::println!("byte.second={}", chunk.try_claim_run(8).unwrap());
+    std::println!("byte.temporary=0");
+    state("byte_drained", &chunk);
+    chunk.set_run(0, BCHUNK_BITS).unwrap();
+    state("full", &chunk);
+    let mut storage = Storage::new();
+    let bitmap = storage.binned(512);
+    bitmap.set_range(0, 512).unwrap();
+    std::println!("bin.one={}", bitmap.try_find_and_claim(0, 1).unwrap());
+    std::println!("bin.byte={}", bitmap.try_find_and_claim(0, 8).unwrap());
+    std::println!("CRABC_MI_M7_OPTIONAL_ISA_TRACE_END");
+}
+
+#[cfg(feature = "mi-opt-simd")]
+#[test]
+fn optional_isa_retries_stale_vector_candidates() {
+    let one = Chunk::new();
+    one.set_run(0, 1).unwrap();
+    one.set_run(448, 1).unwrap();
+    let first_field = one.avx2_first_nonzero_field();
+    assert_eq!(first_field, Some(0));
+    one.clear_run(0, 1).unwrap();
+    assert_eq!(one.try_claim_one_avx2_with_candidate(first_field), Some(448));
+    assert!(one.all_are_clear_relaxed());
+
+    let byte = Chunk::new();
+    byte.set_run(80, 8).unwrap();
+    byte.set_run(432, 8).unwrap();
+    let first_byte = byte.avx2_first_full_byte();
+    assert_eq!(first_byte, Some((1, 16)));
+    byte.clear_run(80, 8).unwrap();
+    let claim = byte.try_claim_byte_avx2_with_candidate(first_byte);
+    assert_eq!(claim.index, Some(432));
+    assert!(!claim.temporarily_unclaimed);
+    assert!(byte.all_are_clear_relaxed());
+}
+
+#[test]
 fn binned_images_require_live_isolated_statistics_owners() {
     let mut storage = Storage::new();
     let layout = BinnedBitmapLayout::for_bit_count(512).unwrap();

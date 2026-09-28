@@ -9,6 +9,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -51,6 +52,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:error-reporting-sites",
             "differential:option-effects",
             "differential:option-profiles",
+            "differential:optional-isa",
             "differential:options-environment",
             "differential:page-max-candidates",
             "differential:reclaim-options",
@@ -96,6 +98,15 @@ class M7GateContractTests(unittest.TestCase):
         modes = {name for entry in self.contract["gates"] for name in entry["compile_time_modes"]}
         self.assertIn("MI_GUARDED", modes)
         self.assertNotIn("MI_OVERRIDE", modes)
+
+    def test_optional_isa_rejects_incomplete_or_heterogeneous_cpu_features(self) -> None:
+        haswell = ("abm aes avx avx2 bmi1 bmi2 cx16 erms f16c fma fxsr lahf_lm "
+                   "movbe pclmulqdq pni popcnt rdrand sse sse2 sse4_1 sse4_2 ssse3 xsave xsaveopt")
+        for rows in ("flags: avx2 bmi1 bmi2\n", f"flags: {haswell}\nflags: {haswell.replace('avx2 ', '')}\n", ""):
+            with self.subTest(rows=rows), mock.patch.object(gate.harness, "require_native_x86_64"), \
+                    mock.patch.object(Path, "read_text", return_value=rows):
+                with self.assertRaisesRegex(harness.HarnessError, "optional ISA unavailable"):
+                    gate.run_optional_isa_differential(offline=True)
 
     def test_destroy_on_exit_requires_its_physical_option_effect_evidence(self) -> None:
         summary = self.validate()

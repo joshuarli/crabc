@@ -91,6 +91,9 @@ ERROR_SITE_CASES = tuple(
     )
 )
 OPTION_PROFILES_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_option_profiles_oracle.c"
+OPTIONAL_ISA_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_optional_isa_oracle.c"
+OPTIONAL_ISA_TRACE_BEGIN = "CRABC_MI_M7_OPTIONAL_ISA_TRACE_BEGIN"
+OPTIONAL_ISA_TRACE_END = "CRABC_MI_M7_OPTIONAL_ISA_TRACE_END"
 OPTION_PROFILES_RUST_TEST = "native_option_profiles"
 OPTION_PROFILES_TRACE_BEGIN = "CRABC_MI_M7_OPTION_PROFILES_TRACE_BEGIN"
 OPTION_PROFILES_TRACE_END = "CRABC_MI_M7_OPTION_PROFILES_TRACE_END"
@@ -894,6 +897,142 @@ def run_trace_differential(
     }
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     harness.write_json(ARTIFACTS / report_name, report)
+    return report
+
+
+def run_optional_isa_differential(offline: bool) -> dict[str, Any]:
+    """Compare source-built bitmap claims under scalar, arch, and AVX2 selection."""
+
+    harness.require_native_x86_64()
+    flag_rows = re.findall(r"^flags\s*:\s*(.*)$", Path("/proc/cpuinfo").read_text(), re.MULTILINE)
+    if not flag_rows:
+        raise harness.HarnessError("optional ISA unavailable: CPU feature rows are absent")
+    flags = set.intersection(*(set(row.split()) for row in flag_rows))
+    # `target-cpu=haswell` enables these compiler features; Linux names
+    # `sse3` as `pni`, `lzcnt` as `abm`, and `cmpxchg16b` as `cx16`.
+    required = {
+        "abm", "aes", "avx", "avx2", "bmi1", "bmi2", "cx16", "erms",
+        "f16c", "fma", "fxsr", "lahf_lm", "movbe", "pclmulqdq", "pni",
+        "popcnt", "rdrand", "sse", "sse2", "sse4_1", "sse4_2", "ssse3",
+        "xsave", "xsaveopt",
+    }
+    if not required <= flags:
+        raise harness.HarnessError(f"optional ISA unavailable: CPU lacks {sorted(required - flags)}")
+    pin = harness.load_pin()
+    archive = harness.fetch_archive(pin, offline)
+    compiler = harness.require_tool("musl-gcc")
+    objdump = harness.require_tool("objdump")
+    modes = {
+        "scalar": ([], [], ""),
+        "no_opt_arch": (["-DMI_NO_OPT_ARCH=1", "-DMI_OPT_SIMD=0"], [], ""),
+        "opt_arch": (["-march=haswell", "-mavx2", "-DMI_OPT_SIMD=0"], [], "-C target-cpu=haswell"),
+        "opt_simd": (["-march=haswell", "-mavx2", "-DMI_OPT_SIMD=1"], ["mi-opt-simd"], "-C target-cpu=haswell"),
+    }
+    profiles: dict[str, Any] = {}
+    with harness.temporary_directory("crabc-mimalloc-x86_64-m7-optional-isa-") as name:
+        temporary = Path(name)
+        source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
+        for mode, (c_flags, features, rustflags) in modes.items():
+            c_binary = temporary / f"{mode}-c"
+            c_build = harness.command_record([
+                compiler, "-std=c11", "-O2", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+                *harness.CONFIGURATION_PROFILES["release"], *c_flags,
+                "-I", str(source / "include"), "-I", str(source / "src"),
+                str(OPTIONAL_ISA_ORACLE), "-pthread", "-o", str(c_binary),
+            ], cwd=source, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS)
+            harness.require_success(c_build, f"optional ISA {mode} C build")
+            c_run = harness.command_record([str(c_binary)], cwd=source, env={})
+            harness.require_success(c_run, f"optional ISA {mode} C trace")
+            target = temporary / "cargo-target"
+            rust_build = harness.command_record([
+                harness.require_tool("cargo"), "test", "--locked", "--target", RUST_TARGET,
+                "-p", "crabc-mimalloc", "--no-default-features",
+                *(["--features", ",".join(features)] if features else []),
+                "--lib", "--no-run", "--message-format=json", "--target-dir", str(target),
+            ], cwd=harness.ROOT, env={**os.environ, "RUSTFLAGS": rustflags},
+                timeout_seconds=EVIDENCE_TIMEOUT_SECONDS)
+            harness.require_success(rust_build, f"optional ISA {mode} Rust build")
+            artifacts = [json.loads(line) for line in str(rust_build["stdout"]).splitlines()
+                         if line.startswith("{") and json.loads(line).get("reason") == "compiler-artifact"
+                         and json.loads(line).get("target", {}).get("name") == "crabc_mimalloc"
+                         and json.loads(line).get("executable")]
+            if len(artifacts) != 1:
+                raise harness.HarnessError(f"optional ISA {mode} lacks one Rust unit executable")
+            rust_binary = Path(artifacts[0]["executable"])
+            rust_run = harness.command_record([
+                str(rust_binary), "bitmap::native_tests::optional_isa_bitmap_allocation_trace",
+                "--exact", "--nocapture", "--test-threads=1",
+            ], cwd=harness.ROOT)
+            harness.require_success(rust_run, f"optional ISA {mode} Rust trace")
+            if harness.parse_rust_test_count(str(rust_run["stdout"]) + str(rust_run["stderr"])) != 1:
+                raise harness.HarnessError(f"optional ISA {mode} ran the wrong Rust test inventory")
+            retry_command = None
+            if mode == "opt_simd":
+                retry_command = [str(rust_binary),
+                                 "bitmap::native_tests::optional_isa_retries_stale_vector_candidates",
+                                 "--exact", "--test-threads=1"]
+                retry_run = harness.command_record(retry_command, cwd=harness.ROOT)
+                harness.require_success(retry_run, "optional ISA stale-vector retry regression")
+                if harness.parse_rust_test_count(str(retry_run["stdout"]) + str(retry_run["stderr"])) != 1:
+                    raise harness.HarnessError("optional ISA stale-vector retry test did not execute")
+            c_trace = parse_options_trace(str(c_run["stdout"]), f"{mode} C", OPTIONAL_ISA_TRACE_BEGIN, OPTIONAL_ISA_TRACE_END)
+            rust_trace_image = parse_options_trace(str(rust_run["stdout"]), f"{mode} Rust", OPTIONAL_ISA_TRACE_BEGIN, OPTIONAL_ISA_TRACE_END)
+            expected = {"bitmap.bits", "bitmap.arch", "bitmap.path", "one.first", "one.second", "one.third", "byte.first", "byte.second", "byte.temporary", "bin.one", "bin.byte"}
+            expected |= {f"{stage}.{suffix}" for stage in ("empty", "one_drained", "byte_drained", "full")
+                         for suffix in ("clear", "set", *(f"field{i}" for i in range(8)))}
+            if set(c_trace) != expected or set(rust_trace_image) != expected:
+                raise harness.HarnessError(f"optional ISA {mode} trace omitted bitmap state")
+            required_values = {
+                "bitmap.bits": "512", "one.first": "0", "one.second": "256", "one.third": "448",
+                "byte.first": "80", "byte.second": "432", "byte.temporary": "0",
+                "bin.one": "0", "bin.byte": "8",
+                "empty.clear": "1", "empty.set": "0",
+                "one_drained.clear": "1", "one_drained.set": "0",
+                "byte_drained.clear": "1", "byte_drained.set": "0",
+                "full.clear": "0", "full.set": "1",
+            }
+            if any(c_trace[key] != value for key, value in required_values.items()):
+                raise harness.HarnessError(f"optional ISA {mode} lost a source bitmap selection boundary")
+            arch = "avx2" if mode in ("opt_arch", "opt_simd") else "scalar"
+            path = "avx2" if mode == "opt_simd" else "scalar"
+            if c_trace["bitmap.arch"] != arch or c_trace["bitmap.path"] != path:
+                raise harness.HarnessError(f"optional ISA {mode} selected the wrong C bitmap branch")
+            compare_options_traces(c_trace, rust_trace_image)
+            c_disassembly = harness.command_record([objdump, "-d", str(c_binary)], cwd=source)
+            rust_disassembly = harness.command_record([objdump, "-Cd", str(rust_binary)], cwd=source)
+            harness.require_success(c_disassembly, f"optional ISA {mode} C disassembly")
+            harness.require_success(rust_disassembly, f"optional ISA {mode} Rust disassembly")
+            vector_opcodes = ("vpcmpeqq", "vpcmpeqb", "vpmovmskb")
+            c_counts = {opcode: len(re.findall(rf"\b{opcode}\b", str(c_disassembly["stdout"])))
+                        for opcode in vector_opcodes}
+            rust_counts = {opcode: len(re.findall(rf"\b{opcode}\b", str(rust_disassembly["stdout"])))
+                           for opcode in vector_opcodes}
+            c_has_opcodes = all(c_counts.values())
+            rust_has_opcodes = all(rust_counts.values())
+            if mode == "opt_simd" and (not c_has_opcodes or not rust_has_opcodes):
+                raise harness.HarnessError("optional ISA AVX2 bitmap instruction selection absent")
+            profiles[mode] = {"c_trace": c_trace, "rust_trace": rust_trace_image,
+                              "c_build_command": c_build["command"], "rust_build_command": rust_build["command"],
+                              "c_binary_has_avx2_bitmap_opcodes": c_has_opcodes,
+                              "rust_binary_has_avx2_bitmap_opcodes": rust_has_opcodes,
+                              "bitmap_selected_path": path,
+                              "c_opcode_counts": c_counts, "rust_opcode_counts": rust_counts,
+                              "rust_features": features, "rustflags": rustflags,
+                              "retry_test_command": retry_command}
+        source_files = harness.source_file_records(source, ("src/bitmap.c", "src/bitmap.h", "src/static.c"))
+    scalar = {key: value for key, value in profiles["scalar"]["c_trace"].items()
+              if key not in ("bitmap.arch", "bitmap.path")}
+    if any({key: value for key, value in profile["c_trace"].items()
+            if key not in ("bitmap.arch", "bitmap.path")} != scalar for profile in profiles.values()):
+        raise harness.HarnessError("optional ISA changed sequential bitmap allocation semantics")
+    report = {"status": "passed", "cpu_flags": sorted(required), "cpu_count": len(flag_rows),
+              "profiles": profiles,
+              "compared_key_count": len(scalar) + 2, "source_tag": pin["tag"],
+              "source_files": source_files,
+              "fixture_sha256": hashlib.sha256(OPTIONAL_ISA_ORACLE.read_bytes()).hexdigest(),
+              "bitmap_sha256": hashlib.sha256((harness.ROOT / "crabc-mimalloc/src/bitmap.rs").read_bytes()).hexdigest()}
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    harness.write_json(ARTIFACTS / "optional-isa.json", report)
     return report
 
 
@@ -2038,9 +2177,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run the pinned-C/Rust `_mi_error_message` site differential")
     mode.add_argument("--default-baseline-audit", action="store_true",
         help="build and inspect the default native allocator release artifact")
+    mode.add_argument("--optional-isa-differential", action="store_true",
+        help="compare scalar, arch-only, and AVX2 bitmap allocation paths with pinned C")
     parser.add_argument("--offline", action="store_true", help="require the verified archive in the local cache")
     parser.add_argument("--scratch", type=Path, help="fresh output directory for the default baseline audit")
     arguments = parser.parse_args(argv)
+    if arguments.optional_isa_differential:
+        report = run_optional_isa_differential(arguments.offline)
+        print(f"M7 optional ISA differential passed: {report['compared_key_count']} keys in {len(report['profiles'])} modes")
+        return 0
     if arguments.options_differential:
         report = run_options_differential(arguments.offline)
         print(f"M7 options/environment differential passed: {report['compared_key_count']} keys")

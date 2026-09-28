@@ -13,7 +13,7 @@
 // field/chunk representation plus ordinary and binned dynamic headers),
 // `include/mimalloc-stats.h:85-93` (chunk-bin classification), and
 // `src/bitmap.c:26-568,594-915,933-1246` (field masks, field/chunk index
-// arithmetic, atomic set/clear, rollback, set-run selection, scalar relaxed
+// arithmetic, atomic set/clear, rollback, set-run selection, scalar and AVX2 relaxed
 // chunk observations, caller-owned bitmap initialization, range operations,
 // and conservative chunkmap maintenance), `src/bitmap.c:109-129,920-928,
 // 1024-1042,1297-1420,1425-1432` (the abandoned-page single-bit claim
@@ -26,7 +26,7 @@
 // rollback). The native bitmap component also covers all scalar callback
 // dispositions and range/observer paths, including unconditional subprocess
 // counters (`src/stats.c::mi_stat_update_mt` and `__mi_stat_counter_increase_mt`).
-// The legacy selected M2 C/Rust traces below cover the
+// The selected C/Rust traces below cover the
 // abandoned visitor's reject/restore, accepted-claim, and stale-map repair;
 // the scalar clear-range visitor's completed and stopped field-bounded walks;
 // the `rangesn` wrapper's selected aligned/delegated paths; and a direct
@@ -50,6 +50,15 @@ use crate::atomic::{
 };
 use crate::bits::{bsf, bsr, clz, ctz, popcount};
 use crate::config::BCHUNK_BITS;
+
+#[cfg(all(feature = "mi-opt-simd", not(all(target_arch = "x86_64", target_feature = "avx2"))))]
+compile_error!("mi-opt-simd requires an x86-64 target built with AVX2 enabled");
+
+#[cfg(all(feature = "mi-opt-simd", target_arch = "x86_64"))]
+use core::arch::x86_64::{
+    _mm256_cmpeq_epi8, _mm256_cmpeq_epi64, _mm256_movemask_epi8,
+    _mm256_set1_epi8, _mm256_set_epi64x, _mm256_setzero_si256,
+};
 #[cfg(test)]
 #[path = "bitmap_native_tests.rs"]
 mod native_tests;
@@ -316,6 +325,56 @@ impl Chunk {
         &self.fields[field_index]
     }
 
+    #[cfg(feature = "mi-opt-simd")]
+    #[inline]
+    fn avx2_fields(&self) -> (core::arch::x86_64::__m256i, core::arch::x86_64::__m256i) {
+        // The source uses aligned vector reads of atomic fields. Keep each
+        // lane's Relaxed atomic observation in Rust, then perform the same
+        // AVX2 comparison and lowest-candidate selection on those values.
+        let field: [i64; BCHUNK_FIELDS] =
+            core::array::from_fn(|index| word_load_relaxed(self.field(index)) as i64);
+        // SAFETY: this feature requires the whole x86-64 artifact to enable AVX2.
+        unsafe {
+            (
+                _mm256_set_epi64x(field[3], field[2], field[1], field[0]),
+                _mm256_set_epi64x(field[7], field[6], field[5], field[4]),
+            )
+        }
+    }
+
+    #[cfg(feature = "mi-opt-simd")]
+    #[inline]
+    fn avx2_first_nonzero_field(&self) -> Option<usize> {
+        let (lo, hi) = self.avx2_fields();
+        // SAFETY: this feature requires the whole x86-64 artifact to enable AVX2.
+        let mask = unsafe {
+            let zero = _mm256_setzero_si256();
+            let first = !(_mm256_movemask_epi8(_mm256_cmpeq_epi64(lo, zero)) as u32);
+            let second = !(_mm256_movemask_epi8(_mm256_cmpeq_epi64(hi, zero)) as u32);
+            ((second as u64) << 32) | first as u64
+        };
+        (mask != 0).then(|| mask.trailing_zeros() as usize / 8)
+    }
+
+    #[cfg(feature = "mi-opt-simd")]
+    #[inline]
+    fn avx2_first_full_byte(&self) -> Option<(usize, usize)> {
+        let (lo, hi) = self.avx2_fields();
+        // SAFETY: this feature requires the whole x86-64 artifact to enable AVX2.
+        let mask = unsafe {
+            let ones = _mm256_set1_epi8(-1);
+            let first = _mm256_movemask_epi8(_mm256_cmpeq_epi8(lo, ones)) as u32;
+            let second = _mm256_movemask_epi8(_mm256_cmpeq_epi8(hi, ones)) as u32;
+            ((second as u64) << 32) | first as u64
+        };
+        if mask == 0 {
+            None
+        } else {
+            let byte = mask.trailing_zeros() as usize;
+            Some((byte / 8, (byte % 8) * 8))
+        }
+    }
+
     /// Atomically sets an available run, preserving `mi_bchunk_setN`'s
     /// per-field transition and `already_set` accounting.
     pub(crate) fn set_run(&self, index: usize, len: usize) -> Option<RunTransition> {
@@ -438,12 +497,19 @@ impl Chunk {
     /// upstream protocol permits that conservative race.
     #[inline]
     pub(crate) fn all_are_clear_relaxed(&self) -> bool {
-        for field_index in 0..BCHUNK_FIELDS {
-            if word_load_relaxed(self.field(field_index)) != 0 {
-                return false;
-            }
+        #[cfg(feature = "mi-opt-simd")]
+        {
+            self.avx2_first_nonzero_field().is_none()
         }
-        true
+        #[cfg(not(feature = "mi-opt-simd"))]
+        {
+            for field_index in 0..BCHUNK_FIELDS {
+                if word_load_relaxed(self.field(field_index)) != 0 {
+                    return false;
+                }
+            }
+            true
+        }
     }
 
     /// Port of `mi_bchunk_all_are_set_relaxed`'s scalar fallback.
@@ -453,12 +519,26 @@ impl Chunk {
     /// protocols that tolerate a concurrently stale answer.
     #[inline]
     pub(crate) fn all_are_set_relaxed(&self) -> bool {
-        for field_index in 0..BCHUNK_FIELDS {
-            if word_load_relaxed(self.field(field_index)) != usize::MAX {
-                return false;
+        #[cfg(feature = "mi-opt-simd")]
+        {
+            let (lo, hi) = self.avx2_fields();
+            // SAFETY: this feature requires the whole x86-64 artifact to enable AVX2.
+            unsafe {
+                let ones = _mm256_set1_epi8(-1);
+                let first = _mm256_movemask_epi8(_mm256_cmpeq_epi64(lo, ones)) as u32;
+                let second = _mm256_movemask_epi8(_mm256_cmpeq_epi64(hi, ones)) as u32;
+                first == u32::MAX && second == u32::MAX
             }
         }
-        true
+        #[cfg(not(feature = "mi-opt-simd"))]
+        {
+            for field_index in 0..BCHUNK_FIELDS {
+                if word_load_relaxed(self.field(field_index)) != usize::MAX {
+                    return false;
+                }
+            }
+            true
+        }
     }
 
     /// Port of `mi_bchunk_bsr`: return the highest set bit in the source's
@@ -645,13 +725,48 @@ impl Chunk {
     }
 
     fn try_claim_one(&self) -> Option<usize> {
-        for field_index in 0..BCHUNK_FIELDS {
-            let mut value = word_load_relaxed(self.field(field_index));
-            if value == 0 {
-                continue;
+        #[cfg(feature = "mi-opt-simd")]
+        {
+            self.try_claim_one_avx2()
+        }
+        #[cfg(not(feature = "mi-opt-simd"))]
+        {
+            for field_index in 0..BCHUNK_FIELDS {
+                let mut value = word_load_relaxed(self.field(field_index));
+                if value == 0 {
+                    continue;
+                }
+                let mut tries = 0;
+                loop {
+                    let mask = value & value.wrapping_neg();
+                    let previous = word_and_acq_rel(self.field(field_index), !mask);
+                    if previous & mask == mask {
+                        return Some(field_index * BFIELD_BITS + ctz(mask));
+                    }
+                    value = previous;
+                    tries += 1;
+                    if value == 0 || tries > 4 {
+                        break;
+                    }
+                }
             }
+            None
+        }
+    }
+
+    #[cfg(feature = "mi-opt-simd")]
+    fn try_claim_one_avx2(&self) -> Option<usize> {
+        self.try_claim_one_avx2_with_candidate(self.avx2_first_nonzero_field())
+    }
+
+    #[cfg(feature = "mi-opt-simd")]
+    #[inline]
+    fn try_claim_one_avx2_with_candidate(&self, first: Option<usize>) -> Option<usize> {
+        for attempt in 0..4 {
+            let field_index = if attempt == 0 { first? } else { self.avx2_first_nonzero_field()? };
+            let mut value = word_load_relaxed(self.field(field_index));
             let mut tries = 0;
-            loop {
+            while value != 0 {
                 let mask = value & value.wrapping_neg();
                 let previous = word_and_acq_rel(self.field(field_index), !mask);
                 if previous & mask == mask {
@@ -659,7 +774,7 @@ impl Chunk {
                 }
                 value = previous;
                 tries += 1;
-                if value == 0 || tries > 4 {
+                if tries > 4 {
                     break;
                 }
             }
@@ -668,36 +783,72 @@ impl Chunk {
     }
 
     fn try_claim_byte(&self) -> ChunkSearchClaim {
-        let mut temporarily_unclaimed = false;
-        for field_index in 0..BCHUNK_FIELDS {
-            let mut value = word_load_relaxed(self.field(field_index));
-            if value == 0 {
-                continue;
-            }
-            let mut tries = 0;
-            loop {
-                let has_set8 = ((!value).wrapping_sub(BFIELD_LO_BIT8)
-                    & (value & BFIELD_HI_BIT8))
-                    >> 7;
-                let Some(bit_index) = bsf(has_set8) else {
-                    break;
-                };
-                let claim = self.try_clear_mask_optimistic(
-                    field_index,
-                    field_mask_valid(8, bit_index),
-                );
-                temporarily_unclaimed |= claim.result.temporarily_unclaimed();
-                if claim.result.claimed {
-                    return ChunkSearchClaim::found(
-                        field_index * BFIELD_BITS + bit_index,
-                        temporarily_unclaimed,
+        #[cfg(feature = "mi-opt-simd")]
+        {
+            self.try_claim_byte_avx2()
+        }
+        #[cfg(not(feature = "mi-opt-simd"))]
+        {
+            let mut temporarily_unclaimed = false;
+            for field_index in 0..BCHUNK_FIELDS {
+                let mut value = word_load_relaxed(self.field(field_index));
+                if value == 0 {
+                    continue;
+                }
+                let mut tries = 0;
+                loop {
+                    let has_set8 = ((!value).wrapping_sub(BFIELD_LO_BIT8)
+                        & (value & BFIELD_HI_BIT8))
+                        >> 7;
+                    let Some(bit_index) = bsf(has_set8) else {
+                        break;
+                    };
+                    let claim = self.try_clear_mask_optimistic(
+                        field_index,
+                        field_mask_valid(8, bit_index),
                     );
+                    temporarily_unclaimed |= claim.result.temporarily_unclaimed();
+                    if claim.result.claimed {
+                        return ChunkSearchClaim::found(
+                            field_index * BFIELD_BITS + bit_index,
+                            temporarily_unclaimed,
+                        );
+                    }
+                    value = claim.previous;
+                    tries += 1;
+                    if value == 0 || tries > 4 {
+                        break;
+                    }
                 }
-                value = claim.previous;
-                tries += 1;
-                if value == 0 || tries > 4 {
-                    break;
-                }
+            }
+            ChunkSearchClaim::not_found(temporarily_unclaimed)
+        }
+    }
+
+    #[cfg(feature = "mi-opt-simd")]
+    fn try_claim_byte_avx2(&self) -> ChunkSearchClaim {
+        self.try_claim_byte_avx2_with_candidate(self.avx2_first_full_byte())
+    }
+
+    #[cfg(feature = "mi-opt-simd")]
+    #[inline]
+    fn try_claim_byte_avx2_with_candidate(&self, first: Option<(usize, usize)>) -> ChunkSearchClaim {
+        let mut temporarily_unclaimed = false;
+        for attempt in 0..4 {
+            let candidate = if attempt == 0 { first } else { self.avx2_first_full_byte() };
+            let Some((field_index, bit_index)) = candidate else {
+                return ChunkSearchClaim::not_found(temporarily_unclaimed);
+            };
+            let claim = self.try_clear_mask_optimistic(
+                field_index,
+                field_mask_valid(8, bit_index),
+            );
+            temporarily_unclaimed |= claim.result.temporarily_unclaimed();
+            if claim.result.claimed {
+                return ChunkSearchClaim::found(
+                    field_index * BFIELD_BITS + bit_index,
+                    temporarily_unclaimed,
+                );
             }
         }
         ChunkSearchClaim::not_found(temporarily_unclaimed)

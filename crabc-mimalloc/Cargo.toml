@@ -249,6 +249,9 @@ mi-stat-2 = ["mi-stat-1"]
 # Pinned MI_SHOW_ERRORS changes the initial show_errors descriptor while
 # retaining release allocation layout and algorithms.
 mi-show-errors = []
+# Selects the pinned AVX2 bitmap searches when the whole crate is built for
+# a Haswell-class x86-64 CPU. The default and arch-only profiles remain scalar.
+mi-opt-simd = []
 # Private, allocation-backed process context used only by the standalone
 # prefixed C adapter's tests. Production builds retain the allocation-free engine.
 test-adapter = []

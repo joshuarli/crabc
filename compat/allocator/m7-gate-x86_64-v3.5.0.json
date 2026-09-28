@@ -210,8 +210,8 @@
       "scope": "Pinned-C/Rust sampled guard-page allocation, guarded option effects, and Theap sample-rate/size-bound state under MI_GUARDED."
     },
     "differential:optional-isa": {
-      "command": null,
-      "scope": "Pinned-C/Rust results of the MI_OPT_ARCH and MI_OPT_SIMD bitmap/allocation paths on a CPU that supports them."
+      "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--optional-isa-differential"],
+      "scope": "CPU-qualified pinned-C/Rust scalar, MI_NO_OPT_ARCH, MI_OPT_ARCH, and MI_OPT_SIMD bitmap/allocation traces with AVX2 instruction selection."
     },
     "audit:default-baseline": {
       "command": [
@@ -491,7 +491,7 @@
         "differential:optional-isa"
       ],
       "blocked_by": [
-        "No optional ISA profile or `MI_OPT_SIMD` bitmap path exists."
+        "AVX2 bitmap throughput has not been qualified on an uncontended host against the scalar path."
       ]
     },
     {
