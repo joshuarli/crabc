@@ -180,13 +180,47 @@ class ProductIdentityTests(unittest.TestCase):
                                               "share/crabc/manifest.json": "share/crabc/static/manifest.json"}},
                 },
             }
-            (combined / "share/crabc/manifest.json").write_text(json.dumps(combined_manifest))
+            combined_manifest_path = combined / "share/crabc/manifest.json"
+            combined_manifest_path.write_text(json.dumps(combined_manifest))
 
             self.assertEqual(RUNNER.validate_product(dynamic)["files"], selected)
             self.assertEqual(RUNNER.validate_product(combined)["files"], files)
 
+            combined_manifest_path.chmod(0o755)
+            with self.assertRaisesRegex(RUNNER.CorpusError, "manifest mode differs"):
+                RUNNER.validate_product(combined)
+            combined_manifest_path.chmod(0o600)
+            self.assertEqual(RUNNER.validate_product(combined)["files"], files)
+            combined_manifest_path.chmod(0o644)
+
+            embedded_bytes = embedded.read_bytes()
+            embedded.write_bytes(embedded_bytes + b" ")
+            with self.assertRaisesRegex(RUNNER.CorpusError, "payload differs: share/crabc/dynamic/manifest.json"):
+                RUNNER.validate_product(combined)
+            embedded.write_bytes(embedded_bytes)
+
+            loader = combined / "lib/ld-crabc-x86_64.so.1"
+            loader.chmod(0o644)
+            with self.assertRaisesRegex(RUNNER.CorpusError, "mode differs: lib/ld-crabc-x86_64.so.1"):
+                RUNNER.validate_product(combined)
+            loader.chmod(0o755)
+
+            alias = combined / "lib/ld-musl-x86_64.so.1"
+            alias.unlink()
+            alias.symlink_to("libc.so")
+            with self.assertRaisesRegex(RUNNER.CorpusError, "installed roster drifted"):
+                RUNNER.validate_product(combined)
+            alias.unlink()
+            alias.symlink_to("ld-crabc-x86_64.so.1")
+
+            combined_manifest["files"]["usr//lib/libc.so"] = combined_manifest["files"].pop("usr/lib/libc.so")
+            combined_manifest_path.write_text(json.dumps(combined_manifest))
+            with self.assertRaisesRegex(RUNNER.CorpusError, "unsafe payload entry"):
+                RUNNER.validate_product(combined)
+            combined_manifest["files"]["usr/lib/libc.so"] = combined_manifest["files"].pop("usr//lib/libc.so")
+
             combined_manifest["products"]["dynamic"]["placements"]["usr/lib/libc.so"] = "usr/lib/libc.a"
-            (combined / "share/crabc/manifest.json").write_text(json.dumps(combined_manifest))
+            combined_manifest_path.write_text(json.dumps(combined_manifest))
             with self.assertRaisesRegex(RUNNER.CorpusError, "dynamic placement differs"):
                 RUNNER.validate_product(combined)
             combined_manifest["products"]["dynamic"]["placements"]["usr/lib/libc.so"] = "usr/lib/libc.so"
@@ -194,14 +228,14 @@ class ProductIdentityTests(unittest.TestCase):
             extra = combined / "share/crabc/unowned.bin"
             extra.write_bytes(b"unowned payload")
             combined_manifest["files"]["share/crabc/unowned.bin"] = RUNNER.sha256_file(extra, "extra payload")
-            (combined / "share/crabc/manifest.json").write_text(json.dumps(combined_manifest))
+            combined_manifest_path.write_text(json.dumps(combined_manifest))
             with self.assertRaisesRegex(RUNNER.CorpusError, "not exactly the embedded products"):
                 RUNNER.validate_product(combined)
             extra.unlink()
             del combined_manifest["files"]["share/crabc/unowned.bin"]
 
             (combined / "usr/lib/libc.so").write_bytes(b"substituted libc")
-            (combined / "share/crabc/manifest.json").write_text(json.dumps(combined_manifest))
+            combined_manifest_path.write_text(json.dumps(combined_manifest))
             with self.assertRaisesRegex(RUNNER.CorpusError, "payload differs: usr/lib/libc.so"):
                 RUNNER.validate_product(combined)
 

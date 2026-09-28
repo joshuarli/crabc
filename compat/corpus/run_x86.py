@@ -994,6 +994,9 @@ def combined_payload_map(value: object, label: str) -> dict[str, str]:
 
 def validate_combined_product(product: Path, manifest_path: Path, raw: dict[str, object]) -> dict[str, object]:
     """Bind every installed byte and both embedded placement maps before selecting libc."""
+    manifest_mode = manifest_path.lstat().st_mode
+    if not stat.S_ISREG(manifest_mode) or manifest_mode & 0o111:
+        fail("supplied combined product manifest mode differs")
     if (set(raw) != {"schema", "format", "target", "toolchain", "modes", "files",
                      "executables", "symlinks", "products"}
             or type(raw["schema"]) is not int or raw["schema"] != 1
