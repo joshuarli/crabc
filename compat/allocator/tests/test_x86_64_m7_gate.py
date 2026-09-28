@@ -344,6 +344,8 @@ class M7GateContractTests(unittest.TestCase):
     def test_statistics_remote_bin_reader_rejects_lost_worker_free(self) -> None:
         worker_bin = "  bin S    8:    64   B      64   B     -64   B      64   B       1        not all freed"
         worker_requested = "  malloc req:    64   B"
+        medium_worker_bin = "  bin M   44:    32.1 KiB    32.1 KiB   -32.1 KiB    32.1 KiB      1        not all freed"
+        medium_worker_requested = "  malloc req:    32.1 KiB"
         trace = {
             "profile.level": "2", "warm.usable": "64", "target.usable": "64", "target.bin": "8",
             "allocated.bin": "1,1,1", "allocated.requested": "64,64,64",
@@ -354,6 +356,30 @@ class M7GateContractTests(unittest.TestCase):
             "freed.normal": "128,128,0", "freed.normal_count": "2",
             "worker.bin.hex": worker_bin.encode("ascii").hex(),
             "worker.requested.hex": worker_requested.encode("ascii").hex(),
+            "medium.warm.usable": "32768", "medium.target.usable": "32768",
+            "medium.target.bin": "44", "medium.disallow_os_alloc": "1",
+            "medium.disallow_arena_alloc": "0", "medium.target.mapped": "1",
+            "medium.survivor.mapped": "1", "medium.survivor.data": "1",
+            "medium.before.arena": "1076166656,4,1",
+            "medium.allocated.arena": "1076166656,4,1",
+            "medium.terminal.arena": "1076166656,4,1",
+            "medium.allocated.bin": "2,2,2", "medium.allocated.requested": "65536,65536,65536",
+            "medium.allocated.normal": "65536,65408,65536", "medium.allocated.normal_count": "2",
+            "medium.allocated.page_bin": "1,1,1",
+            "medium.merged.bin": "2,2,2", "medium.merged.requested": "65536,65536,65536",
+            "medium.merged.normal": "65536,65408,65536", "medium.merged.normal_count": "2",
+            "medium.merged.page_bin": "1,1,1",
+            "medium.freed.bin": "3,3,1", "medium.freed.requested": "98304,98304,98304",
+            "medium.freed.normal": "98304,98176,32768", "medium.freed.normal_count": "3",
+            "medium.freed.page_bin": "2,2,1",
+            "medium.collected.bin": "3,3,1", "medium.collected.requested": "98304,98304,98304",
+            "medium.collected.normal": "98304,98176,32768", "medium.collected.normal_count": "3",
+            "medium.collected.page_bin": "2,2,1",
+            "medium.terminal.bin": "3,3,0", "medium.terminal.requested": "98304,98304,98304",
+            "medium.terminal.normal": "98304,98176,0", "medium.terminal.normal_count": "3",
+            "medium.terminal.page_bin": "2,2,0",
+            "worker.medium.bin.hex": medium_worker_bin.encode("ascii").hex(),
+            "worker.medium.requested.hex": medium_worker_requested.encode("ascii").hex(),
         }
         gate.require_statistics_remote_bin(trace, "complete")
         with self.assertRaises(harness.HarnessError):
@@ -363,6 +389,18 @@ class M7GateContractTests(unittest.TestCase):
                 "worker.bin.hex": worker_bin.replace("-64", "  0").encode("ascii").hex()}, "lost worker free")
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_remote_bin({**trace, "freed.requested": "128,128,64"}, "lost requested record")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_remote_bin({**trace, "medium.freed.bin": "3,3,2"}, "lost medium remote free")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_remote_bin({**trace, "medium.terminal.page_bin": "2,2,1"}, "lost medium release")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_remote_bin({**trace, "medium.survivor.mapped": "0"}, "lost medium mapping")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_remote_bin({**trace, "medium.allocated.arena": "1076166656,5,1"},
+                                               "unexpected OS allocation")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_remote_bin({**trace, "medium.disallow_os_alloc": "0"},
+                                               "arena policy not selected")
 
     def test_statistics_aligned_huge_requires_source_built_producer(self) -> None:
         summary = self.validate()

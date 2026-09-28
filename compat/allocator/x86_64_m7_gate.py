@@ -999,17 +999,53 @@ def require_statistics_remote_bin(trace: Mapping[str, str], description: str) ->
         "freed.normal": "128,128,0", "freed.normal_count": "2",
         "worker.bin.hex": trace.get("worker.bin.hex"),
         "worker.requested.hex": trace.get("worker.requested.hex"),
+        "medium.warm.usable": "32768", "medium.target.usable": "32768",
+        "medium.target.bin": "44", "medium.disallow_os_alloc": "1",
+        "medium.disallow_arena_alloc": "0", "medium.target.mapped": "1",
+        "medium.survivor.mapped": "1", "medium.survivor.data": "1",
+        "medium.before.arena": trace.get("medium.before.arena"),
+        "medium.allocated.arena": trace.get("medium.allocated.arena"),
+        "medium.terminal.arena": trace.get("medium.terminal.arena"),
+        "medium.allocated.bin": "2,2,2", "medium.allocated.requested": "65536,65536,65536",
+        "medium.allocated.normal": "65536,65408,65536", "medium.allocated.normal_count": "2",
+        "medium.allocated.page_bin": "1,1,1",
+        "medium.merged.bin": "2,2,2", "medium.merged.requested": "65536,65536,65536",
+        "medium.merged.normal": "65536,65408,65536", "medium.merged.normal_count": "2",
+        "medium.merged.page_bin": "1,1,1",
+        "medium.freed.bin": "3,3,1", "medium.freed.requested": "98304,98304,98304",
+        "medium.freed.normal": "98304,98176,32768", "medium.freed.normal_count": "3",
+        "medium.freed.page_bin": "2,2,1",
+        "medium.collected.bin": "3,3,1", "medium.collected.requested": "98304,98304,98304",
+        "medium.collected.normal": "98304,98176,32768", "medium.collected.normal_count": "3",
+        "medium.collected.page_bin": "2,2,1",
+        "medium.terminal.bin": "3,3,0", "medium.terminal.requested": "98304,98304,98304",
+        "medium.terminal.normal": "98304,98176,0", "medium.terminal.normal_count": "3",
+        "medium.terminal.page_bin": "2,2,0",
+        "worker.medium.bin.hex": trace.get("worker.medium.bin.hex"),
+        "worker.medium.requested.hex": trace.get("worker.medium.requested.hex"),
     }
     if dict(trace) != expected:
         raise harness.HarnessError(f"{description} lost the remote bin merge or requested-size record: {trace}")
     try:
+        arena_before = [int(value) for value in trace["medium.before.arena"].split(",")]
+        arena_allocated = [int(value) for value in trace["medium.allocated.arena"].split(",")]
+        arena_terminal = [int(value) for value in trace["medium.terminal.arena"].split(",")]
         bin_row = bytes.fromhex(trace["worker.bin.hex"]).decode("ascii")
         requested_row = bytes.fromhex(trace["worker.requested.hex"]).decode("ascii")
+        medium_bin_row = bytes.fromhex(trace["worker.medium.bin.hex"]).decode("ascii")
+        medium_requested_row = bytes.fromhex(trace["worker.medium.requested.hex"]).decode("ascii")
     except (ValueError, UnicodeDecodeError) as error:
         raise harness.HarnessError(f"{description} has invalid worker statistics text") from error
+    if (len(arena_before) != 3 or arena_before[0] <= 0 or arena_before[1] <= 0
+            or arena_before[2] < 1 or arena_allocated != arena_before
+            or arena_terminal != arena_before):
+        raise harness.HarnessError(f"{description} lost arena-only medium-page allocation: {trace}")
     if (bin_row.split() != ["bin", "S", "8:", "64", "B", "64", "B", "-64", "B",
                              "64", "B", "1", "not", "all", "freed"]
-            or requested_row.split() != ["malloc", "req:", "64", "B"]):
+            or requested_row.split() != ["malloc", "req:", "64", "B"]
+            or medium_bin_row.split() != ["bin", "M", "44:", "32.1", "KiB", "32.1", "KiB",
+                                          "-32.1", "KiB", "32.1", "KiB", "1", "not", "all", "freed"]
+            or medium_requested_row.split() != ["malloc", "req:", "32.1", "KiB"]):
         raise harness.HarnessError(f"{description} lost the freeing Theap's bin/requested rows: {trace}")
 
 

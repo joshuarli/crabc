@@ -11,6 +11,7 @@ static pthread_cond_t changed = PTHREAD_COND_INITIALIZER;
 static int ready;
 static int release_worker;
 static void* remote_block;
+static size_t worker_request = 64;
 static size_t warm_usable;
 static char worker_output[32768];
 static size_t worker_output_length;
@@ -56,6 +57,17 @@ static void show_stage(const char* name, const mi_stats_t* after,
          (long long)(after->malloc_normal_count.total - before->malloc_normal_count.total));
 }
 
+static void show_page_bin(const char* name, const mi_stats_t* after,
+                          const mi_stats_t* before, size_t bin) {
+  show_count(name, "page_bin", &after->page_bins[bin], &before->page_bins[bin]);
+}
+
+static void show_arena(const char* name, const mi_stats_t* stats) {
+  printf("medium.%s.arena=%lld,%lld,%lld\n", name,
+         (long long)stats->reserved.total, (long long)stats->mmap_calls.total,
+         (long long)stats->arena_count.total);
+}
+
 static void show_worker_row(const char* name, const char* label) {
   const char* start = strstr(worker_output, label);
   if (start == NULL) abort();
@@ -68,7 +80,7 @@ static void show_worker_row(const char* name, const char* label) {
 
 static void* worker(void* argument) {
   (void)argument;
-  void* warm = mi_malloc(64);
+  void* warm = mi_malloc(worker_request);
   if (warm == NULL) abort();
   warm_usable = mi_usable_size(warm);
   mi_free(warm);
@@ -130,6 +142,82 @@ int main(void) {
   show_stage("freed", &freed, &before, bin);
   show_worker_row("bin", bin_label);
   show_worker_row("requested", "  malloc req:");
+
+  mi_option_set(mi_option_disallow_os_alloc, 1);
+  worker_request = 32768;
+  ready = 0;
+  release_worker = 0;
+  remote_block = NULL;
+  worker_output_length = 0;
+  worker_output[0] = '\0';
+  if (pthread_create(&thread, NULL, &worker, NULL) != 0) abort();
+  if (pthread_mutex_lock(&lock) != 0) abort();
+  while (!ready) {
+    if (pthread_cond_wait(&changed, &lock) != 0) abort();
+  }
+  if (pthread_mutex_unlock(&lock) != 0) abort();
+
+  mi_stats_t_decl(medium_before);
+  mi_stats_t_decl(medium_allocated);
+  mi_stats_t_decl(medium_merged);
+  mi_stats_t_decl(medium_freed);
+  mi_stats_t_decl(medium_collected);
+  mi_stats_t_decl(medium_terminal);
+  read_stats(&medium_before);
+  void* survivor = mi_malloc(32768);
+  void* medium_target = mi_malloc(32768);
+  if (survivor == NULL || medium_target == NULL) abort();
+  memset(survivor, 0x6b, 32768);
+  memset(medium_target, 0x5a, 32768);
+  const size_t medium_usable = mi_usable_size(medium_target);
+  const size_t medium_bin = bin_for_size(medium_usable);
+  const int medium_target_mapped = mi_is_in_heap_region(medium_target);
+  read_stats(&medium_allocated);
+  mi_thread_stats_print_out(&discard, NULL);
+  read_stats(&medium_merged);
+
+  if (pthread_mutex_lock(&lock) != 0) abort();
+  remote_block = medium_target;
+  release_worker = 1;
+  if (pthread_cond_broadcast(&changed) != 0) abort();
+  if (pthread_mutex_unlock(&lock) != 0) abort();
+  if (pthread_join(thread, NULL) != 0) abort();
+  read_stats(&medium_freed);
+  const int medium_survivor_mapped = mi_is_in_heap_region(survivor);
+  int medium_survivor_data = 1;
+  for (size_t index = 0; index < 32768; index++) {
+    if (((const unsigned char*)survivor)[index] != 0x6b) medium_survivor_data = 0;
+  }
+  mi_collect(true);
+  read_stats(&medium_collected);
+  mi_free(survivor);
+  mi_collect(true);
+  read_stats(&medium_terminal);
+
+  snprintf(bin_label, sizeof(bin_label), "  bin%2s  %3zu:", "M", medium_bin);
+  printf("medium.warm.usable=%zu\n", warm_usable);
+  printf("medium.target.usable=%zu\n", medium_usable);
+  printf("medium.target.bin=%zu\n", medium_bin);
+  printf("medium.disallow_os_alloc=%ld\n", mi_option_get(mi_option_disallow_os_alloc));
+  printf("medium.disallow_arena_alloc=%ld\n", mi_option_get(mi_option_disallow_arena_alloc));
+  printf("medium.target.mapped=%d\n", medium_target_mapped);
+  printf("medium.survivor.mapped=%d\n", medium_survivor_mapped);
+  printf("medium.survivor.data=%d\n", medium_survivor_data);
+  show_arena("before", &medium_before);
+  show_arena("allocated", &medium_allocated);
+  show_arena("terminal", &medium_terminal);
+  show_stage("medium.allocated", &medium_allocated, &medium_before, medium_bin);
+  show_page_bin("medium.allocated", &medium_allocated, &medium_before, medium_bin);
+  show_stage("medium.merged", &medium_merged, &medium_before, medium_bin);
+  show_page_bin("medium.merged", &medium_merged, &medium_before, medium_bin);
+  show_stage("medium.freed", &medium_freed, &medium_before, medium_bin);
+  show_page_bin("medium.freed", &medium_freed, &medium_before, medium_bin);
+  show_stage("medium.collected", &medium_collected, &medium_before, medium_bin);
+  show_page_bin("medium.collected", &medium_collected, &medium_before, medium_bin);
+  show_stage("medium.terminal", &medium_terminal, &medium_before, medium_bin);
+  show_page_bin("medium.terminal", &medium_terminal, &medium_before, medium_bin);
+  show_worker_row("medium.bin", bin_label);
+  show_worker_row("medium.requested", "  malloc req:");
   printf("CRABC_MI_M7_STATISTICS_REMOTE_BIN_TRACE_END\n");
   return 0;
 }
