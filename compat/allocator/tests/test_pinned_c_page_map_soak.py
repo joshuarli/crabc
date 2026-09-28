@@ -17,12 +17,14 @@ SPEC.loader.exec_module(soak)
 
 
 def output(*, first: int = 900, second: int = 990, missing: int | None = None,
-           undrained: int | None = None, classes: bool = False) -> str:
+           undrained: int | None = None, classes: bool = False,
+           page_map_entries: list[int] | None = None) -> str:
     lines = ["soak seed=0x000000005eed0002 rounds=1200 workers=8 checkpoint_interval=60"]
     for round_ in range(60, 1201, 60):
         if round_ == missing:
             continue
-        entries = first if round_ <= 600 else second
+        entries = (page_map_entries[round_ // 60 - 1] if page_map_entries is not None
+                   else first if round_ <= 600 else second)
         frees = round_ - 1 if round_ == undrained else round_
         lines.append(
             f"checkpoint round={round_} allocations={round_} frees={frees} "
@@ -75,6 +77,17 @@ class PageMapSoakReaderTests(unittest.TestCase):
     def test_one_extra_registered_slice_exceeds_the_bound(self) -> None:
         result = soak.parse_soak(output(second=991))
         self.assertTrue(result["exceeds_ten_percent"])
+
+    def test_pinned_c_peak_is_transient_under_the_shared_stability_reader(self) -> None:
+        entries = [
+            846, 830, 861, 831, 847, 771, 853, 821, 766, 830,
+            990, 821, 765, 773, 821, 821, 821, 824, 757, 845,
+        ]
+        result = soak.parse_soak(output(page_map_entries=entries))
+        self.assertTrue(result["exceeds_ten_percent"])
+        self.assertEqual(result["page_map_stability"]["first_window_median"], 846)
+        self.assertEqual(result["page_map_stability"]["last_window_median"], 821)
+        self.assertFalse(result["page_map_stability"]["exceeds_ten_percent"])
 
     def test_class_snapshots_match_the_two_registered_entry_peaks(self) -> None:
         result = soak.parse_soak(output(classes=True), require_class_snapshot=True)

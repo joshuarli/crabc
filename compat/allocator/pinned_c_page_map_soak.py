@@ -19,12 +19,16 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 
 import run as harness
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "compat/x86_64"))
+from allocator_page_map_stability import page_map_stability
+
 FIXTURE = ROOT / "compat/x86_64/owned_native_allocator_soak_probe.c"
 BRIDGE = Path(__file__).with_name("pinned_c_page_map_soak_bridge.c")
 ARTIFACTS = ROOT / ".work/allocator-x86_64/target/compat/allocator/x86_64/pinned-c-page-map-soak"
@@ -100,6 +104,7 @@ def parse_soak(output: str, *, require_class_snapshot: bool = False) -> dict[str
             for point in checkpoints
         ],
         "summary": summaries[0],
+        "page_map_stability": page_map_stability([point["page_map_entries"] for point in checkpoints]),
     }
     class_lines = [line for line in lines if line.startswith("class_snapshot ")]
     if require_class_snapshot:
@@ -268,7 +273,9 @@ def main() -> None:
         (artifacts / "report.json").write_text(json.dumps(report, indent=2) + "\n")
         print(f"{name}: first={observation['first_half_max']} "
               f"second={observation['second_half_max']} "
-              f"exceeds_ten_percent={observation['exceeds_ten_percent']}", flush=True)
+              f"exceeds_ten_percent={observation['exceeds_ten_percent']} "
+              f"plateau_exceeds_ten_percent={observation['page_map_stability']['exceeds_ten_percent']}",
+              flush=True)
     print(f"raw diagnostic: {artifacts}")
 
 

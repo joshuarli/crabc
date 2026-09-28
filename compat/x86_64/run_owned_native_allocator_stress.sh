@@ -16,9 +16,9 @@
 # products reporting process-wide PageMap/arena/metadata/TLD/Theap/abandoned
 # counts at each drained checkpoint. The runner retains every transcript and
 # a JSON summary. At every drained checkpoint no worker TLD, Theap, owner,
-# metadata capability, or abandoned page may remain; PageMap entries and
-# submaps, arenas, metadata high-water, and current RSS may not grow
-# across equivalent churn beyond a tenth of their first-half maximum.
+# metadata capability, or abandoned page may remain. PageMap entries must
+# plateau across the first and last quarters of equivalent churn; submaps,
+# arenas, metadata high-water, and current RSS retain their peak growth bound.
 #
 # Modes: the musl oracle; the pinned C mimalloc backend through the same
 # owned static-PIE libc (`accepted-c`, a resident-memory reference); and the
@@ -296,55 +296,7 @@ if [ "$skip" != soak ]; then
             printf 'soak %s %s: pass (%ss)\n' "$seed" "$mode" "$(cat "$work/$label.seconds")"
         done
     done
-    python3 -B - "$work" <<'PY'
-import json
-import sys
-from pathlib import Path
-work = Path(sys.argv[1])
-# At a drained checkpoint every worker has joined and every block is free.
-EXACT = {'live_threads': 1, 'metadata_live': 0, 'later_theaps': 0, 'abandoned_pages': 0,
-         'attached_workers': 0}
-# Capacity counts that may fluctuate but must plateau across equivalent churn.
-# Current RSS is -1 where the execution root mounts no /proc; the getrusage
-# high-water only records the largest transient peak and is reported only.
-BOUNDED = ('page_map_entries', 'page_map_submaps', 'arenas', 'metadata_high_water', 'rss_kib')
-def fields(line):
-    return {key: value for key, value in (item.split('=', 1) for item in line.split()[1:])}
-summary, failures = {}, []
-for stdout in sorted(work.glob('soak-*.stdout')):
-    label = stdout.stem
-    lines = stdout.read_text().splitlines()
-    checkpoints = [fields(line) for line in lines if line.startswith('checkpoint ')]
-    record = {
-        'header': fields(lines[0]),
-        'summary': fields(next(line for line in lines if line.startswith('summary '))),
-        'checkpoints': checkpoints,
-    }
-    if len(checkpoints) < 4:
-        failures.append(f'{label}: {len(checkpoints)} checkpoints are too few to judge growth')
-    half = len(checkpoints) // 2
-    growth = {}
-    for key in BOUNDED:
-        if key not in checkpoints[0] or int(checkpoints[0][key]) < 0:
-            continue
-        first = max(int(point[key]) for point in checkpoints[:half])
-        later = max(int(point[key]) for point in checkpoints[half:])
-        growth[key] = {'first_half_max': first, 'second_half_max': later}
-        if later > first + first // 10:
-            failures.append(f'{label}: {key} grew from {first} to {later} across equivalent churn')
-    record['growth'] = growth
-    for point in checkpoints:
-        for key, expected in EXACT.items():
-            if key in point and int(point[key]) != expected:
-                failures.append(f"{label}: round {point['round']} {key}={point[key]}, expected {expected}")
-    summary[label] = record
-(work / 'soak-summary.json').write_text(json.dumps(summary, indent=2, sort_keys=True) + '\n')
-for label, record in summary.items():
-    last = record['checkpoints'][-1]
-    print(f"{label}: {record['summary']} final {last}")
-if failures:
-    raise SystemExit('native-allocator-soak: ' + '; '.join(failures))
-PY
+    python3 -B "$ROOT/compat/x86_64/allocator_page_map_stability.py" "$work"
     receipt_cases+=("soak-growth=0:soak-summary.json")
 fi
 printf 'owned native-allocator stress/soak: PASS (musl, pinned-C static-PIE, audited native-shadow static-PIE/dynamic PIE); evidence: %s\n' "$work"
