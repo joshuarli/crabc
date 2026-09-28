@@ -175,6 +175,11 @@ are not transferable passes for a different revision.
   traversal order and selection across ten pinned-C callback keys.
   Public default-Theap switching and direct allocation now match 32 pinned-C
   main, worker, and fork observations while retaining same-thread TLD ownership.
+  A child subprocess's public Heap selection and lifecycle now match 12 more
+  pinned-C keys, including Heap list order, dynamic TLS-key reuse, child main
+  Theap cache restoration, and teardown; the prior 161 private lifecycle
+  values remain matched in the same M6 row. All 15 runnable M6 evidence rows
+  pass.
   All ten required gates
   remain blocked by 10 named missing API and lifetime evidence entries;
   accumulated mixed-workload main-Heap page-population parity remains unproved.
