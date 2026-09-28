@@ -38,7 +38,10 @@ are not transferable passes for a different revision.
   register or expression memory reads; a guarded source-built regression and
   valid cleanup control pass. A forked child fixture confirms that denied
   self-memory reads return a phase error without a fault while valid child
-  unwinding reaches end of stack; installed-product unwind proof remains open.
+  unwinding reaches end of stack. A fault-contained, allocation-free EH-frame
+  reader now guards metadata after `dl_iterate_phdr` callbacks: mapped controls
+  succeed and unmapped, unreadable, truncated, or oversized cases return phase
+  errors without child faults. Installed-product unwind proof remains open.
   Allocator M5 remains open. C mimalloc remains the selected
   backend; allocator M2–M11 remain open. A frozen M5 source run at `e0b9ecbc7`
   passed seven gates, failed its churn and upstream stress gates on one seed-2
