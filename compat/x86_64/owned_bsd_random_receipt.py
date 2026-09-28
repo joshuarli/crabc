@@ -117,6 +117,26 @@ def authenticate_oracle_link(work: Path, retained: object) -> None:
                 "pinned-musl oracle differs from exact rebuilt link")
 
 
+def authenticate_workload_compile(work: Path, dynamic_product: Path) -> None:
+    """Recreate the shared object from the current probe and selected driver."""
+
+    driver = physical(dynamic_product / "bin/crabc-cc-dynamic")
+    source = physical(ROOT / SOURCE_NAMES[0])
+    retained = physical(work / "workload.o")
+    with tempfile.TemporaryDirectory(prefix="bsd-random-source-recompile-", dir=work.parent) as scratch:
+        rebuilt = Path(scratch) / "workload.o"
+        argv = [str(driver), "--dynamic-pie", "-std=c11", "-D_BSD_SOURCE", "-fno-builtin",
+                "-c", str(source), "-o", str(rebuilt)]
+        try:
+            completed = subprocess.run(argv, cwd=ROOT, stdin=subprocess.DEVNULL,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=45, check=False)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ReceiptError("installed BSD random source recompile failed") from error
+        require(completed.returncode == 0, "installed BSD random source recompile failed")
+        require(physical(rebuilt).read_bytes() == retained.read_bytes(),
+                "installed BSD random object differs from source compile")
+
+
 def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
     for key, value in pairs:
@@ -246,6 +266,7 @@ def source_and_products(work: Path) -> dict[str, Path]:
         require(value["manifest_sha256"] == digest(manifest.read_bytes()), f"{kind} manifest differs")
         result[kind] = path
     require(result["static"] != result["dynamic"], "static and dynamic products coincide")
+    authenticate_workload_compile(work, result["dynamic"])
     return result
 
 

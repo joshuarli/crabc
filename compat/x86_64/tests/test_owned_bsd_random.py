@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import subprocess
 import sys
 import tempfile
@@ -81,6 +82,73 @@ class OwnedBsdRandomContracts(unittest.TestCase):
                 forged_hash = receipt.oracle_link_contract(work)
                 with self.assertRaisesRegex(receipt.ReceiptError, "rebuilt link"):
                     receipt.authenticate_oracle_link(work, forged_hash)
+
+    def test_self_consistent_object_receipt_still_requires_source_recompile(self) -> None:
+        scratch = ROOT / ".work/x86_64/bsd-random-receipt-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            checkout = Path(temporary)
+            work = checkout / ".work/receipt"
+            work.mkdir(parents=True)
+            snapshot = {"revision": "selected-source", "tree_sha256": "source-tree"}
+            for name in receipt.SOURCE_NAMES:
+                source = checkout / name
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_bytes(name.encode())
+            (work / "workload.o").write_bytes(b"substituted object")
+            for name in ("source-before.json", "source-after.json"):
+                (work / name).write_text(json.dumps(snapshot), encoding="utf-8")
+            roots = {kind: checkout / ".work" / kind for kind in ("static", "dynamic")}
+            manifests = {}
+            for kind, product in roots.items():
+                manifest = product / "share/crabc/manifest.json"
+                manifest.parent.mkdir(parents=True)
+                manifest.write_bytes(kind.encode())
+                manifests[kind] = manifest
+            driver = roots["dynamic"] / "bin/crabc-cc-dynamic"
+            driver.parent.mkdir()
+            driver.write_text(
+                '#!/bin/sh\nwhile [ "$1" != -o ]; do shift; done\n'
+                'shift\nprintf "compiled from source" > "$1"\n', encoding="utf-8",
+            )
+            driver.chmod(0o755)
+            product_inputs = {
+                "schema": "crabc.x86_64-owned-bsd-random-product-inputs/v1",
+                "roles": {"static": "provided-static", "dynamic": "provided-dynamic"},
+                "products": {
+                    kind: {"path": str(product), "manifest_sha256": receipt.digest(manifests[kind].read_bytes())}
+                    for kind, product in roots.items()
+                },
+                "extracted_provenance": None,
+            }
+            (work / "product-inputs.json").write_text(json.dumps(product_inputs), encoding="utf-8")
+            inputs = {
+                key: {"path": str(path), "sha256": receipt.digest(path.read_bytes())}
+                for key, path in {
+                    "probe": checkout / receipt.SOURCE_NAMES[0],
+                    "runner": checkout / receipt.SOURCE_NAMES[1],
+                    "reader": checkout / receipt.SOURCE_NAMES[2],
+                    "port": checkout / receipt.SOURCE_NAMES[4],
+                    "installed_object": work / "workload.o",
+                }.items()
+            }
+            source_receipt = {
+                "schema": "crabc.x86_64-owned-bsd-random-source/v1",
+                "root_source": {"before": snapshot, "after": snapshot, "unchanged": True},
+                "inputs": inputs, "products": product_inputs,
+            }
+            (work / "source-receipt.json").write_text(json.dumps(source_receipt), encoding="utf-8")
+            (work / "source-input.sha256").write_bytes(b"".join(
+                f"{receipt.digest((checkout / name).read_bytes())}  {checkout / name}\n".encode()
+                for name in (receipt.SOURCE_NAMES[0], receipt.SOURCE_NAMES[1],
+                             receipt.SOURCE_NAMES[2], receipt.SOURCE_NAMES[4])
+            ))
+            with mock.patch.object(receipt, "ROOT", checkout), \
+                    mock.patch.object(receipt, "source_snapshot", return_value=snapshot), \
+                    mock.patch.object(receipt.products, "_validate_static_product", return_value=(manifests["static"], {})), \
+                    mock.patch.object(receipt.products, "_validate_dynamic_product", return_value=(manifests["dynamic"], {})):
+                with self.assertRaisesRegex(receipt.ReceiptError, "object differs from source compile"):
+                    receipt.source_and_products(work)
 
 
 if __name__ == "__main__":
