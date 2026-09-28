@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import subprocess
 import sys
 import tomllib
 from typing import Any, Mapping
@@ -32,6 +33,7 @@ import owned_posix_product_evidence as products
 
 SCHEMA = "crabc.x86_64-owned-stdio-file-engine/v1"
 ORACLE_COMPILER = "/usr/local/bin/crabc-x86_64-musl-gcc"
+ORACLE_RUNTIME = Path("/opt/musl-1.2.6/lib/libc.so")
 COPIES_PATH = HERE / "owned_crypt_runtime_evidence.py"
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 # The process probe needs a shell.  These are explicit pinned-image control
@@ -132,6 +134,26 @@ ROLES: dict[str, dict[str, object]] = {
     },
 }
 SCOPE = tuple(ROLES)
+INTERPOSITION_ROLE = "stdio.allocator-interposition"
+RECEIPT_SCOPE = (*SCOPE, INTERPOSITION_ROLE)
+INTERPOSITION_SOURCE = "compat/x86_64/owned_stdio_allocator_interposition_probe.c"
+INTERPOSITION_RUNNER = "compat/x86_64/run_owned_stdio_allocator_interposition.sh"
+INTERPOSITION_CELLS = ("dynamic-pie-kernel", "dynamic-pie-direct",
+                       "dynamic-non-pie-kernel", "dynamic-non-pie-direct")
+INTERPOSITION_ARTIFACTS = (
+    "workload.o",
+    *(f"{role}-{mode}" for role in ("oracle", "candidate") for mode in ("pie", "non-pie")),
+    *(f"candidate-{mode}.crabc-link.json" for mode in ("pie", "non-pie")),
+    *(f"{role}-{mode}-{entry}.{part}" for role in ("oracle", "candidate")
+      for mode in ("pie", "non-pie") for entry in ("kernel", "direct")
+      for part in ("status", "stdout", "stderr")),
+    *(f"{role}-{mode}-{entry}-root/consumer" for role in ("oracle", "candidate")
+      for mode in ("pie", "non-pie") for entry in ("kernel", "direct")),
+    *(f"candidate-{mode}-{entry}-root/usr/lib/libc.so" for mode in ("pie", "non-pie")
+      for entry in ("kernel", "direct")),
+    *(f"oracle-{mode}-{entry}-root/lib/ld-musl-x86_64.so.1" for mode in ("pie", "non-pie")
+      for entry in ("kernel", "direct")),
+)
 # The frozen AArch64 capability ledger names each credited capability's exact
 # C symbol surface. `stdio.fopen64-alias` is a header macro with no x86 ELF
 # name; the separate v3 stdio component owns that observation.
@@ -325,13 +347,18 @@ def validate_source_product_seals(checkout: Path, work: Path, report: Mapping[st
     same(before_value, after_value, "source/product seals differ")
     require(set(before_value) == {"sources", "static", "dynamic"}, "source/product seal fields drifted")
     raw_sources = before_value["sources"]
-    expected_names = {"runner", "reader", *SCOPE}
+    expected_names = {"runner", "reader", "allocator-probe", "allocator-runner", *SCOPE}
     require(type(raw_sources) is dict and set(raw_sources) == expected_names, "source seal roster differs")
     sources = {role: source_file(checkout, raw_sources[role], str(ROLES[role]["source"]), role + " source")
                for role in SCOPE}
     runner = source_file(checkout, raw_sources["runner"], "compat/x86_64/run_owned_stdio_file_engine.sh", "FILE engine runner")
     reader = source_file(checkout, raw_sources["reader"], "compat/x86_64/owned_stdio_file_engine_receipt.py", "FILE engine reader")
-    all_sources = {**sources, "runner": runner, "reader": reader}
+    allocator_probe = source_file(checkout, raw_sources["allocator-probe"], INTERPOSITION_SOURCE,
+                                  "allocator interposition probe")
+    allocator_runner = source_file(checkout, raw_sources["allocator-runner"], INTERPOSITION_RUNNER,
+                                   "allocator interposition runner")
+    all_sources = {**sources, "runner": runner, "reader": reader,
+                   "allocator-probe": allocator_probe, "allocator-runner": allocator_runner}
     require(type(report["source"]) is dict, "report source mapping differs")
     same(source_map(checkout, all_sources), report["source"], "report source mapping differs from sealed sources")
     product_paths = report["products"]
@@ -670,6 +697,7 @@ def validate_object_seals(work: Path, report: Mapping[str, Any], sources: Mappin
     before = check_identity(work, records["before"], "object before seal")
     after = check_identity(work, records["after"], "object after seal")
     sealed = [*(sources[role] for role in SCOPE), sources["runner"],
+              sources["allocator-probe"], sources["allocator-runner"],
               *(control["sources"][applet] for applet in CONTROL_APPLETS),
               *(workloads[role] for role in SCOPE),
               *(control["objects"][applet] for applet in CONTROL_APPLETS)]
@@ -975,11 +1003,89 @@ def validate_commands(checkout: Path, work: Path, report: Mapping[str, Any], sou
                 expected_stems.add(f"{role}-{linkage}-cleanup")
                 require_argv(cleanup, ["test", "!", "-e", str(root / "scratch/stream")],
                              f"{role} dynamic {linkage} cleanup")
+    record = report["allocator_interposition"]
+    require(type(record) is dict and set(record) == {"work", "artifacts"},
+            "allocator interposition row fields differ")
+    name = record["work"]
+    require(type(name) is str and re.fullmatch(r"owned-stdio-allocator-interposition\.[A-Za-z0-9]+", name),
+            "allocator interposition work name differs")
+    cohort = directory(work / name, "allocator interposition work")
+    artifacts = record["artifacts"]
+    require(type(artifacts) is dict and set(artifacts) == set(INTERPOSITION_ARTIFACTS),
+            "allocator interposition artifact roster differs")
+    files = {item: check_identity(work, artifacts[item], "allocator interposition " + item)
+             for item in INTERPOSITION_ARTIFACTS}
+    require(all(files[item] == cohort / item for item in INTERPOSITION_ARTIFACTS),
+            "allocator interposition artifact paths differ")
+    dynamic = directory(Path(report["products"]["dynamic"]), "dynamic product")
+    command = commands[INTERPOSITION_ROLE + "-run"]
+    require_argv(command, ["bash", str(sources["allocator-runner"]), str(dynamic)],
+                 "allocator interposition run")
+    require(command["stderr"].read_bytes() == b"", "allocator interposition runner stderr differs")
+
+    workload = files["workload.o"]
+    require({"tmpfile", "flockfile", "funlockfile", "fclose"} <= undefined_symbols(workload),
+            "allocator interposition workload omits FILE lifetime calls")
+    libc = regular(dynamic / "usr/lib/libc.so", "installed shared libc")
+    relocations = _elf_output("readelf", "-rW", str(libc))
+    symbols = _elf_output("readelf", "-sW", str(libc))
+    for name in ("malloc", "realloc", "free"):
+        require(re.search(rf"R_X86_64_JUMP_SLOT\s+[^\n]*\b{name} \+ 0", relocations) is not None,
+                f"FILE allocator {name} lacks public PLT relocation")
+        tail = "__crabc_x86_stdio_cabi_" + name
+        require(re.search(rf"\bFUNC\s+LOCAL\s+HIDDEN\s+\d+\s+{tail}$", symbols, re.MULTILINE)
+                is not None, f"FILE allocator {name} tail is not hidden")
+        assembly = _elf_output("objdump", "-d", "--disassemble=" + tail, str(libc))
+        require(re.search(rf"\bjmp\s+[0-9a-f]+ <{name}@plt>", assembly) is not None,
+                f"FILE allocator {name} tail does not select public PLT")
+
+    for mode in ("pie", "non-pie"):
+        candidate = files[f"candidate-{mode}"]
+        oracle = files[f"oracle-{mode}"]
+        link_receipt = files[f"candidate-{mode}.crabc-link.json"]
+        try:
+            products.validate_link(dynamic, workload, candidate, link_receipt, mode, export_dynamic=True)
+        except Exception as error:
+            raise ReceiptError(f"allocator interposition {mode} product link differs") from error
+        for executable in (candidate, oracle):
+            dynsyms = _elf_output("readelf", "--dyn-syms", "-W", str(executable))
+            for name in ("malloc", "realloc", "free"):
+                matches = re.findall(rf"\bFUNC\s+GLOBAL\s+DEFAULT\s+\d+\s+{name}$", dynsyms, re.MULTILINE)
+                require(len(matches) == 1, f"allocator interposition {mode} {name} export differs")
+        for entry in ("kernel", "direct"):
+            for role, executable in (("oracle", oracle), ("candidate", candidate)):
+                stem = f"{role}-{mode}-{entry}"
+                require(digest(files[stem + "-root/consumer"]) == digest(executable),
+                        f"allocator interposition {stem} consumer differs")
+                require(files[stem + ".status"].read_bytes() == b"0\n"
+                        and files[stem + ".stdout"].read_bytes() == b""
+                        and files[stem + ".stderr"].read_bytes() == b"",
+                        f"allocator interposition {stem} raw execution differs")
+            candidate_root = f"candidate-{mode}-{entry}-root/usr/lib/libc.so"
+            oracle_root = f"oracle-{mode}-{entry}-root/lib/ld-musl-x86_64.so.1"
+            require(digest(files[candidate_root]) == digest(libc),
+                    f"allocator interposition {mode} {entry} libc copy differs")
+            require(digest(files[oracle_root]) == digest(ORACLE_RUNTIME),
+                    f"allocator interposition {mode} {entry} musl copy differs")
+
+    expected_stems.add(INTERPOSITION_ROLE + "-run")
     require(set(commands) == expected_stems, "command roster differs")
 
 
+def _elf_output(*arguments: str) -> str:
+    try:
+        return subprocess.check_output(arguments, stderr=subprocess.PIPE, text=True)
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ReceiptError("allocator interposition ELF inspection failed") from error
+
+
 def validate_report(path: Path, checkout: Path, *, require_static: bool = True) -> dict[str, object]:
-    """Validate a full supplied-product FILE-engine receipt without executing it."""
+    """Validate all eleven physical rows while preserving the ten-row family view.
+
+    The family adapter's exact scope and rows describe six-cell FILE behavior.
+    Allocator interposition has four dynamic cells, so its verified result is
+    exposed separately after the same fail-closed physical receipt replay.
+    """
     require(require_static is True, "FILE engine requires supplied-static admission")
     checkout = directory(checkout, "checkout")
     require(checkout == directory(qualification.ROOT, "reader source checkout"),
@@ -990,12 +1096,15 @@ def validate_report(path: Path, checkout: Path, *, require_static: bool = True) 
     report = strict_json(report_path, "FILE engine report")
     expected_fields = {"schema", "scope", "rows", "source", "workloads", "products", "seals", "object_seals",
                        "commands", "links", "execution_payloads", "side_effects", "control", "process_proc", "family_completion",
-                       "promotion_ready", "public_support"}
+                       "promotion_ready", "public_support", "allocator_interposition"}
     require(set(report) == expected_fields, "report fields differ")
     require(report["schema"] == SCHEMA, "report schema differs")
-    same(report["scope"], list(SCOPE), "report scope differs")
-    require(type(report["rows"]) is dict and set(report["rows"]) == set(SCOPE), "report row roster differs")
-    same(report["rows"], {role: row_value(role) for role in SCOPE}, "report rows differ")
+    same(report["scope"], list(RECEIPT_SCOPE), "report scope differs")
+    require(type(report["rows"]) is dict and set(report["rows"]) == set(RECEIPT_SCOPE), "report row roster differs")
+    same(report["rows"], {**{role: row_value(role) for role in SCOPE},
+                          INTERPOSITION_ROLE: {"source": INTERPOSITION_SOURCE,
+                                               "behavior": "dynamic-FILE-public-allocator-ownership-and-lock-list-lifetime",
+                                               "runtime_cells": list(INTERPOSITION_CELLS)}}, "report rows differ")
     require(report["family_completion"] is False and report["promotion_ready"] is False
             and report["public_support"] is False, "FILE engine flags differ")
     require(type(report["seals"]) is dict and set(report["seals"]) == {
@@ -1013,7 +1122,8 @@ def validate_report(path: Path, checkout: Path, *, require_static: bool = True) 
         "cells": 6,
         "execution_cells": list(EXECUTION_CELLS),
         "scope": list(SCOPE),
-        "rows": report["rows"],
+        "rows": {role: report["rows"][role] for role in SCOPE},
+        "allocator_interposition": report["rows"][INTERPOSITION_ROLE],
         "products": report["products"],
         "source": report["source"],
         "source_product_seal": report["seals"]["source-product-before"],

@@ -136,6 +136,10 @@ class ReceiptFixture:
         self.runner.chmod(0o755)
         self.reader = self.checkout / "compat/x86_64/owned_stdio_file_engine_receipt.py"
         self.reader.write_text("# sealed reader\n")
+        self.allocator_probe = self.checkout / receipt.INTERPOSITION_SOURCE
+        self.allocator_probe.write_text("/* allocator interposition */\n")
+        self.allocator_runner = self.checkout / receipt.INTERPOSITION_RUNNER
+        self.allocator_runner.write_text("#!/usr/bin/env bash\n")
         ledger = self.checkout / receipt.FROZEN_LEDGER
         ledger.parent.mkdir(parents=True, exist_ok=True)
         ledger.write_text("".join(
@@ -185,6 +189,8 @@ class ReceiptFixture:
         sources = {role: source_identity(self.checkout, source) for role, source in self.sources.items()}
         sources["runner"] = source_identity(self.checkout, self.runner)
         sources["reader"] = source_identity(self.checkout, self.reader)
+        sources["allocator-probe"] = source_identity(self.checkout, self.allocator_probe)
+        sources["allocator-runner"] = source_identity(self.checkout, self.allocator_runner)
         seal = {"sources": sources, "static": self._product_seal(self.static), "dynamic": self._product_seal(self.dynamic)}
         for name in ("source-product-before.json", "source-product-after.json"):
             self.write(name, json.dumps(seal, sort_keys=True, separators=(",", ":")).encode() + b"\n")
@@ -199,6 +205,7 @@ class ReceiptFixture:
         for name in ("tools-before.json", "tools-after.json"):
             self.write(name, json.dumps(tools, sort_keys=True, separators=(",", ":")).encode() + b"\n")
         sealed = [*(self.sources[role] for role in receipt.SCOPE), self.runner,
+                  self.allocator_probe, self.allocator_runner,
                   *(self.control_sources[applet] for applet in receipt.CONTROL_APPLETS),
                   *(self.workloads[role] for role in receipt.SCOPE),
                   *(self.control_objects[applet] for applet in receipt.CONTROL_APPLETS)]
@@ -352,6 +359,8 @@ class ReceiptFixture:
                 self.command(role + f"-{linkage}-copy-audit-after", ["python3", "-B", str(receipt.COPIES_PATH), "audit", *common], audit)
                 if meta["side_effect"] is None:
                     self.command(role + f"-{linkage}-cleanup", ["test", "!", "-e", str(scratch)])
+        self.command(receipt.INTERPOSITION_ROLE + "-run",
+                     ["bash", str(self.allocator_runner), str(self.dynamic)])
 
     def _write_process_proc(self) -> None:
         self.process_proc: dict[str, dict[str, Path]] = {}
@@ -390,10 +399,14 @@ class ReceiptFixture:
                             for linkage in ("pie", "non-pie")} for role in receipt.SCOPE}
         effects = {cell: identity(self.work, self.side_effects[f"stdio.file-backends:{cell}"])
                    for cell in receipt.EXECUTION_CELLS}
-        sources = {**self.sources, "runner": self.runner, "reader": self.reader}
+        sources = {**self.sources, "runner": self.runner, "reader": self.reader,
+                   "allocator-probe": self.allocator_probe, "allocator-runner": self.allocator_runner}
         self.report = {
-            "schema": receipt.SCHEMA, "scope": list(receipt.SCOPE),
-            "rows": {role: receipt.row_value(role) for role in receipt.SCOPE},
+            "schema": receipt.SCHEMA, "scope": list(receipt.RECEIPT_SCOPE),
+            "rows": {**{role: receipt.row_value(role) for role in receipt.SCOPE},
+                     receipt.INTERPOSITION_ROLE: {"source": receipt.INTERPOSITION_SOURCE,
+                        "behavior": "dynamic-FILE-public-allocator-ownership-and-lock-list-lifetime",
+                        "runtime_cells": list(receipt.INTERPOSITION_CELLS)}},
             "source": receipt.source_map(self.checkout, sources),
             "workloads": {role: identity(self.work, self.workloads[role]) for role in receipt.SCOPE},
             "products": {"static": str(self.static), "dynamic": str(self.dynamic)},
@@ -416,6 +429,7 @@ class ReceiptFixture:
             },
             "process_proc": {linkage: {name: identity(self.work, path) for name, path in item.items()}
                              for linkage, item in self.process_proc.items()},
+            "allocator_interposition": {"work": "owned-stdio-allocator-interposition.fixture", "artifacts": {}},
             "family_completion": False, "promotion_ready": False, "public_support": False,
         }
         self.path = self.work / "owned-stdio-file-engine.json"
@@ -475,6 +489,7 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
         self.patches = [
             mock.patch.object(receipt, "ORACLE_COMPILER", str(self.fixture.tool)),
             mock.patch.object(receipt, "CONTROL_BUSYBOX", self.fixture.control_busybox),
+            mock.patch.object(receipt, "ORACLE_RUNTIME", self.fixture.control_loader),
             mock.patch.object(receipt, "CONTROL_LOADER", self.fixture.control_loader),
             mock.patch.object(receipt, "CONTROL_PROC_MOUNT", self.fixture.control_mount),
             mock.patch.object(receipt, "CONTROL_PROC_UMOUNT", self.fixture.control_umount),
@@ -484,13 +499,18 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
             mock.patch.object(receipt.copies, "audit_execution_payload", side_effect=self._payload),
             mock.patch.object(qualification, "source_digest", return_value="a" * 64),
             mock.patch.object(qualification, "ROOT", self.fixture.checkout),
+            mock.patch.object(receipt, "_elf_output", side_effect=self.allocator_elf),
         ]
         for patch in self.patches:
             patch.start()
+        self.allocator_row()
 
-    def _link(self, product: Path, workload: Path, executable: Path, _receipt: Path, linkage: str) -> dict[str, object]:
+    def _link(self, product: Path, workload: Path, executable: Path, _receipt: Path,
+              linkage: str, **_options: object) -> dict[str, object]:
         expected_product = self.fixture.static if linkage.startswith("static") else self.fixture.dynamic
         self.assertEqual(product, expected_product)
+        if workload.name == "workload.o":
+            return {}
         for role, item in self.fixture.workloads.items():
             if item == workload:
                 return self.fixture._link(role, linkage, product, executable)
@@ -528,6 +548,9 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
         self.assertEqual(report["products"], self.fixture.report["products"])
         self.assertEqual(report["source"], self.fixture.report["source"])
         self.assertEqual(report["frozen_surface"], {key: len(value) for key, value in FIXTURE_SURFACE.items()})
+        self.assertEqual(tuple(report["scope"]), receipt.SCOPE)
+        self.assertEqual(tuple(report["rows"]), receipt.SCOPE)
+        self.assertEqual(report["allocator_interposition"]["runtime_cells"], list(receipt.INTERPOSITION_CELLS))
 
     def test_rehashed_transplanted_dynamic_product_source_is_rejected(self) -> None:
         state = json.loads(self.fixture.dynamic_state.read_text())
@@ -694,6 +717,110 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
         link.symlink_to(self.fixture.path)
         with self.assertRaisesRegex(receipt.ReceiptError, "symlink"):
             receipt.validate_report(link, self.fixture.checkout, require_static=True)
+
+    def allocator_row(self) -> tuple[Path, dict[str, object], dict[str, Path]]:
+        cohort = self.fixture.work / "owned-stdio-allocator-interposition.fixture"
+        cohort.mkdir(exist_ok=True)
+        libc = self.fixture.dynamic / "usr/lib/libc.so"
+        libc.parent.mkdir(parents=True, exist_ok=True)
+        libc.write_bytes(b"installed libc\n")
+        for name in receipt.INTERPOSITION_ARTIFACTS:
+            path = cohort / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if name == "workload.o":
+                body = elf_object(("tmpfile", "flockfile", "funlockfile", "fclose"))
+            elif name.endswith(".status"):
+                body = b"0\n"
+            elif name.endswith((".stdout", ".stderr")):
+                body = b""
+            elif name.endswith("/usr/lib/libc.so"):
+                body = libc.read_bytes()
+            elif name.endswith("/lib/ld-musl-x86_64.so.1"):
+                body = self.fixture.control_loader.read_bytes()
+            elif name.endswith("/consumer"):
+                role, mode = name.split("-", 2)[:2]
+                body = (role + "-" + mode + " executable\n").encode()
+            elif name.startswith(("oracle-", "candidate-")) and not name.endswith(".json"):
+                body = (name + " executable\n").encode()
+            else:
+                body = b"{}\n"
+            path.write_bytes(body)
+        for role in ("oracle", "candidate"):
+            for mode in ("pie", "non-pie"):
+                binary = cohort / f"{role}-{mode}"
+                for entry in ("kernel", "direct"):
+                    (cohort / f"{role}-{mode}-{entry}-root/consumer").write_bytes(binary.read_bytes())
+        self.fixture.report["allocator_interposition"] = {
+            "work": cohort.name,
+            "artifacts": {name: identity(self.fixture.work, cohort / name)
+                          for name in receipt.INTERPOSITION_ARTIFACTS},
+        }
+        self.fixture.command(receipt.INTERPOSITION_ROLE + "-run",
+                             ["bash", str(self.fixture.allocator_runner), str(self.fixture.dynamic)],
+                             b"human-readable summary may change\n")
+        self.fixture.refresh("commands")
+        self.fixture._write_seals()
+        for phase in ("source-product-before", "source-product-after"):
+            self.fixture.report["seals"][phase] = identity(self.fixture.work, self.fixture.work / (phase + ".json"))
+        self.fixture.write_report()
+        return cohort, self.fixture.report, {"allocator-runner": self.fixture.allocator_runner}
+
+    @staticmethod
+    def allocator_elf(*arguments: str) -> str:
+        if arguments[0] == "objdump":
+            name = arguments[2].split("=")[-1].removeprefix("__crabc_x86_stdio_cabi_")
+            return f"jmp 11a920 <{name}@plt>\n"
+        if arguments[1] == "-rW":
+            return "".join(f"R_X86_64_JUMP_SLOT 00000000 {name} + 0\n"
+                           for name in ("malloc", "realloc", "free"))
+        if arguments[1] == "-sW":
+            return "".join(f"FUNC LOCAL HIDDEN 9 __crabc_x86_stdio_cabi_{name}\n"
+                           for name in ("malloc", "realloc", "free"))
+        return "".join(f"FUNC GLOBAL DEFAULT 10 {name}\n" for name in ("malloc", "realloc", "free"))
+
+    def test_allocator_row_rejects_foreign_provider_tail_after_rehash(self) -> None:
+        cohort = self.fixture.work / "owned-stdio-allocator-interposition.fixture"
+        report = self.fixture.report
+        libc = self.fixture.dynamic / "usr/lib/libc.so"
+        for provider in ("malloc", "realloc", "free"):
+            with self.subTest(provider=provider):
+                libc.write_bytes(("foreign " + provider + "\n").encode())
+                for mode in ("pie", "non-pie"):
+                    for entry in ("kernel", "direct"):
+                        name = f"candidate-{mode}-{entry}-root/usr/lib/libc.so"
+                        path = cohort / name
+                        path.write_bytes(libc.read_bytes())
+                        report["allocator_interposition"]["artifacts"][name] = identity(self.fixture.work, path)
+                self.fixture._write_seals()
+                for phase in ("source-product-before", "source-product-after"):
+                    report["seals"][phase] = identity(self.fixture.work, self.fixture.work / (phase + ".json"))
+                self.fixture.write_report()
+                def foreign(*arguments: str) -> str:
+                    value = self.allocator_elf(*arguments)
+                    if arguments[0] == "objdump" and arguments[2].endswith("_" + provider) \
+                            and libc.read_bytes() == ("foreign " + provider + "\n").encode():
+                        return value.replace(f"<{provider}@plt>", f"<mi_{provider}@plt>")
+                    return value
+                with mock.patch.object(receipt, "_elf_output", side_effect=foreign):
+                    with self.assertRaisesRegex(receipt.ReceiptError,
+                                                provider + " tail does not select public PLT"):
+                        self.validate()
+
+    def test_allocator_row_reconstructs_dynamic_ownership(self) -> None:
+        report = self.validate()
+        self.assertEqual(tuple(report["scope"]), receipt.SCOPE)
+        self.assertEqual(tuple(report["rows"]), receipt.SCOPE)
+        self.assertEqual(report["allocator_interposition"]["runtime_cells"], list(receipt.INTERPOSITION_CELLS))
+
+    def test_allocator_row_rejects_changed_raw_execution_after_rehash(self) -> None:
+        cohort = self.fixture.work / "owned-stdio-allocator-interposition.fixture"
+        report = self.fixture.report
+        path = cohort / "candidate-non-pie-direct.stdout"
+        path.write_bytes(b"foreign allocator\n")
+        report["allocator_interposition"]["artifacts"][path.name] = identity(self.fixture.work, path)
+        self.fixture.write_report()
+        with self.assertRaisesRegex(receipt.ReceiptError, "candidate-non-pie-direct raw execution differs"):
+            self.validate()
 
 
 if __name__ == "__main__":

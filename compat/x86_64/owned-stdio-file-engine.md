@@ -2,17 +2,20 @@
 
 `run_owned_stdio_file_engine.sh [STATIC_SYSROOT DYNAMIC_SYSROOT]` records a
 finite installed-header FILE-engine replay. It compiles one unchanged object
-for each of ten frozen probes with the selected dynamic product's
+for each of ten six-cell probes with the selected dynamic product's
 headers, links that same object once with pinned musl and once in every
 product linkage, and retains raw compiler, linker, run, copied-root,
 and seal evidence. Without a supplied pair it first builds current static and
 dynamic products from the checkout into its evidence directory, so one command
-replays every row against the checkout's own source.
+replays every row against the checkout's own source. An eleventh, dynamic-only
+row runs the executable allocator interposer against that same installed
+dynamic product in PIE and non-PIE, through kernel and direct-loader entry.
 
 The closed rows are `stdio.file-backends`, `stdio.process-streams`,
 `stdio.wide-stream`, `stdio.wide-format`, `stdio.file-extensions`,
 `stdio.printf-float`, `stdio.scanf`, `stdio.frozen-surface`,
-`stdio.engine-model`, and `stdio.buffering-lifecycle`. They retain
+`stdio.engine-model`, and `stdio.buffering-lifecycle`. The dynamic row is
+`stdio.allocator-interposition`. The six-cell rows retain
 the actual observations in `owned_stdio_backends_probe.c`,
 `owned_stdio_process_probe.c`, `owned_wide_stdio_probe.c`,
 `owned_wide_format_probe.c`, `owned_stdio_extensions_probe.c`,
@@ -45,6 +48,15 @@ descriptor at exit, `fclose(stdout)`, and `exit`/return/`_Exit`/`quick_exit`/
 `abort`/`pthread_exit`. The runner opens `/dev/ptmx` as descriptor 3 for every
 cell of that row, because the dynamic chroot has no devpts; the probe unlocks
 it and opens the terminal with `TIOCGPTPEER`. The rows do not add a runtime API.
+
+The allocator row keeps the existing `flockfile`/`funlockfile`/`fclose`
+lifetime probe and its malloc-family executable interposer inside this
+receipt's work directory. The reader checks the same source and product seals,
+the retained object and owned dynamic links, the executable's three exported
+interposers, each hidden FILE allocator tail's jump to its public PLT entry,
+the libc jump-slot relocations, copied runtime bytes, and all eight raw musl
+and candidate outcomes. Rehashing a changed output or redirecting any of the
+three tails to a private allocator fails the row.
 
 ## Frozen symbol surface
 
@@ -79,7 +91,7 @@ diagnose; valid programs observe musl's behavior.
 - `fread`/`fwrite` with an overflowing `size * nmemb` set the error indicator
   (`fread` also `EOVERFLOW`) instead of wrapping the byte count.
 
-Each row runs in exactly six supplied-product cells: static ET_EXEC, static
+Each of the ten original rows runs in exactly six supplied-product cells: static ET_EXEC, static
 PIE, and dynamic PIE/non-PIE through both kernel and direct-loader entry. The
 pinned-musl static link is the oracle. The raw stdout, stderr, and status of
 each candidate cell must equal its named oracle. The probes retain their own
@@ -139,7 +151,8 @@ python3 -B compat/x86_64/owned_stdio_file_engine_receipt.py \
 ```
 
 It returns `crabc.x86_64-owned-stdio-file-engine/v1`, `matrix` equal to
-`supplied-static`, six exact execution-cell labels, the closed rows, exact
+`supplied-static`, six exact execution-cell labels for the ten original rows,
+four dynamic cells for the allocator row, the closed rows, exact
 source and product mappings, the source/product before seal, and the
 `frozen_surface` counts. Its
 `family_completion`, `promotion_ready`, and `public_support` flags are all

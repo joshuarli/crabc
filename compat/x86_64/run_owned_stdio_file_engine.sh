@@ -7,6 +7,8 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly RUNNER="$ROOT/compat/x86_64/run_owned_stdio_file_engine.sh"
 readonly READER="$ROOT/compat/x86_64/owned_stdio_file_engine_receipt.py"
+readonly ALLOCATOR_PROBE="$ROOT/compat/x86_64/owned_stdio_allocator_interposition_probe.c"
+readonly ALLOCATOR_RUNNER="$ROOT/compat/x86_64/run_owned_stdio_allocator_interposition.sh"
 readonly COPIES="$ROOT/compat/x86_64/owned_crypt_runtime_evidence.py"
 readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 readonly CONTROL_BUSYBOX="$(realpath -e /bin/busybox)"
@@ -189,6 +191,8 @@ record = {'sources': {role: source(root / data['source']) for role, data in rece
           'static': product(static, 'static'), 'dynamic': product(dynamic, 'dynamic')}
 record['sources']['runner'] = source(runner)
 record['sources']['reader'] = source(reader)
+record['sources']['allocator-probe'] = source(root / receipt.INTERPOSITION_SOURCE)
+record['sources']['allocator-runner'] = source(root / receipt.INTERPOSITION_RUNNER)
 output.write_text(json.dumps(record, sort_keys=True, separators=(',', ':')) + '\n', encoding='utf-8')
 PY
 }
@@ -281,7 +285,7 @@ done
 sha256sum "${SOURCE[stdio.file-backends]}" "${SOURCE[stdio.process-streams]}" "${SOURCE[stdio.wide-stream]}" \
     "${SOURCE[stdio.wide-format]}" "${SOURCE[stdio.file-extensions]}" "${SOURCE[stdio.printf-float]}" \
     "${SOURCE[stdio.scanf]}" "${SOURCE[stdio.frozen-surface]}" "${SOURCE[stdio.engine-model]}" \
-    "${SOURCE[stdio.buffering-lifecycle]}" "$RUNNER" \
+    "${SOURCE[stdio.buffering-lifecycle]}" "$RUNNER" "$ALLOCATOR_PROBE" "$ALLOCATOR_RUNNER" \
     "$WORK/control-sh.c" "$WORK/control-cat.c" "$WORK/control-sleep.c" \
     "$WORK/stdio.file-backends.o" "$WORK/stdio.process-streams.o" "$WORK/stdio.wide-stream.o" \
     "$WORK/stdio.wide-format.o" "$WORK/stdio.file-extensions.o" "$WORK/stdio.printf-float.o" "$WORK/stdio.scanf.o" \
@@ -529,6 +533,11 @@ for role in "${ROLES[@]}"; do
     done
 done
 
+TMPDIR="$WORK" capture "stdio.allocator-interposition-run" bash "$ALLOCATOR_RUNNER" "$DYNAMIC_PRODUCT"
+mapfile -t allocator_cohorts < <(find "$WORK" -mindepth 1 -maxdepth 1 -type d -name 'owned-stdio-allocator-interposition.*' -print)
+[ "${#allocator_cohorts[@]}" -eq 1 ] || fail 'allocator interposition cohort roster differs'
+readonly ALLOCATOR_COHORT="${allocator_cohorts[0]}"
+
 capture_tools "$WORK/tools-after.json"
 cmp "$WORK/tools-before.json" "$WORK/tools-after.json" || fail 'tool roster changed during replay'
 capture_source_product_seal source-product-after
@@ -570,6 +579,8 @@ for argv in sorted(work.glob('*.argv.json')):
     commands[stem] = {name: artifact(work / f'{stem}.{suffix}') for name, suffix in
                       (('argv', 'argv.json'), ('stdout', 'stdout'), ('stderr', 'stderr'), ('status', 'status'))}
 roles = tuple(receipt.ROLES)
+allocator = work / next(path.name for path in work.iterdir()
+                        if path.is_dir() and path.name.startswith('owned-stdio-allocator-interposition.'))
 control = {'sources': {applet: artifact(work / f'control-{applet}.c') for applet in receipt.CONTROL_APPLETS},
            'objects': {applet: artifact(work / f'control-{applet}.o') for applet in receipt.CONTROL_APPLETS},
            'launchers': {applet: {mode: artifact(work / f'control-{applet}-{mode}') for mode in
@@ -584,11 +595,18 @@ control = {'sources': {applet: artifact(work / f'control-{applet}.c') for applet
                          **{applet: work / f'process-control-{mode if mode != "static-pie" else "static-pie"}-stage/bin/{applet}' for applet in receipt.CONTROL_APPLETS},
                        }.items()} for mode in ('oracle', 'static', 'static-pie', 'pie', 'non-pie')}}
 record = {
-    'schema': receipt.SCHEMA, 'scope': list(receipt.SCOPE),
-    'rows': {role: receipt.row_value(role) for role in roles},
+    'schema': receipt.SCHEMA, 'scope': list(receipt.RECEIPT_SCOPE),
+    'rows': {**{role: receipt.row_value(role) for role in roles},
+             receipt.INTERPOSITION_ROLE: {'source': receipt.INTERPOSITION_SOURCE,
+                'behavior': 'dynamic-FILE-public-allocator-ownership-and-lock-list-lifetime',
+                'runtime_cells': list(receipt.INTERPOSITION_CELLS)}},
     'source': {role: source(root / value['source']) for role, value in receipt.ROLES.items()} | {
         'runner': source(root / 'compat/x86_64/run_owned_stdio_file_engine.sh'),
-        'reader': source(root / 'compat/x86_64/owned_stdio_file_engine_receipt.py')},
+        'reader': source(root / 'compat/x86_64/owned_stdio_file_engine_receipt.py'),
+        'allocator-probe': source(root / receipt.INTERPOSITION_SOURCE),
+        'allocator-runner': source(root / receipt.INTERPOSITION_RUNNER)},
+    'allocator_interposition': {'work': allocator.name,
+        'artifacts': {name: artifact(allocator / name) for name in receipt.INTERPOSITION_ARTIFACTS}},
     'workloads': {role: artifact(work / f'{role}.o') for role in roles},
     'products': {'static': str(static.resolve(strict=True)), 'dynamic': str(dynamic.resolve(strict=True))},
     'seals': {name: artifact(work / f'{name}.json') for name in
@@ -615,4 +633,4 @@ PY
 
 python3 -B "$READER" "$WORK/owned-stdio-file-engine.json" --checkout "$ROOT" --require-static
 chmod a+r "$WORK/owned-stdio-file-engine.json"
-printf 'owned FILE engine: PASS (ten closed FILE/format/process/surface/model/buffering rows; pinned musl, supplied static/static-PIE, dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$WORK"
+printf 'owned FILE engine: PASS (ten six-cell FILE rows and dynamic allocator interposition; pinned musl, supplied static/static-PIE, dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$WORK"
