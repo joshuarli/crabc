@@ -7063,6 +7063,161 @@ mod tests {
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
+    fn emit_m2_large_page_fallback_process_trace() {
+        use crate::diagnostic_output::ProcessDiagnosticInputs;
+        use crate::process_init::ProcessMainInitializationStorage;
+
+        const CHILD: &str = "CRABC_M2_LARGE_PAGE_FALLBACK_CHILD";
+        const BEGIN: &str = "CRABC_M2_LARGE_PAGE_FALLBACK_RUST_TRACE_BEGIN";
+        const END: &str = "CRABC_M2_LARGE_PAGE_FALLBACK_RUST_TRACE_END";
+        if std::env::var_os(CHILD).is_none() {
+            let child = std::process::Command::new(std::env::current_exe().expect("test binary path"))
+                .arg("os::tests::emit_m2_large_page_fallback_process_trace")
+                .arg("--exact")
+                .arg("--nocapture")
+                .arg("--test-threads=1")
+                .env_clear()
+                .env(CHILD, "1")
+                .output()
+                .expect("fresh source-process child runs");
+            assert!(child.status.success(), "the isolated process-owned mapping completes");
+            assert!(child.stderr.is_empty(), "successful THP advice emits no diagnostics");
+            let output = std::str::from_utf8(&child.stdout).expect("child trace is ASCII");
+            let start = output.find(BEGIN).expect("child emits its THP advice trace");
+            let end = output.find(END).expect("child closes its THP advice trace") + END.len();
+            std::println!("{}", &output[start..end]);
+            return;
+        }
+
+        unsafe extern "C" {
+            static mut stderr: *mut c_void;
+            fn fputs(message: *const c_char, stream: *mut c_void) -> i32;
+        }
+
+        unsafe extern "C" fn selected_stderr(message: *const c_char) {
+            // SAFETY: the selected musl FILE remains live in this isolated
+            // process, and fputs owns its stream locking and buffering.
+            let stream = unsafe { core::ptr::read(core::ptr::addr_of!(stderr)) };
+            let _ = unsafe { fputs(message, stream) };
+        }
+
+        let entries = std::boxed::Box::leak(std::boxed::Box::new([
+            c"mimalloc_allow_thp=1".as_ptr(),
+            c"mimalloc_allow_large_os_pages=1".as_ptr(),
+            core::ptr::null(),
+        ]));
+        VM_POLICY_SOURCE_ENVIRONMENT.store(entries.as_mut_ptr(), Ordering::Release);
+        let fault = fault::install(fault::Plan::every(fault::Point::LargeMap, Errno::NOMEM));
+        let thp_capture = fault.capture_thp_direct_policy_case(fault::ThpDirectPolicyCase::AllowEnabled);
+        let config = MemoryConfig::detect(current_startup());
+        // SAFETY: this exact-test child is the sole process-start owner; its
+        // leaked environment vector and selected musl FILE live until exit.
+        let inputs = unsafe {
+            ProcessDiagnosticInputs::new(
+                vm_policy_source_environment_for_test,
+                RuntimeStderrOutput::new(selected_stderr).into_default_stderr_output(),
+            )
+        };
+        let storage = ProcessMainInitializationStorage::global();
+        // SAFETY: this fresh process owns its initial thread and retains the
+        // source process while its mapping is live and through release.
+        let owner = unsafe { storage.initialize_from_source_environment(config, inputs) }
+            .expect("enabled THP policy reaches process readiness");
+        let ready = owner.ready().expect("source process remains ready");
+        let ready_config = ready.memory_config().expect("ready configuration is retained");
+        let process = ready.vm_process().expect("ready VM process is retained");
+        let prctl_count = thp_capture.attempts().expect("policy calls are captured").1;
+        assert_eq!(prctl_count, 0);
+        drop(thp_capture);
+        assert_eq!(process.policy().source_option_value(VmOption::AllowThp.source()), 1);
+        assert_eq!(process.policy().source_option_value(VmOption::AllowLargeOsPages.source()), 1);
+        let length = ready_config.large_page_size();
+        assert_eq!(length, 2 * 1024 * 1024);
+        let before = process.subprocess().vm_statistics().snapshot();
+        let mut random = TheapRandomImage::empty_weak();
+        random.initialize_weak();
+        let mmap_capture = fault.capture_policy_mmaps();
+        let advice = fault.capture_advice_range();
+        let mut mapping = Mapping::map_for_process(
+            process, ready_config, length, length, MapAccess::Committed, true,
+            Some(&mut random),
+        ).expect("the source process retains one regular advised mapping");
+        let base = mapping.base().expect("the selected mapping has one base");
+        let (attempts, attempt_count) = mmap_capture.attempts()
+            .expect("the source raw-map sequence fits its bounded capture");
+        assert_eq!(attempt_count, 3);
+        assert!(attempts[0].hint.is_some());
+        assert_eq!(attempts[1].hint, None);
+        assert!(attempts[2].hint.is_some());
+        assert_ne!(attempts[0].hint, attempts[2].hint);
+        assert!(attempts[0].uses_huge_page_flag());
+        assert!(attempts[1].uses_huge_page_flag());
+        assert!(!attempts[2].uses_huge_page_flag());
+        assert_eq!(fault.observed(), 2);
+        drop(mmap_capture);
+        let advice_range = advice.range().expect("one THP advisory was selected");
+        assert_eq!(advice_range, (base.addr(), length, MADV_HUGEPAGE));
+        drop(advice);
+        let vmflags_hg = selected_mapping_has_vm_flag(base, "hg");
+        assert!(vmflags_hg, "the kernel accepted fallback THP advice");
+        // SAFETY: the process still owns a committed writable mapping at base.
+        let mapping_survived = unsafe {
+            (base.addr() as *mut u8).write_volatile(0x5a);
+            (base.addr() as *const u8).read_volatile() == 0x5a
+        };
+        let live = process.subprocess().vm_statistics().snapshot();
+        fault.set(fault::Plan::disabled());
+        let release = fault.capture_unmap_ranges();
+        mapping.unmap_for_process(process, length, false)
+            .expect("the exact process mapping releases");
+        let released = release.all().expect("the selected unmap fits its bounded capture");
+        assert_eq!(released.1, 1);
+        assert_eq!(released.0[0], (base.addr(), length));
+        let after_release = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(after_release.reserved_current, before.reserved_current);
+        assert_eq!(after_release.committed_current, before.committed_current);
+
+        std::println!("{BEGIN}");
+        std::println!("selected_allow_thp_raw=1");
+        std::println!("selected_allow_large_os_pages_raw=1");
+        std::println!("config_has_transparent_huge_pages={}", usize::from(ready_config.has_transparent_huge_pages()));
+        std::println!("config_has_overcommit={}", usize::from(ready_config.has_overcommit()));
+        std::println!("process_ready=1");
+        std::println!("thp_prctl_count={prctl_count}");
+        std::println!("mmap_attempt_count={attempt_count}");
+        std::println!("huge_failure_count=2");
+        std::println!("regular_hint_differs={}", usize::from(attempts[0].hint != attempts[2].hint));
+        for (index, attempt) in attempts[..attempt_count].iter().enumerate() {
+            std::println!("attempt{index}_hint_present={}", usize::from(attempt.hint.is_some()));
+            std::println!("attempt{index}_length={}", attempt.length);
+            std::println!("attempt{index}_protection={}", attempt.protection);
+            std::println!("attempt{index}_flags={}", attempt.flags);
+            std::println!("attempt{index}_result={}", if index < 2 { -1 } else { 0 });
+        }
+        std::println!("huge_failure_errno={}", Errno::NOMEM.raw());
+        std::println!("mapping_owned={}", usize::from(!mapping.is_large()));
+        std::println!("mapping_aligned_2m={}", usize::from(base.addr() % length == 0));
+        std::println!("mapping_length={length}");
+        std::println!("advice_count=1");
+        std::println!("advice_address_is_mapping={}", usize::from(advice_range.0 == base.addr()));
+        std::println!("advice_length={}", advice_range.1);
+        std::println!("advice_kind={}", advice_range.2);
+        std::println!("advice_succeeded={}", usize::from(vmflags_hg));
+        std::println!("vmflags_hg={}", usize::from(vmflags_hg));
+        std::println!("mapping_survived={}", usize::from(mapping_survived));
+        std::println!("mmap_calls_delta={}", live.mmap_calls - before.mmap_calls);
+        std::println!("reserved_live_delta={}", live.reserved_current - before.reserved_current);
+        std::println!("committed_live_delta={}", live.committed_current - before.committed_current);
+        std::println!("release_count={}", released.1);
+        std::println!("release_exact_range={}", usize::from(released.0[0] == (base.addr(), length)));
+        std::println!("release_result=0");
+        std::println!("reserved_after_release_delta={}", after_release.reserved_current - before.reserved_current);
+        std::println!("committed_after_release_delta={}", after_release.committed_current - before.committed_current);
+        std::println!("{END}");
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
     fn emit_m2_thp_enable_existing_disable_process_trace() {
         use crate::diagnostic_output::ProcessDiagnosticInputs;
         use crate::process_init::ProcessMainInitializationStorage;
