@@ -1166,7 +1166,68 @@ mod tests {
         assert_eq!(unsafe { page_map.destroy() }, Err(Errno::INVAL));
     }
 
-    /// Emits the address-free M2 PageMap success differential record. Both
+    #[test]
+    fn overlapping_range_churn_counts_registered_entries_instead_of_retained_submaps() {
+        let mut page_map = PageMap::initialize(memory_config(false), MIN_VABITS, false)
+            .expect("initialize the two-level page map");
+        let first_slice = PAGE_MAP_SUB_COUNT - 3;
+        let start = core::ptr::without_provenance::<u8>(first_slice * ARENA_SLICE_SIZE);
+        let page = NonNull::from(EMPTY_PAGE.as_ref());
+        let check = |expected: [bool; 8]| {
+            let mut registered = 0;
+            for (index, occupied) in expected.into_iter().enumerate() {
+                let address = start.wrapping_add(index * ARENA_SLICE_SIZE);
+                // SAFETY: no entry mutation overlaps this observation, and the
+                // marker remains live for the whole test.
+                let observed = unsafe { page_map.checked_lookup(address) };
+                assert_eq!(observed, if occupied { page.as_ptr() } else { null_mut() });
+                registered += usize::from(occupied);
+            }
+            assert_eq!(page_map.test_registered_entry_count(), Ok(registered));
+        };
+
+        check([false; 8]);
+        // SAFETY: this test is the only map client and its marker stays live.
+        unsafe {
+            page_map.register_range(start, 4 * ARENA_SLICE_SIZE, page).unwrap();
+        }
+        check([true, true, true, true, false, false, false, false]);
+        assert_eq!(page_map.test_published_submap_count(), Ok(2));
+
+        // Replacing two live entries must only count the two newly occupied
+        // slices, even though the range crosses a published submap boundary.
+        unsafe {
+            page_map.register_range(start.wrapping_add(2 * ARENA_SLICE_SIZE),
+                4 * ARENA_SLICE_SIZE, page).unwrap();
+        }
+        check([true, true, true, true, true, true, false, false]);
+
+        unsafe {
+            page_map.unregister_range(start.wrapping_add(ARENA_SLICE_SIZE),
+                4 * ARENA_SLICE_SIZE).unwrap();
+        }
+        check([true, false, false, false, false, true, false, false]);
+        // Source unregistration also accepts ranges that are already clear.
+        unsafe {
+            page_map.unregister_range(start.wrapping_add(ARENA_SLICE_SIZE),
+                4 * ARENA_SLICE_SIZE).unwrap();
+        }
+        check([true, false, false, false, false, true, false, false]);
+
+        unsafe {
+            page_map.register_range(start.wrapping_add(3 * ARENA_SLICE_SIZE),
+                4 * ARENA_SLICE_SIZE, page).unwrap();
+        }
+        check([true, false, false, true, true, true, true, false]);
+        unsafe { page_map.unregister_range(start, 8 * ARENA_SLICE_SIZE).unwrap() };
+        check([false; 8]);
+        assert_eq!(page_map.test_published_submap_count(), Ok(2));
+
+        // SAFETY: this unpublished map has no readers or registered entries.
+        unsafe { page_map.destroy() }.expect("release the map after churn");
+    }
+
+    /// Emits the address-free PageMap success differential record. Both
     /// halves use a controlled 4-KiB, non-overcommit configuration and reach
     /// the same selected source transitions: initial partial commitment, a
     /// two-submap extension, range clear, boundary rollback, and an absent
@@ -1403,7 +1464,7 @@ mod tests {
         std::println!("CRABC_MI_M2_PAGE_MAP_TRACE_END");
     }
 
-    /// Emits the selected M2 PageMap lazy-commit failure differential record.
+    /// Emits the selected PageMap lazy-commit failure differential record.
     ///
     /// The pinned `mi_page_map_commit_entries` body fails before its Release
     /// `committed_count` publication and before `mi_page_map_ensure_submap_at`
