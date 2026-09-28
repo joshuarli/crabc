@@ -129,6 +129,8 @@ are not transferable passes for a different revision.
   including registry, warning sequence, claim survival, and terminal release.
   Concurrent second-arena reservations publish one arena across two workers;
   24 C/Rust fields match claim, registry, ownership, and terminal release.
+  A failed regular-arena parent unmap matches 15 C/Rust destroy, warning-order,
+  registry, and raw-retry fields after restoring the source warning call.
   Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). On an idle host the development engine harness

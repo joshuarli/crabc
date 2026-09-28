@@ -2068,7 +2068,7 @@ pub(crate) struct M2VmPolicyFirstArenaTrace {
     pub(crate) thp_advice_failure_ignored: bool,
 }
 
-/// Executes the bounded policy record used by the native M2 C/Rust trace.
+/// Executes the bounded first-arena policy record for a native C/Rust comparison.
 #[cfg(test)]
 pub(crate) fn m2_vm_policy_first_arena_trace() -> M2VmPolicyFirstArenaTrace {
     use crate::config::{VmOption, VmOptionEnvironment, VmOptions};
