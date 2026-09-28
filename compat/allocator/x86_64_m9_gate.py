@@ -1,41 +1,20 @@
 #!/usr/bin/env python3
-"""Fail-closed native Linux/x86-64 gate for allocator Milestone 9.
+"""Read-only native Linux/x86-64 allocator evidence gate.
 
-M9 is "full equivalent C/Rust performance/memory matrix, codegen audit,
-source-faithful convergence and at least three agreeing qualified full
-reports; correctness stays green" (plan.md Milestones). This gate is
-read-only: it measures nothing and names every unmet condition.
-
-* ``m9.matrix``: the engine matrix manifest validates, its critical roster
-  names timed matrix rows, and at least one full report's raw samples carry
-  every promotion-table metric (throughput, p99, peak RSS, peak PSS) of
-  every matrix row.
-* ``m9.qualified-reports``: at least three engine reports that
-  ``perf_engine_x86_64.validate_qualified_full_report`` accepts. Without
-  ``--report`` every ``--full`` report under the engine report directory is
-  read; each refused report is named with the reader's reasons.
-* ``m9.agreement``: the accepted reports share one source/configuration/host
-  identity and one critical roster.
-* ``m9.codegen-audit``: one complete ``allocator-codegen-audit`` report from a
-  clean checkout whose source seal matches this checkout, with no Rust-only
-  structural cost (``rust_excess``) in any traced region.
-* ``m9.source-convergence``: every condition of ``source_convergence.py``
-  (port-map closure, no transitional rows, evidence for every intentional
-  difference, a closed and carried known-differences register).
-* ``m9.integrated-products``: at least one ``perf_integrated_x86_64`` report
-  that ``inspect_integrated_report`` accepts.
-* ``m9.correctness``: the retained M4, M5, M6 and M7 gate reports passed.
-  They record no source identity, so each must also be no older than the
-  newest accepted qualified report. M8 has no gate here and is named.
-
-The ``performance.release`` gate applies the promotion thresholds to the same
-reader's metrics; M9 decides qualification and agreement only.
+The gate requires a complete matrix, three distinct qualified reports with
+matching source, configuration, host and built products, a complete codegen
+audit without Rust-only structural cost, source convergence, one qualified
+integrated-product report, and current correctness gate reports. It measures
+nothing and names every unmet condition. Numerical promotion thresholds are
+applied separately to the qualified reports' metrics.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -75,7 +54,7 @@ def matrix_condition(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     except engine.HarnessError as error:
         return _condition("m9.matrix", [str(error)], "")
     timed, memory = engine.selected_rows(manifest, engine.QUALIFIED_ROW_SET)
-    covered = [record["path"] for record in records if record.get("coverage") == {}]
+    covered = [record["path"] for record in records if not record["unmet"] and record.get("coverage") == {}]
     unmet = []
     if not covered:
         unmet.append("no full report carries throughput, tail, peak RSS and peak PSS for every matrix row")
@@ -103,13 +82,63 @@ def discover_reports(directory: Path = ENGINE_REPORTS) -> list[Path]:
 
 def read_reports(paths: Sequence[Path], inspect: Callable[[Path, Path], Mapping[str, Any]]) -> list[dict[str, Any]]:
     records = []
+    seen_paths: set[Path] = set()
+    seen_labels: set[str] = set()
+    seen_attempts: set[str] = set()
     for path in paths:
+        canonical = Path(path).resolve()
+        if canonical in seen_paths:
+            records.append({"path": harness.relative(Path(path)), "unmet": ["report path repeats an earlier attempt"],
+                            "identity": None, "metrics": None})
+            continue
+        seen_paths.add(canonical)
         try:
             inspected = dict(inspect(harness.ROOT, path))
         except Exception as error:  # noqa: BLE001 - a reader refusal is the unmet detail
             inspected = {"unmet": [f"{type(error).__name__}: {error}"], "identity": None, "metrics": None}
+        if not inspected.get("unmet"):
+            try:
+                attempt = retained_attempt(Path(path))
+            except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+                inspected["unmet"] = [f"retained attempt identity is invalid: {error}"]
+            else:
+                if attempt["label"] in seen_labels:
+                    inspected["unmet"] = [f"attempt label {attempt['label']!r} repeats an earlier report"]
+                elif attempt["fingerprint"] in seen_attempts:
+                    inspected["unmet"] = ["raw report duplicates an earlier attempt apart from its label"]
+                else:
+                    seen_labels.add(attempt["label"])
+                    seen_attempts.add(attempt["fingerprint"])
+                    inspected["product_identity"] = attempt["products"]
         records.append({"path": harness.relative(Path(path)), **inspected})
     return records
+
+
+def retained_attempt(path: Path) -> dict[str, Any]:
+    """Read the retained measurement's label, built products, and raw attempt content."""
+
+    report = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(report, dict) or report.get("label") != path.stem:
+        raise ValueError("report label differs from its retained filename")
+    lanes = report["lanes"]
+    rust_library = lanes["rust_engine"]["static_library"]
+    physical_library = path.with_suffix(".artifacts") / "libcrabc_allocator_engine_rust_backend.a"
+    if (not physical_library.is_file() or physical_library.is_symlink()
+            or rust_library != engine.artifact_record(physical_library)):
+        raise ValueError("Rust static library differs from its retained physical product")
+    products = {
+        "shared_fixture_object": lanes["shared_fixture_object_sha256"],
+        "pinned_c_executable": lanes["pinned_c"]["executable"]["artifact"]["sha256"],
+        "rust_engine_static_library": rust_library["sha256"],
+        "rust_engine_executable": lanes["rust_engine"]["executable"]["artifact"]["sha256"],
+    }
+    if any(not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest)
+           for digest in products.values()):
+        raise ValueError("retained product identity lacks a SHA-256 digest")
+    without_label = {key: value for key, value in report.items() if key != "label"}
+    fingerprint = hashlib.sha256(json.dumps(without_label, sort_keys=True, separators=(",", ":"),
+                                          allow_nan=False).encode("utf-8")).hexdigest()
+    return {"label": report["label"], "products": products, "fingerprint": fingerprint}
 
 
 def report_conditions(records: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -136,6 +165,8 @@ def agreement_condition(accepted: Sequence[Mapping[str, Any]]) -> dict[str, Any]
                     unmet.append(f"{record['path']} {part} identity differs from {first['path']}")
             if record.get("critical_rows") != first.get("critical_rows"):
                 unmet.append(f"{record['path']} critical roster differs from {first['path']}")
+            if record.get("product_identity") != first.get("product_identity"):
+                unmet.append(f"{record['path']} built product identity differs from {first['path']}")
         for record in accepted:
             metrics = record.get("metrics") or {}
             rosters = {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Contracts for the read-only native x86-64 Milestone 9 allocator gate.
+"""Contracts for the read-only native x86-64 allocator evidence gate.
 
 The gate's report agreement, codegen, and correctness logic runs over fake
 reader results and retained-report files; the qualified-report reader itself
@@ -10,6 +10,7 @@ is exercised by the imported ``QualifiedReportTests`` and
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -56,14 +57,28 @@ def accepted(identity: dict | None = None, roster: list[str] | None = None) -> d
 
 class GateFixture(unittest.TestCase):
     def setUp(self) -> None:
-        self.directory = tempfile.TemporaryDirectory()
+        self.directory = tempfile.TemporaryDirectory(prefix="m9-gate-", dir=ROOT / ".work")
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         self.results: dict[str, dict] = {}
 
-    def report_file(self, name: str, result: dict) -> Path:
+    def report_file(self, name: str, result: dict, *, rust_product: bytes = b"rust static library") -> Path:
         path = self.root / f"{name}.json"
-        path.write_text("{}", encoding="utf-8")
+        product_name = "libcrabc_allocator_engine_rust_backend.a"
+        artifacts = path.with_suffix(".artifacts")
+        artifacts.mkdir(exist_ok=True)
+        (artifacts / product_name).write_bytes(rust_product)
+        product_record = {"filename": product_name, "bytes": len(rust_product),
+                          "sha256": hashlib.sha256(rust_product).hexdigest()}
+        path.write_text(json.dumps({
+            "label": name, "attempt_marker": name,
+            "lanes": {
+                "shared_fixture_object_sha256": "a" * 64,
+                "pinned_c": {"executable": {"artifact": {"sha256": "a" * 64}}},
+                "rust_engine": {"static_library": product_record,
+                                "executable": {"artifact": {"sha256": product_record["sha256"]}}},
+            },
+        }), encoding="utf-8")
         self.results[str(path)] = result
         return path
 
@@ -90,6 +105,52 @@ class AgreementTests(GateFixture):
         self.assertTrue(self.condition(result, "m9.agreement")["met"])
         self.assertEqual(result["overall_status"], "unmet")
         self.assertEqual([row["id"] for row in result["conditions"]], list(gate.CONDITION_IDS))
+
+    def test_repeating_one_report_path_does_not_make_three_attempts(self) -> None:
+        path = self.report_file("one", accepted())
+        result = self.evaluate([path, path, path])
+        self.assertFalse(self.condition(result, "m9.qualified-reports")["met"])
+        self.assertFalse(self.condition(result, "m9.agreement")["met"])
+
+    def test_different_retained_products_do_not_agree(self) -> None:
+        paths = [self.report_file("a", accepted()), self.report_file("b", accepted()),
+                 self.report_file("c", accepted(), rust_product=b"different rust static library")]
+        result = self.evaluate(paths)
+        self.assertFalse(self.condition(result, "m9.agreement")["met"])
+
+    def test_renaming_a_copied_report_does_not_make_another_attempt(self) -> None:
+        first = self.report_file("a", accepted())
+        copied = self.root / "b.json"
+        raw = json.loads(first.read_text(encoding="utf-8"))
+        raw["label"] = "b"
+        copied.write_text(json.dumps(raw), encoding="utf-8")
+        copied_artifacts = copied.with_suffix(".artifacts")
+        copied_artifacts.mkdir()
+        library = "libcrabc_allocator_engine_rust_backend.a"
+        (copied_artifacts / library).write_bytes((first.with_suffix(".artifacts") / library).read_bytes())
+        self.results[str(copied)] = accepted()
+        third = self.report_file("c", accepted())
+        result = self.evaluate([first, copied, third])
+        self.assertFalse(self.condition(result, "m9.qualified-reports")["met"])
+        self.assertTrue(any("raw report duplicates" in item
+                            for item in self.condition(result, "m9.qualified-reports")["detail"]))
+
+    def test_a_reader_acceptance_without_retained_product_identity_is_refused(self) -> None:
+        path = self.report_file("missing", accepted())
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        del raw["lanes"]
+        path.write_text(json.dumps(raw), encoding="utf-8")
+        result = self.evaluate([path])
+        self.assertFalse(self.condition(result, "m9.qualified-reports")["met"])
+        self.assertTrue(any("retained attempt identity is invalid" in item
+                            for item in self.condition(result, "m9.qualified-reports")["detail"]))
+
+    def test_a_missing_physical_rust_library_is_refused(self) -> None:
+        path = self.report_file("missing_library", accepted())
+        (path.with_suffix(".artifacts") / "libcrabc_allocator_engine_rust_backend.a").unlink()
+        result = self.evaluate([path])
+        self.assertTrue(any("retained attempt identity is invalid" in item
+                            for item in self.condition(result, "m9.qualified-reports")["detail"]))
 
     def test_fewer_than_three_accepted_reports_are_named_with_each_refusal(self) -> None:
         paths = [
@@ -153,6 +214,9 @@ class AgreementTests(GateFixture):
         complete = accepted()
         complete["coverage"] = {}
         self.assertTrue(self.condition(self.evaluate([self.report_file("c", complete)]), "m9.matrix")["met"])
+        rejected = copy.deepcopy(complete)
+        rejected["unmet"] = ["raw metric differs from fixture output"]
+        self.assertFalse(self.condition(self.evaluate([self.report_file("r", rejected)]), "m9.matrix")["met"])
 
     def test_discovery_reads_only_full_mode_reports(self) -> None:
         (self.root / "smoke.json").write_text(json.dumps({"mode": "smoke"}), encoding="utf-8")
