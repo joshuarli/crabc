@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import importlib.util
 import json
@@ -157,6 +158,26 @@ class OwnedDynamicPackageTests(unittest.TestCase):
                 },
                 modes,
             )
+
+            for relative, changed_mode in (("usr/lib/libc.so", 0o644),
+                                           ("usr/lib/crt1.o", 0o755),
+                                           ("share/crabc/manifest.json", 0o755)):
+                with self.subTest(relative=relative):
+                    forged = workspace / (relative.replace("/", "-") + ".tar")
+                    with tarfile.open(archive, "r:") as original, \
+                         tarfile.open(forged, "w", format=tarfile.USTAR_FORMAT) as rewritten:
+                        for member in original.getmembers():
+                            projected = copy.copy(member)
+                            if projected.name == relative:
+                                projected.mode = changed_mode
+                            payload = original.extractfile(member) if member.isfile() else None
+                            rewritten.addfile(projected, payload)
+                    output = workspace / ("rejected-" + relative.replace("/", "-"))
+                    with mock.patch.object(package.driver, "validate", return_value=record), \
+                         mock.patch.object(package.qualification, "product_identity"):
+                        with self.assertRaisesRegex(package.driver.shared.DriverError, "package member mode"):
+                            package.extract(forged, output)
+                    self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":

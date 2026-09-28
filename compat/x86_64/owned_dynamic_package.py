@@ -82,6 +82,10 @@ def extract(package_path: Path, output: Path) -> None:
             if not (entry.isfile() or entry.issym()): raise driver.shared.DriverError("nonregular package member")
             if entry.issym() and driver.ALIASES.get(entry.name) != entry.linkname:
                 raise driver.shared.DriverError("unapproved package symlink")
+            expected_mode = (0o777 if entry.issym() else
+                             0o755 if entry.name in EXECUTABLE_PAYLOADS else 0o644)
+            if entry.mode != expected_mode:
+                raise driver.shared.DriverError(f"package member mode differs: {entry.name}")
         manifest_member = archive.getmember("share/crabc/manifest.json")
         if not manifest_member.isfile(): raise driver.shared.DriverError("manifest is not a regular file")
         try:
