@@ -2864,7 +2864,7 @@ const _: [(); 648] = [(); size_of::<Arena>()];
 const _: [(); ARENA_MAX_SIZE] = [(); BITMAP_MAX_BIT_COUNT * ARENA_SLICE_SIZE];
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     extern crate std;
 
     use super::*;
@@ -2933,6 +2933,54 @@ mod tests {
             unsafe { is_zero.write(script.allocation_is_zero) };
         }
         true
+    }
+
+    /// Runs the external-arena half of a fresh on-demand page's first prefix
+    /// while the source callback can refuse it. The returned relations are
+    /// consumed by the paired OS publication oracle and by the focused test.
+    pub(crate) fn on_demand_arena_prefix_callback_relations() -> [bool; 4] {
+        let mut region = AlignedRegion::zeroed(ARENA_MIN_SIZE);
+        let subprocess = MainSubprocess::test_static_owner();
+        let registry = ArenaRegistry::new(subprocess.as_ptr());
+        let script = CommitScript::new(false);
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry, region.as_ptr(), ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(), false, false, false, -1, true,
+                Some(CommitHook::new(
+                    scripted_commit, (&script as *const CommitScript).cast_mut().cast(),
+                )),
+            )
+        }.unwrap();
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let claim = view.try_claim_suitable_slices(managed.arena_id(), 8, false, 1)
+            .expect("reserved on-demand arena span");
+        assert!(claim.page_metadata().is_some());
+        let calls_before = script.calls.load(std::sync::atomic::Ordering::Relaxed);
+        let stats_before = subprocess.vm_statistics().snapshot();
+        script.fail.store(true, std::sync::atomic::Ordering::Relaxed);
+        let failed = !claim.commit_initial_page_prefix(ARENA_SLICE_SIZE);
+        let callback_failed = failed
+            && script.calls.load(std::sync::atomic::Ordering::Relaxed) == calls_before + 1
+            && !claim.memory_id().initially_committed();
+        let index = claim.slice_index();
+        let free = unsafe { view.slices_free() }.unwrap();
+        let mapping_retained = free.is_clear_range(index, 8) == Some(true)
+            && region.as_ptr() == view.arena().start;
+        let callback_statistics = subprocess.vm_statistics().snapshot() == stats_before;
+        assert!(claim.release());
+        script.fail.store(false, std::sync::atomic::Ordering::Relaxed);
+        let retry = view.try_claim_suitable_slices(managed.arena_id(), 8, false, 1)
+            .expect("released span is reusable");
+        let recovered = retry.slice_index() == index
+            && retry.commit_initial_page_prefix(ARENA_SLICE_SIZE);
+        assert!(retry.release());
+        [callback_failed, mapping_retained, callback_statistics, recovered]
+    }
+
+    #[test]
+    fn on_demand_arena_prefix_callback_failure_retains_external_owner_and_reuses_span() {
+        assert_eq!(on_demand_arena_prefix_callback_relations(), [true; 4]);
     }
 
     /// Records the source callback's decommit request. Returning true from

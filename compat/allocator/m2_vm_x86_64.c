@@ -1249,6 +1249,7 @@ typedef struct external_callback_record_s {
   bool purge_zero_null;
   bool commit_zero;
   bool needs_recommit;
+  size_t fail_commit_size;
 } external_callback_record_t;
 
 typedef struct external_callback_result_s {
@@ -1281,7 +1282,7 @@ static bool external_arena_callback(
     record->commit_calls++;
     record->commit_zero_nonnull = (is_zero != NULL);
     if (is_zero != NULL) *is_zero = record->commit_zero;
-    return true;
+    return size != record->fail_commit_size;
   }
   record->purge_calls++;
   record->purge_zero_null = (is_zero == NULL);
@@ -4009,6 +4010,131 @@ int main(void) {
   return 0;
 }
 #elif defined(CRABC_M2_OS_PUBLICATION_PROFILE)
+typedef struct on_demand_os_area_record_s {
+  bool facts[4];
+  int64_t values[9];
+} on_demand_os_area_record_t;
+
+/* The ordinary OS fallback reserves a page area and commits only aligned
+ * metadata when the caller requests on-demand commitment. This direct area
+ * call stops before the pinned fresh-page body would write a free-list link
+ * into the still reserved block span. Its MemoryId and accounting are source
+ * outputs, including the source's premature commitment flag. */
+static int run_on_demand_os_area_child(int descriptor) {
+  mi_process_init();
+  mi_option_set(mi_option_disallow_arena_alloc, 1);
+  mi_option_set(mi_option_allow_large_os_pages, 0);
+  mi_option_set(mi_option_page_commit_on_demand, 1);
+  mi_option_set(mi_option_show_errors, 0);
+  mi_subproc_t* const subproc = _mi_subproc_main();
+  mi_theap_t* const theap = subproc->theap_meta;
+  const int64_t reserved_before = subproc->stats.reserved.current;
+  const int64_t committed_before = subproc->stats.committed.current;
+  const int64_t commits_before = subproc->stats.commit_calls.total;
+  mi_memid_t memid = _mi_memid_none();
+  mi_arena_pages_t* arena_pages = NULL;
+  captured_transition_mprotect_calls = 0;
+  capture_transition_mprotect = true;
+  uint8_t* const start = mi_arenas_page_alloc_fresh_area(
+      theap, 1, 1, 1, false, false, &memid, &arena_pages);
+  capture_transition_mprotect = false;
+  if (start == NULL || memid.memkind != MI_MEM_OS || arena_pages != NULL) return 10;
+  const size_t mapped_size = memid.mem.os.size;
+  const int64_t reserved_mapped = subproc->stats.reserved.current - reserved_before;
+  const int64_t committed_mapped = subproc->stats.committed.current - committed_before;
+  const int64_t commit_calls = subproc->stats.commit_calls.total - commits_before;
+  const bool source_skipped_prefix = memid.initially_committed
+      && captured_transition_mprotect_calls == 1
+      && captured_transition_protections[0] == (PROT_READ | PROT_WRITE);
+  _mi_arenas_free(subproc, start, MI_ARENA_SLICE_SIZE, memid);
+  const int64_t reserved_released = subproc->stats.reserved.current - reserved_before;
+  const int64_t committed_released = subproc->stats.committed.current - committed_before;
+  const int64_t source_release_charge = (int64_t)(mapped_size - MI_ARENA_SLICE_SIZE);
+  const bool facts[] = {
+      mapped_size == 2 * MI_ARENA_SLICE_SIZE
+          && reserved_mapped == (int64_t)mapped_size,
+      committed_mapped == 0 && commit_calls == 1,
+      source_skipped_prefix,
+      reserved_released == 0 && committed_released == -source_release_charge,
+  };
+  for (size_t i = 0; i < sizeof(facts) / sizeof(facts[0]); i++)
+    if (!facts[i]) return (int)(20 + i);
+  on_demand_os_area_record_t result = {0};
+  memcpy(result.facts, facts, sizeof(facts));
+  result.values[0] = (int64_t)mapped_size;
+  result.values[1] = reserved_mapped;
+  result.values[2] = committed_mapped;
+  result.values[3] = commit_calls;
+  result.values[4] = memid.initially_committed;
+  result.values[5] = (int64_t)_mi_align_up(4096, mi_page_min_commit_size());
+  result.values[6] = 0;
+  result.values[7] = 0;
+  result.values[8] = committed_released;
+  return write(descriptor, &result, sizeof(result)) == sizeof(result) ? 0 : 30;
+}
+
+/* A managed external arena reaches the other arm of the same fresh-page
+ * prefix call. Its callback may reject the initial page area while the
+ * external mapping and the arena's free-slice ownership remain retained. */
+static int run_on_demand_arena_callback_child(int descriptor) {
+  mi_process_init();
+  mi_option_set(mi_option_page_commit_on_demand, 1);
+  mi_option_set(mi_option_allow_large_os_pages, 0);
+  mi_option_set(mi_option_show_errors, 0);
+  const size_t size = MI_ARENA_MIN_SIZE;
+  const size_t alignment = MI_ARENA_ALIGNMENT;
+  void* const raw = mmap(NULL, size + alignment, PROT_READ | PROT_WRITE,
+      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (raw == MAP_FAILED) return 10;
+  void* const base = (void*)(((uintptr_t)raw + alignment - 1) & ~(alignment - 1));
+  external_callback_record_t record = {0};
+  mi_arena_id_t arena_id = _mi_arena_id_none();
+  if (!mi_manage_memory(base, size, false, false, false, -1, true,
+      external_arena_callback, &record, &arena_id)) return 11;
+  mi_heap_t* const heap = mi_heap_new_in_arena(arena_id);
+  if (heap == NULL) return 12;
+  void* const starter = mi_heap_malloc(heap, 64);
+  mi_theap_t* const theap = mi_heap_theap(heap);
+  if (starter == NULL || theap == NULL) return 13;
+  const size_t slices = mi_slice_count_of_size(MI_MEDIUM_PAGE_SIZE);
+  const size_t block_size = MI_SMALL_MAX_OBJ_SIZE + 1;
+  const size_t prefix = _mi_align_up(block_size, mi_page_min_commit_size());
+  if (prefix >= mi_size_of_slices(slices)) return 14;
+  mi_arena_t* const arena = _mi_arena_from_id(arena_id);
+  const size_t calls_before = record.commit_calls;
+  const int64_t committed_before = _mi_subproc_main()->stats.committed.current;
+  record.fail_commit_size = prefix;
+  mi_page_t* const failed = mi_arenas_page_alloc_fresh(
+      theap, slices, block_size, 1, false);
+  const bool callback_failed = failed == NULL && record.commit_calls > calls_before
+      && record.last_size == prefix && record.commit_zero_nonnull;
+  if (failed != NULL) return 15;
+  const uintptr_t failed_address = (uintptr_t)record.last_start;
+  const uintptr_t arena_address = arena == NULL ? 0 : (uintptr_t)arena->start;
+  const size_t failed_index = arena == NULL || failed_address < arena_address ? 0
+      : (failed_address - arena_address) / MI_ARENA_SLICE_SIZE;
+  const bool retained_mapping = arena != NULL && arena->start == base
+      && failed_address >= arena_address
+      && failed_index <= arena->slice_count
+      && slices <= arena->slice_count - failed_index
+      && mi_bbitmap_is_setN(arena->slices_free, failed_index, slices);
+  const bool callback_statistics = _mi_subproc_main()->stats.committed.current
+      == committed_before;
+  record.fail_commit_size = 0;
+  mi_page_t* const retry = mi_arenas_page_alloc_fresh(
+      theap, slices, block_size, 1, false);
+  const bool recovered = retry != NULL
+      && retry->memid.memkind == MI_MEM_ARENA
+      && retry->memid.mem.arena.slice_index == failed_index
+      && retry->slice_pcommitted == prefix / _mi_os_page_size();
+  if (retry != NULL) mi_arenas_page_free_prim(retry);
+  const bool facts[] = {callback_failed, retained_mapping,
+      callback_statistics, recovered};
+  for (size_t i = 0; i < sizeof(facts) / sizeof(facts[0]); i++)
+    if (!facts[i]) return (int)(20 + i);
+  return write(descriptor, facts, sizeof(facts)) == sizeof(facts) ? 0 : 30;
+}
+
 /* Each case starts from the same real process initialization in a COW child.
  * A PageMap fault requires a previously absent lazy submap. If the source's
  * normal high hint shares an already present submap, release that successful
@@ -4106,7 +4232,30 @@ int main(void) {
     for (size_t i = 0; i < OS_PUBLICATION_FACTS + 2; i++)
       printf("os_publication.%u.%s=%u\n", selected, fields[i], (unsigned)facts[i]);
   }
+  const char* on_demand_fields[] = {"mapping_range", "metadata_commit_statistics",
+      "commit_state_divergence_witness", "release_accounting_divergence_witness"};
+  on_demand_os_area_record_t on_demand = {0};
+  if (!capture_large_page_retry_child("on-demand OS area child",
+      run_on_demand_os_area_child, &on_demand, sizeof(on_demand))) return 1;
+  for (size_t i = 0; i < 4; i++)
+    printf("os_on_demand.%s=%u\n", on_demand_fields[i], (unsigned)on_demand.facts[i]);
+  const char* callback_fields[] = {"callback_failed", "mapping_retained",
+      "callback_statistics", "recovered"};
+  bool callback_facts[4] = {0};
+  if (!capture_large_page_retry_child("on-demand arena callback child",
+      run_on_demand_arena_callback_child, callback_facts, sizeof(callback_facts))) return 1;
+  for (size_t i = 0; i < 4; i++)
+    printf("arena_on_demand.%s=%u\n", callback_fields[i], (unsigned)callback_facts[i]);
   puts("CRABC_MI_M2_OS_PUBLICATION_TRACE_END");
+  const char* on_demand_value_fields[] = {"mapping_length", "reserved_after_area",
+      "committed_after_area", "commit_calls_after_area", "memory_id_initially_committed",
+      "expected_first_prefix", "block_prefix_commit_calls",
+      "block_prefix_committed_bytes", "committed_after_release"};
+  puts("CRABC_MI_M2_OS_ON_DEMAND_VALUES_BEGIN");
+  for (size_t i = 0; i < 9; i++)
+    printf("os_on_demand.%s=%lld\n", on_demand_value_fields[i],
+        (long long)on_demand.values[i]);
+  puts("CRABC_MI_M2_OS_ON_DEMAND_VALUES_END");
   return 0;
 }
 #elif defined(CRABC_M2_FAULT_SEAM_MBIND_BOUNDARY_TEST)

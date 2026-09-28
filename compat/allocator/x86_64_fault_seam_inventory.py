@@ -41,20 +41,43 @@ OS_PUBLICATION_CHECK_ID = "os-aligned-page-publication-fault-receiver"
 OS_PUBLICATION_TARGET = "os_page::tests::emit_os_publication_fault_receiver_trace"
 OS_PUBLICATION_BEGIN = "CRABC_MI_M2_OS_PUBLICATION_TRACE_BEGIN"
 OS_PUBLICATION_END = "CRABC_MI_M2_OS_PUBLICATION_TRACE_END"
+OS_ON_DEMAND_VALUES_BEGIN = "CRABC_MI_M2_OS_ON_DEMAND_VALUES_BEGIN"
+OS_ON_DEMAND_VALUES_END = "CRABC_MI_M2_OS_ON_DEMAND_VALUES_END"
+OS_ON_DEMAND_VALUE_KEYS = tuple(
+    f"os_on_demand.{field}" for field in (
+        "mapping_length", "reserved_after_area", "committed_after_area",
+        "commit_calls_after_area", "memory_id_initially_committed",
+        "expected_first_prefix", "block_prefix_commit_calls",
+        "block_prefix_committed_bytes", "committed_after_release",
+    )
+)
 OS_PUBLICATION_KEYS = tuple(
     f"os_publication.{selected}.{field}" for selected in range(1, 8)
     for field in ("page_result", "commit_branch", "map_branch", "release_once",
                   "cleanup_retention", "unreachable", "raw_retry", "retry_statistics", "map_rollback",
                   "repeat_same_branch", "recovered_page_published")
+) + tuple(
+    f"os_on_demand.{field}" for field in (
+        "mapping_range", "metadata_commit_statistics",
+        "commit_state_divergence_witness", "release_accounting_divergence_witness",
+    )
+) + tuple(
+    f"arena_on_demand.{field}" for field in (
+        "callback_failed", "mapping_retained", "callback_statistics", "recovered",
+    )
 )
 OS_PUBLICATION_BOUNDARY = {
     "source": "src/arena.c:781-1120,1220-1297; src/page-map.c:391-515; src/os.c:240-294",
     "cases": ["map-failure", "metadata-commit-failure", "block-commit-failure",
               "page-map-publication-failure", "metadata-commit-and-cleanup-failure",
               "page-map-and-cleanup-failure", "published-page-release-failure"],
+    "on_demand_cases": ["os-area-source-correction",
+                        "external-arena-prefix-callback-failure"],
     "requests": "each case's faulted request twice against the state the first failure left, then one fault-free publication and release",
     "c_release": "void upper free; failed range captured only for exact lower primitive fixture cleanup",
     "rust_release": "one typed Claim or Published owner; raw retry never repeats source accounting",
+    "on_demand_difference": "the direct pinned OS area receiver commits only metadata, marks MemoryId committed, and charges its uncommitted page suffix on release; Rust commits a first writable prefix before publication and charges exactly that prefix",
+    "on_demand_callback": "an external arena rejects one first page prefix through its source callback; its backing and free-slice ownership remain live, no OS commit statistics event occurs, and a later claim succeeds",
     "excluded": "corrupted-alias provenance refusal, general metadata allocator, hardware huge/NUMA, and complete M2",
 }
 METADATA_PUBLICATION_PROFILE_DEFINE = "-DCRABC_M2_METADATA_PUBLICATION_PROFILE=1"
@@ -2195,6 +2218,42 @@ def _os_publication_c_command(runner: Any, compiler: str, source: Path, binary: 
     return command
 
 
+def _parse_os_on_demand_values(output: str, *, source: str) -> dict[str, int]:
+    begin, end = OS_ON_DEMAND_VALUES_BEGIN, OS_ON_DEMAND_VALUES_END
+    if output.count(begin) != 1 or output.count(end) != 1 or output.index(end) < output.index(begin):
+        raise ValueError(f"{source} on-demand OS value markers changed")
+    values: dict[str, int] = {}
+    for line in output[output.index(begin) + len(begin):output.index(end)].strip().splitlines():
+        match = re.fullmatch(r"([a-z_.0-9]+)=(-?[0-9]+)", line)
+        if match is None or match.group(1) in values:
+            raise ValueError(f"{source} on-demand OS value is malformed: {line}")
+        values[match.group(1)] = int(match.group(2))
+    if tuple(values) != OS_ON_DEMAND_VALUE_KEYS:
+        raise ValueError(f"{source} on-demand OS value roster changed")
+    return values
+
+
+def _validate_os_on_demand_difference(c: Mapping[str, int], rust: Mapping[str, int]) -> None:
+    key = lambda field: f"os_on_demand.{field}"
+    mapping = c[key("mapping_length")]
+    prefix = c[key("expected_first_prefix")]
+    shared = ("mapping_length", "reserved_after_area", "committed_after_area",
+              "commit_calls_after_area", "expected_first_prefix")
+    if any(c[key(field)] != rust[key(field)] for field in shared):
+        raise ValueError(f"on-demand OS shared mapping or metadata values differ: C {c} Rust {rust}")
+    if (mapping != 2 * 65536 or prefix <= 0 or prefix > 65536 or prefix % 4096 != 0
+        or c[key("reserved_after_area")] != mapping
+        or c[key("committed_after_area")] != 0
+        or c[key("commit_calls_after_area")] != 1
+        or (c[key("memory_id_initially_committed")], c[key("block_prefix_commit_calls")],
+            c[key("block_prefix_committed_bytes")], c[key("committed_after_release")])
+            != (1, 0, 0, -(mapping - 65536))
+        or (rust[key("memory_id_initially_committed")], rust[key("block_prefix_commit_calls")],
+            rust[key("block_prefix_committed_bytes")], rust[key("committed_after_release")])
+            != (0, 1, prefix, 0)):
+        raise ValueError(f"on-demand OS correction boundary changed: C {c} Rust {rust}")
+
+
 def validate_os_publication_report(report: Mapping[str, Any]) -> dict[str, Any]:
     """Replay the independent ordinary OS receiver from retained C/Rust streams."""
     expected = {"schema", "format", "profile", "status", "boundary", "upstream",
@@ -2233,9 +2292,12 @@ def validate_os_publication_report(report: Mapping[str, Any]) -> dict[str, Any]:
         or runner.parse_rust_test_count(_combined_output(rust_run)) != 1
         or report.get("rust_source_files") != _rust_trace_source_files()):
         raise ValueError("OS publication Rust receiver changed")
+    on_demand_values = []
     for language, record in (("C", c_run), ("Rust", rust_run)):
         _parse_fixed_trace(_combined_output(record), begin=OS_PUBLICATION_BEGIN,
             end=OS_PUBLICATION_END, keys=OS_PUBLICATION_KEYS, source=language)
+        on_demand_values.append(_parse_os_on_demand_values(_combined_output(record), source=language))
+    _validate_os_on_demand_difference(*on_demand_values)
     before = runner.validate_runtime_ticket_zero_soak_source_state(report.get("source_state_before"), "OS receiver before")
     after = runner.validate_runtime_ticket_zero_soak_source_state(report.get("source_state_after"), "OS receiver after")
     if not before["worktree_clean"] or before != after:

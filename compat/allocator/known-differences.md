@@ -1991,7 +1991,19 @@ transfer capability.
   `process_metadata_os_only_failed_initial_prefix_rolls_back_before_source_retry`,
   and
   `process_metadata_os_only_failed_extension_selects_fresh_without_forging_commitment`
-  cover arena and published-OS commit failure/retry boundaries. The pinned
+  cover arena and published-OS commit failure/retry boundaries.
+  `allocator-fault-seam-inventory --os-publication-receiver` now compares the
+  direct ordinary OS area and external-arena first-prefix receivers. Both
+  sides reserve the exact 131,072-byte OS mapping and record one metadata
+  commit call with zero committed-byte change. Pinned C then marks the area
+  committed without a block-prefix protection call and charges 65,536
+  uncommitted bytes on release; Rust keeps the ID uncommitted, commits the
+  source-calculated 16,384-byte first prefix, and returns committed current
+  to baseline on release. The external callback's failed prefix retains its
+  mapping, bypasses OS commit statistics, and permits a later successful
+  claim. A focused Rust failed-prefix regression proves that a failed
+  protection transition cannot yield a publishable `MemoryId`; a failed
+  release retains one raw retry owner and applies statistics once. The pinned
   `allocator-unit` lane passes 932 tests. The private native smoke command
   `./compat/allocator/run-x86_64.sh allocator-perf --smoke --label m2-incremental-on-demand`
   completed successfully and emitted

@@ -40,8 +40,8 @@
 //! the initial prefix is actually writable, and terminal release accounts the
 //! exact prefix rather than the reserved mapping suffix. Failed syscall
 //! ownership survives without repeating its accounting event.
-//! This is M2 backing ownership; normal M3 queue/free-list callers still own
-//! page publication, retirement, and the choice of source commitment branch.
+//! Queue/free-list callers own page publication, retirement, and the choice
+//! of source commitment branch.
 
 use core::mem::size_of;
 use core::ptr::NonNull;
@@ -894,9 +894,9 @@ impl OsAlignedPageClaim {
     /// its `Mapping` capability.
     ///
     /// This precedes page metadata capacity/free-list publication. A failure
-    /// leaves both `initially_committed` and `release_commit_size` unchanged,
-    /// so private rollback releases only the reservation and cannot publish a
-    /// fictitious accessible page span.
+    /// makes the claim unpublishable while retaining its mapping for private
+    /// rollback. It leaves `initially_committed` and `release_commit_size`
+    /// unchanged, so release accounts only the reservation.
     pub(crate) fn commit_initial_page_prefix(
         &mut self,
         size: usize,
@@ -912,9 +912,12 @@ impl OsAlignedPageClaim {
         {
             return Err(OsAlignedPageError::new(OsAlignedPageFailureStage::Publish, Errno::INVAL));
         }
-        self.mapping
-            .commit_for_process(process, self.layout.alignment(), size, 0)
-            .map_err(|error| OsAlignedPageError::new(OsAlignedPageFailureStage::BlockCommit, error))?;
+        if let Err(error) = self.mapping.commit_for_process(
+            process, self.layout.alignment(), size, 0,
+        ) {
+            self.ready = false;
+            return Err(OsAlignedPageError::new(OsAlignedPageFailureStage::BlockCommit, error));
+        }
         self.release_commit_size = size;
         Ok(())
     }
@@ -931,8 +934,12 @@ impl OsAlignedPageClaim {
         {
             return Err(OsAlignedPageError::new(OsAlignedPageFailureStage::Publish, Errno::INVAL));
         }
-        self.mapping.commit_for_process(process, self.layout.alignment(), size, 0)
-            .map_err(|error| OsAlignedPageError::new(OsAlignedPageFailureStage::BlockCommit, error))?;
+        if let Err(error) = self.mapping.commit_for_process(
+            process, self.layout.alignment(), size, 0,
+        ) {
+            self.ready = false;
+            return Err(OsAlignedPageError::new(OsAlignedPageFailureStage::BlockCommit, error));
+        }
         self.release_commit_size = size;
         Ok(())
     }
@@ -1711,6 +1718,77 @@ mod tests {
     }
 
     #[test]
+    fn on_demand_initial_prefix_failure_cannot_publish_and_retains_raw_retry_owner() {
+        let fault = fault::install(fault::Plan::disabled());
+        let process = process(false);
+        let before = process.subprocess().vm_statistics().snapshot();
+        let mut claim = OsAlignedPageClaim::allocate_on_demand_for_process(
+            process, config(4 * KIB), 16 * KIB, 1, crate::arena::ArenaId::none(),
+        ).unwrap_or_else(|_| panic!("reserved OS page with committed metadata"));
+        let mapped = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(mapped.committed_current, before.committed_current);
+        assert_eq!(mapped.reserved_current - before.reserved_current,
+            claim.layout().mapping_length() as i64);
+
+        fault.set(fault::Plan::at_pair(fault::Point::Commit, 1,
+            fault::Point::Unmap, 1, Errno::NOMEM));
+        let prefix = page::initial_page_slice_pcommitted(
+            claim.layout().block_start_offset(), claim.layout().block_size(),
+            claim.layout().allocation_size(), 4 * KIB,
+        ).expect("source initial prefix") as usize * 4 * KIB;
+        let error = claim.commit_initial_page_prefix(prefix).expect_err("initial commit fault");
+        assert_eq!(error.stage(), OsAlignedPageFailureStage::BlockCommit);
+        assert_eq!(fault.observed(), 1);
+        assert!(claim.memory_id().is_err(), "failed prefix cannot supply page provenance");
+        let failure = match claim.release() {
+            Ok(()) => panic!("failed unmap must retain the private owner"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error().operation(), Errno::NOMEM);
+        let accounted = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(accounted.reserved_current, before.reserved_current);
+        assert_eq!(accounted.committed_current, before.committed_current);
+        fault.set(fault::Plan::disabled());
+        let OsAlignedPageOwner::Claim(claim) = failure.into_owner() else {
+            panic!("unpublished mapping remains a claim");
+        };
+        assert!(claim.release().is_ok());
+        assert_eq!(process.subprocess().vm_statistics().snapshot(), accounted);
+    }
+
+    #[test]
+    fn borrowed_on_demand_initial_prefix_failure_cannot_publish_or_repeat_accounting() {
+        let fault = fault::install(fault::Plan::disabled());
+        let process = process(false);
+        let before = process.subprocess().vm_statistics().snapshot();
+        let mut claim = unsafe {
+            OsAlignedPageClaim::allocate_on_demand_for_borrowed_process_with_random(
+                process, config(4 * KIB), 4096, 1, crate::arena::ArenaId::none(), None,
+            )
+        }.unwrap_or_else(|_| panic!("borrowed on-demand OS area"));
+        let prefix = usize::from(page::initial_page_slice_pcommitted(
+            claim.layout().block_start_offset(), claim.layout().block_size(),
+            claim.layout().allocation_size(), 4 * KIB,
+        ).unwrap()) * 4 * KIB;
+        fault.set(fault::Plan::at_pair(fault::Point::Commit, 1,
+            fault::Point::Unmap, 1, Errno::NOMEM));
+        assert_eq!(claim.commit_initial_page_prefix_for_process(process, prefix)
+            .expect_err("initial commit fault").stage(), OsAlignedPageFailureStage::BlockCommit);
+        assert!(claim.memory_id().is_err());
+        let failure = unsafe { claim.release_for_process(process) }
+            .err().expect("failed unmap retains borrowed owner");
+        let accounted = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(accounted.reserved_current, before.reserved_current);
+        assert_eq!(accounted.committed_current, before.committed_current);
+        let OsAlignedPageOwner::Claim(claim) = failure.into_owner() else {
+            panic!("private borrowed owner remains a claim");
+        };
+        fault.set(fault::Plan::disabled());
+        assert!(unsafe { claim.retry_release() }.is_ok());
+        assert_eq!(process.subprocess().vm_statistics().snapshot(), accounted);
+    }
+
+    #[test]
     fn paired_fresh_os_page_policy_refusal_acquires_no_mapping() {
         let process = process(true);
         let before = process.subprocess().vm_statistics().snapshot();
@@ -1968,7 +2046,64 @@ mod tests {
             // Each case has no live page, alias, map entry, or retained claim.
             unsafe { map.destroy() }.unwrap();
         }
+        let process = process(false);
+        let before = process.subprocess().vm_statistics().snapshot();
+        let mut claim = OsAlignedPageClaim::allocate_on_demand_for_process(
+            process, config(4 * KIB), 4096, 1, crate::arena::ArenaId::none(),
+        ).unwrap_or_else(|_| panic!("on-demand OS area"));
+        let layout = claim.layout();
+        let mapped = process.subprocess().vm_statistics().snapshot();
+        let memory = claim.memory_id().unwrap();
+        let mapping_range = layout.mapping_length() == 2 * ARENA_SLICE_SIZE
+            && mapped.reserved_current - before.reserved_current
+                == layout.mapping_length() as i64;
+        let metadata_commit_statistics = mapped.committed_current == before.committed_current
+            && mapped.commit_calls - before.commit_calls == 1;
+        let prefix = usize::from(page::initial_page_slice_pcommitted(
+            layout.block_start_offset(), layout.block_size(),
+            layout.allocation_size(), 4 * KIB,
+        ).unwrap()) * 4 * KIB;
+        claim.commit_initial_page_prefix(prefix).expect("writable first prefix");
+        let committed = process.subprocess().vm_statistics().snapshot();
+        let commit_state_divergence_witness = !memory.initially_committed()
+            && committed.commit_calls - mapped.commit_calls == 1
+            && committed.committed_current - mapped.committed_current == prefix as i64;
+        assert!(claim.release().is_ok());
+        let released = process.subprocess().vm_statistics().snapshot();
+        let release_accounting_divergence_witness =
+            released.reserved_current == before.reserved_current
+            && released.committed_current == before.committed_current;
+        for (field, value) in [
+            ("mapping_range", mapping_range),
+            ("metadata_commit_statistics", metadata_commit_statistics),
+            ("commit_state_divergence_witness", commit_state_divergence_witness),
+            ("release_accounting_divergence_witness", release_accounting_divergence_witness),
+        ] {
+            assert!(value, "on-demand OS receiver: {field}");
+            std::println!("os_on_demand.{field}={}", u8::from(value));
+        }
+        let callback = crate::arena::tests::on_demand_arena_prefix_callback_relations();
+        for (field, value) in ["callback_failed", "mapping_retained",
+            "callback_statistics", "recovered"].into_iter().zip(callback) {
+            assert!(value, "on-demand arena receiver: {field}");
+            std::println!("arena_on_demand.{field}={}", u8::from(value));
+        }
         std::println!("CRABC_MI_M2_OS_PUBLICATION_TRACE_END");
+        std::println!("CRABC_MI_M2_OS_ON_DEMAND_VALUES_BEGIN");
+        for (field, value) in [
+            ("mapping_length", layout.mapping_length() as i64),
+            ("reserved_after_area", mapped.reserved_current - before.reserved_current),
+            ("committed_after_area", mapped.committed_current - before.committed_current),
+            ("commit_calls_after_area", mapped.commit_calls - before.commit_calls),
+            ("memory_id_initially_committed", i64::from(memory.initially_committed())),
+            ("expected_first_prefix", prefix as i64),
+            ("block_prefix_commit_calls", committed.commit_calls - mapped.commit_calls),
+            ("block_prefix_committed_bytes", committed.committed_current - mapped.committed_current),
+            ("committed_after_release", released.committed_current - before.committed_current),
+        ] {
+            std::println!("os_on_demand.{field}={value}");
+        }
+        std::println!("CRABC_MI_M2_OS_ON_DEMAND_VALUES_END");
     }
 
     #[test]
