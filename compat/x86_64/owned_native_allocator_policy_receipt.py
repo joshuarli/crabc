@@ -6,8 +6,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
+import stat
 import struct
+import subprocess
 import sys
 from typing import Any
 
@@ -51,6 +54,25 @@ def _json(path: Path) -> dict[str, Any]:
         raise native_shadow_receipt.ReceiptError(f"{RUNNER}: unreadable {path.name}: {error}") from error
     _require(isinstance(value, dict), f"{path.name} is not an object")
     return value
+
+
+def _product_source_digest(root: Path) -> str:
+    """Recompute the installed dynamic product's content, name, and mode seal."""
+    completed = subprocess.run(
+        ("git", "-c", "safe.directory=*", "-C", str(root), "ls-files", "-z",
+         "--cached", "--others", "--exclude-standard"),
+        capture_output=True, check=False,
+    )
+    _require(completed.returncode == 0, "cannot enumerate product source inputs")
+    names = sorted(set(completed.stdout.split(b"\0")) - {b""})
+    digest = hashlib.sha256()
+    for name in names:
+        path = root / os.fsdecode(name)
+        mode = path.lstat().st_mode
+        data = os.fsencode(os.readlink(path)) if stat.S_ISLNK(mode) else path.read_bytes()
+        digest.update(name + b"\0" + str(stat.S_IMODE(mode)).encode() + b"\0")
+        digest.update(hashlib.sha256(data).digest())
+    return digest.hexdigest()
 
 
 def _elf_mode(path: Path) -> tuple[int, str | None]:
@@ -124,6 +146,8 @@ def _check_products(root: Path, read: native_shadow_receipt.Receipt) -> None:
     _require(dynamic_state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1" and
              dynamic_state.get("modes") == ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
              "dynamic product state does not identify the installed modes")
+    _require(dynamic_state.get("source_sha256") == _product_source_digest(root),
+             "dynamic product source digest differs from the checkout")
     for program in PROGRAMS:
         for mode, expected_type in (("oracle", 2), ("static", 2), ("static-pie", 3)):
             kind, interpreter = _elf_mode(product / f"{mode}-{program}")

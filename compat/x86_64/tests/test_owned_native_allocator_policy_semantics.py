@@ -62,7 +62,7 @@ class PolicyReceiptTests(unittest.TestCase):
 
     def publish(self, *, missing_case: str = "", missing_product: str = "",
                 differing_mode: str = "", stderr_mode: str = "",
-                bad_archive: bool = False,
+                bad_archive: bool = False, bad_source_digest: bool = False,
                 wrong_elf_mode: bool = False) -> Path:
         files: dict[str, Path] = {}
 
@@ -97,6 +97,7 @@ class PolicyReceiptTests(unittest.TestCase):
         product("dynamic-product-state", json.dumps({
             "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
             "allocator_backend": "native-shadow",
+            "source_sha256": "0" * 64 if bad_source_digest else policy._product_source_digest(self.root),
             "modes": ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
             "payload_files": dynamic_files,
         }).encode())
@@ -162,6 +163,11 @@ class PolicyReceiptTests(unittest.TestCase):
     def test_rehashed_wrong_provenance_is_rejected(self) -> None:
         self.publish(bad_archive=True)
         with self.assertRaisesRegex(receipt.ReceiptError, "provenance"):
+            self.read()
+
+    def test_rehashed_wrong_product_source_digest_is_rejected(self) -> None:
+        self.publish(bad_source_digest=True)
+        with self.assertRaisesRegex(receipt.ReceiptError, "source digest"):
             self.read()
 
     def test_stderr_and_elf_mode_are_checked(self) -> None:
