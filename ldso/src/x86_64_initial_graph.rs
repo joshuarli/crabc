@@ -2407,11 +2407,21 @@ unsafe fn map_elf_with_status(
     };
     let mut min = u64::MAX;
     let mut max = 0u64;
+    let mut phdr_load = None;
     for index in 0..phnum {
         let p = phdr.add(index * 56);
         if read_u32(p) == PT_LOAD {
-            min = min.min(align_down(read_u64(p.add(16))));
-            max = max.max(align_up(read_u64(p.add(16)).checked_add(read_u64(p.add(40))).ok_or(ENOEXEC)?));
+            let vaddr = read_u64(p.add(16));
+            min = min.min(align_down(vaddr));
+            max = max.max(align_up(vaddr.checked_add(read_u64(p.add(40))).ok_or(ENOEXEC)?));
+            if phdr_load.is_none() {
+                let file_offset = read_u64(p.add(8));
+                if phoff_u64 >= file_offset
+                    && ph_file_end_u64 - file_offset <= read_u64(p.add(32))
+                {
+                    phdr_load = Some((vaddr, file_offset));
+                }
+            }
         }
     }
     if min == u64::MAX || max <= min {
@@ -2474,27 +2484,12 @@ unsafe fn map_elf_with_status(
             }
         }
     }
-    // The temporary header mapping cannot own retained program-header
-    // pointers. Locate the actual PT_LOAD file bytes before it is dropped.
-    let mut runtime_phdr = None;
-    for index in 0..phnum {
-        let p = phdr.add(index * 56);
-        if read_u32(p) != PT_LOAD {
-            continue;
-        }
-        let file_offset = read_u64(p.add(8));
-        let file_end = file_offset.checked_add(read_u64(p.add(32))).ok_or(ENOEXEC)?;
-        if phoff_u64 < file_offset || ph_file_end_u64 > file_end {
-            continue;
-        }
-        // The whole table is inside this file-backed PT_LOAD. Mapping
-        // already proved p_filesz <= p_memsz and representable load extents,
-        // so its virtual range needs no second search over all PT_LOADs.
-        let virtual_address = read_u64(p.add(16)).checked_add(phoff_u64 - file_offset).ok_or(ENOEXEC)?;
-        runtime_phdr = Some(runtime_address(base, virtual_address).ok_or(ENOEXEC)? as *const u8);
-        break;
-    }
-    let runtime_phdr = runtime_phdr.ok_or(ENOEXEC)?;
+    // Keep the first file-backed PHDR alias observed in program-header order.
+    // Its final pointer is formed only after every PT_LOAD has been mapped,
+    // so a later overlapping load still has the same overwrite semantics.
+    let (phdr_vaddr, phdr_file_offset) = phdr_load.ok_or(ENOEXEC)?;
+    let virtual_address = phdr_vaddr.checked_add(phoff_u64 - phdr_file_offset).ok_or(ENOEXEC)?;
+    let runtime_phdr = runtime_address(base, virtual_address).ok_or(ENOEXEC)? as *const u8;
     let entry = base.checked_add(read_u64(header.add(24))).ok_or(ENOEXEC)?;
     drop(phdr_mapping);
     let mut object = parse_mapped(
@@ -5280,6 +5275,58 @@ mod readable_file_load_tests {
         phdr[40..48].copy_from_slice(&0x100u64.to_le_bytes());
         assert_eq!(unsafe { syscall3(SYS_WRITE, fd, image.as_ptr() as i64, PAGE as i64) }, PAGE as i64);
         let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
+        assert!(matches!(unsafe { map_elf_with_status(fd, &status, false, true,
+            ObjectRole::Library) }, Err(ENOEXEC)));
+        assert_eq!(unsafe { syscall1(SYS_CLOSE, fd) }, 0);
+    }
+
+    #[test]
+    fn mapper_retains_first_file_backed_program_header_alias() {
+        const SYS_MEMFD_CREATE: i64 = 319;
+        const SYS_PWRITE64: i64 = 18;
+        let fd = unsafe { syscall2(SYS_MEMFD_CREATE, b"phdr-alias\0".as_ptr() as i64, 0) };
+        assert!(fd >= 0);
+        let mut image = [0u8; PAGE as usize];
+        image[..4].copy_from_slice(b"\x7fELF");
+        image[4] = 2;
+        image[5] = 1;
+        image[16..18].copy_from_slice(&3u16.to_le_bytes());
+        image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[32..40].copy_from_slice(&64u64.to_le_bytes());
+        image[54..56].copy_from_slice(&56u16.to_le_bytes());
+        image[56..58].copy_from_slice(&3u16.to_le_bytes());
+        for (index, vaddr) in [(0, 0x2000u64), (1, 0)] {
+            let load = &mut image[64 + index * 56..][..56];
+            load[..4].copy_from_slice(&PT_LOAD.to_le_bytes());
+            load[4..8].copy_from_slice(&PF_R.to_le_bytes());
+            load[16..24].copy_from_slice(&vaddr.to_le_bytes());
+            load[32..40].copy_from_slice(&0x380u64.to_le_bytes());
+            load[40..48].copy_from_slice(&0x380u64.to_le_bytes());
+        }
+        let dynamic = &mut image[176..232];
+        dynamic[..4].copy_from_slice(&PT_DYNAMIC.to_le_bytes());
+        dynamic[8..16].copy_from_slice(&0x200u64.to_le_bytes());
+        dynamic[16..24].copy_from_slice(&0x2200u64.to_le_bytes());
+        dynamic[32..40].copy_from_slice(&96u64.to_le_bytes());
+        dynamic[40..48].copy_from_slice(&96u64.to_le_bytes());
+        for (index, (tag, value)) in [
+            (DT_STRTAB, 0x2300u64), (DT_STRSZ, 1), (DT_SYMTAB, 0x2320),
+            (DT_SYMENT, 24), (DT_HASH, 0x2340), (DT_NULL, 0),
+        ].into_iter().enumerate() {
+            let entry = &mut image[0x200 + index * 16..][..16];
+            entry[..8].copy_from_slice(&tag.to_le_bytes());
+            entry[8..16].copy_from_slice(&value.to_le_bytes());
+        }
+        image[0x340..0x348].copy_from_slice(&[1, 0, 0, 0, 1, 0, 0, 0]);
+        assert_eq!(unsafe { syscall3(SYS_WRITE, fd, image.as_ptr() as i64, PAGE as i64) }, PAGE as i64);
+        let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
+        let object = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) }.unwrap();
+        assert_eq!(object.phdr as u64, object.base + 0x2000 + 64);
+        assert_eq!(unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64,
+            object.map_span_byte_len as i64) }, 0);
+        let overflowing_offset = u64::MAX.to_le_bytes();
+        assert_eq!(unsafe { syscall4(SYS_PWRITE64, fd, overflowing_offset.as_ptr() as i64,
+            overflowing_offset.len() as i64, 64 + 56 + 8) }, overflowing_offset.len() as i64);
         assert!(matches!(unsafe { map_elf_with_status(fd, &status, false, true,
             ObjectRole::Library) }, Err(ENOEXEC)));
         assert_eq!(unsafe { syscall1(SYS_CLOSE, fd) }, 0);
