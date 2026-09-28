@@ -971,6 +971,15 @@ impl ProcessArenaBacking {
         match result {
             Ok(managed) => Ok(managed),
             Err(error) => {
+                // A rejected metadata commit warns after the callback
+                // returns and before the unpublished lease is recovered.
+                if matches!(error, ManageArenaError::CommitFailed) {
+                    process.policy().source_warning(
+                        crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(
+                            c"unable to commit meta-data for OS memory",
+                        ),
+                    );
+                }
                 let guard = match self.reserve_lock.lock() {
                     Ok(guard) => guard,
                     Err(_) => {

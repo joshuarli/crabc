@@ -57,6 +57,7 @@ class M6GateContractTests(unittest.TestCase):
             "differential:public-theap": "compat/allocator/x86_64_m6_public_theap.py",
             "differential:managed-os-lifecycle": "compat/allocator/x86_64_m6_manage_os_memory_alias.py",
             "differential:managed-callback": "compat/allocator/x86_64_m6_managed_callback.py",
+            "differential:managed-callback-failure": "compat/allocator/x86_64_m6_managed_callback_failure.py",
             "differential:public-reservation-warning": "compat/allocator/x86_64_m6_reservation_warning.py",
             "differential:subprocess-lifecycle": "compat/allocator/subprocess_lifecycle.py",
             "unit:heap-membership": "compat/allocator/heap_membership.py",
@@ -151,6 +152,21 @@ class M6GateContractTests(unittest.TestCase):
 
     def test_managed_callback_row_is_required_and_failure_is_visible(self) -> None:
         row = "differential:managed-callback"
+        removed = copy.deepcopy(self.contract)
+        self.gate_record(removed, "m6.arena")["evidence"].remove(row)
+        with self.assertRaisesRegex(harness.HarnessError, "declared but unused"):
+            self.validate(removed)
+
+        summary = self.validate()
+        results = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
+        results[row] = {"status": "failed"}
+        report = gate.gate_report(self.contract, summary, results)
+        arena = self.gate_record(report, "m6.arena")
+        self.assertEqual(arena["status"], "failed")
+        self.assertEqual(arena["evidence"][row], "failed")
+
+    def test_managed_callback_failure_row_is_required_and_failure_is_visible(self) -> None:
+        row = "differential:managed-callback-failure"
         removed = copy.deepcopy(self.contract)
         self.gate_record(removed, "m6.arena")["evidence"].remove(row)
         with self.assertRaisesRegex(harness.HarnessError, "declared but unused"):
