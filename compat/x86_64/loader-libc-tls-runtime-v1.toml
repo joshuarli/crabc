@@ -315,3 +315,4 @@ fork = "loader registry and surviving TLS repair before libc thread registry rep
 qualification = "owned_dynamic_qualification.py live three-product receipt only"
 
 timer_callback_reset = "__crabc_x86_64_reset_current_tls_v1: unsafe extern C fn() -> i32; registered current TP, application signals blocked after TSD cleanup; loader guard, no allocation, validate all modules then reset relocated template and TBSS bytes; preserve TCB/DTV/token; 0 success or -EINVAL private invariant failure"
+timer_callback_native_allocator_reset = "__crabc_x86_64_reset_current_tls_v2: unsafe extern C fn(*const NativeAllocatorTlsSpan, usize) -> i32; native-shadow only; validate each live allocator span within one current-thread TLS image and reject overlaps before resetting every unprotected image byte; preserve TCB/DTV/token; 0 success or -EINVAL private invariant failure"

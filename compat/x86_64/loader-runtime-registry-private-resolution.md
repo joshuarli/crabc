@@ -6,6 +6,15 @@ selected shared libc are resolved from the selected x86-64 interpreter's
 closed `runtime_function` table.  It does not add a libc export, a fallback
 provider, or an installed declaration.
 
+The accepted-C product keeps the v1 timer reset operation and the existing
+candidate-shared ELF roster. A separately supplied native-shadow dynamic
+product may opt into the v2 timer reset operation. The reader requires both
+products to carry the current clean source digest, verifies the native
+product's sealed payload and physical undefined v2 import in `.dynsym` and
+`.symtab`, then replays its PIE and non-PIE timer runner through the same
+source-bound receipt checks. A default accepted-C report contains no v2
+claim; a native-shadow claim without that product and timer evidence fails.
+
 The tracked contract is
 `loader-runtime-registry-private-resolution.toml`.  Its names map one for one
 to `ldso/src/x86_64_runtime_registry.rs:runtime_function`.  The selected

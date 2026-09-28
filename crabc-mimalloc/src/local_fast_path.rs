@@ -68,6 +68,17 @@ static mut PUBLISHED_THEAP: *mut Theap = core::ptr::null_mut();
 #[thread_local]
 static mut PUBLISHED_PAGE_MAP: *const crate::page_map::PageMap = core::ptr::null();
 
+/// The validated owner-local fast publication belongs to the pthread, not
+/// to one timer callback's application TLS lifetime.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn native_timer_tls_spans() -> [crate::runtime_lifecycle::NativeAllocatorTlsSpan; 2] {
+    use crate::runtime_lifecycle::NativeAllocatorTlsSpan as Span;
+    [
+        Span::of(core::ptr::addr_of!(PUBLISHED_THEAP)),
+        Span::of(core::ptr::addr_of!(PUBLISHED_PAGE_MAP)),
+    ]
+}
+
 /// Publishes `owner` for the current thread's fast paths, or withdraws the
 /// publication when `owner` is `None` or the TLS roots do not select it.
 #[inline]

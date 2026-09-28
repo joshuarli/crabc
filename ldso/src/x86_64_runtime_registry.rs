@@ -989,6 +989,7 @@ pub(super) unsafe fn attach_worker_tls(guard: &RuntimeGuard, tp: *mut u8) -> Opt
 pub(super) fn runtime_function(name: &[u8]) -> Option<u64> {
     match name {
         b"__crabc_x86_64_reset_current_tls_v1" => Some(reset_current_tls as *const () as usize as u64),
+        b"__crabc_x86_64_reset_current_tls_v2" => Some(reset_current_tls_preserving_allocator as *const () as usize as u64),
         b"__crabc_x86_64_runtime_open" => Some(runtime_open as *const () as usize as u64),
         b"__crabc_x86_64_runtime_symbol" => Some(runtime_symbol as *const () as usize as u64),
         b"__crabc_x86_64_runtime_close" => Some(runtime_close as *const () as usize as u64),
@@ -1233,20 +1234,90 @@ unsafe extern "C" fn runtime_iterate(callback: ProgramHeaderCallback, data: *mut
 /// Application signals are blocked by the caller after TSD cleanup. This is
 /// not a signal-handler entry point. No allocation or application call occurs.
 unsafe extern "C" fn reset_current_tls() -> i32 {
+    unsafe { reset_current_tls_with_preserved(&[]) }
+}
+
+/// The continuing timer pthread keeps its native allocator owner pinned while
+/// every other byte of its application and libc TLS modules is reset. The
+/// trusted libc caller must pass every live allocator TLS object exactly once.
+/// The loader checks count, range shape, nonoverlap, and current TLS image
+/// membership before any write; raw ranges cannot identify omitted objects.
+unsafe extern "C" fn reset_current_tls_preserving_allocator(
+    preserved: *const x86_64_runtime_tls_view::TimerTlsPreservedSpan,
+    count: usize,
+) -> i32 {
+    if count != 14 || preserved.is_null() { return -22; }
+    let spans = unsafe { core::slice::from_raw_parts(preserved, count) };
+    unsafe { reset_current_tls_with_preserved(spans) }
+}
+
+fn preserved_tls_spans_do_not_overlap(
+    preserved: &[x86_64_runtime_tls_view::TimerTlsPreservedSpan],
+) -> bool {
+    for (index, span) in preserved.iter().enumerate() {
+        let Some(stop) = span.start.checked_add(span.byte_len) else { return false; };
+        if span.byte_len == 0 { return false; }
+        for earlier in &preserved[..index] {
+            let earlier_stop = earlier.start + earlier.byte_len;
+            if span.start < earlier_stop && earlier.start < stop { return false; }
+        }
+    }
+    true
+}
+
+unsafe fn reset_current_tls_with_preserved(
+    preserved: &[x86_64_runtime_tls_view::TimerTlsPreservedSpan],
+) -> i32 {
+    if !preserved_tls_spans_do_not_overlap(preserved) { return -22; }
     let guard = RuntimeGuard::acquire();
     let tp = unsafe { read_thread_pointer() } as *mut u8;
     if !unsafe { x86_64_initial_worker_tls::contains_thread(&guard, tp) } { return -22; }
     let registry = unsafe { &*REGISTRY.0.get() };
+    for span in preserved {
+        let stop = span.start + span.byte_len;
+        let mut members = 0;
+        let mut node = registry.head;
+        while !node.is_null() {
+            let Some(object) = (unsafe { (*node).object() }) else { return -22; };
+            let Some((start, end)) = (unsafe { x86_64_runtime_tls_view::module_image_bounds(tp, object) }) else { return -22; };
+            if span.start < end && stop > start {
+                if span.start < start || stop > end { return -22; }
+                members += 1;
+            }
+            node = unsafe { (*node).next };
+        }
+        if members != 1 { return -22; }
+    }
     let mut node = registry.head;
-    // Validate every module before the first write; malformed private state
-    // must not leave some images reset and others carrying callback state.
+    // Validate each module's range and template size before the first write,
+    // so detected range errors cannot leave only some images reset. The
+    // object-to-module-ID mapping and DTV pointers come from admitted state
+    // held stable by the loader guard; these range checks do not rederive it.
     for write in [false, true] {
         while !node.is_null() {
             let Some(object) = (unsafe { (*node).object() }) else { return -22; };
-            if !unsafe { x86_64_runtime_tls_view::reset_module_image(tp, object, write) } { return -22; }
+            if !unsafe { x86_64_runtime_tls_view::reset_module_image_preserving(tp, object, preserved, write) } { return -22; }
             node = unsafe { (*node).next };
         }
         node = registry.head;
     }
     0
+}
+
+#[cfg(test)]
+mod timer_tls_reset_tests {
+    use super::*;
+
+    #[test]
+    fn protected_tls_spans_reject_empty_overflow_and_overlap() {
+        use x86_64_runtime_tls_view::TimerTlsPreservedSpan as Span;
+        assert!(preserved_tls_spans_do_not_overlap(&[
+            Span { start: 100, byte_len: 4 }, Span { start: 104, byte_len: 8 },
+        ]));
+        assert!(!preserved_tls_spans_do_not_overlap(&[
+            Span { start: 100, byte_len: 5 }, Span { start: 104, byte_len: 8 },
+        ]));
+        assert!(!preserved_tls_spans_do_not_overlap(&[Span { start: 100, byte_len: 0 }]));
+        assert!(!preserved_tls_spans_do_not_overlap(&[Span { start: usize::MAX, byte_len: 2 }]));
+    }
 }

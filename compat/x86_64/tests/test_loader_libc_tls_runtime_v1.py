@@ -129,6 +129,17 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
                 with self.assertRaisesRegex(runtime_v1.TlsRuntimeContractError, "owned runtime contract drifted"):
                     runtime_v1.validate_contract(contract)
 
+    def test_native_timer_reset_has_a_distinct_protected_span_wire(self) -> None:
+        contract = self.contract()
+        v1 = contract["owned_runtime"]["timer_callback_reset"]
+        v2 = contract["owned_runtime"]["timer_callback_native_allocator_reset"]
+        self.assertIn("fn() -> i32", v1)
+        self.assertIn("fn(*const NativeAllocatorTlsSpan, usize) -> i32", v2)
+        self.assertIn("native-shadow only", v2)
+        contract["owned_runtime"]["timer_callback_native_allocator_reset"] = v1
+        with self.assertRaisesRegex(runtime_v1.TlsRuntimeContractError, "owned runtime contract drifted"):
+            runtime_v1.validate_contract(contract)
+
     def test_static_dynamic_selection_and_owner_are_not_interchangeable(self) -> None:
         mutations = (
             (

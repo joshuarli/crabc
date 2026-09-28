@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -55,10 +56,14 @@ SOURCE_FILES = (
     "compat/x86_64/owned_posix_timers_tls.c",
     "ldso/Cargo.toml",
     "ldso/src/x86_64_runtime_registry.rs",
+    "ldso/src/x86_64_runtime_tls_view.rs",
     "ldso/src/x86_64_initial_worker_tls.rs",
     "ldso/src/x86_64_general_relocation.rs",
     "libc/src/c_abi/x86_64/general_dlfcn.rs",
     "libc/src/c_abi/x86_64/dynamic_tls.rs",
+    "libc/src/c_abi/x86_64/static_tls.rs",
+    "crabc-mimalloc/src/runtime_lifecycle.rs",
+    "crabc-mimalloc/src/lib.rs",
     "libc/src/c_abi/x86_64/static_c_abi.rs",
     "scripts/build_x86_64_owned_dynamic_sysroot.py",
 )
@@ -77,6 +82,8 @@ RESOLVERS = {
     "__crabc_x86_64_runtime_information": "runtime_information",
     "__crabc_x86_64_runtime_iterate": "runtime_iterate",
 }
+NATIVE_RESET_NAME = "__crabc_x86_64_reset_current_tls_v2"
+NATIVE_RESOLVERS = {NATIVE_RESET_NAME: "reset_current_tls_preserving_allocator"}
 FORK_NAMES = ("__crabc_x86_64_runtime_fork_prepare", "__crabc_x86_64_runtime_fork_complete")
 STARTUP_NAME = "__crabc_x86_64_runtime_publish_initial_tid"
 RESET_NAME = "__crabc_x86_64_reset_current_tls_v1"
@@ -255,7 +262,7 @@ def load_contract(root: Path = ROOT) -> dict[str, Any]:
 
 
 def validate_contract(contract: object) -> None:
-    record = exact(contract, {"schema", "id", "status", "target", "operation", "relocation", "limits"}, "runtime registry contract")
+    record = exact(contract, {"schema", "id", "status", "target", "operation", "native_shadow_operation", "relocation", "limits"}, "runtime registry contract")
     require((record["schema"], record["id"], record["status"], record["target"]) == (
         "crabc.x86_64-loader-runtime-registry-private-resolution-contract/v1",
         "x86-loader-runtime-registry-private-resolution", "implemented-unqualified", TARGET),
@@ -276,6 +283,11 @@ def validate_contract(contract: object) -> None:
         seen[name] = resolver
         require(expected_consumers.get(name) == (row["consumer"], row["scenario"]), "runtime registry operation scenario drifted")
     require(seen == RESOLVERS, "runtime registry resolver roster drifted")
+    native = record["native_shadow_operation"]
+    require(type(native) is list and len(native) == 1, "native-shadow operation roster drifted")
+    require(same(native[0], {"name": NATIVE_RESET_NAME, "resolver": NATIVE_RESOLVERS[NATIVE_RESET_NAME],
+                             "consumer": "timer_reset", "scenario": "dynamic-pie-and-non-pie-kernel-and-direct"}),
+            "native-shadow operation drifted")
     relocation = exact(record["relocation"], {"feature", "kinds", "symbol", "addend"}, "runtime registry relocation")
     require(same(relocation, {"feature": FEATURE, "kinds": ["R_X86_64_GLOB_DAT", "R_X86_64_JUMP_SLOT"],
                               "symbol": "GLOBAL DEFAULT UND NOTYPE", "addend": 0}),
@@ -290,7 +302,7 @@ def source_resolution(root: Path = ROOT) -> dict[str, object]:
     registry = source_file(root, "ldso/src/x86_64_runtime_registry.rs").read_text(encoding="utf-8")
     matches = re.findall(r'\bb"([^"]+)"\s*=>\s*Some\((\w+)\s+as \*const \(\)', registry)
     found = {"__" + name if not name.startswith("__") else name: resolver for name, resolver in matches}
-    require(found == RESOLVERS, "runtime_function is not the exact closed resolver")
+    require(found == RESOLVERS | NATIVE_RESOLVERS, "runtime_function is not the exact closed resolver")
     require(re.search(r'unsafe\s+extern\s+"C"\s+fn\s+runtime_publish_initial_tid\s*\(\s*tid:\s*i32\s*\)\s*->\s*i32', registry) is not None,
             "initial TID producer signature drifted")
     # Initial worker routing must delegate unknown protocol names to that
@@ -313,7 +325,7 @@ def source_resolution(root: Path = ROOT) -> dict[str, object]:
     dlfcn = source_file(root, "libc/src/c_abi/x86_64/general_dlfcn.rs").read_text(encoding="utf-8")
     for name in DLFCN_NAMES:
         require(f"fn {name}(" in dlfcn, f"dlfcn consumer omits {name}")
-    for name in (STARTUP_NAME, *FORK_NAMES, RESET_NAME):
+    for name in (STARTUP_NAME, *FORK_NAMES, RESET_NAME, NATIVE_RESET_NAME):
         require(f"fn {name}(" in dynamic_tls, f"dynamic TLS consumer omits {name}")
     static_root = source_file(root, "libc/src/c_abi/x86_64/static_c_abi.rs").read_text(encoding="utf-8")
     require('#[cfg_attr(crabc_x86_dynamic_runtime, path = "dynamic_tls.rs")]' in static_root,
@@ -321,7 +333,8 @@ def source_resolution(root: Path = ROOT) -> dict[str, object]:
     cargo = source_file(root, "ldso/Cargo.toml").read_text(encoding="utf-8")
     require('x86_64-owned-dynamic-runtime = ["x86_64-general-initial-lifecycle", "x86_64-general-initial-tls-runtime-v1-dynamic-main-thread-interpreter"]' in cargo,
             "loader selected feature closure drifted")
-    return {"resolvers": dict(sorted(RESOLVERS.items())), "feature": FEATURE}
+    return {"resolvers": dict(sorted(RESOLVERS.items())),
+            "native_shadow_resolvers": NATIVE_RESOLVERS, "feature": FEATURE}
 
 
 def _symbol_rows(facts: Mapping[str, Any], artifact: str) -> dict[str, list[Mapping[str, Any]]]:
@@ -787,11 +800,72 @@ def fresh_output(output: Path, *, static_preparation: Path, static_product: Path
     return output
 
 
+def native_shadow_product(product: Path, accepted_product: Path) -> dict[str, object]:
+    """Require a distinct sealed native product from the accepted-C source."""
+    product = physical_directory(product, "native-shadow dynamic product")
+    accepted_product = physical_directory(accepted_product, "accepted-C dynamic product")
+    require(product != accepted_product, "native-shadow and accepted-C products are identical")
+    try:
+        product_evidence._validate_dynamic_product(product)
+    except product_evidence.ProductEvidenceError as error:
+        raise RuntimeRegistryEvidenceError("native-shadow dynamic product is not sealed") from error
+    current = inventory.collector_source_seal()["content_sha256"]
+    states = []
+    for root, backend in ((product, "native-shadow"), (accepted_product, "accepted-c")):
+        state_path = physical_regular(root / "share/crabc/dynamic-product-state.json", "dynamic product state")
+        state = read_json(state_path, "dynamic product state")
+        require(state.get("source_sha256") == current and state.get("allocator_backend") == backend
+                and state.get("allocator_promoted") is False,
+                f"{backend} dynamic product does not match the current source and backend")
+        states.append(checkout_identity(ROOT, state_path))
+    return {"native_state": states[0], "accepted_state": states[1],
+            "native_libc": checkout_identity(ROOT, product / "usr/lib/libc.so"),
+            "native_loader": checkout_identity(ROOT, product / "lib/ld-crabc-x86_64.so.1")}
+
+
+def native_shadow_import(product: Path, output: Path, *, recorded: object | None = None) -> dict[str, object]:
+    """Read the product's undefined v2 symbol from both ELF symbol tables."""
+    readelf = physical_regular(Path(shutil.which("readelf") or ""), "native ELF reader")
+    tool = identity(readelf, logical_path=str(readelf))
+    libc = physical_regular(product / "usr/lib/libc.so", "native shared libc")
+    command = [str(readelf), "--symbols", "--wide", str(libc)]
+    result = subprocess.run(command, cwd=ROOT, env={"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
+                            stdin=subprocess.DEVNULL, capture_output=True, check=False)
+    require(result.returncode == 0 and not result.stderr, "native shared libc symbol inspection failed")
+    try:
+        tables = inventory.parse_elf_symbol_tables(result.stdout.decode("ascii"))
+    except (inventory.InventoryError, UnicodeDecodeError) as error:
+        raise RuntimeRegistryEvidenceError("native shared libc symbol table is invalid") from error
+    selected = {table["name"]: [row for row in table["rows"] if row["name"] == NATIVE_RESET_NAME]
+                for table in tables if table["name"] in SYMBOL_TABLES}
+    require(set(selected) == set(SYMBOL_TABLES) and all(len(rows) == 1 for rows in selected.values()),
+            "native shared libc must import v2 once in each ELF symbol table")
+    for rows in selected.values():
+        row = rows[0]
+        require(row["binding"] == "GLOBAL" and row["visibility"] == "DEFAULT"
+                and row["section_index"] == "UND" and row["version"] is None,
+                "native v2 import has wrong ELF binding")
+    raw = output / RAW / "native-shadow-v2-symbols.stdout"
+    if recorded is None:
+        raw.write_bytes(result.stdout)
+    else:
+        require(_read_stream(output, recorded["stdout"], f"raw/{raw.name}") == result.stdout,
+                "native v2 symbol inspection no longer reconstructs")
+        require(same(recorded["reader"], tool) and recorded["command"] == command,
+                "native v2 symbol reader or command drifted")
+    return {"reader": tool, "command": command,
+            "stdout": identity(raw, logical_path=f"raw/{raw.name}"),
+            "imports": {name: rows[0] for name, rows in sorted(selected.items())}}
+
+
 def collect(*, base_inventory: Path, elf_report: Path, static_preparation: Path, static_product: Path,
-            dynamic_product: Path, output: Path) -> dict[str, object]:
+            dynamic_product: Path, output: Path, native_shadow_product_path: Path | None = None) -> dict[str, object]:
     """Run only the existing finite supplied-product workloads and seal their bytes."""
     output = fresh_output(output, static_preparation=Path(static_preparation), static_product=Path(static_product),
                           dynamic_product=Path(dynamic_product))
+    if native_shadow_product_path is not None:
+        require(not output.is_relative_to(physical_directory(native_shadow_product_path, "native-shadow dynamic product")),
+                "component output overlaps native-shadow product")
     inputs = validate_supplied_products(root=ROOT, base_inventory=base_inventory, elf_report=elf_report,
                                        static_preparation=static_preparation, static_product=static_product,
                                        dynamic_product=dynamic_product)
@@ -825,6 +899,19 @@ def collect(*, base_inventory: Path, elf_report: Path, static_preparation: Path,
     timer_work = _new_work(output, "owned-posix-timers", before)
     make_retained_readable(timer_work)
     timer = timer_observations(Path(dynamic_product), output, timer_work)
+    native_timer: dict[str, object] | None = None
+    if native_shadow_product_path is not None:
+        native_product = Path(native_shadow_product_path)
+        native_identity = native_shadow_product(native_product, Path(dynamic_product))
+        native_import = native_shadow_import(native_product, output)
+        before = set(output.glob("owned-posix-timers.*"))
+        command, environment = runner_contract(output, native_product, "timer-reset")
+        native_command = _capture(command, output=output, label="native-shadow-timer-reset", environment=environment)
+        native_work = _new_work(output, "owned-posix-timers", before)
+        make_retained_readable(native_work)
+        native_observation = timer_observations(native_product, output, native_work, reset_name=NATIVE_RESET_NAME)
+        native_timer = {"product": native_identity, "import": native_import, "command": native_command,
+                        "observation": native_observation}
     for role, path in fork_evidence.REPLAY_TOOL_PATHS.items():
         require(same(tools[role]["original"], inventory.file_record(Path(path), logical_path=path)), "registry tool changed during collection")
     require(source == inventory.collector_source_seal(), "collector source changed during runtime observations")
@@ -833,6 +920,8 @@ def collect(*, base_inventory: Path, elf_report: Path, static_preparation: Path,
               "replay_inputs": {"tools": tools, "files": replay_files(output, fork_work, timer_work)},
               "dlfcn": dlfcn, "fork": {"command": fork_command, "work": str(fork_work.relative_to(output)), "receipt": fork_receipt},
               "timer_reset": {"command": timer_command, "observation": timer}}
+    if native_timer is not None:
+        report["native_shadow_timer_reset"] = native_timer
     (output / "report.json").write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     output.chmod(0o755)
     return report
@@ -867,7 +956,8 @@ def timer_source_test_observations(work: Path, output: Path) -> dict[str, object
     return captures
 
 
-def timer_observations(product: Path, output: Path, work: Path, *, replay: fork_evidence.RetainedRuntimeInputs | None = None) -> dict[str, object]:
+def timer_observations(product: Path, output: Path, work: Path, *, replay: fork_evidence.RetainedRuntimeInputs | None = None,
+                       reset_name: str = RESET_NAME) -> dict[str, object]:
     """Join timer reset raw executions and existing owned-link receipts."""
     product, output, work = physical_directory(product, "dynamic product"), physical_directory(output, "component output"), physical_directory(work, "timer work")
     require(work.is_relative_to(output), "timer work escapes retained component output")
@@ -901,7 +991,7 @@ def timer_observations(product: Path, output: Path, work: Path, *, replay: fork_
         observed[mode] = {"link": link, "entries": cells}
     return {"work": str(work.relative_to(output)), "source_tests": source_tests, "application": app, "tls_dso": tls,
             "oracle_dynamic": oracle,
-            "modes": observed, "operations": [RESET_NAME], "scenario": "dynamic-pie-and-non-pie-kernel-and-direct"}
+            "modes": observed, "operations": [reset_name], "scenario": "dynamic-pie-and-non-pie-kernel-and-direct"}
 
 
 def _validate_command(output: Path, record: object, label: str, argv: list[str], environment: Mapping[str, str]) -> None:
@@ -915,12 +1005,14 @@ def _validate_command(output: Path, record: object, label: str, argv: list[str],
 
 
 def validate_report(report_path: Path, *, base_inventory: Path, elf_report: Path, static_preparation: Path,
-                    static_product: Path, dynamic_product: Path) -> dict[str, object]:
+                    static_product: Path, dynamic_product: Path, native_shadow_product_path: Path | None = None) -> dict[str, object]:
     """Rehash and reconstruct a finite retained supplied-product receipt."""
     report_path = physical_regular(report_path, "runtime registry report")
     output = physical_directory(report_path.parent, "runtime registry report root")
-    report = exact(read_json(report_path, "runtime registry report"),
-                   {"schema", "target", "status", "source", "source_files", "inputs", "replay_inputs", "dlfcn", "fork", "timer_reset"},
+    fields = {"schema", "target", "status", "source", "source_files", "inputs", "replay_inputs", "dlfcn", "fork", "timer_reset"}
+    if native_shadow_product_path is not None:
+        fields.add("native_shadow_timer_reset")
+    report = exact(read_json(report_path, "runtime registry report"), fields,
                    "runtime registry report")
     require(report["schema"] == SCHEMA and report["target"] == TARGET
             and same(report["status"], {"family_completion": False, "promotion_ready": False}),
@@ -958,6 +1050,20 @@ def validate_report(report_path: Path, *, base_inventory: Path, elf_report: Path
     timer_current = timer_observations(Path(dynamic_product), output,
                                        physical_directory(output / timer["observation"]["work"], "timer reset work"), replay=replay)
     require(same(timer["observation"], timer_current), "timer reset retained artifacts do not reconstruct")
+    if native_shadow_product_path is not None:
+        native_product = Path(native_shadow_product_path)
+        native = exact(report["native_shadow_timer_reset"], {"product", "import", "command", "observation"},
+                       "native-shadow timer observation")
+        require(same(native["product"], native_shadow_product(native_product, Path(dynamic_product))),
+                "native-shadow product/source identity drifted")
+        require(same(native["import"], native_shadow_import(native_product, output, recorded=native["import"])),
+                "native-shadow v2 physical import drifted")
+        _validate_command(output, native["command"], "native-shadow-timer-reset",
+                          *runner_contract(output, native_product, "timer-reset"))
+        native_current = timer_observations(native_product, output,
+            physical_directory(output / native["observation"]["work"], "native-shadow timer work"),
+            replay=replay, reset_name=NATIVE_RESET_NAME)
+        require(same(native["observation"], native_current), "native-shadow timer artifacts do not reconstruct")
     # Do not infer coverage from the runner names.  The report itself must name
     # each protocol operation/scenario and both required entry modes.
     covered = set()
@@ -969,6 +1075,8 @@ def validate_report(report_path: Path, *, base_inventory: Path, elf_report: Path
     covered.update((STARTUP_NAME, *FORK_NAMES))
     covered.update(timer_current["operations"])
     require(covered == set(RESOLVERS), "runtime registry operation coverage is incomplete")
+    if native_shadow_product_path is not None:
+        require(native_current["operations"] == [NATIVE_RESET_NAME], "native-shadow v2 coverage is incomplete")
     return report
 
 
@@ -983,11 +1091,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         current.add_argument("--static-preparation", type=Path, required=True)
         current.add_argument("--static-product", type=Path, required=True)
         current.add_argument("--dynamic-product", type=Path, required=True)
+        current.add_argument("--native-shadow-product", dest="native_shadow_product_path", type=Path)
     collect_parser.add_argument("--output", type=Path, required=True)
     validate_parser.add_argument("report", type=Path)
     args = parser.parse_args(argv)
     try:
-        fields = {name: getattr(args, name) for name in ("base_inventory", "elf_report", "static_preparation", "static_product", "dynamic_product")}
+        fields = {name: getattr(args, name) for name in ("base_inventory", "elf_report", "static_preparation", "static_product", "dynamic_product", "native_shadow_product_path")}
         if args.command == "collect":
             report = collect(**fields, output=args.output)
         else:

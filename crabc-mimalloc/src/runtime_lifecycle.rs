@@ -9156,6 +9156,46 @@ impl Drop for ThreadAttachmentEntry {
 static THREAD_LIFECYCLE: UnsafeCell<ThreadLifecycleSlot> =
     UnsafeCell::new(ThreadLifecycleSlot::new());
 
+/// One current-thread allocator TLS object that must remain pinned while a
+/// timer callback resets application TLS on the same continuing pthread.
+/// The address is an identity for the resetter, never a borrowed projection.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct NativeAllocatorTlsSpan {
+    pub start: usize,
+    pub byte_len: usize,
+}
+
+impl NativeAllocatorTlsSpan {
+    #[inline]
+    pub(crate) fn of<T>(pointer: *const T) -> Self {
+        Self { start: pointer as usize, byte_len: core::mem::size_of::<T>() }
+    }
+}
+
+/// Names every production allocator compiler-TLS object on this thread.
+/// A timer callback may reset C application TLS after its destructors, but
+/// this pthread's allocator attachment, admission descriptor, and source
+/// roots remain live until the pthread itself finishes. The resetter must
+/// leave these exact bytes in place. This producer must name every live
+/// allocator TLS object exactly once; a resetter can validate the raw ranges'
+/// image membership and nonoverlap but cannot recover their object identities.
+#[cfg(target_arch = "x86_64")]
+pub fn current_native_allocator_timer_tls_spans() -> [NativeAllocatorTlsSpan; 14] {
+    let [dynamic, fast, default, cached, helper] = crate::compiler_tls::native_timer_tls_spans();
+    let [engine, staged] = crate::main_heap_thread::native_timer_tls_spans();
+    let [published_theap, published_map] = crate::local_fast_path::native_timer_tls_spans();
+    [
+        NativeAllocatorTlsSpan::of(core::ptr::addr_of!(THREAD_ATTACHMENT_ENTRY)),
+        NativeAllocatorTlsSpan::of(core::ptr::addr_of!(THREAD_LIFECYCLE)),
+        admission::native_timer_descriptor_tls_span(),
+        dynamic, fast, default, cached, helper,
+        engine, staged, published_theap, published_map,
+        crate::subproc::main_heaps::native_timer_tls_span(),
+        crate::subproc::lifecycle::native_timer_tls_span(),
+    ]
+}
+
 #[inline]
 fn current_thread_slot_pointer() -> core::ptr::NonNull<ThreadLifecycleSlot> {
     // SAFETY: compiler TLS gives this running thread the only normal Rust
@@ -19163,6 +19203,23 @@ mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
     use std::thread;
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn timer_tls_inventory_names_distinct_nonempty_objects_on_each_thread() {
+        fn check(spans: [NativeAllocatorTlsSpan; 14]) {
+            for (index, span) in spans.iter().enumerate() {
+                let end = span.start.checked_add(span.byte_len).unwrap();
+                assert!(span.start != 0 && span.byte_len != 0);
+                for previous in &spans[..index] {
+                    let previous_end = previous.start.checked_add(previous.byte_len).unwrap();
+                    assert!(span.start >= previous_end || previous.start >= end);
+                }
+            }
+        }
+        check(current_native_allocator_timer_tls_spans());
+        thread::spawn(|| check(current_native_allocator_timer_tls_spans())).join().unwrap();
+    }
 
     #[cfg(all(feature = "native-runtime-test-audit", feature = "native-runtime-test-fault"))]
     #[test]

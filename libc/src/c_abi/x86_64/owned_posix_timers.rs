@@ -26,6 +26,15 @@ const EINTR: i64 = 4;
 const EINVAL: c_int = 22;
 const EAGAIN: c_int = 11;
 
+/// One in-place runtime TLS object excluded from a timer callback's reset.
+/// The reset owner validates every span before modifying any TLS image.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(super) struct TimerTlsPreservedSpan {
+    pub(super) start: usize,
+    pub(super) byte_len: usize,
+}
+
 /// The installed x86 union sigval occupies one integer-class machine word.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -87,7 +96,14 @@ unsafe extern "C" fn cleanup_callback(jump: *mut c_void) {
     // Our errno is ELF TLS; preserve that same TCB-like callback continuity.
     let callback_errno = unsafe { errno::get_errno() };
     unsafe {
-        static_tls::reset_current_thread_images();
+        #[cfg(feature = "native-mimalloc-shadow")]
+        // This private producer supplies the complete live allocator TLS
+        // inventory; the loader can validate geometry but not object identity.
+        let preserved = crabc_mimalloc::__crabc_runtime::current_native_allocator_timer_tls_spans()
+            .map(|span| TimerTlsPreservedSpan { start: span.start, byte_len: span.byte_len });
+        #[cfg(not(feature = "native-mimalloc-shadow"))]
+        let preserved: [TimerTlsPreservedSpan; 0] = [];
+        static_tls::reset_current_thread_images(&preserved);
         errno::set_errno(callback_errno);
         longjmp(jump, 1);
     }

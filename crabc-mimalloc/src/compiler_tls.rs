@@ -188,6 +188,20 @@ static mut CACHED_THEAP_ROOT: *mut Theap = empty_default_theap_ptr();
 #[thread_local]
 static mut THREAD_ID_HELPER_ROOT: *mut () = core::ptr::null_mut();
 
+/// The five source compiler-TLS roots remain attached across application TLS
+/// reset on a reused timer pthread; losing one would orphan its live Theap.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn native_timer_tls_spans() -> [crate::runtime_lifecycle::NativeAllocatorTlsSpan; 5] {
+    use crate::runtime_lifecycle::NativeAllocatorTlsSpan as Span;
+    [
+        Span::of(core::ptr::addr_of!(DYNAMIC_BACKING_ROOT)),
+        Span::of(core::ptr::addr_of!(FAST_SLOT_ROOT)),
+        Span::of(core::ptr::addr_of!(DEFAULT_THEAP_ROOT)),
+        Span::of(core::ptr::addr_of!(CACHED_THEAP_ROOT)),
+        Span::of(core::ptr::addr_of!(THREAD_ID_HELPER_ROOT)),
+    ]
+}
+
 /// Rust-side state of one inline persistent allocator owner in compiler TLS.
 ///
 /// Pinned mimalloc stores its source Theap roots directly in compiler TLS and

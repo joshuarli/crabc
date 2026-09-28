@@ -165,12 +165,26 @@ pub(super) fn adopt_current_thread_after_fork() -> bool {
 
 unsafe extern "C" { fn __crabc_x86_64_reset_current_tls_v1() -> i32; }
 
+#[cfg(feature = "native-mimalloc-shadow")]
+unsafe extern "C" {
+    fn __crabc_x86_64_reset_current_tls_v2(
+        preserved: *const super::owned_posix_timers::TimerTlsPreservedSpan,
+        count: usize,
+    ) -> i32;
+}
+
 /// Reset every current module image through its retained loader owner.
 /// # Safety
 /// The calling timer worker completed callback/TSD cleanup and blocked
 /// application signals. It alone may access its ELF TLS during reset.
-pub(super) unsafe fn reset_current_thread_images() {
-    if unsafe { __crabc_x86_64_reset_current_tls_v1() } != 0 {
+pub(super) unsafe fn reset_current_thread_images(
+    preserved: &[super::owned_posix_timers::TimerTlsPreservedSpan],
+) {
+    #[cfg(feature = "native-mimalloc-shadow")]
+    let result = unsafe { __crabc_x86_64_reset_current_tls_v2(preserved.as_ptr(), preserved.len()) };
+    #[cfg(not(feature = "native-mimalloc-shadow"))]
+    let result = unsafe { __crabc_x86_64_reset_current_tls_v1() };
+    if result != 0 {
         unsafe { raw_syscall::syscall1(231, 127); }
         loop { core::hint::spin_loop(); }
     }

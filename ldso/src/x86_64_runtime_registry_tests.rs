@@ -3,6 +3,16 @@ use super::*;
 use core::sync::atomic::{AtomicPtr, AtomicUsize};
 
 #[test]
+fn timer_tls_reset_versions_resolve_to_distinct_private_targets() {
+    let v1 = runtime_function(b"__crabc_x86_64_reset_current_tls_v1").unwrap();
+    let v2 = runtime_function(b"__crabc_x86_64_reset_current_tls_v2").unwrap();
+    assert_eq!(v1, reset_current_tls as *const () as usize as u64);
+    assert_eq!(v2, reset_current_tls_preserving_allocator as *const () as usize as u64);
+    assert_ne!(v1, v2);
+    assert!(runtime_function(b"__crabc_x86_64_reset_current_tls_v3").is_none());
+}
+
+#[test]
 fn source_test_harness_keeps_its_own_tls_resolver() {
     extern "C" {
         #[link_name = "__tls_get_addr"]

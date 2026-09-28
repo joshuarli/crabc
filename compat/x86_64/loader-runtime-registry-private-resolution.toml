@@ -57,6 +57,14 @@ resolver = "reset_current_tls"
 consumer = "timer_reset"
 scenario = "dynamic-pie-and-non-pie-kernel-and-direct"
 
+# This import belongs only to a same-source native-shadow product. The
+# accepted-C product and its selected operation roster continue to use v1.
+[[native_shadow_operation]]
+name = "__crabc_x86_64_reset_current_tls_v2"
+resolver = "reset_current_tls_preserving_allocator"
+consumer = "timer_reset"
+scenario = "dynamic-pie-and-non-pie-kernel-and-direct"
+
 [relocation]
 feature = "x86_64-owned-dynamic-runtime"
 kinds = ["R_X86_64_GLOB_DAT", "R_X86_64_JUMP_SLOT"]

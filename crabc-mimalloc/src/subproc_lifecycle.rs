@@ -856,6 +856,13 @@ struct CurrentChildMember {
 static CURRENT_CHILD_MEMBER: core::cell::UnsafeCell<Option<CurrentChildMember>> =
     core::cell::UnsafeCell::new(None);
 
+/// A child-subprocess membership is an attached pthread owner, so a timer
+/// callback's application TLS reset cannot replace this live membership.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn native_timer_tls_span() -> crate::runtime_lifecycle::NativeAllocatorTlsSpan {
+    crate::runtime_lifecycle::NativeAllocatorTlsSpan::of(core::ptr::addr_of!(CURRENT_CHILD_MEMBER))
+}
+
 /// The current thread's child membership slot.
 ///
 /// # Safety

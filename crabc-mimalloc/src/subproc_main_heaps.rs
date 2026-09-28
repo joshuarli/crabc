@@ -95,6 +95,13 @@ static THREAD_HEAPS: UnsafeCell<ThreadHeaps> =
         pending_os_release: None,
     });
 
+/// Preserve the live main-subprocess Heap slots until the pthread's source
+/// attachment finishes, including across timer callback TLS reset.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn native_timer_tls_span() -> crate::runtime_lifecycle::NativeAllocatorTlsSpan {
+    crate::runtime_lifecycle::NativeAllocatorTlsSpan::of(core::ptr::addr_of!(THREAD_HEAPS))
+}
+
 /// # Safety
 /// The caller is on the current thread and forms no other reference to the
 /// state while the returned one is live.

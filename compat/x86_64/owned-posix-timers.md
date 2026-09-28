@@ -27,6 +27,14 @@ dynamic-only boundary and skips static execution. It always retains products,
 objects, compile/header audits, receipts, raw stdout/stderr/status, outputs and
 failure observations, printing `evidence: PATH` on exit.
 
+The accepted-C product resets every current-thread TLS module through the
+existing private v1 loader operation. Native-shadow uses a separate v2 loader
+operation that validates the allocator's live TLS spans, preserves those exact
+bytes, and resets every other current-thread TLS byte. Static executables use
+the same span rule within their combined application/libc TLS image. This
+keeps the timer worker's allocator owner live across callbacks while the
+application's initialized and zero-fill TLS returns to its template.
+
 The four executable links retain the shared
 `owned_posix_product_evidence.validate_link` identities: static, static PIE,
 dynamic PIE and dynamic non-PIE. Before publication,

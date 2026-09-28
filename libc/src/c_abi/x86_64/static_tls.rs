@@ -891,19 +891,67 @@ const _: () = {
     assert!(destination & (alignment - 1) == image & (alignment - 1));
 };
 
-/// musl src/env/__reset_tls.c: reset the current timer task's ELF template,
-/// preserving its TCB, stack guard and cancellation-state ownership.
+/// Reset the current timer task's application ELF template while leaving
+/// attached allocator objects at their pinned addresses. The TCB, stack
+/// guard and cancellation-state ownership are outside the image.
 /// # Safety
 /// Called on a live owned TLS task after callback/TSD cleanup, with application
 /// signals blocked. No application reference to its TLS may be used meanwhile.
 #[cfg(crabc_x86_owned_runtime)]
-pub(super) unsafe fn reset_current_thread_images() {
+pub(super) unsafe fn reset_current_thread_images(
+    preserved: &[super::owned_posix_timers::TimerTlsPreservedSpan],
+) {
     let plan = unsafe { STATIC_INITIAL_TLS_PLAN };
     let tp = super::pthread_identity::current_thread_pointer();
     let destination = unsafe { tp.sub(plan.image_offset_below_tp) };
-    unsafe {
-        copy_bytes(plan.image, destination, plan.filesz);
-        zero_bytes(destination.add(plan.filesz), plan.memsz - plan.filesz);
+    let start = destination as usize;
+    let Some(end) = start.checked_add(plan.memsz) else {
+        unsafe { raw_syscall::syscall1(231, 127); }
+        loop { core::hint::spin_loop(); }
+    };
+    let mut valid = true;
+    for (index, span) in preserved.iter().enumerate() {
+        let Some(stop) = span.start.checked_add(span.byte_len) else { valid = false; break };
+        if span.byte_len == 0 || span.start < start || stop > end {
+            valid = false;
+            break;
+        }
+        for earlier in &preserved[..index] {
+            let earlier_stop = earlier.start + earlier.byte_len;
+            if span.start < earlier_stop && earlier.start < stop {
+                valid = false;
+                break;
+            }
+        }
+        if !valid { break; }
+    }
+    if !valid {
+        unsafe { raw_syscall::syscall1(231, 127); }
+        loop { core::hint::spin_loop(); }
+    }
+
+    let mut cursor = start;
+    while cursor < end {
+        let mut next = end;
+        let mut protected_end = end;
+        for span in preserved {
+            if span.start >= cursor && span.start < next {
+                next = span.start;
+                protected_end = span.start + span.byte_len;
+            }
+        }
+        let offset = cursor - start;
+        let gap_end = next - start;
+        let initialized_end = gap_end.min(plan.filesz);
+        if offset < initialized_end {
+            unsafe { copy_bytes(plan.image.add(offset), destination.add(offset), initialized_end - offset); }
+        }
+        let zero_start = offset.max(plan.filesz);
+        if zero_start < gap_end {
+            unsafe { zero_bytes(destination.add(zero_start), gap_end - zero_start); }
+        }
+        if next == end { break; }
+        cursor = protected_end;
     }
 }
 

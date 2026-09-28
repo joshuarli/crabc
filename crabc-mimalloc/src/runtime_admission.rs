@@ -65,6 +65,11 @@ impl NativeAllocatorThreadDescriptor {
 
 #[thread_local]
 static DESCRIPTOR: NativeAllocatorThreadDescriptor = NativeAllocatorThreadDescriptor::new();
+
+#[cfg(target_arch = "x86_64")]
+pub(super) fn native_timer_descriptor_tls_span() -> super::NativeAllocatorTlsSpan {
+    super::NativeAllocatorTlsSpan::of(core::ptr::addr_of!(DESCRIPTOR))
+}
 static INITIAL_DESCRIPTOR: AtomicPtr<NativeAllocatorThreadDescriptor> = AtomicPtr::new(core::ptr::null_mut());
 static EPOCH: NativeAllocatorEpoch = NativeAllocatorEpoch::new();
 

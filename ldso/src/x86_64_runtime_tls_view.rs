@@ -336,35 +336,118 @@ mod tests {
     }
 }
 
+/// An exact current-thread TLS object whose bytes remain live across a timer
+/// callback's application-image reset.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(super) struct TimerTlsPreservedSpan {
+    pub(super) start: usize,
+    pub(super) byte_len: usize,
+}
+
+/// Validate one module image and project its current-thread address range.
+/// An empty image has the empty range; every nonempty range is backed by the
+/// current DTV and has the admitted module's exact size.
+pub(super) unsafe fn module_image_bounds(tp: *mut u8, object: &Object) -> Option<(usize, usize)> {
+    if object.tls_memsz == 0 { return Some((0, 0)); }
+    if object.tls_module_id == 0 || object.tls_filesz > object.tls_memsz
+        || (object.tls_filesz != 0 && object.tls_image.is_null()) { return None; }
+    let view = unsafe { current(tp) };
+    let (destination, size) = if view.is_null() {
+        let dtv = unsafe { *tp.add(8).cast::<*const usize>() };
+        let sizes = unsafe { *tp.add(TLS_TCB_MODULE_SIZE_TABLE_OFFSET).cast::<*const usize>() };
+        if dtv.is_null() || sizes.is_null() || object.tls_module_id > unsafe { *dtv } { return None; }
+        unsafe { (*dtv.add(object.tls_module_id) as *mut u8, *sizes.add(object.tls_module_id)) }
+    } else {
+        if object.tls_module_id > unsafe { (*view).module_count } { return None; }
+        unsafe { (*(*view).dtv.add(object.tls_module_id) as *mut u8, *(*view).sizes.add(object.tls_module_id)) }
+    };
+    if destination.is_null() || size != object.tls_memsz { return None; }
+    let start = destination as usize;
+    Some((start, start.checked_add(size)?))
+}
+
 /// Validate/reset a retained module's image on one exclusively borrowed TP.
 /// The caller holds the loader mutation guard and application TLS is quiescent.
 /// A current DTV generation covers both initial and dlopen-added modules.
 /// The false pass validates the entire population before any bytes are reset.
 pub(super) unsafe fn reset_module_image(tp: *mut u8, object: &Object, write: bool) -> bool {
-    if object.tls_memsz == 0 { return true; }
-    if object.tls_module_id == 0 || object.tls_filesz > object.tls_memsz
-        || (object.tls_filesz != 0 && object.tls_image.is_null()) { return false; }
-    let view = unsafe { current(tp) };
-    let (destination, size) = if view.is_null() {
-        let dtv = unsafe { *tp.add(8).cast::<*const usize>() };
-        let sizes = unsafe { *tp.add(TLS_TCB_MODULE_SIZE_TABLE_OFFSET).cast::<*const usize>() };
-        if dtv.is_null() || sizes.is_null() || object.tls_module_id > unsafe { *dtv } { return false; }
-        unsafe { (*dtv.add(object.tls_module_id) as *mut u8, *sizes.add(object.tls_module_id)) }
-    } else {
-        if object.tls_module_id > unsafe { (*view).module_count } { return false; }
-        unsafe { (*(*view).dtv.add(object.tls_module_id) as *mut u8, *(*view).sizes.add(object.tls_module_id)) }
-    };
-    if destination.is_null() || size != object.tls_memsz { return false; }
-    if write { unsafe {
-        if object.tls_filesz != 0 { core::ptr::copy_nonoverlapping(object.tls_image, destination, object.tls_filesz); }
-        core::ptr::write_bytes(destination.add(object.tls_filesz), 0, object.tls_memsz - object.tls_filesz);
-    } }
+    unsafe { reset_module_image_preserving(tp, object, &[], write) }
+}
+
+/// Reset only gaps between already validated, nonoverlapping runtime spans.
+/// The owner validates the complete module population before its first write.
+pub(super) unsafe fn reset_module_image_preserving(
+    tp: *mut u8,
+    object: &Object,
+    preserved: &[TimerTlsPreservedSpan],
+    write: bool,
+) -> bool {
+    let Some((start, end)) = (unsafe { module_image_bounds(tp, object) }) else { return false; };
+    if !write || start == end { return true; }
+    let destination = start as *mut u8;
+    let mut cursor = start;
+    while cursor < end {
+        let mut next = end;
+        let mut protected_end = end;
+        for span in preserved {
+            let Some(stop) = span.start.checked_add(span.byte_len) else { return false; };
+            if span.start < end && stop > start {
+                if span.start < start || stop > end || span.byte_len == 0 { return false; }
+                if span.start >= cursor && span.start < next {
+                    next = span.start;
+                    protected_end = stop;
+                }
+            }
+        }
+        let offset = cursor - start;
+        let gap_end = next - start;
+        let initialized_end = gap_end.min(object.tls_filesz);
+        if offset < initialized_end {
+            unsafe { core::ptr::copy_nonoverlapping(
+                object.tls_image.add(offset), destination.add(offset), initialized_end - offset,
+            ); }
+        }
+        let zero_start = offset.max(object.tls_filesz);
+        if zero_start < gap_end {
+            unsafe { core::ptr::write_bytes(destination.add(zero_start), 0, gap_end - zero_start); }
+        }
+        if next == end { break; }
+        cursor = protected_end;
+    }
     true
 }
 
 #[cfg(test)]
 mod timer_reset_tests {
     use super::*;
+
+    #[test]
+    fn timer_reset_keeps_one_live_runtime_tls_object_and_resets_its_neighbors() {
+        let image = [11u8, 13, 17, 19];
+        let mut initial = [EMPTY_OBJECT; 32];
+        initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: image.len(),
+            tls_memsz: 32, tls_align: 16, tls_module_id: 1,
+            tls_offset_below_tp: 32, ..EMPTY_OBJECT };
+        let block = unsafe { materialize_initial_tls(&initial, 0) }.unwrap();
+        let tp = block.thread_pointer;
+        let current = unsafe { *block.dtv.add(1) } as *mut u8;
+        let retained = TimerTlsPreservedSpan { start: current as usize + 8, byte_len: 4 };
+        unsafe {
+            current.write(99);
+            core::ptr::write_bytes(current.add(8), 77, 4);
+            current.add(20).write(99);
+        }
+        assert!(unsafe { reset_module_image_preserving(tp, &initial[0], &[retained], false) });
+        assert!(unsafe { reset_module_image_preserving(tp, &initial[0], &[retained], true) });
+        assert_eq!(unsafe { current.read() }, 11);
+        assert_eq!(unsafe { core::slice::from_raw_parts(current.add(8), 4) }, &[77; 4]);
+        assert_eq!(unsafe { current.add(20).read() }, 0);
+        let crossing = TimerTlsPreservedSpan { start: current as usize + 31, byte_len: 2 };
+        assert!(!unsafe { reset_module_image_preserving(tp, &initial[0], &[crossing], true) });
+        assert_eq!(unsafe { release(tp) }, 0);
+        assert_eq!(unsafe { syscall2(SYS_MUNMAP, block.mapping as i64, block.mapping_byte_len as i64) }, 0);
+    }
 
     #[test]
     fn timer_reset_restores_initial_and_runtime_images_without_replacing_tcb_or_dtv() {

@@ -179,9 +179,19 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
     def test_contract_and_live_source_are_an_exact_closed_resolver(self):
         contract = self.contract()
         self.assertEqual({row["name"]: row["resolver"] for row in contract["operation"]}, EVIDENCE.RESOLVERS)
+        self.assertEqual({row["name"]: row["resolver"] for row in contract["native_shadow_operation"]},
+                         EVIDENCE.NATIVE_RESOLVERS)
         resolution = EVIDENCE.source_resolution(ROOT)
         self.assertEqual(resolution["resolvers"], dict(sorted(EVIDENCE.RESOLVERS.items())))
+        self.assertEqual(resolution["native_shadow_resolvers"], EVIDENCE.NATIVE_RESOLVERS)
         self.assertEqual(resolution["feature"], EVIDENCE.FEATURE)
+
+    def test_native_shadow_operation_is_separate_from_the_accepted_c_roster(self):
+        contract = self.contract()
+        contract["native_shadow_operation"][0]["name"] = EVIDENCE.RESET_NAME
+        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "native-shadow operation drifted"):
+            EVIDENCE.validate_contract(contract)
+        self.assertNotIn(EVIDENCE.NATIVE_RESET_NAME, EVIDENCE.RESOLVERS)
 
     def test_non_pie_workload_label_requires_the_owned_driver_exec_receipt(self):
         self.assertEqual(EVIDENCE.DLOPEN_DRIVER_MODES, {"pie": "pie", "non-pie": "exec"})

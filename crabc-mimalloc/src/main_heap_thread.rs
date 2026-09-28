@@ -141,6 +141,17 @@ fn owner_local_page_engine_state() -> MainHeapThreadOwnerLocalPageEngineState {
 #[thread_local]
 static mut OWNER_LOCAL_FAST_STAGED: Option<crate::local_fast_path::LocalFastOwner> = None;
 
+/// These owner-local state words retain the same page engine between timer
+/// callbacks on one continuing pthread.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn native_timer_tls_spans() -> [crate::runtime_lifecycle::NativeAllocatorTlsSpan; 2] {
+    use crate::runtime_lifecycle::NativeAllocatorTlsSpan as Span;
+    [
+        Span::of(core::ptr::addr_of!(OWNER_LOCAL_PAGE_ENGINE_STATE)),
+        Span::of(core::ptr::addr_of!(OWNER_LOCAL_FAST_STAGED)),
+    ]
+}
+
 #[inline]
 fn set_owner_local_page_engine_state(state: MainHeapThreadOwnerLocalPageEngineState) {
     // SAFETY: the current thread alone reads and writes these compiler-TLS

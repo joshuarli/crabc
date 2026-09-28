@@ -161,6 +161,7 @@ pub mod __crabc_runtime {
 
     #[cfg(target_arch = "x86_64")]
     pub use crate::runtime_lifecycle::{
+        NativeAllocatorTlsSpan, current_native_allocator_timer_tls_spans,
         prepare_native_process_destroy, capture_native_process_destroy_request,
         NativeProcessDestroyRequest, NativePreparedProcessDestroy, NativeProcessDestroyError,
         native_process_done_action, NativeProcessDoneInvocation, NativeProcessDoneAction,
