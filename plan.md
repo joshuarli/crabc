@@ -138,8 +138,10 @@ are not transferable passes for a different revision.
   rows match 35 more C/Rust fields. The public JSON buffer contract matches
   114 C/Rust trace fields at MI_STAT=0/1/2, including truncation and invalid
   images. A source-built 64-byte allocation now matches pinned C page-extension
-  attempt and touched-byte counters before and after free; all nine statistics
-  evidence rows pass on a clean source. Other page, huge, nonlocal, and
+  attempt and touched-byte counters before and after free. A fresh huge page
+  now records its physical 589,824-byte allocation and one huge count; a
+  nonlocal free brings current huge bytes to zero, matching pinned C. All ten
+  statistics evidence rows pass on a clean source. Other page, aligned-OS huge, nonlocal-normal, and
   higher-level production statistics producers remain unproved, so full M7
   stays open. Static
   replacement now has a source-bound installed sweep with zero divergent
