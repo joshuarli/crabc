@@ -221,9 +221,12 @@ are not transferable passes for a different revision.
   count values, including the source's retained requested count after free.
   Warmed 64-byte direct, 8 KiB small, and 32 KiB medium local `calloc`
   paths now match 88 pinned-C statistics fields for requested bytes, normal
-  count, bin lifetime, owner merge, local free, and zeroed contents. All 14
-  statistics evidence rows pass on a clean source. Other page and fast-path
-  shapes, remote bin-free, and metadata-Theap statistics producers remain
+  count, bin lifetime, owner merge, local free, and zeroed contents. A regular
+  64-byte cross-thread free now matches 18 C/Rust requested-byte and bin
+  observations, including the freeing Theap's debit before publication and
+  the final merged zero count. All 15 statistics evidence rows pass on a clean
+  source. Other page and fast-path
+  shapes, other remote bin-free, and metadata-Theap statistics producers remain
   unproved, so full M7
   stays open. Static
   replacement now has a source-bound installed sweep with zero divergent
@@ -262,6 +265,9 @@ are not transferable passes for a different revision.
   Initial TLS now uses zeroed builtin or fresh anonymous backing for module
   tails; that saves 19 median instructions and 64 release-text bytes in the
   same paired development rows.
+  A retained file-backed dynsym record bound avoids a checked offset on the
+  active lookup path, saving 281 and 288 median instructions in paired simple
+  and graph startups with unchanged syscalls and 16 more release-text bytes.
   These remain unqualified under host contention. Allocator rows stay
   6.5–8× on the selected
   accepted-C backend, whose arena the host's THP `always` mode backs with
@@ -306,8 +312,9 @@ are not transferable passes for a different revision.
      `7fbcc1b5d`). The finite `aio_cancel` oracle disposition is integrated;
      its full native OS-test replay is still running. The text family row is
      executable, and current-source
-     `qualification-candidate --through posix-admission` is running on a
-     frozen lane revision. These receipts must be rerun on merged `main`.
+     direct `posix-admission` passed on frozen `83e365c7c`, binding the
+     54-cell POSIX family matrix and five native aggregate components.
+     These receipts must be rerun on merged `main`.
   2. Sixteen Codex lanes resumed on 2026-09-26; `.work/tmp/lane-agents.txt`
      holds the active map, and the parent owns integration to `main`. The
      `lane/abi-closure` companion-reader refresh is integrated; its merged-source
