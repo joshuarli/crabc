@@ -3,16 +3,17 @@
  *
  * Pinned mimalloc v3.5.0 implementation of the private engine performance
  * boundary (`engine-api.h`).  Each entry is a public operation of the pinned
- * source.  `malloc` and `calloc` request the C ABI's 16-byte fundamental
- * alignment (`mi_malloc_aligned(size, 16)`, `mi_calloc_aligned`), the entry
- * crabc-libc's native adapter uses for them because the pinned small bins
- * (24, 40, 56 ... bytes) do not all guarantee it; `realloc` is `mi_realloc`,
- * as the adapter's `native_reallocate` is.  The runner compiles this unit
- * and the pinned sources separately from the fixture, never with LTO.
+ * source.  The 8-byte bin needs an explicitly aligned entry to meet the C
+ * ABI's 16-byte fundamental alignment. Every ordinary bin for requests
+ * from 9 bytes upward has an even word stride and a 16-byte aligned page
+ * start, so those calls use the ordinary source entry. `realloc` is
+ * `mi_realloc`, as the adapter's `native_reallocate` is. The runner compiles
+ * this unit and the pinned sources separately from the fixture, never with LTO.
  */
 #include "engine-api.h"
 
 #include <mimalloc.h>
+#include <stdint.h>
 
 int crabc_allocator_engine_process_init(void)
 {
@@ -34,7 +35,7 @@ int crabc_allocator_engine_thread_done(void)
 
 void *crabc_allocator_engine_malloc(size_t size)
 {
-  return mi_malloc_aligned(size, 16);
+  return (size <= 8 ? mi_malloc_aligned(size, 16) : mi_malloc(size));
 }
 
 void crabc_allocator_engine_free(void *block)
@@ -44,7 +45,9 @@ void crabc_allocator_engine_free(void *block)
 
 void *crabc_allocator_engine_calloc(size_t count, size_t size)
 {
-  return mi_calloc_aligned(count, size, 16);
+  if (size != 0 && count > SIZE_MAX / size) return NULL;
+  const size_t total = count * size;
+  return (total <= 8 ? mi_calloc_aligned(count, size, 16) : mi_calloc(count, size));
 }
 
 void *crabc_allocator_engine_realloc(void *block, size_t size)

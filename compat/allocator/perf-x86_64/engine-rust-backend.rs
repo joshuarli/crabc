@@ -4,10 +4,10 @@
 //!
 //! Every operation enters the same hidden `crabc_mimalloc::__crabc_runtime`
 //! entry point that crabc-libc's compile-time `native-mimalloc-shadow`
-//! selection uses (`libc/src/allocator_native_mimalloc.rs`): `malloc` is
-//! `native_allocate_aligned(size, 16, false)`, `calloc` zeroes through the
-//! same primitive, `realloc` is `native_reallocate`, and `free` fail-stops on
-//! any native refusal exactly like the libc adapter. Each allocating thread
+//! selection uses: `malloc` and `calloc` use the aligned entry for requests
+//! through 8 bytes and the ordinary entry above that size, `realloc` is
+//! `native_reallocate`, and `free` fail-stops on any native refusal exactly
+//! like the libc adapter. Each allocating thread
 //! therefore keeps its persistent source TLD/Theap across operations; the
 //! fixture has no route, ledger, or scheduler of its own.
 //!
@@ -28,7 +28,7 @@ use crabc_mimalloc::__crabc_runtime::{
     ThreadAttachResult,
     ThreadFinishResult, attach_current_thread, current_native_allocator_thread_descriptor,
     finish_current_thread_native_after_user_destructors, initialize_process,
-    native_allocate_aligned, native_free, native_reallocate, native_usable_size,
+    native_allocate, native_allocate_aligned, native_free, native_reallocate, native_usable_size,
     prepare_native_later_thread_arena, publish_native_process_startup_facts,
     register_current_native_allocator_worker_descriptor,
 };
@@ -126,7 +126,11 @@ pub extern "C" fn crabc_allocator_engine_thread_done() -> c_int {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn crabc_allocator_engine_malloc(size: usize) -> *mut c_void {
-    allocation(native_allocate_aligned(size, C_MALLOC_ALIGNMENT, false))
+    allocation(if size <= 8 {
+        native_allocate_aligned(size, C_MALLOC_ALIGNMENT, false)
+    } else {
+        native_allocate(size, false)
+    })
 }
 
 /// # Safety
@@ -151,7 +155,11 @@ pub extern "C" fn crabc_allocator_engine_calloc(count: usize, size: usize) -> *m
     let Some(total) = count.checked_mul(size) else {
         return null_mut();
     };
-    allocation(native_allocate_aligned(total, C_MALLOC_ALIGNMENT, true))
+    allocation(if total <= 8 {
+        native_allocate_aligned(total, C_MALLOC_ALIGNMENT, true)
+    } else {
+        native_allocate(total, true)
+    })
 }
 
 /// # Safety

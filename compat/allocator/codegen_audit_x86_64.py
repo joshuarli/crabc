@@ -89,6 +89,8 @@ class Scenario:
 
 # Regions pair consecutive int3 markers in execution order.
 SCENARIOS = (
+    Scenario("local_8", "trace_local", {"size": 8}, ("malloc", "free"), "aligned C ABI 8-byte local allocation and free"),
+    Scenario("local_9", "trace_local", {"size": 9}, ("malloc", "free"), "ordinary C ABI 9-byte local allocation and free"),
     Scenario("local_64", "trace_local", {"size": 64}, ("malloc", "free"), "initial-thread small local allocation and free"),
     Scenario("local_1024", "trace_local", {"size": 1024}, ("malloc", "free"), "initial-thread small local allocation and free"),
     Scenario("local_32768", "trace_local", {"size": 32768}, ("malloc", "free"), "initial-thread medium local allocation and free"),

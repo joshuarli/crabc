@@ -1233,6 +1233,10 @@ static void trace_local_pair(size_t size)
   TRACE_MARK();
   block = crabc_allocator_engine_malloc(size);
   TRACE_MARK();
+  if (((uintptr_t)checked(block) & 15U) != 0
+      || crabc_allocator_engine_usable_size(block) < size) {
+    die("local malloc did not satisfy C alignment or usable size");
+  }
   touch(checked(block), size, 1);
   TRACE_MARK();
   crabc_allocator_engine_free(block);
@@ -1308,8 +1312,8 @@ static int run_trace(const struct params *params)
   pthread_t thread;
   void *block;
   size_t index;
-  if (size < 16) {
-    fail("trace scenarios need size >= 16");
+  if (size == 0 || (size < 16 && strcmp(scenario, "local") != 0)) {
+    fail("trace scenario size is unsupported");
     return 64;
   }
   if (strcmp(scenario, "local") == 0) {
