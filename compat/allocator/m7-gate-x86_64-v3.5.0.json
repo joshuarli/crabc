@@ -193,6 +193,10 @@
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-fast-allocation-differential"],
       "scope": "Pinned C MI_STAT=2 and the Rust native adapter keep one block live and recycle a second block on warmed 64-byte direct, 8 KiB small-queue, and 32 KiB medium-queue pages. A measured calloc consumes the available head with no new page, search, or extension; public process snapshots compare requested bytes, allocation count, selected bin total/peak/current, owner merge, local free, zeroed contents, and stable page-bin current. Other fast allocation sizes and remote bin frees remain outside this fixture."
     },
+    "differential:statistics-os-large-stage-accounted": {
+      "command": ["python3", "compat/allocator/x86_64_m7_os_large_remote_stats_placement.py", "--offline"],
+      "scope": "Pinned C MI_STAT=2 and the Rust adapter allocate one OS-backed 86706-byte large block, remotely free it from an initialized worker, and compare all 50 non-address trace keys through owner merge, worker merge, and terminal collection. Raw warm and target VM stages and address indices remain in the receipt. Each side must charge exactly one persistent 64 KiB PageMap submap when a new 512 MiB address index first appears; the compared VM counters remove only that source-proved charge. A placement crossing two submap indices fails closed. Other large sizes and PageMap commit failures remain unproved."
+    },
     "differential:visitation-profiles": {
       "command": null,
       "scope": "Pinned-C/Rust area/block visitation traces under the debug-padding, secure, and guarded profiles."
@@ -392,6 +396,7 @@
         "differential:statistics-aligned-huge",
         "differential:statistics-requested-production",
         "differential:statistics-fast-allocation",
+        "differential:statistics-os-large-stage-accounted",
         "differential:adapter"
       ],
       "blocked_by": [

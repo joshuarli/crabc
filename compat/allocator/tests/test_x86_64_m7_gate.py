@@ -71,6 +71,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:statistics-level-two-bins",
             "differential:statistics-level-two-page-huge",
             "differential:statistics-level-two-requested",
+            "differential:statistics-os-large-stage-accounted",
             "differential:statistics-page-extend",
             "differential:statistics-page-second-extension",
             "differential:statistics-remote-bin",
