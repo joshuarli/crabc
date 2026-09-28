@@ -2217,8 +2217,13 @@ mod tests {
         order: core::sync::atomic::AtomicUsize,
         count: core::sync::atomic::AtomicUsize,
         subprocess: core::sync::atomic::AtomicPtr<crate::subproc::SubprocessIdentity>,
+        top: core::sync::atomic::AtomicPtr<crate::page_map::PageMap>,
         commit_calls: [core::sync::atomic::AtomicI64; 3],
         committed: [core::sync::atomic::AtomicI64; 3],
+        event_commit_calls: [core::sync::atomic::AtomicI64; 4],
+        event_committed: [core::sync::atomic::AtomicI64; 4],
+        event_top_count: [core::sync::atomic::AtomicUsize; 4],
+        event_registry: [core::sync::atomic::AtomicUsize; 4],
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -2239,7 +2244,7 @@ mod tests {
         if category == 0 { return; }
         warning.order.fetch_update(Ordering::AcqRel, Ordering::Acquire,
             |order| Some(order * 10 + category)).unwrap();
-        warning.count.fetch_add(1, Ordering::AcqRel);
+        let event = warning.count.fetch_add(1, Ordering::AcqRel);
         let subprocess = warning.subprocess.load(Ordering::Acquire);
         if subprocess.is_null() { return; }
         // SAFETY: the process is retained through all source warnings and
@@ -2247,11 +2252,25 @@ mod tests {
         let snapshot = unsafe { &*subprocess }.statistics().snapshot();
         warning.commit_calls[category].store(snapshot.vm.commit_calls, Ordering::Release);
         warning.committed[category].store(snapshot.vm.committed_current, Ordering::Release);
+        if event < 4 {
+            warning.event_commit_calls[event].store(snapshot.vm.commit_calls, Ordering::Release);
+            warning.event_committed[event].store(snapshot.vm.committed_current, Ordering::Release);
+            let top = warning.top.load(Ordering::Acquire);
+            if !top.is_null() {
+                // SAFETY: the process retains its PageMap owner through each
+                // synchronous warning; no terminal release overlaps it.
+                let committed = unsafe { &*top }.committed_count().unwrap();
+                warning.event_top_count[event].store(committed, Ordering::Release);
+            }
+            // SAFETY: the subprocess is live during warning delivery, and
+            // arena registration is stable on this serial process thread.
+            let registry = unsafe { &*subprocess }.arena_backing().registry().count();
+            warning.event_registry[event].store(registry, Ordering::Release);
+        }
     }
 
     #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn emit_m2_registered_arena_page_map_fault_c_rust_trace() {
+    fn registered_arena_page_map_fault_trace(double_fault: bool) {
         use crate::arena::ArenaView;
         use crate::diagnostic_output::{OutputCallback, OutputOwner};
         use crate::main_static_page::MainStaticRuntimeFirstArenaPageAllocator;
@@ -2259,7 +2278,7 @@ mod tests {
         use crate::meta::MetaAllocator;
         use std::thread;
 
-        thread::spawn(|| {
+        thread::spawn(move || {
             let entries = std::boxed::Box::leak(std::boxed::Box::new([
                 b"mimalloc_max_vabits=47\0".as_ptr().cast(),
                 b"mimalloc_pagemap_commit=0\0".as_ptr().cast(),
@@ -2276,8 +2295,13 @@ mod tests {
                 order: core::sync::atomic::AtomicUsize::new(0),
                 count: core::sync::atomic::AtomicUsize::new(0),
                 subprocess: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+                top: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
                 commit_calls: core::array::from_fn(|_| core::sync::atomic::AtomicI64::new(0)),
                 committed: core::array::from_fn(|_| core::sync::atomic::AtomicI64::new(0)),
+                event_commit_calls: core::array::from_fn(|_| core::sync::atomic::AtomicI64::new(0)),
+                event_committed: core::array::from_fn(|_| core::sync::atomic::AtomicI64::new(0)),
+                event_top_count: core::array::from_fn(|_| core::sync::atomic::AtomicUsize::new(0)),
+                event_registry: core::array::from_fn(|_| core::sync::atomic::AtomicUsize::new(0)),
             }));
             let output = std::boxed::Box::leak(std::boxed::Box::new(
                 OutputOwner::new(registered_page_map_default_output),
@@ -2344,6 +2368,7 @@ mod tests {
             let claim = first_view.try_claim_suitable_slices(first_id, 1, false, 0)
                 .expect("first exclusive arena retains one claim");
             let top = binding.page_map().page_map().unwrap();
+            warnings.top.store(core::ptr::from_ref(top).cast_mut(), Ordering::Release);
             let initial_top_committed = top.committed_count().unwrap();
             let partial_top = initial_top_committed < top.reserved_count();
             let at_fault = stats.snapshot();
@@ -2352,7 +2377,12 @@ mod tests {
             let mut allocator = MainStaticRuntimeFirstArenaPageAllocator::begin_for_process(
                 session, binding, ProcessSharedArenaStorage::test_static_owner(),
             ).expect("main source page engine begins");
-            let fault = fault::install(fault::Plan::at(fault::Point::Commit, 3, Errno::NOMEM));
+            let plan = if double_fault {
+                fault::Plan::at_pair(fault::Point::Commit, 3, fault::Point::Commit, 1, Errno::NOMEM)
+            } else {
+                fault::Plan::at(fault::Point::Commit, 3, Errno::NOMEM)
+            };
+            let fault = fault::install(plan);
             let protections = fault.capture_protection_ranges();
             let failed = allocator.allocate(crate::config::SMALL_MAX_OBJ_SIZE + 1, false);
             let (ranges, count) = protections.attempts().unwrap();
@@ -2373,6 +2403,7 @@ mod tests {
                 memid.arena_memory().is_some_and(|memory| memory.arena == second_id.as_ptr())
             });
             let fault_attempts = fault.observed();
+            let second_fault_attempts = fault.secondary_observed();
             let mut residence = 0u8;
             // SAFETY: both page-aligned arena mappings remain live while the
             // first high-level allocation and warning callbacks have returned.
@@ -2435,8 +2466,9 @@ mod tests {
             let terminal_second_gone = unsafe { crabc_core::mm::mincore_raw(
                 (16usize << 40) as *mut u8, 4096, &mut residence,
             ) } == Err(Errno::NOMEM);
-            assert_eq!(warnings.order.load(Ordering::Acquire), 12,
-                "the process-ready source warning route must preserve both fault diagnostics");
+            assert_eq!(warnings.order.load(Ordering::Acquire),
+                if double_fault { 1212 } else { 12 },
+                "the process-ready source warning route must preserve each fault diagnostic pair");
             let warning_order = warnings.order.load(Ordering::Acquire);
             let warning_count = warnings.count.load(Ordering::Acquire);
             let fields: [(&str, i64); 44] = [
@@ -2451,7 +2483,11 @@ mod tests {
                 ("mmaps_before_fault", at_fault.vm.mmap_calls - before.vm.mmap_calls),
                 ("first_returned", i64::from(failed.is_some())),
                 ("first_in_second", i64::from(first_in_second)),
-                ("faults", i64::from(fault_attempts == 4 && warning_count == 2)),
+                ("faults", if double_fault {
+                    i64::from(fault_attempts == 5 && second_fault_attempts == 2 && warning_count == 4) * 2
+                } else {
+                    i64::from(fault_attempts == 4 && warning_count == 2)
+                }),
                 ("protection_calls", count as i64),
                 ("first_protection_offset", (ranges[0].0 - (16usize << 40)) as i64),
                 ("first_protection_length", ranges[0].1 as i64),
@@ -2485,11 +2521,54 @@ mod tests {
                 ("terminal_first_gone", i64::from(terminal_first_gone)),
                 ("terminal_second_gone", i64::from(terminal_second_gone)),
             ];
-            std::println!("CRABC_M2_REGISTERED_ARENA_PAGE_MAP_FAULT_RUST_TRACE_BEGIN");
+            if double_fault {
+                std::println!("CRABC_M2_REGISTERED_ARENA_PAGE_MAP_DOUBLE_FAULT_RUST_TRACE_BEGIN");
+            } else {
+                std::println!("CRABC_M2_REGISTERED_ARENA_PAGE_MAP_FAULT_RUST_TRACE_BEGIN");
+            }
             for (field, value) in fields { std::println!("{field}={value}"); }
-            std::println!("CRABC_M2_REGISTERED_ARENA_PAGE_MAP_FAULT_RUST_TRACE_END");
+            if double_fault {
+                std::println!("third_protection_flags={}", ranges[2].2);
+                std::println!("fourth_protection_flags={}", ranges[3].2);
+                std::println!("fifth_replays_top={}", i64::from(ranges[4].0 == top_address
+                    && ranges[4].1 == ranges[2].1));
+                std::println!("fifth_protection_length={}", ranges[4].1);
+                std::println!("fifth_protection_flags={}", ranges[4].2);
+                for event in 0..4 {
+                    std::println!("warning{}_commits={}", event + 1,
+                        warnings.event_commit_calls[event].load(Ordering::Acquire) - before.vm.commit_calls);
+                }
+                for event in 0..4 {
+                    std::println!("warning{}_committed={}", event + 1,
+                        warnings.event_committed[event].load(Ordering::Acquire) - before.vm.committed_current);
+                }
+                std::println!("initial_top_count={initial_top_committed}");
+                for event in 0..4 {
+                    std::println!("warning{}_top_count={}", event + 1,
+                        warnings.event_top_count[event].load(Ordering::Acquire));
+                }
+                for event in 0..4 {
+                    std::println!("warning{}_registry={}", event + 1,
+                        warnings.event_registry[event].load(Ordering::Acquire));
+                }
+                std::println!("CRABC_M2_REGISTERED_ARENA_PAGE_MAP_DOUBLE_FAULT_RUST_TRACE_END");
+            } else {
+                std::println!("CRABC_M2_REGISTERED_ARENA_PAGE_MAP_FAULT_RUST_TRACE_END");
+            }
             core::mem::forget(owner);
         }).join().expect("isolated first-page PageMap fault child");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_registered_arena_page_map_fault_c_rust_trace() {
+        registered_arena_page_map_fault_trace(false);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_registered_arena_page_map_double_fault_c_rust_trace() {
+        registered_arena_page_map_fault_trace(true);
     }
 
     fn memory_config() -> MemoryConfig {
