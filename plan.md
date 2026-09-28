@@ -481,10 +481,15 @@ are not transferable passes for a different revision.
      tree hash to its installed manifest payload roster; rehashed tree lists
      that disagree with the manifest fail physical replay. Dynamic package
      creation and extraction bind retained bytes to the materialization state
-     before publication, and the dynamic qualification reader binds each base
+     before publication. Extraction now rejects altered modes, owner metadata,
+     member order, padding, and PAX/GNU extensions by comparing each physical
+     header with the writer's canonical USTAR encoding. The dynamic
+     qualification reader binds each base
      executable's declared DSO hash to its retained DSO bytes. Resolver and
      POSIX family readers now require the dynamic qualification receipt at
-     its owning work path, rejecting copied rehashed receipts.
+     its owning work path, rejecting copied rehashed receipts. The AIO reader
+     also rejects success output on source cancellation timeouts and requires
+     the retained installed-header trace to contain the preprocessed probe.
      The finite `aio_cancel` oracle disposition
      is integrated;
      a clean `80724223a` native OS-test replay profile-qualifies 5,395 outcome
