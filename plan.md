@@ -415,7 +415,9 @@ are not transferable passes for a different revision.
   21 source-built C/Rust statistics keys. A worker reset and local free at
   `MI_STAT=1` match 29 C/Rust state and output values; its extended `MI_STAT=2`
   payload, allocation/page bins, requested bytes, and selected output rows also
-  match, while full process output retains VM peak and Theap-count differences.
+  match. Source-faithful peak adjustment now matches the physical VM
+  reserved, committed, and process-commit peak rows. The main static Theap
+  count remains lower before worker start and across teardown.
   The prior 16 statistics evidence
   rows pass on a clean source, and the focused differentials pass; the
   source-built OS-large remote-free probe matches 35 statistics payload keys;
