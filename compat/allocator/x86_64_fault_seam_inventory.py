@@ -55,6 +55,11 @@ OS_ON_DEMAND_VALUE_KEYS = tuple(
         "mapping_length", "reserved_delta", "committed_delta", "commit_calls",
         "warning_fragments",
     )
+) + tuple(
+    f"os_area_commit_release.{field}" for field in (
+        "mapping_length", "reserved_delta", "committed_delta", "commit_calls",
+        "warning_fragments",
+    )
 )
 OS_PUBLICATION_KEYS = tuple(
     f"os_publication.{selected}.{field}" for selected in range(1, 8)
@@ -76,6 +81,12 @@ OS_PUBLICATION_KEYS = tuple(
         "single_commit_and_release", "statistics", "warning_fragments_order",
         "warning_before_statistics", "raw_cleanup",
     )
+) + tuple(
+    f"os_area_commit_release.{field}" for field in (
+        "failed_unpublished", "memory_id_range", "exact_range",
+        "single_commit_and_release", "statistics", "warning_fragments_order",
+        "warning_before_statistics", "unmapped_after_cleanup",
+    )
 )
 OS_PUBLICATION_BOUNDARY = {
     "source": "src/arena.c:781-1120,1220-1297; src/page-map.c:391-515; src/os.c:240-294",
@@ -90,6 +101,7 @@ OS_PUBLICATION_BOUNDARY = {
     "on_demand_difference": "the direct pinned OS area receiver commits only metadata, marks MemoryId committed, and charges its uncommitted page suffix on release; Rust commits a first writable prefix before publication and charges exactly that prefix",
     "on_demand_callback": "an external arena rejects one first page prefix through its source callback; its backing and free-slice ownership remain live, no OS commit statistics event occurs, and a later claim succeeds",
     "fresh_os_cleanup": "a direct fresh OS area rejects its metadata commit and cleanup unmap; the retained range and source counters remain observable, commit and free warnings arrive before the reserved decrease, and Rust retries through one raw-only owner",
+    "fresh_os_released": "a direct fresh OS area rejects its metadata commit, then successfully unmaps the exact area; only the commit warning arrives while reserved current still includes the area, and no mapping or retry owner remains",
     "excluded": "corrupted-alias provenance refusal, general metadata allocator, hardware huge/NUMA, and complete M2",
 }
 METADATA_PUBLICATION_PROFILE_DEFINE = "-DCRABC_M2_METADATA_PUBLICATION_PROFILE=1"
@@ -2271,6 +2283,11 @@ def _validate_os_on_demand_difference(c: Mapping[str, int], rust: Mapping[str, i
     if (tuple(c[cleanup(field)] for field in fields) != expected
         or tuple(rust[cleanup(field)] for field in fields) != expected):
         raise ValueError(f"fresh OS metadata/cleanup values differ: C {c} Rust {rust}")
+    released = lambda field: f"os_area_commit_release.{field}"
+    released_expected = (2 * 65536, 0, -(2 * 65536), 1, 2)
+    if (tuple(c[released(field)] for field in fields) != released_expected
+        or tuple(rust[released(field)] for field in fields) != released_expected):
+        raise ValueError(f"fresh OS metadata/release values differ: C {c} Rust {rust}")
 
 
 def validate_os_publication_report(report: Mapping[str, Any]) -> dict[str, Any]:

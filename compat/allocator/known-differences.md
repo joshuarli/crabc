@@ -2003,7 +2003,13 @@ transfer capability.
   mapping, bypasses OS commit statistics, and permits a later successful
   claim. A focused Rust failed-prefix regression proves that a failed
   protection transition cannot yield a publishable `MemoryId`; a failed
-  release retains one raw retry owner and applies statistics once. The pinned
+  release retains one raw retry owner and applies statistics once. A direct
+  fresh OS area receiver now also fails its first metadata commit while
+  `_mi_os_free` successfully unmaps the exact 131,072-byte range. Both sides
+  return no page or retry owner, emit only the commit warning prefix/body
+  before reserved current decreases, record one commit call, return reserved
+  current to baseline, and lower committed current by 131,072 bytes. The
+  released range is no longer mapped. Separately, the pinned
   direct fresh OS area also fails its first metadata commit and cleanup
   `munmap` in a separate source-bound receiver. Both sides retain the exact
   131,072-byte live mapping, record one commit call, return reserved current
@@ -2014,8 +2020,8 @@ transfer capability.
   releases only the observed range through `_mi_prim_free` after the trace.
   Rust retains one unpublished claim and retries that exact range raw, without
   another warning or statistics event. This ownership difference preserves
-  cleanup capability without changing source accounting or warning order. The pinned
-  `allocator-unit` lane passes 932 tests. The private native smoke command
+  cleanup capability without changing source accounting or warning order. The
+  focused `allocator-unit` regressions pass. The private native smoke command
   `./compat/allocator/run-x86_64.sh allocator-perf --smoke --label m2-incremental-on-demand`
   completed successfully and emitted
   `.work/allocator-x86_64/reports/allocator/x86_64/perf/m2-incremental-on-demand.json`;

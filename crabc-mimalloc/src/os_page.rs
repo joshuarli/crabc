@@ -1615,6 +1615,7 @@ mod tests {
     struct FreshOsCleanupWarnings {
         fragments: std::sync::Mutex<std::vec::Vec<std::vec::Vec<u8>>>,
         subprocess: *const crate::subproc::SubprocessIdentity,
+        reserved_at_commit_warning: AtomicI64,
         reserved_at_free_warning: AtomicI64,
     }
 
@@ -1625,10 +1626,15 @@ mod tests {
         // the exact capture and subprocess through the complete faulted call.
         let capture = unsafe { &*(argument as *const FreshOsCleanupWarnings) };
         let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
-        if bytes.starts_with(b"unable to free OS memory") {
+        if bytes.starts_with(b"cannot commit OS memory")
+            || bytes.starts_with(b"unable to free OS memory") {
             let current = unsafe { &*capture.subprocess }
                 .vm_statistics().snapshot().reserved_current;
-            capture.reserved_at_free_warning.store(current, Ordering::Release);
+            if bytes.starts_with(b"cannot commit OS memory") {
+                capture.reserved_at_commit_warning.store(current, Ordering::Release);
+            } else {
+                capture.reserved_at_free_warning.store(current, Ordering::Release);
+            }
         }
         if let Ok(mut fragments) = capture.fragments.lock() {
             fragments.push(bytes.to_vec());
@@ -1751,7 +1757,7 @@ mod tests {
         }
     }
 
-    fn fresh_os_area_metadata_commit_and_cleanup_relations() -> [i64; 5] {
+    fn fresh_os_area_metadata_commit_relations(cleanup_fails: bool) -> [i64; 5] {
         use crate::diagnostic_output::{OutputCallback, OutputOwner};
         let show_errors = b"mimalloc_show_errors=1\0";
         let max_warnings = b"mimalloc_max_warnings=100\0";
@@ -1768,6 +1774,7 @@ mod tests {
         let warnings = FreshOsCleanupWarnings {
             fragments: std::sync::Mutex::new(std::vec::Vec::new()),
             subprocess: subprocess.identity(),
+            reserved_at_commit_warning: AtomicI64::new(i64::MIN),
             reserved_at_free_warning: AtomicI64::new(i64::MIN),
         };
         // SAFETY: this test retains the capture for every synchronous
@@ -1780,27 +1787,43 @@ mod tests {
         policy.finish_preloading();
         let process = VmProcess::new(policy, subprocess);
         let before = process.subprocess().vm_statistics().snapshot();
-        let fault = fault::install(fault::Plan::at_pair(
-            fault::Point::Commit, 1, fault::Point::Unmap, 1, Errno::NOMEM));
+        let plan = if cleanup_fails {
+            fault::Plan::at_pair(fault::Point::Commit, 1,
+                fault::Point::Unmap, 1, Errno::NOMEM)
+        } else {
+            fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM)
+        };
+        let fault = fault::install(plan);
         let unmaps = fault.capture_unmap_ranges();
         let failure = OsAlignedPageClaim::allocate_for_process(
             process, config(4 * KIB), 4096, 1, crate::arena::ArenaId::none(),
         ).err().expect("metadata commit fails");
         assert_eq!(failure.error().stage(), OsAlignedPageFailureStage::MetadataCommit);
-        assert_eq!(failure.error().cleanup(), Some(Errno::NOMEM));
-        let OsAlignedPageOwner::Claim(claim) = failure.into_owner().expect("retained owner")
-            else { panic!("private claim") };
-        assert!(claim.memory_id().is_err(), "failed metadata cannot publish");
-        let base = claim.mapping.base().unwrap();
-        let length = claim.mapping.length().unwrap();
-        assert_eq!(length, 2 * ARENA_SLICE_SIZE);
-        let mut residency = 0;
-        // SAFETY: the retained claim still owns this page-aligned live range.
-        assert!(unsafe { crabc_core::mm::mincore_raw(base, 4096, &mut residency) }.is_ok());
+        assert_eq!(failure.error().cleanup(), cleanup_fails.then_some(Errno::NOMEM));
+        let owner = failure.into_owner();
+        let length = 2 * ARENA_SLICE_SIZE;
         let (ranges, count) = unmaps.all().unwrap();
-        assert_eq!(ranges[..count].iter()
-            .filter(|range| **range == (base.addr(), length)).count(), 1,
-            "one source rollback free targets the retained complete range");
+        assert!(count >= 1);
+        let (base, released_length) = ranges[count - 1];
+        assert_eq!(released_length, length,
+            "the final unmap after aligned-map setup targets the complete claim");
+        let mut residency = 0;
+        // SAFETY: `base` is the page-aligned range observed at the one source
+        // rollback unmap; the kernel query does not dereference the address.
+        let mapped = unsafe { crabc_core::mm::mincore_raw(base as *mut u8, 4096,
+            &mut residency) };
+        if cleanup_fails {
+            let Some(OsAlignedPageOwner::Claim(claim)) = owner.as_ref() else {
+                panic!("failed cleanup retains one private claim")
+            };
+            assert!(claim.memory_id().is_err(), "failed metadata cannot publish");
+            assert_eq!(claim.mapping.base().unwrap().addr(), base);
+            assert_eq!(claim.mapping.length().unwrap(), length);
+            assert!(mapped.is_ok(), "failed unmap retains the complete range");
+        } else {
+            assert!(owner.is_none(), "successful cleanup returns no retry owner");
+            assert_eq!(mapped, Err(Errno::NOMEM), "successful cleanup unmaps the range");
+        }
         let after = process.subprocess().vm_statistics().snapshot();
         assert_eq!(after.reserved_current - before.reserved_current, 0);
         assert_eq!(after.committed_current - before.committed_current, -(length as i64));
@@ -1810,22 +1833,34 @@ mod tests {
             pair[1].starts_with(b"cannot commit OS memory")
                 || pair[1].starts_with(b"unable to free OS memory")
         ).flat_map(|pair| pair.iter()).collect();
-        assert_eq!(receiver.len(), 4, "commit and cleanup each warn in two fragments: {fragments:?}");
+        assert_eq!(receiver.len(), if cleanup_fails { 4 } else { 2 },
+            "only failed source operations warn in two fragments: {fragments:?}");
         assert!(receiver[0].starts_with(b"mimalloc: warning: thread 0x"));
         assert!(receiver[1].starts_with(b"cannot commit OS memory (error: 12 (0x0C), address: 0x"));
-        assert!(receiver[2].starts_with(b"mimalloc: warning: thread 0x"));
-        assert!(receiver[3].starts_with(b"unable to free OS memory (error: 12 (0x0C), size: 0x20000 bytes, address: 0x"));
-        assert_eq!(warnings.reserved_at_free_warning.load(Ordering::Acquire),
+        assert_eq!(warnings.reserved_at_commit_warning.load(Ordering::Acquire),
             before.reserved_current + length as i64);
+        if cleanup_fails {
+            assert!(receiver[2].starts_with(b"mimalloc: warning: thread 0x"));
+            assert!(receiver[3].starts_with(b"unable to free OS memory (error: 12 (0x0C), size: 0x20000 bytes, address: 0x"));
+            assert_eq!(warnings.reserved_at_free_warning.load(Ordering::Acquire),
+                before.reserved_current + length as i64);
+        } else {
+            assert_eq!(warnings.reserved_at_free_warning.load(Ordering::Acquire), i64::MIN);
+        }
         let receiver_len = receiver.len();
         let fragments_len = fragments.len();
         drop(fragments);
         drop(unmaps);
         fault.set(fault::Plan::disabled());
-        assert!(claim.release().is_ok(), "the retained owner retries raw only");
+        if let Some(OsAlignedPageOwner::Claim(claim)) = owner {
+            assert!(claim.release().is_ok(), "the retained owner retries raw only");
+        }
         assert_eq!(process.subprocess().vm_statistics().snapshot(), after);
         assert_eq!(warnings.fragments.lock().unwrap().len(), fragments_len,
             "raw retry does not repeat a source warning");
+        // SAFETY: remove the stack-backed capture before its owner returns;
+        // later delivery through this leaked output can use only its default.
+        unsafe { output.register_output(None, core::ptr::null_mut()) };
         [length as i64, after.reserved_current - before.reserved_current,
             after.committed_current - before.committed_current,
             (after.commit_calls - before.commit_calls) as i64, receiver_len as i64]
@@ -1833,8 +1868,14 @@ mod tests {
 
     #[test]
     fn fresh_os_area_metadata_commit_and_cleanup_failure_warns_before_accounting() {
-        let values = fresh_os_area_metadata_commit_and_cleanup_relations();
+        let values = fresh_os_area_metadata_commit_relations(true);
         assert_eq!(values, [131072, 0, -131072, 1, 4]);
+    }
+
+    #[test]
+    fn fresh_os_area_metadata_commit_failure_releases_exact_range() {
+        let values = fresh_os_area_metadata_commit_relations(false);
+        assert_eq!(values, [131072, 0, -131072, 1, 2]);
     }
 
     #[test]
@@ -2209,11 +2250,17 @@ mod tests {
             std::println!("arena_on_demand.{field}={}", u8::from(value));
         }
         drop(fault);
-        let cleanup = fresh_os_area_metadata_commit_and_cleanup_relations();
+        let cleanup = fresh_os_area_metadata_commit_relations(true);
         for field in ["failed_unpublished", "memory_id_range", "leaked_range",
             "single_commit_and_release", "statistics", "warning_fragments_order",
             "warning_before_statistics", "raw_cleanup"] {
             std::println!("os_area_commit_cleanup.{field}=1");
+        }
+        let cleanup_released_values = fresh_os_area_metadata_commit_relations(false);
+        for field in ["failed_unpublished", "memory_id_range", "exact_range",
+            "single_commit_and_release", "statistics", "warning_fragments_order",
+            "warning_before_statistics", "unmapped_after_cleanup"] {
+            std::println!("os_area_commit_release.{field}=1");
         }
         std::println!("CRABC_MI_M2_OS_PUBLICATION_TRACE_END");
         std::println!("CRABC_MI_M2_OS_ON_DEMAND_VALUES_BEGIN");
@@ -2233,6 +2280,10 @@ mod tests {
         for (field, value) in ["mapping_length", "reserved_delta", "committed_delta",
             "commit_calls", "warning_fragments"].into_iter().zip(cleanup) {
             std::println!("os_area_commit_cleanup.{field}={value}");
+        }
+        for (field, value) in ["mapping_length", "reserved_delta", "committed_delta",
+            "commit_calls", "warning_fragments"].into_iter().zip(cleanup_released_values) {
+            std::println!("os_area_commit_release.{field}={value}");
         }
         std::println!("CRABC_MI_M2_OS_ON_DEMAND_VALUES_END");
     }
