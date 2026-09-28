@@ -490,6 +490,7 @@ class CodegenTests(GateFixture):
                 for region in scenario.regions:
                     observed = codegen.Region([0x1000], {})
                     summary, listing = codegen.analyze_region(self.image, observed)
+                    summary["external_vdso"] = []
                     filename = f"trace-{scenario.name}-{region}-{lane}.txt"
                     (self.artifacts / filename).write_text("\n".join(listing) + "\n", encoding="utf-8")
                     (self.artifacts / f"trace-{scenario.name}-{region}-{lane}.json").write_text(
@@ -528,6 +529,10 @@ class CodegenTests(GateFixture):
         forged, listing = self.codegen.analyze_region(self.image, self.codegen.Region([0x1000, 0x1000], {}))
         (self.artifacts / "trace-local_64-malloc-rust_engine.txt").write_text(
             "\n".join(listing) + "\n", encoding="utf-8")
+        (self.artifacts / "trace-local_64-malloc-rust_engine.json").write_text(
+            json.dumps(self.codegen.trace_record(self.image, self.codegen.Region([0x1000, 0x1000], {}))),
+            encoding="utf-8")
+        forged["external_vdso"] = []
         scenario["lanes"]["rust_engine"]["malloc"] = dict(forged, listing="trace-local_64-malloc-rust_engine.txt")
         scenario["comparison"]["malloc"] = self.codegen.compare_regions(
             scenario["lanes"]["pinned_c"]["malloc"], scenario["lanes"]["rust_engine"]["malloc"])
@@ -552,12 +557,17 @@ class CodegenTests(GateFixture):
         detail = self.evaluate_codegen(report)["detail"]
         self.assertTrue(any("lacks its retained raw trace" in item for item in detail), detail)
 
-    def test_external_clock_trace_variation_names_raw_addresses(self) -> None:
+    def clock_excursion_report(self) -> tuple[dict, object]:
+        self.image.instructions[0x1000] = self.codegen.Instruction(0x1000, "call", "*%rax", "call *%rax", None)
+        self.image.instructions[0x1002] = self.codegen.Instruction(0x1002, "test", "%eax,%eax", "test %eax,%eax", None)
         report = self.codegen_report()
         scenario = report["scenarios"]["thread_lifecycle"]
-        retained = self.codegen.Region([0x1000, 0x7F000B50, 0x1000], {})
+        retained = self.codegen.Region([0x1000, 0x7F000B50, 0x7F000B54, 0x1002], {},
+                                      self.codegen.VdsoImage(0x7F000000, 0x7F002000, "a" * 64, 0xB50))
         for lane in engine.LANES:
-            summary, listing = self.codegen.analyze_region(self.image, retained)
+            projected, spans = self.codegen.project_region(self.image, retained)
+            summary, listing = self.codegen.analyze_region(self.image, projected)
+            summary["external_vdso"] = spans
             filename = f"trace-thread_lifecycle-thread_done-{lane}"
             (self.artifacts / f"{filename}.txt").write_text("\n".join(listing) + "\n", encoding="utf-8")
             (self.artifacts / f"{filename}.json").write_text(
@@ -570,13 +580,33 @@ class CodegenTests(GateFixture):
         def replay(binary: Path, image: object, selected: object, scratch: Path, cpu: int) -> list:
             regions = [self.codegen.Region([0x1000], {}) for _ in selected.regions]
             if selected.name == "thread_lifecycle":
-                regions[1] = self.codegen.Region([0x1000, 0x7F100B50, 0x1000], {})
+                regions[1] = self.codegen.Region([0x1000, 0x7F100B50, 0x7F100B60, 0x7F100B54, 0x1002], {},
+                                                 self.codegen.VdsoImage(0x7F100000, 0x7F102000, "a" * 64, 0xB50))
             return regions
+        return report, replay
 
-        with patch.object(self.codegen, "trace_scenario", side_effect=replay):
+    def test_external_clock_variation_preserves_image_cost(self) -> None:
+        report, replay = self.clock_excursion_report()
+        with (patch.object(self.codegen, "Image", return_value=self.image),
+              patch.object(self.codegen, "trace_scenario", side_effect=replay)):
+            condition = self.evaluate_codegen(report)
+        self.assertTrue(condition["met"], condition["detail"])
+
+    def test_external_clock_target_edge_cannot_be_forged(self) -> None:
+        report, replay = self.clock_excursion_report()
+        raw = self.artifacts / "trace-thread_lifecycle-thread_done-rust_engine.json"
+        record = json.loads(raw.read_text(encoding="utf-8"))
+        record["rips"][1] = 0x7F000B60
+        record["vdso"]["clock_offset"] = 0xB60
+        record["external_vdso"][0]["target_offset"] = 0xB60
+        raw.write_text(json.dumps(record), encoding="utf-8")
+        report["scenarios"]["thread_lifecycle"]["lanes"]["rust_engine"]["thread_done"][
+            "external_vdso"][0]["target_offset"] = 0xB60
+        with (patch.object(self.codegen, "Image", return_value=self.image),
+              patch.object(self.codegen, "trace_scenario", side_effect=replay)):
             detail = self.evaluate_codegen(report)["detail"]
-        self.assertTrue(any("retained 0x7f000b50, replayed 0x7f100b50" in item
-                            and "outside the executable image" in item for item in detail), detail)
+        self.assertTrue(any("external clock boundary or image differs from replay" in item
+                            for item in detail), detail)
 
     def test_report_without_retained_codegen_products_is_refused(self) -> None:
         report = self.codegen_report()

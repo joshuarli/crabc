@@ -9,7 +9,7 @@ code two ways:
 * **Executed hot paths.** Each ``trace_*`` fixture scenario warms one
   operation to its steady state and brackets a single call with ``int3``
   markers. This runner ptrace-single-steps exactly that call and records the
-  instruction sequence it retires: per-function instruction counts, call
+  executable-image instruction sequence it retires: per-function counts, call
   transitions (non-inlined helpers), atomic read-modify-writes and fences,
   divisions, thread-pointer (``%fs``) accesses, string operations, and any
   syscall, panic, or formatting code entered.
@@ -19,15 +19,17 @@ code two ways:
   that the traced steady state did not happen to execute.
 
 The trace is user-mode machine code, independent of host throughput. It is
-structural evidence, never a throughput measurement. Raw instruction sequences
-and classified atomic targets are retained with annotated instruction listings
-beside the JSON report so a reader can replay the same executable.
+structural evidence, never a throughput measurement. Raw instruction sequences,
+classified atomic targets, and kernel clock excursions are retained beside the
+JSON report so a reader can replay the same executable and check external
+entry and return boundaries independently of host clock branch variation.
 """
 
 from __future__ import annotations
 
 import argparse
 import ctypes
+import hashlib
 import json
 import os
 import re
@@ -44,7 +46,7 @@ from typing import Any, Iterable, Mapping, Sequence
 ROOT = Path(__file__).resolve().parents[2]
 ALLOCATOR_ROOT = ROOT / "compat/allocator"
 REPORT_ROOT = ROOT / "compat/reports/allocator/x86_64/codegen-audit"
-SCHEMA = 1
+SCHEMA = 2
 KIND = "crabc-mimalloc-x86_64-codegen-audit"
 
 
@@ -354,12 +356,113 @@ def libc_ptrace():
 
 
 @dataclass
+class VdsoImage:
+    """One traced process's kernel clock image and its mapped address range."""
+
+    start: int
+    end: int
+    sha256: str
+    clock_offset: int
+
+
+@dataclass
 class Region:
     """Retired RIPs of one marker-bracketed region plus atomic targets."""
 
     rips: list[int]
     # position in `rips` -> (address, kind, stack pointer)
     atomic_targets: dict[int, tuple[int, str, int]]
+    vdso: VdsoImage | None = None
+
+
+def vdso_image(pid: int, scratch: Path) -> VdsoImage:
+    """Bind a traced clock entry to the kernel's mapped vDSO ELF image."""
+
+    mapping = [line for line in Path(f"/proc/{pid}/maps").read_text(encoding="utf-8").splitlines()
+               if line.endswith("[vdso]")]
+    if len(mapping) != 1:
+        raise HarnessError(f"traced process {pid} lacks one vDSO mapping")
+    start, end = (int(value, 16) for value in mapping[0].split()[0].split("-"))
+    with open(f"/proc/{pid}/mem", "rb", buffering=0) as memory:
+        contents = os.pread(memory.fileno(), end - start, start)
+    if len(contents) != end - start:
+        raise HarnessError("traced vDSO image is incomplete")
+    physical = scratch / f"vdso-{pid}.so"
+    physical.write_bytes(contents)
+    symbols = shared.command_record(("nm", "-D", "--defined-only", str(physical)), cwd=ROOT)
+    shared.require_success(symbols, "traced vDSO symbol inspection")
+    matches = re.findall(r"^([0-9a-f]+) [TW] __vdso_clock_gettime(?:@@\S+)?$", str(symbols["stdout"]), re.MULTILINE)
+    if len(matches) != 1:
+        raise HarnessError("traced vDSO lacks one clock_gettime entry")
+    return VdsoImage(start, end, hashlib.sha256(contents).hexdigest(), int(matches[0], 16))
+
+
+def project_region(image: Image, region: Region) -> tuple[Region, list[dict[str, Any]]]:
+    """Keep exact executable instructions and identify bounded kernel-clock calls.
+
+    The kernel vDSO mapping changes address per process and its clock path can
+    vary with host time state. Its raw instructions remain in the retained
+    trace, while the allocator-image sequence and each call boundary remain
+    exact inputs to structural comparisons.
+    """
+
+    projected: list[int] = []
+    atomic_targets: dict[int, tuple[int, str, int]] = {}
+    spans: list[dict[str, Any]] = []
+    index = 0
+    while index < len(region.rips):
+        rip = region.rips[index]
+        if rip in image.instructions:
+            if index in region.atomic_targets:
+                if not is_atomic_rmw(image.instructions[rip]):
+                    raise HarnessError(f"non-atomic instruction has a target at trace step {index}")
+                atomic_targets[len(projected)] = region.atomic_targets[index]
+            projected.append(rip)
+            index += 1
+            continue
+        vdso = region.vdso
+        if vdso is None or not vdso.start <= rip < vdso.end:
+            raise HarnessError(f"trace entered unclassified code at {rip:#x}")
+        first = index
+        while index < len(region.rips) and region.rips[index] not in image.instructions:
+            if not vdso.start <= region.rips[index] < vdso.end or index in region.atomic_targets:
+                raise HarnessError("external trace left the kernel clock image")
+            index += 1
+        if first == 0 or index == len(region.rips):
+            raise HarnessError("kernel clock excursion lacks an executable entry or return")
+        entry, returning = region.rips[first - 1], region.rips[index]
+        call = image.instructions[entry]
+        if (not is_call(call) or call.target is not None or rip - vdso.start != vdso.clock_offset
+                or image.function_at(entry) != image.function_at(returning)
+                or not entry < returning <= entry + 15):
+            raise HarnessError("external trace is not an indirect kernel clock call and return")
+        spans.append({"entry": entry, "target": "kernel-vdso-clock_gettime", "target_offset": vdso.clock_offset,
+                      "return": returning,
+                      "last_offset": region.rips[index - 1] - vdso.start, "steps": index - first})
+    if region.vdso is not None and not spans:
+        raise HarnessError("trace declares a kernel clock image without an excursion")
+    return Region(projected, atomic_targets), spans
+
+
+def projected_atomic_events(image: Image, rips: Sequence[int], events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Locate observed atomic targets within the executable-only sequence."""
+
+    by_step = {event["step"]: event["target"] for event in events}
+    if len(by_step) != len(events):
+        raise HarnessError("raw atomic trace repeats a step")
+    result = []
+    projected_step = 0
+    for step, rip in enumerate(rips):
+        if step in by_step:
+            if (rip not in image.instructions or not is_atomic_rmw(image.instructions[rip])
+                    or not isinstance(by_step[step], str)):
+                raise HarnessError(f"raw atomic trace names a non-atomic instruction at step {step}")
+            result.append({"step": projected_step, "target": by_step[step]})
+        if rip in image.instructions:
+            projected_step += 1
+    if len(result) != len(events):
+        raise HarnessError("raw atomic trace names an absent step")
+    return result
 
 
 def trace_scenario(
@@ -395,6 +498,12 @@ def trace_scenario(
     _, status = os.waitpid(child, 0)
     if not os.WIFSTOPPED(status) or os.WSTOPSIG(status) != signal.SIGTRAP:
         raise HarnessError(f"traced fixture did not stop at exec: {status:#x}")
+    try:
+        clock_image = vdso_image(child, scratch) if scenario.name == "thread_lifecycle" else None
+    except BaseException:
+        os.kill(child, signal.SIGKILL)
+        os.waitpid(child, 0)
+        raise
     call(PTRACE_SETOPTIONS, child, 0, PTRACE_O_TRACECLONE | PTRACE_O_EXITKILL)
     call(PTRACE_CONT, child, 0, 0)
     regions: list[Region] = []
@@ -444,7 +553,10 @@ def trace_scenario(
                         _, step = os.waitpid(tid, WALL)
                         if not os.WIFSTOPPED(step) or os.WSTOPSIG(step) != signal.SIGTRAP:
                             raise HarnessError(f"{scenario.name} left single-step with status {step:#x}")
-                    regions.append(Region(rips, targets))
+                    region = Region(rips, targets, clock_image if any(rip not in image.instructions for rip in rips)
+                                    else None)
+                    project_region(image, region)
+                    regions.append(region)
                 call(PTRACE_CONT, tid, 0, 0)
                 continue
             call(PTRACE_CONT, tid, 0, stop)
@@ -491,13 +603,18 @@ def classify_target(image: Image, address: int, kind: str, stack_pointer: int) -
 def trace_record(image: Image, region: Region) -> dict[str, Any]:
     """Retain the observed instruction sequence and classified atomic targets."""
 
-    return {
+    _, spans = project_region(image, region)
+    record = {
         "rips": region.rips,
         "atomic_targets": [
             {"step": step, "target": classify_target(image, address, kind, stack_pointer)}
             for step, (address, kind, stack_pointer) in sorted(region.atomic_targets.items())
         ],
+        "external_vdso": spans,
     }
+    if region.vdso is not None:
+        record["vdso"] = vars(region.vdso)
+    return record
 
 
 def analyze_region(image: Image, region: Region) -> tuple[dict[str, Any], list[str]]:
@@ -719,7 +836,9 @@ def run(arguments: argparse.Namespace) -> Path:
                 regions = trace_scenario(built["binaries"][lane], images[lane], scenario, scratch, cpu)
                 lane_regions = {}
                 for region_name, region in zip(scenario.regions, regions):
-                    summary, listing = analyze_region(images[lane], region)
+                    projected, spans = project_region(images[lane], region)
+                    summary, listing = analyze_region(images[lane], projected)
+                    summary["external_vdso"] = spans
                     listing_path = artifacts / f"trace-{scenario.name}-{region_name}-{lane}.txt"
                     listing_path.write_text("\n".join(listing) + "\n", encoding="utf-8")
                     raw_path = artifacts / f"trace-{scenario.name}-{region_name}-{lane}.json"

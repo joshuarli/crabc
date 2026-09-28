@@ -94,6 +94,18 @@ class ClassificationTests(unittest.TestCase):
 
 
 class TraceAnalysisTests(unittest.TestCase):
+    def test_kernel_clock_excursion_retains_raw_span_and_projects_image_steps(self) -> None:
+        image = FakeImage()
+        image.instructions[0x105] = instruction(0x105, "call *%rax")
+        image.instructions[0x106] = instruction(0x106, "test %eax,%eax")
+        region = audit.Region([0x105, 0x7F000B50, 0x7F000B54, 0x106], {},
+                              audit.VdsoImage(0x7F000000, 0x7F002000, "a" * 64, 0xB50))
+        projected, spans = audit.project_region(image, region)
+        self.assertEqual(projected.rips, [0x105, 0x106])
+        self.assertEqual(spans, [{"entry": 0x105, "target": "kernel-vdso-clock_gettime", "target_offset": 0xB50,
+                                  "return": 0x106, "last_offset": 0xB54, "steps": 2}])
+        self.assertEqual(audit.trace_record(image, region)["rips"], region.rips)
+
     def test_region_attributes_functions_calls_atomics_and_rep_iterations(self) -> None:
         image = FakeImage()
         rips = [0x100, 0x101, 0x105, 0x200, 0x205, 0x208, 0x10a, 0x10f, 0x300, 0x300, 0x300, 0x303]
@@ -113,6 +125,7 @@ class TraceAnalysisTests(unittest.TestCase):
                 {"step": 3, "target": "static:PROCESS_STATIC+0x40"},
                 {"step": 6, "target": "thread-local"},
             ],
+            "external_vdso": [],
         })
         self.assertEqual(sum(entry["count"] for entry in summary["divisions"]), 1)
         self.assertEqual(summary["entered_memory_helpers"], ["memset"])

@@ -332,27 +332,42 @@ def physical_codegen_unmet(path: Path, report: Mapping[str, Any], codegen: Any,
                            if key not in ("atomic_rmw_targets", "atomic_rmw_non_thread_local")):
                         unmet.append(f"codegen {scenario.name}/{region}/{lane} summary differs from its listing")
                     replayed = observed[lane][region_index]
+                    replay_source, replay_spans = codegen.project_region(images[lane], replayed)
                     raw = artifacts / f"trace-{scenario.name}-{region}-{lane}.json"
                     if raw.is_symlink() or not raw.is_file():
                         unmet.append(f"codegen {scenario.name}/{region}/{lane} lacks its retained raw trace")
                     else:
                         raw_record = json.loads(raw.read_text(encoding="utf-8"))
-                        if rips != replayed.rips:
-                            first = next((index for index, (retained, actual) in enumerate(zip(rips, replayed.rips))
-                                          if retained != actual), min(len(rips), len(replayed.rips)))
-                            if first < min(len(rips), len(replayed.rips)):
-                                retained, actual = rips[first], replayed.rips[first]
-                                external = ("; both outside the executable image"
-                                            if retained not in images[lane].instructions
-                                            and actual not in images[lane].instructions else "")
-                                difference = f"step {first}: retained {retained:#x}, replayed {actual:#x}{external}"
-                            else:
-                                difference = f"step {first}: one trace ended"
+                        retained_vdso = (codegen.VdsoImage(**raw_record["vdso"])
+                                         if "vdso" in raw_record else None)
+                        retained_source, retained_spans = codegen.project_region(
+                            images[lane], codegen.Region(raw_record["rips"], {}, retained_vdso))
+                        if rips != retained_source.rips:
+                            unmet.append(f"codegen {scenario.name}/{region}/{lane} listing differs from raw executable steps")
+                        if (raw_record.get("external_vdso") != retained_spans
+                                or summary.get("external_vdso") != retained_spans):
+                            unmet.append(f"codegen {scenario.name}/{region}/{lane} external observations differ from raw trace")
+                        if retained_source.rips != replay_source.rips:
+                            first = next((index for index, (retained, actual) in enumerate(zip(
+                                retained_source.rips, replay_source.rips)) if retained != actual),
+                                min(len(retained_source.rips), len(replay_source.rips)))
                             unmet.append(f"codegen {scenario.name}/{region}/{lane} executed trace differs from replay "
-                                         f"({difference}; {len(rips)} retained steps, {len(replayed.rips)} replayed)")
-                        if raw_record != codegen.trace_record(images[lane], replayed) and rips == replayed.rips:
+                                         f"at executable step {first}")
+                        retained_boundaries = [{key: value for key, value in span.items() if key != "steps"}
+                                               for span in retained_spans]
+                        replay_boundaries = [{key: value for key, value in span.items() if key != "steps"}
+                                             for span in replay_spans]
+                        if (retained_boundaries != replay_boundaries
+                                or (retained_vdso.sha256 if retained_vdso else None)
+                                != (replayed.vdso.sha256 if replayed.vdso else None)):
+                            unmet.append(f"codegen {scenario.name}/{region}/{lane} external clock boundary or image differs from replay")
+                        recorded_targets = codegen.projected_atomic_events(
+                            images[lane], raw_record["rips"], raw_record["atomic_targets"])
+                        replay_targets = codegen.projected_atomic_events(
+                            images[lane], replayed.rips, codegen.trace_record(images[lane], replayed)["atomic_targets"])
+                        if recorded_targets != replay_targets:
                             unmet.append(f"codegen {scenario.name}/{region}/{lane} raw atomic trace differs from replay")
-                    replay_summary, _ = codegen.analyze_region(images[lane], replayed)
+                    replay_summary, _ = codegen.analyze_region(images[lane], replay_source)
                     if (summary.get("atomic_rmw_targets") != replay_summary["atomic_rmw_targets"]
                             or summary.get("atomic_rmw_non_thread_local")
                             != replay_summary["atomic_rmw_non_thread_local"]):
