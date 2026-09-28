@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import ast
+import copy
+import importlib.util
+import sys
 import tomllib
 import unittest
 from pathlib import Path
@@ -12,6 +15,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 PROFILE_PATH = ROOT / "compat/perf/x86_64-profile.toml"
 LEGACY_RUNNER_PATH = ROOT / "compat/perf/run.py"
+PROFILE_MODULE_PATH = ROOT / "compat/perf/x86_64_profile.py"
+SPEC = importlib.util.spec_from_file_location("crabc_perf_x86_profile", PROFILE_MODULE_PATH)
+assert SPEC is not None and SPEC.loader is not None
+profile_reader = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = profile_reader
+SPEC.loader.exec_module(profile_reader)
 
 CLOCK_ROWS = {
     "clock_gettime_realtime": "0",
@@ -275,6 +284,15 @@ class NativeProfileTests(unittest.TestCase):
             self.assertGreater(row["iterations"], 0)
             self.assertIsInstance(row["argv"], list)
             self.assertIsInstance(row["geometry"], dict)
+
+    def test_completed_operation_count_matches_declared_route_geometry(self) -> None:
+        profile_reader.supplemental_rows(self.profile)
+        for index, original in enumerate(self.rows):
+            with self.subTest(row=original["id"]):
+                changed = copy.deepcopy(self.profile)
+                changed["supplemental_row"][index]["operations"] += 1
+                with self.assertRaisesRegex(profile_reader.ProfileError, "operation count"):
+                    profile_reader.supplemental_rows(changed)
 
     def test_clock_rows_are_the_ten_non_legacy_clock_ids(self) -> None:
         for row_id, clock_id in CLOCK_ROWS.items():

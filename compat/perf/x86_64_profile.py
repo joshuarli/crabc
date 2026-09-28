@@ -156,6 +156,26 @@ _LEGACY_CHECKPOINTS = {
 }
 _TLS_CHECKPOINT = "parent after each of eight loads, then worker after all TLS instances are checked before exit and dlclose"
 
+# The operation denominator describes completed route units.  Geometry carries
+# the repetition factors, so a changed count must not relabel syscall rates.
+_OPERATION_GEOMETRY = {
+    ("x86_64_clock_allocator_workload", "clock_gettime"): ("calls", ("calls",)),
+    ("x86_64_clock_allocator_workload", "live"): ("epochs", ("epochs", "allocations_per_epoch")),
+    ("x86_64_clock_allocator_workload", "refill"): ("rounds", ("rounds", "refilled_even_slots")),
+    ("x86_64_clock_allocator_workload", "worker"): (
+        "epochs_per_worker", ("workers", "epochs_per_worker", "lifetimes_per_epoch"),
+    ),
+    **{
+        ("x86_64_network_workload", mode): ("request_echo_pairs", ("request_echo_pairs",))
+        for mode in ("loopback_tcp_ipv4", "loopback_tcp_ipv6", "loopback_udp_ipv4", "loopback_udp_ipv6")
+    },
+    **{
+        ("x86_64_network_workload", mode): ("lookup_free_pairs", ("lookup_free_pairs",))
+        for mode in ("resolver_hosts", "resolver_dns_dual", "resolver_dns_tcp")
+    },
+    ("x86_64_primitive_boundary_workload", "primitive"): (None, ()),
+}
+
 
 def load_profile(root: Path) -> dict[str, Any]:
     path = root / PROFILE_RELATIVE_PATH
@@ -226,6 +246,7 @@ def supplemental_rows(profile: Mapping[str, Any]) -> tuple[SupplementalRow, ...]
         phase = item.get("observer_phase")
         loopback = item.get("requires_loopback_peer")
         resolver = item.get("requires_hermetic_resolver_files")
+        geometry = item.get("geometry")
         require(isinstance(name, str) and name and name not in names
                 and isinstance(binary, str) and binary in SUPPLEMENTAL_MEMORY_ARTIFACTS
                 and isinstance(mode, str) and mode
@@ -233,8 +254,20 @@ def supplemental_rows(profile: Mapping[str, Any]) -> tuple[SupplementalRow, ...]
                 and type(operations) is int and operations > 0
                 and isinstance(argv, list) and all(isinstance(value, str) and value for value in argv)
                 and isinstance(phase, str) and phase
-                and type(loopback) is bool and type(resolver) is bool,
+                and type(loopback) is bool and type(resolver) is bool
+                and isinstance(geometry, dict),
                 "supplemental row values differ")
+        route = _OPERATION_GEOMETRY.get((binary, mode))
+        require(route is not None, f"supplemental row route differs: {name}")
+        iteration_key, factor_keys = route
+        factors = [geometry.get(key) for key in factor_keys]
+        require(all(type(value) is int and value > 0 for value in factors)
+                and (iteration_key is None or geometry.get(iteration_key) == iterations),
+                f"supplemental row operation geometry differs: {name}")
+        expected_operations = iterations if not factors else 1
+        for factor in factors:
+            expected_operations *= factor
+        require(operations == expected_operations, f"supplemental row operation count differs: {name}")
         names.add(name)
         result.append(SupplementalRow(
             name, binary, mode, iterations, operations, tuple(argv), phase, loopback, resolver,
