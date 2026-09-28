@@ -5,6 +5,13 @@
 and two protected FILE boundary controls. `owned-stdio-alias-receipt.toml` fixes
 this roster and its five source-owner groups. The existing byte/wide stream source
 owns the runtime; this component adds no implementation or public export.
+The source-only `fopen64` spelling remains a header macro that expands to
+`fopen`. The contract probe compiles through the installed headers, retains
+the preprocessed initializer and its ordinary `fopen` object import, then
+compares the two function pointers and exercises missing-path errno plus a
+write/seek/read/reopen lifecycle through static and dynamic entry. Neither
+the probe object nor any selected libc artifact may contain an ELF `fopen64`
+symbol.
 
 `fdopen`, `fseeko`, and `ftello` share their named hidden internal bodies. Strong
 application definitions remain independent of `fopen`, `fseek`, and `ftell`.

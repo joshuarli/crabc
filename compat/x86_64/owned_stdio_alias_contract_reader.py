@@ -102,6 +102,7 @@ OWNER_GROUPS = {owner: {'source': source, 'aliases': [alias for alias, _target i
                 for owner, source, pairs in ALIAS_GROUPS}
 HIDDEN = ('__fdopen','__fseeko','__ftello')
 PROTECTED = ('__uflow','__overflow')
+FOPEN64_MACRO = {'spelling':'fopen64','target':'fopen','probe':'contract','elf_symbol':False}
 EXTRA_TOOLS = {'ar':'/usr/bin/ar','oracle_cc':'/usr/bin/gcc','oracle_as':'/usr/bin/as','oracle_ld':'/usr/bin/ld'}
 PROBES = {'contract':'owned_stdio_alias_contract_probe.c', 'override':'owned_stdio_alias_override_probe.c',
           'protected':'owned_stdio_protected_runtime_probe.c'}
@@ -194,7 +195,7 @@ def fresh_output(root, output, inputs):
 def contract(root):
     value=tomllib.loads((root/'compat/x86_64/owned-stdio-alias-receipt.toml').read_text())
     require(same(value,{'schema':SCHEMA,'aliases':ALIASES,'owner_groups':OWNER_GROUPS,
-                        'hidden':list(HIDDEN),'protected':list(PROTECTED),
+                        'hidden':list(HIDDEN),'protected':list(PROTECTED),'fopen64_macro':FOPEN64_MACRO,
                         'family_completion':False,'public_support':False}),'stdio alias source contract differs')
     return value
 
@@ -316,6 +317,11 @@ def plan(root,work,inputs,tools):
     def add(label,argv,cwd='/workspace'):specs.append({'label':label,'argv':argv,'cwd':cwd})
     for probe in PROBES:
         add(probe+'-compile',[tool('dynamic_driver'),'--dynamic-pie','-std=c11','-fno-builtin','-fno-stack-protector','-pthread','-c',path(PROBES[probe]),'-o',path(probe+'.o')])
+        if probe=='contract':
+            dynamic=root/inputs['dynamic_product']['path']
+            add('contract-preprocess',[tool('compiler'),'-nostdinc','-isystem',mount(dynamic/'usr/include'),
+                                       '-std=c11','-fno-builtin','-fno-stack-protector','-pthread',
+                                       '-E','-P',path(PROBES[probe])])
         for flag,suffix in (('-hW','header'),('-SW','sections'),('-sW','symbols')):
             add(probe+'-object-'+suffix,[tool('readelf'),flag,path(probe+'.o')])
     for name in binaries():
@@ -339,12 +345,12 @@ def plan(root,work,inputs,tools):
         argv=[tool('env'),'-i']
         if cell['entry']=='process':
             argv.append(path(name))
-            if cell['probe']=='override':argv.append(path('scratch-'+name))
+            if cell['probe'] in ('contract','override'):argv.append(path('scratch-'+name))
         else:
             argv += [ordinary.validate_chroot_invocation(tools['chroot']['invocation'],tools['chroot']['original']),path(cell['owner']+'-root')]
             if cell['entry']=='direct':argv.append('/lib/ld-musl-x86_64.so.1' if cell['owner']=='oracle' else '/lib/ld-crabc-x86_64.so.1')
             argv.append('/'+name)
-            if cell['probe']=='override':argv.append('/scratch-'+name)
+            if cell['probe'] in ('contract','override'):argv.append('/scratch-'+name)
         add(cell['label'],argv)
     return specs
 
@@ -389,6 +395,9 @@ def occurrences(facts,key,table_name):
 def account_aliases(facts):
     results={}
     for key in ('candidate-static','reference-static','candidate-shared','reference-shared'):
+        require(not any(row['row']['name']=='fopen64' for table in ('.symtab','.dynsym')
+                        for row in occurrences(facts,key,table)),
+                'fopen64 must remain a source-only alias without an ELF symbol: '+key)
         rows=occurrences(facts,key,'.symtab')
         def one(name):
             selected=[x for x in rows if x['row']['name']==name and x['row']['section_index']!='UND']
@@ -430,6 +439,19 @@ def account_aliases(facts):
                         'public FILE dynsym differs from its symtab definition: '+name)
         results[key]={'aliases':pairs,'protected':protected}
     return results
+
+def require_fopen64_macro_import(facts):
+    tables=[table for table in facts['symbol_tables'] if table['name']=='.symtab']
+    require(len(tables)==1,'fopen64 contract object symbol table differs')
+    rows=tables[0]['rows']
+    require(not any(row['name']=='fopen64' for row in rows),
+            'fopen64 contract object imports a distinct ELF symbol')
+    require(any(row['name']=='fopen' and row['section_index']=='UND'
+                for row in rows),'fopen64 contract object omits its ordinary fopen import')
+
+def require_fopen64_macro_expansion(text):
+    require(re.search(r'\bfopen_signature\s+volatile\s+alias\s*=\s*fopen\s*;',text) is not None,
+            'fopen64 header macro does not expand to ordinary fopen')
 
 def product_links(root,work,inputs,tools):
     result={}
@@ -477,11 +499,13 @@ def execution_roots(root,work,inputs):
 def observations(root,work,inputs,tools):
     facts=project_facts(root,work,inputs)
     aliases=account_aliases(facts)
+    require_fopen64_macro_expansion(raw(work,'contract-preprocess'))
     streams={x['label']:{k:ordinary.raw_path(work,x['label'],k).read_bytes() for k in ('stdout','stderr','status')} for x in runtime_cells()}
     validate_runtime_streams(streams)
     objects={}
     for probe in PROBES:
         obj=inventory.parse_elf_facts(*(raw(work,probe+'-object-'+suffix) for suffix in ('header','sections','symbols')),expected_type='REL')
+        if probe=='contract':require_fopen64_macro_import(obj)
         objects[probe]={'identity':ident(root,work/(probe+'.o')),'facts':obj}
     elfs={}
     for name in binaries():

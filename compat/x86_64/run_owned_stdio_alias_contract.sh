@@ -102,7 +102,7 @@ compile_object protected "$PROTECTED_SOURCE"
 
 run oracle-contract-link "$ORACLE_CC" -std=c11 -static -fno-pie -no-pie -pthread \
     "$WORK/contract.o" -o "$WORK/oracle-contract"
-run oracle-contract "$WORK/oracle-contract"
+run oracle-contract "$WORK/oracle-contract" "$WORK/oracle-contract-path"
 [ "$(cat "$WORK/oracle-contract.stdout")" = 'owned-stdio-alias-contract-ok' ] ||
     fail 'pinned musl alias contract transcript drifted'
 [ ! -s "$WORK/oracle-contract.stderr" ] || fail 'pinned musl alias contract emitted stderr'
@@ -129,7 +129,7 @@ same_transcript oracle-protected-kernel oracle-protected-direct
 for mode in static static-pie; do
     run "$mode-contract-link" "$STATIC_PRODUCT/bin/crabc-cc" "-$mode" -pthread \
         "$WORK/contract.o" -o "$WORK/$mode-contract"
-    run "$mode-contract" "$WORK/$mode-contract"
+    run "$mode-contract" "$WORK/$mode-contract" "$WORK/$mode-contract-path"
     same_transcript oracle-contract "$mode-contract"
 
     run "$mode-override-link" "$STATIC_PRODUCT/bin/crabc-cc" "-$mode" \
@@ -152,9 +152,9 @@ for mode in pie non-pie; do
     cp "$WORK/dynamic-$mode-contract" "$root/contract"
     cp "$WORK/dynamic-$mode-override" "$root/override"
     cp "$WORK/dynamic-$mode-protected" "$root/protected"
-    run "dynamic-$mode-contract-kernel" chroot "$root" /contract
+    run "dynamic-$mode-contract-kernel" chroot "$root" /contract /scratch/contract-kernel
     same_transcript oracle-contract "dynamic-$mode-contract-kernel"
-    run "dynamic-$mode-contract-direct" chroot "$root" "$INTERPRETER" /contract
+    run "dynamic-$mode-contract-direct" chroot "$root" "$INTERPRETER" /contract /scratch/contract-direct
     same_transcript oracle-contract "dynamic-$mode-contract-direct"
     run "dynamic-$mode-override-kernel" chroot "$root" /override /scratch/override
     same_transcript oracle-override "dynamic-$mode-override-kernel"

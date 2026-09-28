@@ -199,6 +199,38 @@ class SuppliedStdioReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(reader.StdioAliasEvidenceError,'dynsym roster'):
             reader.account_aliases(facts)
 
+    def test_distinct_fopen64_definition_cannot_count_as_source_only_alias(self):
+        import owned_stdio_alias_contract_reader as reader
+        facts=self.fixture()
+        member=facts['candidate-static'][0]
+        index=len(member['sections'])
+        member['sections'].append({'index':index,'type':'PROGBITS','flags':'AX'})
+        member['symbol_tables'][0]['rows'].append({
+            'row_index':1000,'name':'fopen64','type':'FUNC','binding':'GLOBAL',
+            'visibility':'DEFAULT','section_index':str(index),'value':'0',
+            'size_bytes':16,'version':None,'version_default':False})
+        with self.assertRaisesRegex(reader.StdioAliasEvidenceError,'fopen64.*ELF'):
+            reader.account_aliases(facts)
+
+    def test_fopen64_macro_object_imports_only_the_ordinary_fopen_symbol(self):
+        import owned_stdio_alias_contract_reader as reader
+        facts={'symbol_tables':[{'name':'.symtab','rows':[
+            {'name':'fopen','section_index':'UND'},
+        ]}]}
+        reader.require_fopen64_macro_import(facts)
+        facts['symbol_tables'][0]['rows'].append({'name':'fopen64','section_index':'UND'})
+        with self.assertRaisesRegex(reader.StdioAliasEvidenceError,'distinct ELF symbol'):
+            reader.require_fopen64_macro_import(facts)
+        facts['symbol_tables'][0]['rows'][:]=[{'name':'fopen64','section_index':'UND'}]
+        with self.assertRaises(reader.StdioAliasEvidenceError):
+            reader.require_fopen64_macro_import(facts)
+
+    def test_fopen64_macro_expands_to_the_ordinary_fopen_spelling(self):
+        import owned_stdio_alias_contract_reader as reader
+        reader.require_fopen64_macro_expansion('fopen_signature volatile alias = fopen;')
+        with self.assertRaisesRegex(reader.StdioAliasEvidenceError,'ordinary fopen'):
+            reader.require_fopen64_macro_expansion('fopen_signature volatile alias = __fopen;')
+
     def test_every_plan_uses_original_object_and_static_receipt_is_output_relative(self):
         import owned_stdio_alias_contract_reader as reader
         root=Path('/workspace');work=root/'.work/evidence'
@@ -209,6 +241,13 @@ class SuppliedStdioReceiptTests(unittest.TestCase):
         from unittest.mock import patch
         with patch.object(reader.ordinary,'validate_chroot_invocation',return_value='/usr/sbin/chroot'):
             specs=reader.plan(root,work,inputs,tools)
+        preprocess=next(spec for spec in specs if spec['label']=='contract-preprocess')
+        self.assertEqual(preprocess['argv'][:4],['/tool/compiler','-nostdinc','-isystem','/workspace/.work/dynamic/usr/include'])
+        contract_runs=[spec for spec in specs if spec['label'] in
+                       {cell['label'] for cell in reader.runtime_cells() if cell['probe']=='contract'}]
+        self.assertEqual(len(contract_runs),7)
+        for spec in contract_runs:
+            self.assertIn('scratch-',spec['argv'][-1])
         links=[x for x in specs if x['label'].endswith('-link')]
         self.assertEqual(len(links),13)
         for spec in links:

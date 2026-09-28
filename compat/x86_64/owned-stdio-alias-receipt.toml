@@ -3,6 +3,7 @@ family_completion = false
 public_support = false
 hidden = ['__fdopen', '__fseeko', '__ftello']
 protected = ['__uflow', '__overflow']
+fopen64_macro = { spelling = 'fopen64', target = 'fopen', probe = 'contract', elf_symbol = false }
 
 [aliases]
 fdopen = '__fdopen'

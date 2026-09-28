@@ -10,6 +10,7 @@
  */
 #define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
+#define _LARGEFILE64_SOURCE 1
 
 #include <errno.h>
 #include <locale.h>
@@ -18,8 +19,16 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <wchar.h>
+
+#ifndef fopen64
+#error "the large-file header must expose fopen64 as a macro"
+#endif
+typedef FILE *(*fopen_signature)(const char *, const char *);
+_Static_assert(__builtin_types_compatible_p(__typeof__(&fopen64), fopen_signature),
+               "fopen64 macro must retain the fopen function type");
 
 extern wint_t __fgetwc_unlocked(FILE *);
 extern wint_t __fputwc_unlocked(wint_t, FILE *);
@@ -355,8 +364,37 @@ static int check_write_locking(void)
     return 0;
 }
 
-int main(void)
+static int check_fopen64_macro(const char *path)
 {
+    static const char payload[] = "source-only fopen64 alias";
+    char observed[sizeof(payload)];
+    fopen_signature volatile ordinary = fopen;
+    fopen_signature volatile alias = fopen64;
+    FILE *stream;
+
+    CHECK(ordinary == alias);
+    (void)unlink(path);
+    errno = 0;
+    CHECK(alias(path, "r") == NULL && errno == ENOENT);
+    stream = alias(path, "w+");
+    CHECK(stream != NULL);
+    CHECK(fwrite(payload, 1, sizeof(payload), stream) == sizeof(payload));
+    CHECK(fseek(stream, 0, SEEK_SET) == 0);
+    CHECK(fread(observed, 1, sizeof(observed), stream) == sizeof(observed));
+    CHECK(memcmp(observed, payload, sizeof(payload)) == 0);
+    CHECK(fclose(stream) == 0);
+    stream = alias(path, "r");
+    CHECK(stream != NULL);
+    CHECK(fgetc(stream) == payload[0]);
+    CHECK(fclose(stream) == 0);
+    CHECK(unlink(path) == 0);
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    CHECK(argc == 2);
+    CHECK(check_fopen64_macro(argv[1]) == 0);
     CHECK(setlocale(LC_CTYPE, "C.UTF-8") != NULL);
     CHECK(check_alias_addresses() == 0);
     CHECK(check_default_position_aliases() == 0);
