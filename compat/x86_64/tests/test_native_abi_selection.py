@@ -1359,6 +1359,153 @@ class LinkerDynamicTableBindingTests(unittest.TestCase):
                 self.assertEqual(len(accounting['blockers']), 2)
 
 
+class CrtInitFiniBindingTests(unittest.TestCase):
+    """Strong image-local CRT fragments override inert weak libc defaults."""
+
+    NAMES = ('_init', '_fini')
+    MEMBER = 'init-fini-defaults.rcgu.o'
+    SOURCES = ['libc/src/c_abi/x86_64/init_fini_defaults.rs', 'crt/src/x86_64_crti.rs',
+               'crt/src/x86_64_crtn.rs', 'crt/src/x86_64_startup.rs',
+               'compat/x86_64/crabc_cc_static.py', 'compat/x86_64/crabc_cc_owned_dynamic.py']
+    MODES = LinkerDynamicTableBindingTests.MODES
+
+    def fixture(self):
+        rule = {'id': 'image-local-crt-init-fini', 'owner': 'crt-init-fini',
+                'members': list(self.NAMES), 'sources': self.SOURCES,
+                'reason': 'Strong executable CRT fragments resolve lifecycle calls before weak libc defaults.'}
+        hashes = {'candidate-static': 'a' * 64, 'candidate-shared': 'b' * 64,
+                  'static-crti.o': 'c' * 64, 'dynamic-crti.o': 'c' * 64,
+                  'static-crtn.o': 'd' * 64, 'dynamic-crtn.o': 'd' * 64,
+                  'static-crt1.o': '1' * 64, 'static-Scrt1.o': '2' * 64,
+                  'static-rcrt1.o': '3' * 64, 'dynamic-crt1.o': '4' * 64}
+        manifests = {'static': 'e' * 64, 'dynamic': 'f' * 64}
+        artifacts = {name: {'artifact': {'identity': {'sha256': digest}, 'elf_type': 'REL',
+                                        'binding': {'relative': 'usr/lib/' + name.split('-', 1)[1],
+                                                    'manifest': {'sha256': manifests['static' if name.startswith('static') else 'dynamic']}}}}
+                     for name, digest in hashes.items() if name.endswith(('crti.o', 'crtn.o'))}
+        companion = {'status': 'crt-startup-observed-with-boundaries',
+                     'products': {name: {'sha256': hashes[name]} for name in
+                                  ('candidate-static', 'candidate-shared', 'static-crt1.o',
+                                   'static-Scrt1.o', 'static-rcrt1.o', 'dynamic-crt1.o')},
+                     'cohort_inputs': {'static_manifest': {'sha256': manifests['static']},
+                                       'dynamic_manifest': {'sha256': manifests['dynamic']}}}
+        accounting = {'identities': [], 'occurrences': [], 'placement_joins': [], 'blockers': []}
+        index = 0
+        for name in self.NAMES:
+            ident = identity(name)
+            placements = []
+            for artifact, binding in (('candidate-static', 'WEAK'), ('candidate-shared', 'WEAK'),
+                                      ('static-crti.o', 'GLOBAL'), ('dynamic-crti.o', 'GLOBAL')):
+                placements.append({'artifact_key': artifact, 'metadata': {'type': 'FUNC', 'binding': binding,
+                                                                           'visibility': 'DEFAULT'},
+                                   'metadata_rule': 'explicit'})
+            accounting['identities'].append({'identity': ident,
+                'selection': {'disposition': 'public-provider', 'owner': 'crt-init-fini',
+                              'group': 'crt-defaults-and-fragments'},
+                'expected_placements': placements, 'unresolved': [selection.ORDINARY_IMPORT_REASON]})
+            accounting['blockers'].append({'code': 'identity-unresolved', 'identity': ident,
+                                           'reason': selection.ORDINARY_IMPORT_REASON})
+            for artifact, role, binding, section, member, table in (
+                ('candidate-static', 'definition', 'WEAK', '3', self.MEMBER, '.symtab'),
+                ('candidate-shared', 'definition', 'WEAK', '9', None, '.dynsym'),
+                ('candidate-shared', 'definition', 'WEAK', '9', None, '.symtab'),
+                ('static-crti.o', 'definition', 'GLOBAL', '3', None, '.symtab'),
+                ('dynamic-crti.o', 'definition', 'GLOBAL', '3', None, '.symtab'),
+                *[(crt, 'import', 'GLOBAL', 'UND', None, '.symtab') for crt in
+                  ('static-crt1.o', 'static-Scrt1.o', 'static-rcrt1.o', 'dynamic-crt1.o')],
+            ):
+                row = symbol(name, binding=binding, section=section,
+                             kind='NOTYPE' if role == 'import' else 'FUNC',
+                             size=0 if role == 'import' or 'crti' in artifact else 1,
+                             value='0000000000000900' if artifact == 'candidate-shared' else '0000000000000000')
+                occurrence = {'index': index, 'artifact_key': artifact, 'role': role, 'table': table,
+                              'member_name': member, 'member_occurrence': 0 if member else None,
+                              'artifact_sha256': hashes.get(artifact, artifact), 'row': row}
+                if 'crti.o' in artifact:
+                    occurrence['definition_section'] = {'name': '.' + name[1:]}
+                accounting['occurrences'].append(occurrence)
+                if role == 'definition' and table != '.symtab' or artifact != 'candidate-shared' and role == 'definition':
+                    accounting['placement_joins'].append({'identity': ident, 'artifact_key': artifact,
+                        'placement_observed': True, 'definition_count': 1, 'occurrence_indices': [index]})
+                index += 1
+        observations = {'product_relocations': {}, 'complete_elf_facts': {}, 'executables': {}}
+        for crt in ('static-crt1.o', 'static-Scrt1.o', 'static-rcrt1.o', 'dynamic-crt1.o'):
+            observations['product_relocations'][crt] = [
+                {'name': name, 'binding': 'GLOBAL', 'visibility': 'DEFAULT',
+                 'symbol_section': 0, 'symbol_type': '0',
+                 'kind': 9 if crt in ('static-Scrt1.o', 'static-rcrt1.o') else 4}
+                for name in self.NAMES]
+        link_evidence = {}
+        for mode, (linkage, _defined, dynamic) in self.MODES.items():
+            image = 'dynamic' if dynamic else 'static'
+            crti = f'/owned/{image}/usr/lib/crti.o'
+            crtn = f'/owned/{image}/usr/lib/crtn.o'
+            libc = f'/owned/{image}/usr/lib/' + ('libc.so' if dynamic else 'libc.a')
+            elf_type = ('DYN (Position-Independent Executable file)'
+                        if linkage in ('static-pie', 'pie') else 'EXEC (Executable file)')
+            rows = [symbol(name, section='3' if name == '_init' else '4', size=0,
+                           value='0000000000000900' if name == '_init' else '0000000000000a00')
+                    for name in self.NAMES]
+            tables = [{'name': '.symtab', 'rows': copy.deepcopy(rows)}]
+            if dynamic:
+                tables.append({'name': '.dynsym', 'rows': copy.deepcopy(rows)})
+            observations['complete_elf_facts'][mode] = {
+                'header': {'fields': [{'name': 'Type', 'value': elf_type}]},
+                'sections': [{'name': '.init', 'index': 3, 'address': '0000000000000900'},
+                             {'name': '.fini', 'index': 4, 'address': '0000000000000a00'}],
+                'symbol_tables': tables}
+            observations['executables'][mode] = {'identity': {'sha256': mode},
+                'needed': ['libc.so'] if dynamic else [], 'relocations': [],
+                'link': {'validated': {'linkage': linkage,
+                                       'product_manifest_sha256': manifests[image],
+                                       'executable_sha256': mode}}}
+            inputs = [{'path': path if dynamic else 'usr/lib/' + path.rsplit('/', 1)[-1],
+                       'sha256': hashes['dynamic-' + path.rsplit('/', 1)[-1]] if dynamic and path.endswith(('.o',))
+                       else hashes['static-' + path.rsplit('/', 1)[-1]] if path.endswith(('.o',))
+                       else hashes['candidate-shared' if dynamic else 'candidate-static']}
+                      for path in (crti, libc, crtn)]
+            receipt = {'input_receipts': inputs,
+                       'link_trace' if dynamic else 'owned_link_contract': [crti, libc, crtn],
+                       'output_sha256' if dynamic else 'output': mode if dynamic else {'sha256': mode},
+                       'manifest_sha256' if dynamic else 'mode': manifests[image] if dynamic else {'id': 'static-pie' if linkage == 'static-pie' else 'static-et-exec'}}
+            if dynamic:
+                receipt['mode'] = 'pie' if linkage == 'pie' else 'exec'
+            map_text = '\n'.join(
+                f'{addr} {addr} 4 1 {crti}:(.{name[1:]})\n{addr} {addr} 0 1 {name}\n{addr} {addr} 2 1 {crtn}:(.{name[1:]})'
+                for name, addr in (('_init', '900'), ('_fini', 'a00')))
+            link_evidence[mode] = {'receipt': receipt, 'map': map_text if not dynamic else None,
+                                   'trace': f'{crti}\n{crtn}\n' if not dynamic else None}
+        return rule, accounting, companion, observations, artifacts, link_evidence
+
+    def test_strong_crt_fragments_bind_both_lifecycle_imports(self):
+        rule, accounting, companion, observations, artifacts, evidence = self.fixture()
+        joins = selection.attach_crt_init_fini_imports(
+            accounting, rule, [self.MEMBER], companion, observations, artifacts, evidence)
+        self.assertEqual([row['identity']['name'] for row in joins], list(self.NAMES))
+        self.assertEqual(accounting['blockers'], [])
+
+    def test_foreign_weak_duplicate_or_misplaced_fragment_retains_pair(self):
+        cases = {
+            'weak prologue': lambda a, o, e: a['occurrences'][3]['row'].update(binding='WEAK'),
+            'duplicate import': lambda a, o, e: a['occurrences'].append({**copy.deepcopy(a['occurrences'][5]), 'index': 100}),
+            'foreign archive member': lambda a, o, e: a['occurrences'][0].update(member_name='foreign.o'),
+            'foreign link input': lambda a, o, e: e['owned-pie-normal']['receipt']['input_receipts'][0].update(sha256='x'),
+            'reordered dynamic inputs': lambda a, o, e: e['owned-pie-normal']['receipt']['link_trace'].reverse(),
+            'foreign final section': lambda a, o, e: o['complete_elf_facts']['static-normal']['sections'][0].update(address='0000000000000800'),
+            'dynamic unresolved': lambda a, o, e: o['complete_elf_facts']['owned-pie-normal']['symbol_tables'][0]['rows'][0].update(section_index='UND'),
+            'final relocation': lambda a, o, e: o['executables']['owned-non-pie-normal']['relocations'].append({'name': '_fini'}),
+            'foreign map': lambda a, o, e: e['static-normal'].update(map='foreign.o:(.init)\n'),
+            'foreign fini map': lambda a, o, e: e['static-pie-empty'].update(map=e['static-pie-empty']['map'].replace('/owned/static/usr/lib/crti.o:(.fini)', '/foreign/crti.o:(.fini)')),
+        }
+        for label, alter in cases.items():
+            with self.subTest(label=label):
+                rule, accounting, companion, observations, artifacts, evidence = self.fixture()
+                alter(accounting, observations, evidence)
+                self.assertEqual(selection.attach_crt_init_fini_imports(
+                    accounting, rule, [self.MEMBER], companion, observations, artifacts, evidence), [])
+                self.assertEqual(len(accounting['blockers']), 2)
+
+
 class CompanionRejectionTests(unittest.TestCase):
     """One rejected companion is a named blocker, never an aborted report."""
 

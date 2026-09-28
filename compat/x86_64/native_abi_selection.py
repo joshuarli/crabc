@@ -594,7 +594,8 @@ def source_path(value: str) -> Path:
 def validate_contract(value: Any) -> dict[str, Any]:
     result = exact(value, {'schema', 'target', 'inputs', 'profiles', 'owner_groups', 'structural_groups',
                            'object_contracts', 'private_protocols', 'module_private_symbols',
-                           'process_exit_static_imports', 'linker_dynamic_table', 'requirements'},
+                           'process_exit_static_imports', 'linker_dynamic_table', 'crt_init_fini_binding',
+                           'requirements'},
                    'selection contract')
     module_private = exact(result['module_private_symbols'], {'id', 'owner', 'family', 'sources', 'reason'},
                            'module-private symbol rule')
@@ -624,6 +625,19 @@ def validate_contract(value: Any) -> dict[str, Any]:
             ], 'linker dynamic table rule identity differs')
     string(linker_dynamic['reason'], 'linker dynamic table reason')
     for path in strings(linker_dynamic['sources'], 'linker dynamic table sources', empty=False):
+        source_path(path)
+    init_fini = exact(result['crt_init_fini_binding'], {'id', 'owner', 'members', 'sources', 'reason'},
+                      'CRT init/fini binding rule')
+    require(init_fini['id'] == 'image-local-crt-init-fini'
+            and init_fini['owner'] == 'crt-init-fini'
+            and init_fini['members'] == ['_init', '_fini']
+            and init_fini['sources'] == [
+                'libc/src/c_abi/x86_64/init_fini_defaults.rs', 'crt/src/x86_64_crti.rs',
+                'crt/src/x86_64_crtn.rs', 'crt/src/x86_64_startup.rs',
+                'compat/x86_64/crabc_cc_static.py', 'compat/x86_64/crabc_cc_owned_dynamic.py',
+            ], 'CRT init/fini binding rule identity differs')
+    string(init_fini['reason'], 'CRT init/fini binding reason')
+    for path in strings(init_fini['sources'], 'CRT init/fini binding sources', empty=False):
         source_path(path)
     require(result['schema'] == CONTRACT_SCHEMA and result['target'] == TARGET, 'selection schema/target changed')
     require(same(result['inputs'], INPUT_PATHS), 'selection input roster differs')
@@ -7462,6 +7476,245 @@ def attach_linker_dynamic_table(accounting: Mapping[str, Any], rule: Mapping[str
              'discharged_reasons': sorted(reasons)}]
 
 
+def _crt_init_fini_link_evidence(observations: Mapping[str, Any],
+                                 static_evidence: Mapping[str, Mapping[str, str]]) -> dict[str, dict[str, Any]]:
+    """Read the sealed final-image link receipts alongside the static maps."""
+    result = {}
+    for name in ('static-normal', 'static-empty', 'static-pie-normal', 'static-pie-empty',
+                 'owned-pie-normal', 'owned-pie-empty', 'owned-non-pie-normal', 'owned-non-pie-empty'):
+        retained = exact(observations['executables'][name]['link']['receipt'],
+                         {'path', 'sha256', 'size'}, f'{name} link receipt identity')
+        path = physical_work_path(Path(retained['path']), directory=False)
+        before = file_identity(path)
+        require(retained['path'] == str(path.relative_to(ROOT))
+                and retained['sha256'] == before['sha256'] and retained['size'] == before['size'],
+                f'{name} link receipt changed before CRT fragment binding')
+        receipt = read_json(path)
+        require(same(file_identity(path), before), f'{name} link receipt changed during CRT fragment binding')
+        result[name] = {'receipt': receipt, **static_evidence.get(name, {})}
+    return result
+
+
+def attach_crt_init_fini_imports(accounting: Mapping[str, Any], rule: Mapping[str, Any],
+                                 rust_members: Sequence[str], crt_companion: Mapping[str, Any] | None,
+                                 observations: Mapping[str, Any] | None,
+                                 artifacts: Mapping[str, Any],
+                                 link_evidence: Mapping[str, Mapping[str, Any]] | None) -> list[dict[str, Any]]:
+    """Bind executable lifecycle calls to strong CRT fragments in each image.
+
+    The archive and shared libc carry inert weak defaults. The executable's
+    directly linked prologue defines the address of each assembled .init or
+    .fini section, and its epilogue closes that section. No final image has an
+    unresolved lifecycle relocation to libc.
+    """
+    rule = exact(rule, {'id', 'owner', 'members', 'sources', 'reason'}, 'CRT init/fini binding rule')
+    require(rule['id'] == 'image-local-crt-init-fini' and rule['owner'] == 'crt-init-fini'
+            and rule['members'] == ['_init', '_fini']
+            and rule['sources'] == [
+                'libc/src/c_abi/x86_64/init_fini_defaults.rs', 'crt/src/x86_64_crti.rs',
+                'crt/src/x86_64_crtn.rs', 'crt/src/x86_64_startup.rs',
+                'compat/x86_64/crabc_cc_static.py', 'compat/x86_64/crabc_cc_owned_dynamic.py',
+            ], 'CRT init/fini binding rule differs')
+    if crt_companion is None or observations is None or link_evidence is None:
+        return []
+    products = crt_companion.get('products', {})
+    cohort = crt_companion.get('cohort_inputs', {})
+    crt_imports = ('static-crt1.o', 'static-Scrt1.o', 'static-rcrt1.o', 'dynamic-crt1.o')
+    if (crt_companion.get('status') != 'crt-startup-observed-with-boundaries'
+            or type(products) is not dict or type(cohort) is not dict
+            or not all(type(products.get(name)) is dict and type(products[name].get('sha256')) is str
+                       for name in ('candidate-static', 'candidate-shared', *crt_imports))
+            or not all(type(cohort.get(name)) is dict and type(cohort[name].get('sha256')) is str
+                       for name in ('static_manifest', 'dynamic_manifest'))):
+        return []
+    hashes = {name: products[name]['sha256'] for name in ('candidate-static', 'candidate-shared', *crt_imports)}
+    for image in ('static', 'dynamic'):
+        for name in ('crti.o', 'crtn.o'):
+            key = f'{image}-{name}'
+            artifact = artifacts.get(key, {}).get('artifact', {})
+            binding = artifact.get('binding', {})
+            if (artifact.get('elf_type') != 'REL'
+                    or binding.get('relative') != f'usr/lib/{name}'
+                    or binding.get('manifest', {}).get('sha256') != cohort[f'{image}_manifest']['sha256']
+                    or type(artifact.get('identity', {}).get('sha256')) is not str):
+                return []
+            hashes[key] = artifact['identity']['sha256']
+    if hashes['static-crti.o'] != hashes['dynamic-crti.o'] or hashes['static-crtn.o'] != hashes['dynamic-crtn.o']:
+        return []
+    records, placements, occurrences = _accounting_indexes(accounting, description='CRT init/fini imports')
+    rust = set(strings(list(rust_members), 'static Rust members', empty=False))
+    names = ('_init', '_fini')
+    source_rows = {}
+    for name in names:
+        key = (name, None, False)
+        record = records.get(key)
+        expected_artifacts = {'candidate-static': 'WEAK', 'candidate-shared': 'WEAK',
+                              'static-crti.o': 'GLOBAL', 'dynamic-crti.o': 'GLOBAL'}
+        if (record is None or record.get('unresolved') != [ORDINARY_IMPORT_REASON]
+                or record.get('selection', {}).get('disposition') != 'public-provider'
+                or record['selection'].get('owner') != rule['owner']
+                or record['selection'].get('group') != 'crt-defaults-and-fragments'
+                or len(record.get('expected_placements', [])) != 4
+                or {row.get('artifact_key'): row.get('metadata', {}).get('binding')
+                    for row in record['expected_placements']} != expected_artifacts):
+            return []
+        rows = [row for row in occurrences.values() if row.get('role') != 'unnamed'
+                and identity_key(row_identity(row['row'])) == key
+                and not row['artifact_key'].startswith('reference-')]
+        by_artifact: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            by_artifact.setdefault(row['artifact_key'], []).append(row)
+        if (len(rows) != 9 or set(by_artifact) != {*expected_artifacts, *crt_imports}
+                or any(len(by_artifact[artifact]) != count for artifact, count in {
+                    'candidate-static': 1, 'candidate-shared': 2,
+                    'static-crti.o': 1, 'dynamic-crti.o': 1,
+                    **{crt: 1 for crt in crt_imports},
+                }.items())):
+            return []
+        definitions = {}
+        for artifact, binding in expected_artifacts.items():
+            candidates = by_artifact[artifact]
+            selected = next((row for row in candidates if row['table'] ==
+                             ('.dynsym' if artifact == 'candidate-shared' else '.symtab')), None)
+            placement = placements.get((key, artifact))
+            if (selected is None or placement is None or placement.get('placement_observed') is not True
+                    or placement.get('definition_count') != 1
+                    or placement.get('occurrence_indices') != [selected['index']]
+                    or selected['role'] != 'definition'
+                    or selected.get('artifact_sha256') != hashes[artifact]
+                    or selected['row']['type'] != 'FUNC' or selected['row']['binding'] != binding
+                    or selected['row']['visibility'] != 'DEFAULT'
+                    or selected['row']['size_bytes'] != (0 if 'crti' in artifact else 1)
+                    or not re.fullmatch(r'[1-9][0-9]*', selected['row'].get('section_index', ''))):
+                return []
+            if artifact == 'candidate-static' and (selected['member_name'] not in rust
+                                                    or selected['member_occurrence'] != 0):
+                return []
+            if artifact != 'candidate-static' and selected['member_name'] is not None:
+                return []
+            if 'crti' in artifact and selected.get('definition_section', {}).get('name') != '.' + name[1:]:
+                return []
+            definitions[artifact] = selected
+        shared = by_artifact['candidate-shared']
+        if ({row['table'] for row in shared} != {'.dynsym', '.symtab'}
+                or not all(row['role'] == 'definition' and row['row']['binding'] == 'WEAK'
+                           and row.get('artifact_sha256') == hashes['candidate-shared'] for row in shared)
+                or not same_definition_domain(shared[0], shared[1])):
+            return []
+        for crt in crt_imports:
+            imported = by_artifact[crt][0]
+            if (imported['role'] != 'import' or imported['table'] != '.symtab'
+                    or imported.get('artifact_sha256') != hashes[crt]
+                    or imported['row']['section_index'] != 'UND'
+                    or imported['row']['type'] != 'NOTYPE' or imported['row']['size_bytes'] != 0
+                    or imported['row']['binding'] != 'GLOBAL' or imported['row']['visibility'] != 'DEFAULT'):
+                return []
+            relocations = observations.get('product_relocations', {}).get(crt, [])
+            matching = [row for row in relocations if row.get('name') == name]
+            kind = 9 if crt in ('static-Scrt1.o', 'static-rcrt1.o') else 4
+            if (not matching or not all(row.get('kind') == kind and row.get('symbol_section') == 0
+                                        and row.get('symbol_type') == '0'
+                                        and row.get('binding') == 'GLOBAL'
+                                        and row.get('visibility') == 'DEFAULT' for row in matching)):
+                return []
+        source_rows[name] = (record, definitions)
+    modes = {
+        'static-normal': ('static', 'static'), 'static-empty': ('static', 'static'),
+        'static-pie-normal': ('static-pie', 'static'), 'static-pie-empty': ('static-pie', 'static'),
+        'owned-pie-normal': ('pie', 'dynamic'), 'owned-pie-empty': ('pie', 'dynamic'),
+        'owned-non-pie-normal': ('non-pie', 'dynamic'), 'owned-non-pie-empty': ('non-pie', 'dynamic'),
+    }
+    facts = observations.get('complete_elf_facts', {})
+    executables = observations.get('executables', {})
+    if (type(facts) is not dict or type(executables) is not dict or set(link_evidence) != set(modes)):
+        return []
+    for mode, (linkage, image) in modes.items():
+        elf, executable = facts.get(mode), executables.get(mode)
+        if type(elf) is not dict or type(executable) is not dict:
+            return []
+        dynamic = image == 'dynamic'
+        link = executable.get('link', {}).get('validated', {})
+        if (link.get('linkage') != linkage
+                or link.get('product_manifest_sha256') != cohort[f'{image}_manifest']['sha256']
+                or link.get('executable_sha256') != executable.get('identity', {}).get('sha256')
+                or executable.get('needed') != (['libc.so'] if dynamic else [])
+                or any(row.get('name') in names for row in executable.get('relocations', []))):
+            return []
+        receipt = link_evidence[mode].get('receipt', {})
+        inputs = receipt.get('input_receipts', [])
+        if type(inputs) is not list:
+            return []
+        for basename, artifact in (('crti.o', f'{image}-crti.o'), ('crtn.o', f'{image}-crtn.o'),
+                                   ('libc.so' if dynamic else 'libc.a',
+                                    'candidate-shared' if dynamic else 'candidate-static')):
+            matching = [row for row in inputs if row.get('path', '').endswith('/' + basename)]
+            if len(matching) != 1 or matching[0].get('sha256') != hashes[artifact]:
+                return []
+        order = receipt.get('link_trace' if dynamic else 'owned_link_contract', [])
+        if type(order) is not list or not all(type(item) is str for item in order):
+            return []
+        ordered_inputs = []
+        for basename in ('crti.o', 'libc.so' if dynamic else 'libc.a', 'crtn.o'):
+            matched = [(index, path) for index, path in enumerate(order) if path.endswith('/' + basename)]
+            if len(matched) != 1:
+                return []
+            ordered_inputs.append(matched[0])
+        if [index for index, _path in ordered_inputs] != sorted(index for index, _path in ordered_inputs):
+            return []
+        if dynamic:
+            if (receipt.get('manifest_sha256') != cohort['dynamic_manifest']['sha256']
+                    or receipt.get('output_sha256') != executable['identity']['sha256']
+                    or receipt.get('mode') != ('pie' if linkage == 'pie' else 'exec')):
+                return []
+        elif (receipt.get('output', {}).get('sha256') != executable['identity']['sha256']
+              or receipt.get('mode', {}).get('id') != ('static-pie' if linkage == 'static-pie' else 'static-et-exec')):
+            return []
+        sections = {row.get('name'): row for row in elf.get('sections', [])}
+        tables = elf.get('symbol_tables', [])
+        for name in names:
+            section = sections.get('.' + name[1:])
+            rows = [(table.get('name'), row) for table in tables for row in table.get('rows', [])
+                    if row.get('name') == name]
+            if (type(section) is not dict or len(rows) != (2 if dynamic else 1)
+                    or {table for table, _row in rows} != ({'.symtab', '.dynsym'} if dynamic else {'.symtab'})
+                    or not all(row.get('type') == 'FUNC' and row.get('binding') == 'GLOBAL'
+                               and row.get('visibility') == 'DEFAULT' and row.get('size_bytes') == 0
+                               and row.get('section_index') == str(section.get('index'))
+                               and row.get('value') == section.get('address') for _table, row in rows)):
+                return []
+            if not dynamic:
+                evidence = link_evidence[mode]
+                if type(evidence.get('trace')) is not str or type(evidence.get('map')) is not str:
+                    return []
+                member = source_rows[name][1]['candidate-static']['member_name']
+                if member in evidence['trace'] or member in evidence['map']:
+                    return []
+                mapped = evidence['map'].splitlines()
+                prologue, epilogue = ordered_inputs[0][1], ordered_inputs[2][1]
+                trace = evidence['trace'].splitlines()
+                if trace.count(prologue) != 1 or trace.count(epilogue) != 1:
+                    return []
+                crti_lines = [(i, line) for i, line in enumerate(mapped[:-1])
+                              if line.endswith(f'{prologue}:(.{name[1:]})')]
+                if (len(crti_lines) != 1
+                        or not mapped[crti_lines[0][0] + 1].strip().endswith(' ' + name)
+                        or int(crti_lines[0][1].split()[0], 16) != int(section['address'], 16)
+                        or sum(line.endswith(f'{epilogue}:(.{name[1:]})') for line in mapped) != 1):
+                    return []
+    joins = []
+    for name in names:
+        record, definitions = source_rows[name]
+        _remove_identity_requirements(accounting, record, [ORDINARY_IMPORT_REASON],
+                                      description=f'CRT {name} image-local binding')
+        joins.append({'identity': copy.deepcopy(record['identity']), 'owner': rule['owner'],
+                      'weak_static_occurrence_index': definitions['candidate-static']['index'],
+                      'weak_shared_occurrence_index': definitions['candidate-shared']['index'],
+                      'static_crti_occurrence_index': definitions['static-crti.o']['index'],
+                      'dynamic_crti_occurrence_index': definitions['dynamic-crti.o']['index'],
+                      'final_modes': sorted(modes), 'discharged_reasons': [ORDINARY_IMPORT_REASON]})
+    return joins
+
+
 def attach_native_crt_descriptor_handoff(accounting: Mapping[str, Any],
                                          companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     """Discharge only the current main-image descriptor transport evidence.
@@ -10730,10 +10983,17 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     libc_start_main_import_joins = attach_libc_start_main_imports(
         accounting, crt_startup_companion, archive_map['static_rust_members'], crt_observations,
     )
+    static_crt_link_evidence = (_crt_dynamic_link_evidence(crt_observations)
+                                if crt_observations is not None else None)
     linker_dynamic_table_joins = attach_linker_dynamic_table(
         accounting, contract['linker_dynamic_table'], archive_map['static_rust_members'],
-        crt_startup_companion, crt_observations,
-        _crt_dynamic_link_evidence(crt_observations) if crt_observations is not None else None,
+        crt_startup_companion, crt_observations, static_crt_link_evidence,
+    )
+    crt_init_fini_import_joins = attach_crt_init_fini_imports(
+        accounting, contract['crt_init_fini_binding'], archive_map['static_rust_members'],
+        crt_startup_companion, crt_observations, accounting['artifacts'],
+        _crt_init_fini_link_evidence(crt_observations, static_crt_link_evidence)
+        if crt_observations is not None and static_crt_link_evidence is not None else None,
     )
     # The RuntimeV1 lifecycle join pairs the CRT and prepared-worker receipts;
     # its rejection names the pairing rather than either component.
@@ -10888,6 +11148,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'crt_descriptor_handoff_joins': crt_descriptor_handoff_joins,
             'libc_start_main_import_joins': libc_start_main_import_joins,
             'linker_dynamic_table_joins': linker_dynamic_table_joins,
+            'crt_init_fini_import_joins': crt_init_fini_import_joins,
             'runtimev1_descriptor_lifecycle_joins': runtimev1_descriptor_lifecycle_joins,
             'syscall_alias_contract_companion': syscall_alias_contract_companion,
             'syscall_alias_contract_joins': syscall_alias_contract_joins,

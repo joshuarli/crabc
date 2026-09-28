@@ -924,6 +924,14 @@ owner = "elf-linker"
 sources = ["libc/src/c_abi/x86_64/static_dl_iterate_phdr.rs", "compat/x86_64/crabc_cc_static.py", "compat/x86_64/crabc_cc_owned_dynamic.py"]
 reason = "Final ELF linker defines its own .dynamic start or leaves a weak static reference null."
 
+# The executable's strong fragments resolve lifecycle calls within that image.
+[crt_init_fini_binding]
+id = "image-local-crt-init-fini"
+owner = "crt-init-fini"
+members = ["_init", "_fini"]
+sources = ["libc/src/c_abi/x86_64/init_fini_defaults.rs", "crt/src/x86_64_crti.rs", "crt/src/x86_64_crtn.rs", "crt/src/x86_64_startup.rs", "compat/x86_64/crabc_cc_static.py", "compat/x86_64/crabc_cc_owned_dynamic.py"]
+reason = "Strong executable CRT fragments resolve lifecycle calls before weak libc defaults."
+
 [[structural_groups]]
 id = "loader-entry-stages"
 members = ["__dls2b", "__dls3", "_dlstart"]
