@@ -206,13 +206,36 @@ pub(crate) unsafe fn child_heap_allocate(
     size: usize,
     zero: bool,
 ) -> Result<Option<NonNull<u8>>, HeapAllocateError> {
+    // SAFETY: forwarded child Heap and owner obligations.
+    unsafe { child_heap_allocate_variant(child, member, binding, heap, size, None, zero) }
+}
+
+/// The offset-aligned forms of a child Heap allocation use the same Theap
+/// selected for an ordinary request from that Heap.
+///
+/// # Safety
+/// As for [`child_heap_allocate`]; `aligned` is a valid source alignment and
+/// offset pair.
+pub(crate) unsafe fn child_heap_allocate_variant(
+    child: &mut ChildMainHeapContextOwner<'_>,
+    member: &mut ChildThreadMember,
+    binding: ProcessMainBackingBinding,
+    heap: NonNull<Heap>,
+    size: usize,
+    aligned: Option<(usize, usize)>,
+    zero: bool,
+) -> Result<Option<NonNull<u8>>, HeapAllocateError> {
     let owner = member.owner_mut();
     // SAFETY: forwarded current-thread and exclusion obligations.
     let theap = unsafe { owner.heap_theap(child, binding, heap) }.map_err(HeapAllocateError::Theap)?;
     let owner: *mut ChildThreadOwner = owner;
     // SAFETY: as above; neither pointer is otherwise borrowed for the call.
     unsafe {
-        ChildThreadOwner::with_heap_theap_page_engine(owner, child, binding, theap, |engine| engine.allocate(size, zero))
+        ChildThreadOwner::with_heap_theap_page_engine(owner, child, binding, theap, |engine| match aligned {
+            None => engine.allocate(size, zero),
+            Some((alignment, offset)) if zero => engine.allocate_aligned_zeroed_at(size, alignment, offset),
+            Some((alignment, offset)) => engine.allocate_aligned_at(size, alignment, offset),
+        })
     }
     .map_err(HeapAllocateError::PageEngine)
 }

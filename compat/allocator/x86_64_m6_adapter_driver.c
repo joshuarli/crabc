@@ -1,13 +1,12 @@
-/* Shared C driver for the allocator M6 adapter differential.
+/* Shared C driver for the Heap and subprocess adapter differential.
 
    The same unmodified source is linked once against the pinned mimalloc
    v3.5.0 release sources (`src/static.c`) and once against the native Rust
    adapter (`native-mi-adapter/`), and each binary runs as its own process
-   with an empty environment. It calls only public `mimalloc.h` entries: the
-   first-class Heap and OS-reservation entries of M6, plus the M4 free and
-   M7 output/error/statistics entries it needs to observe them. It prints
-   address-free `key=value` facts, so the two traces must be identical.
-   Driven by `compat/allocator/x86_64_m6_adapter.py`. */
+   with an empty environment. It calls only public `mimalloc.h` entries:
+   Heap and OS-reservation operations, plus free, output, error, and
+   statistics entries needed to observe them. It prints address-free
+   `key=value` facts, so the two traces must be identical. */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE 1
 #endif
@@ -41,7 +40,7 @@ static void capture(const char* message, void* argument) {
 static char thread_text[40];
 
 /* Messages print as hex with the initial thread's `0x<tid>` replaced by
-   `0xTID`, as the M7 adapter driver prints them. */
+   `0xTID`, so address variation cannot affect the comparison. */
 static void print_messages(const char* key) {
   printf("%s=", key);
   const size_t thread_length = strlen(thread_text);
@@ -458,6 +457,7 @@ static int visit(mi_subproc_id_t subproc, int limit, bool* result) {
 
 static mi_subproc_id_t child;
 static int child_facts[12];
+static int child_heap_variants[5];
 
 static void* child_worker(void* argument) {
   (void)argument;
@@ -471,6 +471,21 @@ static void* child_worker(void* argument) {
   child_facts[3] = h != NULL && h != mi_heap_main();
   void* q = mi_heap_malloc(h, 64);
   child_facts[4] = q != NULL;
+  unsigned char* dirty = (unsigned char*)mi_heap_malloc(h, 73);
+  memset(dirty, 0x5a, 73);
+  mi_free(dirty);
+  unsigned char* z = (unsigned char*)mi_heap_zalloc(h, 73);
+  child_heap_variants[0] = z != NULL && zeroed(z, 73) && mi_heap_of(z) == h;
+  unsigned char* c = (unsigned char*)mi_heap_calloc(h, 4, 23);
+  child_heap_variants[1] = c != NULL && zeroed(c, 92) && mi_heap_of(c) == h;
+  void* a = mi_heap_malloc_aligned(h, 73, 64);
+  child_heap_variants[2] = a != NULL && ((uintptr_t)a % 64) == 0 && mi_heap_of(a) == h;
+  unsigned char* at = (unsigned char*)mi_heap_zalloc_aligned_at(h, 73, 128, 7);
+  child_heap_variants[3] = at != NULL && (((uintptr_t)at + 7) % 128) == 0
+                           && zeroed(at, 73) && mi_heap_of(at) == h;
+  unsigned char* ca = (unsigned char*)mi_heap_calloc_aligned_at(h, 4, 23, 64, 5);
+  child_heap_variants[4] = ca != NULL && (((uintptr_t)ca + 5) % 64) == 0
+                           && zeroed(ca, 92) && mi_heap_of(ca) == h;
   child_facts[11] = mi_heap_of(q) == h && mi_heap_contains(h, q)
                  && !mi_heap_contains(NULL, q) && mi_any_heap_contains(q);
   bool ok;
@@ -482,6 +497,11 @@ static void* child_worker(void* argument) {
   mi_subproc_add_current_thread(child);
   child_facts[9] = mi_subproc_current()._mi_subproc_id == child._mi_subproc_id;
   mi_free(q);
+  mi_free(z);
+  mi_free(c);
+  mi_free(a);
+  mi_free(at);
+  mi_free(ca);
   mi_heap_delete(h);
   child_facts[10] = visit(child, 0, NULL);
   return NULL;
@@ -531,6 +551,8 @@ static void subproc_section(void) {
   for (int i = 0; i < 11; i++) printf("%s%d", i == 0 ? "" : ",", child_facts[i]);
   printf("\n");
   printf("subproc.child.membership=%d\n", child_facts[11]);
+  printf("subproc.child.heap_variants=%d,%d,%d,%d,%d\n", child_heap_variants[0], child_heap_variants[1],
+         child_heap_variants[2], child_heap_variants[3], child_heap_variants[4]);
   mi_subproc_destroy(child);
   mi_stats_t after = stats_now();
   printf("subproc.child.destroyed.threads=%lld\n", (long long)(after.threads.total - before.threads.total));

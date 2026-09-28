@@ -1134,6 +1134,22 @@ pub(crate) unsafe fn native_child_heap_allocate(
     heap: core::ptr::NonNull<crate::types::Heap>,
     size: usize,
 ) -> Option<Option<core::ptr::NonNull<u8>>> {
+    // SAFETY: forwarded Heap and current-thread obligations.
+    unsafe { native_child_heap_allocate_variant(heap, size, None, false) }
+}
+
+/// The zeroing and offset-aligned forms of the current child's Heap
+/// allocation, after the source entry has checked alignment.
+///
+/// # Safety
+/// `heap` is a live non-main Heap of the current thread's child; `aligned`
+/// contains a valid power-of-two alignment and its source offset.
+pub(crate) unsafe fn native_child_heap_allocate_variant(
+    heap: core::ptr::NonNull<crate::types::Heap>,
+    size: usize,
+    aligned: Option<(usize, usize)>,
+    zero: bool,
+) -> Option<Option<core::ptr::NonNull<u8>>> {
     // SAFETY: current-thread slot, no other reference live.
     let current = unsafe { current_child_member() }.as_mut()?;
     let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
@@ -1144,7 +1160,7 @@ pub(crate) unsafe fn native_child_heap_allocate(
     // SAFETY: forwarded; the record lock excludes every other context operation.
     let allocated = unsafe {
         id.with_owner(|child| match child.as_mut() {
-            Some(child) => crate::types::heap_registry::lifecycle::child_heap_allocate(child, member, binding, heap, size, false)
+            Some(child) => crate::types::heap_registry::lifecycle::child_heap_allocate_variant(child, member, binding, heap, size, aligned, zero)
                 .ok()
                 .flatten(),
             None => None,

@@ -21,8 +21,7 @@
 //! Each function is the source entry of the same `mi_` name. A Heap is the
 //! source `mi_heap_t*`, passed as an opaque pointer. A calling thread of the
 //! process main subprocess uses `subproc::main_heaps`; a thread admitted to a
-//! child subprocess uses that child's Heap lifecycle, whose allocation is the
-//! plain `mi_heap_malloc` form only. As in [`crate::source_api`], each
+//! child subprocess uses that child's Heap lifecycle. As in [`crate::source_api`], each
 //! allocation reports the errno effect of its source path as data.
 //!
 //! Not provided: an exclusive-arena Heap (`mi_heap_new_in_arena` with an
@@ -125,11 +124,12 @@ unsafe fn heap_allocate(heap: *mut c_void, size: usize, request: Request, zero: 
         }
     }
     let block = if crate::subproc::lifecycle::current_thread_is_child_member() {
-        match (request, zero) {
-            // SAFETY: forwarded Heap contract.
-            (Request::Plain, false) => unsafe { crate::subproc::lifecycle::native_child_heap_allocate(heap, size) }.flatten(),
-            _ => None,
-        }
+        let aligned = match request {
+            Request::Plain => None,
+            Request::Aligned { alignment, offset } => Some((alignment, offset)),
+        };
+        // SAFETY: forwarded Heap contract.
+        unsafe { crate::subproc::lifecycle::native_child_heap_allocate_variant(heap, size, aligned, zero) }.flatten()
     } else {
         let aligned = match request {
             Request::Plain => None,
