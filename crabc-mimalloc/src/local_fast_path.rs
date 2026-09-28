@@ -237,9 +237,8 @@ pub(crate) unsafe fn free(
     if owner != current_thread || page_theap != theap.as_ptr() {
         return false;
     }
-    if used == 0 {
-        return false;
-    }
+    // An exact live block implies `used > 0`; source `mi_free_block_local`
+    // decrements this count without a separate preflight.
     if used == 1 && retire_expire == 0 {
         // SAFETY: this is the same owner-local page and exact live block;
         // the preflight below leaves the page untouched if it cannot retain.
