@@ -29,9 +29,9 @@ are not transferable passes for a different revision.
   waits on 15 planned prerequisite families and 43 selected-private
   capabilities. `compat.abi-differential` reads all its evidence rows from one
   published set (`abi-differential-evidence assemble`); only the selection
-  closure stays unmet: a clean `d713e5e89` pinned-image assembly named 569
-  blockers (551 identities, 17 unadmitted families, one missing semantic
-  receipt) after binding the owned `__errno_location` static imports; all
+  closure stays unmet: a clean `20bc2b75b` pinned-image assembly named 568
+  blockers (550 identities, 17 unadmitted families, one missing semantic
+  receipt) after binding the owned `__stack_chk_fail` static import; all
   18 companions were accepted. `libc.c-abi-compat` now runs a physical same-cohort
   text/math/locale/stdio family admission; its retained receipt is still
   pending on the final candidate revision. `consumer.rust-std-lto` and
@@ -114,11 +114,13 @@ are not transferable passes for a different revision.
   publication, PageMap, terminal-release, and failed-unmap relations. A
   separate second-arena EIO purge regression now matches all 19 fields,
   including the pinned decommit warning and its callback order.
-  A failed second-arena MADV_FREE reset regression matches 20 of 23 fields;
-  its remaining three fields isolate the missing reset warning.
+  A failed second-arena MADV_FREE reset regression now matches all 23 fields,
+  including warning text and callback order.
   A failed second-arena committed-slice claim and same-slice retry match 24
   C/Rust fields after the regular mapping uses the warning-preserving commit
   path; two additional pinned-C fields bind the attempted `mprotect` range.
+  Failed second-arena reservation and retry match 25 more C/Rust fields,
+  including registry, warning sequence, claim survival, and terminal release.
   Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). On an idle host the development engine harness
