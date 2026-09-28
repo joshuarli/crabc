@@ -57,6 +57,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:show-errors-profile",
             "differential:startup-page-map-failure",
             "differential:statistics",
+            "differential:statistics-huge",
             "differential:statistics-json",
             "differential:statistics-level-one",
             "differential:statistics-level-one-output-merge",
@@ -293,6 +294,23 @@ class M7GateContractTests(unittest.TestCase):
             gate.require_statistics_page_extend({**trace, "allocated.page_committed": "0,0,0"}, "missing bytes")
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_page_extend({**trace, "allocated.pages_extended": "0"}, "missing event")
+
+    def test_statistics_huge_requires_source_built_producer(self) -> None:
+        summary = self.validate()
+        statistics = self.gate_record(self.contract, "m7.statistics")
+        self.assertIn("differential:statistics-huge", statistics["evidence"])
+        self.assertIn("differential:statistics-huge", summary["runnable_evidence"])
+
+    def test_statistics_huge_reader_rejects_lost_nonlocal_free(self) -> None:
+        trace = {"profile.level": "1", "allocation.usable": "589824",
+                 "allocated.huge": "589824,589824,589824", "allocated.huge_count": "1",
+                 "allocated.normal": "0", "freed.huge": "589824,589824,0",
+                 "freed.huge_count": "1"}
+        gate.require_statistics_huge(trace, "complete")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_huge({**trace, "freed.huge": "589824,589824,589824"}, "lost free")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_huge({**trace, "allocated.huge_count": "0"}, "lost event")
 
     def test_default_artifact_reader_rejects_changed_build_or_cpu(self) -> None:
         with harness.temporary_directory("m7-baseline-reader-") as name:

@@ -6768,6 +6768,21 @@ impl Theap {
         self.statistics.malloc_normal_freed(block_size);
     }
 
+    /// Records a successfully fresh huge page before its single block is
+    /// popped, using the page's physical block size.
+    #[cfg(feature = "mi-stat-1")]
+    #[inline]
+    pub(crate) fn record_malloc_huge_allocated(&self, block_size: usize) {
+        self.statistics.malloc_huge_allocated(block_size);
+    }
+
+    /// Records `mi_stat_free` for a huge page before the free transition.
+    #[cfg(feature = "mi-stat-1")]
+    #[inline]
+    pub(crate) fn record_malloc_huge_freed(&self, block_size: usize) {
+        self.statistics.malloc_huge_freed(block_size);
+    }
+
     /// Records the current Theap's page release while a field-scoped exit
     /// collector owns its queues. The statistics tail uses relaxed atomics and
     /// is disjoint from the collector's queue, count, and Heap-link fields.

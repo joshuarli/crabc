@@ -38231,6 +38231,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             let Some(page) = self.allocate_fresh_page(block_size, kind) else {
                 return Ok(None);
             };
+            #[cfg(feature = "mi-stat-1")]
+            {
+                // `mi_huge_page_alloc` records the fresh page before the
+                // singleton block is popped or its queue becomes full.
+                let physical_size = unsafe { page.as_ref().block_size() };
+                self.session.theap().record_malloc_huge_allocated(physical_size);
+            }
             self.push_regular_page(bin, page);
             let block = self
                 .pop_or_extend(page, zero)
@@ -40004,6 +40011,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         #[cfg(feature = "mi-stat-1")]
         if block_size <= LARGE_MAX_OBJ_SIZE {
             self.session.theap().record_malloc_normal_freed(block_size);
+        } else {
+            self.session.theap().record_malloc_huge_freed(block_size);
         }
         #[cfg(not(feature = "mi-stat-1"))]
         let _ = block_size;
@@ -42230,6 +42239,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         };
         if let Err(error) = preflight {
             return Err(FreeError::InvalidBlock(error));
+        }
+        #[cfg(feature = "mi-stat-1")]
+        {
+            // `mi_stat_free` runs before the selected abandoned singleton's
+            // remote publication and uses its physical page block size.
+            let physical_size = unsafe { page.as_ref().block_size() };
+            self.session.theap().record_malloc_huge_freed(physical_size);
         }
         // SAFETY: the caller retained the exact source-abandoned singleton
         // and canonical live block. The helper performs the only legal

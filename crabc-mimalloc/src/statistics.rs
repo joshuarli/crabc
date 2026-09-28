@@ -914,6 +914,25 @@ impl HeapTheapStatistics {
         }
     }
 
+    /// Pinned `mi_huge_page_alloc` records the physical page block size and
+    /// one huge-page allocation immediately after the fresh page succeeds.
+    #[inline]
+    pub(crate) fn malloc_huge_allocated(&self, block_size: usize) {
+        if STAT_LEVEL > 0 {
+            self.malloc_huge.update_owner_local(bytes_to_i64(block_size));
+            self.malloc_huge_count.increase_owner_local(1);
+        }
+    }
+
+    /// Pinned `mi_stat_free` subtracts the physical huge-page block size from
+    /// the current free Theap while retaining the allocation count and peak.
+    #[inline]
+    pub(crate) fn malloc_huge_freed(&self, block_size: usize) {
+        if STAT_LEVEL > 0 {
+            self.malloc_huge.update_owner_local(-bytes_to_i64(block_size));
+        }
+    }
+
     /// Seeds synthetic owner records for a direct merge and final-output
     /// comparison. No allocation producer calls this test-only path.
     #[cfg(all(test, feature = "mi-stat-1"))]
