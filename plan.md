@@ -284,7 +284,9 @@ are not transferable passes for a different revision.
   seventeen runnable M6 evidence rows pass on clean `b2fd43160`.
   A public main-process caller-owned external arena matches thirteen
   source-built C/Rust lifecycle keys across registration, selection, allocation,
-  and caller-held terminal unmap; child subprocess ownership remains open.
+  and caller-held terminal unmap. A child-subprocess external arena now matches
+  eighteen C/Rust registration, selection, and caller-held release keys; the
+  clean M6 gate passes all seventeen runnable rows.
   All ten required gates
   remain blocked by 10 named missing API and lifetime evidence entries;
   accumulated mixed-workload main-Heap page-population parity remains unproved.
