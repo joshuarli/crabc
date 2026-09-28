@@ -175,18 +175,47 @@ assert_fixture_tls_capacity() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort timeout; do require_tool "$tool"; done
+require_tool python3
+if ! python3 -B - "$ROOT_DIR" "${TMPDIR:-}" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+raw = sys.argv[2]
+temporary = Path(raw) if raw else Path('.')
+work = root / '.work'
+if (not raw or not temporary.is_absolute() or '..' in temporary.parts
+        or not temporary.is_dir() or not work.is_dir()
+        or temporary.resolve(strict=True) != temporary
+        or work.resolve(strict=True) != work
+        or temporary == work or not temporary.is_relative_to(work)):
+    raise SystemExit(1)
+PY
+then
+    fail "TMPDIR must be a physical checkout .work directory"
+fi
+for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sha256sum sort timeout; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d "/tmp/crabc-x86-64-libc-stdio-${EVIDENCE_PROFILE}.XXXXXX")"
-trap 'rm -rf -- "$work_dir"' EXIT
+work_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-libc-stdio-${EVIDENCE_PROFILE}.XXXXXX")"
+trap 'chmod -R a+rX "$work_dir"' EXIT
+printf 'x86 static crabc-libc %s evidence: %s\n' "$EVIDENCE_LABEL" "$work_dir"
 target_dir="$work_dir/cargo-target"; archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-stdio-reference"; candidate="$work_dir/crabc-static-stdio-candidate"
 trace="$work_dir/header-trace"; archive_symbols="$work_dir/archive-symbols"; selected_symbols="$work_dir/selected-c-abi-symbols"
 expected_symbols="$work_dir/expected-c-abi-symbols"; symbols="$work_dir/candidate-symbols"; headers="$work_dir/candidate-program-headers"
 dynamic="$work_dir/candidate-dynamic"; relocs="$work_dir/candidate-relocations"; disassembly="$work_dir/candidate-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"; archive_relocs="$work_dir/archive-relocations"
+
+capture_fixture() {
+    local name="$1" status=0
+    shift
+    timeout --foreground "$EXECUTION_TIMEOUT" "$@" \
+        >"$work_dir/$name.stdout" 2>"$work_dir/$name.stderr" || status=$?
+    printf '%s\n' "$status" >"$work_dir/$name.status"
+    [ "$status" -eq 0 ]
+}
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
@@ -200,7 +229,7 @@ for header in "${project_headers[@]}"; do
 done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" "$FIXTURE_SOURCE" -o "$reference"
-timeout --foreground "$EXECUTION_TIMEOUT" "$reference" ||
+capture_fixture oracle "$reference" ||
     fail "pinned-musl ${EVIDENCE_LABEL} fixture failed"
 
 build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
@@ -410,10 +439,21 @@ if [ "$EVIDENCE_PROFILE" = fixed-suppressed-count-scan ]; then
     grep -Fq 'zero-assignment suppressed count' "$ROOT_DIR/$FIXTURE_SOURCE" ||
         fail "suppressed-count fixture no longer records its assignment boundary"
 fi
-if timeout --foreground "$EXECUTION_TIMEOUT" "$candidate"; then
+sha256sum "$archive" "$archive.source-runtime.json" "$reference" "$candidate" \
+    "$ROOT_DIR/$FIXTURE_SOURCE" "$ROOT_DIR/$START_SOURCE" \
+    "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" \
+    "$ROOT_DIR/compat/x86_64/run_libc_stdio_format_scan.sh" \
+    >"$work_dir/source-product.sha256"
+if capture_fixture candidate "$candidate"; then
     :
 else
-    status=$?
+    status="$(cat "$work_dir/candidate.status")"
     fail "freestanding ${EVIDENCE_LABEL} fixture failed with status ${status}"
 fi
+for stream in status stdout stderr; do
+    cmp "$work_dir/oracle.$stream" "$work_dir/candidate.$stream" ||
+        fail "${EVIDENCE_LABEL} ${stream} differs from pinned musl"
+done
+sha256sum -c "$work_dir/source-product.sha256" >/dev/null ||
+    fail "${EVIDENCE_LABEL} source or product changed during replay"
 printf 'x86 static crabc-libc %s: PASS\n' "$EVIDENCE_LABEL"
