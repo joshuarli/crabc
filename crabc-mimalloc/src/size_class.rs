@@ -22,6 +22,7 @@ use crate::bits;
 use crate::config::{
     BIN_HUGE, LARGE_MAX_OBJ_SIZE, LARGE_MAX_OBJ_WSIZE, MAX_ALLOC_SIZE,
     MEDIUM_MAX_OBJ_SIZE, PADDING_SIZE, PAGE_MAX_OVERALLOC_ALIGN, SMALL_MAX_OBJ_SIZE,
+    WORD_SIZE,
 };
 use crate::invariants;
 use crate::types::{PageKind, BIN_BLOCK_SIZES};
@@ -65,22 +66,34 @@ pub(crate) const fn wsize_from_size(size: usize) -> Option<usize> {
 /// selection; sizes above `MI_LARGE_MAX_OBJ_WSIZE` use the huge queue.
 #[inline]
 pub(crate) const fn bin(size: usize) -> Option<usize> {
-    let mut wsize = match wsize_from_size(size) {
+    let wsize = match wsize_from_size(size) {
         Some(value) => value,
         None => return None,
     };
+    Some(bin_from_wsize(wsize))
+}
 
+/// The block size of an initialized regular page is an exact machine-word
+/// multiple from the queue table, so its bin does not need request rounding.
+#[inline]
+pub(crate) const fn bin_for_regular_page_block_size(block_size: usize) -> usize {
+    debug_assert!(block_size != 0 && block_size % WORD_SIZE == 0);
+    bin_from_wsize(block_size / WORD_SIZE)
+}
+
+#[inline]
+const fn bin_from_wsize(mut wsize: usize) -> usize {
     if wsize <= 8 {
-        return Some(if wsize <= 1 { 1 } else { (wsize + 1) & !1 });
+        return if wsize <= 1 { 1 } else { (wsize + 1) & !1 };
     }
     if wsize > LARGE_MAX_OBJ_WSIZE {
-        return Some(BIN_HUGE);
+        return BIN_HUGE;
     }
 
     wsize -= 1;
     let highest_bit = usize::BITS as usize - 1 - bits::clz(wsize);
     let bin = ((highest_bit << 2) + ((wsize >> (highest_bit - 2)) & 0x03)) - 3;
-    Some(bin)
+    bin
 }
 
 /// Port of `_mi_bin_size`.
@@ -286,6 +299,14 @@ mod tests {
             usize::MAX,
         ] {
             assert_eq!(bin(size), reference_bin(size), "size edge {size}");
+        }
+    }
+
+    #[test]
+    fn regular_page_block_sizes_use_the_same_bins_as_byte_requests() {
+        for &block_size in BIN_BLOCK_SIZES.iter().filter(|&&size| size > 0 && size <= LARGE_MAX_OBJ_SIZE) {
+            assert_eq!(block_size % WORD_SIZE, 0, "block size {block_size}");
+            assert_eq!(Some(bin_for_regular_page_block_size(block_size)), bin(block_size));
         }
     }
 
