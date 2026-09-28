@@ -255,5 +255,72 @@ class OrdinaryAbortImportAttachmentTests(unittest.TestCase):
                     selection._attach_ordinary_static_import(accounting, companion, "abort")
 
 
+def fputs_fixture() -> tuple[dict, dict]:
+    accounting, companion = abort_fixture()
+    name = "fputs"
+    ident = selection.identity(name)
+    accounting["identities"][0]["identity"] = ident
+    accounting["blockers"][0]["identity"] = ident
+    for placement in accounting["placement_joins"]:
+        placement["identity"] = ident
+    for row in accounting["occurrences"]:
+        row["row"]["name"] = name
+        row["row"]["raw_name"] = name
+    claim = companion["account"]["c_runtime_imports"]["imports"][0]
+    claim["name"] = name
+    for field in ("static_rust_provider", "shared_dynsym_provider", "shared_symtab_provider"):
+        claim[field]["name"] = name
+    projection = companion["ordinary_import_resolutions"].pop("abort")
+    companion["ordinary_import_resolutions"][name] = projection
+    for item in projection["importers"]:
+        item["import"]["name"] = name
+    for mode in ("static", "static-pie"):
+        projection["static_final_links"][mode]["importers"][1][
+            "resolved_calls"][0]["branch_kind"] = "tail-jump"
+    projection["shared_final"]["importers"][1]["calls"][0][
+        "branch_kind"] = "tail-jump"
+    return accounting, companion
+
+
+class OrdinaryFputsImportAttachmentTests(unittest.TestCase):
+    def test_got_call_and_c_tail_branch_join_one_provider(self) -> None:
+        accounting, companion = fputs_fixture()
+        joins = selection._attach_ordinary_static_import(accounting, companion, "fputs")
+        self.assertEqual([join["identity"]["name"] for join in joins], ["fputs"])
+        self.assertEqual(len(joins[0]["import_occurrence_indices"]), 2)
+        self.assertEqual(accounting["blockers"], [])
+
+    def test_foreign_or_duplicate_importer_provider_and_branch_reject(self) -> None:
+        for mutation in ("foreign-import", "duplicate-import", "weak-provider",
+                         "duplicate-provider", "foreign-tail-target", "missing-rust-got-call",
+                         "foreign-shared-target"):
+            with self.subTest(mutation=mutation):
+                accounting, companion = fputs_fixture()
+                projection = companion["ordinary_import_resolutions"]["fputs"]
+                if mutation == "foreign-import":
+                    accounting["occurrences"][0]["member_name"] = "foreign.o"
+                elif mutation == "duplicate-import":
+                    extra = deepcopy(accounting["occurrences"][0])
+                    extra["index"] = 101
+                    accounting["occurrences"].append(extra)
+                elif mutation == "weak-provider":
+                    accounting["occurrences"][2]["row"]["binding"] = "WEAK"
+                elif mutation == "duplicate-provider":
+                    extra = deepcopy(accounting["occurrences"][2])
+                    extra["index"] = 101
+                    accounting["occurrences"].append(extra)
+                elif mutation == "foreign-tail-target":
+                    projection["static_final_links"]["static"]["importers"][1][
+                        "resolved_calls"][0]["target_address"] += 1
+                elif mutation == "missing-rust-got-call":
+                    projection["static_final_links"]["static-pie"]["importers"][0][
+                        "resolved_calls"] = []
+                else:
+                    projection["shared_final"]["importers"][1]["calls"][0][
+                        "target_address"] += 1
+                with self.assertRaises(selection.SelectionError):
+                    selection._attach_ordinary_static_import(accounting, companion, "fputs")
+
+
 if __name__ == "__main__":
     unittest.main()

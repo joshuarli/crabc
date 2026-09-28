@@ -61,9 +61,14 @@ PUBLIC_WEAK_WORKLOAD = ("#define _GNU_SOURCE\n#include <sys/timeb.h>\n#include <
 ERRNO_IMPORT_NAME = "__errno_location"
 ERRNO_WORKLOAD = ("#include <stdlib.h>\n#include <stdio.h>\n#include <wchar.h>\n"
                   "#include <assert.h>\n"
-                  "#ifdef CRABC_STATIC_ABORT_PROBE\nextern void *mi_new(size_t);\n#endif\n"
+                  "#ifdef CRABC_STATIC_ORDINARY_IMPORT_PROBE\n"
+                  "extern void *mi_new(size_t);\n"
+                  "extern void _mi_prim_out_stderr(const char *);\n#endif\n"
                   "int main(int argc, char **argv) { (void)argv; assert(argc >= 1);\n"
-                  "#ifdef CRABC_STATIC_ABORT_PROBE\nif (argc == 1000) free(mi_new(1));\n#endif\n"
+                  "#ifdef CRABC_STATIC_ORDINARY_IMPORT_PROBE\n"
+                  "if (argc == 1000) free(mi_new(1));\n"
+                  "if (argc == 1001) { puts(\"x\"); _mi_prim_out_stderr(\"x\"); }\n"
+                  "#endif\n"
                   "char *end; int decimal = 0, wide = 0; "
                   "volatile double value = strtod(\"3.25e2\", &end); "
                   "if (sscanf(\"7\", \"%d\", &decimal) != 1) return 1; "
@@ -1093,11 +1098,12 @@ def _ordinary_final_member_calls(image: bytes, *, archive_member: str,
         if kind == "R_X86_64_PLT32":
             call_address = int(parts[0], 16) + offset - 1
             opcode = _public_weak_virtual_bytes(image, call_address, 5, elf_type, executable=True)
-            require(opcode[0] == 0xe8, f"ordinary {name} direct-call opcode differs")
+            require(opcode[0] in (0xe8, 0xe9), f"ordinary {name} direct-branch opcode differs")
             target = call_address + 5 + struct.unpack_from("<i", opcode, 1)[0]
-            require(target == provider_address, f"ordinary {name} call resolves to a foreign provider")
+            require(target == provider_address, f"ordinary {name} branch resolves to a foreign provider")
             call = {"section": section, "offset": offset, "call_address": call_address,
-                    "target_address": target}
+                    "target_address": target,
+                    "branch_kind": "call" if opcode[0] == 0xe8 else "tail-jump"}
         else:
             require(kind == "R_X86_64_GOTPCREL", f"ordinary {name} source call form differs")
             call_address = int(parts[0], 16) + offset - 2
@@ -1187,11 +1193,12 @@ def _ordinary_shared_caller_calls(image: bytes, symbol_text: str, relocations: s
         require(size > 0, f"ordinary {name} shared caller is empty: {function}")
         body = _public_weak_virtual_bytes(image, address, size, 3, executable=True)
         for offset in range(size):
-            if offset + 5 <= size and body[offset] == 0xe8:
+            if offset + 5 <= size and body[offset] in (0xe8, 0xe9):
                 target = address + offset + 5 + struct.unpack_from("<i", body, offset + 1)[0]
                 if target == provider_address:
                     calls.append({"function": function, "call_address": address + offset,
-                                  "target_address": target})
+                                  "target_address": target,
+                                  "branch_kind": "call" if body[offset] == 0xe8 else "tail-jump"})
             if offset + 6 <= size and body[offset:offset + 2] == b"\xff\x15":
                 slot = address + offset + 6 + struct.unpack_from("<i", body, offset + 2)[0]
                 try:
@@ -1205,7 +1212,8 @@ def _ordinary_shared_caller_calls(image: bytes, symbol_text: str, relocations: s
                                        re.MULTILINE)) == 1,
                         f"ordinary {name} shared GOT relocation differs")
                 calls.append({"function": function, "call_address": address + offset,
-                              "got_slot": slot, "target_address": target})
+                              "got_slot": slot, "target_address": target,
+                              "branch_kind": "indirect-call"})
     require(calls, f"ordinary {name} shared importer has no provider call")
     return calls
 
@@ -2025,7 +2033,7 @@ def _errno_links(output: Path, static_product: Path, dynamic_product: Path) -> d
             "errno installed-header compilation failed")
     static_object = work / "static-workload.o"
     static_compile = [str(physical_file(dynamic_product / "bin/crabc-cc-dynamic", "ordinary installed compiler")),
-                      "--dynamic-pie", "-std=c11", "-fno-builtin", "-DCRABC_STATIC_ABORT_PROBE",
+                      "--dynamic-pie", "-std=c11", "-fno-builtin", "-DCRABC_STATIC_ORDINARY_IMPORT_PROBE",
                       "-c", mounted_path(source), "-o", mounted_path(static_object)]
     completed = subprocess.run(static_compile, cwd=work, env=workload_environment(output),
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)

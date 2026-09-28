@@ -111,6 +111,32 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
             BOUNDARY._ordinary_final_member_calls(
                 bytes(image), relocation_text=relocation.replace("1080", "1090"), **kwargs)
 
+    def test_ordinary_plt32_tail_branch_resolves_selected_provider(self) -> None:
+        image = bytearray(0x200)
+        image[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<H", image, 16, 2)
+        struct.pack_into("<Q", image, 32, 64)
+        struct.pack_into("<HH", image, 54, 56, 1)
+        struct.pack_into("<IIQQQQ", image, 64, 1, 5, 0x100, 0x1000, 0, 0x100)
+        image[0x110] = 0xe9
+        struct.pack_into("<i", image, 0x111, 0x1080 - 0x1015)
+        member = "/workspace/current/libc.a(importer.o)"
+        kwargs = {
+            "archive_member": member,
+            "source_calls": [{"section": ".text.writer", "offset": 1,
+                              "kind": "R_X86_64_PLT32"}],
+            "map_text": f"1010 1010 20 1 {member}:(.text.writer)",
+            "relocation_text": "", "provider_address": 0x1080,
+            "elf_type": 2, "name": "fputs",
+        }
+        linked = BOUNDARY._ordinary_final_member_calls(bytes(image), **kwargs)
+        self.assertEqual(linked["resolved_calls"][0]["target_address"], 0x1080)
+        self.assertEqual(linked["resolved_calls"][0]["branch_kind"], "tail-jump")
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "foreign provider"):
+            BOUNDARY._ordinary_final_member_calls(bytes(image), **{
+                **kwargs, "provider_address": 0x1090,
+            })
+
     def test_public_weak_import_relocations_keep_c_and_rust_call_forms_distinct(self) -> None:
         c = ("Relocation section '.rela.text.clock' at offset 0x100 contains 1 entry:\n"
              "0000000000000001  0000000100000004 R_X86_64_PLT32 0000000000000000 clock_gettime - 4\n")

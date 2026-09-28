@@ -5482,6 +5482,11 @@ def native_c_allocator_boundary_adapter(report_path: Path | None, *, facts: Mapp
             dynamic_product=paths['dynamic_product'], elf_facts_report=paths['elf_report'],
             name='abort',
         )
+        fputs_import_resolution = native_c_allocator_boundary.ordinary_import_resolution(
+            report, report_path=report_path, static_product=paths['static_product'],
+            dynamic_product=paths['dynamic_product'], elf_facts_report=paths['elf_report'],
+            name='fputs',
+        )
     except (KeyError, TypeError, ValueError, OSError, native_c_allocator_boundary.AllocatorBoundaryError) as error:
         raise SelectionError(f'native C allocator errno import resolution rejected: {error}') from error
     selected_products = {
@@ -5510,7 +5515,8 @@ def native_c_allocator_boundary_adapter(report_path: Path | None, *, facts: Mapp
         'private_vm_resolution': private_vm_resolution,
         'public_weak_resolution': public_weak_resolution,
         'ordinary_import_resolutions': {'__errno_location': errno_import_resolution,
-                                        'abort': abort_import_resolution},
+                                        'abort': abort_import_resolution,
+                                        'fputs': fputs_import_resolution},
         'limits': list(C_ALLOCATOR_BOUNDARY_LIMITS),
     }
 
@@ -8984,7 +8990,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
     component reader. The errno accessor additionally retains its FS/TLS
     address proof; other ordinary functions have no such storage claim.
     """
-    require(name in {'__errno_location', 'abort'}, 'ordinary import identity differs')
+    require(name in {'__errno_location', 'abort', 'fputs'}, 'ordinary import identity differs')
     companion = exact(companion, {
         'status', 'reader', 'contract', 'report', 'source', 'source_inputs', 'products',
         'measurement_reports', 'account', 'private_vm_resolution',
@@ -9026,7 +9032,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                 and type(item['shared_caller_functions']) is list
                 and item['shared_caller_functions'],
                 'ordinary archive importer evidence differs')
-        if name == 'abort':
+        if name in {'abort', 'fputs'}:
             kind = ('R_X86_64_PLT32' if member['member_index'] == c_member['member_index']
                     else 'R_X86_64_GOTPCREL')
             require(all(type(call) is dict and set(call) == {'section', 'offset', 'kind'}
@@ -9142,7 +9148,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                                calls + linked['discarded_calls']) ==
                         sorted((call['section'], call['offset']) for call in source_item['source_calls']),
                     f'ordinary {mode} importer final calls differ')
-            if name == 'abort':
+            if name in {'abort', 'fputs'}:
                 kinds = {(call['section'], call['offset']): call['kind']
                          for call in source_item['source_calls']}
                 require(all((type(call.get('got_slot')) is int and call['got_slot'] > 0)
@@ -9166,10 +9172,10 @@ def attach_ordinary_static_imports(accounting: Mapping[str, Any],
     if companion is None:
         return []
     resolutions = companion.get('ordinary_import_resolutions')
-    require(type(resolutions) is dict and set(resolutions) == {'__errno_location', 'abort'},
+    require(type(resolutions) is dict and set(resolutions) == {'__errno_location', 'abort', 'fputs'},
             'ordinary import resolution roster differs')
     joins = []
-    for name in ('__errno_location', 'abort'):
+    for name in ('__errno_location', 'abort', 'fputs'):
         joins.extend(_attach_ordinary_static_import(accounting, companion, name))
     return joins
 

@@ -336,14 +336,24 @@ The same ordinary-import attachment also accounts for `abort`. The archive has
 one Rust `__assert_fail` caller with a `GOTPCREL` call and the fixed C allocator
 member with `PLT32` calls. The retained installed-header workload selects both
 members with a static-only `mi_new` call; the dynamic object omits that
-non-exported allocator entry. The reader maps each source relocation to its selected ET_EXEC and
-static-PIE section, decodes direct calls or GOT slots, and requires the unique
+non-exported allocator entry. The reader maps each source relocation to its
+selected ET_EXEC and static-PIE section, decodes direct calls or GOT slots, and requires the unique
 owned Rust `abort` provider as the final target. It also checks matching
 source-named calls in shared libc, its two provider symbol rows, and absence
 of an implementation import in the dynamic executables. Archive occurrence
 accounting rejects added or foreign callers and weak, missing, or duplicate
 providers. This joins the ordinary import/provider boundary; termination and
 signal behavior remain separate runtime obligations.
+
+The same selected static workload also retains the two `fputs` importers:
+Rust `puts` calls through a GOT slot, and the fixed C allocator's stderr
+transport uses a `PLT32` tail jump. A static-only call selects the private C
+transport; the dynamic workload omits it because it is not a shared export.
+The reader checks each archive relocation against the final executable's
+instruction and provider address, including the static-PIE GOT relocation.
+Shared libc retains the Rust GOT call and C tail jump to its sole global
+`fputs` provider in both symbol tables. Occurrence accounting rejects foreign
+or duplicate importers/providers before the ordinary-import reason is removed.
 
 `--utmpx-receipt-report REPORT` is independently optional. Its owning
 process-free reader reconstructs the retained eight selected aliases and
