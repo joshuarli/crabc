@@ -175,7 +175,7 @@ impl ProcessArenaBacking {
                     // Source passes still_committed=true even for reserved
                     // arenas. The OS memid retains the full reservation size.
                     let size = mapping.length().expect("preflight validated live mapping");
-                    if mapping.unmap_for_process(process.project(), size, false).is_err() {
+                    if mapping.unmap_for_process_with_warning(process.project(), size, false, true).is_err() {
                         destroyed.failures[slot_index] = Some(FailedArenaRelease::Regular(mapping));
                     }
                 }
