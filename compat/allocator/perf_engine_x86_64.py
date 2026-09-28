@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Native x86-64 allocator engine development performance measurements.
 
-This runner builds one source-shared C workload fixture
-(``perf-x86_64/engine-fixture.c``) twice, each time linked with exactly one
-opaque backend behind ``perf-x86_64/engine-api.h``:
+This runner builds one source-shared C workload fixture twice, each time
+linked with exactly one opaque allocator backend:
 
 * ``pinned_c``: the SHA-256-verified pinned mimalloc v3.5.0 C source;
 * ``rust_engine``: crabc-mimalloc's persistent per-thread source owners
@@ -16,9 +15,8 @@ randomized pair order. Every raw batch record (wall ns and allocator calls),
 process rusage, and /proc memory snapshot is retained in the JSON report with
 source, toolchain, host, load, and artifact provenance.
 
-``--set architecture`` measures the rows behind plan.md's early architecture
-sanity check (single-thread Rust/C throughput and independent four-worker
-scaling); ``--set matrix`` measures the complete equivalent workload/memory
+``--set architecture`` measures single-thread Rust/C throughput and independent four-worker
+scaling; ``--set matrix`` measures the complete equivalent workload/memory
 matrix. Every timed row records throughput, the per-process p99 batch cost
 (the slow-batch tail), the exec image's peak RSS (``VmHWM`` read at a
 ptrace exit stop) and its peak-state PSS, read while the fixture holds its
@@ -35,8 +33,7 @@ it under the documented ``UNCONTENDED_*`` thresholds. A report records no
 gate verdict. ``validate_qualified_full_report`` decides whether one report
 is a qualified full report (``--full --set matrix``, every row measured, a
 clean sealed checkout, an uncontended host) by recomputing everything from
-the raw data; the ``allocator-m9`` gate and ``performance.release`` consume
-it.
+the raw data; release qualification consumes its result.
 """
 
 from __future__ import annotations
@@ -232,6 +229,34 @@ def expected_batches(row: Mapping[str, Any], batch_divisor: int) -> int:
     return max(1, int(row["params"].get("batches", 1)) // batch_divisor)
 
 
+def expected_operations(row: Mapping[str, Any]) -> int:
+    """Allocator operations in one batch of the pinned shared fixture."""
+
+    workload, params = row["workload"], row["params"]
+    workers = params.get("workers", 1)
+    if workload in {"alloc_free", "calloc_free", "aligned_free", "churn", "local_scaling", "churn_scaling"}:
+        return 2 * workers * params["iterations"]
+    if workload == "alloc_batch":
+        return 2 * params["count"] * params["iterations"]
+    if workload == "realloc_grow":
+        size, steps = params["size"], 0
+        while size < params["max_size"]:
+            size = min(size * 2, params["max_size"])
+            steps += 1
+        return (steps + 2) * params["iterations"]
+    if workload == "realloc_inplace":
+        return params["iterations"] + 2
+    if workload == "usable_size":
+        return params["count"] * params["iterations"]
+    if workload == "remote_free":
+        return 2 * workers * params["iterations"]
+    if workload == "thread_churn":
+        return 2 * workers * params["count"]
+    if workload in {"heap_destroy", "subproc_destroy"}:
+        return params["count"] * params["live"]
+    raise HarnessError(f"fixture has no timed operation count for {workload}")
+
+
 def fixture_arguments(row: Mapping[str, Any], *, batch_divisor: int, cpus: Sequence[int]) -> list[str]:
     params = dict(row["params"])
     if "batches" in params:
@@ -354,7 +379,8 @@ def exit_memory_snapshot(pid: int) -> dict[str, Any]:
         rollup = (proc / "smaps_rollup").read_text(encoding="utf-8")
     except OSError as error:
         raise HarnessError(f"cannot snapshot the exiting fixture's memory: {error}") from error
-    return {"status": parse_status(status), "smaps_rollup": shared.parse_smaps_rollup(rollup)}
+    return {"status": parse_status(status), "smaps_rollup": shared.parse_smaps_rollup(rollup),
+            "raw": {"status": status, "smaps_rollup": rollup}}
 
 
 class PeakProbe:
@@ -502,7 +528,9 @@ def run_timed_sample(
     if process["exit_memory"] is None:
         raise HarnessError("fixture exited without its PTRACE_EVENT_EXIT memory snapshot")
     batches = parse_timed_output(stdout, expected_batches=expected_batches(row, batch_divisor))
-    sample = {"arguments": arguments, "cpus": list(cpus), "process": process, "batches": batches}
+    if any(batch["ops"] != expected_operations(row) for batch in batches):
+        raise HarnessError(f"fixture {row['workload']} batch has an unexpected allocator operation count")
+    sample = {"arguments": arguments, "cpus": list(cpus), "process": process, "stdout": stdout, "batches": batches}
     if peak_hook:
         if probe.snapshot is None:
             raise HarnessError("timed fixture exited without its READY_PEAK pause")
@@ -553,6 +581,7 @@ def memory_snapshot(pid: int) -> dict[str, Any]:
         "maps": shared.maps_record(maps),
         "smaps_rollup": shared.parse_smaps_rollup(rollup),
         "status": parse_status(status),
+        "raw": {"maps": maps, "smaps_rollup": rollup, "status": status},
     }
 
 
@@ -603,7 +632,7 @@ def run_memory_sample(
                 pass
     if stdout != "ok\n":
         raise HarnessError(f"memory fixture output is not exactly ok: {stdout[:256]!r}")
-    return {"arguments": arguments, "cpus": list(cpus), "process": process, "snapshots": snapshots}
+    return {"arguments": arguments, "cpus": list(cpus), "process": process, "stdout": stdout, "snapshots": snapshots}
 
 
 # ---- statistics -------------------------------------------------------------
@@ -813,7 +842,7 @@ def memory_comparison(
 
 
 def architecture_summary(manifest: Mapping[str, Any], rows: Mapping[str, Any]) -> dict[str, Any]:
-    """Indicative values behind plan.md's early architecture sanity check."""
+    """Indicative single-thread throughput and independent-worker scaling."""
 
     names = manifest["architecture_rows"]
     single = rows.get(names["single_thread"], {})
@@ -1428,12 +1457,10 @@ def uncontended_host_record(evidence: Mapping[str, Any]) -> dict[str, Any]:
 
 # ---- qualified full reports -------------------------------------------------
 #
-# plan.md's M9 row and its "Allocator verification and performance" table
-# need qualified full reports: the complete matrix in full mode on an
-# uncontended host, sealed to the reading checkout's sources. The reader
-# below never trusts a report's own summaries or classification: it
-# recomputes every comparison and bound from the raw samples, reclassifies
-# the raw host evidence, and recomputes the source seal.
+# Qualified reports measure the complete matrix in full mode on an
+# uncontended host and bind their source and built products to the reading
+# checkout. The reader recomputes every comparison and bound from replayed
+# samples, reclassifies host evidence, and checks the source seal.
 
 QUALIFIED_MODE = "full"
 QUALIFIED_ROW_SET = "matrix"
@@ -1505,6 +1532,22 @@ def source_seal_unmet(inputs: Mapping[str, Any]) -> list[str]:
     return unmet
 
 
+def snapshot_replay_unmet(snapshot: Any, context: str, *, maps: bool) -> list[str]:
+    """Reparse the captured /proc input that supplied each memory metric."""
+
+    try:
+        raw = snapshot["raw"]
+        if snapshot["status"] != parse_status(raw["status"]):
+            return [f"{context} status metric differs from raw /proc input"]
+        if snapshot["smaps_rollup"] != shared.parse_smaps_rollup(raw["smaps_rollup"]):
+            return [f"{context} smaps metric differs from raw /proc input"]
+        if maps and snapshot["maps"] != shared.maps_record(raw["maps"]):
+            return [f"{context} maps metric differs from raw /proc input"]
+    except (HarnessError, KeyError, TypeError, AttributeError) as error:
+        return [f"{context} lacks valid raw /proc input: {error}"]
+    return []
+
+
 def _row_unmet(group: str, row: Mapping[str, Any], entry: Any, mode: Mapping[str, Any]) -> list[str]:
     name = row["name"]
     if not isinstance(entry, Mapping) or entry.get("status") != "measured":
@@ -1518,6 +1561,48 @@ def _row_unmet(group: str, row: Mapping[str, Any], entry: Any, mode: Mapping[str
     if len(c_samples) != mode["samples"] or len(rust_samples) != mode["samples"] or None in (*c_samples, *rust_samples):
         unmet.append(f"{group} row {name} lacks the full mode's {mode['samples']} samples per lane")
         return unmet
+    cpus = entry.get("cpus")
+    if (not isinstance(cpus, list) or len(cpus) != row_thread_count(row)
+            or any(type(cpu) is not int or cpu < 0 for cpu in cpus) or len(set(cpus)) != len(cpus)):
+        unmet.append(f"{group} row {name} lacks its distinct measurement CPUs")
+        cpus = []
+    if entry.get("sample_plan") != [{"lane": lane, "sample_index": index}
+                                    for lane, index in paired_plan(mode["samples"], seed=entry["seed"])]:
+        unmet.append(f"{group} row {name} differs from its paired sample schedule")
+    expected_arguments = fixture_arguments(row, batch_divisor=mode["batch_divisor"], cpus=cpus)
+    for lane, samples in (("pinned_c", c_samples), ("rust_engine", rust_samples)):
+        for index, sample in enumerate(samples):
+            context = f"{group} row {name} {lane} sample {index}"
+            arguments = sample.get("arguments")
+            if (sample.get("sample_index") != index or sample.get("cpus") != cpus
+                    or not isinstance(arguments, list) or arguments[:len(expected_arguments)] != expected_arguments
+                    or len(arguments) != len(expected_arguments) + 2
+                    or not all(re.fullmatch(rf"{field}=[0-9]+", value)
+                               for field, value in zip(("ready_fd", "control_fd"), arguments[-2:]))):
+                unmet.append(f"{context} differs from the row's workload, CPUs, or sample index")
+            if sample.get("process", {}).get("status") != {"code": 0, "kind": "exit"}:
+                unmet.append(f"{context} lacks a successful fixture exit")
+            if group == "timed":
+                try:
+                    raw_batches = parse_timed_output(sample.get("stdout", ""),
+                                                     expected_batches=expected_batches(row, mode["batch_divisor"]))
+                except (HarnessError, TypeError, AttributeError) as error:
+                    unmet.append(f"{context} lacks valid raw fixture stdout: {error}")
+                else:
+                    if raw_batches != sample.get("batches"):
+                        unmet.append(f"{context} batches differ from raw fixture stdout")
+                if any(batch.get("ops") != expected_operations(row) for batch in sample["batches"]):
+                    unmet.append(f"{context} has an unexpected allocator operation count")
+                unmet.extend(snapshot_replay_unmet(sample.get("process", {}).get("exit_memory"),
+                                                   f"{context} exit memory", maps=False))
+                if "peak_state" in sample:
+                    unmet.extend(snapshot_replay_unmet(sample["peak_state"], f"{context} peak state", maps=True))
+            elif sample.get("stdout") != "ok\n":
+                unmet.append(f"{context} lacks the raw fixture ok record")
+            else:
+                for phase in ("post_init", "live", "freed"):
+                    unmet.extend(snapshot_replay_unmet(sample.get("snapshots", {}).get(phase),
+                                                       f"{context} {phase} memory", maps=True))
     if group == "timed":
         batches = expected_batches(row, mode["batch_divisor"])
         if any(len(sample["batches"]) != batches for sample in (*c_samples, *rust_samples)):
@@ -1658,6 +1743,26 @@ def _checked_report_path(root: Path, path: Path) -> Path:
     return path
 
 
+def physical_products_unmet(report: Mapping[str, Any], path: Path) -> list[str]:
+    """Bind recorded lane products to the retained, source-shared fixture artifacts."""
+
+    artifacts = path.with_suffix(".artifacts")
+    lanes = report.get("lanes", {})
+    shared_digest = lanes.get("shared_fixture_object_sha256")
+    unmet = []
+    for name in ("engine-fixture-c.o", "engine-fixture-rust.o"):
+        physical = artifacts / name
+        if not physical.is_file() or sha256_file(physical) != shared_digest:
+            unmet.append(f"shared fixture object {name} differs from the recorded product identity")
+    for lane, name in (("pinned_c", "engine-fixture-pinned-c"),
+                       ("rust_engine", "engine-fixture-rust-engine")):
+        physical = artifacts / name
+        recorded = lanes.get(lane, {}).get("executable", {}).get("artifact")
+        if not physical.is_file() or recorded != artifact_record(physical):
+            unmet.append(f"{lane} executable differs from the recorded product identity")
+    return unmet
+
+
 def inspect_full_report(root: Path, path: Path) -> dict[str, Any]:
     """Every unmet qualification condition of one report, plus its identity and metrics."""
 
@@ -1671,6 +1776,7 @@ def inspect_full_report(root: Path, path: Path) -> dict[str, Any]:
         return {"unmet": ["report is not a JSON object"], "identity": None, "metrics": None}
     try:
         unmet = qualification_unmet(report, manifest)
+        unmet.extend(physical_products_unmet(report, path))
     except (KeyError, TypeError, ValueError, AttributeError, IndexError) as error:
         return {"unmet": [f"report is malformed: {type(error).__name__}: {error}"], "identity": None, "metrics": None}
     identity = metrics = None

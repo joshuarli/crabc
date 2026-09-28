@@ -7,6 +7,7 @@ link-map, and summary logic. They build and measure nothing.
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import json
 import sys
@@ -25,14 +26,35 @@ sys.modules[SPEC.name] = engine
 SPEC.loader.exec_module(engine)
 
 
+def proc_snapshot(rss_kib: int, pss_kib: int, *, maps: bool = True) -> dict[str, object]:
+    status = (f"VmRSS: {rss_kib} kB\nVmHWM: {rss_kib} kB\nVmSize: {rss_kib * 2} kB\n"
+              f"VmPeak: {rss_kib * 2} kB\n")
+    rollup = (f"Rss: {rss_kib} kB\nPss: {pss_kib} kB\nPrivate_Clean: 0 kB\n"
+              f"Private_Dirty: {pss_kib} kB\n")
+    result: dict[str, object] = {"status": engine.parse_status(status),
+                                 "smaps_rollup": engine.shared.parse_smaps_rollup(rollup),
+                                 "raw": {"status": status, "smaps_rollup": rollup}}
+    if maps:
+        text = "".join(f"{index * 4096:x}-{(index + 1) * 4096:x} rw-p 00000000 00:00 0\n"
+                       for index in range(10))
+        result["maps"] = engine.shared.maps_record(text)
+        result["raw"]["maps"] = text
+    return result
+
+
 def timed_sample(costs: list[int], cpu_share: float = 1.0, peak_rss_kib: int = 1000,
-                 peak_pss_kib: int | None = 900) -> dict[str, object]:
+                 peak_pss_kib: int | None = 900, operations: int = 100) -> dict[str, object]:
+    batches = [{"ns": round(cost * operations), "cpu_ns": round(cost * operations * cpu_share), "ops": operations}
+               for cost in costs]
     sample: dict[str, object] = {
-        "batches": [{"ns": cost * 100, "cpu_ns": round(cost * 100 * cpu_share), "ops": 100} for cost in costs],
-        "process": {"exit_memory": {"status": {"vm_hwm_kib": peak_rss_kib}}},
+        "batches": batches,
+        "stdout": "".join(f"batch ns={batch['ns']} cpu_ns={batch['cpu_ns']} ops={batch['ops']}\n" for batch in batches)
+                  + "ok\n",
+        "process": {"status": {"code": 0, "kind": "exit"},
+                    "exit_memory": proc_snapshot(peak_rss_kib, peak_pss_kib or 900, maps=False)},
     }
     if peak_pss_kib is not None:
-        sample["peak_state"] = {"smaps_rollup": {"pss_kib": peak_pss_kib, "rss_kib": peak_pss_kib}}
+        sample["peak_state"] = proc_snapshot(peak_rss_kib, peak_pss_kib)
     return sample
 
 
@@ -286,31 +308,57 @@ def synthetic_report(rust_cost_factor: float = 1.0, peak_hook: bool = True) -> d
         },
         "rows": {}, "memory_rows": {},
     }
+    fixture_hash = hashlib.sha256(b"shared fixture object").hexdigest()
+    report["lanes"] = {
+        "shared_fixture_object_sha256": fixture_hash,
+        "pinned_c": {"executable": {"artifact": {"filename": "engine-fixture-pinned-c", "bytes": 8,
+                                                  "sha256": hashlib.sha256(b"C binary").hexdigest()}}},
+        "rust_engine": {"executable": {"artifact": {"filename": "engine-fixture-rust-engine", "bytes": 11,
+                                                     "sha256": hashlib.sha256(b"Rust binary").hexdigest()}}},
+    }
     timed, memory = engine.selected_rows(manifest, "matrix")
     for index, row in enumerate(timed):
         batches = engine.expected_batches(row, mode["batch_divisor"])
         lanes = {
             lane: [timed_sample([10 * factor + (sample + batch) % 3 for batch in range(batches)],
-                                peak_rss_kib=1000 + sample, peak_pss_kib=900 + sample if peak_hook else None)
+                                peak_rss_kib=1000 + sample, peak_pss_kib=900 + sample if peak_hook else None,
+                                operations=engine.expected_operations(row))
                    for sample in range(mode["samples"])]
             for lane, factor in (("pinned_c", 1), ("rust_engine", rust_cost_factor))
         }
+        cpus = list(range(engine.row_thread_count(row)))
+        for samples in lanes.values():
+            for sample_index, sample in enumerate(samples):
+                sample.update(sample_index=sample_index, cpus=cpus,
+                              arguments=engine.fixture_arguments(row, batch_divisor=mode["batch_divisor"], cpus=cpus)
+                                        + ["ready_fd=3", "control_fd=4"])
         seed = 100 + index
         report["rows"][row["name"]] = {
             "status": "measured", "workload": row["workload"], "params": row["params"], "seed": seed,
+            "cpus": cpus, "sample_plan": [{"lane": lane, "sample_index": sample_index}
+                                            for lane, sample_index in engine.paired_plan(mode["samples"], seed=seed)],
             "lanes": {lane: {"samples": samples} for lane, samples in lanes.items()},
             "comparison": engine.throughput_comparison(lanes["pinned_c"], lanes["rust_engine"], seed=seed),
         }
     for index, row in enumerate(memory):
         def snapshot(value: int) -> dict[str, object]:
-            return {"status": {"vm_hwm_kib": value}, "smaps_rollup": {"pss_kib": value, "rss_kib": value},
-                    "maps": {"mapping_count": 10}}
+            return proc_snapshot(value, value)
 
-        lanes = {lane: [{"snapshots": {"live": snapshot(4000 + sample), "freed": snapshot(100)}}
+        lanes = {lane: [{"stdout": "ok\n", "process": {"status": {"code": 0, "kind": "exit"}},
+                         "snapshots": {"post_init": snapshot(100), "live": snapshot(4000 + sample),
+                                       "freed": snapshot(100)}}
                         for sample in range(mode["samples"])] for lane in engine.LANES}
+        cpus = list(range(engine.row_thread_count(row)))
+        for samples in lanes.values():
+            for sample_index, sample in enumerate(samples):
+                sample.update(sample_index=sample_index, cpus=cpus,
+                              arguments=engine.fixture_arguments(row, batch_divisor=mode["batch_divisor"], cpus=cpus)
+                                        + ["ready_fd=3", "control_fd=4"])
         seed = 500 + index
         report["memory_rows"][row["name"]] = {
             "status": "measured", "workload": row["workload"], "params": row["params"], "seed": seed,
+            "cpus": cpus, "sample_plan": [{"lane": lane, "sample_index": sample_index}
+                                            for lane, sample_index in engine.paired_plan(mode["samples"], seed=seed)],
             "lanes": {lane: {"samples": samples} for lane, samples in lanes.items()},
             "comparison": engine.memory_comparison(lanes["pinned_c"], lanes["rust_engine"], seed=seed),
         }
@@ -333,6 +381,13 @@ class QualifiedReportTests(unittest.TestCase):
 
     def write(self, report: dict[str, object]) -> Path:
         path = Path(self.directory.name) / "report.json"
+        artifacts = path.with_suffix(".artifacts")
+        artifacts.mkdir(exist_ok=True)
+        for name, content in (("engine-fixture-c.o", b"shared fixture object"),
+                              ("engine-fixture-rust.o", b"shared fixture object"),
+                              ("engine-fixture-pinned-c", b"C binary"),
+                              ("engine-fixture-rust-engine", b"Rust binary")):
+            (artifacts / name).write_bytes(content)
         path.write_text(json.dumps(report), encoding="utf-8")
         return path
 
@@ -402,6 +457,64 @@ class QualifiedReportTests(unittest.TestCase):
             for batch in sample["batches"]:
                 batch["ns"] *= 3
         self.assert_named(report, "alloc_free_64 comparison differs from a recomputation")
+
+    def test_rejects_a_recomputed_comparison_with_wrong_operation_counts(self) -> None:
+        report = copy.deepcopy(self.report)
+        entry = report["rows"]["alloc_free_64"]
+        for sample in entry["lanes"]["rust_engine"]["samples"]:
+            for batch in sample["batches"]:
+                batch["ops"] *= 2
+            sample["stdout"] = "".join(
+                f"batch ns={batch['ns']} cpu_ns={batch['cpu_ns']} ops={batch['ops']}\n"
+                for batch in sample["batches"]
+            ) + "ok\n"
+        c_samples, rust_samples = engine._lane_samples(entry)
+        entry["comparison"] = engine.throughput_comparison(c_samples, rust_samples, seed=entry["seed"])
+        self.assert_named(report, "alloc_free_64")
+
+    def test_rejects_a_failed_fixture_status_with_unchanged_metrics(self) -> None:
+        report = copy.deepcopy(self.report)
+        report["rows"]["alloc_free_64"]["lanes"]["rust_engine"]["samples"][0]["process"]["status"] = {
+            "kind": "signal", "signal": 11,
+        }
+        self.assert_named(report, "alloc_free_64")
+
+    def test_rejects_repaired_metrics_when_raw_stdout_or_pairing_differs(self) -> None:
+        report = copy.deepcopy(self.report)
+        sample = report["rows"]["alloc_free_64"]["lanes"]["rust_engine"]["samples"][0]
+        sample["stdout"] = sample["stdout"].replace("ops=40000", "ops=80000")
+        sample["arguments"][0] = "calloc_free"
+        self.assert_named(report, "alloc_free_64")
+
+    def test_rejects_changed_sample_arguments_and_pair_order(self) -> None:
+        report = copy.deepcopy(self.report)
+        entry = report["rows"]["alloc_free_64"]
+        entry["sample_plan"].reverse()
+        entry["lanes"]["rust_engine"]["samples"][0]["arguments"][0] = "calloc_free"
+        unmet = self.unmet(report)
+        self.assertTrue(any("paired sample schedule" in item for item in unmet), unmet)
+        self.assertTrue(any("workload, CPUs, or sample index" in item for item in unmet), unmet)
+
+    def test_rejects_a_changed_physical_fixture_product(self) -> None:
+        path = self.write(self.report)
+        (path.with_suffix(".artifacts") / "engine-fixture-rust.o").write_bytes(b"different fixture")
+        unmet = engine.inspect_full_report(engine.ROOT, path)["unmet"]
+        self.assertTrue(any("shared fixture" in item for item in unmet), unmet)
+
+    def test_rejects_a_changed_physical_executable(self) -> None:
+        path = self.write(self.report)
+        (path.with_suffix(".artifacts") / "engine-fixture-rust-engine").write_bytes(b"different binary")
+        unmet = engine.inspect_full_report(engine.ROOT, path)["unmet"]
+        self.assertTrue(any("rust_engine executable" in item for item in unmet), unmet)
+
+    def test_rejects_recomputed_memory_metrics_without_matching_proc_input(self) -> None:
+        report = copy.deepcopy(self.report)
+        entry = report["memory_rows"]["memory_live_64x16m"]
+        for sample in entry["lanes"]["rust_engine"]["samples"]:
+            sample["snapshots"]["live"]["smaps_rollup"]["pss_kib"] *= 2
+        c_samples, rust_samples = engine._lane_samples(entry)
+        entry["comparison"] = engine.memory_comparison(c_samples, rust_samples, seed=entry["seed"])
+        self.assert_named(report, "memory_live_64x16m")
 
     def test_rejects_a_short_sample_schedule(self) -> None:
         report = copy.deepcopy(self.report)
