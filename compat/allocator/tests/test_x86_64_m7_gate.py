@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Contracts for the fail-closed Milestone 7 allocator gate."""
+"""Contracts for the fail-closed native allocator gate."""
 
 from __future__ import annotations
 
 import copy
 import importlib.util
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -42,6 +43,7 @@ class M7GateContractTests(unittest.TestCase):
         summary = self.validate()
         self.assertEqual(summary["gate_ids"], list(gate.GATE_IDS))
         self.assertEqual(sorted(summary["runnable_evidence"]), [
+            "audit:default-baseline",
             "differential:adapter",
             "differential:deferred-free-callback",
             "differential:diagnostic-output-owner",
@@ -50,14 +52,15 @@ class M7GateContractTests(unittest.TestCase):
             "differential:option-profiles",
             "differential:options-environment",
             "differential:reclaim-options",
+            "differential:show-errors-profile",
             "differential:startup-page-map-failure",
             "differential:statistics",
             "differential:thread-init-failure",
         ])
-        # Every M7 gate but the options/environment gate names an open condition.
+        # The options/environment and baseline gates have executable evidence.
         self.assertEqual(
             summary["blocked_gate_ids"],
-            [gate_id for gate_id in gate.GATE_IDS if gate_id != "m7.options-environment"],
+            [gate_id for gate_id in gate.GATE_IDS if gate_id not in ("m7.options-environment", "m7.baseline")],
         )
         owned = {name for entry in self.contract["gates"] for name in entry["items"]}
         for name in ("mi_option_get", "mi_option_reset_delay", "mi_options_print_out", "mi_version",
@@ -71,6 +74,57 @@ class M7GateContractTests(unittest.TestCase):
         modes = {name for entry in self.contract["gates"] for name in entry["compile_time_modes"]}
         self.assertIn("MI_GUARDED", modes)
         self.assertNotIn("MI_OVERRIDE", modes)
+
+    def test_default_artifact_reader_rejects_changed_build_or_cpu(self) -> None:
+        with harness.temporary_directory("m7-baseline-reader-") as name:
+            target = Path(name) / "target"
+            artifact = target / gate.RUST_TARGET / "release/libcrabc_mimalloc_native_mi_adapter.a"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_bytes(b"!<arch>\ncompiled archive")
+            ir = target / gate.RUST_TARGET / "release/build/crabc-mimalloc-native-mi-adapter/x/out/adapter.ll"
+            ir.parent.mkdir(parents=True)
+            ir.write_text('target triple = "x86_64-unknown-linux-musl"\n'
+                          'attributes #0 = { "target-cpu"="x86-64" }\n')
+            record = {
+                "reason": "compiler-artifact", "target": {"name": "crabc_mimalloc_native_mi_adapter",
+                "kind": ["staticlib"]}, "profile": {"opt_level": "3", "debuginfo": 0,
+                "debug_assertions": False, "overflow_checks": False, "test": False},
+                "features": [], "filenames": [str(artifact)],
+            }
+            allocator = copy.deepcopy(record)
+            allocator["target"] = {"name": "crabc_mimalloc", "kind": ["lib"]}
+            output = json.dumps(record) + "\n" + json.dumps(allocator)
+            self.assertEqual(gate.audit_default_baseline_artifact(output, target)["target_cpu"], "x86-64")
+            changed = copy.deepcopy(record)
+            changed["features"] = ["mi-show-errors"]
+            with self.assertRaises(harness.HarnessError):
+                gate.audit_default_baseline_artifact(json.dumps(changed) + "\n" + json.dumps(allocator), target)
+            changed = copy.deepcopy(record)
+            changed["profile"]["debug_assertions"] = True
+            with self.assertRaises(harness.HarnessError):
+                gate.audit_default_baseline_artifact(json.dumps(changed) + "\n" + json.dumps(allocator), target)
+            changed = copy.deepcopy(allocator)
+            changed["features"] = ["mi-show-errors"]
+            with self.assertRaises(harness.HarnessError):
+                gate.audit_default_baseline_artifact(json.dumps(record) + "\n" + json.dumps(changed), target)
+            ir.write_text(ir.read_text().replace('"x86-64"', '"x86-64-v3"'))
+            with self.assertRaises(harness.HarnessError):
+                gate.audit_default_baseline_artifact(output, target)
+            ir.write_text('target triple = "x86_64-unknown-linux-musl"\n'
+                          'attributes #0 = { "target-cpu"="x86-64" "target-features"="+avx2" }\n')
+            with self.assertRaises(harness.HarnessError):
+                gate.audit_default_baseline_artifact(output, target)
+            ir.write_text('target triple = "x86_64-unknown-linux-musl"\n'
+                          'attributes #0 = { "target-cpu"="x86-64" }\n')
+            artifact.write_bytes(b"changed artifact")
+            with self.assertRaises(harness.HarnessError):
+                gate.audit_default_baseline_artifact(output, target)
+
+    def test_default_configuration_reader_rejects_changed_release_image(self) -> None:
+        baseline = "debug level : 0\nsecure level: 0\nmem tracking: none\nfree: aligned, page size: 256\n"
+        self.assertEqual(gate.audit_default_baseline_configuration(baseline, baseline), baseline)
+        with self.assertRaises(harness.HarnessError):
+            gate.audit_default_baseline_configuration(baseline, baseline.replace("secure level: 0", "secure level: 1"))
 
     def test_an_omitted_or_doubly_owned_item_or_mode_is_rejected(self) -> None:
         omitted = copy.deepcopy(self.contract)

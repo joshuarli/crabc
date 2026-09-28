@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-"""Fail-closed native Linux/x86-64 gate for allocator Milestone 7.
+"""Fail-closed native Linux/x86-64 allocator gate.
 
-M7 is "all applicable options/environment, callbacks/deferred free,
-statistics, visitation, debug, secure, guarded and optional ISA profiles,
-without raising the baseline" (plan.md Milestones). The reviewed contract
-`m7-gate-x86_64-v3.5.0.json` selects the M7 interface items and compile-time
-modes from the pinned API applicability inventory, partitions them into
-gates, and names the evidence each gate requires.
+The contract selects applicable interfaces and compile-time modes from the
+pinned API inventory, partitions them into gates, and names required evidence.
 
 A gate passes only when it carries no reviewed blocker and every evidence
 entry has a command that executed successfully on this run. Evidence without a
@@ -26,6 +22,8 @@ one exact Rust test (`diagnostic_output::tests::source_options_trace_...` and
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -131,6 +129,143 @@ OPTION_EFFECT_FAMILIES = (
     "numa_node_count", "generic_collect", "arena_reserve", "purge",
 )
 RUST_TARGET = "x86_64-unknown-linux-musl"
+BASELINE_ADAPTER = "crabc_mimalloc_native_mi_adapter"
+BASELINE_PROBE = harness.ALLOCATOR_ROOT / "x86_64_m7_baseline_configuration.c"
+BASELINE_RELEASE_PROFILE = {
+    "opt_level": "3", "debuginfo": 0, "debug_assertions": False,
+    "overflow_checks": False, "test": False,
+}
+# These two attributes belong to explicitly dispatched functions. Ordinary
+# functions must retain the generic target CPU without an ISA feature list.
+BASELINE_DISPATCH_FEATURES = {
+    "+xsave",
+    "+avx,+avx2,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+crc32,+ssse3",
+}
+
+
+def audit_default_baseline_artifact(build_output: str, target_dir: Path) -> dict[str, Any]:
+    """Read the just-built static library and its compiler-emitted target IR."""
+
+    records = [json.loads(line) for line in build_output.splitlines() if line.startswith('{')]
+    artifacts = [entry for entry in records if entry.get("reason") == "compiler-artifact"
+                 and entry.get("target", {}).get("name") == BASELINE_ADAPTER]
+    if len(artifacts) != 1:
+        raise harness.HarnessError("default baseline lacks one native adapter compiler artifact")
+    entry = artifacts[0]
+    if entry["target"].get("kind") != ["staticlib"] or entry.get("features") != []:
+        raise harness.HarnessError("default baseline enabled an adapter feature or changed its artifact kind")
+    if entry.get("profile") != BASELINE_RELEASE_PROFILE:
+        raise harness.HarnessError("default baseline changed the release compiler profile")
+    allocator = [record for record in records if record.get("reason") == "compiler-artifact"
+                 and record.get("target", {}).get("name") == "crabc_mimalloc"]
+    if len(allocator) != 1 or allocator[0].get("features") != [] \
+            or allocator[0].get("profile") != BASELINE_RELEASE_PROFILE:
+        raise harness.HarnessError("default baseline changed the allocator dependency profile")
+    expected = target_dir / RUST_TARGET / "release/libcrabc_mimalloc_native_mi_adapter.a"
+    if entry.get("filenames") != [str(expected)] or not expected.is_file():
+        raise harness.HarnessError("default baseline did not build the expected native static library")
+    if not expected.read_bytes().startswith(b"!<arch>\n"):
+        raise harness.HarnessError("default baseline static library is not an archive")
+    ir_files = list((target_dir / RUST_TARGET / "release/build/crabc-mimalloc-native-mi-adapter")
+                    .glob("*/out/*.ll"))
+    if len(ir_files) != 1:
+        raise harness.HarnessError("default baseline lacks one compiler-emitted adapter IR image")
+    ir = ir_files[0]
+    emitted = ir.read_text()
+    if emitted.count('target triple = "x86_64-unknown-linux-musl"') != 1:
+        raise harness.HarnessError("default baseline changed the emitted Rust target triple")
+    attributes = re.findall(r'^attributes #\d+ = \{[^\n]*\}$', emitted, re.MULTILINE)
+    cpu_attributes = [line for line in attributes if '"target-cpu"=' in line]
+    if not cpu_attributes or any('"target-cpu"="x86-64"' not in line for line in cpu_attributes):
+        raise harness.HarnessError("default baseline raised the emitted default target CPU")
+    feature_attributes = [re.search(r'"target-features"="([^"]+)"', line) for line in cpu_attributes]
+    features = {match.group(1) for match in feature_attributes if match}
+    if not any(match is None for match in feature_attributes) or not features <= BASELINE_DISPATCH_FEATURES:
+        raise harness.HarnessError("default baseline changed the emitted ISA feature image")
+    return {
+        "artifact": harness.relative(expected),
+        "artifact_sha256": hashlib.sha256(expected.read_bytes()).hexdigest(),
+        "ir": harness.relative(ir),
+        "ir_sha256": hashlib.sha256(ir.read_bytes()).hexdigest(),
+        "target": RUST_TARGET, "target_cpu": "x86-64",
+        "dispatch_features": sorted(features),
+        "profile": dict(entry["profile"]), "features": list(entry["features"]),
+    }
+
+
+def audit_default_baseline_configuration(c_output: str, rust_output: str) -> str:
+    """Compare the observable release image from the two built libraries."""
+
+    lines = rust_output.splitlines()
+    if len(lines) != 4 or lines[:3] != [
+        "debug level : 0", "secure level: 0", "mem tracking: none",
+    ] or not re.fullmatch(r"free: aligned, page size: [1-9][0-9]*", lines[3]):
+        raise harness.HarnessError("default baseline has a non-release runtime configuration image")
+    if c_output != rust_output:
+        raise harness.HarnessError(f"default baseline pinned-C/Rust configuration differs: C={c_output!r}, Rust={rust_output!r}")
+    return rust_output
+
+
+def run_default_baseline_audit(offline: bool, scratch: Path) -> dict[str, Any]:
+    """Build the default native artifact and compare its release image to pinned C."""
+
+    harness.require_native_x86_64()
+    scratch.mkdir(parents=True, exist_ok=True)
+    target_dir = scratch / "cargo-target"
+    build_command = [
+        harness.require_tool("cargo"), "rustc", "--locked", "--release", "--target", RUST_TARGET,
+        "-p", "crabc-mimalloc-native-mi-adapter", "--target-dir",
+        str(target_dir), "--message-format=json", "--", "--emit=link,llvm-ir",
+    ]
+    build = harness.command_record(build_command, cwd=harness.ROOT,
+                                   env=dict(os.environ), timeout_seconds=EVIDENCE_TIMEOUT_SECONDS)
+    harness.require_success(build, "default native allocator artifact build")
+    artifact = audit_default_baseline_artifact(str(build["stdout"]), target_dir)
+    configuration_test_command = [
+        harness.require_tool("cargo"), "test", "--locked", "--release", "--target", RUST_TARGET,
+        "-p", "crabc-mimalloc", "--lib",
+        "config::tests::default_release_constants_match_the_pinned_linux_64_profiles",
+        "--target-dir", str(target_dir), "--", "--exact",
+    ]
+    configuration_test = harness.command_record(
+        configuration_test_command, cwd=harness.ROOT, env=dict(os.environ),
+        timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
+    )
+    harness.require_success(configuration_test, "default release allocator configuration constants")
+    if "running 1 test\n" not in str(configuration_test["stdout"]) \
+            or "test result: ok. 1 passed; 0 failed;" not in str(configuration_test["stdout"]):
+        raise harness.HarnessError("default release configuration check did not execute exactly one test")
+    pin = harness.load_pin()
+    archive = harness.fetch_archive(pin, offline)
+    source = harness.safe_extract(archive, scratch / "source", pin["archive_root"])
+    compiler = harness.require_tool("musl-gcc")
+    c_probe = scratch / "baseline-c"
+    rust_probe = scratch / "baseline-rust"
+    c_build = harness.command_record([
+        compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+        *harness.CONFIGURATION_PROFILES["release"], "-I", str(source / "include"),
+        str(BASELINE_PROBE), str(source / "src/static.c"), "-pthread", "-o", str(c_probe),
+    ], cwd=source, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS)
+    harness.require_success(c_build, "pinned C release configuration probe build")
+    rust_build = harness.command_record([
+        compiler, "-std=c11", "-O2", "-I", str(source / "include"),
+        str(BASELINE_PROBE), str(target_dir / RUST_TARGET / "release/libcrabc_mimalloc_native_mi_adapter.a"),
+        "-pthread", "-o", str(rust_probe),
+    ], cwd=source, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS)
+    harness.require_success(rust_build, "Rust release configuration probe link")
+    c_run = harness.command_record([str(c_probe)], cwd=scratch, env={}, timeout_seconds=60)
+    rust_run = harness.command_record([str(rust_probe)], cwd=scratch, env={}, timeout_seconds=60)
+    harness.require_success(c_run, "pinned C release configuration probe")
+    harness.require_success(rust_run, "Rust release configuration probe")
+    configuration = audit_default_baseline_configuration(str(c_run["stdout"]), str(rust_run["stdout"]))
+    report = {"artifact": artifact, "build_command": build_command,
+              "configuration_test_command": configuration_test_command,
+              "configuration_test_output": str(configuration_test["stdout"]),
+              "c_configuration": str(c_run["stdout"]), "rust_configuration": configuration,
+              "c_release_flags": list(harness.CONFIGURATION_PROFILES["release"]),
+              "pinned_archive": harness.relative(archive)}
+    harness.write_json(scratch / "default-baseline.json", report)
+    return report
 
 
 def _string_list(value: object, subject: str, *, allow_empty: bool = False) -> list[str]:
@@ -799,7 +934,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run the pinned-C/Rust per-environment option-profile differential")
     mode.add_argument("--error-sites-differential", action="store_true",
         help="run the pinned-C/Rust `_mi_error_message` site differential")
+    mode.add_argument("--default-baseline-audit", action="store_true",
+        help="build and inspect the default native allocator release artifact")
     parser.add_argument("--offline", action="store_true", help="require the verified archive in the local cache")
+    parser.add_argument("--scratch", type=Path, help="fresh output directory for the default baseline audit")
     arguments = parser.parse_args(argv)
     if arguments.options_differential:
         report = run_options_differential(arguments.offline)
@@ -846,6 +984,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.option_effects_differential:
         report = run_option_effects_differential(arguments.offline)
         print(f"M7 option-effects differential passed: {report['compared_key_count']} keys")
+        return 0
+    if arguments.default_baseline_audit:
+        if arguments.scratch is None:
+            parser.error("--default-baseline-audit requires --scratch")
+        report = run_default_baseline_audit(arguments.offline, arguments.scratch)
+        print(f"M7 default baseline audit passed: {report['artifact']['artifact_sha256']}")
         return 0
     contract, summary = load_summary()
     if arguments.check:

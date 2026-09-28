@@ -126,8 +126,15 @@
       "scope": "Pinned-C/Rust results of the MI_OPT_ARCH and MI_OPT_SIMD bitmap/allocation paths on a CPU that supports them."
     },
     "audit:default-baseline": {
-      "command": null,
-      "scope": "The default x86-64 artifact keeps baseline x86_64-unknown-linux-musl target features and the release configuration image when every optional M7 profile is compiled out."
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m7_gate.py",
+        "--offline",
+        "--default-baseline-audit",
+        "--scratch",
+        "{scratch}"
+      ],
+      "scope": "Source-built default native adapter and allocator dependency use empty feature sets, Cargo release profile, generic x86-64 target CPU, and the same printed release configuration as pinned mimalloc C."
     }
   },
   "gates": [
@@ -388,9 +395,7 @@
       "evidence": [
         "audit:default-baseline"
       ],
-      "blocked_by": [
-        "No default-artifact target-feature and configuration audit exists."
-      ]
+      "blocked_by": []
     }
   ]
 }
