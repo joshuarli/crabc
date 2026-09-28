@@ -897,7 +897,7 @@ fn ordered_lookup_reuses_name_across_sysv_and_gnu_tables() {
 
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[test]
-fn gnu_lookup_checks_reached_name_without_rejecting_a_bloom_miss() {
+fn gnu_lookup_checks_reached_name_and_version_without_rejecting_bloom_miss() {
     let mut gnu = Image::new();
     gnu.symbol(1, 1, 1, 0, 1, 0x1000, 8);
     let hash = gnu_hash(b"value");
@@ -926,6 +926,16 @@ fn gnu_lookup_checks_reached_name_without_rejecting_a_bloom_miss() {
     assert_eq!(unsafe { exported_index(&object, b"value") }, Some(Some(1)));
     gnu.put_u32(IMAGE_SYMTAB + 24, 8);
     assert_eq!(unsafe { exported_index(&object, b"value") }, None);
+    gnu.put_u32(IMAGE_SYMTAB + 24, 1);
+    object.versym = unsafe { gnu.storage.add(IMAGE_HASH + 64) };
+    gnu.put_u32(IMAGE_HASH + 64, 0x8000_0000);
+    assert_eq!(unsafe { exported_index(&object, b"value") }, Some(None));
+    gnu.put_u32(IMAGE_HASH + 64, 0x0001_0000);
+    assert_eq!(unsafe { exported_index(&object, b"value") }, Some(Some(1)));
+    object.versym = unsafe { gnu.storage.add(IMAGE_METADATA_BYTES - 1) };
+    assert_eq!(unsafe { exported_index(&object, b"value") }, None);
+    gnu.put_u64(IMAGE_HASH + 16, 0);
+    assert_eq!(unsafe { exported_index(&object, b"value") }, Some(None));
 }
 
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]

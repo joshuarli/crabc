@@ -319,7 +319,8 @@ unsafe fn exported_index_with_hashes(
 ) -> Option<Option<usize>> {
     let candidate_matches = |index: usize| -> Option<bool> {
         let symbol = unsafe { object.symtab.add(index.checked_mul(24)?) };
-        if !unsafe { exported_symbol_is_visible(object, index) }? {
+        // A versionless object has no VERSYM record to validate for each hit.
+        if !object.versym.is_null() && !unsafe { exported_symbol_is_visible(object, index) }? {
             return Some(false);
         }
         // A bloom or empty-bucket miss has no name to validate. For a reached
