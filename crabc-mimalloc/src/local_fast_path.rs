@@ -195,7 +195,8 @@ pub(crate) unsafe fn allocate(
         }
     }
     // A direct small head can supply a block without regular-page classification.
-    let bin = size_class::bin(size)?;
+    // The eight-word request uses bin eight when its direct head is empty.
+    let bin = if size == 8 * WORD_SIZE { 8 } else { size_class::bin(size)? };
     let first = NonNull::new(theap_ref.queue(bin)?.first())?;
     if size > SMALL_MAX_OBJ_SIZE {
         // SAFETY: the queue head is a live page of this Theap.
