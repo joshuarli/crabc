@@ -16,8 +16,8 @@
 //! Process and thread binding follow the selected Linux primitives of pinned
 //! `src/prim/unix/prim.c` and `src/init.c`: a load-time constructor publishes
 //! the host's startup facts and starts the process (`mi_process_load`), and a
-//! thread's first entry registers and attaches it and associates a
-//! `pthread_key_t` whose destructor finishes it
+//! worker's first free registers it without attaching a Theap; its first
+//! Theap-requiring entry attaches it. A `pthread_key_t` destructor finishes it
 //! (`_mi_prim_thread_associate_default_theap` / `mi_pthread_done`).
 
 #![no_std]
@@ -372,11 +372,9 @@ pub extern "C" fn mi_new_n(count: usize, size: usize) -> *mut c_void {
 // Free and usable size (free.c, page-queue.c, heap.c, init.c)
 // ---------------------------------------------------------------------------
 
-#[no_mangle]
-pub unsafe extern "C" fn mi_free(block: *mut c_void) {
-    if block.is_null() {
-        return;
-    }
+/// Registers a worker for pointer-first free without creating its default Theap.
+#[inline]
+fn register_thread_for_free() {
     if PROCESS.load(Ordering::Acquire) == PROCESS_READY {
         let key = THREAD_KEY.load(Ordering::Acquire) as PthreadKey;
         // SAFETY: the process's Release publication follows key creation.
@@ -401,6 +399,14 @@ pub unsafe extern "C" fn mi_free(block: *mut c_void) {
             }
         }
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_free(block: *mut c_void) {
+    if block.is_null() {
+        return;
+    }
+    register_thread_for_free();
     // SAFETY: the C caller passes null or a live allocation it gives up.
     freed(unsafe { api::free(block.cast()) });
 }
@@ -431,7 +437,9 @@ pub unsafe extern "C" fn mi_free_size_aligned(block: *mut c_void, _size: usize, 
 
 #[no_mangle]
 pub unsafe extern "C" fn mi_ufree(block: *mut c_void, block_size: *mut usize) {
-    bind_thread();
+    if !block.is_null() {
+        register_thread_for_free();
+    }
     // SAFETY: forwarded free contract.
     let (outcome, size) = unsafe { api::ufree(block.cast()) };
     freed(outcome);
@@ -441,7 +449,9 @@ pub unsafe extern "C" fn mi_ufree(block: *mut c_void, block_size: *mut usize) {
 
 #[no_mangle]
 pub unsafe extern "C" fn mi_cfree(block: *mut c_void) -> bool {
-    bind_thread();
+    if !block.is_null() {
+        register_thread_for_free();
+    }
     // SAFETY: `mi_cfree` accepts any pointer the process owns.
     let (outcome, owned) = unsafe { api::cfree(block.cast()) };
     freed(outcome);

@@ -72,6 +72,8 @@ class M7GateContractTests(unittest.TestCase):
             "differential:statistics-page-extend",
             "differential:statistics-remote-bin",
             "differential:statistics-remote-normal",
+            "differential:statistics-remote-normal-fresh",
+            "differential:statistics-remote-normal-fresh-cfree",
             "differential:statistics-requested-production",
             "differential:thread-init-failure",
         ])
@@ -387,6 +389,7 @@ class M7GateContractTests(unittest.TestCase):
     def test_statistics_remote_normal_reader_rejects_lost_worker_delta(self) -> None:
         worker_row = "  binned    :     8           8         -64                                not all freed"
         trace = {"profile.level": "1", "warm.usable": "8", "target.usable": "64",
+                 "worker.fresh": "0",
                  "allocated.normal": "64,64,64", "freed.normal": "72,72,0",
                  "worker.binned.hex": worker_row.encode("ascii").hex()}
         gate.require_statistics_remote_normal(trace, "complete")
@@ -395,6 +398,34 @@ class M7GateContractTests(unittest.TestCase):
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_remote_normal({**trace,
                 "worker.binned.hex": worker_row.replace("-64", "  0").encode("ascii").hex()}, "lost worker current")
+
+    def test_statistics_fresh_worker_medium_free_keeps_source_metadata_counts(self) -> None:
+        statistics = self.gate_record(self.contract, "m7.statistics")
+        self.assertIn("differential:statistics-remote-normal-fresh", statistics["evidence"])
+        self.assertIn("differential:statistics-remote-normal-fresh-cfree", statistics["evidence"])
+        trace = {
+            "profile.level": "2", "worker.fresh": "1", "warm.usable": "0",
+            "target.request": "32768", "target.usable": "32768",
+            "worker.free_usable": "32768", "worker.cfree_owned": "0",
+            "worker.binned.hex": "",
+        }
+        for stage in ("allocated", "freed"):
+            trace.update({
+                f"{stage}.bin": "1,1,1", f"{stage}.normal": "32768,32768,32768",
+                f"{stage}.normal_count": "1", f"{stage}.page_bin": "1,1,1",
+                f"{stage}.pages": "1,1,1", f"{stage}.requested": "32768,32768,32768",
+            })
+        gate.require_statistics_remote_normal_fresh(trace, "ufree")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_remote_normal_fresh(
+                {**trace, "freed.normal": "32768,32768,0"}, "premature attachment",
+            )
+        checked = {**trace, "worker.free_usable": "0", "worker.cfree_owned": "1"}
+        gate.require_statistics_remote_normal_fresh(checked, "cfree", checked_free=True)
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_remote_normal_fresh(
+                {**checked, "worker.cfree_owned": "0"}, "lost ownership", checked_free=True,
+            )
 
     def test_statistics_remote_bin_requires_source_built_producer(self) -> None:
         summary = self.validate()
