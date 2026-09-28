@@ -190,8 +190,9 @@ are not transferable passes for a different revision.
   perf-c rows pass PSS). A set-bit RELR walk, span-bound target validation,
   and cached file-backed dynsym record limit save medians of 5,481, 2,983,
   and 3,076 user instructions respectively in matched development startups
-  with identical syscall traces; these remain unqualified under host
-  contention. Allocator rows stay
+  with identical syscall traces. Single-pass GNU hash bucket validation saves
+  another paired median 4,164 user instructions in 100 development startups.
+  These remain unqualified under host contention. Allocator rows stay
   6.5–8× on the selected
   accepted-C backend, whose arena the host's THP `always` mode backs with
   huge pages on first touch. The native backend's arena reservations take the
