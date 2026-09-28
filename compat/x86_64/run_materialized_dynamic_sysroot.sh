@@ -3,7 +3,10 @@
 #
 # With no arguments this builds two clean dynamic products, packages both and
 # extracts one below TMPDIR. `--work NEW_DIR` keeps that same cohort in a new
-# physical checkout .work directory. `--supplied-work WORK` qualifies trees another gate
+# physical checkout .work directory. For a retained native allocator diagnostic,
+# use `--work NEW_DIR --allocator-backend native-shadow`; each built manifest
+# records that choice. The default still builds the accepted-C backend.
+# `--supplied-work WORK` qualifies trees another gate
 # already built: WORK must be a physical checkout .work directory holding
 # exactly the installed, second and extracted trees and the runtime.tar and
 # second-runtime.tar packages, such as the combined four-mode sysroot gate's
@@ -14,17 +17,29 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 [ "$(uname -sm)" = 'Linux x86_64' ]
 supplied=0
 explicit_work=0
+allocator_backend=accepted-c
+usage='[--work NEW_DIR [--allocator-backend accepted-c|native-shadow] | --supplied-work WORK]'
 case "$#" in
     0) ;;
-    2) [ -n "$2" ] || { printf 'usage: %s [--work NEW_DIR | --supplied-work WORK]\n' "$0" >&2; exit 2; }
+    2) [ -n "$2" ] || { printf 'usage: %s %s\n' "$0" "$usage" >&2; exit 2; }
        case "$1" in
            --work) explicit_work=1 ;;
            --supplied-work) supplied=1 ;;
-           *) printf 'usage: %s [--work NEW_DIR | --supplied-work WORK]\n' "$0" >&2; exit 2 ;;
+           *) printf 'usage: %s %s\n' "$0" "$usage" >&2; exit 2 ;;
        esac ;;
-    *) printf 'usage: %s [--work NEW_DIR | --supplied-work WORK]\n' "$0" >&2; exit 2 ;;
+    4) if [ "$1" = --work ] && [ -n "$2" ] && [ "$3" = --allocator-backend ]; then
+           explicit_work=1
+           allocator_backend="$4"
+       else
+           printf 'usage: %s %s\n' "$0" "$usage" >&2; exit 2
+       fi ;;
+    *) printf 'usage: %s %s\n' "$0" "$usage" >&2; exit 2 ;;
 esac
-readonly supplied explicit_work
+case "$allocator_backend" in
+    accepted-c|native-shadow) ;;
+    *) printf 'unsupported materialized dynamic allocator backend: %s\n' "$allocator_backend" >&2; exit 2 ;;
+esac
+readonly supplied explicit_work allocator_backend
 python3 -B - "$ROOT" "${TMPDIR:-}" <<'PY'
 from pathlib import Path
 import sys
@@ -155,8 +170,12 @@ PYTHON
 }
 
 if [ "$supplied" -eq 0 ]; then
-    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/installed"
-    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/second"
+    allocator_arguments=()
+    if [ "$allocator_backend" = native-shadow ]; then
+        allocator_arguments=(--allocator-backend native-shadow)
+    fi
+    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/installed" "${allocator_arguments[@]}"
+    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/second" "${allocator_arguments[@]}"
     python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" package "$work/installed" "$work/runtime.tar"
     python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" package "$work/second" "$work/second-runtime.tar"
     python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" extract "$work/runtime.tar" "$work/extracted"

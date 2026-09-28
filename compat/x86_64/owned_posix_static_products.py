@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = "crabc.x86_64-owned-posix-static-preparation/v1"
 PRODUCER = "scripts/build_x86_64_owned_sysroot.py"
 PACKAGER = "compat/x86_64/owned_static_sysroot_package.py"
+ALLOCATOR_BACKENDS = ("accepted-c", "native-shadow")
 
 
 class PreparationError(RuntimeError):
@@ -118,11 +119,19 @@ def product_paths(work: Path) -> dict[str, Path]:
             "extracted": work / "products/extracted" / package.ARCHIVE_ROOT}
 
 
-def commands(root: Path, work: Path) -> dict[str, list[str]]:
+def commands(root: Path, work: Path, allocator_backend: str = "accepted-c") -> dict[str, list[str]]:
+    """Keep accepted-C commands exact; select shadow only for an explicit build.
+
+    `prepare WORK --allocator-backend native-shadow` records that choice in
+    both build commands. Product manifests carry the mode for later replay.
+    """
+    require(allocator_backend in ALLOCATOR_BACKENDS, "unsupported preparation allocator backend")
     base = relative(root, work)
     result = {}
     for label in ("primary", "reproduction"):
         result[f"{label}-build"] = ["python3", "-B", PRODUCER, "--output", f"{base}/products/{label}"]
+        if allocator_backend == "native-shadow":
+            result[f"{label}-build"].extend(("--allocator-backend", allocator_backend))
     for label in ("primary", "reproduction"):
         result[f"{label}-package"] = ["python3", "-B", PACKAGER, "create", "--source",
             f"{base}/products/{label}", "--archive", f"{base}/archives/{label}.tar.xz"]
@@ -181,7 +190,12 @@ def collect(root: Path, work: Path) -> dict:
     exact_children(work / "products", {"primary", "reproduction", "extracted"})
     exact_children(work / "products/extracted", {package.ARCHIVE_ROOT})
     exact_children(work / "archives", {"primary.tar.xz", "reproduction.tar.xz"})
-    expected_commands = commands(root, work)
+    primary_manifest = read(product_paths(work)["primary"] / package.MANIFEST_RELATIVE_PATH)
+    require(isinstance(primary_manifest, dict), "primary product manifest must be an object")
+    allocator_backend = primary_manifest.get("allocator_backend")
+    require(type(allocator_backend) is str and allocator_backend in ALLOCATOR_BACKENDS,
+            "unsupported or absent preparation allocator backend")
+    expected_commands = commands(root, work, allocator_backend)
     exact_children(work / "steps", {f"{step}.{suffix}" for step in expected_commands
                    for suffix in ("command.json", "stdout", "stderr", "status")})
     steps = {}
@@ -198,6 +212,8 @@ def collect(root: Path, work: Path) -> dict:
         tree = tree_identity(product)
         manifest_path = product / package.MANIFEST_RELATIVE_PATH
         manifest = read(manifest_path)
+        require(isinstance(manifest, dict) and manifest.get("allocator_backend") == allocator_backend,
+                f"allocator backend differs from primary: {label}")
         require(isinstance(manifest.get("producer_tools"), dict) and manifest["producer_tools"],
                 f"producer tool provenance absent: {label}")
         require(isinstance(manifest.get("toolchain"), str), f"toolchain provenance absent: {label}")
@@ -226,7 +242,8 @@ def collect(root: Path, work: Path) -> dict:
             "products": products, "archives": archives, "steps": steps}
 
 
-def prepare(root: Path, work: Path) -> Path:
+def prepare(root: Path, work: Path, allocator_backend: str = "accepted-c") -> Path:
+    require(allocator_backend in ALLOCATOR_BACKENDS, "unsupported preparation allocator backend")
     work = physical(root, work)
     source = source_identity(root)
     require(not work.exists(), "preparation requires a fresh run directory")
@@ -235,7 +252,7 @@ def prepare(root: Path, work: Path) -> Path:
         (work / name).mkdir()
     write_new(work / "source-before.json", source)
     try:
-        for step, command in commands(root, work).items():
+        for step, command in commands(root, work, allocator_backend).items():
             run_step(root, work, step, command)
     finally:
         # Even a failed producer leaves its command/status/log files. A dirty
@@ -266,11 +283,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("prepare", "validate"))
     parser.add_argument("path", type=Path)
+    parser.add_argument("--allocator-backend", choices=ALLOCATOR_BACKENDS)
     args = parser.parse_args()
     try:
         if args.command == "prepare":
-            print(prepare(ROOT, args.path))
+            print(prepare(ROOT, args.path, args.allocator_backend or "accepted-c"))
         else:
+            require(args.allocator_backend is None, "allocator backend is selected by the sealed product manifest")
             validate_receipt(ROOT, args.path)
             print("owned POSIX static preparation: valid; runtime unqualified")
     except (PreparationError, package.PackageError, OSError, ValueError, subprocess.CalledProcessError) as error:

@@ -11,6 +11,21 @@ Run from a clean committed checkout in the pinned native environment:
 ./scripts/dev-x86_64.sh owned-posix-static-products .work/x86_64/posix-static-run
 ```
 
+For a separate native allocator diagnostic, select the fixed Rust allocator
+in both static builds:
+
+```bash
+./scripts/dev-x86_64.sh owned-posix-static-products \
+  .work/x86_64/posix-static-shadow --allocator-backend native-shadow
+```
+
+The only preparation modes are `accepted-c` (the unchanged default) and
+`native-shadow`. The installed manifest's `allocator_backend` field binds the
+mode to the two recorded build commands and all three products. Validation
+reads that field from the sealed product, so it takes no backend flag. This
+shadow mode is diagnostic evidence and does not change public backend
+selection.
+
 The final argument must name a new physical directory under the checkout's
 ignored `.work` tree. The dispatcher translates that host path to its
 `/workspace` mount. Absolute host paths are also accepted; symlink traversal

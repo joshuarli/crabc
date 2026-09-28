@@ -652,7 +652,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-loader-family validate --receipt FILE  replay the retained loader-family component
   owned-passwd [DYNAMIC_SYSROOT]         test installed local passwd parsing, lookup and FILE cursors
   owned-posix-composition [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test shared POSIX process state and cancellation
-  owned-posix-static-products WORK prepare two reproducible static trees and an extracted tree
+  owned-posix-static-products WORK [--allocator-backend accepted-c|native-shadow]  prepare two reproducible static trees and an extracted tree
   owned-posix-family --static-preparation FILE --dynamic-qualification FILE --output NEW_DIR  execute the prepared static and dynamic POSIX family matrix
   owned-posix-native --family-execution FILE --crypt-profile FILE --atomic-addressable-profile FILE --wordexp-profile FILE --wordexp-expected-native-inputs FILE --output NEW_DIR  execute the five native POSIX components on the matrix's installed product
   owned-pthread-family --family-execution FILE --output NEW_DIR [--jobs 1|2|3]  validate installed pthread/TLS behavior on the matrix products
@@ -679,7 +679,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-dynamic-pthread-exit  test installed dynamic main and last pthread exit
   owned-dynamic-fork  test installed loader, TLS and pthread fork transactions
   runtime-private-facades [DYNAMIC_SYSROOT]  run crabc-rs RuntimeV1 dl/thread/cfile facades through an installed dynamic product
-  materialized-dynamic-sysroot  build and test the installed initial-graph shared runtime
+  materialized-dynamic-sysroot [--work NEW_DIR [--allocator-backend accepted-c|native-shadow]]  build and test the installed initial-graph shared runtime
   crt-object-bundle  stage and audit the private five-object x86 Rust CRT bundle
   unwinder-build  build and audit the pinned standalone Rust unwind archive (not runtime qualification)
   unwinder-cleanup  run the standalone pinned-musl Rust cleanup unwind regression
@@ -9863,7 +9863,16 @@ case "$command" in
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_posix_composition.sh "$@"
         ;;
     owned-posix-static-products)
-        [ "$#" -eq 1 ] || fail "owned-posix-static-products requires one fresh host checkout .work path"
+        static_allocator_arguments=()
+        if [ "$#" -eq 3 ] && [ "$2" = --allocator-backend ]; then
+            case "$3" in
+                accepted-c) ;;
+                native-shadow) static_allocator_arguments=(--allocator-backend native-shadow) ;;
+                *) fail "unsupported static preparation allocator backend: $3" ;;
+            esac
+        elif [ "$#" -ne 1 ]; then
+            fail "owned-posix-static-products requires WORK [--allocator-backend accepted-c|native-shadow]"
+        fi
         container_work="$(python3 -B - "$ROOT_DIR" "$1" <<'PY'
 from pathlib import Path
 import sys
@@ -9875,7 +9884,7 @@ print('/workspace/' + path.relative_to(root).as_posix())
 PY
         )"
         ensure_image
-        run_in_container python3 -B /workspace/compat/x86_64/owned_posix_static_products.py prepare "$container_work"
+        run_in_container python3 -B /workspace/compat/x86_64/owned_posix_static_products.py prepare "$container_work" "${static_allocator_arguments[@]}"
         ;;
     owned-posix-family)
         ensure_image
@@ -10177,11 +10186,19 @@ PY
         ;;
     materialized-dynamic-sysroot)
         materialized_dynamic_arguments=()
-        if [ "$#" -eq 2 ] && [ "$1" = --work ]; then
+        materialized_allocator_arguments=()
+        if [ "$#" -eq 4 ] && [ "$1" = --work ] && [ "$3" = --allocator-backend ]; then
+            case "$4" in
+                accepted-c) ;;
+                native-shadow) materialized_allocator_arguments=(--allocator-backend native-shadow) ;;
+                *) fail "unsupported materialized dynamic allocator backend: $4" ;;
+            esac
+        elif [ "$#" -ne 0 ] && { [ "$#" -ne 2 ] || [ "$1" != --work ]; }; then
+            fail "materialized-dynamic-sysroot takes no arguments or --work NEW_DIR [--allocator-backend accepted-c|native-shadow]"
+        fi
+        if [ "$#" -ge 2 ]; then
             materialized_dynamic_work="$(translate_owned_posix_product "$2" fresh-output)" || exit 2
-            materialized_dynamic_arguments=(--work "$materialized_dynamic_work")
-        elif [ "$#" -ne 0 ]; then
-            fail "materialized-dynamic-sysroot takes no arguments or --work NEW_DIR"
+            materialized_dynamic_arguments=(--work "$materialized_dynamic_work" "${materialized_allocator_arguments[@]}")
         fi
         ensure_image
         run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_materialized_dynamic_sysroot.sh "${materialized_dynamic_arguments[@]}"

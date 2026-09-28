@@ -44,7 +44,8 @@ class StaticPreparationTests(unittest.TestCase):
         fixtures.OwnedStaticSysrootPackageTests().populate_tree(primary)
         manifest_path = primary / package.MANIFEST_RELATIVE_PATH
         manifest = json.loads(manifest_path.read_text())
-        manifest.update(toolchain="pinned", producer_tools={"fixture": "producer identity"})
+        manifest.update(toolchain="pinned", producer_tools={"fixture": "producer identity"},
+                        allocator_backend="accepted-c")
         manifest_path.write_text(json.dumps(manifest))
         shutil.copytree(primary, products / "reproduction")
         archives = self.work / "archives"
@@ -75,6 +76,27 @@ class StaticPreparationTests(unittest.TestCase):
         self.assertEqual(record["status"], "prepared-unqualified")
         self.assertEqual(set(record["products"]), {"primary", "reproduction", "extracted"})
         self.assertNotIn("runtime", record)
+
+    def test_native_shadow_receipt_binds_build_commands_and_all_product_manifests(self):
+        for label, product in preparation.product_paths(self.work).items():
+            manifest_path = product / package.MANIFEST_RELATIVE_PATH
+            manifest = json.loads(manifest_path.read_text())
+            manifest["allocator_backend"] = "native-shadow"
+            manifest_path.write_text(json.dumps(manifest))
+        for label in ("primary", "reproduction"):
+            (self.work / "archives" / f"{label}.tar.xz").unlink()
+            package.create_archive(preparation.product_paths(self.work)[label],
+                                   self.work / "archives" / f"{label}.tar.xz")
+        for step, command in preparation.commands(self.root, self.work, "native-shadow").items():
+            (self.work / "steps" / f"{step}.command.json").write_text(json.dumps(command))
+        self.receipt.write_text(json.dumps(preparation.collect(self.root, self.work)))
+        self.assertEqual(self.validate()["status"], "prepared-unqualified")
+        primary_manifest_path = preparation.product_paths(self.work)["primary"] / package.MANIFEST_RELATIVE_PATH
+        primary_manifest = json.loads(primary_manifest_path.read_text())
+        primary_manifest["allocator_backend"] = "unknown"
+        primary_manifest_path.write_text(json.dumps(primary_manifest))
+        with self.assertRaisesRegex(preparation.PreparationError, "allocator backend"):
+            self.validate()
 
     def test_receipt_missing_extra_or_changed_fields_rejected(self):
         original = json.loads(self.receipt.read_text())
@@ -208,6 +230,57 @@ class StaticPreparationTests(unittest.TestCase):
 
 
 class StaticPreparationDispatchTests(unittest.TestCase):
+    def test_native_shadow_opt_in_reaches_both_product_frontends(self):
+        scratch = ROOT / ".work/x86_64"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            capture = work / "docker.jsonl"
+            docker = work / "docker"
+            docker.write_text(f"#!{sys.executable}\nimport json, os, sys\n"
+                "if sys.argv[1:3] == ['image', 'inspect']: print('linux/amd64')\n"
+                "elif sys.argv[1] == 'run':\n"
+                "    with open(os.environ['DISPATCH_CAPTURE'], 'a') as out: out.write(json.dumps(sys.argv[1:])+'\\n')\n"
+                "else: raise SystemExit('unexpected Docker operation')\n")
+            docker.chmod(0o755)
+            environment = {**os.environ, "PATH": f"{work}{os.pathsep}{os.environ['PATH']}",
+                "DISPATCH_CAPTURE": str(capture), "CRABC_X86_64_WORK_DIR": str(scratch)}
+            static = work / "static"
+            dynamic = work / "dynamic"
+            for arguments, expected_tail in (
+                (["owned-posix-static-products", str(static), "--allocator-backend", "native-shadow"],
+                 ["python3", "-B", "/workspace/compat/x86_64/owned_posix_static_products.py",
+                  "prepare", "/workspace/" + static.relative_to(ROOT).as_posix(),
+                  "--allocator-backend", "native-shadow"]),
+                (["materialized-dynamic-sysroot", "--work", str(dynamic), "--allocator-backend", "native-shadow"],
+                 ["bash", "/workspace/compat/x86_64/run_materialized_dynamic_sysroot.sh",
+                  "--work", "/workspace/" + dynamic.relative_to(ROOT).as_posix(),
+                  "--allocator-backend", "native-shadow"]),
+            ):
+                with self.subTest(arguments=arguments):
+                    result = subprocess.run(["bash", str(ROOT / "scripts/dev-x86_64.sh"), *arguments],
+                        cwd=ROOT, env=environment, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+            calls = [json.loads(line) for line in capture.read_text().splitlines()]
+            self.assertEqual(len(calls), 2)
+            for call, expected_tail in zip(calls, (
+                ["python3", "-B", "/workspace/compat/x86_64/owned_posix_static_products.py",
+                 "prepare", "/workspace/" + static.relative_to(ROOT).as_posix(),
+                 "--allocator-backend", "native-shadow"],
+                ["bash", "/workspace/compat/x86_64/run_materialized_dynamic_sysroot.sh",
+                 "--work", "/workspace/" + dynamic.relative_to(ROOT).as_posix(),
+                 "--allocator-backend", "native-shadow"],
+            )):
+                self.assertEqual(call[-len(expected_tail):], expected_tail)
+            for arguments in (
+                ["owned-posix-static-products", str(work / "unknown-static"), "--allocator-backend", "unknown"],
+                ["materialized-dynamic-sysroot", "--work", str(work / "unknown-dynamic"), "--allocator-backend", "unknown"],
+            ):
+                result = subprocess.run(["bash", str(ROOT / "scripts/dev-x86_64.sh"), *arguments],
+                    cwd=ROOT, env=environment, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(len(capture.read_text().splitlines()), 2)
+
     def test_host_path_maps_to_workspace_and_escapes_fail_before_docker(self):
         scratch = ROOT / ".work/x86_64/tmp"
         scratch.mkdir(parents=True, exist_ok=True)

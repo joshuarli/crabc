@@ -44,3 +44,25 @@ backend they fail closed as `component-run-failed` gaps. The final candidate
 revision flips the x86 default to the native backend (allocator M10) and the
 whole qualification chain, this family included, runs on that one candidate,
 so both capabilities are admitted there and nowhere else.
+
+A source-bound shadow diagnostic builds its own pair from a clean committed
+revision. Use fresh physical directories under this checkout's ignored
+`.work` tree:
+
+```sh
+./scripts/dev-x86_64.sh owned-posix-static-products \
+  .work/x86_64/abi-shadow-static --allocator-backend native-shadow
+./scripts/dev-x86_64.sh materialized-dynamic-sysroot \
+  --work .work/x86_64/abi-shadow-dynamic --allocator-backend native-shadow
+./scripts/dev-x86_64.sh owned-c-abi-compat-family \
+  --static-preparation .work/x86_64/abi-shadow-static/preparation.json \
+  --dynamic-qualification .work/x86_64/abi-shadow-dynamic/qualification.json \
+  --output .work/x86_64/abi-shadow-family
+```
+
+The static preparation and dynamic qualification bind the same source and
+record `allocator_backend = native-shadow` in installed manifests. The family
+assessment remains diagnostic: public admission still requires a promoted
+default backend and the full current-revision qualification chain. The
+selected accepted-C assessment is a separate source-bound result and must not
+be relabeled from shadow evidence.
