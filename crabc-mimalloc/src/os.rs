@@ -137,6 +137,8 @@ const PROT_WRITE: u32 = 0x2;
 const MAP_PRIVATE: u32 = 0x02;
 const MAP_ANONYMOUS: u32 = 0x20;
 const MAP_NORESERVE: u32 = 0x4000;
+#[cfg(test)]
+const MAP_FIXED_NOREPLACE: u32 = 0x10_0000;
 const MAP_HUGETLB: u32 = 0x40000;
 const MAP_HUGE_SHIFT: u32 = 26;
 const MAP_HUGE_2MB: u32 = 21 << MAP_HUGE_SHIFT;
@@ -364,6 +366,8 @@ pub(crate) struct MemoryConfig {
     // This test-only input never enters the production memory configuration.
     #[cfg(test)]
     force_full_aligned_map_trim: bool,
+    #[cfg(test)]
+    aligned_overmap_test_targets: Option<(usize, usize)>,
 }
 
 impl MemoryConfig {
@@ -396,6 +400,8 @@ impl MemoryConfig {
             .unwrap_or(false),
             #[cfg(test)]
             force_full_aligned_map_trim: false,
+            #[cfg(test)]
+            aligned_overmap_test_targets: None,
         }
     }
 
@@ -417,6 +423,7 @@ impl MemoryConfig {
             has_virtual_reserve: true,
             has_transparent_huge_pages,
             force_full_aligned_map_trim: false,
+            aligned_overmap_test_targets: None,
         }
     }
 
@@ -426,6 +433,14 @@ impl MemoryConfig {
     #[inline]
     pub(crate) fn test_force_full_aligned_map_trim(&mut self) {
         self.force_full_aligned_map_trim = true;
+    }
+
+    /// Selects free fixed ranges for a private native test of both trim edges.
+    /// The caller releases its temporary reservation before installing these
+    /// addresses; a non-replacing mmap makes an intervening claim fail safely.
+    #[cfg(test)]
+    pub(crate) fn test_aligned_overmap_targets(&mut self, direct: usize, over: usize) {
+        self.aligned_overmap_test_targets = Some((direct, over));
     }
 
     #[inline]
@@ -2530,6 +2545,27 @@ impl Mapping {
         })
     }
 
+    #[cfg(test)]
+    fn map_fixed_for_aligned_test(
+        config: MemoryConfig, length: usize, access: MapAccess, target: usize,
+    ) -> Result<Self> {
+        validate_mapping_length(config.page_size(), length)?;
+        fault_before(FaultPoint::Map)?;
+        let flags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE
+            | if config.has_overcommit() { MAP_NORESERVE } else { 0 };
+        // SAFETY: the test released its temporary target reservation, the
+        // kernel rejects any intervening mapping, and the returned owner is
+        // the sole authority for this exact page-aligned range.
+        let address = unsafe { crabc_core::mm::mmap_raw(
+            target as *mut u8, length, access.protection(), flags, -1, 0,
+        ) }?;
+        Ok(Self {
+            address, length, page_size: config.page_size(),
+            initially_committed: matches!(access, MapAccess::Committed),
+            initially_zero: true, is_large: false, is_mapped: true,
+        })
+    }
+
     /// Guarantees a power-of-two aligned regular mapping by overmapping and
     /// partially releasing the prefix and suffix when the direct map is not
     /// aligned. This is the active mmap branch of
@@ -2583,8 +2619,15 @@ impl Mapping {
         if alignment < page_size || !alignment.is_power_of_two() {
             return Err(AlignedMappingFailure::new(Errno::INVAL));
         }
-        let mut direct = Self::map_for_allocator(config, length, access)
-            .map_err(AlignedMappingFailure::new)?;
+        #[cfg(test)]
+        let direct = if let Some((target, _)) = config.aligned_overmap_test_targets {
+            Self::map_fixed_for_aligned_test(config, length, access, target)
+        } else {
+            Self::map_for_allocator(config, length, access)
+        };
+        #[cfg(not(test))]
+        let direct = Self::map_for_allocator(config, length, access);
+        let mut direct = direct.map_err(AlignedMappingFailure::new)?;
         if !force_full_trim_for_test && direct.address.addr() % alignment == 0 {
             return Ok(direct);
         }
@@ -2599,8 +2642,15 @@ impl Mapping {
         };
         let over_length = length.checked_add(alignment_headroom)
             .ok_or(AlignedMappingFailure::new(Errno::NOMEM))?;
-        let mut over = Self::map_for_allocator(config, over_length, access)
-            .map_err(AlignedMappingFailure::new)?;
+        #[cfg(test)]
+        let over = if let Some((_, target)) = config.aligned_overmap_test_targets {
+            Self::map_fixed_for_aligned_test(config, over_length, access, target)
+        } else {
+            Self::map_for_allocator(config, over_length, access)
+        };
+        #[cfg(not(test))]
+        let over = Self::map_for_allocator(config, over_length, access);
+        let mut over = over.map_err(AlignedMappingFailure::new)?;
         let base = over.address.addr();
         let aligned_address = if force_full_trim_for_test && base % alignment == 0 {
             base + alignment
@@ -10455,6 +10505,98 @@ mod tests {
         for ordinal in [2, 3] {
             assert!(m2_normal_receiver_case(config, process, warnings, ordinal));
         }
+    }
+
+    /// A processless OS page claim keeps the aligned middle even when the
+    /// last best-effort trim fails. Its terminal release retains one raw
+    /// retry owner; the escaped suffix has no owner and needs fixture cleanup.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_legacy_os_page_suffix_trim_trace() {
+        use crate::os_page::{OsAlignedPageClaim, OsAlignedPageOwner};
+        let mut config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 1024 * 1024, true, false,
+        );
+        let alignment = crate::config::PAGE_META_ALIGNMENT;
+        let length = 192 * 1024;
+        let span = 6 * alignment + length + alignment + 4096;
+        // SAFETY: this is a private PROT_NONE reservation used only to choose
+        // page-aligned free addresses. It is removed before either claim.
+        let reservation = unsafe { crabc_core::mm::mmap_raw(
+            core::ptr::null_mut(), span, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0,
+        ) }.expect("temporary aligned test target reservation");
+        let aligned = (reservation.addr() + alignment - 1) & !(alignment - 1);
+        let direct_target = aligned + 4096;
+        let over_target = aligned + 4 * alignment + 4096;
+        assert!(over_target + length + alignment <= reservation.addr() + span);
+        // SAFETY: no references or owners have been constructed from this
+        // temporary mapping; the later fixed claims use non-replacing mmap.
+        unsafe { crabc_core::mm::munmap_raw(reservation, span) }
+            .expect("release temporary aligned test targets");
+        config.test_aligned_overmap_targets(direct_target, over_target);
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let before = subprocess.identity().vm_statistics().snapshot();
+        let fault = fault::install(fault::Plan::at(fault::Point::Unmap, 3, Errno::NOMEM));
+        let capture = fault.capture_unmap_ranges();
+        let claim = match OsAlignedPageClaim::allocate(config, 4096, 128 * 1024) {
+            Ok(claim) => claim,
+            Err(_) => panic!("failed suffix trim still returns its aligned claim"),
+        };
+        let (ranges, count) = capture.all().expect("three exact cleanup attempts");
+        drop(capture);
+        let base = claim.base().unwrap().addr();
+        let memory = claim.memory_id().unwrap();
+        let length = memory.size().unwrap();
+        let (suffix_address, suffix_length) = ranges[2];
+        let suffix_exact = count == 3 && fault.observed() == 3
+            && suffix_address == base + length && suffix_length == 4096
+            && m2_aligned_overmap_page_is_live(suffix_address, 4096);
+        let memory_exact = memory.kind() == MemoryKind::Os
+            && memory.os_base().unwrap().value() == base
+            && memory.initially_committed() && memory.initially_zero()
+            && length == 192 * 1024;
+        let claimed = subprocess.identity().vm_statistics().snapshot();
+        fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        let failure = match claim.release() {
+            Ok(()) => panic!("terminal unmap failure must keep one claim"),
+            Err(failure) => failure,
+        };
+        let terminal_live = fault.observed() == 1 && m2_aligned_overmap_page_is_live(base, 4096)
+            && m2_aligned_overmap_page_is_live(suffix_address, 4096);
+        let final_stats = subprocess.identity().vm_statistics().snapshot();
+        fault.set(fault::Plan::disabled());
+        let OsAlignedPageOwner::Claim(claim) = failure.into_owner() else {
+            panic!("terminal failure changed unpublished claim ownership");
+        };
+        let raw_retry = claim.release().is_ok();
+        let suffix_still_live = m2_aligned_overmap_page_is_live(suffix_address, 4096);
+        let raw_no_stats = subprocess.identity().vm_statistics().snapshot() == final_stats;
+        // SAFETY: the failed suffix trim removed this span from the claim.
+        let raw_suffix = unsafe { crabc_core::mm::munmap_raw(
+            suffix_address as *mut u8, suffix_length,
+        ) }.is_ok();
+        std::println!("CRABC_MI_M2_LEGACY_OS_PAGE_TRIM_BEGIN");
+        for (key, value) in [
+            ("memory_exact", i64::from(memory_exact)),
+            ("suffix_exact", i64::from(suffix_exact)),
+            ("terminal_exact", i64::from(terminal_live)),
+            ("middle_length", length as i64),
+            ("escaped_suffix_length", suffix_length as i64),
+            ("reserved_claim", claimed.reserved_current - before.reserved_current),
+            ("committed_claim", claimed.committed_current - before.committed_current),
+            ("mmap_claim", claimed.mmap_calls - before.mmap_calls),
+            ("reserved_final", final_stats.reserved_current - before.reserved_current),
+            ("committed_final", final_stats.committed_current - before.committed_current),
+            ("raw_middle", i64::from(raw_retry)),
+            ("raw_suffix", i64::from(raw_suffix)),
+            ("raw_no_stats", i64::from(raw_no_stats)),
+            ("suffix_still_live", i64::from(suffix_still_live)),
+        ] {
+            std::println!("legacy.claim.{key}={value}");
+        }
+        std::println!("CRABC_MI_M2_LEGACY_OS_PAGE_TRIM_END");
+        assert!(memory_exact && suffix_exact && terminal_live && raw_retry
+            && suffix_still_live && raw_no_stats && raw_suffix);
     }
 
     #[test]
