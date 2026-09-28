@@ -51,7 +51,10 @@ are not transferable passes for a different revision.
   the ported direct-page malloc and local-free fast paths on the initial and
   worker owners (low-load, not qualifying). Allocator M3 passes every own
   component and waits only on M2; M4 passes including the unmodified
-  upstream `test-api.c` through the native adapter. Integrated products are
+  upstream `test-api.c` through the native adapter. M6 now source-differentiates
+  quiescent non-main Heap block visitation across 126 adapter keys; six
+  runnable evidence rows pass, while all ten required gates remain blocked
+  by named missing API and lifetime evidence. Integrated products are
   compared against an evidence-only pinned v3.5.0 C product (the selected C
   backend is `libmimalloc-sys` 0.1.49, mimalloc 3.3.2); the port map
   classifies every intentional difference (`difference_kind`). The M8
