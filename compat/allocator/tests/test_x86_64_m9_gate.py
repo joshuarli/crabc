@@ -386,17 +386,90 @@ class AgreementTests(GateFixture):
 
 
 class CodegenTests(GateFixture):
-    def codegen_report(self, **changes: object) -> dict:
-        import codegen_audit_x86_64 as codegen
+    def setUp(self) -> None:
+        super().setUp()
+        self.codegen = importlib.import_module("codegen_audit_x86_64")
+        codegen = self.codegen
 
+        class FixtureImage:
+            def __init__(self, binary: Path, nm: str, objdump: str) -> None:
+                self.instructions = {0x1000: codegen.Instruction(0x1000, "ret", "", "ret", None)}
+                self.by_name = {name: (0x1000, 0x1001) for name in codegen.ENTRY_SYMBOLS}
+
+            def function_at(self, address: int) -> str:
+                return codegen.ENTRY_SYMBOLS[0]
+
+            def function_range(self, name: str) -> tuple[int, int]:
+                return self.by_name[name]
+
+        image = patch.object(codegen, "Image", FixtureImage)
+        image.start()
+        self.addCleanup(image.stop)
+        git = patch.object(engine, "git_provenance", return_value={"head": "fixture", "clean": True})
+        git.start()
+        self.addCleanup(git.stop)
+        self.image = FixtureImage(self.root / "fixture", "nm", "objdump")
+        self.artifacts = self.root / "codegen.artifacts"
+
+    def codegen_report(self, **changes: object) -> dict:
+        codegen = self.codegen
+        self.artifacts.mkdir(exist_ok=True)
+        products = {}
+        for name, content in (("engine-fixture-c.o", b"shared fixture"),
+                              ("engine-fixture-rust.o", b"shared fixture"),
+                              ("libcrabc_allocator_engine_rust_backend.a", b"rust library"),
+                              ("engine-fixture-pinned-c", b"pinned C executable"),
+                              ("engine-fixture-rust-engine", b"Rust executable")):
+            path = self.artifacts / name
+            path.write_bytes(content)
+            products[name] = engine.sha256_file(path)
+        pin = engine.shared.load_pin()
+        inputs = {**engine.sealed_inputs(), "mimalloc": {"archive": {"sha256": pin["sha256"]},
+                                                        **{key: pin[key] for key in ("version", "tag", "revision")}}}
+        source = dict(inputs, mimalloc={key: pin[key] for key in ("version", "tag", "revision")}
+                      | {"archive_sha256": pin["sha256"]})
+        identity = accepted()["identity"]
+        identity["source"] = source
+        identity["configuration"]["tools"] = {"cc": "fixture"}
+        cohort = []
+        for index in range(3):
+            row = accepted(identity=identity)
+            row["path"] = f"cohort-{index}.json"
+            row["product_identity"] = {
+                "shared_fixture_object": products["engine-fixture-c.o"],
+                "pinned_c_executable": products["engine-fixture-pinned-c"],
+                "rust_engine_static_library": products["libcrabc_allocator_engine_rust_backend.a"],
+                "rust_engine_executable": products["engine-fixture-rust-engine"],
+            }
+            cohort.append(row)
+        self.cohort = cohort
+        static = {lane: {entry: codegen.static_reachability(self.image, entry)
+                         for entry in codegen.ENTRY_SYMBOLS} for lane in engine.LANES}
+        scenarios = {}
+        for scenario in codegen.SCENARIOS:
+            lanes = {}
+            for lane in engine.LANES:
+                lanes[lane] = {}
+                for region in scenario.regions:
+                    summary, listing = codegen.analyze_region(self.image, codegen.Region([0x1000], {}))
+                    filename = f"trace-{scenario.name}-{region}-{lane}.txt"
+                    (self.artifacts / filename).write_text("\n".join(listing) + "\n", encoding="utf-8")
+                    lanes[lane][region] = dict(summary, listing=filename)
+            scenarios[scenario.name] = {
+                "workload": scenario.workload, "params": dict(scenario.params), "measures": scenario.measures,
+                "lanes": lanes,
+                "comparison": {region: codegen.compare_regions(lanes["pinned_c"][region], lanes["rust_engine"][region])
+                               for region in scenario.regions},
+            }
         report = {
-            "status": "ok",
-            "provenance": {"git": {"clean": True}, "inputs": {
-                **engine.sealed_inputs(),
-                "mimalloc": {"archive": {"sha256": engine.shared.load_pin()["sha256"]},
-                             **{key: engine.shared.load_pin()[key] for key in ("version", "tag", "revision")}}}},
-            "scenarios": {scenario.name: {"comparison": {region: {"rust_excess": []} for region in scenario.regions}}
-                          for scenario in codegen.SCENARIOS},
+            "schema": codegen.SCHEMA, "kind": codegen.KIND, "label": "codegen", "status": "ok",
+            "provenance": {"git": {"clean": True, "head": engine.git_provenance()["head"]},
+                           "inputs": inputs, "tools": {"cc": "fixture"}},
+            "lanes": {lane: {"executable": {"artifact": engine.artifact_record(
+                self.artifacts / ("engine-fixture-pinned-c" if lane == "pinned_c" else "engine-fixture-rust-engine")),
+                "elf": dict(engine.shared.EXPECTED_ELF), "type": "static-non-pie-exec"}}
+                for lane in engine.LANES},
+            "static": static, "scenarios": scenarios,
         }
         report.update(changes)
         return report
@@ -404,10 +477,62 @@ class CodegenTests(GateFixture):
     def evaluate_codegen(self, report: dict) -> dict:
         path = self.root / "codegen.json"
         path.write_text(json.dumps(report), encoding="utf-8")
-        return gate.codegen_condition(path)
+        return gate.codegen_condition(path, self.cohort)
 
     def test_a_clean_current_complete_audit_is_met(self) -> None:
         self.assertTrue(self.evaluate_codegen(self.codegen_report())["met"])
+
+    def test_report_without_retained_codegen_products_is_refused(self) -> None:
+        report = self.codegen_report()
+        (self.artifacts / "engine-fixture-rust-engine").unlink()
+        self.assertFalse(self.evaluate_codegen(report)["met"])
+
+    def test_codegen_report_requires_a_qualified_engine_cohort(self) -> None:
+        report = self.codegen_report()
+        self.cohort = []
+        detail = self.evaluate_codegen(report)["detail"]
+        self.assertTrue(any("three agreeing qualified engine reports" in item for item in detail), detail)
+
+    def test_rewritten_comparison_cannot_hide_structural_cost(self) -> None:
+        report = self.codegen_report()
+        comparison = report["scenarios"]["local_64"]["comparison"]["malloc"]
+        comparison["calls"]["rust_engine"] = 3
+        comparison["rust_excess"] = []
+        detail = self.evaluate_codegen(report)["detail"]
+        self.assertTrue(any("comparison differs from its lane summaries" in item for item in detail), detail)
+
+    def test_changed_listing_and_other_cohort_product_are_refused(self) -> None:
+        report = self.codegen_report()
+        listing = self.artifacts / "trace-local_64-malloc-rust_engine.txt"
+        listing.write_text("0x1000 crabc_allocator_engine_malloc: nop\n", encoding="utf-8")
+        detail = self.evaluate_codegen(report)["detail"]
+        self.assertTrue(any("listing differs from its executable" in item for item in detail), detail)
+        listing.write_text("0x1000 crabc_allocator_engine_malloc: ret\n", encoding="utf-8")
+        for member in self.cohort:
+            member["product_identity"]["rust_engine_executable"] = "0" * 64
+        detail = self.evaluate_codegen(report)["detail"]
+        self.assertTrue(any("rust_engine codegen executable differs from the qualified engine product" in item
+                            for item in detail), detail)
+
+    def test_other_source_and_tool_configuration_are_refused(self) -> None:
+        report = self.codegen_report()
+        for member in self.cohort:
+            member["identity"]["source"] = {"different": "source"}
+        detail = self.evaluate_codegen(report)["detail"]
+        self.assertTrue(any("source differs from the qualified engine reports" in item for item in detail), detail)
+        for member in self.cohort:
+            member["identity"]["source"] = dict(report["provenance"]["inputs"], mimalloc={
+                key: report["provenance"]["inputs"]["mimalloc"][key] for key in ("version", "tag", "revision")}
+                | {"archive_sha256": report["provenance"]["inputs"]["mimalloc"]["archive"]["sha256"]})
+            member["identity"]["configuration"]["tools"] = {"cc": "different"}
+        detail = self.evaluate_codegen(report)["detail"]
+        self.assertTrue(any("tool configuration differs" in item for item in detail), detail)
+
+    def test_codegen_audit_requires_the_current_clean_revision(self) -> None:
+        report = self.codegen_report()
+        with patch.object(engine, "git_provenance", return_value={"head": "fixture", "clean": False}):
+            detail = self.evaluate_codegen(report)["detail"]
+        self.assertTrue(any("clean checkout" in item for item in detail), detail)
 
     def test_rust_excess_missing_scenarios_and_stale_seal_are_named(self) -> None:
         report = self.codegen_report()

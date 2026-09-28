@@ -211,7 +211,7 @@ def codegen_unmet(report: Mapping[str, Any], scenarios: Sequence[str]) -> list[s
     return unmet
 
 
-def codegen_condition(path: Path | None) -> dict[str, Any]:
+def codegen_condition(path: Path | None, cohort: Sequence[Mapping[str, Any]] = ()) -> dict[str, Any]:
     if path is None:
         return _condition("m9.codegen-audit", ["no allocator-codegen-audit report exists"], "")
     try:
@@ -219,10 +219,116 @@ def codegen_condition(path: Path | None) -> dict[str, Any]:
         import codegen_audit_x86_64 as codegen
 
         unmet = codegen_unmet(report, [scenario.name for scenario in codegen.SCENARIOS])
+        if not agreement_condition(cohort)["met"]:
+            unmet.append("codegen audit needs three agreeing qualified engine reports")
+        else:
+            unmet.extend(physical_codegen_unmet(Path(path), report, codegen, cohort[0]))
     except Exception as error:  # noqa: BLE001
         unmet = [f"{type(error).__name__}: {error}"]
     return _condition("m9.codegen-audit", [f"{harness.relative(Path(path))}: {item}" for item in unmet],
                       f"{harness.relative(Path(path))} has no Rust-only structural cost")
+
+
+def physical_codegen_unmet(path: Path, report: Mapping[str, Any], codegen: Any,
+                           cohort: Mapping[str, Any]) -> list[str]:
+    """Recompute the audit from retained engine products and instruction listings."""
+
+    label = engine.validate_label(report["label"])
+    if (path.is_symlink() or label != path.stem or report.get("schema") != codegen.SCHEMA
+            or report.get("kind") != codegen.KIND):
+        return ["codegen report path or schema differs from its retained audit"]
+    artifacts = path.with_suffix(".artifacts")
+    if not artifacts.is_dir() or artifacts.is_symlink():
+        return ["codegen audit lacks its retained artifacts"]
+    provenance = report["provenance"]
+    inputs = provenance["inputs"]
+    source = dict(inputs, mimalloc={key: inputs["mimalloc"][key] for key in ("version", "tag", "revision")}
+                  | {"archive_sha256": inputs["mimalloc"]["archive"]["sha256"]})
+    if source != cohort["identity"]["source"]:
+        return ["codegen audit source differs from the qualified engine reports"]
+    if provenance.get("tools") != cohort["identity"]["configuration"].get("tools"):
+        return ["codegen audit tool configuration differs from the qualified engine reports"]
+    current_git = engine.git_provenance()
+    if (current_git.get("clean") is not True or provenance["git"].get("head") != current_git.get("head")):
+        return ["codegen audit checkout revision differs from this clean checkout"]
+    products = cohort["product_identity"]
+    names = {"pinned_c": "engine-fixture-pinned-c", "rust_engine": "engine-fixture-rust-engine"}
+    if set(report["lanes"]) != set(names) or set(report["static"]) != set(names):
+        return ["codegen audit omits a C or Rust product"]
+    images = {}
+    unmet = []
+    for lane, name in names.items():
+        executable = artifacts / name
+        if executable.is_symlink() or not executable.is_file():
+            unmet.append(f"{lane} codegen executable is absent or redirected")
+            continue
+        recorded = report["lanes"][lane]["executable"]
+        expected = {"artifact": engine.artifact_record(executable), "elf": dict(engine.shared.EXPECTED_ELF),
+                    "type": "static-non-pie-exec"}
+        cohort_key = "pinned_c_executable" if lane == "pinned_c" else "rust_engine_executable"
+        if recorded != expected or expected["artifact"]["sha256"] != products[cohort_key]:
+            unmet.append(f"{lane} codegen executable differs from the qualified engine product")
+            continue
+        images[lane] = codegen.Image(executable, "nm", "objdump")
+    for name, digest in (("engine-fixture-c.o", products["shared_fixture_object"]),
+                         ("engine-fixture-rust.o", products["shared_fixture_object"]),
+                         ("libcrabc_allocator_engine_rust_backend.a", products["rust_engine_static_library"])):
+        physical = artifacts / name
+        if physical.is_symlink() or not physical.is_file() or engine.sha256_file(physical) != digest:
+            unmet.append(f"codegen product {name} differs from the qualified engine product")
+    if set(images) != set(names):
+        return unmet
+    for lane, image in images.items():
+        if set(report["static"][lane]) != set(codegen.ENTRY_SYMBOLS):
+            unmet.append(f"{lane} codegen static reachability omits an entry")
+            continue
+        for entry in codegen.ENTRY_SYMBOLS:
+            if report["static"][lane][entry] != codegen.static_reachability(image, entry):
+                unmet.append(f"{lane} codegen static reachability differs from its executable")
+    if set(report["scenarios"]) != {scenario.name for scenario in codegen.SCENARIOS}:
+        unmet.append("codegen audit scenario roster differs from the complete audit")
+        return unmet
+    for scenario in codegen.SCENARIOS:
+        record = report["scenarios"][scenario.name]
+        if (record.get("workload") != scenario.workload or record.get("params") != dict(scenario.params)
+                or record.get("measures") != scenario.measures or set(record.get("lanes", {})) != set(names)
+                or set(record.get("comparison", {})) != set(scenario.regions)):
+            unmet.append(f"codegen {scenario.name} does not describe the selected trace")
+            continue
+        for region in scenario.regions:
+            for lane in names:
+                summary = record["lanes"][lane][region]
+                listing = artifacts / f"trace-{scenario.name}-{region}-{lane}.txt"
+                if summary.get("listing") != listing.name or listing.is_symlink() or not listing.is_file():
+                    unmet.append(f"codegen {scenario.name}/{region}/{lane} lacks its retained listing")
+                    continue
+                rips = []
+                for line in listing.read_text(encoding="utf-8").splitlines():
+                    match = re.fullmatch(r"(0x[0-9a-f]+) (.+?): (.+?)(?:  x([1-9][0-9]*))?", line)
+                    if match is None:
+                        raise ValueError(f"malformed codegen listing: {listing.name}")
+                    address, function, instruction, repeats = match.groups()
+                    address = int(address, 16)
+                    item = images[lane].instructions.get(address)
+                    if item is None or images[lane].function_at(address) != function or item.text != instruction:
+                        unmet.append(f"codegen {scenario.name}/{region}/{lane} listing differs from its executable")
+                        break
+                    rips.extend([address] * (int(repeats) if repeats else 1))
+                else:
+                    recomputed, _ = codegen.analyze_region(images[lane], codegen.Region(rips, {}))
+                    if any(summary.get(key) != value for key, value in recomputed.items()
+                           if key not in ("atomic_rmw_targets", "atomic_rmw_non_thread_local")):
+                        unmet.append(f"codegen {scenario.name}/{region}/{lane} summary differs from its listing")
+                    targets = summary.get("atomic_rmw_targets")
+                    if (not isinstance(targets, Mapping) or any(type(value) is not int or value < 0
+                                                                 for value in targets.values())
+                            or summary.get("atomic_rmw_non_thread_local") != sum(
+                                value for name, value in targets.items() if name not in {"thread-local", "stack"})):
+                        unmet.append(f"codegen {scenario.name}/{region}/{lane} atomic targets are inconsistent")
+            if (record["comparison"][region] != codegen.compare_regions(
+                    record["lanes"]["pinned_c"][region], record["lanes"]["rust_engine"][region])):
+                unmet.append(f"codegen {scenario.name}/{region} comparison differs from its lane summaries")
+    return unmet
 
 
 def convergence_condition(evaluate_convergence: Callable[[Path], Sequence[Mapping[str, Any]]]) -> dict[str, Any]:
@@ -482,7 +588,7 @@ def evaluate(
     conditions = [
         matrix_condition(records),
         *report_conditions(records),
-        codegen_condition(codegen_report),
+        codegen_condition(codegen_report, [record for record in records if not record["unmet"]]),
         convergence_condition(evaluate_convergence),
         integrated_condition(discover_integrated() if integrated_reports is None else integrated_reports,
                              inspect_integrated, [record for record in records if not record["unmet"]]),
