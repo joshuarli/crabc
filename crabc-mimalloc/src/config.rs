@@ -49,6 +49,9 @@ const SOURCE_ENVIRONMENT_ENTRY_LIMIT: usize = 10_000;
 // preprocessor option evaluates to zero in the upstream `#if` expressions.
 pub(crate) const SECURE_LEVEL: usize = 0;
 pub(crate) const DEBUG_LEVEL: usize = 0;
+#[cfg(feature = "mi-stat-1")]
+pub(crate) const STAT_LEVEL: usize = 1;
+#[cfg(not(feature = "mi-stat-1"))]
 pub(crate) const STAT_LEVEL: usize = 0;
 pub(crate) const FREE_IS_CHECKED: bool = false;
 pub(crate) const FREE_USE_PAGEMAP: bool = false;

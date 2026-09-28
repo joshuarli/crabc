@@ -92,6 +92,23 @@ impl StatCount {
         }
     }
 
+    /// Mirrors `mi_stat_update` for a count owned by the current Theap.
+    /// The source writes current, peak, and positive total in that order.
+    #[inline]
+    fn update_owner_local(&self, amount: i64) {
+        if amount == 0 {
+            return;
+        }
+        let current = i64_load_relaxed(&self.current).wrapping_add(amount);
+        i64_store_relaxed(&self.current, current);
+        if current > i64_load_relaxed(&self.peak) {
+            i64_store_relaxed(&self.peak, current);
+        }
+        if amount > 0 {
+            i64_store_relaxed(&self.total, i64_load_relaxed(&self.total).wrapping_add(amount));
+        }
+    }
+
     /// Mirrors `mi_stat_adjust_mt`, used to repair source accounting around
     /// partially committed ranges. It changes current and total without
     /// changing the peak previously observed by [`Self::update`].
@@ -868,6 +885,24 @@ impl HeapTheapStatistics {
         true
     }
 
+    /// Pinned `alloc.c` records a successful binned block by its usable page
+    /// block size only when the optional statistics profile is selected.
+    #[inline]
+    pub(crate) fn malloc_normal_allocated(&self, block_size: usize) {
+        if STAT_LEVEL > 0 {
+            self.malloc_normal.update_owner_local(bytes_to_i64(block_size));
+        }
+    }
+
+    /// Pinned `free.c` subtracts that same page block size from the Theap
+    /// selected for the free, leaving the allocation's total and peak intact.
+    #[inline]
+    pub(crate) fn malloc_normal_freed(&self, block_size: usize) {
+        if STAT_LEVEL > 0 {
+            self.malloc_normal.update_owner_local(-bytes_to_i64(block_size));
+        }
+    }
+
     /// `page.c:_mi_page_retire`'s `mi_theap_stat_counter_increase`; only a
     /// Theap owner records it (see [`StatCounter::increase_owner_local`]).
     #[inline]
@@ -1502,6 +1537,27 @@ impl HeapTheapStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "mi-stat-1")]
+    #[test]
+    fn level_one_normal_allocation_survives_theap_heap_and_process_merge() {
+        let theap = HeapTheapStatistics::new();
+        let heap = HeapTheapStatistics::new();
+        let process = HeapTheapStatistics::new();
+        theap.malloc_normal_allocated(64);
+        assert_eq!(i64_load_relaxed(&theap.malloc_normal.current), 64);
+        heap.merge_from_and_reset(&theap);
+        assert_eq!(i64_load_relaxed(&theap.malloc_normal.current), 0);
+        process.merge_from_and_reset(&heap);
+        assert_eq!(i64_load_relaxed(&process.malloc_normal.total), 64);
+        assert_eq!(i64_load_relaxed(&process.malloc_normal.peak), 64);
+        assert_eq!(i64_load_relaxed(&process.malloc_normal.current), 64);
+        theap.malloc_normal_freed(64);
+        heap.merge_from_and_reset(&theap);
+        process.merge_from_and_reset(&heap);
+        assert_eq!(i64_load_relaxed(&process.malloc_normal.total), 64);
+        assert_eq!(i64_load_relaxed(&process.malloc_normal.current), 0);
+    }
 
     #[test]
     fn count_update_and_adjust_preserve_the_two_source_algorithms() {

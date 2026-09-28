@@ -113,6 +113,10 @@
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-differential"],
       "scope": "Pinned-C/Rust mi_stats_* and mi_process_info API behavior, printed and JSON structure, exact allocation and worker count deltas, 74 page-bin deltas, arena snapshots, bin sizes, and callback deliveries; variable numeric tokens in printed and JSON text are normalized."
     },
+    "differential:statistics-level-one": {
+      "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-level-one-differential"],
+      "scope": "Pinned C MI_STAT=1 and the Rust native adapter allocate a binned block, compare its process count and printed section, merge through mi_stats_reset, then free and compare retained total and zero current."
+    },
     "differential:visitation-profiles": {
       "command": null,
       "scope": "Pinned-C/Rust area/block visitation traces under the debug-padding, secure, and guarded profiles."
@@ -292,6 +296,7 @@
       "acceptance": "The public `mi_stats_t` image and process-wide accessors of include/mimalloc-stats.h and src/stats.c (get, JSON, print, reset, bin sizes, `mi_process_info`) and every producer of the selected statistics level equal the pinned C values and output.",
       "evidence": [
         "differential:statistics",
+        "differential:statistics-level-one",
         "differential:adapter"
       ],
       "blocked_by": [

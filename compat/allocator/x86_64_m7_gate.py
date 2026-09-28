@@ -941,6 +941,85 @@ PAGE_MAP_TRACE_END = "CRABC_MI_M7_PAGE_MAP_TRACE_END"
 STATISTICS_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_driver.c"
 STATISTICS_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_TRACE_BEGIN"
 STATISTICS_TRACE_END = "CRABC_MI_M7_STATISTICS_TRACE_END"
+STATISTICS_LEVEL_ONE_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_level_one_driver.c"
+STATISTICS_LEVEL_ONE_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_LEVEL_ONE_TRACE_BEGIN"
+STATISTICS_LEVEL_ONE_TRACE_END = "CRABC_MI_M7_STATISTICS_LEVEL_ONE_TRACE_END"
+
+
+def require_statistics_level_one(trace: Mapping[str, str], description: str) -> None:
+    """Require a live binned count that survives reset and drops on free."""
+
+    try:
+        usable = int(trace["allocation.usable"])
+        allocated = tuple(int(part) for part in trace["allocated.normal"].split(","))
+        merged = tuple(int(part) for part in trace["merged.normal"].split(","))
+        freed = tuple(int(part) for part in trace["freed.normal"].split(","))
+    except (KeyError, ValueError) as error:
+        raise harness.HarnessError(f"{description} lacks a numeric level-one count: {trace}") from error
+    if (set(trace) != {"profile.level", "allocation.usable", "allocated.normal", "merged.normal",
+                       "freed.normal", "print.binned"}
+            or trace["profile.level"] != "1" or trace["print.binned"] != "1"
+            or usable < 64 or len(allocated) != 3 or len(merged) != 3 or len(freed) != 3
+            or allocated[0] != usable or allocated[2] != usable
+            or merged != allocated or freed != (allocated[0], allocated[1], 0)):
+        raise harness.HarnessError(f"{description} violates the binned merge/reset/free path: {trace}")
+
+
+def run_statistics_level_one_differential(offline: bool) -> dict[str, Any]:
+    """Build the same public statistics driver with pinned C level one and Rust."""
+
+    import x86_64_m4_gate as m4
+
+    harness.require_native_x86_64()
+    pin = harness.load_pin()
+    archive = harness.fetch_archive(pin, offline)
+    with harness.temporary_directory("crabc-mimalloc-x86_64-m7-statistics-level-one-") as name:
+        temporary = Path(name)
+        source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
+        compiler = harness.require_tool("musl-gcc")
+        c_driver = temporary / "statistics-level-one-c"
+        configuration = ["-DMI_STAT=1" if flag == "-DMI_STAT=0" else flag
+                         for flag in harness.CONFIGURATION_PROFILES["release"]]
+        c_build = harness.command_record([
+            compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+            *configuration, "-I", str(source / "include"), str(STATISTICS_LEVEL_ONE_DRIVER),
+            str(source / "src/static.c"), "-pthread", "-o", str(c_driver),
+        ], cwd=source, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS)
+        harness.require_success(c_build, "pinned C level-one statistics driver build")
+        target_dir = temporary / "cargo-target"
+        adapter_build = harness.command_record([
+            harness.require_tool("cargo"), "build", "--locked", "--release", "--target", m4.RUST_TARGET,
+            "-p", m4.ADAPTER_PACKAGE, "--features", "crabc-mimalloc/mi-stat-1",
+            "--target-dir", str(target_dir),
+        ], cwd=harness.ROOT, env=dict(os.environ), timeout_seconds=EVIDENCE_TIMEOUT_SECONDS)
+        harness.require_success(adapter_build, "Rust level-one statistics adapter build")
+        library = target_dir / m4.RUST_TARGET / "release" / m4.ADAPTER_STATICLIB
+        rust_driver = temporary / "statistics-level-one-rust"
+        rust_build = harness.command_record([
+            compiler, "-std=c11", "-O2", "-I", str(source / "include"),
+            str(STATISTICS_LEVEL_ONE_DRIVER), str(library), "-pthread", "-o", str(rust_driver),
+        ], cwd=source, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS)
+        harness.require_success(rust_build, "Rust level-one statistics driver link")
+        executions = {
+            side: harness.command_record([str(driver)], cwd=temporary, env={}, timeout_seconds=60)
+            for side, driver in (("c", c_driver), ("rust", rust_driver))
+        }
+        for side, execution in executions.items():
+            harness.require_success(execution, f"{side} level-one statistics driver")
+        traces = {
+            side: parse_options_trace(str(execution["stdout"]), f"{side} level-one statistics",
+                                      STATISTICS_LEVEL_ONE_TRACE_BEGIN, STATISTICS_LEVEL_ONE_TRACE_END)
+            for side, execution in executions.items()
+        }
+        for side, trace in traces.items():
+            require_statistics_level_one(trace, side)
+        compare_options_traces(traces["c"], traces["rust"])
+        report = {"c_build_command": c_build["command"], "adapter_build_command": adapter_build["command"],
+                  "rust_build_command": rust_build["command"],
+                  "trace": traces["c"], "status": "passed"}
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    harness.write_json(ARTIFACTS / "statistics-level-one.json", report)
+    return report
 
 
 def run_adapter_differential(
@@ -1067,6 +1146,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run the shared-driver pinned-C/native-adapter startup page-map failure differential")
     mode.add_argument("--statistics-differential", action="store_true",
         help="run the shared-driver pinned-C/native-adapter statistics differential")
+    mode.add_argument("--statistics-level-one-differential", action="store_true",
+        help="run the pinned-C/native-adapter level-one statistics differential")
     mode.add_argument("--adapter-differential", action="store_true",
         help="run the shared-driver pinned-C/native-adapter M7 differential")
     mode.add_argument("--option-profiles-differential", action="store_true",
@@ -1106,6 +1187,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             end=STATISTICS_TRACE_END, report_name="statistics.json",
         )
         print(f"M7 statistics differential passed: {report['compared_key_count']} keys")
+        return 0
+    if arguments.statistics_level_one_differential:
+        report = run_statistics_level_one_differential(arguments.offline)
+        print(f"M7 level-one statistics differential passed: {len(report['trace'])} keys")
         return 0
     if arguments.adapter_differential:
         report = run_adapter_differential(arguments.offline)

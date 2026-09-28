@@ -240,6 +240,9 @@ required-features = ["native-runtime-test-audit"]
 
 [features]
 default = []
+# Pinned MI_STAT=1 records binned and huge allocation sizes while retaining
+# the release allocator layout. The default artifact keeps MI_STAT=0.
+mi-stat-1 = []
 # Pinned MI_SHOW_ERRORS changes the initial show_errors descriptor while
 # retaining release allocation layout and algorithms.
 mi-show-errors = []
