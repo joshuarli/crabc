@@ -20,7 +20,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[2]
 PREFIX = "m2.bitmap.native."
 EXPECTED_OBSERVATION_COUNT = 132184
-EXPECTED_RUST_TEST_COUNT = 41
+EXPECTED_RUST_TEST_COUNT = 42
 SOURCE_FILES = (
     "src/bitmap.c", "src/bitmap.h", "include/mimalloc/internal.h",
     "include/mimalloc/atomic.h", "include/mimalloc/bits.h",

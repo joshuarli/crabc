@@ -6,6 +6,13 @@ from m2_bitmaps_x86_64 import transcript
 
 
 class BitmapTranscriptTests(unittest.TestCase):
+    def test_optional_isa_trace_is_outside_the_scalar_bitmap_transcript(self):
+        self.assertEqual(transcript(
+            "CRABC_MI_M7_OPTIONAL_ISA_TRACE_BEGIN\n"
+            "bitmap.path=scalar\n"
+            "m2.bitmap.native.0=7\n"
+            "CRABC_MI_M7_OPTIONAL_ISA_TRACE_END\n"), [7])
+
     def test_libtest_prefix_and_unsigned_max_are_preserved(self):
         self.assertEqual(transcript(
             "test bitmap::native_tests::emit_native_bitmap_component_trace ... "

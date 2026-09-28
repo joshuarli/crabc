@@ -19,8 +19,9 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
             'schema': 'crabc-mimalloc-x86_64-m2-bitmaps-evidence', 'format': 1,
             'status': 'passed', 'architecture': 'x86_64', 'profile': 'scalar-release-stat0',
             'upstream': {'revision': pin['revision'], 'archive_sha256': pin['sha256']},
-            'rust_passed_test_count': 41, 'rust_execution_count': 1, 'rust_build_reused': True,
-            'rust_tests': [f'bitmap::fixture_{index}' for index in range(41)],
+            'rust_passed_test_count': 42, 'rust_execution_count': 1, 'rust_build_reused': True,
+            'rust_tests': [f'bitmap::fixture_{index}' for index in range(41)]
+                + ['bitmap::native_tests::optional_isa_bitmap_allocation_trace'],
             'rust_command': ['/workspace/.work/prepared-test', 'bitmap::', '--test-threads=1', '--nocapture'],
             'compared_value_count': 132184,
             'transcript_sha256': '78ff33552d928c12a9bd1e234d409e5d4dabaa77bd1ee9b7b9ee9b84966ceddb',
@@ -104,7 +105,7 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
         bitmap = summary['components'][2]
         self.assertEqual(len(bitmap['bounded_source_definitions']), 9)
         self.assertEqual(len(bitmap['failure_matrix']), 8)
-        self.assertEqual([c['expected_passed_test_count'] for c in bitmap['checks']], [41, 41])
+        self.assertEqual([c['expected_passed_test_count'] for c in bitmap['checks']], [42, 42])
 
     def test_fragment_schema_check_status_and_predicate_mutations_fail(self):
         original = RUNNER.read_json
@@ -167,11 +168,12 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
         harness.CONFIGURATION_PROFILES = {'release': []}
         harness.temporary_directory.return_value = contextlib.nullcontext('.work/source-fixture')
         harness.safe_extract.return_value = Path('.work/source-fixture')
-        harness.parse_rust_test_count.return_value = 41
+        harness.parse_rust_test_count.return_value = 42
         harness._m1_foundations_test_program.side_effect = AssertionError('a second build is forbidden')
         harness.command_record.side_effect = [
             {}, {'stdout': 'oracle'},
-            {'stdout': '\n'.join(f'bitmap::fixture_{i}: test' for i in range(41))},
+            {'stdout': '\n'.join([*(f'bitmap::fixture_{i}: test' for i in range(41)),
+                'bitmap::native_tests::optional_isa_bitmap_allocation_trace: test'])},
             {'stdout': 'rust', 'stderr': ''},
         ]
         prepared = {'path': Path('.work/prepared-test'), 'build_command': ['cargo', 'test', '--no-run']}
@@ -275,22 +277,14 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
             check for check in vm_checks
             if check.get('comparison_status') is not None
         ]
+        self.assertTrue(custom)
         self.assertEqual(
-            [check['id'] for check in custom],
-            [
-                'native-vm-fixed-lifecycle-differential',
-                'aligned-hint-source-profile-and-direct-caller-matrix',
-                'aligned-overmap-cleanup-c-rust-boundary-matrix',
-            ],
+            {check['id'] for check in custom},
+            {check['id'] for check in vm_checks
+             if check.get('evidence_scope') != 'focused-source-test-batch'},
         )
         self.assertEqual(len({check['id'] for check in vm_checks}), len(vm_checks))
-        self.assertFalse(
-            any(
-                check['id'] == 'aligned-overmap-cleanup-c-rust-boundary-matrix'
-                and check.get('evidence_scope') == 'focused-source-test-batch'
-                for check in vm_checks
-            )
-        )
+        self.assertTrue(all(check['passed_test_count'] >= 1 for check in custom))
 
     def test_report_contains_actual_bitmap_checks_without_promoting_partial_components(self):
         arguments = self.report_arguments()

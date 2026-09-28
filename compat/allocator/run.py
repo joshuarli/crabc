@@ -13912,7 +13912,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                 or not isinstance(raw_check.get("target"), str)
                 or type(raw_check.get("expected_passed_test_count")) is not int
                 or raw_check.get("expected_passed_test_count") != (
-                    41 if component_id == "bitmaps" else (
+                    42 if component_id == "bitmaps" else (
                         7 if raw_check.get("kind") == "c-rust-initialization-tld-source-matrix" else (
                             3 if raw_check.get("kind") == "c-rust-second-arena-reset-advice-matrix" else 1
                         )
