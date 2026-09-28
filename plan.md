@@ -80,7 +80,9 @@ are not transferable passes for a different revision.
   main and pthread workers, with selected-provider and final-ELF physical
   replay. The full three-product current-source admission remains open.
   Allocator M5 remains open. C mimalloc remains the selected
-  backend; allocator M2–M11 remain open. A frozen M5 source run at `e0b9ecbc7`
+  backend; allocator M2–M11 remain open. The six-component M1 gate passed on
+  clean frozen `6431e9036` with no unmet conditions; final-candidate replay
+  remains revision-bound. A frozen M5 source run at `e0b9ecbc7`
   passed seven gates, failed its churn and upstream stress gates on one seed-2
   static-PIE PageMap high-water spike, and left codegen/performance blocked;
   the same binary passed a focused replay. A later diagnostic reproduced one
@@ -166,7 +168,10 @@ are not transferable passes for a different revision.
   A separate source-built reset-advice matrix matches 78 C/Rust fields across
   isolated EIO, EAGAIN, and EINVAL policies, including advice retry, exact
   slice range, warning order, and live bitmap state. The M2 VM component now
-  has 34 checks with five conditions still open. A legacy processless aligned
+  has 35 checks with five conditions still open. A failed second OS-page block
+  commit and failed rollback unmap match pinned C in eleven process-owned
+  observations. The PageMap fallback suffix-trim fault is registered in its
+  shared aggregate with ten matching C/Rust observations. A legacy processless aligned
   OS-page claim preserves the same MemoryId, live escaped suffix, and raw
   cleanup as pinned C after failed suffix trim and terminal unmap. Its absent
   subprocess accounting and warning callback are recorded as exact source
@@ -429,8 +434,9 @@ are not transferable passes for a different revision.
   calls after canonical-alias reuse; a further same-root SysV header-load
   reuse lowers development instructions by a paired median 117 across
   100 rotated samples without changing syscall counts. A source-built marked
-  loader trace now has 24 whole-process calls after skipping exit-time
-  `gettid` when no constructor is active; finalizer controls still pass.
+  loader trace has 23 whole-process calls after skipping exit-time
+  `gettid` and reusing libc's initial TID for constructor ownership;
+  finalizer controls still pass.
   The x86 clock path now
   receives `AT_SYSINFO_EHDR` from validated startup auxv once, so libc-linked
   core clock lookup avoids reopening procfs; direct-core fallback remains.
@@ -441,7 +447,9 @@ are not transferable passes for a different revision.
   and affinity facts; a rehashed allocator cohort from a different source or
   CPU model fails its read-only replay. It also rejects separately rehashed
   allocator reports that reuse the same raw timed and memory samples, or whose
-  reported row CPUs exceed the retained host observation set; no
+  reported row CPUs exceed the retained host observation set. The runtime C
+  collector reader also rejects a claimed benchmark or allowed CPU absent
+  from the retained raw CPUinfo; no
   qualifying performance measurements exist yet.
 - **Resume here, in order:**
   1. Family admissions are the critical path: every selected-private
@@ -483,7 +491,9 @@ are not transferable passes for a different revision.
      creation and extraction bind retained bytes to the materialization state
      before publication. Extraction now rejects altered modes, owner metadata,
      member order, padding, and PAX/GNU extensions by comparing each physical
-     header with the writer's canonical USTAR encoding. The dynamic
+     header with the writer's canonical USTAR encoding. The static extractor
+     also compares the bounded decoded TAR stream against the writer's exact
+     XZ bytes, rejecting trailing data and alternate compression. The dynamic
      qualification reader binds each base
      executable's declared DSO hash to its retained DSO bytes. Resolver and
      POSIX family readers now require the dynamic qualification receipt at
