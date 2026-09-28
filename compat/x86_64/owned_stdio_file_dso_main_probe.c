@@ -728,6 +728,53 @@ static int full_sink_dso_recovery_roundtrip(void)
     return 0;
 }
 
+static int pushback_dso_roundtrip(const char *path)
+{
+    char stream_path[PATH_MAX], observed[6];
+    fpos_t position;
+    FILE *stream;
+    int length, descriptor, result;
+
+    length = snprintf(stream_path, sizeof(stream_path), "%s.pushback", path);
+    if (length < 0 || (size_t)length >= sizeof(stream_path))
+        return 1;
+    errno = EDOM;
+    stream = crabc_pushback_dso_open(stream_path, &errno);
+    if (stream == NULL || errno != ERANGE)
+        return 2;
+    descriptor = fileno(stream);
+    if (descriptor < 0 || fcntl(descriptor, F_GETFD) < 0)
+        return 3;
+    errno = EDOM;
+    if (fread(observed, 1, sizeof(observed), stream) != sizeof(observed) ||
+        memcmp(observed, "abcdef", sizeof(observed)) != 0 ||
+        ftell(stream) != 6 || fgetc(stream) != EOF ||
+        !feof(stream) || ferror(stream) || errno != EDOM)
+        return 4;
+    errno = EDOM;
+    if (ungetc('Q', stream) != 'Q' || ftell(stream) != 5 ||
+        fgetpos(stream, &position) != 0 || feof(stream) ||
+        ferror(stream) || errno != EDOM)
+        return 5;
+    errno = EDOM;
+    result = crabc_pushback_dso_consume(stream, &errno);
+    if (result != 0 || errno != ERANGE)
+        return 10 + result;
+    errno = EDOM;
+    if (ungetc('R', stream) != 'R' || fsetpos(stream, &position) != 0 ||
+        ftell(stream) != 5 || feof(stream) || ferror(stream) || errno != EDOM)
+        return 20;
+    errno = EDOM;
+    result = crabc_pushback_dso_close(stream, &errno);
+    if (result != 0 || errno != ERANGE)
+        return 30 + result;
+    errno = 0;
+    if (fcntl(descriptor, F_GETFD) != -1 || errno != EBADF ||
+        pathname_readback(stream_path, "abcdef", 6) != 0)
+        return 40;
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     static const char expected[] = "buffered!";
@@ -792,6 +839,9 @@ int main(int argc, char **argv)
     result = full_sink_dso_recovery_roundtrip();
     if (result != 0)
         return result;
+    result = pushback_dso_roundtrip(argv[1]);
+    if (result != 0)
+        return result;
     result = prepare_dso_exit_stream(argv[1]);
     if (result != 0)
         return 130 + result;
@@ -807,7 +857,7 @@ int main(int argc, char **argv)
     result = wide_memory_dso_roundtrip();
     if (result != 0)
         return result;
-    if (write(STDOUT_FILENO, "stdio-file-dso-clearerr-ok\n", 27) != 27)
+    if (write(STDOUT_FILENO, "stdio-file-dso-pushback-ok\n", 27) != 27)
         return 11;
     return 0;
 }

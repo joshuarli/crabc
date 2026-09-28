@@ -736,6 +736,64 @@ int crabc_full_dso_close_recovery(FILE *stream, int *main_errno)
     return result;
 }
 
+/* The DSO owns this pathname stream while main changes its pushback and
+ * logical position. Reading here must observe the same FILE state.
+ */
+static FILE *pushback_dso_stream;
+static char pushback_dso_buffer[64];
+static unsigned pushback_dso_stage;
+
+FILE *crabc_pushback_dso_open(const char *path, int *main_errno)
+{
+    if (path == NULL || main_errno != &errno || errno != EDOM ||
+        pushback_dso_stage != 0)
+        return NULL;
+    pushback_dso_stream = fopen(path, "w+");
+    if (pushback_dso_stream == NULL ||
+        setvbuf(pushback_dso_stream, pushback_dso_buffer, _IOFBF,
+                sizeof(pushback_dso_buffer)) != 0 ||
+        fwrite("abcdef", 1, 6, pushback_dso_stream) != 6 ||
+        fflush(pushback_dso_stream) != 0 ||
+        fseek(pushback_dso_stream, 0, SEEK_SET) != 0 ||
+        ftell(pushback_dso_stream) != 0 ||
+        ferror(pushback_dso_stream) || feof(pushback_dso_stream))
+        return NULL;
+    pushback_dso_stage = 1;
+    errno = ERANGE;
+    return pushback_dso_stream;
+}
+
+int crabc_pushback_dso_consume(FILE *stream, int *main_errno)
+{
+    if (stream == NULL || stream != pushback_dso_stream ||
+        main_errno != &errno || errno != EDOM || pushback_dso_stage != 1 ||
+        feof(stream) || ferror(stream) || ftell(stream) != 5)
+        return 1;
+    if (fgetc(stream) != 'Q' || ftell(stream) != 6 ||
+        feof(stream) || ferror(stream) || errno != EDOM)
+        return 2;
+    pushback_dso_stage = 2;
+    errno = ERANGE;
+    return 0;
+}
+
+int crabc_pushback_dso_close(FILE *stream, int *main_errno)
+{
+    if (stream == NULL || stream != pushback_dso_stream ||
+        main_errno != &errno || errno != EDOM || pushback_dso_stage != 2 ||
+        ftell(stream) != 5 || feof(stream) || ferror(stream))
+        return 1;
+    if (fgetc(stream) != 'f' || ftell(stream) != 6 ||
+        feof(stream) || ferror(stream) || errno != EDOM)
+        return 2;
+    if (fclose(stream) != 0 || errno != EDOM)
+        return 3;
+    pushback_dso_stream = NULL;
+    pushback_dso_stage = 3;
+    errno = ERANGE;
+    return 0;
+}
+
 static FILE *exit_stream;
 static char exit_buffer[64];
 static char exit_marker_path[PATH_MAX];

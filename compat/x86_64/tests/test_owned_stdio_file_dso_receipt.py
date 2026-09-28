@@ -16,7 +16,7 @@ spec.loader.exec_module(receipt)
 
 
 class FileDsoReceiptTests(unittest.TestCase):
-    def test_path_memory_orientation_and_full_sink_recovery_are_reread(self) -> None:
+    def test_path_memory_orientation_and_pushback_are_reread(self) -> None:
         case = "oracle-static-process"
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
             work = Path(temporary)
@@ -37,7 +37,8 @@ class FileDsoReceiptTests(unittest.TestCase):
             (raw / f"{case}.scratch-after.json").write_text(
                 '["stream.dso-global", "stream.exit", "stream.fini", '
                 '"stream.main-global", "stream.new", "stream.old", '
-                '"stream.orientation-byte", "stream.orientation-wide"]\n')
+                '"stream.orientation-byte", "stream.orientation-wide", '
+                '"stream.pushback"]\n')
             (raw / f"{case}.strace").write_text(
                 'unlink("/scratch/stream") = 0\n'
                 'fcntl(3, F_GETFD) = -1 EBADF (Bad file descriptor)\n'
@@ -57,6 +58,11 @@ class FileDsoReceiptTests(unittest.TestCase):
                 'open("/dev/full", O_WRONLY|O_CREAT|O_TRUNC|O_LARGEFILE, 0666) = 3\n'
                 'writev(3, [{iov_base="first", iov_len=5}], 1) = -1 ENOSPC (No space left on device)\n'
                 'writev(3, [{iov_base="second", iov_len=6}], 1) = -1 ENOSPC (No space left on device)\n'
+                'close(3) = 0\n'
+                'open("/scratch/stream.pushback", O_RDWR|O_CREAT|O_TRUNC|O_LARGEFILE, 0666) = 3\n'
+                'writev(3, [{iov_base="abcdef", iov_len=6}], 1) = 6\n'
+                'close(3) = 0\n'
+                'open("/scratch/stream.pushback", O_RDONLY|O_LARGEFILE) = 3\n'
                 'close(3) = 0\n'
                 'write(3, "fini-before-flush:fd-live\\n", 26) = 26\n'
                 'write(3, "dso-exit-once\\n", 14) = 14\n')
@@ -144,6 +150,28 @@ class FileDsoReceiptTests(unittest.TestCase):
                     'writev(3, [{iov_base="first", iov_len=5}], 1) = -1 ENOSPC (No space left on device)\n'
                     'writev(3, [{iov_base="lost", iov_len=4}], 1) = -1 ENOSPC (No space left on device)\n'))
                 with self.assertRaisesRegex(receipt.ReceiptError, "clearerr retry wrote discarded bytes"):
+                    receipt.audit_runtime(work, work / "unused-dynamic")
+                trace_path.write_text(trace.replace(
+                    'writev(3, [{iov_base="abcdef", iov_len=6}], 1) = 6\n', ''))
+                with self.assertRaisesRegex(receipt.ReceiptError, "pushback pathname write or close differs"):
+                    receipt.audit_runtime(work, work / "unused-dynamic")
+                trace_path.write_text(trace.replace(
+                    'writev(3, [{iov_base="abcdef", iov_len=6}], 1) = 6\n',
+                    'writev(3, [{iov_base="abcdef", iov_len=6}], 1) = 6\n'
+                    'writev(3, [{iov_base="abcdef", iov_len=6}], 1) = 6\n'))
+                with self.assertRaisesRegex(receipt.ReceiptError, "pushback pathname write or close differs"):
+                    receipt.audit_runtime(work, work / "unused-dynamic")
+                trace_path.write_text(trace.replace(
+                    'writev(3, [{iov_base="abcdef", iov_len=6}], 1) = 6\n'
+                    'close(3) = 0\n'
+                    'open("/scratch/stream.pushback", O_RDONLY|O_LARGEFILE)',
+                    'writev(3, [{iov_base="abcdef", iov_len=6}], 1) = 6\n'
+                    'open("/scratch/stream.pushback", O_RDONLY|O_LARGEFILE)'))
+                with self.assertRaisesRegex(receipt.ReceiptError, "pushback pathname write or close differs"):
+                    receipt.audit_runtime(work, work / "unused-dynamic")
+                trace_path.write_text(trace)
+                (scratch / "stream.pushback").write_bytes(b"abcdeg")
+                with self.assertRaisesRegex(receipt.ReceiptError, "retained pathname bytes differ"):
                     receipt.audit_runtime(work, work / "unused-dynamic")
 
 
