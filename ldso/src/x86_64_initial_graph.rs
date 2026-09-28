@@ -2787,13 +2787,10 @@ unsafe fn materialize_tls_in(
         if object.tls_filesz != 0 {
             core::ptr::copy_nonoverlapping(object.tls_image, destination, object.tls_filesz);
         }
-        if object.tls_memsz > object.tls_filesz {
-            core::ptr::write_bytes(
-                destination.add(object.tls_filesz),
-                0,
-                object.tls_memsz - object.tls_filesz,
-            );
-        }
+        // Both backing choices start zeroed: the one-time builtin block is
+        // static storage, and every worker block is a fresh anonymous map.
+        // TLS placements do not overlap, so copying the file prefix leaves
+        // the remaining bytes zero without touching them again.
         core::ptr::write_unaligned(dtv.add(object.tls_module_id), destination as usize);
         core::ptr::write_unaligned(module_sizes.add(object.tls_module_id), object.tls_memsz);
     }
@@ -2805,6 +2802,45 @@ unsafe fn materialize_tls_in(
         dtv_words,
         module_count,
     })
+}
+
+#[cfg(test)]
+mod tls_zero_tail_tests {
+    use super::*;
+
+    #[repr(align(4096))]
+    struct ZeroedBlock([u8; 2 * PAGE as usize]);
+
+    #[test]
+    fn initial_tls_keeps_file_prefix_and_zero_tail_in_both_backing_choices() {
+        let prefixes = [[0x5au8, 0x6b], [0xa5, 0xc3]];
+        let objects: [Object; 2] = core::array::from_fn(|index| Object {
+            tls_image: prefixes[index].as_ptr(),
+            tls_filesz: prefixes[index].len(),
+            tls_memsz: 16,
+            tls_align: 8,
+            tls_module_id: index + 1,
+            tls_offset_below_tp: (index + 1) * 16,
+            ..EMPTY_OBJECT
+        });
+        let mut builtin = ZeroedBlock([0; 2 * PAGE as usize]);
+        let builtin_pointer = builtin.0.as_mut_ptr();
+        let builtin_bytes = builtin.0.len();
+        for backing in [Some((builtin_pointer, builtin_bytes)), None] {
+            let installed = unsafe { materialize_tls_in(&objects, 0, backing) }.unwrap();
+            for (index, prefix) in prefixes.iter().enumerate() {
+                let destination = unsafe { installed.thread_pointer.sub((index + 1) * 16) };
+                let image = unsafe { core::slice::from_raw_parts(destination, 16) };
+                assert_eq!(&image[..2], prefix);
+                assert!(image[2..].iter().all(|byte| *byte == 0));
+                assert_eq!(unsafe { core::ptr::read_unaligned(installed.dtv.add(index + 1)) }, destination as usize);
+            }
+            if backing.is_none() {
+                assert_eq!(unsafe { syscall2(SYS_MUNMAP, installed.mapping as i64,
+                    installed.mapping_byte_len as i64) }, 0);
+            }
+        }
+    }
 }
 
 /// Publish the one loader-owned RuntimeV1 record after a complete initial TLS
