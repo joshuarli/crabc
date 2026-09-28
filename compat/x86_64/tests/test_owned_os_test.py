@@ -118,6 +118,27 @@ class TargetAdapterPlanTests(unittest.TestCase):
 
 
 class EvidenceContractTests(unittest.TestCase):
+    def test_ttyname_proc_capture_retains_each_side_without_overwriting_raw_streams(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+            work = Path(temporary)
+            records = []
+            for side, status in (("candidate", 3), ("musl-static", 4)):
+                command = [sys.executable, "-c", "import sys; "
+                           f"sys.stdout.write('{side}'); sys.stderr.write('{side} error'); sys.exit({status})"]
+                records.append(TTYNAME_PROC.capture(
+                    work, Path("execution/without-proc") / f"ttyname.{side}", command, {}, 5.0,
+                ))
+
+            paths = [record["raw"][stream]["path"] for record in records
+                     for stream in ("status", "stdout", "stderr")]
+            self.assertEqual(len(paths), len(set(paths)))
+            for record, side, status in zip(records, ("candidate", "musl-static"), (3, 4)):
+                self.assertEqual(record["status"], status)
+                for stream, expected in (("status", f"{status}\n".encode()),
+                                         ("stdout", side.encode()),
+                                         ("stderr", f"{side} error".encode())):
+                    self.assertEqual((work / record["raw"][stream]["path"]).read_bytes(), expected)
+
     def assert_live_proc_root_is_not_walked(self, root: Path, lifecycle: dict[str, object]) -> None:
         proc = Path(lifecycle["receipt"]["mountpoint"])
         (proc / "live").mkdir(parents=True)

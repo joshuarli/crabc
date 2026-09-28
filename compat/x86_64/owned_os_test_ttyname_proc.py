@@ -83,15 +83,16 @@ def capture(work: Path, stem: Path, command: list[str], environment: dict[str, s
             stdout, stderr = process.communicate()
             status = "TIMEOUT"
     status_bytes = (str(status) + "\n").encode()
+    raw_stem = work / "raw" / stem
     return {
         "command": command,
         "cwd": str(cwd) if cwd is not None else None,
         "timeout_seconds": timeout,
         "status": status,
         "raw": {
-            "status": artifact(work, work / "raw" / stem.with_suffix(".status"), status_bytes),
-            "stdout": artifact(work, work / "raw" / stem.with_suffix(".stdout"), stdout),
-            "stderr": artifact(work, work / "raw" / stem.with_suffix(".stderr"), stderr),
+            "status": artifact(work, raw_stem.parent / (raw_stem.name + ".status"), status_bytes),
+            "stdout": artifact(work, raw_stem.parent / (raw_stem.name + ".stdout"), stdout),
+            "stderr": artifact(work, raw_stem.parent / (raw_stem.name + ".stderr"), stderr),
         },
     }
 
