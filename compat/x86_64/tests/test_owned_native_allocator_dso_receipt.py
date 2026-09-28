@@ -122,6 +122,22 @@ class OwnedNativeAllocatorDsoReceiptTests(unittest.TestCase):
         receipt_path.write_bytes(original_receipt)
         semantic_receipt.read_native_allocator_dso_receipt(ROOT)
 
+        candidate_dso = latest / "products/candidate-initial-dso"
+        original_dso = candidate_dso.read_bytes()
+        replacement = (latest / "products/oracle-initial-dso").read_bytes()
+        candidate_dso.write_bytes(replacement)
+        changed = json.loads(original_receipt)
+        changed["products"]["candidate-initial-dso"] = {
+            "sha256": hashlib.sha256(replacement).hexdigest(), "size": len(replacement),
+        }
+        receipt_path.write_text(json.dumps(changed))
+        receipt.read_receipt(ROOT, RUNNER)
+        with self.assertRaisesRegex(receipt.ReceiptError, "candidate-initial-dso runpath"):
+            semantic_receipt.read_native_allocator_dso_receipt(ROOT)
+        candidate_dso.write_bytes(original_dso)
+        receipt_path.write_bytes(original_receipt)
+        semantic_receipt.read_native_allocator_dso_receipt(ROOT)
+
         loader = latest / "products/dynamic-loader"
         manifest = latest / "products/dynamic-manifest"
         original_loader = loader.read_bytes()

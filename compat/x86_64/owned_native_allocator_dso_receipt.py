@@ -209,6 +209,9 @@ def read_native_allocator_dso_receipt(
             dynamic, _, _, symbols = elf(products / name, "DYN")
             require(soname(dynamic) == [f"libdso-{role}.so"] and needed(dynamic) == ["libc.so"],
                     f"{name} linkage differs")
+            expected_runpath = ["/usr/lib"] if arm == "candidate" else []
+            require(re.findall(r"\(RUNPATH\).*Library runpath: \[([^]]+)\]", dynamic) == expected_runpath,
+                    f"{name} runpath differs")
             api = f"dso_api_{role}"
             require(api in symbols and symbols[api][0:2] == ("FUNC", "GLOBAL")
                     and symbols[api][3] != "UND", f"{name} API identity differs")
