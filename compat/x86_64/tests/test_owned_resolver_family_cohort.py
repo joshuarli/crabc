@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import shutil
 import sys
@@ -120,6 +121,45 @@ class ResolverFamilyCohortTests(unittest.TestCase):
                             dynamic_qualification=self.work / "unused-dynamic.json",
                             component_products=components,
                         )
+
+    def test_copied_dynamic_qualification_receipt_is_rejected(self) -> None:
+        source = {"revision": "a" * 40, "content_sha256": "b" * 64}
+        static_receipt = self.work / "static/preparation.json"
+        static_receipt.parent.mkdir()
+        static_receipt.write_text("{}\n", encoding="utf-8")
+        prepared = {"source": source, "products": {}}
+        for label, pair in self.products.items():
+            manifest = cohort._file_identity(ROOT, pair["static"] / "share/crabc/manifest.json", label)
+            prepared["products"][label] = {
+                "path": self._relative(pair["static"]),
+                "manifest": {"path": manifest["path"], "sha256": manifest["sha256"],
+                             "size": manifest["byte_length"]},
+            }
+
+        dynamic_work = self.work / "dynamic-work"
+        qualified = {"work": self._relative(dynamic_work), "source_sha256": source["content_sha256"],
+                     "family_completion": False, "public_support": False, "products": {}}
+        for label, dynamic_label in cohort.PAIRS.items():
+            manifest = dynamic_work / dynamic_label / "share/crabc/manifest.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(f"{label}-dynamic\n", encoding="utf-8")
+            qualified["products"][dynamic_label] = cohort._file_identity(ROOT, manifest, label)["sha256"]
+        receipt = dynamic_work / "qualification.json"
+        receipt.write_text(json.dumps(qualified), encoding="utf-8")
+        copied = self.work / "copied-qualification.json"
+        shutil.copyfile(receipt, copied)
+
+        with (mock.patch.object(cohort.static, "validate_receipt", return_value=prepared),
+              mock.patch.object(cohort.static, "source_identity", return_value=source),
+              mock.patch.object(cohort.static, "product_paths",
+                                return_value={label: pair["static"] for label, pair in self.products.items()}),
+              mock.patch.object(cohort.dynamic, "collect", return_value=qualified)):
+            valid_source, valid_products = cohort.canonical_products(ROOT, static_receipt, receipt)
+            self.assertEqual(valid_source["content_sha256"], source["content_sha256"])
+            self.assertEqual(set(valid_products), set(cohort.PAIRS))
+            with self.assertRaisesRegex(cohort.ResolverFamilyCohortError,
+                                        "dynamic qualification receipt is outside its work directory"):
+                cohort.canonical_products(ROOT, static_receipt, copied)
 
 
 if __name__ == "__main__":

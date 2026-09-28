@@ -115,6 +115,8 @@ def _canonical_products(root: Path, static_preparation: Path, dynamic_qualificat
     static_paths = static.product_paths(static_preparation.parent)
     work_value = qualified.get("work")
     dynamic_work = _directory(root, work_value, "dynamic qualification work")
+    require(dynamic_qualification == dynamic_work / "qualification.json",
+            "dynamic qualification receipt is outside its work directory")
     products: dict[str, dict[str, dict[str, object]]] = {}
     for label, dynamic_label in PAIRS.items():
         static_product = _physical_work_path(root, static_paths[label], f"{label} static product", directory=True)
