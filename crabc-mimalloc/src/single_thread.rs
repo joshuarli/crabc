@@ -38274,7 +38274,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // Huge pages contain exactly one block and are never candidates for
         // queue reuse. The fresh page enters the huge queue only long enough
         // for the source full-page transition below.
-        if bin == BIN_HUGE {
+        let page = if bin == BIN_HUGE {
             let Some(page) = self.allocate_fresh_page(block_size, kind) else {
                 return Ok(None);
             };
@@ -38286,39 +38286,28 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 self.session.theap().record_malloc_huge_allocated(physical_size);
             }
             self.push_regular_page(bin, page);
-            let block = self
-                .pop_or_extend(page, request, zero)
-                ?
-                .ok_or(GenericPathError::Lifecycle)?;
+            page
+        } else {
+            let Some(page) = self.find_generic_queue_page(bin, block_size, kind)? else {
+                return Ok(None);
+            };
+            page
+        };
+        // Both source routes pop from their newly selected or reused page.
+        // An absent immediate block is an invariant failure, never an OOM retry.
+        let block = self
+            .pop_or_extend(page, request, zero)?
+            .ok_or(GenericPathError::Lifecycle)?;
+        // Huge pages always become full after their sole pop. Ordinary medium
+        // and large pages move only when the source used/reserved pair is full.
+        if bin == BIN_HUGE || (block_size > SMALL_MAX_OBJ_SIZE && unsafe {
+            let page = page.as_ref();
+            page.used() == page.reserved() as usize
+        }) {
             self.move_regular_to_full(bin, page.as_ptr(), Some(block))
                 .map_err(GenericPathError::from)?;
-            return Ok(Some(block));
         }
-
-        let Some(page) = self.find_generic_queue_page(bin, block_size, kind)? else {
-            return Ok(None);
-        };
-        match self.pop_or_extend(page, request, zero) {
-            Ok(Some(block)) => {
-                // `mi_malloc_generic_fallback` moves a full medium, large,
-                // or singleton page immediately. Small pages use the source
-                // retain-count path while a later queue scan considers them.
-                let full = unsafe {
-                    let page = page.as_ref();
-                    page.used() == page.reserved() as usize
-                };
-                if block_size > SMALL_MAX_OBJ_SIZE && full {
-                    self.move_regular_to_full(bin, page.as_ptr(), Some(block))
-                        .map_err(GenericPathError::from)?;
-                }
-                Ok(Some(block))
-            }
-            // `find_generic_queue_page` returns only a source-immediately-
-            // available page. A contrary result is a local-list invariant
-            // failure, not a reason to select a different page or retry OOM.
-            Ok(None) => Err(GenericPathError::Lifecycle),
-            Err(error) => Err(error),
-        }
+        Ok(Some(block))
     }
 
     /// Ports `mi_page_queue_lookup_free_first` and
