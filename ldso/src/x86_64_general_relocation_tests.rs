@@ -997,6 +997,50 @@ fn gnu_lookup_checks_reached_name_and_version_without_rejecting_bloom_miss() {
 
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[test]
+fn gnu_single_and_multiple_buckets_keep_scope_order_and_malformed_failure() {
+    let mut first = Image::new();
+    let mut second = Image::new();
+    first.symbol(1, 1, 2, 0, 1, 0x1000, 8);
+    second.symbol(1, 1, 1, 0, 1, 0x1000, 8);
+    let hash = gnu_hash(b"value");
+    let shift = 5;
+    let bloom = (1u64 << (hash & 63)) | (1u64 << ((hash >> shift) & 63));
+    first.put_u64(IMAGE_HASH + 16, bloom);
+    first.put_u32(IMAGE_HASH + 24, 1);
+    first.put_u32(IMAGE_HASH + 28, hash | 1);
+    second.put_u64(IMAGE_HASH + 16, bloom);
+    second.put_u32(IMAGE_HASH + 24 + ((hash as usize % 3) * 4), 1);
+    second.put_u32(IMAGE_HASH + 36, hash | 1);
+    let mut first_object = first.object(true);
+    first_object.symbol_lookup = SymbolLookupTable::Gnu {
+        bucket_count: 1, symbol_offset: 1, bloom_count: 1, bloom_shift: shift,
+        bloom: unsafe { first.storage.add(IMAGE_HASH + 16).cast() },
+        buckets: unsafe { first.storage.add(IMAGE_HASH + 24).cast() },
+        chains: unsafe { first.storage.add(IMAGE_HASH + 28).cast() }, symbol_count: 5,
+    };
+    let mut second_object = second.object(true);
+    second_object.symbol_lookup = SymbolLookupTable::Gnu {
+        bucket_count: 3, symbol_offset: 1, bloom_count: 1, bloom_shift: shift,
+        bloom: unsafe { second.storage.add(IMAGE_HASH + 16).cast() },
+        buckets: unsafe { second.storage.add(IMAGE_HASH + 24).cast() },
+        chains: unsafe { second.storage.add(IMAGE_HASH + 36).cast() }, symbol_count: 5,
+    };
+    assert!(matches!(unsafe { find_runtime_symbol([Some(&first_object), Some(&second_object)], b"value") },
+        Some(RuntimeSymbol::Address(address)) if address == first.data.as_ptr() as u64));
+    assert!(matches!(unsafe { find_runtime_symbol([Some(&second_object), Some(&first_object)], b"value") },
+        Some(RuntimeSymbol::Address(address)) if address == second.data.as_ptr() as u64));
+
+    first.put_u32(IMAGE_HASH + 24, 5);
+    assert!(unsafe { find_runtime_symbol([Some(&first_object), Some(&second_object)], b"value") }.is_none());
+    first.put_u32(IMAGE_HASH + 24, 1);
+    second.put_u32(IMAGE_HASH + 24 + ((hash as usize % 3) * 4), 5);
+    assert!(unsafe { exported_index(&second_object, b"value") }.is_none());
+    second.put_u32(IMAGE_HASH + 24 + ((hash as usize % 3) * 4), 1);
+    assert_eq!(unsafe { exported_index(&second_object, b"missing") }, Some(None));
+}
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[test]
 fn exported_lookup_keeps_first_chain_record_and_rejects_its_bad_name() {
     let mut image = Image::new();
     image.symbol(1, 1, 2, 0, 1, 0x1000, 8);

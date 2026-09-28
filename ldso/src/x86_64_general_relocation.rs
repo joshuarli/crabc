@@ -105,11 +105,16 @@ pub(super) unsafe fn find_runtime_symbol<'a>(
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let mut hashes = SymbolHashes::default();
     for object in scope {
-        let objects = core::slice::from_ref(object?);
+        let object = object?;
+        let objects = core::slice::from_ref(object);
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-        let Some(symbol) = (unsafe { lookup_exported(objects, 0, name, &mut hashes) })? else {
+        // The scope already supplied this object, so an indexed lookup through
+        // the one-element slice adds no validation to its retained record.
+        let Some((_, record)) = (unsafe { exported_record_with_hashes(object, name, &mut hashes) })? else {
             continue;
         };
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        let symbol = unsafe { definition_at(0, record) };
         #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
         let Some(symbol) = (|| -> Option<Option<Definition>> {
             for index in 1..objects[0].symcount {
