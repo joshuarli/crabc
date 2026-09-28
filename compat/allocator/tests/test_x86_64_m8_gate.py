@@ -283,5 +283,38 @@ class M8CorpusEvidenceTests(unittest.TestCase):
         self.assertEqual(results["product:package-corpus"]["status"], "failed")
 
 
+class M8ThreadsForkReceiptTests(unittest.TestCase):
+    def test_successful_commands_with_missing_or_tampered_receipts_fail(self) -> None:
+        products = {"evidence": "product:p", "evidence_line": "p evidence: ",
+                    "static_sysroot": "static-sysroot", "dynamic_sysroot": "dynamic-sysroot"}
+        commands = {
+            "product:p": ["scripts/dev-x86_64.sh", "produce"],
+            "product:native-worker-lifecycle": ["scripts/dev-x86_64.sh", "owned-native-worker-lifecycle"],
+            "product:native-allocator-fork": ["scripts/dev-x86_64.sh", "owned-native-allocator-fork",
+                                              "--static-sysroot", "{static_sysroot}", "{dynamic_sysroot}"],
+            "product:native-allocator-stress": ["scripts/dev-x86_64.sh", "owned-native-allocator-stress"],
+        }
+        for evidence_id in tuple(commands)[1:]:
+            for reason in ("no receipt", "retained product changed"):
+                with self.subTest(evidence_id=evidence_id, reason=reason):
+                    runner = "owned-" + evidence_id.removeprefix("product:")
+                    with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory, \
+                            tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64/tmp",
+                                                        prefix=f"{runner}.") as evidence:
+                        evidence_path = gate.CONTAINER_ROOT / Path(evidence).relative_to(ROOT)
+
+                        def command_record(command, **_kwargs):
+                            line = ("p evidence: /workspace/.work/product\n" if command[1] == "produce"
+                                    else f"{runner.removeprefix('owned-')} evidence: {evidence_path}\n")
+                            return {"status": 0, "stdout": line, "stderr": ""}
+
+                        with mock.patch.object(harness, "command_record", command_record), \
+                                mock.patch.object(gate.native_shadow_receipt, "read_receipt",
+                                                  side_effect=gate.native_shadow_receipt.ReceiptError(reason)) as reader:
+                            result = gate.run_evidence(commands, products, [evidence_id], Path(directory))
+                        reader.assert_called_once()
+                    self.assertEqual(result[evidence_id]["status"], "failed")
+
+
 if __name__ == "__main__":
     unittest.main()

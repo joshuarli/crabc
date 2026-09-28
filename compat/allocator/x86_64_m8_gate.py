@@ -38,6 +38,7 @@ import run as harness
 sys.path.insert(0, str(harness.ROOT / "compat/x86_64"))
 import consumer_rust_std_lto as consumer
 import owned_dynamic_qualification as qualification
+import native_shadow_receipt
 
 
 CONTRACT = harness.ALLOCATOR_ROOT / "m8-gate-x86_64-v3.5.0.json"
@@ -646,6 +647,106 @@ def run_corpus_receipt_reader(command: Sequence[str], output: str) -> dict[str, 
     return identity
 
 
+def read_threads_fork_receipt(evidence_id: str, command: Sequence[str], output: str) -> dict[str, Any]:
+    """Bind a canonical runner receipt to its executed cases and installed products."""
+
+    runner = "owned-" + evidence_id.removeprefix("product:")
+    if evidence_id not in {
+            "product:native-worker-lifecycle", "product:native-allocator-fork",
+            "product:native-allocator-stress",
+    } or command[:2] != [DISPATCHER, runner]:
+        raise harness.HarnessError("unexpected native-shadow runner command")
+    work_path = product_directory(output, f"{runner.removeprefix('owned-')} evidence: ")
+    if work_path is None:
+        raise harness.HarnessError(f"{runner} did not emit one private evidence directory")
+    try:
+        relative = Path(work_path).relative_to(CONTAINER_ROOT / ".work/x86_64/tmp")
+        if len(relative.parts) != 1 or not relative.name.startswith(f"{runner}."):
+            raise harness.HarnessError(f"{runner} evidence escaped its runner root")
+        work = consumer.owned_cleanup.work_child(
+            harness.ROOT / ".work/x86_64/tmp" / relative, f"{runner} evidence", existing=True)
+        receipt = native_shadow_receipt.read_receipt(harness.ROOT, runner)
+        raw = json.loads(receipt.path.read_text(encoding="utf-8"))
+        if raw.get("work") != work.relative_to(harness.ROOT).as_posix():
+            raise harness.HarnessError(f"{runner} receipt names another execution root")
+        if evidence_id == "product:native-allocator-fork":
+            if (len(command) != 5 or command[2] != "--static-sysroot"
+                    or not command[3].startswith(f"{CONTAINER_ROOT}/.work/")
+                    or not command[4].startswith(f"{CONTAINER_ROOT}/.work/")):
+                raise harness.HarnessError("fork runner did not consume the supplied native-shadow products")
+            roots = [harness.ROOT / Path(value).relative_to(CONTAINER_ROOT)
+                     for value in command[3:5]]
+        else:
+            if len(command) != 2:
+                raise harness.HarnessError(f"{runner} used non-canonical arguments")
+            roots = [work / "static-sysroot", work / "dynamic-sysroot"]
+        static, dynamic = roots
+        consumer.owned_cleanup.product_snapshot(static, "static")
+        consumer.owned_cleanup.product_snapshot(dynamic, "dynamic")
+        special = {
+            "probe-source": harness.ROOT / "compat/x86_64" / (
+                "owned_native_worker_lifecycle_probe.c" if runner == "owned-native-worker-lifecycle"
+                else "owned_native_allocator_fork_probe.c"),
+            "c-static-manifest": work / "c-static-sysroot/share/crabc/manifest.json",
+            "static-manifest": static / "share/crabc/manifest.json",
+            "static-libc-provenance": static / "share/crabc/libc-static.provenance.json",
+            "dynamic-manifest": dynamic / "share/crabc/manifest.json",
+            "dynamic-libc-provenance": dynamic / "share/crabc/libc-shared.provenance.json",
+        }
+        required = {"static-manifest", "static-libc-provenance", "dynamic-libc-provenance"}
+        if runner == "owned-native-allocator-stress":
+            required |= {"c-static-manifest", "stress-oracle", "stress-static-pie",
+                         "stress-dynamic-pie", "soak-oracle", "soak-static-pie", "soak-dynamic-pie"}
+        else:
+            required |= {"probe-source", "dynamic-manifest", "oracle", "static", "static-pie",
+                         "dynamic-pie", "dynamic-non-pie"}
+        if not required <= set(receipt.products):
+            raise harness.HarnessError(f"{runner} receipt omits executed programs or provenance")
+        for name, record in receipt.products.items():
+            original = consumer.owned_cleanup.physical(special.get(name, work / name),
+                                                        f"{runner} product {name}")
+            if {"sha256": consumer.owned_cleanup.digest(original), "size": original.stat().st_size} != record:
+                raise harness.HarnessError(f"{runner} original product changed: {name}")
+        static_manifest = json.loads(special["static-manifest"].read_text(encoding="utf-8"))
+        static_provenance = json.loads(special["static-libc-provenance"].read_text(encoding="utf-8"))
+        dynamic_provenance = json.loads(special["dynamic-libc-provenance"].read_text(encoding="utf-8"))
+        dynamic_state = json.loads((dynamic / "share/crabc/dynamic-product-state.json").read_text())
+        if (static_manifest.get("allocator_backend") != "native-shadow"
+                or dynamic_provenance.get("allocator_backend") != "native-shadow"
+                or dynamic_state.get("allocator_backend") != "native-shadow"
+                or dynamic_state.get("source_sha256") != qualification.source_digest()):
+            raise harness.HarnessError(f"{runner} product is not current native-shadow source")
+        if runner != "owned-native-allocator-fork" and (
+                static_provenance.get("allocator_lifecycle_test_audit") is not True
+                or dynamic_provenance.get("allocator_lifecycle_test_audit") is not True):
+            raise harness.HarnessError(f"{runner} product lacks the lifecycle audit")
+        if runner in {"owned-native-worker-lifecycle", "owned-native-allocator-fork"}:
+            scenarios = (("main", "final", "deferred") if runner == "owned-native-worker-lifecycle"
+                         else ("initial", "worker", "joined", "repeat", "underscore", "synccall-create"))
+            expected = [f"oracle-{scenario}" for scenario in scenarios]
+            expected += [f"{mode}-{scenario}" for mode in ("static", "static-pie") for scenario in scenarios]
+            expected += [f"{entry}-{mode}-{scenario}" for mode in ("pie", "non-pie")
+                         for scenario in scenarios for entry in ("kernel", "direct")]
+            if receipt.case_ids() != expected:
+                raise harness.HarnessError(f"{runner} receipt omits an executed product mode")
+        elif (receipt.parameters.get("SKIP") != ""
+              or not all(f"stress-32-50-50-{mode}" in receipt.case_ids()
+                         for mode in ("oracle", "c-static-pie", "static-pie", "dynamic-pie"))
+              or not all(f"soak-{seed}-{mode}" in receipt.case_ids()
+                         for seed in ("0x5eed0001", "0x5eed0002", "0x5eed0003")
+                         for mode in ("oracle", "c-static-pie", "static-pie", "dynamic-pie"))
+              or "soak-growth" not in receipt.case_ids()):
+            raise harness.HarnessError("stress receipt omits canonical stress or soak cases")
+        return {"path": str(receipt.path), "sha256": consumer.sha256_file(receipt.path),
+                "source": dict(receipt.source), "source_sha256": qualification.source_digest(),
+                "products": {mode: consumer.sha256_file(root / "share/crabc/manifest.json")
+                             for mode, root in (("static", static), ("dynamic", dynamic))},
+                "case_count": len(receipt.cases)}
+    except (native_shadow_receipt.ReceiptError, consumer.owned_cleanup.OwnedCleanupError,
+            qualification.QualificationError, OSError, ValueError, KeyError, TypeError) as error:
+        raise harness.HarnessError(f"{runner} physical receipt is invalid: {error}") from error
+
+
 def run_evidence(
     runnable: Mapping[str, Sequence[str]], products: Mapping[str, str], selected: Sequence[str], artifacts: Path,
 ) -> dict[str, dict[str, Any]]:
@@ -697,6 +798,15 @@ def run_evidence(
             except harness.HarnessError as error:
                 with log.open("a", encoding="utf-8") as stream:
                     stream.write(f"M8 corpus receipt reader: {error}\n")
+                passed = False
+        if evidence_id in {"product:native-worker-lifecycle", "product:native-allocator-fork",
+                           "product:native-allocator-stress"} and passed:
+            try:
+                receipt = read_threads_fork_receipt(
+                    evidence_id, command, str(record["stdout"]) + str(record["stderr"]))
+            except harness.HarnessError as error:
+                with log.open("a", encoding="utf-8") as stream:
+                    stream.write(f"native-shadow runner receipt reader: {error}\n")
                 passed = False
         if evidence_id in selected:
             results[evidence_id] = {

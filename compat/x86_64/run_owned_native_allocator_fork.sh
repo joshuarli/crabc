@@ -55,6 +55,26 @@ readonly work
 chmod a+rx "$work"
 printf 'native-allocator-fork evidence: %s\n' "$work"
 
+readonly receipt_runner=owned-native-allocator-fork
+rm -rf "$ROOT/.work/x86_64/reports/native-shadow/$receipt_runner/latest"
+receipt_cases=()
+receipt_products=()
+publish_receipt() {
+    local status=$?
+    trap - EXIT
+    if [ "$status" -ne 0 ]; then
+        printf '%s\n' "$status" >"$work/runner.status"
+        receipt_cases+=("runner=$status:runner.status")
+    fi
+    local -a arguments=(--runner "$receipt_runner" --work "$work" --canonical yes)
+    local entry
+    for entry in "${receipt_cases[@]}"; do arguments+=(--case "$entry"); done
+    for entry in "${receipt_products[@]}"; do arguments+=(--product "$entry"); done
+    python3 -B "$ROOT/compat/x86_64/native_shadow_receipt.py" write "${arguments[@]}" || status=1
+    exit "$status"
+}
+trap publish_receipt EXIT
+
 if [ -z "$static_sysroot" ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --allocator-backend native-shadow \
         --output "$work/static-sysroot" >"$work/static-build.json"
@@ -86,6 +106,7 @@ run_case() {
     local status=0
     timeout 30 "$@" >"$work/$name.stdout" 2>"$work/$name.stderr" || status=$?
     printf '%s\n' "$status" >"$work/$name.status"
+    receipt_cases+=("$name=$status:$name.stdout,$name.stderr,$name.status")
     if [ "$status" -ne 0 ]; then
         printf 'native-allocator-fork: %s exited %s\n' "$name" "$status" >&2
         cat "$work/$name.stderr" >&2
@@ -121,4 +142,16 @@ for mode in pie non-pie; do
             "/consumer-$mode" "$scenario"
     done
 done
+receipt_products=(
+    "probe-source=$probe"
+    "static-manifest=$static_sysroot/share/crabc/manifest.json"
+    "static-libc-provenance=$static_sysroot/share/crabc/libc-static.provenance.json"
+    "dynamic-manifest=$dynamic_sysroot/share/crabc/manifest.json"
+    "dynamic-libc-provenance=$dynamic_sysroot/share/crabc/libc-shared.provenance.json"
+    "oracle=$work/oracle"
+    "static=$work/static"
+    "static-pie=$work/static-pie"
+    "dynamic-pie=$work/dynamic-pie"
+    "dynamic-non-pie=$work/dynamic-non-pie"
+)
 printf 'owned native-allocator fork: PASS (musl + native-shadow static/static-PIE/dynamic PIE/non-PIE kernel/direct; initial/worker/joined/repeated fork, _Fork, credential rendezvous during C11/explicit-scheduling creation); evidence: %s\n' "$work"
