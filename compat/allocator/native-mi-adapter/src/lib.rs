@@ -1480,6 +1480,31 @@ pub unsafe extern "C" fn mi_manage_os_memory_ex(
 
 #[no_mangle]
 /// # Safety
+/// The caller retains the mapped range, callback code, and callback argument
+/// through every arena, Heap, Theap, page, and callback use. A true callback
+/// commit makes its entire span accessible; callback state synchronizes
+/// concurrent or reentrant calls. `arena_id` is null or writable.
+pub unsafe extern "C" fn mi_manage_memory(
+    start: *mut c_void,
+    size: usize,
+    is_committed: bool,
+    is_pinned: bool,
+    is_zero: bool,
+    numa_node: c_int,
+    exclusive: bool,
+    callback: Option<heaps::ManagedCommitFunction>,
+    user_argument: *mut c_void,
+    arena_id: *mut *mut c_void,
+) -> bool {
+    bind_thread();
+    // SAFETY: the public caller retains the external mapping and callback
+    // capability for the same complete arena lifetime.
+    unsafe { heaps::manage_memory(start, size, is_committed, is_pinned,
+        is_zero, numa_node, exclusive, callback, user_argument, arena_id) }
+}
+
+#[no_mangle]
+/// # Safety
 /// The caller retains the external mapped range through all arena, Heap,
 /// Theap and page uses; commitment and zero flags describe its initial state.
 pub unsafe extern "C" fn mi_manage_os_memory(

@@ -39,6 +39,17 @@ use crate::subproc::MainSubprocess;
 use crate::types::heap_registry::lifecycle::HeapReleaseOutcome;
 use crate::types::{Heap, Page, Theap};
 
+/// Callback ABI retained by a caller-managed arena. A true commit result
+/// means the requested span is accessible; a true purge result means it must
+/// be recommitted before reuse.
+pub type ManagedCommitFunction = unsafe extern "C" fn(
+    commit: bool,
+    start: *mut u8,
+    size: usize,
+    is_zero: *mut bool,
+    user_argument: *mut c_void,
+) -> bool;
+
 /// `mi_heap_main()`: the calling thread's subprocess main Heap.
 pub fn heap_main() -> *mut c_void {
     if crate::subproc::lifecycle::current_thread_is_child_member() {
@@ -198,6 +209,76 @@ pub unsafe fn manage_os_memory_ex(
         unsafe { arena_id.write(managed.arena_id().as_ptr().cast()) };
     }
     true
+}
+
+/// `mi_manage_memory` retains the caller's external mapping and optional
+/// commit/purge callback in the process-main arena group.
+///
+/// # Safety
+/// `start..start + size` is one live caller-owned mapping until every arena,
+/// Heap, Theap, and page using it is quiescent. The initial memory flags are
+/// truthful. When present, `callback` and `user_argument` remain valid for
+/// every metadata commit, page commit, and purge until arena retirement;
+/// callback code accepts contained raw spans, synchronizes concurrent and
+/// reentrant calls, and makes a successful commit span accessible before
+/// returning. `arena_id` is null or writable. Setup excludes overlapping
+/// mappings, concurrent unmapping, and concurrent mutation of these inputs.
+pub unsafe fn manage_memory(
+    start: *mut c_void,
+    size: usize,
+    is_committed: bool,
+    is_pinned: bool,
+    is_zero: bool,
+    numa_node: c_int,
+    exclusive: bool,
+    callback: Option<ManagedCommitFunction>,
+    user_argument: *mut c_void,
+    arena_id: *mut *mut c_void,
+) -> bool {
+    let Some(callback) = callback else {
+        // SAFETY: without a callback, source uses the ordinary external OS
+        // path with exactly these flags and output ownership.
+        return unsafe { manage_os_memory_ex(start, size, is_committed, is_pinned,
+            is_zero, numa_node, exclusive, arena_id) };
+    };
+    if !arena_id.is_null() {
+        // SAFETY: caller supplied a writable output.
+        unsafe { arena_id.write(null_mut()) };
+    }
+    if crate::subproc::lifecycle::current_thread_is_child_member() {
+        // Child callback arenas need a child-owned callback lease and registry.
+        return false;
+    }
+    let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
+        .ready_child_subprocess_inputs() else { return false };
+    let Ok(config) = binding.page_map().memory_config() else { return false };
+    let Some(_active) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else { return false };
+    let Some(lease) = (unsafe { crate::arena::ProcessExternalArenaLease::new(
+        start.cast(), size, is_committed, is_pinned, is_zero,
+        crate::arena::CommitHook::new(callback, user_argument),
+    ) }) else { return false };
+    // SAFETY: the public caller retains the mapping and callback for every
+    // published owner. The process-static arena backing retains the lease;
+    // failed prepublication setup returns it without taking the unmap right.
+    let managed = unsafe { MainSubprocess::global().arena_backing()
+        .install_owned_external_callback_arena(
+            binding.process(), config, size, lease, numa_node, exclusive,
+        ) };
+    match managed {
+        Ok(managed) => {
+            if !arena_id.is_null() {
+                // SAFETY: caller supplied a writable output.
+                unsafe { arena_id.write(managed.arena_id().as_ptr().cast()) };
+            }
+            true
+        }
+        Err(failure) => {
+            // A returned lease has no published owner and no unmap right.
+            // A retained lease stays in its arena slot after publication.
+            let _ = failure.into_returned_lease();
+            false
+        }
+    }
 }
 
 /// `mi_manage_os_memory` forwards to the managed-memory entry with ordinary

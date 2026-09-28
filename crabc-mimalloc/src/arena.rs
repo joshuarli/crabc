@@ -70,7 +70,7 @@ pub(crate) use selection::{ArenaCandidates, ArenaReservationPlan, ArenaSearch, a
 #[path = "arena_owned.rs"]
 mod owned;
 pub(crate) use owned::{arena_purge_delay, ReserveOsMemoryFailure, ArenaDestroyError, DestroyedArenas, ArenaPageCommitError, FirstRegularStartupArenaSelection,
-    ProcessArenaBacking, ProcessArenaInstallFailure, HugeArenaReserveError,
+    ProcessArenaBacking, ProcessArenaInstallFailure, ProcessExternalArenaLease, HugeArenaReserveError,
     HugeArenaCleanupError, StartupArenaReservationOutcomes};
 
 #[cfg(test)]
