@@ -173,7 +173,11 @@ are not transferable passes for a different revision.
   `m8.startup-constructors`, `m8.errno-c-abi`, and
   `m8.static-dynamic-products` pass on
   source-built native-shadow products with physically reread receipts on their respective source revisions;
-  the corpus covers all 34 frozen cases. The complete nine-leaf M8 gate
+  the corpus covers all 34 frozen cases. A separate cross-image FILE handoff
+  proof has eleven musl and owned cells covering buffered writes,
+  flush/readback, shared errno, and close lifetime
+  across PIE and non-PIE kernel/direct entry, with static baselines.
+  The complete nine-leaf M8 gate
   passed again on clean `ea0c28759` with all 16 evidence entries passing and
   13 physical receipt identities matching a post-exit reread; the same nine
   leaves, 16 entries, and 13 post-exit identities passed again on clean
