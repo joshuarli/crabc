@@ -4233,6 +4233,261 @@ mod tests {
             && terminal_unmapped && terminal_registry == 0);
     }
 
+    #[cfg(target_arch = "x86_64")]
+    static SECOND_CONCURRENT_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn second_concurrent_environment() -> *const *const core::ffi::c_char {
+        SECOND_CONCURRENT_ENVIRONMENT.load(Ordering::Acquire)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    struct SecondConcurrentWarnings {
+        active: core::sync::atomic::AtomicBool,
+        calls: core::sync::atomic::AtomicUsize,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn second_concurrent_capture_warning(
+        message: *const core::ffi::c_char,
+        argument: *mut core::ffi::c_void,
+    ) {
+        if message.is_null() || argument.is_null() { return; }
+        // SAFETY: the registered atomic capture remains process-lived and
+        // warning delivery completes synchronously before each claim returns.
+        let warnings = unsafe { &*(argument as *const SecondConcurrentWarnings) };
+        if warnings.active.load(Ordering::Acquire) {
+            warnings.calls.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_second_arena_concurrent_reserve_c_rust_trace() {
+        use crate::arena::{ArenaSearch, ArenaView};
+        use crate::diagnostic_output::{OutputCallback, OutputOwner};
+        let entries = std::boxed::Box::leak(std::boxed::Box::new([
+            b"mimalloc_arena_reserve=32M\0".as_ptr().cast(),
+            b"mimalloc_arena_eager_commit=0\0".as_ptr().cast(),
+            b"mimalloc_allow_large_os_pages=0\0".as_ptr().cast(),
+            b"mimalloc_allow_thp=0\0".as_ptr().cast(),
+            b"mimalloc_arena_is_numa_local=0\0".as_ptr().cast(),
+            b"mimalloc_purge_delay=100000\0".as_ptr().cast(),
+            b"mimalloc_show_errors=1\0".as_ptr().cast(),
+            b"mimalloc_max_warnings=100\0".as_ptr().cast(),
+            core::ptr::null(),
+        ]));
+        SECOND_CONCURRENT_ENVIRONMENT.store(entries.as_mut_ptr(), Ordering::Release);
+        let warnings = std::boxed::Box::leak(std::boxed::Box::new(SecondConcurrentWarnings {
+            active: core::sync::atomic::AtomicBool::new(false),
+            calls: core::sync::atomic::AtomicUsize::new(0),
+        }));
+        let output = std::boxed::Box::leak(std::boxed::Box::new(
+            OutputOwner::new(second_purge_default_output),
+        ));
+        // SAFETY: the source environment and atomic capture remain live for
+        // the fixture's entire process; registration has no concurrent writer.
+        unsafe {
+            output.initialize_source_options(second_concurrent_environment);
+            output.register_output(Some(second_concurrent_capture_warning as OutputCallback),
+                warnings as *mut SecondConcurrentWarnings as *mut core::ffi::c_void);
+        }
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 1024 * 1024, true, false,
+        );
+        // SAFETY: process initialization, policy, subprocess, PageMap, and
+        // output remain live through the two worker claims and terminal stop.
+        let binding = unsafe { ProcessMainInitializationStorage::test_static_owner()
+            .test_prepare_vm_process_backing_binding_with_source_output(
+                config, output, MainSubprocess::test_static_owner(),
+                ProcessPageMapStorage::test_static_owner(),
+            ) }.expect("the concurrent arena process initializes");
+        let process = binding.process();
+        process.policy().finish_preloading();
+        let backing = process.subprocess().arena_backing();
+        let search = ArenaSearch {
+            heap_sequence: 0, heap_count: 1, thread_sequence: 0,
+            numa_node: -1, requested: ArenaId::none(), allow_pinned: false,
+        };
+        let mut initial_claims = std::vec::Vec::new();
+        for _ in 0..3 {
+            // SAFETY: each claim remains live through both racing workers;
+            // this process owns their arena until quiescent destruction.
+            initial_claims.push(unsafe { backing.try_allocate_slices(
+                process, config, search, 256, ARENA_SLICE_SIZE, false,
+            ) }.expect("three claims leave no fitting first-arena span"));
+        }
+        // SAFETY: the first arena is published and its mapping remains live.
+        let first = unsafe { backing.registry().arena_at(0) }.unwrap();
+        let first_view = unsafe { ArenaView::from_ptr(core::ptr::from_ref(first).cast_mut()) }.unwrap();
+        let first_free = unsafe { first_view.slices_free() }.unwrap();
+        let first_free_slices = (0..first.slice_count)
+            .filter(|&index| first_free.is_set_range(index, 1) == Some(true)).count();
+        let first_full = backing.registry().count() == 1 && first_free_slices < 256
+            && initial_claims.iter().all(|claim|
+                claim.memory_id().arena_memory().is_some_and(|memory|
+                    memory.arena == core::ptr::from_ref(first).cast_mut()));
+        let before = process.subprocess().statistics().snapshot();
+
+        let start = std::sync::Barrier::new(3);
+        let claimed = std::sync::Barrier::new(3);
+        let release = std::sync::Barrier::new(3);
+        let worker_arenas = [core::sync::atomic::AtomicUsize::new(0),
+            core::sync::atomic::AtomicUsize::new(0)];
+        let worker_slices = [core::sync::atomic::AtomicUsize::new(0),
+            core::sync::atomic::AtomicUsize::new(0)];
+        let worker_found = [core::sync::atomic::AtomicBool::new(false),
+            core::sync::atomic::AtomicBool::new(false)];
+        warnings.active.store(true, Ordering::Release);
+        let (registry_claimed, registry_order, both_claimed, both_second,
+            distinct_claims, low_slice, high_slice, first_claims_live,
+            mapped_both, after_claim, worker_released, second_base) =
+            std::thread::scope(|scope| {
+                let mut threads = std::vec::Vec::new();
+                for index in 0..2 {
+                    let start = &start;
+                    let claimed = &claimed;
+                    let release = &release;
+                    let arena = &worker_arenas[index];
+                    let slice = &worker_slices[index];
+                    let found = &worker_found[index];
+                    threads.push(scope.spawn(move || {
+                        start.wait();
+                        let worker_search = ArenaSearch {
+                            heap_sequence: 0, heap_count: 1, thread_sequence: 0,
+                            numa_node: -1, requested: ArenaId::none(), allow_pinned: false,
+                        };
+                        // SAFETY: both workers share only published arena
+                        // state; source bitmap claims and reservation locks
+                        // serialize their ownership transitions.
+                        let claim = unsafe { backing.try_allocate_slices(
+                            process, config, worker_search, 256, ARENA_SLICE_SIZE, false,
+                        ) };
+                        if let Some(claim) = claim.as_ref() {
+                            let memory = claim.memory_id().arena_memory().unwrap();
+                            arena.store(memory.arena as usize, Ordering::Release);
+                            slice.store(claim.slice_index(), Ordering::Release);
+                            found.store(true, Ordering::Release);
+                        }
+                        claimed.wait();
+                        release.wait();
+                        claim.is_some_and(|claim| claim.release())
+                    }));
+                }
+                start.wait();
+                claimed.wait();
+                warnings.active.store(false, Ordering::Release);
+                let registry_claimed = backing.registry().count();
+                // SAFETY: both worker claims remain live through this barrier.
+                let second = if registry_claimed == 2 {
+                    unsafe { backing.registry().arena_at(1) }
+                } else { None };
+                let registry_order = unsafe { backing.registry().arena_at(0) }
+                    .is_some_and(|arena| core::ptr::eq(arena, first))
+                    && second.is_some_and(|arena| !core::ptr::eq(arena, first));
+                let second_address = second.map_or(0, |arena|
+                    core::ptr::from_ref(arena) as usize);
+                let both_claimed = worker_found.iter().all(|found| found.load(Ordering::Acquire));
+                let both_second = both_claimed && second.is_some()
+                    && worker_arenas.iter().all(|arena|
+                        arena.load(Ordering::Acquire) == second_address);
+                let slice0 = worker_slices[0].load(Ordering::Acquire);
+                let slice1 = worker_slices[1].load(Ordering::Acquire);
+                let low_slice = slice0.min(slice1);
+                let high_slice = slice0.max(slice1);
+                let distinct_claims = second.is_some_and(|arena| {
+                    // SAFETY: the second arena remains published through
+                    // both worker claims and this snapshot.
+                    let view = unsafe { ArenaView::from_ptr(core::ptr::from_ref(arena).cast_mut()) }.unwrap();
+                    let free = unsafe { view.slices_free() }.unwrap();
+                    both_second && low_slice == 9 && high_slice == 512
+                        && free.is_clear_range(slice0, 256) == Some(true)
+                        && free.is_clear_range(slice1, 256) == Some(true)
+                });
+                let first_claims_live = initial_claims.iter().all(|claim|
+                    first_free.is_clear_range(claim.slice_index(), 256) == Some(true));
+                let mut residence = 0u8;
+                let second_base = second.map_or(core::ptr::null_mut(), |arena| arena.start);
+                // SAFETY: both published mappings remain process-owned
+                // while the workers wait at the release barrier.
+                let mapped_both = second.is_some()
+                    && unsafe { crabc_core::mm::mincore_raw(first.start, 4096, &mut residence) }.is_ok()
+                    && unsafe { crabc_core::mm::mincore_raw(second_base, 4096, &mut residence) }.is_ok();
+                let after_claim = process.subprocess().statistics().snapshot();
+                release.wait();
+                let worker_released = threads.into_iter().all(|thread|
+                    thread.join().expect("each arena worker completes its release"));
+                (registry_claimed, registry_order, both_claimed, both_second,
+                    distinct_claims, low_slice, high_slice, first_claims_live,
+                    mapped_both, after_claim, worker_released, second_base)
+            });
+        let reserved_delta = after_claim.vm.reserved_current - before.vm.reserved_current;
+        let committed_delta = after_claim.vm.committed_current - before.vm.committed_current;
+        let mmap_calls = after_claim.vm.mmap_calls - before.vm.mmap_calls;
+        let commit_calls = after_claim.vm.commit_calls - before.vm.commit_calls;
+        let purge_calls = after_claim.vm.purge_calls - before.vm.purge_calls;
+        let arena_delta = after_claim.arena.arena_count - before.arena.arena_count;
+        let second = unsafe { backing.registry().arena_at(1) }.unwrap();
+        let second_view = unsafe { ArenaView::from_ptr(core::ptr::from_ref(second).cast_mut()) }.unwrap();
+        let second_free = unsafe { second_view.slices_free() }.unwrap();
+        let worker_released = worker_released
+            && worker_slices.iter().all(|slice|
+                second_free.is_set_range(slice.load(Ordering::Acquire), 256) == Some(true));
+        for claim in initial_claims.drain(..) {
+            assert!(claim.release(), "each first-arena claim releases once");
+        }
+        let initial_released = first_free.is_set_range(9, 256) == Some(true)
+            && first_free.is_set_range(265, 256) == Some(true)
+            && first_free.is_set_range(512, 256) == Some(true);
+        let mut residence = 0u8;
+        let first_base = first.start;
+        // SAFETY: both mappings remain published after all claims return.
+        let retained_both = unsafe { crabc_core::mm::mincore_raw(first_base, 4096, &mut residence) }.is_ok()
+            && unsafe { crabc_core::mm::mincore_raw(second_base, 4096, &mut residence) }.is_ok()
+            && backing.registry().count() == 2;
+        // SAFETY: all workers joined and all claims returned; this isolated
+        // process has no concurrent arena reader or publisher.
+        let destroyed = unsafe { backing.destroy_all(&mut []) }
+            .expect("both regular arenas retire after worker release");
+        let terminal_unmapped = destroyed.is_released()
+            && unsafe { crabc_core::mm::mincore_raw(first_base, 4096, &mut residence) }.is_err()
+            && unsafe { crabc_core::mm::mincore_raw(second_base, 4096, &mut residence) }.is_err();
+        let terminal_registry = backing.registry().count();
+        let terminal = process.subprocess().vm_statistics().snapshot();
+        let terminal_reserved_delta = terminal.reserved_current - before.vm.reserved_current;
+        let terminal_committed_delta = terminal.committed_current - before.vm.committed_current;
+        for (field, value) in [
+            ("first_full", i64::from(first_full)),
+            ("registry_claimed", registry_claimed as i64),
+            ("registry_order", i64::from(registry_order)),
+            ("both_claimed", i64::from(both_claimed)),
+            ("both_second", i64::from(both_second)),
+            ("distinct_claims", i64::from(distinct_claims)),
+            ("low_slice", low_slice as i64), ("high_slice", high_slice as i64),
+            ("first_claims_live", i64::from(first_claims_live)),
+            ("mapped_both", i64::from(mapped_both)),
+            ("warnings", warnings.calls.load(Ordering::Acquire) as i64),
+            ("reserved_delta", reserved_delta), ("committed_delta", committed_delta),
+            ("mmap_calls", mmap_calls), ("commit_calls", commit_calls),
+            ("purge_calls", purge_calls), ("arena_delta", arena_delta),
+            ("worker_released", i64::from(worker_released)),
+            ("initial_released", i64::from(initial_released)),
+            ("retained_both", i64::from(retained_both)),
+            ("terminal_unmapped", i64::from(terminal_unmapped)),
+            ("terminal_registry", terminal_registry as i64),
+            ("terminal_reserved_delta", terminal_reserved_delta),
+            ("terminal_committed_delta", terminal_committed_delta),
+        ] {
+            std::println!("m2.second_concurrent.{field}={value}");
+        }
+        assert!(first_full && registry_order && both_claimed && both_second
+            && distinct_claims && first_claims_live && mapped_both && worker_released
+            && initial_released && retained_both && terminal_unmapped
+            && terminal_registry == 0);
+    }
+
     #[test]
     fn default_os_reservation_releases_both_failed_attempts_before_retrying_from_cold() {
         let config = memory_config();
