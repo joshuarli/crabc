@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import tempfile
 import sys
 import unittest
@@ -169,6 +170,78 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
             record["stdout"] = self.receipt.identity(root, sibling)
             with self.assertRaisesRegex(self.receipt.ReceiptError, "path differs"):
                 self.receipt.execution_artifacts(root, work, "dynamic-pie-direct", "host-numeric", record)
+
+    def test_self_consistent_workload_identity_requires_source_recompile(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp/classic-netdb-reader-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            root = Path(directory)
+            work = root / ".work/receipt"
+            work.mkdir(parents=True)
+            static = root / ".work/static"
+            dynamic = root / ".work/dynamic"
+            static.mkdir()
+            dynamic.mkdir()
+            source = root / self.receipt.SOURCE_PATHS["probe"]
+            source.parent.mkdir(parents=True)
+            source.write_text("int probe(void) { return 1; }\n", encoding="utf-8")
+            compiler = work / "compiler"
+            compiler.write_text(
+                '#!/bin/sh\nwhile [ "$1" != -o ]; do shift; done\n'
+                'shift\nprintf "\\177ELF\\002\\001\\001\\000\\000\\000\\000\\000\\000\\000\\000\\000\\001\\000>\\000source" > "$1"\n',
+                encoding="utf-8",
+            )
+            compiler.chmod(0o755)
+            workload = work / "workload.o"
+            workload.write_bytes(b"\x7fELF\x02\x01\x01" + b"\0" * 9 + b"\x01\0>\0transplanted")
+            manifest = root / ".work/image.json"
+            manifest.write_text("{}\n", encoding="utf-8")
+            seal = {"sources": {"probe": "selected"}}
+            tools = {"static_driver": {"path": str(compiler)}}
+            seals = {}
+            for name, value in (("source-product-before", seal), ("source-product-after", seal),
+                                ("tools-before", tools), ("tools-after", tools)):
+                path = work / f"{name}.json"
+                path.write_text(json.dumps(value), encoding="utf-8")
+                seals[name] = self.receipt.identity(root, path)
+            plan = {
+                "compile": [str(compiler), "-c", str(source), "-o", str(workload)],
+                "header-trace": [str(compiler), "-H", str(source)],
+            }
+            commands = {}
+            for label, argv in plan.items():
+                commands[label] = {}
+                for field, data in (("argv", json.dumps(argv).encode()), ("stdout", b""),
+                                    ("stderr", (str(static / "usr/include/netdb.h") + "\n").encode()
+                                     if label == "header-trace" else b""), ("status", b"0\n")):
+                    path = work / f"{label}.{'argv.json' if field == 'argv' else field}"
+                    path.write_bytes(data)
+                    commands[label][field] = self.receipt.identity(root, path)
+            report = {
+                "schema": self.receipt.SCHEMA, "component": self.receipt.COMPONENT,
+                "source_mount": str(root), "execution_mode": self.receipt.FULL_MODE,
+                "scope": list(self.receipt.SCOPE), "cases": list(self.receipt.CASES),
+                "behavior_roster": self.receipt.BEHAVIOR_ROSTER, "sources": seal["sources"],
+                "products": {"static": static.relative_to(root).as_posix(),
+                             "dynamic": dynamic.relative_to(root).as_posix()},
+                "seals": seals, "image": {"id": self.receipt.PINNED_IMAGE,
+                                          "manifest": self.receipt.identity(root, manifest)},
+                "workload": self.receipt.identity(root, workload), "commands": commands,
+                "links": {}, "payloads": {}, "executions": [], "network": {}, "dns": {}, "audits": {},
+                "association_differences": [], "family_completion": False,
+                "promotion_ready": False, "public_support": False,
+            }
+            report_path = work / "classic-netdb-products.json"
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            with mock.patch.object(self.receipt, "SOURCE_MOUNT", str(root)), \
+                    mock.patch.object(self.receipt, "IMAGE_MANIFEST", ".work/image.json"), \
+                    mock.patch.object(self.receipt, "source_product_seal", return_value=seal), \
+                    mock.patch.object(self.receipt, "trusted_image_manifest", return_value={}), \
+                    mock.patch.object(self.receipt, "tool_roster", return_value=tools), \
+                    mock.patch.object(self.receipt, "command_plan", return_value=plan), \
+                    mock.patch.object(self.receipt, "validate_provider_symbols", side_effect=AssertionError("substituted object accepted")):
+                with self.assertRaisesRegex(self.receipt.ReceiptError, "workload differs from source compile"):
+                    self.receipt.validate_report(root, report_path, require_static=True)
 
 
 if __name__ == "__main__":

@@ -4,8 +4,9 @@
 This is deliberately a component reader.  It reconstructs the closed
 classic host/service lookup matrix, including its controlled DNS transport,
 but does not select a resolver-family capability or make any promotion claim.
-The reader only inspects retained files and fixed ELF tools; it never builds,
-links, runs a consumer, or contacts a network endpoint.
+The reader recompiles the probe from sealed source and installed headers, then
+inspects retained files and fixed ELF tools. It does not link, run a consumer,
+or contact a network endpoint.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 from typing import Any, Mapping
 
 
@@ -459,6 +461,22 @@ def command_plan(root: Path, work: Path, static: Path | None, dynamic: Path,
     return plan
 
 
+def validate_source_object(root: Path, work: Path, workload: Path, compile_argv: list[str]) -> None:
+    """Bind the retained object bytes to the selected source and installed compiler."""
+    require(compile_argv[-2:] == ["-o", mounted(root, workload)], "classic-netdb compile output differs")
+    with tempfile.TemporaryDirectory(prefix="classic-netdb-source-recompile-", dir=work) as scratch:
+        rebuilt = Path(scratch) / "workload.o"
+        argv = [*compile_argv[:-1], mounted(root, rebuilt)]
+        try:
+            result = subprocess.run(argv, cwd=root, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, check=False, timeout=120)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ReceiptError("cannot recompile classic-netdb probe source") from error
+        require(result.returncode == 0, "cannot recompile classic-netdb probe source")
+        require(physical(rebuilt, "recompiled classic-netdb object").read_bytes() == workload.read_bytes(),
+                "classic-netdb workload differs from source compile")
+
+
 def validate_payload(root: Path, work: Path, value: object, dynamic: Path, mode: str) -> None:
     require(isinstance(value, dict) and set(value) == {"record", "before", "after"}, f"{mode} payload fields differ")
     record = assert_identity(root, value["record"], f"{mode} payload record", expected=work / f"dynamic-{mode}-execution-payload.json")
@@ -557,6 +575,7 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Fal
     trace_paths = [line.lstrip(" .") for line in trace.decode("utf-8", "strict").splitlines() if line.lstrip(" .").startswith("/")]
     require(trace_paths and all(path.startswith(include) for path in trace_paths) and mounted(root, (static_product or dynamic) / "usr/include/netdb.h") in trace_paths,
             "classic-netdb header trace is not installed-only")
+    validate_source_object(root, work, workload, expected_commands["compile"])
 
     # Re-run the sealed reader against the physical ELF bytes.  The retained
     # readelf output is provenance only and cannot be rehashed into a claim.
