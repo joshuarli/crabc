@@ -745,6 +745,79 @@ impl<'a> VmProcess<'a> {
         callback()
     }
 
+    /// Applies the no-callback purge policy to a caller-owned external arena.
+    ///
+    /// The raw span advances purge statistics before its complete contained
+    /// pages are considered for decommit or reset. The normal Linux decommit
+    /// advisory never transfers ownership or lowers committed statistics,
+    /// even when the advisory fails. An empty contained range preserves the
+    /// decommit branch's initial needs-recommit result.
+    ///
+    /// # Safety
+    ///
+    /// `address..address + length` and its containing base pages must lie in
+    /// one live caller-owned external mapping. No Rust reference may observe
+    /// the bytes while an advisory can discard them. The caller must keep the
+    /// mapping live and quiescent through this operation and remains its sole
+    /// release owner. `page_size` must be that mapping's Linux base page size.
+    pub(crate) unsafe fn purge_external_arena_range(
+        self,
+        page_size: PageSize,
+        address: *mut u8,
+        length: usize,
+        allow_reset: bool,
+        _stat_size: usize,
+    ) -> Result<bool> {
+        if self.policy.purge_delay_milliseconds() < 0 {
+            return Ok(false);
+        }
+        self.subprocess.vm_statistics().purge(length);
+        if self.policy.purge_decommits() && !self.is_preloading() {
+            let Some((normalized, normalized_length)) =
+                contained_unowned_page_range(page_size, address, length)?
+            else {
+                return Ok(true);
+            };
+            // SAFETY: the caller keeps every complete contained page inside
+            // its live external mapping and grants no Rust reference during
+            // the raw advisory. This helper cannot release that mapping.
+            return match unsafe { decommit_arena_range(page_size, address, length) } {
+                Ok(Some(DecommitOutcome::DoesNotNeedRecommit)) => Ok(false),
+                Err(error) => {
+                    self.policy.source_warning(SourceFormattedMessage::os_decommit_failure(
+                        error, normalized.addr(), normalized_length,
+                    ));
+                    // The Linux primitive stores false after its advisory
+                    // attempt, including an error; the caller retains the
+                    // external mapping and its release responsibility.
+                    Ok(false)
+                }
+                Ok(None) => Ok(true),
+            };
+        }
+        if allow_reset {
+            if let Some((normalized, normalized_length)) =
+                contained_unowned_page_range(page_size, address, length)?
+            {
+                self.subprocess.vm_statistics().reset(normalized_length);
+                let result = reset_with_advice(&RESET_ADVICE, |advice| {
+                    #[cfg(test)]
+                    fault::record_advice_range(normalized, normalized_length, advice);
+                    fault_before(FaultPoint::Purge)?;
+                    // SAFETY: the caller proves that the contained pages are
+                    // live, quiescent, and free of observing Rust references.
+                    unsafe { crabc_core::mm::madvise_raw(normalized, normalized_length, advice) }
+                });
+                if let Err(error) = result {
+                    self.policy.source_warning(SourceFormattedMessage::os_reset_failure(
+                        error, normalized.addr(), normalized_length,
+                    ));
+                }
+            }
+        }
+        Ok(false)
+    }
+
     /// Commits one source-owned direct page area through `_mi_os_commit`.
     ///
     /// This is deliberately a process operation rather than a [`Mapping`]
@@ -770,6 +843,33 @@ impl<'a> VmProcess<'a> {
         address: *mut u8,
         length: usize,
     ) -> Result<Option<CommitOutcome>> {
+        // SAFETY: this method's caller proves the complete external
+        // reservation and exclusive page-area transition required below.
+        unsafe { self.commit_external_arena_range(page_size, address, length, 0) }
+    }
+
+    /// Commits a caller-owned external arena span with source slice accounting.
+    ///
+    /// The protection change covers complete base pages around the requested
+    /// span, while the committed statistic counts only requested bytes which
+    /// were not already committed. This process operation creates no mapping
+    /// owner or release token.
+    ///
+    /// # Safety
+    ///
+    /// `address..address + length` and its covering base pages must lie in
+    /// one live caller-owned external reservation. `stat_already_committed`
+    /// must not exceed `length` and must measure already committed bytes in
+    /// this requested span. No Rust reference may observe its protection
+    /// transition, and the caller remains the sole terminal unmap owner.
+    pub(crate) unsafe fn commit_external_arena_range(
+        self,
+        page_size: PageSize,
+        address: *mut u8,
+        length: usize,
+        stat_already_committed: usize,
+    ) -> Result<Option<CommitOutcome>> {
+        debug_assert!(stat_already_committed <= length);
         // `_mi_os_commit_ex` increments the named counter before it asks
         // `mi_os_page_align_areax` whether the source span has any pages.
         let statistics = self.subprocess.vm_statistics();
@@ -786,7 +886,7 @@ impl<'a> VmProcess<'a> {
         unsafe {
             crabc_core::mm::mprotect_raw(address, normalized_length, PROT_READ | PROT_WRITE)
         }?;
-        statistics.committed_increase(length);
+        statistics.committed_increase(length - stat_already_committed);
         Ok(Some(CommitOutcome::NotKnownZero))
     }
 }
@@ -1948,6 +2048,8 @@ pub(crate) unsafe fn decommit_arena_range(
     let Some((address, length)) = contained_unowned_page_range(page_size, address, length)? else {
         return Ok(None);
     };
+    #[cfg(test)]
+    fault::record_advice_range(address, length, MADV_DONTNEED);
     fault_before(FaultPoint::Decommit)?;
     // SAFETY: the caller proves that the conservatively page-contained range
     // stays within its live external mapping and carries no Rust references
@@ -6937,6 +7039,285 @@ mod tests {
             }
         }
         false
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn emit_m2_external_os_commit_process_trace() {
+        use crate::diagnostic_output::ProcessDiagnosticInputs;
+        use crate::process_init::ProcessMainInitializationStorage;
+
+        const CHILD: &str = "CRABC_M2_EXTERNAL_COMMIT_CHILD";
+        const BEGIN: &str = "CRABC_M2_EXTERNAL_OS_COMMIT_RUST_TRACE_BEGIN";
+        const END: &str = "CRABC_M2_EXTERNAL_OS_COMMIT_RUST_TRACE_END";
+        if std::env::var_os(CHILD).is_none() {
+            let child = std::process::Command::new(std::env::current_exe().expect("test binary path"))
+                .arg("os::tests::emit_m2_external_os_commit_process_trace")
+                .arg("--exact")
+                .arg("--nocapture")
+                .arg("--test-threads=1")
+                .env_clear()
+                .env(CHILD, "1")
+                .output()
+                .expect("fresh external commit child runs");
+            assert!(child.status.success(), "mixed external commit counts only new bytes");
+            assert!(child.stderr.is_empty(), "successful external commit has no diagnostics");
+            let output = std::str::from_utf8(&child.stdout).expect("child trace is ASCII");
+            let start = output.find(BEGIN).expect("child emits its commit trace");
+            let end = output.find(END).expect("child closes its commit trace") + END.len();
+            std::println!("{}", &output[start..end]);
+            return;
+        }
+
+        unsafe extern "C" fn no_output(_message: *const c_char) {}
+        VM_POLICY_SOURCE_ENVIRONMENT.store(core::ptr::null_mut(), Ordering::Release);
+        let config = MemoryConfig::detect(current_startup());
+        // SAFETY: the no-output callback and fresh process owner remain live
+        // through the selected commit and terminal external unmap.
+        let inputs = unsafe {
+            ProcessDiagnosticInputs::new(
+                vm_policy_source_environment_for_test,
+                RuntimeStderrOutput::new(no_output).into_default_stderr_output(),
+            )
+        };
+        let storage = ProcessMainInitializationStorage::global();
+        // SAFETY: this fresh child is the sole process-start owner.
+        let owner = unsafe { storage.initialize_from_source_environment(config, inputs) }
+            .expect("the external commit process reaches readiness");
+        let ready = owner.ready().expect("the process remains ready");
+        let process = ready.vm_process().expect("the process VM pair remains ready");
+        let page_size = ready.memory_config().expect("the memory config remains ready").page_size();
+        let page = page_size.bytes();
+        assert_eq!(page, 4096);
+        let length = 2 * page;
+        // SAFETY: this child retains sole ownership of a fresh two-page
+        // external reservation, including its terminal release.
+        let mapping = unsafe {
+            crabc_core::mm::mmap_raw(core::ptr::null_mut(), length, PROT_NONE,
+                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)
+        }.expect("caller reserves an external map");
+        unsafe { crabc_core::mm::mprotect_raw(mapping, page, PROT_READ | PROT_WRITE) }
+            .expect("caller establishes an already committed first page");
+        unsafe { mapping.write_volatile(0x5a) };
+        let before = process.subprocess().vm_statistics().snapshot();
+        let selected_range = covering_direct_page_area_range(page_size, mapping, length)
+            .expect("external commit range is valid")
+            .expect("the selected range contains pages");
+        // SAFETY: both pages remain in the caller's live reservation; the
+        // first is already committed and no Rust references observe either.
+        let committed = unsafe {
+            process.commit_external_arena_range(page_size, mapping, length, page)
+        }
+            .expect("the selected external commit succeeds").is_some();
+        let after = process.subprocess().vm_statistics().snapshot();
+        let first_retained = unsafe { mapping.read_volatile() == 0x5a };
+        unsafe { mapping.wrapping_add(page).write_volatile(0x3c) };
+        let second_writable = unsafe { mapping.wrapping_add(page).read_volatile() == 0x3c };
+        let mut residency = 0u8;
+        let mapping_live = unsafe { crabc_core::mm::mincore_raw(mapping, page, &mut residency) }.is_ok();
+        // SAFETY: this caller alone releases the complete external mapping.
+        let released = unsafe { crabc_core::mm::munmap_raw(mapping, length) }.is_ok();
+
+        std::println!("{BEGIN}");
+        std::println!("mapping_length={length}");
+        std::println!("already_committed={page}");
+        std::println!("commit_attempts={}", after.commit_calls - before.commit_calls);
+        std::println!("commit_exact={}", usize::from(selected_range == (mapping, length)));
+        std::println!("commit_result={}", if committed { 0 } else { -1 });
+        std::println!("source_committed={}", usize::from(committed));
+        std::println!("commit_calls_delta={}", after.commit_calls - before.commit_calls);
+        std::println!("committed_current_delta={}", after.committed_current - before.committed_current);
+        std::println!("committed_total_delta={}", after.committed_total - before.committed_total);
+        std::println!("reserved_delta={}", after.reserved_current - before.reserved_current);
+        std::println!("first_retained={}", usize::from(first_retained));
+        std::println!("second_writable={}", usize::from(second_writable));
+        std::println!("mapping_live={}", usize::from(mapping_live));
+        std::println!("terminal_unmap_calls=1");
+        std::println!("terminal_unmap_exact=1");
+        std::println!("caller_released={}", usize::from(released));
+        std::println!("{END}");
+        assert_eq!(after.committed_current - before.committed_current, page as i64);
+        assert_eq!(after.committed_total - before.committed_total, page as i64);
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn emit_m2_external_os_purge_process_trace() {
+        use crate::diagnostic_output::ProcessDiagnosticInputs;
+        use crate::process_init::ProcessMainInitializationStorage;
+        use core::sync::atomic::{AtomicI64, AtomicPtr};
+        use std::ffi::CStr;
+
+        const CASE: &str = "CRABC_M2_EXTERNAL_PURGE_CASE";
+        const CHILD: &str = "CRABC_M2_EXTERNAL_PURGE_CHILD";
+        const BEGIN: &str = "CRABC_M2_EXTERNAL_OS_PURGE_RUST_TRACE_BEGIN";
+        const END: &str = "CRABC_M2_EXTERNAL_OS_PURGE_RUST_TRACE_END";
+        if std::env::var_os(CHILD).is_none() {
+            let case = std::env::var(CASE).unwrap_or_else(|_| std::string::String::from("success"));
+            assert!(case == "success" || case == "failure");
+            let child = std::process::Command::new(std::env::current_exe().expect("test binary path"))
+                .arg("os::tests::emit_m2_external_os_purge_process_trace")
+                .arg("--exact")
+                .arg("--nocapture")
+                .arg("--test-threads=1")
+                .env_clear()
+                .env(CHILD, "1")
+                .env(CASE, case)
+                .output()
+                .expect("fresh external purge child runs");
+            assert!(child.status.success(), "external purge retains caller ownership");
+            assert!(child.stderr.is_empty(), "selected warnings use the process output route");
+            let output = std::str::from_utf8(&child.stdout).expect("child trace is ASCII");
+            let start = output.find(BEGIN).expect("child emits its purge trace");
+            let end = output.find(END).expect("child closes its purge trace") + END.len();
+            std::println!("{}", &output[start..end]);
+            return;
+        }
+
+        static WARNING_PROCESS: AtomicPtr<crate::subproc::SubprocessIdentity> =
+            AtomicPtr::new(core::ptr::null_mut());
+        static WARNING_BEFORE_CALLS: AtomicI64 = AtomicI64::new(0);
+        static WARNING_BEFORE_BYTES: AtomicI64 = AtomicI64::new(0);
+        static WARNING_RAW_LENGTH: AtomicI64 = AtomicI64::new(0);
+        static WARNING_CALLS: AtomicUsize = AtomicUsize::new(0);
+        static WARNING_AFTER_PURGE: AtomicUsize = AtomicUsize::new(0);
+        static WARNING_EXACT: AtomicUsize = AtomicUsize::new(0);
+
+        unsafe extern "C" fn selected_warning(message: *const c_char) {
+            // SAFETY: the process output route passes a live NUL-terminated
+            // source message through this synchronous callback.
+            let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
+            if !bytes.windows(b"cannot decommit OS memory".len())
+                .any(|window| window == b"cannot decommit OS memory")
+            {
+                return;
+            }
+            WARNING_CALLS.fetch_add(1, Ordering::AcqRel);
+            let subprocess = WARNING_PROCESS.load(Ordering::Acquire);
+            if !subprocess.is_null() {
+                // SAFETY: this sole child installs its static process identity
+                // before purge, and the callback completes before child exit.
+                let snapshot = unsafe { &*subprocess }.vm_statistics().snapshot();
+                let calls = WARNING_BEFORE_CALLS.load(Ordering::Acquire) + 1;
+                let bytes = WARNING_BEFORE_BYTES.load(Ordering::Acquire)
+                    + WARNING_RAW_LENGTH.load(Ordering::Acquire);
+                if snapshot.purge_calls == calls && snapshot.purged == bytes {
+                    WARNING_AFTER_PURGE.fetch_add(1, Ordering::AcqRel);
+                }
+            }
+            if bytes.windows(b"error: 5 (0x05)".len()).any(|window| window == b"error: 5 (0x05)")
+                && bytes.windows(b"size: 0x1000 bytes".len()).any(|window| window == b"size: 0x1000 bytes")
+            {
+                WARNING_EXACT.fetch_add(1, Ordering::AcqRel);
+            }
+        }
+
+        let case_failure = std::env::var(CASE).expect("the child retains its selected case") == "failure";
+        let entries = std::boxed::Box::leak(std::boxed::Box::new([
+            c"mimalloc_purge_delay=0".as_ptr(),
+            c"mimalloc_purge_decommits=1".as_ptr(),
+            c"mimalloc_show_errors=1".as_ptr(),
+            c"mimalloc_max_warnings=100".as_ptr(),
+            core::ptr::null(),
+        ]));
+        VM_POLICY_SOURCE_ENVIRONMENT.store(entries.as_mut_ptr(), Ordering::Release);
+        let config = MemoryConfig::detect(current_startup());
+        // SAFETY: the selected callback and leaked environment vector remain
+        // live through this fresh process's output and purge operations.
+        let inputs = unsafe {
+            ProcessDiagnosticInputs::new(
+                vm_policy_source_environment_for_test,
+                RuntimeStderrOutput::new(selected_warning).into_default_stderr_output(),
+            )
+        };
+        let storage = ProcessMainInitializationStorage::global();
+        // SAFETY: the child is the sole process-start owner and retains every
+        // process component until its caller-owned mapping is released.
+        let owner = unsafe { storage.initialize_from_source_environment(config, inputs) }
+            .expect("the external purge process reaches readiness");
+        let ready = owner.ready().expect("the source process remains ready");
+        let process = ready.vm_process().expect("the source VM pair remains ready");
+        assert!(!process.is_preloading());
+        let page_size = ready.memory_config().expect("source config is retained").page_size();
+        let page = page_size.bytes();
+        assert_eq!(page, 4096);
+        let mapping_length = 3 * page;
+        let raw_length = mapping_length - 2;
+        // SAFETY: this child is the sole owner of a fresh writable anonymous
+        // mapping and retains it through purge and terminal raw release.
+        let mapping = unsafe {
+            crabc_core::mm::mmap_raw(core::ptr::null_mut(), mapping_length,
+                PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)
+        }.expect("caller creates external mapped memory");
+        unsafe { core::ptr::write_bytes(mapping, 0x5a, mapping_length) };
+        let before = process.subprocess().vm_statistics().snapshot();
+        WARNING_PROCESS.store(core::ptr::from_ref(process.subprocess()).cast_mut(), Ordering::Release);
+        WARNING_BEFORE_CALLS.store(before.purge_calls, Ordering::Release);
+        WARNING_BEFORE_BYTES.store(before.purged, Ordering::Release);
+        WARNING_RAW_LENGTH.store(raw_length as i64, Ordering::Release);
+        let fault = fault::install(if case_failure {
+            fault::Plan::at(fault::Point::Decommit, 1, Errno::IO)
+        } else {
+            fault::Plan::disabled()
+        });
+        let advice = fault.capture_advice_range();
+        // SAFETY: the caller owns all three mapped pages, has no live Rust
+        // references to them, and retains sole terminal unmap authority.
+        let needs_recommit = unsafe {
+            process.purge_external_arena_range(page_size, mapping.wrapping_add(1),
+                raw_length, true, page)
+        }.expect("the source consumes its selected advisory outcome");
+        let advice_range = advice.range().expect("one normalized decommit advice is selected");
+        assert_eq!(advice_range, (mapping.wrapping_add(page).addr(), page, MADV_DONTNEED));
+        assert_eq!(fault.observed(), usize::from(case_failure));
+        drop(advice);
+        fault.set(fault::Plan::disabled());
+        let after = process.subprocess().vm_statistics().snapshot();
+        // SAFETY: the external mapping remains live and writable; the purge
+        // changed only physical contents, not this caller's ownership.
+        let (middle_byte, neighbors_retained, mapping_writable) = unsafe {
+            let middle = mapping.wrapping_add(page).read_volatile();
+            let neighbors = mapping.read_volatile() == 0x5a
+                && mapping.wrapping_add(mapping_length - 1).read_volatile() == 0x5a;
+            mapping.wrapping_add(page).write_volatile(0x3c);
+            (middle, neighbors, mapping.wrapping_add(page).read_volatile() == 0x3c)
+        };
+        let mut residency = 0u8;
+        let mapping_live = unsafe {
+            crabc_core::mm::mincore_raw(mapping, page, &mut residency)
+        }.is_ok();
+        // SAFETY: no Rust reference survives; only this caller may release the
+        // exact complete external map after the purge has returned.
+        let released = unsafe { crabc_core::mm::munmap_raw(mapping, mapping_length) }.is_ok();
+        WARNING_PROCESS.store(core::ptr::null_mut(), Ordering::Release);
+
+        std::println!("{BEGIN}");
+        std::println!("case_failure={}", usize::from(case_failure));
+        std::println!("purge_delay_raw={}", process.policy().source_option_value(VmOption::PurgeDelay.source()));
+        std::println!("purge_decommits_raw={}", process.policy().source_option_value(VmOption::PurgeDecommits.source()));
+        std::println!("external_mapping_length={mapping_length}");
+        std::println!("raw_purge_length={raw_length}");
+        std::println!("advice_calls=1");
+        std::println!("advice_exact={}", usize::from(advice_range == (mapping.wrapping_add(page).addr(), page, MADV_DONTNEED)));
+        std::println!("advice_result={}", if case_failure { -1 } else { 0 });
+        std::println!("needs_recommit={}", usize::from(needs_recommit));
+        std::println!("purge_calls_delta={}", after.purge_calls - before.purge_calls);
+        std::println!("purged_delta={}", after.purged - before.purged);
+        std::println!("reset_calls_delta={}", after.reset_calls - before.reset_calls);
+        std::println!("reserved_delta={}", after.reserved_current - before.reserved_current);
+        std::println!("committed_delta={}", after.committed_current - before.committed_current);
+        std::println!("warning_calls={}", WARNING_CALLS.load(Ordering::Acquire));
+        std::println!("warning_after_purge={}", WARNING_AFTER_PURGE.load(Ordering::Acquire));
+        std::println!("warning_exact={}", WARNING_EXACT.load(Ordering::Acquire));
+        std::println!("middle_byte={middle_byte}");
+        std::println!("neighbors_retained={}", usize::from(neighbors_retained));
+        std::println!("mapping_writable={}", usize::from(mapping_writable));
+        std::println!("mapping_live={}", usize::from(mapping_live));
+        std::println!("terminal_unmap_calls=1");
+        std::println!("terminal_unmap_exact=1");
+        std::println!("terminal_unmap_result={}", if released { 0 } else { -1 });
+        std::println!("caller_released={}", usize::from(released));
+        std::println!("{END}");
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
