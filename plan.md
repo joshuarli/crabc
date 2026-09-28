@@ -32,7 +32,10 @@ are not transferable passes for a different revision.
   closure stays unmet: a clean `b879f8c86` pinned-image assembly named 567
   blockers (549 identities, 17 unadmitted families, one missing semantic
   receipt) after binding the owned `__libc_start_main` CRT imports; all
-  18 companions were accepted. `libc.c-abi-compat` now runs a physical same-cohort
+  18 companions were accepted. A read-only physical replay of that cohort
+  binds the weak `_DYNAMIC` archive import to each final ELF's own dynamic
+  table or static null resolution, reducing the blocker count to 565; a
+  current-source full assembly remains open. `libc.c-abi-compat` now runs a physical same-cohort
   text/math/locale/stdio family admission; its retained receipt is still
   pending on the final candidate revision. `consumer.rust-std-lto` passes its
   Rust, native-facade, LTO, and unwind leaves on clean `d6733f516`; its
@@ -387,8 +390,11 @@ are not transferable passes for a different revision.
      its embedded static/dynamic placement maps, rejects executable top-level
      manifests, and passes a focused physical
      34-workload replay; a full combined rerun remains open after identical
-     oracle/candidate sqlite timeouts under host contention. The finite
-     `aio_cancel` oracle disposition is integrated;
+     oracle/candidate sqlite timeouts under host contention. The combined
+     archive extractor also checks exact member modes, safe aliases,
+     and every embedded component's claim before staging; retained archives
+     pass its read-only validation. The finite `aio_cancel` oracle disposition
+     is integrated;
      a clean `80724223a` native OS-test replay profile-qualifies 5,395 outcome
      pairs with exactly six selected `stdatomic` dispositions. A full libc-test
      component on clean `02b6fa8a6` profile-qualifies
