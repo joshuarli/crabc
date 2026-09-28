@@ -176,9 +176,11 @@ are not transferable passes for a different revision.
   1.05× kernel instructions (1.47M/2.43M against 1.24M/2.31M), still off the
   0.90× CPU gate: the two loader/libc images, symbol resolution and libc's
   allocator option parsing remain. Startup PSS is 0.86× musl (52 of 114
-  perf-c rows pass PSS). A set-bit RELR walk saves a median 5,481 user
-  instructions in 100 matched development startups with identical syscall
-  traces; this remains unqualified under host contention. Allocator rows stay
+  perf-c rows pass PSS). A set-bit RELR walk, span-bound target validation,
+  and cached file-backed dynsym record limit save medians of 5,481, 2,983,
+  and 3,076 user instructions respectively in matched development startups
+  with identical syscall traces; these remain unqualified under host
+  contention. Allocator rows stay
   6.5–8× on the selected
   accepted-C backend, whose arena the host's THP `always` mode backs with
   huge pages on first touch. The native backend's arena reservations take the
