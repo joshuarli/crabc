@@ -120,7 +120,11 @@ are not transferable passes for a different revision.
   regular medium split between surviving threads match 36 more C/Rust values,
   including 84 arena slices for the huge allocation, 63 registered PageMap
   entries, independent reclaim/release, and no warning or VM loss; the gate
-  passes all fourteen rows on its sealed source.
+  passes all fourteen rows on its sealed source. A huge OS singleton whose
+  terminal unmap fails now leaves the independently owned medium survivor
+  freeable after PageMap mutation; the generic-exit gate passes fifteen rows
+  on that sealed source. The full M5 gate is running again on a clean frozen
+  revision.
   A paired medium-churn
   diagnostic matches C/Rust page-class transitions under four option profiles;
   PageMap retirement precedes arena RSS release with the default purge delay,
@@ -325,10 +329,13 @@ are not transferable passes for a different revision.
   A level-two arena-backed huge singleton now matches 39 selected C/Rust
   page-bin and worker-merge keys. The JSON caller-buffer differential uses a
   stable sufficient capacity while retaining small-buffer error and guard
-  checks. All 16 statistics evidence rows pass on a clean source, while the
-  gate remains blocked by named unproved producers. Other page and fast-path
-  shapes, other remote bin-free, and metadata-Theap statistics producers remain
-  unproved, so full M7
+  checks. A fresh worker's huge free through the metadata Theap and later
+  first allocation each match 41 pinned-C/Rust keys after descriptor-only
+  registration preserves delayed attachment. The prior 16 statistics evidence
+  rows pass on a clean source, and these two focused differentials pass; the
+  full current-source gate remains blocked by named unproved producers. Other
+  page and fast-path shapes, other remote bin-free, and other metadata-Theap
+  statistics producers remain unproved, so full M7
   stays open. Static
   replacement now has a source-bound installed sweep with zero divergent
   functions among 1,406 musl-replaceable entries and all 831 required entries
