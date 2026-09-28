@@ -18,8 +18,16 @@ class MetadataBoundsExecutionContract(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'unexpected'):
             metadata_bounds.assert_execution(0, 'truncated metadata accepted\n')
 
-    def test_guarded_eh_frame_pointer_cases_return_no_fde_without_a_fault(self):
-        expected = 'guarded EH frame pointers rejected\n'
+    def test_guarded_eh_frame_metadata_cases_report_phase_errors_without_a_fault(self):
+        expected = ('mapped unwind=5\nmapped wait=0\n'
+                    'unmapped unwind=3\nunmapped wait=0\n'
+                    'unreadable unwind=3\nunreadable wait=0\n'
+                    'oversized unwind=3\noversized wait=0\n'
+                    'truncated unwind=3\ntruncated wait=0\n'
+                    'long-fde unwind=5\nlong-fde wait=0\n'
+                    'direct-pointer unwind=0\ndirect-pointer wait=0\n'
+                    'indirect-pointer unwind=0\nindirect-pointer wait=0\n'
+                    'guarded EH frame metadata rejected\n')
         metadata_bounds.assert_execution(0, expected, expected)
         with self.assertRaisesRegex(RuntimeError, 'status'):
             metadata_bounds.assert_execution(-11, '', expected)
