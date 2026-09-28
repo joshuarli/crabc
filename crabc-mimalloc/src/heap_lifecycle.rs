@@ -480,11 +480,14 @@ pub(crate) unsafe fn child_heap_force_destroy_for_subprocess_destroy(
 ///
 /// # Safety
 /// `block` is an exclusively owned zeroed block of at least
-/// `size_of::<NonMainHeapImage>()` bytes; `subprocess` is live.
+/// `size_of::<NonMainHeapImage>()` bytes; `subprocess` is live. A non-null
+/// `exclusive_arena` names a live parent of this subprocess and remains live
+/// for every Theap and page linked to the returned Heap.
 pub(crate) unsafe fn initialize_and_link_non_main_heap(
     block: NonNull<u8>,
     slot: OwnedThreadLocalKeyLease,
     subprocess: &crate::subproc::SubprocessIdentity,
+    exclusive_arena: crate::arena::ArenaId,
 ) -> Result<NonNull<Heap>, HeapNewError> {
     if block.as_ptr().addr() % align_of::<NonMainHeapImage>() != 0 {
         return Err(HeapNewError::Retained);
@@ -497,7 +500,7 @@ pub(crate) unsafe fn initialize_and_link_non_main_heap(
     let heap = image.cast::<Heap>();
     // SAFETY: the image is exclusively owned until the push publishes it.
     let heap_ref = unsafe { &mut *heap.as_ptr() };
-    heap_ref.initialize_non_main(subprocess, key, core::ptr::null_mut(), memory);
+    heap_ref.initialize_non_main(subprocess, key, exclusive_arena.as_ptr(), memory);
     // SAFETY: the Heap was initialized for this subprocess just above.
     unsafe { subprocess.heap_list().link_non_main(heap_ref, subprocess) }.map_err(HeapNewError::List)?;
     Ok(heap)

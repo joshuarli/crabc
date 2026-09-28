@@ -1683,6 +1683,14 @@ impl TerminalArenaTheapReservation<'_, '_> {
 }
 
 impl<'arena, 'subprocess> ExclusiveArenaTheapReservation<'arena, 'subprocess> {
+    /// The start of this still-owned, committed requested-arena slice.
+    /// The address is valid only while this reservation remains live; callers
+    /// must place at most one image there and clear it before release.
+    #[inline]
+    pub(crate) fn start(&self) -> *mut u8 {
+        self.claim.start()
+    }
+
     /// Returns the selected source `mi_memid_t` result that a future complete
     /// Theap owner must store before `_mi_theap_init` copies its empty image.
     #[inline]
@@ -4060,7 +4068,15 @@ pub(crate) mod tests {
             .expect("the second requested-arena pass commits after the first fails");
         assert_eq!(first_fail.calls.load(std::sync::atomic::Ordering::Relaxed), 2);
         assert!(reservation.memory_id().initially_committed());
+        let start = reservation.start().addr();
+        let selected_slice = reservation.slice_index();
+        let (area, length) = unsafe { second.arena_id().area() }.unwrap();
+        assert!(start >= area.addr() && start - area.addr() < length);
+        assert_eq!(reservation.memory_id().arena_memory().unwrap().slice_count as usize,
+            ARENA_MIN_OBJ_SLICES);
         assert!(matches!(reservation.release(), Ok(true)));
+        assert_eq!(unsafe { second_view.slices_free() }.unwrap()
+            .is_set_range(selected_slice, 1), Some(true));
     }
 
     #[test]

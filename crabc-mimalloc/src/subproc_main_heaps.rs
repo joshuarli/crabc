@@ -12,8 +12,8 @@
 //! A Heap is a `NonMainHeapImage` allocated from the process main Heap
 //! through the calling thread's native owner, on a key of the process-global
 //! thread-local registry, pushed on the main subprocess's Heap list. A
-//! thread's Theap for such a Heap is a [`MainHeapTheapImage`] from the
-//! process metadata (`_mi_theap_alloc` with `_mi_meta_zalloc`) at the head of
+//! thread's Theap for such a Heap is a [`MainHeapTheapImage`] from process
+//! metadata or its Heap's requested parent arena at the head of
 //! the thread's TLD list, stored on the thread's regular thread-local slot
 //! array (a `ThreadLocalBackingOwner`, also process metadata) and cached with
 //! the source reference counts. It pages like a child thread's Theap for a
@@ -28,8 +28,6 @@
 //! and thread exit, which collects and abandons the thread's non-main Theaps
 //! before the thread's own teardown.
 //!
-//! Exclusive-arena binding remains outside this module.
-
 use core::cell::UnsafeCell;
 use core::mem::{align_of, size_of};
 use core::ptr::NonNull;
@@ -38,6 +36,7 @@ use crate::compiler_tls::{
     default_theap, dynamic_backing_peek, fast_slot_peek, install_dynamic_backing, install_empty_dynamic_backing,
     is_empty_dynamic_backing, DynamicThreadLocalBacking,
 };
+use crate::arena::{ArenaId, ExclusiveArenaTheapReservation};
 use crate::meta::{ChildPageEngineState, MetaAllocation, MetaAllocator};
 use crate::os_page::OsAlignedPageOwner;
 use crate::process_init::{ProcessMainBackingBinding, ProcessMainInitializationStorage};
@@ -49,14 +48,21 @@ use crate::types::{Heap, LiveThreadId, MemoryId, Theap, ThreadLocalData, ThreadS
 
 /// One thread's Theap for a non-main Heap of the process main subprocess:
 /// the source `mi_theap_t` at offset zero, then this Theap's own page-engine
-/// state and the metadata capability of this very block (so any thread that
-/// drops the last reference can free it).
+/// state and the exact metadata or arena claim for this block (so any thread
+/// that drops the last reference can release it).
 #[repr(C)]
 pub(crate) struct MainHeapTheapImage {
     theap: Theap,
     page_engine: ChildPageEngineState,
-    allocation: Option<MetaAllocation<'static>>,
+    allocation: Option<MainHeapTheapAllocation>,
 }
+
+enum MainHeapTheapAllocation {
+    Metadata(MetaAllocation<'static>),
+    Arena(ExclusiveArenaTheapReservation<'static, 'static>),
+}
+
+const _: [(); 1] = [(); (size_of::<MainHeapTheapImage>() <= crate::config::ARENA_MIN_OBJ_SIZE) as usize];
 
 /// The calling thread's state for its Theaps of non-main Heaps.
 ///
@@ -287,10 +293,19 @@ unsafe fn theap_decref(theap: NonNull<Theap>) {
     // SAFETY: the image holds its own capability; it is moved out before the
     // block is released.
     let allocation = unsafe { core::ptr::replace(core::ptr::addr_of_mut!((*image).allocation), None) };
-    if let Some(mut allocation) = allocation {
-        // SAFETY: the last Theap reference has left its Heap and TLD lists;
-        // no owner can access the image after the remote publication.
-        let _ = unsafe { MetaAllocator::global().free_detached_heap_theap(&mut allocation) };
+    match allocation {
+        Some(MainHeapTheapAllocation::Metadata(mut allocation)) => {
+            // SAFETY: the last Theap reference has left its Heap and TLD lists;
+            // no owner can access the image after the remote publication.
+            let _ = unsafe { MetaAllocator::global().free_detached_heap_theap(&mut allocation) };
+        }
+        Some(MainHeapTheapAllocation::Arena(reservation)) => {
+            // SAFETY: the final reference has left every root and list; the
+            // typed Rust image must be dropped before its slice is returned.
+            unsafe { core::ptr::drop_in_place(core::ptr::addr_of_mut!((*image).theap)) };
+            let _ = reservation.release();
+        }
+        None => {}
     }
 }
 
@@ -347,20 +362,42 @@ pub(crate) fn native_heap_theap(heap: NonNull<Heap>) -> Option<NonNull<Theap>> {
 fn create_theap(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull<Theap>> {
     let binding = binding()?;
     let config = binding.page_map().memory_config().ok()?;
-    let size = size_of::<MainHeapTheapImage>();
-    let allocation = MetaAllocator::global()
-        .zalloc_for_main_subprocess(config, MainSubprocess::global(), size)
-        .ok()?;
-    let block = allocation.pointer();
+    // SAFETY: this live Heap retains its selected arena for the operation.
+    let requested = unsafe { heap.as_ref() }.exclusive_arena_id()?;
+    let (block, allocation, memory) = if requested.as_ptr().is_null() {
+        let size = size_of::<MainHeapTheapImage>();
+        let allocation = MetaAllocator::global()
+            .zalloc_for_main_subprocess(config, MainSubprocess::global(), size)
+            .ok()?;
+        let block = allocation.pointer();
+        (block, MainHeapTheapAllocation::Metadata(allocation),
+            MemoryId::malloc(block.as_ptr(), size, true))
+    } else {
+        // SAFETY: the Heap's arena came from a live parent ID, and the
+        // process arena backing remains live through all Heap Theaps.
+        let reservation = unsafe { MainSubprocess::global().arena_backing().try_reserve_exclusive_theap(
+            binding.process(), config, MainSubprocess::global(), requested,
+            thread.sequence, thread.numa_node,
+        ) }.ok()?;
+        let block = NonNull::new(reservation.start())?;
+        let memory = reservation.memory_id();
+        (block, MainHeapTheapAllocation::Arena(reservation), memory)
+    };
     let image = block.cast::<MainHeapTheapImage>().as_ptr();
-    // SAFETY: a fresh, exclusively owned, zeroed block; the Rust fields are
-    // written whole before the Theap is published. The TLD is this thread's
-    // and the Heap's lists take their own locks.
+    // SAFETY: a fresh, exclusively owned block; all Rust fields are written
+    // whole before the Theap is published. The TLD is this thread's and the
+    // Heap's lists take their own locks.
     let initialized = unsafe {
+        core::ptr::addr_of_mut!((*image).theap).write(Theap::empty());
         core::ptr::addr_of_mut!((*image).page_engine).write(ChildPageEngineState::Active);
         core::ptr::addr_of_mut!((*image).allocation).write(Some(allocation));
         let theap = &mut (*image).theap;
-        theap.set_dynamic_metadata_memid(MemoryId::malloc(block.as_ptr(), size, true))
+        let provenance = if requested.as_ptr().is_null() {
+            theap.set_dynamic_metadata_memid(memory)
+        } else {
+            theap.set_requested_arena_metadata_memid(memory)
+        };
+        provenance
             && theap
                 .initialize_dynamic_metadata_on_tld(
                     &mut *heap.as_ptr(),
@@ -398,6 +435,9 @@ fn with_theap_engine<R>(
     }
     // SAFETY: a live Theap of this thread.
     let heap = NonNull::new(unsafe { Theap::heap_at(theap) })?;
+    // SAFETY: the live Heap's selected parent remains published during this
+    // page operation and is fixed for the Heap lifetime.
+    let requested_arena = unsafe { heap.as_ref() }.exclusive_arena_id()?;
     let image = theap.cast::<MainHeapTheapImage>().as_ptr();
     // SAFETY: the Theap's own state field, used only by its engine.
     let page_engine = unsafe { &mut (*image).page_engine };
@@ -424,7 +464,9 @@ fn with_theap_engine<R>(
     // SAFETY: the process registry backing and its PageMap are held for the
     // operation.
     let mut engine = unsafe {
-        crate::single_thread::PageAllocatorEngine::activate_owned_session(session, backing, page_map, thread.sequence)
+        crate::single_thread::PageAllocatorEngine::activate_owned_session(
+            session, backing, page_map, thread.sequence, requested_arena,
+        )
     };
     let value = operation(&mut engine);
     let finished = engine.finish_owned_session().map_err(drop).is_ok();
@@ -446,6 +488,16 @@ fn with_theap_engine<R>(
 /// thread's main-Heap Theap becoming the cached Theap), a dynamic key, then
 /// `_mi_heap_init` and the list push. `None` is source null.
 pub(crate) fn native_heap_new() -> Option<NonNull<Heap>> {
+    // SAFETY: the absent ID selects the ordinary source Heap path.
+    unsafe { native_heap_new_in_arena(ArenaId::none()) }
+}
+
+/// Create a process-main non-main Heap bound to a live selected parent.
+///
+/// # Safety
+/// A non-null `arena` is a live parent ID of this process and remains live
+/// until all Theaps and pages of the returned Heap have been released.
+pub(crate) unsafe fn native_heap_new_in_arena(arena: ArenaId) -> Option<NonNull<Heap>> {
     let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
     current_main_thread()?;
     let binding = binding()?;
@@ -466,7 +518,7 @@ pub(crate) fn native_heap_new() -> Option<NonNull<Heap>> {
     };
     let identity = MainSubprocess::global().identity();
     // SAFETY: a fresh, zeroed, exclusively owned image block.
-    unsafe { crate::types::heap_registry::lifecycle::initialize_and_link_non_main_heap(block, slot, identity) }.ok()
+    unsafe { crate::types::heap_registry::lifecycle::initialize_and_link_non_main_heap(block, slot, identity, arena) }.ok()
 }
 
 /// Pinned `mi_heap_malloc` and its zeroing and aligned forms on the calling

@@ -24,8 +24,7 @@
 //! child subprocess uses that child's Heap lifecycle. As in [`crate::source_api`], each
 //! allocation reports the errno effect of its source path as data.
 //!
-//! Not provided: an exclusive-arena Heap (`mi_heap_new_in_arena` with an
-//! arena), reservation from a thread of a child subprocess (refused with
+//! Not provided: reservation from a thread of a child subprocess (refused with
 //! `ENOMEM`), and the `_mi_verbose_message` reservation reports.
 
 use core::ffi::{c_int, c_void};
@@ -54,6 +53,49 @@ pub fn heap_new() -> *mut c_void {
         return created.ok().and_then(Result::ok).map_or(null_mut(), |heap| heap.as_ptr().cast());
     }
     main_heaps::native_heap_new().map_or(null_mut(), |heap| heap.as_ptr().cast())
+}
+
+/// `mi_heap_new_in_arena`: null selects the ordinary Heap allocation policy.
+///
+/// # Safety
+/// A non-null `arena` is a live parent arena ID returned by this process.
+/// Its backing must outlive the Heap and every Theap and page it owns. No
+/// concurrent arena destruction may overlap this call.
+pub unsafe fn heap_new_in_arena(arena: *mut c_void) -> *mut c_void {
+    let Some(arena) = (unsafe { crate::arena::ArenaId::from_arena(arena.cast()) }) else {
+        return null_mut();
+    };
+    if arena.as_ptr().is_null() {
+        return heap_new();
+    }
+    if crate::subproc::lifecycle::current_thread_is_child_member() {
+        return null_mut();
+    }
+    // SAFETY: forwarded live process-parent ID and lifetime obligations.
+    unsafe { main_heaps::native_heap_new_in_arena(arena) }
+        .map_or(null_mut(), |heap| heap.as_ptr().cast())
+}
+
+/// `mi_arena_area`: a null ID yields null and a zero size.
+///
+/// # Safety
+/// `size` is null or writable. A non-null ID names a live parent arena in
+/// this process and its backing is retained through this query.
+pub unsafe fn arena_area(arena: *mut c_void, size: *mut usize) -> *mut c_void {
+    if !size.is_null() {
+        // SAFETY: the caller supplies a writable output.
+        unsafe { size.write(0) };
+    }
+    let Some(id) = (unsafe { crate::arena::ArenaId::from_arena(arena.cast()) }) else {
+        return null_mut();
+    };
+    // SAFETY: forwarded live arena ID and backing obligation.
+    let Some((start, length)) = (unsafe { id.area() }) else { return null_mut() };
+    if !size.is_null() {
+        // SAFETY: as above.
+        unsafe { size.write(length) };
+    }
+    start.cast()
 }
 
 /// The initialized default Theap of the calling thread. A cold main-subprocess

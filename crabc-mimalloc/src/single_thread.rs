@@ -37046,18 +37046,21 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// # Safety
     /// As for `activate_child_ordinary`, with `backing` the process
     /// registry backing and `page_map` its PageMap projected for the ranges
-    /// this engine owns.
+    /// this engine owns. A non-null `requested_arena` is the live parent
+    /// selected by this session's Heap and remains published through every
+    /// page claim and release.
     pub(crate) unsafe fn activate_owned_session(
         session: Session,
         backing: Backing,
         page_map: &'map PageMap,
         sequence: crate::types::ThreadSequence,
+        requested_arena: ArenaId,
     ) -> Self {
         Self {
             session,
             arena: backing,
             arena_lifetime: PhantomData,
-            requested_arena: ArenaId::none(),
+            requested_arena,
             page_map,
             thread_sequence: sequence.get(),
             pending_os_release: None,

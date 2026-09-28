@@ -1055,6 +1055,16 @@ pub extern "C" fn mi_heap_new() -> HeapPointer {
 }
 
 #[no_mangle]
+/// # Safety
+/// A non-null arena ID names a live parent arena returned by this process.
+/// Its backing outlives the Heap and all of its Theaps and pages.
+pub unsafe extern "C" fn mi_heap_new_in_arena(arena_id: *mut c_void) -> HeapPointer {
+    bind_thread();
+    // SAFETY: the C caller retains the arena backing and the returned Heap.
+    unsafe { heaps::heap_new_in_arena(arena_id) }
+}
+
+#[no_mangle]
 pub extern "C" fn mi_heap_main() -> HeapPointer {
     bind_thread();
     heaps::heap_main()
@@ -1347,6 +1357,16 @@ pub unsafe extern "C" fn mi_reserve_os_memory_ex(
     bind_thread();
     // SAFETY: the C caller passes null or a writable `mi_arena_id_t*`.
     finish(unsafe { heaps::reserve_os_memory_ex(size, commit, allow_large, exclusive, arena_id) })
+}
+
+#[no_mangle]
+/// # Safety
+/// `size` is null or writable; a non-null arena ID names a live parent
+/// arena of this process for the duration of the query.
+pub unsafe extern "C" fn mi_arena_area(arena_id: *mut c_void, size: *mut usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: the C caller supplies a live arena ID and writable output.
+    unsafe { heaps::arena_area(arena_id, size) }
 }
 
 // ---------------------------------------------------------------------------

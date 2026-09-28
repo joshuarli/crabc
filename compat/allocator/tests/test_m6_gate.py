@@ -49,6 +49,7 @@ class M6GateContractTests(unittest.TestCase):
             "differential:main-abandoned-mixed-heap-visitor": "compat/allocator/x86_64_m6_main_abandoned_mixed_visitor.py",
             "differential:arena-destroy": "compat/allocator/arena_destroy.py",
             "differential:heap-destroy": "compat/allocator/heap_destroy.py",
+            "differential:heap-in-arena": "compat/allocator/x86_64_m6_heap_in_arena.py",
             "differential:main-heap-visitor-population": "compat/allocator/x86_64_m6_main_visitor_population.py",
             "differential:public-heap-adapter": "compat/allocator/x86_64_m6_adapter.py",
             "differential:public-heap-lifecycle": "compat/allocator/heap_lifecycle.py",
