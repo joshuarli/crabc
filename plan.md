@@ -47,7 +47,10 @@ are not transferable passes for a different revision.
   unwinding reaches end of stack. A fault-contained, allocation-free EH-frame
   reader now guards metadata after `dl_iterate_phdr` callbacks: mapped controls
   succeed and unmapped, unreadable, truncated, or oversized cases return phase
-  errors without child faults. Installed-product unwind proof remains open.
+  errors without child faults. On frozen `1b1511d19`, installed static and
+  dynamic products each pass eight guarded metadata cases with a source-bound
+  provider and physically reread link and execution receipts. Broader
+  unwinder integration remains open.
   Allocator M5 remains open. C mimalloc remains the selected
   backend; allocator M2–M11 remain open. A frozen M5 source run at `e0b9ecbc7`
   passed seven gates, failed its churn and upstream stress gates on one seed-2
