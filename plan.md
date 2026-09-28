@@ -113,7 +113,11 @@ are not transferable passes for a different revision.
   member per libc module). On an idle host the development engine harness
   measures the Rust local path at about 0.33× pinned C single-thread with
   the ported direct-page malloc and local-free fast paths on the initial and
-  worker owners (low-load, not qualifying). Allocator M3 passes every own
+  worker owners (low-load, not qualifying). A source-matched 32 KiB medium
+  queue-head fast path cuts its development malloc codegen from 779 to 157
+  instructions and 12 to three calls; its C/Rust trace matches 38 events,
+  including local-free reuse and page spill. Contended timing is not
+  qualifying. Allocator M3 passes every own
   component and waits only on M2; M4 passes including the unmodified
   upstream `test-api.c` through the native adapter. M6 now source-differentiates
   quiescent non-main and isolated process-main Heap block visitation across 138
