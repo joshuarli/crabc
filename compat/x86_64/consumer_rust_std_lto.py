@@ -1081,7 +1081,8 @@ def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
     require(record.get("source_sha256") == qualification.source_digest(), "consumer gate receipt source is stale")
     request = record["cohort"]["request"]
     try:
-        cohort, _paths = cohort_products(ROOT / request["static_preparation"], ROOT / request["dynamic_qualification"])
+        cohort, cohort_paths = cohort_products(ROOT / request["static_preparation"],
+                                               ROOT / request["dynamic_qualification"])
     except qualification.QualificationError as error:
         raise GateError(f"consumer gate cohort evidence is unavailable or changed: {error}") from error
     require(cohort == record["cohort"], "consumer gate product cohort changed")
@@ -1091,6 +1092,36 @@ def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
         candidate = Path(file_path)
         require(candidate.is_file() and not candidate.is_symlink() and sha256_file(candidate) == digest,
                 f"consumer gate evidence changed: {file_path}")
+    products = record.get("products")
+    require(isinstance(products, dict) and set(products) == set(UNWIND_PRODUCTS),
+            "consumer gate receipt lacks an installed/extracted product pair")
+    require(set(cohort_paths) == set(UNWIND_PRODUCTS), "consumer gate cohort has the wrong product roster")
+    for label in UNWIND_PRODUCTS:
+        physical_pair = product_pair(label, cohort_paths[label]["static"], cohort_paths[label]["dynamic"])
+        require(products[label] == physical_pair, f"consumer gate {label} product differs from the source cohort")
+    provider = record.get("provider")
+    toolchain = record.get("toolchain")
+    require(isinstance(provider, dict) and isinstance(provider.get("archive"), dict)
+            and isinstance(toolchain, dict) and isinstance(toolchain.get("rustc_vv"), str),
+            "consumer gate receipt lacks provider or compiler identity")
+    archive = provider["archive"]
+    archive_path = path.parent / "provider/libcrabc-unwind.a"
+    require(archive.get("path") == str(archive_path), "consumer gate provider archive is outside its build output")
+    require(retained.get(str(archive_path)) == archive.get("sha256"),
+            "consumer gate provider archive differs from retained evidence")
+    physical_provider = owned_cleanup.provider_snapshot(archive_path.parent, toolchain["rustc_vv"])
+    require(provider == physical_provider, "consumer gate provider differs from its physical provenance")
+    # Link receipts record the archive identity observed during each Rust link.
+    # Rehashing this summary alone cannot substitute a different archive.
+    provider_links = 0
+    for file_path in retained:
+        if not Path(file_path).name.endswith(".crabc-owned-rust-link.json"):
+            continue
+        linked_archive = json.loads(Path(file_path).read_text(encoding="utf-8")).get("provider_archive")
+        if linked_archive is not None:
+            require(linked_archive == archive, "consumer gate provider differs from a retained link receipt")
+            provider_links += 1
+    require(provider_links > 0, "consumer gate provider has no retained link receipt")
     gates = record.get("gates")
     require(isinstance(gates, dict) and set(gates) == set(FROZEN_GATES), "consumer gate receipt lacks a frozen gate")
     unwind = record.get("unwind")

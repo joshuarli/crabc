@@ -128,23 +128,57 @@ class ReceiptReaderTests(unittest.TestCase):
         root = Path(self.temporary.name)
         self.evidence = root / "candidate.stdout"
         self.evidence.write_bytes(b"ok\n")
+        provider = root / "provider"
+        provider.mkdir()
+        archive = provider / "libcrabc-unwind.a"
+        archive.write_bytes(b"provider archive\n")
+        provenance = provider / "provenance.json"
+        provider_record = {"archive": {"name": archive.name, "sha256": GATE.sha256_file(archive)}}
+        provenance.write_text(json.dumps(provider_record))
+        self.provider = {
+            "archive": {"path": str(archive), "sha256": GATE.sha256_file(archive)},
+            "provenance": {"path": str(provenance), "sha256": GATE.sha256_file(provenance)},
+            "record": provider_record, "defined_unwind_abi": [],
+        }
+        link_receipt = root / "candidate.crabc-owned-rust-link.json"
+        link_receipt.write_text(json.dumps({"provider_archive": self.provider["archive"]}))
+        self.product_paths = {}
+        self.products = {}
+        for label in GATE.UNWIND_PRODUCTS:
+            paths = {}
+            for mode in ("static", "dynamic"):
+                product = root / label / mode
+                product.mkdir(parents=True)
+                manifest = product / "manifest.json"
+                manifest.write_bytes(f"{label} {mode}\n".encode())
+                paths[mode] = product
+            self.product_paths[label] = paths
+            self.products[label] = self.snapshot_product_pair(label, paths["static"], paths["dynamic"])
         self.cohort = {"request": {"static_preparation": "s.json", "dynamic_qualification": "q.json"},
                        "evidence": {"source": "x"}}
         self.record = {
             "schema": GATE.SCHEMA, "gate": GATE.GATE, "source_sha256": "a" * 64, "qualifying": True,
             "cohort": self.cohort, "passed": True, "unmet_conditions": [],
+            "toolchain": {"rustc_vv": "test-compiler"}, "provider": self.provider, "products": self.products,
             "gates": {gate: {"lanes": {"lane": {"unmet": []}}} for gate in GATE.FROZEN_GATES},
             "unwind": {label: {"unmet": []} for label in GATE.UNWIND_PRODUCTS},
             "provider_regressions": {"lanes": {script: {"unmet": []} for script in GATE.PROVIDER_REGRESSIONS}},
-            "retained_files": {str(self.evidence): GATE.sha256_file(self.evidence)},
+            "retained_files": {str(self.evidence): GATE.sha256_file(self.evidence),
+                               str(archive): GATE.sha256_file(archive),
+                               str(link_receipt): GATE.sha256_file(link_receipt)},
         }
+        self.record["gates"]["rust-std"]["lanes"]["lane"]["candidate_build"] = {
+            "link_receipt": {"path": str(link_receipt), "sha256": GATE.sha256_file(link_receipt)}}
         self.receipt = root / "receipt.json"
         qualification = mock.MagicMock()
         qualification.source_digest.return_value = "a" * 64
         qualification.QualificationError = DYNAMIC_QUALIFICATION.QualificationError
         self.patches = [
             mock.patch.dict(sys.modules, {"owned_dynamic_qualification": qualification}),
-            mock.patch.object(GATE, "cohort_products", side_effect=lambda *_: (copy.deepcopy(self.cohort), {})),
+            mock.patch.object(GATE, "cohort_products",
+                              side_effect=lambda *_: (copy.deepcopy(self.cohort), self.product_paths)),
+            mock.patch.object(GATE, "product_pair", side_effect=self.snapshot_product_pair),
+            mock.patch.object(GATE.owned_cleanup, "provider_snapshot", return_value=copy.deepcopy(self.provider)),
         ]
         for patch in self.patches:
             patch.start()
@@ -160,8 +194,64 @@ class ReceiptReaderTests(unittest.TestCase):
         self.receipt.write_text(json.dumps(record, sort_keys=True))
         return GATE.validate_receipt(GATE.ROOT, self.receipt)
 
+    @staticmethod
+    def snapshot_product_pair(label: str, static: Path, dynamic: Path) -> dict[str, object]:
+        return {
+            "label": label,
+            "static": {"root": str(static), "manifest": {"path": str(static / "manifest.json"),
+                                                      "sha256": GATE.sha256_file(static / "manifest.json")}},
+            "dynamic": {"root": str(dynamic), "manifest": {"path": str(dynamic / "manifest.json"),
+                                                         "sha256": GATE.sha256_file(dynamic / "manifest.json")}},
+        }
+
     def test_complete_current_receipt_is_read(self) -> None:
         self.assertTrue(self.validate(self.record)["passed"])
+
+    def test_rehashed_provider_archive_cannot_replace_selected_archive(self) -> None:
+        alternate = self.receipt.parent / "alternate-provider"
+        alternate.mkdir()
+        substitute = alternate / "libcrabc-unwind.a"
+        substitute.write_bytes(b"different provider archive\n")
+        provider = copy.deepcopy(self.provider)
+        provider["archive"] = {"path": str(substitute), "sha256": GATE.sha256_file(substitute)}
+        provider["record"]["archive"]["sha256"] = GATE.sha256_file(substitute)
+        provenance = alternate / "provenance.json"
+        provenance.write_text(json.dumps(provider["record"]))
+        provider["provenance"] = {"path": str(provenance), "sha256": GATE.sha256_file(provenance)}
+        record = {**self.record, "provider": provider,
+                  "retained_files": {**self.record["retained_files"], str(substitute): GATE.sha256_file(substitute),
+                                     str(provenance): GATE.sha256_file(provenance)}}
+        with self.assertRaisesRegex(GATE.GateError, "provider"):
+            self.validate(record)
+
+    def test_rehashed_canonical_provider_conflicts_with_retained_link_receipt(self) -> None:
+        archive = Path(self.provider["archive"]["path"])
+        archive.write_bytes(b"different provider archive\n")
+        provider = copy.deepcopy(self.provider)
+        provider["archive"]["sha256"] = GATE.sha256_file(archive)
+        provider["record"]["archive"]["sha256"] = GATE.sha256_file(archive)
+        provenance = Path(provider["provenance"]["path"])
+        provenance.write_text(json.dumps(provider["record"]))
+        provider["provenance"]["sha256"] = GATE.sha256_file(provenance)
+        record = {**self.record, "provider": provider,
+                  "retained_files": {**self.record["retained_files"], str(archive): GATE.sha256_file(archive)}}
+        with mock.patch.object(GATE.owned_cleanup, "provider_snapshot", return_value=copy.deepcopy(provider)):
+            with self.assertRaisesRegex(GATE.GateError, "link receipt"):
+                self.validate(record)
+
+    def test_rehashed_product_manifest_cannot_replace_cohort_product(self) -> None:
+        alternate = self.receipt.parent / "alternate-product"
+        alternate.mkdir()
+        substitute = alternate / "manifest.json"
+        substitute.write_bytes(b"different product\n")
+        products = copy.deepcopy(self.products)
+        products["primary"]["static"]["root"] = str(alternate)
+        products["primary"]["static"]["manifest"] = {"path": str(substitute),
+                                                       "sha256": GATE.sha256_file(substitute)}
+        record = {**self.record, "products": products,
+                  "retained_files": {**self.record["retained_files"], str(substitute): GATE.sha256_file(substitute)}}
+        with self.assertRaisesRegex(GATE.GateError, "product"):
+            self.validate(record)
 
     def test_failure_modes_fail_closed(self) -> None:
         cases = {
@@ -204,7 +294,7 @@ class ReceiptReaderTests(unittest.TestCase):
 
         def read_cohort(*_paths: Path) -> tuple[dict[str, object], dict[str, object]]:
             DYNAMIC_QUALIFICATION.digest(qualification)
-            return copy.deepcopy(cohort), {}
+            return copy.deepcopy(cohort), self.product_paths
 
         with mock.patch.object(GATE, "cohort_products", side_effect=read_cohort):
             self.validate(record)
