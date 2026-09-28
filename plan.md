@@ -143,7 +143,11 @@ are not transferable passes for a different revision.
   A separate source-built reset-advice matrix matches 78 C/Rust fields across
   isolated EIO, EAGAIN, and EINVAL policies, including advice retry, exact
   slice range, warning order, and live bitmap state. The M2 VM component now
-  has 33 matched checks with five conditions still open.
+  has 34 checks with five conditions still open. A legacy processless aligned
+  OS-page claim preserves the same MemoryId, live escaped suffix, and raw
+  cleanup as pinned C after failed suffix trim and terminal unmap. Its absent
+  subprocess accounting and warning callback are recorded as exact source
+  differences; process-owned callers remain separately qualified or open.
   The metadata publication receiver also matches 15 recovery observations
   after three faulted requests, charging each actual lazy PageMap submap by
   its 64 KiB extent. The M2 fault component has four matched checks and four
