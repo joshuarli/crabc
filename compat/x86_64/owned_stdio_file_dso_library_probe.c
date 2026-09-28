@@ -39,3 +39,29 @@ int crabc_file_dso_transfer(FILE *stream, int descriptor, int *main_errno)
     errno = ERANGE;
     return 0;
 }
+
+int crabc_cookie_dso_transfer(FILE *stream, const struct crabc_cookie_state *state,
+                              int *main_errno)
+{
+    char observed[6];
+
+    if (stream == NULL || state == NULL || main_errno != &errno || errno != EDOM)
+        return 1;
+    if (fwrite("cookie", 1, 6, stream) != 6)
+        return 2;
+    if (state->writes != 0 || state->length != 0)
+        return 3;
+    if (fflush(stream) != 0 || state->writes < 1 || state->length != 6 ||
+        memcmp(state->data, "cookie", 6) != 0)
+        return 4;
+    if (fseek(stream, 0, SEEK_SET) != 0 || fread(observed, 1, 6, stream) != 6 ||
+        memcmp(observed, "cookie", 6) != 0)
+        return 5;
+    if (fseek(stream, 0, SEEK_END) != 0 || fputc('!', stream) != '!')
+        return 6;
+    if (fflush(stream) != 0 || state->length != 7 ||
+        memcmp(state->data, "cookie!", 7) != 0)
+        return 7;
+    errno = ERANGE;
+    return 0;
+}

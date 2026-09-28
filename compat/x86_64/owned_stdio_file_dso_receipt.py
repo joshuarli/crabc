@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Collect and reread one main-image FILE handed to a linked application DSO.
+"""Collect and reread main-owned pathname and cookie FILEs used by a DSO.
 
-The executable owns fopen and fclose. Its DSO observes the same FILE, errno
-slot and descriptor while it writes, flushes and reads. Static links run the
-same C functions in one image as a baseline; only dynamic cells prove the
-cross-image handoff.
+The executable owns fopen, fopencookie, their callbacks and fclose. Its DSO
+uses both streams for buffered writes, flushes and positioned reads. Static
+links run the same functions in one image as a baseline; only dynamic cells
+prove the cross-image handoff.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ SOURCES = (
     "compat/x86_64/owned_stdio_file_dso_probe.h",
     "compat/x86_64/owned_stdio_file_dso_receipt.py",
 )
-EXPECTED_STDOUT = b"stdio-file-dso-ok\n"
+EXPECTED_STDOUT = b"stdio-file-dso-cookie-ok\n"
 ORACLE_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 ORACLE_ARCHIVE = Path("/opt/musl-1.2.6/lib/libc.a")
 ORACLE_LIBC = Path("/opt/musl-1.2.6/lib/libc.so")
@@ -373,14 +373,16 @@ def audit_elf(work: Path) -> None:
                     f"{role} SONAME differs")
             require(re.search(r"\(NEEDED\).*\[libc\.so\]", dynamic) is not None,
                     f"{role} libc dependency differs")
-            require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+\d+\s+crabc_file_dso_transfer\b", symbols) is not None,
-                    f"{role} lacks the DSO entry")
+            for entry in ("crabc_file_dso_transfer", "crabc_cookie_dso_transfer"):
+                require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+\d+\s+" + entry + r"\b", symbols) is not None,
+                        f"{role} lacks {entry}")
         elif dynamic_main:
             require(re.search(r"\(NEEDED\).*\[libfile-dso\.so\]", dynamic) is not None
                     and re.search(r"\(NEEDED\).*\[libc\.so\]", dynamic) is not None,
                     f"{role} DSO/libc dependencies differ")
-            require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+UND\s+crabc_file_dso_transfer\b", symbols) is not None,
-                    f"{role} does not import its DSO entry")
+            for entry in ("crabc_file_dso_transfer", "crabc_cookie_dso_transfer"):
+                require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+UND\s+" + entry + r"\b", symbols) is not None,
+                        f"{role} does not import {entry}")
         else:
             require("(NEEDED)" not in dynamic, f"{role} static baseline gained a shared dependency")
 
