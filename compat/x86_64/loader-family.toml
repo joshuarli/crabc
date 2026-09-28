@@ -57,7 +57,7 @@ capability = "loader.dlfcn-basic"
 qualification_cases = ["dlopen-pie", "dlopen-non-pie", "lazy-pie", "lazy-non-pie"]
 synthetic_cases = []
 package_cases = []
-behavior = "Selected dlopen, dlsym, dlclose, and dlerror behavior for initial and runtime-loaded dependency closures in both installed modes."
+behavior = "Selected dlopen, dlsym, dlclose, dlerror, and dladdr behavior for initial and runtime-loaded dependency closures in both installed modes."
 
 [[required]]
 id = "dlfcn-introspection"
@@ -65,7 +65,7 @@ capability = "loader.dlfcn-introspection"
 qualification_cases = ["dlopen-pie", "dlopen-non-pie"]
 synthetic_cases = []
 package_cases = []
-behavior = "Selected dladdr, dlinfo, and dl_iterate_phdr observations over the retained installed object graph."
+behavior = "Selected dlinfo and dl_iterate_phdr observations over the retained installed object graph."
 
 [[required]]
 id = "fork-callback-rollback"
