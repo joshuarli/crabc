@@ -294,19 +294,20 @@ unsafe fn lookup_exported(
     objects: &[Object], owner: usize, name: &[u8], hashes: &mut SymbolHashes,
 ) -> Option<Option<Definition>> {
     let object = objects.get(owner)?;
-    let Some(index) = (unsafe { exported_index_with_hashes(object, name, hashes) })? else { return Some(None); };
-    Some(Some(unsafe { definition_at(owner, object.symtab.add(index.checked_mul(24)?)) }))
+    let Some((_, symbol)) = (unsafe { exported_record_with_hashes(object, name, hashes) })? else { return Some(None); };
+    Some(Some(unsafe { definition_at(owner, symbol) }))
 }
 
 /// Standalone lookup for a caller that has no ordered multi-object search.
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[inline(always)]
 unsafe fn exported_index(object: &Object, name: &[u8]) -> Option<Option<usize>> {
-    unsafe { exported_index_with_hashes(object, name, &mut SymbolHashes::default()) }
+    unsafe { exported_record_with_hashes(object, name, &mut SymbolHashes::default()) }
+        .map(|found| found.map(|(index, _)| index))
 }
 
-/// The dynsym index of `name`'s first externally visible definition in
-/// `object`'s hash table, `Some(None)` when it has none, and `None` when the
+/// The dynsym index and record of `name`'s first externally visible definition
+/// in `object`'s hash table, `Some(None)` when it has none, and `None` when the
 /// walk meets malformed metadata. Every index is bounded by the table's
 /// `symbol_count`, whose dynsym records decode proved readable and
 /// file-backed, and every chain walk is bounded, so a malformed table fails
@@ -314,14 +315,14 @@ unsafe fn exported_index(object: &Object, name: &[u8]) -> Option<Option<usize>> 
 // Inlined into `lookup_exported`, the dlsym and symbol-resolution hot path.
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[inline(always)]
-unsafe fn exported_index_with_hashes(
+unsafe fn exported_record_with_hashes(
     object: &Object, name: &[u8], hashes: &mut SymbolHashes,
-) -> Option<Option<usize>> {
-    let candidate_matches = |index: usize| -> Option<bool> {
+) -> Option<Option<(usize, *const u8)>> {
+    let candidate_matches = |index: usize| -> Option<Option<*const u8>> {
         let symbol = unsafe { object.symtab.add(index.checked_mul(24)?) };
         // A versionless object has no VERSYM record to validate for each hit.
         if !object.versym.is_null() && !unsafe { exported_symbol_is_visible(object, index) }? {
-            return Some(false);
+            return Some(None);
         }
         // A bloom or empty-bucket miss has no name to validate. For a reached
         // candidate, a final NUL allows comparison through the first mismatch.
@@ -329,9 +330,9 @@ unsafe fn exported_index_with_hashes(
         if terminated {
             let offset = unsafe { read_u32(symbol) } as usize;
             if offset >= object.strsz { return None; }
-            Some(unsafe { terminated_name_equals(object.strtab.add(offset), object.strsz - offset, name) })
+            Some(unsafe { terminated_name_equals(object.strtab.add(offset), object.strsz - offset, name) }.then_some(symbol))
         } else {
-            Some(unsafe { symbol_name(object, index) }? == name)
+            Some((unsafe { symbol_name(object, index) }? == name).then_some(symbol))
         }
     };
     match object.symbol_lookup {
@@ -350,8 +351,8 @@ unsafe fn exported_index_with_hashes(
             if index < symbol_offset || index >= symbol_count { return None; }
             loop {
                 let chain = unsafe { read_u32(chains.add(index.checked_sub(symbol_offset)?).cast()) };
-                if (chain | 1) == (hash | 1) && candidate_matches(index)? {
-                    return Some(Some(index));
+                if (chain | 1) == (hash | 1) {
+                    if let Some(symbol) = candidate_matches(index)? { return Some(Some((index, symbol))); }
                 }
                 if chain & 1 != 0 { return Some(None); }
                 index = index.checked_add(1)?;
@@ -364,9 +365,7 @@ unsafe fn exported_index_with_hashes(
             for _ in 0..symbol_count {
                 if index == 0 { return Some(None); }
                 if index >= symbol_count { return None; }
-                if candidate_matches(index)? {
-                    return Some(Some(index));
-                }
+                if let Some(symbol) = candidate_matches(index)? { return Some(Some((index, symbol))); }
                 index = unsafe { read_u32(chains.add(index).cast()) } as usize;
             }
             None

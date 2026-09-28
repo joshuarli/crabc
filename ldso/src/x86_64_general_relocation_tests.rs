@@ -940,6 +940,23 @@ fn gnu_lookup_checks_reached_name_and_version_without_rejecting_bloom_miss() {
 
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[test]
+fn exported_lookup_keeps_first_chain_record_and_rejects_its_bad_name() {
+    let mut image = Image::new();
+    image.symbol(1, 1, 2, 0, 1, 0x1000, 8);
+    image.symbol(2, 1, 1, 0, 1, 0x1008, 16);
+    image.put_u32(IMAGE_HASH + 16, 2);
+    let object = image.object(true);
+    let first = unsafe { lookup_exported(&[object], 0, b"value", &mut SymbolHashes::default()) }
+        .unwrap().unwrap();
+    assert_eq!((first.value, first.size, first.binding), (0x1000, 8, 2));
+
+    // A malformed first hash candidate cannot fall through to a later one.
+    image.put_u32(IMAGE_SYMTAB + 24, object.strsz as u32);
+    assert!(unsafe { lookup_exported(&[object], 0, b"value", &mut SymbolHashes::default()) }.is_none());
+}
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[test]
 fn ordinary_word_resolution_keeps_requestor_validation_and_mixed_hash_scope() {
     let mut main = Image::new();
     let mut sysv = Image::new();
