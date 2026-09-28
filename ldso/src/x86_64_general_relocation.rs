@@ -317,14 +317,14 @@ unsafe fn exported_index(object: &Object, name: &[u8]) -> Option<Option<usize>> 
 unsafe fn exported_index_with_hashes(
     object: &Object, name: &[u8], hashes: &mut SymbolHashes,
 ) -> Option<Option<usize>> {
-    // With a NUL-terminated string table no name read can fail, so the name is
-    // compared bytewise up to its first difference instead of being measured.
-    let terminated = object.strsz != 0 && unsafe { object.strtab.add(object.strsz - 1).read() } == 0;
     let candidate_matches = |index: usize| -> Option<bool> {
         let symbol = unsafe { object.symtab.add(index.checked_mul(24)?) };
         if !unsafe { exported_symbol_is_visible(object, index) }? {
             return Some(false);
         }
+        // A bloom or empty-bucket miss has no name to validate. For a reached
+        // candidate, a final NUL allows comparison through the first mismatch.
+        let terminated = object.strsz != 0 && unsafe { object.strtab.add(object.strsz - 1).read() } == 0;
         if terminated {
             let offset = unsafe { read_u32(symbol) } as usize;
             if offset >= object.strsz { return None; }

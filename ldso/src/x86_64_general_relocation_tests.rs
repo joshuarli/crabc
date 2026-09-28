@@ -897,6 +897,39 @@ fn ordered_lookup_reuses_name_across_sysv_and_gnu_tables() {
 
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[test]
+fn gnu_lookup_checks_reached_name_without_rejecting_a_bloom_miss() {
+    let mut gnu = Image::new();
+    gnu.symbol(1, 1, 1, 0, 1, 0x1000, 8);
+    let hash = gnu_hash(b"value");
+    let shift = 5;
+    let bloom = (1u64 << (hash & 63)) | (1u64 << ((hash >> shift) & 63));
+    gnu.put_u64(IMAGE_HASH + 16, bloom);
+    gnu.put_u32(IMAGE_HASH + 24, 1);
+    gnu.put_u32(IMAGE_HASH + 28, hash | 1);
+    let mut object = gnu.object(true);
+    object.symbol_lookup = SymbolLookupTable::Gnu {
+        bucket_count: 1, symbol_offset: 1, bloom_count: 1, bloom_shift: shift,
+        bloom: unsafe { gnu.storage.add(IMAGE_HASH + 16).cast() },
+        buckets: unsafe { gnu.storage.add(IMAGE_HASH + 24).cast() },
+        chains: unsafe { gnu.storage.add(IMAGE_HASH + 28).cast() }, symbol_count: 5,
+    };
+
+    // A reached name without a terminator is malformed; a bloom miss never
+    // reads that name. A valid earlier name survives unrelated trailing junk.
+    object.strsz = 6;
+    assert_eq!(unsafe { exported_index(&object, b"value") }, None);
+    gnu.put_u64(IMAGE_HASH + 16, 0);
+    assert_eq!(unsafe { exported_index(&object, b"value") }, Some(None));
+    gnu.put_u64(IMAGE_HASH + 16, bloom);
+    object.strsz = 8;
+    unsafe { gnu.storage.add(IMAGE_STRTAB + 7).write(b'X') };
+    assert_eq!(unsafe { exported_index(&object, b"value") }, Some(Some(1)));
+    gnu.put_u32(IMAGE_SYMTAB + 24, 8);
+    assert_eq!(unsafe { exported_index(&object, b"value") }, None);
+}
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[test]
 fn ordinary_word_resolution_keeps_requestor_validation_and_mixed_hash_scope() {
     let mut main = Image::new();
     let mut sysv = Image::new();
