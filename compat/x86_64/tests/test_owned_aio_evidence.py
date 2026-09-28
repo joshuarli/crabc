@@ -167,6 +167,66 @@ class OwnedAioBehaviorObservationTests(unittest.TestCase):
             with self.assertRaises(self.evidence.EvidenceError):
                 self.evidence.assert_oracle_fd_reuse(self.root, fd)
 
+    def test_public_replay_rejects_rehashed_success_output_for_source_cancel_timeout(self) -> None:
+        class ReachedSubmit(RuntimeError):
+            pass
+
+        evidence = self.evidence
+        work = self.work
+        tools = {"oracle-compiler": {"path": "/tools/oracle"}}
+        for key in evidence.ORACLE_CASES:
+            (work / evidence.OBJECTS[key]).write_bytes(b"object")
+            (work / ("oracle" if key == "workload" else f"oracle-{key}")).write_bytes(b"binary")
+        for key in ("queued-cancel", "submit-cancel"):
+            source = self.root / evidence.PROBES[key]
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_bytes(b"source")
+        (work / "oracle-queued-cancel").write_bytes(b"binary")
+        (work / "oracle-submit-cancel").write_bytes(b"binary")
+        (work / "expected-native-inputs.json").write_text("{}\n", encoding="utf-8")
+        report = {
+            "schema": evidence.SCHEMA, "source_mount": str(self.root),
+            "status": "component-verified-not-family-qualified", "modes": evidence._mode_claims(None),
+            "inputs": {"before": {}, "after": {}, "expected_native_inputs": str(work / "expected-native-inputs.json")},
+            "header_trace": {}, "compiles": {}, "links": {}, "executions": {}, "commands": str(work),
+        }
+        report_path = work / "owned-aio-receipts.json"
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        real_command = evidence._command
+
+        def command(root, command_work, label, argv, statuses, **kwargs):
+            if label.startswith("oracle-queued-cancel-"):
+                return real_command(root, command_work, label, argv, statuses, **kwargs)
+            if label == "oracle-submit-cancel":
+                raise ReachedSubmit()
+            return {}
+
+        with unittest.mock.patch.object(evidence, "SOURCE_MOUNT", str(self.root)):
+            for case in ("target", "all"):
+                label = f"oracle-queued-cancel-{case}"
+                for suffix, data in (("stdout", b""), ("stderr", b""), ("status", b"124\n")):
+                    (work / f"{label}.{suffix}").write_bytes(data)
+                evidence.record_command(
+                    self.root, work, label,
+                    ["/usr/bin/timeout", "-k", "1", "5", str(work / "oracle-queued-cancel"), case],
+                    self.root, work / f"{label}.stdout", work / f"{label}.stderr", work / f"{label}.status",
+                )
+            with unittest.mock.patch.object(evidence, "_check_input", return_value=(work, None, tools, {})), \
+                    unittest.mock.patch.object(evidence, "_same_expected"), \
+                    unittest.mock.patch.object(evidence, "_validate_header", return_value={}), \
+                    unittest.mock.patch.object(evidence, "_compile_commands", return_value={}), \
+                    unittest.mock.patch.object(evidence, "_command", side_effect=command):
+                with self.assertRaises(ReachedSubmit):
+                    evidence.validate_report(self.root, report_path, {})
+                output = work / "oracle-queued-cancel-target.stdout"
+                output.write_bytes(b"queued-cancel-target=ok\n")
+                command_path = work / "commands/oracle-queued-cancel-target.json"
+                receipt = json.loads(command_path.read_text())
+                receipt["stdout"] = evidence._identity(self.root, output, "rehashed timeout output")
+                command_path.write_text(json.dumps(receipt), encoding="utf-8")
+                with self.assertRaisesRegex(evidence.EvidenceError, "source queued cancellation timeout transcript"):
+                    evidence.validate_report(self.root, report_path, {})
+
     @staticmethod
     def _fd_reuse_espipe(*, attempt: int | str, step: str = "wait-pipe-read", regular: int | str = 3,
                          pipe_read: int | str = 3, pipe_write: int | str = 4,

@@ -523,6 +523,12 @@ def assert_success_transcript(root: Path, command: Mapping[str, Any], expected: 
         fail(f"{description} transcript differs")
     return stdout, stderr
 
+def assert_oracle_queued_cancel_timeout(root: Path, command: Mapping[str, Any]) -> None:
+    """The source probe writes its only success line after cancellation returns."""
+    stdout, stderr = _streams(root, command, "source queued cancellation timeout")
+    if stdout or stderr:
+        fail("source queued cancellation timeout transcript differs")
+
 def assert_matched_transcript(root: Path, oracle: Mapping[str, Any], candidate: Mapping[str, Any], description: str) -> None:
     if _streams(root, oracle, f"{description} oracle") != _streams(root, candidate, f"{description} candidate"):
         fail(f"{description} candidate differs from pinned-musl transcript")
@@ -713,7 +719,8 @@ def validate_report(root: Path, report_path: Path, expected: object, *, live: bo
     defect_binary = work / "oracle-queued-cancel"
     for case in ("target", "all"):
         label = f"oracle-queued-cancel-{case}"
-        _command(root, work, label, ["/usr/bin/timeout", "-k", "1", "5", _mounted(root, defect_binary), case], {b"124\n", b"137\n"})
+        timeout = _command(root, work, label, ["/usr/bin/timeout", "-k", "1", "5", _mounted(root, defect_binary), case], {b"124\n", b"137\n"})
+        assert_oracle_queued_cancel_timeout(root, timeout)
     submit = _command(root, work, "oracle-submit-cancel", ["/usr/bin/timeout", "60", _mounted(root, work / "oracle-submit-cancel"), "s"], {b"0\n"})
     assert_success_transcript(root, submit, b"submit-handoff-cancellation=observed\n", "source submit cancellation")
     oracle_commands: dict[str, Any] = {}
