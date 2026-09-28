@@ -433,10 +433,13 @@ are not transferable passes for a different revision.
   musl's 11. A later scoped development smoke on the current loader is 27
   calls after canonical-alias reuse; a further same-root SysV header-load
   reuse lowers development instructions by a paired median 117 across
-  100 rotated samples without changing syscall counts. A source-built marked
-  loader trace has 23 whole-process calls after skipping exit-time
-  `gettid` and reusing libc's initial TID for constructor ownership;
-  finalizer controls still pass.
+  100 rotated samples without changing syscall counts. A scoped source-built
+  startup smoke has 23 whole-process calls after skipping exit-time `gettid`
+  and reusing libc's initial TID for constructor ownership; finalizer controls
+  still pass. The canonical scorecard startup fixture on clean `dde46571e`
+  records 25 kernel-entry, 34 direct-entry, and 11 musl calls. Its published
+  `/app/lib:/usr/lib` RUNPATH adds a required failed app-local libc probe
+  compared with an ad hoc workload link.
   The x86 clock path now
   receives `AT_SYSINFO_EHDR` from validated startup auxv once, so libc-linked
   core clock lookup avoids reopening procfs; direct-core fallback remains.
