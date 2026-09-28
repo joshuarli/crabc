@@ -15,6 +15,8 @@ ROOT = Path(__file__).resolve().parents[2]
 PROBE = ROOT / "compat/allocator/x86_64_os_medium_split_releasers_exit.c"
 RUST_SOURCE = ROOT / "crabc-mimalloc/tests/native_os_medium_split_releasers_exit.rs"
 RUNTIME_SOURCE = ROOT / "crabc-mimalloc/src/runtime_lifecycle.rs"
+SINGLE_THREAD_SOURCE = ROOT / "crabc-mimalloc/src/single_thread.rs"
+ABANDONED_SOURCE = ROOT / "crabc-mimalloc/src/abandoned.rs"
 LIB_SOURCE = ROOT / "crabc-mimalloc/src/lib.rs"
 PAGE_MAP_SOURCE = ROOT / "crabc-mimalloc/src/page_map.rs"
 SUPPORT_SOURCE = ROOT / "crabc-mimalloc/tests/support/native_runtime.rs"
@@ -128,6 +130,10 @@ def source_seal() -> dict[str, str]:
         "c_path": base.relative(PROBE), "c_sha256": base.sha256_file(PROBE),
         "rust_path": base.relative(RUST_SOURCE), "rust_sha256": base.sha256_file(RUST_SOURCE),
         "runtime_path": base.relative(RUNTIME_SOURCE), "runtime_sha256": base.sha256_file(RUNTIME_SOURCE),
+        "single_thread_path": base.relative(SINGLE_THREAD_SOURCE),
+        "single_thread_sha256": base.sha256_file(SINGLE_THREAD_SOURCE),
+        "abandoned_path": base.relative(ABANDONED_SOURCE),
+        "abandoned_sha256": base.sha256_file(ABANDONED_SOURCE),
         "lib_path": base.relative(LIB_SOURCE), "lib_sha256": base.sha256_file(LIB_SOURCE),
         "page_map_path": base.relative(PAGE_MAP_SOURCE), "page_map_sha256": base.sha256_file(PAGE_MAP_SOURCE),
         "support_path": base.relative(SUPPORT_SOURCE), "support_sha256": base.sha256_file(SUPPORT_SOURCE),

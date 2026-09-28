@@ -62,6 +62,12 @@ class OsMediumSplitExitReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.EvidenceError, "source route"):
             evidence.validate_report(report)
 
+    def test_changed_production_source_seal_fails(self):
+        report = self.report()
+        report["probe"]["single_thread_sha256"] = "0" * 64
+        with self.assertRaisesRegex(evidence.EvidenceError, "source seal"):
+            evidence.validate_report(report)
+
     def test_missing_and_tampered_receipts_fail(self):
         work_root = ROOT / ".work"
         work_root.mkdir(exist_ok=True)

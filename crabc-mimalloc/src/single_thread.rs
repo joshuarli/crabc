@@ -1257,7 +1257,7 @@ unsafe fn continue_post_owner_exit_remote_claim_with_process_page_facts(
                     // SAFETY: the remote-free claim retains this exact OS
                     // page and its Heap list link until reclaim consumes it.
                     match unsafe { remove_non_arena_page_from_main_heap(main_heap, page) } {
-                        NonArenaSingletonListRemoval::Removed => Ok(()),
+                        NonArenaPageListRemoval::Removed => Ok(()),
                         _ => Err(AbandonError::OsAbandonedListRemoval),
                     }
                 },
@@ -1623,9 +1623,9 @@ pub(crate) unsafe fn free_child_page_block_nonlocal(
                             page_map, backing.process(), release.page(), release.memory(),
                             false,
                             |page| if Heap::remove_os_abandoned_page_at(heap, page) {
-                                NonArenaSingletonListRemoval::Removed
+                                NonArenaPageListRemoval::Removed
                             } else {
-                                NonArenaSingletonListRemoval::NotRemoved
+                                NonArenaPageListRemoval::NotRemoved
                             },
                         ) {
                             ClaimedProcessNonArenaPageRelease::Released => {
@@ -1878,9 +1878,9 @@ pub(crate) unsafe fn delete_non_main_heap_pages(
                 release_claimed_non_arena_page_with_list_removal(
                     page_map, backing.process(), page, memory, false,
                     |page| if Heap::remove_os_abandoned_page_at(heap, page) {
-                        NonArenaSingletonListRemoval::Removed
+                        NonArenaPageListRemoval::Removed
                     } else {
-                        NonArenaSingletonListRemoval::NotRemoved
+                        NonArenaPageListRemoval::NotRemoved
                     },
                 )
             };
@@ -2717,7 +2717,7 @@ unsafe fn preflight_non_arena_page(
 /// that irreversible state as `RemovedUnlockFailed`; treating either error as
 /// a pre-list failure would lose the only mapping/backing terminal owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum NonArenaSingletonListRemoval {
+enum NonArenaPageListRemoval {
     NotRemoved,
     Removed,
     RemovedUnlockFailed,
@@ -2730,9 +2730,9 @@ enum NonArenaSingletonListRemoval {
 unsafe fn remove_non_arena_page_from_main_heap(
     main_heap: MainStaticHeapLease<'static>,
     page: NonNull<Page>,
-) -> NonArenaSingletonListRemoval {
+) -> NonArenaPageListRemoval {
     let Ok(mut heap) = main_heap.lock_heap() else {
-        return NonArenaSingletonListRemoval::NotRemoved;
+        return NonArenaPageListRemoval::NotRemoved;
     };
     // SAFETY: the caller's low-bit claim retains this exact page and the guard
     // serializes the one `_mi_arenas_page_unabandon` list removal.
@@ -2743,18 +2743,18 @@ unsafe fn remove_non_arena_page_from_main_heap(
     let unlock = heap.unlock();
     match removed {
         HeapOsAbandonedPageRemovalOutcome::NotRemoved(_) => {
-            NonArenaSingletonListRemoval::NotRemoved
+            NonArenaPageListRemoval::NotRemoved
         }
         HeapOsAbandonedPageRemovalOutcome::Removed => match unlock {
-            Ok(()) => NonArenaSingletonListRemoval::Removed,
-            Err(_) => NonArenaSingletonListRemoval::RemovedUnlockFailed,
+            Ok(()) => NonArenaPageListRemoval::Removed,
+            Err(_) => NonArenaPageListRemoval::RemovedUnlockFailed,
         },
         // The inner list lock observed a wake failure only after it spliced
         // and cleared the links.  An outer unlock error cannot undo that
         // source-visible transition, so both cases retain the post-list
         // owner rather than progressing as a healthy release.
         HeapOsAbandonedPageRemovalOutcome::RemovedUnlockFailed(_) => {
-            NonArenaSingletonListRemoval::RemovedUnlockFailed
+            NonArenaPageListRemoval::RemovedUnlockFailed
         }
     }
 }
@@ -2792,7 +2792,7 @@ unsafe fn release_claimed_non_arena_page_with_list_removal(
     mut page: NonNull<Page>,
     expected_memory: MemoryId,
     regular: bool,
-    remove_from_list: impl FnOnce(NonNull<Page>) -> NonArenaSingletonListRemoval,
+    remove_from_list: impl FnOnce(NonNull<Page>) -> NonArenaPageListRemoval,
 ) -> ClaimedProcessNonArenaPageRelease {
     let Some(preflight) = (unsafe {
         preflight_non_arena_page(page_map, process, page, expected_memory, regular)
@@ -2800,11 +2800,11 @@ unsafe fn release_claimed_non_arena_page_with_list_removal(
         return ClaimedProcessNonArenaPageRelease::RetainedBeforeList;
     };
     let list_removal = remove_from_list(page);
-    if list_removal == NonArenaSingletonListRemoval::NotRemoved {
+    if list_removal == NonArenaPageListRemoval::NotRemoved {
         return ClaimedProcessNonArenaPageRelease::RetainedBeforeList;
     }
 
-    if list_removal == NonArenaSingletonListRemoval::RemovedUnlockFailed {
+    if list_removal == NonArenaPageListRemoval::RemovedUnlockFailed {
         // The list was already spliced, but a source lock boundary reported
         // failure after that one-way transition.  Do not run PageMap or
         // backing steps against a lifecycle whose outer lock state is no
