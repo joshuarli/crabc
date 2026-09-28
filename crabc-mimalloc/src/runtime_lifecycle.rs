@@ -11114,10 +11114,10 @@ fn native_allocate_shaped(
     let Some(_operation) = enter_native_allocation_operation() else {
         return NativePageAllocationResult::Unavailable;
     };
-    // The local fast path's gate excludes child-subprocess members, and it
-    // accepts only small requests with a power-of-two alignment no larger
-    // than the request at offset zero, which the aligned precheck below
-    // always passes; so it may precede both.
+    // The local fast path's gate excludes child-subprocess members. Its
+    // aligned branch accepts only an offset-zero, power-of-two alignment no
+    // larger than the request, so that branch may precede the aligned
+    // precheck below. Ordinary requests may use regular queue heads too.
     #[cfg(target_arch = "x86_64")]
     if let Some(owner) = native_local_fast_owner() {
         let alignment = match shape {
