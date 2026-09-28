@@ -2028,7 +2028,16 @@ transfer capability.
   +327,680/+196,608 while the page is live and +65,536/+65,536 after terminal
   free; the remaining 65,536 bytes belong to the lazily installed PageMap
   submap. Both record two mmap and two commit calls, no detached-Theap queue
-  page-count change, and no warning during the request and release. The focused
+  page-count change, and no warning during the request and release. With a
+  failed terminal `munmap` of that 262,144-byte MemoryId range, both sides
+  remove the PageMap entry and retain the live mapping. The free warning's
+  prefix/body arrives while reserved/committed still include the page at
+  +327,680/+196,608; the source free then leaves those counters at
+  +65,536/+65,536 and does not repeat mmap or commit calls. Pinned C's void
+  free loses the retry owner, so the fixture releases only the observed range
+  through the raw primitive after recording its source state. Rust retains
+  the published owner and retries its exact range raw, with no second warning
+  or statistics event. The focused
   `allocator-unit` regressions pass. The private native
   smoke command
   `./compat/allocator/run-x86_64.sh allocator-perf --smoke --label m2-incremental-on-demand`

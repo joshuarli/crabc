@@ -4024,6 +4024,38 @@ typedef struct fresh_os_published_record_s {
   int64_t values[20];
 } fresh_os_published_record_t;
 
+typedef struct published_os_failed_free_record_s {
+  bool facts[8];
+  int64_t values[10];
+} published_os_failed_free_record_t;
+
+static struct {
+  mi_subproc_t* subproc;
+  unsigned fragments;
+  bool prefix_first;
+  bool free_body_second;
+  int64_t reserved_at_warning;
+  int64_t committed_at_warning;
+} published_os_failed_free_warning;
+
+static void published_os_failed_free_output(const char* message, void* argument) {
+  (void)argument;
+  const unsigned index = published_os_failed_free_warning.fragments++;
+  if (index == 0) {
+    published_os_failed_free_warning.prefix_first = strncmp(message,
+        "mimalloc: warning: thread 0x", sizeof("mimalloc: warning: thread 0x") - 1) == 0;
+  }
+  else if (index == 1) {
+    published_os_failed_free_warning.free_body_second = strncmp(message,
+        "unable to free OS memory (error: 12 (0x0C), size: 0x40000 bytes, address: 0x",
+        sizeof("unable to free OS memory (error: 12 (0x0C), size: 0x40000 bytes, address: 0x") - 1) == 0;
+    published_os_failed_free_warning.reserved_at_warning =
+        published_os_failed_free_warning.subproc->stats.reserved.current;
+    published_os_failed_free_warning.committed_at_warning =
+        published_os_failed_free_warning.subproc->stats.committed.current;
+  }
+}
+
 static struct {
   mi_subproc_t* subproc;
   int64_t reserved_at_commit_warning;
@@ -4250,6 +4282,80 @@ static int run_fresh_os_published_child(int descriptor) {
   result.values[17] = mmap_free - mmap_before;
   result.values[18] = (int64_t)pages_live - (int64_t)pages_before;
   result.values[19] = (int64_t)pages_free - (int64_t)pages_before;
+  return write(descriptor, &result, sizeof(result)) == sizeof(result) ? 0 : 40;
+}
+
+/* A failed terminal primitive leaves the already-unregistered source page
+ * mapping live. The void source free has no retry owner; the fixture releases
+ * only its observed exact raw range after all accounting is captured. */
+static int run_published_os_failed_free_child(int descriptor) {
+  mi_process_init();
+  mi_option_set(mi_option_disallow_arena_alloc, 1);
+  mi_option_set(mi_option_allow_large_os_pages, 0);
+  mi_option_set_enabled(mi_option_show_errors, true);
+  mi_subproc_t* const subproc = _mi_subproc_main();
+  memset(&published_os_failed_free_warning, 0, sizeof(published_os_failed_free_warning));
+  published_os_failed_free_warning.subproc = subproc;
+  mi_register_output(published_os_failed_free_output, NULL);
+  published_os_failed_free_warning.fragments = 0;
+  const int64_t reserved_before = subproc->stats.reserved.current;
+  const int64_t committed_before = subproc->stats.committed.current;
+  const int64_t commits_before = subproc->stats.commit_calls.total;
+  const int64_t mmap_before = subproc->stats.mmap_calls.total;
+  memset(&os_publication_probe, 0, sizeof(os_publication_probe));
+  os_publication_probe.selected = 8;
+  os_publication_probe.active = true;
+  mi_page_t* const page = _mi_arenas_page_alloc(subproc->theap_meta,
+      128 * MI_KiB, 128 * MI_KiB);
+  if (page == NULL) return 20;
+  const mi_memid_t memid = page->memid;
+  uint8_t* const start = mi_page_start(page);
+  const bool registered = _mi_safe_ptr_page(start) == page;
+  const int64_t reserved_live = subproc->stats.reserved.current;
+  const int64_t committed_live = subproc->stats.committed.current;
+  _mi_arenas_page_free(page, subproc->theap_meta);
+  os_publication_probe.active = false;
+  const int64_t reserved_free = subproc->stats.reserved.current;
+  const int64_t committed_free = subproc->stats.committed.current;
+  const int64_t commits_free = subproc->stats.commit_calls.total;
+  const int64_t mmap_free = subproc->stats.mmap_calls.total;
+  unsigned char residency = 0;
+  const bool retained = mincore(memid.mem.os.base, _mi_os_page_size(), &residency) == 0;
+  published_os_failed_free_record_t result = {0};
+  result.facts[0] = memid.memkind == MI_MEM_OS
+      && memid.mem.os.size == 4 * MI_ARENA_SLICE_SIZE;
+  result.facts[1] = registered && _mi_safe_ptr_page(start) == NULL;
+  result.facts[2] = os_publication_probe.releases == 1
+      && os_publication_probe.base == memid.mem.os.base
+      && os_publication_probe.length == memid.mem.os.size
+      && os_publication_probe.retained;
+  result.facts[3] = retained;
+  result.facts[4] = published_os_failed_free_warning.fragments == 2
+      && published_os_failed_free_warning.prefix_first
+      && published_os_failed_free_warning.free_body_second;
+  result.facts[5] = published_os_failed_free_warning.reserved_at_warning == reserved_live
+      && published_os_failed_free_warning.committed_at_warning == committed_live;
+  result.facts[6] = reserved_free - reserved_before == MI_ARENA_SLICE_SIZE
+      && committed_free - committed_before == MI_ARENA_SLICE_SIZE
+      && commits_free - commits_before == 2 && mmap_free - mmap_before == 2;
+  result.values[0] = (int64_t)memid.mem.os.size;
+  result.values[1] = reserved_live - reserved_before;
+  result.values[2] = committed_live - committed_before;
+  result.values[3] = reserved_free - reserved_before;
+  result.values[4] = committed_free - committed_before;
+  result.values[5] = commits_free - commits_before;
+  result.values[6] = mmap_free - mmap_before;
+  result.values[7] = (int64_t)published_os_failed_free_warning.fragments;
+  result.values[8] = published_os_failed_free_warning.reserved_at_warning - reserved_before;
+  result.values[9] = published_os_failed_free_warning.committed_at_warning - committed_before;
+  const int64_t reserved_before_raw = subproc->stats.reserved.current;
+  const int64_t committed_before_raw = subproc->stats.committed.current;
+  result.facts[7] = _mi_prim_free(memid.mem.os.base, memid.mem.os.size) == 0
+      && mincore(memid.mem.os.base, _mi_os_page_size(), &residency) == -1
+      && errno == ENOMEM
+      && subproc->stats.reserved.current == reserved_before_raw
+      && subproc->stats.committed.current == committed_before_raw
+      && published_os_failed_free_warning.fragments == 2;
   return write(descriptor, &result, sizeof(result)) == sizeof(result) ? 0 : 40;
 }
 
@@ -4508,6 +4614,15 @@ int main(void) {
       run_fresh_os_published_child, &published, sizeof(published))) return 1;
   for (size_t i = 0; i < 6; i++)
     printf("os_area_published.%s=%u\n", published_fields[i], (unsigned)published.facts[i]);
+  const char* failed_free_fields[] = {"os_memory", "page_map_unpublished",
+      "exact_failed_release", "range_retained", "warning_fragments_order",
+      "warning_before_statistics", "statistics_once", "raw_cleanup"};
+  published_os_failed_free_record_t failed_free = {0};
+  if (!capture_large_page_retry_child("published OS failed free child",
+      run_published_os_failed_free_child, &failed_free, sizeof(failed_free))) return 1;
+  for (size_t i = 0; i < 8; i++)
+    printf("os_area_published_free_failure.%s=%u\n", failed_free_fields[i],
+        (unsigned)failed_free.facts[i]);
   puts("CRABC_MI_M2_OS_PUBLICATION_TRACE_END");
   const char* on_demand_value_fields[] = {"mapping_length", "reserved_after_area",
       "committed_after_area", "commit_calls_after_area", "memory_id_initially_committed",
@@ -4534,6 +4649,13 @@ int main(void) {
   for (size_t i = 0; i < 20; i++)
     printf("os_area_published.%s=%lld\n", published_value_fields[i],
         (long long)published.values[i]);
+  const char* failed_free_value_fields[] = {"mapping_length", "reserved_live",
+      "committed_live", "reserved_after_free", "committed_after_free",
+      "commit_calls_after_free", "mmap_calls_after_free", "warning_fragments",
+      "reserved_at_warning", "committed_at_warning"};
+  for (size_t i = 0; i < 10; i++)
+    printf("os_area_published_free_failure.%s=%lld\n", failed_free_value_fields[i],
+        (long long)failed_free.values[i]);
   puts("CRABC_MI_M2_OS_ON_DEMAND_VALUES_END");
   return 0;
 }

@@ -69,6 +69,13 @@ OS_ON_DEMAND_VALUE_KEYS = tuple(
         "primitive_commits", "warning_fragments", "mmap_calls_live",
         "mmap_calls_after_free", "pages_live", "pages_after_free",
     )
+) + tuple(
+    f"os_area_published_free_failure.{field}" for field in (
+        "mapping_length", "reserved_live", "committed_live",
+        "reserved_after_free", "committed_after_free", "commit_calls_after_free",
+        "mmap_calls_after_free", "warning_fragments", "reserved_at_warning",
+        "committed_at_warning",
+    )
 )
 OS_PUBLICATION_KEYS = tuple(
     f"os_publication.{selected}.{field}" for selected in range(1, 8)
@@ -101,6 +108,12 @@ OS_PUBLICATION_KEYS = tuple(
         "os_memory", "exact_mapping_release", "page_map_lifecycle",
         "kernel_mapping_lifecycle", "single_terminal_free", "warning_absent",
     )
+) + tuple(
+    f"os_area_published_free_failure.{field}" for field in (
+        "os_memory", "page_map_unpublished", "exact_failed_release",
+        "range_retained", "warning_fragments_order", "warning_before_statistics",
+        "statistics_once", "raw_cleanup",
+    )
 )
 OS_PUBLICATION_BOUNDARY = {
     "source": "src/arena.c:781-1120,1220-1297; src/page-map.c:391-515; src/os.c:240-294",
@@ -117,6 +130,7 @@ OS_PUBLICATION_BOUNDARY = {
     "fresh_os_cleanup": "a direct fresh OS area rejects its metadata commit and cleanup unmap; the retained range and source counters remain observable, commit and free warnings arrive before the reserved decrease, and Rust retries through one raw-only owner",
     "fresh_os_released": "a direct fresh OS area rejects its metadata commit, then successfully unmaps the exact area; only the commit warning arrives while reserved current still includes the area, and no mapping or retry owner remains",
     "fresh_os_published": "a successful fresh OS singleton publishes through the page map, retains its exact OS MemoryId and VM deltas, then releases its complete mapping without warnings",
+    "published_os_failed_free": "a published OS singleton removes its PageMap registration before a failed exact terminal unmap; C loses the void-free retry owner while Rust retains one raw-only retry, and both warn before applying statistics",
     "excluded": "corrupted-alias provenance refusal, general metadata allocator, hardware huge/NUMA, and complete M2",
 }
 METADATA_PUBLICATION_PROFILE_DEFINE = "-DCRABC_M2_METADATA_PUBLICATION_PROFILE=1"
@@ -2317,6 +2331,17 @@ def _validate_os_on_demand_difference(c: Mapping[str, int], rust: Mapping[str, i
         65536, 65536, 2, 2, 0, 2, 2, 0, 0)
     if c_published != expected_published or rust_published != expected_published:
         raise ValueError(f"fresh OS published values differ: C {c_published} Rust {rust_published}")
+    failed_free = lambda field: f"os_area_published_free_failure.{field}"
+    failed_free_fields = ("mapping_length", "reserved_live", "committed_live",
+        "reserved_after_free", "committed_after_free", "commit_calls_after_free",
+        "mmap_calls_after_free", "warning_fragments", "reserved_at_warning",
+        "committed_at_warning")
+    c_failed_free = tuple(c[failed_free(field)] for field in failed_free_fields)
+    rust_failed_free = tuple(rust[failed_free(field)] for field in failed_free_fields)
+    expected_failed_free = (4 * 65536, 5 * 65536, 3 * 65536,
+        65536, 65536, 2, 2, 2, 5 * 65536, 3 * 65536)
+    if c_failed_free != expected_failed_free or rust_failed_free != expected_failed_free:
+        raise ValueError(f"published OS failed-free values differ: C {c_failed_free} Rust {rust_failed_free}")
 
 
 def validate_os_publication_report(report: Mapping[str, Any]) -> dict[str, Any]:

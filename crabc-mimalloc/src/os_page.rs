@@ -1617,6 +1617,7 @@ mod tests {
         subprocess: *const crate::subproc::SubprocessIdentity,
         reserved_at_commit_warning: AtomicI64,
         reserved_at_free_warning: AtomicI64,
+        committed_at_free_warning: AtomicI64,
     }
 
     unsafe extern "C" fn capture_fresh_os_cleanup_warning(
@@ -1628,12 +1629,12 @@ mod tests {
         let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
         if bytes.starts_with(b"cannot commit OS memory")
             || bytes.starts_with(b"unable to free OS memory") {
-            let current = unsafe { &*capture.subprocess }
-                .vm_statistics().snapshot().reserved_current;
+            let current = unsafe { &*capture.subprocess }.vm_statistics().snapshot();
             if bytes.starts_with(b"cannot commit OS memory") {
-                capture.reserved_at_commit_warning.store(current, Ordering::Release);
+                capture.reserved_at_commit_warning.store(current.reserved_current, Ordering::Release);
             } else {
-                capture.reserved_at_free_warning.store(current, Ordering::Release);
+                capture.reserved_at_free_warning.store(current.reserved_current, Ordering::Release);
+                capture.committed_at_free_warning.store(current.committed_current, Ordering::Release);
             }
         }
         if let Ok(mut fragments) = capture.fragments.lock() {
@@ -1776,6 +1777,7 @@ mod tests {
             subprocess: subprocess.identity(),
             reserved_at_commit_warning: AtomicI64::new(i64::MIN),
             reserved_at_free_warning: AtomicI64::new(i64::MIN),
+            committed_at_free_warning: AtomicI64::new(i64::MIN),
         };
         // SAFETY: this test retains the capture for every synchronous
         // callback and does not register another output route.
@@ -2192,6 +2194,7 @@ mod tests {
             subprocess: subprocess.identity(),
             reserved_at_commit_warning: AtomicI64::new(i64::MIN),
             reserved_at_free_warning: AtomicI64::new(i64::MIN),
+            committed_at_free_warning: AtomicI64::new(i64::MIN),
         };
         // SAFETY: the callback uses this stack-backed capture only while it
         // remains registered and every operation is synchronous.
@@ -2273,6 +2276,129 @@ mod tests {
         drop(fault);
         unsafe { map.destroy() }.unwrap();
         // SAFETY: remove the stack capture before it becomes invalid.
+        unsafe { output.register_output(None, core::ptr::null_mut()) };
+        (facts, values)
+    }
+
+    /// A failed published free leaves its mapping live after PageMap removal;
+    /// the retained token retries only the raw primitive after accounting.
+    fn published_os_failed_free_relations() -> ([bool; 8], [i64; 10]) {
+        use crate::bootstrap::ExclusiveTheapBootstrap;
+        use crate::diagnostic_output::{OutputCallback, OutputOwner};
+        use crate::page_map::PageMap;
+        let show_errors = b"mimalloc_show_errors=1\0";
+        let max_warnings = b"mimalloc_max_warnings=100\0";
+        let environment = std::boxed::Box::leak(std::boxed::Box::new([
+            show_errors.as_ptr().cast(), max_warnings.as_ptr().cast(), core::ptr::null(),
+        ]));
+        FRESH_OS_CLEANUP_ENVIRONMENT.store(environment.as_mut_ptr(), Ordering::Release);
+        let output = std::boxed::Box::leak(std::boxed::Box::new(
+            OutputOwner::new(fresh_os_cleanup_default_output)));
+        // SAFETY: leaked option storage and output remain live for this
+        // synchronous receiver and its source option reads.
+        unsafe { output.initialize_source_options(fresh_os_cleanup_environment) };
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let warnings = FreshOsCleanupWarnings {
+            fragments: std::sync::Mutex::new(std::vec::Vec::new()),
+            subprocess: subprocess.identity(),
+            reserved_at_commit_warning: AtomicI64::new(i64::MIN),
+            reserved_at_free_warning: AtomicI64::new(i64::MIN),
+            committed_at_free_warning: AtomicI64::new(i64::MIN),
+        };
+        // SAFETY: callback delivery is synchronous and this capture remains
+        // live until output registration is removed below.
+        unsafe { output.register_output(Some(capture_fresh_os_cleanup_warning as OutputCallback),
+            &warnings as *const FreshOsCleanupWarnings as *mut c_void) };
+        let policy = std::boxed::Box::leak(std::boxed::Box::new(
+            unsafe { crate::os::VmPolicy::from_process_options(output) }));
+        policy.finish_preloading();
+        let process = VmProcess::new(policy, subprocess);
+        let mut map = PageMap::initialize_for_process(config(4 * KIB), 0, true, process).unwrap();
+        let mut bootstrap = std::boxed::Box::pin(ExclusiveTheapBootstrap::new());
+        let mut session = bootstrap.as_mut().activate_detached_for_main_subprocess(
+            process.main_subprocess().expect("fixture uses process main")).unwrap();
+        warnings.fragments.lock().unwrap().clear();
+        let before = process.subprocess().vm_statistics().snapshot();
+        let fault = fault::install(fault::Plan::disabled());
+        // SAFETY: the exclusive session retains the pinned initialized Theap;
+        // this random projection ends before Page metadata is published.
+        let mut random = unsafe { crate::os::CurrentTheapRandom::new(
+            NonNull::from(session.theap())) };
+        let claim = OsAlignedPageClaim::allocate_for_process_with_random(process,
+            config(4 * KIB), 128 * KIB, 128 * KIB, crate::arena::ArenaId::none(),
+            Some(&mut random)).unwrap_or_else(|_| panic!("published OS claim"));
+        let layout = claim.layout();
+        let memory = claim.memory_id().unwrap();
+        let base = claim.base().unwrap();
+        let start = claim.slice_start().unwrap();
+        let mut primary = unsafe { session.publish_fresh_page(claim.metadata().unwrap(),
+            layout.block_size(), layout.page_offset(), layout.reserved(), 0,
+            memory.initially_zero(), memory) }.unwrap();
+        assert!(unsafe { claim.publish_secondary_metadata(primary) });
+        unsafe { map.register_range(start.as_ptr(), layout.page_map_size(), primary) }.unwrap();
+        let live = process.subprocess().vm_statistics().snapshot();
+        let registered = unsafe { map.checked_lookup(start.as_ptr()) } == primary.as_ptr();
+        claim.into_published().unwrap();
+        let published = unsafe { PublishedOsAlignedPage::from_page_for_process(
+            process, config(4 * KIB), primary) }.unwrap();
+        unsafe { map.unregister_range(start.as_ptr(), layout.page_map_size()) }.unwrap();
+        assert!(unsafe { published.clear_secondary_metadata() });
+        assert!(session.retire_page(unsafe { primary.as_mut() }).is_some());
+        fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        let unmaps = fault.capture_unmap_ranges();
+        let failure = unsafe { published.reclaim() }.err().expect("failed terminal unmap");
+        assert_eq!(failure.error().operation(), Errno::NOMEM);
+        let OsAlignedPageOwner::Published(owner) = failure.into_owner() else {
+            panic!("published page retains its release owner")
+        };
+        let freed = process.subprocess().vm_statistics().snapshot();
+        let (ranges, count) = unmaps.all().unwrap();
+        let exact_release = count == 1 && ranges[0] == (base.addr(), layout.mapping_length());
+        let mut residency = 0;
+        let retained = unsafe { crabc_core::mm::mincore_raw(base, 4096, &mut residency) }.is_ok();
+        let fragments = warnings.fragments.lock().unwrap();
+        let warning_order = fragments.len() == 2
+            && fragments[0].starts_with(b"mimalloc: warning: thread 0x")
+            && fragments[1].starts_with(b"unable to free OS memory (error: 12 (0x0C), size: 0x40000 bytes, address: 0x");
+        let warning_count = fragments.len();
+        drop(fragments);
+        let warning_reserved = warnings.reserved_at_free_warning.load(Ordering::Acquire);
+        let warning_committed = warnings.committed_at_free_warning.load(Ordering::Acquire);
+        let before_retry = process.subprocess().vm_statistics().snapshot();
+        drop(unmaps);
+        fault.set(fault::Plan::disabled());
+        let retried = unsafe { owner.retry_reclaim() }.is_ok();
+        let unmapped = unsafe { crabc_core::mm::mincore_raw(base, 4096, &mut residency) }
+            == Err(Errno::NOMEM);
+        let after_retry = process.subprocess().vm_statistics().snapshot();
+        let retry_warning_count = warnings.fragments.lock().unwrap().len();
+        let facts = [memory.kind() == crate::types::MemoryKind::Os
+                && memory.size() == Some(4 * ARENA_SLICE_SIZE),
+            registered && unsafe { map.checked_lookup(start.as_ptr()) }.is_null(),
+            exact_release, retained, warning_order,
+            warning_reserved == live.reserved_current
+                && warning_committed == live.committed_current,
+            freed.reserved_current - before.reserved_current == ARENA_SLICE_SIZE as i64
+                && freed.committed_current - before.committed_current == ARENA_SLICE_SIZE as i64
+                && freed.commit_calls - before.commit_calls == 2
+                && freed.mmap_calls - before.mmap_calls == 2,
+            retried && unmapped && after_retry == before_retry
+                && retry_warning_count == warning_count];
+        let values = [layout.mapping_length() as i64,
+            live.reserved_current - before.reserved_current,
+            live.committed_current - before.committed_current,
+            freed.reserved_current - before.reserved_current,
+            freed.committed_current - before.committed_current,
+            freed.commit_calls - before.commit_calls,
+            freed.mmap_calls - before.mmap_calls,
+            warning_count as i64,
+            if warning_reserved == i64::MIN { -1 }
+                else { warning_reserved - before.reserved_current },
+            if warning_committed == i64::MIN { -1 }
+                else { warning_committed - before.committed_current }];
+        drop(fault);
+        unsafe { map.destroy() }.unwrap();
+        // SAFETY: no callback may retain this stack-backed capture.
         unsafe { output.register_output(None, core::ptr::null_mut()) };
         (facts, values)
     }
@@ -2376,6 +2502,13 @@ mod tests {
             "warning_absent"].into_iter().zip(published_facts) {
             std::println!("os_area_published.{field}={}", u8::from(value));
         }
+        let (failed_free_facts, failed_free_values) = published_os_failed_free_relations();
+        for (field, value) in ["os_memory", "page_map_unpublished",
+            "exact_failed_release", "range_retained", "warning_fragments_order",
+            "warning_before_statistics", "statistics_once", "raw_cleanup"]
+            .into_iter().zip(failed_free_facts) {
+            std::println!("os_area_published_free_failure.{field}={}", u8::from(value));
+        }
         std::println!("CRABC_MI_M2_OS_PUBLICATION_TRACE_END");
         std::println!("CRABC_MI_M2_OS_ON_DEMAND_VALUES_BEGIN");
         for (field, value) in [
@@ -2408,8 +2541,16 @@ mod tests {
             .into_iter().zip(published_values) {
             std::println!("os_area_published.{field}={value}");
         }
+        for (field, value) in ["mapping_length", "reserved_live", "committed_live",
+            "reserved_after_free", "committed_after_free", "commit_calls_after_free",
+            "mmap_calls_after_free", "warning_fragments", "reserved_at_warning",
+            "committed_at_warning"].into_iter().zip(failed_free_values) {
+            std::println!("os_area_published_free_failure.{field}={value}");
+        }
         assert!(published_facts.into_iter().all(|value| value),
             "fresh OS published receiver: {published_facts:?}");
+        assert!(failed_free_facts.into_iter().all(|value| value),
+            "published OS failed free receiver: {failed_free_facts:?}");
         std::println!("CRABC_MI_M2_OS_ON_DEMAND_VALUES_END");
     }
 

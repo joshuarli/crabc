@@ -2651,7 +2651,8 @@ impl Mapping {
     ///
     /// This is the paired published-page counterpart of
     /// [`Self::unmap_for_process`]. The source syscall runs before its named
-    /// statistics transition, including when it fails. An error therefore
+    /// statistics transition, including when it fails. A failed primitive
+    /// warns before that transition. An error therefore
     /// leaves the published range live but already accounted; its exact owner
     /// must use [`Self::reclaim_published`] for an explicit raw retry instead
     /// of applying the process accounting edge twice.
@@ -2682,6 +2683,11 @@ impl Mapping {
             Ok(()) => unsafe { crabc_core::mm::munmap_raw(address, length) },
             Err(error) => Err(error),
         };
+        if let Err(error) = result {
+            process.policy.source_warning(SourceFormattedMessage::os_free_failure(
+                error, length, address.addr(),
+            ));
+        }
         let stats = process.subprocess.vm_statistics();
         if adjust {
             if commit_size != 0 {
