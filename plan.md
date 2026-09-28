@@ -285,6 +285,8 @@ are not transferable passes for a different revision.
   free from 98 to 95 Rust instructions, against 86 pinned C; the worker path
   remains at 91 against 86. Comparing the raw thread pointer against the
   validated published initial identity lowers the initial path again to 91;
+  cold placement of the existing out-of-line free remainder lowers both local
+  paths to 90 against 86, without changing local malloc or remote publication;
   local-owner traces and pointer dispatch pass.
   34,084 source-built C/Rust local allocation and free trace lines match.
   A clean allocator-engine smoke physically rehashes final link maps and finds
@@ -420,7 +422,11 @@ are not transferable passes for a different revision.
   rejection in the package reader. A clean `5613d3c39` rerun with exact
   lane-local vendors passed all nine leaves and 16 evidence entries, including
   Rust std, static/dynamic Lua, all 34 corpus cases, 113 stress cases, and three
-  soak seeds. The independent eleven-cell FILE matrix passed. Final
+  soak seeds. The independent eleven-cell FILE matrix passed. A separate
+  source-bound FILE engine receipt passes ten six-cell stream rows plus a new
+  four-cell dynamic allocator-interposition row; its public family projection
+  remains the existing ten rows and the extra row is verified fail-closed.
+  Final
   merged-revision M8 qualification remains open. All 57 `native_*`
   integration targets pass; the earlier attachment
   defect was stale. The M7 options/environment gate passes its source-matched
