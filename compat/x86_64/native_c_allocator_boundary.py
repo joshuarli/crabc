@@ -59,15 +59,25 @@ PUBLIC_WEAK_WORKLOAD = ("#define _GNU_SOURCE\n#include <sys/timeb.h>\n#include <
                         "if (ftime(&stamp) != 0) return 1; "
                         "return getloadavg(loads, 3) < 0 ? 2 : 0; }\n")
 ERRNO_IMPORT_NAME = "__errno_location"
-ERRNO_WORKLOAD = ("#include <stdlib.h>\n#include <stdio.h>\n#include <wchar.h>\n"
-                  "#include <assert.h>\n"
+ERRNO_WORKLOAD = ("#define _GNU_SOURCE 1\n#include <stdlib.h>\n#include <stdio.h>\n#include <wchar.h>\n"
+                  "#include <assert.h>\n#include <fmtmsg.h>\n#include <glob.h>\n"
+                  "#include <locale.h>\n#include <spawn.h>\n#include <time.h>\n"
+                  "#include <unistd.h>\n"
                   "#ifdef CRABC_STATIC_ORDINARY_IMPORT_PROBE\n"
                   "extern void *mi_new(size_t);\n"
-                  "extern void _mi_prim_out_stderr(const char *);\n#endif\n"
+                  "extern void _mi_prim_out_stderr(const char *);\n"
+                  "extern int mi_dupenv_s(char **, size_t *, const char *);\n#endif\n"
                   "int main(int argc, char **argv) { (void)argv; assert(argc >= 1);\n"
                   "#ifdef CRABC_STATIC_ORDINARY_IMPORT_PROBE\n"
                   "if (argc == 1000) free(mi_new(1));\n"
                   "if (argc == 1001) { puts(\"x\"); _mi_prim_out_stderr(\"x\"); }\n"
+                  "if (argc == 1002) { tzset(); glob(\"~\", 0, 0, 0); "
+                  "mbrtowc(0, \"x\", 1, 0); posix_spawnp(0, \"x\", 0, 0, argv, argv); "
+                  "fmtmsg(0, \"x\", 0, \"x\", \"x\", \"x\"); "
+                  "execvp(\"x\", argv); execvpe(\"x\", argv, argv); "
+                  "setlocale(0, \"\"); setenv(\"X\", \"Y\", 1); getdate(\"x\"); "
+                  "get_current_dir_name(); execlp(\"x\", \"x\", (void *)0); "
+                  "secure_getenv(\"X\"); getlogin(); mi_dupenv_s(0, 0, \"X\"); }\n"
                   "#endif\n"
                   "char *end; int decimal = 0, wide = 0; "
                   "volatile double value = strtod(\"3.25e2\", &end); "
@@ -1108,7 +1118,8 @@ def _ordinary_final_member_calls(image: bytes, *, archive_member: str,
             require(kind == "R_X86_64_GOTPCREL", f"ordinary {name} source call form differs")
             call_address = int(parts[0], 16) + offset - 2
             opcode = _public_weak_virtual_bytes(image, call_address, 6, elf_type, executable=True)
-            require(opcode[:2] == b"\xff\x15", f"ordinary {name} GOT-call opcode differs")
+            require(opcode[:2] in (b"\xff\x15", b"\xff\x25"),
+                    f"ordinary {name} GOT-branch opcode differs")
             slot = call_address + 6 + struct.unpack_from("<i", opcode, 2)[0]
             target = struct.unpack("<Q", _public_weak_virtual_bytes(
                 image, slot, 8, elf_type, executable=False))[0]
@@ -1128,7 +1139,8 @@ def _ordinary_final_member_calls(image: bytes, *, archive_member: str,
                             and not relocations_at_slot),
                         f"ordinary {name} PIE GOT resolves to a foreign provider")
             call = {"section": section, "offset": offset, "call_address": call_address,
-                    "got_slot": slot, "target_address": provider_address}
+                    "got_slot": slot, "target_address": provider_address,
+                    "branch_kind": "indirect-call" if opcode[1] == 0x15 else "tail-jump"}
         resolved.append(call)
     require(resolved, f"ordinary {name} final image has no selected call from importer: {archive_member}")
     return {"resolved_calls": resolved, "discarded_calls": discarded}
@@ -1183,37 +1195,71 @@ def _ordinary_shared_caller_calls(image: bytes, symbol_text: str, relocations: s
             functions.add(suffix[len("unlikely."):] + ".cold")
     calls = []
     for function in sorted(functions):
-        rows = []
-        for binding in ("LOCAL", "GLOBAL"):
-            rows.extend(_errno_elf_symbols(symbol_text, function, kind="FUNC", binding=binding))
-        if not rows:
-            continue
-        require(len(set(rows)) == 1, f"ordinary {name} shared caller is ambiguous: {function}")
-        address, size = rows[0]
-        require(size > 0, f"ordinary {name} shared caller is empty: {function}")
-        body = _public_weak_virtual_bytes(image, address, size, 3, executable=True)
-        for offset in range(size):
-            if offset + 5 <= size and body[offset] in (0xe8, 0xe9):
-                target = address + offset + 5 + struct.unpack_from("<i", body, offset + 1)[0]
-                if target == provider_address:
-                    calls.append({"function": function, "call_address": address + offset,
-                                  "target_address": target,
-                                  "branch_kind": "call" if body[offset] == 0xe8 else "tail-jump"})
-            if offset + 6 <= size and body[offset:offset + 2] == b"\xff\x15":
-                slot = address + offset + 6 + struct.unpack_from("<i", body, offset + 2)[0]
-                try:
-                    target = struct.unpack("<Q", _public_weak_virtual_bytes(
-                        image, slot, 8, 3, executable=False))[0]
-                except AllocatorBoundaryError:
+        source_mangled = re.fullmatch(
+            r"(?P<prefix>_R.+C)[A-Za-z0-9]{12}(?P<tail>_1c19x86_64_static_c_abi.+)",
+            function)
+        names = {function}
+        inlined = False
+        if source_mangled is not None:
+            names = set()
+            for line in symbol_text.splitlines():
+                parts = line.split()
+                if len(parts) < 8 or not parts[0].endswith(":"):
                     continue
-                if target != provider_address:
+                shared_mangled = re.fullmatch(
+                    r"(?P<prefix>_R.+C)[A-Za-z0-9]{12}(?P<tail>_1c19x86_64_static_c_abi.+)",
+                    parts[-1])
+                if shared_mangled is None or shared_mangled.group("prefix") != source_mangled.group("prefix"):
                     continue
-                require(len(re.findall(rf"^\s*0*{slot:x}\s+\.got\b", relocations,
-                                       re.MULTILINE)) == 1,
-                        f"ordinary {name} shared GOT relocation differs")
-                calls.append({"function": function, "call_address": address + offset,
-                              "got_slot": slot, "target_address": target,
-                              "branch_kind": "indirect-call"})
+                if shared_mangled.group("tail") == source_mangled.group("tail"):
+                    names.add(parts[-1])
+            require(len(names) <= 1,
+                    f"ordinary {name} shared Rust caller is ambiguous: {function}")
+            if not names:
+                # The shared glob entry inlines its tilde expansion call.
+                require(source_mangled.group("tail").endswith(
+                    "13owned_pattern10owned_glob12expand_tilde") and name == "getenv",
+                    f"ordinary {name} shared Rust caller is missing: {function}")
+                names = {"glob"}
+                inlined = True
+        for selected_name in sorted(names):
+            rows = []
+            for binding in ("LOCAL", "GLOBAL"):
+                rows.extend(_errno_elf_symbols(symbol_text, selected_name, kind="FUNC", binding=binding))
+            if not rows:
+                continue
+            require(len(set(rows)) == 1, f"ordinary {name} shared caller is ambiguous: {selected_name}")
+            address, size = rows[0]
+            require(size > 0, f"ordinary {name} shared caller is empty: {selected_name}")
+            body = _public_weak_virtual_bytes(image, address, size, 3, executable=True)
+            for offset in range(size):
+                if offset + 5 <= size and body[offset] in (0xe8, 0xe9):
+                    target = address + offset + 5 + struct.unpack_from("<i", body, offset + 1)[0]
+                    if target == provider_address:
+                        calls.append({"function": selected_name, "source_function": function,
+                                      "call_address": address + offset,
+                                      "target_address": target,
+                                      "branch_kind": "call" if body[offset] == 0xe8 else "tail-jump"})
+                if offset + 6 <= size and body[offset:offset + 2] in (b"\xff\x15", b"\xff\x25"):
+                    slot = address + offset + 6 + struct.unpack_from("<i", body, offset + 2)[0]
+                    try:
+                        target = struct.unpack("<Q", _public_weak_virtual_bytes(
+                            image, slot, 8, 3, executable=False))[0]
+                    except AllocatorBoundaryError:
+                        continue
+                    if target != provider_address:
+                        continue
+                    require(len(re.findall(rf"^\s*0*{slot:x}\s+\.got\b", relocations,
+                                           re.MULTILINE)) == 1,
+                            f"ordinary {name} shared GOT relocation differs")
+                    calls.append({"function": selected_name, "source_function": function,
+                                  "call_address": address + offset,
+                                  "got_slot": slot, "target_address": target,
+                                  "branch_kind": "indirect-call" if body[offset + 1] == 0x15 else "tail-jump"})
+        if inlined:
+            require(len({call["function"] for call in calls
+                         if call["source_function"] == function}) == 1,
+                    f"ordinary {name} inlined Rust caller is ambiguous: {function}")
     require(calls, f"ordinary {name} shared importer has no provider call")
     return calls
 

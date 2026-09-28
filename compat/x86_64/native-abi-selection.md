@@ -355,6 +355,19 @@ Shared libc retains the Rust GOT call and C tail jump to its sole global
 `fputs` provider in both symbol tables. Occurrence accounting rejects foreign
 or duplicate importers/providers before the ordinary-import reason is removed.
 
+The ordinary `getenv` import has one fixed C allocator caller and twelve Rust
+archive caller members. The static installed-header workload selects every
+member and retains each source relocation in ET_EXEC and static PIE. The
+reader decodes their direct or GOT calls and tail branches to the unique
+owned provider, including each PIE GOT relocation. In shared libc, Rust's
+crate disambiguator differs from the static archive; matching the remaining
+symbol path finds the corresponding caller. The shared `glob` entry inlines
+the archive's `expand_tilde` call, so its retained GOT call supplies that
+member's shared placement. The reader also checks the two shared provider
+symbol rows and absence of a `getenv` implementation import in dynamic
+executables. Exact archive occurrences and final targets reject foreign or
+duplicate callers and providers before the ordinary-import reason is removed.
+
 `--utmpx-receipt-report REPORT` is independently optional. Its owning
 process-free reader reconstructs the retained eight selected aliases and
 sixteen provider spellings, static executable function proof, dynamic import

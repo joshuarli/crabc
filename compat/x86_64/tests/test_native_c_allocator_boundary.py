@@ -137,6 +137,44 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
                 **kwargs, "provider_address": 0x1090,
             })
 
+    def test_ordinary_shared_rust_hash_and_inlined_export_resolve_got_branch(self) -> None:
+        provider = 0x3000
+        slot = 0x2000
+        body = b"\xff\x25" + struct.pack("<i", slot - 0x1006)
+        source = "_RNvNtNtCABCDEFGHIJKL_1c19x86_64_static_c_abi10owned_env6lookup"
+        shared = "_RNvNtNtCmnopqrstuvwx_1c19x86_64_static_c_abi10owned_env6lookup"
+        symbols = f"1: 0000000000001000 6 FUNC LOCAL DEFAULT 9 {shared}\n"
+        relocations = f"{slot:x} .got + 0x0\n"
+
+        def virtual_bytes(_image: bytes, address: int, length: int, _elf_type: int,
+                          *, executable: bool) -> bytes:
+            if (address, length, executable) == (0x1000, 6, True):
+                return body
+            if (address, length, executable) == (slot, 8, False):
+                return struct.pack("<Q", provider)
+            raise BOUNDARY.AllocatorBoundaryError("foreign virtual address")
+
+        with mock.patch.object(BOUNDARY, "_public_weak_virtual_bytes", side_effect=virtual_bytes):
+            calls = BOUNDARY._ordinary_shared_caller_calls(
+                b"", symbols, relocations,
+                [{"section": ".text." + source, "offset": 2}], provider, "getenv")
+            self.assertEqual(calls[0]["function"], shared)
+            self.assertEqual(calls[0]["branch_kind"], "tail-jump")
+            self.assertEqual(calls[0]["target_address"], provider)
+            with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "no provider call"):
+                BOUNDARY._ordinary_shared_caller_calls(
+                    b"", symbols, relocations,
+                    [{"section": ".text." + source, "offset": 2}], provider + 1, "getenv")
+
+            inlined_source = (
+                "_RNvNtNtNtCABCDEFGHIJKL_1c19x86_64_static_c_abi"
+                "13owned_pattern10owned_glob12expand_tilde")
+            inlined_calls = BOUNDARY._ordinary_shared_caller_calls(
+                b"", "1: 0000000000001000 6 FUNC GLOBAL DEFAULT 9 glob\n",
+                relocations, [{"section": ".text." + inlined_source, "offset": 2}],
+                provider, "getenv")
+            self.assertEqual(inlined_calls[0]["function"], "glob")
+
     def test_public_weak_import_relocations_keep_c_and_rust_call_forms_distinct(self) -> None:
         c = ("Relocation section '.rela.text.clock' at offset 0x100 contains 1 entry:\n"
              "0000000000000001  0000000100000004 R_X86_64_PLT32 0000000000000000 clock_gettime - 4\n")
