@@ -3314,3 +3314,13 @@ The focused `single_thread::tests::os_claim_` regressions distinguish legal
 PageMap-allocation/rollback-unmap failures from terminal alias provenance
 refusal. These unit receivers do not by themselves admit the broader stopped
 OS-publication row in the M2 C/Rust fault inventory.
+
+The direct fresh OS page receiver now qualifies the selected legal failed
+PageMap registration after both page commits. Pinned C and Rust return no Page,
+unmap the same 256 KiB OS area, leave one 64 KiB rollback submap, and record
+the same reserved, committed, commit-call, and mmap-call deltas. The warning
+trace has the allocation warning before its failed mmap event, followed by the
+internal PageMap warning; the process-owned Rust map releases its private lock
+before invoking the registered callback so callback reentry cannot deadlock.
+The focused receiver preserves the exact four warning fragments and snapshots
+the subprocess counters at the allocation warning.

@@ -4029,6 +4029,49 @@ typedef struct published_os_failed_free_record_s {
   int64_t values[10];
 } published_os_failed_free_record_t;
 
+typedef struct failed_os_page_map_record_s {
+  bool facts[7];
+  int64_t values[8];
+} failed_os_page_map_record_t;
+
+static struct {
+  mi_subproc_t* subproc;
+  unsigned fragments;
+  bool prefix_first;
+  bool allocation_second;
+  bool prefix_third;
+  bool internal_fourth;
+  int64_t reserved_at_warning;
+  int64_t committed_at_warning;
+  int64_t mmap_calls_at_warning;
+} failed_os_page_map_warning;
+
+static void failed_os_page_map_output(const char* message, void* argument) {
+  (void)argument;
+  const unsigned index = failed_os_page_map_warning.fragments++;
+  if (index == 0 || index == 2) {
+    const bool prefix = strncmp(message,
+        "mimalloc: warning: thread 0x", sizeof("mimalloc: warning: thread 0x") - 1) == 0;
+    if (index == 0) failed_os_page_map_warning.prefix_first = prefix;
+    else failed_os_page_map_warning.prefix_third = prefix;
+  }
+  else if (index == 1) {
+    failed_os_page_map_warning.allocation_second = strncmp(message,
+        "unable to allocate OS memory (error: 12 (0x0C), addr: ",
+        sizeof("unable to allocate OS memory (error: 12 (0x0C), addr: ") - 1) == 0;
+    failed_os_page_map_warning.reserved_at_warning =
+        failed_os_page_map_warning.subproc->stats.reserved.current;
+    failed_os_page_map_warning.committed_at_warning =
+        failed_os_page_map_warning.subproc->stats.committed.current;
+    failed_os_page_map_warning.mmap_calls_at_warning =
+        failed_os_page_map_warning.subproc->stats.mmap_calls.total;
+  }
+  else if (index == 3) {
+    failed_os_page_map_warning.internal_fourth = strcmp(message,
+        "internal error: unable to extend the page map\n") == 0;
+  }
+}
+
 static struct {
   mi_subproc_t* subproc;
   unsigned fragments;
@@ -4492,6 +4535,77 @@ static int run_on_demand_arena_callback_child(int descriptor) {
  * `os_page::tests::emit_os_publication_fault_receiver_trace`. */
 #define OS_PUBLICATION_FACTS 9
 static unsigned os_publication_case;
+/* Registration can allocate a lazy PageMap submap after the page's metadata
+ * and block commits. The source returns NULL and frees the exact OS mapping
+ * when that submap allocation fails. A preexisting submap is released as a
+ * normal setup page, then the next source-chosen range is tried. */
+static int run_failed_os_page_map_child(int descriptor) {
+  mi_process_init();
+  mi_option_set(mi_option_disallow_arena_alloc, 1);
+  mi_option_set(mi_option_allow_large_os_pages, 0);
+  mi_option_set_enabled(mi_option_show_errors, true);
+  mi_subproc_t* const subproc = _mi_subproc_main();
+  memset(&failed_os_page_map_warning, 0, sizeof(failed_os_page_map_warning));
+  failed_os_page_map_warning.subproc = subproc;
+  mi_register_output(failed_os_page_map_output, NULL);
+  for (unsigned attempt = 0; attempt < 16; attempt++) {
+    memset(&os_publication_probe, 0, sizeof(os_publication_probe));
+    os_publication_probe.selected = 4;
+    failed_os_page_map_warning.fragments = 0;
+    const int64_t reserved_before = subproc->stats.reserved.current;
+    const int64_t committed_before = subproc->stats.committed.current;
+    const int64_t commits_before = subproc->stats.commit_calls.total;
+    const int64_t mmap_before = subproc->stats.mmap_calls.total;
+    const size_t pages_before = subproc->theap_meta->page_count;
+    os_publication_probe.active = true;
+    mi_page_t* const page = _mi_arenas_page_alloc(subproc->theap_meta,
+        128 * MI_KiB, 128 * MI_KiB);
+    if (os_publication_probe.map_faults == 0 && page != NULL) {
+      os_publication_probe.active = false;
+      _mi_arenas_page_free(page, subproc->theap_meta);
+      continue;
+    }
+    os_publication_probe.active = false;
+    const int64_t reserved_after = subproc->stats.reserved.current;
+    const int64_t committed_after = subproc->stats.committed.current;
+    const int64_t commits_after = subproc->stats.commit_calls.total;
+    const int64_t mmap_after = subproc->stats.mmap_calls.total;
+    unsigned char residency = 0;
+    const bool unmapped = os_publication_probe.base != NULL
+        && mincore(os_publication_probe.base, _mi_os_page_size(), &residency) == -1
+        && errno == ENOMEM;
+    failed_os_page_map_record_t result = {0};
+    result.facts[0] = page == NULL && subproc->theap_meta->page_count == pages_before;
+    result.facts[1] = os_publication_probe.length == 4 * MI_ARENA_SLICE_SIZE;
+    result.facts[2] = os_publication_probe.base != NULL
+        && _mi_safe_ptr_page((uint8_t*)os_publication_probe.base + 128 * MI_KiB) == NULL;
+    result.facts[3] = os_publication_probe.releases == 1
+        && !os_publication_probe.retained && unmapped;
+    result.facts[4] = os_publication_probe.commits == 2
+        && os_publication_probe.map_faults != 0
+        && os_publication_probe.map_cleanup_allocated;
+    result.facts[5] = failed_os_page_map_warning.fragments == 4
+        && failed_os_page_map_warning.prefix_first
+        && failed_os_page_map_warning.allocation_second
+        && failed_os_page_map_warning.prefix_third
+        && failed_os_page_map_warning.internal_fourth;
+    result.facts[6] = failed_os_page_map_warning.reserved_at_warning
+            - reserved_before == (int64_t)os_publication_probe.length
+        && failed_os_page_map_warning.mmap_calls_at_warning == mmap_before + 1;
+    result.values[0] = (int64_t)os_publication_probe.length;
+    result.values[1] = reserved_after - reserved_before;
+    result.values[2] = committed_after - committed_before;
+    result.values[3] = commits_after - commits_before;
+    result.values[4] = mmap_after - mmap_before;
+    result.values[5] = (int64_t)failed_os_page_map_warning.fragments;
+    result.values[6] = failed_os_page_map_warning.reserved_at_warning - reserved_before;
+    result.values[7] = failed_os_page_map_warning.committed_at_warning - committed_before;
+    for (size_t i = 0; i < 7; i++) if (!result.facts[i]) return (int)(20 + i);
+    return write(descriptor, &result, sizeof(result)) == sizeof(result) ? 0 : 40;
+  }
+  return 41;
+}
+
 static int os_publication_attempt(mi_theap_t* theap, bool facts[OS_PUBLICATION_FACTS]) {
   for (unsigned attempt = 0; attempt < 16; attempt++) {
     memset(&os_publication_probe, 0, sizeof(os_publication_probe));
@@ -4623,6 +4737,15 @@ int main(void) {
   for (size_t i = 0; i < 8; i++)
     printf("os_area_published_free_failure.%s=%u\n", failed_free_fields[i],
         (unsigned)failed_free.facts[i]);
+  const char* failed_map_fields[] = {"null_page", "mapping_range",
+      "page_map_unpublished", "exact_release", "rollback_map",
+      "warning_fragments_order", "warning_before_statistics"};
+  failed_os_page_map_record_t failed_map = {0};
+  if (!capture_large_page_retry_child("failed OS PageMap child",
+      run_failed_os_page_map_child, &failed_map, sizeof(failed_map))) return 1;
+  for (size_t i = 0; i < 7; i++)
+    printf("os_area_page_map_failure.%s=%u\n", failed_map_fields[i],
+        (unsigned)failed_map.facts[i]);
   puts("CRABC_MI_M2_OS_PUBLICATION_TRACE_END");
   const char* on_demand_value_fields[] = {"mapping_length", "reserved_after_area",
       "committed_after_area", "commit_calls_after_area", "memory_id_initially_committed",
@@ -4656,6 +4779,12 @@ int main(void) {
   for (size_t i = 0; i < 10; i++)
     printf("os_area_published_free_failure.%s=%lld\n", failed_free_value_fields[i],
         (long long)failed_free.values[i]);
+  const char* failed_map_value_fields[] = {"mapping_length", "reserved_after_failure",
+      "committed_after_failure", "commit_calls_after_failure", "mmap_calls_after_failure",
+      "warning_fragments", "reserved_at_warning", "committed_at_warning"};
+  for (size_t i = 0; i < 8; i++)
+    printf("os_area_page_map_failure.%s=%lld\n", failed_map_value_fields[i],
+        (long long)failed_map.values[i]);
   puts("CRABC_MI_M2_OS_ON_DEMAND_VALUES_END");
   return 0;
 }

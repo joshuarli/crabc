@@ -43,6 +43,7 @@
 //! Queue/free-list callers own page publication, retirement, and the choice
 //! of source commitment branch.
 
+use core::cell::Cell;
 use core::mem::size_of;
 use core::ptr::NonNull;
 
@@ -354,10 +355,13 @@ pub(crate) struct OsAlignedPageClaim {
     /// must present a fresh short-lived `VmProcess` for this exact identity.
     process_identity: Option<NonNull<crate::subproc::SubprocessIdentity>>,
     initially_committed: bool,
-    /// The exact source page-area commitment to remove if this private claim
-    /// rolls back. Metadata commitment is deliberately excluded because its
-    /// source call passes it as `stat_already_committed`.
+    /// The source commitment charged by a direct page-area rollback. Once
+    /// Page metadata takes the returned slice start, rollback clips this
+    /// charge by the metadata prefix instead.
     release_commit_size: usize,
+    /// A Page metadata owner has taken over the returned slice start. Its
+    /// rollback frees from that start and clips the committed accounting.
+    page_publication_started: Cell<bool>,
     release_state: OsPageReleaseState,
     ready: bool,
 }
@@ -490,6 +494,7 @@ impl OsAlignedPageClaim {
             process_identity: None,
             initially_committed: true,
             release_commit_size: 0,
+            page_publication_started: Cell::new(false),
             release_state: OsPageReleaseState::Unaccounted,
             ready,
         }
@@ -539,6 +544,7 @@ impl OsAlignedPageClaim {
                             initially_committed: false,
                             release_commit_size: 0,
                             ready: false,
+                            page_publication_started: Cell::new(false),
                             release_state: OsPageReleaseState::Unaccounted,
                         })),
                 };
@@ -550,9 +556,10 @@ impl OsAlignedPageClaim {
             process: Some(process),
             process_identity: Some(NonNull::from(process.subprocess())),
             initially_committed: true,
-            // Preserve the existing source full-commit release accounting:
-            // the mapping suffix from `slice_start` is its source extent.
+            // Before the fresh area returns its slice start, an early commit
+            // failure frees from the mapping base and charges its full extent.
             release_commit_size: layout.mapping_length(),
+            page_publication_started: Cell::new(false),
             release_state: OsPageReleaseState::Unaccounted,
             ready: false,
         };
@@ -618,6 +625,7 @@ impl OsAlignedPageClaim {
                             mapping, layout, process: None,
                             process_identity: Some(NonNull::from(process.subprocess())),
                             initially_committed: false, release_commit_size: 0, ready: false,
+                            page_publication_started: Cell::new(false),
                             release_state: OsPageReleaseState::Unaccounted,
                         },
                     )),
@@ -628,6 +636,7 @@ impl OsAlignedPageClaim {
             mapping, layout, process: None,
             process_identity: Some(NonNull::from(process.subprocess())),
             initially_committed: true, release_commit_size: layout.mapping_length(),
+            page_publication_started: Cell::new(false),
             release_state: OsPageReleaseState::Unaccounted, ready: false,
         };
         let metadata_size = layout.metadata_commit_size();
@@ -687,6 +696,7 @@ impl OsAlignedPageClaim {
                         Self { mapping, layout, process: None,
                             process_identity: Some(NonNull::from(process.subprocess())),
                             initially_committed: false, release_commit_size: 0, ready: false,
+                            page_publication_started: Cell::new(false),
                             release_state: OsPageReleaseState::Unaccounted },
                     )),
                 };
@@ -695,6 +705,7 @@ impl OsAlignedPageClaim {
         let mut claim = Self { mapping, layout, process: None,
             process_identity: Some(NonNull::from(process.subprocess())),
             initially_committed: false, release_commit_size: 0,
+            page_publication_started: Cell::new(false),
             release_state: OsPageReleaseState::Unaccounted, ready: false };
         let metadata_size = layout.metadata_commit_size();
         if let Err(error) = claim.mapping.commit_for_process_with_warning(process, 0, metadata_size, metadata_size) {
@@ -769,6 +780,7 @@ impl OsAlignedPageClaim {
                             initially_committed: false,
                             release_commit_size: 0,
                             ready: false,
+                            page_publication_started: Cell::new(false),
                             release_state: OsPageReleaseState::Unaccounted,
                         })),
                 };
@@ -781,6 +793,7 @@ impl OsAlignedPageClaim {
             process_identity: Some(NonNull::from(process.subprocess())),
             initially_committed: false,
             release_commit_size: 0,
+            page_publication_started: Cell::new(false),
             release_state: OsPageReleaseState::Unaccounted,
             ready: false,
         };
@@ -988,6 +1001,9 @@ impl OsAlignedPageClaim {
         if self.metadata() != Some(primary) {
             return false;
         }
+        // From this publication onward, rollback frees from the returned
+        // slice start and excludes the metadata prefix from its charge.
+        self.page_publication_started.set(true);
         for index in 1..self.layout.metadata_slot_count() {
             let Some(slot) = self.metadata_slot(index) else {
                 return false;
@@ -1063,6 +1079,15 @@ impl OsAlignedPageClaim {
         OsAlignedPageOwner::Claim(self)
     }
 
+    #[inline]
+    fn release_committed_size(&self) -> usize {
+        if self.page_publication_started.get() && self.initially_committed {
+            self.layout.mapping_length() - self.layout.alignment()
+        } else {
+            self.release_commit_size
+        }
+    }
+
     /// Releases an unpublished claim after metadata/page rollback.
     ///
     /// An `unmap` failure returns this exact still-live claim inside
@@ -1078,7 +1103,8 @@ impl OsAlignedPageClaim {
         let result = match (self.process, self.release_state) {
             (Some(process), OsPageReleaseState::Unaccounted) => {
                 self.release_state = OsPageReleaseState::Accounted;
-                self.mapping.unmap_for_process_with_warning(process, self.release_commit_size, false, true)
+                let committed = self.release_committed_size();
+                self.mapping.unmap_for_process_with_warning(process, committed, false, true)
             }
             (None, OsPageReleaseState::Unaccounted) if self.process_identity.is_some() => {
                 Err(Errno::INVAL)
@@ -1125,7 +1151,8 @@ impl OsAlignedPageClaim {
                 // Pinned `_mi_os_prim_free` applies statistics even when the
                 // syscall fails. Latch before the call so retry is raw-only.
                 self.release_state = OsPageReleaseState::Accounted;
-                self.mapping.unmap_for_process_with_warning(process, self.release_commit_size, false, true)
+                let committed = self.release_committed_size();
+                self.mapping.unmap_for_process_with_warning(process, committed, false, true)
             }
             OsPageReleaseState::Accounted => self.mapping.unmap(),
             OsPageReleaseState::RetainedPublicationFailure => unreachable!(),
@@ -1618,6 +1645,9 @@ mod tests {
         reserved_at_commit_warning: AtomicI64,
         reserved_at_free_warning: AtomicI64,
         committed_at_free_warning: AtomicI64,
+        reserved_at_allocation_warning: AtomicI64,
+        committed_at_allocation_warning: AtomicI64,
+        mmap_at_allocation_warning: AtomicI64,
     }
 
     unsafe extern "C" fn capture_fresh_os_cleanup_warning(
@@ -1628,13 +1658,18 @@ mod tests {
         let capture = unsafe { &*(argument as *const FreshOsCleanupWarnings) };
         let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
         if bytes.starts_with(b"cannot commit OS memory")
-            || bytes.starts_with(b"unable to free OS memory") {
+            || bytes.starts_with(b"unable to free OS memory")
+            || bytes.starts_with(b"unable to allocate OS memory") {
             let current = unsafe { &*capture.subprocess }.vm_statistics().snapshot();
             if bytes.starts_with(b"cannot commit OS memory") {
                 capture.reserved_at_commit_warning.store(current.reserved_current, Ordering::Release);
-            } else {
+            } else if bytes.starts_with(b"unable to free OS memory") {
                 capture.reserved_at_free_warning.store(current.reserved_current, Ordering::Release);
                 capture.committed_at_free_warning.store(current.committed_current, Ordering::Release);
+            } else {
+                capture.reserved_at_allocation_warning.store(current.reserved_current, Ordering::Release);
+                capture.committed_at_allocation_warning.store(current.committed_current, Ordering::Release);
+                capture.mmap_at_allocation_warning.store(current.mmap_calls, Ordering::Release);
             }
         }
         if let Ok(mut fragments) = capture.fragments.lock() {
@@ -1778,6 +1813,9 @@ mod tests {
             reserved_at_commit_warning: AtomicI64::new(i64::MIN),
             reserved_at_free_warning: AtomicI64::new(i64::MIN),
             committed_at_free_warning: AtomicI64::new(i64::MIN),
+            reserved_at_allocation_warning: AtomicI64::new(i64::MIN),
+            committed_at_allocation_warning: AtomicI64::new(i64::MIN),
+            mmap_at_allocation_warning: AtomicI64::new(i64::MIN),
         };
         // SAFETY: this test retains the capture for every synchronous
         // callback and does not register another output route.
@@ -2195,6 +2233,9 @@ mod tests {
             reserved_at_commit_warning: AtomicI64::new(i64::MIN),
             reserved_at_free_warning: AtomicI64::new(i64::MIN),
             committed_at_free_warning: AtomicI64::new(i64::MIN),
+            reserved_at_allocation_warning: AtomicI64::new(i64::MIN),
+            committed_at_allocation_warning: AtomicI64::new(i64::MIN),
+            mmap_at_allocation_warning: AtomicI64::new(i64::MIN),
         };
         // SAFETY: the callback uses this stack-backed capture only while it
         // remains registered and every operation is synchronous.
@@ -2304,6 +2345,9 @@ mod tests {
             reserved_at_commit_warning: AtomicI64::new(i64::MIN),
             reserved_at_free_warning: AtomicI64::new(i64::MIN),
             committed_at_free_warning: AtomicI64::new(i64::MIN),
+            reserved_at_allocation_warning: AtomicI64::new(i64::MIN),
+            committed_at_allocation_warning: AtomicI64::new(i64::MIN),
+            mmap_at_allocation_warning: AtomicI64::new(i64::MIN),
         };
         // SAFETY: callback delivery is synchronous and this capture remains
         // live until output registration is removed below.
@@ -2401,6 +2445,131 @@ mod tests {
         // SAFETY: no callback may retain this stack-backed capture.
         unsafe { output.register_output(None, core::ptr::null_mut()) };
         (facts, values)
+    }
+
+    /// A failed lazy PageMap allocation after both page commits returns no
+    /// Page, releases the exact OS area, and leaves only the rollback submap.
+    fn failed_os_page_map_relations() -> ([bool; 7], [i64; 8]) {
+        use crate::bootstrap::ExclusiveTheapBootstrap;
+        use crate::diagnostic_output::{OutputCallback, OutputOwner};
+        use crate::page_map::PageMap;
+        let show_errors = b"mimalloc_show_errors=1\0";
+        let max_warnings = b"mimalloc_max_warnings=100\0";
+        let environment = std::boxed::Box::leak(std::boxed::Box::new([
+            show_errors.as_ptr().cast(), max_warnings.as_ptr().cast(), core::ptr::null(),
+        ]));
+        FRESH_OS_CLEANUP_ENVIRONMENT.store(environment.as_mut_ptr(), Ordering::Release);
+        let output = std::boxed::Box::leak(std::boxed::Box::new(
+            OutputOwner::new(fresh_os_cleanup_default_output)));
+        // SAFETY: the leaked option storage and output remain live through
+        // the synchronous source option reads and callback delivery.
+        unsafe { output.initialize_source_options(fresh_os_cleanup_environment) };
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let warnings = FreshOsCleanupWarnings {
+            fragments: std::sync::Mutex::new(std::vec::Vec::new()),
+            subprocess: subprocess.identity(),
+            reserved_at_commit_warning: AtomicI64::new(i64::MIN),
+            reserved_at_free_warning: AtomicI64::new(i64::MIN),
+            committed_at_free_warning: AtomicI64::new(i64::MIN),
+            reserved_at_allocation_warning: AtomicI64::new(i64::MIN),
+            committed_at_allocation_warning: AtomicI64::new(i64::MIN),
+            mmap_at_allocation_warning: AtomicI64::new(i64::MIN),
+        };
+        // SAFETY: callback delivery is synchronous and the capture outlives
+        // registration.
+        unsafe { output.register_output(Some(capture_fresh_os_cleanup_warning as OutputCallback),
+            &warnings as *const FreshOsCleanupWarnings as *mut c_void) };
+        let policy = std::boxed::Box::leak(std::boxed::Box::new(
+            unsafe { crate::os::VmPolicy::from_process_options(output) }));
+        policy.finish_preloading();
+        let process = VmProcess::new(policy, subprocess);
+        let mut map = PageMap::initialize_for_process(config(4 * KIB), 0, true, process).unwrap();
+        let mut bootstrap = std::boxed::Box::pin(ExclusiveTheapBootstrap::new());
+        let mut session = bootstrap.as_mut().activate_detached_for_main_subprocess(
+            process.main_subprocess().expect("fixture uses process main")).unwrap();
+        let fault = fault::install(fault::Plan::disabled());
+        for _ in 0..16 {
+            warnings.fragments.lock().unwrap().clear();
+            let before = process.subprocess().vm_statistics().snapshot();
+            let pages_before = session.theap().page_count();
+            // SAFETY: the pinned detached Theap remains exclusively owned
+            // while its random projection is used for this claim.
+            let mut random = unsafe { crate::os::CurrentTheapRandom::new(
+                NonNull::from(session.theap())) };
+            let claim = OsAlignedPageClaim::allocate_for_process_with_random(process,
+                config(4 * KIB), 128 * KIB, 128 * KIB, crate::arena::ArenaId::none(),
+                Some(&mut random)).unwrap_or_else(|_| panic!("fresh OS claim"));
+            let layout = claim.layout();
+            let memory = claim.memory_id().unwrap();
+            let base = claim.base().unwrap();
+            let start = claim.slice_start().unwrap();
+            let mut primary = unsafe { session.publish_fresh_page(claim.metadata().unwrap(),
+                layout.block_size(), layout.page_offset(), layout.reserved(), 0,
+                memory.initially_zero(), memory) }.unwrap();
+            assert!(unsafe { claim.publish_secondary_metadata(primary) });
+            fault.set(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+            let unmaps = fault.capture_unmap_ranges();
+            let registered = unsafe { map.register_range(start.as_ptr(),
+                layout.page_map_size(), primary) }.is_ok();
+            if registered && fault.observed() == 0 {
+                drop(unmaps);
+                fault.set(fault::Plan::disabled());
+                claim.into_published().unwrap();
+                let published = unsafe { PublishedOsAlignedPage::from_page_for_process(
+                    process, config(4 * KIB), primary) }.unwrap();
+                unsafe { map.unregister_range(start.as_ptr(), layout.page_map_size()) }.unwrap();
+                assert!(unsafe { published.clear_secondary_metadata() });
+                assert!(session.retire_page(unsafe { primary.as_mut() }).is_some());
+                assert!(unsafe { published.reclaim() }.is_ok());
+                continue;
+            }
+            assert!(!registered && fault.observed() >= 1,
+                "registered={registered} maps={} retry={}",
+                fault.observed(), fault.secondary_observed());
+            let rollback_map = map.test_lazy_submap_allocation_count() >= 2;
+            assert!(unsafe { claim.clear_secondary_metadata(primary) });
+            assert!(session.retire_page(unsafe { primary.as_mut() }).is_some());
+            let released = claim.release().is_ok();
+            let after = process.subprocess().vm_statistics().snapshot();
+            let (ranges, count) = unmaps.all().unwrap();
+            let exact_release = count == 1
+                && ranges[0] == (base.addr(), layout.mapping_length());
+            let mut residency = 0;
+            let unmapped = unsafe { crabc_core::mm::mincore_raw(base, 4096, &mut residency) }
+                == Err(Errno::NOMEM);
+            let fragments = warnings.fragments.lock().unwrap();
+            let warning_order = fragments.len() == 4
+                && fragments[0].starts_with(b"mimalloc: warning: thread 0x")
+                && fragments[1].starts_with(b"unable to allocate OS memory (error: 12 (0x0C), addr: ")
+                && fragments[2].starts_with(b"mimalloc: warning: thread 0x")
+                && fragments[3] == b"internal error: unable to extend the page map\n";
+            let warning_count = fragments.len();
+            drop(fragments);
+            let warning_reserved = warnings.reserved_at_allocation_warning.load(Ordering::Acquire);
+            let warning_committed = warnings.committed_at_allocation_warning.load(Ordering::Acquire);
+            let warning_mmap = warnings.mmap_at_allocation_warning.load(Ordering::Acquire);
+            let facts = [released && session.theap().page_count() == pages_before,
+                memory.is_os() && memory.size() == Some(layout.mapping_length()),
+                unsafe { map.checked_lookup(start.as_ptr()) }.is_null(),
+                exact_release && unmapped, rollback_map, warning_order,
+                warning_reserved - before.reserved_current == layout.mapping_length() as i64
+                    && warning_mmap - before.mmap_calls == 1];
+            let values = [layout.mapping_length() as i64,
+                after.reserved_current - before.reserved_current,
+                after.committed_current - before.committed_current,
+                after.commit_calls - before.commit_calls,
+                after.mmap_calls - before.mmap_calls,
+                warning_count as i64,
+                warning_reserved - before.reserved_current,
+                warning_committed - before.committed_current];
+            drop(unmaps);
+            drop(fault);
+            unsafe { map.destroy() }.unwrap();
+            // SAFETY: the stack capture cannot be used after deregistration.
+            unsafe { output.register_output(None, core::ptr::null_mut()) };
+            return (facts, values);
+        }
+        panic!("no fresh OS claim needed a lazy PageMap submap");
     }
 
     /// The same seven legal source transitions as the direct-included C
@@ -2509,6 +2678,12 @@ mod tests {
             .into_iter().zip(failed_free_facts) {
             std::println!("os_area_published_free_failure.{field}={}", u8::from(value));
         }
+        let (failed_map_facts, failed_map_values) = failed_os_page_map_relations();
+        for (field, value) in ["null_page", "mapping_range", "page_map_unpublished",
+            "exact_release", "rollback_map", "warning_fragments_order",
+            "warning_before_statistics"].into_iter().zip(failed_map_facts) {
+            std::println!("os_area_page_map_failure.{field}={}", u8::from(value));
+        }
         std::println!("CRABC_MI_M2_OS_PUBLICATION_TRACE_END");
         std::println!("CRABC_MI_M2_OS_ON_DEMAND_VALUES_BEGIN");
         for (field, value) in [
@@ -2547,10 +2722,18 @@ mod tests {
             "committed_at_warning"].into_iter().zip(failed_free_values) {
             std::println!("os_area_published_free_failure.{field}={value}");
         }
+        for (field, value) in ["mapping_length", "reserved_after_failure",
+            "committed_after_failure", "commit_calls_after_failure",
+            "mmap_calls_after_failure", "warning_fragments", "reserved_at_warning",
+            "committed_at_warning"].into_iter().zip(failed_map_values) {
+            std::println!("os_area_page_map_failure.{field}={value}");
+        }
         assert!(published_facts.into_iter().all(|value| value),
             "fresh OS published receiver: {published_facts:?}");
         assert!(failed_free_facts.into_iter().all(|value| value),
             "published OS failed free receiver: {failed_free_facts:?}");
+        assert!(failed_map_facts.into_iter().all(|value| value),
+            "failed OS PageMap receiver: {failed_map_facts:?}");
         std::println!("CRABC_MI_M2_OS_ON_DEMAND_VALUES_END");
     }
 

@@ -290,6 +290,7 @@ pub(crate) struct PageMap {
     mapping: Mapping,
     config: MemoryConfig,
     statistics: PageMapStatistics,
+    source_process: Option<crate::os::VmProcess<'static>>,
     header: NonNull<PageMapHeader>,
     reserved_count: usize,
     active: bool,
@@ -381,7 +382,7 @@ impl PageMap {
         configured_virtual_bits: usize,
         force_commit: bool,
         statistics: PageMapStatistics,
-        process: Option<crate::os::VmProcess<'_>>,
+        process: Option<crate::os::VmProcess<'static>>,
     ) -> core::result::Result<Self, PageMapInitializationError> {
         let virtual_bits = effective_virtual_address_bits(
             configured_virtual_bits,
@@ -525,6 +526,7 @@ impl PageMap {
             mapping,
             config,
             statistics,
+            source_process: process,
             header,
             reserved_count,
             active: true,
@@ -750,7 +752,7 @@ impl PageMap {
         }
 
         let guard = self.header()?.lock.lock()?;
-        let mut warn_failed_map = false;
+        let mut failed_map = None;
         let result = (|| if let Some(submap) = self.submap_at(index)? {
             Ok(submap)
         } else {
@@ -759,15 +761,16 @@ impl PageMap {
             // See `PageMap::initialize`: the requested alignment is exactly
             // the Linux base-page guarantee of this direct anonymous mapping.
             // `_mi_os_zalloc(subproc, submap_size)`: a committed good-size map.
-            let mut candidate = self.statistics.map(Mapping::map_for_allocator(
-                self.config,
-                PAGE_MAP_SUB_SIZE,
-                MapAccess::Committed,
-            ), self.config.good_alloc_size(PAGE_MAP_SUB_SIZE), true)
-                .map_err(|error| {
-                    warn_failed_map = true;
-                    error
-                })?;
+            let mapped_size = self.config.good_alloc_size(PAGE_MAP_SUB_SIZE);
+            let mapped = Mapping::map_for_allocator(self.config, PAGE_MAP_SUB_SIZE,
+                MapAccess::Committed);
+            let mut candidate = match mapped {
+                Ok(mapping) => self.statistics.map(Ok(mapping), mapped_size, true)?,
+                Err(error) => {
+                    failed_map = Some(error);
+                    return Err(error);
+                }
+            };
             let candidate_base = candidate.base()?.cast::<PageEntry>();
             // SAFETY: the candidate mapping is exclusively owned and committed.
             unsafe { initialize_submap(candidate_base) };
@@ -804,14 +807,29 @@ impl PageMap {
             }
         })();
         let unlock = guard.unlock();
-        if warn_failed_map {
-            // The output callback may allocate and reenter PageMap. Deliver
-            // the source warning only after releasing its private lock.
-            crate::process_init::process_warning_message(
-                crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(
-                    c"internal error: unable to extend the page map\n",
-                ),
+        if let Some(error) = failed_map {
+            // The callback may reenter PageMap. No submap was published, so
+            // unlock first, deliver the failed OS allocation warning while
+            // its source statistics still reflect the preceding page, then
+            // charge the failed mmap before the PageMap warning and rollback.
+            let allocation_warning = crate::diagnostic_output::SourceFormattedMessage::os_alloc_failure(
+                error, 0, self.config.good_alloc_size(PAGE_MAP_SUB_SIZE), 1, true, false,
             );
+            if let Some(process) = self.source_process {
+                process.policy().source_warning(allocation_warning);
+            } else {
+                crate::process_init::process_warning_message(allocation_warning);
+            }
+            let _: Result<Mapping> = self.statistics.map(Err(error),
+                self.config.good_alloc_size(PAGE_MAP_SUB_SIZE), true);
+            let map_warning = crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(
+                c"internal error: unable to extend the page map\n",
+            );
+            if let Some(process) = self.source_process {
+                process.policy().source_warning(map_warning);
+            } else {
+                crate::process_init::process_warning_message(map_warning);
+            }
         }
         unlock?;
         result
@@ -1669,8 +1687,7 @@ mod tests {
     /// remains the exact retry owner, then retries the one pending extension.
     /// It deliberately excludes cold initialization, range rollback, submap
     /// map failure, release failure, and concurrent publication.
-    /// Rust half of `compat/allocator/m2_page_map_init_cleanup_x86_64.c`:
-    /// source `mi_page_map_init_once` with its initial (1) or trailing-submap
+    /// The source `mi_page_map_init_once` with its initial (1) or trailing-submap
     /// (2) commit failing and the cleanup unmap failing too. Initialization
     /// fails and the mapping leaks, exactly as the pinned C leaks it.
     #[cfg(not(miri))]
