@@ -147,7 +147,15 @@
     },
     "differential:statistics-huge-page-bin": {
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-huge-page-bin-differential"],
-      "scope": "Pinned C MI_STAT=2 and the Rust native adapter seed an arena, disallow OS allocation, then allocate one 512 KiB+1 huge singleton and free it from an initialized worker Theap. Public snapshots compare the 589824-byte huge total/peak/current, one huge page-bin and page lifetime through owner merge, nonlocal free and terminal collection, zero huge allocation-bin and ordinary-allocation producers, retained requested bytes from the worker's 8-byte warm allocation, and unchanged arena reservation/mapping during the selected transition. Raw absolute arena snapshots remain in the receipt. The uninitialized worker's metadata-Theap fallback is separately blocked."
+      "scope": "Pinned C MI_STAT=2 and the Rust native adapter seed an arena, disallow OS allocation, then allocate one 512 KiB+1 huge singleton and free it from an initialized worker Theap. Public snapshots compare the 589824-byte huge total/peak/current, one huge page-bin and page lifetime through owner merge, nonlocal free and terminal collection, zero huge allocation-bin and ordinary-allocation producers, retained requested bytes from the worker's 8-byte warm allocation, and unchanged arena reservation/mapping during the selected transition. Raw absolute arena snapshots remain in the receipt. The fresh-worker metadata-Theap route is covered by a separate differential."
+    },
+    "differential:statistics-huge-page-bin-fresh": {
+      "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-huge-page-bin-fresh-differential"],
+      "scope": "Pinned C MI_STAT=2 and the Rust native adapter free an arena-backed 589824-byte huge singleton from a worker that has never allocated. The freeing thread has no default Theap; its metadata-Theap path releases the huge page and its thread exit leaves the process image with the source's retained 589824-byte huge current and zero huge page-bin current."
+    },
+    "differential:statistics-huge-page-bin-fresh-then-allocate": {
+      "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-huge-page-bin-fresh-then-allocate-differential"],
+      "scope": "The same fresh-worker huge free is followed by its first 8-byte allocation and local free. Pinned C and Rust compare the complete public statistics trace, including later Theap attachment and thread exit."
     },
     "differential:statistics-remote-normal": {
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-remote-normal-differential"],
@@ -357,6 +365,8 @@
         "differential:statistics-page-extend",
         "differential:statistics-huge",
         "differential:statistics-huge-page-bin",
+        "differential:statistics-huge-page-bin-fresh",
+        "differential:statistics-huge-page-bin-fresh-then-allocate",
         "differential:statistics-remote-normal",
         "differential:statistics-remote-bin",
         "differential:statistics-aligned-huge",
@@ -365,7 +375,7 @@
         "differential:adapter"
       ],
       "blocked_by": [
-        "The selected `MI_STAT=1` binned allocation, reset/merge, free, final-output path, first successful page-extension count and touched bytes, one huge arena-singleton allocation/nonlocal free, one regular-page cross-thread remote free with freeing-Theap merge, and one OS-aligned huge singleton with its count-dependent printed byte unit are proven. Later extension, page release/commit failure, other aligned sizes, uninitialized freeing Theap metadata accounting, and other nonlocal and level-one producers remain unproved. `MI_STAT=2` requested-size, normal allocation-count, and bin transitions are proven for one ordinary allocation, one OS-aligned small-object singleton, and warmed direct/small/medium local fast-path calloc allocations across owner merges and local frees. Cross-thread remote frees of 64-byte small-page and arena-backed 32 KiB medium-page blocks debit the freeing Theap's bin before publication and merge both owners into the public process image; the medium survivor's PageMap membership and page-bin release after its final local free are proven. An arena-backed 589824-byte huge singleton's page-bin release, huge bytes/count, requested/normal/count records, and initialized-worker nonlocal free are proven through terminal collection. The uninitialized-worker metadata-Theap route is source-built red and remains blocked. Other allocation shapes and sizes, other remote bin frees, and other huge/page producers remain unproved; synthetic owner merge/reset and final requested-size, nonzero-bin, huge, and page output are proven. The public JSON formatter and caller buffer contract are proven under MI_STAT=0, 1, and 2 with a synthetic image, independent of those production producers."
+        "The selected `MI_STAT=1` binned allocation, reset/merge, free, final-output path, first successful page-extension count and touched bytes, one huge arena-singleton allocation/nonlocal free, one regular-page cross-thread remote free with freeing-Theap merge, and one OS-aligned huge singleton with its count-dependent printed byte unit are proven. Later extension, page release/commit failure, other aligned sizes, other metadata-Theap accounting, and other nonlocal and level-one producers remain unproved. `MI_STAT=2` requested-size, normal allocation-count, and bin transitions are proven for one ordinary allocation, one OS-aligned small-object singleton, and warmed direct/small/medium local fast-path calloc allocations across owner merges and local frees. Cross-thread remote frees of 64-byte small-page and arena-backed 32 KiB medium-page blocks debit the freeing Theap's bin before publication and merge both owners into the public process image; the medium survivor's PageMap membership and page-bin release after its final local free are proven. An arena-backed 589824-byte huge singleton's page-bin release, huge bytes/count, requested/normal/count records, and initialized-worker nonlocal free are proven through terminal collection. A fresh worker's metadata-Theap huge free and later first allocation match pinned C, including its distinct huge current after attachment. Other allocation shapes and sizes, other remote bin frees, and other huge/page producers remain unproved; synthetic owner merge/reset and final requested-size, nonzero-bin, huge, and page output are proven. The public JSON formatter and caller buffer contract are proven under MI_STAT=0, 1, and 2 with a synthetic image, independent of those production producers."
       ]
     },
     {

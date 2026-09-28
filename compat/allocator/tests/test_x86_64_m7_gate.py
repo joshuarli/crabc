@@ -61,6 +61,8 @@ class M7GateContractTests(unittest.TestCase):
             "differential:statistics-fast-allocation",
             "differential:statistics-huge",
             "differential:statistics-huge-page-bin",
+            "differential:statistics-huge-page-bin-fresh",
+            "differential:statistics-huge-page-bin-fresh-then-allocate",
             "differential:statistics-json",
             "differential:statistics-level-one",
             "differential:statistics-level-one-output-merge",
@@ -329,7 +331,8 @@ class M7GateContractTests(unittest.TestCase):
         trace = {
             "profile.level": "2", "request": "524289", "usable": "589824",
             "disallow_os_alloc": "1", "disallow_arena_alloc": "0",
-            "allocated.mapped": "1", "worker.mapped": "1",
+            "allocated.mapped": "1", "worker.mapped": "1", "worker.fresh": "0",
+            "worker.followup_usable": "0",
             "before.arena": "1076166656,3,1", "allocated.arena": "1076166656,3,1",
             "terminal.arena": "1076166656,3,1",
         }
@@ -360,6 +363,20 @@ class M7GateContractTests(unittest.TestCase):
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_huge_page_bin({**trace, "allocated.arena": "1076166656,4,1"},
                                                   "unexpected OS mapping")
+
+        fresh = {**trace, "worker.fresh": "1", "worker.mapped": "-1"}
+        for stage in ("freed", "terminal"):
+            fresh[f"{stage}.huge"] = "589824,589824,589824"
+            fresh[f"{stage}.requested"] = "0,0,0"
+            fresh[f"{stage}.normal"] = "0,0,0"
+            fresh[f"{stage}.pages"] = "1,1,0"
+            fresh[f"{stage}.normal_count"] = "0"
+        gate.require_statistics_huge_page_bin(fresh, "fresh worker", fresh_worker=True)
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_huge_page_bin(
+                {**fresh, "freed.huge": "589824,589824,0"},
+                "visible metadata debit", fresh_worker=True,
+            )
 
     def test_statistics_remote_normal_requires_source_built_producer(self) -> None:
         summary = self.validate()

@@ -88,10 +88,11 @@ static PROCESS: AtomicU8 = AtomicU8::new(PROCESS_COLD);
 static INITIAL_THREAD: AtomicUsize = AtomicUsize::new(0);
 static THREAD_KEY: AtomicUsize = AtomicUsize::new(0);
 
-// Values stored under the thread key: the initial thread is process-owned
-// and never finished by the key; an attached worker is.
+// The free-only marker holds descriptor registration without initializing a
+// Theap. A later allocation still attaches; either worker marker runs finish.
 const THREAD_INITIAL: usize = 1;
 const THREAD_ATTACHED: usize = 2;
+const THREAD_FREE_ONLY: usize = 3;
 
 unsafe extern "C" fn host_stderr(message: *const c_char) {
     // SAFETY: musl's permanent `stderr` receives the owner's NUL-terminated
@@ -145,19 +146,24 @@ extern "C" fn process_load() {
 #[link_section = ".init_array"]
 static PROCESS_LOAD: extern "C" fn() = process_load;
 
-/// `mi_pthread_done`: finish an attached worker after its user destructors.
+/// `mi_pthread_done`: retire a registered worker after its user destructors.
 unsafe extern "C" fn thread_done(value: *mut c_void) {
-    if value as usize == THREAD_ATTACHED {
+    if matches!(value as usize, THREAD_ATTACHED | THREAD_FREE_ONLY) {
         let _ = finish_current_thread_native_after_user_destructors();
     }
 }
 
-/// Binds the calling thread before its first native operation.
+/// Attaches the calling thread before an operation that needs its default Theap.
 #[inline]
 fn bind_thread() {
+    // Key creation can fail or still be pending while the process is cold.
+    if PROCESS.load(Ordering::Acquire) != PROCESS_READY {
+        return;
+    }
     let key = THREAD_KEY.load(Ordering::Acquire) as PthreadKey;
     // SAFETY: the key exists once the process is ready.
-    if PROCESS.load(Ordering::Acquire) != PROCESS_READY || !unsafe { pthread_getspecific(key) }.is_null() {
+    let marker = unsafe { pthread_getspecific(key) } as usize;
+    if marker != 0 && marker != THREAD_FREE_ONLY {
         return;
     }
     bind_thread_cold(key);
@@ -179,7 +185,8 @@ fn bind_thread_cold(key: PthreadKey) {
         // A deferred attachment (a failed `_mi_thread_init`) still runs the
         // thread; its allocations retry the attachment, as in C.
         if !registered
-            || !matches!(attach_current_thread(), ThreadAttachResult::Attached | ThreadAttachResult::Deferred)
+            || !matches!(attach_current_thread(),
+                ThreadAttachResult::Attached | ThreadAttachResult::AlreadyAttached | ThreadAttachResult::Deferred)
         {
             // SAFETY: an unattached worker cannot allocate; stop here.
             unsafe { abort() }
@@ -367,7 +374,33 @@ pub extern "C" fn mi_new_n(count: usize, size: usize) -> *mut c_void {
 
 #[no_mangle]
 pub unsafe extern "C" fn mi_free(block: *mut c_void) {
-    bind_thread();
+    if block.is_null() {
+        return;
+    }
+    if PROCESS.load(Ordering::Acquire) == PROCESS_READY {
+        let key = THREAD_KEY.load(Ordering::Acquire) as PthreadKey;
+        // SAFETY: the process's Release publication follows key creation.
+        if unsafe { pthread_getspecific(key) }.is_null() {
+            // Pinned `mi_free` validates the page and records the free without
+            // `_mi_thread_init`. Register only the runtime admission descriptor
+            // so an uninitialized worker can take the metadata-Theap stats path.
+            let initial = unsafe {
+                pthread_equal(pthread_self(), INITIAL_THREAD.load(Ordering::Acquire) as Pthread)
+            } != 0;
+            if initial {
+                bind_thread_cold(key);
+            } else {
+                let registered = unsafe {
+                    register_current_native_allocator_worker_descriptor(
+                        current_native_allocator_thread_descriptor(),
+                    )
+                };
+                if !registered || unsafe { pthread_setspecific(key, THREAD_FREE_ONLY as *const c_void) } != 0 {
+                    unsafe { abort() }
+                }
+            }
+        }
+    }
     // SAFETY: the C caller passes null or a live allocation it gives up.
     freed(unsafe { api::free(block.cast()) });
 }

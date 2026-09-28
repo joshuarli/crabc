@@ -6,12 +6,20 @@
 #include "mimalloc.h"
 #include "mimalloc-stats.h"
 
+#ifndef CRABC_MI_FRESH_WORKER
+#define CRABC_MI_FRESH_WORKER 0
+#endif
+#ifndef CRABC_MI_FRESH_WORKER_ALLOCATE_AFTER_FREE
+#define CRABC_MI_FRESH_WORKER_ALLOCATE_AFTER_FREE 0
+#endif
+
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t changed = PTHREAD_COND_INITIALIZER;
 static int ready;
 static int release_worker;
 static void* remote_block;
 static int worker_mapped;
+static size_t worker_followup_usable;
 
 static void discard(const char* message, void* argument) {
   (void)message;
@@ -55,9 +63,11 @@ static void show_arena(const char* name, const mi_stats_t* stats) {
 
 static void* worker(void* argument) {
   (void)argument;
+#if !CRABC_MI_FRESH_WORKER
   void* warm = mi_malloc(8);
   if (warm == NULL) abort();
   mi_free(warm);
+#endif
   if (pthread_mutex_lock(&lock) != 0) abort();
   ready = 1;
   if (pthread_cond_broadcast(&changed) != 0) abort();
@@ -66,8 +76,19 @@ static void* worker(void* argument) {
   }
   void* block = remote_block;
   if (pthread_mutex_unlock(&lock) != 0) abort();
+#if CRABC_MI_FRESH_WORKER
+  // Keep the worker's default Theap untouched until its first free.
+  worker_mapped = -1;
+#else
   worker_mapped = mi_is_in_heap_region(block);
+#endif
   mi_free(block);
+#if CRABC_MI_FRESH_WORKER_ALLOCATE_AFTER_FREE
+  void* followup = mi_malloc(8);
+  if (followup == NULL) abort();
+  worker_followup_usable = mi_usable_size(followup);
+  mi_free(followup);
+#endif
   mi_thread_stats_print_out(&discard, NULL);
   return NULL;
 }
@@ -113,6 +134,8 @@ int main(void) {
 
   printf("CRABC_MI_M7_STATISTICS_HUGE_PAGE_BIN_TRACE_BEGIN\n");
   printf("profile.level=2\n");
+  printf("worker.fresh=%d\n", CRABC_MI_FRESH_WORKER);
+  printf("worker.followup_usable=%zu\n", worker_followup_usable);
   printf("request=%zu\n", request);
   printf("usable=%zu\n", usable);
   printf("disallow_os_alloc=%ld\n", mi_option_get(mi_option_disallow_os_alloc));

@@ -989,13 +989,17 @@ STATISTICS_REMOTE_BIN_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_REMOTE_BIN_TRACE_BEG
 STATISTICS_REMOTE_BIN_TRACE_END = "CRABC_MI_M7_STATISTICS_REMOTE_BIN_TRACE_END"
 
 
-def require_statistics_huge_page_bin(trace: Mapping[str, str], description: str) -> None:
-    """Require the huge page-bin release and initialized worker's process merge."""
+def require_statistics_huge_page_bin(
+    trace: Mapping[str, str], description: str, *, fresh_worker: bool = False,
+) -> None:
+    """Require huge page-bin release and the selected worker's process image."""
 
     expected = {
         "profile.level": "2", "request": "524289", "usable": "589824",
         "disallow_os_alloc": "1", "disallow_arena_alloc": "0",
-        "allocated.mapped": "1", "worker.mapped": "1",
+        "allocated.mapped": "1", "worker.mapped": "-1" if fresh_worker else "1",
+        "worker.fresh": "1" if fresh_worker else "0",
+        "worker.followup_usable": "0",
         "before.arena": trace.get("before.arena"),
         "allocated.arena": trace.get("allocated.arena"),
         "terminal.arena": trace.get("terminal.arena"),
@@ -1010,6 +1014,13 @@ def require_statistics_huge_page_bin(trace: Mapping[str, str], description: str)
         "terminal": ("589824,589824,0", "8,8,8", "8,8,0", "0,0,0",
                      "1,1,0", "2,1,0", "1", "1"),
     }
+    if fresh_worker:
+        fresh_stage = (
+            "589824,589824,589824", "0,0,0", "0,0,0", "0,0,0",
+            "1,1,0", "1,1,0", "1", "0",
+        )
+        stages["freed"] = fresh_stage
+        stages["terminal"] = fresh_stage
     fields = ("huge", "requested", "normal", "huge_bin", "huge_page_bin", "pages",
               "huge_count", "normal_count")
     for stage, values in stages.items():
@@ -1587,6 +1598,7 @@ def run_public_statistics_differential(
     offline: bool, *, subject: str, driver: Path, begin: str, end: str,
     report_name: str, require_complete: Any | None = None, stat_level: int = 1,
     comparison_excluded_keys: frozenset[str] = frozenset(),
+    driver_defines: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Run one public statistics driver with pinned C and the selected adapter profile."""
 
@@ -1603,6 +1615,7 @@ def run_public_statistics_differential(
         c_build = harness.command_record(
             [compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
              *harness.CONFIGURATION_PROFILES["release"], f"-DMI_STAT={stat_level}",
+             *driver_defines,
              "-I", str(source / "include"), str(driver),
              str(source / "src/static.c"), "-pthread", "-o", str(c_binary)], cwd=source,
         )
@@ -1617,7 +1630,7 @@ def run_public_statistics_differential(
         harness.require_success(rust_build, f"M7 {subject} Rust adapter build")
         rust_binary = temporary / f"{subject}-rust"
         rust_link = harness.command_record(
-            [compiler, "-std=c11", "-O2", "-I", str(source / "include"),
+            [compiler, "-std=c11", "-O2", *driver_defines, "-I", str(source / "include"),
              str(driver),
              str(target / RUST_TARGET / "release" / m4.ADAPTER_STATICLIB),
              "-pthread", "-o", str(rust_binary)], cwd=source,
@@ -1674,6 +1687,38 @@ def run_statistics_huge_page_bin_differential(offline: bool) -> dict[str, Any]:
         report_name="statistics-huge-page-bin.json", stat_level=2,
         require_complete=require_statistics_huge_page_bin,
         comparison_excluded_keys=frozenset({"before.arena", "allocated.arena", "terminal.arena"}),
+    )
+
+
+def run_statistics_huge_page_bin_fresh_differential(offline: bool) -> dict[str, Any]:
+    return run_public_statistics_differential(
+        offline, subject="huge-page-bin-fresh", driver=STATISTICS_HUGE_PAGE_BIN_DRIVER,
+        begin=STATISTICS_HUGE_PAGE_BIN_TRACE_BEGIN, end=STATISTICS_HUGE_PAGE_BIN_TRACE_END,
+        report_name="statistics-huge-page-bin-fresh.json", stat_level=2,
+        require_complete=lambda trace, description: require_statistics_huge_page_bin(
+            trace, description, fresh_worker=True,
+        ),
+        comparison_excluded_keys=frozenset({"before.arena", "allocated.arena", "terminal.arena"}),
+        driver_defines=("-DCRABC_MI_FRESH_WORKER=1",),
+    )
+
+
+def run_statistics_huge_page_bin_fresh_then_allocate_differential(offline: bool) -> dict[str, Any]:
+    def require_followup(trace: Mapping[str, str], description: str) -> None:
+        if trace.get("worker.fresh") != "1" or trace.get("worker.mapped") != "-1":
+            raise harness.HarnessError(f"{description} did not free from a fresh worker")
+        if trace.get("worker.followup_usable") != "8":
+            raise harness.HarnessError(f"{description} did not attach on its later allocation")
+        if trace.get("freed.huge_page_bin") != "1,1,0":
+            raise harness.HarnessError(f"{description} retained the remotely freed huge page")
+
+    return run_public_statistics_differential(
+        offline, subject="huge-page-bin-fresh-then-allocate", driver=STATISTICS_HUGE_PAGE_BIN_DRIVER,
+        begin=STATISTICS_HUGE_PAGE_BIN_TRACE_BEGIN, end=STATISTICS_HUGE_PAGE_BIN_TRACE_END,
+        report_name="statistics-huge-page-bin-fresh-then-allocate.json", stat_level=2,
+        require_complete=require_followup,
+        comparison_excluded_keys=frozenset({"before.arena", "allocated.arena", "terminal.arena"}),
+        driver_defines=("-DCRABC_MI_FRESH_WORKER=1", "-DCRABC_MI_FRESH_WORKER_ALLOCATE_AFTER_FREE=1"),
     )
 
 
@@ -1867,6 +1912,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="compare pinned-C/Rust huge allocation statistics under MI_STAT=1")
     mode.add_argument("--statistics-huge-page-bin-differential", action="store_true",
         help="compare pinned-C/Rust arena huge page-bin statistics under MI_STAT=2")
+    mode.add_argument("--statistics-huge-page-bin-fresh-differential", action="store_true",
+        help="compare a fresh worker's metadata-Theap huge free under MI_STAT=2")
+    mode.add_argument("--statistics-huge-page-bin-fresh-then-allocate-differential", action="store_true",
+        help="compare a fresh worker's huge free followed by its first allocation")
     mode.add_argument("--statistics-remote-normal-differential", action="store_true",
         help="compare pinned-C/Rust cross-thread normal free statistics under MI_STAT=1")
     mode.add_argument("--statistics-aligned-huge-differential", action="store_true",
@@ -1959,6 +2008,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.statistics_huge_page_bin_differential:
         report = run_statistics_huge_page_bin_differential(arguments.offline)
         print(f"M7 huge page-bin statistics differential passed: {report['compared_key_count']} compared keys")
+        return 0
+    if arguments.statistics_huge_page_bin_fresh_differential:
+        report = run_statistics_huge_page_bin_fresh_differential(arguments.offline)
+        print(f"M7 fresh-worker huge statistics differential passed: {report['compared_key_count']} compared keys")
+        return 0
+    if arguments.statistics_huge_page_bin_fresh_then_allocate_differential:
+        report = run_statistics_huge_page_bin_fresh_then_allocate_differential(arguments.offline)
+        print(f"M7 fresh-worker free-then-allocate differential passed: {report['compared_key_count']} compared keys")
         return 0
     if arguments.statistics_remote_normal_differential:
         report = run_statistics_remote_normal_differential(arguments.offline)
