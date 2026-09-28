@@ -13,6 +13,29 @@ WORK = Path(__file__).parents[2] / ".work/x86_64/unwinder-output-tests"
 
 
 class InstalledBacktraceReplay(unittest.TestCase):
+    def test_source_built_cargo_output_matches_retained_binary_bytes(self):
+        WORK.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=WORK) as temporary:
+            root = Path(temporary)
+            build = root / "release/build/fixture/out"
+            build.mkdir(parents=True)
+            linked = build / "fixture"
+            retained = root / "release/fixture"
+            linked.write_bytes(b"linked executable")
+            retained.write_bytes(linked.read_bytes())
+            link = {
+                "output": backtrace.owned.record_file(linked, "linked output"),
+                "source_built_target_build_root": str(root / "release/build"),
+            }
+            binary = backtrace.owned.record_file(retained, "Cargo executable")
+            backtrace.source_built_cargo_output(link, binary)
+            retained.write_bytes(b"different executable")
+            with self.assertRaises(backtrace.owned.OwnedCleanupError):
+                backtrace.source_built_cargo_output(link, binary)
+            changed_binary = backtrace.owned.record_file(retained, "changed Cargo executable")
+            with self.assertRaises(backtrace.owned.OwnedCleanupError):
+                backtrace.source_built_cargo_output(link, changed_binary)
+
     def test_static_panic_requires_control_cleanup_resume_and_worker_completion(self):
         self.assertEqual(backtrace.panic_static_result(0, backtrace.PANIC_STATIC_OUTPUT, ""),
                          {"status": 0, "c_frame_control": 8, "direct_drops": 2,

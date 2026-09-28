@@ -47,6 +47,17 @@ def require_record(record: dict[str, str], description: str) -> Path:
     return path
 
 
+def source_built_cargo_output(link: dict[str, Any], binary: dict[str, str]) -> None:
+    """Bind Cargo's retained executable to the linked build-script output bytes."""
+    build_root = owned.physical(Path(link["source_built_target_build_root"]),
+                                "source-built Cargo build root", directory=True)
+    linked = require_record(link["output"], "source-built linked output")
+    retained = require_record(binary, "source-built retained executable")
+    owned.require(linked.is_relative_to(build_root) and retained.parent == build_root.parent
+                  and link["output"]["sha256"] == binary["sha256"],
+                  "source-built Cargo output differs from its retained executable")
+
+
 def image_identity(path: Path) -> tuple[dict[str, str], str]:
     path = owned.physical(path, "immutable core image inspection")
     inspection = json.loads(path.read_text(encoding="utf-8"))
@@ -526,8 +537,8 @@ def owned_receipt(path: Path, products: dict[str, Any]) -> dict[str, Any]:
             link_path = require_record(part["link_receipt"], f"source-built {part_name} link receipt")
             link = owned.json_object(link_path, f"source-built {part_name} link receipt")
             lto = link.get("source_lto_object")
-            owned.require(link.get("output") == owned.record_file(binary, f"source-built {part_name} executable")
-                          and link.get("resolved_input_trace") == part["link_trace"]
+            source_built_cargo_output(link, part["binary"])
+            owned.require(link.get("resolved_input_trace") == part["link_trace"]
                           and link.get("command") == part["link_command"]
                           and isinstance(lto, dict) and lto.get("defined_unwind_abi") == sorted(owned.build.UNWIND_ABI)
                           and "provider_archive" not in link and "omitted_source_built_rust_unwind" not in link,
