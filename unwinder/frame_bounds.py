@@ -20,6 +20,16 @@ def main() -> None:
         'guarded-register-rule-execution.log',
         'guarded-register-rule',
     ))
+    print(run_fixture(
+        'unwinder-frame-bounds-runs',
+        'forked_self_read.rs',
+        'allowed probe=8\nallowed unwind=5\nallowed wait=0\n'
+        'denied probe=-1 errno=1\ndenied unwind=3\ndenied wait=0\n'
+        'forked self-read policy respected\n',
+        'standalone forked self-read provider regression',
+        'forked-self-read-execution.log',
+        'forked-self-read',
+    ))
 
 
 if __name__ == '__main__':

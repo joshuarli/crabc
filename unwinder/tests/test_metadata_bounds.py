@@ -48,6 +48,14 @@ class MetadataBoundsExecutionContract(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'status'):
             metadata_bounds.assert_execution(-11, '', expected)
 
+    def test_forked_self_read_denial_preserves_raw_child_results(self):
+        expected = ('allowed probe=8\nallowed unwind=5\nallowed wait=0\n'
+                    'denied probe=-1 errno=1\ndenied unwind=3\ndenied wait=0\n'
+                    'forked self-read policy respected\n')
+        metadata_bounds.assert_execution(0, expected, expected)
+        with self.assertRaisesRegex(RuntimeError, 'status'):
+            metadata_bounds.assert_execution(-11, '', expected)
+
     def test_provider_provenance_must_name_the_compiled_overlay(self):
         patches = []
         files = []
