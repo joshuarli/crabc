@@ -34,8 +34,10 @@ are not transferable passes for a different revision.
   receipt) after binding the owned `__libc_start_main` CRT imports; all
   18 companions were accepted. A read-only physical replay of that cohort
   binds the weak `_DYNAMIC` archive import to each final ELF's own dynamic
-  table or static null resolution, reducing the blocker count to 565; a
-  current-source full assembly remains open. `libc.c-abi-compat` now runs a physical same-cohort
+  table or static null resolution. The same replay binds `_init` and `_fini`
+  startup imports to strong image-local CRT fragments, reducing the blocker
+  count to 563; a current-source full assembly remains open.
+  `libc.c-abi-compat` now runs a physical same-cohort
   text/math/locale/stdio family admission; its retained receipt is still
   pending on the final candidate revision. `consumer.rust-std-lto` passes its
   Rust, native-facade, LTO, and unwind leaves on clean `d6733f516`; its
@@ -254,7 +256,9 @@ are not transferable passes for a different revision.
   ownership. A further eleven-cell orientation handoff confirms that a DSO
   can select wide orientation on a main-owned FILE and main can select byte
   orientation on a DSO-owned FILE; both retain exact UTF-8 or byte output,
-  shared errno, and one close by the owning image.
+  shared errno, and one close by the owning image. A DSO-owned buffered
+  `/dev/full` stream also passes eleven cells: main observes `fflush` return
+  EOF, `ENOSPC`, and `ferror`, then the DSO closes its descriptor once.
   The complete nine-leaf M8 gate
   passed again on clean `ea0c28759` with all 16 evidence entries passing and
   13 physical receipt identities matching a post-exit reread; the same nine
@@ -355,6 +359,9 @@ are not transferable passes for a different revision.
   Simplifying class rounding saves a further 108 and 122 paired median
   instructions and 32 release-text bytes in the same development rows, again
   with unchanged syscall sequences and all class boundaries checked.
+  Normalizing zero length only on the pool's mapping-release branch saves
+  another 18 and 19 paired median instructions in simple and graph startup;
+  release text and syscall sequences remain unchanged.
   These remain unqualified under host contention. Allocator rows stay
   6.5–8× on the selected
   accepted-C backend, whose arena the host's THP `always` mode backs with
@@ -405,7 +412,11 @@ are not transferable passes for a different revision.
      oracle/candidate sqlite timeouts under host contention. The combined
      archive extractor also checks exact member modes, safe aliases,
      and every embedded component's claim before staging; retained archives
-     pass its read-only validation. The finite `aio_cancel` oracle disposition
+     passed its earlier read-only validation. Newly source-sealed static
+     manifests and the dynamic product state must now carry one matching
+     source digest before combined composition or extraction; older retained
+     archives without the seal fail closed and need a fresh source-built run.
+     The finite `aio_cancel` oracle disposition
      is integrated;
      a clean `80724223a` native OS-test replay profile-qualifies 5,395 outcome
      pairs with exactly six selected `stdatomic` dispositions. A full libc-test
