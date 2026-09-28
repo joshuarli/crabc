@@ -3105,6 +3105,148 @@ mod tests {
         assert!(all_claims && distinct && owners && first_exhausted && restored && mapped_both);
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_second_arena_partial_purge_c_rust_trace() {
+        use crate::arena::{ArenaSearch, ArenaView};
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 1024 * 1024, true, false,
+        );
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        options.set(VmOption::ArenaReserve, (ARENA_MIN_SIZE / 1024) as i64);
+        options.set(VmOption::ArenaEagerCommit, 0);
+        options.set(VmOption::AllowLargeOsPages, 0);
+        options.set(VmOption::AllowThp, 0);
+        options.set(VmOption::ArenaIsNumaLocal, 0);
+        options.set(VmOption::PurgeDelay, 100_000);
+        options.set(VmOption::ArenaPurgeMult, 1);
+        options.set(VmOption::PurgeDecommits, 1);
+        let process_storage = ProcessMainInitializationStorage::test_static_owner();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = ProcessPageMapStorage::test_static_owner();
+        // SAFETY: the coordinator, subprocess, policy, and PageMap are leaked
+        // for the complete lifetime of both published arena mappings.
+        let binding = unsafe { process_storage.test_prepare_vm_process_backing_binding(
+            config, options, subprocess, page_map,
+        ) }.expect("the delayed-purge process binding initializes");
+        let process = binding.process();
+        process.policy().finish_preloading();
+        let backing = process.subprocess().arena_backing();
+        let search = ArenaSearch {
+            heap_sequence: 0, heap_count: 1, thread_sequence: 0,
+            numa_node: -1, requested: ArenaId::none(), allow_pinned: false,
+        };
+        let mut claims = std::vec::Vec::new();
+        for _ in 0..4 {
+            // SAFETY: the process owns one stable arena backing, and every
+            // returned span stays in `claims` until its explicit release.
+            claims.push(unsafe { backing.try_allocate_slices(
+                process, config, search, 256, ARENA_SLICE_SIZE, false,
+            ) }.expect("four source claims publish a second regular arena"));
+        }
+        assert_eq!(backing.registry().count(), 2);
+        // SAFETY: these are permanent published registry entries; no teardown
+        // or competing claim occurs in this isolated test.
+        let first = unsafe { backing.registry().arena_at(0) }.unwrap();
+        let second = unsafe { backing.registry().arena_at(1) }.unwrap();
+        let second_id = unsafe { ArenaId::from_arena(core::ptr::from_ref(second).cast_mut()) }
+            .expect("the second published parent has a source ID");
+        let selected = ArenaSearch { requested: second_id, ..search };
+        // SAFETY: the requested parent is published and its backing remains
+        // live while the additional one-slice claim is retained.
+        let survivor = unsafe { backing.try_find_free(selected, 1, ARENA_SLICE_SIZE, false) }
+            .expect("one neighboring slice remains in the second arena");
+        let released = claims.pop().unwrap();
+        let released_index = released.slice_index();
+        let survivor_index = survivor.slice_index();
+        let view = unsafe { ArenaView::from_ptr(second_id.as_ptr()) }.unwrap();
+        // SAFETY: the free and purge bitmaps are distinct in-place images;
+        // this single-threaded fixture holds all claims and their owner.
+        let free = unsafe { view.slices_free() }.unwrap();
+        let purge = unsafe { view.slices_purge() }.unwrap();
+        let setup = released_index == 9 && survivor_index == 265
+            && second.memid.kind() == crate::types::MemoryKind::Os
+            && second.memid.os_memory().is_some_and(|os|
+                os.base == second.start && os.size == 2 * ARENA_MIN_SIZE)
+            && free.is_clear_range(released_index, 256) == Some(true)
+            && free.is_clear_range(survivor_index, 1) == Some(true);
+        let before_vm = process.subprocess().vm_statistics().snapshot();
+        let before_arenas = process.subprocess().arena_statistics().snapshot();
+        assert!(released.release());
+        let after_release = process.subprocess().statistics().snapshot();
+        let pending = free.is_set_range(released_index, 256) == Some(true)
+            && free.is_clear_range(survivor_index, 1) == Some(true)
+            && purge.is_set_range(released_index, 256) == Some(true)
+            && purge.is_clear_range(survivor_index, 1) == Some(true)
+            && second.purge_expire.load(Ordering::Acquire) > 0
+            && after_release.vm.purge_calls == before_vm.purge_calls
+            && after_release.vm.purged == before_vm.purged
+            && after_release.arena.arena_purges == before_arenas.arena_purges;
+
+        // SAFETY: the fixed process pair owns all published mappings, and
+        // only the returned free span may be purged beside the live survivor.
+        assert!(unsafe { backing.collect_purge(process, config, true, true, 0) });
+        let after_first = process.subprocess().statistics().snapshot();
+        let first_calls = after_first.vm.purge_calls - before_vm.purge_calls;
+        let first_bytes = after_first.vm.purged - before_vm.purged;
+        let first_visits = after_first.arena.arena_purges - before_arenas.arena_purges;
+        let partial = free.is_set_range(released_index, 256) == Some(true)
+            && free.is_clear_range(survivor_index, 1) == Some(true)
+            && purge.is_clear_range(released_index, 256) == Some(true)
+            && purge.is_clear_range(survivor_index, 1) == Some(true)
+            && first_calls == 5 && first_bytes == (256 * ARENA_SLICE_SIZE) as i64
+            && first_visits == 1;
+        assert!(survivor.release());
+        let after_survivor = process.subprocess().vm_statistics().snapshot();
+        let later_pending = free.is_set_range(survivor_index, 1) == Some(true)
+            && purge.is_set_range(survivor_index, 1) == Some(true)
+            && after_survivor.purge_calls == before_vm.purge_calls + 5;
+        // SAFETY: the last second-arena claim has returned its exact span;
+        // the source visitor may now take its scheduled free bitmap bit.
+        assert!(unsafe { backing.collect_purge(process, config, true, true, 0) });
+        let after = process.subprocess().statistics().snapshot();
+        let later_purged = free.is_set_range(released_index, 256) == Some(true)
+            && free.is_set_range(survivor_index, 1) == Some(true)
+            && purge.is_clear_range(released_index, 256) == Some(true)
+            && purge.is_clear_range(survivor_index, 1) == Some(true)
+            && after.vm.purge_calls == before_vm.purge_calls + 6
+            && after.vm.purged == before_vm.purged + (257 * ARENA_SLICE_SIZE) as i64
+            && after.arena.arena_purges == before_arenas.arena_purges + 2;
+        let first_view = unsafe { ArenaView::from_ptr(core::ptr::from_ref(first).cast_mut()) }.unwrap();
+        let first_free = unsafe { first_view.slices_free() }.unwrap();
+        let first_survives = claims.iter().all(|claim|
+            first_free.is_clear_range(claim.slice_index(), 256) == Some(true));
+        let mut residence = 0u8;
+        // SAFETY: both regular mappings remain process-owned and published;
+        // `mincore` writes only one residency byte for each live base.
+        let maps_live = unsafe { crabc_core::mm::mincore_raw(first.start, 4096, &mut residence) }.is_ok()
+            && unsafe { crabc_core::mm::mincore_raw(second.start, 4096, &mut residence) }.is_ok()
+            && after.vm.reserved_current == before_vm.reserved_current
+            && backing.registry().count() == 2;
+        for (field, value) in [
+            ("setup", i64::from(setup)), ("pending", i64::from(pending)),
+            ("partial", i64::from(partial)),
+            ("later_pending", i64::from(later_pending)),
+            ("later_purged", i64::from(later_purged)),
+            ("first_survives", i64::from(first_survives)),
+            ("maps_live", i64::from(maps_live)),
+            ("first_purge_calls", first_calls),
+            ("first_purged_bytes", first_bytes),
+            ("first_arena_purges", first_visits),
+            ("released_slice", released_index as i64),
+            ("survivor_slice", survivor_index as i64),
+            ("purge_calls", after.vm.purge_calls - before_vm.purge_calls),
+            ("purged_bytes", after.vm.purged - before_vm.purged),
+            ("arena_purges", after.arena.arena_purges - before_arenas.arena_purges),
+        ] {
+            std::println!("m2.second_purge.{field}={value}");
+        }
+        assert!(setup && pending && partial && later_pending && later_purged
+            && first_survives && maps_live);
+    }
+
     #[test]
     fn default_os_reservation_releases_both_failed_attempts_before_retrying_from_cold() {
         let config = memory_config();
