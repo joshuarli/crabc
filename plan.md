@@ -99,8 +99,10 @@ are not transferable passes for a different revision.
   source-shaped C ABI size-class correction, the canonical 113-case native
   stress receipt passes all three seeds, including PageMap and RSS bounds;
   the intermittent historical RSS growth has no proven root cause. A clean
-  `934ca15e1` full M5 run passes nine correctness gates and has one blocked
-  codegen/performance gate pending qualifying local-path evidence. Source-built
+  `46b408b16` full M5 run passes nine correctness gates with 27 independently
+  reread physical logs. Only codegen/performance remains blocked: the local
+  path is below the 0.25× pinned-C structural threshold, and qualifying timing
+  still needs an uncontended host. Source-built
   C/Rust differentials pass for both dormant and active survivors of a non-abandoning
   full-medium/OS-singleton owner exit, including reclaim and retirement; a
   late remote free after that exit also matches all 17 retained observations.
@@ -132,8 +134,7 @@ are not transferable passes for a different revision.
   passes all fourteen rows on its sealed source. A huge OS singleton whose
   terminal unmap fails now leaves the independently owned medium survivor
   freeable after PageMap mutation; the generic-exit gate passes fifteen rows
-  on that sealed source. The full M5 gate is running again on a clean frozen
-  revision.
+  on that sealed source. A final candidate must rerun the source-bound gate.
   A paired medium-churn
   diagnostic matches C/Rust page-class transitions under four option profiles;
   PageMap retirement precedes arena RSS release with the default purge delay,
