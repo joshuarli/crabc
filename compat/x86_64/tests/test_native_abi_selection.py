@@ -1368,9 +1368,21 @@ class LinkerDynamicTableBindingTests(unittest.TestCase):
         self.assertEqual(accounting['identities'][0]['unresolved'], [])
         self.assertEqual(accounting['blockers'], [])
 
+    def test_missing_current_crt_receipt_keeps_dynamic_import_unresolved(self):
+        accounting = self.accounting()
+        self.assertEqual(selection.attach_linker_dynamic_table(
+            accounting, self.rule(), [self.MEMBER], None,
+            self.observations(), self.link_evidence()), [])
+        self.assertEqual(set(accounting['identities'][0]['unresolved']), {
+            'candidate binding ownership is unresolved', selection.ORDINARY_IMPORT_REASON,
+        })
+        self.assertEqual(len(accounting['blockers']), 2)
+
     def test_foreign_weak_duplicate_or_wrong_final_image_retains_both_blockers(self):
         cases = {
             'strong import': lambda a, c, o, e: a['occurrences'][0]['row'].update(binding='GLOBAL'),
+            'weak import carries nonzero value': lambda a, c, o, e: a['occurrences'][0]['row'].update(value='0000000000000040'),
+            'foreign static product hash': lambda a, c, o, e: c['products']['candidate-static'].update(sha256='f' * 64),
             'foreign archive member': lambda a, c, o, e: a['occurrences'][0].update(member_name='foreign.o'),
             'duplicate archive import': lambda a, c, o, e: a['occurrences'].append(
                 {**copy.deepcopy(a['occurrences'][0]), 'index': 2}),

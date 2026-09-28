@@ -7467,9 +7467,9 @@ def attach_linker_dynamic_table(accounting: Mapping[str, Any], rule: Mapping[str
             or imported['member_name'] not in members or imported['member_occurrence'] != 0
             or imported.get('artifact_sha256') != products['candidate-static']['sha256']
             or {field: imported['row'].get(field) for field in
-                ('type', 'binding', 'visibility', 'section_index', 'size_bytes')} != {
+                ('type', 'binding', 'visibility', 'section_index', 'size_bytes', 'value')} != {
                     'type': 'NOTYPE', 'binding': 'WEAK', 'visibility': 'HIDDEN',
-                    'section_index': 'UND', 'size_bytes': 0,
+                    'section_index': 'UND', 'size_bytes': 0, 'value': '0000000000000000',
                 }
             or local['role'] != 'local-definition' or local['table'] != '.symtab'
             or local['member_name'] is not None or local['member_occurrence'] is not None

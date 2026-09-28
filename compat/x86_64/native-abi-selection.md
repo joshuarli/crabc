@@ -484,6 +484,17 @@ does not supply release-READY ordering, malformed rejection, worker lifetime,
 mapping-generation, fork, general CRT lifecycle, runtime qualification, family
 completion, promotion, or public support.
 
+The same current CRT receipt supplies the final-image boundary for `_DYNAMIC`.
+`libc.a` carries one unversioned, zero-valued `NOTYPE WEAK HIDDEN UND` import
+from its authenticated Rust member. A static ET_EXEC image leaves its local
+symbol null and has no `.dynamic` section. Static PIE and owned dynamic
+images each define one hidden local symbol at their own `.dynamic` start;
+the local symbol in `libc.so` is a separate DSO placement. The selector also
+binds the static member's retained extraction trace and mapped `iterate`
+body, the final executable hashes, and the source/product manifests for all
+normal and empty modes. Without that current receipt, the archive import's
+ownership and weak/null resolution reasons remain open.
+
 The v4 receipt retains the earlier kernel/direct relocation admission controls
 and adds `descriptor_runtime_admission`: 21 malformed-value cases, three
 selected-object cells (normal, absent, and unaligned), exact raw streams,
