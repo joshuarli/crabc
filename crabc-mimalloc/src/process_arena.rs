@@ -3373,7 +3373,9 @@ mod tests {
         let aligned = (reservation.addr() + alignment - 1) & !(alignment - 1);
         let direct = aligned + page;
         let over = aligned + 2 * alignment + page;
-        assert!(over + size + alignment <= reservation.addr() + span);
+        let recovery_target = aligned + 4 * alignment;
+        assert!(over + size + alignment <= reservation.addr() + span
+            && recovery_target + size <= reservation.addr() + span);
         // SAFETY: no reference or owner was built from this temporary span;
         // a competing claim causes either later fixed map to fail safely.
         unsafe { crabc_core::mm::munmap_raw(reservation, span) }
@@ -3435,6 +3437,56 @@ mod tests {
         // SAFETY: the middle address remains page aligned; either the failed
         // cleanup left it live or the successful cleanup removed it.
         let middle_live = unsafe { crabc_core::mm::mincore_raw(middle as *mut u8, page, &mut residence) }.is_ok();
+        let mut recovery_config = config;
+        recovery_config.test_aligned_overmap_targets(recovery_target, recovery_target);
+        let warning_count_before_recovery = warnings.count.load(Ordering::Acquire);
+        // SAFETY: the first failed publication returned its cleanup slot;
+        // this process still owns the arena registry and selected free target.
+        let recovery = unsafe { backing.reserve_os_memory_for_process(
+            process, recovery_config, size, MapAccess::Reserved, false, false, None,
+        ) };
+        let recovery_registry = backing.registry().count();
+        let recovery_arena = unsafe { backing.registry().arena_at(0) };
+        let recovery_memory_exact = recovery.as_ref().is_ok_and(|id|
+            recovery_arena.is_some_and(|arena| id.as_ptr() == core::ptr::from_ref(arena).cast_mut()
+                && arena.start as usize == recovery_target
+                && arena.memid.kind() == crate::types::MemoryKind::Os
+                && arena.memid.os_memory().is_some_and(|os|
+                    os.base as usize == recovery_target && os.size == size)
+                && !arena.memid.initially_committed()));
+        // SAFETY: the first mapping is either still retained by the failed
+        // raw release or was fully unmapped; recovery owns a separate range.
+        let prior_live_during_recovery = unsafe { crabc_core::mm::mincore_raw(
+            middle as *mut u8, page, &mut residence,
+        ) }.is_ok() == leaked;
+        // SAFETY: the recovered MemoryId remains published until destroy_all.
+        let recovery_live = unsafe { crabc_core::mm::mincore_raw(
+            recovery_target as *mut u8, page, &mut residence,
+        ) }.is_ok();
+        let recovery_snapshot = process.subprocess().statistics().snapshot();
+        let recovery_warning_count = warnings.count.load(Ordering::Acquire) - warning_count_before_recovery;
+        let recovery_warning_order = warnings.order.load(Ordering::Acquire);
+        let release = fault.capture_unmap_ranges();
+        // SAFETY: no claim or reader survives this fresh process's sole
+        // published arena; the prior escaped range has no arena owner.
+        let destroyed = unsafe { backing.destroy_all(&mut []) }
+            .expect("the recovered explicit arena releases");
+        let (release_ranges, release_count) = release.all()
+            .expect("the recovered arena has one terminal unmap");
+        drop(release);
+        let recovery_release_exact = destroyed.is_released() && release_count == 1
+            && release_ranges[0] == (recovery_target, size);
+        let recovery_terminal = process.subprocess().statistics().snapshot();
+        // SAFETY: terminal destroy retired the recovered MemoryId and its map.
+        let recovery_gone = unsafe { crabc_core::mm::mincore_raw(
+            recovery_target as *mut u8, page, &mut residence,
+        ) }.is_err();
+        let recovery_terminal_registry = backing.registry().count();
+        // SAFETY: terminal destroy touched only the recovered MemoryId and
+        // leaves the first failed cleanup's unowned range as it was.
+        let prior_live_after_release = unsafe { crabc_core::mm::mincore_raw(
+            middle as *mut u8, page, &mut residence,
+        ) }.is_ok() == leaked;
         // SAFETY: only a failed cleanup leaves the unpublished middle mapped;
         // it has no arena or Mapping owner and this fixture retains its extent.
         let raw_cleanup = !middle_live || unsafe { crabc_core::mm::munmap_raw(middle as *mut u8, size) }.is_ok();
@@ -3464,6 +3516,24 @@ mod tests {
             ("raw_cleanup", i64::from(raw_cleanup)),
             ("middle_gone", i64::from(middle_gone)),
             ("raw_reserved_delta", raw_stats.vm.reserved_current - before.vm.reserved_current),
+            ("recovery_success", i64::from(recovery.is_ok())),
+            ("recovery_memory_exact", i64::from(recovery_memory_exact)),
+            ("recovery_registry", recovery_registry as i64),
+            ("prior_live_during_recovery", i64::from(prior_live_during_recovery)),
+            ("recovery_live", i64::from(recovery_live)),
+            ("recovery_reserved_delta", recovery_snapshot.vm.reserved_current - before.vm.reserved_current),
+            ("recovery_committed_delta", recovery_snapshot.vm.committed_current - before.vm.committed_current),
+            ("recovery_mmap_calls_delta", recovery_snapshot.vm.mmap_calls - before.vm.mmap_calls),
+            ("recovery_commit_calls_delta", recovery_snapshot.vm.commit_calls - before.vm.commit_calls),
+            ("recovery_arena_count_delta", recovery_snapshot.arena.arena_count - before.arena.arena_count),
+            ("recovery_warning_count", recovery_warning_count as i64),
+            ("recovery_warning_order", recovery_warning_order as i64),
+            ("recovery_release_exact", i64::from(recovery_release_exact)),
+            ("recovery_gone", i64::from(recovery_gone)),
+            ("recovery_terminal_registry", recovery_terminal_registry as i64),
+            ("prior_live_after_release", i64::from(prior_live_after_release)),
+            ("recovery_terminal_reserved_delta", recovery_terminal.vm.reserved_current - before.vm.reserved_current),
+            ("recovery_terminal_committed_delta", recovery_terminal.vm.committed_current - before.vm.committed_current),
         ] {
             std::println!("{field}={value}");
         }
@@ -3472,6 +3542,8 @@ mod tests {
         assert_eq!(warnings.count.load(Ordering::Acquire), if leaked { 4 } else { 3 });
         assert!(warning_timing && geometry && protection_exact && no_memory_id);
         assert_eq!(middle_live, leaked);
+        assert!(recovery_memory_exact && prior_live_during_recovery && recovery_live);
+        assert!(recovery_release_exact && recovery_gone && prior_live_after_release);
         assert!(raw_cleanup && middle_gone);
     }
 

@@ -21,11 +21,12 @@ static size_t arena_size;
 static size_t arena_alignment;
 static void* direct_target;
 static void* over_target;
+static void* recovery_target;
 static unsigned map_phase;
 static unsigned unmap_calls;
-static void* unmap_addresses[4];
-static size_t unmap_lengths[4];
-static int unmap_results[4];
+static void* unmap_addresses[5];
+static size_t unmap_lengths[5];
+static int unmap_results[5];
 static unsigned protect_calls;
 static void* protected_address;
 static size_t protected_length;
@@ -53,11 +54,16 @@ void* __wrap_mmap(void* address, size_t length, int protection, int flags,
     return __real_mmap(over_target, length, protection,
                        flags | MAP_FIXED_NOREPLACE, descriptor, offset);
   }
+  if (capture && map_phase == 2 && length == arena_size) {
+    map_phase = 3;
+    return __real_mmap(recovery_target, length, protection,
+                       flags | MAP_FIXED_NOREPLACE, descriptor, offset);
+  }
   return __real_mmap(address, length, protection, flags, descriptor, offset);
 }
 
 int __wrap_mprotect(void* address, size_t length, int protection) {
-  if (!capture) return __real_mprotect(address, length, protection);
+  if (!capture || map_phase == 3) return __real_mprotect(address, length, protection);
   protect_calls++;
   protected_address = address;
   protected_length = length;
@@ -69,7 +75,7 @@ int __wrap_mprotect(void* address, size_t length, int protection) {
 int __wrap_munmap(void* address, size_t length) {
   if (!capture) return __real_munmap(address, length);
   const unsigned index = unmap_calls++;
-  if (index >= 4) { errno = EIO; return -1; }
+  if (index >= 5) { errno = EIO; return -1; }
   unmap_addresses[index] = address;
   unmap_lengths[index] = length;
   if (fail_cleanup && index == 3) {
@@ -107,10 +113,12 @@ static bool targets(void) {
       & ~(uintptr_t)(arena_alignment - 1);
   const uintptr_t direct = aligned + page;
   const uintptr_t over = aligned + 2 * arena_alignment + page;
-  const bool fits = over + arena_size + arena_alignment <= (uintptr_t)reservation + span;
+  const bool fits = over + arena_size + arena_alignment <= (uintptr_t)reservation + span
+      && aligned + 4 * arena_alignment + arena_size <= (uintptr_t)reservation + span;
   if (__real_munmap(reservation, span) != 0 || !fits) return false;
   direct_target = (void*)direct;
   over_target = (void*)over;
+  recovery_target = (void*)(aligned + 4 * arena_alignment);
   return true;
 }
 
@@ -177,6 +185,44 @@ int main(int argc, char** argv) {
   const int64_t arena_count_delta = selected_subproc->stats.arena_count.total - before_arena_count;
   unsigned char residence = 0;
   const bool middle_live = mincore((void*)middle, (size_t)sysconf(_SC_PAGESIZE), &residence) == 0;
+
+  // The rejected arena owns no registry slot. A later reservation must still
+  // publish its own mapping while the failed cleanup's range remains live.
+  capture = true;
+  const unsigned warnings_before_recovery = captured_warning_count;
+  mi_arena_id_t recovery_id = _mi_arena_id_none();
+  const int recovery_rc = mi_reserve_os_memory_ex2(selected_subproc, arena_size,
+                                                   false, false, false, &recovery_id);
+  mi_arena_t* recovery_arena = _mi_arena_from_id(recovery_id);
+  const bool recovery_memory_exact = recovery_rc == 0 && recovery_arena != NULL
+      && recovery_arena->start == recovery_target
+      && recovery_arena->memid.memkind == MI_MEM_OS
+      && recovery_arena->memid.mem.os.base == recovery_target
+      && recovery_arena->memid.mem.os.size == arena_size
+      && !recovery_arena->memid.initially_committed;
+  const size_t recovery_registry = mi_arenas_get_count(selected_subproc);
+  const bool prior_live_during_recovery = mincore((void*)middle,
+      (size_t)sysconf(_SC_PAGESIZE), &residence) == (fail_cleanup ? 0 : -1);
+  const bool recovery_live = mincore(recovery_target,
+      (size_t)sysconf(_SC_PAGESIZE), &residence) == 0;
+  const int64_t recovery_reserved_delta = selected_subproc->stats.reserved.current - before_reserved;
+  const int64_t recovery_committed_delta = selected_subproc->stats.committed.current - before_committed;
+  const int64_t recovery_mmap_calls_delta = selected_subproc->stats.mmap_calls.total - before_mmap_calls;
+  const int64_t recovery_commit_calls_delta = selected_subproc->stats.commit_calls.total - before_commit_calls;
+  const int64_t recovery_arena_count_delta = selected_subproc->stats.arena_count.total - before_arena_count;
+  const unsigned recovery_warning_count = captured_warning_count - warnings_before_recovery;
+  _mi_arenas_unsafe_destroy_all(selected_subproc);
+  capture = false;
+  const bool recovery_release_exact = unmap_calls == 5
+      && unmap_addresses[4] == recovery_target
+      && unmap_lengths[4] == arena_size && unmap_results[4] == 0;
+  const bool recovery_gone = mincore(recovery_target,
+      (size_t)sysconf(_SC_PAGESIZE), &residence) != 0;
+  const size_t recovery_terminal_registry = mi_arenas_get_count(selected_subproc);
+  const bool prior_live_after_release = mincore((void*)middle,
+      (size_t)sysconf(_SC_PAGESIZE), &residence) == (fail_cleanup ? 0 : -1);
+  const int64_t recovery_terminal_reserved_delta = selected_subproc->stats.reserved.current - before_reserved;
+  const int64_t recovery_terminal_committed_delta = selected_subproc->stats.committed.current - before_committed;
   const bool raw_cleanup = !middle_live || __real_munmap((void*)middle, arena_size) == 0;
   const bool middle_gone = mincore((void*)middle, (size_t)sysconf(_SC_PAGESIZE), &residence) != 0;
   const int64_t raw_reserved_delta = selected_subproc->stats.reserved.current - before_reserved;
@@ -205,6 +251,24 @@ int main(int argc, char** argv) {
   printf("raw_cleanup=%u\n", (unsigned)raw_cleanup);
   printf("middle_gone=%u\n", (unsigned)middle_gone);
   printf("raw_reserved_delta=%lld\n", (long long)raw_reserved_delta);
+  printf("recovery_success=%u\n", (unsigned)(recovery_rc == 0));
+  printf("recovery_memory_exact=%u\n", (unsigned)recovery_memory_exact);
+  printf("recovery_registry=%zu\n", recovery_registry);
+  printf("prior_live_during_recovery=%u\n", (unsigned)prior_live_during_recovery);
+  printf("recovery_live=%u\n", (unsigned)recovery_live);
+  printf("recovery_reserved_delta=%lld\n", (long long)recovery_reserved_delta);
+  printf("recovery_committed_delta=%lld\n", (long long)recovery_committed_delta);
+  printf("recovery_mmap_calls_delta=%lld\n", (long long)recovery_mmap_calls_delta);
+  printf("recovery_commit_calls_delta=%lld\n", (long long)recovery_commit_calls_delta);
+  printf("recovery_arena_count_delta=%lld\n", (long long)recovery_arena_count_delta);
+  printf("recovery_warning_count=%u\n", recovery_warning_count);
+  printf("recovery_warning_order=%u\n", warning_order);
+  printf("recovery_release_exact=%u\n", (unsigned)recovery_release_exact);
+  printf("recovery_gone=%u\n", (unsigned)recovery_gone);
+  printf("recovery_terminal_registry=%zu\n", recovery_terminal_registry);
+  printf("prior_live_after_release=%u\n", (unsigned)prior_live_after_release);
+  printf("recovery_terminal_reserved_delta=%lld\n", (long long)recovery_terminal_reserved_delta);
+  printf("recovery_terminal_committed_delta=%lld\n", (long long)recovery_terminal_committed_delta);
   puts("CRABC_M2_EXPLICIT_ARENA_METADATA_FAULT_C_TRACE_END");
   return 0;
 }

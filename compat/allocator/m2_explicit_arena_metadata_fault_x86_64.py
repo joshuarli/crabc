@@ -22,6 +22,14 @@ FIELDS = (
     "reserved_delta", "committed_delta", "mmap_calls_delta", "commit_calls_delta",
     "arena_count_delta", "middle_live", "raw_cleanup", "middle_gone",
     "raw_reserved_delta",
+    "recovery_success", "recovery_memory_exact", "recovery_registry",
+    "prior_live_during_recovery", "recovery_live", "recovery_reserved_delta",
+    "recovery_committed_delta", "recovery_mmap_calls_delta",
+    "recovery_commit_calls_delta", "recovery_arena_count_delta",
+    "recovery_warning_count", "recovery_warning_order",
+    "recovery_release_exact", "recovery_gone", "recovery_terminal_registry",
+    "prior_live_after_release", "recovery_terminal_reserved_delta",
+    "recovery_terminal_committed_delta",
 )
 
 
@@ -57,6 +65,19 @@ def expected(profile: str) -> dict[str, int]:
         "mmap_calls_delta": 2, "commit_calls_delta": 1,
         "arena_count_delta": 0, "middle_live": int(leaked),
         "raw_cleanup": 1, "middle_gone": 1, "raw_reserved_delta": 0,
+        "recovery_success": 1, "recovery_memory_exact": 1,
+        "recovery_registry": 1, "prior_live_during_recovery": 1,
+        "recovery_live": 1, "recovery_warning_count": 0,
+        "recovery_warning_order": 1234 if leaked else 123,
+        "recovery_reserved_delta": 32 * 1024 * 1024,
+        "recovery_committed_delta": 589824,
+        "recovery_mmap_calls_delta": 3,
+        "recovery_commit_calls_delta": 2,
+        "recovery_arena_count_delta": 1,
+        "recovery_release_exact": 1, "recovery_gone": 1,
+        "recovery_terminal_registry": 0, "prior_live_after_release": 1,
+        "recovery_terminal_reserved_delta": 0,
+        "recovery_terminal_committed_delta": -(32 * 1024 * 1024 - 589824),
     }
 
 
@@ -147,7 +168,7 @@ def run(*, offline: bool, c_only: bool) -> dict[str, Any]:
         "status": "matched" if not mismatches else "red", "c": c, "rust": rust,
         "mismatches": mismatches, "c_commands": c_commands,
         "rust_commands": rust_commands,
-        "scope": "explicit aligned overmap followed by metadata mprotect ENOMEM, prepublication cleanup success or failed munmap and raw-only cleanup",
+        "scope": "explicit aligned overmap metadata mprotect ENOMEM, prepublication cleanup success or failed munmap, subsequent successful reservation and terminal destroy, retained prior range and raw-only cleanup",
     }
     (ARTIFACTS / "evidence.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     print(f"explicit arena metadata fault {report['status'].upper()} ({len(PROFILES)} profiles, {len(FIELDS)} fields each)")
