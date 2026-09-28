@@ -19,6 +19,7 @@ assert SPEC is not None and SPEC.loader is not None
 GATE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = GATE
 SPEC.loader.exec_module(GATE)
+import owned_dynamic_qualification as DYNAMIC_QUALIFICATION
 WORK = ROOT / ".work/x86_64/consumer-rust-std-lto-tests"
 
 
@@ -140,6 +141,7 @@ class ReceiptReaderTests(unittest.TestCase):
         self.receipt = root / "receipt.json"
         qualification = mock.MagicMock()
         qualification.source_digest.return_value = "a" * 64
+        qualification.QualificationError = DYNAMIC_QUALIFICATION.QualificationError
         self.patches = [
             mock.patch.dict(sys.modules, {"owned_dynamic_qualification": qualification}),
             mock.patch.object(GATE, "cohort_products", side_effect=lambda *_: (copy.deepcopy(self.cohort), {})),
@@ -192,6 +194,29 @@ class ReceiptReaderTests(unittest.TestCase):
         with mock.patch.object(GATE, "cohort_products", return_value=({"request": {}, "evidence": {}}, {})):
             with self.assertRaisesRegex(GATE.GateError, "cohort changed"):
                 self.validate(self.record)
+
+    def test_removed_physical_cohort_fails_as_a_gate_error(self) -> None:
+        qualification = self.receipt.parent / "qualification.json"
+        qualification.write_text("{}\n")
+        cohort = copy.deepcopy(self.cohort)
+        cohort["request"]["dynamic_qualification"] = qualification.relative_to(ROOT).as_posix()
+        record = {**self.record, "cohort": cohort}
+
+        def read_cohort(*_paths: Path) -> tuple[dict[str, object], dict[str, object]]:
+            DYNAMIC_QUALIFICATION.digest(qualification)
+            return copy.deepcopy(cohort), {}
+
+        with mock.patch.object(GATE, "cohort_products", side_effect=read_cohort):
+            self.validate(record)
+            qualification.unlink()
+            with self.assertRaisesRegex(GATE.GateError, "cohort evidence.*missing or unsafe"):
+                self.validate(record)
+
+    def test_removed_retained_artifact_fails_closed(self) -> None:
+        self.validate(self.record)
+        self.evidence.unlink()
+        with self.assertRaisesRegex(GATE.GateError, "evidence changed"):
+            self.validate(self.record)
 
 
 if __name__ == "__main__":

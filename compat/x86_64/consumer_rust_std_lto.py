@@ -93,7 +93,7 @@ CROSS_DSO_RUNTIME = "libcrabc_unwind_frame_runtime.so"
 CROSS_DSO_FLAGS = ("-C", "panic=unwind", "-C", "force-unwind-tables=yes", "-C", "target-feature=-crt-static")
 CROSS_DSO_STDOUT = b"unwind: cross-dso cleanup resume initial runtime main worker\n"
 # The standalone provider regressions for bounded malformed and truncated
-# frame metadata and DWARF expressions (``unwinder/README.md``). They inject
+# frame metadata and DWARF expressions inject
 # their own ``dl_iterate_phdr`` images, so they run in the pinned-musl
 # harness; they supplement, never replace, the owned-product consumers.
 PROVIDER_REGRESSIONS = (
@@ -1062,7 +1062,11 @@ def run_gate(arguments: argparse.Namespace) -> tuple[dict[str, Any], Path]:
 
 
 def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
-    """Reread one retained receipt: current source, same cohort, same bytes, passed."""
+    """Reread current source, the physical cohort and every retained byte.
+
+    The cohort reader replays its product and case identities from physical
+    inputs. A saved successful result cannot stand in for removed input trees.
+    """
 
     import owned_dynamic_qualification as qualification  # pylint: disable=import-outside-toplevel
 
@@ -1076,7 +1080,10 @@ def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
             "consumer gate receipt used development products")
     require(record.get("source_sha256") == qualification.source_digest(), "consumer gate receipt source is stale")
     request = record["cohort"]["request"]
-    cohort, _paths = cohort_products(ROOT / request["static_preparation"], ROOT / request["dynamic_qualification"])
+    try:
+        cohort, _paths = cohort_products(ROOT / request["static_preparation"], ROOT / request["dynamic_qualification"])
+    except qualification.QualificationError as error:
+        raise GateError(f"consumer gate cohort evidence is unavailable or changed: {error}") from error
     require(cohort == record["cohort"], "consumer gate product cohort changed")
     retained = record.get("retained_files")
     require(isinstance(retained, dict) and retained, "consumer gate receipt retains no evidence")
