@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import struct
 import sys
 from typing import Any, Mapping
 
@@ -699,6 +700,72 @@ def validate_commands(
     return retained, workload
 
 
+def elf_section_layout(executable: Path) -> dict[str, tuple[int, int]]:
+    """Read named ELF64 sections so retained map placements can be checked."""
+
+    image = regular(executable, "linked executable").read_bytes()
+    require(len(image) >= 64 and image[:7] == b"\x7fELF\x02\x01\x01", "link map output is not ELF64")
+    section_offset = struct.unpack_from("<Q", image, 40)[0]
+    section_size, count, names_index = struct.unpack_from("<HHH", image, 58)
+    require(section_size == 64 and 0 < count and 0 < names_index < count
+            and section_offset + count * section_size <= len(image), "link map output section table is invalid")
+
+    def section(index: int) -> tuple[int, int, int, int]:
+        name, _, _, address, offset, size = struct.unpack_from("<IIQQQQ", image, section_offset + index * section_size)
+        return name, address, offset, size
+
+    _, _, names_offset, names_size = section(names_index)
+    require(names_offset + names_size <= len(image), "link map output section names are invalid")
+    names = image[names_offset:names_offset + names_size]
+    result: dict[str, tuple[int, int]] = {}
+    for index in range(1, count):
+        name_offset, address, _, size = section(index)
+        require(name_offset < len(names), "link map output section name is invalid")
+        end = names.find(b"\0", name_offset)
+        require(end >= 0, "link map output section name is unterminated")
+        try:
+            name = names[name_offset:end].decode("ascii")
+        except UnicodeDecodeError as error:
+            raise ReceiptError("link map output section name is not ASCII") from error
+        require(name.startswith(".") and name not in result, "link map output section roster is invalid")
+        result[name] = (address, size)
+    return result
+
+
+def validate_dynamic_link_map(work: Path, name: str, product: Path, workload: Path) -> None:
+    """Bind LLD's retained placements and input contributors to this output."""
+
+    map_path = regular(work / (name + ".crabc-link.map"), name.replace("-", " ") + " link map")
+    try:
+        lines = map_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as error:
+        raise ReceiptError(name.replace("-", " ") + " link map is unreadable") from error
+    label = name.replace("-", " ") + " link map"
+    require(lines and lines[0].split() == ["VMA", "LMA", "Size", "Align", "Out", "In", "Symbol"],
+            label + " header differs")
+    sections = elf_section_layout(work / name)
+    mapped: dict[str, tuple[int, int]] = {}
+    contributors: set[str] = set()
+    library = product / "usr/lib"
+    allowed = {str(workload), "<internal>", *(str(library / entry) for entry in
+              ("Scrt1.o", "crt1.o", "crti.o", "crtn.o", "crabc-dynamic-attach.o", "libc.so"))}
+    builtins = str(library / "libcrabc-builtins.a")
+    for line in lines[1:]:
+        match = re.fullmatch(r"\s*([0-9a-f]+)\s+[0-9a-f]+\s+([0-9a-f]+)\s+\d+\s+(\S.*)", line)
+        require(match is not None, label + " contains a non-LLD record")
+        address, size, entry = int(match[1], 16), int(match[2], 16), match[3]
+        if entry in sections:
+            require(entry not in mapped, label + " repeats an output section")
+            mapped[entry] = (address, size)
+        elif ":(" in entry:
+            source = entry.split(":(", 1)[0]
+            require(source in allowed or source.startswith(builtins + "(") and source.endswith(")"),
+                    label + " contains a foreign input")
+            contributors.add(source)
+    require(mapped == sections, label + " output sections differ from the executable")
+    require(str(workload) in contributors, label + " omits the installed-header object")
+
+
 def validate_links(checkout: Path, work: Path, report: Mapping[str, Any], commands: Mapping[str, Mapping[str, object]], workload: Path, *, static: bool) -> None:
     links = report["links"]
     expected = {"dynamic-pie", "dynamic-non-pie"} | ({"static", "static-pie"} if static else set())
@@ -724,6 +791,8 @@ def validate_links(checkout: Path, work: Path, report: Mapping[str, Any], comman
                 name.replace("-", " ") + " link workload identity differs")
         require(rebuilt.get("product") == str(product), name.replace("-", " ") + " link identity differs")
         require(link_path.read_bytes() == canonical(rebuilt), name.replace("-", " ") + " link identity differs")
+        if linkage in ("pie", "non-pie"):
+            validate_dynamic_link_map(work, name, product, workload)
         validation = commands[name + "-validate"]
         validation_stdout = validation["stdout"]
         validation_stderr = validation["stderr"]

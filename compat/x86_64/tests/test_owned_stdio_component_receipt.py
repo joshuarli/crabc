@@ -220,6 +220,13 @@ class ReceiptFixture:
         for linkage in ("pie", "non-pie"):
             executable = self.work / ("dynamic-" + linkage)
             executable.write_bytes((linkage + " executable\n").encode())
+            self.write("dynamic-" + linkage + ".crabc-link.map", (
+                "             VMA              LMA     Size Align Out     In      Symbol\n"
+                "            1000             1000       10    16 .text\n"
+                f"            1000             1000       10     1         {self.object}:(.text)\n"
+                "            2000             2000        4     1 .rodata\n"
+                f"            2000             2000        4     1         {self.object}:(.rodata)\n"
+            ).encode())
             self.command("dynamic-" + linkage + "-link", [str(self.dynamic_driver), "--dynamic-" + linkage, "-std=c11", str(self.object), "-o", str(executable)])
             link = {"linkage": linkage, "product": str(self.dynamic), "product_format": "dynamic", "product_manifest_sha256": "d" * 64,
                     "workload_sha256": hashlib.sha256(self.object.read_bytes()).hexdigest(), "executable_sha256": hashlib.sha256(executable.read_bytes()).hexdigest(), "receipt_sha256": linkage[0] * 64}
@@ -339,6 +346,7 @@ class OwnedStdioComponentReceiptTests(unittest.TestCase):
             mock.patch.object(receipt.copies, "audit_execution_payload", side_effect=self._payload),
             mock.patch.object(qualification, "source_digest", return_value="a" * 64),
             mock.patch.object(qualification, "ROOT", self.fixture.checkout),
+            mock.patch.object(receipt, "elf_section_layout", return_value={".text": (0x1000, 0x10), ".rodata": (0x2000, 0x4)}),
         ]
         for patch in self.patches:
             patch.start()
@@ -532,6 +540,20 @@ class OwnedStdioComponentReceiptTests(unittest.TestCase):
         validate.write_bytes(path.read_bytes())
         self.fixture.refresh("links", "commands")
         with self.assertRaisesRegex(receipt.ReceiptError, "dynamic pie link identity"):
+            self.validate()
+
+    def test_rehashed_dynamic_link_map_cannot_add_a_foreign_record(self) -> None:
+        path = self.fixture.work / "dynamic-pie.crabc-link.map"
+        path.write_bytes(path.read_bytes() + b"forged-map-record\n")
+        with self.assertRaisesRegex(receipt.ReceiptError, "dynamic pie link map"):
+            self.validate()
+
+    def test_rehashed_dynamic_link_map_cannot_change_output_placement(self) -> None:
+        path = self.fixture.work / "dynamic-pie.crabc-link.map"
+        path.write_bytes(path.read_bytes().replace(
+            b"1000             1000       10    16 .text",
+            b"3000             3000       10    16 .text"))
+        with self.assertRaisesRegex(receipt.ReceiptError, "link map output sections"):
             self.validate()
 
     def test_recomputed_hashes_cannot_replace_payload_audit(self) -> None:
