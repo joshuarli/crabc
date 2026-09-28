@@ -120,8 +120,8 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
                 {"name": "fallback.example.test.", "role": "valid", "action": "drop"},
                 {"role": "drop", "action": "drop"},
                 {"role": "drop", "action": "drop"},
-                {"name": "fallback.example.test.", "role": "fallback", "action": "answer"},
-                {"name": "fallback.example.test.", "role": "fallback", "action": "answer"},
+                {"name": "fallback.example.test.", "role": "fallback", "transport": "udp", "action": "answer"},
+                {"name": "fallback.example.test.", "role": "fallback", "transport": "udp", "action": "answer"},
                 {"name": "alias.example.test.", "action": "cname"},
                 {"name": "tc.example.test.", "transport": "udp", "action": "tc-sequence"},
             ]
@@ -129,6 +129,11 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
         self.assertFalse(runner.event_contract(events)["passed"])
         events.append({"name": "tc.example.test.", "transport": "tcp", "action": "answer"})
         self.assertTrue(runner.event_contract(events)["passed"])
+        without_fallback_answer = [
+            {**event, "action": "drop"} if event.get("role") == "fallback" else event
+            for event in events
+        ]
+        self.assertFalse(runner.event_contract(without_fallback_answer)["passed"])
         self.assertFalse(runner.event_contract(events, executions=2)["passed"])
         self.assertTrue(runner.event_contract(events * 2, executions=2)["passed"])
 

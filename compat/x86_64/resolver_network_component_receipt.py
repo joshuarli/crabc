@@ -971,7 +971,9 @@ def recompute_event_contract(events: Sequence[Mapping[str, object]], *, executio
     malformed = count(lambda event: event.get("name") == "malformed.example.test." and event.get("action") == "malformed-sequence")
     valid_drop = count(lambda event: event.get("role") == "valid" and event.get("name") == "fallback.example.test." and event.get("action") == "drop")
     drop = count(lambda event: event.get("role") == "drop" and event.get("action") == "drop")
-    fallback = count(lambda event: event.get("role") == "fallback" and event.get("name") == "fallback.example.test.")
+    fallback = count(lambda event: event.get("role") == "fallback" and
+                     event.get("name") == "fallback.example.test." and
+                     event.get("transport") in {"udp", "tcp"} and event.get("action") == "answer")
     cname = count(lambda event: event.get("name") == "alias.example.test." and event.get("action") == "cname")
     tc_udp = count(lambda event: event.get("name") == "tc.example.test." and event.get("transport") == "udp" and event.get("action") == "tc-sequence")
     tc_tcp = count(lambda event: event.get("name") == "tc.example.test." and event.get("transport") == "tcp" and event.get("action") == "answer")

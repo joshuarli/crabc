@@ -66,6 +66,23 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
         self.assertFalse(contract["passed"])
         self.assertEqual(contract["required_names_missing"], sorted(self.reader.REQUIRED_SERVER_NAMES))
 
+    def test_fallback_query_without_an_answer_from_fallback_endpoint_is_rejected(self) -> None:
+        events = [
+            {"name": name, "role": "valid", "transport": "udp", "action": "answer"}
+            for name in self.reader.REQUIRED_SERVER_NAMES
+        ]
+        events.extend([
+            {"name": "malformed.example.test.", "role": "valid", "transport": "udp", "action": "malformed-sequence"},
+            {"name": "fallback.example.test.", "role": "valid", "transport": "udp", "action": "drop"},
+            {"name": "fallback.example.test.", "role": "drop", "transport": "udp", "action": "drop"},
+            {"name": "fallback.example.test.", "role": "fallback", "transport": "udp", "action": "drop"},
+            {"name": "alias.example.test.", "role": "valid", "transport": "udp", "action": "cname"},
+            {"name": "tc.example.test.", "role": "valid", "transport": "udp", "action": "tc-sequence"},
+            {"name": "tc.example.test.", "role": "valid", "transport": "tcp", "action": "answer"},
+        ])
+        contract = self.reader.recompute_event_contract(events, executions=1)
+        self.assertFalse(contract["passed"])
+
     def test_physical_reader_refuses_a_symlinked_artifact_path(self) -> None:
         scratch = ROOT / ".work/x86_64/tmp"
         scratch.mkdir(parents=True, exist_ok=True)
