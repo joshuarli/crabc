@@ -804,6 +804,19 @@ prove only its seven exact static Rust-root imports; allocator semantics,
 lifecycle beyond that bounded receipt, family completion, promotion, and
 public support remain open.
 
+The pinned Rust compiler's allocation error default, shim, and marker form
+one conditional static archive class. `native-abi-selection.toml` names the
+three exact mangled identities. `native_abi_selection.py` joins their five
+ELF rows only when the accepted C allocator companion authenticates the same
+installed `libc.a` and its provenance records the selected `liballoc` and
+`libstd` members whose duplicate stock definitions were weakened. The join
+requires two weak providers, their mutual ordinary imports, and the shim's
+strong marker in those exact archive members. It selects no shared export or
+ambient allocator. The focused physical link reader in
+`tests/test_native_abi_selection.py` checks the sealed ET_EXEC and static PIE
+link receipts, input bytes, trace extraction, and mapped handler sections
+when those retained receipts are supplied.
+
 The private feature witnesses have actual evidence consumers. Crypt helper
 names, private musl alias targets, process/runtime seams, and compiler helpers
 also require their own physical visibility and consumer decisions. They do

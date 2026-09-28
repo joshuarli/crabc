@@ -57,6 +57,11 @@ SCHEMA = 'crabc.x86_64-native-abi-selection-report/v8'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v1'
 TARGET = inventory.TARGET
 CONTRACT_PATH = MODULE_DIR / 'native-abi-selection.toml'
+RUST_ALLOC_HANDLER_NAMES = (
+    '_RNvCs6HbitnLHj0h_7___rustc25___rdl_alloc_error_handler',
+    '_RNvCs6HbitnLHj0h_7___rustc26___rust_alloc_error_handler',
+    '_RNvCs6HbitnLHj0h_7___rustc35___rust_no_alloc_shim_is_unstable_v2',
+)
 INPUT_PATHS = {
     'frozen_baseline': 'compat/x86_64/aarch64_frozen_baseline.json',
     'coverage': 'compat/crabc-rs/coverage.toml',
@@ -595,6 +600,7 @@ def validate_contract(value: Any) -> dict[str, Any]:
     result = exact(value, {'schema', 'target', 'inputs', 'profiles', 'owner_groups', 'structural_groups',
                            'object_contracts', 'private_protocols', 'module_private_symbols',
                            'process_exit_static_imports', 'linker_dynamic_table', 'crt_init_fini_binding',
+                           'rust_allocation_handlers',
                            'requirements'},
                    'selection contract')
     module_private = exact(result['module_private_symbols'], {'id', 'owner', 'family', 'sources', 'reason'},
@@ -638,6 +644,16 @@ def validate_contract(value: Any) -> dict[str, Any]:
             ], 'CRT init/fini binding rule identity differs')
     string(init_fini['reason'], 'CRT init/fini binding reason')
     for path in strings(init_fini['sources'], 'CRT init/fini binding sources', empty=False):
+        source_path(path)
+    rust_handlers = exact(result['rust_allocation_handlers'],
+                          {'id', 'owner', 'names', 'sources', 'reason'}, 'Rust allocation handler rule')
+    require(rust_handlers['id'] == 'pinned-rust-allocation-error-shim'
+            and rust_handlers['owner'] == 'pinned-rust-alloc-error-shim'
+            and rust_handlers['names'] == list(RUST_ALLOC_HANDLER_NAMES)
+            and rust_handlers['sources'] == ['rust-toolchain.toml', 'scripts/build_x86_64_owned_sysroot.py'],
+            'Rust allocation handler rule identity differs')
+    string(rust_handlers['reason'], 'Rust allocation handler reason')
+    for path in strings(rust_handlers['sources'], 'Rust allocation handler sources', empty=False):
         source_path(path)
     require(result['schema'] == CONTRACT_SCHEMA and result['target'] == TARGET, 'selection schema/target changed')
     require(same(result['inputs'], INPUT_PATHS), 'selection input roster differs')
@@ -7715,6 +7731,172 @@ def attach_crt_init_fini_imports(accounting: Mapping[str, Any], rule: Mapping[st
     return joins
 
 
+def _rust_allocation_handler_provenance(companion: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+    """Read the accepted allocator product's attested static archive members."""
+    if companion is None:
+        return None
+    retained = companion.get('products', {}).get('static_provenance')
+    require(type(retained) is dict and type(retained.get('path')) is str,
+            'Rust allocation handler provenance identity differs')
+    path = physical_work_path(Path(retained['path']), directory=False)
+    before = file_identity(path)
+    require(same(before, retained), 'Rust allocation handler provenance changed before binding')
+    provenance = read_json(path)
+    require(same(file_identity(path), before), 'Rust allocation handler provenance changed during binding')
+    return provenance
+
+
+def attach_rust_allocation_handlers(accounting: Mapping[str, Any], rule: Mapping[str, Any],
+                                    rust_members: Sequence[str],
+                                    allocator_companion: Mapping[str, Any] | None,
+                                    provenance: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Own the pinned Rust OOM defaults and their conditional archive imports.
+
+    The stock alloc default and compiler shim are retained as explicitly
+    attested weak members of the selected static archive. Their mutual
+    references resolve to those members when linked without an application
+    override. The global marker is a compiler-internal shim entry, not an
+    allocator implementation or a shared-libc export.
+    """
+    rule = exact(rule, {'id', 'owner', 'names', 'sources', 'reason'}, 'Rust allocation handler rule')
+    require(rule['id'] == 'pinned-rust-allocation-error-shim'
+            and rule['owner'] == 'pinned-rust-alloc-error-shim'
+            and rule['names'] == list(RUST_ALLOC_HANDLER_NAMES)
+            and rule['sources'] == ['rust-toolchain.toml', 'scripts/build_x86_64_owned_sysroot.py'],
+            'Rust allocation handler rule differs')
+    if allocator_companion is None or provenance is None:
+        return []
+    products = allocator_companion.get('products', {})
+    static = products.get('static_libc', {}) if type(products) is dict else {}
+    if (allocator_companion.get('status') != 'native-c-allocator-boundary-observed-with-boundaries'
+            or type(static) is not dict or type(static.get('sha256')) is not str
+            or type(provenance) is not dict
+            or provenance.get('archive') != {'name': 'libc.a', 'sha256': static['sha256']}
+            or provenance.get('dependency_graph', {}).get('c_allocator_selected') is not True
+            or provenance['dependency_graph'].get('native_allocator_selected') is not False):
+        return []
+    artifact = accounting.get('artifacts', {}).get('candidate-static', {}).get('artifact', {})
+    if artifact.get('identity', {}).get('sha256') != static['sha256']:
+        return []
+    selected = provenance.get('selected_members', [])
+    duplicates = provenance.get('rust_runtime_duplicate_bindings', [])
+    if type(selected) is not list or type(duplicates) is not list:
+        return []
+    rust = set(strings(list(rust_members), 'static Rust members', empty=False))
+    selected_names = [row.get('name') for row in selected if type(row) is dict]
+    if len(selected_names) != len(selected) or len(selected_names) != len(set(selected_names)):
+        return []
+    role_names = RUST_ALLOC_HANDLER_NAMES
+    source_roles = (('liballoc-', role_names[0]), ('libstd-', role_names[1]))
+    attested = {}
+    for prefix, weakened in source_roles:
+        candidates = [row for row in duplicates if type(row) is dict
+                      and weakened in row.get('weakened_symbols', [])]
+        if len(candidates) != 1:
+            return []
+        claim = candidates[0]
+        name = claim.get('member')
+        installed = [row for row in selected if type(row) is dict and row.get('name') == name]
+        if (type(name) is not str or len(installed) != 1
+                or name not in rust
+                or installed[0].get('sha256') != claim.get('installed_sha256')
+                or type(claim.get('source_sha256')) is not str
+                or re.fullmatch(r'[0-9a-f]{64}', claim['source_sha256']) is None
+                or type(claim.get('stock_rlib')) is not str
+                or not claim['stock_rlib'].startswith(prefix)
+                or not claim['stock_rlib'].endswith('.rlib')
+                or type(claim.get('stock_rlib_sha256')) is not str
+                or re.fullmatch(r'[0-9a-f]{64}', claim['stock_rlib_sha256']) is None):
+            return []
+        attested[weakened] = name
+    alloc_member, shim_member = attested[role_names[0]], attested[role_names[1]]
+    if alloc_member == shim_member:
+        return []
+    records, placements, occurrences = _accounting_indexes(accounting, description='Rust allocation handler class')
+    topology = (
+        (role_names[0], alloc_member, 'definition', 'WEAK', 57, '.text.unlikely.'),
+        (role_names[0], shim_member, 'import', 'GLOBAL', 0, None),
+        (role_names[1], shim_member, 'definition', 'WEAK', 7, '.text.unlikely.'),
+        (role_names[1], alloc_member, 'import', 'GLOBAL', 0, None),
+        (role_names[2], shim_member, 'definition', 'GLOBAL', 1, '.text.'),
+    )
+    expected_reasons = ('candidate binding ownership is unresolved',
+                        'candidate definition placement is not selected: candidate-static',
+                        ORDINARY_IMPORT_REASON)
+    bound = {}
+    for name in role_names:
+        record = records.get((name, None, False))
+        reasons = expected_reasons if name != role_names[2] else expected_reasons[:2]
+        if (record is None or record.get('selection', {}).get('disposition') != 'unresolved'
+                or record['selection'].get('owner') is not None
+                or record.get('expected_placements') != []
+                or len(record.get('unresolved', [])) != len(reasons)
+                or set(record['unresolved']) != set(reasons)
+                or (name, 'candidate-static') in placements):
+            return []
+        rows = [row for row in occurrences.values() if row.get('role') != 'unnamed'
+                and identity_key(row_identity(row['row'])) == (name, None, False)]
+        expected = [part for part in topology if part[0] == name]
+        if len(rows) != len(expected):
+            return []
+        by_member = {row.get('member_name'): row for row in rows}
+        if len(by_member) != len(expected):
+            return []
+        for _symbol, member, role, binding, size, section_prefix in expected:
+            row = by_member.get(member)
+            if (row is None or row.get('artifact_key') != 'candidate-static'
+                    or row.get('artifact_sha256') != static['sha256']
+                    or row.get('member_occurrence') != 0 or row.get('table') != '.symtab'
+                    or row.get('role') != role
+                    or row['row'].get('type') != ('FUNC' if role == 'definition' else 'NOTYPE')
+                    or row['row'].get('binding') != binding
+                    or row['row'].get('visibility') != 'DEFAULT'
+                    or (row['row'].get('section_index') == 'UND') != (role == 'import')
+                    or row['row'].get('size_bytes') != size):
+                return []
+            if role == 'definition':
+                section = row.get('definition_section')
+                if (type(section) is not dict
+                        or section.get('name') != section_prefix + name
+                        or section.get('type') != 'PROGBITS' or section.get('flags') != 'AX'
+                        or row['row'].get('section_index') != str(section.get('index'))):
+                    return []
+        bound[name] = (record, by_member)
+    joins = []
+    for name in role_names:
+        record, by_member = bound[name]
+        definition_member = alloc_member if name == role_names[0] else shim_member
+        definition = by_member[definition_member]
+        binding = definition['row']['binding']
+        metadata = {'type': 'FUNC', 'binding': binding, 'visibility': 'DEFAULT'}
+        record['selection'] = {'disposition': 'private-provider', 'owner': rule['owner'],
+                               'group': rule['id'], 'sources': list(rule['sources']), 'reason': rule['reason']}
+        record['expected_placements'] = [{'artifact_key': 'candidate-static', 'metadata': metadata,
+                                          'metadata_rule': 'explicit'}]
+        accounting['placement_joins'].append({
+            'identity': copy.deepcopy(record['identity']), 'artifact_key': 'candidate-static',
+            'definition_count': 1, 'occurrence_indices': [definition['index']],
+            'expected_metadata': metadata, 'metadata_differences': [],
+            'metadata_origin': None, 'placement_observed': True,
+        })
+        for row in by_member.values():
+            row['accounting'] = {'disposition': 'private-provider', 'owner': rule['owner'],
+                                 'scope': 'candidate-static'}
+            if row['role'] == 'import':
+                row['accounting']['resolution'] = {
+                    'kind': 'archive-sibling', 'provider_occurrence_index': definition['index']}
+                row['accounting']['resolution_proven'] = True
+        discharged = list(record['unresolved'])
+        _remove_identity_requirements(accounting, record, discharged,
+                                      description=f'Rust allocation handler {name}')
+        joins.append({'identity': copy.deepcopy(record['identity']), 'owner': rule['owner'],
+                      'definition_member': definition_member, 'definition_index': definition['index'],
+                      'reference_indices': sorted(row['index'] for row in by_member.values()
+                                                  if row['role'] == 'import'),
+                      'discharged_reasons': discharged})
+    return joins
+
+
 def attach_native_crt_descriptor_handoff(accounting: Mapping[str, Any],
                                          companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     """Discharge only the current main-image descriptor transport evidence.
@@ -10970,6 +11152,13 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         lambda: (attach_native_c_allocator_boundary(accounting, native_c_allocator_boundary_companion),
                  attach_native_c_allocator_runtime_imports(accounting, native_c_allocator_boundary_companion)),
         empty=([], []))
+    rust_allocation_handler_joins, _ = _attach(
+        rejected, 'rust_allocation_handler_provenance', accounting, native_c_allocator_boundary_companion,
+        lambda: attach_rust_allocation_handlers(
+            accounting, contract['rust_allocation_handlers'], archive_map['static_rust_members'],
+            native_c_allocator_boundary_companion,
+            _rust_allocation_handler_provenance(native_c_allocator_boundary_companion),
+        ))
     stdio_alias_contract_joins, stdio_alias_contract_companion = _attach(
         rejected, 'stdio_alias_contract_report', accounting, stdio_alias_contract_companion,
         lambda: attach_native_stdio_alias(accounting, stdio_alias_contract_companion))
@@ -11141,6 +11330,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'native_c_allocator_boundary_companion': native_c_allocator_boundary_companion,
             'native_c_allocator_boundary_joins': native_c_allocator_boundary_joins,
             'native_c_allocator_runtime_import_joins': native_c_allocator_runtime_import_joins,
+            'rust_allocation_handler_joins': rust_allocation_handler_joins,
             'stdio_alias_contract_companion': stdio_alias_contract_companion,
             'stdio_alias_contract_joins': stdio_alias_contract_joins,
             'crt_startup_companion': crt_startup_companion,

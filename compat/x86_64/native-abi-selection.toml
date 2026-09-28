@@ -932,6 +932,15 @@ members = ["_init", "_fini"]
 sources = ["libc/src/c_abi/x86_64/init_fini_defaults.rs", "crt/src/x86_64_crti.rs", "crt/src/x86_64_crtn.rs", "crt/src/x86_64_startup.rs", "compat/x86_64/crabc_cc_static.py", "compat/x86_64/crabc_cc_owned_dynamic.py"]
 reason = "Strong executable CRT fragments resolve lifecycle calls before weak libc defaults."
 
+# These compiler-internal Rust OOM entries remain tied to the selected archive
+# and its attested weak stock-runtime members.
+[rust_allocation_handlers]
+id = "pinned-rust-allocation-error-shim"
+owner = "pinned-rust-alloc-error-shim"
+names = ["_RNvCs6HbitnLHj0h_7___rustc25___rdl_alloc_error_handler", "_RNvCs6HbitnLHj0h_7___rustc26___rust_alloc_error_handler", "_RNvCs6HbitnLHj0h_7___rustc35___rust_no_alloc_shim_is_unstable_v2"]
+sources = ["rust-toolchain.toml", "scripts/build_x86_64_owned_sysroot.py"]
+reason = "Pinned Rust alloc default and compiler shim conditionally resolve through the owned static archive."
+
 [[structural_groups]]
 id = "loader-entry-stages"
 members = ["__dls2b", "__dls3", "_dlstart"]

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import copy
 import contextlib
+import hashlib
 import io
 import importlib.util
 import json
+import os
 from pathlib import Path
+import struct
 import sys
 import tempfile
 import unittest
@@ -1504,6 +1507,202 @@ class CrtInitFiniBindingTests(unittest.TestCase):
                 self.assertEqual(selection.attach_crt_init_fini_imports(
                     accounting, rule, [self.MEMBER], companion, observations, artifacts, evidence), [])
                 self.assertEqual(len(accounting['blockers']), 2)
+
+
+class RustAllocationHandlerBindingTests(unittest.TestCase):
+    """Pinned Rust OOM defaults form one conditional static archive boundary."""
+
+    NAMES = (
+        '_RNvCs6HbitnLHj0h_7___rustc25___rdl_alloc_error_handler',
+        '_RNvCs6HbitnLHj0h_7___rustc26___rust_alloc_error_handler',
+        '_RNvCs6HbitnLHj0h_7___rustc35___rust_no_alloc_shim_is_unstable_v2',
+    )
+    ALLOC_MEMBER = 'c.alloc-pinned.alloc-cgu.0.rcgu.o.rcgu.o'
+    SHIM_MEMBER = 'c.rustc-shim.rcgu.o'
+
+    def fixture(self):
+        rule = {'id': 'pinned-rust-allocation-error-shim', 'owner': 'pinned-rust-alloc-error-shim',
+                'names': list(self.NAMES),
+                'sources': ['rust-toolchain.toml', 'scripts/build_x86_64_owned_sysroot.py'],
+                'reason': 'Pinned Rust alloc default and compiler shim conditionally resolve through the owned static archive.'}
+        archive_sha = 'a' * 64
+        members = {self.ALLOC_MEMBER: 'b' * 64, self.SHIM_MEMBER: 'c' * 64}
+        companion = {'status': 'native-c-allocator-boundary-observed-with-boundaries',
+                     'products': {'static_libc': {'sha256': archive_sha},
+                                  'static_provenance': {'sha256': 'd' * 64}}}
+        provenance = {
+            'archive': {'name': 'libc.a', 'sha256': archive_sha},
+            'dependency_graph': {'c_allocator_selected': True, 'native_allocator_selected': False},
+            'selected_members': [{'name': name, 'sha256': digest} for name, digest in members.items()],
+            'rust_runtime_duplicate_bindings': [
+                {'member': self.ALLOC_MEMBER, 'installed_sha256': members[self.ALLOC_MEMBER],
+                 'source_sha256': 'e' * 64, 'stock_rlib': 'liballoc-pinned.rlib',
+                 'stock_rlib_sha256': 'f' * 64, 'weakened_symbols': [self.NAMES[0]]},
+                {'member': self.SHIM_MEMBER, 'installed_sha256': members[self.SHIM_MEMBER],
+                 'source_sha256': '1' * 64, 'stock_rlib': 'libstd-pinned.rlib',
+                 'stock_rlib_sha256': '2' * 64, 'weakened_symbols': [self.NAMES[1]]},
+            ],
+        }
+        unresolved = ('candidate binding ownership is unresolved',
+                      'candidate definition placement is not selected: candidate-static',
+                      selection.ORDINARY_IMPORT_REASON)
+        accounting = {'identities': [], 'occurrences': [], 'placement_joins': [], 'blockers': [],
+                      'artifacts': {'candidate-static': {'artifact': {'identity': {'sha256': archive_sha}}}}}
+        for number, name in enumerate(self.NAMES):
+            reasons = list(unresolved if number < 2 else unresolved[:2])
+            ident = identity(name)
+            accounting['identities'].append({'identity': ident,
+                'selection': {'disposition': 'unresolved', 'owner': None},
+                'expected_placements': [], 'unresolved': reasons})
+            accounting['blockers'].extend({'code': 'identity-unresolved', 'identity': ident, 'reason': reason}
+                                          for reason in reasons)
+        topology = (
+            (self.NAMES[0], self.ALLOC_MEMBER, 'definition', 'WEAK', 57),
+            (self.NAMES[0], self.SHIM_MEMBER, 'import', 'GLOBAL', 0),
+            (self.NAMES[1], self.SHIM_MEMBER, 'definition', 'WEAK', 7),
+            (self.NAMES[1], self.ALLOC_MEMBER, 'import', 'GLOBAL', 0),
+            (self.NAMES[2], self.SHIM_MEMBER, 'definition', 'GLOBAL', 1),
+        )
+        for index, (name, member, role, binding, size) in enumerate(topology):
+            accounting['occurrences'].append({
+                'index': index, 'artifact_key': 'candidate-static', 'artifact_sha256': archive_sha,
+                'member_name': member, 'member_occurrence': 0, 'role': role, 'table': '.symtab',
+                'row': symbol(name, binding=binding, section='UND' if role == 'import' else '3',
+                              kind='NOTYPE' if role == 'import' else 'FUNC', size=size),
+                'definition_section': None if role == 'import' else
+                    {'name': '.text.unlikely.' + name if index < 4 else '.text.' + name,
+                     'type': 'PROGBITS', 'flags': 'AX', 'index': 3},
+            })
+        return rule, accounting, companion, provenance, list(members)
+
+    def test_pinned_weak_defaults_and_marker_close_one_static_class(self):
+        rule, accounting, companion, provenance, members = self.fixture()
+        joins = selection.attach_rust_allocation_handlers(accounting, rule, members, companion, provenance)
+        self.assertEqual([row['identity']['name'] for row in joins], list(self.NAMES))
+        self.assertEqual(accounting['blockers'], [])
+        self.assertTrue(all(row['selection']['owner'] == rule['owner'] for row in accounting['identities']))
+
+    def test_installed_provenance_is_read_only_from_its_authenticated_file(self):
+        work = ROOT / '.work/x86_64/native-abi-selection-tests'
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            path = Path(temporary) / 'libc-static.provenance.json'
+            path.write_text('{"archive":"selected"}\n')
+            retained = {'products': {'static_provenance': selection.file_identity(path)}}
+            self.assertEqual(selection._rust_allocation_handler_provenance(retained),
+                             {'archive': 'selected'})
+            path.write_text('{"archive":"foreign"}\n')
+            with self.assertRaisesRegex(selection.SelectionError, 'changed before binding'):
+                selection._rust_allocation_handler_provenance(retained)
+
+    def test_foreign_or_ambiguous_archive_topology_retains_whole_class(self):
+        cases = {
+            'strong default': lambda a, p: a['occurrences'][0]['row'].update(binding='GLOBAL'),
+            'weak marker': lambda a, p: a['occurrences'][4]['row'].update(binding='WEAK'),
+            'foreign member': lambda a, p: a['occurrences'][0].update(member_name='foreign.o'),
+            'duplicate provider': lambda a, p: a['occurrences'].append({**copy.deepcopy(a['occurrences'][0]), 'index': 5}),
+            'misplaced import': lambda a, p: a['occurrences'][1].update(member_name=self.ALLOC_MEMBER),
+            'foreign artifact': lambda a, p: a['occurrences'][4].update(artifact_key='candidate-shared'),
+            'wrong archive pin': lambda a, p: p['archive'].update(sha256='x'),
+            'foreign stock rlib': lambda a, p: p['rust_runtime_duplicate_bindings'][0].update(stock_rlib='foreign.rlib'),
+            'wrong installed member hash': lambda a, p: p['selected_members'][0].update(sha256='0' * 64),
+            'missing weakened symbol': lambda a, p: p['rust_runtime_duplicate_bindings'][1].update(weakened_symbols=[]),
+            'native allocator selected': lambda a, p: p['dependency_graph'].update(native_allocator_selected=True),
+            'foreign archive fact': lambda a, p: a['artifacts']['candidate-static']['artifact']['identity'].update(sha256='0' * 64),
+            'wrong marker section': lambda a, p: a['occurrences'][4]['definition_section'].update(index=4),
+        }
+        for label, alter in cases.items():
+            with self.subTest(label=label):
+                rule, accounting, companion, provenance, members = self.fixture()
+                alter(accounting, provenance)
+                self.assertEqual(selection.attach_rust_allocation_handlers(
+                    accounting, rule, members, companion, provenance), [])
+                self.assertEqual(len(accounting['blockers']), 8)
+
+
+class RustAllocationHandlerPhysicalLinkTests(unittest.TestCase):
+    """Read sealed static link maps for the selected archive's Rust handlers."""
+
+    @staticmethod
+    def physical(path):
+        path = Path(path)
+        if path.is_relative_to('/workspace'):
+            path = ROOT / path.relative_to('/workspace')
+        elif not path.is_absolute():
+            path = ROOT / path
+        return path
+
+    @staticmethod
+    def digest(path):
+        if not path.is_file() or path.is_symlink():
+            raise AssertionError(f'link input is not a physical regular file: {path}')
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def test_installed_archive_handlers_are_extracted_in_both_static_modes(self):
+        retained = os.environ.get('CRABC_RUST_ALLOC_HANDLER_LINK_DIR')
+        if retained is None:
+            self.skipTest('physical static link receipts were not supplied')
+        work = self.physical(retained)
+        self.assertTrue(work.is_relative_to(ROOT / '.work'))
+        self.assertTrue(work.is_dir() and not work.is_symlink())
+        source = None
+        for mode, elf_type in (('static-exec', 'ET_EXEC'), ('static-pie', 'ET_DYN')):
+            with self.subTest(mode=mode):
+                receipt = json.loads((work / f'{mode}.link.json').read_text())
+                self.assertEqual(receipt['format'], 'crabc-x86-64-sealed-static-driver-v1')
+                self.assertEqual(receipt['mode']['elf_type'], elf_type)
+                self.assertEqual(receipt['mode']['interpreter'], 'absent')
+                inputs = receipt['input_receipts']
+                self.assertEqual([row['role'] for row in inputs],
+                                 ['crt-entry', 'crt-prologue', 'libc', 'builtins', 'crt-epilogue', 'application'])
+                libc = next(row for row in inputs if row['role'] == 'libc')
+                contract = receipt['owned_link_contract']
+                archive_inputs = [path for path in contract if path.endswith('/usr/lib/libc.a')]
+                self.assertEqual(len(archive_inputs), 1)
+                archive_input = archive_inputs[0]
+                archive = self.physical(archive_input)
+                self.assertEqual(self.digest(archive), libc['sha256'])
+                for item in inputs:
+                    physical = (self.physical(item['path']) if item['role'] == 'application'
+                                else archive.parent / Path(item['path']).name)
+                    self.assertEqual(self.digest(physical), item['sha256'])
+                provenance_path = archive.parents[2] / 'share/crabc/libc-static.provenance.json'
+                provenance = json.loads(provenance_path.read_text())
+                self.assertEqual(provenance['archive'], {'name': 'libc.a', 'sha256': libc['sha256']})
+                self.assertIs(provenance['dependency_graph']['c_allocator_selected'], True)
+                self.assertIs(provenance['dependency_graph']['native_allocator_selected'], False)
+                if source is None:
+                    source = (libc['sha256'], self.digest(provenance_path))
+                self.assertEqual((libc['sha256'], self.digest(provenance_path)), source)
+                self.assertEqual(contract.count(archive_input), 1)
+                self.assertIn('--no-dynamic-linker', contract)
+                for role in ('map', 'trace'):
+                    path = work / receipt[role]['path']
+                    self.assertEqual(self.digest(path), receipt[role]['sha256'])
+                output = self.physical(receipt['output']['path'])
+                self.assertEqual(self.digest(output), receipt['output']['sha256'])
+                image = output.read_bytes()
+                self.assertEqual(image[:6], b'\x7fELF\x02\x01')
+                self.assertEqual(struct.unpack_from('<H', image, 16)[0], 2 if mode == 'static-exec' else 3)
+                phoff = struct.unpack_from('<Q', image, 32)[0]
+                phentsize, phnum = struct.unpack_from('<HH', image, 54)
+                self.assertNotIn(3, [struct.unpack_from('<I', image, phoff + index * phentsize)[0]
+                                     for index in range(phnum)])
+                mapped = (work / receipt['map']['path']).read_text()
+                traced = (work / receipt['trace']['path']).read_text().splitlines()
+                members = provenance['rust_runtime_duplicate_bindings']
+                selected = {row['name']: row['sha256'] for row in provenance['selected_members']}
+                for name in selection.RUST_ALLOC_HANDLER_NAMES:
+                    claims = [row for row in members if name in row['weakened_symbols']]
+                    if name == selection.RUST_ALLOC_HANDLER_NAMES[2]:
+                        claims = [row for row in members
+                                  if selection.RUST_ALLOC_HANDLER_NAMES[1] in row['weakened_symbols']]
+                    self.assertEqual(len(claims), 1)
+                    member = claims[0]['member']
+                    self.assertEqual(selected[member], claims[0]['installed_sha256'])
+                    self.assertEqual(traced.count(f'{archive_input}({member})'), 1)
+                    section = '.text.' if name == selection.RUST_ALLOC_HANDLER_NAMES[2] else '.text.unlikely.'
+                    self.assertEqual(mapped.count(f'{archive_input}({member}):({section}{name})'), 1)
 
 
 class CompanionRejectionTests(unittest.TestCase):
