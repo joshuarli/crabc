@@ -43,6 +43,7 @@ class M6GateContractTests(unittest.TestCase):
         self.assertEqual(summary["runnable_evidence"], {
             "differential:arena-destroy": "compat/allocator/arena_destroy.py",
             "differential:heap-destroy": "compat/allocator/heap_destroy.py",
+            "differential:main-heap-visitor-population": "compat/allocator/x86_64_m6_main_visitor_population.py",
             "differential:public-heap-adapter": "compat/allocator/x86_64_m6_adapter.py",
             "differential:public-heap-lifecycle": "compat/allocator/heap_lifecycle.py",
             "differential:subprocess-lifecycle": "compat/allocator/subprocess_lifecycle.py",

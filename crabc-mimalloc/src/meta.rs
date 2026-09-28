@@ -26,7 +26,9 @@
 //!
 //! The metadata theap is not a thread cache. Every operation is serialized by
 //! [`PrivateLock`], its source TLD identity stays `THREAD_ID_DETACHED`, and
-//! its pages never enter abandonment or remote-free routing. The mapping,
+//! its pages never enter abandonment. A source free on a detached metadata
+//! page publishes to its remote head, which the metadata owner or a quiescent
+//! Heap visitor later collects. The mapping,
 //! page map, arena, bootstrap, and allocator all reside in final static slots
 //! before the initialized state is Release-published; none is destroyed or
 //! moved for the process lifetime.
@@ -167,6 +169,11 @@ pub(crate) enum MetaError {
     /// The already-validated detached local free could not preserve a source
     /// page lifecycle invariant. This is not a public invalid-free policy.
     Free(FreeError),
+    /// A detached metadata page could not accept the source remote free.
+    DetachedRemoteFree(crate::remote_free::RemoteFreeError),
+    /// The selected process PageMap was unavailable for a detached metadata
+    /// block whose source free requires remote publication.
+    DetachedRemoteFreeUnavailable,
 }
 
 /// Failure while attaching or detaching a child subprocess's metadata Theap
@@ -5087,16 +5094,42 @@ impl<'owner> MetadataEngine<'owner> {
     }
 
     /// Replaces one metadata allocation while retaining the already selected
-    /// main-subprocess identity. Current-thread TLS backing uses this rather
-    /// than the global convenience route so all of its images remain with the
-    /// same TLD/Theap/registry process selection in isolated tests and later
-    /// integration.
+    /// main-subprocess identity. The regular thread-local slot owner uses the
+    /// typed sibling below so replaced images take the detached remote-free
+    /// path; this general route retains its existing local release contract.
     pub(crate) fn rezalloc_for_main_subprocess(
         self: Pin<&'owner Self>,
         config: MemoryConfig,
         subprocess: &'static MainSubprocess,
         old: Option<&mut MetaAllocation<'owner>>,
         new_size: usize,
+    ) -> Result<MetaAllocation<'owner>, MetaError> {
+        self.rezalloc_for_main_subprocess_with_release(config, subprocess, old, new_size, false)
+    }
+
+    /// Replaces an installed regular thread-local slot image. Source copies
+    /// the old flexible image after releasing the metadata allocation lock,
+    /// then frees it through the detached page's remote head.
+    pub(crate) fn rezalloc_thread_local_backing_for_main_subprocess(
+        self: Pin<&'owner Self>,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+        old: &mut MetaAllocation<'owner>,
+        new_size: usize,
+    ) -> Result<MetaAllocation<'owner>, MetaError> {
+        if !old.dynamic_thread_local_backing_projected {
+            return Err(MetaError::ReleasedOrStale);
+        }
+        self.rezalloc_for_main_subprocess_with_release(config, subprocess, Some(old), new_size, true)
+    }
+
+    fn rezalloc_for_main_subprocess_with_release(
+        self: Pin<&'owner Self>,
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+        old: Option<&mut MetaAllocation<'owner>>,
+        new_size: usize,
+        remote_old: bool,
     ) -> Result<MetaAllocation<'owner>, MetaError> {
         let Some(old) = old else {
             return self.zalloc_for_main_subprocess(config, subprocess, new_size);
@@ -5160,7 +5193,14 @@ impl<'owner> MetadataEngine<'owner> {
         }
 
         old.state.store(ALLOCATION_RELEASING, Ordering::Release);
-        if let Err(error) = self.release_claimed(old) {
+        let old_release = if remote_old {
+            // SAFETY: the old image remains the exact live metadata block
+            // through the source copy; its capability is now RELEASING.
+            unsafe { self.publish_claimed_detached_metadata(old) }
+        } else {
+            self.release_claimed(old)
+        };
+        if let Err(error) = old_release {
             // The old block was fully validated while held exclusively, so a
             // free failure is an internal lifecycle fault. Retire the private
             // replacement before reporting it rather than leaking an
@@ -5181,6 +5221,70 @@ impl<'owner> MetadataEngine<'owner> {
         #[cfg(any(test, feature = "native-runtime-test-audit"))]
         self.get_ref().test_note_allocation_released();
         Ok(replacement)
+    }
+
+    /// Releases a non-main Heap Theap image through the detached metadata
+    /// page's remote list, as source `mi_free` does for this caller-relative
+    /// free. The exact capability ends at publication; its page remains
+    /// counted until the detached owner collects the remote head.
+    ///
+    /// # Safety
+    /// The caller has detached the Theap from all Heap and TLD lists and
+    /// excludes concurrent process teardown and access to its image.
+    pub(crate) unsafe fn free_detached_heap_theap(
+        self: Pin<&'owner Self>,
+        allocation: &mut MetaAllocation<'owner>,
+    ) -> Result<(), MetaError> {
+        if !allocation.belongs_to(self) {
+            return Err(MetaError::ForeignOwner);
+        }
+        if self.get_ref().status.load(Ordering::Acquire) != READY
+            || !allocation.is_live()
+            || !allocation.has_consistent_malloc_provenance()
+        {
+            return Err(MetaError::ReleasedOrStale);
+        }
+        if !allocation.claim(ALLOCATION_LIVE, ALLOCATION_RELEASING) {
+            return Err(MetaError::ReleasedOrStale);
+        }
+        // SAFETY: the source Heap release has relinquished all image users;
+        // this exact capability retains its page through publication.
+        match unsafe { self.publish_claimed_detached_metadata(allocation) } {
+            Ok(()) => {
+                allocation.release();
+                #[cfg(any(test, feature = "native-runtime-test-audit"))]
+                self.get_ref().test_note_allocation_released();
+                Ok(())
+            }
+            Err(error) => {
+                allocation.reject();
+                Err(error)
+            }
+        }
+    }
+
+    /// Publishes an already claimed exact Malloc block to its detached
+    /// metadata page and leaves its used count pending for owner collection.
+    ///
+    /// # Safety
+    /// `allocation` is in RELEASING state, its exact block remains live and
+    /// registered, and no source owner can access its bytes after success.
+    unsafe fn publish_claimed_detached_metadata(
+        self: Pin<&'owner Self>,
+        allocation: &mut MetaAllocation<'owner>,
+    ) -> Result<(), MetaError> {
+        let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+            .ready_child_subprocess_inputs()
+            .ok_or(MetaError::DetachedRemoteFreeUnavailable)?;
+        // SAFETY: the claimed exact block retains its metadata page and
+        // registration through the consuming remote publication.
+        let observed = unsafe { binding.page_map().lookup_live_allocation(allocation.pointer) }
+            .map_err(|_| MetaError::DetachedRemoteFreeUnavailable)?
+            .ok_or(MetaError::DetachedRemoteFreeUnavailable)?;
+        // SAFETY: the one PageMap observation binds the exact block to the
+        // detached metadata page whose owner remains process-live.
+        unsafe { crate::remote_free::push_detached_metadata_allocation(observed) }
+            .map_err(MetaError::DetachedRemoteFree)
     }
 
     /// Releases one metadata allocation under the detached owner lock.

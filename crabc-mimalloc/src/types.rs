@@ -4432,7 +4432,8 @@ impl Page {
     /// its block area remains mapped until the temporary claim is released.
     /// An associated page may have producers using only their disjoint
     /// atomic projection and current blocks during collection. A detached
-    /// page must have an empty remote head and no remote producer.
+    /// page may have pending remote blocks; the visitor excludes any producer
+    /// while it drains that head and then collects the local list.
     pub(crate) unsafe fn collect_for_heap_visit_at(page: NonNull<Self>) -> bool {
         // SAFETY: the caller keeps this initialized page mapped and excludes
         // identity changes while the atomic owner word is observed.
@@ -4468,11 +4469,33 @@ impl Page {
             return remote_ok && local_ok && released;
         }
         if thread_word == THREAD_ID_DETACHED {
-            // The remote half is a no-op for this serialized detached page;
-            // its forced local half still has to move the pending free list.
-            // SAFETY: the caller keeps this initialized detached page stable
-            // while the exact atomic head is inspected.
-            if !unsafe { page.as_ref() }.remote_free_head_is_owner_only() {
+            // A detached metadata page keeps its remote-head owner bit set.
+            // Source block visitation detaches any published blocks before
+            // the forced local-list transfer, even though no thread owns its
+            // ordinary fields outside the metadata lock or this quiescence.
+            // SAFETY: this checks the detached Theap and complete area before
+            // projecting owner-only fields for the remote detach below.
+            if (unsafe { Self::local_collect_state_for_owner_at(page, None) }).is_none() {
+                return false;
+            }
+            let raw = page.as_ptr();
+            // SAFETY: the caller retains this initialized page and excludes
+            // producers and competing collectors through both collection
+            // phases. Each projection names a disjoint initialized field.
+            let owner = unsafe {
+                PageRemoteFreeOwnerState {
+                    xthread_free: NonNull::new_unchecked(core::ptr::addr_of_mut!((*raw).xthread_free)),
+                    free: NonNull::new_unchecked(core::ptr::addr_of_mut!((*raw).free)),
+                    local_free: NonNull::new_unchecked(core::ptr::addr_of_mut!((*raw).local_free)),
+                    used: NonNull::new_unchecked(core::ptr::addr_of_mut!((*raw).used)),
+                    free_is_zero: NonNull::new_unchecked(core::ptr::addr_of_mut!((*raw).free_is_zero)),
+                    capacity: (*raw).capacity,
+                }
+            };
+            // SAFETY: the detached owner bit remains set, every remote block
+            // is still counted in used, and this visitor owns the page's
+            // ordinary free-list fields for the complete detach.
+            if unsafe { crate::remote_free::collect(owner) }.is_err() {
                 return false;
             }
             // SAFETY: the caller exclusively owns the detached page's local
@@ -7506,6 +7529,38 @@ mod tests {
         assert!(page_ref.local_free.is_null());
         assert_eq!(page_ref.used(), 1);
         assert_eq!(page_ref.xthread_free.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn heap_visitor_collects_detached_metadata_remote_block_before_local_visit() {
+        const BLOCK_SIZE: usize = 64;
+        const PAGE_OFFSET: usize = size_of::<Page>();
+        const WORDS: usize = (PAGE_OFFSET + 2 * BLOCK_SIZE) / size_of::<usize>();
+        let mut storage = [MaybeUninit::<usize>::uninit(); WORDS];
+        let page_pointer = storage.as_mut_ptr().cast::<Page>();
+        let remote = unsafe { page_pointer.cast::<u8>().add(PAGE_OFFSET + BLOCK_SIZE).cast::<Block>() };
+        // SAFETY: the second block remains writable and its remote-list link
+        // terminates inside the retained two-block area.
+        unsafe { remote.write(Block { next: Encoded(0) }) };
+        let mut initial = Page::remote_free_test_page(2, 2);
+        initial.block_size = BLOCK_SIZE;
+        initial.page_offset = PAGE_OFFSET;
+        initial.xthread_id.store(THREAD_ID_DETACHED, Ordering::Release);
+        initial.xthread_free.store(remote.addr() | 1, Ordering::Release);
+        // SAFETY: the word-aligned backing holds the complete Page and both
+        // blocks throughout the quiescent visitor collection.
+        unsafe { page_pointer.write(initial) };
+        let page = NonNull::new(page_pointer).expect("the fixture page is address-stable");
+        // SAFETY: the detached metadata owner has no active producer or
+        // collector, and this test retains its page and complete block area.
+        assert!(unsafe { Page::collect_for_heap_visit_at(page) });
+        // SAFETY: collection ended before these sole-owner observations.
+        let page_ref = unsafe { page.as_ref() };
+        assert_eq!(page_ref.used(), 1);
+        assert_eq!(page_ref.free_list_head(), remote);
+        assert!(page_ref.local_free.is_null());
+        assert_eq!(page_ref.xthread_free.load(Ordering::Acquire), 1);
+        assert_eq!(page_ref.owner_thread_id(), THREAD_ID_DETACHED);
     }
 
     #[test]

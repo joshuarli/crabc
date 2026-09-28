@@ -1504,16 +1504,17 @@ impl ThreadLocalBackingOwner {
                 .allocation
                 .as_mut()
                 .ok_or(ThreadLocalBackingError::BackingProjection)?;
-            self.metadata.rezalloc_for_main_subprocess(
+            self.metadata.rezalloc_thread_local_backing_for_main_subprocess(
                 self.config,
                 self.subprocess,
-                Some(old),
+                old,
                 size,
             )
         };
         let replacement = match replacement {
             Ok(replacement) => replacement,
-            Err(error @ MetaError::Free(_) | error @ MetaError::ReleasedOrStale) => {
+            Err(error @ (MetaError::Free(_) | MetaError::ReleasedOrStale
+                | MetaError::DetachedRemoteFree(_) | MetaError::DetachedRemoteFreeUnavailable)) => {
                 // A successful replacement may already have consumed the old
                 // backing before reporting this internal lifecycle failure.
                 // Do not leave its old root live or offer a false retry.

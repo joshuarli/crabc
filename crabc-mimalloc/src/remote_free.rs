@@ -649,6 +649,31 @@ pub(crate) unsafe fn push_live_allocation_without_collect(
     Ok(())
 }
 
+/// Publishes a metadata block to the process-static detached Theap's remote
+/// list. Its page keeps the head's owner bit set for the lifetime of that
+/// Theap, so the ordinary source `allow_collect=true` free never claims an
+/// abandoned page at this boundary. The detached owner collects the block on
+/// a later allocation or Heap block visit.
+///
+/// # Safety
+/// `allocation` is one exact live metadata block whose page belongs to the
+/// process-static detached Theap. The caller consumes the block and excludes
+/// simultaneous teardown of that Theap or its page registration.
+pub(crate) unsafe fn push_detached_metadata_allocation(
+    allocation: LiveAllocationPointer,
+) -> Result<(), RemoteFreeError> {
+    if allocation.page_state() != LiveAllocationPageState::Detached {
+        return Err(RemoteFreeError::NotOwnerAssociated);
+    }
+    // SAFETY: the checked allocation binds this canonical block and atomic
+    // head to one stable detached metadata page. Its permanent owner bit is
+    // already set, making this the source remote publication without a claim.
+    let (_, producer, block, _) = unsafe { page_map_live_allocation_parts(&allocation) };
+    let was_owned = unsafe { push_source_block_mt(producer, block, false) }?;
+    debug_assert!(was_owned);
+    Ok(())
+}
+
 /// The source remote-free protocol encountered an unsupported lifecycle
 /// state or an invalid remote-list accounting condition.
 ///
@@ -809,7 +834,8 @@ unsafe fn push_source_block_mt(
 ///
 /// # Safety
 ///
-/// `state` must be the sole live-owner projection of one owner-associated page;
+/// `state` must be the sole owner projection of one live associated page or a
+/// detached metadata page under its private lock or quiescent Heap visitor;
 /// this caller must exclusively own its non-atomic `used`, `free`,
 /// `local_free`, and `free_is_zero` fields. Every block
 /// reachable from the detached remote list must be a valid, unencoded block

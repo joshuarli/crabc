@@ -286,7 +286,9 @@ unsafe fn theap_decref(theap: NonNull<Theap>) {
     // block is released.
     let allocation = unsafe { core::ptr::replace(core::ptr::addr_of_mut!((*image).allocation), None) };
     if let Some(mut allocation) = allocation {
-        let _ = MetaAllocator::global().free(&mut allocation);
+        // SAFETY: the last Theap reference has left its Heap and TLD lists;
+        // no owner can access the image after the remote publication.
+        let _ = unsafe { MetaAllocator::global().free_detached_heap_theap(&mut allocation) };
     }
 }
 
