@@ -62,7 +62,9 @@ are not transferable passes for a different revision.
   provider and reduces the selector to 719 blockers (700 identities).
   A later sealed cohort joins all 13 `getenv` archive importers and all 16
   retained source calls in both static modes and shared libc, reducing the
-  selector to 718 blockers.
+  selector to 718 blockers. A subsequent sealed cohort binds the owned scanf
+  archive's `mbrtowc` import through its direct static and shared-libc calls,
+  reducing the selector to 717 blockers.
   `libc.c-abi-compat` now runs a physical
   same-cohort text/math/locale/stdio family admission; its current assessment admits seven
   of ten components and retains three allocator components at the selected C
@@ -242,11 +244,15 @@ are not transferable passes for a different revision.
   remaining conditions; its full gate remains partial.
   A second explicit arena metadata-commit fault now matches 34 pinned-C/Rust
   observations while an earlier registered arena remains usable and releases
-  terminally; shared M2 registration is pending. The separate explicit arena
+  terminally; its registered-arena receiver is included in the shared M2 VM
+  gate. The separate explicit arena
   metadata-protection fault is now registered in the shared M2 VM gate with
   clean and failed-cleanup profiles, each matching 41 C/Rust fields. A clean
   source-bound rerun passes all 88 runnable checks, including all 49 VM checks;
   VM, arenas, initialization, and fault-injection blockers remain named.
+  A later clean run passes all 89 runnable checks, including 50 VM checks;
+  the newly registered second-arena metadata fault matches all 34 C/Rust
+  fields and the same four partial components retain their named blockers.
   A failed second-arena committed-slice claim and same-slice retry match 24
   C/Rust fields after the regular mapping uses the warning-preserving commit
   path; two additional pinned-C fields bind the attempted `mprotect` range.
@@ -305,6 +311,9 @@ are not transferable passes for a different revision.
   A later clean queue insertion sharing change reduces the linked Rust total
   from 716,602 to 716,353 bytes against the unchanged 108,311-byte C reference;
   the 64-byte local allocation and free instruction counts do not change.
+  Sharing the direct-cache queue-head update across page transitions reduces
+  a separate clean linked Rust total from 716,437 to 705,454 bytes, with the
+  pinned-C total and measured 64-byte path counts unchanged.
   Remote publication is at 165 Rust instructions after source-equivalent
   owner-word and published-PageMap checks, with its 100-trace and 25-value
   differentials passing.
