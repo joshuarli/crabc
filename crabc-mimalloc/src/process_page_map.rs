@@ -2944,6 +2944,79 @@ mod tests {
         );
     }
 
+    /// A failed direct reservation reaches the aligned fallback. Its failed
+    /// suffix release leaves one escaped raw mapping while the PageMap owns
+    /// the aligned middle, so startup and later allocation still proceed.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn emit_m2_page_map_fallback_trim_fault_c_rust_trace() {
+        static CAPTURE: std::sync::Mutex<std::vec::Vec<u8>> = std::sync::Mutex::new(std::vec::Vec::new());
+        unsafe extern "C" fn capture(message: *const core::ffi::c_char) {
+            // SAFETY: the output owner passes a non-null NUL-terminated fragment.
+            let bytes = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            CAPTURE.lock().unwrap().extend_from_slice(bytes);
+        }
+        crate::test_process::run_in_fresh_process(
+            "process_page_map::tests::emit_m2_page_map_fallback_trim_fault_c_rust_trace",
+            || {
+                std::env::set_var("mimalloc_show_errors", "1");
+                let fault = fault::install(fault::Plan::at_pair(
+                    fault::Point::Map, 1, fault::Point::Unmap, 1, Errno::NOMEM,
+                ));
+                let ranges = fault.capture_unmap_ranges();
+                let started = crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(capture)
+                });
+                let (released, count) = ranges.all().expect("bounded releases");
+                drop(ranges);
+                let failed_maps = fault.observed();
+                let failed_unmaps = fault.secondary_observed();
+                fault.set(fault::Plan::disabled());
+                assert!(started);
+                assert_eq!((failed_maps, failed_unmaps), (2, 1));
+                assert_eq!(count, 1);
+                let (suffix, suffix_length) = released[0];
+                let thread = std::format!("0x{:02X}", crate::os::thread_pointer_identity());
+                let output = std::string::String::from_utf8(core::mem::take(&mut *CAPTURE.lock().unwrap()))
+                    .expect("source messages are ASCII")
+                    .replace(&thread, "0xTID")
+                    .replace(&std::format!("0x{suffix:08X}"), "0xSUFFIX");
+                let hex: std::string::String = output.bytes().map(|byte| std::format!("{byte:02x}")).collect();
+                std::println!("m2.page_map.fallback_trim_fault.output={hex}");
+                let initialized = PROCESS_PAGE_MAP.state.load(Ordering::Acquire) == READY
+                    && PROCESS_PAGE_MAP.root.load().is_some();
+                std::println!("m2.page_map.fallback_trim_fault.initialized={}", usize::from(initialized));
+                let stats = MainSubprocess::global().identity().vm_statistics().snapshot();
+                std::println!("m2.page_map.fallback_trim_fault.reserved={}", stats.reserved_current);
+                std::println!("m2.page_map.fallback_trim_fault.committed={}", stats.committed_current);
+                std::println!("m2.page_map.fallback_trim_fault.mmap_calls={}", stats.mmap_calls);
+                std::println!("m2.page_map.fallback_trim_fault.commit_calls={}", stats.commit_calls);
+                let mut residency = 0u8;
+                // SAFETY: the failed suffix is page-aligned and `mincore` only
+                // writes the one residency byte for its first page.
+                let suffix_live = unsafe { crabc_core::mm::mincore_raw(
+                    suffix as *mut u8, 4096, &mut residency,
+                ) }.is_ok();
+                std::println!("m2.page_map.fallback_trim_fault.suffix_length={suffix_length}");
+                std::println!("m2.page_map.fallback_trim_fault.suffix_live={}", usize::from(suffix_live));
+                let allocated = match crate::runtime_lifecycle::native_allocate_aligned(16, 16, false) {
+                    crate::runtime_lifecycle::NativePageAllocationResult::Allocated(block) => {
+                        unsafe { crate::runtime_lifecycle::native_free(block) };
+                        true
+                    }
+                    _ => false,
+                };
+                std::println!("m2.page_map.fallback_trim_fault.allocated={}", usize::from(allocated));
+                // SAFETY: the failed trim removed this exact span from every
+                // allocator owner; only the fixture retains its raw address.
+                let cleaned = unsafe { crabc_core::mm::munmap_raw(
+                    suffix as *mut u8, suffix_length,
+                ) }.is_ok();
+                std::println!("m2.page_map.fallback_trim_fault.raw_cleanup={}", usize::from(cleaned));
+            },
+        );
+    }
+
     /// Emits the Rust half of the failed-first PageMap initialization record.
     ///
     /// Pinned C retains its `mi_page_map_empty` sentinel after the once body
