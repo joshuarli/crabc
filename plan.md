@@ -184,11 +184,12 @@ are not transferable passes for a different revision.
   A separate source-built reset-advice matrix matches 78 C/Rust fields across
   isolated EIO, EAGAIN, and EINVAL policies, including advice retry, exact
   slice range, warning order, and live bitmap state. A clean full M2 run passed
-  all 82 runnable checks with VM primitives, arenas, initialization, and fault
-  injection still partial. The VM inventory now registers 43 checks, including
+  all 85 runnable checks with VM primitives, arenas, initialization, and fault
+  injection still partial. The VM inventory now registers 46 checks, including
   direct process-owned successful and failed THP advice and disabled process
   policy and inherited process disable with source-selected advice; the clean
-  rerun executed all 43. Five VM conditions remain open. A
+  rerun executed all 46, including 209 further matched external OS reset,
+  retry, and no-advice relations. Five VM conditions remain open. A
   failed second OS-page block commit and failed rollback unmap match pinned C
   in eleven process-owned
   observations. The PageMap fallback suffix-trim fault is registered in its
