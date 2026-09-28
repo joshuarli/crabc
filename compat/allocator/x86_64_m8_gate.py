@@ -42,6 +42,9 @@ import owned_dynamic_qualification as qualification
 import native_shadow_receipt
 import owned_mimalloc_startup_errno_receipt as startup_errno
 import owned_native_allocator_policy_receipt as policy_reader
+import owned_native_allocator_dso_receipt as dso_reader
+import owned_loader_synthetic_receipt as synthetic_reader
+import owned_loader_libc_identity_receipt as identity_reader
 
 
 CONTRACT = harness.ALLOCATOR_ROOT / "m8-gate-x86_64-v3.5.0.json"
@@ -1011,6 +1014,68 @@ def read_startup_constructor_receipt(command: Sequence[str], output: str) -> dic
         raise harness.HarnessError(f"startup errno physical receipt is invalid: {error}") from error
 
 
+def read_dso_loader_receipt(evidence_id: str, command: Sequence[str], output: str) -> dict[str, Any]:
+    """Bind a DSO or loader execution receipt to the supplied dynamic product."""
+
+    definitions = {
+        "product:native-allocator-dso": (
+            dso_reader.RUNNER, dso_reader.read_native_allocator_dso_receipt,
+            "native-allocator-dso evidence: ", Path(".work/x86_64/tmp"), dso_reader.PRODUCT_PATHS),
+        "product:loader-synthetic": (
+            synthetic_reader.RUNNER, synthetic_reader.read_loader_synthetic_receipt,
+            "owned synthetic loader evidence: ", Path(".work/x86_64"), synthetic_reader.PRODUCT_PATHS),
+        "product:loader-libc-identity": (
+            identity_reader.RUNNER, identity_reader.read_identity_receipt,
+            "owned loader libc identity: PASS (5 cases across PIE and non-PIE); evidence: ",
+            Path(".work/x86_64/tmp"), {
+                "dynamic-manifest": "share/crabc/manifest.json",
+                "dynamic-product-state": "share/crabc/dynamic-product-state.json",
+                "dynamic-libc-provenance": "share/crabc/libc-shared.provenance.json",
+                "dynamic-loader-provenance": "share/crabc/loader.provenance.json",
+                "dynamic-libc": "usr/lib/libc.so",
+                "dynamic-loader": "lib/ld-crabc-x86_64.so.1",
+                "dynamic-driver": "bin/crabc-cc-dynamic",
+            }),
+    }
+    if evidence_id not in definitions:
+        raise harness.HarnessError("unknown DSO or loader evidence")
+    runner, reader, marker, parent, products = definitions[evidence_id]
+    if (len(command) != 3 or command[:2] != [DISPATCHER, runner]
+            or not command[2].startswith(f"{CONTAINER_ROOT}/.work/")):
+        raise harness.HarnessError(f"{runner} did not consume one supplied dynamic product")
+    evidence = product_directory(output, marker)
+    if evidence is None:
+        raise harness.HarnessError(f"{runner} did not emit one private evidence directory")
+    try:
+        work = Path(evidence).relative_to(CONTAINER_ROOT)
+        if work.parent != parent or not work.name.startswith(f"{runner}."):
+            raise harness.HarnessError(f"{runner} evidence escaped its private root")
+        dynamic = harness.ROOT / Path(command[2]).relative_to(CONTAINER_ROOT)
+        receipt = reader(harness.ROOT)
+        raw = json.loads(receipt.path.read_text(encoding="utf-8"))
+        if raw.get("work") != work.as_posix():
+            raise harness.HarnessError(f"{runner} receipt names another execution root")
+        consumer.owned_cleanup.product_snapshot(dynamic, "dynamic")
+        for name, relative in products.items():
+            if name not in receipt.products:
+                raise harness.HarnessError(f"{runner} receipt omits supplied product {name}")
+            original = consumer.owned_cleanup.physical(dynamic / relative, f"{runner} {name}")
+            if {"sha256": consumer.owned_cleanup.digest(original),
+                    "size": original.stat().st_size} != receipt.products[name]:
+                raise harness.HarnessError(f"{runner} used another supplied product: {name}")
+        state = json.loads((dynamic / "share/crabc/dynamic-product-state.json").read_text(encoding="utf-8"))
+        source_sha256 = qualification.source_digest()
+        if state.get("allocator_backend") != "native-shadow" or state.get("source_sha256") != source_sha256:
+            raise harness.HarnessError(f"{runner} product is not current native-shadow source")
+        return {"path": str(receipt.path), "sha256": consumer.sha256_file(receipt.path),
+                "source": dict(receipt.source), "source_sha256": source_sha256,
+                "product_manifest_sha256": consumer.sha256_file(dynamic / "share/crabc/manifest.json"),
+                "case_count": len(receipt.cases)}
+    except (native_shadow_receipt.ReceiptError, consumer.owned_cleanup.OwnedCleanupError,
+            qualification.QualificationError, OSError, ValueError, KeyError, TypeError) as error:
+        raise harness.HarnessError(f"{runner} physical receipt is invalid: {error}") from error
+
+
 def run_evidence(
     runnable: Mapping[str, Sequence[str]], products: Mapping[str, str], selected: Sequence[str], artifacts: Path,
 ) -> dict[str, dict[str, Any]]:
@@ -1096,6 +1161,15 @@ def run_evidence(
             except harness.HarnessError as error:
                 with log.open("a", encoding="utf-8") as stream:
                     stream.write(f"startup errno receipt reader: {error}\n")
+                passed = False
+        if evidence_id in {"product:native-allocator-dso", "product:loader-synthetic",
+                           "product:loader-libc-identity"} and passed:
+            try:
+                receipt = read_dso_loader_receipt(
+                    evidence_id, command, str(record["stdout"]) + str(record["stderr"]))
+            except harness.HarnessError as error:
+                with log.open("a", encoding="utf-8") as stream:
+                    stream.write(f"DSO or loader receipt reader: {error}\n")
                 passed = False
         if evidence_id in selected:
             results[evidence_id] = {

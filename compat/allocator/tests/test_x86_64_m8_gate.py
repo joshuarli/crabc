@@ -23,6 +23,9 @@ sys.modules[SPEC.name] = gate
 SPEC.loader.exec_module(gate)
 harness = gate.harness
 import owned_native_allocator_policy_receipt as policy_reader
+import owned_native_allocator_dso_receipt as dso_reader
+import owned_loader_synthetic_receipt as synthetic_reader
+import owned_loader_libc_identity_receipt as identity_reader
 
 
 class M8GateContractTests(unittest.TestCase):
@@ -452,6 +455,74 @@ class M8StartupErrnoReceiptTests(unittest.TestCase):
             with mock.patch.object(harness, "command_record", command_record):
                 result = gate.run_evidence(runnable, products, ["product:mimalloc-startup-errno"], Path(directory))
         self.assertEqual(result["product:mimalloc-startup-errno"]["status"], "failed")
+
+
+class M8DsoLoaderReceiptTests(unittest.TestCase):
+    def test_validated_dso_receipt_cannot_bind_a_different_supplied_loader(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64/tmp",
+                                         prefix="owned-native-allocator-dso.") as evidence, \
+                tempfile.TemporaryDirectory(dir=ROOT / ".work", prefix="dso-product.") as product:
+            work = Path(evidence)
+            dynamic = Path(product)
+            receipt_path = work / "receipt.json"
+            receipt_path.write_text(json.dumps({"work": work.relative_to(ROOT).as_posix()}))
+            records = {}
+            for name, relative in dso_reader.PRODUCT_PATHS.items():
+                path = dynamic / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                value = name.encode()
+                path.write_bytes(value)
+                records[name] = {"sha256": hashlib.sha256(value).hexdigest(), "size": len(value)}
+            (dynamic / dso_reader.PRODUCT_PATHS["dynamic-loader"]).write_bytes(b"another loader")
+            read = gate.native_shadow_receipt.Receipt(
+                path=receipt_path, runner=dso_reader.RUNNER,
+                source={"revision": "a" * 40, "worktree_sha256": "b" * 64},
+                products=records, cases=(), parameters={},
+            )
+            command = [gate.DISPATCHER, dso_reader.RUNNER,
+                       str(gate.CONTAINER_ROOT / dynamic.relative_to(ROOT))]
+            output = ("native-allocator-dso evidence: "
+                      f"{gate.CONTAINER_ROOT / work.relative_to(ROOT)}\n")
+            with mock.patch.object(dso_reader, "read_native_allocator_dso_receipt", return_value=read), \
+                    mock.patch.object(gate.consumer.owned_cleanup, "product_snapshot"):
+                with self.assertRaisesRegex(harness.HarnessError, "another supplied product: dynamic-loader"):
+                    gate.read_dso_loader_receipt("product:native-allocator-dso", command, output)
+
+    def test_successful_commands_without_physical_receipts_fail(self) -> None:
+        products = {"evidence": "product:p", "evidence_line": "p evidence: ",
+                    "static_sysroot": "static-sysroot", "dynamic_sysroot": "dynamic-sysroot"}
+        readers = {
+            "product:native-allocator-dso": (dso_reader, "read_native_allocator_dso_receipt",
+                                             "native-allocator-dso evidence: ",
+                                             "/workspace/.work/x86_64/tmp/owned-native-allocator-dso.missing"),
+            "product:loader-synthetic": (synthetic_reader, "read_loader_synthetic_receipt",
+                                         "owned synthetic loader evidence: ",
+                                         "/workspace/.work/x86_64/owned-loader-synthetic.missing"),
+            "product:loader-libc-identity": (identity_reader, "read_identity_receipt",
+                                             "owned loader libc identity: PASS (5 cases across PIE and non-PIE); "
+                                             "evidence: ",
+                                             "/workspace/.work/x86_64/tmp/owned-loader-libc-identity.missing"),
+        }
+        for evidence_id, (module, method, marker, work) in readers.items():
+            with self.subTest(evidence_id=evidence_id):
+                runner = "owned-" + evidence_id.removeprefix("product:")
+                runnable = {
+                    "product:p": ["scripts/dev-x86_64.sh", "produce"],
+                    evidence_id: ["scripts/dev-x86_64.sh", runner, "{dynamic_sysroot}"],
+                }
+
+                def command_record(command, **_kwargs):
+                    output = ("p evidence: /workspace/.work/product\n" if command[1] == "produce"
+                              else f"{marker}{work}\n")
+                    return {"status": 0, "stdout": output, "stderr": ""}
+
+                with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory, \
+                        mock.patch.object(harness, "command_record", command_record), \
+                        mock.patch.object(module, method,
+                                          side_effect=gate.native_shadow_receipt.ReceiptError("no receipt")) as reader:
+                    result = gate.run_evidence(runnable, products, [evidence_id], Path(directory))
+                reader.assert_called_once()
+                self.assertEqual(result[evidence_id]["status"], "failed")
 
 
 if __name__ == "__main__":
