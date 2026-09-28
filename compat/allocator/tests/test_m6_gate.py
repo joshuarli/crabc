@@ -52,6 +52,7 @@ class M6GateContractTests(unittest.TestCase):
             "differential:main-heap-visitor-population": "compat/allocator/x86_64_m6_main_visitor_population.py",
             "differential:public-heap-adapter": "compat/allocator/x86_64_m6_adapter.py",
             "differential:public-heap-lifecycle": "compat/allocator/heap_lifecycle.py",
+            "differential:public-theap": "compat/allocator/x86_64_m6_public_theap.py",
             "differential:subprocess-lifecycle": "compat/allocator/subprocess_lifecycle.py",
             "unit:heap-membership": "compat/allocator/heap_membership.py",
             "upstream:test-api-heaps": "compat/allocator/x86_64_m6_test_api.py",

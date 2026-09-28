@@ -1465,9 +1465,10 @@ impl<'main> MainHeapThreadAttachment<'main> {
     /// Outside a selected deferred-free callback this checks exactly the state
     /// that can differ between two operations of an attached owner: the
     /// attachment's own state/thread/suspension/terminal flags, its retained
-    /// dynamic-Theap metadata, and the four TLS roots through which source
-    /// selects that Theap (fixed fast slot, default and cached Theap, dynamic
-    /// backing), which other same-thread lifecycle code may rewrite.
+    /// dynamic-Theap metadata, and the four TLS roots (fixed fast slot,
+    /// default and cached Theap, dynamic backing), which other same-thread
+    /// lifecycle code may rewrite. An auxiliary default can share the fixed
+    /// owner's TLD without replacing the fixed slot.
     ///
     /// The Theap refcount/thread/subprocess image and the TLD lifecycle and
     /// list membership are established by `initialize_and_publish` before
@@ -1495,12 +1496,36 @@ impl<'main> MainHeapThreadAttachment<'main> {
         let theap = self.local_theap_pointer()?;
         if !matches!(dynamic_backing_peek(), Some(backing) if is_empty_dynamic_backing(backing))
             || fast_slot_peek().map(NonNull::cast::<Theap>) != Some(theap)
-            || default_theap() != theap
+            || !self.default_root_matches_local_owner(theap, true)
             || !core::ptr::eq(cached_theap().as_ptr(), empty_default_theap_ptr())
         {
             return Err(MainHeapThreadAttachmentError::RootOwnership);
         }
         Ok(theap)
+    }
+
+    /// An attached owner keeps the fixed fast slot while its source default
+    /// may select another initialized Theap sharing this thread's TLD.
+    /// Once the fast owner is removed, only the original default is valid.
+    fn default_root_matches_local_owner(
+        &self,
+        owner: NonNull<Theap>,
+        allow_auxiliary: bool,
+    ) -> bool {
+        let selected = default_theap();
+        if selected == owner {
+            return true;
+        }
+        if !allow_auxiliary {
+            return false;
+        }
+        // SAFETY: attached-owner admission retains both the fixed Theap and
+        // the same-thread default root through this scalar projection. The
+        // default setter must retain an auxiliary Theap until restoration.
+        unsafe {
+            !Theap::heap_at(selected).is_null()
+                && Theap::tld_at(selected) == Theap::tld_at(owner)
+        }
     }
 
     /// Validates the exact opposite half of the persistent-engine handoff.
@@ -1631,7 +1656,9 @@ impl<'main> MainHeapThreadAttachment<'main> {
         };
         if !matches!(dynamic_backing_peek(), Some(backing) if is_empty_dynamic_backing(backing))
             || !fast_matches
-            || !core::ptr::eq(default_theap().as_ptr(), theap_pointer)
+            || !NonNull::new(theap_pointer).is_some_and(|owner| {
+                self.default_root_matches_local_owner(owner, expect_fast_owner)
+            })
             || !core::ptr::eq(cached_theap().as_ptr(), empty_default_theap_ptr())
         {
             return Err(MainHeapThreadAttachmentError::RootOwnership);

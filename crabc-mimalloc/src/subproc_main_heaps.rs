@@ -35,7 +35,7 @@ use core::mem::{align_of, size_of};
 use core::ptr::NonNull;
 
 use crate::compiler_tls::{
-    default_theap, dynamic_backing_peek, install_dynamic_backing, install_empty_dynamic_backing,
+    default_theap, dynamic_backing_peek, fast_slot_peek, install_dynamic_backing, install_empty_dynamic_backing,
     is_empty_dynamic_backing, DynamicThreadLocalBacking,
 };
 use crate::meta::{ChildPageEngineState, MetaAllocation, MetaAllocator};
@@ -108,22 +108,24 @@ struct MainThread {
     numa_node: i32,
 }
 
-/// The calling thread when it is attached to the process main subprocess
-/// (its default Theap is initialized there) and not a child member.
+/// The calling thread when its main-Heap Theap is installed and it is not a
+/// child member. The default root may name another live Theap of this TLD.
 fn current_main_thread() -> Option<MainThread> {
     if crate::subproc::lifecycle::current_thread_is_child_member() {
         return None;
     }
-    let theap = default_theap();
-    // SAFETY: the default root names this thread's Theap or the empty one.
+    let theap = fast_slot_peek()?.cast::<Theap>();
+    // SAFETY: the fixed main-Heap slot names this thread's live Theap.
     let tld = NonNull::new(unsafe { Theap::tld_at(theap) })?;
     let main = MainSubprocess::global();
     // SAFETY: an initialized default Theap keeps its TLD live.
     let tld_ref = unsafe { tld.as_ref() };
     let thread = LiveThreadId::new(tld_ref.thread_id())?;
     if crate::compiler_tls::current_thread_identity() != Some(thread)
-        // SAFETY: the Theap's Heap is the process main Heap or null.
-        || unsafe { Theap::heap_at(theap) }.is_null()
+        // SAFETY: the fixed slot must still belong to this subprocess main Heap.
+        || unsafe { Theap::heap_at(theap) } != main.ready_main_heap_pointer()
+        // SAFETY: a switched default must share this thread's TLD.
+        || unsafe { Theap::tld_at(default_theap()) } != tld.as_ptr()
         || !tld_ref.matches_subprocess_attached_lifecycle(thread, tld_ref.thread_sequence(), main.identity())
     {
         return None;
@@ -332,6 +334,15 @@ pub(crate) fn native_heap_select_theap(heap: NonNull<Heap>) -> bool {
     is_main_subprocess_heap(heap) && heap_theap(thread, heap).is_some()
 }
 
+/// Resolve the calling thread's Theap for a live Heap in the process main
+/// subprocess, including its source cached-Theap transition.
+pub(crate) fn native_heap_theap(heap: NonNull<Heap>) -> Option<NonNull<Theap>> {
+    let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
+    let thread = current_main_thread()?;
+    is_main_subprocess_heap(heap).then_some(())?;
+    heap_theap(thread, heap)
+}
+
 /// `_mi_theap_create(heap, tld)` (`theap.c:307-341`).
 fn create_theap(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull<Theap>> {
     let binding = binding()?;
@@ -436,7 +447,7 @@ fn with_theap_engine<R>(
 /// `_mi_heap_init` and the list push. `None` is source null.
 pub(crate) fn native_heap_new() -> Option<NonNull<Heap>> {
     let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
-    let thread = current_main_thread()?;
+    current_main_thread()?;
     let binding = binding()?;
     let config = binding.page_map().memory_config().ok()?;
     cached_set_main();
@@ -475,6 +486,36 @@ pub(crate) unsafe fn native_heap_allocate(
         return None;
     }
     let theap = heap_theap(thread, heap)?;
+    allocate_on_theap(thread, theap, size, aligned, zero)
+}
+
+/// Allocate through one exact current-thread Theap of a non-main Heap.
+///
+/// # Safety
+/// `theap` remains linked to its live Heap and this thread's TLD for the
+/// operation, with no concurrent Heap destruction or thread exit.
+pub(crate) unsafe fn native_theap_allocate(
+    theap: NonNull<Theap>,
+    size: usize,
+    zero: bool,
+) -> Option<NonNull<u8>> {
+    let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
+    let thread = current_main_thread()?;
+    // SAFETY: caller retains the Theap and its TLD for this thread.
+    let heap = NonNull::new(unsafe { Theap::heap_at(theap) })?;
+    if !is_main_subprocess_heap(heap) || unsafe { Theap::tld_at(theap) } != thread.tld.as_ptr() {
+        return None;
+    }
+    allocate_on_theap(thread, theap, size, None, zero)
+}
+
+fn allocate_on_theap(
+    thread: MainThread,
+    theap: NonNull<Theap>,
+    size: usize,
+    aligned: Option<(usize, usize)>,
+    zero: bool,
+) -> Option<NonNull<u8>> {
     use crate::single_thread::{DeferredFreeAllocationPhase, GenericAllocationCollection};
     // `_mi_malloc_generic`'s collections run `_mi_deferred_free` first; the
     // engine returns each selected collection so that the callback runs with

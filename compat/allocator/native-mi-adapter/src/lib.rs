@@ -1045,6 +1045,8 @@ use crabc_mimalloc::__crabc_runtime::source_heap_api as heaps;
 
 /// `mi_heap_t*`, opaque to C.
 type HeapPointer = *mut c_void;
+/// `mi_theap_t*`, opaque to C.
+type TheapPointer = *mut c_void;
 
 #[no_mangle]
 pub extern "C" fn mi_heap_new() -> HeapPointer {
@@ -1056,6 +1058,51 @@ pub extern "C" fn mi_heap_new() -> HeapPointer {
 pub extern "C" fn mi_heap_main() -> HeapPointer {
     bind_thread();
     heaps::heap_main()
+}
+
+#[no_mangle]
+/// # Safety
+/// `heap` is a live Heap of this thread's subprocess and remains live until
+/// the returned Theap is no longer used. The calling thread is attached.
+pub unsafe extern "C" fn mi_heap_theap(heap: HeapPointer) -> TheapPointer {
+    bind_thread();
+    // SAFETY: the C caller retains its Heap and this thread's attachment.
+    unsafe { heaps::heap_theap(heap) }
+}
+
+#[no_mangle]
+pub extern "C" fn mi_theap_get_default() -> TheapPointer {
+    bind_thread();
+    heaps::theap_get_default()
+}
+
+#[no_mangle]
+/// # Safety
+/// A non-null `theap` is a live, initialized Theap of the calling thread's
+/// TLD and Heap. It remains live until the prior default is restored.
+pub unsafe extern "C" fn mi_theap_set_default(theap: TheapPointer) -> TheapPointer {
+    bind_thread();
+    // SAFETY: the caller retains the candidate and its thread association.
+    unsafe { heaps::theap_set_default(theap) }
+}
+
+#[no_mangle]
+/// # Safety
+/// `theap` is a live Theap of the calling thread and remains linked to its
+/// Heap and TLD throughout the allocation.
+pub unsafe extern "C" fn mi_theap_malloc(theap: TheapPointer, size: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: the caller retains this thread's selected Theap.
+    allocation(unsafe { heaps::theap_malloc(theap, size, false) })
+}
+
+#[no_mangle]
+/// # Safety
+/// `theap` satisfies [`mi_theap_malloc`]'s lifetime and thread obligations.
+pub unsafe extern "C" fn mi_theap_zalloc(theap: TheapPointer, size: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: the caller retains this thread's selected Theap.
+    allocation(unsafe { heaps::theap_malloc(theap, size, true) })
 }
 
 #[no_mangle]

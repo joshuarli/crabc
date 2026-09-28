@@ -183,6 +183,15 @@ fn native_block(result: NativePageAllocationResult) -> Block {
 /// oversized request (`EOVERFLOW`) and the generic fallback's out-of-memory
 /// report (`ENOMEM`), both `ENOMEM` for errno.
 fn malloc_zero(size: usize, zero: bool) -> Sourced<Block> {
+    if let Some(selected) = crate::source_heap_api::default_theap_allocate(size, zero) {
+        return selected;
+    }
+    malloc_zero_native(size, zero)
+}
+
+/// Allocate through the installed main or child owner after the default
+/// Theap has been resolved by the caller.
+pub(crate) fn malloc_zero_native(size: usize, zero: bool) -> Sourced<Block> {
     match native_block(native_allocate(size, zero)) {
         Some(block) => Sourced::quiet(Some(block)),
         None => Sourced::with(None, SourceErrno::error_message(Errno::NOMEM)),

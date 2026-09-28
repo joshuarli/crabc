@@ -75,8 +75,8 @@
       "scope": "Source-built pinned-C/native-adapter process-main abandoned visitation over two worker regular bins and an OS singleton allocated in reverse traversal order, with separate live main-thread regular and OS pages: exact bitmap/list membership, bin-before-OS order, freed block/page omission, area/block early stops in each selected page, and null-Heap selection."
     },
     "differential:public-theap": {
-      "runner": null,
-      "scope": "Pinned-C/Rust default-Theap switching and direct Theap operation traces."
+      "runner": "compat/allocator/x86_64_m6_public_theap.py",
+      "scope": "Source-built pinned-C/native-adapter traces of mi_theap_get_default, mi_theap_set_default, mi_heap_theap, mi_theap_malloc, mi_theap_zalloc, and default-root mi_malloc across the process main thread, one worker, and a fork child: initialized candidate and null refusal, exact previous/default pointers, main and auxiliary Heap ownership, shared TLD, zeroing, restoration, and parent root preservation."
     },
     "differential:public-arena": {
       "runner": null,
@@ -154,7 +154,7 @@
         "unit:heap-lifecycle"
       ],
       "blocked_by": [
-        "Non-main Heaps exist for threads of the process main subprocess (`subproc::main_heaps`, exported as mi_heap_new/mi_heap_main/mi_heap_delete/mi_heap_destroy/mi_heap_collect) and of child subprocesses (`types::heap_registry::lifecycle`, crate-private): exclusive arenas (`mi_heap_new_in_arena`), `mi_heap_set_numa_affinity`, and `mi_heap_theap` do not exist."
+        "Non-main Heaps exist for threads of the process main subprocess (`subproc::main_heaps`, exported as mi_heap_new/mi_heap_main/mi_heap_delete/mi_heap_destroy/mi_heap_collect) and of child subprocesses (`types::heap_registry::lifecycle`, crate-private). Process-main mi_heap_theap has bounded source-built evidence; child-subprocess mi_heap_theap, exclusive arenas (`mi_heap_new_in_arena`), and `mi_heap_set_numa_affinity` remain unproved or absent."
       ]
     },
     {
@@ -303,7 +303,7 @@
         "unit:theap"
       ],
       "blocked_by": [
-        "Theap operations exist only behind private bounded page sessions; no public-shaped default-Theap switch or direct-Theap entry surface exists."
+        "Process-main mi_theap_get_default/set_default and direct mi_theap_malloc/zalloc have source-built evidence across main, worker, and fork contexts. The remaining direct allocation variants, collection, statistics, visitation, guarded setters, child-subprocess auxiliary defaults, and broader cross-thread lifetime cases are absent or unproved."
       ]
     },
     {

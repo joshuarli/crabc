@@ -38,7 +38,7 @@ use crate::source_api::{Block, SourceErrno, Sourced};
 use crate::subproc::main_heaps;
 use crate::subproc::MainSubprocess;
 use crate::types::heap_registry::lifecycle::HeapReleaseOutcome;
-use crate::types::{Heap, Page};
+use crate::types::{Heap, Page, Theap};
 
 /// `mi_heap_main()`: the calling thread's subprocess main Heap.
 pub fn heap_main() -> *mut c_void {
@@ -54,6 +54,111 @@ pub fn heap_new() -> *mut c_void {
         return created.ok().and_then(Result::ok).map_or(null_mut(), |heap| heap.as_ptr().cast());
     }
     main_heaps::native_heap_new().map_or(null_mut(), |heap| heap.as_ptr().cast())
+}
+
+/// The initialized default Theap of the calling thread. A cold thread runs
+/// its source owner attachment before this pointer is returned.
+pub fn theap_get_default() -> *mut c_void {
+    if !crate::runtime_lifecycle::prepare_current_thread_native_owner_for_heap_theaps() {
+        return null_mut();
+    }
+    let theap = crate::compiler_tls::default_theap();
+    // SAFETY: the default root names this thread's Theap or the immutable
+    // empty image; a non-null Heap marks the initialized case.
+    if unsafe { Theap::heap_at(theap) }.is_null() {
+        null_mut()
+    } else {
+        theap.as_ptr().cast()
+    }
+}
+
+/// Select the calling thread's Theap for a live Heap.
+///
+/// # Safety
+/// `heap` is a live Heap of this thread's subprocess and remains live through
+/// the selection. The calling thread keeps its Theap and TLD attached.
+pub unsafe fn heap_theap(heap: *mut c_void) -> *mut c_void {
+    let Some(heap) = NonNull::new(heap.cast::<Heap>()) else { return null_mut() };
+    if theap_get_default().is_null() { return null_mut(); }
+    if heap.as_ptr().cast::<c_void>() == heap_main() {
+        let Some(theap) = crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<Theap>()) else {
+            return null_mut();
+        };
+        // SAFETY: the fixed slot and Heap stay live for this thread.
+        if unsafe { Theap::heap_at(theap) } != heap.as_ptr() { return null_mut(); }
+        if !crate::subproc::lifecycle::current_thread_is_child_member() {
+            main_heaps::select_main_heap_theap();
+        }
+        return theap.as_ptr().cast();
+    }
+    if crate::subproc::lifecycle::current_thread_is_child_member() { return null_mut(); }
+    main_heaps::native_heap_theap(heap).map_or(null_mut(), |theap| theap.as_ptr().cast())
+}
+
+/// Replace this thread's default Theap and return its previous one. Null and
+/// uninitialized candidates leave the root unchanged.
+///
+/// # Safety
+/// A non-null `theap` points to an address-stable Theap of the calling
+/// thread's live TLD and Heap. It remains live until the caller restores the
+/// previous default. The caller excludes concurrent destruction or exit.
+pub unsafe fn theap_set_default(theap: *mut c_void) -> *mut c_void {
+    let previous = theap_get_default();
+    let Some(candidate) = NonNull::new(theap.cast::<Theap>()) else { return previous };
+    let Some(current) = NonNull::new(previous.cast::<Theap>()) else { return previous };
+    // SAFETY: caller retains the candidate and this thread retains current.
+    let initialized = unsafe { !Theap::heap_at(candidate).is_null() };
+    let same_tld = unsafe { Theap::tld_at(candidate) == Theap::tld_at(current) };
+    if !initialized || !same_tld { return previous; }
+    // A child member's additional Heap Theaps still need their own direct
+    // allocation route before they can replace its default root.
+    if crate::subproc::lifecycle::current_thread_is_child_member()
+        && crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<Theap>()) != Some(candidate)
+    {
+        return previous;
+    }
+    crate::compiler_tls::set_default_theap(candidate);
+    previous
+}
+
+/// Direct allocation from an initialized Theap of the calling thread.
+///
+/// # Safety
+/// `theap` is a live Theap of this thread's TLD and Heap, retained against
+/// Heap destruction and thread exit for the entire allocation.
+pub unsafe fn theap_malloc(theap: *mut c_void, size: usize, zero: bool) -> Sourced<Block> {
+    let Some(theap) = NonNull::new(theap.cast::<Theap>()) else {
+        return Sourced { value: None, errno: SourceErrno::Unchanged };
+    };
+    let Some(current) = NonNull::new(theap_get_default().cast::<Theap>()) else {
+        return Sourced { value: None, errno: SourceErrno::Unchanged };
+    };
+    // SAFETY: both Theaps are retained by this thread for the call.
+    if unsafe { Theap::tld_at(theap) != Theap::tld_at(current) }
+        || unsafe { Theap::heap_at(theap) }.is_null()
+    {
+        return Sourced { value: None, errno: SourceErrno::Unchanged };
+    }
+    if crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<Theap>()) == Some(theap) {
+        return crate::source_api::malloc_zero_native(size, zero);
+    }
+    // SAFETY: the current thread retains this non-main Theap and its Heap.
+    let block = unsafe { main_heaps::native_theap_allocate(theap, size, zero) };
+    match block {
+        Some(block) => Sourced { value: Some(block), errno: SourceErrno::Unchanged },
+        None => Sourced { value: None, errno: report_failure(size, Request::Plain) },
+    }
+}
+
+/// The default Theap's allocation route when it differs from this thread's
+/// main-Heap Theap; `None` keeps the existing main-owner fast path.
+pub(crate) fn default_theap_allocate(size: usize, zero: bool) -> Option<Sourced<Block>> {
+    let main = crate::compiler_tls::fast_slot_peek()?.cast::<Theap>();
+    let selected = crate::compiler_tls::default_theap();
+    if selected == main { return None; }
+    // SAFETY: only the calling thread changes its default, which must stay
+    // live through every allocation until it is restored.
+    Some(unsafe { theap_malloc(selected.as_ptr().cast(), size, zero) })
 }
 
 /// `mi_heap_of`: the Heap currently named by the page containing `pointer`.
