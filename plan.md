@@ -53,6 +53,8 @@ are not transferable passes for a different revision.
   differentials pass for both dormant and active survivors of a non-abandoning
   full-medium/OS-singleton owner exit, including reclaim and retirement; a
   late remote free after that exit also matches all 17 retained observations.
+  A mapped-large/medium mixed owner-exit differential matches 20 additional
+  C/Rust transition values, including large reabandonment and medium retirement.
   The full M2 runner records complete
   metadata, bitmap, PageMap, and allocator-recursion components; VM primitives,
   arenas, initialization, and fault injection remain partial. Its direct fresh
