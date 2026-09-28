@@ -26,6 +26,40 @@ use crate::lock::PrivateLock;
 use crate::os::{MapAccess, Mapping, MemoryConfig};
 use crate::types::{MemoryId, Page};
 
+#[cfg(feature = "native-runtime-test-audit")]
+static LAST_AUDITED_PROCESS_MAP: AtomicPtr<PageMap> = AtomicPtr::new(null_mut());
+
+/// Registered arena slices grouped by the quiescent page image they name.
+/// A multi-slice page contributes once for each registered slice.
+/// Medium state buckets overlap: `remote_pending` reads the atomic remote
+/// head, `reusable` means either local free-list head is nonnull, and
+/// `retired` means the page's retirement countdown is nonzero.
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
+#[repr(C)]
+#[derive(Default)]
+pub struct PageMapClassTestAudit {
+    pub registered_slices: usize,
+    pub small_empty_slices: usize,
+    pub small_used_slices: usize,
+    pub medium_empty_slices: usize,
+    pub medium_used_slices: usize,
+    pub large_empty_slices: usize,
+    pub large_used_slices: usize,
+    pub singleton_empty_slices: usize,
+    pub singleton_used_slices: usize,
+    pub unknown_kind_slices: usize,
+    pub abandoned_slices: usize,
+    pub detached_slices: usize,
+    pub attached_slices: usize,
+    pub nonprimary_slices: usize,
+    pub medium_abandoned_slices: usize,
+    pub medium_detached_slices: usize,
+    pub medium_attached_slices: usize,
+    pub medium_remote_pending_slices: usize,
+    pub medium_reusable_slices: usize,
+    pub medium_retired_slices: usize,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PageMapLocation {
     pub(crate) map_index: usize,
@@ -525,7 +559,90 @@ impl PageMap {
     #[cfg(any(test, feature = "native-runtime-test-audit"))]
     pub(crate) fn test_registered_entry_count(&self) -> Result<usize> {
         self.header()?;
+        #[cfg(feature = "native-runtime-test-audit")]
+        if self.statistics.0.is_some() {
+            // The separate class audit is called immediately after this
+            // process-map observation while its owner remains quiescent.
+            LAST_AUDITED_PROCESS_MAP.store(core::ptr::from_ref(self).cast_mut(), Ordering::Release);
+        }
         Ok(self.registered_entry_count.load(Ordering::Acquire))
+    }
+
+    /// Classifies each registered slice without acquiring a page or a map
+    /// mutation right. The sum of the kind buckets and the sum of the owner
+    /// buckets must each equal `registered_slices`.
+    ///
+    /// # Safety
+    ///
+    /// The caller must keep every registered page image alive and establish
+    /// process-wide quiescence across registration, unregistration, page
+    /// ownership changes, and page release for the entire scan.
+    #[cfg(any(test, feature = "native-runtime-test-audit"))]
+    pub(crate) unsafe fn test_class_audit(&self) -> Result<PageMapClassTestAudit> {
+        let mut audit = PageMapClassTestAudit::default();
+        for index in 0..self.committed_count()? {
+            let Some(submap) = self.submap_at(index)? else { continue; };
+            for offset in 0..PAGE_MAP_SUB_COUNT {
+                // SAFETY: the published submap bounds this entry; the caller
+                // excludes entry mutation and retains every registered page.
+                let page = unsafe { *(*submap.as_ptr().add(offset)).0.get() };
+                let Some(page_ref) = (unsafe { page.as_ref() }) else { continue; };
+                audit.registered_slices += 1;
+                let used = page_ref.used() != 0;
+                let kind = crate::size_class::page_kind_for_block_size(page_ref.block_size());
+                match kind {
+                    Some(crate::types::PageKind::Small) if used => audit.small_used_slices += 1,
+                    Some(crate::types::PageKind::Small) => audit.small_empty_slices += 1,
+                    Some(crate::types::PageKind::Medium) if used => audit.medium_used_slices += 1,
+                    Some(crate::types::PageKind::Medium) => audit.medium_empty_slices += 1,
+                    Some(crate::types::PageKind::Large) if used => audit.large_used_slices += 1,
+                    Some(crate::types::PageKind::Large) => audit.large_empty_slices += 1,
+                    Some(crate::types::PageKind::Singleton) if used => audit.singleton_used_slices += 1,
+                    Some(crate::types::PageKind::Singleton) => audit.singleton_empty_slices += 1,
+                    None => audit.unknown_kind_slices += 1,
+                }
+                let owner = page_ref.owner_thread_id() & !crate::types::PAGE_FLAG_MASK;
+                match owner {
+                    crate::types::THREAD_ID_ABANDONED
+                    | crate::types::THREAD_ID_ABANDONED_MAPPED => {
+                        audit.abandoned_slices += 1;
+                        if kind == Some(crate::types::PageKind::Medium) {
+                            audit.medium_abandoned_slices += 1;
+                        }
+                    }
+                    crate::types::THREAD_ID_DETACHED => {
+                        audit.detached_slices += 1;
+                        if kind == Some(crate::types::PageKind::Medium) {
+                            audit.medium_detached_slices += 1;
+                        }
+                    }
+                    _ => {
+                        audit.attached_slices += 1;
+                        if kind == Some(crate::types::PageKind::Medium) {
+                            audit.medium_attached_slices += 1;
+                        }
+                    }
+                }
+                if kind == Some(crate::types::PageKind::Medium) {
+                    if page_ref.has_published_remote_free() {
+                        audit.medium_remote_pending_slices += 1;
+                    }
+                    if page_ref.has_owner_exit_collectable_local_free() {
+                        audit.medium_reusable_slices += 1;
+                    }
+                    if page_ref.retire_expire() != 0 {
+                        audit.medium_retired_slices += 1;
+                    }
+                }
+                if page_ref.aligned_alias_owner() != page {
+                    audit.nonprimary_slices += 1;
+                }
+            }
+        }
+        if audit.registered_slices != self.registered_entry_count.load(Ordering::Acquire) {
+            return Err(Errno::INVAL);
+        }
+        Ok(audit)
     }
 
     /// Counts registered slices whose page belongs to the source detached
@@ -860,6 +977,35 @@ impl PageMap {
         self.active = false;
         Ok(())
     }
+}
+
+/// Copies a quiescent process-map class audit after the scalar audit has
+/// selected the exact map. This symbol exists only in native test products.
+///
+/// # Safety
+///
+/// `output` must name aligned writable `PageMapClassTestAudit` storage, and
+/// `output_bytes` must equal its size. The caller
+/// must have just obtained the process scalar audit, must keep that process
+/// map and every registered page alive, and must exclude all allocator
+/// operations until this scan completes.
+#[cfg(feature = "native-runtime-test-audit")]
+#[no_mangle]
+pub unsafe extern "C" fn __crabc_mimalloc_page_map_class_test_audit(
+    output: *mut core::ffi::c_void,
+    output_bytes: usize,
+) -> i32 {
+    if output_bytes != size_of::<PageMapClassTestAudit>() { return -1; }
+    let Some(output) = NonNull::new(output.cast::<PageMapClassTestAudit>()) else { return -1; };
+    let Some(page_map) = NonNull::new(LAST_AUDITED_PROCESS_MAP.load(Ordering::Acquire)) else {
+        return -1;
+    };
+    // SAFETY: the caller's process-wide quiescence keeps this last selected
+    // process map and every registered page image live through the scan.
+    let Ok(snapshot) = (unsafe { page_map.as_ref().test_class_audit() }) else { return -1; };
+    // SAFETY: the caller supplies writable, correctly typed output storage.
+    unsafe { output.as_ptr().write(snapshot) };
+    0
 }
 
 /// The main-subprocess statistics owner of a process page map's VM events,
@@ -1225,6 +1371,56 @@ mod tests {
 
         // SAFETY: this unpublished map has no readers or registered entries.
         unsafe { page_map.destroy() }.expect("release the map after churn");
+    }
+
+    #[test]
+    fn page_class_audit_counts_registered_slices_and_abandoned_owner_state() {
+        let mut page_map = PageMap::initialize(memory_config(false), MIN_VABITS, false)
+            .expect("initialize the two-level page map");
+        let mut page = std::boxed::Box::new(Page::remote_free_test_page(1, 1));
+        let start = core::ptr::without_provenance::<u8>(4 * ARENA_SLICE_SIZE);
+        // SAFETY: the boxed page remains stable and initialized until this
+        // range is cleared; no other map client or page owner runs.
+        unsafe {
+            page_map.register_range(start, 2 * ARENA_SLICE_SIZE, NonNull::from(page.as_mut()))
+                .expect("register the two-slice test page");
+        }
+        // SAFETY: this test is the only map and page client.
+        let attached = unsafe { page_map.test_class_audit() }.unwrap();
+        assert_eq!(attached.registered_slices, 2);
+        assert_eq!(attached.small_used_slices, 2);
+        assert_eq!(attached.attached_slices, 2);
+        assert_eq!(attached.abandoned_slices, 0);
+
+        page.set_block_size(crate::config::SMALL_MAX_OBJ_SIZE + 1);
+        page.remote_free_test_set_local_free(NonNull::dangling().as_ptr());
+        page.set_retire_expire(1);
+        // SAFETY: the page's test-only state changed before this sole reader.
+        let medium = unsafe { page_map.test_class_audit() }.unwrap();
+        assert_eq!(medium.medium_used_slices, 2);
+        assert_eq!(medium.medium_attached_slices, 2);
+        assert_eq!(medium.medium_reusable_slices, 2);
+        assert_eq!(medium.medium_retired_slices, 2);
+        assert_eq!(medium.medium_remote_pending_slices, 0);
+
+        page.remote_free_test_mark_abandoned();
+        // SAFETY: the ownership transition finished before this sole reader.
+        let abandoned = unsafe { page_map.test_class_audit() }.unwrap();
+        assert_eq!(abandoned.registered_slices, 2);
+        assert_eq!(abandoned.medium_used_slices, 2);
+        assert_eq!(abandoned.medium_abandoned_slices, 2);
+        assert_eq!(abandoned.abandoned_slices, 2);
+        assert_eq!(abandoned.attached_slices, 0);
+
+        // SAFETY: the test still owns the exact range and page lifetime.
+        unsafe { page_map.unregister_range(start, 2 * ARENA_SLICE_SIZE).unwrap() };
+        // SAFETY: no map writer or page owner runs during this empty scan.
+        let cleared = unsafe { page_map.test_class_audit() }.unwrap();
+        assert_eq!(cleared.registered_slices, 0);
+        assert_eq!(cleared.medium_used_slices, 0);
+        assert_eq!(cleared.abandoned_slices, 0);
+        // SAFETY: the map has no root, readers, or registered entries.
+        unsafe { page_map.destroy() }.unwrap();
     }
 
     /// Emits the address-free PageMap success differential record. Both

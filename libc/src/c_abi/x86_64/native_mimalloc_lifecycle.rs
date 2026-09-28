@@ -773,6 +773,69 @@ pub unsafe extern "C" fn __crabc_x86_owned_allocator_process_test_audit(
     0
 }
 
+/// Registered PageMap slices classified by the page image observed after
+/// every worker has joined. The kind buckets and owner buckets independently
+/// sum to `registered_slices`; `nonprimary_slices` is an overlapping check.
+#[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
+#[repr(C)]
+pub struct ProcessPageMapClassTestAudit {
+    pub registered_slices: usize,
+    pub small_empty_slices: usize,
+    pub small_used_slices: usize,
+    pub medium_empty_slices: usize,
+    pub medium_used_slices: usize,
+    pub large_empty_slices: usize,
+    pub large_used_slices: usize,
+    pub singleton_empty_slices: usize,
+    pub singleton_used_slices: usize,
+    pub unknown_kind_slices: usize,
+    pub abandoned_slices: usize,
+    pub detached_slices: usize,
+    pub attached_slices: usize,
+    pub nonprimary_slices: usize,
+    pub medium_abandoned_slices: usize,
+    pub medium_detached_slices: usize,
+    pub medium_attached_slices: usize,
+    pub medium_remote_pending_slices: usize,
+    pub medium_reusable_slices: usize,
+    pub medium_retired_slices: usize,
+}
+
+#[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
+unsafe extern "C" {
+    fn __crabc_mimalloc_page_map_class_test_audit(
+        output: *mut c_void,
+        output_bytes: usize,
+    ) -> c_int;
+}
+
+/// Copies a bounded PageMap class snapshot through the existing active
+/// process audit, then scans only while the caller keeps all owners quiescent.
+///
+/// # Safety
+/// `output` must name writable `ProcessPageMapClassTestAudit` storage. The
+/// caller must retain the active process and every registered page, join all
+/// worker owners, and exclude every allocator operation and page ownership
+/// transition until this call returns.
+#[cfg(feature = "x86-owned-allocator-lifecycle-test-audit")]
+#[no_mangle]
+pub unsafe extern "C" fn __crabc_x86_owned_allocator_page_class_test_audit(
+    output: *mut ProcessPageMapClassTestAudit,
+) -> c_int {
+    let Some(output) = core::ptr::NonNull::new(output) else { return -1; };
+    if crabc_mimalloc::__crabc_runtime::native_runtime_lifecycle_test_audit().is_none() {
+        return -1;
+    }
+    // SAFETY: the scalar audit just selected the active process map; the
+    // caller's quiescence retains that map and its registered page images.
+    unsafe {
+        __crabc_mimalloc_page_map_class_test_audit(
+            output.as_ptr().cast(),
+            core::mem::size_of::<ProcessPageMapClassTestAudit>(),
+        )
+    }
+}
+
 /// Scalar worker-owner state for installed native lifecycle fixtures.
 ///
 /// `owner_installed` is one while the calling worker's persistent native

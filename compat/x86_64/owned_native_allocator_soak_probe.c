@@ -49,8 +49,44 @@ struct process_audit {
 struct owner_audit {
     size_t owner_installed, page_engine_active, attached_worker_owners, reclaimed_worker_descriptors;
 };
+struct page_class_audit {
+    size_t registered_slices;
+    size_t small_empty_slices, small_used_slices;
+    size_t medium_empty_slices, medium_used_slices;
+    size_t large_empty_slices, large_used_slices;
+    size_t singleton_empty_slices, singleton_used_slices;
+    size_t unknown_kind_slices;
+    size_t abandoned_slices, detached_slices, attached_slices;
+    size_t nonprimary_slices;
+    size_t medium_abandoned_slices, medium_detached_slices, medium_attached_slices;
+    size_t medium_remote_pending_slices, medium_reusable_slices, medium_retired_slices;
+};
 int __crabc_x86_owned_allocator_process_test_audit(struct process_audit *);
 int __crabc_x86_owned_allocator_worker_owner_test_audit(struct owner_audit *);
+int __crabc_x86_owned_allocator_page_class_test_audit(struct page_class_audit *);
+static int class_snapshot_enabled;
+static unsigned class_snapshot_half_round;
+static unsigned first_class_round, second_class_round;
+static struct page_class_audit first_class_snapshot, second_class_snapshot;
+
+static void print_class_snapshot(const char *half, unsigned round, const struct page_class_audit *audit) {
+    printf("class_snapshot half=%s round=%u entries=%zu small_empty=%zu small_used=%zu"
+           " medium_empty=%zu medium_used=%zu large_empty=%zu large_used=%zu"
+           " singleton_empty=%zu singleton_used=%zu unknown_kind=%zu"
+           " abandoned=%zu detached=%zu attached=%zu nonprimary=%zu"
+           " medium_abandoned=%zu medium_detached=%zu medium_attached=%zu"
+           " medium_remote_pending=%zu medium_reusable=%zu medium_retired=%zu\n",
+           half, round, audit->registered_slices,
+           audit->small_empty_slices, audit->small_used_slices,
+           audit->medium_empty_slices, audit->medium_used_slices,
+           audit->large_empty_slices, audit->large_used_slices,
+           audit->singleton_empty_slices, audit->singleton_used_slices,
+           audit->unknown_kind_slices, audit->abandoned_slices,
+           audit->detached_slices, audit->attached_slices, audit->nonprimary_slices,
+           audit->medium_abandoned_slices, audit->medium_detached_slices,
+           audit->medium_attached_slices, audit->medium_remote_pending_slices,
+           audit->medium_reusable_slices, audit->medium_retired_slices);
+}
 #endif
 
 enum { SLOTS = 2048, LOCAL = 128, BATCH = 1024, BATCH_SIZE = 48, CLASSES = 5, MAX_WORKERS = 64 };
@@ -307,6 +343,31 @@ static void checkpoint(unsigned round) {
     struct owner_audit owner;
     CHECK(__crabc_x86_owned_allocator_process_test_audit(&process) == 0);
     CHECK(__crabc_x86_owned_allocator_worker_owner_test_audit(&owner) == 0);
+    if (class_snapshot_enabled) {
+        struct page_class_audit classes;
+        CHECK(__crabc_x86_owned_allocator_page_class_test_audit(&classes) == 0);
+        size_t kinds = classes.small_empty_slices + classes.small_used_slices
+            + classes.medium_empty_slices + classes.medium_used_slices
+            + classes.large_empty_slices + classes.large_used_slices
+            + classes.singleton_empty_slices + classes.singleton_used_slices
+            + classes.unknown_kind_slices;
+        CHECK(classes.registered_slices == process.page_map_registered_entries);
+        CHECK(kinds == classes.registered_slices);
+        CHECK(classes.abandoned_slices + classes.detached_slices + classes.attached_slices
+              == classes.registered_slices);
+        CHECK(classes.medium_abandoned_slices + classes.medium_detached_slices
+              + classes.medium_attached_slices
+              == classes.medium_empty_slices + classes.medium_used_slices);
+        if (round <= class_snapshot_half_round) {
+            if (first_class_round == 0 || classes.registered_slices > first_class_snapshot.registered_slices) {
+                first_class_round = round;
+                first_class_snapshot = classes;
+            }
+        } else if (second_class_round == 0 || classes.registered_slices > second_class_snapshot.registered_slices) {
+            second_class_round = round;
+            second_class_snapshot = classes;
+        }
+    }
     printf(" page_map_entries=%zu page_map_submaps=%zu arenas=%zu live_threads=%zu"
            " metadata_live=%zu metadata_high_water=%zu later_theaps=%zu abandoned_pages=%zu"
            " attached_workers=%zu reclaimed_descriptors=%zu",
@@ -328,6 +389,12 @@ int main(int argc, char **argv) {
     unsigned interval = (unsigned)strtoul(argv[4], NULL, 10);
     unsigned watchdog = (unsigned)strtoul(argv[5], NULL, 10);
     CHECK(rounds > 0 && workers > 0 && workers <= MAX_WORKERS && interval > 0 && watchdog > 0);
+#ifdef CRABC_NATIVE_ALLOCATOR_AUDIT
+    const char *class_snapshot_option = getenv("CRABC_NATIVE_ALLOCATOR_CLASS_SNAPSHOT");
+    class_snapshot_enabled = class_snapshot_option != NULL && strcmp(class_snapshot_option, "1") == 0;
+    class_snapshot_half_round = rounds / 2;
+    if (class_snapshot_enabled) CHECK(class_snapshot_half_round >= interval);
+#endif
     alarm(watchdog);
     CHECK(pthread_key_create(&tsd_key, tsd_destructor) == 0);
     printf("soak seed=0x%016llx rounds=%u workers=%u checkpoint_interval=%u\n",
@@ -392,6 +459,13 @@ int main(int argc, char **argv) {
         printf(" class_%s=%zu", class_names[class], atomic_load(&class_counts[class]));
     }
     printf("\n");
+#ifdef CRABC_NATIVE_ALLOCATOR_AUDIT
+    if (class_snapshot_enabled) {
+        CHECK(first_class_round != 0 && second_class_round != 0);
+        print_class_snapshot("first", first_class_round, &first_class_snapshot);
+        print_class_snapshot("second", second_class_round, &second_class_snapshot);
+    }
+#endif
     CHECK(exited == (size_t)rounds * workers);
     CHECK(atomic_load(&cleanup_runs) == exited);
     CHECK(atomic_load(&tsd_runs) >= exited);
