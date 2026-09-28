@@ -247,7 +247,10 @@ are not transferable passes for a different revision.
   with one owner. Cross-image `fflush(NULL)` also passes the eleven-cell matrix:
   separate main and DSO buffered pathname streams flush in pinned-musl order
   on both calls, preserving exact writes, file bytes, shared errno, and close
-  ownership.
+  ownership. A further eleven-cell orientation handoff confirms that a DSO
+  can select wide orientation on a main-owned FILE and main can select byte
+  orientation on a DSO-owned FILE; both retain exact UTF-8 or byte output,
+  shared errno, and one close by the owning image.
   The complete nine-leaf M8 gate
   passed again on clean `ea0c28759` with all 16 evidence entries passing and
   13 physical receipt identities matching a post-exit reread; the same nine
@@ -345,6 +348,9 @@ are not transferable passes for a different revision.
   Specializing the pool's zeroed and uninitialized allocation paths saves
   another 104 and 128 paired median instructions across 100 development
   startup pairs with unchanged syscall sequences; release text grows 192 bytes.
+  Simplifying class rounding saves a further 108 and 122 paired median
+  instructions and 32 release-text bytes in the same development rows, again
+  with unchanged syscall sequences and all class boundaries checked.
   These remain unqualified under host contention. Allocator rows stay
   6.5–8× on the selected
   accepted-C backend, whose arena the host's THP `always` mode backs with
