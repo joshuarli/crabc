@@ -2806,6 +2806,183 @@ mod tests {
             "the leaked candidate's reservation was still subtracted");
     }
 
+    #[cfg(target_arch = "x86_64")]
+    struct PolicyTrimWarnings {
+        active: core::sync::atomic::AtomicBool,
+        order: core::sync::atomic::AtomicUsize,
+        count: core::sync::atomic::AtomicUsize,
+        subprocess: core::sync::atomic::AtomicPtr<crate::subproc::SubprocessIdentity>,
+        fallback_reserved: core::sync::atomic::AtomicI64,
+        free_reserved: core::sync::atomic::AtomicI64,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    static POLICY_TRIM_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn policy_trim_environment() -> *const *const core::ffi::c_char {
+        POLICY_TRIM_ENVIRONMENT.load(Ordering::Acquire)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn policy_trim_default_output(_: *const core::ffi::c_char) {}
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn policy_trim_capture_warning(
+        message: *const core::ffi::c_char,
+        argument: *mut core::ffi::c_void,
+    ) {
+        if message.is_null() || argument.is_null() { return; }
+        // SAFETY: the output registration retains this leaked capture for all
+        // synchronous deliveries; the callback receives a terminated body.
+        let warning = unsafe { &*(argument as *const PolicyTrimWarnings) };
+        if !warning.active.load(Ordering::Acquire) { return; }
+        let bytes = unsafe { std::ffi::CStr::from_ptr(message) }.to_bytes();
+        let category = if bytes.starts_with(b"unable to allocate aligned OS memory directly") {
+            1
+        } else if bytes.starts_with(b"unable to free OS memory") {
+            2
+        } else {
+            0
+        };
+        if category != 0 {
+            warning.order.fetch_update(Ordering::AcqRel, Ordering::Acquire,
+                |order| Some(order * 10 + category)).unwrap();
+            warning.count.fetch_add(1, Ordering::AcqRel);
+            let subprocess = warning.subprocess.load(Ordering::Acquire);
+            if !subprocess.is_null() {
+                // SAFETY: the process binding and callback capture both have
+                // process lifetime, and this synchronous output cannot outlive it.
+                let reserved = unsafe { &*subprocess }.vm_statistics().snapshot().reserved_current;
+                if category == 1 {
+                    warning.fallback_reserved.store(reserved, Ordering::Release);
+                } else {
+                    warning.free_reserved.store(reserved, Ordering::Release);
+                }
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn policy_first_trim_case(name: &str, ordinal: usize) -> bool {
+        use crate::diagnostic_output::{OutputCallback, OutputOwner};
+        let entries = std::boxed::Box::leak(std::boxed::Box::new([
+            b"mimalloc_arena_reserve=128M\0".as_ptr().cast(),
+            b"mimalloc_arena_eager_commit=0\0".as_ptr().cast(),
+            b"mimalloc_allow_large_os_pages=0\0".as_ptr().cast(),
+            b"mimalloc_allow_thp=0\0".as_ptr().cast(),
+            b"mimalloc_show_errors=1\0".as_ptr().cast(),
+            b"mimalloc_max_warnings=100\0".as_ptr().cast(),
+            core::ptr::null(),
+        ]));
+        POLICY_TRIM_ENVIRONMENT.store(entries.as_mut_ptr(), Ordering::Release);
+        let warnings = std::boxed::Box::leak(std::boxed::Box::new(PolicyTrimWarnings {
+            active: core::sync::atomic::AtomicBool::new(true),
+            order: core::sync::atomic::AtomicUsize::new(0),
+            count: core::sync::atomic::AtomicUsize::new(0),
+            subprocess: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+            fallback_reserved: core::sync::atomic::AtomicI64::new(i64::MIN),
+            free_reserved: core::sync::atomic::AtomicI64::new(i64::MIN),
+        }));
+        let output = std::boxed::Box::leak(std::boxed::Box::new(OutputOwner::new(policy_trim_default_output)));
+        // SAFETY: the environment and warning capture are leaked for this
+        // process policy's lifetime; no registration races this test call.
+        unsafe {
+            output.initialize_source_options(policy_trim_environment);
+            output.register_output(Some(policy_trim_capture_warning as OutputCallback),
+                warnings as *mut PolicyTrimWarnings as *mut core::ffi::c_void);
+        }
+        let mut config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 1024 * 1024, true, false,
+        );
+        config.test_force_full_aligned_map_trim();
+        // SAFETY: this fixture retains each isolated process, map, and output
+        // owner through both permanent arena reservations.
+        let binding = unsafe {
+            ProcessMainInitializationStorage::test_static_owner()
+                .test_prepare_vm_process_backing_binding_with_source_output(
+                    config, output, MainSubprocess::test_static_owner(),
+                    ProcessPageMapStorage::test_static_owner(),
+                )
+        }.expect("the source-option backing fixture initializes");
+        let process = binding.process();
+        warnings.subprocess.store(core::ptr::from_ref(process.subprocess()).cast_mut(), Ordering::Release);
+        let statistics = process.subprocess().vm_statistics();
+        let before = statistics.snapshot();
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+        let mut random = initialized_random();
+        let fault = fault::install(fault::Plan::at(fault::Point::Unmap, ordinal, Errno::NOMEM));
+        let capture = fault.capture_unmap_ranges();
+        let reservation = storage.reserve_default_os_arena_for_process(
+            binding, ARENA_SLICE_SIZE, &mut random,
+        );
+        let (ranges, count) = capture.all().expect("three source cleanup releases fit");
+        drop(capture);
+        fault.set(fault::Plan::disabled());
+        let lease = match reservation {
+            Ok(lease) => lease,
+            Err(_) => panic!("a failed trim still reserves the first arena"),
+        };
+        let arena = lease.arena().expect("the first arena is published");
+        let mapping = unsafe { storage.mapping_for_commit() };
+        let middle = mapping.base().unwrap() as usize;
+        let size = mapping.length().unwrap();
+        let memory = &arena.arena().memid;
+        let owner = arena.arena().start as usize == middle
+            && memory.kind() == crate::types::MemoryKind::Os
+            && memory.os_base().map(|base| base.value()) == Some(middle)
+            && memory.size() == Some(size);
+        let geometry = count == 3 && ranges[0].1 == size
+            && ranges[1].0 + ranges[1].1 == middle
+            && ranges[2].0 == middle + size
+            && ranges[1].1 > 0 && ranges[2].1 > 0;
+        let escaped = ranges[ordinal - 1];
+        let mut residency = 0u8;
+        // SAFETY: the selected failed release starts at a page-aligned live
+        // anonymous mapping, and `mincore` writes one residency byte.
+        let escaped_live = unsafe { crabc_core::mm::mincore_raw(
+            escaped.0 as *mut u8, 4096, &mut residency,
+        ) }.is_ok();
+        let after = statistics.snapshot();
+        let stats = after.reserved_current - before.reserved_current == size as i64
+            && after.mmap_calls - before.mmap_calls == 2;
+        let warning_statistics_order =
+            warnings.fallback_reserved.load(Ordering::Acquire)
+                == before.reserved_current + size as i64
+            && warnings.free_reserved.load(Ordering::Acquire)
+                == before.reserved_current + (size + 2 * ARENA_ALIGNMENT) as i64
+                    - if ordinal == 3 { ranges[1].1 as i64 } else { 0 };
+        warnings.active.store(false, Ordering::Release);
+        let second = ProcessSharedArenaStorage::test_static_owner()
+            .reserve_default_os_arena_for_process(binding, ARENA_SLICE_SIZE, &mut random)
+            .is_ok();
+        let warning_order = warnings.order.load(Ordering::Acquire);
+        let warning_count = warnings.count.load(Ordering::Acquire);
+        for (field, value) in [
+            ("owner", usize::from(owner)), ("geometry", usize::from(geometry)),
+            ("escaped_live", usize::from(escaped_live)),
+            ("warning_order", warning_order), ("warning_count", warning_count),
+            ("warning_statistics_order", usize::from(warning_statistics_order)),
+            ("statistics", usize::from(stats)), ("later_valid", usize::from(second)),
+        ] {
+            std::println!("m2.policy_trim.{name}.{field}={value}");
+        }
+        // SAFETY: this leaked trim lies outside both arena MemoryIds and is
+        // released only after every observation of its live page.
+        unsafe { crabc_core::mm::munmap_raw(escaped.0 as *mut u8, escaped.1) }
+            .expect("fixture teardown releases the escaped trim");
+        owner && geometry && escaped_live && warning_order == 12 && warning_statistics_order
+            && warning_count == 2 && stats && second
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_policy_first_arena_trim_c_rust_trace() {
+        assert!(policy_first_trim_case("prefix", 2));
+        assert!(policy_first_trim_case("suffix", 3));
+    }
+
     #[test]
     fn default_os_reservation_releases_both_failed_attempts_before_retrying_from_cold() {
         let config = memory_config();

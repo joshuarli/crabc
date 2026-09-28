@@ -1135,7 +1135,7 @@ impl ProcessMainInitializationStorage {
     #[cfg(test)]
     pub(crate) unsafe fn test_prepare_vm_process_backing_binding(
         &'static self,
-        mut config: MemoryConfig,
+        config: MemoryConfig,
         options: VmOptions,
         subprocess: &'static MainSubprocess,
         page_map_storage: &'static ProcessPageMapStorage,
@@ -1154,6 +1154,52 @@ impl ProcessMainInitializationStorage {
                 return Err(ProcessMainInitError::VmPolicy(error));
             }
         };
+        unsafe { self.test_prepare_vm_process_backing_binding_after_claim(
+            config, policy, subprocess, page_map_storage,
+        ) }
+    }
+
+    /// Binds a captured source-option output owner to the same isolated
+    /// process/PageMap proof used by policy-aware arena reservations.
+    ///
+    /// # Safety
+    /// The supplied owners have isolated process lifetime. `output` has
+    /// completed source-option initialization, remains live for every policy
+    /// read, and owns its registered callback through those reads.
+    #[cfg(test)]
+    pub(crate) unsafe fn test_prepare_vm_process_backing_binding_with_source_output(
+        &'static self,
+        config: MemoryConfig,
+        output: &'static OutputOwner,
+        subprocess: &'static MainSubprocess,
+        page_map_storage: &'static ProcessPageMapStorage,
+    ) -> Result<ProcessMainBackingBinding, ProcessMainInitError> {
+        if self.state.compare_exchange(COLD, INITIALIZING, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(ProcessMainInitError::AlreadyInitialized);
+        }
+        // SAFETY: the caller retains the initialized source-option owner for
+        // every later policy read and warning delivery.
+        let policy = unsafe { VmPolicy::from_process_options(output) };
+        unsafe { self.test_prepare_vm_process_backing_binding_after_claim(
+            config, policy, subprocess, page_map_storage,
+        ) }
+    }
+
+    /// Continues the test-only backing proof after claiming this coordinator.
+    ///
+    /// # Safety
+    /// `self` owns INITIALIZING and all supplied owners have isolated process
+    /// lifetime. No other caller may initialize this coordinator.
+    #[cfg(test)]
+    unsafe fn test_prepare_vm_process_backing_binding_after_claim(
+        &'static self,
+        mut config: MemoryConfig,
+        policy: VmPolicy,
+        subprocess: &'static MainSubprocess,
+        page_map_storage: &'static ProcessPageMapStorage,
+    ) -> Result<ProcessMainBackingBinding, ProcessMainInitError> {
         // SAFETY: this test-only method owns the successful COLD ->
         // INITIALIZING transition and the supplied owners are all static.
         let process = match unsafe {
