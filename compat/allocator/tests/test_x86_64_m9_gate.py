@@ -14,10 +14,12 @@ import hashlib
 import importlib.util
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -40,11 +42,21 @@ from test_perf_engine_x86_64 import (  # noqa: E402,F401
 ROSTER = ["alloc_free_64", "remote_free_1"]
 
 
+def integrated_reading() -> dict:
+    names = gate.integrated.row_names(gate.integrated.load_manifest())
+    metrics = {name: {key: 1.0 for key in ("throughput_lower_95", "p99_upper_95",
+                                                "peak_rss_upper_95", "peak_pss_upper_95")} for name in names}
+    return {"unmet": [], "metrics": metrics}
+
+
 def accepted(identity: dict | None = None, roster: list[str] | None = None) -> dict:
     roster = ROSTER if roster is None else roster
     return {
         "unmet": [],
-        "identity": identity or {"source": {"fixture": "a"}, "configuration": {"mode": "full"}, "host": {"cpu": "x"}},
+        "identity": identity or {"source": {"fixture": "a"}, "configuration": {"mode": "full"}, "host": {
+            "cpu_model": "synthetic", "kernel_release": "6.1", "logical_cpus": 4,
+            "allowed_cpus": [0, 1, 2, 3], "measurement_cpus": [0, 1, 2, 3],
+            "scaling_governors": {"0": "performance"}, "transparent_hugepage": "never"}},
         "critical_rows": roster,
         "metrics": {
             "throughput": {"suite_geometric_mean_lower_95": 1.0, "critical_lower_95": {name: 1.0 for name in roster}},
@@ -61,6 +73,9 @@ class GateFixture(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         self.results: dict[str, dict] = {}
+        patcher = patch.object(gate.integrated, "WORK_ROOT", self.root / "integrated-builds")
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def report_file(self, name: str, result: dict, *, rust_product: bytes = b"rust static library") -> Path:
         path = self.root / f"{name}.json"
@@ -82,6 +97,62 @@ class GateFixture(unittest.TestCase):
         self.results[str(path)] = result
         return path
 
+    def integrated_report_file(self, name: str, *, host: dict | None = None) -> Path:
+        work = gate.integrated.WORK_ROOT / name
+        report: dict = {"label": name, "provenance": {"host": host or accepted()["identity"]["host"]},
+                        "products": {}, "programs": {}}
+        manifest = gate.integrated.load_manifest()
+        products: dict[str, dict[str, Path]] = {}
+        for kind in ("static", "dynamic"):
+            report["products"][kind] = {}
+            products[kind] = {}
+            for lane, backend in manifest["backends"].items():
+                product = work / "products" / f"{kind}-{backend}"
+                share = product / "share/crabc"
+                share.mkdir(parents=True)
+                product_manifest = share / "manifest.json"
+                if lane == "pinned_c":
+                    pin = engine.shared.load_pin()
+                    evidence = {"upstream": {"version": pin["version"], "revision": pin["revision"],
+                                             "archive_sha256": pin["sha256"]},
+                                "mi_malloc_version": 30500, "member_sha256": "a" * 64,
+                                "flag_reconstruction": {}}
+                    (share / "libc-shared.provenance.json").write_text(
+                        json.dumps({"pinned_c_evidence": evidence}), encoding="utf-8")
+                payload = {path.relative_to(product).as_posix(): engine.sha256_file(path)
+                           for path in product.rglob("*") if path.is_file()}
+                product_record = {"allocator_backend": backend}
+                if kind == "static":
+                    product_record["installed"] = {"files": payload}
+                else:
+                    product_record.update(files=payload, symlinks={})
+                product_manifest.write_text(json.dumps(product_record), encoding="utf-8")
+                products[kind][lane] = product
+                report["products"][kind][lane] = {
+                    "path": engine.shared.relative(product), "manifest": engine.file_record(product_manifest)}
+                program = work / "programs" / f"{kind}-{lane}"
+                program.mkdir(parents=True)
+                objects = {}
+                for object_name in ("engine-fixture.o", "integrated-libc-backend.o"):
+                    physical = program / object_name
+                    physical.write_bytes(f"{kind}/{object_name}".encode())
+                    objects[object_name] = engine.sha256_file(physical)
+                executable = program / "program"
+                executable.write_bytes(f"{kind}/{lane}/program".encode())
+                report["programs"][f"{kind}/{lane}"] = {
+                    "executable": engine.artifact_record(executable), "objects": objects}
+                if kind == "dynamic":
+                    runtime = program / "root"
+                    shutil.copytree(product, runtime)
+                    shutil.copy2(executable, runtime / "program")
+        report["c_reference"] = gate.integrated.c_reference(products)
+        launcher = work / "programs/integrated-startup-launcher"
+        launcher.write_bytes(b"startup launcher")
+        report["programs"]["launcher"] = engine.artifact_record(launcher)
+        path = self.root / f"{name}.json"
+        path.write_text(json.dumps(report), encoding="utf-8")
+        return path
+
     def inspect(self, root: Path, path: Path) -> dict:
         self.assertEqual(root, gate.harness.ROOT)
         result = self.results[str(path)]
@@ -97,6 +168,10 @@ class AgreementTests(GateFixture):
     def evaluate(self, paths: list[Path]) -> dict:
         return gate.evaluate(paths, None, inspect=self.inspect, gate_root=self.root / "gates",
                              integrated_reports=[], evaluate_convergence=lambda root: [])
+
+    def qualified_cohort(self) -> list[dict]:
+        paths = [self.report_file(f"cohort-{index}", accepted()) for index in range(3)]
+        return gate.read_reports(paths, self.inspect)
 
     def test_three_agreeing_accepted_reports_meet_reports_and_agreement(self) -> None:
         paths = [self.report_file(f"r{index}", accepted()) for index in range(3)]
@@ -198,12 +273,95 @@ class AgreementTests(GateFixture):
         self.assertEqual(convergence["detail"], ["transitional: src/a.c:x is partial"])
 
     def test_one_accepted_integrated_report_meets_its_condition(self) -> None:
-        good, bad = self.root / "good.json", self.root / "bad.json"
-        results = {good: {"unmet": []}, bad: {"unmet": ["host is not uncontended: x"]}}
-        condition = gate.integrated_condition([bad, good], lambda root, path: results[path])
+        good, bad = self.integrated_report_file("good"), self.root / "bad.json"
+        results = {good: integrated_reading(), bad: {"unmet": ["host is not uncontended: x"]}}
+        cohort = self.qualified_cohort()
+        condition = gate.integrated_condition([bad, good], lambda root, path: results[path], cohort)
         self.assertTrue(condition["met"])
-        condition = gate.integrated_condition([bad], lambda root, path: results[path])
+        condition = gate.integrated_condition([bad], lambda root, path: results[path], cohort)
         self.assertIn("bad.json: host is not uncontended: x", condition["detail"][1])
+
+    def test_integrated_report_cannot_qualify_without_an_engine_report_cohort(self) -> None:
+        integrated_path = self.root / "integrated.json"
+        integrated_path.write_text("{}", encoding="utf-8")
+        result = gate.evaluate([], None, inspect=self.inspect, gate_root=self.root / "gates",
+                               integrated_reports=[integrated_path],
+                               inspect_integrated=lambda root, path: integrated_reading(),
+                               evaluate_convergence=lambda root: [])
+        self.assertFalse(self.condition(result, "m9.integrated-products")["met"])
+        self.assertTrue(any("three agreeing qualified engine reports" in item
+                            for item in self.condition(result, "m9.integrated-products")["detail"]))
+
+    def test_integrated_report_requires_the_cohort_host(self) -> None:
+        host = copy.deepcopy(accepted()["identity"]["host"])
+        host["cpu_model"] = "other host"
+        path = self.integrated_report_file("other-host", host=host)
+        condition = gate.integrated_condition([path], lambda root, path: integrated_reading(), self.qualified_cohort())
+        self.assertFalse(condition["met"])
+        self.assertTrue(any("host identity differs" in item for item in condition["detail"]))
+
+    def test_integrated_report_may_use_a_subset_of_cohort_measurement_cpus(self) -> None:
+        cohort = self.qualified_cohort()
+        host = copy.deepcopy(cohort[0]["identity"]["host"])
+        host["measurement_cpus"] = [0, 1]
+        host["scaling_governors"] = {"0": "performance"}
+        path = self.integrated_report_file("subset-cpus", host=host)
+        condition = gate.integrated_condition([path], lambda root, path: integrated_reading(), cohort)
+        self.assertTrue(condition["met"], condition)
+
+    def test_integrated_report_requires_one_agreeing_source_cohort(self) -> None:
+        cohort = self.qualified_cohort()
+        cohort[-1]["identity"]["source"] = {"fixture": "different"}
+        path = self.integrated_report_file("different-source-cohort")
+        condition = gate.integrated_condition([path], lambda root, path: integrated_reading(), cohort)
+        self.assertFalse(condition["met"])
+        self.assertTrue(any("three agreeing qualified engine reports" in item for item in condition["detail"]))
+
+    def test_integrated_reader_without_a_verdict_fails_closed(self) -> None:
+        path = self.integrated_report_file("missing-verdict")
+        condition = gate.integrated_condition([path], lambda root, path: {"metrics": {}}, self.qualified_cohort())
+        self.assertFalse(condition["met"])
+        self.assertTrue(any("reader returned no valid refusal list" in item for item in condition["detail"]))
+
+    def test_integrated_reader_without_complete_metrics_fails_closed(self) -> None:
+        path = self.integrated_report_file("missing-metrics")
+        condition = gate.integrated_condition([path], lambda root, path: {"unmet": [], "metrics": {}},
+                                              self.qualified_cohort())
+        self.assertFalse(condition["met"])
+        self.assertTrue(any("reader returned no complete row metrics" in item for item in condition["detail"]))
+
+    def test_integrated_report_requires_physical_products_and_programs(self) -> None:
+        path = self.integrated_report_file("tampered")
+        work = gate.integrated.WORK_ROOT / "tampered"
+        (work / "programs/static-rust_engine/program").write_bytes(b"changed binary")
+        condition = gate.integrated_condition([path], lambda root, path: integrated_reading(), self.qualified_cohort())
+        self.assertFalse(condition["met"])
+        self.assertTrue(any("static/rust_engine program differs" in item for item in condition["detail"]))
+
+    def test_integrated_report_rejects_changed_installed_payload_and_execution_root(self) -> None:
+        path = self.integrated_report_file("changed-tree")
+        work = gate.integrated.WORK_ROOT / "changed-tree"
+        product = work / "products/static-native-shadow"
+        (product / "unexpected.bin").write_bytes(b"unrecorded product payload")
+        runtime_program = work / "programs/dynamic-rust_engine/root/program"
+        runtime_program.write_bytes(b"changed runtime copy")
+        condition = gate.integrated_condition([path], lambda root, path: integrated_reading(), self.qualified_cohort())
+        self.assertFalse(condition["met"])
+        self.assertTrue(any("static/rust_engine installed payload differs" in item for item in condition["detail"]))
+        self.assertTrue(any("dynamic/rust_engine execution root differs" in item for item in condition["detail"]))
+
+    def test_integrated_program_objects_must_be_identical_across_backends(self) -> None:
+        path = self.integrated_report_file("different-objects")
+        changed = gate.integrated.WORK_ROOT / "different-objects/programs/static-rust_engine/engine-fixture.o"
+        changed.write_bytes(b"different fixture object")
+        report = json.loads(path.read_text(encoding="utf-8"))
+        report["programs"]["static/rust_engine"]["objects"]["engine-fixture.o"] = engine.sha256_file(changed)
+        path.write_text(json.dumps(report), encoding="utf-8")
+        condition = gate.integrated_condition([path], lambda root, path: integrated_reading(),
+                                              self.qualified_cohort())
+        self.assertFalse(condition["met"])
+        self.assertTrue(any("static C and Rust program objects are not source-identical" in item
+                            for item in condition["detail"]))
 
     def test_the_matrix_condition_comes_from_report_coverage(self) -> None:
         self.assertIn("no full report carries", self.condition(self.evaluate([]), "m9.matrix")["detail"][0])

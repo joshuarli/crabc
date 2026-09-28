@@ -14,6 +14,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
+import os
 import re
 import sys
 from pathlib import Path
@@ -231,26 +233,160 @@ def discover_integrated(directory: Path = integrated.REPORT_ROOT) -> list[Path]:
 
 
 def integrated_condition(
-    paths: Sequence[Path], inspect: Callable[[Path, Path], Mapping[str, Any]]
+    paths: Sequence[Path], inspect: Callable[[Path, Path], Mapping[str, Any]],
+    cohort: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    """At least one integrated-product report must qualify."""
+    """One physical integrated comparison must belong to the qualified engine cohort."""
 
     unmet: list[str] = []
     accepted = []
+    agreement = agreement_condition(cohort)
+    if not agreement["met"]:
+        unmet.append("integrated products need three agreeing qualified engine reports")
     for path in paths:
         try:
             result = inspect(harness.ROOT, path)
         except Exception as error:  # noqa: BLE001
             result = {"unmet": [f"{type(error).__name__}: {error}"]}
+        if not isinstance(result, Mapping) or not isinstance(result.get("unmet"), list):
+            result = {"unmet": ["integrated reader returned no valid refusal list"]}
+        if not result["unmet"]:
+            metrics = result.get("metrics")
+            fields = {"throughput_lower_95", "p99_upper_95", "peak_rss_upper_95", "peak_pss_upper_95"}
+            names = set(integrated.row_names(integrated.load_manifest()))
+            if (not isinstance(metrics, Mapping) or set(metrics) != names
+                    or any(not isinstance(row, Mapping) or set(row) != fields
+                           or any(type(value) not in (int, float) or not math.isfinite(value) or value <= 0
+                                  for value in row.values()) for row in metrics.values())):
+                result = {"unmet": ["integrated reader returned no complete row metrics"]}
         if result["unmet"]:
             unmet.append(f"{harness.relative(Path(path))}: " + "; ".join(result["unmet"]))
         else:
-            accepted.append(path)
+            try:
+                report = json.loads(Path(path).read_text(encoding="utf-8"))
+                physical_unmet = physical_integrated_unmet(Path(path), report)
+                if agreement["met"]:
+                    if not same_cohort_host(report["provenance"]["host"], cohort[0]["identity"]["host"]):
+                        physical_unmet.append("host identity differs from the qualified engine reports")
+            except Exception as error:  # noqa: BLE001 - malformed retained evidence must fail closed
+                physical_unmet = [f"retained integrated product is invalid: {type(error).__name__}: {error}"]
+            if physical_unmet:
+                unmet.append(f"{harness.relative(Path(path))}: " + "; ".join(physical_unmet))
+            elif agreement["met"]:
+                accepted.append(path)
     if not accepted:
         unmet.insert(0, f"no qualified integrated-product report among {len(paths)} read "
                         "(allocator-perf-integrated --full)")
         return _condition("m9.integrated-products", unmet, "")
     return _condition("m9.integrated-products", [], f"{harness.relative(Path(accepted[0]))} qualifies")
+
+
+def same_cohort_host(integrated_host: Mapping[str, Any], engine_host: Mapping[str, Any]) -> bool:
+    """A narrower integrated CPU set may share the engine cohort's physical host."""
+
+    stable_fields = ("cpu_model", "kernel_release", "logical_cpus", "allowed_cpus", "transparent_hugepage")
+    if any(integrated_host.get(field) != engine_host.get(field) for field in stable_fields):
+        return False
+    measured = integrated_host.get("measurement_cpus")
+    cohort_cpus = engine_host.get("measurement_cpus")
+    if (not isinstance(measured, list) or not measured or len(set(measured)) != len(measured)
+            or not isinstance(cohort_cpus, list) or not set(measured) <= set(cohort_cpus)):
+        return False
+    governors = integrated_host.get("scaling_governors")
+    cohort_governors = engine_host.get("scaling_governors")
+    return (isinstance(governors, Mapping) and isinstance(cohort_governors, Mapping)
+            and governors == {str(cpu): cohort_governors[str(cpu)] for cpu in measured
+                              if str(cpu) in cohort_governors})
+
+
+def physical_integrated_unmet(path: Path, report: Mapping[str, Any]) -> list[str]:
+    """Reread installed products and programs from the report's retained build tree."""
+
+    label = engine.validate_label(report["label"])
+    if label != path.stem:
+        return ["report label differs from its retained filename"]
+    work = integrated.WORK_ROOT / label
+    if work.is_symlink():
+        return ["retained integrated build tree is a symlink"]
+    manifest = integrated.load_manifest()
+    products: dict[str, dict[str, Path]] = {}
+    unmet = []
+    if set(report["products"]) != {"static", "dynamic"} or set(report["programs"]) != {
+            "static/pinned_c", "static/rust_engine", "dynamic/pinned_c", "dynamic/rust_engine", "launcher"}:
+        return ["integrated report does not name exactly its installed products and programs"]
+    for kind in ("static", "dynamic"):
+        products[kind] = {}
+        objects = []
+        if set(report["products"][kind]) != set(manifest["backends"]):
+            return [f"{kind} report does not name exactly its C and Rust installed products"]
+        for lane, backend in manifest["backends"].items():
+            product = work / "products" / f"{kind}-{backend}"
+            products[kind][lane] = product
+            product_manifest = product / "share/crabc/manifest.json"
+            recorded_product = report["products"][kind][lane]
+            if (product.is_symlink() or product_manifest.is_symlink() or recorded_product != {
+                    "path": engine.shared.relative(product), "manifest": engine.file_record(product_manifest)}
+                    or integrated.product_backend(product) != backend):
+                unmet.append(f"{kind}/{lane} installed product differs from its retained manifest")
+            product_contents = json.loads(product_manifest.read_text(encoding="utf-8"))
+            declared_files = (product_contents.get("installed", {}).get("files") if kind == "static"
+                              else product_contents.get("files"))
+            declared_symlinks = {} if kind == "static" else product_contents.get("symlinks")
+            files, symlinks = physical_tree(product, exclude={"share/crabc/manifest.json"})
+            if (not isinstance(declared_files, dict) or files != declared_files
+                    or not isinstance(declared_symlinks, dict) or symlinks != declared_symlinks):
+                unmet.append(f"{kind}/{lane} installed payload differs from its manifest")
+            program = work / "programs" / f"{kind}-{lane}"
+            executable = program / "program"
+            recorded_program = report["programs"][f"{kind}/{lane}"]
+            if (program.is_symlink() or executable.is_symlink()
+                    or recorded_program["executable"] != engine.artifact_record(executable)):
+                unmet.append(f"{kind}/{lane} program differs from its retained executable")
+            physical_objects = {}
+            for name in ("engine-fixture.o", "integrated-libc-backend.o"):
+                physical = program / name
+                if physical.is_symlink():
+                    unmet.append(f"{kind}/{lane} {name} is a symlink")
+                physical_objects[name] = engine.sha256_file(physical)
+            if recorded_program["objects"] != physical_objects:
+                unmet.append(f"{kind}/{lane} program objects differ from their retained digests")
+            if kind == "dynamic":
+                runtime_files, runtime_symlinks = physical_tree(program / "root")
+                expected_runtime = dict(files, **{"share/crabc/manifest.json": engine.sha256_file(product_manifest),
+                                                  "program": engine.sha256_file(executable)})
+                if runtime_files != expected_runtime or runtime_symlinks != symlinks:
+                    unmet.append(f"{kind}/{lane} execution root differs from its installed product and program")
+            objects.append(physical_objects)
+        if objects[0] != objects[1]:
+            unmet.append(f"{kind} C and Rust program objects are not source-identical")
+    if report["c_reference"] != integrated.c_reference(products):
+        unmet.append("C reference differs from the installed evidence products")
+    launcher = work / "programs/integrated-startup-launcher"
+    if launcher.is_symlink() or report["programs"]["launcher"] != engine.artifact_record(launcher):
+        unmet.append("startup launcher differs from its retained executable")
+    return unmet
+
+
+def physical_tree(root: Path, *, exclude: set[str] | None = None) -> tuple[dict[str, str], dict[str, str]]:
+    """Hash the regular files and relative links of a retained installed tree."""
+
+    if not root.is_dir() or root.is_symlink():
+        raise ValueError(f"retained tree is absent or is a symlink: {root}")
+    files: dict[str, str] = {}
+    symlinks: dict[str, str] = {}
+    for item in root.rglob("*"):
+        name = item.relative_to(root).as_posix()
+        if item.is_symlink():
+            target = os.readlink(item)
+            if Path(target).is_absolute() or ".." in Path(target).parts:
+                raise ValueError(f"retained tree has an escaping symlink: {name}")
+            symlinks[name] = target
+        elif item.is_file():
+            if name not in (exclude or set()):
+                files[name] = engine.sha256_file(item)
+        elif not item.is_dir():
+            raise ValueError(f"retained tree has a non-file entry: {name}")
+    return files, symlinks
 
 
 def correctness_condition(accepted_paths: Sequence[Path], gate_root: Path = harness.ARTIFACT_ROOT / "x86_64") -> dict[str, Any]:
@@ -289,7 +425,7 @@ def evaluate(
         codegen_condition(codegen_report),
         convergence_condition(evaluate_convergence),
         integrated_condition(discover_integrated() if integrated_reports is None else integrated_reports,
-                             inspect_integrated),
+                             inspect_integrated, [record for record in records if not record["unmet"]]),
         correctness_condition(accepted, gate_root),
     ]
     assert [row["id"] for row in conditions] == list(CONDITION_IDS)
