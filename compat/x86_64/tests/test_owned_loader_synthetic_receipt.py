@@ -16,6 +16,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import native_shadow_receipt as receipt  # noqa: E402
+import owned_loader_synthetic_receipt as semantic_receipt  # noqa: E402
 
 RUNNER = "owned-loader-synthetic"
 EVIDENCE = re.compile(r"^owned synthetic loader evidence: (/workspace/\.work/x86_64/owned-loader-synthetic\.[^\s]+)$", re.M)
@@ -81,6 +82,7 @@ class OwnedLoaderSyntheticReceiptTests(unittest.TestCase):
 
         shutil.rmtree(work)
         receipt.read_receipt(ROOT, RUNNER, case_prefix="weak-strong")
+        semantic_receipt.read_loader_synthetic_receipt(ROOT)
         retained = latest / "products/dynamic-loader"
         original = retained.read_bytes()
         retained.write_bytes(bytes([original[0] ^ 1]) + original[1:])
@@ -95,6 +97,100 @@ class OwnedLoaderSyntheticReceiptTests(unittest.TestCase):
             receipt.read_receipt(ROOT, RUNNER)
         log.write_bytes(original)
         receipt.read_receipt(ROOT, RUNNER)
+
+        receipt_path = latest / "receipt.json"
+        original_receipt = receipt_path.read_bytes()
+        report_path = latest / "logs/report.json"
+        original_report = report_path.read_bytes()
+        changed_report = json.loads(original_report)
+        changed_report["selected"].remove("weak-strong")
+        changed_report["cases"].pop("weak-strong")
+        report_path.write_text(json.dumps(changed_report))
+        changed_receipt = json.loads(original_receipt)
+        runner = next(case for case in changed_receipt["cases"] if case["id"] == "runner")
+        report_bytes = report_path.read_bytes()
+        runner["logs"]["report.json"] = {
+            "sha256": hashlib.sha256(report_bytes).hexdigest(), "size": len(report_bytes),
+        }
+        receipt_path.write_text(json.dumps(changed_receipt))
+        receipt.read_receipt(ROOT, RUNNER)
+        with self.assertRaisesRegex(receipt.ReceiptError, "report workload roster"):
+            semantic_receipt.read_loader_synthetic_receipt(ROOT)
+        report_path.write_bytes(original_report)
+        receipt_path.write_bytes(original_receipt)
+        semantic_receipt.read_loader_synthetic_receipt(ROOT)
+
+        fixture_path = latest / "products/fixture-map"
+        original_fixture = fixture_path.read_bytes()
+        changed_fixture = json.loads(original_fixture)
+        changed_fixture["fixtures"][0]["sha256"] = "0" * 64
+        fixture_path.write_text(json.dumps(changed_fixture))
+        changed_receipt = json.loads(original_receipt)
+        fixture_bytes = fixture_path.read_bytes()
+        changed_receipt["products"]["fixture-map"] = {
+            "sha256": hashlib.sha256(fixture_bytes).hexdigest(), "size": len(fixture_bytes),
+        }
+        receipt_path.write_text(json.dumps(changed_receipt))
+        receipt.read_receipt(ROOT, RUNNER)
+        with self.assertRaisesRegex(receipt.ReceiptError, "fixture digest"):
+            semantic_receipt.read_loader_synthetic_receipt(ROOT)
+        fixture_path.write_bytes(original_fixture)
+        receipt_path.write_bytes(original_receipt)
+        semantic_receipt.read_loader_synthetic_receipt(ROOT)
+
+        changed_fixture = json.loads(original_fixture)
+        changed_fixture["symlinks"].pop()
+        fixture_path.write_text(json.dumps(changed_fixture))
+        changed_receipt = json.loads(original_receipt)
+        fixture_bytes = fixture_path.read_bytes()
+        changed_receipt["products"]["fixture-map"] = {
+            "sha256": hashlib.sha256(fixture_bytes).hexdigest(), "size": len(fixture_bytes),
+        }
+        receipt_path.write_text(json.dumps(changed_receipt))
+        receipt.read_receipt(ROOT, RUNNER)
+        with self.assertRaisesRegex(receipt.ReceiptError, "fixture symlink map"):
+            semantic_receipt.read_loader_synthetic_receipt(ROOT)
+        fixture_path.write_bytes(original_fixture)
+        receipt_path.write_bytes(original_receipt)
+        semantic_receipt.read_loader_synthetic_receipt(ROOT)
+
+        state_path = latest / "products/dynamic-product-state"
+        original_state = state_path.read_bytes()
+        changed_state = json.loads(original_state)
+        changed_state["allocator_backend"] = "selected-c"
+        state_path.write_text(json.dumps(changed_state))
+        changed_receipt = json.loads(original_receipt)
+        state_bytes = state_path.read_bytes()
+        changed_receipt["products"]["dynamic-product-state"] = {
+            "sha256": hashlib.sha256(state_bytes).hexdigest(), "size": len(state_bytes),
+        }
+        receipt_path.write_text(json.dumps(changed_receipt))
+        receipt.read_receipt(ROOT, RUNNER)
+        with self.assertRaisesRegex(receipt.ReceiptError, "product backend"):
+            semantic_receipt.read_loader_synthetic_receipt(ROOT)
+        state_path.write_bytes(original_state)
+        receipt_path.write_bytes(original_receipt)
+        semantic_receipt.read_loader_synthetic_receipt(ROOT)
+
+        raw_path = next((latest / "logs/cases/nested-needed/raw").glob("*.json"))
+        original_raw = raw_path.read_bytes()
+        changed_raw = json.loads(original_raw)
+        changed_raw["stdout_hex"] = "00"
+        raw_path.write_text(json.dumps(changed_raw))
+        changed_receipt = json.loads(original_receipt)
+        raw_key = raw_path.relative_to(latest / "logs").as_posix()
+        nested_case = next(case for case in changed_receipt["cases"] if case["id"] == "nested-needed")
+        raw_bytes = raw_path.read_bytes()
+        nested_case["logs"][raw_key] = {
+            "sha256": hashlib.sha256(raw_bytes).hexdigest(), "size": len(raw_bytes),
+        }
+        receipt_path.write_text(json.dumps(changed_receipt))
+        receipt.read_receipt(ROOT, RUNNER)
+        with self.assertRaisesRegex(receipt.ReceiptError, "raw command streams"):
+            semantic_receipt.read_loader_synthetic_receipt(ROOT)
+        raw_path.write_bytes(original_raw)
+        receipt_path.write_bytes(original_receipt)
+        semantic_receipt.read_loader_synthetic_receipt(ROOT)
 
 
 if __name__ == "__main__":
