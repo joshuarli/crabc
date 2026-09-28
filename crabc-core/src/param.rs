@@ -1,4 +1,4 @@
-//! Direct Linux/AArch64 process auxiliary-vector reads.
+//! Direct Linux 64-bit process auxiliary-vector reads.
 //!
 //! Linux does not provide an auxv syscall. This module reads the kernel's
 //! fixed-width records from `/proc/self/auxv` through the existing direct
@@ -9,6 +9,15 @@
 const AT_NULL: usize = 0;
 const PROC_SELF_AUXV: &[u8] = b"/proc/self/auxv\0";
 const AUXV_RECORD_BYTES: usize = 16;
+
+#[cfg(target_arch = "x86_64")]
+use core::sync::atomic::{AtomicUsize, Ordering};
+
+// Zero means no startup owner has supplied the kernel vDSO base. One means
+// the validated initial vector had no usable base. A kernel vDSO address is
+// page aligned, so neither state can be confused with a valid base.
+#[cfg(target_arch = "x86_64")]
+static INITIAL_SYSINFO_EHDR_FOR_VDSO: AtomicUsize = AtomicUsize::new(0);
 
 /// `AT_PAGESZ`: the process page size.
 pub const AT_PAGESZ: usize = 6;
@@ -45,6 +54,80 @@ pub fn auxv_value(tag: usize) -> Option<usize> {
     // the read failed, so no retry is attempted for EINTR here.
     let _ = crate::io::close(fd);
     value
+}
+
+/// Supply the process's initial vDSO base to this copy of the core clock
+/// dispatcher. The first handoff wins; a later call returns `false` without
+/// replacing it. An absent or zero base is retained so clock lookup does not
+/// retry `/proc/self/auxv`. Copies without a handoff still read procfs.
+///
+/// # Safety
+///
+/// `base` must be absent or the `AT_SYSINFO_EHDR` word from this process's
+/// validated, immutable kernel initial auxiliary vector. The startup owner
+/// must publish it before other threads can use this core clock dispatcher.
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn install_initial_sysinfo_ehdr_for_vdso(base: Option<usize>) -> bool {
+    install_initial_sysinfo_ehdr_into(&INITIAL_SYSINFO_EHDR_FOR_VDSO, base)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn install_initial_sysinfo_ehdr_into(state: &AtomicUsize, base: Option<usize>) -> bool {
+    let selected = base.filter(|base| *base > 1).unwrap_or(1);
+    state.compare_exchange(0, selected, Ordering::Release, Ordering::Relaxed)
+        .is_ok()
+}
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn vdso_sysinfo_ehdr() -> Option<usize> {
+    let published = INITIAL_SYSINFO_EHDR_FOR_VDSO.load(Ordering::Acquire);
+    vdso_sysinfo_ehdr_from_state(published, || auxv_value(AT_SYSINFO_EHDR))
+}
+
+#[cfg(target_arch = "x86_64")]
+fn vdso_sysinfo_ehdr_from_state(
+    state: usize,
+    read_proc: impl FnOnce() -> Option<usize>,
+) -> Option<usize> {
+    match state {
+        0 => read_proc(),
+        1 => None,
+        base => Some(base),
+    }
+}
+
+#[cfg(all(test, target_arch = "x86_64"))]
+mod tests {
+    use super::{install_initial_sysinfo_ehdr_into, vdso_sysinfo_ehdr_from_state};
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn vdso_handoff_keeps_first_base_and_avoids_procfs() {
+        let state = AtomicUsize::new(0);
+        assert_eq!(
+            vdso_sysinfo_ehdr_from_state(state.load(Ordering::Acquire), || Some(0x4000)),
+            Some(0x4000)
+        );
+        assert!(install_initial_sysinfo_ehdr_into(&state, Some(0x5000)));
+        assert!(!install_initial_sysinfo_ehdr_into(&state, None));
+        assert_eq!(
+            vdso_sysinfo_ehdr_from_state(state.load(Ordering::Acquire), || panic!("reopened procfs")),
+            Some(0x5000)
+        );
+    }
+
+    #[test]
+    fn vdso_handoff_keeps_absent_and_zero_base_without_procfs() {
+        for base in [None, Some(0)] {
+            let state = AtomicUsize::new(0);
+            assert!(install_initial_sysinfo_ehdr_into(&state, base));
+            assert!(!install_initial_sysinfo_ehdr_into(&state, Some(0x5000)));
+            assert_eq!(
+                vdso_sysinfo_ehdr_from_state(state.load(Ordering::Acquire), || panic!("reopened procfs")),
+                None
+            );
+        }
+    }
 }
 
 #[inline]

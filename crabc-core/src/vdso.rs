@@ -103,7 +103,7 @@ pub(crate) unsafe fn clock_gettime_status(clock_id: i32, timespec: *mut u8) -> i
 pub(crate) unsafe fn gettimeofday_status(timeval: *mut u8, timezone: *mut u8) -> i32 {
     let cached = GETTIMEOFDAY.load(Ordering::Relaxed);
     let address = if cached == UNRESOLVED {
-        let selected = select_gettimeofday(crate::param::auxv_value(crate::param::AT_SYSINFO_EHDR));
+        let selected = select_gettimeofday(process_sysinfo_ehdr());
         let selected = selected as *const () as usize;
         match GETTIMEOFDAY.compare_exchange(
             UNRESOLVED,
@@ -142,7 +142,7 @@ unsafe fn resolve_and_call_clock_gettime(clock_id: i32, timespec: *mut u8) -> i3
 #[cold]
 #[inline(never)]
 fn resolve_and_publish_clock_gettime() -> ClockGettime {
-    let resolved = select_clock_gettime(crate::param::auxv_value(crate::param::AT_SYSINFO_EHDR));
+    let resolved = select_clock_gettime(process_sysinfo_ehdr());
     let resolved = resolved as *const () as usize;
     let published = match CLOCK_GETTIME.compare_exchange(
         UNRESOLVED,
@@ -157,6 +157,14 @@ fn resolve_and_publish_clock_gettime() -> ClockGettime {
     // SAFETY: See the corresponding cached branch above. The cache contains
     // only validated vDSO code addresses or `direct_clock_gettime`.
     unsafe { published_clock_gettime_function(published) }
+}
+
+#[inline]
+fn process_sysinfo_ehdr() -> Option<usize> {
+    #[cfg(target_arch = "x86_64")]
+    { crate::param::vdso_sysinfo_ehdr() }
+    #[cfg(target_arch = "aarch64")]
+    { crate::param::auxv_value(crate::param::AT_SYSINFO_EHDR) }
 }
 
 #[inline]

@@ -63,6 +63,16 @@ pub(super) unsafe fn install_initial(auxv: *const usize) {
     // SAFETY: The selected startup path validated this pointer and all bounded
     // pair delimiters before its sole process-wide release publication.
     INITIAL_AUXV.store(auxv as usize, Ordering::Release);
+    #[cfg(crabc_x86_owned_runtime)]
+    {
+        // The native clock dispatcher shares this libc-linked core copy. Its
+        // first clock read can follow allocator startup, where procfs need not
+        // exist even though the initial vector is already validated here.
+        let base = initial_value(AT_SYSINFO_EHDR).filter(|base| *base != 0);
+        // SAFETY: `auxv` is the validated immutable kernel initial vector;
+        // startup calls this once before constructors or worker threads.
+        let _ = unsafe { crabc_core::param::install_initial_sysinfo_ehdr_for_vdso(base) };
+    }
 }
 
 /// Read one value from the startup-published, already validated auxv vector.
