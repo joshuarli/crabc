@@ -104,8 +104,8 @@ are not transferable passes for a different revision.
   `purge_decommits=0` matches 15 more MADV_FREE and counter observations. A
   committed medium OS page matches 136 C/Rust
   publication, PageMap, terminal-release, and failed-unmap relations. A
-  separate second-arena EIO purge regression matches 16 of 19 fields; Rust
-  still omits the pinned decommit warning and its callback-order observations.
+  separate second-arena EIO purge regression now matches all 19 fields,
+  including the pinned decommit warning and its callback order.
   A failed second-arena MADV_FREE reset regression matches 20 of 23 fields;
   its remaining three fields isolate the missing reset warning.
   Every freestanding-C runner builds `libc.a` through
@@ -207,6 +207,9 @@ are not transferable passes for a different revision.
   and 3,076 user instructions respectively in matched development startups
   with identical syscall traces. Single-pass GNU hash bucket validation saves
   another paired median 4,164 user instructions in 100 development startups.
+  Direct use of retained object records for runtime symbol lookup saves a
+  paired median 14,507 instructions in a 256-call GNU-hash `dlsym` probe and
+  11,240 in a CRT startup control, at a 1,872-byte release-text cost.
   These remain unqualified under host contention. Allocator rows stay
   6.5–8× on the selected
   accepted-C backend, whose arena the host's THP `always` mode backs with
