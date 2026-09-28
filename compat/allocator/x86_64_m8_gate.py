@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -38,6 +39,7 @@ import run as harness
 
 sys.path.insert(0, str(harness.ROOT / "compat/x86_64"))
 import consumer_rust_std_lto as consumer
+import core_image
 import owned_dynamic_qualification as qualification
 import native_shadow_receipt
 import owned_mimalloc_startup_errno_receipt as startup_errno
@@ -66,7 +68,16 @@ EVIDENCE_TIMEOUT_SECONDS = 7200
 # The dispatcher's container sees the checkout at this path.
 CONTAINER_ROOT = Path("/workspace")
 ARTIFACTS = harness.ROOT / ".work/allocator-x86_64/reports/allocator/x86_64/m8-gate"
-CORE_IMAGE = "crabc-core-evidence:x86_64"
+
+
+def pinned_core_image() -> str:
+    """Keep product commands and private receipt readers in the same immutable image."""
+
+    image = core_image.CORE_IMAGE_ID
+    requested = os.environ.get("CRABC_X86_64_CORE_IMAGE")
+    if requested is not None and requested != image:
+        raise harness.HarnessError(f"M8 gate requires pinned core image {image}; got {requested}")
+    return image
 
 
 def _string_list(value: object, subject: str, *, allow_empty: bool = False) -> list[str]:
@@ -547,7 +558,7 @@ def run_lua_receipt_reader(lane: str, output: str) -> dict[str, Any]:
         "--volume", f"{git_directory}:{git_directory}:ro", "--workdir", str(CONTAINER_ROOT),
         "--env", "GIT_OPTIONAL_LOCKS=0", "--env", "GIT_CONFIG_COUNT=1",
         "--env", "GIT_CONFIG_KEY_0=safe.directory", "--env", f"GIT_CONFIG_VALUE_0={CONTAINER_ROOT}",
-        CORE_IMAGE, "python3", "-B", str(CONTAINER_ROOT / "compat/allocator/x86_64_m8_gate.py"),
+        pinned_core_image(), "python3", "-B", str(CONTAINER_ROOT / "compat/allocator/x86_64_m8_gate.py"),
         "--read-lua-evidence", lane, summary["report"],
     ]
     result = harness.command_record(command, cwd=harness.ROOT, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS)
@@ -704,7 +715,7 @@ def run_corpus_receipt_reader(command: Sequence[str], output: str) -> dict[str, 
         "--volume", f"{git_directory}:{git_directory}:ro", "--workdir", str(CONTAINER_ROOT),
         "--env", "GIT_OPTIONAL_LOCKS=0", "--env", "GIT_CONFIG_COUNT=1",
         "--env", "GIT_CONFIG_KEY_0=safe.directory", "--env", f"GIT_CONFIG_VALUE_0={CONTAINER_ROOT}",
-        CORE_IMAGE, "python3", "-B", str(CONTAINER_ROOT / "compat/allocator/x86_64_m8_gate.py"),
+        pinned_core_image(), "python3", "-B", str(CONTAINER_ROOT / "compat/allocator/x86_64_m8_gate.py"),
         "--read-corpus-evidence", str(report_path), product,
     ]
     result = harness.command_record(reader, cwd=harness.ROOT, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS)
@@ -1079,6 +1090,8 @@ def read_dso_loader_receipt(evidence_id: str, command: Sequence[str], output: st
 def run_evidence(
     runnable: Mapping[str, Sequence[str]], products: Mapping[str, str], selected: Sequence[str], artifacts: Path,
 ) -> dict[str, dict[str, Any]]:
+    image = pinned_core_image()
+    child_env = {**os.environ, "CRABC_X86_64_CORE_IMAGE": image}
     results: dict[str, dict[str, Any]] = {}
     directory: str | None = None
     producer = products["evidence"]
@@ -1098,6 +1111,7 @@ def run_evidence(
             command = bind_products(command, products, directory)
         record = harness.command_record(
             [str(harness.ROOT / command[0]), *command[1:]], cwd=harness.ROOT,
+            env=child_env,
             timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
         )
         log.write_text(str(record["stdout"]) + str(record["stderr"]))

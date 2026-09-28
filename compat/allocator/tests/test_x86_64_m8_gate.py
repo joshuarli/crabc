@@ -7,6 +7,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -26,6 +27,7 @@ import owned_native_allocator_policy_receipt as policy_reader
 import owned_native_allocator_dso_receipt as dso_reader
 import owned_loader_synthetic_receipt as synthetic_reader
 import owned_loader_libc_identity_receipt as identity_reader
+import core_image
 
 
 class M8GateContractTests(unittest.TestCase):
@@ -331,6 +333,52 @@ class M8RustStdReceiptTests(unittest.TestCase):
 
 
 class M8LuaEvidenceTests(unittest.TestCase):
+    def test_private_reader_uses_pinned_image_when_default_tag_drifts(self) -> None:
+        state = "/workspace/.work/x86_64/lua-static-source-build-native-shadow/run-image-pin"
+        summary = json.dumps({"state_root": state, "report": state + "/report.json",
+                              "latest_report": None, "passed": True}) + "\n"
+        commands = []
+
+        def command_record(command, **_kwargs):
+            commands.append(command)
+            return {"status": 1, "stdout": "", "stderr": "reader stopped after image capture"}
+
+        with mock.patch.dict(os.environ, {"CRABC_X86_64_CORE_IMAGE": core_image.CORE_IMAGE_ID}), \
+                mock.patch.object(harness, "command_record", command_record):
+            with self.assertRaisesRegex(harness.HarnessError, "reader failed"):
+                gate.run_lua_receipt_reader("static", summary)
+        self.assertEqual(len(commands), 1)
+        self.assertIn(core_image.CORE_IMAGE_ID, commands[0])
+        self.assertNotIn("crabc-core-evidence:x86_64", commands[0])
+
+    def test_evidence_dispatcher_pins_image_in_child_environment(self) -> None:
+        commands = []
+
+        def command_record(command, **kwargs):
+            commands.append((command, kwargs.get("env")))
+            return {"status": 1, "stdout": "", "stderr": ""}
+
+        products = {"evidence": "product:p", "evidence_line": "p evidence: ",
+                    "static_sysroot": "static-sysroot", "dynamic_sysroot": "dynamic-sysroot"}
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory, \
+                mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch.object(harness, "command_record", command_record):
+            gate.run_evidence({"product:p": ["scripts/dev-x86_64.sh", "produce"]},
+                              products, ["product:p"], Path(directory))
+        self.assertEqual(len(commands), 1)
+        self.assertEqual(commands[0][1]["CRABC_X86_64_CORE_IMAGE"], core_image.CORE_IMAGE_ID)
+
+    def test_mismatched_image_override_is_rejected_before_evidence(self) -> None:
+        products = {"evidence": "product:p", "evidence_line": "p evidence: ",
+                    "static_sysroot": "static-sysroot", "dynamic_sysroot": "dynamic-sysroot"}
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory, \
+                mock.patch.dict(os.environ, {"CRABC_X86_64_CORE_IMAGE": "crabc-core-evidence:x86_64"}), \
+                mock.patch.object(harness, "command_record") as command_record:
+            with self.assertRaisesRegex(harness.HarnessError, "pinned core image"):
+                gate.run_evidence({"product:p": ["scripts/dev-x86_64.sh", "produce"]},
+                                  products, ["product:p"], Path(directory))
+        command_record.assert_not_called()
+
     def test_successful_lua_commands_without_private_reports_fail(self) -> None:
         products = {"evidence": "product:p", "evidence_line": "p evidence: ",
                     "static_sysroot": "static-sysroot", "dynamic_sysroot": "dynamic-sysroot"}
@@ -356,6 +404,27 @@ class M8LuaEvidenceTests(unittest.TestCase):
 
 
 class M8CorpusEvidenceTests(unittest.TestCase):
+    def test_private_reader_uses_pinned_image_when_default_tag_drifts(self) -> None:
+        root = "/workspace/.work/x86_64/tmp/owned-package-corpus/owned-package-corpus-image-pin"
+        output = (f"owned package corpus evidence: {root}\n"
+                  "owned x86_64 package corpus: status: pass\n"
+                  f"owned x86_64 package corpus: report: {root}/report.json\n")
+        command = ["scripts/dev-x86_64.sh", "owned-package-corpus", "--dynamic-sysroot",
+                   "/workspace/.work/x86_64/tmp/pinned-dynamic", "--quiet"]
+        commands = []
+
+        def command_record(reader, **_kwargs):
+            commands.append(reader)
+            return {"status": 1, "stdout": "", "stderr": "reader stopped after image capture"}
+
+        with mock.patch.dict(os.environ, {"CRABC_X86_64_CORE_IMAGE": core_image.CORE_IMAGE_ID}), \
+                mock.patch.object(harness, "command_record", command_record):
+            with self.assertRaisesRegex(harness.HarnessError, "reader failed"):
+                gate.run_corpus_receipt_reader(command, output)
+        self.assertEqual(len(commands), 1)
+        self.assertIn(core_image.CORE_IMAGE_ID, commands[0])
+        self.assertNotIn("crabc-core-evidence:x86_64", commands[0])
+
     def test_successful_corpus_command_without_private_report_fails(self) -> None:
         products = {"evidence": "product:p", "evidence_line": "p evidence: ",
                     "static_sysroot": "static-sysroot", "dynamic_sysroot": "dynamic-sysroot"}
