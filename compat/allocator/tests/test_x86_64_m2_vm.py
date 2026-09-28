@@ -678,25 +678,35 @@ class NativeVmAssemblyTests(unittest.TestCase):
         self.assertEqual(records[6]["id"], "process-os-page-block-commit-rollback-c-rust-differential")
         self.assertEqual(records[6]["comparison_status"], "matched")
 
-    def test_page_map_fallback_trim_receipt_requires_its_ten_field_trace(self):
-        check = next(check for check in RUNNER.M2_X86_64_PAGE_MAP_CHECKS
-            if check["id"] == "page-map-fallback-trim-fault-c-rust-differential")
-        fields = {field: "1" for field in (
-            "output", "initialized", "reserved", "committed", "mmap_calls",
-            "commit_calls", "suffix_length", "suffix_live", "allocated", "raw_cleanup",
-        )}
-        evidence = {"status": "matched", "mismatches": {}, "c": fields, "rust": fields,
-            "command": ["python3", check["target"], "--offline"]}
-        record = RUNNER._m2_x86_64_page_map_fallback_check_record(check, evidence)
-        self.assertEqual(record["comparison_status"], "matched")
-        older_shape = {"status": "passed", "comparison": {"status": "matched"},
-            "rust_passed_test_count": 1, "rust_command": ["stale"]}
-        with self.assertRaises(RUNNER.HarnessError):
-            RUNNER._m2_x86_64_page_map_fallback_check_record(check, older_shape)
-        incomplete = dict(evidence, c={key: value for key, value in fields.items()
-            if key != "suffix_live"})
-        with self.assertRaises(RUNNER.HarnessError):
-            RUNNER._m2_x86_64_page_map_fallback_check_record(check, incomplete)
+    def test_page_map_process_receipts_require_their_exact_trace_shapes(self):
+        cases = (
+            ("page-map-fallback-trim-fault-c-rust-differential", (
+                "output", "initialized", "reserved", "committed", "mmap_calls",
+                "commit_calls", "suffix_length", "suffix_live", "allocated", "raw_cleanup",
+            )),
+            ("page-map-lazy-map-rollback-c-rust-differential", (
+                "output", "failed", "empty_after_failure", "map_attempts",
+                "reserved_delta", "committed_delta", "mmap_delta", "retry",
+                "entry_published", "retry_reused", "cleared", "root_ready",
+            )),
+        )
+        for check_id, names in cases:
+            with self.subTest(check_id=check_id):
+                check = next(check for check in RUNNER.M2_X86_64_PAGE_MAP_CHECKS
+                    if check["id"] == check_id)
+                fields = {field: "1" for field in names}
+                evidence = {"status": "matched", "mismatches": {}, "c": fields, "rust": fields,
+                    "command": ["python3", check["target"], "--offline"]}
+                record = RUNNER._m2_x86_64_page_map_fallback_check_record(check, evidence)
+                self.assertEqual(record["comparison_status"], "matched")
+                older_shape = {"status": "passed", "comparison": {"status": "matched"},
+                    "rust_passed_test_count": 1, "rust_command": ["stale"]}
+                with self.assertRaises(RUNNER.HarnessError):
+                    RUNNER._m2_x86_64_page_map_fallback_check_record(check, older_shape)
+                incomplete = dict(evidence, c={key: value for key, value in fields.items()
+                    if key != names[-1]})
+                with self.assertRaises(RUNNER.HarnessError):
+                    RUNNER._m2_x86_64_page_map_fallback_check_record(check, incomplete)
 
     def test_rust_binary_binding_accepts_both_cargo_profile_layouts_only(self):
         """The pinned nightly's per-unit test executable remains gate-owned."""
