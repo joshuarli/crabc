@@ -5,9 +5,10 @@ The reader accepts only the raw evidence made by
 ``owned_protocol_database.py``: the pinned musl ``proto.lo`` oracle, the one
 project-header object, three separate but byte-identical product pairs, link
 receipts, current provider ELF projections, isolated chroot roots, and every
-oracle/candidate stdout, stderr, status, and argv sidecar.  It never builds,
-links, or runs a consumer.  Its readelf/nm replays only authenticate retained
-provider and oracle bytes against their named current artifacts.
+oracle/candidate stdout, stderr, status, and argv sidecar. It recompiles the
+current probe to authenticate the shared object, but never links or runs a
+consumer. Its readelf/nm replays authenticate retained provider and oracle
+bytes against their named current artifacts.
 
 The C ABI proven here remains musl's fixed table.  A Rust facade snapshot of
 ``/etc/protocols`` is a separate API and is deliberately absent from this
@@ -24,6 +25,7 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
+import tempfile
 from typing import Any, Mapping
 
 
@@ -195,6 +197,26 @@ def _oracle(root: Path, work: Path, value: object) -> None:
     require(imports == ["strcmp", "strlen"], "protocol receipt musl proto imports differ")
 
 
+def _source_object(root: Path, work: Path, workload: Path) -> None:
+    """Recreate the shared object from the selected source and musl compiler."""
+
+    compiler = physical(producer.MUSL_CC, "pinned musl compiler")
+    source = physical(root / producer.PROBE, "protocol probe source")
+    physical(root / "include", "project headers", directory=True)
+    with tempfile.TemporaryDirectory(prefix="protocol-source-recompile-", dir=work) as scratch:
+        rebuilt = Path(scratch) / "workload.o"
+        argv = (compiler, "-std=c11", "-fno-builtin", "-fno-stack-protector", "-I", root / "include",
+                "-c", source, "-o", rebuilt)
+        try:
+            result = subprocess.run([str(item) for item in argv], cwd=root, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=30)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ReceiptError("cannot recompile protocol probe source") from error
+        require(result.returncode == 0, "cannot recompile protocol probe source")
+        require(physical(rebuilt, "recompiled protocol object").read_bytes() == workload.read_bytes(),
+                "protocol receipt object differs from source compile")
+
+
 def _candidate_paths(root: Path, value: object, workload: Path, products: Mapping[str, Mapping[str, object]],
                      helper: Any) -> dict[str, Path]:
     require(isinstance(value, dict) and set(value) == set(ARMS), "protocol receipt candidate arm roster differs")
@@ -328,6 +350,7 @@ def validate_report(root: Path, report_path: Path) -> dict[str, object]:
     products_before = _reported_products(root, report["products"], helper)
     _oracle(root, work, report["oracle"])
     workload = resolve_identity(root, report["workload"], "protocol receipt workload")
+    _source_object(root, work, workload)
     oracle_binary = resolve_identity(root, report["oracle_binary"], "protocol receipt oracle binary")
     candidates = _candidate_paths(root, report["candidates"], workload, products_before, helper)
     _providers(root, report["providers"], oracle_binary, candidates, products_before)

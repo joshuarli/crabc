@@ -9,6 +9,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -150,6 +151,41 @@ class OwnedProtocolDatabaseReceiptTests(unittest.TestCase):
         entries["installed-static-et-exec"]["stdout"] = producer.artifact(ROOT, drift)  # type: ignore[index]
         with self.assertRaisesRegex(receipt.ReceiptError, "raw outcome differs"):
             receipt._executions(ROOT, entries, roots)
+
+    def test_self_consistent_workload_identity_requires_source_recompile(self) -> None:
+        workload = self.work / "workload.o"
+        workload.write_bytes(b"substituted protocol object")
+        oracle = self.work / "oracle"
+        oracle.write_bytes(b"retained oracle")
+        compiler = self.work / "musl-cc"
+        compiler.write_text(
+            '#!/bin/sh\nwhile [ "$1" != -o ]; do shift; done\n'
+            'shift\nprintf "compiled from current source" > "$1"\n', encoding="utf-8",
+        )
+        compiler.chmod(0o755)
+        report = {
+            "schema": receipt.SCHEMA, "component": receipt.COMPONENT,
+            "entry_modes": list(receipt.ENTRY_MODES), "family_completion": False,
+            "promotion_ready": False, "public_support": False,
+            "oracle": {}, "source": {}, "products": {},
+            "workload": receipt.identity(ROOT, workload, "substituted workload"),
+            "oracle_binary": receipt.identity(ROOT, oracle, "retained oracle"),
+            "candidates": {}, "providers": {}, "isolation": {}, "executions": {},
+        }
+        report_path = self.work / receipt.REPORT_NAME
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        with mock.patch.object(producer, "MUSL_CC", compiler), \
+                mock.patch.object(producer, "source_records", return_value={}), \
+                mock.patch.object(receipt, "_source"), \
+                mock.patch.object(receipt, "fixture"), \
+                mock.patch.object(receipt, "_reported_products", return_value={}), \
+                mock.patch.object(receipt, "_oracle"), \
+                mock.patch.object(receipt, "_candidate_paths", return_value={}), \
+                mock.patch.object(receipt, "_providers"), \
+                mock.patch.object(receipt, "_isolation", return_value={}), \
+                mock.patch.object(receipt, "_executions"):
+            with self.assertRaisesRegex(receipt.ReceiptError, "object differs from source compile"):
+                receipt.validate_report(ROOT, report_path)
 
 
 if __name__ == "__main__":
