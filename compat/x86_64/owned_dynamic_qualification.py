@@ -412,10 +412,32 @@ def artifact_snapshot(log: Path, source_mount: str) -> dict:
     return result
 
 
+def retained_case_scratch(work: Path) -> Path | None:
+    """Select the cohort's physical scratch only when its runner reserved it."""
+
+    marker = work / "qualification-scratch/retained-case-evidence"
+    if not marker.exists() and not marker.is_symlink():
+        return None
+    require(marker.is_file() and not marker.is_symlink() and marker.read_bytes() == b"retained\n",
+            "retained case evidence marker differs")
+    scratch = evidence_path(work / "qualification-scratch/tmp")
+    require(scratch.is_dir() and not scratch.is_symlink(), "retained case scratch is missing")
+    return scratch
+
+
 def case_command(work: Path, product: str, case: str, source_mount: str | None = None) -> list[str]:
     mount = Path(source_mount) if source_mount is not None else ROOT
     script, _ = CASES[case]
     product_argument = str(mount / work.relative_to(ROOT) / product)
+    if case in LOADER_CORPUS_CASES:
+        scratch = retained_case_scratch(work)
+        if scratch is not None:
+            scratch_argument = str(mount / scratch.relative_to(ROOT))
+            if case == "loader-synthetic":
+                return ["unshare", "--net", "--", "python3", "-B", str(mount / "compat/ldso/run_x86.py"),
+                        "--dynamic-sysroot", product_argument, "--evidence-parent", scratch_argument]
+            return ["unshare", "--net", "--", "python3", "-B", str(mount / "compat/corpus/run_x86.py"),
+                    "--dynamic-sysroot", product_argument, "--work", scratch_argument]
     leaf = ["bash", str(mount / "compat/x86_64" / script),
             *(["--dynamic-sysroot"] if case == "package-corpus" else []), product_argument]
     if case in LOADER_CORPUS_CASES:

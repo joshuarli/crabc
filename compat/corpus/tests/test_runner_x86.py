@@ -329,6 +329,26 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
                 RUNNER.run(self.manifest, Path("archives"), Path("index"), Path("product"), outside_work, ())
         staged.assert_not_called()
 
+    def test_explicit_work_selects_a_physical_private_campaign_parent(self) -> None:
+        scratch = RUNNER.ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            selected: list[Path] = []
+
+            def record(_manifest: object, _archives: Path, _index: Path, _product: Path,
+                       work: Path, _cases: object) -> dict[str, object]:
+                selected.append(RUNNER.private_campaign_parent(work))
+                evidence = Path(temporary) / "evidence"
+                return {"passed": True, "execution_root": str(evidence),
+                        "report_path": str(evidence / "report.json")}
+
+            with mock.patch.object(RUNNER, "run", side_effect=record), \
+                 mock.patch.object(RUNNER, "write_new_report", return_value=Path("retained.json")), \
+                 mock.patch.object(sys, "stdout", io.StringIO()):
+                self.assertEqual(RUNNER.main(["--dynamic-sysroot", "product", "--work", temporary,
+                                              "--quiet"]), 0)
+            self.assertEqual(selected, [Path(temporary)])
+
     def test_explicit_tier_does_not_append_to_the_default_all_selection(self) -> None:
         captured: list[tuple[str, ...]] = []
 

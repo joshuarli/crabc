@@ -41,6 +41,20 @@ def qualification():
 
 
 class OwnedLoaderSyntheticTests(unittest.TestCase):
+    def test_explicit_evidence_parent_requires_a_physical_checkout_directory(self) -> None:
+        module = runner()
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            parent = pathlib.Path(temporary)
+            self.assertEqual(module.checked_evidence_parent(parent), parent)
+            link = parent / "link"
+            link.symlink_to(parent, target_is_directory=True)
+            with self.assertRaisesRegex(module.LoaderSyntheticError, "symlink"):
+                module.checked_evidence_parent(link)
+            with self.assertRaisesRegex(module.LoaderSyntheticError, "checkout"):
+                module.checked_evidence_parent(ROOT / "compat/ldso")
+
     def test_normal_exit_with_orphan_retains_observation_before_rejection(self) -> None:
         module = runner()
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:

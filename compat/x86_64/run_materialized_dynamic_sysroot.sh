@@ -168,6 +168,7 @@ if [ "$explicit_work" -eq 1 ]; then
     # must remain beside the retained products when this cohort is durable.
     mkdir "$work/qualification-scratch"
     mkdir "$work/qualification-scratch/tmp"
+    printf 'retained\n' >"$work/qualification-scratch/retained-case-evidence"
     export CRABC_WORK_DIR="$work/qualification-scratch"
     export TMPDIR="$work/qualification-scratch/tmp"
 fi

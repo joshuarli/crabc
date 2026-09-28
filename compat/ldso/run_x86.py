@@ -204,6 +204,18 @@ def checked_scratch_directory(root: pathlib.Path = ROOT) -> pathlib.Path:
     return scratch
 
 
+def checked_evidence_parent(path: pathlib.Path) -> pathlib.Path:
+    """Admit an existing physical evidence parent within checkout x86 work."""
+
+    boundary = checked_scratch_directory()
+    if not path.is_absolute() or not path.is_relative_to(boundary) or path == boundary:
+        raise LoaderSyntheticError("explicit evidence parent must be below checkout x86 work")
+    reject_symlink_components(path, "explicit evidence parent")
+    if not path.is_dir() or path.resolve() != path:
+        raise LoaderSyntheticError("explicit evidence parent must be a physical directory")
+    return path
+
+
 def checked_selection(requested: Sequence[str] | None) -> tuple[str, ...]:
     """Accept a finite, unique subset while reserving completion for all 21."""
 
@@ -274,13 +286,15 @@ def producer_linker_seal(product: pathlib.Path) -> dict[str, str]:
     return {"path": str(resolved), "sha256": sha256(resolved)}
 
 
-def preflight(dynamic_sysroot: pathlib.Path, requested: Sequence[str] | None, timeout: float) -> tuple[pathlib.Path, tuple[str, ...], float, pathlib.Path]:
+def preflight(dynamic_sysroot: pathlib.Path, requested: Sequence[str] | None, timeout: float,
+              evidence_parent: pathlib.Path | None = None) -> tuple[pathlib.Path, tuple[str, ...], float, pathlib.Path]:
     """Reject unsafe inputs before creating any collector directory."""
 
     product = checked_product_directory(dynamic_sysroot)
     selected = checked_selection(requested)
     bounded_timeout = checked_timeout(timeout)
-    return product, selected, bounded_timeout, checked_scratch_directory()
+    scratch = checked_scratch_directory() if evidence_parent is None else checked_evidence_parent(evidence_parent)
+    return product, selected, bounded_timeout, scratch
 
 
 def summary_lines(component_complete: bool, evidence: pathlib.Path, receipt: pathlib.Path) -> tuple[str, str, str]:
@@ -836,6 +850,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--dynamic-sysroot", required=True, type=pathlib.Path, help="required physical installed dynamic product")
     parser.add_argument("--case", action="append", choices=CASES, help="repeatable frozen workload selection")
     parser.add_argument("--timeout", type=float, default=20.0)
+    parser.add_argument("--evidence-parent", type=pathlib.Path, help="existing physical checkout x86 work directory for retained raw evidence")
     return parser.parse_args(argv)
 
 
@@ -843,7 +858,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     started = time.time()
     try:
-        product, selected, timeout, scratch = preflight(args.dynamic_sysroot, args.case, args.timeout)
+        product, selected, timeout, scratch = preflight(args.dynamic_sysroot, args.case, args.timeout,
+                                                        args.evidence_parent)
     except (LoaderSyntheticError, OSError) as error:
         print(f"owned synthetic loader: FAIL; error: {error}")
         return 1

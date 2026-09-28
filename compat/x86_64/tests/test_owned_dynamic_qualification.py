@@ -170,6 +170,22 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
              str(self.root / "compat/x86_64/resolver_namespace.py"),
              str(self.root / "compat/x86_64/run_owned_resolver_cancellation.sh"), str(self.work / "installed")])
 
+    def test_retained_cohort_routes_loader_and_corpus_evidence_inside_its_work(self):
+        scratch = self.work / "qualification-scratch"
+        (scratch / "tmp").mkdir(exist_ok=True)
+        (scratch / "retained-case-evidence").write_text("retained\n", encoding="ascii")
+        self.assertEqual(qualification.case_command(self.work, "installed", "loader-synthetic"),
+            ["unshare", "--net", "--", "python3", "-B", str(self.root / "compat/ldso/run_x86.py"),
+             "--dynamic-sysroot", str(self.work / "installed"), "--evidence-parent", str(scratch / "tmp")])
+        self.assertEqual(qualification.case_command(self.work, "installed", "package-corpus"),
+            ["unshare", "--net", "--", "python3", "-B", str(self.root / "compat/corpus/run_x86.py"),
+             "--dynamic-sysroot", str(self.work / "installed"), "--work", str(scratch / "tmp")])
+        record = qualification.read(self.work / "qualification-cases/installed/loader-synthetic.json")
+        record["isolation_command"] = qualification.case_command(self.work, "installed", "loader-synthetic")
+        (scratch / "retained-case-evidence").unlink()
+        with self.assertRaisesRegex(qualification.QualificationError, "stale or mismatched"):
+            qualification.validate_case(record, "installed", "loader-synthetic", self.source, self.manifest)
+
     def test_classic_netdb_scratch_is_fresh_and_preserves_shared_tmpdir(self):
         shared = self.work / "shared-temporary"
         shared.mkdir(mode=0o750)
