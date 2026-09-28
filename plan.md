@@ -183,7 +183,9 @@ are not transferable passes for a different revision.
   the corpus covers all 34 frozen cases. A separate cross-image FILE handoff
   proof has eleven musl and owned cells covering buffered writes,
   flush/readback, shared errno, and close lifetime
-  across PIE and non-PIE kernel/direct entry, with static baselines.
+  across PIE and non-PIE kernel/direct entry, with static baselines. The same
+  eleven-cell matrix now passes a main-owned cookie stream through a DSO,
+  including read/seek/write callbacks, past-EOF reads, and one close callback.
   The complete nine-leaf M8 gate
   passed again on clean `ea0c28759` with all 16 evidence entries passing and
   13 physical receipt identities matching a post-exit reread; the same nine
