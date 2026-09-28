@@ -13376,10 +13376,37 @@ M2_X86_64_EXPLICIT_ARENA_TRIM_RECEIVERS = {
         "scope": "pinned-c-rust-explicit-os-arena-failed-suffix-trim-and-terminal-destroy",
     },
 }
+M2_X86_64_EXPLICIT_ARENA_METADATA_FAULT_FIELDS = {
+    "profile", "size", "alignment", "prefix", "suffix", "refused",
+    "no_memory_id", "geometry", "protection_exact", "protection_length",
+    "warning_order", "warning_count", "warning_timing", "registry",
+    "reserved_delta", "committed_delta", "mmap_calls_delta", "commit_calls_delta",
+    "arena_count_delta", "middle_live", "raw_cleanup", "middle_gone",
+    "raw_reserved_delta", "recovery_success", "recovery_memory_exact",
+    "recovery_registry", "prior_live_during_recovery", "recovery_live",
+    "recovery_reserved_delta", "recovery_committed_delta", "recovery_mmap_calls_delta",
+    "recovery_commit_calls_delta", "recovery_arena_count_delta",
+    "recovery_warning_count", "recovery_warning_order", "recovery_release_exact",
+    "recovery_gone", "recovery_terminal_registry", "prior_live_after_release",
+    "recovery_terminal_reserved_delta", "recovery_terminal_committed_delta",
+}
+M2_X86_64_EXPLICIT_ARENA_METADATA_FAULT_RECEIVERS = {
+    "explicit-arena-metadata-fault-c-rust-differential": {
+        "artifact": "m2-explicit-arena-metadata-fault",
+        "target": "compat/allocator/m2_explicit_arena_metadata_fault_x86_64.py",
+        "kind": "c-rust-explicit-arena-metadata-fault-differential",
+        "cases": ("clean", "leaked"),
+        "fields": M2_X86_64_EXPLICIT_ARENA_METADATA_FAULT_FIELDS,
+        "commit_fields": set(),
+        "command_receipts": "nested-runs",
+        "scope": "pinned-c-rust-explicit-os-arena-metadata-protection-failure-cleanup-and-recovery",
+    },
+}
 M2_X86_64_VM_PROCESS_RECEIVERS = {
     **{check_id: {**receiver, "kind": "c-rust-process-external-os-differential"}
        for check_id, receiver in M2_X86_64_EXTERNAL_OS_RECEIVERS.items()},
     **M2_X86_64_EXPLICIT_ARENA_TRIM_RECEIVERS,
+    **M2_X86_64_EXPLICIT_ARENA_METADATA_FAULT_RECEIVERS,
 }
 
 
@@ -13934,6 +13961,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-process-thp-policy-differential",
                     "c-rust-process-external-os-differential",
                     "c-rust-explicit-arena-trim-differential",
+                    "c-rust-explicit-arena-metadata-fault-differential",
                     "c-rust-second-arena-reset-advice-matrix",
                     "c-rust-process-arena-purge-differential",
                     "c-rust-arena-lifecycle-differential",
@@ -14119,6 +14147,7 @@ def validate_x86_64_m2_memory_substrate_contract(
             elif raw_check.get("kind") in {
                 "c-rust-process-external-os-differential",
                 "c-rust-explicit-arena-trim-differential",
+                "c-rust-explicit-arena-metadata-fault-differential",
             }:
                 receiver = M2_X86_64_VM_PROCESS_RECEIVERS.get(raw_check["id"])
                 if (

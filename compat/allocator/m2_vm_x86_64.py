@@ -167,6 +167,11 @@ CHECKS = (
         "compat/allocator/m2_explicit_arena_suffix_trim_x86_64.py",
     ),
     (
+        "explicit-arena-metadata-fault-c-rust-differential",
+        "c-rust-explicit-arena-metadata-fault-differential",
+        "compat/allocator/m2_explicit_arena_metadata_fault_x86_64.py",
+    ),
+    (
         "selected-subprocess-statistics-aggregation",
         "rust-unit",
         "statistics::tests::subprocess_statistics_merges_selected_fields_in_source_declaration_order",
@@ -314,6 +319,11 @@ EXTERNAL_OS_CHECK_IDS = (
 EXPLICIT_ARENA_TRIM_CHECK_IDS = (
     "explicit-arena-prefix-trim-c-rust-differential",
     "explicit-arena-suffix-trim-c-rust-differential",
+)
+EXPLICIT_ARENA_METADATA_FAULT_CHECK_ID = "explicit-arena-metadata-fault-c-rust-differential"
+EXPLICIT_ARENA_SOURCE_CHECK_IDS = (
+    *EXPLICIT_ARENA_TRIM_CHECK_IDS,
+    EXPLICIT_ARENA_METADATA_FAULT_CHECK_ID,
 )
 THP_PROCESS_CHECK_IDS = (
     "process-thp-madvise-success-c-rust-differential",
@@ -809,9 +819,9 @@ def load_fragment(path: Path) -> dict[str, Any]:
         definition = next((item for item in definitions if item["id"] == definition_id), None)
         if definition is None or any(
             check_id not in definition["evidence_check_ids"]
-            for check_id in EXPLICIT_ARENA_TRIM_CHECK_IDS
+            for check_id in EXPLICIT_ARENA_SOURCE_CHECK_IDS
         ):
-            raise _error("explicit arena trim lost its allocation or release source boundary")
+            raise _error("explicit arena receiver lost its allocation or release source boundary")
     for branch_id in (
         "os-free-and-statistics-events",
         "os-primitive-regular-and-aligned-allocation",
@@ -820,9 +830,9 @@ def load_fragment(path: Path) -> dict[str, Any]:
         branch = next((item for item in branches if item["id"] == branch_id), None)
         if branch is None or branch["disposition"] != "partial-fixed-profile" or any(
             check_id not in branch["evidence_check_ids"]
-            for check_id in EXPLICIT_ARENA_TRIM_CHECK_IDS
+            for check_id in EXPLICIT_ARENA_SOURCE_CHECK_IDS
         ):
-            raise _error("explicit arena trim lost its aligned map or release branch")
+            raise _error("explicit arena receiver lost its aligned map or release branch")
 
     unqualified = component.get("unqualified_failure_matrix")
     if not isinstance(unqualified, list) or not unqualified:

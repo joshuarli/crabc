@@ -33,6 +33,7 @@ EXPECTED_VM_CHECK_IDS = (
     "process-policy-first-arena-trim-leak",
     "explicit-arena-prefix-trim-c-rust-differential",
     "explicit-arena-suffix-trim-c-rust-differential",
+    "explicit-arena-metadata-fault-c-rust-differential",
     "selected-subprocess-statistics-aggregation",
     "process-policy-ticket-zero-live-random",
     "aligned-map-trim-failure-leak",
@@ -721,7 +722,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         producer.load_fragment(source)
 
-    def test_explicit_arena_trim_checks_keep_allocation_and_release_source_anchors(self):
+    def test_explicit_arena_receivers_keep_allocation_and_release_source_anchors(self):
         producer = RUNNER._m2_x86_64_vm_producer()
         original = RUNNER.read_json(RUNNER.M2_X86_64_VM_FRAGMENT)
         bindings = (
@@ -735,7 +736,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
             ("branch_matrix", "os-normal-aligned-and-offset-allocation"),
         )
         for section, row_id in bindings:
-            for check_id in producer.EXPLICIT_ARENA_TRIM_CHECK_IDS:
+            for check_id in producer.EXPLICIT_ARENA_SOURCE_CHECK_IDS:
                 with self.subTest(section=section, row_id=row_id, check_id=check_id):
                     changed = copy.deepcopy(original)
                     row = next(item for item in changed["component"][section] if item["id"] == row_id)
@@ -1356,6 +1357,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "external-os-reset-retry-c-rust-differential",
                 "explicit-arena-prefix-trim-c-rust-differential",
                 "explicit-arena-suffix-trim-c-rust-differential",
+                "explicit-arena-metadata-fault-c-rust-differential",
             },
             {record["id"] for record in vm_records},
         )
