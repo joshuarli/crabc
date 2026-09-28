@@ -45,10 +45,15 @@ are not transferable passes for a different revision.
   current-source cohort, the installed CRT receipt resolves `_DYNAMIC` through
   its weak zero archive import, static null result, and six image-local dynamic
   tables; selector blockers fall from 770 to 733, with 714 identities and
-  declaration, family, and semantic receipts still open. Full closure remains open.
-  `libc.c-abi-compat` now runs a physical same-cohort
-  text/math/locale/stdio family admission; its retained receipt is still
-  pending on the final candidate revision. `consumer.rust-std-lto` passes its
+  declaration, family, and semantic receipts still open. A newer sealed
+  current-source cohort resolves three private allocator VM imports to hidden
+  Rust providers in both static link forms; its exact C allocator companion
+  lowers selector blockers from 757 to 724, with 705 identities, 17 family
+  admissions, one declaration companion, and one semantic receipt open. Full
+  closure remains open. `libc.c-abi-compat` now runs a physical same-cohort
+  text/math/locale/stdio family admission; its current assessment admits seven
+  of ten components and retains three allocator components at the selected C
+  backend. Independent physical replay is pending. `consumer.rust-std-lto` passes its
   Rust, native-facade, LTO, and unwind leaves on clean `d6733f516`; its
   pinned-image receipt passed independent physical validation and public
   publication. `consumer.source-build` passes on a development cohort and
@@ -172,11 +177,11 @@ are not transferable passes for a different revision.
   A separate source-built reset-advice matrix matches 78 C/Rust fields across
   isolated EIO, EAGAIN, and EINVAL policies, including advice retry, exact
   slice range, warning order, and live bitmap state. A clean full M2 run passed
-  all 79 runnable checks with VM primitives, arenas, initialization, and fault
-  injection still partial. The VM inventory now registers 40 checks, including
+  all 82 runnable checks with VM primitives, arenas, initialization, and fault
+  injection still partial. The VM inventory now registers 43 checks, including
   direct process-owned successful and failed THP advice and disabled process
   policy and inherited process disable with source-selected advice; the clean
-  rerun executed all 40. Five VM conditions remain open. A
+  rerun executed all 43. Five VM conditions remain open. A
   failed second OS-page block commit and failed rollback unmap match pinned C
   in eleven process-owned
   observations. The PageMap fallback suffix-trim fault is registered in its
