@@ -13,6 +13,7 @@ set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+readonly dso_linker="$ROOT/compat/x86_64/owned_native_allocator_dso.py"
 readonly probe="$ROOT/compat/x86_64/owned_native_allocator_dso_probe.c"
 readonly library="$ROOT/compat/x86_64/owned_native_allocator_dso_library.c"
 readonly musl_interpreter=/lib/ld-musl-x86_64.so.1
@@ -129,17 +130,35 @@ cmp "$work/musl-family.bindings" "$work/candidate-family.bindings" || {
 
 # Compile once through the installed driver; link each object for both sides.
 mkdir "$work/objects" "$work/oracle"
+receipt_products+=(
+    "source-library=$library"
+    "link-producer=$dso_linker"
+    "oracle-wrapper=$oracle_cc"
+    "oracle-gcc=/usr/bin/gcc"
+    "oracle-specs=/opt/musl-1.2.6/lib/musl-gcc.specs"
+)
 for name in initial plugin; do
     "$driver" --dynamic-shared-object -std=c11 -fno-builtin \
         "-DDSO_NAME=\"$name\"" "-DDSO_SYMBOL=$name" -c "$library" -o "$work/objects/$name.o"
-    "$driver" --dynamic-shared-object "$work/objects/$name.o" -o "$work/libdso-$name.so"
-    "$oracle_cc" -shared "$work/objects/$name.o" -Wl,-z,now,-soname,"libdso-$name.so" \
-        -o "$work/oracle/libdso-$name.so"
+    python3 -B "$dso_linker" --work "$work" --product "$dynamic_sysroot" \
+        --arm candidate --role "$name"
+    python3 -B "$dso_linker" --work "$work" --arm oracle --role "$name"
     receipt_products+=(
         "object-$name=$work/objects/$name.o"
+        "link-candidate-$name=$work/link-candidate-$name.json"
+        "link-oracle-$name=$work/link-oracle-$name.json"
+        "candidate-link-sidecar-$name=$work/libdso-$name.so.crabc-link.json"
         "oracle-$name-dso=$work/oracle/libdso-$name.so"
     )
 done
+candidate_linker="$(python3 -B - "$work/libdso-initial.so.crabc-link.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+print(json.loads(Path(sys.argv[1]).read_text())["resolved_linker"]["path"])
+PY
+)"
+receipt_products+=("candidate-linker=$candidate_linker")
 "$driver" --dynamic-pie -std=c11 -fno-builtin -c "$probe" -o "$work/objects/probe.o"
 receipt_products+=("object-probe=$work/objects/probe.o")
 

@@ -132,9 +132,45 @@ class OwnedNativeAllocatorDsoReceiptTests(unittest.TestCase):
         }
         receipt_path.write_text(json.dumps(changed))
         receipt.read_receipt(ROOT, RUNNER)
-        with self.assertRaisesRegex(receipt.ReceiptError, "candidate-initial-dso runpath"):
+        with self.assertRaisesRegex(receipt.ReceiptError, "candidate-initial-dso link output"):
             semantic_receipt.read_native_allocator_dso_receipt(ROOT)
         candidate_dso.write_bytes(original_dso)
+        receipt_path.write_bytes(original_receipt)
+        semantic_receipt.read_native_allocator_dso_receipt(ROOT)
+
+        oracle_link = latest / "products/link-oracle-initial"
+        original_link = oracle_link.read_bytes()
+        changed_link = json.loads(original_link)
+        changed_link["command"][1] = "-static"
+        oracle_link.write_text(json.dumps(changed_link))
+        changed = json.loads(original_receipt)
+        data = oracle_link.read_bytes()
+        changed["products"]["link-oracle-initial"] = {
+            "sha256": hashlib.sha256(data).hexdigest(), "size": len(data),
+        }
+        receipt_path.write_text(json.dumps(changed))
+        receipt.read_receipt(ROOT, RUNNER)
+        with self.assertRaisesRegex(receipt.ReceiptError, "oracle-initial oracle link command"):
+            semantic_receipt.read_native_allocator_dso_receipt(ROOT)
+        oracle_link.write_bytes(original_link)
+        receipt_path.write_bytes(original_receipt)
+        semantic_receipt.read_native_allocator_dso_receipt(ROOT)
+
+        candidate_link = latest / "products/link-candidate-initial"
+        original_link = candidate_link.read_bytes()
+        changed_link = json.loads(original_link)
+        changed_link["tools"]["linker"]["sha256"] = "0" * 64
+        candidate_link.write_text(json.dumps(changed_link))
+        changed = json.loads(original_receipt)
+        data = candidate_link.read_bytes()
+        changed["products"]["link-candidate-initial"] = {
+            "sha256": hashlib.sha256(data).hexdigest(), "size": len(data),
+        }
+        receipt_path.write_text(json.dumps(changed))
+        receipt.read_receipt(ROOT, RUNNER)
+        with self.assertRaisesRegex(receipt.ReceiptError, "candidate-initial linker identity"):
+            semantic_receipt.read_native_allocator_dso_receipt(ROOT)
+        candidate_link.write_bytes(original_link)
         receipt_path.write_bytes(original_receipt)
         semantic_receipt.read_native_allocator_dso_receipt(ROOT)
 
@@ -160,6 +196,22 @@ class OwnedNativeAllocatorDsoReceiptTests(unittest.TestCase):
             semantic_receipt.read_native_allocator_dso_receipt(ROOT)
         loader.write_bytes(original_loader)
         manifest.write_bytes(original_manifest)
+        receipt_path.write_bytes(original_receipt)
+        semantic_receipt.read_native_allocator_dso_receipt(ROOT)
+
+        candidate_dso = latest / "products/candidate-initial-dso"
+        original_dso = candidate_dso.read_bytes()
+        forged = original_dso + b"unlinked-product-bytes"
+        candidate_dso.write_bytes(forged)
+        changed = json.loads(original_receipt)
+        changed["products"]["candidate-initial-dso"] = {
+            "sha256": hashlib.sha256(forged).hexdigest(), "size": len(forged),
+        }
+        receipt_path.write_text(json.dumps(changed))
+        receipt.read_receipt(ROOT, RUNNER)
+        with self.assertRaisesRegex(receipt.ReceiptError, "candidate-initial-dso link output"):
+            semantic_receipt.read_native_allocator_dso_receipt(ROOT)
+        candidate_dso.write_bytes(original_dso)
         receipt_path.write_bytes(original_receipt)
         semantic_receipt.read_native_allocator_dso_receipt(ROOT)
 

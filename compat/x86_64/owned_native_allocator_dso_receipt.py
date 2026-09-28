@@ -35,9 +35,12 @@ PRODUCT_PATHS = {
 }
 PRODUCTS = set(PRODUCT_PATHS) | {
     "musl-libc", "musl-interpreter", "musl-family-bindings", "candidate-family-bindings",
+    "source-library", "link-producer", "oracle-wrapper", "oracle-gcc", "oracle-specs", "candidate-linker",
     "object-initial", "object-plugin", "object-probe",
     "oracle-initial-dso", "oracle-plugin-dso", "candidate-initial-dso", "candidate-plugin-dso",
     "oracle-probe-pie", "oracle-probe-non-pie", "candidate-probe-pie", "candidate-probe-non-pie",
+    *(f"link-{arm}-{role}" for arm in ("oracle", "candidate") for role in ("initial", "plugin")),
+    *(f"candidate-link-sidecar-{role}" for role in ("initial", "plugin")),
 }
 MALLOC_FAMILY = {
     "malloc", "free", "calloc", "realloc", "reallocarray", "aligned_alloc",
@@ -137,6 +140,119 @@ def family_bindings(symbols: dict[str, tuple[str, str, str, str]]) -> bytes:
     return ("\n".join(sorted(lines)) + "\n").encode()
 
 
+def check_link_identity(value: object, path: str, expected: Mapping[str, object], label: str) -> None:
+    require(isinstance(value, dict) and set(value) == {"path", "sha256", "size"},
+            f"{label} identity is malformed")
+    require(value == {"path": path, "sha256": expected["sha256"], "size": expected["size"]},
+            f"{label} identity differs")
+
+
+def check_dso_link(root: Path, directory: Path, receipt: shared.Receipt,
+                   manifest: dict, state: dict, work: str, arm: str, role: str) -> None:
+    """Match one executed link record and owned sidecar to retained inputs."""
+
+    products = receipt.products
+    native_work = f"/workspace/{work}"
+    name = f"{arm}-{role}"
+    record = json_file(directory / "products" / f"link-{name}")
+    require(set(record) == {"schema", "arm", "role", "cwd", "product", "command",
+                            "inputs", "tools", "output", "sidecar"}
+            and record["schema"] == "crabc.x86_64-owned-native-allocator-dso-link/v1"
+            and record["arm"] == arm and record["role"] == role and record["cwd"] == "/workspace",
+            f"{name} link record differs")
+    inputs = record["inputs"]
+    require(isinstance(inputs, dict) and set(inputs) == {"source", "object", "libc", "tool"},
+            f"{name} link input roster differs")
+    source = root / "compat/x86_64/owned_native_allocator_dso_library.c"
+    require(products["source-library"]["sha256"] == hashlib.sha256(source.read_bytes()).hexdigest(),
+            "DSO library source differs from checkout")
+    producer = root / "compat/x86_64/owned_native_allocator_dso.py"
+    require(products["link-producer"]["sha256"] == hashlib.sha256(producer.read_bytes()).hexdigest(),
+            "DSO link producer differs from checkout")
+    check_link_identity(inputs["source"], "/workspace/compat/x86_64/owned_native_allocator_dso_library.c",
+                        products["source-library"], f"{name} source")
+    object_path = f"{native_work}/objects/{role}.o"
+    check_link_identity(inputs["object"], object_path, products[f"object-{role}"], f"{name} object")
+    output_path = (f"{native_work}/libdso-{role}.so" if arm == "candidate"
+                   else f"{native_work}/oracle/libdso-{role}.so")
+    check_link_identity(record["output"], output_path, products[f"{name}-dso"], f"{name}-dso link output")
+
+    tools = record["tools"]
+    if arm == "oracle":
+        require(record["product"] is None and record["sidecar"] is None
+                and isinstance(tools, dict) and set(tools) == {"gcc", "specs"},
+                f"{name} oracle link tools differ")
+        tool_path = "/usr/local/bin/crabc-x86_64-musl-gcc"
+        check_link_identity(inputs["tool"], tool_path, products["oracle-wrapper"], f"{name} wrapper")
+        check_link_identity(inputs["libc"], "/opt/musl-1.2.6/lib/libc.so",
+                            products["musl-libc"], f"{name} libc")
+        check_link_identity(tools["gcc"], "/usr/bin/gcc", products["oracle-gcc"], f"{name} gcc")
+        check_link_identity(tools["specs"], "/opt/musl-1.2.6/lib/musl-gcc.specs",
+                            products["oracle-specs"], f"{name} specs")
+        command = [tool_path, "-shared", object_path,
+                   f"-Wl,-z,now,-soname,libdso-{role}.so", "-o", output_path]
+        require(record["command"] == command, f"{name} oracle link command differs")
+        return
+
+    product_root = record["product"]
+    require(isinstance(product_root, str) and Path(product_root).is_absolute()
+            and Path(product_root).is_relative_to(Path("/workspace/.work"))
+            and ".." not in Path(product_root).parts,
+            f"{name} selected dynamic product path differs")
+    require(isinstance(tools, dict) and set(tools) == {"linker"},
+            f"{name} candidate link tools differ")
+    tool_path = f"{product_root}/bin/crabc-cc-dynamic"
+    check_link_identity(inputs["tool"], tool_path, products["dynamic-driver"], f"{name} driver")
+    check_link_identity(inputs["libc"], f"{product_root}/usr/lib/libc.so",
+                        products["dynamic-libc"], f"{name} libc")
+    require(record["command"] == [tool_path, "--dynamic-shared-object", object_path, "-o", output_path],
+            f"{name} candidate link command differs")
+    sidecar_path = f"{output_path}.crabc-link.json"
+    check_link_identity(record["sidecar"], sidecar_path,
+                        products[f"candidate-link-sidecar-{role}"], f"{name} sidecar")
+    sidecar = json_file(directory / "products" / f"candidate-link-sidecar-{role}")
+    linker_path = (f"/opt/rustup/toolchains/{manifest['toolchain']}-x86_64-unknown-linux-musl"
+                   "/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld")
+    check_link_identity(tools["linker"], linker_path, products["candidate-linker"], f"{name} linker")
+    require(sidecar.get("resolved_linker") == {"path": linker_path,
+                                               "sha256": products["candidate-linker"]["sha256"]}
+            and sidecar.get("schema") == 2 and sidecar.get("format") == manifest.get("format")
+            and sidecar.get("mode") == "shared" and sidecar.get("binding") == "now"
+            and sidecar.get("runtime_imports") == [] and sidecar.get("application_dsos") == {}
+            and sidecar.get("application_runpath") == "/usr/lib"
+            and sidecar.get("application_rpath") is None
+            and sidecar.get("application_search_kind") == "runpath"
+            and sidecar.get("application_hash_style") == "sysv"
+            and sidecar.get("campaign_complete") is False,
+            f"{name} owned link mode differs")
+    require(sidecar.get("output_path") == output_path
+            and sidecar.get("output_sha256") == products[f"{name}-dso"]["sha256"]
+            and sidecar.get("manifest_sha256") == products["dynamic-manifest"]["sha256"],
+            f"{name} link output differs")
+    library = f"{product_root}/usr/lib"
+    crti, libc, crtn = (f"{library}/{item}" for item in ("crti.o", "libc.so", "crtn.o"))
+    builtins = f"{library}/libcrabc-builtins.a"
+    expected_inputs = [
+        {"path": crti, "sha256": state["payload_files"].get("usr/lib/crti.o")},
+        {"path": libc, "sha256": products["dynamic-libc"]["sha256"]},
+        {"path": crtn, "sha256": state["payload_files"].get("usr/lib/crtn.o")},
+        {"path": object_path, "sha256": products[f"object-{role}"]["sha256"]},
+        {"path": builtins, "sha256": state["payload_files"].get("usr/lib/libcrabc-builtins.a")},
+    ]
+    require(all(isinstance(item["sha256"], str) for item in expected_inputs)
+            and sidecar.get("input_receipts") == expected_inputs
+            and sidecar.get("owned_runtime_inputs") == sorted(("usr/lib/crti.o", "usr/lib/crtn.o",
+                                                                 "usr/lib/libc.so", "usr/lib/libcrabc-builtins.a"))
+            and sidecar.get("link_trace") == [crti, object_path, libc, crtn],
+            f"{name} owned link inputs differ")
+    command = [linker_path, "-shared", "--hash-style=sysv", "--eh-frame-hdr", "-z", "relro",
+               "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
+               "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib",
+               "-soname", f"libdso-{role}.so", crti, object_path, libc, builtins, crtn,
+               "-o", output_path]
+    require(sidecar.get("link_command") == command, f"{name} owned link command differs")
+
+
 def read_native_allocator_dso_receipt(
     root: Path = ROOT, *, seal: Mapping[str, str] | None = None,
 ) -> shared.Receipt:
@@ -205,6 +321,7 @@ def read_native_allocator_dso_receipt(
 
     for arm in ("oracle", "candidate"):
         for role in ("initial", "plugin"):
+            check_dso_link(root, directory, receipt, manifest, state, work, arm, role)
             name = f"{arm}-{role}-dso"
             dynamic, _, _, symbols = elf(products / name, "DYN")
             require(soname(dynamic) == [f"libdso-{role}.so"] and needed(dynamic) == ["libc.so"],
