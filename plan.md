@@ -36,7 +36,9 @@ are not transferable passes for a different revision.
   binds the weak `_DYNAMIC` archive import to each final ELF's own dynamic
   table or static null resolution. The same replay binds `_init` and `_fini`
   startup imports to strong image-local CRT fragments, reducing the blocker
-  count to 563; a current-source full assembly remains open.
+  count to 563. Three pinned Rust allocation-handler identities now bind to
+  authenticated static archive members and exact ELF rows, with static ET_EXEC
+  and static-PIE link controls; a current-source full assembly remains open.
   `libc.c-abi-compat` now runs a physical same-cohort
   text/math/locale/stdio family admission; its retained receipt is still
   pending on the final candidate revision. `consumer.rust-std-lto` passes its
@@ -69,8 +71,10 @@ are not transferable passes for a different revision.
   qualify the older product for the current source. A further installed
   diagnostic crosses a mapped C DSO frame with direct Rust panic cleanup and
   `resume_unwind` on main and pthread workers; the selected provider, exact
-  guard drops, and physical replay pass. The full three-product current-source
-  admission remains open.
+  guard drops, and physical replay pass. The same matrix now has a focused
+  installed static C-frame control for direct cleanup and `resume_unwind` on
+  main and pthread workers, with selected-provider and final-ELF physical
+  replay. The full three-product current-source admission remains open.
   Allocator M5 remains open. C mimalloc remains the selected
   backend; allocator M2–M11 remain open. A frozen M5 source run at `e0b9ecbc7`
   passed seven gates, failed its churn and upstream stress gates on one seed-2
@@ -158,7 +162,10 @@ are not transferable passes for a different revision.
   OS-page claim preserves the same MemoryId, live escaped suffix, and raw
   cleanup as pinned C after failed suffix trim and terminal unmap. Its absent
   subprocess accounting and warning callback are recorded as exact source
-  differences; process-owned callers remain separately qualified or open.
+  differences. A process-owned claim now matches 17 C/Rust suffix-trim,
+  terminal-unmap, warning, escaped mapping, and accounting relations after
+  terminal release charges only the committed block area; other process-owned
+  callers remain separately qualified or open.
   The metadata publication receiver also matches 15 recovery observations
   after three faulted requests, charging each actual lazy PageMap submap by
   its 64 KiB extent. The M2 fault component has four matched checks and four
@@ -271,7 +278,9 @@ are not transferable passes for a different revision.
   `/dev/full` stream also passes eleven cells: main observes `fflush` return
   EOF, `ENOSPC`, and `ferror`, then the DSO closes its descriptor once. A
   second DSO-owned stream carries pending buffered bytes into `fclose` itself;
-  all eleven cells return EOF with `ENOSPC` and close the descriptor once.
+  all eleven cells return EOF with `ENOSPC` and close the descriptor once. A
+  third stream passes all eleven cells across failed `fflush`, main-side
+  `clearerr`, a no-write retry, another buffered failure, and owner-side close.
   The complete nine-leaf M8 gate
   passed again on clean `ea0c28759` with all 16 evidence entries passing and
   13 physical receipt identities matching a post-exit reread; the same nine
@@ -403,7 +412,10 @@ are not transferable passes for a different revision.
   musl's 11. A later scoped development smoke on the current loader is 27
   calls after canonical-alias reuse; a further same-root SysV header-load
   reuse lowers development instructions by a paired median 117 across
-  100 rotated samples without changing syscall counts. Full qualified CPU/PSS
+  100 rotated samples without changing syscall counts. The x86 clock path now
+  receives `AT_SYSINFO_EHDR` from validated startup auxv once, so libc-linked
+  core clock lookup avoids reopening procfs; direct-core fallback remains.
+  Full qualified CPU/PSS
   evidence still waits for an uncontended host and a final candidate revision.
   The release receipt gate now joins the owner-validated runtime C, native
   facade, and allocator reports by source revision and recorded CPU, kernel,
@@ -447,7 +459,12 @@ are not transferable passes for a different revision.
      readers remain responsible for authenticating installed products. The
      static receipt reader now joins every retained primary and reproduction
      tree hash to its installed manifest payload roster; rehashed tree lists
-     that disagree with the manifest fail physical replay.
+     that disagree with the manifest fail physical replay. Dynamic package
+     creation and extraction bind retained bytes to the materialization state
+     before publication, and the dynamic qualification reader binds each base
+     executable's declared DSO hash to its retained DSO bytes. Resolver and
+     POSIX family readers now require the dynamic qualification receipt at
+     its owning work path, rejecting copied rehashed receipts.
      The finite `aio_cancel` oracle disposition
      is integrated;
      a clean `80724223a` native OS-test replay profile-qualifies 5,395 outcome
