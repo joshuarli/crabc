@@ -11321,6 +11321,7 @@ fn native_allocate_shaped(
 
 /// The admitted remainder of [`native_allocate_shaped`] after its local fast
 /// path, kept out of line so the fast path does not pay this path's frame.
+#[cold]
 #[inline(never)]
 fn native_allocate_shaped_slow(
     request: usize,
