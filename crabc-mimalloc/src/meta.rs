@@ -8418,8 +8418,8 @@ mod ownership_tests {
     /// The fixture holds `theap_meta_lock` until an arena-growing allocation
     /// waits on it, then a third thread releases a published block. Source
     /// `_mi_meta_free` of a Malloc block is a lock-free `mi_free`, while the
-    /// Rust release reaches its backing lock inside the same window
-    /// (known-differences.md); only facts common to both are emitted.
+    /// Rust release reaches its backing lock inside the same window;
+    /// only facts common to both are emitted.
     fn allocation_release_overlap(trace: &mut Trace) {
         trace.marker(3);
         let allocator = MetaAllocator::test_static_owner();
