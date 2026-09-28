@@ -7551,6 +7551,165 @@ mod tests {
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
+    fn emit_m2_external_os_reset_retry_process_trace() {
+        use crate::diagnostic_output::ProcessDiagnosticInputs;
+        use crate::process_init::ProcessMainInitializationStorage;
+        use std::ffi::CStr;
+
+        const PROFILE: &str = "CRABC_M2_EXTERNAL_RESET_RETRY_PROFILE";
+        const CHILD: &str = "CRABC_M2_EXTERNAL_RESET_RETRY_CHILD";
+        const BEGIN: &str = "CRABC_M2_EXTERNAL_OS_RESET_RETRY_RUST_TRACE_BEGIN";
+        const END: &str = "CRABC_M2_EXTERNAL_OS_RESET_RETRY_RUST_TRACE_END";
+        let profile = std::env::var(PROFILE).unwrap_or_else(|_| "one-eagain".into());
+        assert!(profile == "one-eagain" || profile == "two-eagain");
+        if std::env::var_os(CHILD).is_none() {
+            let child = std::process::Command::new(std::env::current_exe().expect("test binary path"))
+                .arg("os::tests::emit_m2_external_os_reset_retry_process_trace")
+                .arg("--exact")
+                .arg("--nocapture")
+                .arg("--test-threads=1")
+                .env_clear()
+                .env(CHILD, "1")
+                .env(PROFILE, &profile)
+                .output()
+                .expect("fresh external reset retry child runs");
+            assert!(child.status.success(), "retry retains the caller's mapping");
+            assert!(child.stderr.is_empty(), "successful retry has no diagnostic");
+            let output = std::str::from_utf8(&child.stdout).expect("child trace is ASCII");
+            let start = output.find(BEGIN).expect("child emits its retry trace");
+            let end = output.find(END).expect("child closes its retry trace") + END.len();
+            std::println!("{}", &output[start..end]);
+            return;
+        }
+
+        static WARNING_CALLS: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "C" fn selected_warning(message: *const c_char) {
+            // SAFETY: the process output route synchronously passes a live
+            // NUL-terminated source message to this callback.
+            let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
+            if bytes.windows(b"cannot reset OS memory".len())
+                .any(|window| window == b"cannot reset OS memory")
+            {
+                WARNING_CALLS.fetch_add(1, Ordering::AcqRel);
+            }
+        }
+
+        let entries = std::boxed::Box::leak(std::boxed::Box::new([
+            c"mimalloc_purge_delay=0".as_ptr(),
+            c"mimalloc_purge_decommits=0".as_ptr(),
+            c"mimalloc_show_errors=1".as_ptr(),
+            c"mimalloc_max_warnings=100".as_ptr(),
+            core::ptr::null(),
+        ]));
+        VM_POLICY_SOURCE_ENVIRONMENT.store(entries.as_mut_ptr(), Ordering::Release);
+        let config = MemoryConfig::detect(current_startup());
+        // SAFETY: the callback and leaked source environment remain live
+        // through the selected purge and its output.
+        let inputs = unsafe {
+            ProcessDiagnosticInputs::new(
+                vm_policy_source_environment_for_test,
+                RuntimeStderrOutput::new(selected_warning).into_default_stderr_output(),
+            )
+        };
+        let storage = ProcessMainInitializationStorage::global();
+        // SAFETY: this child alone initializes and retains its process owner.
+        let owner = unsafe { storage.initialize_from_source_environment(config, inputs) }
+            .expect("the external reset process reaches readiness");
+        let ready = owner.ready().expect("the process remains ready");
+        let process = ready.vm_process().expect("the VM pair remains ready");
+        assert!(!process.is_preloading());
+        let page_size = ready.memory_config().expect("memory config remains ready").page_size();
+        let page = page_size.bytes();
+        assert_eq!(page, 4096);
+        let mapping_length = 3 * page;
+        let raw_length = mapping_length - 2;
+        let failures = if profile == "one-eagain" { 1 } else { 2 };
+        // SAFETY: this child exclusively owns a fresh writable anonymous
+        // mapping until its terminal raw release.
+        let mapping = unsafe {
+            crabc_core::mm::mmap_raw(core::ptr::null_mut(), mapping_length,
+                PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)
+        }.expect("caller creates external mapped memory");
+        // SAFETY: all bytes belong to the live writable caller mapping.
+        unsafe { core::ptr::write_bytes(mapping, 0x5a, mapping_length) };
+        let before = process.subprocess().vm_statistics().snapshot();
+        let plan = if failures == 1 {
+            fault::Plan::at(fault::Point::Purge, 1, Errno::AGAIN)
+        } else {
+            fault::Plan::at_pair(fault::Point::Purge, 1,
+                fault::Point::Purge, 1, Errno::AGAIN)
+        };
+        let fault = fault::install(plan);
+        let _reset_advice = fault.initial_reset_advice();
+        let advice = fault.capture_advice_range();
+        // SAFETY: the complete advised page lies inside the live caller-owned
+        // mapping; no Rust reference observes it during the raw advisory.
+        let needs_recommit = unsafe {
+            process.purge_external_arena_range(page_size, mapping.wrapping_add(1),
+                raw_length, true, page)
+        }.expect("transient reset failures eventually succeed");
+        let (advice_ranges, advice_calls) = advice.ranges()
+            .expect("bounded capture contains every retry advisory");
+        let attempts = fault.observed();
+        drop(advice);
+        fault.set(fault::Plan::disabled());
+        let after = process.subprocess().vm_statistics().snapshot();
+        // SAFETY: both neighbor bytes remain in the live caller-owned mapping.
+        let neighbors_retained = unsafe {
+            mapping.read_volatile() == 0x5a
+                && mapping.wrapping_add(mapping_length - 1).read_volatile() == 0x5a
+        };
+        // SAFETY: the advised middle page remains writable in the live
+        // caller-owned mapping and no reference into it is retained.
+        let mapping_writable = unsafe {
+            mapping.wrapping_add(page).write_volatile(0x3c);
+            mapping.wrapping_add(page).read_volatile() == 0x3c
+        };
+        let mut residency = 0u8;
+        // SAFETY: the queried page lies in the live caller-owned map and
+        // `residency` is writable for this one-page query.
+        let mapping_live = unsafe {
+            crabc_core::mm::mincore_raw(mapping, page, &mut residency)
+        }.is_ok();
+        // SAFETY: this caller still owns the complete original extent and no
+        // reference or VM operation into it survives terminal release.
+        let released = unsafe { crabc_core::mm::munmap_raw(mapping, mapping_length) }.is_ok();
+
+        std::println!("{BEGIN}");
+        std::println!("profile={failures}");
+        std::println!("purge_delay_raw={}", process.policy().source_option_value(VmOption::PurgeDelay.source()));
+        std::println!("purge_decommits_raw={}", process.policy().source_option_value(VmOption::PurgeDecommits.source()));
+        std::println!("mapping_length={mapping_length}");
+        std::println!("raw_purge_length={raw_length}");
+        std::println!("advice_calls={advice_calls}");
+        for index in 0..3 {
+            std::println!("advice{}_exact={}", index + 1,
+                usize::from(index < advice_calls
+                    && advice_ranges[index] == (mapping.wrapping_add(page).addr(), page, MADV_FREE)));
+            std::println!("advice{}_result={}", index + 1, if index < failures { -1 } else { 0 });
+            std::println!("advice{}_errno={}", index + 1, if index < failures { 11 } else { 0 });
+        }
+        std::println!("needs_recommit={}", usize::from(needs_recommit));
+        std::println!("purge_calls_delta={}", after.purge_calls - before.purge_calls);
+        std::println!("purged_delta={}", after.purged - before.purged);
+        std::println!("reset_calls_delta={}", after.reset_calls - before.reset_calls);
+        std::println!("reset_delta={}", after.reset - before.reset);
+        std::println!("reserved_delta={}", after.reserved_current - before.reserved_current);
+        std::println!("committed_delta={}", after.committed_current - before.committed_current);
+        std::println!("warning_calls={}", WARNING_CALLS.load(Ordering::Acquire));
+        std::println!("neighbors_retained={}", usize::from(neighbors_retained));
+        std::println!("mapping_writable={}", usize::from(mapping_writable));
+        std::println!("mapping_live={}", usize::from(mapping_live));
+        std::println!("terminal_unmap_calls=1");
+        std::println!("terminal_unmap_exact=1");
+        std::println!("caller_released={}", usize::from(released));
+        std::println!("{END}");
+        assert_eq!(attempts, failures + 1);
+        assert_eq!(WARNING_CALLS.load(Ordering::Acquire), 0);
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
     fn emit_m2_external_os_reset_fallback_process_trace() {
         use crate::diagnostic_output::ProcessDiagnosticInputs;
         use crate::process_init::ProcessMainInitializationStorage;
