@@ -195,10 +195,9 @@ pub(crate) unsafe fn allocate(
         }
     }
     // A direct small head can supply a block without regular-page classification.
-    let regular_medium = size > SMALL_MAX_OBJ_SIZE;
     let bin = size_class::bin(size)?;
     let first = NonNull::new(theap_ref.queue(bin)?.first())?;
-    if regular_medium {
+    if size > SMALL_MAX_OBJ_SIZE {
         // SAFETY: the queue head is a live page of this Theap.
         let first_ref = unsafe { first.as_ref() };
         if first_ref.block_size() <= SMALL_MAX_OBJ_SIZE
