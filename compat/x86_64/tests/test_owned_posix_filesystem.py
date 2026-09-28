@@ -302,7 +302,7 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
             record = json.loads(receipt.read_text(encoding="utf-8"))
             record["application_dsos"] = {"forged.so": "0" * 64}
             receipt.write_text(json.dumps(record), encoding="utf-8")
-            with self.assertRaisesRegex(auditor.AuditError, "application_dsos drifted"):
+            with self.assertRaisesRegex(auditor.AuditError, "application DSO input identity differs"):
                 auditor.audit_dynamic_receipt(product, "pie", application, candidate, receipt)
 
             self._write_dynamic_receipt(auditor, product, application, candidate, receipt, linker)
