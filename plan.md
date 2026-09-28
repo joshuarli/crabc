@@ -57,7 +57,9 @@ are not transferable passes for a different revision.
   unchanged RSS bound for native static PIE on seeds 1 and 3. After the
   source-shaped C ABI size-class correction, the canonical 113-case native
   stress receipt passes all three seeds, including PageMap and RSS bounds;
-  the intermittent historical RSS growth has no proven root cause. Source-built
+  the intermittent historical RSS growth has no proven root cause. A clean
+  `934ca15e1` full M5 run passes nine correctness gates and has one blocked
+  codegen/performance gate pending qualifying local-path evidence. Source-built
   C/Rust differentials pass for both dormant and active survivors of a non-abandoning
   full-medium/OS-singleton owner exit, including reclaim and retirement; a
   late remote free after that exit also matches all 17 retained observations.
@@ -101,11 +103,15 @@ are not transferable passes for a different revision.
   upstream `test-api.c` through the native adapter. M6 now source-differentiates
   quiescent non-main and isolated process-main Heap block visitation across 138
   adapter keys, including all five exported Heap membership and region queries
-  and the quiescent page-utilization query; seven
+  and the quiescent page-utilization query; eight
   runnable evidence rows pass, including fresh-process Heap membership
-  regressions, while all ten required gates remain blocked
-  by named missing API and lifetime evidence. Accumulated mixed-workload
-  main-Heap page-population parity remains unproved. Integrated products are
+  regressions and a ten-case source-built main-Heap population differential
+  across one to 1000 non-main Heaps, direct/fork execution, and reserved-arena
+  profiles. Detached Theap and replaced TLS slot images now retain the source
+  remote-free lifetime through a visitor collection. All ten required gates
+  remain blocked by 11 named missing API and lifetime evidence entries;
+  accumulated mixed-workload main-Heap page-population parity remains unproved.
+  Integrated products are
   compared against an evidence-only pinned v3.5.0 C product (the selected C
   backend is `libmimalloc-sys` 0.1.49, mimalloc 3.3.2); the port map
   classifies every intentional difference (`difference_kind`). The M8
