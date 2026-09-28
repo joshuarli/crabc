@@ -251,6 +251,15 @@ class ReceiptFixture:
             for linkage in ("static", "static-pie"):
                 executable = self.work / linkage
                 executable.write_bytes((linkage + " executable\n").encode())
+                entry = "rcrt1.o" if linkage == "static-pie" else "crt1.o"
+                self.write(linkage + ".crabc-link.map", (
+                    "             VMA              LMA     Size Align Out     In      Symbol\n"
+                    "            1000             1000       10    16 .text\n"
+                    f"            1000             1000        0     1         {self.static / 'usr/lib' / entry}:(.text)\n"
+                    f"            1000             1000       10     1         {self.object}:(.text)\n"
+                    "            2000             2000        4     1 .rodata\n"
+                    f"            2000             2000        4     1         {self.object}:(.rodata)\n"
+                ).encode())
                 self.command(linkage + "-link", [str(self.static_driver), "-" + linkage, "--link-receipt", linkage + ".crabc-link.json", str(self.object), "-o", str(executable)])
                 link = {"linkage": linkage, "product": str(self.static), "product_format": "static", "product_manifest_sha256": "s" * 64,
                         "workload_sha256": hashlib.sha256(self.object.read_bytes()).hexdigest(), "executable_sha256": hashlib.sha256(executable.read_bytes()).hexdigest(), "receipt_sha256": linkage[0] * 64}
@@ -363,6 +372,15 @@ class OwnedStdioComponentReceiptTests(unittest.TestCase):
     def validate(self, *, require_static: bool = False) -> dict[str, object]:
         return receipt.validate_report(self.fixture.path, self.fixture.checkout, require_static=require_static)
 
+    def static_fixture(self) -> None:
+        self.fixture = ReceiptFixture(self.root / "static", static=True)
+        for index, (name, value) in enumerate((("ORACLE_COMPILER", str(self.fixture.tool)),
+                                               ("MUSL_INCLUDE", self.fixture.musl_include))):
+            self.patches[index].stop()
+            self.patches[index] = mock.patch.object(receipt, name, value)
+            self.patches[index].start()
+        qualification.ROOT = self.fixture.checkout
+
     def test_dynamic_development_receipt_reconstructs_exactly_four_cells(self) -> None:
         report = self.validate()
         self.assertEqual(report["matrix"], "dynamic-development")
@@ -413,14 +431,7 @@ class OwnedStdioComponentReceiptTests(unittest.TestCase):
         self.assertEqual(report["source_product_seal"], self.fixture.report["seals"]["source-product-before"])
 
     def test_supplied_static_receipt_reconstructs_exactly_six_cells(self) -> None:
-        self.fixture = ReceiptFixture(self.root / "static", static=True)
-        self.patches[0].stop()
-        self.patches[0] = mock.patch.object(receipt, "ORACLE_COMPILER", str(self.fixture.tool))
-        self.patches[0].start()
-        self.patches[1].stop()
-        self.patches[1] = mock.patch.object(receipt, "MUSL_INCLUDE", self.fixture.musl_include)
-        self.patches[1].start()
-        qualification.ROOT = self.fixture.checkout
+        self.static_fixture()
         report = self.validate(require_static=True)
         self.assertEqual(report["matrix"], "supplied-static")
 
@@ -555,6 +566,31 @@ class OwnedStdioComponentReceiptTests(unittest.TestCase):
             b"3000             3000       10    16 .text"))
         with self.assertRaisesRegex(receipt.ReceiptError, "link map output sections"):
             self.validate()
+
+    def test_rehashed_static_link_map_cannot_change_output_placement(self) -> None:
+        self.static_fixture()
+        path = self.fixture.work / "static.crabc-link.map"
+        path.write_bytes(path.read_bytes().replace(
+            b"1000             1000       10    16 .text",
+            b"3000             3000       10    16 .text"))
+        with self.assertRaisesRegex(receipt.ReceiptError, "static link map output sections"):
+            self.validate(require_static=True)
+
+    def test_rehashed_static_pie_link_map_cannot_name_a_foreign_input(self) -> None:
+        self.static_fixture()
+        path = self.fixture.work / "static-pie.crabc-link.map"
+        path.write_bytes(path.read_bytes().replace(
+            (str(self.fixture.object) + ":(.text)").encode(),
+            (str(self.fixture.work / "foreign.o") + ":(.text)").encode()))
+        with self.assertRaisesRegex(receipt.ReceiptError, "static pie link map contains a foreign input"):
+            self.validate(require_static=True)
+
+    def test_rehashed_static_pie_link_map_cannot_name_the_static_crt(self) -> None:
+        self.static_fixture()
+        path = self.fixture.work / "static-pie.crabc-link.map"
+        path.write_bytes(path.read_bytes().replace(b"rcrt1.o:(.text)", b"crt1.o:(.text)"))
+        with self.assertRaisesRegex(receipt.ReceiptError, "static pie link map contains a foreign input"):
+            self.validate(require_static=True)
 
     def test_recomputed_hashes_cannot_replace_payload_audit(self) -> None:
         path = self.fixture.work / "dynamic-non-pie-copy-audit-after.stdout"

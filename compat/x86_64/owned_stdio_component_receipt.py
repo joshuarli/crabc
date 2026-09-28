@@ -732,7 +732,7 @@ def elf_section_layout(executable: Path) -> dict[str, tuple[int, int]]:
     return result
 
 
-def validate_dynamic_link_map(work: Path, name: str, product: Path, workload: Path) -> None:
+def validate_link_map(work: Path, name: str, product: Path, workload: Path) -> None:
     """Bind LLD's retained placements and input contributors to this output."""
 
     map_path = regular(work / (name + ".crabc-link.map"), name.replace("-", " ") + " link map")
@@ -747,9 +747,14 @@ def validate_dynamic_link_map(work: Path, name: str, product: Path, workload: Pa
     mapped: dict[str, tuple[int, int]] = {}
     contributors: set[str] = set()
     library = product / "usr/lib"
-    allowed = {str(workload), "<internal>", *(str(library / entry) for entry in
-              ("Scrt1.o", "crt1.o", "crti.o", "crtn.o", "crabc-dynamic-attach.o", "libc.so"))}
-    builtins = str(library / "libcrabc-builtins.a")
+    entry = {"static": "crt1.o", "static-pie": "rcrt1.o",
+             "dynamic-pie": "Scrt1.o", "dynamic-non-pie": "crt1.o"}[name]
+    static = name in ("static", "static-pie")
+    direct = (entry, "crti.o", "crtn.o") if static else (
+        entry, "crti.o", "crtn.o", "crabc-dynamic-attach.o", "libc.so")
+    allowed = {str(workload), "<internal>", *(str(library / item) for item in direct)}
+    archives = ("libcrabc-builtins.a", "libc.a") if static else ("libcrabc-builtins.a",)
+    archive_prefixes = tuple(str(library / archive) + "(" for archive in archives)
     for line in lines[1:]:
         match = re.fullmatch(r"\s*([0-9a-f]+)\s+[0-9a-f]+\s+([0-9a-f]+)\s+\d+\s+(\S.*)", line)
         require(match is not None, label + " contains a non-LLD record")
@@ -759,7 +764,8 @@ def validate_dynamic_link_map(work: Path, name: str, product: Path, workload: Pa
             mapped[entry] = (address, size)
         elif ":(" in entry:
             source = entry.split(":(", 1)[0]
-            require(source in allowed or source.startswith(builtins + "(") and source.endswith(")"),
+            require(source in allowed or any(source.startswith(prefix) and source.endswith(")")
+                                             for prefix in archive_prefixes),
                     label + " contains a foreign input")
             contributors.add(source)
     require(mapped == sections, label + " output sections differ from the executable")
@@ -791,8 +797,7 @@ def validate_links(checkout: Path, work: Path, report: Mapping[str, Any], comman
                 name.replace("-", " ") + " link workload identity differs")
         require(rebuilt.get("product") == str(product), name.replace("-", " ") + " link identity differs")
         require(link_path.read_bytes() == canonical(rebuilt), name.replace("-", " ") + " link identity differs")
-        if linkage in ("pie", "non-pie"):
-            validate_dynamic_link_map(work, name, product, workload)
+        validate_link_map(work, name, product, workload)
         validation = commands[name + "-validate"]
         validation_stdout = validation["stdout"]
         validation_stderr = validation["stderr"]
