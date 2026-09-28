@@ -10176,9 +10176,15 @@ PY
         run_in_container bash /workspace/compat/x86_64/run_owned_dynamic_pthread_exit.sh
         ;;
     materialized-dynamic-sysroot)
-        [ "$#" -eq 0 ] || fail "materialized-dynamic-sysroot takes no arguments"
+        materialized_dynamic_arguments=()
+        if [ "$#" -eq 2 ] && [ "$1" = --work ]; then
+            materialized_dynamic_work="$(translate_owned_posix_product "$2" fresh-output)" || exit 2
+            materialized_dynamic_arguments=(--work "$materialized_dynamic_work")
+        elif [ "$#" -ne 0 ]; then
+            fail "materialized-dynamic-sysroot takes no arguments or --work NEW_DIR"
+        fi
         ensure_image
-        run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_materialized_dynamic_sysroot.sh
+        run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_materialized_dynamic_sysroot.sh "${materialized_dynamic_arguments[@]}"
         ;;
     unwinder-build)
         [ "$#" -eq 0 ] || fail "unwinder-build takes no arguments"

@@ -2,7 +2,8 @@
 # Installed initial/runtime graph evidence. Full dynamic campaign stays open.
 #
 # With no arguments this builds two clean dynamic products, packages both and
-# extracts one. `--supplied-work WORK` instead qualifies trees another gate
+# extracts one below TMPDIR. `--work NEW_DIR` keeps that same cohort in a new
+# physical checkout .work directory. `--supplied-work WORK` qualifies trees another gate
 # already built: WORK must be a physical checkout .work directory holding
 # exactly the installed, second and extracted trees and the runtime.tar and
 # second-runtime.tar packages, such as the combined four-mode sysroot gate's
@@ -12,13 +13,18 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 [ "$(uname -sm)" = 'Linux x86_64' ]
 supplied=0
+explicit_work=0
 case "$#" in
     0) ;;
-    2) [ "$1" = --supplied-work ] && [ -n "$2" ] || { printf 'usage: %s [--supplied-work WORK]\n' "$0" >&2; exit 2; }
-       supplied=1 ;;
-    *) printf 'usage: %s [--supplied-work WORK]\n' "$0" >&2; exit 2 ;;
+    2) [ -n "$2" ] || { printf 'usage: %s [--work NEW_DIR | --supplied-work WORK]\n' "$0" >&2; exit 2; }
+       case "$1" in
+           --work) explicit_work=1 ;;
+           --supplied-work) supplied=1 ;;
+           *) printf 'usage: %s [--work NEW_DIR | --supplied-work WORK]\n' "$0" >&2; exit 2 ;;
+       esac ;;
+    *) printf 'usage: %s [--work NEW_DIR | --supplied-work WORK]\n' "$0" >&2; exit 2 ;;
 esac
-readonly supplied
+readonly supplied explicit_work
 python3 -B - "$ROOT" "${TMPDIR:-}" <<'PY'
 from pathlib import Path
 import sys
@@ -42,6 +48,23 @@ for name in ('runtime.tar', 'second-runtime.tar'):
 for name in ('qualification-prepare.json', 'qualification-cases', 'qualification.json', 'expected.stdout'):
     if (work / name).exists() or (work / name).is_symlink():
         raise SystemExit(f'materialized dynamic supplied work already holds {name}')
+PY
+    work="$2"
+elif [ "$explicit_work" -eq 1 ]; then
+    python3 -B - "$ROOT" "$2" <<'PY'
+from pathlib import Path
+import sys
+
+root, work = map(Path, sys.argv[1:])
+boundary = root / '.work'
+if (not work.is_absolute() or work == boundary or not work.is_relative_to(boundary)
+        or work.exists() or work.is_symlink() or not work.parent.is_dir()
+        or work.parent.resolve(strict=True) != work.parent or work.resolve() != work):
+    raise SystemExit('materialized dynamic --work must be a new physical checkout .work directory')
+try:
+    work.mkdir()
+except OSError as error:
+    raise SystemExit(f'materialized dynamic --work cannot be created: {error}') from error
 PY
     work="$2"
 else

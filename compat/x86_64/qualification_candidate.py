@@ -251,8 +251,10 @@ def _plan() -> tuple[Step, ...]:
              lambda c: _d("owned-posix-static-products", c.template("{work}/out/static")),
              (Output("preparation", fixed="{work}/out/static/preparation.json"),),
              fresh=("{work}/out/static",)),
-        Step("dynamic-products", "cohort", lambda c: _d("materialized-dynamic-sysroot"),
-             (Output("qualification", printed="qualification.json"),)),
+        Step("dynamic-products", "cohort",
+             lambda c: _d("materialized-dynamic-sysroot", "--work", c.template("{work}/out/dynamic")),
+             (Output("qualification", fixed="{work}/out/dynamic/qualification.json"),),
+             fresh=("{work}/out/dynamic",)),
         # libc.posix-runtime: matrix, four companions, native aggregate, admission.
         Step("posix-family", "libc.posix-runtime",
              lambda c: _d("owned-posix-family", *c.cohort(), "--output", c.template("{work}/out/posix-family")),

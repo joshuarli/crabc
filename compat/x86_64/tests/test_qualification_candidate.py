@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -64,6 +66,15 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(prefix["steps"][-1]["step"], "posix-admission")
         self.assertFalse(any("rust_std_lto" in blocker for blocker in prefix["preflight_blockers"]))
 
+    def test_dynamic_cohort_is_planned_below_candidate_work(self) -> None:
+        work = ROOT / ".work/x86_64/candidate-durable-cohort-test"
+        report = candidate.dry_run(ROOT, work, {}, "dynamic-products")
+        dynamic = report["steps"][-1]
+        self.assertEqual(dynamic["argv"], ["./scripts/dev-x86_64.sh", "materialized-dynamic-sysroot",
+                                           "--work", ".work/x86_64/candidate-durable-cohort-test/out/dynamic"])
+        self.assertEqual(dynamic["outputs"],
+                         [".work/x86_64/candidate-durable-cohort-test/out/dynamic/qualification.json"])
+
 
 class ExecutionTests(unittest.TestCase):
     """Run the real plan against a runner that fakes each producer's outputs."""
@@ -99,8 +110,6 @@ class ExecutionTests(unittest.TestCase):
                 path = self.root / context.template(output.fixed)
             elif output.glob is not None:
                 path = self.root / context.template(output.glob).replace("*", "x")
-            elif identifier == "dynamic-products":
-                path = self.root / ".work/x86_64/tmp/materialized-dynamic.test/qualification.json"
             else:
                 path = self.root / ".work/x86_64/tmp" / identifier / (output.printed or "")
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -126,13 +135,27 @@ class ExecutionTests(unittest.TestCase):
         publish = next(record for record in written["steps"] if record["step"] == "publish-resolver-network")
         self.assertEqual(publish["status"], "complete")
         request = json.loads((self.work / "out/loader-family/request.json").read_text(encoding="utf-8"))
-        self.assertEqual(request["qualification"], ".work/x86_64/tmp/materialized-dynamic.test/qualification.json")
+        self.assertEqual(request["qualification"], ".work/x86_64/run/out/dynamic/qualification.json")
 
         self.calls.clear()
         again = self._execute()
         self.assertTrue(again["complete"])
         self.assertEqual(self.calls, [])
         self.assertTrue(all(record.get("resumed") for record in again["steps"]))
+
+    def test_dynamic_cohort_receipt_survives_tmp_cleanup(self) -> None:
+        summary = self._execute(through="dynamic-products")
+        self.assertNotIn("error", summary)
+        dynamic = next(record for record in summary["steps"] if record["step"] == "dynamic-products")
+        receipt = self.root / dynamic["outputs"]["qualification"]
+        self.assertEqual(receipt, self.work / "out/dynamic/qualification.json")
+        temporary = self.root / ".work/x86_64/tmp"
+        shutil.rmtree(temporary, ignore_errors=True)
+        self.assertTrue(receipt.is_file())
+        self.calls.clear()
+        resumed = self._execute(through="dynamic-products")
+        self.assertNotIn("error", resumed)
+        self.assertEqual(self.calls, [])
 
     def test_failure_stops_closed_and_a_restart_resumes_from_the_failed_step(self) -> None:
         self.fail = {"pthread-family"}
@@ -186,6 +209,28 @@ class AttachmentTests(unittest.TestCase):
             self.assertEqual(records["libc.resolver"]["state"], "unattached")
             blockers = candidate.preflight(root, context, candidate.plan())
             self.assertTrue(any("elsewhere/assessment.json" in blocker for blocker in blockers))
+
+
+class DynamicWorkPathTests(unittest.TestCase):
+    def test_new_cohort_rejects_existing_symlink_and_escape_paths_before_build(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="materialized-paths.", dir=scratch) as temporary:
+            parent = Path(temporary)
+            (parent / "existing").mkdir()
+            (parent / "physical").mkdir()
+            (parent / "link").symlink_to(parent / "physical", target_is_directory=True)
+            paths = (parent / "existing", parent / "link" / "new", parent / "../../../escaped")
+            for path in paths:
+                with self.subTest(path=path):
+                    result = subprocess.run(
+                        ["bash", str(ROOT / "compat/x86_64/run_materialized_dynamic_sysroot.sh"),
+                         "--work", str(path)], cwd=ROOT,
+                        env={**os.environ, "TMPDIR": str(scratch)},
+                        capture_output=True, text=True, check=False)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("new physical checkout .work directory", result.stderr)
+                    self.assertFalse((parent / "new").exists())
 
 
 if __name__ == "__main__":
