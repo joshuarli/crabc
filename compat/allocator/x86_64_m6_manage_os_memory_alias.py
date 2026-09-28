@@ -15,14 +15,28 @@ BEGIN = "CRABC_MI_M6_MANAGE_OS_MEMORY_ALIAS_BEGIN"
 END = "CRABC_MI_M6_MANAGE_OS_MEMORY_ALIAS_END"
 EXPECTED = {
     "alias.main": "1,1,1,1",
+    "alias.main_allocation": "1,1",
     "alias.child": "1,1,1,1,1",
-    "alias.child_terminal": "1,1",
+    "alias.child_allocation": "1,1",
+    "alias.child_terminal": "1,1,1",
 }
 SOURCE = {
     "source.main_alias": "1,1,1,1",
     "source.child_alias": "1,1,1,1",
 }
-WARNING = "cannot use OS memory since it is not large enough"
+SHORT_REGION_WARNING = (
+    "cannot use OS memory since it is not large enough "
+    "(size 32767 KiB, minimum required is 32768 KiB)"
+)
+WARNING_PATTERN = re.compile(
+    r"mimalloc: warning: thread 0x[0-9A-Fa-f]+: "
+    r"(cannot use OS memory since it is not large enough "
+    r"\(size [0-9]+ KiB, minimum required is [0-9]+ KiB\))"
+)
+
+
+def short_region_warnings(stderr: str) -> list[str]:
+    return WARNING_PATTERN.findall(stderr)
 
 
 def run_differential() -> int:
@@ -48,8 +62,10 @@ def run_differential() -> int:
         c_run = harness.command_record([str(c_driver)], cwd=temporary, env={}, timeout_seconds=60)
         (ARTIFACTS / "c.log").write_text(str(c_run["stdout"]) + str(c_run["stderr"]))
         harness.require_success(c_run, "Managed OS alias C run")
-        if str(c_run["stderr"]).count(WARNING) != 2:
-            raise harness.HarnessError("pinned alias C short-region warnings changed")
+        expected_warnings = [SHORT_REGION_WARNING, SHORT_REGION_WARNING]
+        c_warnings = short_region_warnings(str(c_run["stderr"]))
+        if c_warnings != expected_warnings:
+            raise harness.HarnessError(f"pinned alias C short-region warnings changed: {c_warnings}")
         source_rows = dict(re.findall(r"^(source\.[a-z_]+)=([0-9,]+)$", str(c_run["stderr"]), re.MULTILINE))
         if source_rows != SOURCE:
             raise harness.HarnessError(f"pinned alias source image changed: {source_rows}")
@@ -67,8 +83,9 @@ def run_differential() -> int:
         rust_run = harness.command_record([str(rust_driver)], cwd=temporary, env={}, timeout_seconds=60)
         (ARTIFACTS / "rust.log").write_text(str(rust_run["stdout"]) + str(rust_run["stderr"]))
         harness.require_success(rust_run, "Managed OS alias Rust run")
-        if str(rust_run["stderr"]).count(WARNING) != 2:
-            raise harness.HarnessError("managed OS alias Rust short-region warnings differ")
+        rust_warnings = short_region_warnings(str(rust_run["stderr"]))
+        if rust_warnings != c_warnings:
+            raise harness.HarnessError(f"managed OS alias Rust short-region warnings differ: {rust_warnings}")
         rust_trace = m7.parse_options_trace(str(rust_run["stdout"]), "Rust managed OS alias", BEGIN, END)
         m7.compare_options_traces(c_trace, rust_trace)
         return len(c_trace)

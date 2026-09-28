@@ -57,22 +57,33 @@ static void* child_worker(void* argument) {
                                       false, false, true, -1);
   bool ordinary_errno = errno == 0;
   errno = 0;
-  bool short_region = mi_manage_os_memory(state->area, state->size - 1,
+  bool short_region = mi_manage_os_memory(state->area, mi_arena_min_size() - 1,
                                            false, false, true, -1);
+  bool short_rejected_without_errno = !short_region && errno == 0;
+  mi_heap_t* heap = managed ? mi_heap_new() : NULL;
+  void* block = heap != NULL ? mi_heap_malloc(heap, 64) : NULL;
+  bool allocated_in_area = block != NULL &&
+      (uintptr_t)block >= (uintptr_t)state->area &&
+      (uintptr_t)block < (uintptr_t)state->area + state->size;
+  if (block != NULL) mi_free(block);
+  if (heap != NULL) mi_heap_delete(heap);
   unsigned char resident = 0;
   printf("alias.child=%d,%d,%d,%d,%d\n", member, managed, ordinary_errno,
-         !short_region && errno == 0,
+         short_rejected_without_errno,
          mincore(state->area, 4096, &resident) == 0);
+  printf("alias.child_allocation=%d,%d\n", block != NULL, allocated_in_area);
 #ifdef CRABC_M6_SOURCE_INTERNAL
   source_alias_row("child_alias", (mi_subproc_t*)state->child._mi_subproc_id, state->area);
 #endif
-  state->done = member && managed && !short_region;
+  state->done = member && managed && !short_region && allocated_in_area;
   return NULL;
 }
 
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   mi_option_set_enabled(mi_option_show_errors, true);
+  // Keep automatic reservations from preceding the caller-owned child arena.
+  mi_option_set(mi_option_arena_reserve, 0);
   puts("CRABC_MI_M6_MANAGE_OS_MEMORY_ALIAS_BEGIN");
   size_t minimum = mi_arena_min_size();
   size_t alignment = mi_arena_min_alignment();
@@ -85,16 +96,23 @@ int main(void) {
                                            false, false, true, -1);
   bool ordinary_errno = errno == 0;
   errno = 0;
-  bool short_region = mi_manage_os_memory(main_area, minimum - 1,
+  bool short_region = mi_manage_os_memory(main_area, mi_arena_min_size() - 1,
                                            false, false, true, -1);
+  bool short_rejected_without_errno = !short_region && errno == 0;
+  void* main_block = main_managed ? mi_malloc(64) : NULL;
+  bool main_in_area = main_block != NULL &&
+      (uintptr_t)main_block >= (uintptr_t)main_area &&
+      (uintptr_t)main_block < (uintptr_t)main_area + minimum;
+  if (main_block != NULL) mi_free(main_block);
   unsigned char resident = 0;
   printf("alias.main=%d,%d,%d,%d\n", main_managed, ordinary_errno,
-         !short_region && errno == 0,
+         short_rejected_without_errno,
          mincore(main_area, 4096, &resident) == 0);
+  printf("alias.main_allocation=%d,%d\n", main_block != NULL, main_in_area);
 #ifdef CRABC_M6_SOURCE_INTERNAL
   source_alias_row("main_alias", (mi_subproc_t*)mi_subproc_main()._mi_subproc_id, main_area);
 #endif
-  if (!main_managed || short_region) return 4;
+  if (!main_managed || short_region || !main_in_area) return 4;
   child_alias_t state = {mi_subproc_new(), child_area, minimum, false};
   if (state.child._mi_subproc_id == NULL) return 5;
   pthread_t worker;
@@ -103,7 +121,10 @@ int main(void) {
   mi_subproc_destroy(state.child);
   bool mapped_after_destroy = mincore(child_area, 4096, &resident) == 0;
   bool caller_released = munmap(child_area, minimum) == 0;
-  printf("alias.child_terminal=%d,%d\n", mapped_after_destroy, caller_released);
+  errno = 0;
+  bool unmapped_after_caller_release = mincore(child_area, 4096, &resident) != 0 && errno == ENOMEM;
+  printf("alias.child_terminal=%d,%d,%d\n", mapped_after_destroy, caller_released,
+         unmapped_after_caller_release);
   puts("CRABC_MI_M6_MANAGE_OS_MEMORY_ALIAS_END");
   return 0;
 }
