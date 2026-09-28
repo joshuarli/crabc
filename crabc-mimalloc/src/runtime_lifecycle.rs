@@ -20561,6 +20561,91 @@ mod tests {
         );
     }
 
+    #[test]
+    #[cfg(all(target_arch = "x86_64", feature = "native-runtime-test-audit"))]
+    fn native_owner_exit_collects_a_late_remote_publication_before_survivor_reclaim() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::native_owner_exit_collects_a_late_remote_publication_before_survivor_reclaim",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                assert!(initialize_process());
+                assert!(native_round_trip(48));
+                assert!(prepare_native_later_thread_arena());
+
+                let (blocks_sender, blocks_receiver) = mpsc::sync_channel(0);
+                let (exit_sender, exit_receiver) = mpsc::sync_channel(0);
+                let owner = thread::spawn(move || {
+                    let descriptor = admission::current_native_allocator_thread_descriptor();
+                    // SAFETY: the worker registers its own TLS descriptor and
+                    // retains that descriptor through its source exit.
+                    assert!(unsafe {
+                        admission::register_current_native_allocator_worker_descriptor(descriptor)
+                    });
+                    assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                    let blocks = core::array::from_fn(|_| {
+                        let NativePageAllocationResult::Allocated(block) =
+                            native_allocate_aligned(64, 16, false)
+                        else {
+                            panic!("the later source owner allocates three clients");
+                        };
+                        // SAFETY: each fresh client remains live until the
+                        // surviving thread consumes its transferred address.
+                        unsafe { block.as_ptr().write_bytes(0x6b, 64) };
+                        block.as_ptr().addr()
+                    });
+                    blocks_sender.send(blocks).expect("the survivor receives the live clients");
+                    exit_receiver.recv().expect("the survivor starts owner exit");
+                    assert_eq!(
+                        finish_current_thread_native_after_user_destructors(),
+                        ThreadFinishResult::Finished,
+                    );
+                });
+
+                let blocks = blocks_receiver.recv().expect("the owner transfers three clients");
+                let page_map = RUNTIME_PROCESS
+                    .page_map_for_live_native_allocation()
+                    .expect("the active source process has a PageMap");
+                // SAFETY: all three exact clients remain live while their
+                // PageMap registrations are observed at this quiescent point.
+                let pages = blocks.map(|address| unsafe {
+                    page_map.page_map().unwrap().checked_lookup(address as *mut u8)
+                });
+                assert!(!pages[0].is_null());
+                assert_eq!(pages, [pages[0]; 3], "the three clients share one source page");
+
+                let block = |address| {
+                    NonNull::new(address as *mut u8).expect("a live client address is nonnull")
+                };
+                // SAFETY: the survivor exclusively owns this first transferred
+                // client, and the source owner is waiting before exit.
+                assert_eq!(unsafe { native_free(block(blocks[0])) }, NativePageFreeResult::Freed);
+                let rendezvous = native_runtime_test_arm_owner_exit_collection_rendezvous()
+                    .expect("one source owner-exit collector is armed");
+                exit_sender.send(()).expect("the owner begins source exit");
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                while !rendezvous.is_paused() && std::time::Instant::now() < deadline {
+                    thread::yield_now();
+                }
+                assert!(rendezvous.is_paused(), "the owner reads the first nonempty remote head");
+                // SAFETY: the second client is still live and exclusively
+                // owned by this survivor. Its publication races the paused
+                // source collector's first head-detach CAS.
+                assert_eq!(unsafe { native_free(block(blocks[1])) }, NativePageFreeResult::Freed);
+                assert!(rendezvous.release());
+                owner.join().expect("the later source owner completes its traversal");
+                assert!(rendezvous.observed_retry(), "late publication makes the captured head stale");
+
+                // SAFETY: the last transferred client remains live after the
+                // owner joined; its exact PageMap route owns final reclaim.
+                assert_eq!(unsafe { native_free(block(blocks[2])) }, NativePageFreeResult::Freed);
+                assert!(unsafe {
+                    page_map.page_map().unwrap().checked_lookup(blocks[2] as *mut u8)
+                }.is_null(), "the survivor's final free releases the abandoned page");
+                assert!(native_round_trip(64), "the surviving owner remains usable");
+            },
+        );
+    }
+
     #[cfg(target_arch = "x86_64")]
     fn native_deferred_free_callback_boundary_fixture() {
         let _runtime_driver = NATIVE_DEFERRED_FREE_RUNTIME_DRIVER_LOCK.lock().expect(
