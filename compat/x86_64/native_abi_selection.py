@@ -8989,14 +8989,18 @@ def attach_errno_storage_lifecycle(accounting: Mapping[str, Any], companion: Map
 
 
 def _attach_ordinary_static_import(accounting: Mapping[str, Any],
-                                   companion: Mapping[str, Any], name: str) -> list[dict[str, Any]]:
+                                   companion: Mapping[str, Any], name: str, *,
+                                   projection_override: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
     """Bind all authenticated archive callers to their final provider.
 
     Each member's relocation form and selected final call are replayed by the
     component reader. The errno accessor additionally retains its FS/TLS
     address proof; other ordinary functions have no such storage claim.
     """
-    require(name in {'__errno_location', 'abort', 'fputs', 'getenv'}, 'ordinary import identity differs')
+    scan_caller = name == 'mbrtowc'
+    require(name in {'__errno_location', 'abort', 'fputs', 'getenv', 'mbrtowc'}
+            and (projection_override is not None) == scan_caller,
+            'ordinary import identity differs')
     companion = exact(companion, {
         'status', 'reader', 'contract', 'report', 'source', 'source_inputs', 'products',
         'measurement_reports', 'account', 'private_vm_resolution',
@@ -9005,7 +9009,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
     require(companion['status'] == 'native-c-allocator-boundary-observed-with-boundaries'
             and companion['limits'] == C_ALLOCATOR_BOUNDARY_LIMITS,
             'ordinary import companion differs')
-    projection = exact(companion['ordinary_import_resolutions'][name], {
+    projection = exact(projection_override if scan_caller else companion['ordinary_import_resolutions'][name], {
         'static_provider_member', 'static_provider', 'shared_dynsym_provider',
         'shared_symtab_provider', 'importers', 'static_final_links',
         'shared_final', 'dynamic_final_import_absent',
@@ -9013,15 +9017,17 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
     runtime = companion['account']['c_runtime_imports']
     claim = next((row for row in runtime['imports']
                   if row['name'] == name), None)
-    require(claim is not None and claim['binding'] == 'GLOBAL'
-            and same(projection['static_provider_member'], claim['static_rust_provider_member'])
-            and same(projection['static_provider'], claim['static_rust_provider'])
-            and same(projection['shared_dynsym_provider'], claim['shared_dynsym_provider'])
-            and same(projection['shared_symtab_provider'], claim['shared_symtab_provider'])
-            and projection['dynamic_final_import_absent'] is True,
+    require((claim is None if scan_caller else claim is not None and claim['binding'] == 'GLOBAL'
+             and same(projection['static_provider_member'], claim['static_rust_provider_member'])
+             and same(projection['static_provider'], claim['static_rust_provider'])
+             and same(projection['shared_dynsym_provider'], claim['shared_dynsym_provider'])
+             and same(projection['shared_symtab_provider'], claim['shared_symtab_provider']))
+            and projection['dynamic_final_import_absent'] is True
+            and (not scan_caller or all(projection[field]['name'] == name for field in (
+                'static_provider', 'shared_dynsym_provider', 'shared_symtab_provider'))),
             'ordinary import provider account differs')
     importers = projection['importers']
-    require(type(importers) is list and len(importers) >= 2,
+    require(type(importers) is list and (len(importers) == 1 if scan_caller else len(importers) >= 2),
             'ordinary import roster differs')
     c_member = runtime['static_c_member']
     member_indices = []
@@ -9038,18 +9044,23 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                 and type(item['shared_caller_functions']) is list
                 and item['shared_caller_functions'],
                 'ordinary archive importer evidence differs')
-        if name in {'abort', 'fputs', 'getenv'}:
-            kind = ('R_X86_64_PLT32' if member['member_index'] == c_member['member_index']
+        if name in {'abort', 'fputs', 'getenv', 'mbrtowc'}:
+            kind = ('R_X86_64_PLT32' if scan_caller or member['member_index'] == c_member['member_index']
                     else 'R_X86_64_GOTPCREL')
             require(all(type(call) is dict and set(call) == {'section', 'offset', 'kind'}
                         and call['kind'] == kind for call in item['source_calls']),
                     'ordinary import source call form differs')
+            if scan_caller:
+                require(len(item['source_calls']) == 1
+                        and item['source_calls'][0]['section'] == '.text.crabc_owned_scan_vfscanf'
+                        and item['shared_caller_functions'] == ['crabc_owned_scan_vfscanf'],
+                        'owned scanf import caller differs')
         member_indices.append(member['member_index'])
     require(len(set(member_indices)) == len(importers)
             and len([item for item in importers
                      if item['member']['member_index'] == c_member['member_index']
                      and item['member']['member'] == c_member['name']
-                     and item['member_sha256'] == c_member['sha256']]) == 1
+                     and item['member_sha256'] == c_member['sha256']]) == (0 if scan_caller else 1)
             and all(index != projection['static_provider_member']['member_index']
                     for index in member_indices),
             'ordinary import member roles differ')
@@ -9154,7 +9165,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                                calls + linked['discarded_calls']) ==
                         sorted((call['section'], call['offset']) for call in source_item['source_calls']),
                     f'ordinary {mode} importer final calls differ')
-            if name in {'abort', 'fputs', 'getenv'}:
+            if name in {'abort', 'fputs', 'getenv', 'mbrtowc'}:
                 kinds = {(call['section'], call['offset']): call['kind']
                          for call in source_item['source_calls']}
                 require(all((type(call.get('got_slot')) is int and call['got_slot'] > 0)
@@ -9184,6 +9195,28 @@ def attach_ordinary_static_imports(accounting: Mapping[str, Any],
     for name in ('__errno_location', 'abort', 'fputs', 'getenv'):
         joins.extend(_attach_ordinary_static_import(accounting, companion, name))
     return joins
+
+
+def attach_ordinary_import_from_retained_links(
+        accounting: Mapping[str, Any], companion: Mapping[str, Any] | None,
+        *, report_path: Path | None, paths: Mapping[str, Path],
+        name: str, caller_section: str) -> list[dict[str, Any]]:
+    """Bind an owned archive caller through the already replayed installed links."""
+    if companion is None:
+        return []
+    require(report_path is not None, 'ordinary import retained report is missing')
+    try:
+        report = native_c_allocator_boundary.json_object(report_path, 'ordinary import retained report')
+        projection = native_c_allocator_boundary.ordinary_import_resolution(
+            report, report_path=report_path, static_product=paths['static_product'],
+            dynamic_product=paths['dynamic_product'], elf_facts_report=paths['elf_report'],
+            name=name, required_importer_section=caller_section,
+        )
+    except (KeyError, TypeError, ValueError, OSError,
+            native_c_allocator_boundary.AllocatorBoundaryError) as error:
+        raise SelectionError(f'owned ordinary import resolution rejected: {error}') from error
+    return _attach_ordinary_static_import(
+        accounting, companion, name, projection_override=projection)
 
 
 def attach_stack_check_static_import(accounting: Mapping[str, Any], rust_members: Sequence[str],
@@ -11962,6 +11995,14 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         rejected, 'native_c_allocator_ordinary_import_resolution', accounting,
         native_c_allocator_boundary_companion,
         lambda: attach_ordinary_static_imports(accounting, native_c_allocator_boundary_companion))
+    owned_scan_joins, _ = _attach(
+        rejected, 'owned_scan_ordinary_import_resolution', accounting,
+        native_c_allocator_boundary_companion,
+        lambda: attach_ordinary_import_from_retained_links(
+            accounting, native_c_allocator_boundary_companion,
+            report_path=native_c_allocator_boundary_report, paths=paths,
+            name='mbrtowc', caller_section='.text.crabc_owned_scan_vfscanf'))
+    ordinary_static_import_joins.extend(owned_scan_joins)
     rust_allocation_handler_joins, _ = _attach(
         rejected, 'rust_allocation_handler_provenance', accounting, native_c_allocator_boundary_companion,
         lambda: attach_rust_allocation_handlers(

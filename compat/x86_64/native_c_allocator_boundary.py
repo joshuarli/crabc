@@ -78,6 +78,7 @@ ERRNO_WORKLOAD = ("#define _GNU_SOURCE 1\n#include <stdlib.h>\n#include <stdio.h
                   "setlocale(0, \"\"); setenv(\"X\", \"Y\", 1); getdate(\"x\"); "
                   "get_current_dir_name(); execlp(\"x\", \"x\", (void *)0); "
                   "secure_getenv(\"X\"); getlogin(); mi_dupenv_s(0, 0, \"X\"); }\n"
+                  "if (argc == 1003) { int scanned; fscanf(stdin, \"%d\", &scanned); }\n"
                   "#endif\n"
                   "char *end; int decimal = 0, wide = 0; "
                   "volatile double value = strtod(\"3.25e2\", &end); "
@@ -1605,15 +1606,49 @@ def public_weak_resolution(report: Mapping[str, Any], *, report_path: Path,
 
 def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
                                static_product: Path, dynamic_product: Path,
-                               elf_facts_report: Path, name: str) -> dict[str, object]:
+                               elf_facts_report: Path, name: str,
+                               required_importer_section: str | None = None) -> dict[str, object]:
     """Bind all archive callers of one ordinary import to final libc providers."""
     facts = json_object(elf_facts_report, f"{name} ELF facts")["facts"]
     members = facts["candidate-static"]
     runtime = report["inputs"]["c_runtime_import_bindings"]
     c_member = runtime["static_c_member"]
     claim = next((row for row in runtime["imports"] if row["name"] == name), None)
-    require(claim is not None and claim["binding"] == "GLOBAL",
-            f"ordinary {name} runtime import account differs")
+    if required_importer_section is None:
+        require(claim is not None and claim["binding"] == "GLOBAL",
+                f"ordinary {name} runtime import account differs")
+    else:
+        require(claim is None and required_importer_section.startswith(".text.")
+                and required_importer_section != ".text.",
+                f"ordinary {name} independent caller boundary differs")
+        provider_member, provider_row = _static_definition(
+            {"facts": facts}, name, "ordinary import provider")
+        try:
+            shared_tables = producer._symbol_tables(
+                facts["candidate-shared"]["symbol_tables"],
+                f"ordinary {name} shared provider", {".dynsym", ".symtab"})
+        except producer.ProducerMetadataError as error:
+            raise AllocatorBoundaryError(str(error)) from error
+        shared_rows = {}
+        for table in (".dynsym", ".symtab"):
+            rows = [row for row in shared_tables[table]
+                    if row.get("name") == name and row.get("section_index") != "UND"]
+            require(len(rows) == 1 and all(rows[0].get(field) == value for field, value in {
+                "type": "FUNC", "binding": "GLOBAL", "visibility": "DEFAULT",
+            }.items()), f"ordinary {name} shared provider differs")
+            shared_rows[table] = rows[0]
+        selected = ("name", "type", "binding", "visibility", "section_index", "size_bytes", "value")
+        require(all(provider_row.get(field) == value for field, value in {
+            "type": "FUNC", "binding": "GLOBAL", "visibility": "DEFAULT",
+        }.items()) and all(shared_rows[".dynsym"].get(key) == shared_rows[".symtab"].get(key)
+                          for key in selected),
+                f"ordinary {name} source provider differs")
+        claim = {
+            "static_rust_provider_member": _member_identity(provider_member),
+            "static_rust_provider": {key: provider_row[key] for key in selected},
+            "shared_dynsym_provider": {key: shared_rows[".dynsym"][key] for key in selected},
+            "shared_symtab_provider": {key: shared_rows[".symtab"][key] for key in selected},
+        }
     provider = claim["static_rust_provider_member"]
     provider_fact = members[provider["member_index"]]
     require(provider_fact["member"] == provider["member"]
@@ -1655,8 +1690,12 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
         require(relocations.returncode == 0, f"ordinary {name} source relocations unreadable")
         calls = _ordinary_import_relocations(relocations.stdout, name)
         is_c = member["member_index"] == c_member["member_index"]
-        require(all(call["kind"] == ("R_X86_64_PLT32" if is_c else "R_X86_64_GOTPCREL")
-                    for call in calls), f"ordinary {name} importer call form differs")
+        expected_kind = "R_X86_64_PLT32" if is_c or required_importer_section else "R_X86_64_GOTPCREL"
+        require(all(call["kind"] == expected_kind for call in calls)
+                and (required_importer_section is None
+                     or (not is_c and len(calls) == 1
+                         and calls[0]["section"] == required_importer_section)),
+                f"ordinary {name} importer call form differs")
         imported.append({
             "member": _member_identity(member),
             "import": {key: matches[0][key] for key in (
@@ -1666,9 +1705,10 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
             "shared_caller_functions": sorted({call["section"][6:]
                                                for call in calls}),
         })
-    require(len(imported) >= 2
+    require((len(imported) >= 2 if required_importer_section is None else len(imported) == 1)
             and len({item["member"]["member_index"] for item in imported}) == len(imported)
-            and len([item for item in imported if item["member"]["member_index"] == c_member["member_index"]]) == 1
+            and len([item for item in imported if item["member"]["member_index"] == c_member["member_index"]])
+            == (1 if required_importer_section is None else 0)
             and all(item["member"]["member_index"] != provider["member_index"] for item in imported),
             f"ordinary {name} static importer roster differs")
     work = physical_directory(report_path.parent / report["errno_import"]["work"],

@@ -380,5 +380,84 @@ class OrdinaryGetenvImportAttachmentTests(unittest.TestCase):
                     selection._attach_ordinary_static_import(accounting, companion, "getenv")
 
 
+def owned_scan_mbrtowc_fixture() -> tuple[dict, dict, dict]:
+    accounting, companion = abort_fixture()
+    name = "mbrtowc"
+    ident = selection.identity(name)
+    accounting["identities"][0]["identity"] = ident
+    accounting["blockers"][0]["identity"] = ident
+    for placement in accounting["placement_joins"]:
+        placement["identity"] = ident
+    projection = companion["ordinary_import_resolutions"]["abort"]
+    c_member = companion["account"]["c_runtime_imports"]["static_c_member"]
+    scan_item = next(item for item in projection["importers"]
+                     if item["member"]["member_index"] != c_member["member_index"])
+    scan_item["import"]["name"] = name
+    scan_item["source_calls"][0].update({
+        "section": ".text.crabc_owned_scan_vfscanf", "kind": "R_X86_64_PLT32"})
+    scan_item["shared_caller_functions"] = ["crabc_owned_scan_vfscanf"]
+    projection["importers"] = [scan_item]
+    for field in ("static_provider", "shared_dynsym_provider", "shared_symtab_provider"):
+        projection[field]["name"] = name
+    for mode in ("static", "static-pie"):
+        link = projection["static_final_links"][mode]
+        linked = next(item for item in link["importers"]
+                      if item["member"]["member_index"] == scan_item["member"]["member_index"])
+        linked["resolved_calls"][0].update({
+            "section": ".text.crabc_owned_scan_vfscanf", "kind": "R_X86_64_PLT32"})
+        linked["resolved_calls"][0].pop("got_slot", None)
+        link["importers"] = [linked]
+    shared = projection["shared_final"]
+    shared["importers"] = [next(item for item in shared["importers"]
+                                if item["member"]["member_index"] == scan_item["member"]["member_index"])]
+    accounting["occurrences"] = [row for row in accounting["occurrences"]
+                                 if row["role"] != "import"
+                                 or row["member_index"] == scan_item["member"]["member_index"]]
+    for row in accounting["occurrences"]:
+        row["row"]["name"] = name
+        row["row"]["raw_name"] = name
+    return accounting, companion, projection
+
+
+class OwnedScanMbrtowcImportAttachmentTests(unittest.TestCase):
+    def test_selected_scan_import_and_unique_provider_join(self) -> None:
+        accounting, companion, projection = owned_scan_mbrtowc_fixture()
+        joins = selection._attach_ordinary_static_import(
+            accounting, companion, "mbrtowc", projection_override=projection)
+        self.assertEqual([join["identity"]["name"] for join in joins], ["mbrtowc"])
+        self.assertEqual(accounting["blockers"], [])
+
+    def test_foreign_duplicate_or_wrong_final_target_rejects(self) -> None:
+        for mutation in ("foreign-import", "duplicate-import", "weak-provider",
+                         "duplicate-provider", "foreign-static-call", "foreign-shared-call"):
+            with self.subTest(mutation=mutation):
+                accounting, companion, projection = owned_scan_mbrtowc_fixture()
+                if mutation == "foreign-import":
+                    next(row for row in accounting["occurrences"] if row["role"] == "import")[
+                        "member_name"] = "foreign.o"
+                elif mutation == "duplicate-import":
+                    extra = deepcopy(next(row for row in accounting["occurrences"]
+                                          if row["role"] == "import"))
+                    extra["index"] = 103
+                    accounting["occurrences"].append(extra)
+                elif mutation == "weak-provider":
+                    next(row for row in accounting["occurrences"] if row["role"] == "definition")[
+                        "row"]["binding"] = "WEAK"
+                elif mutation == "duplicate-provider":
+                    extra = deepcopy(next(row for row in accounting["occurrences"]
+                                          if row["role"] == "definition"))
+                    extra["index"] = 103
+                    accounting["occurrences"].append(extra)
+                elif mutation == "foreign-static-call":
+                    projection["static_final_links"]["static-pie"]["importers"][0][
+                        "resolved_calls"][0]["target_address"] += 1
+                else:
+                    projection["shared_final"]["importers"][0]["calls"][0][
+                        "target_address"] += 1
+                with self.assertRaises(selection.SelectionError):
+                    selection._attach_ordinary_static_import(
+                        accounting, companion, "mbrtowc", projection_override=projection)
+
+
 if __name__ == "__main__":
     unittest.main()

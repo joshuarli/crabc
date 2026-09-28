@@ -368,6 +368,17 @@ symbol rows and absence of a `getenv` implementation import in dynamic
 executables. Exact archive occurrences and final targets reject foreign or
 duplicate callers and providers before the ordinary-import reason is removed.
 
+The owned scanf archive member imports `mbrtowc` once from
+`crabc_owned_scan_vfscanf`. A static-only `fscanf` branch in the existing
+installed-header workload retains that C section in ET_EXEC and static PIE.
+The ordinary call reader authenticates its archive symbol and `PLT32`
+relocation, decodes both final direct calls to the unique Rust provider, and
+finds the corresponding direct call and two strong provider symbol rows in
+shared libc. Dynamic executables do not import the implementation. The
+selector joins the exact archive occurrence and both placements, rejecting
+foreign or duplicate callers and providers; the scanf caller remains distinct
+from the fixed C allocator import roster.
+
 `--utmpx-receipt-report REPORT` is independently optional. Its owning
 process-free reader reconstructs the retained eight selected aliases and
 sixteen provider spellings, static executable function proof, dynamic import
