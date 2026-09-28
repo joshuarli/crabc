@@ -79,6 +79,8 @@ mod native_local_trace;
 mod mapped_large_owner_exit;
 #[cfg(all(test, feature = "native-runtime-test-audit", target_arch = "x86_64"))]
 mod arena_singleton_regular_exit;
+#[cfg(all(test, target_arch = "x86_64", feature = "native-runtime-test-audit"))]
+mod arena_singleton_split_exit;
 mod lock;
 mod main_theap;
 mod main_heap_thread;

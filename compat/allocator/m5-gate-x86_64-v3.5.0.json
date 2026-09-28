@@ -83,12 +83,13 @@
     },
     "native:deterministic-churn": {
       "native_tests": [
+        "native_medium_collection_churn",
         "native_owner_local_persistent_cycles",
         "native_parallel_local_workers",
         "native_parked_compatibility_local_cycles",
         "native_persistent_worker_fastpath"
       ],
-      "scope": "Deterministic persistent-owner allocate/free/realloc cycles at 1, 2, 4, and 8 workers with collect-abandon and reclaim teardowns, owner-local operation counts, and a metadata registration plateau."
+      "scope": "Deterministic persistent-owner allocate/free/realloc cycles at 1, 2, 4, and 8 workers with collect-abandon and reclaim teardowns, owner-local operation counts, a medium-page remote collection point, and a metadata registration plateau."
     },
     "differential:reclaim-on-free": {
       "command": [
@@ -141,6 +142,15 @@
         "{scratch}/arena-singleton-regular-owner-exit.json"
       ],
       "scope": "Pinned C directly observes arena bitmap, slice, PageMap, and mapped/unmapped states for a live arena singleton beside a regular medium page after owner exit. C and native Rust compare exact arena geometry and independent survivor reclaim, singleton release, regular retirement, and final PageMap release."
+    },
+    "differential:arena-singleton-split-releasers-exit": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_arena_singleton_split_releasers_exit_evidence.py",
+        "--report",
+        "{scratch}/arena-singleton-split-releasers-exit.json"
+      ],
+      "scope": "Two arena singletons remain live after their common owner exits while two independent survivor threads wait. Pinned C observes unmapped abandonment and separate PageMap, arena bitmap, and slice releases; native Rust matches the source geometry and ordered PageMap release without consuming the other survivor's client."
     },
     "lifecycle:bounded-laboratory": {
       "command": [
@@ -228,7 +238,8 @@
         "differential:nonabandoning-active-survivor-owner-exit",
         "differential:nonabandoning-late-remote-owner-exit",
         "differential:nonabandoning-mapped-large-owner-exit",
-        "differential:arena-singleton-regular-owner-exit"
+        "differential:arena-singleton-regular-owner-exit",
+        "differential:arena-singleton-split-releasers-exit"
       ],
       "blocked_by": []
     },
