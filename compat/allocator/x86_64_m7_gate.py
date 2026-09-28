@@ -1019,7 +1019,8 @@ def run_statistics_level_one_differential(offline: bool) -> dict[str, Any]:
         compare_options_traces(traces["c"], traces["rust"])
         report = {"c_build_command": c_build["command"], "adapter_build_command": adapter_build["command"],
                   "rust_build_command": rust_build["command"],
-                  "trace": traces["c"], "status": "passed"}
+                  "trace": traces["c"], "c_trace": traces["c"], "rust_trace": traces["rust"],
+                  "status": "passed"}
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     harness.write_json(ARTIFACTS / "statistics-level-one.json", report)
     return report
@@ -1194,6 +1195,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.statistics_level_one_differential:
         report = run_statistics_level_one_differential(arguments.offline)
         print(f"M7 level-one statistics differential passed: {len(report['trace'])} keys")
+        print(f"pinned C: {json.dumps(report['c_trace'], sort_keys=True)}")
+        print(f"Rust: {json.dumps(report['rust_trace'], sort_keys=True)}")
         return 0
     if arguments.adapter_differential:
         report = run_adapter_differential(arguments.offline)

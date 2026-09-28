@@ -300,7 +300,7 @@
         "differential:adapter"
       ],
       "blocked_by": [
-        "Statistics producers gated on `MI_STAT > 0` are absent."
+        "The selected `MI_STAT=1` binned allocation, reset/merge, free, and final-output path is proven; page extension/commit, huge allocation, nonlocal free, and other level-one producers remain unproved. `MI_STAT>1` bin/requested counters and output remain unimplemented."
       ]
     },
     {

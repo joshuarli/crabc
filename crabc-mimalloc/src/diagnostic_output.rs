@@ -2694,7 +2694,7 @@ fn emit_final_average(output: StatisticsOutput<'_>, count: i64, total: i64, name
 }
 
 /// Pinned `_mi_stats_print(name, id, stats, out, arg)` (`src/stats.c:356-436`)
-/// under the selected `MI_STAT == 0` profile.
+/// under the default `MI_STAT == 0` and selected `MI_STAT == 1` profiles.
 ///
 /// `peak_commit` is `mi_process_info`'s main-subprocess committed peak,
 /// which is the printed image's own peak only when that image is the main
@@ -2709,8 +2709,28 @@ unsafe fn render_final_statistics(
     let _ = write!(line, " {}\n", view.subprocess_sequence);
     unsafe { emit_final_statistics_line(output, &line) };
 
-    // `MI_STAT == 0` keeps the malloc section structurally present but emits
-    // no lines.  The pages and arena sections retain their source guards.
+    #[cfg(feature = "mi-stat-1")]
+    if statistics.malloc_normal.total.wrapping_add(statistics.malloc_huge.total) != 0 {
+        // Level one leaves the allocation-count fields at zero, so the
+        // source displays both classes without a per-block-size column.
+        emit_final_stat(output, statistics.malloc_normal, b"binned", -1, FINAL_NOT_ALL_FREED);
+        emit_final_stat(output, statistics.malloc_huge, b"huge", -1, FINAL_NOT_ALL_FREED);
+        // `mi_stat_count_add_mt` first adds normal into zero, then combines
+        // huge using the previous current plus the incoming peak.
+        let normal = statistics.malloc_normal;
+        let huge = statistics.malloc_huge;
+        let total = FinalStatCount {
+            total: normal.total.wrapping_add(huge.total),
+            current: normal.current.wrapping_add(huge.current),
+            peak: normal.peak.max(normal.current.wrapping_add(huge.peak)),
+        };
+        emit_final_stat(output, total, b"total", 1, FINAL_EXPLICIT_EMPTY_NOT_OK);
+        let mut separator = FinalOutputLine::new();
+        separator.append_bytes(b"\n");
+        unsafe { emit_final_statistics_line(output, &separator) };
+    }
+
+    // The pages and arena sections retain their independent source guards.
     if statistics.pages.total != 0 {
         emit_final_header(output, b"pages");
         // `stats.c` supplies `""`, not NULL, for this explicit display
@@ -3058,6 +3078,10 @@ mod tests {
 
     fn final_statistics_fixture() -> FinalStatisticsSnapshot {
         FinalStatisticsSnapshot {
+            #[cfg(feature = "mi-stat-1")]
+            malloc_normal: final_stat_count(0, 0, 0),
+            #[cfg(feature = "mi-stat-1")]
+            malloc_huge: final_stat_count(0, 0, 0),
             pages: final_stat_count(5, 7, 2),
             page_committed: final_stat_count(6_144, 5_120, 4_096),
             pages_abandoned: final_stat_count(1, 2, 0),
