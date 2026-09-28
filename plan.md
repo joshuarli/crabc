@@ -208,13 +208,17 @@ are not transferable passes for a different revision.
   its 23-event C/Rust trace covers reuse, page spill, and `calloc` zeroing.
   Reusing the owner-local queue head across the generic count step reduces
   the 64-byte local malloc path from 153 to 150 instructions in 100 matched
-  traces, with local free and remote publication codegen unchanged.
+  traces. Deferring regular-page classification past the direct small head
+  reduces that initial path to 139 and the worker path from 143 to 132;
+  34,084 source-built C/Rust local allocation and free trace lines match.
+  Remote publication is at 166 Rust instructions after two source-equivalent
+  owner-word changes, with its 100-trace and 25-value differentials passing.
   Contended timing is not qualifying. Allocator M3 passes every own
   component and waits only on M2; M4 passes including the unmodified
   upstream `test-api.c` through the native adapter. M6 now source-differentiates
   quiescent non-main and isolated process-main Heap block visitation across 138
   adapter keys, including all five exported Heap membership and region queries
-  and the quiescent page-utilization query; sixteen
+  and the quiescent page-utilization query; seventeen
   runnable evidence rows pass, including fresh-process Heap membership
   regressions and a ten-case source-built main-Heap population differential
   across one to 1000 non-main Heaps, direct/fork execution, and reserved-arena
@@ -239,8 +243,10 @@ are not transferable passes for a different revision.
   teardown; the prior 161 private lifecycle
   values remain matched in the same M6 row. A process-main Heap selected from
   a live exclusive arena now matches twelve pinned-C allocation, Theap/page
-  placement, fallback refusal, delete/destroy and failure keys. All sixteen
-  runnable M6 evidence rows pass on the sealed source.
+  placement, fallback refusal, delete/destroy and failure keys. A child Heap
+  selected from its subprocess arena matches twelve more source-built keys;
+  prepublication Theap failures return their exact slice for reuse. All
+  seventeen runnable M6 evidence rows pass on clean `b2fd43160`.
   All ten required gates
   remain blocked by 10 named missing API and lifetime evidence entries;
   accumulated mixed-workload main-Heap page-population parity remains unproved.
@@ -308,8 +314,12 @@ are not transferable passes for a different revision.
   all nine M8 leaves and 16 evidence entries, with 13 physical receipts
   matching a post-exit reread; its seed-3 static-PIE RSS stayed within the
   unchanged bound. The static-PIE binary changed between these runs, so the
-  intermittent growth remains under investigation. Qualification on the final
-  merged revision remains open. All 57 `native_*` integration targets pass; the earlier attachment
+  intermittent growth remains under investigation. A clean frozen `f140eb666`
+  run passed seven M8 leaves; Rust std lacked prepared fixture vendors in that
+  lane, and Lua dynamic exposed a native-shadow materialization provenance
+  rejection in the package reader. The independent eleven-cell FILE matrix
+  passed. Final merged-revision M8 qualification remains open. All 57 `native_*`
+  integration targets pass; the earlier attachment
   defect was stale. The M7 options/environment gate passes its source-matched
   profile and 660-key C/Rust differential; its default-artifact baseline audit
   also passes. A selected `MI_STAT=1` binned allocation, merge/reset, free,
