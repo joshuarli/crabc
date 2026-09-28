@@ -284,7 +284,7 @@ fn owned_crt_note_and_private_handoff_must_agree_before_relocation() {
         owned_crt_note_mode(objects[0].phdr, objects[0].phnum, objects[0].base)
     }.expect("exact CRABC note");
     assert_eq!(objects[0].main_crt_mode, MainCrtMode::Owned);
-    assert!(unsafe { validate_main_crt_mode(&objects) }.is_some());
+    assert!(unsafe { validate_main_private_imports(&objects, None) }.is_some());
 
     // A conventional entry never gains owned lifecycle merely because an
     // arbitrary main imports the private handoff name.
@@ -297,7 +297,7 @@ fn owned_crt_note_and_private_handoff_must_agree_before_relocation() {
         owned_crt_note_mode(objects[0].phdr, objects[0].phnum, objects[0].base)
     }.expect("absent marker is conventional");
     assert_eq!(objects[0].main_crt_mode, MainCrtMode::Conventional);
-    assert!(unsafe { validate_main_crt_mode(&objects) }.is_none());
+    assert!(unsafe { validate_main_private_imports(&objects, None) }.is_none());
 
     // Conversely a retained owned marker cannot fall back if its exact
     // private relocation is missing or if its relocation form drifts.
@@ -306,7 +306,7 @@ fn owned_crt_note_and_private_handoff_must_agree_before_relocation() {
     let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = note_only.object(false);
     objects[0].main_crt_mode = MainCrtMode::Owned;
-    assert!(unsafe { validate_main_crt_mode(&objects) }.is_none());
+    assert!(unsafe { validate_main_private_imports(&objects, None) }.is_none());
 
     let mut wrong_form = MappedImage::new();
     wrong_form.exact_owned_crt_note();
@@ -315,7 +315,17 @@ fn owned_crt_note_and_private_handoff_must_agree_before_relocation() {
     let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = wrong_form.object(false);
     objects[0].main_crt_mode = MainCrtMode::Owned;
-    assert!(unsafe { validate_main_crt_mode(&objects) }.is_none());
+    assert!(unsafe { validate_main_private_imports(&objects, None) }.is_none());
+
+    let mut duplicate = MappedImage::new();
+    duplicate.exact_owned_crt_note();
+    duplicate.symbol(1, b"__crabc_x86_64_owned_crt_handoff", 1, 2, 0, 0);
+    duplicate.rela(R_X86_64_GLOB_DAT, 1, 0);
+    duplicate.rela_at(MappedImage::DESTINATION + 8, R_X86_64_GLOB_DAT, 1, 0);
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
+    objects[0] = duplicate.object(false);
+    objects[0].main_crt_mode = MainCrtMode::Owned;
+    assert!(unsafe { validate_main_private_imports(&objects, None) }.is_none());
 }
 
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
@@ -326,18 +336,18 @@ fn private_import_selectors_validate_unrelated_names_within_string_table() {
     main.rela(R_X86_64_GLOB_DAT, 1, 0);
     let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
     objects[0] = main.object(false);
-    assert!(unsafe { validate_main_crt_mode(&objects) }.is_some());
+    assert!(unsafe { validate_main_private_imports(&objects, None) }.is_some());
 
     // A table without a final NUL can still contain a valid earlier name.
     main.put_byte(MappedImage::STRTAB + 127, b'x');
     objects[0] = main.object(false);
-    assert!(unsafe { validate_main_crt_mode(&objects) }.is_some());
+    assert!(unsafe { validate_main_private_imports(&objects, None) }.is_some());
 
     // An in-range offset with no terminating byte remains malformed even
     // when the name differs from the private selector in its first byte.
     main.put_bytes(MappedImage::STRTAB + 1, &[b'x'; 127]);
     objects[0] = main.object(false);
-    assert!(unsafe { validate_main_crt_mode(&objects) }.is_none());
+    assert!(unsafe { validate_main_private_imports(&objects, None) }.is_none());
 
     let mut libc = MappedImage::new();
     libc.symbol(1, b"__crabc_x86_64_loader_conventional_startup_v1", 1, 2, 0, 0);
@@ -350,11 +360,31 @@ fn private_import_selectors_validate_unrelated_names_within_string_table() {
     objects[0] = conventional_main.object(false);
     objects[1] = libc.object(true);
     objects[1].canonical_libc_identity = Some(ObjectIdentity { device: 7, inode: 9 });
-    assert!(unsafe { validate_canonical_libc_startup_import(&graph(2), &objects) }.is_some());
+    assert!(unsafe { validate_initial_private_imports(&graph(2), &objects) }.is_some());
     libc.put_bytes(MappedImage::STRTAB + 64, &[b'x'; 64]);
     objects[1] = libc.object(true);
     objects[1].canonical_libc_identity = Some(ObjectIdentity { device: 7, inode: 9 });
-    assert!(unsafe { validate_canonical_libc_startup_import(&graph(2), &objects) }.is_none());
+    assert!(unsafe { validate_initial_private_imports(&graph(2), &objects) }.is_none());
+
+    // One malformed main name must fail even when it cannot match either
+    // private import; both admissions precede every graph write.
+    let mut malformed_main = MappedImage::new();
+    malformed_main.set_destination(0xfeed);
+    malformed_main.symbol(1, b"ordinary", 2, 1, 0, 0);
+    malformed_main.rela(R_X86_64_GLOB_DAT, 1, 0);
+    malformed_main.put_bytes(MappedImage::STRTAB + 1, &[b'x'; 127]);
+    let mut canonical_libc = MappedImage::new();
+    canonical_libc.set_destination(0xfeed);
+    canonical_libc.symbol(1, b"__crabc_x86_64_loader_conventional_startup_v1", 1, 2, 0, 0);
+    canonical_libc.rela(R_X86_64_GLOB_DAT, 1, 0);
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
+    objects[0] = malformed_main.object(false);
+    objects[1] = canonical_libc.object(true);
+    objects[1].canonical_libc_identity = Some(ObjectIdentity { device: 7, inode: 9 });
+    assert!(unsafe { validate_initial_private_imports(&graph(2), &objects) }.is_none());
+    assert!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_none());
+    assert_eq!(malformed_main.destination(), 0xfeed);
+    assert_eq!(canonical_libc.destination(), 0xfeed);
 }
 
 // The installed owned main has one weak, default-visible, undefined NOTYPE
@@ -427,6 +457,21 @@ fn conventional_startup_import_requires_canonical_libc_and_keeps_owned_mode_null
     objects[1].canonical_libc_identity = Some(ObjectIdentity { device: 7, inode: 9 });
     assert!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_some());
     assert_eq!(libc.destination(), x86_64_conventional_startup_v1::address());
+
+    // The same private name in the main is rejected before the canonical
+    // libc's valid import can write its slot.
+    let mut main = MappedImage::new();
+    main.set_destination(0xfeed);
+    main.symbol(1, STARTUP, 1, 2, 0, 0);
+    main.rela(R_X86_64_GLOB_DAT, 1, 0);
+    let libc = imported_libc();
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
+    objects[0] = main.object(false);
+    objects[1] = libc.object(true);
+    objects[1].canonical_libc_identity = Some(ObjectIdentity { device: 7, inode: 9 });
+    assert!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_none());
+    assert_eq!(main.destination(), 0xfeed);
+    assert_eq!(libc.destination(), 0xfeed);
 
     // The installed libc retains one exact request. A second otherwise valid
     // slot is rejected before either relocation write, rather than becoming a

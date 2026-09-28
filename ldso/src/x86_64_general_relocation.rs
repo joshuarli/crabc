@@ -770,8 +770,7 @@ unsafe fn relocate_initial_graph_inner(
 ) -> Option<()> {
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     {
-        unsafe { validate_main_crt_mode(objects) }?;
-        unsafe { validate_canonical_libc_startup_import(graph, objects) }?;
+        unsafe { validate_initial_private_imports(graph, objects) }?;
     }
     let initial_scope = InitialSymbolScope::from_graph(graph)?;
     let scope = initial_scope.view();
@@ -831,13 +830,14 @@ pub(super) unsafe fn debugger_pointer_slot(object: &Object) -> Option<*mut usize
 }
 
 
-/// The owned note and the one private handoff relocation are independent
-/// proofs of CRT ownership. A note without the exact relocation (or that
-/// relocation without the note) is rejected before any relocation writes.
+/// Validate both private names in the main's one relocation-table walk. The
+/// owned note and one exact handoff remain independent proofs of CRT ownership;
+/// a conventional-startup import is admitted only from the canonical libc.
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-unsafe fn validate_main_crt_mode(objects: &[Object]) -> Option<()> {
+unsafe fn validate_main_private_imports(objects: &[Object], canonical: Option<usize>) -> Option<usize> {
     let main = objects.first()?;
     let mut handoffs = 0usize;
+    let mut startup_imports = 0usize;
     let terminated = main.strsz != 0 && unsafe { main.strtab.add(main.strsz - 1).read() } == 0;
     for (table, bytes) in [(main.rela, main.relasz), (main.jmprel, main.pltrelsz)] {
         if bytes == 0 { continue; }
@@ -852,33 +852,51 @@ unsafe fn validate_main_crt_mode(objects: &[Object]) -> Option<()> {
             let index = (info >> 32) as usize;
             if index == 0 { continue; }
             let symbol = unsafe { direct_symbol(main, index) }?;
-            if !unsafe { checked_symbol_name_equals(main, symbol,
+            if unsafe { checked_symbol_name_equals(main, symbol,
                 b"__crabc_x86_64_owned_crt_handoff", terminated) }? {
+                handoffs = handoffs.checked_add(1)?;
+                if info as u32 != R_X86_64_GLOB_DAT || unsafe { read_i64(entry.add(16)) } != 0
+                    || unsafe { *symbol.add(4) >> 4 } != 2
+                    || unsafe { *symbol.add(4) & 15 } != 1
+                    || unsafe { *symbol.add(5) & 3 } != 0
+                    || unsafe { read_u16(symbol.add(6)) } != 0
+                {
+                    return None;
+                }
                 continue;
             }
-            handoffs = handoffs.checked_add(1)?;
-            if info as u32 != R_X86_64_GLOB_DAT || unsafe { read_i64(entry.add(16)) } != 0
-                || unsafe { *symbol.add(4) >> 4 } != 2
-                || unsafe { *symbol.add(4) & 15 } != 1
-                || unsafe { *symbol.add(5) & 3 } != 0
-                || unsafe { read_u16(symbol.add(6)) } != 0
-            {
-                return None;
+            if canonical.is_some() && unsafe { checked_symbol_name_equals(main, symbol,
+                b"__crabc_x86_64_loader_conventional_startup_v1", terminated) }? {
+                if canonical != Some(0)
+                    || !unsafe { conventional_startup_import_is_exact(entry, info, symbol) }
+                { return None; }
+                startup_imports = startup_imports.checked_add(1)?;
             }
         }
     }
-    match main.main_crt_mode {
-        MainCrtMode::Conventional => (handoffs == 0).then_some(()),
-        MainCrtMode::Owned => (handoffs == 1).then_some(()),
-    }
+    let valid_mode = match main.main_crt_mode {
+        MainCrtMode::Conventional => handoffs == 0,
+        MainCrtMode::Owned => handoffs == 1,
+    };
+    valid_mode.then_some(startup_imports)
 }
 
-/// The fixed installed libc has exactly one relocation request for the
-/// ordinary-startup record. Classification has already marked one retained
-/// library by opened-file identity; require that one request before any write
-/// so duplicate private slots cannot turn into a second authority.
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-unsafe fn validate_canonical_libc_startup_import(
+unsafe fn conventional_startup_import_is_exact(entry: *const u8, info: u64, symbol: *const u8) -> bool {
+    info as u32 == R_X86_64_GLOB_DAT
+        && unsafe { read_i64(entry.add(16)) } == 0
+        && unsafe { *symbol.add(4) >> 4 } == 2
+        && unsafe { *symbol.add(4) & 15 } == 1
+        && unsafe { *symbol.add(5) & 3 } == 0
+        && unsafe { read_u16(symbol.add(6)) } == 0
+}
+
+/// The fixed installed libc has exactly one conventional-startup request.
+/// Classification marks its opened-file identity; validating main imports in
+/// the same pass as the owned handoff avoids decoding each main dynsym twice.
+/// Duplicate or foreign private slots are rejected before any graph write.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn validate_initial_private_imports(
     graph: &InitialGraphState,
     objects: &[Object],
 ) -> Option<()> {
@@ -888,12 +906,12 @@ unsafe fn validate_canonical_libc_startup_import(
             if canonical.replace(index).is_some() { return None; }
         }
     }
+    let mut imports = unsafe { validate_main_private_imports(objects, canonical) }?;
     // Structural unit fixtures that do not exercise installed-product
     // classification retain their independent relocation coverage. A real
     // product cannot reach this code without the selector's one mark.
     let Some(canonical) = canonical else { return Some(()); };
-    let mut imports = 0usize;
-    for owner in 0..graph.object_count() {
+    for owner in 1..graph.object_count() {
         let object = objects.get(owner)?;
         let terminated = object.strsz != 0 && unsafe { object.strtab.add(object.strsz - 1).read() } == 0;
         for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
@@ -910,13 +928,7 @@ unsafe fn validate_canonical_libc_startup_import(
                     continue;
                 }
                 if owner != canonical { return None; }
-                let exact = info as u32 == R_X86_64_GLOB_DAT
-                    && unsafe { read_i64(entry.add(16)) } == 0
-                    && unsafe { *symbol.add(4) >> 4 } == 2
-                    && unsafe { *symbol.add(4) & 15 } == 1
-                    && unsafe { *symbol.add(5) & 3 } == 0
-                    && unsafe { read_u16(symbol.add(6)) } == 0;
-                if !exact { return None; }
+                if !unsafe { conventional_startup_import_is_exact(entry, info, symbol) } { return None; }
                 imports = imports.checked_add(1)?;
             }
         }
