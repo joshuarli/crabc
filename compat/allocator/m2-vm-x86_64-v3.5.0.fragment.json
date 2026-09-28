@@ -236,7 +236,8 @@
           "process-thp-inherited-disable-advice-c-rust-differential",
           "explicit-arena-prefix-trim-c-rust-differential",
           "explicit-arena-suffix-trim-c-rust-differential",
-          "explicit-arena-metadata-fault-c-rust-differential"
+          "explicit-arena-metadata-fault-c-rust-differential",
+          "registered-arena-metadata-fault-c-rust-differential"
         ]
       },
       {
@@ -265,7 +266,8 @@
           "process-thp-inherited-disable-advice-c-rust-differential",
           "explicit-arena-prefix-trim-c-rust-differential",
           "explicit-arena-suffix-trim-c-rust-differential",
-          "explicit-arena-metadata-fault-c-rust-differential"
+          "explicit-arena-metadata-fault-c-rust-differential",
+          "registered-arena-metadata-fault-c-rust-differential"
         ]
       },
       {
@@ -291,7 +293,8 @@
           "aligned-overmap-cleanup-c-rust-boundary-matrix",
           "explicit-arena-prefix-trim-c-rust-differential",
           "explicit-arena-suffix-trim-c-rust-differential",
-          "explicit-arena-metadata-fault-c-rust-differential"
+          "explicit-arena-metadata-fault-c-rust-differential",
+          "registered-arena-metadata-fault-c-rust-differential"
         ]
       },
       {
@@ -413,7 +416,8 @@
           "process-policy-ticket-zero-live-random",
           "explicit-arena-prefix-trim-c-rust-differential",
           "explicit-arena-suffix-trim-c-rust-differential",
-          "explicit-arena-metadata-fault-c-rust-differential"
+          "explicit-arena-metadata-fault-c-rust-differential",
+          "registered-arena-metadata-fault-c-rust-differential"
         ]
       },
       {
@@ -433,7 +437,8 @@
           "native-vm-fixed-lifecycle-differential",
           "explicit-arena-prefix-trim-c-rust-differential",
           "explicit-arena-suffix-trim-c-rust-differential",
-          "explicit-arena-metadata-fault-c-rust-differential"
+          "explicit-arena-metadata-fault-c-rust-differential",
+          "registered-arena-metadata-fault-c-rust-differential"
         ]
       },
       {
@@ -557,7 +562,7 @@
       {
         "id": "os-free-and-statistics-events",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/os.c:240-294 regular OS free, full MemoryId base adjustment, huge dispatch, warnings, and unconditional subprocess committed/reserved counter events; the bounded records inject one normal-offset _mi_os_free_ex primitive failure/retry and, separately, release every selected aligned-overmap returned MemoryId after direct/prefix/suffix cleanup outcomes. The pinned C fixture records its actual void-free counter timing even when a physical cleanup range escaped before that returned-MemoryId release. Two selected explicit OS arena reservations also compare failed prefix or suffix trim, warning-time counters, published registry ownership, terminal arena destroy, and escaped raw-only cleanup. A separate fresh-process receiver compares metadata-protection failure before arena publication, clean or failed cleanup, successful retry, terminal release, and retained raw-only cleanup.",
+        "source_scope": "src/os.c:240-294 regular OS free, full MemoryId base adjustment, huge dispatch, warnings, and unconditional subprocess committed/reserved counter events; the bounded records inject one normal-offset _mi_os_free_ex primitive failure/retry and, separately, release every selected aligned-overmap returned MemoryId after direct/prefix/suffix cleanup outcomes. The pinned C fixture records its actual void-free counter timing even when a physical cleanup range escaped before that returned-MemoryId release. Two selected explicit OS arena reservations also compare failed prefix or suffix trim, warning-time counters, published registry ownership, terminal arena destroy, and escaped raw-only cleanup. A separate fresh-process receiver compares metadata-protection failure before arena publication, clean or failed cleanup, successful retry, terminal release, and retained raw-only cleanup. Another compares a second metadata-protection failure while the first arena remains registered, then a writable claim and terminal release of that retained arena.",
         "source_anchors": [
           {
             "member": "src/os.c",
@@ -576,7 +581,8 @@
           "process-thp-inherited-disable-advice-c-rust-differential",
           "explicit-arena-prefix-trim-c-rust-differential",
           "explicit-arena-suffix-trim-c-rust-differential",
-          "explicit-arena-metadata-fault-c-rust-differential"
+          "explicit-arena-metadata-fault-c-rust-differential",
+          "registered-arena-metadata-fault-c-rust-differential"
         ],
         "missing_conditions": [
           "The selected normal-offset _mi_os_free_ex failure/retry, finite aligned-overmap source rows, and normal aligned allocation prefix/suffix trim-failure receivers compare full-MemoryId base/size, current/total counter timing, escaped ranges, source warning delivery, and raw-only release cleanup. Warning/error reporting beyond those receivers, huge MemoryId dispatch, unselected allocation transitions, and every other counter/caller route remain unqualified."
@@ -585,7 +591,7 @@
       {
         "id": "os-primitive-regular-and-aligned-allocation",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/os.c:303-430 regular primitive allocation, direct/aligned overmap selection, partial prefix/suffix free, allocation statistics, large-page argument propagation, and cleanup warnings. The finite native C/Rust boundary drives a normal aligned direct map, direct-map failure fallback, normal prefix-zero/suffix-only geometry, a successful direct/prefix/suffix trim sequence, and each direct/prefix/suffix cleanup failure for Reserved and Committed requests. It also compares one normal aligned allocation receiver after failed prefix or suffix trim and failed final free, including MemoryId, escaped range, warning order and pre-decrease delivery, counters, and raw-only cleanup. C retains its actual void-cleanup continuation, escaped physical range, and statistics; Rust records its distinct exact retained owner. Separate explicit regular OS arena caller receivers compare one failed prefix and one failed suffix release through arena publication, terminal destroy, and escaped raw cleanup. Another receiver compares aligned reservation through metadata-protection failure before publication, clean or escaped cleanup, and successful retry.",
+        "source_scope": "src/os.c:303-430 regular primitive allocation, direct/aligned overmap selection, partial prefix/suffix free, allocation statistics, large-page argument propagation, and cleanup warnings. The finite native C/Rust boundary drives a normal aligned direct map, direct-map failure fallback, normal prefix-zero/suffix-only geometry, a successful direct/prefix/suffix trim sequence, and each direct/prefix/suffix cleanup failure for Reserved and Committed requests. It also compares one normal aligned allocation receiver after failed prefix or suffix trim and failed final free, including MemoryId, escaped range, warning order and pre-decrease delivery, counters, and raw-only cleanup. C retains its actual void-cleanup continuation, escaped physical range, and statistics; Rust records its distinct exact retained owner. Separate explicit regular OS arena caller receivers compare one failed prefix and one failed suffix release through arena publication, terminal destroy, and escaped raw cleanup. Another receiver compares aligned reservation through metadata-protection failure before publication, clean or escaped cleanup, and successful retry. A registered-arena receiver compares a second failed reservation without disturbing the first arena, followed by a writable claim and terminal destruction.",
         "source_anchors": [
           {
             "member": "src/os.c",
@@ -609,7 +615,8 @@
           "process-thp-inherited-disable-advice-c-rust-differential",
           "explicit-arena-prefix-trim-c-rust-differential",
           "explicit-arena-suffix-trim-c-rust-differential",
-          "explicit-arena-metadata-fault-c-rust-differential"
+          "explicit-arena-metadata-fault-c-rust-differential",
+          "registered-arena-metadata-fault-c-rust-differential"
         ],
         "missing_conditions": [
           "The finite aligned-overmap equality differential covers its named direct/overmap cleanup paths and one normal aligned allocation receiver under prefix/suffix trim and final-free failures; other Rust receivers follow the leak-and-continue rule under unit tests. Pinned-C differentials of the other receiving allocator callers, broader callback/counter/error routes, source large-page/option paths, and runtime policy remain unqualified."
@@ -618,7 +625,7 @@
       {
         "id": "os-normal-aligned-and-offset-allocation",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/os.c:438-527 normal, aligned, zero-offset, and interior-offset allocation routes, including source allow_large forwarding and the best-effort prefix decommit. The selected `_mi_os_alloc_aligned` wrapper reaches the separate finite C/Rust aligned-overmap cleanup boundary without claiming source-equivalent failed-cleanup ownership. The selected explicit OS arena callers drive this aligned wrapper through failed prefix and suffix trims and a later metadata-protection failure before source arena management.",
+        "source_scope": "src/os.c:438-527 normal, aligned, zero-offset, and interior-offset allocation routes, including source allow_large forwarding and the best-effort prefix decommit. The selected `_mi_os_alloc_aligned` wrapper reaches the separate finite C/Rust aligned-overmap cleanup boundary without claiming source-equivalent failed-cleanup ownership. The selected explicit OS arena callers drive this aligned wrapper through failed prefix and suffix trims and metadata-protection failures before source arena management, including failure of a second reservation while the first remains registered.",
         "source_anchors": [
           {
             "member": "src/os.c",
@@ -638,7 +645,8 @@
           "aligned-overmap-cleanup-c-rust-boundary-matrix",
           "explicit-arena-prefix-trim-c-rust-differential",
           "explicit-arena-suffix-trim-c-rust-differential",
-          "explicit-arena-metadata-fault-c-rust-differential"
+          "explicit-arena-metadata-fault-c-rust-differential",
+          "registered-arena-metadata-fault-c-rust-differential"
         ],
         "missing_conditions": [
           "The selected normal process receiver proves one offset-prefix decommit success and one consumed advisory failure with the full owner retained, but option-driven large-page/hint policy across all regular and arena callers, general offset geometry, and source statistics/error behavior remain unqualified."
@@ -1040,6 +1048,12 @@
         "id": "explicit-arena-metadata-fault-c-rust-differential",
         "kind": "c-rust-explicit-arena-metadata-fault-differential",
         "target": "compat/allocator/m2_explicit_arena_metadata_fault_x86_64.py",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "registered-arena-metadata-fault-c-rust-differential",
+        "kind": "c-rust-explicit-arena-metadata-fault-differential",
+        "target": "compat/allocator/m2_registered_arena_metadata_fault_x86_64.py",
         "expected_passed_test_count": 1
       },
       {

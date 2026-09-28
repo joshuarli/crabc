@@ -13401,6 +13401,25 @@ M2_X86_64_EXPLICIT_ARENA_METADATA_FAULT_RECEIVERS = {
         "command_receipts": "nested-runs",
         "scope": "pinned-c-rust-explicit-os-arena-metadata-protection-failure-cleanup-and-recovery",
     },
+    "registered-arena-metadata-fault-c-rust-differential": {
+        "artifact": "m2-registered-arena-metadata-fault",
+        "target": "compat/allocator/m2_registered_arena_metadata_fault_x86_64.py",
+        "kind": "c-rust-explicit-arena-metadata-fault-differential",
+        "cases": (),
+        "fields": {
+            "size", "alignment", "first_exact", "first_registry", "first_reserved",
+            "first_committed", "first_mmap", "first_commit", "second_refused",
+            "first_id_retained", "first_survives", "second_gone",
+            "after_failure_registry", "failed_reserved", "failed_committed",
+            "failed_mmap", "failed_commit", "failed_arena", "warning_order",
+            "warning_count", "warning_timing", "fault_geometry", "survivor_claim",
+            "survivor_rw", "first_after_claim", "claim_registry", "claim_committed",
+            "claim_commit", "terminal_exact", "first_gone", "terminal_registry",
+            "terminal_reserved", "terminal_committed", "terminal_arena",
+        },
+        "commit_fields": set(),
+        "scope": "pinned-c-rust-registered-os-arena-survives-second-metadata-fault-claim-and-terminal-destroy",
+    },
 }
 M2_X86_64_VM_PROCESS_RECEIVERS = {
     **{check_id: {**receiver, "kind": "c-rust-process-external-os-differential"}

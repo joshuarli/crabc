@@ -34,6 +34,7 @@ EXPECTED_VM_CHECK_IDS = (
     "explicit-arena-prefix-trim-c-rust-differential",
     "explicit-arena-suffix-trim-c-rust-differential",
     "explicit-arena-metadata-fault-c-rust-differential",
+    "registered-arena-metadata-fault-c-rust-differential",
     "selected-subprocess-statistics-aggregation",
     "process-policy-ticket-zero-live-random",
     "aligned-map-trim-failure-leak",
@@ -1358,6 +1359,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "explicit-arena-prefix-trim-c-rust-differential",
                 "explicit-arena-suffix-trim-c-rust-differential",
                 "explicit-arena-metadata-fault-c-rust-differential",
+                "registered-arena-metadata-fault-c-rust-differential",
             },
             {record["id"] for record in vm_records},
         )
