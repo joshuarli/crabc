@@ -313,6 +313,58 @@ class NativeCallableDeclarationsTests(unittest.TestCase):
                 with self.assertRaisesRegex(ADAPTER.NativeCallableDeclarationsError, expected):
                     self.account(envelope=envelope)
 
+    def test_reviewed_membarrier_cpp_difference_requires_exact_c_and_musl_spelling(self):
+        envelope = self.envelope()
+        matrix = self.matrix_projection()
+        for profile in ("cxx17-gnu", "cxx17-strict"):
+            matrix["rows"].append({"header": "sys/membarrier.h", "profile": profile,
+                                   "comparison": "mismatch", "reference_status": "ok",
+                                   "difference": {
+                                       "candidate_only": [], "candidate_only_count": 0,
+                                       "incompatible": [{
+                                           "candidate_signature": "int (int, int)|mangled=membarrier",
+                                           "kind": "function", "name": "membarrier",
+                                           "reference_signature": "int (int, int)|mangled=_Z10membarrierii",
+                                       }],
+                                       "incompatible_count": 1, "matched_count": 13,
+                                       "reference_only": [], "reference_only_count": 0,
+                                   }})
+            for tree in ("candidate", "reference"):
+                row = self.occurrence(
+                    index=len(envelope["report"]["occurrences"]), tree=tree,
+                    name="membarrier", input_header="sys/membarrier.h", profile=profile,
+                    qual_type="int (int, int)",
+                    mangled="membarrier" if tree == "candidate" else "_Z10membarrierii",
+                )
+                if tree == "reference":
+                    row["linkage_specifier_languages"] = []
+                envelope["report"]["occurrences"].append(row)
+        envelope["report"]["jobs"] = self.jobs(envelope["report"]["occurrences"])
+        providers = sorted(self.partition()["provider_names"] + ["membarrier"])
+        account = self.account(envelope=envelope, matrix_projection=matrix, provider_names=providers)
+        reviewed = [row for row in account["groups"] if row["name"] == "membarrier"]
+        self.assertEqual({row["profile"] for row in reviewed}, {"cxx17-gnu", "cxx17-strict"})
+        self.assertTrue(all(row["reviewed_cpp_linkage_difference"]["candidate_symbol"] == "membarrier"
+                            and row["reviewed_cpp_linkage_difference"]["reference_symbol"] == "_Z10membarrierii"
+                            for row in reviewed))
+        changed_matrix = copy.deepcopy(matrix)
+        next(row for row in changed_matrix["rows"] if row["header"] == "sys/membarrier.h")["difference"]["incompatible"][0]["candidate_signature"] = "int (int, int)|mangled=_Z10membarrierii"
+        with self.assertRaisesRegex(ADAPTER.NativeCallableDeclarationsError, r"unreviewed C\+\+ membarrier difference"):
+            self.account(envelope=envelope, matrix_projection=changed_matrix, provider_names=providers)
+        for tree, field, replacement in (
+            ("candidate", "mangled_name_observation", "_Z10membarrierii"),
+            ("reference", "mangled_name_observation", "membarrier"),
+            ("candidate", "type", {"qual_type": "long (int, int)", "desugared_qual_type": None}),
+        ):
+            with self.subTest(tree=tree, field=field):
+                changed = copy.deepcopy(envelope)
+                row = next(item for item in changed["report"]["occurrences"]
+                           if item["tree"] == tree and item["name"] == "membarrier"
+                           and item["profile"] == "cxx17-gnu")
+                row[field] = replacement
+                with self.assertRaisesRegex(ADAPTER.NativeCallableDeclarationsError, r"reviewed C\+\+ membarrier"):
+                    self.account(envelope=changed, matrix_projection=matrix, provider_names=providers)
+
     def test_selected_raw_function_must_stay_bound_to_its_job_ast_and_physical_dependency(self):
         swapped_job = self.envelope()
         for row in swapped_job["report"]["occurrences"]:
@@ -421,7 +473,7 @@ class NativeCallableDeclarationsTests(unittest.TestCase):
 
         projection = self.matrix_projection()
         projection["rows"][0]["comparison"] = "mismatch"
-        with self.assertRaisesRegex(ADAPTER.NativeCallableDeclarationsError, "comparison is unusable"):
+        with self.assertRaisesRegex(ADAPTER.NativeCallableDeclarationsError, "fields differ"):
             self.account(matrix_projection=projection)
 
         partition = self.partition()

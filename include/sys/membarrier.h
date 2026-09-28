@@ -15,7 +15,15 @@
 #define MEMBARRIER_CMD_SHARED MEMBARRIER_CMD_GLOBAL
 #define MEMBARRIER_CMD_FLAG_CPU 1
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int membarrier(int, int);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
 #else

@@ -26650,13 +26650,20 @@
         }
       },
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "mismatch",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [],
-        "incompatible_count": 0,
-        "matched_count": 14,
+        "incompatible": [
+          {
+            "candidate_signature": "int (int, int)|mangled=membarrier",
+            "kind": "function",
+            "name": "membarrier",
+            "reference_signature": "int (int, int)|mangled=_Z10membarrierii"
+          }
+        ],
+        "incompatible_count": 1,
+        "matched_count": 13,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -26800,13 +26807,20 @@
         }
       },
       "candidate_status": "ok",
-      "comparison": "matched",
+      "comparison": "mismatch",
       "difference": {
         "candidate_only": [],
         "candidate_only_count": 0,
-        "incompatible": [],
-        "incompatible_count": 0,
-        "matched_count": 14,
+        "incompatible": [
+          {
+            "candidate_signature": "int (int, int)|mangled=membarrier",
+            "kind": "function",
+            "name": "membarrier",
+            "reference_signature": "int (int, int)|mangled=_Z10membarrierii"
+          }
+        ],
+        "incompatible_count": 1,
+        "matched_count": 13,
         "reference_only": [],
         "reference_only_count": 0
       },
@@ -42900,17 +42914,22 @@
     "comparison_counts": {
       "candidate-only-reviewed-native-callable-extension": 28,
       "candidate-only-reviewed-project-c-abi-extension": 56,
-      "matched": 1252,
+      "matched": 1250,
+      "mismatch": 2,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "0 comparable header/profile rows have prototype or named declaration-form differences",
+      "2 comparable header/profile rows have prototype or named declaration-form differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
       "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
-    "mismatch_fact_counts": {},
-    "mismatch_row_count": 0,
+    "mismatch_fact_counts": {
+      "candidate_only_count": 0,
+      "incompatible_count": 2,
+      "reference_only_count": 0
+    },
+    "mismatch_row_count": 2,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "reviewed_native_callable_extension_fact_count": 28,

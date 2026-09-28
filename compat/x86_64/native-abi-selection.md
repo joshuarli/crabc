@@ -147,8 +147,8 @@ envelope once, then passes that exact authenticated envelope to
 reconstructs and checks its own current source snapshots, raw compiler/object
 evidence, callable plan, and record-layout projection; the shared envelope
 only avoids rereading the retained header receipt. Its finite joins retain all
-ordinary C/C++ object observations, including the four `membarrier` C++
-spelling mismatches, and attach only `_ns_flagdata` element and `in6_addr`
+ordinary C/C++ object observations, including the two pinned-reference
+`membarrier` C++ spelling mismatches, and attach only `_ns_flagdata` element and `in6_addr`
 record facts. They do not select a provider, establish `h_errno` storage
 lifecycle, erase language-linkage differences, or change the aggregate
 completion, family, promotion, or public-support flags.

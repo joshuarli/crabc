@@ -37,7 +37,7 @@ import native_data_declarations as data_declarations
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = ROOT / "compat" / "x86_64" / "native_callable_declarations.toml"
 SCHEMA = "crabc.x86_64-native-callable-declarations/v1"
-MATRIX_PROJECTION_SCHEMA = "crabc.x86_64-native-callable-matrix-projection/v1"
+MATRIX_PROJECTION_SCHEMA = "crabc.x86_64-native-callable-matrix-projection/v2"
 HEADER_REPORT_SCHEMA = "crabc.x86_64-header-declaration-inventory/v1"
 HEADER_MATRIX_REPORT_SCHEMA = "crabc.x86_64-header-abi-matrix-report/v2"
 TARGET = "x86_64-unknown-linux-musl"
@@ -63,12 +63,37 @@ POLICY = {
     "family_completion": False,
     "public_support": False,
 }
+REVIEWED_CPP_LINKAGE_DIFFERENCE = {
+    "header": "sys/membarrier.h",
+    "name": "membarrier",
+    "profiles": ["cxx17-gnu", "cxx17-strict"],
+    "qual_type": "int (int, int)",
+    "candidate_symbol": "membarrier",
+    "reference_symbol": "_Z10membarrierii",
+    "candidate_linkage_specifier_languages": ["C"],
+    "reference_linkage_specifier_languages": [],
+}
 MATRIX_COMPARISONS = {
     "matched",
+    "mismatch",
     "candidate-only-reviewed-native-callable-extension",
     "candidate-only-reviewed-project-c-abi-extension",
     "oracle-not-applicable",
 }
+
+
+def _reviewed_matrix_difference() -> dict[str, Any]:
+    reviewed = REVIEWED_CPP_LINKAGE_DIFFERENCE
+    return {
+        "candidate_only": [], "candidate_only_count": 0,
+        "incompatible": [{
+            "candidate_signature": reviewed["qual_type"] + "|mangled=" + reviewed["candidate_symbol"],
+            "kind": "function", "name": reviewed["name"],
+            "reference_signature": reviewed["qual_type"] + "|mangled=" + reviewed["reference_symbol"],
+        }],
+        "incompatible_count": 1, "matched_count": 13,
+        "reference_only": [], "reference_only_count": 0,
+    }
 DEFERRED_RESOLUTIONS = {
     "planned-provider",
     "compiler-builtin",
@@ -202,6 +227,7 @@ def load_contract(path: Path = CONTRACT_PATH) -> dict[str, Any]:
             "matrix_projection_schema",
             "profile_languages",
             "policy",
+            "reviewed_cpp_linkage_difference",
         },
         "native callable declaration contract",
     )
@@ -213,6 +239,10 @@ def load_contract(path: Path = CONTRACT_PATH) -> dict[str, Any]:
     require(raw["matrix_projection_schema"] == MATRIX_PROJECTION_SCHEMA, "native callable matrix projection schema differs")
     languages = exact_keys(raw["profile_languages"], set(PROFILE_LANGUAGES), "native callable declaration profile languages")
     require(dict(languages) == PROFILE_LANGUAGES, "native callable declaration profile languages differ")
+    difference = exact_keys(raw["reviewed_cpp_linkage_difference"], set(REVIEWED_CPP_LINKAGE_DIFFERENCE),
+                            "reviewed C++ membarrier linkage difference")
+    require(dict(difference) == REVIEWED_CPP_LINKAGE_DIFFERENCE,
+            "reviewed C++ membarrier linkage difference differs")
     return {
         "schema": SCHEMA,
         "target": TARGET,
@@ -222,6 +252,7 @@ def load_contract(path: Path = CONTRACT_PATH) -> dict[str, Any]:
         "matrix_projection_schema": MATRIX_PROJECTION_SCHEMA,
         "profile_languages": copy.deepcopy(PROFILE_LANGUAGES),
         "policy": _boolean_policy(raw["policy"]),
+        "reviewed_cpp_linkage_difference": copy.deepcopy(REVIEWED_CPP_LINKAGE_DIFFERENCE),
     }
 
 
@@ -275,14 +306,19 @@ def matrix_projection_from_checked_report(
         key = (header, profile)
         require(key not in seen, f"checked matrix row repeats {header}:{profile}")
         seen.add(key)
-        result_rows.append(
-            {
+        projected = {
                 "header": header,
                 "profile": profile,
                 "comparison": comparison,
                 "reference_status": reference_status,
             }
-        )
+        if comparison == "mismatch":
+            reviewed = REVIEWED_CPP_LINKAGE_DIFFERENCE
+            require(header == reviewed["header"] and profile in reviewed["profiles"]
+                    and row.get("difference") == _reviewed_matrix_difference(),
+                    f"checked matrix row {index} has an unreviewed C++ membarrier difference")
+            projected["difference"] = copy.deepcopy(row["difference"])
+        result_rows.append(projected)
     return {
         "schema": MATRIX_PROJECTION_SCHEMA,
         "provenance": checked_provenance,
@@ -290,7 +326,7 @@ def matrix_projection_from_checked_report(
     }
 
 
-def _validate_matrix_projection(value: object) -> tuple[dict[tuple[str, str], dict[str, str]], dict[str, Any]]:
+def _validate_matrix_projection(value: object) -> tuple[dict[tuple[str, str], dict[str, Any]], dict[str, Any]]:
     raw = exact_keys(value, {"schema", "provenance", "rows"}, "callable matrix projection")
     require(raw["schema"] == MATRIX_PROJECTION_SCHEMA, "callable matrix projection schema differs")
     provenance_raw = exact_keys(raw["provenance"], {"report", "reader", "contract", "extension_contract"}, "callable matrix projection provenance")
@@ -304,9 +340,13 @@ def _validate_matrix_projection(value: object) -> tuple[dict[tuple[str, str], di
     require({key: provenance[key]["path"] for key in expected_paths} == expected_paths, "callable matrix projection provenance paths differ")
     rows = raw["rows"]
     require(isinstance(rows, list) and bool(rows), "callable matrix projection rows are absent")
-    by_key: dict[tuple[str, str], dict[str, str]] = {}
+    by_key: dict[tuple[str, str], dict[str, Any]] = {}
     for index, item in enumerate(rows):
-        row = exact_keys(item, {"header", "profile", "comparison", "reference_status"}, f"callable matrix projection row {index}")
+        require(isinstance(item, Mapping), f"callable matrix projection row {index} is invalid")
+        fields = {"header", "profile", "comparison", "reference_status"}
+        if item.get("comparison") == "mismatch":
+            fields.add("difference")
+        row = exact_keys(item, fields, f"callable matrix projection row {index}")
         header = safe_relative(row["header"], f"callable matrix projection row {index}.header")
         profile = string(row["profile"], f"callable matrix projection row {index}.profile")
         require(profile in PROFILE_LANGUAGES, f"callable matrix projection row {index}.profile is unknown")
@@ -315,13 +355,20 @@ def _validate_matrix_projection(value: object) -> tuple[dict[tuple[str, str], di
         reference_status = string(row["reference_status"], f"callable matrix projection row {index}.reference_status")
         if comparison in {"matched", "candidate-only-reviewed-native-callable-extension"}:
             require(reference_status == "ok", f"callable matrix projection row {index}.reference_status differs")
+        elif comparison == "mismatch":
+            reviewed = REVIEWED_CPP_LINKAGE_DIFFERENCE
+            require(header == reviewed["header"] and profile in reviewed["profiles"]
+                    and reference_status == "ok" and row["difference"] == _reviewed_matrix_difference(),
+                    f"callable matrix projection row {index} has an unreviewed C++ membarrier difference")
         elif comparison == "candidate-only-reviewed-project-c-abi-extension":
             require(reference_status == "not-in-pinned-inventory", f"callable matrix projection row {index}.reference_status differs")
         else:
             require(reference_status == "oracle-not-applicable", f"callable matrix projection row {index}.reference_status differs")
         key = (header, profile)
         require(key not in by_key, f"callable matrix projection repeats {header}:{profile}")
-        by_key[key] = {"header": header, "profile": profile, "comparison": comparison, "reference_status": reference_status}
+        by_key[key] = {"header": header, "profile": profile, "comparison": comparison,
+                       "reference_status": reference_status,
+                       **({"difference": copy.deepcopy(row["difference"])} if comparison == "mismatch" else {})}
     return by_key, provenance
 
 
@@ -548,6 +595,25 @@ def _status_counts(observations: Sequence[Mapping[str, Any]]) -> dict[str, int]:
     return dict(sorted(values.items()))
 
 
+def _reviewed_cpp_linkage_difference(
+    candidate: Sequence[Mapping[str, Any]], reference: Sequence[Mapping[str, Any]],
+    difference: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Retain one C bridge whose pinned C++ header emits a mangled reference."""
+    require(len(candidate) == len(reference) == 1, "reviewed C++ membarrier multiplicity differs")
+    for tree, observations, symbol_name, languages in (
+        ("candidate", candidate, difference["candidate_symbol"], difference["candidate_linkage_specifier_languages"]),
+        ("reference", reference, difference["reference_symbol"], difference["reference_linkage_specifier_languages"]),
+    ):
+        row = observations[0]
+        require(row["type"]["qual_type"] == difference["qual_type"]
+                and row["mangled_name_observation"] == symbol_name
+                and row["linkage_specifier_languages"] == languages
+                and row["source"]["declaring_header"] == difference["header"],
+                f"reviewed C++ membarrier {tree} declaration differs")
+    return copy.deepcopy(dict(difference))
+
+
 def _record_group(
     *,
     category: str,
@@ -676,7 +742,7 @@ def account_declarations(
     raw occurrence multiplicity, and deliberately leaves
     provider/linkage/runtime/family claims open.
     """
-    _reviewed_contract(contract)
+    reviewed_contract = _reviewed_contract(contract)
     current_source, report, job_bindings = _header_envelope(header_report_envelope)
     providers, deferred_rows, abi_only = _validate_partition(provider_names, deferred, abi_only_callables)
     matrix, matrix_provenance = _validate_matrix_projection(matrix_projection)
@@ -702,6 +768,8 @@ def account_declarations(
     )
     records: list[dict[str, Any]] = []
     consumed = set(extension_groups)
+    cpp_difference = reviewed_contract["reviewed_cpp_linkage_difference"]
+    reviewed_cpp_profiles: set[str] = set()
     for key in sorted(candidate_groups):
         if key in consumed:
             continue
@@ -716,6 +784,16 @@ def account_declarations(
             reference_signatures = _signature_multiset(reference)
             require(candidate_signatures == reference_signatures, f"callable declaration signature multiset differs: {header}:{profile}:{name}")
             records.append(_record_group(category="reference-backed", matrix_comparison=comparison, header=header, profile=profile, name=name, candidate=candidate, reference=reference))
+        elif comparison == "mismatch":
+            require(header == cpp_difference["header"] and name == cpp_difference["name"]
+                    and profile in cpp_difference["profiles"] and bool(reference),
+                    f"reviewed C++ membarrier matrix route differs: {header}:{profile}:{name}")
+            observed_difference = _reviewed_cpp_linkage_difference(candidate, reference, cpp_difference)
+            reviewed_cpp_profiles.add(profile)
+            records.append({**_record_group(category="reference-backed", matrix_comparison=comparison,
+                                             header=header, profile=profile, name=name, candidate=candidate,
+                                             reference=reference),
+                            "reviewed_cpp_linkage_difference": observed_difference})
         elif comparison == "candidate-only-reviewed-native-callable-extension":
             # A matrix row is reviewed because it contains the one exact
             # tgkill difference.  Its other functions still have ordinary
@@ -739,6 +817,9 @@ def account_declarations(
         raise NativeCallableDeclarationsError(
             f"reference callable declaration has no candidate group: {orphan_reference[0]}"
         )
+    if cpp_difference["name"] in provider_set:
+        require(reviewed_cpp_profiles == set(cpp_difference["profiles"]),
+                "reviewed C++ membarrier profile roster differs")
     records.extend(extension_records)
     records.sort(key=lambda item: (item["input_header"], item["profile"], item["name"]))
     category_counts = Counter(item["category"] for item in records)

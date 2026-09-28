@@ -3,7 +3,7 @@ target = "x86_64-unknown-linux-musl"
 oracle = "Pinned musl 1.2.6"
 header_declaration_report_schema = "crabc.x86_64-header-declaration-inventory/v1"
 header_abi_matrix_report_schema = "crabc.x86_64-header-abi-matrix-report/v2"
-matrix_projection_schema = "crabc.x86_64-native-callable-matrix-projection/v1"
+matrix_projection_schema = "crabc.x86_64-native-callable-matrix-projection/v2"
 
 # These are observations from the one shared compiler receipt.  In particular,
 # cxx17-strict is still a C++ AST profile even where the pinned Clang process
@@ -27,3 +27,13 @@ semantic_language_linkage = false
 synthetic_macro_or_gcc_fallback_declarations = false
 family_completion = false
 public_support = false
+
+[reviewed_cpp_linkage_difference]
+header = "sys/membarrier.h"
+name = "membarrier"
+profiles = ["cxx17-gnu", "cxx17-strict"]
+qual_type = "int (int, int)"
+candidate_symbol = "membarrier"
+reference_symbol = "_Z10membarrierii"
+candidate_linkage_specifier_languages = ["C"]
+reference_linkage_specifier_languages = []

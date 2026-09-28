@@ -7,6 +7,8 @@ import copy
 import importlib.util
 import json
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -58,6 +60,33 @@ def group(
 
 
 class NativeDeclarationAbiTests(unittest.TestCase):
+    def test_x86_membarrier_c_and_cpp_profiles_emit_the_c_abi_symbol(self):
+        clang = shutil.which("clang")
+        nm = shutil.which("nm")
+        if clang is None or nm is None:
+            self.skipTest("native C++ compiler and symbol reader are required")
+        scratch = ROOT / ".work" / "x86_64" / "native-declaration-abi-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            for profile in ("c11-gnu", "c11-strict", "cxx17-gnu", "cxx17-strict"):
+                with self.subTest(profile=profile):
+                    output = Path(temporary) / (profile + ".o")
+                    cpp = profile.startswith("cxx")
+                    command = [clang, "-x", "c++" if cpp else "c",
+                               "-std=c++17" if cpp else "-std=c11",
+                               "-nostdinc", "-isystem", str(ROOT / "include")]
+                    if profile.endswith("-gnu"):
+                        command.append("-D_GNU_SOURCE=1")
+                    command += ["-c", "-o", str(output), "-"]
+                    source = ("#include <sys/membarrier.h>\n"
+                              "static __typeof__(&membarrier) volatile reference "
+                              "__attribute__((used)) = &membarrier;\n")
+                    compiled = subprocess.run(command, input=source, text=True, capture_output=True, check=False)
+                    self.assertEqual(compiled.returncode, 0, compiled.stderr)
+                    symbols = subprocess.run([nm, "--undefined-only", str(output)],
+                                             text=True, capture_output=True, check=True).stdout
+                    self.assertEqual(symbols.splitlines(), ["                 U membarrier"])
+
     def _ordinary_job_fixture(self) -> tuple[tempfile.TemporaryDirectory[str], Path, dict[str, object], dict[str, object], dict[str, object]]:
         scratch = ROOT / ".work" / "x86_64" / "native-declaration-abi-tests"
         scratch.mkdir(parents=True, exist_ok=True)

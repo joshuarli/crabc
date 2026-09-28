@@ -183,7 +183,7 @@ COMPILER_HELPER_SHARED_ARTIFACT = 'candidate-shared'
 COMPILER_HELPER_SHARED_METADATA_RULE = 'validated-compiler-helper-shared-local'
 DECLARATION_ABI_LIMITS = [
     'The object witness records emitted ordinary references; it does not select an archive/shared provider.',
-    'The four retained C++ membarrier spelling mismatches remain observations, not a language-linkage pass.',
+    'The two pinned-reference C++ membarrier spelling mismatches remain observations, not a language-linkage pass.',
     'Only _ns_flagdata element and in6_addr record facts are projected; FILE, table extent and h_errno storage semantics remain open.',
     'Runtime semantics, family completion, promotion and public support remain false.',
 ]

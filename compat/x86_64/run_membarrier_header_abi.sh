@@ -64,7 +64,9 @@ candidate_compiler_builtin_include="$(realpath "$candidate_compiler_builtin_incl
 [ -d "$candidate_compiler_builtin_include" ] ||
     fail "missing raw candidate compiler builtin include directory"
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-membarrier-header.XXXXXX)"
+scratch_root="$ROOT_DIR/.work/x86_64/membarrier-header-abi"
+mkdir -p -- "$scratch_root"
+work_dir="$(mktemp -d "$scratch_root/scratch.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 
 set_profile_args() {
@@ -106,13 +108,18 @@ compile_profile() {
                     -U_DEFAULT_SOURCE "$@" -nostdinc++ "${include_args[@]}" \
                     -c "$CXX_PROBE" -o "$object"
                 undefined="$(nm --undefined-only "$object")"
-                # Pinned musl's <sys/membarrier.h> has no extern "C" block, and
-                # the x86 project header keeps that source form: C++ callers
-                # reference the mangled spelling in both trees.
-                grep -Eq '[[:space:]]_Z10membarrierii$' <<<"$undefined" ||
-                    fail "${variant} C++ header lost musl's mangled membarrier spelling (${label})"
-                if grep -Eq '[[:space:]]membarrier$' <<<"$undefined"; then
-                    fail "${variant} C++ header unexpectedly gained C linkage (${label})"
+                if [ "$variant" = oracle ]; then
+                    grep -Eq '[[:space:]]_Z10membarrierii$' <<<"$undefined" ||
+                        fail "pinned musl C++ header lost its mangled membarrier spelling (${label})"
+                    if grep -Eq '[[:space:]]membarrier$' <<<"$undefined"; then
+                        fail "pinned musl C++ header unexpectedly gained C linkage (${label})"
+                    fi
+                else
+                    grep -Eq '[[:space:]]membarrier$' <<<"$undefined" ||
+                        fail "project C++ header lost its C ABI membarrier spelling (${label})"
+                    if grep -Eq '[[:space:]]_Z10membarrierii$' <<<"$undefined"; then
+                        fail "project C++ header retained a mangled membarrier spelling (${label})"
+                    fi
                 fi
             fi
         done

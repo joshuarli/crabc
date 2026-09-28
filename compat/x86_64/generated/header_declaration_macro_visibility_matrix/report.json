@@ -23581,8 +23581,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "matched"
+      "separately_accounted_source_form_difference_count": 1,
+      "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
@@ -23711,8 +23711,8 @@
       },
       "reference_only": [],
       "reference_status": "ok",
-      "separately_accounted_source_form_difference_count": 0,
-      "source_form_comparison": "matched"
+      "separately_accounted_source_form_difference_count": 1,
+      "source_form_comparison": "mismatch"
     },
     {
       "candidate": {
@@ -37899,12 +37899,13 @@
     "source_form_comparison_counts": {
       "candidate-only-reviewed-native-callable-extension": 28,
       "candidate-only-reviewed-project-c-abi-extension": 56,
-      "matched": 1252,
+      "matched": 1250,
+      "mismatch": 2,
       "oracle-not-applicable": 1
     },
-    "source_form_difference_count": 0,
-    "source_form_difference_row_count": 0,
-    "source_form_only_difference_row_count": 0
+    "source_form_difference_count": 2,
+    "source_form_difference_row_count": 2,
+    "source_form_only_difference_row_count": 2
   },
   "target": "x86_64-unknown-linux-musl",
   "work_package": {

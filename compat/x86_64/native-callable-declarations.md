@@ -26,6 +26,15 @@ require an exact multiplicity-preserving multiset of the structured
 `(input_header, profile, name)`.  This compares spelling without concatenation
 ambiguity; it does not use an unmangled name as a C-linkage proof.
 
+The two C++ `sys/membarrier.h` rows retain an exact reviewed difference:
+the project header declares the C ABI symbol `membarrier`, while pinned musl
+declares `_Z10membarrierii`. The checked matrix projection carries each row's
+single incompatible function fact, and the raw declaration join requires one
+`int (int, int)` occurrence and the corresponding linkage context in each
+tree. Other selected rows keep exact pair agreement. The emitted object
+references are measured separately, so this raw AST observation alone does
+not establish linker behavior.
+
 The one native extension is the existing exact `tgkill` contract.  It retains
 all four visible profiles through each of its seven direct include roots, has
 the fixed `int (int, int, int)` spelling and `tgkill` linker observation, has

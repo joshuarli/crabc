@@ -458,17 +458,18 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
     "comparison_counts": {
         "candidate-only-reviewed-native-callable-extension": 28,
         "candidate-only-reviewed-project-c-abi-extension": 56,
-        "matched": 1252,
+        "matched": 1250,
+        "mismatch": 2,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "0 comparable header/profile rows have prototype or named declaration-form differences",
+        "2 comparable header/profile rows have prototype or named declaration-form differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
-    "mismatch_fact_counts": {},
-    "mismatch_row_count": 0,
+    "mismatch_fact_counts": {"candidate_only_count": 0, "incompatible_count": 2, "reference_only_count": 0},
+    "mismatch_row_count": 2,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "reviewed_native_callable_extension_fact_count": 28,
@@ -554,12 +555,13 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "source_form_comparison_counts": {
         "candidate-only-reviewed-native-callable-extension": 28,
         "candidate-only-reviewed-project-c-abi-extension": 56,
-        "matched": 1252,
+        "matched": 1250,
+        "mismatch": 2,
         "oracle-not-applicable": 1,
     },
-    "source_form_difference_count": 0,
-    "source_form_difference_row_count": 0,
-    "source_form_only_difference_row_count": 0,
+    "source_form_difference_count": 2,
+    "source_form_difference_row_count": 2,
+    "source_form_only_difference_row_count": 2,
 }
 
 EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES = {
@@ -2983,6 +2985,31 @@ def require_header_abi_matrix(manifest: Mapping[str, Any]) -> int:
         "header ABI matrix contract inputs drifted",
     )
     summary = report["summary"]
+    from native_callable_declarations import load_contract as load_callable_declaration_contract
+
+    reviewed = load_callable_declaration_contract()["reviewed_cpp_linkage_difference"]
+    expected_difference = {
+        "candidate_only": [], "candidate_only_count": 0,
+        "incompatible": [{
+            "candidate_signature": reviewed["qual_type"] + "|mangled=" + reviewed["candidate_symbol"],
+            "kind": "function", "name": reviewed["name"],
+            "reference_signature": reviewed["qual_type"] + "|mangled=" + reviewed["reference_symbol"],
+        }],
+        "incompatible_count": 1, "matched_count": 13,
+        "reference_only": [], "reference_only_count": 0,
+    }
+    mismatches = [row for row in report["rows"] if row["comparison"] == "mismatch"]
+    require(len(mismatches) == len(reviewed["profiles"]),
+            "reviewed C++ membarrier matrix mismatch roster differs")
+    observed_profiles = set()
+    for row in mismatches:
+        require(row["header"] == reviewed["header"] and row["profile"] in reviewed["profiles"]
+                and row["profile"] not in observed_profiles and row["candidate_status"] == "ok"
+                and row["reference_status"] == "ok" and row["difference"] == expected_difference,
+                "reviewed C++ membarrier matrix row differs")
+        observed_profiles.add(row["profile"])
+    require(observed_profiles == set(reviewed["profiles"]),
+            "reviewed C++ membarrier matrix profile roster differs")
     require(
         summary == EXPECTED_HEADER_ABI_MATRIX_SUMMARY,
         "header ABI matrix finite baseline drifted",

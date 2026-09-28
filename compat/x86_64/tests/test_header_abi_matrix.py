@@ -968,10 +968,20 @@ class HeaderAbiMatrixTests(unittest.TestCase):
             {
                 "candidate-only-reviewed-native-callable-extension": 28,
                 "candidate-only-reviewed-project-c-abi-extension": 56,
-                "matched": 1252,
+                "matched": 1250,
+                "mismatch": 2,
                 "oracle-not-applicable": 1,
             },
         )
+        mismatches = [row for row in checked["rows"] if row["comparison"] == "mismatch"]
+        self.assertEqual({(row["header"], row["profile"]) for row in mismatches}, {
+            ("sys/membarrier.h", "cxx17-gnu"), ("sys/membarrier.h", "cxx17-strict"),
+        })
+        self.assertTrue(all(row["difference"]["incompatible"] == [{
+            "candidate_signature": "int (int, int)|mangled=membarrier",
+            "kind": "function", "name": "membarrier",
+            "reference_signature": "int (int, int)|mangled=_Z10membarrierii",
+        }] and row["difference"]["matched_count"] == 13 for row in mismatches))
         self.assertEqual(
             checked["summary"]["reviewed_native_callable_extension_fact_count"], 28
         )

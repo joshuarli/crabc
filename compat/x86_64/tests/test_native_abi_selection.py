@@ -3001,6 +3001,39 @@ class OrdinaryDeclarationAbiAttachmentTests(unittest.TestCase):
         ns = next(row for row in result['record_layout_joins'] if row['id'] == 'object:_ns_flagdata')
         self.assertEqual(ns['remaining_layout_limitations'], ['not-proved-by-record-layout'])
 
+    def test_candidate_c_linkage_does_not_erase_pinned_cpp_membarrier_mismatches(self):
+        plans, jobs = [], []
+        for tree in ('candidate', 'reference'):
+            for profile in ('cxx17-gnu', 'cxx17-strict'):
+                plan = {
+                    'tree': tree, 'header': 'sys/membarrier.h', 'profile': profile,
+                    'language': 'cxx', 'names': ['membarrier'],
+                    'references': [{
+                        'category': 'reference-backed', 'name': 'membarrier',
+                        'source_definition_observations': ['extern-declaration-without-initializer'],
+                        'expected_observation': 'ordinary-undefined-reference',
+                        'holder': 'crabc_native_declaration_abi_reference_0',
+                    }],
+                }
+                observation = (
+                    {'category': 'reference-backed', 'name': 'membarrier',
+                     'status': 'ordinary-undefined-reference', 'symbol': 'membarrier'}
+                    if tree == 'candidate' else
+                    {'category': 'reference-backed', 'expected_symbol': 'membarrier',
+                     'holder': 'crabc_native_declaration_abi_reference_0',
+                     'observed_symbol': '_Z10membarrierii', 'relocation_type': 'R_X86_64_64',
+                     'status': 'ordinary-linkage-identity-mismatch'}
+                )
+                plans.append(plan)
+                jobs.append({**copy.deepcopy(plan), 'ordinal': len(jobs), 'observations': [observation]})
+        replayed = {'callable_plan': plans, 'report': {'jobs': jobs}}
+        with mock.patch.object(selection.declaration_abi, 'linkage_jobs_from_callable_account', return_value=plans):
+            joins, mismatches = selection._ordinary_declaration_plan_joins(replayed, {'groups': []})
+        self.assertEqual({row['tree'] for row in mismatches}, {'reference'})
+        self.assertEqual({row['profile'] for row in mismatches}, {'cxx17-gnu', 'cxx17-strict'})
+        self.assertEqual(len(mismatches), 2)
+        self.assertEqual([row['linkage_mismatch_indices'] for row in joins], [[], [], [0], [0]])
+
     def test_attachment_rejects_an_object_plan_that_is_not_the_typed_callable_account(self):
         plans = self._plan()
         replayed = self._replayed(plans)

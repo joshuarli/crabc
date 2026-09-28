@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import importlib
+import json
 import sys
 import tempfile
 import unittest
@@ -24,6 +25,25 @@ UNPATCHED_LOAD_TOML = ledger.load_toml
 
 
 class X86ParityLedgerTests(unittest.TestCase):
+    def test_reviewed_membarrier_cpp_matrix_rows_reject_foreign_or_missing_difference(self) -> None:
+        report = json.loads(ledger.HEADER_ABI_MATRIX_REPORT_PATH.read_text(encoding="utf-8"))
+        manifest = self.header_foundation_manifest()
+        self.assertEqual(ledger.require_header_abi_matrix(manifest), 1337)
+        for change in ("foreign-symbol", "missing-profile", "foreign-row"):
+            with self.subTest(change=change):
+                changed = copy.deepcopy(report)
+                mismatches = [row for row in changed["rows"] if row["comparison"] == "mismatch"]
+                if change == "foreign-symbol":
+                    mismatches[0]["difference"]["incompatible"][0]["candidate_signature"] = "int (int, int)|mangled=_Z10membarrierii"
+                elif change == "missing-profile":
+                    mismatches[0]["comparison"] = "matched"
+                else:
+                    mismatches[0]["header"] = "sys/foreign.h"
+                with mock.patch.object(ledger, "validate_header_abi_matrix_report"), \
+                     mock.patch.object(ledger.json, "loads", return_value=changed), \
+                     self.assertRaisesRegex(ledger.LedgerError, r"reviewed C\+\+ membarrier"):
+                    ledger.require_header_abi_matrix(manifest)
+
     @classmethod
     def setUpClass(cls) -> None:
         """Parse immutable checked inputs once; each test still owns a deep copy."""
@@ -2213,7 +2233,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             {
                 "candidate-only-reviewed-native-callable-extension": 28,
                 "candidate-only-reviewed-project-c-abi-extension": 56,
-                "matched": 1252,
+                "matched": 1250,
+                "mismatch": 2,
                 "oracle-not-applicable": 1,
             },
         )

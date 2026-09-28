@@ -220,18 +220,27 @@ class HeaderDeclarationMacroVisibilityMatrixTests(unittest.TestCase):
             report["summary"]["reviewed_native_callable_extension_row_count"], 28
         )
         self.assertEqual(report["summary"]["matched_identity_count"], 294885)
-        self.assertEqual(report["summary"]["source_form_difference_count"], 0)
-        self.assertEqual(report["summary"]["source_form_difference_row_count"], 0)
-        self.assertEqual(report["summary"]["source_form_only_difference_row_count"], 0)
+        self.assertEqual(report["summary"]["source_form_difference_count"], 2)
+        self.assertEqual(report["summary"]["source_form_difference_row_count"], 2)
+        self.assertEqual(report["summary"]["source_form_only_difference_row_count"], 2)
         mismatches = [row for row in report["rows"] if row["comparison"] == "mismatch"]
         self.assertEqual(mismatches, [])
+        source_form_differences = [row for row in report["rows"] if row.get("source_form_comparison") == "mismatch"]
+        self.assertEqual({(row["header"], row["profile"]) for row in source_form_differences}, {
+            ("sys/membarrier.h", "cxx17-gnu"), ("sys/membarrier.h", "cxx17-strict"),
+        })
+        self.assertTrue(all(row["comparison"] == "matched"
+                            and row["separately_accounted_source_form_difference_count"] == 1
+                            and row["candidate_only"] == row["reference_only"] == []
+                            for row in source_form_differences))
         for row in report["rows"]:
             if row["comparison"] != "matched":
                 continue
             self.assertEqual(row["candidate_only"], [])
             self.assertEqual(row["reference_only"], [])
-            self.assertEqual(row["source_form_comparison"], "matched")
-            self.assertEqual(row["separately_accounted_source_form_difference_count"], 0)
+            if row not in source_form_differences:
+                self.assertEqual(row["source_form_comparison"], "matched")
+                self.assertEqual(row["separately_accounted_source_form_difference_count"], 0)
 
     def test_noncomparable_rows_retain_checked_summaries_not_identity_deltas(self) -> None:
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
