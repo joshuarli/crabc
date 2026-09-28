@@ -533,6 +533,72 @@ int crabc_global_dso_close(int *main_errno)
     return 0;
 }
 
+/* The executable owns the first FILE. This image selects wide orientation
+ * before either image performs I/O, and its caller remains the close owner.
+ */
+int crabc_orientation_dso_set_wide(FILE *stream, int *main_errno)
+{
+    if (stream == NULL || main_errno != &errno || errno != EDOM ||
+        fwide(stream, 0) != 0 || ferror(stream) || feof(stream))
+        return 1;
+    if (fwide(stream, 1) <= 0 || fwide(stream, -1) <= 0 ||
+        fputwc((wchar_t)0x20ac, stream) != 0x20ac || ferror(stream))
+        return 2;
+    errno = ERANGE;
+    return 0;
+}
+
+/* This FILE and descriptor belong to the DSO. Main chooses byte orientation
+ * after open, then both images use only byte I/O until this image closes it.
+ */
+static FILE *orientation_dso_byte_stream;
+static int orientation_dso_byte_descriptor;
+
+FILE *crabc_orientation_dso_open_byte(const char *path, int *main_errno)
+{
+    if (path == NULL || main_errno != &errno || errno != EDOM ||
+        orientation_dso_byte_stream != NULL)
+        return NULL;
+    orientation_dso_byte_stream = fopen(path, "w+");
+    if (orientation_dso_byte_stream == NULL ||
+        fwide(orientation_dso_byte_stream, 0) != 0)
+        return NULL;
+    orientation_dso_byte_descriptor = fileno(orientation_dso_byte_stream);
+    if (orientation_dso_byte_descriptor < 0)
+        return NULL;
+    errno = ERANGE;
+    return orientation_dso_byte_stream;
+}
+
+int crabc_orientation_dso_use_byte(FILE *stream, int *main_errno)
+{
+    if (stream == NULL || stream != orientation_dso_byte_stream ||
+        main_errno != &errno || errno != EDOM || fwide(stream, 0) >= 0 ||
+        fwide(stream, 1) >= 0 || ferror(stream) || feof(stream))
+        return 1;
+    if (fwrite("dso", 1, 3, stream) != 3 || fflush(stream) != 0 ||
+        ferror(stream))
+        return 2;
+    errno = ERANGE;
+    return 0;
+}
+
+int crabc_orientation_dso_close_byte(FILE *stream, int *main_errno)
+{
+    if (stream == NULL || stream != orientation_dso_byte_stream ||
+        main_errno != &errno || errno != EDOM || fwide(stream, 0) >= 0 ||
+        ferror(stream) || fcntl(orientation_dso_byte_descriptor, F_GETFD) < 0)
+        return 1;
+    if (fclose(stream) != 0)
+        return 2;
+    orientation_dso_byte_stream = NULL;
+    errno = 0;
+    if (fcntl(orientation_dso_byte_descriptor, F_GETFD) != -1 || errno != EBADF)
+        return 3;
+    errno = ERANGE;
+    return 0;
+}
+
 static FILE *exit_stream;
 static char exit_buffer[64];
 static char exit_marker_path[PATH_MAX];

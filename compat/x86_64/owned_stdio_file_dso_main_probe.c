@@ -482,7 +482,7 @@ static int wide_memory_dso_roundtrip(void)
     return 0;
 }
 
-static int global_readback(const char *path, const char *expected, size_t length)
+static int pathname_readback(const char *path, const char *expected, size_t length)
 {
     char observed[64];
     int descriptor = open(path, O_RDONLY);
@@ -558,9 +558,78 @@ static int global_dso_roundtrip(const char *path)
     result = crabc_global_dso_close(&errno);
     if (result != 0 || errno != ERANGE)
         return 80 + result;
-    if (global_readback(main_path, main_bytes, sizeof(main_bytes) - 1) != 0 ||
-        global_readback(dso_path, dso_bytes, sizeof(dso_bytes) - 1) != 0)
+    if (pathname_readback(main_path, main_bytes, sizeof(main_bytes) - 1) != 0 ||
+        pathname_readback(dso_path, dso_bytes, sizeof(dso_bytes) - 1) != 0)
         return 90;
+    return 0;
+}
+
+static int orientation_dso_roundtrip(const char *path)
+{
+    static const char wide_bytes[] = "\xe2\x82\xac\xce\xbb";
+    static const char byte_bytes[] = "M:dso";
+    char wide_path[PATH_MAX], byte_path[PATH_MAX], observed[8];
+    FILE *wide_stream, *byte_stream;
+    int wide_length, byte_length, wide_descriptor, byte_descriptor, result;
+
+    if (setlocale(LC_CTYPE, "C.UTF-8") == NULL)
+        return 1;
+    wide_length = snprintf(wide_path, sizeof(wide_path), "%s.orientation-wide", path);
+    byte_length = snprintf(byte_path, sizeof(byte_path), "%s.orientation-byte", path);
+    if (wide_length < 0 || byte_length < 0 ||
+        (size_t)wide_length >= sizeof(wide_path) ||
+        (size_t)byte_length >= sizeof(byte_path))
+        return 2;
+    wide_stream = fopen(wide_path, "w+");
+    if (wide_stream == NULL || fwide(wide_stream, 0) != 0)
+        return 3;
+    wide_descriptor = fileno(wide_stream);
+    if (wide_descriptor < 0)
+        return 4;
+    errno = EDOM;
+    result = crabc_orientation_dso_set_wide(wide_stream, &errno);
+    if (result != 0 || errno != ERANGE || fwide(wide_stream, 0) <= 0 ||
+        fwide(wide_stream, -1) <= 0 || ferror(wide_stream) || feof(wide_stream))
+        return 10 + result;
+    if (fputwc((wchar_t)0x03bb, wide_stream) != 0x03bb ||
+        fflush(wide_stream) != 0 || fseek(wide_stream, 0, SEEK_SET) != 0 ||
+        fwide(wide_stream, 0) <= 0 ||
+        fgetwc(wide_stream) != 0x20ac || fgetwc(wide_stream) != 0x03bb ||
+        fgetwc(wide_stream) != WEOF || !feof(wide_stream) || ferror(wide_stream))
+        return 20;
+    if (fclose(wide_stream) != 0)
+        return 21;
+    errno = 0;
+    if (fcntl(wide_descriptor, F_GETFD) != -1 || errno != EBADF ||
+        pathname_readback(wide_path, wide_bytes, sizeof(wide_bytes) - 1) != 0)
+        return 22;
+
+    errno = EDOM;
+    byte_stream = crabc_orientation_dso_open_byte(byte_path, &errno);
+    if (byte_stream == NULL || errno != ERANGE || fwide(byte_stream, 0) != 0)
+        return 30;
+    byte_descriptor = fileno(byte_stream);
+    if (byte_descriptor < 0 || fwide(byte_stream, -1) >= 0 ||
+        fwide(byte_stream, 1) >= 0 ||
+        fwrite("M:", 1, 2, byte_stream) != 2 || ferror(byte_stream))
+        return 31;
+    errno = EDOM;
+    result = crabc_orientation_dso_use_byte(byte_stream, &errno);
+    if (result != 0 || errno != ERANGE || fwide(byte_stream, 0) >= 0 ||
+        fseek(byte_stream, 0, SEEK_SET) != 0 ||
+        fread(observed, 1, sizeof(byte_bytes) - 1, byte_stream) !=
+            sizeof(byte_bytes) - 1 ||
+        memcmp(observed, byte_bytes, sizeof(byte_bytes) - 1) != 0 ||
+        ferror(byte_stream) || feof(byte_stream))
+        return 40 + result;
+    errno = EDOM;
+    result = crabc_orientation_dso_close_byte(byte_stream, &errno);
+    if (result != 0 || errno != ERANGE)
+        return 50 + result;
+    errno = 0;
+    if (fcntl(byte_descriptor, F_GETFD) != -1 || errno != EBADF ||
+        pathname_readback(byte_path, byte_bytes, sizeof(byte_bytes) - 1) != 0)
+        return 60;
     return 0;
 }
 
@@ -616,6 +685,9 @@ int main(int argc, char **argv)
     result = global_dso_roundtrip(argv[1]);
     if (result != 0)
         return result;
+    result = orientation_dso_roundtrip(argv[1]);
+    if (result != 0)
+        return result;
     result = prepare_dso_exit_stream(argv[1]);
     if (result != 0)
         return 130 + result;
@@ -631,7 +703,7 @@ int main(int argc, char **argv)
     result = wide_memory_dso_roundtrip();
     if (result != 0)
         return result;
-    if (write(STDOUT_FILENO, "stdio-file-dso-global-flush-ok\n", 31) != 31)
+    if (write(STDOUT_FILENO, "stdio-file-dso-orientation-ok\n", 30) != 30)
         return 11;
     return 0;
 }

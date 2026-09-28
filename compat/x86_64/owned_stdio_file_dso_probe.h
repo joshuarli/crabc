@@ -78,4 +78,9 @@ int crabc_global_dso_flush(FILE *main_stream, int *main_errno);
 int crabc_global_dso_tail(FILE *main_stream, int *main_errno);
 int crabc_global_dso_after_second(FILE *main_stream, int *main_errno);
 int crabc_global_dso_close(int *main_errno);
+
+int crabc_orientation_dso_set_wide(FILE *stream, int *main_errno);
+FILE *crabc_orientation_dso_open_byte(const char *path, int *main_errno);
+int crabc_orientation_dso_use_byte(FILE *stream, int *main_errno);
+int crabc_orientation_dso_close_byte(FILE *stream, int *main_errno);
 #endif
