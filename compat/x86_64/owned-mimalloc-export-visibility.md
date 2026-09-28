@@ -39,5 +39,17 @@ misrepresented as a fresh source match. It then reuses the owned C
 allocation-interposition and mimalloc startup/errno lifecycle components with
 the fresh dynamic product.
 
+`run_libc_mimalloc_export_visibility.sh --native-shadow` builds the selected
+Rust allocator products from one sealed source state. Its reader checks both
+installed manifests, the static archive's selected members and weak C ABI
+allocator entry points, and the dynamic product's source state, link inputs,
+public allocator bindings, absent bundled-C definitions, and local process
+finalizer. The C-only 424-name version script must be absent from this shared
+link. This path does not compare a historical C product because the native
+backend has no bundled C allocator member. Its `ar`, `nm`, and `readelf`
+executables are bound to the core image and exact bytes in
+`owned_mimalloc_export_visibility_image_inputs.json`; changed tool bytes,
+backend selection, link policy, or product provenance fail the receipt.
+
 This is component evidence only. It does not qualify the native runtime,
 allocator, product campaign, or public x86 support.

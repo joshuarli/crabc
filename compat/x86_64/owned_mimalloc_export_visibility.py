@@ -26,8 +26,11 @@ PUBLIC_ALLOCATORS = {
     "reallocarray": "GLOBAL",
     "valloc": "GLOBAL",
 }
+NATIVE_IMAGE_INPUTS = ROOT / "compat/x86_64/owned_mimalloc_export_visibility_image_inputs.json"
+NATIVE_IMAGE_TOOL_NAMES = ("ar", "nm", "readelf")
 
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
+from core_image import CORE_IMAGE_ID  # noqa: E402
 import native_abi_inventory as inventory  # noqa: E402
 import owned_dynamic_qualification as qualification  # noqa: E402
 
@@ -74,6 +77,49 @@ def contract_members() -> tuple[list[str], dict[str, object]]:
     require(all(member.replace("_", "a").isalnum() and not member[0].isdigit() for member in members),
             "mimalloc hidden-export contract contains an invalid linker name")
     return members, record
+
+
+def native_image_inputs(tools: dict[str, str]) -> dict[str, object]:
+    """Bind ELF inspection to the reviewed core-image executables."""
+
+    require(set(tools) == set(NATIVE_IMAGE_TOOL_NAMES), "native image tool roster differs")
+    manifest_identity = identity(NATIVE_IMAGE_INPUTS, "native image input manifest")
+    try:
+        manifest = json.loads(NATIVE_IMAGE_INPUTS.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise EvidenceError("native image input manifest is malformed") from error
+    require(isinstance(manifest, dict) and set(manifest) == {"schema", "image", "tools"}
+            and manifest["schema"] == "crabc.x86_64-owned-mimalloc-export-visibility-image-inputs/v1"
+            and manifest["image"] == CORE_IMAGE_ID and isinstance(manifest["tools"], dict)
+            and set(manifest["tools"]) == set(NATIVE_IMAGE_TOOL_NAMES),
+            "native image input manifest or image differs")
+    for name, executable in tools.items():
+        require(Path(executable).is_absolute(), f"image input is not absolute: {name}")
+        require(identity(Path(executable), f"image input {name}") == manifest["tools"][name],
+                f"image input differs: {name}")
+    return {"manifest": manifest_identity, "image": CORE_IMAGE_ID, "tools": manifest["tools"]}
+
+
+def validate_native_provenance(provenance: dict[str, object], upstream: dict[str, object]) -> None:
+    """The Rust backend has no C mimalloc member or C-only version script."""
+
+    require(provenance.get("allocator_backend") == "native-shadow"
+            and provenance.get("accepted_allocator") is None
+            and provenance.get("native_allocator") == upstream,
+            "shared native allocator selection or source differs")
+    require(provenance.get("shared_mimalloc_hidden_exports") == {"status": "not-selected-native-shadow"},
+            "native shared link selected a C allocator visibility policy")
+    selected = provenance.get("selected_members")
+    require(isinstance(selected, dict) and selected
+            and all(isinstance(name, str) and isinstance(digest, str) and len(digest) == 64
+                    and all(character in "0123456789abcdef" for character in digest)
+                    and not name.endswith("-static.o") for name, digest in selected.items()),
+            "native shared link selected a C allocator member or malformed input")
+    link = provenance.get("libc_shared_link_command")
+    require(isinstance(link, list) and all(isinstance(arg, str) for arg in link)
+            and not any("libc-mimalloc-hidden.exports" in arg for arg in link)
+            and all(arg == "--exclude-libs=libcrabc-builtins.a" for arg in link if arg.startswith("--exclude-libs")),
+            "native shared link used a C allocator or broad visibility policy")
 
 
 def dynamic_symbols(readelf: str, library: Path) -> tuple[dict[str, dict[str, object]], dict[str, object]]:
@@ -334,6 +380,102 @@ def dynamic_product_source_binding(library: Path, collector: dict[str, object]) 
             "matches_collector": source == collector["source_sha256"]}
 
 
+def native_shadow(args: argparse.Namespace) -> dict[str, object]:
+    hidden_members, contract = contract_members()
+    hidden = set(hidden_members)
+    image_inputs = native_image_inputs({"ar": args.ar, "nm": args.nm, "readelf": args.readelf})
+    collector = collector_source_identity()
+    source = dynamic_product_source_binding(args.dynamic_shared, collector)
+    require(source["matches_collector"], "native dynamic product source differs from collector")
+
+    static_root = args.static_archive.parents[2]
+    static_manifest_path = static_root / "share/crabc/manifest.json"
+    static_provenance_path = static_root / "share/crabc/libc-static.provenance.json"
+    static_manifest_identity = identity(static_manifest_path, "native static manifest")
+    static_provenance_identity = identity(static_provenance_path, "native static provenance")
+    archive_identity = identity(args.static_archive, "native static archive")
+    upstream_identity = identity(ROOT / "crabc-mimalloc/UPSTREAM.md", "native allocator source provenance")
+    upstream = {"path": "crabc-mimalloc/UPSTREAM.md", "sha256": upstream_identity["sha256"],
+                "mode": upstream_identity["mode"]}
+    try:
+        static_manifest = json.loads(static_manifest_path.read_text(encoding="utf-8"))
+        static_provenance = json.loads(static_provenance_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise EvidenceError("native static product metadata is malformed") from error
+    require(isinstance(static_manifest, dict) and static_manifest.get("allocator_backend") == "native-shadow"
+            and static_manifest.get("installed", {}).get("files", {}).get("usr/lib/libc.a") == archive_identity["sha256"]
+            and static_manifest.get("installed", {}).get("files", {}).get("share/crabc/libc-static.provenance.json")
+            == static_provenance_identity["sha256"],
+            "native static product manifest or archive differs")
+    require(isinstance(static_provenance, dict) and static_provenance.get("archive", {}).get("sha256")
+            == archive_identity["sha256"]
+            and static_provenance.get("allocator_backend", {}).get("implementation")
+            == "native Rust shadow; promotion remains separate"
+            and static_provenance.get("allocator_backend", {}).get("upstream_sha256") == upstream["sha256"],
+            "native static allocator provenance differs")
+    archive_listing, archive_command = run([args.ar, "t", str(args.static_archive)], "native archive members")
+    archive_members = archive_listing.splitlines()
+    selected = static_provenance.get("selected_members")
+    require(isinstance(selected, list) and all(isinstance(item, dict) and isinstance(item.get("name"), str)
+            for item in selected) and {item["name"] for item in selected} == set(archive_members)
+            and len(selected) == len(archive_members) and not any(name.endswith("-static.o") for name in archive_members),
+            "native static archive selected a C allocator member or changed roster")
+    static_raw, static_command = run([args.nm, "--defined-only", "--extern-only", str(args.static_archive)],
+                                     "native static defined symbols")
+    static_symbols = [line.split() for line in static_raw.splitlines() if len(line.split()) == 3]
+    static_names = {row[2] for row in static_symbols}
+    require(not hidden & static_names and not any(name.startswith(("mi_", "_mi_")) for name in static_names),
+            "native static archive contains C mimalloc definitions")
+    for name in PUBLIC_ALLOCATORS:
+        matches = [row for row in static_symbols if row[2] == name]
+        require(len(matches) == 1 and matches[0][1] == "W",
+                f"native static public allocator {name} is not one weak definition")
+
+    current, shared_record = dynamic_symbols(args.readelf, args.dynamic_shared)
+    tables, tables_record = complete_shared_symbol_tables(args.readelf, args.dynamic_shared)
+    complete_names = {row.get("name") for row in tables[".symtab"] if row.get("section_index") != "UND"}
+    require(not hidden & (set(current) | complete_names)
+            and not any(isinstance(name, str) and name.startswith(("mi_", "_mi_"))
+                        for name in set(current) | complete_names),
+            "native shared libc contains C mimalloc definitions")
+    for name, binding in PUBLIC_ALLOCATORS.items():
+        row = current.get(name)
+        require(isinstance(row, dict) and row.get("type") == "FUNC" and row.get("binding") == binding
+                and row.get("visibility") == "DEFAULT",
+                f"native shared public allocator {name} binding/visibility drifted")
+    finalizer = "__crabc_x86_native_mimalloc_process_finalizer"
+    require(finalizer not in current
+            and one_named_defined_row(tables[".symtab"], finalizer, "native shared symtab")["binding"] == "LOCAL",
+            "native process finalizer became public")
+
+    provenance_path = args.dynamic_shared.parents[2] / "share/crabc/libc-shared.provenance.json"
+    provenance_identity = identity(provenance_path, "native shared provenance")
+    try:
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise EvidenceError("native shared provenance is malformed") from error
+    validate_native_provenance(provenance, upstream)
+    state_path = args.dynamic_shared.parents[2] / "share/crabc/dynamic-product-state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    require(state.get("allocator_backend") == "native-shadow", "native dynamic product state selected another backend")
+    return {
+        "schema": "crabc.x86_64-owned-mimalloc-export-visibility/v2",
+        "status": "component-pass-not-qualification",
+        "allocator_backend": "native-shadow",
+        "contract": {"identity": contract, "member_count": len(hidden_members),
+                     "native_c_definitions": 0},
+        "image_inputs": image_inputs,
+        "collector": collector,
+        "source": source,
+        "static": {"archive": archive_identity, "manifest": static_manifest_identity,
+                   "provenance": static_provenance_identity, "member_count": len(archive_members),
+                   "archive_command": archive_command, "symbols_command": static_command},
+        "shared": {"dynsym": shared_record, "tables": tables_record,
+                   "provenance": provenance_identity, "public_allocators": PUBLIC_ALLOCATORS,
+                   "private_finalizer": finalizer},
+    }
+
+
 def validate(args: argparse.Namespace) -> dict[str, object]:
     hidden_members, contract = contract_members()
     hidden = set(hidden_members)
@@ -422,8 +564,9 @@ def validate(args: argparse.Namespace) -> dict[str, object]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline-report", type=Path, required=True)
-    parser.add_argument("--baseline-shared", type=Path, required=True)
+    parser.add_argument("--baseline-report", type=Path)
+    parser.add_argument("--baseline-shared", type=Path)
+    parser.add_argument("--allocator-backend", choices=("accepted-c", "native-shadow"), default="accepted-c")
     parser.add_argument("--static-archive", type=Path, required=True)
     parser.add_argument("--dynamic-shared", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -434,7 +577,14 @@ def main() -> int:
     try:
         require(args.output.parent.is_dir(), "output parent must exist")
         require(not args.output.exists() and not args.output.is_symlink(), "output already exists")
-        report = validate(args)
+        if args.allocator_backend == "native-shadow":
+            require(args.baseline_report is None and args.baseline_shared is None,
+                    "native-shadow visibility does not use a historical C baseline")
+            report = native_shadow(args)
+        else:
+            require(args.baseline_report is not None and args.baseline_shared is not None,
+                    "accepted-C visibility requires its historical product pair")
+            report = validate(args)
         args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     except EvidenceError as error:
         print(f"owned mimalloc export visibility: {error}", file=sys.stderr)

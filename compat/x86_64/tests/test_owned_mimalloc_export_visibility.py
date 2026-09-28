@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -22,6 +25,40 @@ EVIDENCE_SPEC.loader.exec_module(evidence)
 
 
 class OwnedMimallocExportVisibilityTests(unittest.TestCase):
+    def test_native_image_input_rejects_changed_tool_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            tool = Path(scratch) / "readelf"
+            tool.write_bytes(b"pinned inspection tool")
+            tool.chmod(0o755)
+            expected = {"schema": "crabc.x86_64-owned-mimalloc-export-visibility-image-inputs/v1",
+                        "image": "image-id", "tools": {"readelf": {
+                "path": str(tool), "sha256": hashlib.sha256(tool.read_bytes()).hexdigest(),
+                "size": tool.stat().st_size, "mode": 0o755,
+            }}}
+            with mock.patch.object(evidence, "NATIVE_IMAGE_INPUTS", Path(scratch) / "inputs.json"), \
+                 mock.patch.object(evidence, "CORE_IMAGE_ID", "image-id"), \
+                 mock.patch.object(evidence, "NATIVE_IMAGE_TOOL_NAMES", ("readelf",)):
+                evidence.NATIVE_IMAGE_INPUTS.write_text(json.dumps(expected), encoding="utf-8")
+                self.assertEqual(evidence.native_image_inputs({"readelf": str(tool)})["tools"], expected["tools"])
+                tool.write_bytes(b"tampered inspection tool")
+                with self.assertRaisesRegex(evidence.EvidenceError, "image input differs: readelf"):
+                    evidence.native_image_inputs({"readelf": str(tool)})
+
+    def test_native_provenance_rejects_c_backend_visibility_claim(self) -> None:
+        native = {"allocator_backend": "native-shadow", "accepted_allocator": None,
+                  "shared_mimalloc_hidden_exports": {"status": "not-selected-native-shadow"},
+                  "native_allocator": {"path": "crabc-mimalloc/UPSTREAM.md", "sha256": "a" * 64, "mode": 0o644},
+                  "selected_members": {"rust-libc.o": "b" * 64},
+                  "libc_shared_link_command": ["ld.lld", "--version-script=$BUILD/libc-errno-private.exports",
+                                               "--exclude-libs=libcrabc-builtins.a"]}
+        evidence.validate_native_provenance(native, native["native_allocator"])
+        altered = dict(native, shared_mimalloc_hidden_exports={"member_count": 424})
+        with self.assertRaisesRegex(evidence.EvidenceError, "C allocator visibility policy"):
+            evidence.validate_native_provenance(altered, native["native_allocator"])
+        broad = dict(native, libc_shared_link_command=["ld.lld", "--exclude-libs=ALL"])
+        with self.assertRaisesRegex(evidence.EvidenceError, "broad visibility policy"):
+            evidence.validate_native_provenance(broad, native["native_allocator"])
+
     def test_exact_contract_is_sealed_and_not_a_prefix_rule(self) -> None:
         members = LIST.read_text(encoding="utf-8").splitlines()
         self.assertEqual(len(members), 424)

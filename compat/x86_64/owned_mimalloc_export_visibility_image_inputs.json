@@ -1,0 +1,24 @@
+{
+  "schema": "crabc.x86_64-owned-mimalloc-export-visibility-image-inputs/v1",
+  "image": "sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d",
+  "tools": {
+    "ar": {
+      "path": "/usr/bin/ar",
+      "sha256": "b7989aadd8b335bbd7d53f95f1838c75cbb9475a89e7277b9ce1ced3f821a252",
+      "size": 63712,
+      "mode": 493
+    },
+    "nm": {
+      "path": "/usr/bin/nm",
+      "sha256": "06cb32af7c7082bb9ad65c8440dd465bb74d4c06e5e7f071cac027d7ea5e192b",
+      "size": 56416,
+      "mode": 493
+    },
+    "readelf": {
+      "path": "/usr/bin/readelf",
+      "sha256": "49e72abc29652bbd9453b38b748461cf21aeab07ebf7214740d4d8d8ed943eb1",
+      "size": 805680,
+      "mode": 493
+    }
+  }
+}
