@@ -330,13 +330,15 @@ unsafe fn classify_live_allocation_in_page(
     // allocation becomes visible. The caller's live-client proof keeps the
     // page from reuse or final release, so raw reads do not overlap a write.
     let block_size = unsafe { (*geometry).block_size };
-    let page_offset = unsafe { (*geometry).page_offset };
     if block_size == 0 {
         return None;
     }
-    let page_start = page.as_ptr().addr().checked_add(page_offset)?;
-    let client_address = client.as_ptr().addr();
     let canonical_block = if has_interior_pointers {
+        // Only adjusted clients need page-start geometry to recover their
+        // canonical free-list block. A normal client is that block already.
+        let page_offset = unsafe { (*geometry).page_offset };
+        let page_start = page.as_ptr().addr().checked_add(page_offset)?;
+        let client_address = client.as_ptr().addr();
         let block_address = crate::aligned::recover_block_start(
             client_address,
             page_start,
