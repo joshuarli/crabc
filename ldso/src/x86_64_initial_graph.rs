@@ -5290,13 +5290,16 @@ unsafe fn decode_gnu_hash(
 /// intentionally independent from a SysV/GNU export iteration extent.
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn direct_symbol(object: &Object, index: usize) -> Option<*const u8> {
+    if index < object.symtab_file_record_limit {
+        // The retained limit is the number of complete 24-byte records in
+        // one file-backed load, so this product and pointer stay in that load.
+        return Some(unsafe { object.symtab.add(index * 24) });
+    }
     let byte_offset = index.checked_mul(24)?;
-    if index >= object.symtab_file_record_limit {
-        let virtual_base = (object.symtab as u64).checked_sub(object.base)?;
-        let virtual_address = virtual_base.checked_add(u64::try_from(byte_offset).ok()?)?;
-        if !unsafe { virtual_range_in_readable_file_load(object.phdr, object.phnum, virtual_address, 24) } {
-            return None;
-        }
+    let virtual_base = (object.symtab as u64).checked_sub(object.base)?;
+    let virtual_address = virtual_base.checked_add(u64::try_from(byte_offset).ok()?)?;
+    if !unsafe { virtual_range_in_readable_file_load(object.phdr, object.phnum, virtual_address, 24) } {
+        return None;
     }
     Some(unsafe { object.symtab.add(byte_offset) })
 }
@@ -5698,7 +5701,10 @@ mod readable_file_load_tests {
             symtab_file_record_limit: 2,
             ..EMPTY_OBJECT
         };
+        assert_eq!(unsafe { direct_symbol(&object, 0) }, Some(image.as_ptr()));
         assert_eq!(unsafe { direct_symbol(&object, 1) }, Some(unsafe { image.as_ptr().add(24) }));
+        let narrow = Object { symtab_file_record_limit: 1, ..object };
+        assert_eq!(unsafe { direct_symbol(&narrow, 1) }, Some(unsafe { image.as_ptr().add(24) }));
         assert_eq!(unsafe { direct_symbol(&object, 2) }, Some(unsafe { image.as_ptr().add(48) }));
         assert!(unsafe { direct_symbol(&object, 4) }.is_none());
         assert!(unsafe { direct_symbol(&object, usize::MAX) }.is_none());
