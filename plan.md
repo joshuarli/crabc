@@ -72,8 +72,9 @@ are not transferable passes for a different revision.
   worker owners (low-load, not qualifying). Allocator M3 passes every own
   component and waits only on M2; M4 passes including the unmodified
   upstream `test-api.c` through the native adapter. M6 now source-differentiates
-  quiescent non-main and isolated process-main Heap block visitation across 134
-  adapter keys; six
+  quiescent non-main and isolated process-main Heap block visitation across 138
+  adapter keys, including all five exported Heap membership and region queries
+  and the quiescent page-utilization query; six
   runnable evidence rows pass, while all ten required gates remain blocked
   by named missing API and lifetime evidence. Accumulated mixed-workload
   main-Heap page-population parity remains unproved. Integrated products are
