@@ -5497,6 +5497,45 @@ impl NativeRuntimeLiveClientPageAudit {
     pub const fn registered_slice_count(self) -> usize { self.registered_slice_count }
 }
 
+/// Opaque identity of one regular medium page's arena span.
+///
+/// The selected process registry must still publish this arena when the
+/// caller later requests a scalar state copy. The identity grants no claim,
+/// release, or direct access to arena memory.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+#[derive(Clone, Copy)]
+pub struct NativeRuntimeArenaSpanTestAudit {
+    arena_index: usize,
+    arena_address: usize,
+    slice_index: usize,
+    slice_count: usize,
+    bin: usize,
+}
+
+#[cfg(feature = "native-runtime-test-audit")]
+impl NativeRuntimeArenaSpanTestAudit {
+    #[doc(hidden)]
+    pub const fn slice_count(self) -> usize { self.slice_count }
+}
+
+/// Copied bitmap counts over one registered arena span.
+///
+/// Page and abandoned counts refer to the span's first slice. Free,
+/// committed, and purge counts cover every slice in the span, including
+/// after its PageMap entries have been cleared.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeRuntimeArenaSpanStateTestAudit {
+    pub arena_registry_count: usize,
+    pub page_record_set: usize,
+    pub abandoned_record_set: usize,
+    pub free_slices: usize,
+    pub committed_slices: usize,
+    pub purge_slices: usize,
+}
+
 /// Quiescent PageMap facts for one prior [`NativeRuntimeLiveClientPageAudit`]
 /// fingerprint.
 ///
@@ -6708,6 +6747,120 @@ pub unsafe fn native_runtime_live_client_page_test_audit(
         arena_slice_start: arena_slice_start.addr(),
         arena_slice_count,
         registered_slice_count: registered_size / ARENA_SLICE_SIZE,
+    })
+}
+
+/// Captures the selected arena identity of one exact live regular medium client.
+///
+/// # Safety
+///
+/// `client` must remain live throughout the call. The caller must exclude
+/// concurrent page, PageMap, arena-registry, and bitmap mutation while this
+/// short projection validates the identity and copies its geometry.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub unsafe fn native_runtime_live_client_arena_span_test_audit(
+    client: core::ptr::NonNull<u8>,
+) -> Option<NativeRuntimeArenaSpanTestAudit> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
+    let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
+    // SAFETY: the exact live client and quiescent page owner keep this lookup
+    // and its short immutable scalar projection valid.
+    let page = unsafe { page_map.lookup_page_for_live_client(client) }.ok()??;
+    let page_ref = unsafe { page.as_ref() };
+    let block_size = page_ref.block_size();
+    if block_size <= SMALL_SIZE_MAX || block_size > MEDIUM_MAX_OBJ_SIZE
+        || block_size % core::mem::size_of::<usize>() != 0
+    {
+        return None;
+    }
+    let memory = page_ref.memid().arena_memory()?;
+    let slice_index = memory.slice_index as usize;
+    let slice_count = memory.slice_count as usize;
+    let end = slice_index.checked_add(slice_count)?;
+    if slice_count == 0 {
+        return None;
+    }
+    // SAFETY: the live page's arena memid keeps its source arena alive for
+    // this call; the registry comparison below rejects an unrelated slot.
+    let candidate = unsafe { memory.arena.as_ref() }?;
+    let owner = unsafe { RUNTIME_PROCESS.active_owner() }?;
+    let process = owner.ready().ok()?.process_backing().ok()?.process();
+    let registry = process.subprocess().arena_backing().registry();
+    let arena_index = candidate.arena_index;
+    let published = unsafe { registry.arena_at(arena_index) }?;
+    if !core::ptr::eq(candidate, published)
+        || candidate.subprocess != process.subprocess().as_ptr()
+        || end > candidate.slice_count
+    {
+        return None;
+    }
+    let bin = size_class::bin_for_regular_page_block_size(block_size);
+    // SAFETY: the exact registry publication and live page retain this arena.
+    let view = unsafe { ArenaView::from_ptr(memory.arena) }?;
+    view.abandoned_pages(bin)?;
+    Some(NativeRuntimeArenaSpanTestAudit {
+        arena_index,
+        arena_address: memory.arena.addr(),
+        slice_index,
+        slice_count,
+        bin,
+    })
+}
+
+/// Copies the arena bitmap state for a previously validated regular span.
+///
+/// # Safety
+///
+/// The selected process and its arena registry must remain live. The caller
+/// must exclude concurrent arena publication, claim, release, or purge while
+/// this function reads the span, including after its page has been freed.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub unsafe fn native_runtime_arena_span_state_test_audit(
+    span: NativeRuntimeArenaSpanTestAudit,
+) -> Option<NativeRuntimeArenaSpanStateTestAudit> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
+    let owner = unsafe { RUNTIME_PROCESS.active_owner() }?;
+    let process = owner.ready().ok()?.process_backing().ok()?.process();
+    let registry = process.subprocess().arena_backing().registry();
+    let published = unsafe { registry.arena_at(span.arena_index) }?;
+    if core::ptr::from_ref(published).addr() != span.arena_address
+        || published.subprocess != process.subprocess().as_ptr()
+        || span.slice_count == 0
+        || span.slice_index.checked_add(span.slice_count)? > published.slice_count
+    {
+        return None;
+    }
+    // SAFETY: the registry still publishes the exact arena, and the caller
+    // excludes mutation while these atomic bitmap fields are copied.
+    let view = unsafe { ArenaView::from_ptr(core::ptr::from_ref(published).cast_mut()) }?;
+    let pages = unsafe { view.pages() }?;
+    let abandoned = view.abandoned_pages(span.bin)?;
+    let free = unsafe { view.slices_free() }?;
+    let committed = unsafe { view.slices_committed() }?;
+    let purge = unsafe { view.slices_purge() }?;
+    let mut free_slices = 0;
+    let mut committed_slices = 0;
+    let mut purge_slices = 0;
+    for index in span.slice_index..span.slice_index + span.slice_count {
+        free_slices += usize::from(free.is_set_range(index, 1)?);
+        committed_slices += usize::from(committed.is_set_range(index, 1)?);
+        purge_slices += usize::from(purge.is_set_range(index, 1)?);
+    }
+    Some(NativeRuntimeArenaSpanStateTestAudit {
+        arena_registry_count: registry.count(),
+        page_record_set: usize::from(pages.is_set_range(span.slice_index, 1)?),
+        abandoned_record_set: usize::from(!abandoned.bitmap_is_clear(span.slice_index)),
+        free_slices,
+        committed_slices,
+        purge_slices,
     })
 }
 
