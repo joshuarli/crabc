@@ -75,8 +75,10 @@ static POOL: PoolCell = PoolCell(UnsafeCell::new(Pool {
 /// Class index and size for a pooled request, or `None` for its own mapping.
 fn class(bytes: usize, align: usize) -> Option<(usize, usize)> {
     if align > SMALLEST_CLASS || bytes > LARGEST_CLASS { return None; }
-    let size = bytes.max(SMALLEST_CLASS).next_power_of_two();
-    Some(((size / SMALLEST_CLASS).trailing_zeros() as usize, size))
+    // The exponent gives both the rounded block size and its free-list index.
+    let exponent = usize::BITS - (bytes.max(SMALLEST_CLASS) - 1).leading_zeros();
+    let index = (exponent - SMALLEST_CLASS.trailing_zeros()) as usize;
+    Some((index, SMALLEST_CLASS << index))
 }
 
 fn map(bytes: usize) -> Option<*mut u8> {
@@ -265,6 +267,20 @@ unsafe impl<T: Sync> Sync for LoaderVec<T> {}
 mod pool_tests {
     extern crate std;
     use super::*;
+
+    #[test]
+    fn class_rounding_keeps_pool_and_mapping_boundaries() {
+        for (bytes, index, size) in [
+            (0, 0, 16), (1, 0, 16), (16, 0, 16), (17, 1, 32),
+            (31, 1, 32), (32, 1, 32), (33, 2, 64),
+            (LARGEST_CLASS - 1, CLASS_COUNT - 1, LARGEST_CLASS),
+            (LARGEST_CLASS, CLASS_COUNT - 1, LARGEST_CLASS),
+        ] {
+            assert_eq!(class(bytes, 16), Some((index, size)));
+        }
+        assert_eq!(class(LARGEST_CLASS + 1, 16), None);
+        assert_eq!(class(16, 32), None);
+    }
 
     // Recycled blocks must come back zeroed and class-aligned, large blocks
     // keep their own mapping, and concurrent users never share a block.
