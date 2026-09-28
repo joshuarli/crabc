@@ -758,6 +758,18 @@ impl SourceFormattedMessage {
         Self { bytes, length }
     }
 
+    /// `"requested alignment is too large (%zu KiB)\n"` from the OS
+    /// singleton page fallback when its block alignment reaches the metadata
+    /// alignment and the page header could no longer precede the block.
+    pub(crate) fn page_alignment_too_large(alignment: usize) -> Self {
+        let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
+        let mut length = 0;
+        append_mbind_bytes(&mut bytes, &mut length, b"requested alignment is too large (");
+        append_mbind_unsigned_decimal(&mut bytes, &mut length, (alignment / 1024) as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b" KiB)\n");
+        Self { bytes, length }
+    }
+
     /// `"cannot use OS memory since it is not large enough (size %zu KiB,
     /// minimum required is %zu KiB)"` from `mi_manage_os_memory_ex2`
     /// (`src/arena.c:1816-1819`); the source literal has no final newline.

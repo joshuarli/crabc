@@ -123,7 +123,21 @@ unsafe fn heap_allocate(heap: *mut c_void, size: usize, request: Request, zero: 
             return Sourced { value: None, errno: SourceErrno::error_message(report.error()) };
         }
     }
-    let block = if crate::subproc::lifecycle::current_thread_is_child_member() {
+    let child_member = crate::subproc::lifecycle::current_thread_is_child_member();
+    let child_page_alignment_refusal = match request {
+        Request::Aligned { alignment, offset: 0 }
+            if child_member && alignment >= crate::config::PAGE_META_ALIGNMENT => Some(alignment),
+        _ => None,
+    };
+    if child_page_alignment_refusal.is_some() {
+        // `_mi_heap_theap` precedes the allocation attempt even when the OS
+        // page geometry later refuses this alignment.
+        // SAFETY: forwarded Heap and current-child obligations.
+        if !unsafe { crate::subproc::lifecycle::native_child_heap_select_theap(heap) } {
+            return Sourced { value: None, errno: report_failure(size, request) };
+        }
+    }
+    let block = if child_member {
         let aligned = match request {
             Request::Plain => None,
             Request::Aligned { alignment, offset } => Some((alignment, offset)),
@@ -141,7 +155,19 @@ unsafe fn heap_allocate(heap: *mut c_void, size: usize, request: Request, zero: 
     if block.is_some() {
         return Sourced { value: block, errno: SourceErrno::Unchanged };
     }
-    Sourced { value: None, errno: report_failure(size, request) }
+    let prior_errno = if let Some(alignment) = child_page_alignment_refusal {
+        // Each of `mi_find_page`'s two attempts reaches the same OS-page
+        // alignment refusal before the generic fallback reports OOM.
+        for _ in 0..2 {
+            crate::process_init::process_warning_message(
+                SourceFormattedMessage::page_alignment_too_large(alignment),
+            );
+        }
+        SourceErrno::Store(Errno::INVAL)
+    } else {
+        SourceErrno::Unchanged
+    };
+    Sourced { value: None, errno: prior_errno.then(report_failure(size, request)) }
 }
 
 /// The failed `_mi_malloc_generic`'s reports: `mi_find_page` refuses a

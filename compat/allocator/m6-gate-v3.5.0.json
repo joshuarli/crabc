@@ -189,7 +189,7 @@
         "unit:heap-allocation"
       ],
       "blocked_by": [
-        "Every Heap-scoped allocation entry is exported for main-subprocess threads and follows its source path through the Heap's Theap; child-subprocess threads route plain, zeroing, bounded aligned, owned-block, and same-child cross-Heap reallocation through the selected Heap's Theap, while larger alignment sizes remain unproved for child Heap operations."
+        "Every Heap-scoped allocation entry is exported for main-subprocess threads and follows its source path through the Heap's Theap; selected child-subprocess plain, zeroing, aligned through 128 MiB, owned-block, and same-child cross-Heap paths match pinned C, including the 256 MiB alignment refusal. The required Heap allocation unit runner and complete per-entry failure and lifetime coverage remain open."
       ]
     },
     {
@@ -327,7 +327,7 @@
         "unit:subprocess"
       ],
       "blocked_by": [
-        "mi_subproc_main, mi_subproc_current, mi_subproc_new, mi_subproc_destroy, mi_subproc_add_current_thread, and mi_subproc_visit_heaps are exported for root children of the process main subprocess; a child thread's non-main Heaps allocate only through plain mi_heap_malloc, nested children do not exist, and the subprocess statistics entries have no public entry."
+        "mi_subproc_main, mi_subproc_current, mi_subproc_new, mi_subproc_destroy, mi_subproc_add_current_thread, and mi_subproc_visit_heaps are exported for root children of the process main subprocess; selected child non-main Heap allocation, zeroing, alignment, and reallocation paths match pinned C, while nested children, complete Heap entry and failure coverage, and subprocess statistics entries remain absent."
       ]
     },
     {

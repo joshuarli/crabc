@@ -38,20 +38,29 @@ static void capture(const char* message, void* argument) {
 }
 
 static char thread_text[40];
+static char child_thread_text[40];
 
-/* Messages print as hex with the initial thread's `0x<tid>` replaced by
-   `0xTID`, so address variation cannot affect the comparison. */
+/* Messages print as hex with either observed thread's `0x<tid>` replaced
+   by `0xTID`, so address variation cannot affect the comparison. */
 static void print_messages(const char* key) {
   printf("%s=", key);
   const size_t thread_length = strlen(thread_text);
+  const size_t child_thread_length = strlen(child_thread_text);
   for (size_t index = 0; index < message_count && index < MAX_MESSAGES; index++) {
     if (index != 0) printf(":");
     const char* message = messages[index];
     const size_t length = strlen(message);
     for (size_t i = 0; i < length; ) {
+      size_t matched = 0;
       if (thread_length > 0 && i + thread_length <= length && memcmp(message + i, thread_text, thread_length) == 0) {
+        matched = thread_length;
+      } else if (child_thread_length > 0 && i + child_thread_length <= length
+                 && memcmp(message + i, child_thread_text, child_thread_length) == 0) {
+        matched = child_thread_length;
+      }
+      if (matched != 0) {
         for (const char* c = "0xTID"; *c != 0; c++) printf("%02x", (unsigned char)*c);
-        i += thread_length;
+        i += matched;
       } else {
         printf("%02x", (unsigned char)message[i]);
         i++;
@@ -458,6 +467,7 @@ static int visit(mi_subproc_id_t subproc, int limit, bool* result) {
 static mi_subproc_id_t child;
 static int child_facts[12];
 static int child_heap_variants[5];
+static int child_heap_large_alignment[14];
 static int child_heap_realloc[10];
 static int child_cross_heap_realloc[14];
 static mi_heap_t* cross_thread_source_heap;
@@ -473,6 +483,7 @@ static void* child_cross_thread_source(void* argument) {
 
 static void* child_worker(void* argument) {
   (void)argument;
+  snprintf(child_thread_text, sizeof(child_thread_text), "0x%02lX", (unsigned long)(uintptr_t)pthread_self());
   mi_subproc_add_current_thread(child);
   child_facts[0] = mi_subproc_current()._mi_subproc_id == child._mi_subproc_id;
   child_facts[1] = mi_heap_main() != NULL;
@@ -498,6 +509,35 @@ static void* child_worker(void* argument) {
   unsigned char* ca = (unsigned char*)mi_heap_calloc_aligned_at(h, 4, 23, 64, 5);
   child_heap_variants[4] = ca != NULL && (((uintptr_t)ca + 5) % 64) == 0
                            && zeroed(ca, 92) && mi_heap_of(ca) == h;
+  void* large_arena = mi_heap_malloc_aligned(h, 8192, 64 * 1024);
+  child_heap_large_alignment[0] = large_arena != NULL && ((uintptr_t)large_arena % (64 * 1024)) == 0;
+  child_heap_large_alignment[1] = large_arena != NULL && mi_heap_of(large_arena) == h;
+  unsigned char* large_zero = (unsigned char*)mi_heap_zalloc_aligned(h, 4096, MIB);
+  child_heap_large_alignment[2] = large_zero != NULL && ((uintptr_t)large_zero % MIB) == 0;
+  child_heap_large_alignment[3] = large_zero != NULL && zeroed(large_zero, 4096)
+                                  && mi_heap_of(large_zero) == h;
+  unsigned char* large_at = (unsigned char*)mi_heap_calloc_aligned_at(h, 2, 4096, 64 * 1024, 13);
+  child_heap_large_alignment[4] = large_at != NULL && (((uintptr_t)large_at + 13) % (64 * 1024)) == 0;
+  child_heap_large_alignment[5] = large_at != NULL && zeroed(large_at, 8192)
+                                  && mi_heap_of(large_at) == h;
+  void* large_os = mi_heap_malloc_aligned(h, 4096, 2 * MIB);
+  child_heap_large_alignment[6] = large_os != NULL && ((uintptr_t)large_os % (2 * MIB)) == 0
+                                  && mi_heap_of(large_os) == h;
+  void* large_upper = mi_heap_malloc_aligned(h, 4096, 128 * MIB);
+  child_heap_large_alignment[11] = large_upper != NULL && ((uintptr_t)large_upper % (128 * MIB)) == 0
+                                   && mi_heap_of(large_upper) == h;
+  errno = 0;
+  void* bad_offset = mi_heap_malloc_aligned_at(h, 4096, MIB, 7);
+  child_heap_large_alignment[7] = bad_offset == NULL;
+  child_heap_large_alignment[8] = errno;
+  errno = 0;
+  void* overflow_aligned = mi_heap_calloc_aligned(h, SIZE_MAX / 2, 3, MIB);
+  child_heap_large_alignment[9] = overflow_aligned == NULL && errno == 0;
+  child_heap_large_alignment[10] = mi_heap_contains(h, large_zero);
+  errno = 0;
+  void* beyond_limit = mi_heap_malloc_aligned(h, 4096, 256 * MIB);
+  child_heap_large_alignment[12] = beyond_limit == NULL;
+  child_heap_large_alignment[13] = errno;
   unsigned char* rp = (unsigned char*)mi_heap_malloc(h, 100);
   memset(rp, 0x31, 100);
   unsigned char* shrunk = (unsigned char*)mi_heap_realloc(h, rp, 80);
@@ -594,6 +634,11 @@ static void* child_worker(void* argument) {
   mi_free(a);
   mi_free(at);
   mi_free(ca);
+  mi_free(large_arena);
+  mi_free(large_zero);
+  mi_free(large_at);
+  mi_free(large_os);
+  mi_free(large_upper);
   mi_free(grown);
   mi_free(rz_grown);
   mi_free(ra_at);
@@ -657,6 +702,13 @@ static void subproc_section(void) {
   printf("subproc.child.membership=%d\n", child_facts[11]);
   printf("subproc.child.heap_variants=%d,%d,%d,%d,%d\n", child_heap_variants[0], child_heap_variants[1],
          child_heap_variants[2], child_heap_variants[3], child_heap_variants[4]);
+  printf("subproc.child.large_alignment=%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+         child_heap_large_alignment[0], child_heap_large_alignment[1], child_heap_large_alignment[2],
+         child_heap_large_alignment[3], child_heap_large_alignment[4], child_heap_large_alignment[5],
+         child_heap_large_alignment[6], child_heap_large_alignment[7], child_heap_large_alignment[8],
+         child_heap_large_alignment[9], child_heap_large_alignment[10], child_heap_large_alignment[11],
+         child_heap_large_alignment[12], child_heap_large_alignment[13]);
+  print_errors("subproc.child.large_alignment.codes");
   printf("subproc.child.heap_realloc=%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
          child_heap_realloc[0], child_heap_realloc[1], child_heap_realloc[2], child_heap_realloc[3],
          child_heap_realloc[4], child_heap_realloc[5], child_heap_realloc[6], child_heap_realloc[7],
