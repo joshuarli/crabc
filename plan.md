@@ -69,8 +69,11 @@ are not transferable passes for a different revision.
   PageMap retirement precedes arena RSS release with the default purge delay,
   while immediate purge releases at collection. A two-arena pressure profile
   matches C/Rust medium and PageMap transitions in six profiles; three more
-  paired replays found no canonical RSS step. A separate 65,536-byte profile
-  exposes a medium-page capacity difference now under reduction. The
+  paired replays found no canonical RSS step. A 65,536-byte medium-page
+  capacity difference was traced to the native C ABI requesting explicit
+  alignment for ordinary `malloc`; the source-shaped size-class dispatch now
+  matches pinned C usable size and page transition on initial and worker
+  owners while retaining 16-byte alignment for tiny C allocations. The
   intermittent native RSS breach remains unexplained.
   The full M2 runner records complete
   metadata, bitmap, PageMap, and allocator-recursion components; VM primitives,
