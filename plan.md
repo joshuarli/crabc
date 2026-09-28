@@ -38,6 +38,10 @@ are not transferable passes for a different revision.
   passed seven gates, failed its churn and upstream stress gates on one seed-2
   static-PIE PageMap high-water spike, and left codegen/performance blocked;
   the same binary passed a focused replay, so the spike remains unresolved.
+  A source-bound regression now passes for non-abandoning full-queue owner
+  exit with a full medium page, one remote free, and an OS singleton; a
+  diagnostic seed-2 replay reproduced the high-water failure and localized
+  its growth to medium pages, with the collection cause still under study.
   The full M2 runner records complete
   metadata, bitmap, PageMap, and allocator-recursion components; VM primitives,
   arenas, initialization, and fault injection remain partial. Every freestanding-C runner builds `libc.a` through
