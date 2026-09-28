@@ -147,7 +147,7 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
         payload_hashes = builder.regular_file_hashes(root)
         builder.write_json(
             root / "share" / "crabc" / "manifest.json",
-            builder.installed_manifest(payload_hashes, self.example_producer_tools()),
+            builder.installed_manifest(payload_hashes, self.example_producer_tools(), source_sha256="a" * 64),
         )
         return installed
 
@@ -415,11 +415,14 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
 
     def test_manifest_contract_names_installed_inputs_and_non_promotion_scope(self) -> None:
         producer_tools = self.example_producer_tools()
-        manifest = builder.installed_manifest({"usr/lib/crt1.o": "0" * 64}, producer_tools)
+        manifest = builder.installed_manifest({"usr/lib/crt1.o": "0" * 64}, producer_tools,
+                                              source_sha256="a" * 64)
+        self.assertEqual(manifest["source_sha256"], "a" * 64)
         self.assertEqual(manifest["format"], builder.FORMAT)
         self.assertEqual(manifest["target"], builder.TARGET)
         self.assertEqual(manifest["toolchain"], builder.PINNED_TOOLCHAIN)
         self.assertEqual(manifest["producer_tools"], producer_tools)
+
         self.assertEqual(
             manifest["package"],
             {
@@ -463,6 +466,20 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             "x86-64 promotion or public support",
         ):
             self.assertIn(item, manifest["not_selected"])
+
+    def test_source_change_during_build_prevents_product_publication(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            output = Path(temporary) / "installed"
+            with mock.patch.object(builder, "assert_native_target"), \
+                 mock.patch.object(builder, "build_runtime_inputs", return_value={}), \
+                 mock.patch.object(builder, "assemble", return_value={"source_sha256": "a" * 64}), \
+                 mock.patch.object(builder.static_product_contract, "source_digest",
+                                   side_effect=["a" * 64, "b" * 64]):
+                with self.assertRaisesRegex(builder.BuildError, "source changed during build"):
+                    builder.build(output)
+            self.assertFalse(output.exists())
 
     def test_recorded_libc_build_command_retains_the_static_sysroot_cfg(self) -> None:
         """Published provenance must retain the cfg used for the rebuilt archive."""
@@ -799,6 +816,7 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             builder.installed_manifest(
                 builder.regular_file_hashes(static, exclude=frozenset({driver.MANIFEST_RELATIVE_PATH})),
                 self.example_producer_tools(),
+                source_sha256="a" * 64,
             ),
         )
         dynamic = workspace / "dynamic"
@@ -810,6 +828,10 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             ("usr/lib/crt1.o", b"owned\n"),
             ("usr/include/stdint.h", b"\n"),
             ("share/crabc/crabc_cc_static.py", DRIVER_SOURCE.read_bytes()),
+            ("share/crabc/dynamic-product-state.json", json.dumps({
+                "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
+                "source_sha256": "a" * 64,
+            }).encode()),
         ):
             path = dynamic / relative
             path.parent.mkdir(parents=True, exist_ok=True)

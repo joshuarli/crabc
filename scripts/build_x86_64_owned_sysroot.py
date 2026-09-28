@@ -33,6 +33,7 @@ from typing import Sequence
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.rust_toolchain import pinned_toolchain
+from compat.x86_64 import static_product_contract
 TARGET = "x86_64-unknown-linux-musl"
 FORMAT = "crabc-x86-64-owned-static-sysroot-v1"
 PINNED_TOOLCHAIN = pinned_toolchain(ROOT)
@@ -743,12 +744,16 @@ def regular_file_hashes(root: Path, *, exclude: frozenset[str] = frozenset()) ->
 
 def installed_manifest(
     payload_hashes: dict[str, str], producer_tools: dict[str, object],
-    *, allocator_backend: str = "accepted-c",
+    *, allocator_backend: str = "accepted-c", source_sha256: str | None = None,
 ) -> dict[str, object]:
     """Describe the bounded installed contract without promoting either family."""
 
     if allocator_backend not in ALLOCATOR_BACKENDS:
         raise BuildError("unknown owned allocator backend")
+    if source_sha256 is None:
+        source_sha256 = static_product_contract.source_digest()
+    if len(source_sha256) != 64 or any(character not in "0123456789abcdef" for character in source_sha256):
+        raise BuildError("invalid owned static source digest")
     target_inputs = list(TARGET_RUNTIME_INPUTS)
     if allocator_backend in NATIVE_ALLOCATOR_BACKENDS:
         target_inputs[3] = "fixed-upstream Rust mimalloc in the selected crabc-libc Rust object"
@@ -759,6 +764,7 @@ def installed_manifest(
         "format": FORMAT,
         "target": TARGET,
         "toolchain": PINNED_TOOLCHAIN,
+        "source_sha256": source_sha256,
         "producer_tools": producer_tools,
         "scope": EVIDENCE_SCOPE if allocator_backend == EVIDENCE_ALLOCATOR_BACKEND else SCOPE,
         "allocator_backend": allocator_backend,
@@ -1313,7 +1319,7 @@ def build_commands_record(
     }
 
 
-def assemble(output: Path, inputs: dict[str, object]) -> dict[str, object]:
+def assemble(output: Path, inputs: dict[str, object], source_sha256: str) -> dict[str, object]:
     remove_owned_output(output)
     output.mkdir(parents=True)
     output.chmod(0o755)
@@ -1366,7 +1372,9 @@ def assemble(output: Path, inputs: dict[str, object]) -> dict[str, object]:
         output,
         exclude=frozenset({manifest_path.relative_to(output).as_posix()}),
     )
-    manifest = installed_manifest(payload_hashes, producer_tools, allocator_backend=inputs.get("allocator_backend", DEFAULT_ALLOCATOR_BACKEND))
+    manifest = installed_manifest(payload_hashes, producer_tools,
+                                  allocator_backend=inputs.get("allocator_backend", DEFAULT_ALLOCATOR_BACKEND),
+                                  source_sha256=source_sha256)
     write_json(manifest_path, manifest)
     installed_hashes = regular_file_hashes(output)
     expected = set(payload_hashes) | {manifest_path.relative_to(output).as_posix()}
@@ -1378,6 +1386,7 @@ def assemble(output: Path, inputs: dict[str, object]) -> dict[str, object]:
 def build(output: Path, *, allocator_backend: str = DEFAULT_ALLOCATOR_BACKEND,
           lifecycle_test_audit: bool = False) -> dict[str, object]:
     assert_native_target()
+    source_before_build = static_product_contract.source_digest()
     output = validate_output_path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="crabc-x86-owned-sysroot.", dir=output.parent) as temporary:
@@ -1385,7 +1394,9 @@ def build(output: Path, *, allocator_backend: str = DEFAULT_ALLOCATOR_BACKEND,
         inputs = build_runtime_inputs(temporary_root, allocator_backend=allocator_backend,
                                       lifecycle_test_audit=lifecycle_test_audit)
         staged_output = temporary_root / "installed"
-        manifest = assemble(staged_output, inputs)
+        manifest = assemble(staged_output, inputs, source_before_build)
+        if static_product_contract.source_digest() != source_before_build:
+            raise BuildError("owned static source changed during build")
         remove_owned_output(output)
         staged_output.replace(output)
         return manifest

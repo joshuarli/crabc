@@ -94,6 +94,18 @@ class StaticProductSuiteTests(unittest.TestCase):
         with self.assertRaisesRegex(PRODUCT.StaticProductError, "implemented-unqualified"):
             PRODUCT.validate_contract(contract)
 
+    def test_receipt_requires_every_installed_static_manifest_to_match_live_source(self) -> None:
+        source = "a" * 64
+        manifests = {name: {"source_sha256": source}
+                     for name in ("primary", "reproduction", "extracted")}
+        PRODUCT.require_product_source(manifests, source)
+        manifests["extracted"]["source_sha256"] = "b" * 64
+        with self.assertRaisesRegex(PRODUCT.StaticProductError, "extracted installed static product source"):
+            PRODUCT.require_product_source(manifests, source)
+        del manifests["extracted"]["source_sha256"]
+        with self.assertRaisesRegex(PRODUCT.StaticProductError, "extracted installed static product source"):
+            PRODUCT.require_product_source(manifests, source)
+
     def write_case(self, report: Path, product: str, mode: str, case_path: str, *,
                    trace_lines: list[str] | None = None, program_headers: str | None = None,
                    relocations: str | None = None) -> tuple[dict, dict]:

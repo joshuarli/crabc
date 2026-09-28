@@ -44,6 +44,8 @@ import owned_static_sysroot_package as shared_package
 FORMAT = "crabc-x86-64-owned-sysroot-v1"
 TARGET = "x86_64-unknown-linux-musl"
 MANIFEST = "share/crabc/manifest.json"
+DYNAMIC_STATE = "share/crabc/dynamic-product-state.json"
+DYNAMIC_STATE_SCHEMA = "crabc.x86_64-owned-dynamic-materialization/v1"
 METADATA_PREFIX = "share/crabc/"
 PRODUCTS = ("static", "dynamic")
 PRODUCT_BUILDERS = {
@@ -115,12 +117,47 @@ def product_manifest(root: Path, product: str) -> dict:
     return record
 
 
+def require_matching_source_seals(static_manifest: dict, dynamic_state_payload: bytes) -> None:
+    """Require the two embedded products to claim the same complete source tree."""
+
+    static_source = static_manifest.get("source_sha256")
+    require(isinstance(static_source, str) and len(static_source) == 64
+            and all(character in "0123456789abcdef" for character in static_source),
+            "static product source seal is missing or invalid")
+    try:
+        dynamic_state = json.loads(dynamic_state_payload)
+    except (ValueError, UnicodeDecodeError) as error:
+        raise CompositionError("dynamic product state is invalid") from error
+    require(isinstance(dynamic_state, dict) and dynamic_state.get("schema") == DYNAMIC_STATE_SCHEMA,
+            "dynamic product state identity differs")
+    dynamic_source = dynamic_state.get("source_sha256")
+    require(isinstance(dynamic_source, str) and len(dynamic_source) == 64
+            and all(character in "0123456789abcdef" for character in dynamic_source),
+            "dynamic product source seal is missing or invalid")
+    require(static_source == dynamic_source, "static and dynamic product source seals differ")
+
+
+def dynamic_state_destination(record: dict) -> str:
+    products = record.get("products")
+    dynamic = products.get("dynamic") if isinstance(products, dict) else None
+    placements = dynamic.get("placements") if isinstance(dynamic, dict) else None
+    destination = placements.get(DYNAMIC_STATE) if isinstance(placements, dict) else None
+    require(isinstance(destination, str) and destination in record.get("files", {}),
+            "combined product does not place dynamic product state")
+    return destination
+
+
 def plan(products: Mapping[str, Path]) -> dict:
     """Decide every installed path from two validated product trees."""
 
     require(tuple(products) == PRODUCTS, "composition requires the static and dynamic products")
     trees = {name: tree(root) for name, root in products.items()}
     manifests = {name: product_manifest(root, name) for name, root in products.items()}
+    try:
+        dynamic_state = (products["dynamic"] / DYNAMIC_STATE).read_bytes()
+    except OSError as error:
+        raise CompositionError("dynamic product state is missing") from error
+    require_matching_source_seals(manifests["static"], dynamic_state)
     toolchains = {record.get("toolchain") for record in manifests.values()}
     require(len(toolchains) == 1 and isinstance(next(iter(toolchains)), str),
             "products were built by different Rust toolchains")
@@ -222,6 +259,7 @@ def validate_component_claims(record: dict, embedded_payloads: Mapping[str, byte
             and isinstance(record.get("toolchain"), str) and record.get("modes") == list(MODES),
             "combined package identity differs")
     claims: dict[str, str] = {}
+    static_manifest: dict | None = None
     for name in PRODUCTS:
         manifest_path = f"{METADATA_PREFIX}{name}/manifest.json"
         component = products[name]
@@ -230,7 +268,7 @@ def validate_component_claims(record: dict, embedded_payloads: Mapping[str, byte
                 and component["manifest"] == manifest_path
                 and isinstance(component["placements"], dict),
                 f"combined package {name} placement identity differs")
-        payload = embedded_payloads.get(name)
+        payload = embedded_payloads.get(manifest_path)
         require(isinstance(payload, bytes), f"combined package {name} manifest is missing")
         try:
             embedded = json.loads(payload)
@@ -241,6 +279,8 @@ def validate_component_claims(record: dict, embedded_payloads: Mapping[str, byte
                 and embedded.get("target") == TARGET
                 and embedded.get("toolchain") == record["toolchain"],
                 f"combined package {name} manifest identity differs")
+        if name == "static":
+            static_manifest = embedded
         installed = embedded.get("installed")
         if name == "static":
             component_files = installed.get("files") if isinstance(installed, dict) else None
@@ -251,6 +291,8 @@ def validate_component_claims(record: dict, embedded_payloads: Mapping[str, byte
                         for path, digest in component_files.items()),
                 f"combined package {name} file roster differs")
         if name == "dynamic":
+            require(DYNAMIC_STATE in component_files,
+                    "dynamic product manifest omits its source-bound state")
             require(embedded.get("symlinks") == record["symlinks"],
                     "combined package aliases differ from dynamic component")
         placements = component["placements"]
@@ -269,6 +311,10 @@ def validate_component_claims(record: dict, embedded_payloads: Mapping[str, byte
                     f"combined package {name} placement conflicts: {origin}")
             claims[destination] = digest
     require(claims == record["files"], "unclaimed package payload")
+    state_payload = embedded_payloads.get(dynamic_state_destination(record))
+    require(isinstance(state_payload, bytes), "combined package dynamic product state is missing")
+    require(static_manifest is not None, "combined package static manifest is missing")
+    require_matching_source_seals(static_manifest, state_payload)
 
 
 def validate(root: Path) -> dict:
@@ -292,9 +338,11 @@ def validate(root: Path) -> dict:
     for path, target in links.items():
         resolved = PurePosixPath(path).parent / target
         require("/" not in target and resolved.as_posix() in files, f"symlink escapes the payload: {path}")
+    state_destination = dynamic_state_destination(record)
     validate_component_claims(record, {
-        name: (root / f"{METADATA_PREFIX}{name}/manifest.json").read_bytes()
-        for name in PRODUCTS
+        **{f"{METADATA_PREFIX}{name}/manifest.json":
+           (root / f"{METADATA_PREFIX}{name}/manifest.json").read_bytes() for name in PRODUCTS},
+        state_destination: (root / state_destination).read_bytes(),
     })
     return record
 
@@ -367,9 +415,7 @@ def read_validated_package(package_path: Path) -> tuple[dict, dict[str, bytes]]:
             if member.name != MANIFEST:
                 require(sha256_bytes(payload) == record["files"][member.name], "combined package payload differs")
             payloads[member.name] = payload
-    validate_component_claims(record, {
-        name: payloads.get(f"{METADATA_PREFIX}{name}/manifest.json") for name in PRODUCTS
-    })
+    validate_component_claims(record, payloads)
     return record, payloads
 
 

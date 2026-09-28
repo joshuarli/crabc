@@ -26,6 +26,7 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(dir=temporary_root)
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        self.source_sha256 = "a" * 64
         self.static = self.product("static", {
             "bin/crabc-cc": (b"static driver", 0o755),
             "usr/lib/crt1.o": (b"shared ET_EXEC entry", 0o644),
@@ -44,7 +45,9 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
             "usr/lib/crabc-dynamic-attach.o": (b"attach", 0o644),
             "share/crabc/crabc_cc_static.py": (b"static driver module", 0o644),
             "share/crabc/crt.provenance.json": (b"dynamic crt producer", 0o644),
-            "share/crabc/dynamic-product-state.json": (b"state", 0o644),
+            "share/crabc/dynamic-product-state.json": (
+                json.dumps({"schema": "crabc.x86_64-owned-dynamic-materialization/v1",
+                            "source_sha256": self.source_sha256}).encode(), 0o644),
         }, symlinks={"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"})
 
     def product(self, name: str, files: dict[str, tuple[bytes, int]], symlinks=None) -> Path:
@@ -63,6 +66,7 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
                     "toolchain": "nightly-pinned"}
         if name == "static":
             manifest["installed"] = {"files": files}
+            manifest["source_sha256"] = self.source_sha256
         else:
             manifest["files"] = files
             manifest["symlinks"] = symlinks or {}
@@ -136,6 +140,62 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
         (self.static / "share/crabc/dynamic/crt.provenance.json").write_bytes(b"squatter")
         with self.assertRaisesRegex(combined.CompositionError, "claim installed path"):
             combined.plan({"static": self.static, "dynamic": self.dynamic})
+
+    def test_source_seals_must_match_before_composition(self):
+        manifest_path = self.static / combined.MANIFEST
+        manifest = json.loads(manifest_path.read_text())
+        manifest["source_sha256"] = "b" * 64
+        manifest_path.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(combined.CompositionError, "source seals differ"):
+            self.compose()
+        self.assertFalse((self.root / "combined").exists())
+        del manifest["source_sha256"]
+        manifest_path.write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(combined.CompositionError, "static product source seal is missing"):
+            self.compose()
+        self.assertFalse((self.root / "combined").exists())
+
+    def test_rehashed_package_cannot_substitute_dynamic_source_seal(self):
+        product = self.compose()
+        archive_path = self.root / "good.tar"
+        combined.package(product, archive_path)
+        state_path = "share/crabc/dynamic-product-state.json"
+        dynamic_manifest_path = "share/crabc/dynamic/manifest.json"
+        with tarfile.open(archive_path) as archive:
+            members = [(copy.copy(member), archive.extractfile(member).read() if member.isfile() else None)
+                       for member in archive.getmembers()]
+        for index, (member, payload) in enumerate(members):
+            if member.name == state_path:
+                state = json.loads(payload)
+                state["source_sha256"] = "b" * 64
+                payload = json.dumps(state).encode()
+                member.size = len(payload)
+                members[index] = (member, payload)
+                state_digest = combined.sha256_bytes(payload)
+        for index, (member, payload) in enumerate(members):
+            if member.name == dynamic_manifest_path:
+                manifest = json.loads(payload)
+                manifest["files"][state_path] = state_digest
+                payload = json.dumps(manifest).encode()
+                member.size = len(payload)
+                members[index] = (member, payload)
+                manifest_digest = combined.sha256_bytes(payload)
+        for index, (member, payload) in enumerate(members):
+            if member.name == combined.MANIFEST:
+                manifest = json.loads(payload)
+                manifest["files"][state_path] = state_digest
+                manifest["files"][dynamic_manifest_path] = manifest_digest
+                payload = json.dumps(manifest).encode()
+                member.size = len(payload)
+                members[index] = (member, payload)
+        forged = self.root / "mixed-source.tar"
+        with tarfile.open(forged, "w", format=tarfile.USTAR_FORMAT) as archive:
+            for member, payload in members:
+                archive.addfile(member, None if payload is None else io.BytesIO(payload))
+        output = self.root / "extracted-mixed-source"
+        with self.assertRaisesRegex(combined.CompositionError, "source seals differ"):
+            combined.extract(forged, output)
+        self.assertFalse(output.exists())
 
     def test_validation_rejects_changed_extra_mode_and_link_drift(self):
         def retarget(root: Path) -> None:

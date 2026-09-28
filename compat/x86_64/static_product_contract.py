@@ -262,6 +262,15 @@ def source_digest() -> str:
     return result.hexdigest()
 
 
+def require_product_source(manifests: Mapping[str, object], source: str) -> None:
+    """Bind each selected installed static tree to the independently observed source."""
+
+    for product in ("primary", "reproduction", "extracted"):
+        manifest = manifests.get(product)
+        require(isinstance(manifest, Mapping) and manifest.get("source_sha256") == source,
+                f"{product} installed static product source differs from the receipt")
+
+
 def require_clean_source() -> str:
     require(not git("status", "--porcelain", "--untracked-files=all").strip(),
             "static product publication requires clean source")
@@ -309,6 +318,8 @@ def collect(work_dir: Path, started_source: str) -> Path:
     for product, tree in (("primary", "primary"), ("reproduction", "reproduction"),
                           ("extracted", "extracted-tree/crabc-x86_64-owned-static-sysroot")):
         retain(work_dir / tree / INSTALLED_MANIFEST, f"products/{product}/manifest.json")
+    require_product_source({product: read_json(report / "products" / product / "manifest.json")
+                            for product in ("primary", "reproduction", "extracted")}, source)
     for name in ("primary-tree.sha256", "reproduction-tree.sha256", "primary-build.json", "reproduction-build.json"):
         retain(work_dir / name, f"reproducibility/{name}")
     archives = {name: digest(work_dir / name) for name in ("primary.tar.xz", "reproduction.tar.xz")}
@@ -470,6 +481,7 @@ def validate_receipt(path: Path) -> dict[str, Any]:
 
     manifests = {product: read_json(report / "products" / product / "manifest.json")
                  for product in ("primary", "reproduction", "extracted")}
+    require_product_source(manifests, receipt["source_sha256"])
     require(manifests["primary"] == manifests["reproduction"] == manifests["extracted"],
             "installed manifests differ across clean builds and extraction")
     require(manifests["primary"].get("format") == "crabc-x86-64-owned-static-sysroot-v1",

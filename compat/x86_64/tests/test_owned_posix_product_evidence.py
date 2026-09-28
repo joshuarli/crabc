@@ -778,12 +778,19 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
 
         # The static product's own Scrt1.o is never linked by a static mode.
         (self.static / "usr/lib/Scrt1.o").write_bytes(b"static unlinked Scrt1\n")
+        source_sha256 = "a" * 64
+        self.write_json(self.dynamic / "share/crabc/dynamic-product-state.json", {
+            "schema": combined.DYNAMIC_STATE_SCHEMA,
+            "source_sha256": source_sha256,
+        })
+        self.refresh_dynamic_manifest()
         for product in (self.static, self.dynamic):
             path = product / "share/crabc/manifest.json"
             manifest = json.loads(path.read_text(encoding="utf-8"))
             manifest["toolchain"] = "pinned"
             if "installed" in manifest:
                 manifest["installed"]["files"]["usr/lib/Scrt1.o"] = digest(self.static / "usr/lib/Scrt1.o")
+                manifest["source_sha256"] = source_sha256
             self.write_json(path, manifest)
         output = self.root / name
         combined.compose({"static": self.static, "dynamic": self.dynamic}, output)
