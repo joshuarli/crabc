@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import crabc_cc_owned_dynamic as driver
 import owned_dynamic_package as package
+import owned_dynamic_qualification as qualification
 import owned_posix_product_evidence as product_evidence
 import io
 import tarfile
@@ -45,6 +46,34 @@ class InstalledDynamicDriverTests(unittest.TestCase):
 
     def write_manifest(self):
         (self.root / "share/crabc/manifest.json").write_text(json.dumps(self.manifest))
+
+    def _seal_materialized_fixture(self, root: Path) -> str:
+        """Give the selected fixture payload one source-bound materialization state."""
+
+        manifest_path = root / "share/crabc/manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        source = qualification.source_digest()
+        state = {
+            "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
+            "status": "materialized-unqualified", "source_sha256": source,
+            "contracts": qualification.contract_digests(),
+            "payload_files": dict(manifest["files"]),
+            "allocator_backend": qualification.MATERIALIZATION_ALLOCATOR_BACKEND,
+            "allocator_lifecycle_test_audit": qualification.MATERIALIZATION_ALLOCATOR_LIFECYCLE_TEST_AUDIT,
+            "allocator_promoted": qualification.MATERIALIZATION_ALLOCATOR_PROMOTED,
+            "runtime_v1_published": False, "campaign_complete": False,
+            "public_support": False,
+            "modes": ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
+            "runtime_profile": qualification.MATERIALIZATION_PROFILE,
+            "qualification": qualification.MATERIALIZATION_QUALIFICATION,
+        }
+        state_path = root / "share/crabc/dynamic-product-state.json"
+        state_path.write_text(json.dumps(state))
+        manifest["files"]["share/crabc/dynamic-product-state.json"] = hashlib.sha256(state_path.read_bytes()).hexdigest()
+        manifest_path.write_text(json.dumps(manifest))
+        if root == self.root:
+            self.manifest = manifest
+        return source
 
     def test_producer_manifest_seals_the_pinned_toolchain_identity(self):
         output = Path(self.temporary.name) / "product"
@@ -388,6 +417,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         """Compose the native dynamic fixture with a small static product."""
 
         dynamic = self._installed_native_driver_fixture()
+        source = self._seal_materialized_fixture(dynamic)
         static = Path(self.temporary.name) / "static-product"
         for relative, payload in (("bin/crabc-cc", b"static driver"), ("usr/lib/libc.a", b"static libc"),
                                   ("usr/lib/rcrt1.o", b"static-pie entry"),
@@ -398,8 +428,12 @@ class InstalledDynamicDriverTests(unittest.TestCase):
             path.write_bytes(payload)
         (static / "share/crabc").mkdir(parents=True)
         (static / "share/crabc/manifest.json").write_text(json.dumps({
-            "format": combined.PRODUCT_FORMATS["static"], "target": combined.TARGET,
-            "toolchain": PINNED_TOOLCHAIN,
+            "schema": 1, "format": combined.PRODUCT_FORMATS["static"], "target": combined.TARGET,
+            "toolchain": PINNED_TOOLCHAIN, "source_sha256": source,
+            "installed": {"files": {
+                path.relative_to(static).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in static.rglob("*") if path.is_file() and path != static / "share/crabc/manifest.json"
+            }},
         }))
         output = Path(self.temporary.name) / "combined"
         combined.compose({"static": static, "dynamic": dynamic}, output)
@@ -1172,6 +1206,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         one = Path(self.temporary.name) / "one.tar"
         two = Path(self.temporary.name) / "two.tar"
         extracted = Path(self.temporary.name) / "extracted"
+        self._seal_materialized_fixture(self.root)
         package.package(self.root, one)
         package.package(self.root, two)
         self.assertEqual(one.read_bytes(), two.read_bytes())
