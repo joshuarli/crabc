@@ -133,6 +133,15 @@
       ],
       "scope": "Pinned C observes mapped and unowned post-exit large and medium regular pages. Native Rust proves each source PageMap prefix survives exit; the large page stays nonlocal after its first free and releases on its final free, while the active survivor requeues the medium page and retains it until forced collection."
     },
+    "differential:arena-singleton-regular-owner-exit": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_arena_singleton_regular_owner_exit_evidence.py",
+        "--report",
+        "{scratch}/arena-singleton-regular-owner-exit.json"
+      ],
+      "scope": "Pinned C directly observes arena bitmap, slice, PageMap, and mapped/unmapped states for a live arena singleton beside a regular medium page after owner exit. C and native Rust compare exact arena geometry and independent survivor reclaim, singleton release, regular retirement, and final PageMap release."
+    },
     "lifecycle:bounded-laboratory": {
       "command": [
         "python3",
@@ -218,7 +227,8 @@
         "differential:nonabandoning-mixed-owner-exit",
         "differential:nonabandoning-active-survivor-owner-exit",
         "differential:nonabandoning-late-remote-owner-exit",
-        "differential:nonabandoning-mapped-large-owner-exit"
+        "differential:nonabandoning-mapped-large-owner-exit",
+        "differential:arena-singleton-regular-owner-exit"
       ],
       "blocked_by": []
     },
