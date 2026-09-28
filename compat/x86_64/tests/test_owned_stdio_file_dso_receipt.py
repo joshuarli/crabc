@@ -54,6 +54,13 @@ class FileDsoReceiptTests(unittest.TestCase):
                 with self.assertRaisesRegex(receipt.ReceiptError, "stdout differs"):
                     receipt.audit_runtime(work, work / "unused-dynamic")
                 (raw / f"{case}.stdout").write_bytes(receipt.EXPECTED_STDOUT)
+                (raw / f"{case}.stdout").write_bytes(
+                    receipt.EXPECTED_STDOUT.replace(receipt.WIDE_MEMORY_FINAL,
+                        receipt.WIDE_MEMORY_FINAL[:20] + b"\xa8\x03\0\0" +
+                        receipt.WIDE_MEMORY_FINAL[24:]))
+                with self.assertRaisesRegex(receipt.ReceiptError, "stdout differs"):
+                    receipt.audit_runtime(work, work / "unused-dynamic")
+                (raw / f"{case}.stdout").write_bytes(receipt.EXPECTED_STDOUT)
                 (scratch / "stream.old").write_bytes(b"beforetaim")
                 with self.assertRaisesRegex(receipt.ReceiptError, "retained pathname bytes differ"):
                     receipt.audit_runtime(work, work / "unused-dynamic")

@@ -12,6 +12,8 @@ the same functions in one image as a baseline; dynamic cells prove handoffs.
 The DSO also creates an open_memstream FILE, main owns its close, and the DSO
 owns the published allocation after close. A DSO-owned fmemopen FILE exposes
 fixed caller storage to main through buffered writes, reads and a short write.
+The DSO's wide memory stream publishes its wchar_t buffer across alternating
+main/DSO wide writes and keeps that buffer alive until main closes the FILE.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 
@@ -45,8 +48,10 @@ SOURCES = (
     "compat/x86_64/owned_stdio_file_dso_receipt.py",
 )
 MEMSTREAM_FINAL = b"alXYa!\0\0Z"
+WIDE_MEMORY_FINAL = struct.pack("<7I", 0x20AC, 0x03BB, 0x1F600, 0, 0, 0x03A9, 0)
 EXPECTED_STDOUT = (b"memstream-final:" + MEMSTREAM_FINAL +
-                   b"\nfixed-final:abcDEFGH\nstdio-file-dso-fmemopen-ok\n")
+                   b"\nfixed-final:abcDEFGH\nwide-final:" + WIDE_MEMORY_FINAL +
+                   b"\nstdio-file-dso-wmemstream-ok\n")
 EXIT_PAYLOAD = b"dso-exit-once\n"
 EXIT_MARKER = b"fini-before-flush:fd-live\n"
 RETAINED_PATHS = ("stream.exit", "stream.fini", "stream.new", "stream.old")
@@ -407,7 +412,8 @@ def audit_elf(work: Path) -> None:
                           "crabc_file_dso_reopen", "crabc_memstream_dso_open",
                           "crabc_memstream_dso_checkpoint", "crabc_memstream_dso_release",
                           "crabc_fixed_dso_open", "crabc_fixed_dso_step",
-                          "crabc_fixed_dso_after_close"):
+                          "crabc_fixed_dso_after_close", "crabc_wide_memory_dso_open",
+                          "crabc_wide_memory_dso_step", "crabc_wide_memory_dso_release"):
                 require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+\d+\s+" + entry + r"\b", symbols) is not None,
                         f"{role} lacks {entry}")
         elif dynamic_main:
@@ -420,7 +426,8 @@ def audit_elf(work: Path) -> None:
                           "crabc_file_dso_reopen", "crabc_memstream_dso_open",
                           "crabc_memstream_dso_checkpoint", "crabc_memstream_dso_release",
                           "crabc_fixed_dso_open", "crabc_fixed_dso_step",
-                          "crabc_fixed_dso_after_close"):
+                          "crabc_fixed_dso_after_close", "crabc_wide_memory_dso_open",
+                          "crabc_wide_memory_dso_step", "crabc_wide_memory_dso_release"):
                 require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+UND\s+" + entry + r"\b", symbols) is not None,
                         f"{role} does not import {entry}")
         else:

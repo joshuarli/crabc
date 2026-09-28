@@ -2,6 +2,7 @@
 #ifndef CRABC_OWNED_STDIO_FILE_DSO_PROBE_H
 #define CRABC_OWNED_STDIO_FILE_DSO_PROBE_H
 #include <stdio.h>
+#include <wchar.h>
 
 struct crabc_cookie_state {
     unsigned char data[32];
@@ -57,4 +58,18 @@ FILE *crabc_fixed_dso_open(unsigned char **buffer, size_t *capacity,
 int crabc_fixed_dso_step(FILE *stream, enum crabc_fixed_dso_stage stage,
                           int *main_errno);
 int crabc_fixed_dso_after_close(int *main_errno);
+
+enum crabc_wide_memory_dso_stage {
+    CRABC_WIDE_MEMORY_DSO_MAIN_EURO = 1,
+    CRABC_WIDE_MEMORY_DSO_WRITE_HAN,
+    CRABC_WIDE_MEMORY_DSO_MAIN_REWRITE,
+    CRABC_WIDE_MEMORY_DSO_APPEND_FACE,
+    CRABC_WIDE_MEMORY_DSO_MAIN_GAP
+};
+
+FILE *crabc_wide_memory_dso_open(wchar_t ***buffer_slot, size_t **length_slot,
+                                  int *main_errno);
+int crabc_wide_memory_dso_step(FILE *stream, enum crabc_wide_memory_dso_stage stage,
+                                int *main_errno);
+int crabc_wide_memory_dso_release(int *main_errno);
 #endif

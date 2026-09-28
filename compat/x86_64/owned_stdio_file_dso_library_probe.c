@@ -346,6 +346,99 @@ int crabc_fixed_dso_after_close(int *main_errno)
     return 0;
 }
 
+/* The pointer and length slots remain in this image. Main closes the FILE;
+ * this image owns and releases the published wide allocation afterward.
+ */
+static FILE *wide_memory_stream;
+static wchar_t *wide_memory_buffer;
+static size_t wide_memory_length;
+static unsigned wide_memory_stage;
+
+FILE *crabc_wide_memory_dso_open(wchar_t ***buffer_slot, size_t **length_slot,
+                                  int *main_errno)
+{
+    if (buffer_slot == NULL || length_slot == NULL || main_errno != &errno ||
+        errno != EDOM || wide_memory_stream != NULL || wide_memory_stage != 0 ||
+        sizeof(wchar_t) != 4)
+        return NULL;
+    wide_memory_stream = open_wmemstream(&wide_memory_buffer, &wide_memory_length);
+    if (wide_memory_stream == NULL || wide_memory_buffer == NULL ||
+        wide_memory_length != 0 || wide_memory_buffer[0] != 0 ||
+        fwide(wide_memory_stream, 0) <= 0)
+        return NULL;
+    *buffer_slot = &wide_memory_buffer;
+    *length_slot = &wide_memory_length;
+    errno = ERANGE;
+    return wide_memory_stream;
+}
+
+int crabc_wide_memory_dso_step(FILE *stream, enum crabc_wide_memory_dso_stage stage,
+                                int *main_errno)
+{
+    static const wchar_t euro[] = {0x20ac, 0};
+    static const wchar_t han[] = {0x20ac, 0x4e2d, 0};
+    static const wchar_t lambda[] = {0x20ac, 0x03bb, 0};
+    static const wchar_t face[] = {0x20ac, 0x03bb, 0x1f600, 0};
+    static const wchar_t final[] = {0x20ac, 0x03bb, 0x1f600, 0, 0, 0x03a9, 0};
+
+    if (stream == NULL || stream != wide_memory_stream || main_errno != &errno ||
+        errno != EDOM || (unsigned)stage != wide_memory_stage + 1 ||
+        wide_memory_buffer == NULL || fwide(stream, 0) <= 0)
+        return 1;
+    if (stage == CRABC_WIDE_MEMORY_DSO_MAIN_EURO) {
+        if (wide_memory_length != 1 ||
+            memcmp(wide_memory_buffer, euro, sizeof(euro)) != 0 ||
+            fflush(stream) != 0 || wide_memory_length != 1 ||
+            memcmp(wide_memory_buffer, euro, sizeof(euro)) != 0)
+            return 2;
+    } else if (stage == CRABC_WIDE_MEMORY_DSO_WRITE_HAN) {
+        if (fputwc((wchar_t)0x4e2d, stream) != 0x4e2d ||
+            wide_memory_length != 2 ||
+            memcmp(wide_memory_buffer, han, sizeof(han)) != 0)
+            return 3;
+    } else if (stage == CRABC_WIDE_MEMORY_DSO_MAIN_REWRITE) {
+        if (wide_memory_length != 2 ||
+            memcmp(wide_memory_buffer, lambda, sizeof(lambda)) != 0 ||
+            fflush(stream) != 0 ||
+            memcmp(wide_memory_buffer, lambda, sizeof(lambda)) != 0)
+            return 4;
+    } else if (stage == CRABC_WIDE_MEMORY_DSO_APPEND_FACE) {
+        if (fseek(stream, 0, SEEK_END) != 0 ||
+            fputwc((wchar_t)0x1f600, stream) != 0x1f600 ||
+            wide_memory_length != 3 ||
+            memcmp(wide_memory_buffer, face, sizeof(face)) != 0)
+            return 5;
+    } else if (stage == CRABC_WIDE_MEMORY_DSO_MAIN_GAP) {
+        if (wide_memory_length != 6 ||
+            memcmp(wide_memory_buffer, final, sizeof(final)) != 0 ||
+            fflush(stream) != 0 ||
+            memcmp(wide_memory_buffer, final, sizeof(final)) != 0)
+            return 6;
+    } else {
+        return 7;
+    }
+    wide_memory_stage++;
+    errno = ERANGE;
+    return 0;
+}
+
+int crabc_wide_memory_dso_release(int *main_errno)
+{
+    static const wchar_t final[] = {0x20ac, 0x03bb, 0x1f600, 0, 0, 0x03a9, 0};
+
+    if (main_errno != &errno || errno != EDOM || wide_memory_stage != 5 ||
+        wide_memory_buffer == NULL || wide_memory_length != 6 ||
+        memcmp(wide_memory_buffer, final, sizeof(final)) != 0)
+        return 1;
+    free(wide_memory_buffer);
+    wide_memory_buffer = NULL;
+    wide_memory_length = 0;
+    wide_memory_stream = NULL;
+    wide_memory_stage++;
+    errno = ERANGE;
+    return 0;
+}
+
 static FILE *exit_stream;
 static char exit_buffer[64];
 static char exit_marker_path[PATH_MAX];

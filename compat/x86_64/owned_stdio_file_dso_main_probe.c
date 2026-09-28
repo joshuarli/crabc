@@ -406,6 +406,82 @@ static int fixed_dso_roundtrip(void)
     return 0;
 }
 
+static int wide_memory_dso_roundtrip(void)
+{
+    static const wchar_t euro[] = {0x20ac, 0};
+    static const wchar_t han[] = {0x20ac, 0x4e2d, 0};
+    static const wchar_t lambda[] = {0x20ac, 0x03bb, 0};
+    static const wchar_t face[] = {0x20ac, 0x03bb, 0x1f600, 0};
+    static const wchar_t final[] = {0x20ac, 0x03bb, 0x1f600, 0, 0, 0x03a9, 0};
+    wchar_t **buffer_slot;
+    size_t *length_slot;
+    FILE *stream;
+    int result;
+
+    if (setlocale(LC_CTYPE, "C.UTF-8") == NULL)
+        return 1;
+    errno = EDOM;
+    stream = crabc_wide_memory_dso_open(&buffer_slot, &length_slot, &errno);
+    if (stream == NULL || errno != ERANGE || buffer_slot == NULL ||
+        length_slot == NULL || *buffer_slot == NULL || *length_slot != 0 ||
+        (*buffer_slot)[0] != 0 || fwide(stream, 0) <= 0)
+        return 2;
+    if (fputwc((wchar_t)0x20ac, stream) != 0x20ac || *length_slot != 1 ||
+        memcmp(*buffer_slot, euro, sizeof(euro)) != 0)
+        return 3;
+    errno = EDOM;
+    result = crabc_wide_memory_dso_step(stream, CRABC_WIDE_MEMORY_DSO_MAIN_EURO,
+                                         &errno);
+    if (result != 0 || errno != ERANGE)
+        return 10 + result;
+    errno = EDOM;
+    result = crabc_wide_memory_dso_step(stream, CRABC_WIDE_MEMORY_DSO_WRITE_HAN,
+                                         &errno);
+    if (result != 0 || errno != ERANGE || *length_slot != 2 ||
+        memcmp(*buffer_slot, han, sizeof(han)) != 0 || fflush(stream) != 0 ||
+        memcmp(*buffer_slot, han, sizeof(han)) != 0)
+        return 20 + result;
+    if (fseek(stream, 1, SEEK_SET) != 0 ||
+        fputwc((wchar_t)0x03bb, stream) != 0x03bb || *length_slot != 2 ||
+        memcmp(*buffer_slot, lambda, sizeof(lambda)) != 0)
+        return 30;
+    errno = EDOM;
+    result = crabc_wide_memory_dso_step(stream, CRABC_WIDE_MEMORY_DSO_MAIN_REWRITE,
+                                         &errno);
+    if (result != 0 || errno != ERANGE)
+        return 40 + result;
+    errno = EDOM;
+    result = crabc_wide_memory_dso_step(stream, CRABC_WIDE_MEMORY_DSO_APPEND_FACE,
+                                         &errno);
+    if (result != 0 || errno != ERANGE || *length_slot != 3 ||
+        memcmp(*buffer_slot, face, sizeof(face)) != 0 || fflush(stream) != 0 ||
+        memcmp(*buffer_slot, face, sizeof(face)) != 0)
+        return 50 + result;
+    if (fseek(stream, 5, SEEK_SET) != 0 ||
+        fputwc((wchar_t)0x03a9, stream) != 0x03a9 || *length_slot != 6 ||
+        memcmp(*buffer_slot, final, sizeof(final)) != 0)
+        return 60;
+    errno = EDOM;
+    result = crabc_wide_memory_dso_step(stream, CRABC_WIDE_MEMORY_DSO_MAIN_GAP,
+                                         &errno);
+    if (result != 0 || errno != ERANGE || *length_slot != 6 ||
+        memcmp(*buffer_slot, final, sizeof(final)) != 0)
+        return 70 + result;
+    if (fclose(stream) != 0 || *length_slot != 6 ||
+        memcmp(*buffer_slot, final, sizeof(final)) != 0)
+        return 80;
+    if (write(STDOUT_FILENO, "wide-final:", 11) != 11 ||
+        write(STDOUT_FILENO, *buffer_slot, sizeof(final)) != sizeof(final) ||
+        write(STDOUT_FILENO, "\n", 1) != 1)
+        return 81;
+    errno = EDOM;
+    result = crabc_wide_memory_dso_release(&errno);
+    if (result != 0 || errno != ERANGE || *buffer_slot != NULL ||
+        *length_slot != 0)
+        return 90 + result;
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     static const char expected[] = "buffered!";
@@ -467,7 +543,10 @@ int main(int argc, char **argv)
     result = fixed_dso_roundtrip();
     if (result != 0)
         return result;
-    if (write(STDOUT_FILENO, "stdio-file-dso-fmemopen-ok\n", 27) != 27)
+    result = wide_memory_dso_roundtrip();
+    if (result != 0)
+        return result;
+    if (write(STDOUT_FILENO, "stdio-file-dso-wmemstream-ok\n", 29) != 29)
         return 11;
     return 0;
 }
