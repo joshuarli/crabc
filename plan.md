@@ -408,7 +408,9 @@ are not transferable passes for a different revision.
   The release receipt gate now joins the owner-validated runtime C, native
   facade, and allocator reports by source revision and recorded CPU, kernel,
   and affinity facts; a rehashed allocator cohort from a different source or
-  CPU model fails its read-only replay.
+  CPU model fails its read-only replay. It also rejects separately rehashed
+  allocator reports that reuse the same raw timed and memory samples; no
+  qualifying performance measurements exist yet.
 - **Resume here, in order:**
   1. Family admissions are the critical path: every selected-private
      capability completes when its family is admitted. Admission receipts
@@ -442,7 +444,10 @@ are not transferable passes for a different revision.
      manifest's source seal to equal the current checkout digest; physical
      forged and stripped archives fail before publication. The installed
      driver rejects missing or malformed seals, while source-bound receipt
-     readers remain responsible for authenticating installed products.
+     readers remain responsible for authenticating installed products. The
+     static receipt reader now joins every retained primary and reproduction
+     tree hash to its installed manifest payload roster; rehashed tree lists
+     that disagree with the manifest fail physical replay.
      The finite `aio_cancel` oracle disposition
      is integrated;
      a clean `80724223a` native OS-test replay profile-qualifies 5,395 outcome
