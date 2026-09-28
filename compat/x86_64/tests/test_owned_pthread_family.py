@@ -41,6 +41,17 @@ class PthreadFamilyContractTests(unittest.TestCase):
         self.assertTrue(roster["required"])
         self.assertTrue(all(entry["capability"] in roster["capabilities"] for entry in roster["required"]))
 
+    def test_roster_requires_static_pthread_lifecycle_for_all_six_static_cells(self) -> None:
+        roster = family.load_roster(ROOT / "compat/x86_64/pthread-family.toml")
+        entry = next((item for item in roster["required"] if item["id"] == "pthread-static-lifecycle"), None)
+        self.assertIsNotNone(entry, "static pthread lifecycle has no required family row")
+        assert entry is not None
+        self.assertEqual(entry["capability"], "thread.pthread-c11")
+        self.assertEqual(entry["kind"], "static-lifecycle")
+        self.assertEqual(entry["runner"], "compat/x86_64/run_owned_pthread_lifecycle.sh")
+        self.assertEqual(entry["source"], "compat/x86_64/owned_pthread_lifecycle_consumer.c")
+        self.assertEqual(tuple(entry["modes"]), tuple(roster["mode_sets"]["static"]))
+
     def test_roster_requires_every_declared_behavior_in_its_exact_mode_set(self) -> None:
         source = (ROOT / "compat/x86_64/pthread-family.toml").read_text(encoding="utf-8")
         changed = source.replace(
@@ -212,7 +223,8 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
                 patch.object(family, "_validated_phase_inputs", return_value=phase), \
                 patch.object(family, "matrix_cells", side_effect=fixture_cells), \
                 patch.object(family, "dynamic_qualification_cells", side_effect=fixture_cells), \
-                patch.object(family, "composition_cells", side_effect=fixture_cells):
+                patch.object(family, "composition_cells", side_effect=fixture_cells), \
+                patch.object(family, "static_lifecycle_cells", side_effect=fixture_cells):
             return family.collect(self.root, work)
 
     def test_collection_seals_a_tracked_roster_outside_mutable_evidence(self) -> None:
@@ -252,6 +264,123 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
             ["bash", "/workspace/compat/x86_64/run_owned_pthread_family_composition.sh", "--static-sysroot",
              "/workspace/.work/products/static", "/workspace/.work/products/dynamic"],
         )
+
+    def test_static_lifecycle_command_uses_each_supplied_static_product(self) -> None:
+        product = self.root / ".work/products/primary-static"
+        product.mkdir(parents=True)
+        command = family.static_lifecycle_command(
+            self.root, product,
+            {"runner": "compat/x86_64/run_owned_pthread_lifecycle.sh"}, "/workspace",
+        )
+        self.assertEqual(command, [
+            "bash", "/workspace/compat/x86_64/run_owned_pthread_lifecycle.sh",
+            "--static-sysroot", "/workspace/.work/products/primary-static", "--retain",
+        ])
+
+    def _static_lifecycle_fixture(self) -> tuple[Path, Path, dict[str, object]]:
+        product = self.root / ".work/products/primary-static"
+        driver = product / "bin/crabc-cc"
+        manifest = product / "share/crabc/manifest.json"
+        driver.parent.mkdir(parents=True)
+        manifest.parent.mkdir(parents=True)
+        driver.write_bytes(b"primary sealed static driver")
+        manifest.write_text("{\"product\":\"primary\"}\n", encoding="utf-8")
+        leaf = self.root / ".work/lifecycle-runs/primary/tmp/evidence"
+        leaf.mkdir(parents=True)
+        headers = ("errno.h", "limits.h", "pthread.h", "sched.h", "signal.h", "threads.h",
+                   "sys/mman.h", "sys/wait.h", "unistd.h", "bits/alltypes.h")
+        (leaf / "header-trace").write_text(
+            "\n".join(f". /workspace/include/{header}" for header in headers) + "\n", encoding="utf-8")
+        (leaf / "musl-pthread-lifecycle").write_bytes(b"pinned musl executable")
+        (leaf / "musl-output").write_bytes(b"")
+
+        oracle = {
+            "compiler_wrapper_sha256": "a" * 64,
+            "runtime_sha256": "b" * 64,
+            "files": {"source_manifest": "c" * 64},
+        }
+        tool_identity = lambda path, digest: {"path": path, "sha256": digest, "size": 1}
+        tools = {
+            "oracle": tool_identity("/usr/local/bin/crabc-x86_64-musl-gcc", "a" * 64),
+            "static_driver": {
+                "path": "/workspace/.work/products/primary-static/bin/crabc-cc",
+                "sha256": family.family.digest(driver), "size": driver.stat().st_size,
+            },
+            "compiler": tool_identity("/opt/rust/bin/gcc", "d" * 64),
+            "linker": tool_identity("/opt/rust/lib/gcc-ld/ld.lld", "e" * 64),
+        }
+        (leaf / "tools-before.json").write_text(json.dumps(tools), encoding="utf-8")
+        (leaf / "tools-after.json").write_text(json.dumps(tools), encoding="utf-8")
+        oracle_report = {
+            "compiler": tools["oracle"],
+            "runtime": tool_identity("/opt/musl-1.2.6/lib/libc.so", "b" * 64),
+            "pin": tool_identity("/opt/musl-1.2.6/.crabc-oracle", "c" * 64),
+        }
+        (leaf / "oracle.json").write_text(json.dumps(oracle_report), encoding="utf-8")
+
+        expected_modes = {
+            "installed-et-exec": {"id": "static-et-exec", "elf_type": "ET_EXEC",
+                                  "crt_object": "crt1.o", "interpreter": "absent"},
+            "installed-static-pie": {"id": "static-pie", "elf_type": "ET_DYN",
+                                     "crt_object": "rcrt1.o", "interpreter": "absent"},
+        }
+        for mode_root, mode in expected_modes.items():
+            directory = leaf / mode_root
+            directory.mkdir()
+            for name in ("candidate", "consumer.o", "dynamic", "file-header", "link.receipt.map",
+                         "link.receipt.trace", "output", "program-headers", "relocations", "symbols"):
+                (directory / name).write_bytes(b"" if name == "output" else name.encode())
+            (directory / "link.receipt.json").write_text(json.dumps({
+                "mode": mode, "resolved_linker": {"path": tools["linker"]["path"],
+                                                       "sha256": tools["linker"]["sha256"]},
+            }), encoding="utf-8")
+        return leaf, product, oracle
+
+    def test_static_lifecycle_reader_binds_both_linkages_to_the_supplied_product(self) -> None:
+        leaf, product, oracle = self._static_lifecycle_fixture()
+
+        def retained_link(root, source_mount, selected, workload, executable, receipt, linkage, linker):
+            self.assertEqual(selected, product)
+            self.assertEqual(source_mount, "/workspace")
+            self.assertEqual(workload.name, "consumer.o")
+            self.assertEqual(executable.name, "candidate")
+            self.assertEqual(receipt.name, "link.receipt.json")
+            self.assertEqual(linkage, "static" if "et-exec" in executable.parent.name else "static-pie")
+            self.assertEqual(linker["path"], "/opt/rust/lib/gcc-ld/ld.lld")
+            return {"linkage": linkage, "product": str(selected), "executable_sha256": family.family.digest(executable)}
+
+        with patch.object(product_evidence, "validate_retained_link", side_effect=retained_link) as validate:
+            record = family._static_lifecycle_report(self.root, leaf, product, "/workspace", oracle)
+        self.assertEqual(set(record["modes"]), {"static-et-exec", "static-pie"})
+        self.assertEqual([call.args[6] for call in validate.call_args_list], ["static", "static-pie"])
+
+    def test_static_lifecycle_reader_rejects_a_foreign_product_and_link_mutation(self) -> None:
+        leaf, product, oracle = self._static_lifecycle_fixture()
+        foreign = self.root / ".work/products/foreign-static"
+        foreign_driver = foreign / "bin/crabc-cc"
+        (foreign_driver.parent).mkdir(parents=True)
+        foreign_driver.write_bytes(b"foreign static driver")
+        manifest = foreign / "share/crabc/manifest.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text("{\"product\":\"foreign\"}\n", encoding="utf-8")
+        with self.assertRaisesRegex(family.PthreadFamilyError, "driver differs from the supplied product"):
+            family._static_lifecycle_report(self.root, leaf, foreign, "/workspace", oracle)
+
+        receipt = leaf / "installed-et-exec/link.receipt.json"
+        value = json.loads(receipt.read_text(encoding="utf-8"))
+        value["mode"]["id"] = "static-pie"
+        receipt.write_text(json.dumps(value), encoding="utf-8")
+        with patch.object(product_evidence, "validate_retained_link"):
+            with self.assertRaisesRegex(family.PthreadFamilyError, "link mode differs"):
+                family._static_lifecycle_report(self.root, leaf, product, "/workspace", oracle)
+
+    def test_static_lifecycle_reader_rejects_mutated_execution_output(self) -> None:
+        leaf, product, oracle = self._static_lifecycle_fixture()
+        output = leaf / "installed-static-pie/output"
+        output.write_bytes(b"foreign execution output\n")
+        with patch.object(product_evidence, "validate_retained_link", return_value={"linkage": "ok"}):
+            with self.assertRaisesRegex(family.PthreadFamilyError, "output differs from pinned musl"):
+                family._static_lifecycle_report(self.root, leaf, product, "/workspace", oracle)
 
     def test_static_link_receipts_use_the_driver_required_work_relative_paths(self) -> None:
         leaf = self.root / ".work/composition"

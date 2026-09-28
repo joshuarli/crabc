@@ -73,6 +73,15 @@ modes = [
 behavior = "C11 create/join result; distinct initialized and zero TLS; contended call_once publication; TSD destructor rearm/order before join; reusable barrier serial return; rwlock reader/writer publication; contended spin state."
 
 [[required]]
+id = "pthread-static-lifecycle"
+capability = "thread.pthread-c11"
+kind = "static-lifecycle"
+runner = "compat/x86_64/run_owned_pthread_lifecycle.sh"
+source = "compat/x86_64/owned_pthread_lifecycle_consumer.c"
+modes = ["primary:static-et-exec", "primary:static-pie", "reproduction:static-et-exec", "reproduction:static-pie", "extracted:static-et-exec", "extracted:static-pie"]
+behavior = "Installed static pthread/C11 lifecycle, cancellation cleanup and TSD teardown, custom stack, detached reaping, last-exit concurrency, and atfork ordering."
+
+[[required]]
 id = "atfork-static-fork"
 capability = "process.atfork-exit-hooks"
 kind = "matrix"

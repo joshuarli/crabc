@@ -43,6 +43,7 @@ NONPROMOTING_FLAGS = {
 # a behavior, change capability ownership, or quietly drop a product cell.
 EXPECTED_ROWS = {
     "c11-tls-synchronization-composition": ("thread.pthread-c11", "composition", "all", None),
+    "pthread-static-lifecycle": ("thread.pthread-c11", "static-lifecycle", "static", None),
     "atfork-static-fork": ("process.atfork-exit-hooks", "matrix", "static", "static-fork"),
     "atfork-dynamic-fork": ("process.atfork-exit-hooks", "matrix", "dynamic", "fork"),
     "atfork-registry": ("process.atfork-exit-hooks", "dynamic-qualification", "dynamic", "atfork-registry"),
@@ -119,7 +120,7 @@ def load_roster(path: Path = ROSTER_PATH) -> dict[str, Any]:
             expected.add("workload")
         elif kind == "dynamic-qualification":
             expected.add("case")
-        elif kind == "composition":
+        elif kind in ("composition", "static-lifecycle"):
             expected.update(("runner", "source"))
         else:
             raise PthreadFamilyError("pthread family behavior kind differs")
@@ -157,6 +158,10 @@ def load_roster(path: Path = ROSTER_PATH) -> dict[str, Any]:
     require(composition["runner"] == "compat/x86_64/run_owned_pthread_family_composition.sh"
             and composition["source"] == "compat/x86_64/owned_pthread_family_composition.c",
             "pthread family composition implementation differs")
+    lifecycle = next(entry for entry in required if entry["id"] == "pthread-static-lifecycle")
+    require(lifecycle["runner"] == "compat/x86_64/run_owned_pthread_lifecycle.sh"
+            and lifecycle["source"] == "compat/x86_64/owned_pthread_lifecycle_consumer.c",
+            "pthread family static lifecycle implementation differs")
     return {"capabilities": list(CAPABILITIES), "cross_cut": "tls-dtv", "mode_sets": {"static": list(static), "dynamic": list(dynamic), "all": list(all_modes)}, "required": required}
 
 
@@ -929,6 +934,192 @@ def composition_cells(root: Path, work: Path, phase: _ValidatedPthreadInputs,
     return cells
 
 
+def static_lifecycle_command(root: Path, static_product: Path, roster_entry: dict[str, Any],
+                             source_mount: str) -> list[str]:
+    return ["bash", str(Path(source_mount) / roster_entry["runner"]), "--static-sysroot",
+            _mounted(root, static_product, source_mount), "--retain"]
+
+
+def _require_lifecycle_tree(path: Path, directories: set[str], files: set[str], description: str) -> None:
+    require(path.is_dir() and not path.is_symlink(), f"{description} is not a physical directory")
+    require({child.name for child in path.iterdir()} == directories | files,
+            f"{description} contents differ")
+    for child in path.iterdir():
+        if child.name in directories:
+            require(child.is_dir() and not child.is_symlink(), f"{description} directory differs")
+        else:
+            require(child.is_file() and not child.is_symlink(), f"{description} file differs")
+
+
+def _lifecycle_tool_roster(root: Path, value: object, static_product: Path,
+                           source_mount: str) -> dict[str, dict[str, Any]]:
+    require(isinstance(value, dict) and set(value) == {"oracle", "static_driver", "compiler", "linker"},
+            "static lifecycle tool roster differs")
+    result: dict[str, dict[str, Any]] = {}
+    for role, item in value.items():
+        require(isinstance(item, dict) and set(item) == {"path", "sha256", "size"},
+                "static lifecycle tool identity differs")
+        path, digest, size = item["path"], item["sha256"], item["size"]
+        require(isinstance(path, str) and Path(path).is_absolute() and ".." not in Path(path).parts
+                and isinstance(digest, str) and len(digest) == 64
+                and all(character in "0123456789abcdef" for character in digest)
+                and type(size) is int and size >= 0, "static lifecycle tool identity is malformed")
+        result[role] = item
+    driver = static_product / "bin/crabc-cc"
+    driver_identity = family.file_identity(root, driver)
+    require(result["static_driver"] == {
+        "path": _mounted(root, driver, source_mount),
+        "sha256": driver_identity["sha256"], "size": driver_identity["size"],
+    }, "static lifecycle driver differs from the supplied product")
+    require(result["oracle"]["path"] == "/usr/local/bin/crabc-x86_64-musl-gcc"
+            and Path(result["compiler"]["path"]).name == "gcc"
+            and Path(result["linker"]["path"]).name == "ld.lld",
+            "static lifecycle native tool selection differs")
+    return result
+
+
+def _static_lifecycle_report(root: Path, leaf: Path, static_product: Path,
+                             source_mount: str, oracle: object) -> dict[str, Any]:
+    """Re-read both retained static lifecycle links and their raw executions."""
+    import owned_posix_product_evidence as products
+
+    leaf = family.physical(root, leaf)
+    _require_lifecycle_tree(
+        leaf, {"installed-et-exec", "installed-static-pie"},
+        {"header-trace", "musl-pthread-lifecycle", "musl-output", "oracle.json",
+         "tools-before.json", "tools-after.json"},
+        "static lifecycle evidence",
+    )
+    header_trace = (leaf / "header-trace").read_text(encoding="utf-8", errors="replace")
+    for header in ("errno.h", "limits.h", "pthread.h", "sched.h", "signal.h", "threads.h",
+                   "sys/mman.h", "sys/wait.h", "unistd.h", "bits/alltypes.h"):
+        require(f"{source_mount}/include/{header}" in header_trace,
+                f"static lifecycle consumer did not use project {header}")
+    tools_before_path = leaf / "tools-before.json"
+    tools_after_path = leaf / "tools-after.json"
+    tools_before = _lifecycle_tool_roster(root, family.read(tools_before_path), static_product,
+                                          source_mount)
+    tools_after = _lifecycle_tool_roster(root, family.read(tools_after_path), static_product,
+                                         source_mount)
+    require(family.same_json(tools_before, tools_after), "static lifecycle native tools changed during execution")
+    oracle_report_path = leaf / "oracle.json"
+    _validate_oracle(family.read(oracle_report_path), oracle, {"oracle": tools_before["oracle"]})
+    driver_identity = family.file_identity(root, static_product / "share/crabc/manifest.json")
+    product_record = {"path": static_product.relative_to(root).as_posix(), "manifest": driver_identity}
+    _product_identity(root, product_record, static_product, "static lifecycle")
+
+    oracle_executable = leaf / "musl-pthread-lifecycle"
+    oracle_output = leaf / "musl-output"
+    require(oracle_executable.is_file() and not oracle_executable.is_symlink(),
+            "static lifecycle pinned-musl executable is missing")
+    require(oracle_output.read_bytes() == b"", "static lifecycle pinned-musl output differs")
+    require(family.file_identity(root, oracle_executable)["size"] > 0,
+            "static lifecycle pinned-musl executable is empty")
+
+    mode_specs = {
+        "static-et-exec": ("installed-et-exec", "static", {"id": "static-et-exec", "elf_type": "ET_EXEC",
+                                                                  "crt_object": "crt1.o", "interpreter": "absent"}),
+        "static-pie": ("installed-static-pie", "static-pie", {"id": "static-pie", "elf_type": "ET_DYN",
+                                                                  "crt_object": "rcrt1.o", "interpreter": "absent"}),
+    }
+    mode_results: dict[str, dict[str, Any]] = {}
+    for mode, (directory, linkage, expected_mode) in mode_specs.items():
+        mode_root = leaf / directory
+        _require_lifecycle_tree(
+            mode_root, set(), {"candidate", "consumer.o", "dynamic", "file-header", "link.receipt.json",
+                               "link.receipt.map", "link.receipt.trace", "output", "program-headers",
+                               "relocations", "symbols"}, f"static lifecycle {mode}",
+        )
+        try:
+            receipt = json.loads((mode_root / "link.receipt.json").read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise PthreadFamilyError(f"static lifecycle {mode} link receipt is unreadable") from error
+        require(isinstance(receipt, dict) and receipt.get("mode") == expected_mode,
+                f"static lifecycle {mode} link mode differs")
+        resolved_linker = receipt.get("resolved_linker")
+        linker = tools_before["linker"]
+        require(isinstance(resolved_linker, dict)
+                and resolved_linker == {"path": linker["path"], "sha256": linker["sha256"]},
+                f"static lifecycle {mode} linker differs from the captured native tool")
+        workload = mode_root / "consumer.o"
+        executable = mode_root / "candidate"
+        link_receipt = mode_root / "link.receipt.json"
+        observed = products.validate_retained_link(
+            root, source_mount, static_product, workload, executable, link_receipt, linkage,
+            {"path": linker["path"], "sha256": linker["sha256"]},
+        )
+        output = mode_root / "output"
+        require(output.read_bytes() == oracle_output.read_bytes(),
+                f"static lifecycle {mode} output differs from pinned musl")
+        require(output.read_bytes() == b"", f"static lifecycle {mode} emitted output")
+        mode_results[mode] = {
+            "link": observed,
+            "workload": family.file_identity(root, workload),
+            "executable": family.file_identity(root, executable),
+            "link_receipt": family.file_identity(root, link_receipt),
+            "output": family.file_identity(root, output),
+        }
+    return {
+        "product": product_record,
+        "oracle": family.file_identity(root, oracle_report_path),
+        "tools_before": family.file_identity(root, tools_before_path),
+        "tools_after": family.file_identity(root, tools_after_path),
+        "oracle_executable": family.file_identity(root, oracle_executable),
+        "oracle_output": family.file_identity(root, oracle_output),
+        "modes": mode_results,
+        "artifact_snapshot_sha256": stable_hash(family.snapshot(leaf)),
+    }
+
+
+def static_lifecycle_cells(root: Path, work: Path, phase: _ValidatedPthreadInputs,
+                           roster_entry: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    source_mount = phase.request["source_mount"]
+    runner = _source_file_identity(root, root / roster_entry["runner"], "static lifecycle runner")
+    source = _source_file_identity(root, root / roster_entry["source"], "static lifecycle source")
+    products = phase.product_inputs.products
+    pair_records: dict[str, dict[str, Any]] = {}
+    for pair in family.PAIRS:
+        static_product = products[pair]["static"]
+        step = work / "lifecycle-runs" / pair
+        command = static_lifecycle_command(root, static_product, roster_entry, source_mount)
+        environment = family.case_environment(root, step, source_mount)
+        step_artifacts = family.check_step(root, step, command, environment, source_mount=source_mount)
+        require((step / "stderr").read_bytes() == b"", "static lifecycle runner emitted stderr")
+        leaf = family.leaf_directory(root, step, source_mount)
+        report = _static_lifecycle_report(root, leaf, static_product, source_mount,
+                                          phase.product_inputs.evidence["oracle"])
+        pair_records[pair] = {
+            "product": report["product"], "runner": runner, "source": source,
+            "step": step_artifacts, "leaf": leaf.relative_to(root).as_posix(),
+            "oracle": report["oracle"],
+            "oracle_executable": report["oracle_executable"], "oracle_output": report["oracle_output"],
+            "tools_before": report["tools_before"], "tools_after": report["tools_after"],
+            "artifact_snapshot_sha256": report["artifact_snapshot_sha256"],
+            "modes": report["modes"],
+        }
+    cells: dict[str, dict[str, Any]] = {}
+    for cell in _modes(roster_entry["modes"], roster_entry["id"]):
+        pair, mode, dynamic_product = _mode_parts(cell)
+        require(dynamic_product is None, "static lifecycle behavior cannot name a dynamic product")
+        pair_record = pair_records[pair]
+        cells[cell] = {
+            "kind": "pthread-family-static-lifecycle", "product_pair": pair, "mode": mode,
+            "product": pair_record["product"], "runner": pair_record["runner"], "source": pair_record["source"],
+            "step": pair_record["step"], "leaf": pair_record["leaf"],
+            "oracle": pair_record["oracle"],
+            "oracle_executable": pair_record["oracle_executable"], "oracle_output": pair_record["oracle_output"],
+            "tools_before": pair_record["tools_before"], "tools_after": pair_record["tools_after"],
+            "artifact_snapshot_sha256": pair_record["artifact_snapshot_sha256"],
+            "link": pair_record["modes"][mode]["link"],
+            "workload": pair_record["modes"][mode]["workload"],
+            "executable": pair_record["modes"][mode]["executable"],
+            "link_receipt": pair_record["modes"][mode]["link_receipt"],
+            "output": pair_record["modes"][mode]["output"],
+        }
+    require_complete_cells(roster_entry, cells)
+    return cells
+
+
 def collect(root: Path, work: Path) -> dict[str, Any]:
     work = family.physical(root, work)
     request = family.read(work / "request.json")
@@ -942,8 +1133,10 @@ def collect(root: Path, work: Path) -> dict[str, Any]:
             cells = matrix_cells(matrix, required)
         elif required["kind"] == "dynamic-qualification":
             cells = dynamic_qualification_cells(root, phase.dynamic_qualification, required)
-        else:
+        elif required["kind"] == "composition":
             cells = composition_cells(root, work, phase, required)
+        else:
+            cells = static_lifecycle_cells(root, work, phase, required)
         require_complete_cells(required, cells)
         coverage[required["id"]] = {"capability": required["capability"], "behavior": required["behavior"],
                                       "cells": cells}
@@ -981,6 +1174,8 @@ def execute(root: Path, family_execution: Path, output: Path, jobs: int) -> Path
     phase = _validated_phase_inputs(root, request, native_execution=True)
     roster = load_roster()
     composition = next(entry for entry in roster["required"] if entry["kind"] == "composition")
+    lifecycle = next((entry for entry in roster["required"]
+                      if entry["id"] == "pthread-static-lifecycle"), None)
     work = _fresh_work(root, output)
     phase.require_output_disjoint(work)
     require(type(jobs) is int and 1 <= jobs <= len(family.PAIRS), "pthread family jobs must be in [1, 3]")
@@ -991,13 +1186,16 @@ def execute(root: Path, family_execution: Path, output: Path, jobs: int) -> Path
     errors: list[BaseException] = []
 
     def run_pair(pair: str) -> None:
-        step = work / "runs" / pair
-        command = composition_command(root, products[pair], composition, source_mount)
-        try:
-            family.run_step(root, step, command, family.case_environment(root, step, source_mount))
-        finally:
-            if step.exists():
-                family.static_products.make_retained_evidence_readable(step)
+        steps = [(work / "runs" / pair, composition_command(root, products[pair], composition, source_mount))]
+        if lifecycle is not None:
+            steps.append((work / "lifecycle-runs" / pair,
+                          static_lifecycle_command(root, products[pair]["static"], lifecycle, source_mount)))
+        for step, command in steps:
+            try:
+                family.run_step(root, step, command, family.case_environment(root, step, source_mount))
+            finally:
+                if step.exists():
+                    family.static_products.make_retained_evidence_readable(step)
 
     with ThreadPoolExecutor(max_workers=jobs, thread_name_prefix="pthread-family") as executor:
         pending = {executor.submit(run_pair, pair): pair for pair in family.PAIRS}

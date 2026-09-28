@@ -19,6 +19,29 @@ fail() {
     exit 1
 }
 
+usage() {
+    printf 'usage: %s [--static-sysroot STATIC_SYSROOT --retain]\n' "$0" >&2
+    exit 2
+}
+
+supplied_sysroot=""
+retain=0
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --static-sysroot)
+            [ "$#" -ge 2 ] && [ -z "$supplied_sysroot" ] || usage
+            supplied_sysroot="$2"
+            shift 2
+            ;;
+        --retain)
+            [ "$retain" -eq 0 ] || usage
+            retain=1
+            shift
+            ;;
+        *) usage ;;
+    esac
+done
+
 require_tool() {
     command -v "$1" >/dev/null 2>&1 || fail "requires $1"
 }
@@ -41,6 +64,21 @@ case "$tmpdir_physical" in
     "$checkout_physical"/.work/*) ;;
     *) fail "TMPDIR physically escapes checkout .work: $tmpdir_physical" ;;
 esac
+if [ -n "$supplied_sysroot" ]; then
+    sysroot_physical="$(realpath -e "$supplied_sysroot")" || fail "cannot resolve supplied static product"
+    python3 - "$checkout_physical" "$sysroot_physical" <<'PY'
+from pathlib import Path
+import sys
+
+root, product = map(Path, sys.argv[1:])
+if not product.is_dir() or product.resolve() != product:
+    raise SystemExit("supplied static product must be a physical directory")
+if not product.is_relative_to(root / ".work"):
+    raise SystemExit("supplied static product must be under checkout .work")
+PY
+else
+    sysroot_physical=""
+fi
 ulimit -c 0
 
 work_dir="$(mktemp -d "$TMPDIR/crabc-x86-owned-pthread-lifecycle.XXXXXX")"
@@ -48,11 +86,14 @@ cleanup() {
     local status=$?
 
     trap - EXIT
-    if [ "$status" -eq 0 ]; then
+    if [ "$status" -eq 0 ] && [ "$retain" -eq 0 ]; then
         rm -rf -- "$work_dir"
     else
-        printf 'x86 owned pthread lifecycle: retained failure evidence at %s\n' \
-            "$work_dir" >&2
+        chmod -R a+rX "$work_dir"
+        if [ "$status" -ne 0 ]; then
+            printf 'x86 owned pthread lifecycle: retained failure evidence at %s\n' \
+                "$work_dir" >&2
+        fi
     fi
     exit "$status"
 }
@@ -61,7 +102,11 @@ trap cleanup EXIT
 reference="$work_dir/musl-pthread-lifecycle"
 reference_output="$work_dir/musl-output"
 header_trace="$work_dir/header-trace"
-sysroot="$work_dir/owned-static-sysroot"
+if [ -n "$sysroot_physical" ]; then
+    sysroot="$sysroot_physical"
+else
+    sysroot="$work_dir/owned-static-sysroot"
+fi
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H "$PROBE" \
@@ -76,7 +121,9 @@ timeout 30 env -i "$reference" >"$reference_output" ||
     fail "pinned-musl lifecycle consumer failed"
 [ ! -s "$reference_output" ] || fail "pinned-musl lifecycle consumer emitted output"
 
-python3 "$BUILDER" --output "$sysroot" >"$work_dir/sysroot-build.json"
+if [ -z "$sysroot_physical" ]; then
+    python3 "$BUILDER" --output "$sysroot" >"$work_dir/sysroot-build.json"
+fi
 
 audit_receipt_and_elf() {
     local mode="$1"
@@ -207,8 +254,77 @@ run_installed_mode() {
     audit_receipt_and_elf "$mode" "$label" "$mode_root"
 }
 
+capture_tool_roster() {
+    local output="$1"
+    python3 -B - "$sysroot" "$ORACLE_CC" "$output" <<'PY'
+import hashlib
+import json
+import shutil
+from pathlib import Path
+import sys
+
+sysroot, oracle, output = map(Path, sys.argv[1:])
+
+def identity(path):
+    path = path.resolve(strict=True)
+    if not path.is_file() or path.is_symlink():
+        raise SystemExit(f"pthread lifecycle tool is not a physical file: {path}")
+    data = path.read_bytes()
+    return {"path": str(path), "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+
+compiler = shutil.which("gcc")
+linker = shutil.which("ld.lld")
+if compiler is None or linker is None:
+    raise SystemExit("pthread lifecycle requires the pinned gcc and ld.lld")
+record = {
+    "oracle": identity(oracle),
+    "static_driver": identity(sysroot / "bin/crabc-cc"),
+    "compiler": identity(Path(compiler)),
+    "linker": identity(Path(linker)),
+}
+Path(output).write_text(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+PY
+}
+
+capture_oracle() {
+    local output="$1"
+    python3 -B - "$ORACLE_CC" "$output" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+compiler, output = map(Path, sys.argv[1:])
+
+def identity(path):
+    path = path.resolve(strict=True)
+    if not path.is_file() or path.is_symlink():
+        raise SystemExit(f"pthread lifecycle oracle input is not a physical file: {path}")
+    data = path.read_bytes()
+    return {"path": str(path), "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+
+record = {
+    "compiler": identity(compiler),
+    "runtime": identity(Path("/opt/musl-1.2.6/lib/libc.so")),
+    "pin": identity(Path("/opt/musl-1.2.6/.crabc-oracle")),
+}
+Path(output).write_text(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+PY
+}
+
+if [ "$retain" -eq 1 ]; then
+    capture_tool_roster "$work_dir/tools-before.json"
+    capture_oracle "$work_dir/oracle.json"
+fi
+
 run_installed_mode -static et-exec
 run_installed_mode -static-pie static-pie
 
+if [ "$retain" -eq 1 ]; then
+    capture_tool_roster "$work_dir/tools-after.json"
+    cmp -s "$work_dir/tools-before.json" "$work_dir/tools-after.json" ||
+        fail 'native compiler/linker tool roster changed during lifecycle'
+    printf 'evidence: %s\n' "$work_dir"
+fi
 printf '%s\n' \
     'x86 owned pthread lifecycle: PASS (pinned musl + installed ET_EXEC/static-PIE attributes, C11, explicit/condition cancellation teardown, normal robust owner-death/recovery, detached reaping, atfork)'
