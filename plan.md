@@ -106,6 +106,8 @@ are not transferable passes for a different revision.
   publication, PageMap, terminal-release, and failed-unmap relations. A
   separate second-arena EIO purge regression matches 16 of 19 fields; Rust
   still omits the pinned decommit warning and its callback-order observations.
+  A failed second-arena MADV_FREE reset regression matches 20 of 23 fields;
+  its remaining three fields isolate the missing reset warning.
   Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). On an idle host the development engine harness
