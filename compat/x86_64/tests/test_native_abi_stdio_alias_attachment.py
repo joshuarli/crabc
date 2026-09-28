@@ -210,6 +210,42 @@ class NativeStdioAliasAttachmentContractTests(unittest.TestCase):
                     ],
                 )
 
+    def test_selected_file_alias_occurrence_rejects_foreign_or_duplicate_archive_member(self) -> None:
+        selected = {
+            'index': 7, 'artifact_key': 'candidate-static', 'table': '.symtab',
+            'member_name': 'selected.o', 'member_index': 4, 'member_occurrence': 0,
+            'table_section_index': 9,
+            'row': {'name': '_IO_getc', 'type': 'FUNC', 'binding': 'WEAK',
+                    'visibility': 'DEFAULT', 'section_index': '3'},
+            'definition_section': {'name': '.text.getc', 'index': 3},
+        }
+        observed = {
+            'member': selected['member_name'], 'member_index': selected['member_index'],
+            'member_occurrence': selected['member_occurrence'],
+            'table_section_index': selected['table_section_index'], 'row': selected['row'],
+            'section': selected['definition_section'],
+        }
+        self.assertEqual(selection._stdio_alias_occurrence(
+            {selected['index']: selected}, artifact_key='candidate-static',
+            observation=observed, description='selected FILE alias',
+        )['index'], selected['index'])
+
+        foreign = copy.deepcopy(observed)
+        foreign['member'] = 'foreign.o'
+        with self.assertRaisesRegex(selection.SelectionError, 'does not bind one complete ELF occurrence'):
+            selection._stdio_alias_occurrence(
+                {selected['index']: selected}, artifact_key='candidate-static',
+                observation=foreign, description='foreign FILE alias',
+            )
+
+        duplicate = {**copy.deepcopy(selected), 'index': selected['index'] + 1}
+        with self.assertRaisesRegex(selection.SelectionError, 'does not bind one complete ELF occurrence'):
+            selection._stdio_alias_occurrence(
+                {selected['index']: selected, duplicate['index']: duplicate},
+                artifact_key='candidate-static', observation=observed,
+                description='duplicate FILE alias',
+            )
+
     def test_adapter_binds_current_source_product_tree_and_complete_elf_facts(self) -> None:
         receipt = self._receipt()
         with mock.patch.object(stdio_alias_evidence, 'validate_report', return_value=receipt) as replay:
