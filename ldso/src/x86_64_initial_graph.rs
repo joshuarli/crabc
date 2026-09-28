@@ -1919,9 +1919,14 @@ unsafe fn parse_mapped(
     // The null entry is the only unconditional dynsym range. GNU tables may
     // have no export buckets while relocations still name undefined imports;
     // later direct indexed access validates exactly the named record.
-    if !virtual_range_in_readable_file_load(phdr, phnum, symtab_address, 24) { return None; }
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-    { object.symtab_file_load = readable_file_load_segment(phdr, phnum, symtab_address, 24); }
+    {
+        // Retain the segment found by the admission scan for direct indexed
+        // symbols; repeating the same scan cannot strengthen that proof.
+        object.symtab_file_load = Some(readable_file_load_segment(phdr, phnum, symtab_address, 24)?);
+    }
+    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+    if !virtual_range_in_readable_file_load(phdr, phnum, symtab_address, 24) { return None; }
     object.symtab = runtime_address(base, symtab_address)? as *const u8;
     #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
     {
@@ -5274,6 +5279,8 @@ mod readable_file_load_tests {
         assert_eq!(unsafe { syscall3(SYS_WRITE, fd, image.as_ptr() as i64, PAGE as i64) }, PAGE as i64);
         let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
         let object = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) }.unwrap();
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        assert_eq!(object.symtab_file_load, Some((0, 0x380)));
         let mapped = object.base as *const u8;
         assert_eq!(unsafe { *mapped.add(0x37f) }, 0xa5);
         assert!(unsafe { core::slice::from_raw_parts(mapped.add(0x380), 0x180) }
@@ -5308,19 +5315,37 @@ mod readable_file_load_tests {
         let fits = |address, size| unsafe {
             virtual_range_in_readable_file_load(headers.as_ptr(), 2, address, size)
         };
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        let selected = |address, size| unsafe {
+            readable_file_load_segment(headers.as_ptr(), 2, address, size)
+        };
         assert!(fits(0x1000, 24));
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        assert_eq!(selected(0x1000, 24), Some((0x1000, 0x1030)));
         assert!(fits(0x1018, 24));
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        assert_eq!(selected(0x1030, 24), Some((0x1030, 0x1060)));
         assert!(!fits(0x0fff, 24));
         // Adjacent mapped segments cannot jointly back one symbol record.
         assert!(!fits(0x1020, 24));
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        assert_eq!(selected(0x1020, 24), None);
         // Mapped zero-fill is not initialized symbol-table storage.
         assert!(!fits(0x1070, 24));
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        assert_eq!(selected(0x1070, 24), None);
         assert!(!fits(u64::MAX - 12, 24));
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        assert_eq!(selected(u64::MAX - 12, 24), None);
 
         load(&mut headers, 0, PF_W, 0x1000, 48, 128);
         assert!(!unsafe { virtual_range_in_readable_file_load(headers.as_ptr(), 2, 0x1000, 24) });
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        assert_eq!(unsafe { readable_file_load_segment(headers.as_ptr(), 2, 0x1000, 24) }, None);
         load(&mut headers, 0, PF_R, u64::MAX - 12, 48, 48);
         assert!(!unsafe { virtual_range_in_readable_file_load(headers.as_ptr(), 2, u64::MAX - 12, 1) });
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        assert_eq!(unsafe { readable_file_load_segment(headers.as_ptr(), 2, u64::MAX - 12, 1) }, None);
     }
 }
 
