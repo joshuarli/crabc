@@ -90,6 +90,28 @@ static INITIALIZATIONS: AtomicUsize = AtomicUsize::new(0);
 static FINALIZATIONS: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
+fn initial_constructor_tid_consumes_handoff_once_and_repairs_a_fork_child() {
+    let absent = InitialConstructorTid::new();
+    let queries = core::cell::Cell::new(0);
+    assert_eq!(absent.consume_with(|| { queries.set(queries.get() + 1); 41 }), 41);
+    assert_eq!(queries.get(), 1);
+    assert!(!absent.publish(42));
+
+    let handed_off = InitialConstructorTid::new();
+    assert!(!handed_off.publish(0));
+    assert!(!handed_off.publish(-1));
+    assert!(handed_off.publish(43));
+    assert!(!handed_off.publish(44));
+    assert_eq!(handed_off.consume_with(|| panic!("published TID queried again")), 43);
+    assert!(!handed_off.publish(45));
+
+    let inherited = InitialConstructorTid::new();
+    assert!(inherited.publish(46));
+    inherited.adopt_fork_child(47);
+    assert_eq!(inherited.consume_with(|| panic!("fork child queried again")), 47);
+}
+
+#[test]
 fn finalizer_tid_is_queried_only_for_an_active_constructor() {
     unsafe {
         let mut nodes = UnpublishedObjects::new();

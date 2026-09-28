@@ -438,6 +438,42 @@ unsafe fn initialize_object(node: *mut RuntimeObject) {
 
 fn current_tid() -> i32 { (unsafe { syscall1(186, 0) }) as i32 }
 
+/// A libc-attached main task has already queried its kernel TID before it
+/// invokes initial constructors. Zero means no handoff was published, and
+/// negative one closes the slot after its sole consumption. A loader entered
+/// without that libc attachment still queries its own current TID.
+struct InitialConstructorTid(AtomicI32);
+
+impl InitialConstructorTid {
+    const fn new() -> Self { Self(AtomicI32::new(0)) }
+
+    fn publish(&self, tid: i32) -> bool {
+        tid > 0 && self.0.compare_exchange(0, tid, Ordering::Release, Ordering::Relaxed).is_ok()
+    }
+
+    fn consume_with(&self, current: impl FnOnce() -> i32) -> i32 {
+        let published = self.0.swap(-1, Ordering::AcqRel);
+        if published > 0 { published } else { current() }
+    }
+
+    fn adopt_fork_child(&self, tid: i32) {
+        if tid > 0 && self.0.load(Ordering::Acquire) > 0 {
+            // The fork child is single-threaded; its copied pending handoff
+            // names the former task until this completion replaces it.
+            self.0.store(tid, Ordering::Release);
+        }
+    }
+}
+
+static INITIAL_CONSTRUCTOR_TID: InitialConstructorTid = InitialConstructorTid::new();
+
+/// The private libc startup attachment publishes its validated initial-task
+/// TID before any constructor can run. Reject a duplicate or late handoff so
+/// no later caller can rewrite the ownership token used by this queue.
+unsafe extern "C" fn runtime_publish_initial_tid(tid: i32) -> i32 {
+    if INITIAL_CONSTRUCTOR_TID.publish(tid) { 0 } else { -1 }
+}
+
 /// Incremented in each fork child's copy by `runtime_fork_complete`. A
 /// constructor visitor compares it around its callbacks to learn, without a
 /// gettid, whether it is still the task that claimed the object.
@@ -503,7 +539,7 @@ pub(super) unsafe fn initialize_initial() {
     };
     // This immutable queue was allocated/preflighted before ARCH_SET_FS.
     // Runtime growth cannot replace it; no fallible work follows preinit.
-    let mut tid = current_tid();
+    let mut tid = INITIAL_CONSTRUCTOR_TID.consume_with(current_tid);
     for index in 0..count { tid = unsafe { initialize_object_as(*order.add(index), tid) }; }
 }
 
@@ -588,6 +624,7 @@ unsafe extern "C" fn runtime_fork_complete(parent_tid: i32, child: i32, callback
         // Publish the new process before any suspended visitor resumes.
         FORK_GENERATION.fetch_add(1, Ordering::Relaxed);
         let tid = unsafe { syscall1(186, 0) } as i32;
+        INITIAL_CONSTRUCTOR_TID.adopt_fork_child(tid);
         let thread_pointer = unsafe { read_thread_pointer() } as *mut u8;
         let registry = unsafe { &mut *REGISTRY.0.get() };
         let mut node = registry.head;
@@ -958,6 +995,7 @@ pub(super) fn runtime_function(name: &[u8]) -> Option<u64> {
         b"__crabc_x86_64_runtime_address" => Some(runtime_address_info as *const () as usize as u64),
         b"__crabc_x86_64_runtime_fork_prepare" => Some(runtime_fork_prepare as *const () as usize as u64),
         b"__crabc_x86_64_runtime_fork_complete" => Some(runtime_fork_complete as *const () as usize as u64),
+        b"__crabc_x86_64_runtime_publish_initial_tid" => Some(runtime_publish_initial_tid as *const () as usize as u64),
         b"__crabc_x86_64_runtime_information" => Some(runtime_information as *const () as usize as u64),
         b"__crabc_x86_64_runtime_iterate" => Some(runtime_iterate as *const () as usize as u64),
         _ => None,

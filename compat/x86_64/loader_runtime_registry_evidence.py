@@ -71,14 +71,16 @@ RESOLVERS = {
     "__crabc_x86_64_runtime_symbol": "runtime_symbol",
     "__crabc_x86_64_runtime_close": "runtime_close",
     "__crabc_x86_64_runtime_address": "runtime_address_info",
+    "__crabc_x86_64_runtime_publish_initial_tid": "runtime_publish_initial_tid",
     "__crabc_x86_64_runtime_fork_prepare": "runtime_fork_prepare",
     "__crabc_x86_64_runtime_fork_complete": "runtime_fork_complete",
     "__crabc_x86_64_runtime_information": "runtime_information",
     "__crabc_x86_64_runtime_iterate": "runtime_iterate",
 }
-DLFCN_NAMES = tuple(name for name, _ in RESOLVERS.items() if "runtime_" in name and "fork" not in name)
 FORK_NAMES = ("__crabc_x86_64_runtime_fork_prepare", "__crabc_x86_64_runtime_fork_complete")
+STARTUP_NAME = "__crabc_x86_64_runtime_publish_initial_tid"
 RESET_NAME = "__crabc_x86_64_reset_current_tls_v1"
+DLFCN_NAMES = tuple(name for name in RESOLVERS if "runtime_" in name and name not in (*FORK_NAMES, STARTUP_NAME))
 DLOPEN_MODES = ("pie", "non-pie")
 DLOPEN_DRIVER_MODES = {"pie": "pie", "non-pie": "exec"}
 TIMER_MODES = ("pie", "non-pie")
@@ -262,6 +264,7 @@ def validate_contract(contract: object) -> None:
     require(type(operations) is list and len(operations) == len(RESOLVERS), "runtime registry operation roster drifted")
     seen: dict[str, str] = {}
     expected_consumers = {**{name: ("general_dlfcn", "runtime-tls-41-modules") for name in DLFCN_NAMES},
+                          STARTUP_NAME: ("dynamic_startup", "dynamic-pie-and-non-pie-kernel-and-direct"),
                           **{name: ("dynamic_fork", "all-100-fork-cells") for name in FORK_NAMES},
                           RESET_NAME: ("timer_reset", "dynamic-pie-and-non-pie-kernel-and-direct")}
     for operation in operations:
@@ -287,7 +290,9 @@ def source_resolution(root: Path = ROOT) -> dict[str, object]:
     registry = source_file(root, "ldso/src/x86_64_runtime_registry.rs").read_text(encoding="utf-8")
     matches = re.findall(r'\bb"([^"]+)"\s*=>\s*Some\((\w+)\s+as \*const \(\)', registry)
     found = {"__" + name if not name.startswith("__") else name: resolver for name, resolver in matches}
-    require(found == RESOLVERS, "runtime_function is not the exact closed nine-name resolver")
+    require(found == RESOLVERS, "runtime_function is not the exact closed resolver")
+    require(re.search(r'unsafe\s+extern\s+"C"\s+fn\s+runtime_publish_initial_tid\s*\(\s*tid:\s*i32\s*\)\s*->\s*i32', registry) is not None,
+            "initial TID producer signature drifted")
     # Initial worker routing must delegate unknown protocol names to that
     # closed table; it cannot widen a three-name worker table into this owner.
     worker = source_file(root, "ldso/src/x86_64_initial_worker_tls.rs").read_text(encoding="utf-8")
@@ -303,10 +308,12 @@ def source_resolution(root: Path = ROOT) -> dict[str, object]:
     ):
         require(fragment in relocation, f"runtime relocation gate omits {fragment!r}")
     dynamic_tls = source_file(root, "libc/src/c_abi/x86_64/dynamic_tls.rs").read_text(encoding="utf-8")
+    require(re.search(r'fn\s+__crabc_x86_64_runtime_publish_initial_tid\s*\(\s*tid:\s*i32\s*\)\s*->\s*i32\s*;', dynamic_tls) is not None,
+            "initial TID consumer signature drifted")
     dlfcn = source_file(root, "libc/src/c_abi/x86_64/general_dlfcn.rs").read_text(encoding="utf-8")
     for name in DLFCN_NAMES:
         require(f"fn {name}(" in dlfcn, f"dlfcn consumer omits {name}")
-    for name in (*FORK_NAMES, RESET_NAME):
+    for name in (STARTUP_NAME, *FORK_NAMES, RESET_NAME):
         require(f"fn {name}(" in dynamic_tls, f"dynamic TLS consumer omits {name}")
     static_root = source_file(root, "libc/src/c_abi/x86_64/static_c_abi.rs").read_text(encoding="utf-8")
     require('#[cfg_attr(crabc_x86_dynamic_runtime, path = "dynamic_tls.rs")]' in static_root,
@@ -337,7 +344,7 @@ def _symbol_rows(facts: Mapping[str, Any], artifact: str) -> dict[str, list[Mapp
 
 
 def import_placement(facts: Mapping[str, Any]) -> dict[str, dict[str, object]]:
-    """Require exactly the nine genuine shared-libc undefined protocol imports."""
+    """Require exactly the selected shared-libc undefined protocol imports."""
     artifacts = facts.get("artifacts")
     require(type(artifacts) is dict and set(("candidate-shared", "candidate-loader")) <= set(artifacts),
             "complete ELF facts omit candidate shared/loader placements")
@@ -959,7 +966,7 @@ def validate_report(report_path: Path, *, base_inventory: Path, elf_report: Path
     covered.update(fork_current.get("validation", {}).get("operations", []))
     # Fork's established v2 receipt has no operation list; its contract map is
     # explicit here, after the entire 100-cell reader has replayed.
-    covered.update(FORK_NAMES)
+    covered.update((STARTUP_NAME, *FORK_NAMES))
     covered.update(timer_current["operations"])
     require(covered == set(RESOLVERS), "runtime registry operation coverage is incomplete")
     return report

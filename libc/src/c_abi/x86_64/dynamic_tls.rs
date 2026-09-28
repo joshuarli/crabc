@@ -23,6 +23,7 @@ impl StaticInitialTlsBlock {
 }
 
 unsafe extern "C" {
+    fn __crabc_x86_64_runtime_publish_initial_tid(tid: i32) -> i32;
     fn __crabc_x86_64_runtime_fork_prepare(callback_lock: i32) -> i32;
     fn __crabc_x86_64_runtime_fork_complete(parent_tid: i32, child: i32, callback_lock: i32);
     fn __crabc_x86_64_initial_tls_allocate(block: *mut StaticInitialTlsBlock) -> i32;
@@ -42,17 +43,41 @@ pub unsafe extern "C" fn __tls_get_addr(index: *const core::ffi::c_void) -> *mut
 
 static MAIN_POINTER: AtomicUsize = AtomicUsize::new(0);
 static MAIN_ID: AtomicI32 = AtomicI32::new(0);
+const ATTACHING_POINTER: usize = usize::MAX;
+
+fn attach_with_tid_handoff(
+    main_pointer: &AtomicUsize,
+    main_id: &AtomicI32,
+    pointer: usize,
+    tid: i32,
+    publish: impl FnOnce(i32) -> i32,
+) -> bool {
+    if main_pointer.compare_exchange(0, ATTACHING_POINTER, Ordering::AcqRel, Ordering::Relaxed).is_err() {
+        return false;
+    }
+    // The reserved pointer is never a ready TLS identity. A rejected loader
+    // handoff returns to the empty state before startup terminates.
+    if publish(tid) != 0 {
+        main_pointer.store(0, Ordering::Release);
+        return false;
+    }
+    main_id.store(tid, Ordering::Relaxed);
+    main_pointer.store(pointer, Ordering::Release);
+    true
+}
 
 pub(super) unsafe fn attach_initial_thread() -> bool {
     let pointer: usize;
     unsafe { core::arch::asm!("mov {}, fs:[0]", out(reg) pointer, options(nostack, readonly)); }
     let tid = unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETTID) };
     if pointer == 0 || tid <= 0 || tid > i32::MAX as i64 { return false; }
-    MAIN_ID.store(tid as i32, Ordering::Relaxed);
-    MAIN_POINTER.compare_exchange(0, pointer, Ordering::Release, Ordering::Relaxed).is_ok()
+    attach_with_tid_handoff(&MAIN_POINTER, &MAIN_ID, pointer, tid as i32,
+        |tid| unsafe { __crabc_x86_64_runtime_publish_initial_tid(tid) })
 }
 
-pub(super) fn is_ready() -> bool { MAIN_POINTER.load(Ordering::Acquire) != 0 }
+pub(super) fn is_ready() -> bool {
+    !matches!(MAIN_POINTER.load(Ordering::Acquire), 0 | ATTACHING_POINTER)
+}
 
 /// Whether `pointer` (the caller's `%fs:0`) is the initial thread's.
 ///
@@ -148,5 +173,35 @@ pub(super) unsafe fn reset_current_thread_images() {
     if unsafe { __crabc_x86_64_reset_current_tls_v1() } != 0 {
         unsafe { raw_syscall::syscall1(231, 127); }
         loop { core::hint::spin_loop(); }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn initial_tid_handoff_rejection_rolls_back_unpublished_main_identity() {
+        let pointer = AtomicUsize::new(0);
+        let id = AtomicI32::new(0);
+        assert!(!attach_with_tid_handoff(&pointer, &id, 0x1000, 41, |tid| {
+            assert_eq!(tid, 41);
+            assert_eq!(pointer.load(Ordering::Acquire), ATTACHING_POINTER);
+            assert_eq!(id.load(Ordering::Acquire), 0);
+            -1
+        }));
+        assert_eq!(pointer.load(Ordering::Acquire), 0);
+        assert_eq!(id.load(Ordering::Acquire), 0);
+
+        assert!(attach_with_tid_handoff(&pointer, &id, 0x1000, 42, |tid| {
+            assert_eq!(tid, 42);
+            assert_eq!(pointer.load(Ordering::Acquire), ATTACHING_POINTER);
+            0
+        }));
+        assert_eq!(pointer.load(Ordering::Acquire), 0x1000);
+        assert_eq!(id.load(Ordering::Acquire), 42);
+        assert!(!attach_with_tid_handoff(&pointer, &id, 0x2000, 43, |_| {
+            panic!("a ready main identity accepted a second loader handoff")
+        }));
     }
 }

@@ -678,6 +678,7 @@ fn installed_runtime_function_imports_validate_shape_before_any_graph_write() {
         b"\0__crabc_x86_64_runtime_symbol\0".as_slice(),
         b"\0__crabc_x86_64_runtime_close\0".as_slice(),
         b"\0__crabc_x86_64_runtime_address\0".as_slice(),
+        b"\0__crabc_x86_64_runtime_publish_initial_tid\0".as_slice(),
         b"\0__crabc_x86_64_runtime_fork_prepare\0".as_slice(),
         b"\0__crabc_x86_64_runtime_fork_complete\0".as_slice(),
         b"\0__crabc_x86_64_runtime_information\0".as_slice(),

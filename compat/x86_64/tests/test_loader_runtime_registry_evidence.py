@@ -1,4 +1,4 @@
-"""Focused contracts for the nine private loader-runtime protocol imports."""
+"""Focused contracts for the private loader-runtime protocol imports."""
 from __future__ import annotations
 
 import copy

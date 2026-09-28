@@ -743,6 +743,7 @@ def build_staged_payload(output: Path, stage: Path, *, allocator_backend: str = 
     allowed = {"__crabc_x86_64_initial_tls_allocate", "__crabc_x86_64_initial_tls_release",
                "__crabc_x86_64_resolve_initial_tls", "__crabc_x86_64_reset_current_tls_v1",
                "__crabc_x86_64_loader_conventional_startup_v1",
+               "__crabc_x86_64_runtime_publish_initial_tid",
                "__crabc_x86_64_runtime_fork_prepare", "__crabc_x86_64_runtime_fork_complete",
                "__crabc_x86_64_runtime_open", "__crabc_x86_64_runtime_symbol",
                "__crabc_x86_64_runtime_close", "__crabc_x86_64_runtime_address",

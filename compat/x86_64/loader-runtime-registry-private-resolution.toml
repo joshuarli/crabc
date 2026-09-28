@@ -37,6 +37,11 @@ resolver = "runtime_iterate"
 consumer = "general_dlfcn"
 scenario = "runtime-tls-41-modules"
 [[operation]]
+name = "__crabc_x86_64_runtime_publish_initial_tid"
+resolver = "runtime_publish_initial_tid"
+consumer = "dynamic_startup"
+scenario = "dynamic-pie-and-non-pie-kernel-and-direct"
+[[operation]]
 name = "__crabc_x86_64_runtime_fork_prepare"
 resolver = "runtime_fork_prepare"
 consumer = "dynamic_fork"
