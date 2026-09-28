@@ -75,8 +75,10 @@ static POOL: PoolCell = PoolCell(UnsafeCell::new(Pool {
 /// Class index and size for a pooled request, or `None` for its own mapping.
 fn class(bytes: usize, align: usize) -> Option<(usize, usize)> {
     if align > SMALLEST_CLASS || bytes > LARGEST_CLASS { return None; }
-    // The exponent gives both the rounded block size and its free-list index.
-    let exponent = usize::BITS - (bytes.max(SMALLEST_CLASS) - 1).leading_zeros();
+    // All sizes up to the smallest class share its exponent; above it, each
+    // next power-of-two boundary selects the following class.
+    let rounded_input = bytes.saturating_sub(1) | (SMALLEST_CLASS - 1);
+    let exponent = usize::BITS - rounded_input.leading_zeros();
     let index = (exponent - SMALLEST_CLASS.trailing_zeros()) as usize;
     Some((index, SMALLEST_CLASS << index))
 }
@@ -282,6 +284,21 @@ mod pool_tests {
         }
         assert_eq!(class(LARGEST_CLASS + 1, 16), None);
         assert_eq!(class(16, 32), None);
+    }
+
+    #[test]
+    fn every_class_edge_rounds_up_without_crossing_the_mapping_cutoff() {
+        for index in 0..CLASS_COUNT {
+            let size = SMALLEST_CLASS << index;
+            assert_eq!(class(size, 16), Some((index, size)));
+            if index > 0 {
+                assert_eq!(class(size - 1, 16), Some((index, size)));
+            }
+            if index + 1 < CLASS_COUNT {
+                assert_eq!(class(size + 1, 16), Some((index + 1, size * 2)));
+            }
+        }
+        assert_eq!(class(LARGEST_CLASS + 1, 16), None);
     }
 
     #[test]
