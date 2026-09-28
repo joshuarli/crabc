@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import lzma
 import sys
 import tarfile
 import tempfile
@@ -174,6 +175,68 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
             with self.assertRaisesRegex(package.PackageError, "mode"):
                 package.create_archive(source, workspace / "nonexecutable-driver.tar.xz")
 
+    def test_extraction_rejects_noncanonical_tar_encoding(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            workspace = Path(temporary)
+            source = workspace / "source"
+            self.populate_tree(source)
+            control = workspace / "control.tar.xz"
+            package.create_archive(source, control)
+            with tarfile.open(control, "r:xz") as opened:
+                libc = opened.getmember(f"{package.ARCHIVE_ROOT}/usr/lib/libc.a")
+                padding_offset = libc.offset_data + libc.size
+            for variant in ("pax", "gnu", "reordered", "uid", "gid", "mtime", "padding"):
+                with self.subTest(variant=variant):
+                    forged = workspace / f"{variant}.tar.xz"
+                    if variant == "padding":
+                        raw = bytearray(lzma.decompress(control.read_bytes()))
+                        self.assertEqual(raw[padding_offset], 0)
+                        raw[padding_offset] = 1
+                        forged.write_bytes(lzma.compress(raw))
+                    else:
+                        archive_format = tarfile.GNU_FORMAT if variant == "gnu" else tarfile.PAX_FORMAT
+                        with tarfile.open(control, "r:xz") as original, \
+                             tarfile.open(forged, "w:xz", format=archive_format) as rewritten:
+                            members = original.getmembers()
+                            if variant == "reordered":
+                                members = [members[0], *reversed(members[1:])]
+                            for member in members:
+                                projected = copy.copy(member)
+                                if variant == "pax" and member.name == package.ARCHIVE_ROOT:
+                                    projected.pax_headers = {"comment": "forged"}
+                                if variant in {"uid", "gid", "mtime"} and member.name.endswith("/usr/lib/libc.a"):
+                                    setattr(projected, variant, 1)
+                                payload = original.extractfile(member).read() if member.isfile() else None
+                                rewritten.addfile(projected, None if payload is None else io.BytesIO(payload))
+                    destination = workspace / f"rejected-{variant}"
+                    with self.assertRaisesRegex(package.PackageError, "archive encoding"):
+                        package.extract_archive(forged, destination)
+                    self.assertFalse(destination.exists())
+
+    def test_writer_pax_long_path_remains_extractable(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            workspace = Path(temporary)
+            source = workspace / "source"
+            self.populate_tree(source)
+            relative = Path("usr/include") / ("x" * 95 + ".h")
+            payload = b"long installed header\n"
+            (source / relative).write_bytes(payload)
+            manifest_path = source / package.MANIFEST_RELATIVE_PATH
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["installed"]["files"][relative.as_posix()] = hashlib.sha256(payload).hexdigest()
+            manifest_path.write_text(json.dumps(manifest, sort_keys=True) + "\n", encoding="utf-8")
+            archive = workspace / "long-path.tar.xz"
+            package.create_archive(source, archive)
+            with tarfile.open(archive, "r:xz") as opened:
+                member = opened.getmember(f"{package.ARCHIVE_ROOT}/{relative.as_posix()}")
+                self.assertIn("path", member.pax_headers)
+            extracted = package.extract_archive(archive, workspace / "extracted")
+            self.assertEqual((extracted / relative).read_bytes(), payload)
+
     def test_packaging_refuses_a_symlinked_input_or_unsafe_member_name(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             workspace = Path(temporary)
@@ -260,10 +323,10 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
             workspace = Path(temporary)
             archive = workspace / "unbound.tar.xz"
             with tarfile.open(archive, "w:xz") as output:
-                root = tarfile.TarInfo(package.ARCHIVE_ROOT)
-                root.type = tarfile.DIRTYPE
-                root.mode = 0o755
-                output.addfile(root)
+                for name in (package.ARCHIVE_ROOT,
+                             f"{package.ARCHIVE_ROOT}/usr",
+                             f"{package.ARCHIVE_ROOT}/usr/lib"):
+                    output.addfile(package.deterministic_info(name, directory=True, mode=0o755))
                 content = b"unbound\n"
                 member = tarfile.TarInfo(f"{package.ARCHIVE_ROOT}/usr/lib/libc.a")
                 member.size = len(content)

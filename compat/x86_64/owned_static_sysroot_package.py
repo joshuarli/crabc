@@ -319,7 +319,7 @@ def create_archive(source: Path, archive: Path) -> None:
             prefix=".crabc-x86-static-package.", suffix=".tar.xz", dir=parent, delete=False
         ) as temporary:
             staged_archive = Path(temporary.name)
-        with tarfile.open(staged_archive, "w:xz") as output:
+        with tarfile.open(staged_archive, "w:xz", format=tarfile.PAX_FORMAT) as output:
             output.addfile(deterministic_info(ARCHIVE_ROOT, directory=True, mode=0o755))
             for relative, path in entries:
                 name = archive_member(relative)
@@ -403,6 +403,52 @@ def checked_archive_members(
     return checked
 
 
+def require_canonical_tar_encoding(
+    input_archive: tarfile.TarFile,
+    members: list[tuple[tarfile.TarInfo, Path]],
+) -> None:
+    """Require the exact tar member records emitted by the deterministic writer."""
+
+    paths = [relative for _, relative in members]
+    if paths[0] != Path(ARCHIVE_ROOT) or paths[1:] != sorted(paths[1:]):
+        raise PackageError("archive encoding has noncanonical member order")
+    directories = {relative for member, relative in members if member.isdir()}
+    for _, relative in members:
+        if any(parent not in directories for parent in relative.parents if parent != Path(".")):
+            raise PackageError("archive encoding omits a member directory")
+
+    # Tarfile projects extension records into members, so compare raw headers.
+    stream = input_archive.fileobj
+    offset = 0
+    for member, _ in members:
+        expected = deterministic_info(member.name, directory=member.isdir(), mode=member.mode)
+        if member.isreg():
+            expected.size = member.size
+        try:
+            header = expected.tobuf(format=tarfile.PAX_FORMAT)
+        except (ValueError, OverflowError, tarfile.TarError) as error:
+            raise PackageError("archive encoding has an unsupported member header") from error
+        if member.offset != offset or member.offset_data != offset + len(header):
+            raise PackageError("archive encoding has an unexpected member record")
+        stream.seek(offset)
+        if stream.read(len(header)) != header:
+            raise PackageError("archive encoding has an altered member header")
+        data_end = member.offset_data + member.size
+        offset = member.offset_data + (
+            (member.size + tarfile.BLOCKSIZE - 1) // tarfile.BLOCKSIZE
+        ) * tarfile.BLOCKSIZE
+        stream.seek(data_end)
+        if any(stream.read(offset - data_end)):
+            raise PackageError("archive encoding has nonzero member padding")
+    expected_size = (
+        (offset + 2 * tarfile.BLOCKSIZE + tarfile.RECORDSIZE - 1) // tarfile.RECORDSIZE
+    ) * tarfile.RECORDSIZE
+    stream.seek(offset)
+    trailer = stream.read(expected_size - offset + 1)
+    if len(trailer) != expected_size - offset or any(trailer):
+        raise PackageError("archive encoding has an altered trailer")
+
+
 def materialize_checked_members(
     input_archive: tarfile.TarFile,
     members: list[tuple[tarfile.TarInfo, Path]],
@@ -441,6 +487,7 @@ def extract_archive(archive: Path, destination: Path) -> Path:
     try:
         with tarfile.open(archive, "r:xz") as input_archive:
             members = checked_archive_members(input_archive)
+            require_canonical_tar_encoding(input_archive, members)
             with tempfile.TemporaryDirectory(
                 prefix=".crabc-x86-static-package.", dir=parent
             ) as temporary:
