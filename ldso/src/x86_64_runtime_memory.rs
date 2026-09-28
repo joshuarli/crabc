@@ -47,9 +47,9 @@ const CHUNK_BYTES: usize = 64 * 1024;
 struct Pool {
     // Singly linked free blocks per class; the link is the block's first word.
     free: [*mut u8; CLASS_COUNT],
-    // Unused tail of the current chunk.
+    // Next carve address and exclusive end of its current chunk.
     cursor: *mut u8,
-    remaining: usize,
+    limit: usize,
     // Whether the loader's static first chunk has been handed out.
     static_chunk_used: bool,
 }
@@ -68,7 +68,7 @@ struct PoolCell(UnsafeCell<Pool>);
 // SAFETY: every access holds `AllocationGuard`.
 unsafe impl Sync for PoolCell {}
 static POOL: PoolCell = PoolCell(UnsafeCell::new(Pool {
-    free: [core::ptr::null_mut(); CLASS_COUNT], cursor: core::ptr::null_mut(), remaining: 0,
+    free: [core::ptr::null_mut(); CLASS_COUNT], cursor: core::ptr::null_mut(), limit: 0,
     static_chunk_used: false,
 }));
 
@@ -118,19 +118,21 @@ fn allocate_block(bytes: usize, align: usize, zeroed: bool) -> Option<*mut u8> {
         // chunk; a chunk too full for it is abandoned (its tail stays mapped
         // and unused) for a fresh one.
         let mut padding = (pool.cursor as usize).wrapping_neg() % size;
-        if pool.cursor.is_null() || pool.remaining < size + padding {
-            pool.cursor = if pool.static_chunk_used {
+        let mut block = pool.cursor.wrapping_add(padding);
+        let mut end = block.wrapping_add(size);
+        if pool.cursor.is_null() || end as usize > pool.limit {
+            let cursor = if pool.static_chunk_used {
                 map(CHUNK_BYTES)?
             } else {
                 pool.static_chunk_used = true;
                 STATIC_CHUNK.0.get().cast::<u8>()
             };
-            pool.remaining = CHUNK_BYTES;
-            padding = (pool.cursor as usize).wrapping_neg() % size;
+            pool.limit = cursor as usize + CHUNK_BYTES;
+            padding = (cursor as usize).wrapping_neg() % size;
+            block = cursor.wrapping_add(padding);
+            end = block.wrapping_add(size);
         }
-        let block = pool.cursor.wrapping_add(padding);
-        pool.cursor = block.wrapping_add(size);
-        pool.remaining -= size + padding;
+        pool.cursor = end;
         // Never-used chunk memory is still the kernel's zero fill.
         block
     };
@@ -280,6 +282,58 @@ mod pool_tests {
         }
         assert_eq!(class(LARGEST_CLASS + 1, 16), None);
         assert_eq!(class(16, 32), None);
+    }
+
+    #[test]
+    fn mixed_class_blocks_remain_disjoint_across_chunk_refills() {
+        let sizes = [16, 8192, 32, 16384, 64, 16384, 128, 16384,
+            256, 16384, 512, 16384, 1024, 16384];
+        let mut blocks = std::vec::Vec::new();
+        for (index, bytes) in sizes.into_iter().enumerate() {
+            let block = allocate(bytes, 16).unwrap();
+            assert_eq!(block as usize % bytes.max(SMALLEST_CLASS).next_power_of_two(), 0);
+            assert!(unsafe { core::slice::from_raw_parts(block, bytes) }.iter().all(|&byte| byte == 0));
+            let tag = index as u8 + 1;
+            unsafe { core::ptr::write_bytes(block, tag, bytes); }
+            blocks.push((block, bytes, tag));
+        }
+        for (index, &(block, bytes, tag)) in blocks.iter().enumerate() {
+            let start = block as usize;
+            let end = start.checked_add(bytes).unwrap();
+            assert!(unsafe { core::slice::from_raw_parts(block, bytes) }.iter().all(|&byte| byte == tag));
+            for &(other, other_bytes, _) in &blocks[..index] {
+                let other_start = other as usize;
+                let other_end = other_start.checked_add(other_bytes).unwrap();
+                assert!(end <= other_start || other_end <= start);
+            }
+        }
+        for (block, bytes, _) in blocks.into_iter().rev() {
+            unsafe { release(block, bytes, 16); }
+        }
+    }
+
+    #[test]
+    fn concurrent_chunk_refills_keep_live_blocks_exclusive() {
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+        let workers: std::vec::Vec<_> = (1..=4u8).map(|tag| {
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                let mut blocks = std::vec::Vec::new();
+                for _ in 0..6 {
+                    let block = allocate(LARGEST_CLASS, 16).unwrap();
+                    unsafe { core::ptr::write_bytes(block, tag, LARGEST_CLASS); }
+                    blocks.push(block);
+                }
+                barrier.wait();
+                for &block in &blocks {
+                    assert!(unsafe { core::slice::from_raw_parts(block, LARGEST_CLASS) }
+                        .iter().all(|&byte| byte == tag));
+                }
+                barrier.wait();
+                for block in blocks { unsafe { release(block, LARGEST_CLASS, 16); } }
+            })
+        }).collect();
+        for worker in workers { worker.join().unwrap(); }
     }
 
     // Recycled blocks must come back zeroed and class-aligned, large blocks
