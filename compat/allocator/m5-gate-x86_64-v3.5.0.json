@@ -44,6 +44,7 @@
         "native_initial_persistent_live_transfer",
         "native_initial_persistent_quiescent_fork",
         "native_initial_post_exit_free",
+        "native_mixed_regular_medium_pre_reclaim_exit",
         "native_multiple_post_exit_completions",
         "native_os_medium_failed_unmap_exit",
         "native_os_medium_interleaved_reuse_exit",
@@ -165,6 +166,15 @@
         "{scratch}/arena-singleton-split-releasers-exit.json"
       ],
       "scope": "Two arena singletons remain live after their common owner exits while two independent survivor threads wait. Pinned C observes unmapped abandonment and separate PageMap, arena bitmap, and slice releases; native Rust matches the source geometry and ordered PageMap release without consuming the other survivor's client."
+    },
+    "differential:mixed-regular-medium-pre-reclaim-exit": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_mixed_regular_medium_pre_reclaim_exit_evidence.py",
+        "--report",
+        "{scratch}/mixed-regular-medium-pre-reclaim-exit.json"
+      ],
+      "scope": "One worker exits with full arena-backed and OS-backed regular medium pages. A surviving owner publishes one remote free to each before independent owners reclaim and reuse them. The source and Rust traces compare the arena bitmap, OS abandoned list, PageMap, warning state, ordered terminal releases, arena purge schedule, and exact OS VM counter drops."
     },
     "differential:os-medium-split-releasers-exit": {
       "command": [
@@ -291,6 +301,7 @@
         "differential:arena-medium-pre-reclaim-remote-exit",
         "differential:arena-singleton-regular-owner-exit",
         "differential:arena-singleton-split-releasers-exit",
+        "differential:mixed-regular-medium-pre-reclaim-exit",
         "differential:os-medium-interleaved-reuse-exit",
         "differential:os-medium-pre-reclaim-remote-exit",
         "differential:os-medium-split-releasers-exit",
