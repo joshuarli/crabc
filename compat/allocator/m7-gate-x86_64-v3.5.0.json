@@ -149,6 +149,10 @@
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-remote-normal-differential"],
       "scope": "Pinned C MI_STAT=1 and the Rust native adapter warm a worker Theap, then remotely free one 64-byte regular-page block allocated by the initial thread. The worker thread's printed binned row must show its own peak and total of 8 bytes and current of -64 before its Theap merges; the final process count must compose total and peak of 72 bytes with zero current. Metadata-Theap fallback and other nonlocal producers remain outside this fixture."
     },
+    "differential:statistics-remote-bin": {
+      "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-remote-bin-differential"],
+      "scope": "Pinned C MI_STAT=2 and the Rust native adapter remotely free one 64-byte regular-page block from a worker Theap after the initial owner merges. Public process snapshots compare bin, requested, normal, and allocation-count records before and after both owner merges. The worker's printed bin row must carry a negative current and its requested row must retain the warm allocation. Metadata-Theap fallback and other remote sizes remain outside this fixture."
+    },
     "differential:statistics-aligned-huge": {
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-aligned-huge-differential"],
       "scope": "Pinned C MI_STAT=1 and the Rust native adapter allocate one 512 KiB+1 object aligned to 1 MiB, forcing the OS-backed huge singleton branch. They compare 589824 physical page bytes and one huge allocation before/after Theap-to-Heap merge, the exact live `578.2 KiB` printed huge row, zero current after free, pointer alignment, and zero warning deliveries. Other aligned sizes and metadata-Theap fallback remain outside this fixture."
@@ -349,6 +353,7 @@
         "differential:statistics-page-extend",
         "differential:statistics-huge",
         "differential:statistics-remote-normal",
+        "differential:statistics-remote-bin",
         "differential:statistics-aligned-huge",
         "differential:statistics-requested-production",
         "differential:statistics-fast-allocation",

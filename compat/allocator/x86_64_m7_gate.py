@@ -981,6 +981,36 @@ STATISTICS_REQUESTED_PRODUCTION_TRACE_END = "CRABC_MI_M7_STATISTICS_REQUESTED_PR
 STATISTICS_FAST_ALLOCATION_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_fast_allocation_driver.c"
 STATISTICS_FAST_ALLOCATION_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_FAST_ALLOCATION_TRACE_BEGIN"
 STATISTICS_FAST_ALLOCATION_TRACE_END = "CRABC_MI_M7_STATISTICS_FAST_ALLOCATION_TRACE_END"
+STATISTICS_REMOTE_BIN_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_remote_bin_driver.c"
+STATISTICS_REMOTE_BIN_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_REMOTE_BIN_TRACE_BEGIN"
+STATISTICS_REMOTE_BIN_TRACE_END = "CRABC_MI_M7_STATISTICS_REMOTE_BIN_TRACE_END"
+
+
+def require_statistics_remote_bin(trace: Mapping[str, str], description: str) -> None:
+    """Require the freeing Theap's negative bin current before its merge."""
+
+    expected = {
+        "profile.level": "2", "warm.usable": "64", "target.usable": "64", "target.bin": "8",
+        "allocated.bin": "1,1,1", "allocated.requested": "64,64,64",
+        "allocated.normal": "64,64,64", "allocated.normal_count": "1",
+        "main_merged.bin": "1,1,1", "main_merged.requested": "64,64,64",
+        "main_merged.normal": "64,64,64", "main_merged.normal_count": "1",
+        "freed.bin": "2,2,0", "freed.requested": "128,128,128",
+        "freed.normal": "128,128,0", "freed.normal_count": "2",
+        "worker.bin.hex": trace.get("worker.bin.hex"),
+        "worker.requested.hex": trace.get("worker.requested.hex"),
+    }
+    if dict(trace) != expected:
+        raise harness.HarnessError(f"{description} lost the remote bin merge or requested-size record: {trace}")
+    try:
+        bin_row = bytes.fromhex(trace["worker.bin.hex"]).decode("ascii")
+        requested_row = bytes.fromhex(trace["worker.requested.hex"]).decode("ascii")
+    except (ValueError, UnicodeDecodeError) as error:
+        raise harness.HarnessError(f"{description} has invalid worker statistics text") from error
+    if (bin_row.split() != ["bin", "S", "8:", "64", "B", "64", "B", "-64", "B",
+                             "64", "B", "1", "not", "all", "freed"]
+            or requested_row.split() != ["malloc", "req:", "64", "B"]):
+        raise harness.HarnessError(f"{description} lost the freeing Theap's bin/requested rows: {trace}")
 
 
 def require_statistics_fast_allocation(trace: Mapping[str, str], description: str) -> None:
@@ -1582,6 +1612,15 @@ def run_statistics_fast_allocation_differential(offline: bool) -> dict[str, Any]
     )
 
 
+def run_statistics_remote_bin_differential(offline: bool) -> dict[str, Any]:
+    return run_public_statistics_differential(
+        offline, subject="remote-bin", driver=STATISTICS_REMOTE_BIN_DRIVER,
+        begin=STATISTICS_REMOTE_BIN_TRACE_BEGIN, end=STATISTICS_REMOTE_BIN_TRACE_END,
+        report_name="statistics-remote-bin.json", stat_level=2,
+        require_complete=require_statistics_remote_bin,
+    )
+
+
 def run_adapter_differential(
     offline: bool, *, driver: Path = ADAPTER_DRIVER, begin: str = ADAPTER_TRACE_BEGIN,
     end: str = ADAPTER_TRACE_END, report_name: str = "adapter.json",
@@ -1730,6 +1769,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="compare pinned-C/Rust ordinary and OS-aligned requested-size producers under MI_STAT=2")
     mode.add_argument("--statistics-fast-allocation-differential", action="store_true",
         help="compare pinned-C/Rust direct, small, and medium local allocation producers under MI_STAT=2")
+    mode.add_argument("--statistics-remote-bin-differential", action="store_true",
+        help="compare pinned-C/Rust freeing-Theap size-bin attribution under MI_STAT=2")
     mode.add_argument("--adapter-differential", action="store_true",
         help="run the shared-driver pinned-C/native-adapter M7 differential")
     mode.add_argument("--option-profiles-differential", action="store_true",
@@ -1824,6 +1865,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.statistics_fast_allocation_differential:
         report = run_statistics_fast_allocation_differential(arguments.offline)
         print(f"M7 fast allocation statistics differential passed: {len(report['c_trace'])} keys")
+        return 0
+    if arguments.statistics_remote_bin_differential:
+        report = run_statistics_remote_bin_differential(arguments.offline)
+        print(f"M7 remote bin statistics differential passed: {len(report['c_trace'])} keys")
         return 0
     if arguments.adapter_differential:
         report = run_adapter_differential(arguments.offline)

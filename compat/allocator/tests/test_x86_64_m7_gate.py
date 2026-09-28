@@ -67,6 +67,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:statistics-level-two-page-huge",
             "differential:statistics-level-two-requested",
             "differential:statistics-page-extend",
+            "differential:statistics-remote-bin",
             "differential:statistics-remote-normal",
             "differential:statistics-requested-production",
             "differential:thread-init-failure",
@@ -333,6 +334,35 @@ class M7GateContractTests(unittest.TestCase):
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_remote_normal({**trace,
                 "worker.binned.hex": worker_row.replace("-64", "  0").encode("ascii").hex()}, "lost worker current")
+
+    def test_statistics_remote_bin_requires_source_built_producer(self) -> None:
+        summary = self.validate()
+        statistics = self.gate_record(self.contract, "m7.statistics")
+        self.assertIn("differential:statistics-remote-bin", statistics["evidence"])
+        self.assertIn("differential:statistics-remote-bin", summary["runnable_evidence"])
+
+    def test_statistics_remote_bin_reader_rejects_lost_worker_free(self) -> None:
+        worker_bin = "  bin S    8:    64   B      64   B     -64   B      64   B       1        not all freed"
+        worker_requested = "  malloc req:    64   B"
+        trace = {
+            "profile.level": "2", "warm.usable": "64", "target.usable": "64", "target.bin": "8",
+            "allocated.bin": "1,1,1", "allocated.requested": "64,64,64",
+            "allocated.normal": "64,64,64", "allocated.normal_count": "1",
+            "main_merged.bin": "1,1,1", "main_merged.requested": "64,64,64",
+            "main_merged.normal": "64,64,64", "main_merged.normal_count": "1",
+            "freed.bin": "2,2,0", "freed.requested": "128,128,128",
+            "freed.normal": "128,128,0", "freed.normal_count": "2",
+            "worker.bin.hex": worker_bin.encode("ascii").hex(),
+            "worker.requested.hex": worker_requested.encode("ascii").hex(),
+        }
+        gate.require_statistics_remote_bin(trace, "complete")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_remote_bin({**trace, "freed.bin": "2,2,1"}, "lost process free")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_remote_bin({**trace,
+                "worker.bin.hex": worker_bin.replace("-64", "  0").encode("ascii").hex()}, "lost worker free")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_remote_bin({**trace, "freed.requested": "128,128,64"}, "lost requested record")
 
     def test_statistics_aligned_huge_requires_source_built_producer(self) -> None:
         summary = self.validate()
