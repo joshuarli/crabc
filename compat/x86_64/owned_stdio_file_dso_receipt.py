@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Collect and reread main-owned pathname and cookie FILEs used by a DSO.
+"""Collect and reread main/DSO-owned FILE handoffs in both directions.
 
-The executable owns fopen, fopencookie, their callbacks and fclose. Its DSO
-uses both streams for buffered writes, flushes and positioned reads. Static
-links run the same functions in one image as a baseline; only dynamic cells
-prove the cross-image handoff.
+The executable owns pathname and cookie FILEs used by its DSO. The DSO also
+creates a cookie FILE whose callbacks it owns while main uses and closes it.
+Static links run the same functions in one image as a baseline; only dynamic
+cells prove the cross-image handoffs.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ SOURCES = (
     "compat/x86_64/owned_stdio_file_dso_probe.h",
     "compat/x86_64/owned_stdio_file_dso_receipt.py",
 )
-EXPECTED_STDOUT = b"stdio-file-dso-cookie-ok\n"
+EXPECTED_STDOUT = b"stdio-file-dso-both-ways-ok\n"
 ORACLE_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 ORACLE_ARCHIVE = Path("/opt/musl-1.2.6/lib/libc.a")
 ORACLE_LIBC = Path("/opt/musl-1.2.6/lib/libc.so")
@@ -373,14 +373,16 @@ def audit_elf(work: Path) -> None:
                     f"{role} SONAME differs")
             require(re.search(r"\(NEEDED\).*\[libc\.so\]", dynamic) is not None,
                     f"{role} libc dependency differs")
-            for entry in ("crabc_file_dso_transfer", "crabc_cookie_dso_transfer"):
+            for entry in ("crabc_file_dso_transfer", "crabc_cookie_dso_transfer",
+                          "crabc_cookie_dso_open", "crabc_cookie_dso_check"):
                 require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+\d+\s+" + entry + r"\b", symbols) is not None,
                         f"{role} lacks {entry}")
         elif dynamic_main:
             require(re.search(r"\(NEEDED\).*\[libfile-dso\.so\]", dynamic) is not None
                     and re.search(r"\(NEEDED\).*\[libc\.so\]", dynamic) is not None,
                     f"{role} DSO/libc dependencies differ")
-            for entry in ("crabc_file_dso_transfer", "crabc_cookie_dso_transfer"):
+            for entry in ("crabc_file_dso_transfer", "crabc_cookie_dso_transfer",
+                          "crabc_cookie_dso_open", "crabc_cookie_dso_check"):
                 require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+UND\s+" + entry + r"\b", symbols) is not None,
                         f"{role} does not import {entry}")
         else:

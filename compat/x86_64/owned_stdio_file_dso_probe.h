@@ -16,4 +16,13 @@ struct crabc_cookie_state {
 int crabc_file_dso_transfer(FILE *stream, int descriptor, int *main_errno);
 int crabc_cookie_dso_transfer(FILE *stream, const struct crabc_cookie_state *state,
                               int *main_errno);
+
+enum crabc_cookie_dso_stage {
+    CRABC_COOKIE_DSO_BUFFERED,
+    CRABC_COOKIE_DSO_FLUSHED,
+    CRABC_COOKIE_DSO_CLOSED
+};
+
+FILE *crabc_cookie_dso_open(int *main_errno);
+int crabc_cookie_dso_check(enum crabc_cookie_dso_stage stage, int *main_errno);
 #endif

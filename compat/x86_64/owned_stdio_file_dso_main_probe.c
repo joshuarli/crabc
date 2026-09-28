@@ -94,6 +94,44 @@ static int cookie_dso_roundtrip(void)
     return 0;
 }
 
+static int reverse_cookie_dso_roundtrip(void)
+{
+    char buffer[64], observed[7];
+    FILE *stream;
+
+    errno = EDOM;
+    stream = crabc_cookie_dso_open(&errno);
+    if (stream == NULL || errno != ERANGE ||
+        setvbuf(stream, buffer, _IOFBF, sizeof(buffer)) != 0)
+        return 1;
+    if (fwrite("reverse", 1, 7, stream) != 7)
+        return 2;
+    errno = EILSEQ;
+    if (crabc_cookie_dso_check(CRABC_COOKIE_DSO_BUFFERED, &errno) != 0 ||
+        errno != EAGAIN)
+        return 3;
+    if (fflush(stream) != 0)
+        return 4;
+    errno = EILSEQ;
+    if (crabc_cookie_dso_check(CRABC_COOKIE_DSO_FLUSHED, &errno) != 0 ||
+        errno != EAGAIN)
+        return 5;
+    if (fseek(stream, 0, SEEK_SET) != 0 ||
+        fread(observed, 1, 7, stream) != 7 ||
+        memcmp(observed, "reverse", 7) != 0)
+        return 6;
+    if (fseek(stream, 0, SEEK_END) != 0 || fputc('!', stream) != '!' ||
+        fflush(stream) != 0)
+        return 7;
+    if (fclose(stream) != 0)
+        return 8;
+    errno = EILSEQ;
+    if (crabc_cookie_dso_check(CRABC_COOKIE_DSO_CLOSED, &errno) != 0 ||
+        errno != EAGAIN)
+        return 9;
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     static const char expected[] = "buffered!";
@@ -137,7 +175,10 @@ int main(int argc, char **argv)
     result = cookie_dso_roundtrip();
     if (result != 0)
         return 60 + result;
-    if (write(STDOUT_FILENO, "stdio-file-dso-cookie-ok\n", 25) != 25)
+    result = reverse_cookie_dso_roundtrip();
+    if (result != 0)
+        return 80 + result;
+    if (write(STDOUT_FILENO, "stdio-file-dso-both-ways-ok\n", 28) != 28)
         return 11;
     return 0;
 }
