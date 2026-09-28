@@ -748,6 +748,30 @@ impl SourceFormattedMessage {
         Self { bytes, length }
     }
 
+    /// The source protection primitive reports only a failed complete-page
+    /// syscall range. Its caller has not changed mapping ownership or VM
+    /// accounting, and the warning names the attempted access transition.
+    pub(crate) fn os_protect_failure(
+        errno: Errno, address: usize, size: usize, protect: bool,
+    ) -> Self {
+        let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
+        let mut length = 0;
+        if protect {
+            append_mbind_bytes(&mut bytes, &mut length, b"cannot protect OS memory (error: ");
+        } else {
+            append_mbind_bytes(&mut bytes, &mut length, b"cannot unprotect OS memory (error: ");
+        }
+        append_mbind_unsigned_decimal(&mut bytes, &mut length, errno.raw() as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b" (0x");
+        append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, errno.raw() as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b"), address: ");
+        append_source_pointer(&mut bytes, &mut length, address);
+        append_mbind_bytes(&mut bytes, &mut length, b", size: 0x");
+        append_mbind_uppercase_hex_minimum_two(&mut bytes, &mut length, size as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b" bytes)\n");
+        Self { bytes, length }
+    }
+
     /// `"unable to allocate aligned OS memory directly, fall back to
     /// over-allocation (size: 0x%zx bytes, address: %p, alignment: 0x%zx,
     /// commit: %d)\n"` from `mi_os_prim_alloc_aligned` (`src/os.c:376-378`).

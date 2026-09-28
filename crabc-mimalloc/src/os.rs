@@ -3229,13 +3229,31 @@ impl Mapping {
     /// not a protection operation and returns false.
     #[inline]
     pub(crate) fn protect(&self, offset: usize, length: usize) -> Result<bool> {
-        self.protect_with(offset, length, true)
+        self.protect_with(offset, length, true, None)
     }
 
     /// Restores read/write access to complete pages inside the requested range.
     #[inline]
     pub(crate) fn unprotect(&self, offset: usize, length: usize) -> Result<bool> {
-        self.protect_with(offset, length, false)
+        self.protect_with(offset, length, false, None)
+    }
+
+    /// Protects a process-owned mapping through the source warning route.
+    /// The caller supplies the same process pair that created this mapping;
+    /// an empty contained range returns false without a warning or syscall.
+    #[inline]
+    pub(crate) fn protect_for_process(
+        &self, process: VmProcess<'_>, offset: usize, length: usize,
+    ) -> Result<bool> {
+        self.protect_with(offset, length, true, Some(process))
+    }
+
+    /// Restores read/write access under the mapping's process warning route.
+    #[inline]
+    pub(crate) fn unprotect_for_process(
+        &self, process: VmProcess<'_>, offset: usize, length: usize,
+    ) -> Result<bool> {
+        self.protect_with(offset, length, false, Some(process))
     }
 
     /// Explicitly releases the entire anonymous mapping.
@@ -3381,25 +3399,37 @@ impl Mapping {
     }
 
     #[inline]
-    fn protect_with(&self, offset: usize, length: usize, protect: bool) -> Result<bool> {
+    fn protect_with(
+        &self, offset: usize, length: usize, protect: bool, process: Option<VmProcess<'_>>,
+    ) -> Result<bool> {
         let Some(range) = self.page_range(offset, length, PageAlignment::Contained)? else {
             return Ok(false);
         };
-        fault_before(if protect {
-            FaultPoint::Protect
-        } else {
-            FaultPoint::Unprotect
-        })?;
         let protection = if protect {
             PROT_NONE
         } else {
             PROT_READ | PROT_WRITE
         };
+        #[cfg(any(test, feature = "native-runtime-test-fault"))]
+        fault::record_protection_range(range.address, range.length, protection);
+        let result = fault_before(if protect {
+            FaultPoint::Protect
+        } else {
+            FaultPoint::Unprotect
+        }).and_then(|()| {
+            // SAFETY: `range` is a complete-page subrange of this live mapping.
+            // Callers receive no Rust reference from `Mapping`, so the boundary
+            // cannot leave an existing reference usable across PROT_NONE.
+            unsafe { crabc_core::mm::mprotect_raw(range.address, range.length, protection) }
+        });
+        if let Err(error) = result {
+            if let Some(process) = process {
+                process.policy.source_warning(SourceFormattedMessage::os_protect_failure(
+                    error, range.address.addr(), range.length, protect));
+            }
+            return Err(error);
+        }
 
-        // SAFETY: `range` is a complete-page subrange of this live mapping.
-        // Callers receive no Rust reference from `Mapping`, so the boundary
-        // cannot leave an existing reference usable across PROT_NONE.
-        unsafe { crabc_core::mm::mprotect_raw(range.address, range.length, protection) }?;
         Ok(true)
     }
 
@@ -14344,6 +14374,225 @@ mod tests {
             u8::from(large_only_trace[3])
         );
         std::println!("CRABC_MI_M2_VM_TRACE_END");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    struct ProcessOwnedProtectWarning {
+        count: AtomicUsize,
+        order: AtomicUsize,
+        errno: AtomicUsize,
+        text_exact: AtomicBool,
+        offset: AtomicUsize,
+        size: AtomicUsize,
+        protection_calls: AtomicUsize,
+        reserved: AtomicI64,
+        committed: AtomicI64,
+        commit_calls: AtomicI64,
+        mmap_calls: AtomicI64,
+        base: AtomicUsize,
+        subprocess: AtomicPtr<crate::subproc::SubprocessIdentity>,
+        fault: AtomicPtr<fault::Guard>,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn capture_process_owned_protect_warning(
+        message: *const c_char, argument: *mut c_void,
+    ) {
+        if message.is_null() || argument.is_null() { return; }
+        // SAFETY: the retained test capture and source fragment outlive this
+        // synchronous callback on the isolated process thread.
+        let capture = unsafe { &*(argument as *const ProcessOwnedProtectWarning) };
+        let body = unsafe { CStr::from_ptr(message) }.to_bytes();
+        if !body.windows(b"cannot protect OS memory".len())
+            .any(|part| part == b"cannot protect OS memory") { return; }
+        capture.order.store(1, Ordering::Release);
+        capture.count.fetch_add(1, Ordering::AcqRel);
+        let text = std::str::from_utf8(body).unwrap();
+        let decimal = text.split("error: ").nth(1)
+            .and_then(|tail| tail.split_whitespace().next())
+            .and_then(|digits| digits.parse::<usize>().ok()).unwrap_or(0);
+        let address = text.split("address: ").nth(1)
+            .and_then(|tail| tail.split(',').next())
+            .and_then(|digits| usize::from_str_radix(digits.trim_start_matches("0x"), 16).ok())
+            .unwrap_or(0);
+        let size = text.split("size: 0x").nth(1)
+            .and_then(|tail| tail.split_whitespace().next())
+            .and_then(|digits| usize::from_str_radix(digits, 16).ok()).unwrap_or(0);
+        let pointer_width = if address <= u32::MAX as usize { 8 }
+            else if address >> 16 <= u32::MAX as usize { 12 } else { 16 };
+        let expected = std::format!(
+            "cannot protect OS memory (error: {} (0x{:02X}), address: 0x{:0width$X}, size: 0x{:02X} bytes)\n",
+            decimal, decimal, address, size, width = pointer_width,
+        );
+        capture.text_exact.store(text == expected, Ordering::Release);
+        capture.errno.store(decimal, Ordering::Release);
+        capture.offset.store(address.checked_sub(capture.base.load(Ordering::Acquire))
+            .unwrap_or(usize::MAX), Ordering::Release);
+        capture.size.store(size, Ordering::Release);
+        let fault = capture.fault.load(Ordering::Acquire);
+        if !fault.is_null() {
+            // SAFETY: warning delivery occurs before the selected fault guard
+            // is disabled or dropped by this serial test.
+            capture.protection_calls.store(unsafe { &*fault }.observed(), Ordering::Release);
+        }
+        let subprocess = capture.subprocess.load(Ordering::Acquire);
+        if !subprocess.is_null() {
+            // SAFETY: the process owns the subprocess through warning delivery
+            // and this callback only takes an atomic statistics snapshot.
+            let stats = unsafe { &*subprocess }.vm_statistics().snapshot();
+            capture.reserved.store(stats.reserved_current, Ordering::Release);
+            capture.committed.store(stats.committed_current, Ordering::Release);
+            capture.commit_calls.store(stats.commit_calls, Ordering::Release);
+            capture.mmap_calls.store(stats.mmap_calls, Ordering::Release);
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_process_owned_protect_fault_c_rust_trace() {
+        let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK.lock().unwrap();
+        let _environment_reset = VmPolicySourceEnvironmentReset;
+        let mut environment = [
+            b"mimalloc_show_errors=1\0".as_ptr().cast(),
+            b"mimalloc_max_warnings=100\0".as_ptr().cast(),
+            b"mimalloc_allow_large_os_pages=0\0".as_ptr().cast(),
+            b"mimalloc_allow_thp=0\0".as_ptr().cast(),
+            core::ptr::null(),
+        ];
+        VM_POLICY_SOURCE_ENVIRONMENT.store(environment.as_mut_ptr(), Ordering::Release);
+        let capture = std::boxed::Box::leak(std::boxed::Box::new(ProcessOwnedProtectWarning {
+            count: AtomicUsize::new(0), order: AtomicUsize::new(0),
+            errno: AtomicUsize::new(0), text_exact: AtomicBool::new(false),
+            offset: AtomicUsize::new(0),
+            size: AtomicUsize::new(0), protection_calls: AtomicUsize::new(0),
+            reserved: AtomicI64::new(0), committed: AtomicI64::new(0),
+            commit_calls: AtomicI64::new(0), mmap_calls: AtomicI64::new(0),
+            base: AtomicUsize::new(0), subprocess: AtomicPtr::new(core::ptr::null_mut()),
+            fault: AtomicPtr::new(core::ptr::null_mut()),
+        }));
+        let output = std::boxed::Box::leak(std::boxed::Box::new(
+            OutputOwner::new(unexpected_default_diagnostic_output),
+        ));
+        // SAFETY: the environment vector and callback capture remain live
+        // throughout every selected process option read and warning.
+        unsafe {
+            output.initialize_source_options(vm_policy_source_environment_for_test);
+            output.register_output(Some(capture_process_owned_protect_warning as OutputCallback),
+                capture as *mut ProcessOwnedProtectWarning as *mut c_void);
+        }
+        // SAFETY: the initialized source output owner is leaked for this
+        // isolated process policy's lifetime.
+        let policy = unsafe { VmPolicy::from_process_options(output) };
+        policy.finish_preloading();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        capture.subprocess.store(core::ptr::from_ref(process.subprocess()).cast_mut(), Ordering::Release);
+        let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(),
+            1024 * 1024, false, false);
+        let page = config.page_size().bytes();
+        let request_size = 3 * page;
+        let before = subprocess.vm_statistics().snapshot();
+        let mut mapping = Mapping::map_for_process(process, config, request_size, 1,
+            MapAccess::Committed, false, None).unwrap();
+        let base = mapping.base().unwrap();
+        let mapping_size = mapping.length().unwrap();
+        capture.base.store(base.addr(), Ordering::Release);
+        let at_map = subprocess.vm_statistics().snapshot();
+        // SAFETY: the committed mapping owns all three pages and no other
+        // reference aliases this selected middle byte.
+        unsafe { core::ptr::write_volatile(base.wrapping_add(page), 0x51); }
+        let request_offset = 19;
+        let protect_size = 2 * page + 5;
+        let fault = fault::install(fault::Plan::at(fault::Point::Protect, 1, Errno::NOMEM));
+        capture.fault.store(core::ptr::from_ref(&fault).cast_mut(), Ordering::Release);
+        let protections = fault.capture_protection_ranges();
+        let failed_protect = mapping.protect_for_process(process, request_offset, protect_size)
+            == Err(Errno::NOMEM);
+        // SAFETY: the selected pre-syscall failure left the middle page
+        // committed and writable under this retained mapping owner.
+        let writable_after_failure = unsafe {
+            let middle = base.wrapping_add(page);
+            let retained = core::ptr::read_volatile(middle) == 0x51;
+            core::ptr::write_volatile(middle, 0x52);
+            retained
+        };
+        let fault_attempts = fault.observed();
+        fault.set(fault::Plan::disabled());
+        let retry_protect = mapping.protect_for_process(process, request_offset, protect_size)
+            == Ok(true);
+        let mut residence = 0u8;
+        // SAFETY: PROT_NONE does not remove the still-owned mapped page;
+        // mincore only queries its mapping and does not read its contents.
+        let mapped_while_protected = unsafe {
+            crabc_core::mm::mincore_raw(base.wrapping_add(page), page, &mut residence)
+        }.is_ok();
+        let unprotected = mapping.unprotect_for_process(process, request_offset, protect_size)
+            == Ok(true);
+        let (ranges, protection_calls) = protections.attempts().unwrap();
+        drop(protections);
+        // SAFETY: the successful unprotect restored read/write access to
+        // this still-owned middle page before either byte operation.
+        let writable_after_unprotect = unsafe {
+            let middle = base.wrapping_add(page);
+            let readable = core::ptr::read_volatile(middle) == 0x52;
+            core::ptr::write_volatile(middle, 0x53);
+            readable && core::ptr::read_volatile(middle) == 0x53
+        };
+        let after_protection = subprocess.vm_statistics().snapshot();
+        let regular_owner = mapping.base() == Ok(base) && mapping.length() == Ok(request_size)
+            && mapping.initially_committed() && !mapping.is_large();
+        mapping.unmap_for_process(process, mapping_size, false).unwrap();
+        let terminal = subprocess.vm_statistics().snapshot();
+        // SAFETY: terminal release removed the exact mapping, leaving no
+        // surviving reference; mincore probes only its former address.
+        let terminal_unmapped = unsafe {
+            crabc_core::mm::mincore_raw(base, page, &mut residence)
+        } == Err(Errno::NOMEM);
+        let fields: [(&str, i64); 44] = [
+            ("allocated", 1), ("memid_os", i64::from(regular_owner)),
+            ("page_size", page as i64), ("mapping_size", mapping_size as i64),
+            ("request_offset", request_offset as i64), ("request_size", protect_size as i64),
+            ("failed_protect", i64::from(failed_protect && fault_attempts == 1)),
+            ("writable_after_failure", i64::from(writable_after_failure)),
+            ("retry_protect", i64::from(retry_protect)),
+            ("mapped_while_protected", i64::from(mapped_while_protected)),
+            ("unprotected", i64::from(unprotected)),
+            ("writable_after_unprotect", i64::from(writable_after_unprotect)),
+            ("protection_calls", protection_calls as i64),
+            ("protect1_offset", (ranges[0].0 - base.addr()) as i64),
+            ("protect1_length", ranges[0].1 as i64), ("protect1_flags", ranges[0].2 as i64),
+            ("protect2_offset", (ranges[1].0 - base.addr()) as i64),
+            ("protect2_length", ranges[1].1 as i64), ("protect2_flags", ranges[1].2 as i64),
+            ("unprotect_offset", (ranges[2].0 - base.addr()) as i64),
+            ("unprotect_length", ranges[2].1 as i64), ("unprotect_flags", ranges[2].2 as i64),
+            ("warning_order", capture.order.load(Ordering::Acquire) as i64),
+            ("warning_count", capture.count.load(Ordering::Acquire) as i64),
+            ("warning_errno", capture.errno.load(Ordering::Acquire) as i64),
+            ("warning_text_exact", i64::from(capture.text_exact.load(Ordering::Acquire))),
+            ("warning_offset", capture.offset.load(Ordering::Acquire) as i64),
+            ("warning_size", capture.size.load(Ordering::Acquire) as i64),
+            ("warning_protection_calls", capture.protection_calls.load(Ordering::Acquire) as i64),
+            ("reserved_at_map", at_map.reserved_current - before.reserved_current),
+            ("committed_at_map", at_map.committed_current - before.committed_current),
+            ("commits_at_map", at_map.commit_calls - before.commit_calls),
+            ("mmaps_at_map", at_map.mmap_calls - before.mmap_calls),
+            ("warning_reserved", capture.reserved.load(Ordering::Acquire) - before.reserved_current),
+            ("warning_committed", capture.committed.load(Ordering::Acquire) - before.committed_current),
+            ("warning_commit_calls", capture.commit_calls.load(Ordering::Acquire) - before.commit_calls),
+            ("warning_mmap_calls", capture.mmap_calls.load(Ordering::Acquire) - before.mmap_calls),
+            ("reserved_after_protection", after_protection.reserved_current - before.reserved_current),
+            ("committed_after_protection", after_protection.committed_current - before.committed_current),
+            ("commits_after_protection", after_protection.commit_calls - before.commit_calls),
+            ("mmaps_after_protection", after_protection.mmap_calls - before.mmap_calls),
+            ("terminal_reserved", terminal.reserved_current - before.reserved_current),
+            ("terminal_committed", terminal.committed_current - before.committed_current),
+            ("terminal_unmapped", i64::from(terminal_unmapped)),
+        ];
+        std::println!("CRABC_M2_PROCESS_OWNED_PROTECT_FAULT_RUST_TRACE_BEGIN");
+        for (field, value) in fields { std::println!("{field}={value}"); }
+        std::println!("CRABC_M2_PROCESS_OWNED_PROTECT_FAULT_RUST_TRACE_END");
+        assert_eq!(capture.count.load(Ordering::Acquire), 1,
+            "the failed process-owned protection must emit its source warning");
     }
 
     #[test]
