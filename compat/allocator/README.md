@@ -2116,6 +2116,20 @@ Dynamic modes also run the same client with the allocator built alone as an
 initial DSO that preempts libc.so. The contract and its one difference from
 musl are in `known-differences.md`.
 
+The native-shadow runner publishes
+`.work/x86_64/reports/native-shadow/owned-allocator-override/latest/receipt.json`
+through the shared `native_shadow_receipt.py` writer. It retains stdout,
+stderr, and status for each oracle and candidate execution, the selected
+static and dynamic libc inputs and provenance, the executed programs and
+initial DSOs, fixed workload parameters, and a before/after checkout source
+seal. Replay the physical receipt after removing the temporary build directory:
+
+```sh
+python3 -B compat/x86_64/native_shadow_receipt.py check --runner owned-allocator-override --case-prefix kernel-
+```
+
+This component alone does not complete the M8 weak-interposition gate.
+
 Allocation across images is checked through the installed dynamic product by:
 
 ```sh
