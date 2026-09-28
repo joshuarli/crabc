@@ -1004,8 +1004,15 @@ unsafe fn final_flush(stream: *mut StandardStream) {
 
 unsafe fn prepare_read(stream: *mut StandardStream) -> bool {
     unsafe {
+        // A read on a write-only stream still drains pending output before
+        // reporting the direction error. This also leaves later writes with
+        // a fresh buffer region while the error indicator remains set.
         if is_writable(stream) && flush_output_held(stream) == EOF { return false; }
         (*stream).direction = BufferDirection::Read;
+        if !is_readable(stream) {
+            mark_error(stream);
+            return false;
+        }
         true
     }
 }
@@ -1215,7 +1222,6 @@ pub(crate) unsafe fn with_scanned_stream(stream: *mut StandardStream, scan: impl
     unsafe {
         let _guard = StreamGuard::acquire(stream);
         orient_byte(stream);
-        if !is_readable(stream) { mark_error(stream); return EOF; }
         if !prepare_read(stream) { return EOF; }
         mark_io_started(stream);
         scan()
@@ -1255,10 +1261,6 @@ unsafe fn read_byte_held(stream: *mut StandardStream) -> c_int {
         return EOF;
     }
     unsafe { orient_byte(stream); }
-    if !unsafe { is_readable(stream) } {
-        unsafe { mark_error(stream) };
-        return EOF;
-    }
     if !unsafe { prepare_read(stream) } {
         return EOF;
     }
@@ -1526,10 +1528,6 @@ static_archive_member! { ungetc_source {
         if character == EOF {
             return EOF;
         }
-        if !unsafe { is_readable(stream) } {
-            unsafe { mark_error(stream) };
-            return EOF;
-        }
         if !unsafe { prepare_read(stream) } { return EOF; }
         unsafe {
             let lower_bound = (*stream).buffer.sub(UNGET);
@@ -1580,10 +1578,6 @@ unsafe fn fread_held(destination: *mut c_void, size: usize, count: usize, stream
     };
     if !unsafe { is_selected_stream(stream) } {
         unsafe { reject_stream() };
-        return 0;
-    }
-    if !unsafe { is_readable(stream) } {
-        unsafe { mark_error(stream) };
         return 0;
     }
     if !unsafe { prepare_read(stream) } {
