@@ -593,6 +593,11 @@ def _validate_header(root: Path, work: Path, dynamic: Path, tools: Mapping[str, 
     for header in HEADERS:
         if _mounted(root, dynamic / "usr/include" / header) not in trace:
             fail(f"AIO installed header trace omits {header}")
+    preprocessed = _local(root, record["stdout"]["path"], "installed preprocessed probe", directory=False).read_bytes()
+    source = re.escape(_mounted(root, root / PROBES["workload"]).encode("utf-8"))
+    if (re.search(rb'(?m)^# [0-9]+ "' + source + rb'"(?: [0-9]+)*$', preprocessed) is None
+            or b'int main(void)' not in preprocessed):
+        fail("AIO installed-header trace stdout differs from the preprocessed probe")
     return record
 
 

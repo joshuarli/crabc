@@ -227,6 +227,69 @@ class OwnedAioBehaviorObservationTests(unittest.TestCase):
                 with self.assertRaisesRegex(evidence.EvidenceError, "source queued cancellation timeout transcript"):
                     evidence.validate_report(self.root, report_path, {})
 
+    def test_public_replay_rejects_rehashed_empty_preprocessed_probe(self) -> None:
+        class ReachedCompiles(RuntimeError):
+            pass
+
+        evidence = self.evidence
+        work = self.work
+        dynamic = work / "dynamic"
+        include = dynamic / "usr/include"
+        for header in evidence.HEADERS:
+            path = include / header
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"header\n")
+        source = self.root / evidence.PROBES["workload"]
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(b"int main(void) { return 0; }\n")
+        (work / "expected-native-inputs.json").write_text("{}\n", encoding="utf-8")
+        tools = {"compiler": {"path": "/tools/compiler"}}
+        report_path = work / "owned-aio-receipts.json"
+
+        with unittest.mock.patch.object(evidence, "SOURCE_MOUNT", str(self.root)), \
+                unittest.mock.patch.object(evidence.translation_contract, "hosted_translation_flags", return_value=["-fhost"]):
+            argv = ["/tools/compiler", "-nostdinc", "-isystem", str(include), "-fhost", "-fPIE",
+                    "-std=c11", "-D_GNU_SOURCE", "-E", "-H", str(source)]
+            (work / "installed-header-trace.stdout").write_bytes(
+                f'# 0 "{source}"\nint main(void) {{ return 0; }}\n'.encode("utf-8"))
+            (work / "installed-header-trace.stderr").write_bytes(
+                b"\n".join(str(include / header).encode("utf-8") for header in evidence.HEADERS) + b"\n")
+            (work / "installed-header-trace.status").write_bytes(b"0\n")
+            receipt_path = evidence.record_command(
+                self.root, work, "installed-header-trace", argv, self.root,
+                work / "installed-header-trace.stdout", work / "installed-header-trace.stderr",
+                work / "installed-header-trace.status",
+            )
+            report = {
+                "schema": evidence.SCHEMA, "source_mount": str(self.root),
+                "status": "component-verified-not-family-qualified", "modes": evidence._mode_claims(None),
+                "inputs": {"before": {}, "after": {}, "expected_native_inputs": str(work / "expected-native-inputs.json")},
+                "header_trace": json.loads(receipt_path.read_text()), "compiles": {}, "links": {},
+                "executions": {}, "commands": str(work),
+            }
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            with unittest.mock.patch.object(evidence, "_check_input", return_value=(dynamic, None, tools, {})), \
+                    unittest.mock.patch.object(evidence, "_same_expected"), \
+                    unittest.mock.patch.object(evidence, "_compile_commands", side_effect=ReachedCompiles):
+                with self.assertRaises(ReachedCompiles):
+                    evidence.validate_report(self.root, report_path, {})
+                output = work / "installed-header-trace.stdout"
+                output.write_bytes(b"")
+                receipt = json.loads(receipt_path.read_text())
+                receipt["stdout"] = evidence._identity(self.root, output, "rehashed preprocessor output")
+                receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+                report["header_trace"] = receipt
+                report_path.write_text(json.dumps(report), encoding="utf-8")
+                with self.assertRaisesRegex(evidence.EvidenceError, "AIO installed-header trace stdout differs"):
+                    evidence.validate_report(self.root, report_path, {})
+                output.write_bytes(f'# 0 "{source}"\n'.encode("utf-8"))
+                receipt["stdout"] = evidence._identity(self.root, output, "rehashed incomplete preprocessor output")
+                receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+                report["header_trace"] = receipt
+                report_path.write_text(json.dumps(report), encoding="utf-8")
+                with self.assertRaisesRegex(evidence.EvidenceError, "AIO installed-header trace stdout differs"):
+                    evidence.validate_report(self.root, report_path, {})
+
     @staticmethod
     def _fd_reuse_espipe(*, attempt: int | str, step: str = "wait-pipe-read", regular: int | str = 3,
                          pipe_read: int | str = 3, pipe_write: int | str = 4,
