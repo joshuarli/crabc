@@ -49,6 +49,11 @@ class OwnedLocaleComponentReceiptTests(unittest.TestCase):
         self.dynamic = self.mkdir(".work/x86_64/dynamic")
         # The readers derive hosted translation flags from the product helper.
         self.write(".work/x86_64/dynamic/share/crabc/crabc_cc_static.py", b"HOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\n")
+        self.dynamic_state = self.write(
+            ".work/x86_64/dynamic/share/crabc/dynamic-product-state.json",
+            json.dumps({"schema": "crabc.x86_64-owned-dynamic-materialization/v1",
+                        "status": "materialized-unqualified", "source_sha256": "a" * 64}).encode() + b"\n",
+        )
         self.static = self.mkdir(".work/x86_64/static")
         self.workload = self.write_elf(".work/x86_64/owned-locale-products.fixture/workload.o", etype=1)
         self.oracle = self.write(".work/x86_64/owned-locale-products.fixture/oracle", b"oracle\n")
@@ -67,8 +72,10 @@ class OwnedLocaleComponentReceiptTests(unittest.TestCase):
                           for name, path in (("probe", self.probe), ("environment-probe", self.environment_probe), ("runner", self.runner), ("reader", self.reader))}
         self.seal = {
             "sources": source_records,
-            "dynamic": {"path": self.relative(self.dynamic), "manifest": self.identity(self.write(".work/x86_64/dynamic/manifest", b"dynamic\n")), "tree": {}},
-            "static": {"path": self.relative(self.static), "manifest": self.identity(self.write(".work/x86_64/static/manifest", b"static\n")), "tree": {}},
+            "dynamic": {"path": self.relative(self.dynamic), "manifest": self.identity(self.write(".work/x86_64/dynamic/manifest", b"dynamic\n")),
+                        "tree": self.module.family.snapshot(self.dynamic)},
+            "static": {"path": self.relative(self.static), "manifest": self.identity(self.write(".work/x86_64/static/manifest", b"static\n")),
+                       "tree": self.module.family.snapshot(self.static)},
         }
         self.report = self.make_report("full-six-mode")
 
@@ -132,7 +139,8 @@ class OwnedLocaleComponentReceiptTests(unittest.TestCase):
             if label.endswith("-validate"):
                 stdout = module.canonical(self.link_result(label.removesuffix("-validate")))
             commands[label] = self.raw(label, argv, stdout=stdout, stderr=stderr)
-        for name, value in (("source-product-before", self.seal), ("source-product-after", self.seal),
+        selected_seal = self.seal if mode == "full-six-mode" else {key: value for key, value in self.seal.items() if key != "static"}
+        for name, value in (("source-product-before", selected_seal), ("source-product-after", selected_seal),
                             ("tools-before", self.tool_roster), ("tools-after", self.tool_roster)):
             self.write(f".work/x86_64/owned-locale-products.fixture/{name}.json",
                        json.dumps(value, sort_keys=True, separators=(",", ":")).encode() + b"\n")
@@ -193,7 +201,10 @@ class OwnedLocaleComponentReceiptTests(unittest.TestCase):
         return value
 
     def validate(self, *, require_static: bool = False) -> dict[str, object]:
-        with mock.patch.object(self.module, "source_product_seal", return_value=self.seal), \
+        with mock.patch.object(self.module.qualification, "ROOT", self.root), \
+             mock.patch.object(self.module.qualification, "source_digest", return_value="a" * 64), \
+             mock.patch.object(self.module.products, "_validate_dynamic_product", return_value=(self.dynamic / "manifest", {})), \
+             mock.patch.object(self.module.products, "_validate_static_product", return_value=(self.static / "manifest", {})), \
              mock.patch.object(self.module, "tool_roster", return_value=self.tool_roster), \
              mock.patch.object(self.module.products, "validate_retained_link", side_effect=self.reconstructed_link), \
              mock.patch.object(self.module.copies, "audit_execution_payload", return_value={}):
@@ -221,6 +232,20 @@ class OwnedLocaleComponentReceiptTests(unittest.TestCase):
 
     def test_full_six_mode_control_reconstructs_before_negative_mutations(self) -> None:
         self.assertEqual(self.validate()["execution_mode"], "full-six-mode")
+
+    def test_rehashed_transplanted_dynamic_source_is_rejected(self) -> None:
+        state = json.loads(self.dynamic_state.read_text())
+        state["source_sha256"] = "b" * 64
+        self.dynamic_state.write_text(json.dumps(state) + "\n")
+        self.seal["dynamic"]["tree"] = self.module.family.snapshot(self.dynamic)
+        record = self.report_value()
+        for phase in ("source-product-before", "source-product-after"):
+            path = self.work / f"{phase}.json"
+            path.write_bytes(self.module.canonical(self.seal))
+            self.rewrite_identity(record["seals"][phase])
+        self.rewrite_report(record)
+        with self.assertRaisesRegex(self.module.LocaleReceiptError, "dynamic locale product source differs"):
+            self.validate()
 
     def test_profile_assertions_cannot_be_replaced_by_the_common_oracle_stream(self) -> None:
         record = self.report_value()

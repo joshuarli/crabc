@@ -27,6 +27,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import owned_crypt_runtime_evidence as copies
+import owned_dynamic_qualification as qualification
 import installed_compiler_translation as translation_contract
 import owned_posix_family_execution as family
 import owned_posix_product_evidence as products
@@ -165,6 +166,18 @@ def source_product_seal(root: Path, static: Path | None, dynamic: Path) -> dict[
         dynamic_manifest, _ = products._validate_dynamic_product(dynamic)
     except products.ProductEvidenceError as error:
         raise LocaleReceiptError(f"dynamic locale product validation failed: {error}") from error
+    state_path = physical_file(dynamic / "share/crabc/dynamic-product-state.json", "dynamic locale product state")
+    state = read_json(state_path, "dynamic locale product state")
+    require(isinstance(state, dict) and
+            state.get("schema") == "crabc.x86_64-owned-dynamic-materialization/v1" and
+            state.get("status") == "materialized-unqualified",
+            "dynamic locale product state differs")
+    try:
+        current_source = qualification.source_digest()
+    except Exception as error:
+        raise LocaleReceiptError("current locale source digest is unreadable") from error
+    require(state.get("source_sha256") == current_source,
+            "dynamic locale product source differs from current checkout")
     result: dict[str, object] = {
         "sources": {name: tracked_source_identity(root, relative) for name, relative in SOURCE_PATHS.items()},
         "dynamic": {"path": dynamic.relative_to(root).as_posix(), "manifest": identity(root, dynamic_manifest),
@@ -334,6 +347,8 @@ def header_trace_paths(stderr: bytes) -> tuple[str, ...]:
 
 def validate_report(root: Path, report_path: Path, *, require_static: bool = False) -> dict[str, object]:
     root = physical_directory(root, "checkout root")
+    require(root == physical_directory(qualification.ROOT, "reader source checkout"),
+            "locale checkout differs from reader source checkout")
     report_path = physical_file(report_path, "locale component report")
     require(report_path.parent.is_relative_to(root / ".work") and report_path.name == "owned-locale-products.json",
             "locale component report is not retained below checkout .work")
