@@ -142,6 +142,38 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
             self.assertTrue((extracted / "bin" / "crabc-cc").stat().st_mode & 0o111)
             self.assertFalse(any(path.is_symlink() for path in extracted.rglob("*")))
 
+    def test_extraction_rejects_forged_member_modes(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            workspace = Path(temporary)
+            source = workspace / "source"
+            self.populate_tree(source)
+            control = workspace / "control.tar.xz"
+            package.create_archive(source, control)
+            for relative, changed_mode in (("bin/crabc-cc", 0o644),
+                                           ("usr/lib/libc.a", 0o777),
+                                           ("", 0o700)):
+                with self.subTest(relative=relative):
+                    name = package.ARCHIVE_ROOT + ("/" + relative if relative else "")
+                    label = relative.replace("/", "-") or "root"
+                    forged = workspace / f"{label}.tar.xz"
+                    with tarfile.open(control, "r:xz") as original, \
+                         tarfile.open(forged, "w:xz") as rewritten:
+                        for member in original.getmembers():
+                            projected = copy.copy(member)
+                            if projected.name == name:
+                                projected.mode = changed_mode
+                            payload = original.extractfile(member).read() if member.isfile() else None
+                            rewritten.addfile(projected, None if payload is None else io.BytesIO(payload))
+                    destination = workspace / f"rejected-{label}"
+                    with self.assertRaisesRegex(package.PackageError, "mode"):
+                        package.extract_archive(forged, destination)
+                    self.assertFalse(destination.exists())
+            (source / "bin/crabc-cc").chmod(0o644)
+            with self.assertRaisesRegex(package.PackageError, "mode"):
+                package.create_archive(source, workspace / "nonexecutable-driver.tar.xz")
+
     def test_packaging_refuses_a_symlinked_input_or_unsafe_member_name(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             workspace = Path(temporary)
@@ -230,10 +262,12 @@ class OwnedStaticSysrootPackageTests(unittest.TestCase):
             with tarfile.open(archive, "w:xz") as output:
                 root = tarfile.TarInfo(package.ARCHIVE_ROOT)
                 root.type = tarfile.DIRTYPE
+                root.mode = 0o755
                 output.addfile(root)
                 content = b"unbound\n"
                 member = tarfile.TarInfo(f"{package.ARCHIVE_ROOT}/usr/lib/libc.a")
                 member.size = len(content)
+                member.mode = 0o644
                 output.addfile(member, io.BytesIO(content))
             destination = workspace / "extract"
             with self.assertRaisesRegex(package.PackageError, "manifest"):

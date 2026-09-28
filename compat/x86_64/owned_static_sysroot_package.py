@@ -278,6 +278,8 @@ def validate_installed_tree(source: Path, entries: list[tuple[Path, Path]]) -> N
         raise PackageError("source tree has no safe installed header directory")
     for relative in REQUIRED_INSTALLED_PATHS:
         require_regular_file(source / relative, f"source tree required payload {relative}")
+    if normalized_mode(source / "bin/crabc-cc") != 0o755:
+        raise PackageError("source tree sealed static driver mode is not executable")
 
 
 def archive_member(relative: Path) -> str:
@@ -391,6 +393,13 @@ def checked_archive_members(
         checked.append((member, relative))
     if not root_seen:
         raise PackageError("archive lacks its private root directory")
+    for member, _ in checked:
+        if member.isdir() and member.mode != 0o755:
+            raise PackageError(f"archive directory mode differs from the writer: {member.name}")
+        if member.isreg() and member.mode not in {0o644, 0o755}:
+            raise PackageError(f"archive regular member mode differs from the writer: {member.name}")
+        if member.name == f"{ARCHIVE_ROOT}/bin/crabc-cc" and member.mode != 0o755:
+            raise PackageError("archive sealed static driver mode is not executable")
     return checked
 
 
