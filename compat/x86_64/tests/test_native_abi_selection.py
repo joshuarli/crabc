@@ -828,6 +828,113 @@ class ModulePrivateSymbolTests(unittest.TestCase):
         self.assertEqual(self.attach(accounting), [])
 
 
+class ProcessExitStaticImportTests(unittest.TestCase):
+    """Selected public exit imports bind only to unique owned archive members."""
+
+    MEMBERS = ['exit.rcgu.o', 'caller.rcgu.o']
+    RULE = {'id': 'process-exit-static-imports', 'owner': 'checked-header-provider-routing',
+            'group': 'declared-callable-providers', 'members': ['_Exit', '_exit', 'exit'],
+            'sources': ['libc/src/c_abi/x86_64/process_exit.rs'],
+            'reason': 'One selected public exit definition resolves static Rust member imports.'}
+
+    @staticmethod
+    def occurrence(index, name, artifact, role, member, section, *, table='.symtab',
+                   binding='GLOBAL', visibility='DEFAULT', kind='FUNC'):
+        return {'index': index, 'artifact_key': artifact, 'table': table,
+                'member_name': member, 'member_occurrence': 0 if member else None, 'role': role,
+                'row': {'name': name, 'version': None, 'version_default': False,
+                        'section_index': section, 'binding': binding, 'visibility': visibility, 'type': kind}}
+
+    def accounting(self):
+        rows, records, blockers, placements = [], [], [], []
+        for offset, name in enumerate(self.RULE['members']):
+            start = offset * 4
+            rows.extend([
+                self.occurrence(start, name, 'candidate-static', 'definition', 'exit.rcgu.o', '3'),
+                self.occurrence(start + 1, name, 'candidate-static', 'import', 'caller.rcgu.o', 'UND', kind='NOTYPE'),
+                self.occurrence(start + 2, name, 'candidate-shared', 'definition', None, '9', table='.dynsym'),
+                self.occurrence(start + 3, name, 'candidate-shared', 'definition', None, '9'),
+            ])
+            ident = selection.identity(name)
+            records.append({'identity': ident, 'selection': {'disposition': 'public-provider',
+                            'owner': self.RULE['owner'], 'group': self.RULE['group']},
+                            'expected_placements': [{'artifact_key': 'candidate-static'},
+                                                    {'artifact_key': 'candidate-shared'}],
+                            'unresolved': [selection.ORDINARY_IMPORT_REASON]})
+            blockers.append({'code': 'identity-unresolved', 'identity': ident,
+                             'reason': selection.ORDINARY_IMPORT_REASON})
+            placements.append({'identity': ident, 'artifact_key': 'candidate-static',
+                               'placement_observed': True, 'definition_count': 1,
+                               'occurrence_indices': [start]})
+            placements.append({'identity': ident, 'artifact_key': 'candidate-shared',
+                               'placement_observed': True, 'definition_count': 1,
+                               'occurrence_indices': [start + 2]})
+        return {'identities': records, 'occurrences': rows, 'placement_joins': placements, 'blockers': blockers}
+
+    def test_selected_exit_imports_bind_to_unique_public_archive_definitions(self):
+        accounting = self.accounting()
+        unnamed = self.occurrence(50, None, 'candidate-static', 'unnamed', 'caller.rcgu.o', '4')
+        accounting['occurrences'].append(unnamed)
+        joins = selection.attach_process_exit_static_imports(accounting, self.RULE, self.MEMBERS)
+        self.assertEqual({row['identity']['name'] for row in joins}, set(self.RULE['members']))
+        self.assertEqual(accounting['blockers'], [])
+        self.assertTrue(all(row['unresolved'] == [] for row in accounting['identities']))
+        self.assertEqual({row['identity']['name']: (row['provider_member'], row['import_members']) for row in joins},
+                         {name: ('exit.rcgu.o', ['caller.rcgu.o']) for name in self.RULE['members']})
+
+    def test_exit_binding_keeps_import_reason_without_one_owned_provider_and_all_owned_imports(self):
+        def second_provider(accounting):
+            accounting['occurrences'].append(self.occurrence(50, '_Exit', 'candidate-static', 'definition',
+                                                            'caller.rcgu.o', '4'))
+
+        def foreign_import(accounting):
+            accounting['occurrences'].append(self.occurrence(50, '_Exit', 'candidate-static', 'import',
+                                                            'foreign.o', 'UND', kind='NOTYPE'))
+
+        cases = {
+            'absent provider': lambda a: a['occurrences'].pop(0),
+            'second provider': second_provider,
+            'foreign import': foreign_import,
+            'foreign provider': lambda a: a['occurrences'][0].update(member_name='foreign.o'),
+            'duplicate archive member occurrence': lambda a: a['occurrences'][1].update(member_occurrence=1),
+            'same-member import': lambda a: a['occurrences'][1].update(member_name='exit.rcgu.o'),
+            'hidden import': lambda a: a['occurrences'][1]['row'].update(visibility='HIDDEN'),
+            'shared import': lambda a: a['occurrences'].append(self.occurrence(
+                50, '_Exit', 'candidate-shared', 'import', None, 'UND', kind='NOTYPE')),
+            'unselected placement': lambda a: a['placement_joins'][0].update(placement_observed=False),
+            'unowned selection': lambda a: a['identities'][0]['selection'].update(owner=None),
+        }
+        for label, alter in cases.items():
+            with self.subTest(label=label):
+                accounting = self.accounting()
+                alter(accounting)
+                joins = selection.attach_process_exit_static_imports(accounting, self.RULE, self.MEMBERS)
+                self.assertNotIn('_Exit', {row['identity']['name'] for row in joins})
+                self.assertEqual(accounting['identities'][0]['unresolved'], [selection.ORDINARY_IMPORT_REASON])
+                self.assertTrue(any(row['identity']['name'] == '_Exit' for row in accounting['blockers']))
+
+    def test_ambiguous_and_unowned_exit_related_symbols_remain_unresolved(self):
+        accounting = self.accounting()
+        for index, name, owner in ((50, '__funcs_on_exit', 'x86-process-exit-atfork'),
+                                   (60, '__stdio_exit', None)):
+            ident = selection.identity(name)
+            accounting['identities'].append({'identity': ident,
+                'selection': {'disposition': 'public-provider' if owner else 'unresolved', 'owner': owner,
+                              'group': 'source-owned-exit-and-atfork-runtime'},
+                'unresolved': [selection.ORDINARY_IMPORT_REASON]})
+            accounting['blockers'].append({'code': 'identity-unresolved', 'identity': ident,
+                                           'reason': selection.ORDINARY_IMPORT_REASON})
+            accounting['occurrences'].extend([
+                self.occurrence(index, name, 'candidate-static', 'definition', 'exit.rcgu.o', '3'),
+                self.occurrence(index + 1, name, 'candidate-static', 'definition', 'caller.rcgu.o', '4'),
+                self.occurrence(index + 2, name, 'candidate-static', 'import', 'caller.rcgu.o', 'UND', kind='NOTYPE'),
+            ])
+        joins = selection.attach_process_exit_static_imports(accounting, self.RULE, self.MEMBERS)
+        self.assertEqual({row['identity']['name'] for row in joins}, set(self.RULE['members']))
+        self.assertEqual([row['identity']['name'] for row in accounting['identities'] if row['unresolved']],
+                         ['__funcs_on_exit', '__stdio_exit'])
+
+
 class CompanionRejectionTests(unittest.TestCase):
     """One rejected companion is a named blocker, never an aborted report."""
 

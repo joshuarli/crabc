@@ -905,6 +905,17 @@ family = "libc.c-abi-compat"
 sources = ["compat/x86_64/native_abi_selection.py", "compat/x86_64/owned_mimalloc_producer_metadata.py", "scripts/build_x86_64_owned_sysroot.py"]
 reason = "Hidden cross-module definition inside one authenticated Rust member of the owned static archive, local in libc.so and absent from every dynamic symbol table and every pinned-musl public definition."
 
+# These three public process-exit functions have one selected definition in
+# the owned static archive. Sibling Rust members may import their ordinary
+# DEFAULT names; each import must resolve to that unique selected member.
+[process_exit_static_imports]
+id = "process-exit-static-imports"
+owner = "checked-header-provider-routing"
+group = "declared-callable-providers"
+members = ["_Exit", "_exit", "exit"]
+sources = ["libc/src/c_abi/x86_64/process_exit.rs", "libc/src/c_abi/x86_64/static_c_abi.rs"]
+reason = "Unique selected public process-exit definitions resolve ordinary references from authenticated sibling members of the owned static archive."
+
 [[structural_groups]]
 id = "loader-entry-stages"
 members = ["__dls2b", "__dls3", "_dlstart"]

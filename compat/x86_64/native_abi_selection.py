@@ -593,13 +593,25 @@ def source_path(value: str) -> Path:
 
 def validate_contract(value: Any) -> dict[str, Any]:
     result = exact(value, {'schema', 'target', 'inputs', 'profiles', 'owner_groups', 'structural_groups',
-                           'object_contracts', 'private_protocols', 'module_private_symbols', 'requirements'},
+                           'object_contracts', 'private_protocols', 'module_private_symbols',
+                           'process_exit_static_imports', 'requirements'},
                    'selection contract')
     module_private = exact(result['module_private_symbols'], {'id', 'owner', 'family', 'sources', 'reason'},
                            'module-private symbol rule')
     for key in ('id', 'owner', 'family', 'reason'):
         string(module_private[key], f'module-private {key}')
     for path in strings(module_private['sources'], 'module-private sources', empty=False):
+        source_path(path)
+    process_exit = exact(result['process_exit_static_imports'],
+                         {'id', 'owner', 'group', 'members', 'sources', 'reason'},
+                         'process-exit static import rule')
+    require(process_exit['id'] == 'process-exit-static-imports'
+            and process_exit['owner'] == 'checked-header-provider-routing'
+            and process_exit['group'] == 'declared-callable-providers'
+            and strings(process_exit['members'], 'process-exit members', empty=False) == ['_Exit', '_exit', 'exit'],
+            'process-exit static import rule identity differs')
+    string(process_exit['reason'], 'process-exit static import reason')
+    for path in strings(process_exit['sources'], 'process-exit static import sources', empty=False):
         source_path(path)
     require(result['schema'] == CONTRACT_SCHEMA and result['target'] == TARGET, 'selection schema/target changed')
     require(same(result['inputs'], INPUT_PATHS), 'selection input roster differs')
@@ -2487,6 +2499,80 @@ def attach_module_private_symbols(accounting: Mapping[str, Any], rule: Mapping[s
                              and blocker.get('reason') == ORDINARY_IMPORT_REASON)))
         ]
     return sorted(joins, key=lambda row: json.dumps(row['identity'], sort_keys=True))
+
+
+def attach_process_exit_static_imports(accounting: Mapping[str, Any], rule: Mapping[str, Any],
+                                       rust_members: Sequence[str]) -> list[dict[str, Any]]:
+    """Bind selected public exit imports to their one owned static provider.
+
+    An ordinary undefined reference can resolve across Rust archive members
+    only when both the importing and defining members belong to the sealed
+    static Rust roster. A selected public placement is necessary but does not
+    by itself establish where an undefined sibling-member reference binds.
+    """
+    rule = exact(rule, {'id', 'owner', 'group', 'members', 'sources', 'reason'},
+                 'process-exit static import rule')
+    require(rule['id'] == 'process-exit-static-imports'
+            and rule['owner'] == 'checked-header-provider-routing'
+            and rule['group'] == 'declared-callable-providers'
+            and rule['members'] == ['_Exit', '_exit', 'exit'],
+            'process-exit static import rule identity differs')
+    members = set(strings(list(rust_members), 'static Rust members', empty=False))
+    records, placements, occurrences = _accounting_indexes(accounting, description='process-exit static imports')
+    joins: list[dict[str, Any]] = []
+    for name in rule['members']:
+        key = (name, None, False)
+        record = records.get(key)
+        if (record is None or ORDINARY_IMPORT_REASON not in record['unresolved']
+                or record['selection'].get('disposition') != 'public-provider'
+                or record['selection'].get('owner') != rule['owner']
+                or record['selection'].get('group') != rule['group']):
+            continue
+        static_placement = placements.get((key, 'candidate-static'))
+        shared_placement = placements.get((key, 'candidate-shared'))
+        if not (static_placement and static_placement.get('placement_observed') is True
+                and static_placement.get('definition_count') == 1
+                and shared_placement and shared_placement.get('placement_observed') is True
+                and shared_placement.get('definition_count') == 1):
+            continue
+        rows = [row for row in occurrences.values() if row['artifact_key'].startswith('candidate-')
+                and row['role'] != 'unnamed' and row['row'].get('name') == name
+                and identity_key(row_identity(row['row'])) == key]
+        static = [row for row in rows if row['artifact_key'] == 'candidate-static']
+        definitions = [row for row in static if row['role'] == 'definition']
+        imports = [row for row in static if row['role'] == 'import']
+        if not (len(definitions) == 1 and imports and len(static) == len(definitions) + len(imports)
+                and all(row['artifact_key'] in {'candidate-static', 'candidate-shared'} for row in rows)
+                and not any(row['role'] == 'import' for row in rows if row['artifact_key'] != 'candidate-static')):
+            continue
+        provider = definitions[0]
+        if not (static_placement.get('occurrence_indices') == [provider['index']]
+                and provider['table'] == '.symtab'
+                and provider['member_name'] in members and provider['member_occurrence'] == 0
+                and provider['row']['binding'] == 'GLOBAL'
+                and provider['row']['visibility'] == 'DEFAULT'
+                and provider['row']['type'] == 'FUNC'
+                and provider['row']['section_index'] != 'UND'
+                and all(row['table'] == '.symtab' and row['member_name'] in members
+                        and row['member_name'] != provider['member_name']
+                        and row['member_occurrence'] == 0
+                        and row['row']['section_index'] == 'UND'
+                        and row['row']['binding'] == 'GLOBAL'
+                        and row['row']['visibility'] == 'DEFAULT'
+                        and row['row']['type'] in {'NOTYPE', 'FUNC'} for row in imports)):
+            continue
+        _remove_identity_requirements(accounting, record, [ORDINARY_IMPORT_REASON],
+                                      description='process-exit static import')
+        joins.append({
+            'identity': copy.deepcopy(record['identity']),
+            'owner': rule['owner'],
+            'provider_occurrence_index': provider['index'],
+            'provider_member': provider['member_name'],
+            'import_occurrence_indices': sorted(row['index'] for row in imports),
+            'import_members': sorted({row['member_name'] for row in imports}),
+            'discharged_reason': ORDINARY_IMPORT_REASON,
+        })
+    return joins
 
 
 def _common_checkout(root: Path) -> Path:
@@ -10054,6 +10140,10 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         accounting, contract['module_private_symbols'],
         fixed_c_producer_metadata_companion['account']['archive_map']['static_rust_members'],
     )
+    process_exit_static_import_joins = attach_process_exit_static_imports(
+        accounting, contract['process_exit_static_imports'],
+        fixed_c_producer_metadata_companion['account']['archive_map']['static_rust_members'],
+    )
     fixed_c_producer_metadata_joins = bind_fixed_c_producer_metadata_joins(
         accounting, fixed_c_producer_metadata_pending,
     )
@@ -10218,6 +10308,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'fixed_c_producer_metadata_companion': fixed_c_producer_metadata_companion,
             'fixed_c_producer_metadata_joins': fixed_c_producer_metadata_joins,
             'module_private_joins': module_private_joins,
+            'process_exit_static_import_joins': process_exit_static_import_joins,
             'public_data_linkage_companion': public_data_linkage_companion,
             'public_data_linkage_joins': public_data_linkage_joins,
             'public_data_declaration_runtime_companion': public_data_declaration_runtime_companion,
