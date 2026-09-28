@@ -2924,6 +2924,8 @@ mod tests {
         os::ProcessUsage,
         statistics::{FinalStatCount, FinalStatisticsSnapshot},
     };
+    #[cfg(feature = "mi-stat-1")]
+    use crate::statistics::HeapTheapStatistics;
     use crabc_core::{Errno, thread::thread_pointer_identity};
     use core::cell::UnsafeCell;
     use core::ffi::{c_char, c_void, CStr};
@@ -3074,6 +3076,90 @@ mod tests {
 
     const fn final_stat_count(peak: i64, total: i64, current: i64) -> FinalStatCount {
         FinalStatCount { peak, total, current }
+    }
+
+    #[cfg(feature = "mi-stat-1")]
+    fn level_one_merge_count(name: &str, count: FinalStatCount) {
+        std::println!("{name}={},{},{}", count.peak, count.total, count.current);
+    }
+
+    #[cfg(feature = "mi-stat-1")]
+    fn level_one_merge_output(
+        name: &str, process: &HeapTheapStatistics, owner: &OutputOwner, capture: &Capture,
+    ) {
+        capture.reset();
+        let view = FinalProcessDiagnosticView::new(
+            7, process.final_output_snapshot(), FinalProcessInfo::new(0, 0, 0, 0, 0, 0),
+        );
+        // SAFETY: this test holds the only callback registration and keeps
+        // its capture alive through the synchronous source renderer.
+        unsafe {
+            super::render_final_statistics(
+                super::StatisticsOutput::default_route(owner), b"subproc", view, 0,
+            )
+        };
+        for label in ["binned", "huge", "total"] {
+            let prefix = std::format!("  {label:<10}:");
+            let row = (0..capture.count()).find_map(|index| {
+                let message = capture.message(index);
+                message.starts_with(prefix.as_bytes()).then_some(message)
+            });
+            match row {
+                Some(message) => {
+                    let line = std::str::from_utf8(message).expect("source output is ASCII");
+                    std::println!("{name}.{label}={}", line.strip_suffix('\n').expect("one line"));
+                }
+                None => std::println!("{name}.{label}=absent"),
+            }
+        }
+    }
+
+    #[cfg(feature = "mi-stat-1")]
+    #[test]
+    fn level_one_output_merge_trace_for_pinned_c_comparison() {
+        let mut owner = output_owner();
+        let capture = Capture::new();
+        // SAFETY: registration and all source output stay on this test thread;
+        // the capture outlives the final call.
+        unsafe { owner.register_output(Some(capture_output), capture_argument(&capture)) };
+        let process = HeapTheapStatistics::new();
+        let normal_first = HeapTheapStatistics::new();
+        let huge_second = HeapTheapStatistics::new();
+        let mixed_third = HeapTheapStatistics::new();
+        let freed_fourth = HeapTheapStatistics::new();
+
+        std::println!("CRABC_MI_M7_STATISTICS_LEVEL_ONE_OUTPUT_MERGE_TRACE_BEGIN");
+        std::println!("profile.level=1");
+        level_one_merge_output("empty", &process, &owner, &capture);
+
+        normal_first.seed_level_one_malloc_counts(final_stat_count(160, 320, 96), final_stat_count(0, 0, 0));
+        process.merge_from_and_reset(&normal_first);
+        level_one_merge_count("normal.source_reset", normal_first.final_output_snapshot().malloc_normal);
+        level_one_merge_count("normal.process", process.final_output_snapshot().malloc_normal);
+        level_one_merge_output("normal", &process, &owner, &capture);
+
+        huge_second.seed_level_one_malloc_counts(final_stat_count(0, 0, 0), final_stat_count(3_072, 4_096, 2_048));
+        process.merge_from_and_reset(&huge_second);
+        level_one_merge_count("huge.source_reset", huge_second.final_output_snapshot().malloc_huge);
+        level_one_merge_count("huge.process", process.final_output_snapshot().malloc_huge);
+        level_one_merge_output("huge", &process, &owner, &capture);
+
+        mixed_third.seed_level_one_malloc_counts(final_stat_count(224, 256, 128), final_stat_count(1_024, 2_048, 512));
+        process.merge_from_and_reset(&mixed_third);
+        level_one_merge_count("mixed.source_normal_reset", mixed_third.final_output_snapshot().malloc_normal);
+        level_one_merge_count("mixed.source_huge_reset", mixed_third.final_output_snapshot().malloc_huge);
+        level_one_merge_count("mixed.process_normal", process.final_output_snapshot().malloc_normal);
+        level_one_merge_count("mixed.process_huge", process.final_output_snapshot().malloc_huge);
+        level_one_merge_output("mixed", &process, &owner, &capture);
+
+        freed_fourth.seed_level_one_malloc_counts(final_stat_count(0, 0, -224), final_stat_count(0, 0, -2_560));
+        process.merge_from_and_reset(&freed_fourth);
+        level_one_merge_count("freed.source_normal_reset", freed_fourth.final_output_snapshot().malloc_normal);
+        level_one_merge_count("freed.source_huge_reset", freed_fourth.final_output_snapshot().malloc_huge);
+        level_one_merge_count("freed.process_normal", process.final_output_snapshot().malloc_normal);
+        level_one_merge_count("freed.process_huge", process.final_output_snapshot().malloc_huge);
+        level_one_merge_output("freed", &process, &owner, &capture);
+        std::println!("CRABC_MI_M7_STATISTICS_LEVEL_ONE_OUTPUT_MERGE_TRACE_END");
     }
 
     fn final_statistics_fixture() -> FinalStatisticsSnapshot {

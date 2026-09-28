@@ -58,6 +58,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:startup-page-map-failure",
             "differential:statistics",
             "differential:statistics-level-one",
+            "differential:statistics-level-one-output-merge",
             "differential:thread-init-failure",
         ])
         # The options/environment and baseline gates have executable evidence.
@@ -123,6 +124,37 @@ class M7GateContractTests(unittest.TestCase):
             gate.require_statistics_level_one({**trace, "merged.normal": "0,0,0"}, "lost merge")
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_level_one({**trace, "print.live_binned": "0"}, "missing output")
+
+    def test_statistics_level_one_output_merge_requires_source_built_differential(self) -> None:
+        summary = self.validate()
+        statistics = self.gate_record(self.contract, "m7.statistics")
+        self.assertIn("differential:statistics-level-one-output-merge", statistics["evidence"])
+        self.assertIn("differential:statistics-level-one-output-merge", summary["runnable_evidence"])
+
+    def test_statistics_level_one_output_merge_rejects_missing_huge_and_empty_rows(self) -> None:
+        rows = {f"{scenario}.{label}": "absent" if scenario == "empty" else "  binned    : live"
+                for scenario in ("empty", "normal", "huge", "mixed", "freed")
+                for label in ("binned", "huge", "total")}
+        rows["normal.binned"] = "  binned    : not all freed"
+        rows["mixed.huge"] = "  huge      : not all freed"
+        for label in ("binned", "huge", "total"):
+            rows[f"freed.{label}"] = f"  {label:<10}:  ok"
+        counts = {
+            "normal.source_reset": "0,0,0", "normal.process": "160,320,96",
+            "huge.source_reset": "0,0,0", "huge.process": "3072,4096,2048",
+            "mixed.source_normal_reset": "0,0,0", "mixed.source_huge_reset": "0,0,0",
+            "mixed.process_normal": "320,576,224", "mixed.process_huge": "3072,6144,2560",
+            "freed.source_normal_reset": "0,0,0", "freed.source_huge_reset": "0,0,0",
+            "freed.process_normal": "320,576,0", "freed.process_huge": "3072,6144,0",
+        }
+        trace = {"profile.level": "1", **rows, **counts}
+        gate.require_statistics_level_one_output_merge(trace, "complete")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_level_one_output_merge({**trace, "empty.binned": "  binned:"}, "nonempty")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_level_one_output_merge({**trace, "mixed.huge": "absent"}, "missing huge")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_level_one_output_merge({**trace, "mixed.process_normal": "160,576,224"}, "lost peak")
 
     def test_default_artifact_reader_rejects_changed_build_or_cpu(self) -> None:
         with harness.temporary_directory("m7-baseline-reader-") as name:

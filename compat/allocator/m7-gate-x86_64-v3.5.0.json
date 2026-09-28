@@ -117,6 +117,10 @@
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-level-one-differential"],
       "scope": "Pinned C MI_STAT=1 and the Rust native adapter allocate a binned block, compare its process count and printed section, merge through mi_stats_reset, then free and compare retained total and zero current."
     },
+    "differential:statistics-level-one-output-merge": {
+      "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-level-one-output-merge-differential"],
+      "scope": "Pinned C MI_STAT=1 and Rust merge separate synthetic normal/huge source images into one process image, reset each source, and compare exact empty, live, combined-peak, and freed final malloc rows. Production huge allocation remains outside this fixture."
+    },
     "differential:visitation-profiles": {
       "command": null,
       "scope": "Pinned-C/Rust area/block visitation traces under the debug-padding, secure, and guarded profiles."
@@ -297,6 +301,7 @@
       "evidence": [
         "differential:statistics",
         "differential:statistics-level-one",
+        "differential:statistics-level-one-output-merge",
         "differential:adapter"
       ],
       "blocked_by": [

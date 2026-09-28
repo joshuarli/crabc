@@ -906,6 +906,19 @@ impl HeapTheapStatistics {
         }
     }
 
+    /// Seeds synthetic owner records for a direct merge and final-output
+    /// comparison. No allocation producer calls this test-only path.
+    #[cfg(all(test, feature = "mi-stat-1"))]
+    pub(crate) fn seed_level_one_malloc_counts(
+        &self, normal: FinalStatCount, huge: FinalStatCount,
+    ) {
+        for (destination, value) in [(&self.malloc_normal, normal), (&self.malloc_huge, huge)] {
+            i64_store_relaxed(&destination.peak, value.peak);
+            i64_store_relaxed(&destination.total, value.total);
+            i64_store_relaxed(&destination.current, value.current);
+        }
+    }
+
     /// `page.c:_mi_page_retire`'s `mi_theap_stat_counter_increase`; only a
     /// Theap owner records it (see [`StatCounter::increase_owner_local`]).
     #[inline]

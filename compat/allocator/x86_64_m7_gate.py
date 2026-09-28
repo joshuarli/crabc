@@ -944,6 +944,10 @@ STATISTICS_TRACE_END = "CRABC_MI_M7_STATISTICS_TRACE_END"
 STATISTICS_LEVEL_ONE_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_level_one_driver.c"
 STATISTICS_LEVEL_ONE_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_LEVEL_ONE_TRACE_BEGIN"
 STATISTICS_LEVEL_ONE_TRACE_END = "CRABC_MI_M7_STATISTICS_LEVEL_ONE_TRACE_END"
+STATISTICS_LEVEL_ONE_OUTPUT_MERGE_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_level_one_output_merge_oracle.c"
+STATISTICS_LEVEL_ONE_OUTPUT_MERGE_TEST = "diagnostic_output::tests::level_one_output_merge_trace_for_pinned_c_comparison"
+STATISTICS_LEVEL_ONE_OUTPUT_MERGE_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_LEVEL_ONE_OUTPUT_MERGE_TRACE_BEGIN"
+STATISTICS_LEVEL_ONE_OUTPUT_MERGE_TRACE_END = "CRABC_MI_M7_STATISTICS_LEVEL_ONE_OUTPUT_MERGE_TRACE_END"
 
 
 def require_statistics_level_one(trace: Mapping[str, str], description: str) -> None:
@@ -966,6 +970,38 @@ def require_statistics_level_one(trace: Mapping[str, str], description: str) -> 
             or allocated[0] != usable or allocated[2] != usable
             or merged != allocated or freed != (allocated[0], allocated[1], 0)):
         raise harness.HarnessError(f"{description} violates the binned merge/reset/free path: {trace}")
+
+
+def require_statistics_level_one_output_merge(trace: Mapping[str, str], description: str) -> None:
+    """Require separate source merges and every malloc presentation state."""
+
+    scenarios = ("empty", "normal", "huge", "mixed", "freed")
+    rows = ("binned", "huge", "total")
+    counts = ("normal.source_reset", "normal.process", "huge.source_reset", "huge.process",
+              "mixed.source_normal_reset", "mixed.source_huge_reset", "mixed.process_normal",
+              "mixed.process_huge", "freed.source_normal_reset", "freed.source_huge_reset",
+              "freed.process_normal", "freed.process_huge")
+    expected = {"profile.level", *(f"{scenario}.{row}" for scenario in scenarios for row in rows), *counts}
+    if set(trace) != expected or trace["profile.level"] != "1":
+        raise harness.HarnessError(f"{description} lacks the selected level-one merge/output fields: {trace}")
+    try:
+        values = {key: tuple(int(part) for part in trace[key].split(",")) for key in counts}
+    except ValueError as error:
+        raise harness.HarnessError(f"{description} has a nonnumeric merge field: {trace}") from error
+    if (any(len(value) != 3 for value in values.values())
+            or any(values[key] != (0, 0, 0) for key in counts if key.endswith("reset"))
+            or values["normal.process"][2] <= 0 or values["huge.process"][2] <= 0
+            or values["mixed.process_normal"][0] <= values["normal.process"][0]
+            or values["mixed.process_huge"][0] != values["huge.process"][0]
+            or values["freed.process_normal"][2] != 0 or values["freed.process_huge"][2] != 0):
+        raise harness.HarnessError(f"{description} lost a source merge/reset transition: {trace}")
+    if (any(trace[f"empty.{row}"] != "absent" for row in rows)
+            or any(trace[f"{scenario}.{row}"] == "absent"
+                   for scenario in scenarios[1:] for row in rows)
+            or "not all freed" not in trace["normal.binned"]
+            or "not all freed" not in trace["mixed.huge"]
+            or any(not trace[f"freed.{row}"].endswith("  ok") for row in rows)):
+        raise harness.HarnessError(f"{description} lost an empty, live, or freed malloc row: {trace}")
 
 
 def run_statistics_level_one_differential(offline: bool) -> dict[str, Any]:
@@ -1024,6 +1060,17 @@ def run_statistics_level_one_differential(offline: bool) -> dict[str, Any]:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     harness.write_json(ARTIFACTS / "statistics-level-one.json", report)
     return report
+
+
+def run_statistics_level_one_output_merge_differential(offline: bool) -> dict[str, Any]:
+    return run_trace_differential(
+        offline, subject="statistics-level-one-output-merge", oracle=STATISTICS_LEVEL_ONE_OUTPUT_MERGE_ORACLE,
+        test=STATISTICS_LEVEL_ONE_OUTPUT_MERGE_TEST, begin=STATISTICS_LEVEL_ONE_OUTPUT_MERGE_TRACE_BEGIN,
+        end=STATISTICS_LEVEL_ONE_OUTPUT_MERGE_TRACE_END,
+        require_complete=require_statistics_level_one_output_merge,
+        report_name="statistics-level-one-output-merge.json", compile_defines=("-DMI_STAT=1",),
+        rust_features=("mi-stat-1",),
+    )
 
 
 def run_adapter_differential(
@@ -1152,6 +1199,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run the shared-driver pinned-C/native-adapter statistics differential")
     mode.add_argument("--statistics-level-one-differential", action="store_true",
         help="run the pinned-C/native-adapter level-one statistics differential")
+    mode.add_argument("--statistics-level-one-output-merge-differential", action="store_true",
+        help="run the pinned-C/Rust level-one final-output merge differential")
     mode.add_argument("--adapter-differential", action="store_true",
         help="run the shared-driver pinned-C/native-adapter M7 differential")
     mode.add_argument("--option-profiles-differential", action="store_true",
@@ -1197,6 +1246,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"M7 level-one statistics differential passed: {len(report['trace'])} keys")
         print(f"pinned C: {json.dumps(report['c_trace'], sort_keys=True)}")
         print(f"Rust: {json.dumps(report['rust_trace'], sort_keys=True)}")
+        return 0
+    if arguments.statistics_level_one_output_merge_differential:
+        report = run_statistics_level_one_output_merge_differential(arguments.offline)
+        print(f"M7 level-one output merge differential passed: {report['compared_key_count']} keys")
+        print(json.dumps(report["trace"], sort_keys=True))
         return 0
     if arguments.adapter_differential:
         report = run_adapter_differential(arguments.offline)
