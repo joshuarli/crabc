@@ -206,8 +206,11 @@ are not transferable passes for a different revision.
   agree on release and warning state. `MI_STAT=2` ordinary and OS-aligned
   allocation/free production matches 43 C/Rust requested-size, bin, and
   count values, including the source's retained requested count after free.
-  All 13 statistics evidence rows pass on a clean source. Page, fast-path
-  count, remote bin-free, and metadata-Theap statistics producers remain
+  Warmed 64-byte direct, 8 KiB small, and 32 KiB medium local `calloc`
+  paths now match 88 pinned-C statistics fields for requested bytes, normal
+  count, bin lifetime, owner merge, local free, and zeroed contents. All 14
+  statistics evidence rows pass on a clean source. Other page and fast-path
+  shapes, remote bin-free, and metadata-Theap statistics producers remain
   unproved, so full M7
   stays open. Static
   replacement now has a source-bound installed sweep with zero divergent
