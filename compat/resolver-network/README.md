@@ -77,14 +77,16 @@ Run the two phases through the pinned dispatcher:
 
 ### Native x86 physical component receipt
 
-The native runner publishes `schema_version: 2` only after it has retained a
+The native runner publishes `schema_version: 3` only after it has retained a
 physical receipt below that run's `state_root`. The receipt keeps the exact
 source and tool identities before and after collection; each supplied static
 and dynamic product's manifest and complete tree identity; the one workload
 object; reference and all eight product link outputs and link sidecars; every
 command envelope; and raw argv, status, stdout, and stderr files for all
-thirteen executions. It also retains the DNS readiness document and the raw
-versioned DNS event document. The public JSON must byte-match the producer's
+thirteen executions. `run_x86_64.py` starts a separate loopback DNS fixture for
+each execution and retains that mode's raw readiness and versioned event
+document. It also retains their ordered aggregate for inspection. The public
+JSON must byte-match the producer's
 `state_root/report.json`.
 
 Replay it from the pinned core image with the checkout mounted read-only at
@@ -100,12 +102,15 @@ python3 -B compat/x86_64/resolver_network_component_receipt.py validate-report \
 The reader refuses a symlinked input or path component, a missing retained
 artifact, altered raw streams, altered source/tool/product bytes, manifest or
 link substitution, an incomplete execution matrix, and DNS-event summaries
-that do not recompute from the retained event document. It derives the fixed
+that do not recompute from each mode's retained event document. In particular,
+the retry/failover, malformed response, and UDP truncation/TCP retry events
+must appear within each executed mode's stream; aggregate counts cannot fill
+in a missing mode. `resolver_network_component_receipt.py` derives the fixed
 exit-zero/stdout/stderr requirement and all candidate comparisons from the raw
 files; summary booleans cannot establish this receipt.
 
-Older `schema_version: 1` resolver reports remain useful measurements, but
-they do not contain this physical receipt and the reader rejects them for
+Older `schema_version: 1` and `schema_version: 2` resolver reports remain useful
+measurements, but they do not contain per-mode DNS evidence and the reader rejects them for
 component admission. A fresh collector may inspect specifically supplied
 products from a different source revision: the collector-source seals and the
 four product manifest/tree seals remain separate. Such a mixed supplied-product
@@ -228,7 +233,7 @@ harness.
 ## Legacy AArch64 report contract
 
 This contract belongs to the paused native-AArch64 `run.py` path. It does not
-describe the native x86 `schema_version: 2` physical component receipt above.
+describe the native x86 `schema_version: 3` physical component receipt above.
 
 The JSON report has `schema_version: 1` and includes:
 

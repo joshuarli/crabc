@@ -36,7 +36,7 @@ import core_image
 SOURCE_MOUNT = "/workspace"
 PINNED_IMAGE = core_image.CORE_IMAGE_REFERENCE
 IMAGE_MANIFEST = "compat/x86_64/owned_resolver_network_image_inputs.json"
-RECEIPT_SCHEMA = "crabc.x86_64-resolver-network-physical/v2"
+RECEIPT_SCHEMA = "crabc.x86_64-resolver-network-physical/v3"
 SCOPE = ("libc.resolver",)
 EXECUTION_MODE = "two-arms-twelve-candidate-modes"
 RUNNER = "crabc-resolver-network-native-x86"
@@ -328,7 +328,7 @@ def expected_contract() -> dict[str, object]:
         ],
         "candidate_execution_count": 12,
         "comparison": "raw exit status, stdout, and stderr equality; no normalization",
-        "physical_receipt": "raw execution bytes, physical inputs, link products, manifests and DNS event document are retained below state_root",
+        "physical_receipt": "raw execution bytes, physical inputs, link products, manifests and per-execution DNS readiness and events are retained below state_root",
     }
 
 
@@ -336,7 +336,7 @@ def validate_report_document(report: object) -> Mapping[str, object]:
     """Reject summary-only reports before any filesystem-derived claim is made."""
 
     require(isinstance(report, dict), "resolver-network report is not an object")
-    if report.get("schema_version") != 2 or not isinstance(report.get("receipt"), dict):
+    if report.get("schema_version") != 3 or not isinstance(report.get("receipt"), dict):
         raise ReceiptError("resolver-network report has no physical receipt schema")
     fields = {
         "schema_version", "runner", "result", "passed", "state_root", "published_report", "contract",
@@ -963,7 +963,10 @@ def execution_record(
     return {"exit_status": status, "stdout": stream_record(stdout), "stderr": stream_record(stderr)}, (status, stdout, stderr)
 
 
-def recompute_event_contract(events: Sequence[Mapping[str, object]], *, executions: int) -> dict[str, object]:
+def recompute_event_contract(
+    events: Sequence[Mapping[str, object]], *, executions: int,
+    by_execution: Mapping[str, Sequence[Mapping[str, object]]] | None = None,
+) -> dict[str, object]:
     require(executions >= 1, "DNS event contract has no executions")
     names = {str(event["name"]) for event in events if "name" in event}
     count = lambda predicate: sum(1 for event in events if predicate(event))
@@ -980,7 +983,7 @@ def recompute_event_contract(events: Sequence[Mapping[str, object]], *, executio
     passed = (REQUIRED_SERVER_NAMES <= names and all(value >= executions for value in name_counts.values()) and
               malformed >= executions and valid_drop >= executions and drop >= executions and fallback >= executions and
               cname >= executions and tc_udp >= executions and tc_tcp >= executions)
-    return {
+    result = {
         "expected_execution_count": executions,
         "query_counts": name_counts,
         "required_names_seen": sorted(REQUIRED_SERVER_NAMES & names),
@@ -994,11 +997,19 @@ def recompute_event_contract(events: Sequence[Mapping[str, object]], *, executio
         "tc_tcp_retry_observations": tc_tcp,
         "passed": passed,
     }
+    if by_execution is not None:
+        segments = {label: recompute_event_contract(raw, executions=1) for label, raw in by_execution.items()}
+        result["by_execution"] = segments
+        result["passed"] = (passed and len(segments) == executions and
+                            list(events) == [event for raw in by_execution.values() for event in raw] and
+                            all(segment["passed"] is True for segment in segments.values()))
+    return result
 
 
 def validate_dns(root: Path, state: Path, report: Mapping[str, object], receipt: Mapping[str, object]) -> None:
     dns = receipt["dns"]
-    require(isinstance(dns, dict) and set(dns) == {"ready", "events"}, "resolver DNS receipt fields differ")
+    require(isinstance(dns, dict) and set(dns) == {"ready", "events", "by_execution"},
+            "resolver DNS receipt fields differ")
     ready_path = assert_receipt_file_identity(root, dns["ready"], "resolver DNS ready", expected=state / "receipt/dns-ready.json")
     events_path = assert_receipt_file_identity(root, dns["events"], "resolver DNS events", expected=state / "dns-events.json")
     ready = read_json_bytes(ready_path.read_bytes(), "resolver DNS ready")
@@ -1014,13 +1025,39 @@ def validate_dns(root: Path, state: Path, report: Mapping[str, object], receipt:
     require(isinstance(events_document, dict) and set(events_document) == {"schema_version", "events"} and
             events_document["schema_version"] == 1 and isinstance(events_document["events"], list) and
             all(isinstance(item, dict) for item in events_document["events"]), "resolver DNS event document differs")
+    retained_runs = dns["by_execution"]
+    labels = ("reference", *expected_candidate_labels())
+    require(isinstance(retained_runs, dict) and set(retained_runs) == set(labels),
+            "resolver per-execution DNS receipt roster differs")
+    by_execution: dict[str, list[dict[str, object]]] = {}
+    for label in labels:
+        retained = retained_runs[label]
+        require(isinstance(retained, dict) and set(retained) == {"ready", "events"},
+                f"resolver {label} DNS receipt fields differ")
+        directory = state / "receipt/dns-by-execution"
+        raw_ready = assert_receipt_file_identity(
+            root, retained["ready"], f"resolver {label} DNS ready", expected=directory / f"{label}.ready.json",
+        )
+        raw_events = assert_receipt_file_identity(
+            root, retained["events"], f"resolver {label} DNS events", expected=directory / f"{label}.events.json",
+        )
+        require(read_json_bytes(raw_ready.read_bytes(), f"resolver {label} DNS ready") == ready,
+                f"resolver {label} DNS endpoint readiness differs")
+        document = read_json_bytes(raw_events.read_bytes(), f"resolver {label} DNS events")
+        require(isinstance(document, dict) and set(document) == {"schema_version", "events"} and
+                document["schema_version"] == 1 and isinstance(document["events"], list) and
+                all(isinstance(item, dict) for item in document["events"]),
+                f"resolver {label} DNS event document differs")
+        by_execution[label] = document["events"]
+    require(events_document["events"] == [event for items in by_execution.values() for event in items],
+            "resolver aggregate DNS events differ from per-execution streams")
     execution = report["execution"]
     assert isinstance(execution, Mapping)
     server = execution["dns_server"]
     require(isinstance(server, dict) and set(server) == {"ready", "events", "event_contract"} and
             server["ready"] == ready and server["events"] == events_document["events"],
             "resolver report DNS evidence differs from retained raw documents")
-    expected = recompute_event_contract(events_document["events"], executions=13)
+    expected = recompute_event_contract(events_document["events"], executions=13, by_execution=by_execution)
     require(server["event_contract"] == expected and expected["passed"] is True,
             "resolver DNS event contract does not reconstruct")
 

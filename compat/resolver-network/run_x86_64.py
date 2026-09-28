@@ -51,7 +51,7 @@ DYNAMIC_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
 DYNAMIC_INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 PINNED_IMAGE = "crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
 IMAGE_MANIFEST = ROOT / "compat/x86_64/owned_resolver_network_image_inputs.json"
-PHYSICAL_RECEIPT_SCHEMA = "crabc.x86_64-resolver-network-physical/v2"
+PHYSICAL_RECEIPT_SCHEMA = "crabc.x86_64-resolver-network-physical/v3"
 COMPONENT_SCOPE = ["libc.resolver"]
 RECEIPT_SOURCE_FILES = {
     "runner": ROOT / "compat/resolver-network/run_x86_64.py",
@@ -953,8 +953,30 @@ def load_events(path: Path) -> tuple[list[dict[str, object]], str | None]:
         return [], str(error)
 
 
-def event_contract(events: Iterable[Mapping[str, object]], *, executions: int = 1) -> dict[str, object]:
-    """Require each named transition from every reference/candidate process."""
+def run_chroot_with_dns(
+    state: Path, label: str, root: Path, argv: Sequence[str], timeout: float,
+) -> tuple[tuple[int | str, bytes, bytes], dict[str, object], list[dict[str, object]]]:
+    """Give one executed mode a private DNS process and retained event stream."""
+
+    directory = state / "receipt/dns-by-execution"
+    ready_path = directory / f"{label}.ready.json"
+    events_path = directory / f"{label}.events.json"
+    server, ready = start_server(events_path, ready_path)
+    try:
+        raw = run_chroot_raw(root, argv, timeout)
+    finally:
+        stop_server(server)
+    events, error = load_events(events_path)
+    if error is not None:
+        raise RunnerError(f"{label} DNS events are unavailable: {error}")
+    return raw, ready, events
+
+
+def event_contract(
+    events: Iterable[Mapping[str, object]], *, executions: int = 1,
+    by_execution: Mapping[str, Sequence[Mapping[str, object]]] | None = None,
+) -> dict[str, object]:
+    """Require every transition in each isolated reference/candidate run."""
 
     if executions < 1:
         raise RunnerError("DNS event contract needs at least one execution")
@@ -976,7 +998,14 @@ def event_contract(events: Iterable[Mapping[str, object]], *, executions: int = 
         and malformed >= executions and valid_drop >= executions and drop >= executions and fallback >= executions
         and cname >= executions and tc_udp >= executions and tc_tcp >= executions
     )
-    return {"expected_execution_count": executions, "query_counts": name_counts, "required_names_seen": sorted(REQUIRED_SERVER_NAMES & names), "required_names_missing": sorted(REQUIRED_SERVER_NAMES - names), "malformed_sequence_observations": malformed, "valid_fallback_drop_observations": valid_drop, "drop_endpoint_observations": drop, "fallback_query_observations": fallback, "cname_query_observations": cname, "tc_udp_truncated_observations": tc_udp, "tc_tcp_retry_observations": tc_tcp, "passed": passed}
+    result = {"expected_execution_count": executions, "query_counts": name_counts, "required_names_seen": sorted(REQUIRED_SERVER_NAMES & names), "required_names_missing": sorted(REQUIRED_SERVER_NAMES - names), "malformed_sequence_observations": malformed, "valid_fallback_drop_observations": valid_drop, "drop_endpoint_observations": drop, "fallback_query_observations": fallback, "cname_query_observations": cname, "tc_udp_truncated_observations": tc_udp, "tc_tcp_retry_observations": tc_tcp, "passed": passed}
+    if by_execution is not None:
+        segments = {label: event_contract(raw) for label, raw in by_execution.items()}
+        result["by_execution"] = segments
+        result["passed"] = (passed and len(segments) == executions and
+                            events == [event for raw in by_execution.values() for event in raw] and
+                            all(segment["passed"] is True for segment in segments.values()))
+    return result
 
 
 def outcome(status: int | str, stdout: bytes, stderr: bytes) -> dict[str, object]:
@@ -1111,6 +1140,13 @@ def retain_physical_receipt(
     dns_receipt = {
         "ready": receipt_artifact(ready),
         "events": receipt_artifact(events),
+        "by_execution": {
+            label: {
+                "ready": receipt_artifact(state / "receipt/dns-by-execution" / f"{label}.ready.json"),
+                "events": receipt_artifact(state / "receipt/dns-by-execution" / f"{label}.events.json"),
+            }
+            for label in raw_runs
+        },
     }
     if not ready.is_file() or not events.is_file():
         raise RunnerError("cannot retain missing resolver DNS artifacts")
@@ -1155,7 +1191,7 @@ def run(args: argparse.Namespace) -> tuple[dict[str, object], Path, Path | None]
     work_parent = private_work_root(args.work_root)
     state = Path(tempfile.mkdtemp(prefix="run-", dir=work_parent))
     report_path = state / "report.json"
-    report: dict[str, object] = {"schema_version": 2, "runner": "crabc-resolver-network-native-x86", "result": "fail", "passed": False, "state_root": str(state), "published_report": str(args.report), "contract": {"network_namespace": "Docker --network none: loopback is the only observed interface and no default route is admitted", "conventional_files": "each execution chroot has only runner-written etc/hosts and etc/resolv.conf; the host/container /etc is never written", "source_object": "one workload.c object translated with pinned musl 1.2.6 headers and linked unchanged into every reference/candidate artifact", "product_arms": ["installed", "extracted"], "candidate_modes_per_arm": ["static-et-exec", "static-pie", "dynamic-pie ordinary", "dynamic-pie direct-entry", "dynamic-non-pie ordinary", "dynamic-non-pie direct-entry"], "candidate_execution_count": 12, "comparison": "raw exit status, stdout, and stderr equality; no normalization", "physical_receipt": "raw execution bytes, physical inputs, link products, manifests and DNS event document are retained below state_root"}}
+    report: dict[str, object] = {"schema_version": 3, "runner": "crabc-resolver-network-native-x86", "result": "fail", "passed": False, "state_root": str(state), "published_report": str(args.report), "contract": {"network_namespace": "Docker --network none: loopback is the only observed interface and no default route is admitted", "conventional_files": "each execution chroot has only runner-written etc/hosts and etc/resolv.conf; the host/container /etc is never written", "source_object": "one workload.c object translated with pinned musl 1.2.6 headers and linked unchanged into every reference/candidate artifact", "product_arms": ["installed", "extracted"], "candidate_modes_per_arm": ["static-et-exec", "static-pie", "dynamic-pie ordinary", "dynamic-pie direct-entry", "dynamic-non-pie ordinary", "dynamic-non-pie direct-entry"], "candidate_execution_count": 12, "comparison": "raw exit status, stdout, and stderr equality; no normalization", "physical_receipt": "raw execution bytes, physical inputs, link products, manifests and per-execution DNS readiness and events are retained below state_root"}}
     try:
         compiler = physical_regular(MUSL_COMPILER, "pinned musl compiler", executable=True)
         physical_directory(MUSL_ROOT, "pinned musl root")
@@ -1212,40 +1248,44 @@ def run(args: argparse.Namespace) -> tuple[dict[str, object], Path, Path | None]
             layouts[f"{arm}-dynamic-pie"] = dynamic_chroot(Path(str(arm_artifacts["dynamic-pie"]["path"])), roots["dynamic"], chroots / f"{arm}-dynamic-pie")
             layouts[f"{arm}-dynamic-non-pie"] = dynamic_chroot(Path(str(arm_artifacts["dynamic-non-pie"]["path"])), roots["dynamic"], chroots / f"{arm}-dynamic-non-pie")
         report["chroots"] = layouts
-        events_path = state / "dns-events.json"
-        ready_path = state / "receipt" / "dns-ready.json"
-        server, ready = start_server(events_path, ready_path)
-        try:
-            reference_argv = ["/workload"]
-            reference_raw = run_chroot_raw(chroots / "reference", reference_argv, args.timeout)
-            reference_outcome = outcome(*reference_raw)
-            runs: dict[str, dict[str, object]] = {}
-            raw_runs: dict[str, tuple[Sequence[str], tuple[int | str, bytes, bytes], Path]] = {
-                "reference": (reference_argv, reference_raw, chroots / "reference"),
-            }
-            for arm in arms:
-                for label, chroot_name, invocation in (
-                    ("static-et-exec", f"{arm}-static-et-exec", ["/workload"]),
-                    ("static-pie", f"{arm}-static-pie", ["/workload"]),
-                    ("dynamic-pie-ordinary", f"{arm}-dynamic-pie", ["/workload"]),
-                    ("dynamic-pie-direct-entry", f"{arm}-dynamic-pie", [DYNAMIC_INTERPRETER, "/workload"]),
-                    ("dynamic-non-pie-ordinary", f"{arm}-dynamic-non-pie", ["/workload"]),
-                    ("dynamic-non-pie-direct-entry", f"{arm}-dynamic-non-pie", [DYNAMIC_INTERPRETER, "/workload"]),
-                ):
-                    name = f"{arm}-{label}"
-                    raw = run_chroot_raw(chroots / chroot_name, invocation, args.timeout)
-                    runs[name] = outcome(*raw)
-                    raw_runs[name] = (invocation, raw, chroots / chroot_name)
-        finally:
-            stop_server(server)
-        events, event_error = load_events(events_path)
+        reference_argv = ["/workload"]
+        reference_raw, ready, reference_events = run_chroot_with_dns(
+            state, "reference", chroots / "reference", reference_argv, args.timeout,
+        )
+        reference_outcome = outcome(*reference_raw)
+        runs: dict[str, dict[str, object]] = {}
+        raw_runs: dict[str, tuple[Sequence[str], tuple[int | str, bytes, bytes], Path]] = {
+            "reference": (reference_argv, reference_raw, chroots / "reference"),
+        }
+        dns_by_execution: dict[str, list[dict[str, object]]] = {"reference": reference_events}
+        for arm in arms:
+            for label, chroot_name, invocation in (
+                ("static-et-exec", f"{arm}-static-et-exec", ["/workload"]),
+                ("static-pie", f"{arm}-static-pie", ["/workload"]),
+                ("dynamic-pie-ordinary", f"{arm}-dynamic-pie", ["/workload"]),
+                ("dynamic-pie-direct-entry", f"{arm}-dynamic-pie", [DYNAMIC_INTERPRETER, "/workload"]),
+                ("dynamic-non-pie-ordinary", f"{arm}-dynamic-non-pie", ["/workload"]),
+                ("dynamic-non-pie-direct-entry", f"{arm}-dynamic-non-pie", [DYNAMIC_INTERPRETER, "/workload"]),
+            ):
+                name = f"{arm}-{label}"
+                raw, observed_ready, observed_events = run_chroot_with_dns(
+                    state, name, chroots / chroot_name, invocation, args.timeout,
+                )
+                if observed_ready != ready:
+                    raise RunnerError(f"{name} DNS endpoint readiness differs")
+                runs[name] = outcome(*raw)
+                raw_runs[name] = (invocation, raw, chroots / chroot_name)
+                dns_by_execution[name] = observed_events
+        events = [event for observed in dns_by_execution.values() for event in observed]
+        retained_artifact(state / "dns-events.json", canonical_json({"schema_version": 1, "events": events}))
+        retained_artifact(
+            state / "receipt/dns-ready.json",
+            (state / "receipt/dns-by-execution/reference.ready.json").read_bytes(),
+        )
         comparisons = {name: compare(reference_outcome, item) for name, item in runs.items()}
         reference_expected = reference_outcome["exit_status"] == 0 and reference_outcome["stdout"] == stream_record(EXPECTED_STDOUT.encode("utf-8")) and reference_outcome["stderr"] == stream_record(b"")
         candidate_expected = {name: item["exit_status"] == 0 and item["stdout"] == stream_record(EXPECTED_STDOUT.encode("utf-8")) and item["stderr"] == stream_record(b"") for name, item in runs.items()}
-        dns = event_contract(events, executions=1 + len(runs))
-        if event_error is not None:
-            dns["passed"] = False
-            dns["error"] = event_error
+        dns = event_contract(events, executions=1 + len(runs), by_execution=dns_by_execution)
         passed = reference_expected and len(runs) == 12 and all(candidate_expected.values()) and all(all(item.values()) for item in comparisons.values()) and dns["passed"] is True
         report["execution"] = {"reference": reference_outcome, "candidates": runs, "comparisons": comparisons, "reference_expected": reference_expected, "candidate_expected": candidate_expected, "expected_stdout": stream_record(EXPECTED_STDOUT.encode("utf-8")), "dns_server": {"ready": ready, "events": events, "event_contract": dns}}
         report["passed"] = passed

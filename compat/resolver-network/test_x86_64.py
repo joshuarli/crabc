@@ -136,6 +136,8 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
         self.assertFalse(runner.event_contract(without_fallback_answer)["passed"])
         self.assertFalse(runner.event_contract(events, executions=2)["passed"])
         self.assertTrue(runner.event_contract(events * 2, executions=2)["passed"])
+        swapped = {"reference": events * 2, "installed-static-et-exec": []}
+        self.assertFalse(runner.event_contract(events * 2, executions=2, by_execution=swapped)["passed"])
 
     def test_comparison_keeps_stream_records_raw(self) -> None:
         reference = runner.outcome(0, b"unchanged\n", b"")

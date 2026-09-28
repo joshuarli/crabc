@@ -83,6 +83,25 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
         contract = self.reader.recompute_event_contract(events, executions=1)
         self.assertFalse(contract["passed"])
 
+    def test_aggregate_events_cannot_substitute_for_a_missing_mode_stream(self) -> None:
+        events = [{"name": name, "role": "valid", "transport": "udp", "action": "answer"}
+                  for name in self.reader.REQUIRED_SERVER_NAMES]
+        events.extend([
+            {"name": "malformed.example.test.", "action": "malformed-sequence"},
+            {"name": "fallback.example.test.", "role": "valid", "action": "drop"},
+            {"role": "drop", "action": "drop"},
+            {"name": "fallback.example.test.", "role": "fallback", "transport": "udp", "action": "answer"},
+            {"name": "alias.example.test.", "action": "cname"},
+            {"name": "tc.example.test.", "transport": "udp", "action": "tc-sequence"},
+            {"name": "tc.example.test.", "transport": "tcp", "action": "answer"},
+        ])
+        aggregate = events * 2
+        self.assertTrue(self.reader.recompute_event_contract(aggregate, executions=2)["passed"])
+        swapped = {"reference": aggregate, "installed-static-et-exec": []}
+        self.assertFalse(self.reader.recompute_event_contract(
+            aggregate, executions=2, by_execution=swapped,
+        )["passed"])
+
     def test_physical_reader_refuses_a_symlinked_artifact_path(self) -> None:
         scratch = ROOT / ".work/x86_64/tmp"
         scratch.mkdir(parents=True, exist_ok=True)
@@ -212,7 +231,7 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
 
 
 class ResolverNetworkRealReceiptTests(unittest.TestCase):
-    """Replay only a real fresh v2 report; never synthesize a passing receipt."""
+    """Replay only a real fresh v3 report; never synthesize a passing receipt."""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -227,9 +246,29 @@ class ResolverNetworkRealReceiptTests(unittest.TestCase):
 
     def test_fresh_physical_report_replays_without_a_synthetic_success_fixture(self) -> None:
         report = self.reader.validate_report(self.root, self.report)
-        self.assertEqual(report["schema_version"], 2)
+        self.assertEqual(report["schema_version"], 3)
         self.assertTrue(report["passed"])
         self.assertEqual(report["receipt"]["scope"], ["libc.resolver"])
+
+    def test_real_tcp_retry_event_cannot_be_moved_between_executions(self) -> None:
+        report = self.reader.validate_report(self.root, self.report)
+        records = report["receipt"]["dns"]["by_execution"]
+        labels = ("reference", *self.reader.expected_candidate_labels())
+        streams = {
+            label: json.loads(Path(records[label]["events"]["path"]).read_text(encoding="utf-8"))["events"]
+            for label in labels
+        }
+        reference = streams["reference"]
+        moved = [event for event in reference if event.get("name") == "tc.example.test." and
+                 event.get("transport") == "tcp" and event.get("action") == "answer"]
+        self.assertTrue(moved)
+        reference[:] = [event for event in reference if event not in moved]
+        streams["installed-static-et-exec"].extend(moved)
+        aggregate = [event for stream in streams.values() for event in stream]
+        self.assertTrue(self.reader.recompute_event_contract(aggregate, executions=13)["passed"])
+        self.assertFalse(self.reader.recompute_event_contract(
+            aggregate, executions=13, by_execution=streams,
+        )["passed"])
 
 
 if __name__ == "__main__":
