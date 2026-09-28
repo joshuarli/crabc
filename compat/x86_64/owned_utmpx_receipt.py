@@ -952,6 +952,7 @@ def validate_header_bytes(workspace: Path) -> dict[str, str]:
 
 def validate_runtime_bytes(workspace: Path) -> dict[str, str]:
     raw = workspace / ".work/utmpx-receipt/owned-utmpx-receipt"
+    oracle_file = identity(workspace, raw / "oracle")
     oracle = regular(raw / "oracle-ordinary.stdout", "oracle stdout").read_bytes()
     try:
         lines = oracle.decode("ascii").splitlines()
@@ -976,7 +977,13 @@ def validate_runtime_bytes(workspace: Path) -> dict[str, str]:
         require(regular(raw / (prefix + ".stderr"), label + " stderr").read_bytes() == b"", label + " stderr differs")
         require(regular(raw / (prefix + ".status"), label + " status").read_bytes() == b"0\n", label + " status differs")
         require(stdout == oracle, label + " output differs from pinned musl")
-        result[label] = hashlib.sha256(stdout).hexdigest()
+        if label == "oracle":
+            # The saved stream alone cannot detect replacement of the executable
+            # that the pinned musl link command produced.
+            file_record = json.dumps(oracle_file, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            result[label] = hashlib.sha256(b"crabc-utmpx-oracle-runtime\0" + file_record + b"\0" + stdout).hexdigest()
+        else:
+            result[label] = hashlib.sha256(stdout).hexdigest()
     return result
 
 

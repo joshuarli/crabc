@@ -82,6 +82,29 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
                 for symbol in (*receipt.STRONG, *receipt.WEAK)
             ).encode())
 
+    def runtime_fixture(self) -> Path:
+        raw = self.workspace / ".work/utmpx-receipt/owned-utmpx-receipt"
+        lines = ["aliases=1"]
+        ordinary = ("endutxent", "endutent", "setutxent", "setutent", "getutxent", "getutent")
+        query = tuple(name + suffix for name in
+                      ("getutxid", "getutid", "getutxline", "getutline", "pututxline", "pututline")
+                      for suffix in ("", "-null", "-protected"))
+        updates = ("updwtmpx", "updwtmpx-null", "updwtmp", "updwtmp-null")
+        for name in (*ordinary, *query, *updates):
+            errno = 22 if name.endswith("-null") else 84 if name.endswith("-protected") else 33
+            lines.append(f"{name} ptr=0 errno={errno} input=8c82909b")
+        for name in ("utmpname-null", "utmpname-protected", "utmpxname-null", "utmpxname-protected"):
+            lines.append(f"{name} result=-1 errno=95 input=8c82909b")
+        lines.extend(("pututxline-zero ptr=0 errno=0 input=8c82909b", "utmpx-ok"))
+        stdout = ("\n".join(lines) + "\n").encode("ascii")
+        oracle = raw / "oracle"
+        self.write(oracle, b"\x7fELF retained oracle")
+        for _, prefix in receipt.RUNTIME_ROWS:
+            self.write(raw / (prefix + ".stdout"), stdout)
+            self.write(raw / (prefix + ".stderr"), b"")
+            self.write(raw / (prefix + ".status"), b"0\n")
+        return oracle
+
     @staticmethod
     def archive(members: dict[str, bytes]) -> bytes:
         value = bytearray(b"!<arch>\n")
@@ -383,6 +406,13 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
         raw.write_text(raw.read_text(encoding="utf-8").replace("0000000000000001 W endutent", "00000000000000ff W endutent"), encoding="utf-8")
         with self.assertRaisesRegex(receipt.ReceiptError, "alias address"):
             receipt.validate_symbol_bytes(self.workspace)
+
+    def test_oracle_executable_bytes_are_bound_to_the_runtime_projection(self) -> None:
+        oracle = self.runtime_fixture()
+        reported = receipt.validate_runtime_bytes(self.workspace)
+        oracle.write_bytes(oracle.read_bytes() + b"forged trailing byte")
+        with self.assertRaisesRegex(receipt.ReceiptError, "reported runtime differs"):
+            receipt.same(reported, receipt.validate_runtime_bytes(self.workspace), "reported runtime differs")
 
     def test_source_bytes_and_modes_cannot_be_reauthorized_by_report_rows(self) -> None:
         for name in receipt.SOURCES:
