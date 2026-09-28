@@ -44,6 +44,83 @@ static void* observer(void* argument) {
   return NULL;
 }
 
+typedef struct {
+  mi_subproc_id_t child;
+  void* area;
+  size_t size;
+  mi_arena_id_t arena;
+  bool first_done;
+  bool second_done;
+} child_external_t;
+
+static void* child_external_first(void* argument) {
+  child_external_t* state = (child_external_t*)argument;
+  mi_subproc_add_current_thread(state->child);
+  bool member = mi_subproc_current()._mi_subproc_id == state->child._mi_subproc_id;
+  mi_arena_id_t rejected = (mi_arena_id_t)state->area;
+  errno = 0;
+  bool short_region = mi_manage_os_memory_ex(state->area, state->size - 1,
+      false, false, true, -1, true, &rejected);
+  printf("arena.child_reject=%d,%d,%d,%d\n", member, !short_region,
+         rejected == NULL, errno == 0);
+  if (!member || short_region || rejected != NULL) return NULL;
+  errno = 0;
+  bool managed = mi_manage_os_memory_ex(state->area, state->size,
+      false, false, true, -1, true, &state->arena);
+  size_t area_size = 0;
+  void* area = mi_arena_area(state->arena, &area_size);
+  printf("arena.child_manage=%d,%d,%d,%d,%d\n", managed,
+         state->arena != NULL, area == state->area, area_size == state->size,
+         errno == 0);
+  if (!managed || state->arena == NULL) return NULL;
+  mi_heap_t* heap = mi_heap_new_in_arena(state->arena);
+  if (heap == NULL) return NULL;
+  mi_theap_t* theap = mi_heap_theap(heap);
+  void* block = mi_heap_malloc(heap, 80);
+  printf("arena.child_selected=%d,%d,%d,%d,%d\n", theap != NULL,
+         in_area(theap, state->area, state->size), block != NULL,
+         in_area(block, state->area, state->size),
+         mi_arena_contains(state->arena, block));
+  if (theap == NULL || block == NULL) return NULL;
+  mi_free(block);
+  mi_heap_destroy(heap);
+#ifdef CRABC_M6_SOURCE_INTERNAL
+  mi_subproc_t* source_child = (mi_subproc_t*)state->child._mi_subproc_id;
+  mi_arena_t* source_arena = (mi_arena_t*)state->arena;
+  bool purge_pending = mi_atomic_loadi64_relaxed(&source_arena->purge_expire) != 0;
+  int64_t purge_before = source_child->stats.purge_calls.total;
+#endif
+  mi_collect(true);
+#ifdef CRABC_M6_SOURCE_INTERNAL
+  fprintf(stderr, "source.child_external_purge=%d,%d\n", purge_pending,
+          source_child->stats.purge_calls.total > purge_before);
+#endif
+  state->first_done = true;
+  return NULL;
+}
+
+static void* child_external_second(void* argument) {
+  child_external_t* state = (child_external_t*)argument;
+  mi_subproc_add_current_thread(state->child);
+  bool member = mi_subproc_current()._mi_subproc_id == state->child._mi_subproc_id;
+  size_t area_size = 0;
+  void* area = mi_arena_area(state->arena, &area_size);
+  mi_heap_t* heap = mi_heap_new_in_arena(state->arena);
+  if (heap == NULL) return NULL;
+  mi_theap_t* theap = mi_heap_theap(heap);
+  void* block = mi_heap_malloc(heap, 96);
+  printf("arena.child_worker=%d,%d,%d,%d,%d,%d\n", member,
+         state->first_done, area == state->area, area_size == state->size,
+         in_area(theap, state->area, state->size),
+         in_area(block, state->area, state->size));
+  if (theap == NULL || block == NULL) return NULL;
+  mi_free(block);
+  mi_heap_destroy(heap);
+  mi_collect(true);
+  state->second_done = true;
+  return NULL;
+}
+
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
   puts("CRABC_MI_M6_PUBLIC_ARENA_BEGIN");
@@ -202,6 +279,35 @@ int main(void) {
   fprintf(stderr, "source.reserved_external_callback=%d\n",
           ((mi_arena_t*)reserved_external)->commit_fun == NULL);
 #endif
+  void* child_raw = mmap(NULL, minimum + alignment, PROT_NONE,
+                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (child_raw == MAP_FAILED) return 18;
+  uintptr_t child_base = (uintptr_t)child_raw;
+  uintptr_t child_aligned = (child_base + alignment - 1) & ~(uintptr_t)(alignment - 1);
+  size_t child_prefix = child_aligned - child_base;
+  size_t child_suffix = alignment - child_prefix;
+  if (child_prefix != 0 && munmap(child_raw, child_prefix) != 0) return 19;
+  if (child_suffix != 0 && munmap((void*)(child_aligned + minimum), child_suffix) != 0) return 20;
+  child_external_t child_external = {mi_subproc_new(), (void*)child_aligned, minimum, NULL, false, false};
+  if (child_external.child._mi_subproc_id == NULL) return 21;
+  pthread_t first_worker;
+  if (pthread_create(&first_worker, NULL, child_external_first, &child_external) != 0) return 22;
+  if (pthread_join(first_worker, NULL) != 0 || !child_external.first_done) return 23;
+#ifdef CRABC_M6_SOURCE_INTERNAL
+  mi_subproc_t* source_child = (mi_subproc_t*)child_external.child._mi_subproc_id;
+  fprintf(stderr, "source.child_external_owner=%d,%d,%d\n",
+          ((mi_arena_t*)child_external.arena)->subproc == source_child,
+          source_child->arena_count > 0,
+          ((mi_arena_t*)child_external.arena)->commit_fun == NULL);
+#endif
+  pthread_t second_worker;
+  if (pthread_create(&second_worker, NULL, child_external_second, &child_external) != 0) return 24;
+  if (pthread_join(second_worker, NULL) != 0 || !child_external.second_done) return 25;
+  mi_subproc_destroy(child_external.child);
+  printf("arena.child_terminal=%d,%d,%d\n", child_external.first_done,
+         child_external.second_done,
+         mincore(child_external.area, 4096, &residency) == 0);
+  if (munmap(child_external.area, minimum) != 0) return 26;
   puts("CRABC_MI_M6_PUBLIC_ARENA_END");
   return 0;
 }

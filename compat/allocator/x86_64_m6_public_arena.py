@@ -27,12 +27,19 @@ EXPECTED = {
     "arena.reserved_manage": "1,1,1,1",
     "arena.reserved_selected": "1,1,1,1",
     "arena.reserved_retained": "1,1",
+    "arena.child_reject": "1,1,1,1",
+    "arena.child_manage": "1,1,1,1,1",
+    "arena.child_selected": "1,1,1,1,1",
+    "arena.child_worker": "1,1,1,1,1,1",
+    "arena.child_terminal": "1,1,1",
 }
 SOURCE = {
     "source.arena_owners": "1,1,1",
     "source.slices_released": "1,1",
     "source.external_forced_purge": "1,1",
     "source.reserved_external_callback": "1",
+    "source.child_external_owner": "1,1,1",
+    "source.child_external_purge": "1,1",
 }
 
 

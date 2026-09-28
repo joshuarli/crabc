@@ -147,9 +147,8 @@ pub fn arena_max_object_size() -> usize {
 }
 
 /// `mi_manage_os_memory_ex` registers caller-owned mapped backing in the
-/// process main subprocess. A child member is rejected because its arena
-/// backing requires a separately retained child-context owner. The caller
-/// retains the external mapping's unmap right through ordinary arena release.
+/// current subprocess. A child member publishes into its pinned child arena
+/// group; the caller retains the mapping's unmap right through teardown.
 ///
 /// # Safety
 /// `start..start + size` is one live external mapping that outlives
@@ -171,13 +170,22 @@ pub unsafe fn manage_os_memory_ex(
         // SAFETY: caller supplied a writable output.
         unsafe { arena_id.write(null_mut()) };
     }
+    if crate::subproc::lifecycle::current_thread_is_child_member() {
+        // SAFETY: the public caller retains the mapped range and its initial
+        // flags. The child record pins the exact subprocess through setup.
+        let Some(managed) = (unsafe { crate::subproc::lifecycle::native_child_manage_os_memory_ex(
+            start.cast(), size, is_committed, is_pinned, is_zero, numa_node, exclusive,
+        ) }) else { return false };
+        if !arena_id.is_null() {
+            // SAFETY: as above.
+            unsafe { arena_id.write(managed.as_ptr().cast()) };
+        }
+        return true;
+    }
     let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
         .ready_child_subprocess_inputs() else { return false };
     let Ok(config) = binding.page_map().memory_config() else { return false };
     let Some(_active) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else { return false };
-    if crate::subproc::lifecycle::current_thread_is_child_member() {
-        return false;
-    }
     // SAFETY: caller retains the external backing; the process-static owner
     // records its address without taking an unmap right.
     let Ok(managed) = (unsafe { MainSubprocess::global().arena_backing().install_owned_external_os_arena(

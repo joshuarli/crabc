@@ -1401,6 +1401,44 @@ pub(crate) fn native_child_reserve_os_memory(
     Some(result)
 }
 
+/// Register caller-owned mapped memory in the current child's arena group.
+/// The child record lock retains its pinned identity through publication;
+/// teardown retires the arena before that identity can be released.
+///
+/// # Safety
+/// `start..start + size` remains one live caller-owned mapping through the
+/// child's arena, Heap, Theap, and page lifetime. Initial flags are truthful,
+/// and the caller alone owns its final unmap after child teardown.
+pub(crate) unsafe fn native_child_manage_os_memory_ex(
+    start: *mut u8,
+    size: usize,
+    initially_committed: bool,
+    is_pinned: bool,
+    initially_zero: bool,
+    numa_node: i32,
+    exclusive: bool,
+) -> Option<crate::arena::ArenaId> {
+    // SAFETY: this thread exclusively accesses its own child membership.
+    let current = (unsafe { current_child_member() }).as_mut()?;
+    let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
+    let binding = current.binding;
+    let config = binding.page_map().memory_config().ok()?;
+    // SAFETY: the record lock excludes child destruction and retains its
+    // pinned image while the external arena is published in that image's
+    // exact registry. The caller retains the external mapping separately.
+    unsafe {
+        current.id.with_owner(|owner| owner.as_mut().and_then(|child| {
+            child.with_child_image(|image| {
+                let process = crate::os::ChildVmProcess::new(binding.process(), image).ok()?;
+                image.identity().arena_backing().install_owned_external_os_arena_for_child(
+                    process, config, start, size, initially_committed, is_pinned,
+                    initially_zero, numa_node, exclusive,
+                ).ok().map(|managed| managed.arena_id())
+            }).flatten()
+        })).ok().flatten()
+    }
+}
+
 /// Production `mi_heap_delete` (or, with `destroy`, `mi_heap_destroy`) on
 /// the current child thread; see
 /// `types::heap_registry::lifecycle::child_heap_delete`. `None` when the
@@ -1994,6 +2032,131 @@ pub(crate) mod tests {
             .ready_child_subprocess_inputs()
             .expect("the isolated runtime is READY")
             .0
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn native_child_manage_external_os_memory_retains_child_context_and_caller_mapping() {
+        use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE};
+        use crate::runtime_lifecycle::{
+            finish_current_thread_native_after_user_destructors,
+            native_collect, prepare_native_later_thread_arena,
+            test_initialize_process_from_host_environment,
+            ThreadFinishResult,
+        };
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::native_child_manage_external_os_memory_retains_child_context_and_caller_mapping",
+            || {
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let id = native_subproc_new().expect("a child context");
+                // SAFETY: this test alone owns the reserved raw mapping and
+                // trims only the prefix and suffix outside the aligned span.
+                let raw = unsafe { crabc_core::mm::mmap_raw(
+                    core::ptr::null_mut(), ARENA_MIN_SIZE + ARENA_ALIGNMENT,
+                    0, 0x22, -1, 0,
+                ) }.expect("caller reservation");
+                let aligned = (raw as usize + ARENA_ALIGNMENT - 1) & !(ARENA_ALIGNMENT - 1);
+                let prefix = aligned - raw as usize;
+                let suffix = ARENA_ALIGNMENT - prefix;
+                if prefix != 0 {
+                    // SAFETY: these caller-owned bytes precede the aligned
+                    // arena span and no allocator owner has observed them.
+                    unsafe { crabc_core::mm::munmap_raw(raw, prefix) }.unwrap();
+                }
+                if suffix != 0 {
+                    // SAFETY: these caller-owned bytes follow the aligned
+                    // arena span and no allocator owner has observed them.
+                    unsafe { crabc_core::mm::munmap_raw((aligned + ARENA_MIN_SIZE) as *mut u8, suffix) }.unwrap();
+                }
+                let worker = std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    assert!(unsafe {
+                        crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor)
+                    });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(id) }, Ok(NativeChildThreadAdd::Added));
+                    let mut arena = core::ptr::null_mut();
+                    assert!(unsafe { crate::source_heap_api::manage_os_memory_ex(
+                        aligned as *mut core::ffi::c_void, ARENA_MIN_SIZE,
+                        false, false, true, -1, true, &mut arena,
+                    ) }, "the member registers its caller-owned reserved mapping in the child");
+                    assert!(!arena.is_null());
+                    let heap = unsafe { crate::source_heap_api::heap_new_in_arena(arena) };
+                    assert!(!heap.is_null());
+                    let theap = unsafe { crate::source_heap_api::heap_theap(heap) };
+                    assert!(!theap.is_null());
+                    let block = unsafe { crate::source_heap_api::heap_malloc(heap, 80) }
+                        .value.expect("selected child page allocation");
+                    assert!(theap as usize >= aligned && (theap as usize) - aligned < ARENA_MIN_SIZE);
+                    assert!(block.as_ptr() as usize >= aligned && (block.as_ptr() as usize) - aligned < ARENA_MIN_SIZE);
+                    assert_eq!(unsafe { crate::source_api::free(block.as_ptr()) }, crate::source_api::FreeOutcome::Freed);
+                    assert!(unsafe { crate::source_heap_api::heap_release(heap, true) });
+                    native_collect(true);
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                    arena as usize
+                });
+                let arena = worker.join().expect("member finished");
+                let parent_registry = crate::subproc::MainSubprocess::global().arena_backing().registry();
+                assert!((0..parent_registry.count()).all(|index| {
+                    // SAFETY: the parent registry remains live through this
+                    // isolated process and publishes only stable arena slots.
+                    unsafe { parent_registry.arena_at(index) }.is_none_or(|entry|
+                        core::ptr::from_ref(entry) as usize != arena)
+                }), "the child arena is absent from the parent registry");
+                let (child_owns_arena, purge_calls) = unsafe { id.with_owner(|owner| {
+                    owner.as_mut().and_then(|child| child.with_child_image(|image| {
+                        let registry = image.identity().arena_backing().registry();
+                        let owns_arena = (0..registry.count()).any(|index| {
+                            // SAFETY: the child record lock keeps every
+                            // published slot stable through this lookup.
+                            unsafe { registry.arena_at(index) }.is_some_and(|entry|
+                                core::ptr::from_ref(entry) as usize == arena)
+                        });
+                        (owns_arena,
+                         image.identity().vm_statistics().snapshot().purge_calls)
+                    }))
+                }) }.expect("child record remains live").expect("child image remains live");
+                assert!(child_owns_arena, "the child registry publishes the exact external arena");
+                assert!(purge_calls > 0, "forced collection purges the child's external OS arena");
+                let second = std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    assert!(unsafe {
+                        crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor)
+                    });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(id) }, Ok(NativeChildThreadAdd::Added));
+                    let mut size = 0;
+                    let area = unsafe { crate::source_heap_api::arena_area(
+                        arena as *mut core::ffi::c_void, &mut size,
+                    ) };
+                    assert_eq!(area as usize, aligned);
+                    assert_eq!(size, ARENA_MIN_SIZE);
+                    let heap = unsafe { crate::source_heap_api::heap_new_in_arena(arena as *mut core::ffi::c_void) };
+                    assert!(!heap.is_null());
+                    let block = unsafe { crate::source_heap_api::heap_malloc(heap, 96) }
+                        .value.expect("second worker selected allocation");
+                    assert!(block.as_ptr() as usize >= aligned && (block.as_ptr() as usize) - aligned < ARENA_MIN_SIZE);
+                    assert!(unsafe { crate::source_heap_api::arena_contains(
+                        arena as *mut core::ffi::c_void, block.as_ptr().cast(),
+                    ) });
+                    assert_eq!(unsafe { crate::source_api::free(block.as_ptr()) }, crate::source_api::FreeOutcome::Freed);
+                    assert!(unsafe { crate::source_heap_api::heap_release(heap, true) });
+                    native_collect(true);
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                });
+                second.join().expect("second member finished");
+                assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
+                let mut residency = 0u8;
+                // SAFETY: the external mapping stays owned by this caller
+                // after child teardown and mincore writes one output byte.
+                assert!(unsafe { crabc_core::mm::mincore_raw(aligned as *mut u8, 4096, &mut residency) }.is_ok());
+                // SAFETY: both workers finished, their selected pages and
+                // Heaps were released, and child teardown retired the arena;
+                // only this caller retains the exact mapped span.
+                unsafe { crabc_core::mm::munmap_raw(aligned as *mut u8, ARENA_MIN_SIZE) }.unwrap();
+            },
+        );
     }
 
     /// Through the production entry points, a child thread finishes with

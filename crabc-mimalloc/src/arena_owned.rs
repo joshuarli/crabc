@@ -1047,6 +1047,69 @@ impl ProcessArenaBacking {
         numa_node: i32,
         exclusive: bool,
     ) -> Result<ManagedExternalRegion, ManageArenaError> {
+        // SAFETY: a process-static identity and backing outlive all slots.
+        unsafe { self.install_external_os_arena_retained(
+            process, StoredVmProcess::from_static_process(process), config,
+            start, size, initially_committed, is_pinned, initially_zero,
+            numa_node, exclusive,
+        ) }
+    }
+
+    /// Registers caller-owned memory in one pinned child arena group. The
+    /// child context retains the process identity until its arena teardown,
+    /// while the external mapping remains the caller's unmap responsibility.
+    ///
+    /// # Safety
+    /// The caller holds the child record lock through publication and keeps
+    /// the pinned child image alive through all arena, Heap, Theap and page
+    /// uses. It destroys the child arena group before releasing that image.
+    /// `start..start + size` remains mapped through teardown; initial flags
+    /// truthfully describe its commitment and zero state.
+    pub(crate) unsafe fn install_owned_external_os_arena_for_child(
+        &self,
+        child: crate::os::ChildVmProcess<'_>,
+        config: MemoryConfig,
+        start: *mut u8,
+        size: usize,
+        initially_committed: bool,
+        is_pinned: bool,
+        initially_zero: bool,
+        numa_node: i32,
+        exclusive: bool,
+    ) -> Result<ManagedExternalRegion, ManageArenaError> {
+        if !core::ptr::eq(child.identity().arena_backing(), self) {
+            return Err(ManageArenaError::InvalidRegion);
+        }
+        let process = child.process();
+        // SAFETY: the record lock and retained pinned child context satisfy
+        // the stored short identity's full slot lifetime.
+        unsafe { self.install_external_os_arena_retained(
+            process, StoredVmProcess::from_retained_process(process), config,
+            start, size, initially_committed, is_pinned, initially_zero,
+            numa_node, exclusive,
+        ) }
+    }
+
+    /// Caller retains the process identity for every published slot and its
+    /// complete external mapping for every page until arena teardown.
+    ///
+    /// # Safety
+    /// `stored_process` names `process` and stays valid through `destroy_all`.
+    /// The external mapped range and true initial flags satisfy the public
+    /// managed-memory contract throughout that same lifetime.
+    unsafe fn install_external_os_arena_retained(
+        &self,
+        process: VmProcess<'_>,
+        stored_process: StoredVmProcess,
+        config: MemoryConfig,
+        start: *mut u8,
+        size: usize,
+        initially_committed: bool,
+        is_pinned: bool,
+        initially_zero: bool,
+        numa_node: i32,
+        exclusive: bool,
+    ) -> Result<ManagedExternalRegion, ManageArenaError> {
         let lease = ProcessExternalOsArenaLease::new(start, size)
             .ok_or(ManageArenaError::InvalidRegion)?;
         let memory = MemoryId::external(start, size, initially_committed, is_pinned, initially_zero);
@@ -1054,7 +1117,7 @@ impl ProcessArenaBacking {
         // SAFETY: the caller retains external backing and this lock protects
         // the stable owner slot through first registry publication.
         unsafe { self.install_owned_allocation_locked(
-            process, StoredVmProcess::from_static_process(process), config, size,
+            process, stored_process, config, size,
             ArenaBacking::ExternalOs(lease), memory, numa_node, exclusive,
         ) }.map_err(|(error, _lease)| error)
     }
