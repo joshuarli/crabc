@@ -90,8 +90,9 @@ are not transferable passes for a different revision.
   source-built native-shadow products with physically reread receipts on their respective source revisions;
   the corpus covers all 34 frozen cases. The complete nine-leaf M8 gate
   passed again on clean `ea0c28759` with all 16 evidence entries passing and
-  13 physical receipt identities matching a post-exit reread; qualification
-  on the merged revision remains open. All 57 `native_*` integration targets pass; the earlier attachment
+  13 physical receipt identities matching a post-exit reread; the same nine
+  leaves, 16 entries, and 13 post-exit identities passed again on clean
+  `a5613516a`. Qualification on the final merged revision remains open. All 57 `native_*` integration targets pass; the earlier attachment
   defect was stale. The M7 options/environment gate passes its source-matched
   profile and 660-key C/Rust differential; its default-artifact baseline audit
   also passes. A selected `MI_STAT=1` binned allocation, merge/reset, free,
