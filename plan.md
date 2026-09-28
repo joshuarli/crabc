@@ -274,14 +274,19 @@ are not transferable passes for a different revision.
   dispatch still pass. These are structural measurements, not qualified timing.
   Removing a redundant initial-owner readiness read lowers clean 64-byte local
   free from 98 to 95 Rust instructions, against 86 pinned C; the worker path
-  remains at 91 against 86, and local-owner traces and pointer dispatch pass.
+  remains at 91 against 86. Comparing the raw thread pointer against the
+  validated published initial identity lowers the initial path again to 91;
+  local-owner traces and pointer dispatch pass.
   34,084 source-built C/Rust local allocation and free trace lines match.
   A clean allocator-engine smoke physically rehashes final link maps and finds
   108,311 bytes of pinned-C allocator text/read-only data versus 717,923 bytes
   of Rust, a 562.8% increase; the single-thread unit is the largest attributed
   Rust contributor. A source-equivalent queue fullness comparison cuts 95 bytes
   from a later clean Rust final map to 717,456 bytes, while pinned C remains
-  108,311 bytes. This is a code-size investigation, not qualifying M9 timing.
+  108,311 bytes. Moving queue-candidate success work directly into its success
+  branch cuts another 38 bytes from its own clean final map; the measured
+  candidate is 717,067 Rust bytes against the same 108,311 C bytes. This is a
+  code-size investigation, not qualifying M9 timing.
   Remote publication is at 165 Rust instructions after source-equivalent
   owner-word and published-PageMap checks, with its 100-trace and 25-value
   differentials passing.
