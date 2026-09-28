@@ -213,7 +213,20 @@ pub(crate) unsafe fn allocate(
     } else if first_ref.block_size() > SMALL_MAX_OBJ_SIZE {
         return None;
     }
-    if !first_ref.has_owner_exit_collectable_local_free() {
+    // The counter step below touches only the Theap. Keep the owner-only
+    // local head observed during this preflight for the source quick collect;
+    // no other owner can change either ordinary free-list field between them.
+    let (immediate_head, local_head) = unsafe {
+        let state = Page::local_free_list_state_at(first);
+        let immediate_head = *state.free.as_ptr();
+        let local_head = if immediate_head.is_null() {
+            *state.local_free.as_ptr()
+        } else {
+            core::ptr::null_mut()
+        };
+        (immediate_head, local_head)
+    };
+    if immediate_head.is_null() && local_head.is_null() {
         // An empty head needs `mi_page_queue_find_free_ex`.
         return None;
     }
@@ -225,7 +238,7 @@ pub(crate) unsafe fn allocate(
     // immediate or local-free block, so `mi_page_free_quick_collect` leaves
     // `free` non-null for the pop.
     let block = unsafe {
-        quick_collect(first);
+        quick_collect(first, local_head);
         // `mi_page_queue_lookup_free_first` clears this owner-only byte once
         // it selects the head.
         Page::set_retire_expire_at(first, 0);
@@ -402,18 +415,21 @@ unsafe fn pop_immediate(page: NonNull<Page>, zero: bool) -> NonNull<u8> {
 }
 
 /// `mi_page_free_quick_collect` after the caller saw `free` or `local_free`
-/// non-empty.
+/// non-empty. `local_head` is that exact owner-only local head when the
+/// immediate list was empty, or null when the immediate list was non-empty.
 ///
 /// # Safety
 ///
-/// Same ownership contract as [`pop_immediate`].
+/// Same ownership contract as [`pop_immediate`]. `local_head` must be the
+/// page's unchanged local head observed while its immediate head was null,
+/// or null when that immediate head was non-null.
 #[inline(always)]
-unsafe fn quick_collect(page: NonNull<Page>) {
+unsafe fn quick_collect(page: NonNull<Page>, local_head: *mut Block) {
     // SAFETY: forwarded ordinary-field ownership.
     unsafe {
         let state = Page::local_free_list_state_at(page);
-        if (*state.free.as_ptr()).is_null() {
-            *state.free.as_ptr() = *state.local_free.as_ptr();
+        if !local_head.is_null() {
+            *state.free.as_ptr() = local_head;
             *state.local_free.as_ptr() = core::ptr::null_mut();
             *state.free_is_zero.as_ptr() = false;
         }
