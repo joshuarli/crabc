@@ -128,10 +128,13 @@ are not transferable passes for a different revision.
      change only after rerunning its cited commands in a frozen checkout.
   3. Remaining low-churn repository-file pins (`compat/x86_64/core_image.py`
      now names the core image once): owned `.list` digests in the
-     dynamic sysroot builder and the mimalloc visibility, errno-alias and
-     syscall-alias readers, shadow-ABI and churn
+     dynamic sysroot builder and the mimalloc visibility and errno-alias
+     readers, shadow-ABI and churn
      fixtures, the native perf profile, the Lua admission test, and image-input
-     receipts. Keep the frozen AArch64 baseline, pinned-musl header identity,
+     receipts. The syscall-alias reader now replays packed RELR against a
+     source-built static/dynamic cohort; the timed pthread reader binds its
+     four providers to their selected archive members. Their merged-source
+     ABI assembly remains open. Keep the frozen AArch64 baseline, pinned-musl header identity,
      upstream reference copies, adapted-upstream-test patch pins, and
      archive/toolchain provenance.
 - **Other open defects:** fourteen runners pin optimizer shape (raw-syscall
