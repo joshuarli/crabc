@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""Compose the one installed x86-64 sysroot that owns all four link modes.
+"""Compose the one installed x86-64 sysroot that owns all selected link modes.
 
-plan.md "Owned products" requires one installed sysroot with headers, CRT
-objects, ``libc.a``, shared libc, the interpreter and its compatibility alias,
-compiler helpers, the selected allocator and deterministic link
-specifications. The owned static and dynamic products keep their separate
-producers, so static delivery never depends on dynamic startup. This owner
-builds both from the same live source into private staging and composes them
-into one regular-file tree. The composition rules are exact:
+The installed sysroot carries headers, CRT objects, ``libc.a``, shared libc,
+the interpreter and its compatibility alias, compiler helpers, the selected
+allocator and deterministic link specifications. The static and dynamic
+products keep separate producers, so static delivery never depends on dynamic
+startup. This owner builds both from the same live source into private staging
+and composes them into one regular-file tree. The composition rules are exact:
 
 * Two products installing the same runtime path (headers, CRT objects,
   archives, drivers) must supply identical bytes and mode. In particular
@@ -213,6 +212,65 @@ def compose(products: Mapping[str, Path], output: Path) -> dict:
     return record
 
 
+def validate_component_claims(record: dict, embedded_payloads: Mapping[str, bytes | None]) -> None:
+    """Require every installed file to be claimed by a placed component file."""
+
+    products = record.get("products")
+    require(isinstance(products, dict) and set(products) == set(PRODUCTS),
+            "combined package component roster differs")
+    require(record.get("schema") == 1 and record.get("target") == TARGET
+            and isinstance(record.get("toolchain"), str) and record.get("modes") == list(MODES),
+            "combined package identity differs")
+    claims: dict[str, str] = {}
+    for name in PRODUCTS:
+        manifest_path = f"{METADATA_PREFIX}{name}/manifest.json"
+        component = products[name]
+        require(isinstance(component, dict) and set(component) == {"format", "manifest", "placements"}
+                and component["format"] == PRODUCT_FORMATS[name]
+                and component["manifest"] == manifest_path
+                and isinstance(component["placements"], dict),
+                f"combined package {name} placement identity differs")
+        payload = embedded_payloads.get(name)
+        require(isinstance(payload, bytes), f"combined package {name} manifest is missing")
+        try:
+            embedded = json.loads(payload)
+        except (ValueError, UnicodeDecodeError) as error:
+            raise CompositionError(f"combined package {name} manifest is invalid") from error
+        require(isinstance(embedded, dict) and embedded.get("schema") == 1
+                and embedded.get("format") == PRODUCT_FORMATS[name]
+                and embedded.get("target") == TARGET
+                and embedded.get("toolchain") == record["toolchain"],
+                f"combined package {name} manifest identity differs")
+        installed = embedded.get("installed")
+        if name == "static":
+            component_files = installed.get("files") if isinstance(installed, dict) else None
+        else:
+            component_files = embedded.get("files")
+        require(isinstance(component_files, dict)
+                and all(isinstance(path, str) and isinstance(digest, str)
+                        for path, digest in component_files.items()),
+                f"combined package {name} file roster differs")
+        if name == "dynamic":
+            require(embedded.get("symlinks") == record["symlinks"],
+                    "combined package aliases differ from dynamic component")
+        placements = component["placements"]
+        require(set(placements) == set(component_files) | {MANIFEST}
+                and placements[MANIFEST] == manifest_path,
+                f"combined package {name} placement roster differs")
+        for origin, digest in {**component_files, MANIFEST: sha256_bytes(payload)}.items():
+            destination = placements[origin]
+            if destination is None:
+                require(name == "static" and origin == "usr/lib/Scrt1.o",
+                        f"combined package {name} omits a required placement")
+                continue
+            require(isinstance(destination, str) and record["files"].get(destination) == digest,
+                    f"combined package {name} placement payload differs: {origin}")
+            require(destination not in claims or claims[destination] == digest,
+                    f"combined package {name} placement conflicts: {origin}")
+            claims[destination] = digest
+    require(claims == record["files"], "unclaimed package payload")
+
+
 def validate(root: Path) -> dict:
     """Require the exact manifested regular-file, mode and symlink roster."""
 
@@ -234,6 +292,10 @@ def validate(root: Path) -> dict:
     for path, target in links.items():
         resolved = PurePosixPath(path).parent / target
         require("/" not in target and resolved.as_posix() in files, f"symlink escapes the payload: {path}")
+    validate_component_claims(record, {
+        name: (root / f"{METADATA_PREFIX}{name}/manifest.json").read_bytes()
+        for name in PRODUCTS
+    })
     return record
 
 
@@ -260,11 +322,10 @@ def package(root: Path, output: Path) -> None:
         shared_package.publish_noreplace(staged, output, "combined package output")
 
 
-def extract(package_path: Path, output: Path) -> None:
-    """Validate every member against the embedded manifest before writing."""
+def read_validated_package(package_path: Path) -> tuple[dict, dict[str, bytes]]:
+    """Read only regular payloads after validating the complete archive contract."""
 
     require(package_path.is_file() and not package_path.is_symlink(), "combined package is not a regular file")
-    require(not output.exists() and not output.is_symlink(), "extraction output already exists")
     with tarfile.open(package_path, "r:") as archive:
         members = archive.getmembers()
         require(len(members) <= MAX_ARCHIVE_MEMBERS, "combined package member safety limit")
@@ -289,6 +350,10 @@ def extract(package_path: Path, output: Path) -> None:
                 and isinstance(record.get("executables"), list), "wrong combined package contract")
         require(set(names) == {*record["files"], MANIFEST, *record["symlinks"]},
                 "combined package roster differs from its manifest")
+        for path, target in record["symlinks"].items():
+            require(isinstance(target, str) and "/" not in target
+                    and (PurePosixPath(path).parent / target).as_posix() in record["files"],
+                    "unsafe package alias target")
         payloads: dict[str, bytes] = {}
         for member in members:
             if member.name in record["symlinks"]:
@@ -296,10 +361,23 @@ def extract(package_path: Path, output: Path) -> None:
                         "combined package alias differs")
                 continue
             require(member.isfile(), "combined package payload replaced by a link")
+            require(member.mode == (0o755 if member.name in record["executables"] else 0o644),
+                    "combined package member mode differs")
             payload = archive.extractfile(member).read()
             if member.name != MANIFEST:
                 require(sha256_bytes(payload) == record["files"][member.name], "combined package payload differs")
             payloads[member.name] = payload
+    validate_component_claims(record, {
+        name: payloads.get(f"{METADATA_PREFIX}{name}/manifest.json") for name in PRODUCTS
+    })
+    return record, payloads
+
+
+def extract(package_path: Path, output: Path) -> None:
+    """Validate every member before writing an installed tree."""
+
+    require(not output.exists() and not output.is_symlink(), "extraction output already exists")
+    record, payloads = read_validated_package(package_path)
     with tempfile.TemporaryDirectory(prefix=".combined-extraction.", dir=output.parent) as temporary:
         staged = Path(temporary) / "sysroot"
         staged.mkdir()

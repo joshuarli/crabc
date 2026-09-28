@@ -816,8 +816,11 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             path.write_bytes(payload)
         (dynamic / "lib" / "ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
         builder.write_json(dynamic / "share" / "crabc" / "manifest.json", {
+            "schema": 1,
             "format": combined.PRODUCT_FORMATS["dynamic"], "target": builder.TARGET,
             "toolchain": builder.PINNED_TOOLCHAIN,
+            "files": {path: digest for path, (digest, _) in combined.tree(dynamic)[0].items()},
+            "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"},
         })
         output = workspace / "combined"
         combined.compose({"static": static, "dynamic": dynamic}, output)

@@ -2,6 +2,7 @@
 """The combined sysroot is an exact composition of the static and dynamic products."""
 from __future__ import annotations
 
+import copy
 import io
 import json
 import os
@@ -57,8 +58,14 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
             path.chmod(mode)
         for relative, target in (symlinks or {}).items():
             (root / relative).symlink_to(target)
+        files = {relative: digest for relative, (digest, _) in combined.tree(root)[0].items()}
         manifest = {"schema": 1, "format": combined.PRODUCT_FORMATS[name], "target": combined.TARGET,
-                    "toolchain": "nightly-pinned", "files": {}}
+                    "toolchain": "nightly-pinned"}
+        if name == "static":
+            manifest["installed"] = {"files": files}
+        else:
+            manifest["files"] = files
+            manifest["symlinks"] = symlinks or {}
         (root / combined.MANIFEST).write_text(json.dumps(manifest))
         return root
 
@@ -156,6 +163,9 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
         combined.package(first, archives[0])
         combined.package(second, archives[1])
         self.assertEqual(archives[0].read_bytes(), archives[1].read_bytes())
+        record, payloads = combined.read_validated_package(archives[0])
+        self.assertEqual(record, combined.validate(first))
+        self.assertEqual(payloads[combined.MANIFEST], (first / combined.MANIFEST).read_bytes())
         extracted = self.root / "extracted"
         combined.extract(archives[0], extracted)
         combined.compare(first, extracted)
@@ -176,9 +186,21 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
         def forge(name: str, edit) -> Path:
             path = self.root / f"{name}.tar"
             with tarfile.open(path, "w", format=tarfile.USTAR_FORMAT) as archive:
-                for member, payload in edit(list(members)):
+                for member, payload in edit([(copy.copy(member), payload) for member, payload in members]):
                     archive.addfile(member, None if payload is None else io.BytesIO(payload))
             return path
+
+        def executable_mode_drift(entries):
+            for member, _ in entries:
+                if member.name == "lib/ld-crabc-x86_64.so.1":
+                    member.mode = 0o644
+            return entries
+
+        def manifest_mode_drift(entries):
+            for member, _ in entries:
+                if member.name == combined.MANIFEST:
+                    member.mode = 0o755
+            return entries
 
         def replace_payload(entries):
             result = []
@@ -195,26 +217,89 @@ class CombinedSysrootCompositionTests(unittest.TestCase):
                     member.linkname = "/lib/ld-musl-x86_64.so.1"
             return entries
 
+        def rehashed_unsafe_alias(entries):
+            alias = "lib/ld-musl-x86_64.so.1"
+            embedded_path = "share/crabc/dynamic/manifest.json"
+            for index, (member, payload) in enumerate(entries):
+                if member.name == embedded_path:
+                    embedded = json.loads(payload)
+                    embedded["symlinks"][alias] = "../escape"
+                    payload = json.dumps(embedded).encode()
+                    member.size = len(payload)
+                    entries[index] = (member, payload)
+                    embedded_digest = combined.sha256_bytes(payload)
+            for index, (member, payload) in enumerate(entries):
+                if member.name == combined.MANIFEST:
+                    record = json.loads(payload)
+                    record["files"][embedded_path] = embedded_digest
+                    record["symlinks"][alias] = "../escape"
+                    payload = json.dumps(record).encode()
+                    member.size = len(payload)
+                    entries[index] = (member, payload)
+                elif member.name == alias:
+                    member.linkname = "../escape"
+            return entries
+
         def extra_member(entries):
             extra = tarfile.TarInfo("usr/lib/libforeign.a")
             extra.size = 3
             return entries + [(extra, b"foo")]
 
-        def traversal(entries):
+        def rehashed_unclaimed_member(entries):
+            extra = tarfile.TarInfo("usr/lib/libforeign.a")
+            extra.size, extra.mode = 3, 0o644
+            for index, (member, payload) in enumerate(entries):
+                if member.name == combined.MANIFEST:
+                    record = json.loads(payload)
+                    record["files"][extra.name] = combined.sha256_bytes(b"foo")
+                    payload = json.dumps(record).encode()
+                    member.size = len(payload)
+                    entries[index] = (member, payload)
+            return entries + [(extra, b"foo")]
+
+        def duplicate_member(entries):
+            member, payload = entries[0]
+            return entries + [(copy.copy(member), payload)]
+
+        def parent_path(entries):
             evil = tarfile.TarInfo("../escape")
+            evil.size = 1
+            return entries + [(evil, b"x")]
+
+        def absolute_path(entries):
+            evil = tarfile.TarInfo("/escape")
             evil.size = 1
             return entries + [(evil, b"x")]
 
         def no_manifest(entries):
             return [(member, payload) for member, payload in entries if member.name != combined.MANIFEST]
 
-        for name, edit in (("payload", replace_payload), ("alias", retarget_alias),
-                           ("extra", extra_member), ("traversal", traversal), ("manifest", no_manifest)):
+        cases = (
+            ("mode", executable_mode_drift, "package member mode differs"),
+            ("manifest-mode", manifest_mode_drift, "package member mode differs"),
+            ("payload", replace_payload, "combined package payload differs"),
+            ("alias", retarget_alias, "combined package alias differs"),
+            ("extra", extra_member, "combined package roster differs"),
+            ("rehashed-extra", rehashed_unclaimed_member, "unclaimed package payload"),
+            ("duplicate", duplicate_member, "duplicate package member"),
+            ("parent", parent_path, "unsafe package member path"),
+            ("absolute", absolute_path, "unsafe package member path"),
+            ("manifest", no_manifest, "combined package has no manifest"),
+        )
+        for name, edit, error in cases:
             with self.subTest(name=name):
                 output = self.root / f"extract-{name}"
-                with self.assertRaises(combined.CompositionError):
+                with self.assertRaisesRegex(combined.CompositionError, error):
                     combined.extract(forge(name, edit), output)
                 self.assertFalse(output.exists())
+
+        forged_alias = forge("rehashed-alias", rehashed_unsafe_alias)
+        with self.assertRaisesRegex(combined.CompositionError, "unsafe package alias target"):
+            combined.read_validated_package(forged_alias)
+        output = self.root / "extract-rehashed-alias"
+        with self.assertRaisesRegex(combined.CompositionError, "unsafe package alias target"):
+            combined.extract(forged_alias, output)
+        self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":
