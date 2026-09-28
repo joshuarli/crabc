@@ -266,10 +266,20 @@ def allocator_metric_unmet(label: str, metrics: Mapping[str, Any]) -> list[str]:
 
 
 def _allocator_samples_digest(report: Mapping[str, Any]) -> str:
-    """Identify the timed and held-memory observations independent of report metadata."""
+    """Hash replayed batches and snapshots; invocation metadata cannot distinguish runs."""
+
+    def observation(group: str, sample: Mapping[str, Any]) -> dict[str, Any]:
+        if group == "rows":
+            return {"batches": sample["batches"], "exit_memory": sample["process"]["exit_memory"],
+                    "peak_state": sample["peak_state"]}
+        return {"snapshots": sample["snapshots"]}
+
     samples = {
         group: {
-            name: {lane: row["lanes"][lane]["samples"] for lane in ("pinned_c", "rust_engine")}
+            name: {lane: [
+                observation(group, sample)
+                for sample in row["lanes"][lane]["samples"]
+            ] for lane in ("pinned_c", "rust_engine")}
             for name, row in report[group].items()
         }
         for group in ("rows", "memory_rows")
@@ -298,7 +308,8 @@ def allocator_conditions(reports: Sequence[str]) -> list[dict[str, Any]]:
         for report in reports:
             try:
                 validated = reader(ROOT, ROOT / report)
-                digest = _allocator_samples_digest(_read_json(report))
+                raw = _read_json(report)
+                digest = _allocator_samples_digest(raw)
             except Exception as error:  # noqa: BLE001 - the owner's refusal is the unmet detail
                 unmet.append(f"{report}: {type(error).__name__}: {error}")
                 continue
@@ -306,8 +317,7 @@ def allocator_conditions(reports: Sequence[str]) -> list[dict[str, Any]]:
             unmet.extend(allocator_metric_unmet(report, _rows(validated.get("metrics"))))
             if digest in measurements:
                 unmet.append(f"{report} and {measurements[digest]} contain the same raw measurements")
-            else:
-                measurements[digest] = report
+            measurements.setdefault(digest, report)
         if len(identities) == len(reports) and (not identities[0] or any(item != identities[0] for item in identities)):
             unmet.append("allocator reports do not agree on one source/configuration/host identity")
         return _condition("allocator-m9-reports", unmet,

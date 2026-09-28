@@ -48,6 +48,28 @@ def allocator_metrics(**changes: object) -> dict[str, object]:
     return metrics
 
 
+def allocator_timed_sample(index: int) -> dict[str, object]:
+    batches = [{"ns": 900 + index, "cpu_ns": 700 + index, "ops": 10},
+               {"ns": 1000 + index, "cpu_ns": 800 + index, "ops": 10},
+               {"ns": 1100 + index, "cpu_ns": 900 + index, "ops": 10}]
+    return {
+        "arguments": ["ready_fd=3", "control_fd=4"], "cpus": [0], "sample_index": 0,
+        "process": {"exit_memory": {"status": {"vm_hwm_kib": 1000 + index}}},
+        "stdout": "".join(f"batch ns={batch['ns']} cpu_ns={batch['cpu_ns']} ops={batch['ops']}\n"
+                          for batch in batches) + "ok\n",
+        "batches": batches,
+        "peak_state": {"smaps_rollup": {"pss_kib": 900 + index}},
+    }
+
+
+def allocator_memory_sample(index: int) -> dict[str, object]:
+    return {
+        "arguments": ["ready_fd=3", "control_fd=4"], "cpus": [0], "sample_index": 0,
+        "snapshots": {"live": {"status": {"vm_hwm_kib": 1000 + index},
+                               "smaps_rollup": {"pss_kib": 900 + index}}},
+    }
+
+
 HOST = {"status": "uncontended", "evidence": {"load_average": [0.0, 0.0, 0.0]}}
 SOURCE_REVISION = "a" * 40
 HOST_IDENTITY = {
@@ -148,10 +170,14 @@ class ReceiptTests(unittest.TestCase):
         self.allocator = [self.write(f"allocator-{index}.json", {
             "index": index, "uncontended_host": HOST,
             "provenance": {"git": {"head": SOURCE_REVISION}, "host": HOST_IDENTITY},
-            "rows": {"startup": {"lanes": {"pinned_c": {"samples": [index]},
-                                              "rust_engine": {"samples": [index]}}}},
-            "memory_rows": {"live": {"lanes": {"pinned_c": {"samples": [index]},
-                                                   "rust_engine": {"samples": [index]}}}},
+            "rows": {"startup": {"lanes": {
+                "pinned_c": {"samples": [allocator_timed_sample(index)]},
+                "rust_engine": {"samples": [allocator_timed_sample(index)]}},
+                "comparison": {"observed": index}}},
+            "memory_rows": {"live": {"lanes": {
+                "pinned_c": {"samples": [allocator_memory_sample(index)]},
+                "rust_engine": {"samples": [allocator_memory_sample(index)]}},
+                "comparison": {"observed": index}}},
         })
                           for index in range(3)]
         patcher = patch.object(gate, "_module", side_effect=self.module)
@@ -293,6 +319,36 @@ class ReceiptTests(unittest.TestCase):
         self.assertFalse(receipt["passed"], receipt)
         self.assertTrue(any("same raw measurements" in detail
                             for detail in self.details(receipt, "allocator-m9-reports")))
+
+    def test_rehashed_allocator_report_cannot_hide_reused_measurements_in_descriptor_arguments(self):
+        original = json.loads(self.allocator[0].read_text(encoding="utf-8"))
+        copied = json.loads(self.allocator[1].read_text(encoding="utf-8"))
+        for group in ("rows", "memory_rows"):
+            copied[group] = json.loads(json.dumps(original[group]))
+            for row in copied[group].values():
+                for lane in row["lanes"].values():
+                    lane["samples"][0]["arguments"] = ["ready_fd=5", "control_fd=6"]
+        self.allocator[1].write_text(json.dumps(copied), encoding="utf-8")
+        receipt = self.receipt()
+        self.assertEqual(receipt["unmet"], ["allocator-m9-reports"])
+        self.assertTrue(any("same raw measurements" in detail
+                            for detail in self.details(receipt, "allocator-m9-reports")))
+        path = gate.write_receipt(self.directory / "gate-reused-comparison", receipt)
+        with self.assertRaisesRegex(gate.GateInputError, "same raw measurements"):
+            gate.validate_receipt(ROOT, path)
+
+    def test_independent_allocator_samples_may_have_identical_comparisons(self):
+        first = json.loads(self.allocator[0].read_text(encoding="utf-8"))
+        second = json.loads(self.allocator[1].read_text(encoding="utf-8"))
+        for group in ("rows", "memory_rows"):
+            second[group] = json.loads(json.dumps(first[group]))
+        # The lower batch changes while its process median and p99 stay fixed.
+        sample = second["rows"]["startup"]["lanes"]["pinned_c"]["samples"][0]
+        sample["batches"][0]["ns"] -= 1
+        sample["stdout"] = sample["stdout"].replace("batch ns=900 ", "batch ns=899 ", 1)
+        self.allocator[1].write_text(json.dumps(second), encoding="utf-8")
+        receipt = self.receipt()
+        self.assertTrue(receipt["passed"], receipt["unmet"])
 
     def test_inputs_and_outputs_stay_inside_the_checkout(self):
         with self.assertRaisesRegex(gate.GateInputError, "below this checkout"):
