@@ -147,7 +147,11 @@ are not transferable passes for a different revision.
   `a5613516a`. The M8 dispatcher and private readers now pin the immutable
   core image. A clean `740c5e65c` full run passed seven leaves and failed
   two that share one native stress seed-3 static-PIE RSS breach; the same
-  binary passed that soak in an earlier run. Qualification on the final
+  binary passed that soak in an earlier run. A clean `4ae4d70e3` rerun passed
+  all nine M8 leaves and 16 evidence entries, with 13 physical receipts
+  matching a post-exit reread; its seed-3 static-PIE RSS stayed within the
+  unchanged bound. The static-PIE binary changed between these runs, so the
+  intermittent growth remains under investigation. Qualification on the final
   merged revision remains open. All 57 `native_*` integration targets pass; the earlier attachment
   defect was stale. The M7 options/environment gate passes its source-matched
   profile and 660-key C/Rust differential; its default-artifact baseline audit
@@ -164,8 +168,10 @@ are not transferable passes for a different revision.
   now records its physical 589,824-byte allocation and one huge count; a
   nonlocal free brings current huge bytes to zero, matching pinned C. A
   cross-thread normal free records the freeing worker's 8,8,-64 binned row
-  and merges to 72,72,0 process bytes. All 11 statistics evidence rows pass
-  on a clean source. Other page, aligned-OS huge, and
+  and merges to 72,72,0 process bytes. An OS-aligned huge allocation records
+  589,824 physical bytes and prints `578.2 KiB` before owner merge; C/Rust
+  agree on release and warning state. All 12 statistics evidence rows pass
+  on a clean source. Other page, requested-size production, and
   higher-level production statistics producers remain unproved, so full M7
   stays open. Static
   replacement now has a source-bound installed sweep with zero divergent
