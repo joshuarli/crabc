@@ -126,6 +126,187 @@ pub unsafe fn heap_page_is_under_utilized(
     unsafe { page.as_ref() }.is_under_utilized_for_heap(heap.cast(), percentage)
 }
 
+#[cfg(test)]
+mod heap_membership_tests {
+    extern crate std;
+
+    use super::*;
+    use crate::runtime_lifecycle::{
+        attach_current_thread, finish_current_thread_native_after_user_destructors, native_free,
+        NativePageFreeResult, ThreadAttachResult, ThreadFinishResult,
+    };
+    use crate::subproc::main_heaps::{native_heap_allocate, native_heap_new, native_heap_release};
+    use std::vec::Vec;
+
+    unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
+
+    fn initialize_test_owner() {
+        assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+            crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+        }));
+        assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn live_interior_foreign_and_moved_page_queries_follow_page_identity() {
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::heap_membership_tests::live_interior_foreign_and_moved_page_queries_follow_page_identity",
+            || {
+                initialize_test_owner();
+                let heap = native_heap_new().expect("a non-main Heap");
+                // SAFETY: this newly created Heap stays live until its page
+                // has moved to the main Heap.
+                let block = unsafe { native_heap_allocate(heap, 64, None, false) }.expect("a live block");
+                let pointer = block.as_ptr();
+                let interior = pointer.wrapping_add(1);
+                let foreign = 0u8;
+                let selected = heap.as_ptr().cast();
+                // SAFETY: the allocation and its PageMap slice stay live,
+                // and no other thread can mutate this page in the fixture.
+                unsafe {
+                    assert_eq!(heap_of(pointer), selected);
+                    assert_eq!(heap_of(interior), selected);
+                    assert!(heap_contains(selected, pointer));
+                    assert!(any_heap_contains(interior));
+                    assert!(is_in_heap_region(interior));
+                    assert!(!heap_contains(core::ptr::null_mut(), pointer));
+                    assert!(!heap_page_is_under_utilized(selected, pointer, 100));
+                    assert!(heap_of(core::ptr::null()).is_null());
+                    assert!(!any_heap_contains(core::ptr::null()));
+                    assert!(!is_in_heap_region(core::ptr::null()));
+                    assert!(heap_of(&foreign).is_null());
+                    assert!(!any_heap_contains(&foreign));
+                    assert!(!is_in_heap_region(&foreign));
+                    assert!(!heap_contains(selected, &foreign));
+                    assert!(!heap_page_is_under_utilized(selected, (&foreign as *const u8).cast_mut(), 100));
+                }
+                // SAFETY: the Heap is live, its only page and block stay
+                // mapped, and this thread alone performs the move.
+                assert_eq!(unsafe { native_heap_release(heap, false) }, Ok(HeapReleaseOutcome::Released));
+                let main = heap_main();
+                // SAFETY: the moved block still retains its registered page;
+                // no concurrent owner may move or retire it during the query.
+                unsafe {
+                    assert_eq!(heap_of(pointer), main);
+                    assert_eq!(heap_of(interior), main);
+                    assert!(heap_contains(core::ptr::null_mut(), interior));
+                    assert!(any_heap_contains(pointer));
+                    assert!(is_in_heap_region(interior));
+                    assert!(!heap_page_is_under_utilized(main, pointer, 100));
+                }
+                // SAFETY: `block` remains exact and live after its Heap move.
+                assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+            },
+        );
+    }
+
+    struct UtilizationPages {
+        blocks: Vec<usize>,
+        pairs: Vec<(usize, usize)>,
+    }
+
+    unsafe extern "C" fn find_utilization_pages(
+        _: *const c_void,
+        area: *const HeapArea,
+        block: *mut c_void,
+        _: usize,
+        argument: *mut c_void,
+    ) -> bool {
+        if !block.is_null() || area.is_null() || argument.is_null() { return true; }
+        // SAFETY: the test owns both the callback argument and this borrowed
+        // area image until the callback returns; neither outlives this call.
+        let probe = unsafe { &mut *argument.cast::<UtilizationPages>() };
+        let area = unsafe { &*area };
+        let start = area.blocks.addr();
+        let end = start.saturating_add(area.committed);
+        let mut found = probe.blocks.iter().copied().filter(|address| *address >= start && *address < end);
+        if let (Some(victim), Some(survivor)) = (found.next(), found.next()) {
+            probe.pairs.push((victim, survivor));
+        }
+        true
+    }
+
+    unsafe extern "C" fn collect_utilization_page(
+        _: *const c_void,
+        _: *const HeapArea,
+        _: *mut c_void,
+        _: usize,
+        _: *mut c_void,
+    ) -> bool {
+        true
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn joined_remote_free_exposes_non_head_page_utilization() {
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::heap_membership_tests::joined_remote_free_exposes_non_head_page_utilization",
+            || {
+                initialize_test_owner();
+                let heap = native_heap_new().expect("a non-main Heap");
+                let selected = heap.as_ptr().cast();
+                let mut probe = UtilizationPages { blocks: Vec::with_capacity(10_000), pairs: Vec::new() };
+                for _ in 0..10_000 {
+                    // SAFETY: the creating thread holds this Heap until its
+                    // worker has joined and all queries have completed.
+                    let block = unsafe { native_heap_allocate(heap, 64, None, false) }.expect("a page block");
+                    probe.blocks.push(block.as_ptr().addr());
+                }
+                // SAFETY: all pages and the callback's borrowed probe remain
+                // stable while this sole owner identifies page-local pairs.
+                assert!(unsafe { heap_visit_blocks(selected, false, Some(find_utilization_pages),
+                    (&mut probe as *mut UtilizationPages).cast()) });
+                assert!(probe.pairs.len() >= 3);
+                let victims: Vec<usize> = probe.pairs.iter().map(|pair| pair.0).collect();
+                std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    // SAFETY: this new worker registers its own descriptor once.
+                    assert!(unsafe {
+                        crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor)
+                    });
+                    assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                    for address in victims {
+                        let block = NonNull::new(address as *mut u8).expect("a retained victim");
+                        // SAFETY: each exact block is transferred once to
+                        // this worker; its Heap stays live until the join.
+                        assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                    }
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                }).join().expect("the remote producer finished");
+                // SAFETY: the producer has joined, the Heap and pages remain
+                // live, and the visitor only collects and observes them.
+                assert!(unsafe { heap_visit_blocks(selected, true, Some(collect_utilization_page),
+                    core::ptr::null_mut()) });
+                let main = heap_main();
+                let mut positives = 0usize;
+                for (_, survivor) in &probe.pairs {
+                    let pointer = *survivor as *mut u8;
+                    // SAFETY: the survivor is an exact live block. The only
+                    // remote producer joined before collection and queries.
+                    if unsafe { heap_page_is_under_utilized(selected, pointer, 100) } {
+                        positives += 1;
+                        let interior = pointer.wrapping_add(1);
+                        // SAFETY: the same retained block and quiescent page
+                        // back every threshold and Heap-identity observation.
+                        unsafe {
+                            assert!(!heap_page_is_under_utilized(selected, pointer, 50));
+                            assert!(!heap_page_is_under_utilized(main, pointer, 100));
+                            assert!(heap_page_is_under_utilized(selected, interior, 100));
+                            assert_eq!(heap_of(interior), selected);
+                            assert!(is_in_heap_region(interior));
+                        }
+                    }
+                }
+                assert!(positives > 0, "a collected non-head page is observable");
+                // SAFETY: no worker remains and this live Heap owns all
+                // retained pages until destruction finishes.
+                assert_eq!(unsafe { native_heap_release(heap, true) }, Ok(HeapReleaseOutcome::Released));
+            },
+        );
+    }
+}
+
 /// The C `mi_heap_area_t` image passed only while one visitor call runs.
 #[repr(C)]
 pub struct HeapArea {

@@ -67,8 +67,8 @@
       "scope": "Focused Rust Heap lifecycle regressions."
     },
     "unit:heap-membership": {
-      "runner": null,
-      "scope": "Focused Rust Heap membership regressions."
+      "runner": "compat/allocator/heap_membership.py",
+      "scope": "Exact fresh-process Rust regressions for null, foreign, interior, non-main, and moved-page Heap queries and for quiescent non-head page utilization after a joined remote free."
     },
     "unit:heap-allocation": {
       "runner": null,
@@ -146,7 +146,7 @@
         "unit:heap-membership"
       ],
       "blocked_by": [
-        "All five public Heap membership and region queries are exported. Selected null, foreign, interior, main/default, non-main, child, and moved-page lookups match pinned C; the quiescent utilization query also matches the source's non-head, fully committed page threshold after a joined remote free is collected. Broader pointer and page-lifetime coverage and the unit:heap-membership runner remain open."
+        "All five public Heap membership and region queries are exported. Selected null, foreign, interior, main/default, non-main, child, and moved-page lookups match pinned C; the quiescent utilization query also matches the source's non-head, fully committed page threshold after a joined remote free is collected. Exact fresh-process Rust regressions cover these live and moved-page boundaries; broader pointer and concurrent page-lifetime coverage remain open."
       ]
     },
     {
