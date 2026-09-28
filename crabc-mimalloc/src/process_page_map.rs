@@ -2871,9 +2871,7 @@ mod tests {
         ));
     }
 
-    /// Rust half of the M2 PageMap first-map fallback differential
-    /// (`compat/allocator/m2_page_map_first_map_fallback_x86_64.c`): the
-    /// runtime startup's first page-map map fails, the source aligned
+    /// The runtime startup's first page-map map fails, the source aligned
     /// over-allocation fallback maps and trims it, and the process starts and
     /// allocates. Prints the joined TID-normalized startup output as hex, the
     /// main-subprocess VM statistics, and the first allocation result.

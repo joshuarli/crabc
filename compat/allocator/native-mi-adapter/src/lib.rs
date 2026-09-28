@@ -3,16 +3,15 @@
 //!
 //! This static library lets an unmodified C program written against the
 //! pinned mimalloc v3.5.0 `mimalloc.h` run on the Rust port inside a musl
-//! process: the allocator M4 differential links its shared C driver once
+//! process: the allocator differential links its shared C driver once
 //! against the pinned C sources and once against this library, and the
 //! upstream `test/test-api.c` links against it. It is not a production
 //! allocator: it neither interposes `malloc` nor enters crabc libc, and the
 //! C backend remains selected everywhere else.
 //!
-//! The exported functions are exactly the M4 external functions of
-//! `compat/allocator/m4-gate-x86_64-v3.5.0.json`, each a thin projection of
-//! the same-named `crabc_mimalloc::source_api` entry, which applies the
-//! returned errno effect to musl's `errno`.
+//! Each exported function is a thin projection of the same-named
+//! `crabc_mimalloc::source_api` entry, applying the returned errno effect to
+//! musl's `errno`.
 //!
 //! Process and thread binding follow the selected Linux primitives of pinned
 //! `src/prim/unix/prim.c` and `src/init.c`: a load-time constructor publishes
@@ -818,10 +817,10 @@ pub unsafe extern "C" fn mi_wdupenv_s(buf: *mut *mut WideChar, size: *mut usize,
 }
 
 // ---------------------------------------------------------------------------
-// M7: options, callbacks, and statistics (`m7-gate-x86_64-v3.5.0.json`)
+// Options, callbacks, and statistics.
 //
 // Each entry is the same-named `crabc_mimalloc::source_options_api`
-// function; this section is append-only beside the M4 and M6 entries.
+// function. Keep the C ABI projections together as the source interface grows.
 // ---------------------------------------------------------------------------
 
 use crabc_mimalloc::__crabc_runtime::source_options_api as options;
@@ -1036,10 +1035,10 @@ pub extern "C" fn mi_process_info_print() {
 }
 
 // ---------------------------------------------------------------------------
-// M6: first-class Heaps and OS reservation (`m6-gate-v3.5.0.json`)
+// First-class Heaps and OS reservation.
 //
 // Each entry is the same-named `crabc_mimalloc::source_heap_api` function;
-// this section is append-only beside the M4 and M7 entries.
+// keep these C ABI projections together as the source interface grows.
 // ---------------------------------------------------------------------------
 
 use crabc_mimalloc::__crabc_runtime::source_heap_api as heaps;
@@ -1237,7 +1236,7 @@ pub unsafe extern "C" fn mi_reserve_os_memory_ex(
 }
 
 // ---------------------------------------------------------------------------
-// M6 (continued): Heap reallocation, strings, `new`, and collection
+// Heap reallocation, strings, `new`, and collection.
 // ---------------------------------------------------------------------------
 
 type HeapChar = c_char;
@@ -1404,7 +1403,7 @@ pub unsafe extern "C" fn mi_heap_collect(heap: HeapPointer, force: bool) {
 }
 
 // ---------------------------------------------------------------------------
-// M6 (continued): subprocesses
+// Subprocesses.
 // ---------------------------------------------------------------------------
 
 /// `mi_subproc_id_t`: a struct holding one pointer, passed by value.
