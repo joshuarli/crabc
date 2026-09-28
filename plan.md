@@ -171,10 +171,11 @@ are not transferable passes for a different revision.
   A separate source-built reset-advice matrix matches 78 C/Rust fields across
   isolated EIO, EAGAIN, and EINVAL policies, including advice retry, exact
   slice range, warning order, and live bitmap state. A clean full M2 run passed
-  all 78 runnable checks with VM primitives, arenas, initialization, and fault
-  injection still partial. The VM inventory now registers 39 checks, including
+  all 79 runnable checks with VM primitives, arenas, initialization, and fault
+  injection still partial. The VM inventory now registers 40 checks, including
   direct process-owned successful and failed THP advice and disabled process
-  policy; the clean rerun executed all 39. Five VM conditions remain open. A
+  policy and inherited process disable with source-selected advice; the clean
+  rerun executed all 40. Five VM conditions remain open. A
   failed second OS-page block commit and failed rollback unmap match pinned C
   in eleven process-owned
   observations. The PageMap fallback suffix-trim fault is registered in its
@@ -232,6 +233,10 @@ are not transferable passes for a different revision.
   and 123. Two source-equivalent retirement changes put the 64-byte local
   free path at 109 and 102 instructions.
   34,084 source-built C/Rust local allocation and free trace lines match.
+  A clean allocator-engine smoke physically rehashes final link maps and finds
+  108,311 bytes of pinned-C allocator text/read-only data versus 717,923 bytes
+  of Rust, a 562.8% increase; the single-thread unit is the largest attributed
+  Rust contributor. This is a code-size investigation, not qualifying M9 timing.
   Remote publication is at 165 Rust instructions after source-equivalent
   owner-word and published-PageMap checks, with its 100-trace and 25-value
   differentials passing.
@@ -271,6 +276,9 @@ are not transferable passes for a different revision.
   selected from its subprocess arena matches twelve more source-built keys;
   prepublication Theap failures return their exact slice for reuse. All
   seventeen runnable M6 evidence rows pass on clean `b2fd43160`.
+  A public main-process caller-owned external arena matches thirteen
+  source-built C/Rust lifecycle keys across registration, selection, allocation,
+  and caller-held terminal unmap; child subprocess ownership remains open.
   All ten required gates
   remain blocked by 10 named missing API and lifetime evidence entries;
   accumulated mixed-workload main-Heap page-population parity remains unproved.
@@ -341,8 +349,11 @@ are not transferable passes for a different revision.
   intermittent growth remains under investigation. A clean frozen `f140eb666`
   run passed seven M8 leaves; Rust std lacked prepared fixture vendors in that
   lane, and Lua dynamic exposed a native-shadow materialization provenance
-  rejection in the package reader. The independent eleven-cell FILE matrix
-  passed. Final merged-revision M8 qualification remains open. All 57 `native_*`
+  rejection in the package reader. A clean `5613d3c39` rerun with exact
+  lane-local vendors passed all nine leaves and 16 evidence entries, including
+  Rust std, static/dynamic Lua, all 34 corpus cases, 113 stress cases, and three
+  soak seeds. The independent eleven-cell FILE matrix passed. Final
+  merged-revision M8 qualification remains open. All 57 `native_*`
   integration targets pass; the earlier attachment
   defect was stale. The M7 options/environment gate passes its source-matched
   profile and 660-key C/Rust differential; its default-artifact baseline audit
