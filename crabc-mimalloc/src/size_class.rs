@@ -18,7 +18,6 @@
 // overflow outcomes explicit; this private module exposes no allocator
 // operation or public API.
 
-use crate::bits;
 use crate::config::{
     BIN_HUGE, LARGE_MAX_OBJ_SIZE, LARGE_MAX_OBJ_WSIZE, MAX_ALLOC_SIZE,
     MEDIUM_MAX_OBJ_SIZE, PADDING_SIZE, PAGE_MAX_OVERALLOC_ALIGN, SMALL_MAX_OBJ_SIZE,
@@ -91,7 +90,9 @@ const fn bin_from_wsize(mut wsize: usize) -> usize {
     }
 
     wsize -= 1;
-    let highest_bit = usize::BITS as usize - 1 - bits::clz(wsize);
+    // The direct-size branch leaves at least eight words. For a nonzero word,
+    // this all-low-bits mask complements leading zeros to the highest bit.
+    let highest_bit = ((usize::BITS - 1) ^ wsize.leading_zeros()) as usize;
     let bin = ((highest_bit << 2) + ((wsize >> (highest_bit - 2)) & 0x03)) - 3;
     bin
 }
