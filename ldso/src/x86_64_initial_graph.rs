@@ -2458,11 +2458,14 @@ unsafe fn map_elf_with_status(
         // must become zero. Every later page is still the reservation's
         // untouched anonymous zero fill, as in musl's separate bss mapping;
         // writing it would make the whole .bss resident at load.
-        let zero_start = base.checked_add(vaddr).and_then(|v| v.checked_add(filesz)).ok_or(ENOEXEC)?;
-        let segment_end = base.checked_add(vaddr).and_then(|v| v.checked_add(memsz)).ok_or(ENOEXEC)?;
-        let zero_end = segment_end.min(align_up(zero_start));
-        if zero_end > zero_start {
-            core::ptr::write_bytes(zero_start as *mut u8, 0, usize::try_from(zero_end - zero_start).map_err(|_| ENOEXEC)?);
+        if memsz > filesz {
+            let segment_start = base.checked_add(vaddr).ok_or(ENOEXEC)?;
+            let zero_start = segment_start.checked_add(filesz).ok_or(ENOEXEC)?;
+            let segment_end = segment_start.checked_add(memsz).ok_or(ENOEXEC)?;
+            let zero_end = segment_end.min(align_up(zero_start));
+            if zero_end > zero_start {
+                core::ptr::write_bytes(zero_start as *mut u8, 0, usize::try_from(zero_end - zero_start).map_err(|_| ENOEXEC)?);
+            }
         }
     }
     // The temporary header mapping cannot own retained program-header
@@ -5226,6 +5229,65 @@ mod readable_file_load_tests {
         let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
         assert!(matches!(unsafe { map_elf_with_status(fd, &status, false, true,
             ObjectRole::Library) }, Err(ENOEXEC)));
+        assert_eq!(unsafe { syscall1(SYS_CLOSE, fd) }, 0);
+    }
+
+    #[test]
+    fn mapper_zeroes_only_the_declared_file_page_tail() {
+        const SYS_MEMFD_CREATE: i64 = 319;
+        const SYS_PWRITE64: i64 = 18;
+        let fd = unsafe { syscall2(SYS_MEMFD_CREATE, b"load-tail\0".as_ptr() as i64, 0) };
+        assert!(fd >= 0);
+        let mut image = [0xa5u8; PAGE as usize];
+        image[..176].fill(0);
+        image[..4].copy_from_slice(b"\x7fELF");
+        image[4] = 2;
+        image[5] = 1;
+        image[16..18].copy_from_slice(&3u16.to_le_bytes());
+        image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[32..40].copy_from_slice(&64u64.to_le_bytes());
+        image[54..56].copy_from_slice(&56u16.to_le_bytes());
+        image[56..58].copy_from_slice(&2u16.to_le_bytes());
+        let load = &mut image[64..120];
+        load[..4].copy_from_slice(&PT_LOAD.to_le_bytes());
+        load[4..8].copy_from_slice(&(PF_R | PF_W).to_le_bytes());
+        load[32..40].copy_from_slice(&0x380u64.to_le_bytes());
+        load[40..48].copy_from_slice(&0x500u64.to_le_bytes());
+        let dynamic = &mut image[120..176];
+        dynamic[..4].copy_from_slice(&PT_DYNAMIC.to_le_bytes());
+        dynamic[8..16].copy_from_slice(&0x200u64.to_le_bytes());
+        dynamic[16..24].copy_from_slice(&0x200u64.to_le_bytes());
+        dynamic[32..40].copy_from_slice(&96u64.to_le_bytes());
+        dynamic[40..48].copy_from_slice(&96u64.to_le_bytes());
+        for (index, (tag, value)) in [
+            (DT_STRTAB, 0x300u64), (DT_STRSZ, 1), (DT_SYMTAB, 0x320),
+            (DT_SYMENT, 24), (DT_HASH, 0x340), (DT_NULL, 0),
+        ].into_iter().enumerate() {
+            let entry = &mut image[0x200 + index * 16..][..16];
+            entry[..8].copy_from_slice(&tag.to_le_bytes());
+            entry[8..16].copy_from_slice(&value.to_le_bytes());
+        }
+        image[0x300] = 0;
+        image[0x320..0x338].fill(0);
+        image[0x340..0x348].copy_from_slice(&[1, 0, 0, 0, 1, 0, 0, 0]);
+        image[0x348..0x350].fill(0);
+        assert_eq!(unsafe { syscall3(SYS_WRITE, fd, image.as_ptr() as i64, PAGE as i64) }, PAGE as i64);
+        let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
+        let object = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) }.unwrap();
+        let mapped = object.base as *const u8;
+        assert_eq!(unsafe { *mapped.add(0x37f) }, 0xa5);
+        assert!(unsafe { core::slice::from_raw_parts(mapped.add(0x380), 0x180) }
+            .iter().all(|&byte| byte == 0));
+        assert_eq!(unsafe { *mapped.add(0x500) }, 0xa5);
+        assert_eq!(unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64,
+            object.map_span_byte_len as i64) }, 0);
+        let without_bss = 0x380u64.to_le_bytes();
+        assert_eq!(unsafe { syscall4(SYS_PWRITE64, fd, without_bss.as_ptr() as i64,
+            without_bss.len() as i64, 64 + 40) }, without_bss.len() as i64);
+        let object = unsafe { map_elf_with_status(fd, &status, false, true, ObjectRole::Library) }.unwrap();
+        assert_eq!(unsafe { *((object.base as *const u8).add(0x380)) }, 0xa5);
+        assert_eq!(unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64,
+            object.map_span_byte_len as i64) }, 0);
         assert_eq!(unsafe { syscall1(SYS_CLOSE, fd) }, 0);
     }
 
