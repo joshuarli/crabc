@@ -114,13 +114,6 @@ pub unsafe fn theap_set_default(theap: *mut c_void) -> *mut c_void {
     let initialized = unsafe { !Theap::heap_at(candidate).is_null() };
     let same_tld = unsafe { Theap::tld_at(candidate) == Theap::tld_at(current) };
     if !initialized || !same_tld { return previous; }
-    // A child member's additional Heap Theaps still need their own direct
-    // allocation route before they can replace its default root.
-    if crate::subproc::lifecycle::current_thread_is_child_member()
-        && crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<Theap>()) != Some(candidate)
-    {
-        return previous;
-    }
     crate::compiler_tls::set_default_theap(candidate);
     previous
 }
@@ -147,7 +140,11 @@ pub unsafe fn theap_malloc(theap: *mut c_void, size: usize, zero: bool) -> Sourc
         return crate::source_api::malloc_zero_native(size, zero);
     }
     // SAFETY: the current thread retains this non-main Theap and its Heap.
-    let block = unsafe { main_heaps::native_theap_allocate(theap, size, zero) };
+    let block = if crate::subproc::lifecycle::current_thread_is_child_member() {
+        unsafe { crate::subproc::lifecycle::native_child_theap_allocate(theap, size, zero) }.flatten()
+    } else {
+        unsafe { main_heaps::native_theap_allocate(theap, size, zero) }
+    };
     match block {
         Some(block) => Sourced { value: Some(block), errno: SourceErrno::Unchanged },
         None => Sourced { value: None, errno: report_failure(size, Request::Plain) },

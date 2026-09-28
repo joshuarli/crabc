@@ -19,6 +19,11 @@ EXPECTED = {
     "child.created": "1,1,1",
     "child.theaps": "1,1,1,1",
     "child.main_reselected": "1,1",
+    "child.direct": "1,1,1,1",
+    "child.default_first": "1,1,1",
+    "child.default_second": "1,1,1",
+    "child.default_restored": "1,1,1,1",
+    "child.direct_failure": "1,12,1",
     "child.owned": "1,1",
     "child.deleted": "1,1",
     "child.destroyed": "1",
@@ -33,6 +38,8 @@ SOURCE = {
     "source.keys": "0,1,1,2",
     "source.theaps": "1,1,1,0",
     "source.main_cached": "1",
+    "source.direct_cached": "1",
+    "source.default_first_cached": "1",
     "source.reuse": "1,0,3,0",
 }
 

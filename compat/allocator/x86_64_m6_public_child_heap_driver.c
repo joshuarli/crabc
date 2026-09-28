@@ -1,4 +1,5 @@
 #include <pthread.h>
+#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -105,6 +106,44 @@ static void* child_worker(void* argument) {
 #ifdef CRABC_M6_SOURCE_INTERNAL
   fprintf(stderr, "source.main_cached=%d\n", _mi_theap_cached() == base);
 #endif
+  void* direct = mi_theap_malloc(first_theap, 48);
+  unsigned char* direct_zero = (unsigned char*)mi_theap_zalloc(second_theap, 32);
+  if (direct == NULL || direct_zero == NULL) return NULL;
+  bool zeroed = true;
+  for (size_t i = 0; i < 32; i++) zeroed = zeroed && direct_zero[i] == 0;
+  printf("child.direct=%d,%d,%d,%d\n", mi_heap_of(direct) == first,
+         mi_heap_of(direct_zero) == second, zeroed, mi_theap_get_default() == base);
+#ifdef CRABC_M6_SOURCE_INTERNAL
+  fprintf(stderr, "source.direct_cached=%d\n", _mi_theap_cached() == base);
+#endif
+  mi_theap_t* prior = mi_theap_set_default(first_theap);
+  void* default_first = mi_malloc(80);
+  if (default_first == NULL) return NULL;
+  printf("child.default_first=%d,%d,%d\n", prior == base,
+         mi_theap_get_default() == first_theap, mi_heap_of(default_first) == first);
+#ifdef CRABC_M6_SOURCE_INTERNAL
+  fprintf(stderr, "source.default_first_cached=%d\n", _mi_theap_cached() == base);
+#endif
+  prior = mi_theap_set_default(second_theap);
+  void* default_second = mi_malloc(96);
+  if (default_second == NULL) return NULL;
+  printf("child.default_second=%d,%d,%d\n", prior == first_theap,
+         mi_theap_get_default() == second_theap, mi_heap_of(default_second) == second);
+  prior = mi_theap_set_default(base);
+  void* default_restored = mi_malloc(32);
+  if (default_restored == NULL) return NULL;
+  printf("child.default_restored=%d,%d,%d,%d\n", prior == second_theap,
+         mi_theap_get_default() == base, mi_theap_set_default(NULL) == base,
+         mi_heap_of(default_restored) == main);
+  errno = 0;
+  void* failed = mi_theap_malloc(first_theap, SIZE_MAX);
+  printf("child.direct_failure=%d,%d,%d\n", failed == NULL, errno,
+         mi_heap_of(direct) == first);
+  mi_free(default_second);
+  mi_free(default_first);
+  mi_free(default_restored);
+  mi_free(direct_zero);
+  mi_free(direct);
   void* block = mi_heap_malloc(first, 64);
   if (block == NULL) return NULL;
   printf("child.owned=%d,%d\n", mi_heap_of(block) == first, mi_heap_contains(first, block));

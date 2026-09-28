@@ -1169,6 +1169,51 @@ pub(crate) unsafe fn native_child_heap_allocate_variant(
     Some(allocated.ok().flatten())
 }
 
+/// Allocate through this thread's already initialized child Heap Theap
+/// without selecting the Heap or replacing the cached Theap.
+///
+/// # Safety
+/// `theap` belongs to a live non-main Heap of the current child and this
+/// thread's attached TLD. Its Heap and TLD remain live for the call.
+pub(crate) unsafe fn native_child_theap_allocate(
+    theap: core::ptr::NonNull<crate::types::Theap>,
+    size: usize,
+    zero: bool,
+) -> Option<Option<core::ptr::NonNull<u8>>> {
+    // SAFETY: the current thread alone accesses its membership slot.
+    let current = (unsafe { current_child_member() }).as_mut()?;
+    let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
+        return Some(None);
+    };
+    let (id, binding) = (current.id, current.binding);
+    let main_theap = current.member.theap_pointer()?;
+    let owner = current.member.owner_mut() as *mut crate::meta::ChildThreadOwner;
+    // SAFETY: the caller retains this Theap; the current owner retains its TLD.
+    let heap = core::ptr::NonNull::new(unsafe { crate::types::Theap::heap_at(theap) })?;
+    let same_tld = unsafe { crate::types::Theap::tld_at(theap) == crate::types::Theap::tld_at(main_theap) };
+    if !same_tld { return Some(None); }
+    // SAFETY: the record lock excludes concurrent child context operations.
+    let allocated = unsafe {
+        id.with_owner(|child| match child.as_mut() {
+            Some(child) => {
+                let same_child = child.identity_pointer().is_some_and(|identity| {
+                    heap.as_ref().subprocess_pointer() == identity
+                });
+                if !same_child || child.main_heap_pointer() == Some(heap) {
+                    return None;
+                }
+                crate::meta::ChildThreadOwner::with_heap_theap_page_engine(
+                    owner, child, binding, theap, |engine| engine.allocate(size, zero),
+                )
+                .ok()
+                .flatten()
+            }
+            None => None,
+        })
+    };
+    Some(allocated.ok().flatten())
+}
+
 /// Resolve the current child thread's Theap for a live Heap. The child main
 /// Heap keeps its fixed-slot Theap; a non-main Heap may create a per-thread
 /// Theap. Both paths publish the selected Theap in the cache.
@@ -1548,9 +1593,8 @@ pub(crate) mod tests {
         (parent, registry, binding)
     }
 
-    /// Pinned-C/Rust differential for `mi_subproc_new`, `mi_subproc_destroy`,
-    /// and `mi_subproc_visit_heaps`; `compat/allocator/subprocess_lifecycle.c`
-    /// prints the same ordered fields.
+    /// The ordered fields cover child creation, Heap visitation, and
+    /// destruction across the child record's lifetime.
     #[test]
     fn source_ordered_child_subprocess_lifecycle_trace() {
         with_owner_local_fixture(true, |attachment, mut heap_owner, pair| {
@@ -2049,6 +2093,58 @@ pub(crate) mod tests {
                     assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
                 }).join().expect("the child worker completes");
                 // SAFETY: the worker has finished and no child Heap has users.
+                assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn public_child_theap_direct_allocation_and_default_restore() {
+        use crate::runtime_lifecycle::{
+            finish_current_thread_native_after_user_destructors, native_free, prepare_native_later_thread_arena,
+            test_initialize_process_from_host_environment, NativePageFreeResult, ThreadFinishResult,
+        };
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::public_child_theap_direct_allocation_and_default_restore",
+            || {
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let id = native_subproc_new().expect("a live child");
+                std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(id) }, Ok(NativeChildThreadAdd::Added));
+                    let heap = native_child_heap_new().expect("a member").expect("a live child").expect("a Heap");
+                    let heap_ptr = heap.as_ptr().cast();
+                    // SAFETY: this thread retains the child Heap and its selected Theap.
+                    let selected = unsafe { crate::source_heap_api::heap_theap(heap_ptr) };
+                    assert!(!selected.is_null());
+                    let base = crate::source_heap_api::theap_get_default();
+                    let main = current_child_main_heap().expect("the child main Heap");
+                    // SAFETY: this thread retains the child main Heap.
+                    assert_eq!(unsafe { crate::source_heap_api::heap_theap(main.as_ptr().cast()) }, base);
+                    let cached = crate::compiler_tls::cached_theap();
+                    // SAFETY: the selected Theap and Heap remain live.
+                    let direct = unsafe { crate::source_heap_api::theap_malloc(selected, 48, false) }.value.expect("direct block");
+                    assert_eq!(crate::compiler_tls::cached_theap(), cached);
+                    assert_eq!(unsafe { crate::source_heap_api::heap_of(direct.as_ptr()) }, heap_ptr);
+                    // SAFETY: the candidate is this thread's initialized live Theap.
+                    assert_eq!(unsafe { crate::source_heap_api::theap_set_default(selected) }, base);
+                    let default_block = crate::source_api::malloc(80).value.expect("default block");
+                    assert_eq!(crate::source_heap_api::theap_get_default(), selected);
+                    assert_eq!(crate::compiler_tls::cached_theap(), cached);
+                    assert_eq!(unsafe { crate::source_heap_api::heap_of(default_block.as_ptr()) }, heap_ptr);
+                    // SAFETY: the original default remains live until restoration.
+                    assert_eq!(unsafe { crate::source_heap_api::theap_set_default(base) }, selected);
+                    assert_eq!(crate::source_heap_api::theap_get_default(), base);
+                    assert_eq!(unsafe { native_free(default_block) }, NativePageFreeResult::Freed);
+                    assert_eq!(unsafe { native_free(direct) }, NativePageFreeResult::Freed);
+                    assert!(unsafe { crate::source_heap_api::heap_release(heap_ptr, true) });
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                }).join().expect("the child worker completes");
                 assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
             },
         );
