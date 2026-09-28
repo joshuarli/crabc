@@ -40,7 +40,7 @@ use crate::config::{
 #[cfg(feature = "mi-stat-1")]
 use crate::config::LARGE_MAX_OBJ_SIZE;
 use crate::single_thread::{RETIRE_CYCLES, RETIRE_MAX_PAGES};
-use crate::types::{Block, EMPTY_PAGE, Page, Theap};
+use crate::types::{Block, Page, Theap};
 use crate::{invariants, size_class};
 
 /// The one per-thread publication the fast paths read: the owner's Theap
@@ -166,30 +166,27 @@ pub(crate) unsafe fn allocate(
             return None;
         }
         let direct = theap_ref.direct_page(direct_index)?;
-        if direct != EMPTY_PAGE.as_ptr() {
-            // The initialized direct cache contains only the empty-page
-            // sentinel or a live queue page, as the source direct lookup does.
-            // SAFETY: the owner's published Theap keeps that cache initialized;
-            // the sentinel was excluded above.
-            let page = unsafe { NonNull::new_unchecked(direct) };
-            // SAFETY: a direct entry names a live page of this Theap.
-            let head = unsafe { page.as_ref() }.free_list_head();
-            if !head.is_null() {
-                if alignment.is_some_and(|alignment| head.addr() & (alignment - 1) != 0) {
-                    return None;
-                }
-                // SAFETY: the owner exclusively controls this live page's
-                // ordinary local-list fields and its non-null immediate head.
-                let block = unsafe { pop_immediate(page, zero) };
-                #[cfg(feature = "mi-stat-1")]
-                theap_ref.record_malloc_normal_allocated(unsafe { page.as_ref() }.block_size());
-                #[cfg(feature = "mi-stat-2")]
-                theap_ref.record_malloc_normal_level_two_allocated(
-                    size,
-                    size_class::bin_for_regular_page_block_size(unsafe { page.as_ref() }.block_size()),
-                );
-                return Some(block);
+        // The initialized cache contains only the readable empty-page
+        // sentinel or a live queue page. The sentinel's free head is null.
+        // SAFETY: the owner's published Theap keeps every direct slot non-null.
+        let page = unsafe { NonNull::new_unchecked(direct) };
+        // SAFETY: the pointer names a live page or the immutable sentinel.
+        let head = unsafe { page.as_ref() }.free_list_head();
+        if !head.is_null() {
+            if alignment.is_some_and(|alignment| head.addr() & (alignment - 1) != 0) {
+                return None;
             }
+            // SAFETY: a non-null head excludes the sentinel; the owner controls
+            // this live page's ordinary local-list fields and immediate head.
+            let block = unsafe { pop_immediate(page, zero) };
+            #[cfg(feature = "mi-stat-1")]
+            theap_ref.record_malloc_normal_allocated(unsafe { page.as_ref() }.block_size());
+            #[cfg(feature = "mi-stat-2")]
+            theap_ref.record_malloc_normal_level_two_allocated(
+                size,
+                size_class::bin_for_regular_page_block_size(unsafe { page.as_ref() }.block_size()),
+            );
+            return Some(block);
         }
         if let Some(alignment) = alignment {
             if !is_naturally_aligned_small(size, alignment)? {
