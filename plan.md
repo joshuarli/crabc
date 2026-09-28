@@ -170,8 +170,11 @@ are not transferable passes for a different revision.
   including warning text and callback order.
   A separate source-built reset-advice matrix matches 78 C/Rust fields across
   isolated EIO, EAGAIN, and EINVAL policies, including advice retry, exact
-  slice range, warning order, and live bitmap state. The M2 VM component now
-  has 35 checks with five conditions still open. A failed second OS-page block
+  slice range, warning order, and live bitmap state. A clean full M2 run passed
+  all 75 runnable checks with VM primitives, arenas, initialization, and fault
+  injection still partial. The VM inventory now registers 38 checks, including
+  direct process-owned successful and failed THP advice; its full rerun is in
+  progress. Five VM conditions remain open. A failed second OS-page block
   commit and failed rollback unmap match pinned C in eleven process-owned
   observations. The PageMap fallback suffix-trim fault is registered in its
   shared aggregate with ten matching C/Rust observations; lazy submap rollback
@@ -179,12 +182,13 @@ are not transferable passes for a different revision.
   startup THP `prctl` GET and SET failures each match eight pinned-C/Rust
   observations, including READY state and no retry. A selected process-owned
   `MADV_HUGEPAGE` success matches 21 C/Rust observations, including the exact
-  2 MiB advice, kernel mapping flag, accounting, and release. A legacy
+  2 MiB advice, kernel mapping flag, accounting, and release; forced EIO advice
+  failure matches 24 and preserves the live mapping. Disabled and inherited
+  disabled THP process policies match 25 and 24 more observations. A legacy
   processless aligned OS-page claim preserves the same MemoryId, live escaped
-  suffix, and raw
-  cleanup as pinned C after failed suffix trim and terminal unmap. Its absent
-  subprocess accounting and warning callback are recorded as exact source
-  differences. A process-owned claim now matches 17 C/Rust suffix-trim,
+  suffix, and raw cleanup as pinned C after failed suffix trim and terminal
+  unmap. Its absent subprocess accounting and warning callback are recorded as
+  exact source differences. A process-owned claim now matches 17 C/Rust suffix-trim,
   terminal-unmap, warning, escaped mapping, and accounting relations after
   terminal release charges only the committed block area; other process-owned
   callers remain separately qualified or open.
@@ -220,18 +224,24 @@ are not transferable passes for a different revision.
   traces. Deferring regular-page classification past the direct small head
   reduces that initial path to 139 and the worker path from 143 to 132;
   trusting the selected small queue's class lowers those paths again to 136
-  and 129 instructions, respectively;
+  and 129 instructions, respectively. Reading the immutable empty-page
+  sentinel's null free head lowers malloc to 132 and 125 instructions; the
+  64-byte local free path is 109 and 102 instructions after two source-equivalent
+  retirement changes.
   34,084 source-built C/Rust local allocation and free trace lines match.
-  Remote publication is at 166 Rust instructions after two source-equivalent
-  owner-word changes, with its 100-trace and 25-value differentials passing.
+  Remote publication is at 165 Rust instructions after source-equivalent
+  owner-word and published-PageMap checks, with its 100-trace and 25-value
+  differentials passing.
   Contended timing is not qualifying. Allocator M3 passes every own
   component and waits only on M2; M4 passes including the unmodified
   upstream `test-api.c` through the native adapter. M6 now source-differentiates
   quiescent non-main and isolated process-main Heap block visitation across 138
   adapter keys, including all five exported Heap membership and region queries
   and the quiescent page-utilization query; seventeen
-  runnable evidence rows pass, including fresh-process Heap membership
-  regressions and a ten-case source-built main-Heap population differential
+  runnable evidence rows pass on a clean M6 gate, while ten required gates
+  remain blocked by named missing producers. The passing rows include
+  fresh-process Heap membership regressions and a ten-case source-built
+  main-Heap population differential
   across one to 1000 non-main Heaps, direct/fork execution, and reserved-arena
   profiles. Detached Theap and replaced TLS slot images now retain the source
   remote-free lifetime through a visitor collection. A worker-abandoned
