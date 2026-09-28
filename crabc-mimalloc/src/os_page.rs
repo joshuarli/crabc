@@ -2209,9 +2209,9 @@ mod tests {
             && unsafe { map.checked_lookup(start.as_ptr()) }.is_null()
     }
 
-    /// Publishes one process-owned OS singleton and observes its exact mapping
-    /// and subprocess counters through the terminal page release.
-    fn fresh_os_published_relations() -> ([bool; 6], [i64; 20]) {
+    /// Publishes one process-owned OS page and observes its complete mapping,
+    /// PageMap reachability, and subprocess counters through terminal release.
+    fn fresh_os_published_relations(block_size: usize, alignment: usize) -> ([bool; 6], [i64; 20]) {
         use crate::bootstrap::ExclusiveTheapBootstrap;
         use crate::diagnostic_output::{OutputCallback, OutputOwner};
         use crate::page_map::PageMap;
@@ -2258,9 +2258,9 @@ mod tests {
         let mut random = unsafe { crate::os::CurrentTheapRandom::new(
             NonNull::from(session.theap())) };
         let claim = OsAlignedPageClaim::allocate_for_process_with_random(process,
-            config(4 * KIB), 128 * KIB, 128 * KIB, crate::arena::ArenaId::none(),
+            config(4 * KIB), block_size, alignment, crate::arena::ArenaId::none(),
             Some(&mut random))
-            .unwrap_or_else(|_| panic!("fresh OS singleton claim"));
+            .unwrap_or_else(|_| panic!("fresh OS page claim"));
         let layout = claim.layout();
         let memory = claim.memory_id().unwrap();
         let base = claim.base().unwrap();
@@ -2272,10 +2272,13 @@ mod tests {
         unsafe { map.register_range(start.as_ptr(), layout.page_map_size(), primary) }.unwrap();
         let live = process.subprocess().vm_statistics().snapshot();
         let pages_live = session.theap().page_count();
-        let registered = unsafe { map.checked_lookup(start.as_ptr()) } == primary.as_ptr();
         let page_offset = unsafe { primary.as_ref().page_offset() };
         let page_reserved = unsafe { primary.as_ref().reserved() };
         let page_block_size = unsafe { primary.as_ref().block_size() };
+        let last = start.as_ptr().wrapping_add(layout.block_start_offset()
+            + (usize::from(page_reserved) - 1) * page_block_size);
+        let registered = unsafe { map.checked_lookup(start.as_ptr()) } == primary.as_ptr()
+            && unsafe { map.checked_lookup(last) } == primary.as_ptr();
         let mut residency = 0;
         let mapped = unsafe { crabc_core::mm::mincore_raw(base, 4096, &mut residency) }.is_ok();
         let unmaps = fault.capture_unmap_ranges();
@@ -2295,7 +2298,8 @@ mod tests {
             == Err(Errno::NOMEM);
         let warning_count = warnings.fragments.lock().unwrap().len();
         let facts = [memory.is_os(), exact_release,
-            registered && unsafe { map.checked_lookup(start.as_ptr()) }.is_null(),
+            registered && unsafe { map.checked_lookup(start.as_ptr()) }.is_null()
+                && unsafe { map.checked_lookup(last) }.is_null(),
             mapped && unmapped, count == 1, warning_count == 0];
         let values = [layout.mapping_length() as i64,
             (start.as_ptr().addr() - base.addr()) as i64,
@@ -2323,7 +2327,7 @@ mod tests {
 
     /// A failed published free leaves its mapping live after PageMap removal;
     /// the retained token retries only the raw primitive after accounting.
-    fn published_os_failed_free_relations() -> ([bool; 8], [i64; 10]) {
+    fn published_os_failed_free_relations(block_size: usize, alignment: usize) -> ([bool; 8], [i64; 10]) {
         use crate::bootstrap::ExclusiveTheapBootstrap;
         use crate::diagnostic_output::{OutputCallback, OutputOwner};
         use crate::page_map::PageMap;
@@ -2369,7 +2373,7 @@ mod tests {
         let mut random = unsafe { crate::os::CurrentTheapRandom::new(
             NonNull::from(session.theap())) };
         let claim = OsAlignedPageClaim::allocate_for_process_with_random(process,
-            config(4 * KIB), 128 * KIB, 128 * KIB, crate::arena::ArenaId::none(),
+            config(4 * KIB), block_size, alignment, crate::arena::ArenaId::none(),
             Some(&mut random)).unwrap_or_else(|_| panic!("published OS claim"));
         let layout = claim.layout();
         let memory = claim.memory_id().unwrap();
@@ -2381,7 +2385,10 @@ mod tests {
         assert!(unsafe { claim.publish_secondary_metadata(primary) });
         unsafe { map.register_range(start.as_ptr(), layout.page_map_size(), primary) }.unwrap();
         let live = process.subprocess().vm_statistics().snapshot();
-        let registered = unsafe { map.checked_lookup(start.as_ptr()) } == primary.as_ptr();
+        let last = start.as_ptr().wrapping_add(layout.block_start_offset()
+            + (usize::from(layout.reserved()) - 1) * layout.block_size());
+        let registered = unsafe { map.checked_lookup(start.as_ptr()) } == primary.as_ptr()
+            && unsafe { map.checked_lookup(last) } == primary.as_ptr();
         claim.into_published().unwrap();
         let published = unsafe { PublishedOsAlignedPage::from_page_for_process(
             process, config(4 * KIB), primary) }.unwrap();
@@ -2403,7 +2410,9 @@ mod tests {
         let fragments = warnings.fragments.lock().unwrap();
         let warning_order = fragments.len() == 2
             && fragments[0].starts_with(b"mimalloc: warning: thread 0x")
-            && fragments[1].starts_with(b"unable to free OS memory (error: 12 (0x0C), size: 0x40000 bytes, address: 0x");
+            && fragments[1].starts_with(std::format!(
+                "unable to free OS memory (error: 12 (0x0C), size: 0x{:X} bytes, address: 0x",
+                layout.mapping_length()).as_bytes());
         let warning_count = fragments.len();
         drop(fragments);
         let warning_reserved = warnings.reserved_at_free_warning.load(Ordering::Acquire);
@@ -2417,8 +2426,9 @@ mod tests {
         let after_retry = process.subprocess().vm_statistics().snapshot();
         let retry_warning_count = warnings.fragments.lock().unwrap().len();
         let facts = [memory.kind() == crate::types::MemoryKind::Os
-                && memory.size() == Some(4 * ARENA_SLICE_SIZE),
-            registered && unsafe { map.checked_lookup(start.as_ptr()) }.is_null(),
+                && memory.size() == Some(layout.mapping_length()),
+            registered && unsafe { map.checked_lookup(start.as_ptr()) }.is_null()
+                && unsafe { map.checked_lookup(last) }.is_null(),
             exact_release, retained, warning_order,
             warning_reserved == live.reserved_current
                 && warning_committed == live.committed_current,
@@ -2665,18 +2675,41 @@ mod tests {
             "warning_before_statistics", "unmapped_after_cleanup"] {
             std::println!("os_area_commit_release.{field}=1");
         }
-        let (published_facts, published_values) = fresh_os_published_relations();
+        let (published_facts, published_values) = fresh_os_published_relations(128 * KIB, 128 * KIB);
         for (field, value) in ["os_memory", "exact_mapping_release",
             "page_map_lifecycle", "kernel_mapping_lifecycle", "single_terminal_free",
             "warning_absent"].into_iter().zip(published_facts) {
             std::println!("os_area_published.{field}={}", u8::from(value));
         }
-        let (failed_free_facts, failed_free_values) = published_os_failed_free_relations();
+        let (failed_free_facts, failed_free_values) =
+            published_os_failed_free_relations(128 * KIB, 128 * KIB);
         for (field, value) in ["os_memory", "page_map_unpublished",
             "exact_failed_release", "range_retained", "warning_fragments_order",
             "warning_before_statistics", "statistics_once", "raw_cleanup"]
             .into_iter().zip(failed_free_facts) {
             std::println!("os_area_published_free_failure.{field}={}", u8::from(value));
+        }
+        let (medium_success_facts, medium_success_values) =
+            fresh_os_published_relations(32 * KIB, 1);
+        let (medium_failed_facts, medium_failed_values) =
+            published_os_failed_free_relations(32 * KIB, 1);
+        for (field, value) in ["os_memory", "exact_release", "page_map_lifecycle",
+            "kernel_mapping_lifecycle", "single_terminal_free", "warning_order"]
+            .into_iter().zip([
+                medium_success_facts[0], medium_success_facts[1], medium_success_facts[2],
+                medium_success_facts[3], medium_success_facts[4], medium_success_facts[5],
+            ]) {
+            std::println!("os_medium_published.{field}={}", u8::from(value));
+        }
+        for (field, value) in ["os_memory", "exact_release", "page_map_lifecycle",
+            "kernel_mapping_lifecycle", "single_terminal_free", "warning_order",
+            "warning_before_statistics", "raw_cleanup"]
+            .into_iter().zip([
+                medium_failed_facts[0], medium_failed_facts[2], medium_failed_facts[1],
+                medium_failed_facts[3], medium_failed_facts[2], medium_failed_facts[4],
+                medium_failed_facts[5], medium_failed_facts[7],
+            ]) {
+            std::println!("os_medium_free_failure.{field}={}", u8::from(value));
         }
         let (failed_map_facts, failed_map_values) = failed_os_page_map_relations();
         for (field, value) in ["null_page", "mapping_range", "page_map_unpublished",
@@ -2721,6 +2754,21 @@ mod tests {
             "mmap_calls_after_free", "warning_fragments", "reserved_at_warning",
             "committed_at_warning"].into_iter().zip(failed_free_values) {
             std::println!("os_area_published_free_failure.{field}={value}");
+        }
+        for (field, value) in ["mapping_length", "slice_offset",
+            "block_start_offset", "page_offset", "reserved", "block_size",
+            "initially_committed", "initially_zero", "reserved_live", "committed_live",
+            "commit_calls_live", "reserved_after_free", "committed_after_free",
+            "commit_calls_after_free", "primitive_commits", "warning_fragments",
+            "mmap_calls_live", "mmap_calls_after_free", "pages_live", "pages_after_free"]
+            .into_iter().zip(medium_success_values) {
+            std::println!("os_medium_published.{field}={value}");
+        }
+        for (field, value) in ["mapping_length", "reserved_live", "committed_live",
+            "reserved_after_free", "committed_after_free", "commit_calls_after_free",
+            "mmap_calls_after_free", "warning_fragments", "reserved_at_warning",
+            "committed_at_warning"].into_iter().zip(medium_failed_values) {
+            std::println!("os_medium_free_failure.{field}={value}");
         }
         for (field, value) in ["mapping_length", "reserved_after_failure",
             "committed_after_failure", "commit_calls_after_failure",

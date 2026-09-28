@@ -4029,6 +4029,38 @@ typedef struct published_os_failed_free_record_s {
   int64_t values[10];
 } published_os_failed_free_record_t;
 
+typedef struct medium_os_page_record_s {
+  bool facts[8];
+  int64_t values[22];
+} medium_os_page_record_t;
+
+static struct {
+  mi_subproc_t* subproc;
+  unsigned fragments;
+  bool prefix_first;
+  bool free_body_second;
+  int64_t reserved_at_warning;
+  int64_t committed_at_warning;
+} medium_os_page_warning;
+
+static void medium_os_page_output(const char* message, void* argument) {
+  (void)argument;
+  const unsigned index = medium_os_page_warning.fragments++;
+  if (index == 0) {
+    medium_os_page_warning.prefix_first = strncmp(message,
+        "mimalloc: warning: thread 0x", sizeof("mimalloc: warning: thread 0x") - 1) == 0;
+  }
+  else if (index == 1) {
+    medium_os_page_warning.free_body_second = strncmp(message,
+        "unable to free OS memory (error: 12 (0x0C), size: 0x90000 bytes, address: 0x",
+        sizeof("unable to free OS memory (error: 12 (0x0C), size: 0x90000 bytes, address: 0x") - 1) == 0;
+    medium_os_page_warning.reserved_at_warning =
+        medium_os_page_warning.subproc->stats.reserved.current;
+    medium_os_page_warning.committed_at_warning =
+        medium_os_page_warning.subproc->stats.committed.current;
+  }
+}
+
 typedef struct failed_os_page_map_record_s {
   bool facts[7];
   int64_t values[8];
@@ -4402,6 +4434,117 @@ static int run_published_os_failed_free_child(int descriptor) {
   return write(descriptor, &result, sizeof(result)) == sizeof(result) ? 0 : 40;
 }
 
+/* A committed medium page takes the ordinary OS branch and registers all
+ * usable blocks before its terminal free. A failed primitive release leaves
+ * the source void free without an owner, so the fixture frees only the raw
+ * observed range after recording the allocator's state. */
+static int run_medium_os_page_child(int descriptor, bool fail_free) {
+  mi_process_init();
+  mi_option_set(mi_option_disallow_arena_alloc, 1);
+  mi_option_set(mi_option_allow_large_os_pages, 0);
+  mi_option_set(mi_option_page_commit_on_demand, 0);
+  mi_option_set_enabled(mi_option_show_errors, true);
+  mi_subproc_t* const subproc = _mi_subproc_main();
+  memset(&medium_os_page_warning, 0, sizeof(medium_os_page_warning));
+  medium_os_page_warning.subproc = subproc;
+  mi_register_output(medium_os_page_output, NULL);
+  medium_os_page_warning.fragments = 0;
+  const int64_t reserved_before = subproc->stats.reserved.current;
+  const int64_t committed_before = subproc->stats.committed.current;
+  const int64_t commits_before = subproc->stats.commit_calls.total;
+  const int64_t mmap_before = subproc->stats.mmap_calls.total;
+  const size_t pages_before = subproc->theap_meta->page_count;
+  memset(&os_publication_probe, 0, sizeof(os_publication_probe));
+  os_publication_probe.selected = fail_free ? 8 : 0;
+  os_publication_probe.active = true;
+  mi_page_t* const page = _mi_arenas_page_alloc(subproc->theap_meta, 32 * MI_KiB, 1);
+  if (page == NULL) return 20;
+  const mi_memid_t memid = page->memid;
+  uint8_t* const slice = mi_page_slice_start(page);
+  uint8_t* const start = mi_page_start(page);
+  uint8_t* const last = start + ((size_t)page->reserved - 1) * page->block_size;
+  const bool registered = _mi_safe_ptr_page(start) == page
+      && _mi_safe_ptr_page(last) == page;
+  const uint16_t page_reserved = page->reserved;
+  const size_t page_block_size = page->block_size;
+  const size_t page_offset = page->page_offset;
+  const int64_t reserved_live = subproc->stats.reserved.current;
+  const int64_t committed_live = subproc->stats.committed.current;
+  const int64_t commits_live = subproc->stats.commit_calls.total;
+  const int64_t mmap_live = subproc->stats.mmap_calls.total;
+  const size_t pages_live = subproc->theap_meta->page_count;
+  unsigned char residency = 0;
+  const bool mapped = mincore(memid.mem.os.base, _mi_os_page_size(), &residency) == 0;
+  _mi_arenas_page_free(page, subproc->theap_meta);
+  os_publication_probe.active = false;
+  const int64_t reserved_free = subproc->stats.reserved.current;
+  const int64_t committed_free = subproc->stats.committed.current;
+  const int64_t commits_free = subproc->stats.commit_calls.total;
+  const int64_t mmap_free = subproc->stats.mmap_calls.total;
+  const size_t pages_free = subproc->theap_meta->page_count;
+  const bool range_live = mincore(memid.mem.os.base, _mi_os_page_size(), &residency) == 0;
+  medium_os_page_record_t result = {0};
+  result.facts[0] = memid.memkind == MI_MEM_OS && memid.mem.os.base != NULL;
+  result.facts[1] = memid.mem.os.size == os_publication_probe.length
+      && os_publication_probe.base == memid.mem.os.base;
+  result.facts[2] = registered && _mi_safe_ptr_page(start) == NULL
+      && _mi_safe_ptr_page(last) == NULL;
+  result.facts[3] = mapped && (range_live == fail_free);
+  result.facts[4] = os_publication_probe.releases == 1
+      && os_publication_probe.retained == fail_free;
+  result.facts[5] = fail_free
+      ? (medium_os_page_warning.fragments == 2
+          && medium_os_page_warning.prefix_first
+          && medium_os_page_warning.free_body_second)
+      : medium_os_page_warning.fragments == 0;
+  if (fail_free) {
+    result.facts[6] = medium_os_page_warning.reserved_at_warning == reserved_live
+        && medium_os_page_warning.committed_at_warning == committed_live;
+  }
+  result.values[0] = (int64_t)memid.mem.os.size;
+  result.values[1] = (int64_t)(slice - (uint8_t*)memid.mem.os.base);
+  result.values[2] = (int64_t)(start - slice);
+  result.values[3] = (int64_t)page_offset;
+  result.values[4] = (int64_t)page_reserved;
+  result.values[5] = (int64_t)page_block_size;
+  result.values[6] = (int64_t)memid.initially_committed;
+  result.values[7] = (int64_t)memid.initially_zero;
+  result.values[8] = reserved_live - reserved_before;
+  result.values[9] = committed_live - committed_before;
+  result.values[10] = commits_live - commits_before;
+  result.values[11] = reserved_free - reserved_before;
+  result.values[12] = committed_free - committed_before;
+  result.values[13] = commits_free - commits_before;
+  result.values[14] = (int64_t)os_publication_probe.commits;
+  result.values[15] = (int64_t)medium_os_page_warning.fragments;
+  result.values[16] = mmap_live - mmap_before;
+  result.values[17] = mmap_free - mmap_before;
+  result.values[18] = (int64_t)pages_live - (int64_t)pages_before;
+  result.values[19] = (int64_t)pages_free - (int64_t)pages_before;
+  result.values[20] = fail_free
+      ? medium_os_page_warning.reserved_at_warning - reserved_before : 0;
+  result.values[21] = fail_free
+      ? medium_os_page_warning.committed_at_warning - committed_before : 0;
+  if (fail_free) {
+    const int64_t reserved_before_raw = subproc->stats.reserved.current;
+    const int64_t committed_before_raw = subproc->stats.committed.current;
+    result.facts[7] = _mi_prim_free(memid.mem.os.base, memid.mem.os.size) == 0
+        && subproc->stats.reserved.current == reserved_before_raw
+        && subproc->stats.committed.current == committed_before_raw
+        && mincore(memid.mem.os.base, _mi_os_page_size(), &residency) == -1
+        && errno == ENOMEM;
+  }
+  return write(descriptor, &result, sizeof(result)) == sizeof(result) ? 0 : 40;
+}
+
+static int run_medium_os_page_success_child(int descriptor) {
+  return run_medium_os_page_child(descriptor, false);
+}
+
+static int run_medium_os_page_failed_free_child(int descriptor) {
+  return run_medium_os_page_child(descriptor, true);
+}
+
 /* The ordinary OS fallback reserves a page area and commits only aligned
  * metadata when the caller requests on-demand commitment. This direct area
  * call stops before the pinned fresh-page body would write a free-list link
@@ -4737,6 +4880,19 @@ int main(void) {
   for (size_t i = 0; i < 8; i++)
     printf("os_area_published_free_failure.%s=%u\n", failed_free_fields[i],
         (unsigned)failed_free.facts[i]);
+  const char* medium_fields[] = {"os_memory", "exact_release", "page_map_lifecycle",
+      "kernel_mapping_lifecycle", "single_terminal_free", "warning_order",
+      "warning_before_statistics", "raw_cleanup"};
+  medium_os_page_record_t medium_success = {0};
+  if (!capture_large_page_retry_child("medium OS page success child",
+      run_medium_os_page_success_child, &medium_success, sizeof(medium_success))) return 1;
+  medium_os_page_record_t medium_failed = {0};
+  if (!capture_large_page_retry_child("medium OS page failed-free child",
+      run_medium_os_page_failed_free_child, &medium_failed, sizeof(medium_failed))) return 1;
+  for (size_t i = 0; i < 6; i++)
+    printf("os_medium_published.%s=%u\n", medium_fields[i], (unsigned)medium_success.facts[i]);
+  for (size_t i = 0; i < 8; i++)
+    printf("os_medium_free_failure.%s=%u\n", medium_fields[i], (unsigned)medium_failed.facts[i]);
   const char* failed_map_fields[] = {"null_page", "mapping_range",
       "page_map_unpublished", "exact_release", "rollback_map",
       "warning_fragments_order", "warning_before_statistics"};
@@ -4779,6 +4935,24 @@ int main(void) {
   for (size_t i = 0; i < 10; i++)
     printf("os_area_published_free_failure.%s=%lld\n", failed_free_value_fields[i],
         (long long)failed_free.values[i]);
+  const char* medium_value_fields[] = {"mapping_length", "slice_offset",
+      "block_start_offset", "page_offset", "reserved", "block_size",
+      "initially_committed", "initially_zero", "reserved_live", "committed_live",
+      "commit_calls_live", "reserved_after_free", "committed_after_free",
+      "commit_calls_after_free", "primitive_commits", "warning_fragments",
+      "mmap_calls_live", "mmap_calls_after_free", "pages_live", "pages_after_free"};
+  for (size_t i = 0; i < 20; i++) {
+    printf("os_medium_published.%s=%lld\n", medium_value_fields[i],
+        (long long)medium_success.values[i]);
+  }
+  const char* medium_failed_value_fields[] = {"mapping_length", "reserved_live",
+      "committed_live", "reserved_after_free", "committed_after_free",
+      "commit_calls_after_free", "mmap_calls_after_free", "warning_fragments",
+      "reserved_at_warning", "committed_at_warning"};
+  const size_t medium_failed_indices[] = {0, 8, 9, 11, 12, 13, 17, 15, 20, 21};
+  for (size_t i = 0; i < 10; i++)
+    printf("os_medium_free_failure.%s=%lld\n", medium_failed_value_fields[i],
+        (long long)medium_failed.values[medium_failed_indices[i]]);
   const char* failed_map_value_fields[] = {"mapping_length", "reserved_after_failure",
       "committed_after_failure", "commit_calls_after_failure", "mmap_calls_after_failure",
       "warning_fragments", "reserved_at_warning", "committed_at_warning"};

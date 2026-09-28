@@ -77,6 +77,22 @@ OS_ON_DEMAND_VALUE_KEYS = tuple(
         "committed_at_warning",
     )
 ) + tuple(
+    f"os_medium_published.{field}" for field in (
+        "mapping_length", "slice_offset", "block_start_offset", "page_offset",
+        "reserved", "block_size", "initially_committed", "initially_zero",
+        "reserved_live", "committed_live", "commit_calls_live",
+        "reserved_after_free", "committed_after_free", "commit_calls_after_free",
+        "primitive_commits", "warning_fragments", "mmap_calls_live",
+        "mmap_calls_after_free", "pages_live", "pages_after_free",
+    )
+) + tuple(
+    f"os_medium_free_failure.{field}" for field in (
+        "mapping_length", "reserved_live", "committed_live",
+        "reserved_after_free", "committed_after_free", "commit_calls_after_free",
+        "mmap_calls_after_free", "warning_fragments", "reserved_at_warning",
+        "committed_at_warning",
+    )
+) + tuple(
     f"os_area_page_map_failure.{field}" for field in (
         "mapping_length", "reserved_after_failure", "committed_after_failure",
         "commit_calls_after_failure", "mmap_calls_after_failure",
@@ -121,6 +137,17 @@ OS_PUBLICATION_KEYS = tuple(
         "statistics_once", "raw_cleanup",
     )
 ) + tuple(
+    f"os_medium_published.{field}" for field in (
+        "os_memory", "exact_release", "page_map_lifecycle",
+        "kernel_mapping_lifecycle", "single_terminal_free", "warning_order",
+    )
+) + tuple(
+    f"os_medium_free_failure.{field}" for field in (
+        "os_memory", "exact_release", "page_map_lifecycle",
+        "kernel_mapping_lifecycle", "single_terminal_free", "warning_order",
+        "warning_before_statistics", "raw_cleanup",
+    )
+) + tuple(
     f"os_area_page_map_failure.{field}" for field in (
         "null_page", "mapping_range", "page_map_unpublished", "exact_release",
         "rollback_map", "warning_fragments_order", "warning_before_statistics",
@@ -130,7 +157,8 @@ OS_PUBLICATION_BOUNDARY = {
     "source": "src/arena.c:781-1120,1220-1297; src/page-map.c:391-515; src/os.c:240-294",
     "cases": ["map-failure", "metadata-commit-failure", "block-commit-failure",
               "page-map-publication-failure", "metadata-commit-and-cleanup-failure",
-              "page-map-and-cleanup-failure", "published-page-release-failure"],
+              "page-map-and-cleanup-failure", "published-page-release-failure",
+              "medium-page-publication-and-release", "medium-page-release-failure"],
     "on_demand_cases": ["os-area-source-correction",
                         "external-arena-prefix-callback-failure"],
     "requests": "each case's faulted request twice against the state the first failure left, then one fault-free publication and release",
@@ -142,6 +170,7 @@ OS_PUBLICATION_BOUNDARY = {
     "fresh_os_released": "a direct fresh OS area rejects its metadata commit, then successfully unmaps the exact area; only the commit warning arrives while reserved current still includes the area, and no mapping or retry owner remains",
     "fresh_os_published": "a successful fresh OS singleton publishes through the page map, retains its exact OS MemoryId and VM deltas, then releases its complete mapping without warnings",
     "published_os_failed_free": "a published OS singleton removes its PageMap registration before a failed exact terminal unmap; C loses the void-free retry owner while Rust retains one raw-only retry, and both warn before applying statistics",
+    "medium_os_page": "a committed regular medium page with arena allocation disabled registers all usable blocks, releases its exact multi-slice OS mapping, and on terminal unmap failure retains that range after PageMap removal; C loses its void-free retry owner while Rust performs one raw-only retry",
     "failed_os_page_map": "after successful fresh OS metadata and block commits, a failed lazy PageMap allocation warns before its mmap event, reports the internal map error, rolls back through one successful lazy-submap allocation, and releases the exact page mapping without publishing an owner",
     "excluded": "corrupted-alias provenance refusal, general metadata allocator, hardware huge/NUMA, and complete M2",
 }
@@ -2354,6 +2383,22 @@ def _validate_os_on_demand_difference(c: Mapping[str, int], rust: Mapping[str, i
         65536, 65536, 2, 2, 2, 5 * 65536, 3 * 65536)
     if c_failed_free != expected_failed_free or rust_failed_free != expected_failed_free:
         raise ValueError(f"published OS failed-free values differ: C {c_failed_free} Rust {rust_failed_free}")
+    medium_published = lambda field: f"os_medium_published.{field}"
+    c_medium_published = tuple(c[medium_published(field)] for field in published_fields)
+    rust_medium_published = tuple(rust[medium_published(field)] for field in published_fields)
+    expected_medium_published = (9 * 65536, 65536, 0, 65536 - 128,
+        16, 32768, 1, 1, 10 * 65536, 9 * 65536, 2,
+        65536, 65536, 2, 2, 0, 2, 2, 0, 0)
+    if (c_medium_published != expected_medium_published
+        or rust_medium_published != expected_medium_published):
+        raise ValueError(f"medium OS published values differ: C {c_medium_published} Rust {rust_medium_published}")
+    medium_failed = lambda field: f"os_medium_free_failure.{field}"
+    c_medium_failed = tuple(c[medium_failed(field)] for field in failed_free_fields)
+    rust_medium_failed = tuple(rust[medium_failed(field)] for field in failed_free_fields)
+    expected_medium_failed = (9 * 65536, 10 * 65536, 9 * 65536,
+        65536, 65536, 2, 2, 2, 10 * 65536, 9 * 65536)
+    if c_medium_failed != expected_medium_failed or rust_medium_failed != expected_medium_failed:
+        raise ValueError(f"medium OS failed-free values differ: C {c_medium_failed} Rust {rust_medium_failed}")
     failed_map = lambda field: f"os_area_page_map_failure.{field}"
     failed_map_fields = ("mapping_length", "reserved_after_failure",
         "committed_after_failure", "commit_calls_after_failure", "mmap_calls_after_failure",
