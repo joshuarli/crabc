@@ -345,7 +345,8 @@ unsafe fn retire_last_local_free(
     // SAFETY: exclusive owner-local Theap, as above.
     let Some(queue) = (unsafe { theap.as_ref() }).queue(bin) else { return false };
     let count = queue.count();
-    if count > RETIRE_MAX_PAGES || !(count == 1 || block_size < SMALL_SIZE_MAX) {
+    // A sole queued page satisfies the retirement cap and needs no small-block exception.
+    if count != 1 && (count > RETIRE_MAX_PAGES || block_size >= SMALL_SIZE_MAX) {
         return false;
     }
     // SAFETY: this consumes the exact live block after all fallbacks have
