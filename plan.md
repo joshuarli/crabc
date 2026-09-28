@@ -66,7 +66,11 @@ are not transferable passes for a different revision.
   for an unreadable saved return address while the mapped control unwinds;
   the retained pre-guard provider faults on the same case. This focused
   diagnostic is folded into the installed backtrace matrix and does not
-  qualify the older product for the current source.
+  qualify the older product for the current source. A further installed
+  diagnostic crosses a mapped C DSO frame with direct Rust panic cleanup and
+  `resume_unwind` on main and pthread workers; the selected provider, exact
+  guard drops, and physical replay pass. The full three-product current-source
+  admission remains open.
   Allocator M5 remains open. C mimalloc remains the selected
   backend; allocator M2–M11 remain open. A frozen M5 source run at `e0b9ecbc7`
   passed seven gates, failed its churn and upstream stress gates on one seed-2
@@ -190,7 +194,7 @@ are not transferable passes for a different revision.
   upstream `test-api.c` through the native adapter. M6 now source-differentiates
   quiescent non-main and isolated process-main Heap block visitation across 138
   adapter keys, including all five exported Heap membership and region queries
-  and the quiescent page-utilization query; fifteen
+  and the quiescent page-utilization query; sixteen
   runnable evidence rows pass, including fresh-process Heap membership
   regressions and a ten-case source-built main-Heap population differential
   across one to 1000 non-main Heaps, direct/fork execution, and reserved-arena
@@ -213,8 +217,10 @@ are not transferable passes for a different revision.
   pinned-C keys, including Heap list order, dynamic TLS-key reuse, child main
   Theap cache restoration, direct allocation and default substitution, and
   teardown; the prior 161 private lifecycle
-  values remain matched in the same M6 row. All 15 runnable M6 evidence rows
-  pass.
+  values remain matched in the same M6 row. A process-main Heap selected from
+  a live exclusive arena now matches twelve pinned-C allocation, Theap/page
+  placement, fallback refusal, delete/destroy and failure keys. All sixteen
+  runnable M6 evidence rows pass on the sealed source.
   All ten required gates
   remain blocked by 10 named missing API and lifetime evidence entries;
   accumulated mixed-workload main-Heap page-population parity remains unproved.
@@ -389,7 +395,9 @@ are not transferable passes for a different revision.
   the native 64-byte remote path from 177 to 176 instructions and its executed
   stack from 1,920 to 1,184 bytes, with all 42 C/Rust codegen regions replayed;
   reusing the checked canonical block alignment reduces that path to 175
-  instructions with its remote-publication gate passing on sealed source. The
+  instructions; sharing the checked source CAS across captured live and
+  abandoned states reduces it to 173 with the remote-publication gate passing
+  on sealed source. The
   three-call versus pinned-C two-call excess remains. The 114-row runtime scorecard runs
   end to end; its older startup measure was 32 whole-process syscalls against
   musl's 11. A later scoped development smoke on the current loader is 27
@@ -397,6 +405,10 @@ are not transferable passes for a different revision.
   reuse lowers development instructions by a paired median 117 across
   100 rotated samples without changing syscall counts. Full qualified CPU/PSS
   evidence still waits for an uncontended host and a final candidate revision.
+  The release receipt gate now joins the owner-validated runtime C, native
+  facade, and allocator reports by source revision and recorded CPU, kernel,
+  and affinity facts; a rehashed allocator cohort from a different source or
+  CPU model fails its read-only replay.
 - **Resume here, in order:**
   1. Family admissions are the critical path: every selected-private
      capability completes when its family is admitted. Admission receipts
