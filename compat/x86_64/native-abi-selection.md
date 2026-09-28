@@ -277,8 +277,11 @@ only the thirteen named `FUNC GLOBAL HIDDEN` static bodies
 `__sigaction`, and `__libc_sigaction`. The receipt joins their matching shared
 `.symtab` `FUNC LOCAL HIDDEN` bodies, requires no same-named shared `.dynsym`
 definition, and joins the fourteen public `WEAK DEFAULT` aliases to their
-same-definition domains. It discharges only those thirteen bodies' explicit
-receipt requirements. `__statfs` and `__fstatfs` are source-local observations,
+same-definition domains. Static alias and body rows must name the same exact
+archive member as well as its index, occurrence, section, and symbol value; a
+foreign member cannot inherit an otherwise matching definition. It discharges
+only those thirteen bodies' explicit receipt requirements. `__statfs` and
+`__fstatfs` are source-local observations,
 not selected providers. The six public ordinary-import reasons for
 `clock_gettime`, `madvise`, `mmap`, `mprotect`, `munmap`, and `sysinfo` remain
 open because this attachment has no selected installed-caller relocation

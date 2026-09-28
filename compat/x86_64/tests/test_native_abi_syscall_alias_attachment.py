@@ -756,6 +756,22 @@ class NativeSyscallAliasAttachmentTests(unittest.TestCase):
              self.assertRaisesRegex(selection.SelectionError, 'candidate occurrence roster'):
             selection.attach_native_syscall_alias(accounting, self._companion())
 
+    def test_attachment_rejects_a_foreign_archive_member_with_matching_index(self) -> None:
+        accounting = self._accounting()
+        alias = next(row for row in accounting['occurrences']
+                     if row['artifact_key'] == 'candidate-static'
+                     and row['row']['name'] == 'mmap' and row['role'] == 'definition')
+        body = next(row for row in accounting['occurrences']
+                    if row['artifact_key'] == 'candidate-static'
+                    and row['row']['name'] == '__mmap' and row['role'] == 'definition')
+        alias['member_name'] = 'selected.o'
+        body['member_name'] = 'foreign.o'
+        alias['member_index'] = body['member_index'] = 7
+        alias['member_occurrence'] = body['member_occurrence'] = 0
+        with mock.patch.object(selection, '_syscall_alias_reader', return_value=FakeSyscallReader({})), \
+             self.assertRaisesRegex(selection.SelectionError, 'definition domain differs: mmap'):
+            selection.attach_native_syscall_alias(accounting, self._companion())
+
     def test_public_cli_and_report_roundtrip_thread_the_receipt_path(self) -> None:
         arguments = ['build-report']
         for flag in ('measurement-checkout', 'elf-facts', 'base-inventory', 'static-product', 'dynamic-product', 'static-preparation'):

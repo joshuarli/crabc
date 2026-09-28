@@ -859,7 +859,7 @@ def same_definition_domain(left: Mapping[str, Any], right: Mapping[str, Any]) ->
     # archive member and defining section equality are never inferred from nm.
     # COMMON st_value is alignment; ABS has no defining section. Neither can
     # establish this storage/code placement relationship from equal row values.
-    keys = ('artifact_key', 'member_index', 'member_occurrence')
+    keys = ('artifact_key', 'member_name', 'member_index', 'member_occurrence')
     return (all(left.get(key) == right.get(key) for key in keys)
             and (left.get('member_index') is None or left['table_section_index'] == right['table_section_index'])
             and re.fullmatch(r'[1-9][0-9]*', left['row']['section_index']) is not None
