@@ -200,6 +200,10 @@ are not transferable passes for a different revision.
   The same eleven-cell matrix passes a C.UTF-8 wide stream handoff: the DSO
   establishes wide orientation and writes U+20AC, main reads it back, and the
   underlying pathname contains the exact three UTF-8 bytes.
+  A DSO-created buffered pathname stream also survives until ordinary exit:
+  its DSO finalizer sees the descriptor live before one exit flush writes the
+  payload. Pinned musl and all eleven owned/oracle cells preserve the exact
+  finalizer marker, write order, and post-exit bytes.
   The complete nine-leaf M8 gate
   passed again on clean `ea0c28759` with all 16 evidence entries passing and
   13 physical receipt identities matching a post-exit reread; the same nine
