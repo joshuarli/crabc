@@ -60,6 +60,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:statistics-aligned-huge",
             "differential:statistics-fast-allocation",
             "differential:statistics-huge",
+            "differential:statistics-huge-page-bin",
             "differential:statistics-json",
             "differential:statistics-level-one",
             "differential:statistics-level-one-output-merge",
@@ -316,6 +317,48 @@ class M7GateContractTests(unittest.TestCase):
             gate.require_statistics_huge({**trace, "freed.huge": "589824,589824,589824"}, "lost free")
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_huge({**trace, "allocated.huge_count": "0"}, "lost event")
+
+    def test_statistics_huge_page_bin_requires_source_built_producer(self) -> None:
+        summary = self.validate()
+        statistics = self.gate_record(self.contract, "m7.statistics")
+        self.assertIn("differential:statistics-huge-page-bin", statistics["evidence"])
+        self.assertIn("differential:statistics-huge-page-bin", summary["runnable_evidence"])
+
+    def test_statistics_huge_page_bin_reader_rejects_lost_release_or_worker_merge(self) -> None:
+        trace = {
+            "profile.level": "2", "request": "524289", "usable": "589824",
+            "disallow_os_alloc": "1", "disallow_arena_alloc": "0",
+            "allocated.mapped": "1", "worker.mapped": "1",
+            "before.arena": "1076166656,3,1", "allocated.arena": "1076166656,3,1",
+            "terminal.arena": "1076166656,3,1",
+        }
+        fields = ("huge", "requested", "normal", "huge_bin", "huge_page_bin", "pages",
+                  "huge_count", "normal_count")
+        stages = {
+            "allocated": ("589824,589824,589824", "0,0,0", "0,0,0", "0,0,0",
+                          "1,1,1", "1,1,1", "1", "0"),
+            "merged": ("589824,589824,589824", "0,0,0", "0,0,0", "0,0,0",
+                       "1,1,1", "1,1,1", "1", "0"),
+            "freed": ("589824,589824,0", "8,8,8", "8,8,0", "0,0,0",
+                      "1,1,0", "2,1,0", "1", "1"),
+            "terminal": ("589824,589824,0", "8,8,8", "8,8,0", "0,0,0",
+                         "1,1,0", "2,1,0", "1", "1"),
+        }
+        for stage, values in stages.items():
+            trace.update({f"{stage}.{field}": value for field, value in zip(fields, values)})
+        gate.require_statistics_huge_page_bin(trace, "complete")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_huge_page_bin({**trace, "freed.huge_page_bin": "1,1,1"},
+                                                  "lost huge page release")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_huge_page_bin({**trace, "terminal.huge": "589824,589824,589824"},
+                                                  "lost huge free")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_huge_page_bin({**trace, "freed.requested": "0,0,0"},
+                                                  "lost worker merge")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_huge_page_bin({**trace, "allocated.arena": "1076166656,4,1"},
+                                                  "unexpected OS mapping")
 
     def test_statistics_remote_normal_requires_source_built_producer(self) -> None:
         summary = self.validate()

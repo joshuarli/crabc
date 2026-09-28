@@ -969,6 +969,9 @@ STATISTICS_PAGE_EXTEND_TRACE_END = "CRABC_MI_M7_STATISTICS_PAGE_EXTEND_TRACE_END
 STATISTICS_HUGE_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_huge_driver.c"
 STATISTICS_HUGE_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_HUGE_TRACE_BEGIN"
 STATISTICS_HUGE_TRACE_END = "CRABC_MI_M7_STATISTICS_HUGE_TRACE_END"
+STATISTICS_HUGE_PAGE_BIN_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_huge_page_bin_driver.c"
+STATISTICS_HUGE_PAGE_BIN_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_HUGE_PAGE_BIN_TRACE_BEGIN"
+STATISTICS_HUGE_PAGE_BIN_TRACE_END = "CRABC_MI_M7_STATISTICS_HUGE_PAGE_BIN_TRACE_END"
 STATISTICS_REMOTE_NORMAL_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_remote_normal_driver.c"
 STATISTICS_REMOTE_NORMAL_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_REMOTE_NORMAL_TRACE_BEGIN"
 STATISTICS_REMOTE_NORMAL_TRACE_END = "CRABC_MI_M7_STATISTICS_REMOTE_NORMAL_TRACE_END"
@@ -984,6 +987,45 @@ STATISTICS_FAST_ALLOCATION_TRACE_END = "CRABC_MI_M7_STATISTICS_FAST_ALLOCATION_T
 STATISTICS_REMOTE_BIN_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_remote_bin_driver.c"
 STATISTICS_REMOTE_BIN_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_REMOTE_BIN_TRACE_BEGIN"
 STATISTICS_REMOTE_BIN_TRACE_END = "CRABC_MI_M7_STATISTICS_REMOTE_BIN_TRACE_END"
+
+
+def require_statistics_huge_page_bin(trace: Mapping[str, str], description: str) -> None:
+    """Require the huge page-bin release and initialized worker's process merge."""
+
+    expected = {
+        "profile.level": "2", "request": "524289", "usable": "589824",
+        "disallow_os_alloc": "1", "disallow_arena_alloc": "0",
+        "allocated.mapped": "1", "worker.mapped": "1",
+        "before.arena": trace.get("before.arena"),
+        "allocated.arena": trace.get("allocated.arena"),
+        "terminal.arena": trace.get("terminal.arena"),
+    }
+    stages = {
+        "allocated": ("589824,589824,589824", "0,0,0", "0,0,0", "0,0,0",
+                      "1,1,1", "1,1,1", "1", "0"),
+        "merged": ("589824,589824,589824", "0,0,0", "0,0,0", "0,0,0",
+                   "1,1,1", "1,1,1", "1", "0"),
+        "freed": ("589824,589824,0", "8,8,8", "8,8,0", "0,0,0",
+                  "1,1,0", "2,1,0", "1", "1"),
+        "terminal": ("589824,589824,0", "8,8,8", "8,8,0", "0,0,0",
+                     "1,1,0", "2,1,0", "1", "1"),
+    }
+    fields = ("huge", "requested", "normal", "huge_bin", "huge_page_bin", "pages",
+              "huge_count", "normal_count")
+    for stage, values in stages.items():
+        expected.update({f"{stage}.{field}": value for field, value in zip(fields, values)})
+    if dict(trace) != expected:
+        raise harness.HarnessError(f"{description} lost huge singleton or worker merge statistics: {trace}")
+    try:
+        arena_before = [int(value) for value in trace["before.arena"].split(",")]
+        arena_allocated = [int(value) for value in trace["allocated.arena"].split(",")]
+        arena_terminal = [int(value) for value in trace["terminal.arena"].split(",")]
+    except ValueError as error:
+        raise harness.HarnessError(f"{description} has invalid arena statistics") from error
+    if (len(arena_before) != 3 or arena_before[0] <= 0 or arena_before[1] <= 0
+            or arena_before[2] < 1 or arena_allocated != arena_before
+            or arena_terminal != arena_before):
+        raise harness.HarnessError(f"{description} lost the arena-only huge singleton: {trace}")
 
 
 def require_statistics_remote_bin(trace: Mapping[str, str], description: str) -> None:
@@ -1621,6 +1663,18 @@ def run_statistics_huge_differential(offline: bool) -> dict[str, Any]:
     )
 
 
+def run_statistics_huge_page_bin_differential(offline: bool) -> dict[str, Any]:
+    # Worker setup may change prior mmap history; preserve the raw arena
+    # snapshots while requiring no growth through this selected singleton.
+    return run_public_statistics_differential(
+        offline, subject="huge-page-bin", driver=STATISTICS_HUGE_PAGE_BIN_DRIVER,
+        begin=STATISTICS_HUGE_PAGE_BIN_TRACE_BEGIN, end=STATISTICS_HUGE_PAGE_BIN_TRACE_END,
+        report_name="statistics-huge-page-bin.json", stat_level=2,
+        require_complete=require_statistics_huge_page_bin,
+        comparison_excluded_keys=frozenset({"before.arena", "allocated.arena", "terminal.arena"}),
+    )
+
+
 def run_statistics_remote_normal_differential(offline: bool) -> dict[str, Any]:
     return run_public_statistics_differential(
         offline, subject="remote-normal", driver=STATISTICS_REMOTE_NORMAL_DRIVER,
@@ -1809,6 +1863,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="compare pinned-C/Rust page extension statistics under MI_STAT=1")
     mode.add_argument("--statistics-huge-differential", action="store_true",
         help="compare pinned-C/Rust huge allocation statistics under MI_STAT=1")
+    mode.add_argument("--statistics-huge-page-bin-differential", action="store_true",
+        help="compare pinned-C/Rust arena huge page-bin statistics under MI_STAT=2")
     mode.add_argument("--statistics-remote-normal-differential", action="store_true",
         help="compare pinned-C/Rust cross-thread normal free statistics under MI_STAT=1")
     mode.add_argument("--statistics-aligned-huge-differential", action="store_true",
@@ -1897,6 +1953,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.statistics_huge_differential:
         report = run_statistics_huge_differential(arguments.offline)
         print(f"M7 huge statistics differential passed: {len(report['c_trace'])} keys")
+        return 0
+    if arguments.statistics_huge_page_bin_differential:
+        report = run_statistics_huge_page_bin_differential(arguments.offline)
+        print(f"M7 huge page-bin statistics differential passed: {report['compared_key_count']} compared keys")
         return 0
     if arguments.statistics_remote_normal_differential:
         report = run_statistics_remote_normal_differential(arguments.offline)
