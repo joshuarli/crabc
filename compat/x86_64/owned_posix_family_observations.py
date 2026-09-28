@@ -22,6 +22,8 @@ IO_SCENARIOS = tuple('owned_' + name + '_cancellation' for name in (
     'semaphore', 'signal_wait', 'entropy', 'sysv_message'))
 FORK_SCENARIOS = ('main', 'worker', 'kernel-main', 'kernel-worker', 'recursive',
                   'abandoned', 'failure', 'finalizer-single', 'finalizer-held', 'worker-survivor')
+CONSTRUCTOR_FORK_STDOUT = (b'ctor-child\nmain-child\nfini-child\n'
+                           b'ctor-parent\nmain-parent\nfini-parent\n')
 
 
 class ObservationError(ValueError):
@@ -325,8 +327,27 @@ def _fork(leaf, root, layout):
                     witness['protocol'] = _fork_survivor(leaf, f'owned-layout-{mode}-{entry}-{scenario}', witness_raw, expected)
                 row['owned-layout-witnesses'][entry] = witness
             rows[f'{mode}/{scenario}'] = row
+    expected.add('constructor-fork-expected.stdout')
+    fixed, fixed_identity = _file(leaf / 'constructor-fork-expected.stdout', leaf)
+    if fixed != CONSTRUCTOR_FORK_STDOUT:
+        raise ObservationError('constructor fork expected output differs')
+    constructors = {}
+    for mode in ('pie', 'non-pie'):
+        oracle_raw, oracle = _observation(leaf, f'oracle-{mode}-constructor-fork', layout, expected)
+        if oracle_raw != {'stdout': fixed, 'stderr': b'', 'status': b'0\n'}:
+            raise ObservationError('constructor fork oracle output differs')
+        candidates = {}
+        for entry in ('kernel', 'direct'):
+            raw, record = _observation(leaf, f'constructor-fork-{mode}-{entry}', layout, expected)
+            if raw != oracle_raw:
+                raise ObservationError('constructor fork candidate output differs')
+            candidates[entry] = record
+        constructors[mode] = {'oracle': oracle, 'candidates': candidates}
     _roster(leaf, expected, 'fork')
-    return {'case': 'fork', 'scenarios': rows, 'supplemental': {}, 'sources': _sources(root, layout)}
+    return {'case': 'fork', 'scenarios': rows,
+            'supplemental': {'constructor-fork': constructors,
+                             'constructor-fork-expected': fixed_identity},
+            'sources': _sources(root, layout)}
 
 
 def _static_fork(leaf, root, layout):

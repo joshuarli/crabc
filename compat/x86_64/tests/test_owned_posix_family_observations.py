@@ -85,7 +85,7 @@ class ObservationsTests(unittest.TestCase):
         with self.assertRaisesRegex(observations.ObservationError, 'exact profile'):
             observations.collect('control-residual', self.leaf, static_required=True)
 
-    def test_fork_collect_requires_raw_pid_stream_for_every_role_and_entry(self):
+    def fork_fixture(self):
         source_root = self.leaf / 'source-root'
         for name in ('run_general_dynamic_fork.sh', 'owned_dynamic_fork_evidence.py',
                      'general_dynamic_fork_consumer.c', 'general_dynamic_fork_library.c'):
@@ -106,10 +106,36 @@ class ObservationsTests(unittest.TestCase):
                         (evidence / f'{label}.{suffix}').write_bytes(raw)
                     if scenario == 'worker-survivor':
                         (evidence / f'{label}.raw.stdout').write_bytes(str(index).encode() + b'\n' + body)
+        expected = (b'ctor-child\nmain-child\nfini-child\n'
+                    b'ctor-parent\nmain-parent\nfini-parent\n')
+        (evidence / 'constructor-fork-expected.stdout').write_bytes(expected)
+        for mode in ('pie', 'non-pie'):
+            for stem in (f'oracle-{mode}-constructor-fork',
+                         f'constructor-fork-{mode}-kernel', f'constructor-fork-{mode}-direct'):
+                for suffix, raw in (('stdout', expected), ('stderr', b''), ('status', b'0\n')):
+                    (evidence / f'{stem}.{suffix}').write_bytes(raw)
+        return source_root, evidence
+
+    def test_fork_collect_requires_raw_pid_stream_for_every_role_and_entry(self):
+        source_root, evidence = self.fork_fixture()
         result = observations.collect('fork', evidence, static_required=False, root=source_root)
         self.assertEqual(result['scenarios']['pie/worker-survivor']['kind'], 'pid-protocol-semantic-projection')
         (evidence / 'owned-layout-non-pie-direct-worker-survivor.raw.stdout').unlink()
         with self.assertRaises(observations.ObservationError):
+            observations.collect('fork', evidence, static_required=False, root=source_root)
+
+    def test_fork_constructor_transcripts_are_replayed_from_physical_files(self):
+        source_root, evidence = self.fork_fixture()
+        expected = (b'ctor-child\nmain-child\nfini-child\n'
+                    b'ctor-parent\nmain-parent\nfini-parent\n')
+        result = observations.collect('fork', evidence, static_required=False, root=source_root)
+        self.assertEqual(set(result['supplemental']['constructor-fork']), {'pie', 'non-pie'})
+        (evidence / 'constructor-fork-non-pie-direct.stdout').write_bytes(expected + b'extra\n')
+        with self.assertRaisesRegex(observations.ObservationError, 'constructor fork'):
+            observations.collect('fork', evidence, static_required=False, root=source_root)
+        (evidence / 'constructor-fork-non-pie-direct.stdout').write_bytes(expected)
+        (evidence / 'unexpected.stdout').write_bytes(expected)
+        with self.assertRaisesRegex(observations.ObservationError, 'roster differs'):
             observations.collect('fork', evidence, static_required=False, root=source_root)
 
     def test_fork_survivor_requires_complete_pid_transcript_and_exact_projection(self):
