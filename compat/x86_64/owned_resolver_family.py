@@ -902,14 +902,52 @@ def plan_execution(root: Path, static_preparation: Path, dynamic_qualification: 
     return root / layout["plan"]
 
 
+def _validate_admission_cohort(root: Path, request: Path, components: Mapping[str, object]) -> None:
+    """Rebind retained component roots to the current canonical product cohort.
+
+    Behavior replay needs its isolated execution environment. Product paths
+    and manifests can still be checked here, so a rehashed component report
+    from another cohort cannot inherit a completed assessment's admission.
+    """
+
+    definitions, _proofs = _roster(root)
+    _request_path, request_value = _request(root, request.relative_to(root))
+    declared = request_value["components"]
+    require(set(declared) == set(definitions), "resolver family assessment component request roster differs")
+    replays: dict[str, tuple[Mapping[str, Path], Mapping[str, object]]] = {}
+    cohort_paths: dict[str, Path] | None = None
+    for identifier, definition in definitions.items():
+        component = components[identifier]
+        require(isinstance(component, dict), f"resolver family assessment {identifier} component differs")
+        paths = _component_paths(root, definition, declared[identifier])
+        inputs = component.get("inputs")
+        require(isinstance(inputs, dict) and set(inputs) == set(paths)
+                and all(isinstance(inputs[name], dict)
+                        and inputs[name].get("path") == path.relative_to(root).as_posix()
+                        for name, path in paths.items()),
+                f"resolver family assessment {identifier} input paths differ")
+        if identifier == "resolver-family-cohort":
+            cohort_paths = paths
+        else:
+            result = component.get("result")
+            require(isinstance(result, dict), f"resolver family assessment {identifier} result differs")
+            replays[identifier] = (paths, result)
+    require(cohort_paths is not None, "resolver family assessment cohort paths differ")
+    try:
+        rebound = _resolver_family_cohort_reader(root, cohort_paths, replays)
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
+        raise ResolverFamilyError(f"resolver family assessment cohort binding differs: {error}") from error
+    require(components["resolver-family-cohort"].get("result") == rebound,
+            "resolver family assessment cohort binding differs")
+
+
 def admission_facts(root: Path, assessment_path: Path) -> dict[str, object]:
     """Check one retained complete assessment against current checkout bytes.
 
-    Full reconstruction needs the pinned `/workspace` container, so the host
-    ledger cannot replay component behavior. It can and does reject an
-    assessment whose contract, request, cohort receipts, or selected source
-    no longer match this checkout, and returns the cohort identities that the
-    ledger joins to the admitted POSIX family.
+    Component behavior replay needs its isolated execution environment. The
+    host checks the contract, request, cohort receipts, selected source, and
+    the saved component product roots against the canonical cohort. It returns
+    those cohort identities for the ledger to join to admitted POSIX evidence.
     """
 
     import owned_posix_static_products as static
@@ -950,6 +988,7 @@ def admission_facts(root: Path, assessment_path: Path) -> dict[str, object]:
         path = _relative_file(root, record.get("path"), f"resolver family {name}", below_work=True)
         require(_identity(root, path) == record, f"resolver family {name} receipt changed")
         receipts[name] = record
+    _validate_admission_cohort(root, request, components)
     return {
         "assessment": _identity(root, assessment),
         "source": current,

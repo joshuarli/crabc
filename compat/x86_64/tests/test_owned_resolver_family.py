@@ -302,8 +302,10 @@ class OwnedResolverFamilyTests(unittest.TestCase):
         import owned_posix_static_products as static
 
         path, source = self._complete_assessment()
-        with mock.patch.object(static, "source_identity", return_value=source):
+        with (mock.patch.object(static, "source_identity", return_value=source),
+              mock.patch.object(family, "_validate_admission_cohort") as cohort_binding):
             facts = family.admission_facts(ROOT, path.relative_to(ROOT))
+        cohort_binding.assert_called_once()
         self.assertEqual(facts["source"], source)
         self.assertEqual(facts["static_preparation"]["path"], self._relative(self.work / "preparation.json"))
         self.assertEqual(facts["assessment"], family._identity(ROOT, path))
@@ -340,6 +342,89 @@ class OwnedResolverFamilyTests(unittest.TestCase):
             (self.work / "request.json").write_text("{}", encoding="utf-8")
             with self.assertRaisesRegex(family.ResolverFamilyError, "request changed"):
                 family.admission_facts(ROOT, path.relative_to(ROOT))
+
+    def test_admission_facts_rejects_rehashed_wrong_product_component(self) -> None:
+        import owned_posix_static_products as static
+        import owned_resolver_family_cohort as cohort
+        import resolver_network_component_receipt as network
+
+        roots = {
+            label: {kind: self._directory(f"{label}-{kind}") for kind in ("static", "dynamic")}
+            for label in ("primary", "reproduction", "extracted")
+        }
+        wrong = {kind: self._directory(f"wrong-{kind}") for kind in ("static", "dynamic")}
+        products: dict[str, dict[str, dict[str, object]]] = {}
+        for label, pair in roots.items():
+            products[label] = {}
+            for kind, path in pair.items():
+                manifest = path / "share/crabc/manifest.json"
+                manifest.parent.mkdir(parents=True)
+                manifest.write_text(f"{kind} product\n", encoding="utf-8")
+                products[label][kind] = {
+                    "path": self._relative(path), "manifest": family._identity(ROOT, manifest),
+                }
+        for kind, path in wrong.items():
+            manifest = path / "share/crabc/manifest.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text(f"wrong {kind} product\n", encoding="utf-8")
+
+        request_components = self._all_reader_request()
+        for component in ("resolver-alias-private-bodies", "resolver-cancellation"):
+            for kind in ("static", "dynamic"):
+                request_components[component][f"{kind}_product"] = self._relative(roots["primary"][kind])
+        classic_report = self._file("classic-source.json", json.dumps({
+            "products": {kind: self._relative(path) for kind, path in roots["primary"].items()},
+        }))
+        request_components["classic-netdb"]["report"] = self._relative(classic_report)
+        request = self._request(request_components)
+        source = {
+            "revision": "r" * 40, "content_sha256": "c" * 64,
+            "static_preparation": family._identity(ROOT, ROOT / request_components["resolver-family-cohort"]["static_preparation"]),
+            "dynamic_qualification": family._identity(ROOT, ROOT / request_components["resolver-family-cohort"]["dynamic_qualification"]),
+        }
+        protocol_arms = {
+            name: products[label]
+            for name, label in (("installed", "primary"), ("reproduction", "reproduction"),
+                                ("extracted", "extracted"))
+        }
+        protocol_report = {"products": {"before": protocol_arms, "after": protocol_arms}}
+        (ROOT / request_components["protocol-database-product"]["report"]).write_text(
+            json.dumps(protocol_report), encoding="utf-8")
+        results = {
+            "resolver-network-physical": {"report": {}},
+            "classic-netdb": {"report": json.loads(classic_report.read_text(encoding="utf-8"))},
+            "resolver-alias-private-bodies": {"report": {}},
+            "resolver-cancellation": {"report": {}},
+            "protocol-database-product": {"report": protocol_report},
+        }
+        readers = {name: (lambda _root, _paths, value=value: value) for name, value in results.items()}
+        network_roots = {
+            name: roots[label]
+            for name, label in (("installed", "primary"), ("extracted", "extracted"))
+        }
+        with (mock.patch.object(cohort, "_canonical_products", return_value=(source, products)),
+              mock.patch.object(network, "product_paths", return_value=network_roots),
+              mock.patch.object(static, "source_identity", return_value={
+                  "revision": source["revision"], "content_sha256": source["content_sha256"],
+              })):
+            assessment = family.collect(ROOT, request, readers=readers)
+            self.assertTrue(assessment["family_complete"], assessment["gaps"])
+            path = self._file("complete-assessment.json", json.dumps(assessment))
+            self.assertEqual(family.admission_facts(ROOT, path)["source"]["revision"], source["revision"])
+
+            wrong_report = self._file("classic-wrong.json", json.dumps({
+                "products": {kind: self._relative(product) for kind, product in wrong.items()},
+            }))
+            request_components["classic-netdb"]["report"] = self._relative(wrong_report)
+            request.write_text(json.dumps({"schema": family.REQUEST_SCHEMA,
+                                           "components": request_components}), encoding="utf-8")
+            assessment["request"] = family._identity(ROOT, request)
+            assessment["components"]["classic-netdb"]["inputs"]["report"] = family._identity(ROOT, wrong_report)
+            assessment["components"]["classic-netdb"]["result"]["report"] = json.loads(
+                wrong_report.read_text(encoding="utf-8"))
+            path.write_text(json.dumps(assessment), encoding="utf-8")
+            with self.assertRaisesRegex(family.ResolverFamilyError, "classic-netdb selected roots"):
+                family.admission_facts(ROOT, path)
 
 
 if __name__ == "__main__":
