@@ -57,6 +57,45 @@ readonly work="$(mktemp -d "$TMPDIR/owned-mimalloc-startup-errno.XXXXXX")"
 chmod a+rx "$work"
 printf 'owned mimalloc startup errno evidence: %s\n' "$work"
 
+readonly receipt_runner=owned-mimalloc-startup-errno
+rm -rf "$ROOT/.work/x86_64/reports/native-shadow/$receipt_runner/latest"
+receipt_cases=()
+receipt_products=()
+static_supplied=no
+dynamic_supplied=no
+[ -z "$provided_static" ] || static_supplied=yes
+[ -z "$provided_dynamic" ] || dynamic_supplied=yes
+static_backend=absent
+dynamic_backend=absent
+canonical=no
+
+publish_receipt() {
+    local status=$? entry
+    trap - EXIT
+    if [ "$status" -ne 0 ]; then
+        printf '%s\n' "$status" >"$work/runner.status"
+        receipt_cases+=("runner=$status:runner.status")
+    fi
+    if [ "${#receipt_cases[@]}" -gt 0 ] && [ "${#receipt_products[@]}" -gt 0 ]; then
+        local -a arguments=(--runner "$receipt_runner" --work "$work" --canonical "$canonical")
+        for entry in "${receipt_cases[@]}"; do arguments+=(--case "$entry"); done
+        for entry in "${receipt_products[@]}"; do arguments+=(--product "$entry"); done
+        arguments+=(--parameter "STATIC_BACKEND=$static_backend"
+            --parameter "DYNAMIC_BACKEND=$dynamic_backend"
+            --parameter "STATIC_SUPPLIED=$static_supplied"
+            --parameter "DYNAMIC_SUPPLIED=$dynamic_supplied")
+        python3 -B "$ROOT/compat/x86_64/native_shadow_receipt.py" write "${arguments[@]}" || status=1
+        if [ "$status" -eq 0 ] && [ "$canonical" = yes ]; then
+            python3 -B "$ROOT/compat/x86_64/owned_mimalloc_startup_errno_receipt.py" || status=1
+        fi
+    fi
+    if [ "$status" -eq 0 ]; then
+        printf 'owned mimalloc startup errno: PASS (musl reference; preinit allocation and sentinel; user constructor and main allocations; supplied static ET_EXEC/static-PIE when present; dynamic PIE/non-PIE through kernel and direct loader entry in isolated chroots; retained stdout/stderr/status evidence; errno after successful libc calls, first and warmed, matches the musl transcript in every mode and entry); evidence: %s\n' "$work"
+    fi
+    exit "$status"
+}
+trap publish_receipt EXIT
+
 assert_owned_lifecycle_entries() {
     local library="$1" symbols="$2"
 
@@ -83,6 +122,7 @@ run_captured() {
 
     timeout 20 "$@" >"$work/$label.stdout" 2>"$work/$label.stderr" || status=$?
     printf '%s\n' "$status" >"$work/$label.status"
+    receipt_cases+=("startup-$label=$status:$label.status,$label.stdout,$label.stderr")
     [ "$status" -eq 0 ]
     [ ! -s "$work/$label.stdout" ]
     [ ! -s "$work/$label.stderr" ]
@@ -133,6 +173,7 @@ success_transcript() {
         done
     done <"$work/success-cases"
     rm -f "$work/success-$label.stdout" "$work/success-$label.stderr"
+    receipt_cases+=("success-$label=0:success-$label.transcript")
 }
 
 compare_success_transcript() {
@@ -243,6 +284,8 @@ readelf -hW "$work/workload.o" >"$work/workload.header"
 readelf -rW "$work/workload.o" >"$work/workload.relocations"
 
 if [ -n "$provided_static" ]; then
+    static_backend="$(python3 -B -c 'import json, sys; print(json.load(open(sys.argv[1])).get("allocator_backend", "unknown"))' \
+        "$provided_static/share/crabc/manifest.json")"
     for mode in static static-pie; do
         run_static_mode "$provided_static" "$mode"
     done
@@ -260,4 +303,50 @@ for mode in pie non-pie; do
     run_dynamic_mode "$provided_dynamic" "$mode"
 done
 
-printf 'owned mimalloc startup errno: PASS (musl reference; preinit allocation and sentinel; user constructor and main allocations; supplied static ET_EXEC/static-PIE when present; dynamic PIE/non-PIE through kernel and direct loader entry in isolated chroots; retained stdout/stderr/status evidence; errno after successful libc calls, first and warmed, matches the musl transcript in every mode and entry); evidence: %s\n' "$work"
+receipt_products+=(
+    "input-startup-source=$PROBE"
+    "input-success-source=$SUCCESS_PROBE"
+    "input-startup-object=$work/workload.o"
+    "input-success-object=$work/success-workload.o"
+    "input-success-cases=$work/success-cases"
+    "input-passwd=$work/success-oracle-static-root/etc/passwd"
+    "input-group=$work/success-oracle-static-root/etc/group"
+    "input-hosts=$work/success-oracle-static-root/etc/hosts"
+    "input-data=$work/success-oracle-static-root/work/data"
+    "input-dynamic-manifest=$provided_dynamic/share/crabc/manifest.json"
+    "input-dynamic-libc-provenance=$provided_dynamic/share/crabc/libc-shared.provenance.json"
+    "input-dynamic-loader-provenance=$provided_dynamic/share/crabc/loader.provenance.json"
+    "input-dynamic-libc=$provided_dynamic/usr/lib/libc.so"
+    "input-dynamic-loader=$provided_dynamic/lib/ld-crabc-x86_64.so.1"
+    "program-startup-oracle-static=$work/oracle-static"
+    "program-startup-oracle-dynamic=$work/oracle-dynamic"
+    "program-success-oracle-static=$work/success-oracle-static"
+    "program-success-oracle-dynamic=$work/success-oracle-dynamic"
+)
+if [ -n "$provided_static" ]; then
+    receipt_products+=(
+        "input-static-manifest=$provided_static/share/crabc/manifest.json"
+        "input-static-libc-provenance=$provided_static/share/crabc/libc-static.provenance.json"
+        "input-static-libc=$provided_static/usr/lib/libc.a"
+    )
+    for mode in static static-pie; do
+        receipt_products+=(
+            "program-startup-static-$mode=$work/static-$mode"
+            "program-success-static-$mode=$work/success-static-$mode"
+            "link-static-$mode=$work/static-$mode.crabc-link.json"
+            "link-success-static-$mode=$work/success-static-$mode.crabc-link.json"
+        )
+    done
+fi
+for mode in pie non-pie; do
+    for entry in kernel direct; do
+        receipt_products+=(
+            "program-startup-dynamic-$mode-$entry=$work/dynamic-$mode"
+            "program-success-dynamic-$mode-$entry=$work/success-dynamic-$mode"
+        )
+    done
+done
+if [ "$static_supplied" = yes ] && [ "$dynamic_supplied" = yes ] &&
+    [ "$static_backend" = native-shadow ] && [ "$dynamic_backend" = native-shadow ]; then
+    canonical=yes
+fi
