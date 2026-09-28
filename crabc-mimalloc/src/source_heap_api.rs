@@ -489,6 +489,44 @@ pub unsafe fn heap_visit_blocks(
     visitor: Option<HeapBlockVisitor>,
     argument: *mut c_void,
 ) -> bool {
+    // SAFETY: caller retains the selected Heap, pages, and callback through
+    // the same quiescent traversal used for the abandoned-only selection.
+    unsafe { heap_visit_blocks_selected(heap, false, visit_blocks, visitor, argument) }
+}
+
+/// Visits only abandoned arena pages and OS-abandoned pages of a quiescent
+/// Heap in the process main subprocess. A null visitor is refused before
+/// selecting the Heap.
+///
+/// # Safety
+/// `heap` is null or a live Heap of the calling thread's subprocess. Every
+/// selected page, arena bitmap, and block area stays mapped and stable during
+/// traversal; no producer publishes a remote free. The callback and
+/// `argument` remain callable and do not free, move, or mutate a visited
+/// page or its blocks.
+pub unsafe fn heap_visit_abandoned_blocks(
+    heap: *mut c_void,
+    visit_blocks: bool,
+    visitor: Option<HeapBlockVisitor>,
+    argument: *mut c_void,
+) -> bool {
+    // SAFETY: caller retains the selected abandoned pages and callback for
+    // the quiescent source traversal.
+    unsafe { heap_visit_blocks_selected(heap, true, visit_blocks, visitor, argument) }
+}
+
+/// Selects either all arena pages or only their abandoned-bin bitmaps.
+///
+/// # Safety
+/// The caller retains the selected Heap, its published bitmap images, every
+/// selected page and block area, and the callback without concurrent mutation.
+unsafe fn heap_visit_blocks_selected(
+    heap: *mut c_void,
+    abandoned_only: bool,
+    visit_blocks: bool,
+    visitor: Option<HeapBlockVisitor>,
+    argument: *mut c_void,
+) -> bool {
     let Some(visitor) = visitor else { return false };
     let selected = if heap.is_null() { heap_main() } else { heap };
     let Some(heap) = NonNull::new(selected.cast::<Heap>()) else { return false };
@@ -519,7 +557,7 @@ pub unsafe fn heap_visit_blocks(
             unsafe { heap_ref.non_main_arena_pages_bitmap(&view, 0) }
         };
         let Some(pages) = pages else { continue };
-        let complete = pages.visit_set_bits(|slice, _| {
+        let visit_page_set = |selected: &crate::bitmap::BitmapView<'_>| selected.visit_set_bits(|slice, _| {
             let Some(start) = view.slice_start(slice) else { return false };
             // SAFETY: a set Heap bit retains the registered page at this
             // slice; caller exclusion keeps its mapping stable.
@@ -529,7 +567,29 @@ pub unsafe fn heap_visit_blocks(
             // SAFETY: forwarded Heap, page, and callback stability.
             unsafe { visit_heap_page(heap, page, visit_blocks, visitor, argument) }
         });
-        if !complete { return false; }
+        if abandoned_only {
+            for bin in 0..crate::config::ARENA_BIN_COUNT {
+                if !heap_ref.has_abandoned_page_in_bin(bin) { continue; }
+                let abandoned = if heap_ref.is_subprocess_main() {
+                    let Some(layout) = crate::bitmap::BitmapLayout::for_bit_count(view.arena().slice_count) else {
+                        return false;
+                    };
+                    // SAFETY: the installed process-main arena image retains
+                    // this initialized bin bitmap for the complete visit.
+                    unsafe { crate::bitmap::BitmapView::attach(
+                        view.arena().pages_main.pages_abandoned[bin], layout.byte_size(), layout,
+                    ) }
+                } else {
+                    // SAFETY: the non-main Heap's published arena-pages image
+                    // and its bin bitmap remain live during this traversal.
+                    unsafe { heap_ref.non_main_arena_pages_bitmap(&view, bin + 1) }
+                };
+                let Some(abandoned) = abandoned else { return false };
+                if !visit_page_set(&abandoned) { return false; }
+            }
+        } else if !visit_page_set(&pages) {
+            return false;
+        }
     }
     // Source visits the Heap's OS-abandoned list after all arena bitmaps.
     // SAFETY: caller exclusion keeps the private list stable.

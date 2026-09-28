@@ -1136,6 +1136,25 @@ pub unsafe extern "C" fn mi_heap_visit_blocks(
     unsafe { heaps::heap_visit_blocks(heap, visit_blocks, visitor, argument) }
 }
 
+#[no_mangle]
+/// # Safety
+/// `heap` is null or live throughout the call. Its abandoned pages, arena
+/// bitmaps, block areas, and free lists remain stable with no concurrent
+/// owner or producer mutating them. `visitor` and `argument` remain callable
+/// through the final callback, and offered area or block pointers are used
+/// only during that callback.
+pub unsafe extern "C" fn mi_heap_visit_abandoned_blocks(
+    heap: HeapPointer,
+    visit_blocks: bool,
+    visitor: Option<heaps::HeapBlockVisitor>,
+    argument: *mut c_void,
+) -> bool {
+    bind_thread();
+    // SAFETY: the caller retains the selected Heap, abandoned pages, and
+    // callback for the source-ordered quiescent traversal.
+    unsafe { heaps::heap_visit_abandoned_blocks(heap, visit_blocks, visitor, argument) }
+}
+
 #[inline]
 fn heap_released(released: bool) {
     if !released {

@@ -41,6 +41,7 @@ class M6GateContractTests(unittest.TestCase):
         self.assertEqual(summary["item_count"], 105)
         self.assertEqual(summary["gate_ids"], list(gate.GATE_IDS))
         self.assertEqual(summary["runnable_evidence"], {
+            "differential:abandoned-heap-visitor": "compat/allocator/x86_64_m6_abandoned_visitor.py",
             "differential:arena-destroy": "compat/allocator/arena_destroy.py",
             "differential:heap-destroy": "compat/allocator/heap_destroy.py",
             "differential:main-heap-visitor-population": "compat/allocator/x86_64_m6_main_visitor_population.py",

@@ -50,6 +50,10 @@
       "runner": "compat/allocator/x86_64_m6_main_visitor_population.py",
       "scope": "Source-built pinned-C/native-adapter main-Heap area and block population through live non-main Heap allocation, destruction, visitor remote collection, and final collection for 1, 2, 10, 100, 250, 500, and 1000 Heaps; includes direct/fork and reserved-arena cases, detached Theap-image frees, and replaced dynamic TLS slot images."
     },
+    "differential:abandoned-heap-visitor": {
+      "runner": "compat/allocator/x86_64_m6_abandoned_visitor.py",
+      "scope": "Source-built pinned-C/native-adapter mi_heap_visit_abandoned_blocks over one non-main Heap regular page abandoned after its allocating worker exits: area-before-block order, one freed and two live blocks, and area/block callback early stops."
+    },
     "differential:public-theap": {
       "runner": null,
       "scope": "Pinned-C/Rust default-Theap switching and direct Theap operation traces."
@@ -216,10 +220,11 @@
         "differential:public-heap-adapter",
         "differential:public-heap-lifecycle",
         "differential:main-heap-visitor-population",
+        "differential:abandoned-heap-visitor",
         "unit:heap-statistics-visitation"
       ],
       "blocked_by": [
-        "mi_heap_visit_blocks is exported for quiescent non-main and process-main Heaps of the main subprocess. The shared adapter covers regular-before-OS singleton order, live-block and freed-block filtering, and area/block early stops. A separate clean-process source-built differential covers exact main-Heap area/block populations through 1 to 1000 non-main Heaps, detached Theap-image and dynamic TLS slot-image remote frees, and visitor collection with and without an OS reservation. Other mixed workloads, child-subprocess and full abandoned/cross-thread visitation, Heap statistics, mi_heap_visit_abandoned_blocks, and complete lifetime evidence remain open."
+        "mi_heap_visit_blocks is exported for quiescent non-main and process-main Heaps of the main subprocess. The shared adapter covers regular-before-OS singleton order, live-block and freed-block filtering, and area/block early stops. A clean-process differential covers exact main-Heap area/block populations through 1 to 1000 non-main Heaps and detached metadata collection. mi_heap_visit_abandoned_blocks is exported and source-differentiated for a non-main Heap regular page abandoned after worker exit, including live/freed filtering and callback early stops. Other mixed workloads, process-main and OS abandoned-page visitor cases, child-subprocess and full cross-thread visitation, Heap statistics, and complete lifetime evidence remain open."
       ]
     },
     {
