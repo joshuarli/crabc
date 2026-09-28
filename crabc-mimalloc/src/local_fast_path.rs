@@ -339,12 +339,15 @@ unsafe fn retire_last_local_free(
     }
     // A page with multiple reserved blocks uses a word-aligned regular bin
     // size, so its queue number needs no request-size rounding.
-    // The eight-word class uses bin eight directly. Avoid the larger-size
-    // classification on this common retirement free.
-    let bin = if block_size == 8 * WORD_SIZE {
-        8
+    // The eight-word class uses bin eight and the small-page countdown.
+    // Carry both decisions through this common retirement free.
+    let (bin, cycles) = if block_size == 8 * WORD_SIZE {
+        (8, RETIRE_CYCLES)
     } else {
-        size_class::bin_for_regular_page_block_size(block_size)
+        (
+            size_class::bin_for_regular_page_block_size(block_size),
+            if block_size <= SMALL_MAX_OBJ_SIZE { RETIRE_CYCLES } else { RETIRE_CYCLES / 4 },
+        )
     };
     if bin >= BIN_HUGE {
         return false;
@@ -365,7 +368,6 @@ unsafe fn retire_last_local_free(
     // exact raw owner-word check found it clear, and this owner has not set it.
     // SAFETY: exclusive owner-local Theap, as above.
     unsafe { theap.as_ref() }.record_page_retired();
-    let cycles = if block_size <= SMALL_MAX_OBJ_SIZE { RETIRE_CYCLES } else { RETIRE_CYCLES / 4 };
     // SAFETY: `used == 0` now, and the owner controls this byte and the
     // Theap's retirement bounds.
     unsafe {
