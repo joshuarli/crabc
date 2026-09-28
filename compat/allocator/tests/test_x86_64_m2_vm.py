@@ -47,6 +47,9 @@ EXPECTED_VM_CHECK_IDS = (
     "external-os-purge-commit-c-rust-differential",
     "external-os-commit-failure-c-rust-differential",
     "external-os-reset-policy-c-rust-differential",
+    "external-os-reset-fallback-c-rust-differential",
+    "external-os-no-advice-policy-c-rust-differential",
+    "external-os-reset-retry-c-rust-differential",
     "normal-os-good-size-and-base-provenance",
     "normal-os-offset-zero-delegation-and-geometry",
     "normal-os-aligned-trim-leak",
@@ -827,9 +830,16 @@ class NativeVmAssemblyTests(unittest.TestCase):
         for check_id, receiver in RUNNER.M2_X86_64_EXTERNAL_OS_RECEIVERS.items():
             trace = {field: 1 for field in receiver["fields"]}
             cases = receiver["cases"]
-            commands = ({"build_status": 0, **{
-                case: {"run_status": 0, "stderr": ""} for case in cases
-            }} if cases else {"build_status": 0, "run_status": 0, "stderr": ""})
+            if receiver.get("command_receipts") == "nested-runs":
+                commands = {"build_status": 0, "runs": {
+                    case: {"status": 0, "stderr": ""} for case in cases
+                }}
+            elif cases:
+                commands = {"build_status": 0, **{
+                    case: {"run_status": 0, "stderr": ""} for case in cases
+                }}
+            else:
+                commands = {"build_status": 0, "run_status": 0, "stderr": ""}
             observed = {
                 "c": {case: dict(trace) for case in cases} if cases else dict(trace),
                 "rust": {case: dict(trace) for case in cases} if cases else dict(trace),
@@ -877,7 +887,9 @@ class NativeVmAssemblyTests(unittest.TestCase):
                     elif name == "field_different":
                         (row["rust"][receiver["cases"][0]] if receiver["cases"] else row["rust"])[field] = 2
                     else:
-                        if receiver["cases"]:
+                        if receiver.get("command_receipts") == "nested-runs":
+                            row["c_commands"]["runs"][receiver["cases"][0]]["status"] = 1
+                        elif receiver["cases"]:
                             row["c_commands"][receiver["cases"][0]]["run_status"] = 1
                         else:
                             row["c_commands"]["run_status"] = 1
@@ -1313,6 +1325,9 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "external-os-purge-commit-c-rust-differential",
                 "external-os-commit-failure-c-rust-differential",
                 "external-os-reset-policy-c-rust-differential",
+                "external-os-reset-fallback-c-rust-differential",
+                "external-os-no-advice-policy-c-rust-differential",
+                "external-os-reset-retry-c-rust-differential",
             },
             {record["id"] for record in vm_records},
         )

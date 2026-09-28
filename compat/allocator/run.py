@@ -13294,6 +13294,55 @@ M2_X86_64_EXTERNAL_OS_RECEIVERS = {
         "commit_fields": set(),
         "scope": "pinned-c-rust-caller-owned-external-reset-success-failure-and-warning-order",
     },
+    "external-os-reset-fallback-c-rust-differential": {
+        "artifact": "m2-external-os-reset-fallback",
+        "target": "compat/allocator/m2_external_os_reset_fallback_x86_64.py",
+        "cases": (),
+        "fields": {"purge_delay_raw", "purge_decommits_raw", "mapping_length",
+            "raw_purge_length", "advice_calls", "first_exact", "fallback_exact",
+            "cached_exact", "first_result", "fallback_result", "cached_result",
+            "first_needs_recommit", "second_needs_recommit", "first_purge_calls_delta",
+            "first_purged_delta", "first_reset_calls_delta", "first_reset_delta",
+            "purge_calls_delta", "purged_delta", "reset_calls_delta", "reset_delta",
+            "reserved_delta", "committed_delta", "warning_calls",
+            "writable_after_first", "neighbors_retained", "writable_after_second",
+            "mapping_live", "terminal_unmap_calls", "terminal_unmap_exact",
+            "caller_released"},
+        "commit_fields": set(),
+        "scope": "pinned-c-rust-caller-owned-external-reset-einval-fallback-and-cached-advice",
+    },
+    "external-os-no-advice-policy-c-rust-differential": {
+        "artifact": "m2-external-os-no-advice",
+        "target": "compat/allocator/m2_external_os_no_advice_x86_64.py",
+        "cases": ("negative-delay", "reset-forbidden", "decommit-empty",
+            "reset-empty", "contained-control"),
+        "fields": {"profile", "purge_delay_raw", "purge_decommits_raw", "allow_reset",
+            "mapping_length", "raw_purge_length", "advice_calls", "advice_exact",
+            "advice_kind", "needs_recommit", "purge_calls_delta", "purged_delta",
+            "reset_calls_delta", "reset_delta", "reserved_delta", "committed_delta",
+            "warning_calls", "middle_byte", "neighbors_retained", "mapping_writable",
+            "mapping_live", "terminal_unmap_calls", "terminal_unmap_exact",
+            "caller_released"},
+        "commit_fields": set(),
+        "scope": "pinned-c-rust-caller-owned-external-no-advice-policy-and-contained-control",
+    },
+    "external-os-reset-retry-c-rust-differential": {
+        "artifact": "m2-external-os-reset-retry",
+        "target": "compat/allocator/m2_external_os_reset_retry_x86_64.py",
+        "cases": ("one-eagain", "two-eagain"),
+        "fields": {"profile", "purge_delay_raw", "purge_decommits_raw",
+            "mapping_length", "raw_purge_length", "advice_calls",
+            "advice1_exact", "advice1_result", "advice1_errno",
+            "advice2_exact", "advice2_result", "advice2_errno",
+            "advice3_exact", "advice3_result", "advice3_errno",
+            "needs_recommit", "purge_calls_delta", "purged_delta",
+            "reset_calls_delta", "reset_delta", "reserved_delta", "committed_delta",
+            "warning_calls", "neighbors_retained", "mapping_writable", "mapping_live",
+            "terminal_unmap_calls", "terminal_unmap_exact", "caller_released"},
+        "commit_fields": set(),
+        "command_receipts": "nested-runs",
+        "scope": "pinned-c-rust-caller-owned-external-reset-eagain-retries-to-success",
+    },
 }
 
 
@@ -15187,10 +15236,16 @@ def _m2_x86_64_vm_check_records(
                            for case in cases)
                 ):
                     raise HarnessError("native x86 M2 external OS case traces are invalid")
-                expected_commands = {
-                    "build_status": 0,
-                    **{case: {"run_status": 0, "stderr": ""} for case in cases},
-                }
+                if receiver.get("command_receipts") == "nested-runs":
+                    expected_commands = {
+                        "build_status": 0,
+                        "runs": {case: {"status": 0, "stderr": ""} for case in cases},
+                    }
+                else:
+                    expected_commands = {
+                        "build_status": 0,
+                        **{case: {"run_status": 0, "stderr": ""} for case in cases},
+                    }
             else:
                 if not matching_integer_traces(c_trace, rust_trace, receiver["fields"]):
                     raise HarnessError("native x86 M2 external OS flat traces are invalid")

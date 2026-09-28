@@ -237,6 +237,21 @@ CHECKS = (
         "compat/allocator/m2_external_os_reset_policy_x86_64.py",
     ),
     (
+        "external-os-reset-fallback-c-rust-differential",
+        "c-rust-process-external-os-differential",
+        "compat/allocator/m2_external_os_reset_fallback_x86_64.py",
+    ),
+    (
+        "external-os-no-advice-policy-c-rust-differential",
+        "c-rust-process-external-os-differential",
+        "compat/allocator/m2_external_os_no_advice_x86_64.py",
+    ),
+    (
+        "external-os-reset-retry-c-rust-differential",
+        "c-rust-process-external-os-differential",
+        "compat/allocator/m2_external_os_reset_retry_x86_64.py",
+    ),
+    (
         "normal-os-good-size-and-base-provenance",
         "rust-unit",
         "os::tests::normal_os_allocation_uses_good_size_and_base_provenance",
@@ -282,6 +297,9 @@ EXTERNAL_OS_CHECK_IDS = (
     "external-os-purge-commit-c-rust-differential",
     "external-os-commit-failure-c-rust-differential",
     "external-os-reset-policy-c-rust-differential",
+    "external-os-reset-fallback-c-rust-differential",
+    "external-os-no-advice-policy-c-rust-differential",
+    "external-os-reset-retry-c-rust-differential",
 )
 THP_PROCESS_CHECK_IDS = (
     "process-thp-madvise-success-c-rust-differential",

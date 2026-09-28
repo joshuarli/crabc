@@ -310,6 +310,9 @@
           "external-os-purge-commit-c-rust-differential",
           "external-os-commit-failure-c-rust-differential",
           "external-os-reset-policy-c-rust-differential",
+          "external-os-reset-fallback-c-rust-differential",
+          "external-os-no-advice-policy-c-rust-differential",
+          "external-os-reset-retry-c-rust-differential",
           "linux-os-reuse-contained-range-noop",
           "native-protection-owner-and-retry"
         ]
@@ -353,6 +356,9 @@
           "external-os-purge-commit-c-rust-differential",
           "external-os-commit-failure-c-rust-differential",
           "external-os-reset-policy-c-rust-differential",
+          "external-os-reset-fallback-c-rust-differential",
+          "external-os-no-advice-policy-c-rust-differential",
+          "external-os-reset-retry-c-rust-differential",
           "linux-os-reuse-contained-range-noop",
           "native-protection-owner-and-retry"
         ]
@@ -664,6 +670,9 @@
           "external-os-purge-commit-c-rust-differential",
           "external-os-commit-failure-c-rust-differential",
           "external-os-reset-policy-c-rust-differential",
+          "external-os-reset-fallback-c-rust-differential",
+          "external-os-no-advice-policy-c-rust-differential",
+          "external-os-reset-retry-c-rust-differential",
           "linux-os-reuse-contained-range-noop",
           "native-protection-owner-and-retry",
           "normal-page-extension-direct-commit-failure-and-retry"
@@ -671,7 +680,7 @@
         "missing_conditions": [
           "All dependency-ready ordinary VM recipients in the indexed normal-release set are already bounded by this record: the regular process Mapping transitions, offset-prefix decommit, selected external commit callback, and direct page-area commit. Within that permitted receiver set, `Mapping::purge_for_process` is the only non-test caller of `Mapping::reset_for_process`; there is no additional reset receiver to generalize across.",
           "The ordinary OS on-demand metadata and first-prefix receiver plus external-arena callback refusal have a separate source-bound OS-publication fault relation: pinned C falsely marks the uncommitted OS area committed, while Rust commits a writable first prefix before page publication. The direct fresh OS page-area metadata-commit receivers have source-bound range, statistics, and warning-order relations for both successful and failed cleanup; only failed cleanup retains a raw-retry owner. A second block-commit failure with a failed rollback unmap has a separate pinned-C/process-owned Rust relation for its exact release range, warning order, negative committed counter, retained mapping, and raw cleanup. A successful fresh OS singleton now has source-bound mapping geometry, MemoryId, PageMap publication, exact terminal unmap, live/free VM statistics, and warning-absence relations. A published OS singleton terminal-unmap fault now has a source-bound exact-range, warning-before-statistics, retained-mapping, and raw-only Rust retry relation; pinned C void free loses its retry owner. A failed lazy PageMap registration after both fresh OS page commits now has source-bound exact mapping, null publication, rollback submap, release, warning-order, and VM-statistics relations. A committed regular medium page with arena allocation disabled now has source-bound full multi-slice PageMap publication, exact OS mapping release, warning absence, and a failed terminal unmap relation for the retained range, warning-time statistics, and Rust raw-only retry. Other `OsAlignedPage` metadata, unselected PageMap publication, and terminal-release transactions from src/arena.c:951-1125 remain outside this fixed VM slice. The legacy unpaired `OsAlignedPage::allocate` remains outside the configured process-paired mode and is not simulated.",
-          "The unselected src/arena.c:2254-2282 `mi_arena_purge` route reaches `decommit_arena_range` through arena bitmap/purge ownership; that arena lifecycle boundary and allocator destruction remain excluded. These three direct external spans do not exercise source arena callback ownership; unselected external callbacks still require their source arena owner rather than an invented Mapping statistics path.",
+          "The unselected src/arena.c:2254-2282 `mi_arena_purge` route reaches `decommit_arena_range` through arena bitmap/purge ownership; that arena lifecycle boundary and allocator destruction remain excluded. Selected direct external spans cover successful and failed purge or commit, reset fallback and retry, and no-advice policy profiles. They do not exercise source arena callback ownership; unselected external callbacks still require their source arena owner rather than an invented Mapping statistics path.",
           "MI_DEBUG/MI_SECURE decommit/protection behavior, debug reset memset, and source diagnostics beyond the selected external-span warning-time receivers remain unqualified. Direct Mapping transition methods return their raw error, while `Mapping::purge_for_process` consumes its reset advisory error exactly as `_mi_os_purge_ex`; this record does not qualify warning output."
         ]
       },
@@ -796,6 +805,9 @@
           "external-os-purge-commit-c-rust-differential",
           "external-os-commit-failure-c-rust-differential",
           "external-os-reset-policy-c-rust-differential",
+          "external-os-reset-fallback-c-rust-differential",
+          "external-os-no-advice-policy-c-rust-differential",
+          "external-os-reset-retry-c-rust-differential",
           "linux-os-reuse-contained-range-noop",
           "native-protection-owner-and-retry",
           "normal-page-extension-direct-commit-failure-and-retry"
@@ -1082,6 +1094,24 @@
         "id": "external-os-reset-policy-c-rust-differential",
         "kind": "c-rust-process-external-os-differential",
         "target": "compat/allocator/m2_external_os_reset_policy_x86_64.py",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "external-os-reset-fallback-c-rust-differential",
+        "kind": "c-rust-process-external-os-differential",
+        "target": "compat/allocator/m2_external_os_reset_fallback_x86_64.py",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "external-os-no-advice-policy-c-rust-differential",
+        "kind": "c-rust-process-external-os-differential",
+        "target": "compat/allocator/m2_external_os_no_advice_x86_64.py",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "external-os-reset-retry-c-rust-differential",
+        "kind": "c-rust-process-external-os-differential",
+        "target": "compat/allocator/m2_external_os_reset_retry_x86_64.py",
         "expected_passed_test_count": 1
       },
       {
