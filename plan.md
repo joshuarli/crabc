@@ -57,6 +57,12 @@ are not transferable passes for a different revision.
   late remote free after that exit also matches all 17 retained observations.
   A mapped-large/medium mixed owner-exit differential matches 20 additional
   C/Rust transition values, including large reabandonment and medium retirement.
+  An arena singleton beside a regular medium page matches 18 more owner-exit
+  values and separate arena/PageMap terminal releases. A paired medium-churn
+  diagnostic matches C/Rust page-class transitions under four option profiles;
+  PageMap retirement precedes arena RSS release with the default purge delay,
+  while immediate purge releases at collection. The intermittent native RSS
+  breach remains unexplained.
   The full M2 runner records complete
   metadata, bitmap, PageMap, and allocator-recursion components; VM primitives,
   arenas, initialization, and fault injection remain partial. Its direct fresh
