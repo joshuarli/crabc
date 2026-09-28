@@ -41555,6 +41555,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         Some(page)
     }
 
+    // Fresh-page rollback and terminal release use the same page-local commit
+    // reconciliation. Keep its backing call shared across those paths.
+    #[inline(never)]
     fn account_page_commit_before_release(&self, page: NonNull<Page>, memory: MemoryId) -> bool {
         // SAFETY: callers retain the detached page until its prefix has been
         // reconciled, before any whole-page metadata retirement.
