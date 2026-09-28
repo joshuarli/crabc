@@ -4753,6 +4753,160 @@ mod tests {
             && post_cleanup_unmapped && registry_after == 0);
     }
 
+    #[cfg(target_arch = "x86_64")]
+    static HUGE_DESTROY_FAILURE_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn huge_destroy_failure_environment() -> *const *const core::ffi::c_char {
+        HUGE_DESTROY_FAILURE_ENVIRONMENT.load(Ordering::Acquire)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    struct HugeDestroyFailureWarnings {
+        active: core::sync::atomic::AtomicBool,
+        calls: core::sync::atomic::AtomicUsize,
+        before_accounting: core::sync::atomic::AtomicUsize,
+        subprocess: core::sync::atomic::AtomicPtr<crate::subproc::SubprocessIdentity>,
+        reserved_before: core::sync::atomic::AtomicI64,
+        committed_before: core::sync::atomic::AtomicI64,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn huge_destroy_failure_capture_warning(
+        message: *const core::ffi::c_char,
+        argument: *mut core::ffi::c_void,
+    ) {
+        if message.is_null() || argument.is_null() { return; }
+        // SAFETY: the registered capture outlives this serial source callback.
+        let warnings = unsafe { &*(argument as *const HugeDestroyFailureWarnings) };
+        if !warnings.active.load(Ordering::Acquire) { return; }
+        let bytes = unsafe { std::ffi::CStr::from_ptr(message) }.to_bytes();
+        if !bytes.starts_with(b"unable to free OS memory") { return; }
+        warnings.calls.fetch_add(1, Ordering::AcqRel);
+        let subprocess = warnings.subprocess.load(Ordering::Acquire);
+        if subprocess.is_null() { return; }
+        // SAFETY: this isolated subprocess is live throughout the callback.
+        let vm = unsafe { &*subprocess }.vm_statistics().snapshot();
+        let exact = vm.reserved_current == warnings.reserved_before.load(Ordering::Acquire)
+            && vm.committed_current == warnings.committed_before.load(Ordering::Acquire)
+            && bytes.windows(b"error: 5".len()).any(|part| part == b"error: 5")
+            && bytes.windows(b"size: 0x40000000 bytes".len())
+                .any(|part| part == b"size: 0x40000000 bytes");
+        if exact { warnings.before_accounting.fetch_add(1, Ordering::AcqRel); }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_huge_arena_destroy_failure_c_rust_trace() {
+        use crate::diagnostic_output::{OutputCallback, OutputOwner};
+        let entries = std::boxed::Box::leak(std::boxed::Box::new([
+            b"mimalloc_show_errors=1\0".as_ptr().cast(),
+            b"mimalloc_max_warnings=100\0".as_ptr().cast(),
+            core::ptr::null(),
+        ]));
+        HUGE_DESTROY_FAILURE_ENVIRONMENT.store(entries.as_mut_ptr(), Ordering::Release);
+        let warnings = std::boxed::Box::leak(std::boxed::Box::new(HugeDestroyFailureWarnings {
+            active: core::sync::atomic::AtomicBool::new(false),
+            calls: core::sync::atomic::AtomicUsize::new(0),
+            before_accounting: core::sync::atomic::AtomicUsize::new(0),
+            subprocess: core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
+            reserved_before: core::sync::atomic::AtomicI64::new(0),
+            committed_before: core::sync::atomic::AtomicI64::new(0),
+        }));
+        let output = std::boxed::Box::leak(std::boxed::Box::new(
+            OutputOwner::new(second_purge_default_output),
+        ));
+        // SAFETY: environment and callback storage remain live through the
+        // process-owned terminal release, with no concurrent writer.
+        unsafe {
+            output.initialize_source_options(huge_destroy_failure_environment);
+            output.register_output(Some(huge_destroy_failure_capture_warning as OutputCallback),
+                warnings as *mut HugeDestroyFailureWarnings as *mut core::ffi::c_void);
+        }
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 1024 * 1024, true, false,
+        );
+        // SAFETY: the isolated process, policy, and statistics outlive both
+        // huge owners and the retained raw failure retry.
+        let binding = unsafe { ProcessMainInitializationStorage::test_static_owner()
+            .test_prepare_vm_process_backing_binding_with_source_output(
+                config, output, MainSubprocess::test_static_owner(),
+                ProcessPageMapStorage::test_static_owner(),
+            ) }.expect("the huge-destroy process initializes");
+        let process = binding.process();
+        process.policy().finish_preloading();
+        let backing = process.subprocess().arena_backing();
+        let first = crate::os::HugeOsAllocation::test_registry_allocation(process, config, 1);
+        let first_base = first.base().as_ptr();
+        // SAFETY: each huge owner belongs to this sole process arena group.
+        unsafe { backing.install_owned_huge_allocation(config, first, -1, false) }
+            .unwrap_or_else(|failure| panic!("first huge install: {:?}", failure.error()));
+        let second = crate::os::HugeOsAllocation::test_registry_allocation(process, config, 1);
+        let second_base = second.base().as_ptr();
+        unsafe { backing.install_owned_huge_allocation(config, second, -1, false) }
+            .unwrap_or_else(|failure| panic!("second huge install: {:?}", failure.error()));
+        let setup = backing.registry().count() == 2
+            && unsafe { backing.registry().arena_at(0) }.is_some_and(|arena|
+                arena.memid.kind() == crate::types::MemoryKind::OsHuge)
+            && unsafe { backing.registry().arena_at(1) }.is_some_and(|arena|
+                arena.memid.kind() == crate::types::MemoryKind::OsHuge);
+        let mut residence = 0u8;
+        // SAFETY: both huge mappings are live until terminal destruction.
+        let before_mapped = unsafe { crabc_core::mm::mincore_raw(first_base, 4096, &mut residence) }.is_ok()
+            && unsafe { crabc_core::mm::mincore_raw(second_base, 4096, &mut residence) }.is_ok();
+        let before = process.subprocess().statistics().snapshot();
+        warnings.subprocess.store(core::ptr::from_ref(process.subprocess()).cast_mut(), Ordering::Release);
+        warnings.reserved_before.store(before.vm.reserved_current, Ordering::Release);
+        warnings.committed_before.store(before.vm.committed_current, Ordering::Release);
+        warnings.active.store(true, Ordering::Release);
+        fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::from_raw(5).unwrap()));
+        let mut tracking = [0usize; 2];
+        // SAFETY: no publication, allocation, or reader overlaps terminal
+        // destruction; the supplied bits retain either failed one-GiB range.
+        let mut destroyed = unsafe { backing.destroy_all(&mut tracking) }
+            .expect("both huge arenas retire despite one failed unmap");
+        warnings.active.store(false, Ordering::Release);
+        let unmap_calls = fault.observed();
+        let registry_after = backing.registry().count();
+        // SAFETY: the failed first range remains in `destroyed`, and the
+        // second source-accounted release has relinquished its mapping.
+        let failed_live = unsafe { crabc_core::mm::mincore_raw(first_base, 4096, &mut residence) }.is_ok();
+        let other_huge_gone = unsafe { crabc_core::mm::mincore_raw(second_base, 4096, &mut residence) }.is_err();
+        let after = process.subprocess().statistics().snapshot();
+        let reserved_delta = after.vm.reserved_current - before.vm.reserved_current;
+        let committed_delta = after.vm.committed_current - before.vm.committed_current;
+        let arena_count_delta = after.arena.arena_count - before.arena.arena_count;
+        let purge_calls = after.vm.purge_calls - before.vm.purge_calls;
+        let retained_owner = !destroyed.is_released();
+        fault.set(fault::Plan::disabled());
+        destroyed.retry_raw().expect("the first huge range releases on raw retry");
+        let raw_retry = destroyed.is_released();
+        // SAFETY: raw retry retired the last failed map and no owner uses it.
+        let terminal_unmapped = unsafe { crabc_core::mm::mincore_raw(first_base, 4096, &mut residence) }.is_err()
+            && unsafe { crabc_core::mm::mincore_raw(second_base, 4096, &mut residence) }.is_err();
+        let terminal_registry = backing.registry().count() == 0;
+        for (field, value) in [
+            ("setup", i64::from(setup)), ("before_mapped", i64::from(before_mapped)),
+            ("unmap_calls", unmap_calls as i64),
+            ("warning_calls", warnings.calls.load(Ordering::Acquire) as i64),
+            ("warning_before_accounting", warnings.before_accounting.load(Ordering::Acquire) as i64),
+            ("registry_after", registry_after as i64), ("failed_live", i64::from(failed_live)),
+            ("other_huge_gone", i64::from(other_huge_gone)),
+            ("reserved_delta", reserved_delta), ("committed_delta", committed_delta),
+            ("arena_count_delta", arena_count_delta), ("purge_calls", purge_calls),
+            ("raw_retry", i64::from(raw_retry)), ("terminal_unmapped", i64::from(terminal_unmapped)),
+            ("terminal_registry", i64::from(terminal_registry)),
+            ("retained_owner", i64::from(retained_owner)),
+        ] {
+            std::println!("m2.huge_destroy_failure.{field}={value}");
+        }
+        assert!(setup && before_mapped && unmap_calls == 2 && failed_live
+            && other_huge_gone && retained_owner && raw_retry && terminal_unmapped
+            && terminal_registry && registry_after == 0);
+    }
+
     #[test]
     fn default_os_reservation_releases_both_failed_attempts_before_retrying_from_cold() {
         let config = memory_config();

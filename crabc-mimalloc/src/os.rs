@@ -3908,6 +3908,13 @@ fn free_huge_page_for_process(process: VmProcess<'_>, address: NonNull<u8>) -> R
         }
         Err(error) => Err(error),
     };
+    if let Err(error) = result {
+        // Each huge page is a separate primitive free. Report its failure
+        // before accounting for that page, then continue the outer release.
+        process.policy.source_warning(SourceFormattedMessage::os_free_failure(
+            error, HUGE_PAGE_SIZE, address.as_ptr().addr(),
+        ));
+    }
     let statistics = process.subprocess.vm_statistics();
     statistics.committed_decrease(HUGE_PAGE_SIZE);
     statistics.reserve_decrease(HUGE_PAGE_SIZE);
