@@ -57,7 +57,10 @@ are not transferable passes for a different revision.
   ordinary `abort` archive importers through their distinct GOT and direct
   call forms to the final static and shared libc provider; its selector has
   720 blockers (701 identities, 17 family admissions, one declaration
-  companion, and one semantic receipt). `libc.c-abi-compat` now runs a physical
+  companion, and one semantic receipt). A further same-source cohort joins
+  both `fputs` archive importers, including the C tail branch, to the final
+  provider and reduces the selector to 719 blockers (700 identities).
+  `libc.c-abi-compat` now runs a physical
   same-cohort text/math/locale/stdio family admission; its current assessment admits seven
   of ten components and retains three allocator components at the selected C
   backend. Independent physical replay is pending. `consumer.rust-std-lto` passes its
