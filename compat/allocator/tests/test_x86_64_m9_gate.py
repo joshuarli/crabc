@@ -263,15 +263,48 @@ class AgreementTests(GateFixture):
         self.assertTrue(any("b.json critical roster differs" in item for item in detail), detail)
         self.assertTrue(any("c.json metrics do not cover exactly its critical roster" in item for item in detail), detail)
 
-    def test_convergence_and_integrated_conditions_come_from_their_readers(self) -> None:
+    def test_convergence_reads_current_evidence_and_integrated_reports(self) -> None:
         result = self.evaluate([])
-        self.assertTrue(self.condition(result, "m9.source-convergence")["met"])
+        self.assertFalse(self.condition(result, "m9.source-convergence")["met"])
         self.assertIn("no qualified integrated-product report among 0 read",
                       self.condition(result, "m9.integrated-products")["detail"][0])
         convergence = gate.convergence_condition(lambda root: [
             {"id": "transitional", "met": False, "detail": ["src/a.c:x is partial"]},
             {"id": "pin", "met": True, "detail": "ok"}])
-        self.assertEqual(convergence["detail"], ["transitional: src/a.c:x is partial"])
+        self.assertTrue(any("verdict differs from the current port map" in item for item in convergence["detail"]))
+
+    def test_forged_convergence_verdict_cannot_hide_current_divergence_evidence(self) -> None:
+        condition = gate.convergence_condition(lambda root: [])
+        self.assertFalse(condition["met"])
+        self.assertTrue(any("heap lifecycle" in item or "src/heap.c" in item
+                            for item in condition["detail"]), condition)
+        self.assertTrue(any("no source/fixture/program-bound retained differential receipt" in item
+                            for item in condition["detail"]), condition)
+
+    def test_convergence_rereads_source_built_cohort_independently(self) -> None:
+        paths = [self.report_file(f"cohort-{index}", accepted()) for index in range(3)]
+        integrated_path = self.integrated_report_file("integrated")
+        result = gate.evaluate(paths, None, inspect=self.inspect, gate_root=self.root / "gates",
+                               integrated_reports=[integrated_path],
+                               inspect_integrated=lambda root, path: integrated_reading(),
+                               evaluate_convergence=lambda root: [])
+        self.assertTrue(self.condition(result, "m9.integrated-products")["met"])
+        detail = self.condition(result, "m9.source-convergence")["detail"]
+        self.assertTrue(any("no qualified source-bound integrated_rows report measures" in item
+                            for item in detail), detail)
+
+    def test_status_only_differential_gate_lacks_program_identities(self) -> None:
+        command = ["python3", "compat/allocator/heap_lifecycle.py"]
+        contract = self.root / "differential-contract.json"
+        contract.write_text(json.dumps({"evidence": {"heap": {"runner": command[1]}}}), encoding="utf-8")
+        report = self.root / "gates/m6-gate/report.json"
+        report.parent.mkdir(parents=True)
+        report.write_text(json.dumps({"overall_status": "passed", "evidence": {
+            "heap": {"runner": command[1], "status": "passed"}}}), encoding="utf-8")
+        with (patch.dict(gate.CORRECTNESS_INPUTS, {"m6": ("m6_gate.py", str(contract))}, clear=True),
+              patch.object(gate, "correctness_evidence_unmet", return_value=[])):
+            reason = gate.convergence_differential_unmet(command, self.root / "gates", None)
+        self.assertIn("lacks independently checkable C/Rust fixture and executable identities", reason)
 
     def test_one_accepted_integrated_report_meets_its_condition(self) -> None:
         good, bad = self.integrated_report_file("good"), self.root / "bad.json"

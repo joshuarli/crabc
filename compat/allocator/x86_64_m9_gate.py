@@ -25,6 +25,7 @@ import perf_engine_x86_64 as engine
 import perf_integrated_x86_64 as integrated
 import run as harness
 import source_convergence
+import divergence_evidence
 
 
 CONDITION_IDS = (
@@ -331,13 +332,85 @@ def physical_codegen_unmet(path: Path, report: Mapping[str, Any], codegen: Any,
     return unmet
 
 
-def convergence_condition(evaluate_convergence: Callable[[Path], Sequence[Mapping[str, Any]]]) -> dict[str, Any]:
+def convergence_condition(
+    evaluate_convergence: Callable[[Path], Sequence[Mapping[str, Any]]],
+    engine_paths: Sequence[Path] = (),
+    integrated_paths: Sequence[Path] = (),
+    gate_root: Path = harness.ARTIFACT_ROOT / "x86_64",
+) -> dict[str, Any]:
+    """Read current convergence inputs and require their physical evidence cohort."""
+
     try:
-        rows = evaluate_convergence(harness.ROOT)
+        rows = source_convergence.evaluate(harness.ROOT)
+        supplied = evaluate_convergence(harness.ROOT)
+        manifest, _ = divergence_evidence.load()
+        physical_records = read_reports(engine_paths, engine.inspect_full_report)
     except Exception as error:  # noqa: BLE001
         return _condition("m9.source-convergence", [f"{type(error).__name__}: {error}"], "")
     unmet = [f"{row['id']}: {item}" for row in rows if not row["met"] for item in row["detail"]]
+    if supplied != rows:
+        unmet.append("convergence verdict differs from the current port map and known differences")
+    cohort = [record for record in physical_records if not record["unmet"]]
+    engine_rows = set()
+    if agreement_condition(cohort)["met"] and matrix_condition(physical_records)["met"]:
+        timed, memory = engine.selected_rows(engine.load_manifest(), engine.QUALIFIED_ROW_SET)
+        engine_rows = {row["name"] for row in (*timed, *memory)}
+    integrated_result = integrated_condition(integrated_paths, integrated.inspect_integrated_report, cohort)
+    integrated_rows = (set(integrated.row_names(integrated.load_manifest()))
+                       if integrated_result["met"] else set())
+    newest = max((Path(path).stat().st_mtime_ns for path, record in zip(engine_paths, physical_records)
+                  if not record["unmet"]), default=None)
+    for key, entry in sorted(manifest["rows"].items()):
+        if "owner" in entry:
+            unmet.append(f"{key}: differential evidence is still owned by {entry['owner']}")
+            continue
+        differential = entry["differential"]
+        if "command" in differential:
+            reason = convergence_differential_unmet(differential["command"], gate_root, newest)
+            if reason:
+                unmet.append(f"{key}: {reason}")
+        performance = entry["performance"]
+        if "blocked" in performance:
+            unmet.append(f"{key}: performance remains blocked: {performance['blocked']}")
+        for group, available in (("engine_rows", engine_rows), ("integrated_rows", integrated_rows)):
+            missing = sorted(set(performance.get(group, [])) - available)
+            if missing:
+                unmet.append(f"{key}: no qualified source-bound {group} report measures {missing}")
     return _condition("m9.source-convergence", unmet, "every source-convergence condition is met")
+
+
+def convergence_differential_unmet(command: Sequence[str], gate_root: Path, newest: int | None) -> str | None:
+    """Find an executed differential in a current source-sealed correctness gate."""
+
+    matches = []
+    try:
+        for gate, (_, contract_name) in CORRECTNESS_INPUTS.items():
+            contract = json.loads((harness.ALLOCATOR_ROOT / contract_name).read_text(encoding="utf-8"))
+            for evidence_id, declared in contract["evidence"].items():
+                if (declared.get("command") == list(command)
+                        or ("runner" in declared and ["python3", declared["runner"]] == list(command))):
+                    matches.append((gate, evidence_id, declared))
+    except Exception as error:  # noqa: BLE001 - malformed current contracts cannot prove a differential
+        return f"current differential gate contract is unreadable: {type(error).__name__}: {error}"
+    if not matches:
+        return f"no source/fixture/program-bound retained differential receipt for {' '.join(command)}"
+    for gate, evidence_id, declared in matches:
+        path = gate_root / f"{gate}-gate/report.json"
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+            if report.get("overall_status") != "passed" or correctness_evidence_unmet(gate, report, path.parent, newest):
+                continue
+            recorded = report["evidence"][evidence_id]
+            if declared.get("runner") is not None and recorded.get("runner") != declared["runner"]:
+                continue
+            if declared.get("command") is not None and recorded.get("command") != list(command):
+                continue
+            return (f"{gate.upper()} gate ran {' '.join(command)}, but its retained evidence lacks "
+                    "independently checkable C/Rust fixture and executable identities")
+        except Exception:  # noqa: BLE001 - a malformed retained gate cannot prove the differential
+            continue
+    gates = ", ".join(sorted({gate.upper() for gate, _, _ in matches}))
+    return f"no current source/fixture/program-bound {gates} differential receipt for {' '.join(command)}"
 
 
 def discover_integrated(directory: Path = integrated.REPORT_ROOT) -> list[Path]:
@@ -585,13 +658,15 @@ def evaluate(
 ) -> dict[str, Any]:
     records = read_reports(report_paths, inspect)
     accepted = [Path(path) for path, record in zip(report_paths, records) if not record["unmet"]]
+    cohort = [record for record in records if not record["unmet"]]
+    integrated_paths = discover_integrated() if integrated_reports is None else integrated_reports
+    integrated_result = integrated_condition(integrated_paths, inspect_integrated, cohort)
     conditions = [
         matrix_condition(records),
         *report_conditions(records),
         codegen_condition(codegen_report, [record for record in records if not record["unmet"]]),
-        convergence_condition(evaluate_convergence),
-        integrated_condition(discover_integrated() if integrated_reports is None else integrated_reports,
-                             inspect_integrated, [record for record in records if not record["unmet"]]),
+        convergence_condition(evaluate_convergence, report_paths, integrated_paths, gate_root),
+        integrated_result,
         correctness_condition(accepted, gate_root),
     ]
     assert [row["id"] for row in conditions] == list(CONDITION_IDS)
