@@ -94,7 +94,9 @@ are not transferable passes for a different revision.
   publishes its purge statistics before the callback, matching eight more
   C/Rust observations. A second regular arena claims the fourth 256-slice
   request after the first fills and matches pinned C across 33 claim,
-  mapping, purge, and registry observations.
+  mapping, purge, and registry observations. A delayed partial release beside
+  a live slice in that second arena matches 15 further purge, bitmap, mapping,
+  and survivor observations.
   Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). On an idle host the development engine harness
