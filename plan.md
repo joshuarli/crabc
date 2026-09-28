@@ -29,14 +29,16 @@ are not transferable passes for a different revision.
   waits on 15 planned prerequisite families and 43 selected-private
   capabilities. `compat.abi-differential` reads all its evidence rows from one
   published set (`abi-differential-evidence assemble`); only the selection
-  closure stays unmet: a clean `20bc2b75b` pinned-image assembly named 568
-  blockers (550 identities, 17 unadmitted families, one missing semantic
-  receipt) after binding the owned `__stack_chk_fail` static import; all
+  closure stays unmet: a clean `b879f8c86` pinned-image assembly named 567
+  blockers (549 identities, 17 unadmitted families, one missing semantic
+  receipt) after binding the owned `__libc_start_main` CRT imports; all
   18 companions were accepted. `libc.c-abi-compat` now runs a physical same-cohort
   text/math/locale/stdio family admission; its retained receipt is still
-  pending on the final candidate revision. `consumer.rust-std-lto` and
-  `consumer.source-build` pass their evidence on development cohorts and
-  publish receipts; a clean `0bb16e482` Lua source-build admission makes the
+  pending on the final candidate revision. `consumer.rust-std-lto` passes its
+  Rust, native-facade, LTO, and unwind leaves on clean `d6733f516`; its
+  pinned-image receipt passed independent physical validation and public
+  publication. `consumer.source-build` passes on a development cohort and
+  publishes its receipt; a clean `0bb16e482` Lua source-build admission makes the
   latter evidence condition met while 14 prerequisite families remain open.
   `performance.release` is a read-only receipt gate whose
   runtime, native-facade and allocator M9 inputs do not exist yet. The pinned
