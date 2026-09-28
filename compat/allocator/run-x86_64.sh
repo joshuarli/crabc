@@ -314,6 +314,22 @@ run_in_container() {
     local -a capability_args=()
     local -a qualification_identity_args=()
     local execution_image="$IMAGE"
+    if [ "${1:-}" = --with-pinned-core-image ]; then
+        shift
+        local core_image_id
+        core_image_id="$(python3 -B -c \
+            'import sys; sys.path.insert(0, sys.argv[1]); import core_image; print(core_image.CORE_IMAGE_ID)' \
+            "$ROOT_DIR/compat/x86_64")" \
+            || fail "cannot read the pinned core evidence image identity"
+        [[ "$core_image_id" =~ ^sha256:[0-9a-f]{64}$ ]] \
+            || fail "core evidence image identity is not an immutable digest"
+        local core_platform
+        core_platform="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$core_image_id")" \
+            || fail "pinned core evidence image is unavailable"
+        [ "$core_platform" = "linux/amd64" ] \
+            || fail "pinned core evidence image is $core_platform, expected linux/amd64"
+        execution_image="$core_image_id"
+    fi
     # Only the hardware huge-page job needs this mmap permission.  Retain the
     # default seccomp and every other Docker control; its one-page preflight
     # records whether the active policy actually permits mbind.
@@ -475,11 +491,13 @@ case "$command" in
         ;;
     allocator-m9)
         # Read-only: the gate exits nonzero until every M9 condition is met.
+        m9_physical_reader=false
         if [ "$#" -eq 1 ] && [ "$1" = --check ]; then
             m9_command=(python3 compat/allocator/x86_64_m9_gate.py --check)
         elif [ "$#" -eq 1 ] && [ "$1" = --reader-tests ]; then
             m9_command=(python3 compat/allocator/tests/test_x86_64_m9_gate.py)
         else
+            m9_physical_reader=true
             m9_command=(python3 compat/allocator/x86_64_m9_gate.py)
             while [ "$#" -gt 0 ]; do
                 [ "$#" -ge 2 ] && [ "$1" = --report ] \
@@ -489,7 +507,11 @@ case "$command" in
             done
         fi
         ensure_image
-        run_in_container "${m9_command[@]}"
+        if [ "$m9_physical_reader" = true ]; then
+            run_in_container --with-pinned-core-image "${m9_command[@]}"
+        else
+            run_in_container "${m9_command[@]}"
+        fi
         ;;
     allocator-m10)
         # Fails closed until M0-M9, the promotion gates and the native

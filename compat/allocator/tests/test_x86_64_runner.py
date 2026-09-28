@@ -28,6 +28,9 @@ class X86AllocatorWorkspaceTests(unittest.TestCase):
         self.launcher = self.checkout / "compat/allocator/run-x86_64.sh"
         self.launcher.parent.mkdir(parents=True)
         self.launcher.write_text(RUNNER.read_text())
+        core_module = self.checkout / "compat/x86_64/core_image.py"
+        core_module.parent.mkdir(parents=True)
+        core_module.write_text((ROOT / "compat/x86_64/core_image.py").read_text())
         self.boundary = self.checkout / ".work/allocator-x86_64"
         self.capture = self.fixture / "docker-args"
         self.bin = self.fixture / "bin"
@@ -140,6 +143,25 @@ fi
         rejected = self.launch("allocator-m6", "--full")
         self.assertEqual(rejected.returncode, 2)
         self.assertIn("allocator-m6 accepts only --check or --reader-tests", rejected.stderr)
+
+    def test_m9_physical_reader_uses_the_pinned_core_image(self):
+        import sys
+
+        sys.path.insert(0, str(ROOT / "compat/x86_64"))
+        import core_image
+
+        for arguments in ((), ("--report", "receipt.json")):
+            with self.subTest(arguments=arguments):
+                result = self.launch("allocator-m9", *arguments)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                args = self.capture.read_bytes().split(b"\0")
+                self.assertEqual(args[args.index(b"python3") - 1], core_image.CORE_IMAGE_ID.encode())
+        for option in ("--check", "--reader-tests"):
+            with self.subTest(option=option):
+                result = self.launch("allocator-m9", option)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                args = self.capture.read_bytes().split(b"\0")
+                self.assertEqual(args[args.index(b"python3") - 1], b"crabc-allocator-evidence:x86_64")
 
     def test_opt_in_allocator_budget_forwards_cargo_and_caps_the_container(self):
         result = self.launch(
