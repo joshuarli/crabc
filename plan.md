@@ -53,10 +53,12 @@ are not transferable passes for a different revision.
   workload and PageMap slice metric. The PageMap reader now applies the same
   10% bound to sustained first/last-quarter medians, calibrated against 88
   pinned-C/native traces and accumulating-page controls. The canonical stress
-  run passes its PageMap checks but fails the unchanged RSS bound for native
-  static PIE on seeds 1 and 3; medium-page collection and RSS remain under
-  assessment. Source-built C/Rust
-  differentials pass for both dormant and active survivors of a non-abandoning
+  run at the earlier source revision passed PageMap checks but failed the
+  unchanged RSS bound for native static PIE on seeds 1 and 3. After the
+  source-shaped C ABI size-class correction, the canonical 113-case native
+  stress receipt passes all three seeds, including PageMap and RSS bounds;
+  the intermittent historical RSS growth has no proven root cause. Source-built
+  C/Rust differentials pass for both dormant and active survivors of a non-abandoning
   full-medium/OS-singleton owner exit, including reclaim and retirement; a
   late remote free after that exit also matches all 17 retained observations.
   A mapped-large/medium mixed owner-exit differential matches 20 additional
@@ -64,7 +66,9 @@ are not transferable passes for a different revision.
   An arena singleton beside a regular medium page matches 18 more owner-exit
   values and separate arena/PageMap terminal releases. Two survivor threads
   independently release split arena singleton claims after owner exit with
-  17 matching C/Rust observations. A paired medium-churn
+  17 matching C/Rust observations. An abandoned regular OS page now reclaims
+  and releases after its owner exits; the source-built differential passes its generic-exit cases and
+  retains the OS list ownership until terminal release. A paired medium-churn
   diagnostic matches C/Rust page-class transitions under four option profiles;
   PageMap retirement precedes arena RSS release with the default purge delay,
   while immediate purge releases at collection. A two-arena pressure profile
@@ -73,10 +77,8 @@ are not transferable passes for a different revision.
   capacity difference was traced to the native C ABI requesting explicit
   alignment for ordinary `malloc`; the source-shaped size-class dispatch now
   matches pinned C usable size and page transition on initial and worker
-  owners while retaining 16-byte alignment for tiny C allocations. The
-  intermittent native RSS breach remains unexplained.
-  The full M2 runner records complete
-  metadata, bitmap, PageMap, and allocator-recursion components; VM primitives,
+  owners while retaining 16-byte alignment for tiny C allocations. The full M2
+  runner records complete metadata, bitmap, PageMap, and allocator-recursion components; VM primitives,
   arenas, initialization, and fault injection remain partial. Its direct fresh
   OS page-area metadata-commit receiver matches pinned C for both successful
   and failed cleanup, including warning timing and accounting. A fresh OS
@@ -84,7 +86,11 @@ are not transferable passes for a different revision.
   matches 115 C/Rust relations for mapping extent, PageMap state, warning
   order, counters, and exact unmap or retained raw-only retry. Policy-first
   arena failed prefix/suffix trim paths match 16 more C/Rust observations,
-  including escaped live mappings and warning-time counters.
+  including escaped live mappings and warning-time counters. Fresh OS PageMap
+  registration failure matches 122 C/Rust relations for rollback state,
+  mapping lifetime, accounting, and warning order. External arena purge
+  publishes its purge statistics before the callback, matching eight more
+  C/Rust observations.
   Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). On an idle host the development engine harness
