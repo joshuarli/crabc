@@ -19,8 +19,8 @@ use core::ptr::null_mut;
 
 use super::errno;
 use crabc_mimalloc::__crabc_runtime::{
-    NativePageAllocationResult, NativePageFreeResult, native_allocate_aligned, native_free,
-    native_reallocate,
+    NativePageAllocationResult, NativePageFreeResult, native_allocate, native_allocate_aligned,
+    native_free, native_reallocate,
 };
 
 const NATIVE_MIMALLOC_MALLOC_ALIGNMENT: usize = 16;
@@ -80,6 +80,20 @@ unsafe fn native_mimalloc_allocation_result(result: NativePageAllocationResult) 
 #[inline]
 unsafe fn native_mimalloc_allocate(size: usize, alignment: usize, zero: bool) -> *mut c_void {
     unsafe { native_mimalloc_allocation(|| unsafe { native_allocate_aligned(size, alignment, zero) }) }
+}
+
+// The ordinary source bin for 9..64 bytes rounds to an even machine-word
+// count; every larger regular bin also has an even word count. Its page start
+// and optional leading block offset are 16-byte aligned, as is a singleton
+// page start. The 8-byte bin has only 8-byte stride, so libc keeps the aligned
+// entry for requests in that bin to satisfy C's max_align_t promise.
+#[inline]
+unsafe fn native_mimalloc_allocate_malloc_shaped(size: usize, zero: bool) -> *mut c_void {
+    if size <= 8 {
+        unsafe { native_mimalloc_allocate(size, NATIVE_MIMALLOC_MALLOC_ALIGNMENT, zero) }
+    } else {
+        unsafe { native_mimalloc_allocation(|| unsafe { native_allocate(size, zero) }) }
+    }
 }
 
 /// Release one private selected-native allocation without a public C symbol
@@ -223,7 +237,7 @@ unsafe fn public_memalign(alignment: SizeT, size: SizeT) -> *mut c_void {
 }
 
 unsafe extern "C" fn libc_malloc(size: SizeT) -> *mut c_void {
-    unsafe { native_mimalloc_allocate(size, NATIVE_MIMALLOC_MALLOC_ALIGNMENT, false) }
+    unsafe { native_mimalloc_allocate_malloc_shaped(size, false) }
 }
 
 unsafe extern "C" fn libc_free(pointer: *mut c_void) {
@@ -242,13 +256,13 @@ unsafe extern "C" fn libc_calloc(count: SizeT, size: SizeT) -> *mut c_void {
         }
         return allocation;
     }
-    unsafe { native_mimalloc_allocate(total, NATIVE_MIMALLOC_MALLOC_ALIGNMENT, total != 0) }
+    unsafe { native_mimalloc_allocate_malloc_shaped(total, total != 0) }
 }
 
 unsafe extern "C" fn libc_realloc(pointer: *mut c_void, new_size: SizeT) -> *mut c_void {
     // Musl's `realloc(NULL, n)` allocates internally, like this native path.
     if pointer.is_null() {
-        return unsafe { native_mimalloc_allocate(new_size, NATIVE_MIMALLOC_MALLOC_ALIGNMENT, false) };
+        return unsafe { native_mimalloc_allocate_malloc_shaped(new_size, false) };
     }
     let block = unsafe { core::ptr::NonNull::new_unchecked(pointer.cast::<u8>()) };
     unsafe { native_mimalloc_allocation(|| unsafe { native_reallocate(Some(block), new_size) }) }
