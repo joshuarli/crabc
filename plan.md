@@ -237,6 +237,9 @@ are not transferable passes for a different revision.
   Direct use of retained object records for runtime symbol lookup saves a
   paired median 14,507 instructions in a 256-call GNU-hash `dlsym` probe and
   11,240 in a CRT startup control, at a 1,872-byte release-text cost.
+  Reusing the bounded private relocation name cuts another 466 median user
+  instructions in 100 paired simple and graph development startups, with
+  unchanged syscall traces and 16 fewer release-text bytes.
   These remain unqualified under host contention. Allocator rows stay
   6.5–8× on the selected
   accepted-C backend, whose arena the host's THP `always` mode backs with
