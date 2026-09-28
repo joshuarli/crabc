@@ -57,6 +57,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:show-errors-profile",
             "differential:startup-page-map-failure",
             "differential:statistics",
+            "differential:statistics-json",
             "differential:statistics-level-one",
             "differential:statistics-level-one-output-merge",
             "differential:statistics-level-two-bins",
@@ -242,6 +243,38 @@ class M7GateContractTests(unittest.TestCase):
             gate.require_statistics_level_two_page_huge({**trace, "live.order": "pages,blocks"}, "wrong order")
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_level_two_page_huge({**trace, "live.process_huge": "6144,20480,6144"}, "lost peak")
+
+    def test_statistics_json_requires_three_source_built_profiles(self) -> None:
+        summary = self.validate()
+        statistics = self.gate_record(self.contract, "m7.statistics")
+        self.assertIn("differential:statistics-json", statistics["evidence"])
+        self.assertIn("differential:statistics-json", summary["runnable_evidence"])
+
+    def test_statistics_json_reader_rejects_truncation_and_lost_fields(self) -> None:
+        trace = {
+            "profile.level": "2", "json.grown": "1", "json.version": "1",
+            "json.mimalloc_version": "1", "json.process": "1", "json.chunk_bins": "1",
+            "json.hash": "123456789abcdef0", "json.pages": "6,4,3",
+            "json.malloc_normal": "320,160,96", "json.malloc_huge": "8192,4096,2048",
+            "json.malloc_requested": "280,140,70", "json.malloc_bins.bin8": "5,4,2,128,65536",
+            "json.page_bins.bin8": "3,2,1,128,65536",
+            "fixed.length_plus_one": "0", "fixed.length_plus_two": "1",
+            "zero_size.grown": "1", "zero_size.caller_intact": "1",
+            "null_buffer.grown": "1", "invalid.version": "1",
+            "invalid.caller_intact": "1", "invalid.null_image": "1",
+            "get.grown": "1", "get.version": "1", "get.short": "0",
+            "get.short.prefix": "7b0a00", "get.short.guard": "1",
+        }
+        for name, prefix in (("one", "00"), ("two", "7b00"), ("three", "7b0a00"),
+                             ("sixtyfour", "7b0a202022737461")):
+            trace[f"fixed.{name}.result"] = "0"
+            trace[f"fixed.{name}.prefix"] = prefix
+            trace[f"fixed.{name}.guard"] = "1"
+        gate.require_statistics_json(trace, 2, "complete")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_json({**trace, "fixed.length_plus_two": "0"}, 2, "lost final size")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_json({**trace, "json.malloc_requested": "0,0,0"}, 2, "lost field")
 
     def test_default_artifact_reader_rejects_changed_build_or_cpu(self) -> None:
         with harness.temporary_directory("m7-baseline-reader-") as name:

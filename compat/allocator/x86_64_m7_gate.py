@@ -960,6 +960,9 @@ STATISTICS_LEVEL_TWO_PAGE_HUGE_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_stat
 STATISTICS_LEVEL_TWO_PAGE_HUGE_TEST = "diagnostic_output::tests::level_two_page_huge_trace_for_pinned_c_comparison"
 STATISTICS_LEVEL_TWO_PAGE_HUGE_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_LEVEL_TWO_PAGE_HUGE_TRACE_BEGIN"
 STATISTICS_LEVEL_TWO_PAGE_HUGE_TRACE_END = "CRABC_MI_M7_STATISTICS_LEVEL_TWO_PAGE_HUGE_TRACE_END"
+STATISTICS_JSON_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_json_oracle.c"
+STATISTICS_JSON_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_JSON_TRACE_BEGIN"
+STATISTICS_JSON_TRACE_END = "CRABC_MI_M7_STATISTICS_JSON_TRACE_END"
 
 
 def require_statistics_level_one(trace: Mapping[str, str], description: str) -> None:
@@ -1110,6 +1113,47 @@ def require_statistics_level_two_page_huge(trace: Mapping[str, str], description
         raise harness.HarnessError(f"{description} lost a huge/page merge or display state: {trace}")
 
 
+def require_statistics_json(trace: Mapping[str, str], level: int, description: str) -> None:
+    """Require caller-buffer boundaries and source image values in every profile."""
+
+    expected = {
+        "profile.level", "json.grown", "json.version", "json.mimalloc_version",
+        "json.process", "json.chunk_bins", "json.hash", "json.pages",
+        "json.malloc_normal", "json.malloc_huge", "json.malloc_requested",
+        "json.malloc_bins.bin8", "json.page_bins.bin8",
+        *(f"fixed.{name}.{field}" for name in ("one", "two", "three", "sixtyfour")
+          for field in ("result", "prefix", "guard")),
+        "fixed.length_plus_one", "fixed.length_plus_two", "zero_size.grown",
+        "zero_size.caller_intact", "null_buffer.grown", "invalid.version",
+        "invalid.caller_intact", "invalid.null_image", "get.grown", "get.version",
+        "get.short", "get.short.prefix", "get.short.guard",
+    }
+    if set(trace) != expected or trace["profile.level"] != str(level):
+        raise harness.HarnessError(f"{description} lacks the JSON caller trace fields: {trace}")
+    required = {
+        "json.grown": "1", "json.version": "1", "json.mimalloc_version": "1",
+        "json.process": "1", "json.chunk_bins": "1", "json.pages": "6,4,3",
+        "json.malloc_normal": "320,160,96", "json.malloc_huge": "8192,4096,2048",
+        "json.malloc_requested": "280,140,70",
+        "fixed.one.result": "0", "fixed.one.prefix": "00", "fixed.one.guard": "1",
+        "fixed.two.result": "0", "fixed.two.prefix": "7b00", "fixed.two.guard": "1",
+        "fixed.three.result": "0", "fixed.three.prefix": "7b0a00", "fixed.three.guard": "1",
+        "fixed.sixtyfour.result": "0", "fixed.sixtyfour.guard": "1",
+        "fixed.length_plus_one": "0", "fixed.length_plus_two": "1",
+        "zero_size.grown": "1", "zero_size.caller_intact": "1",
+        "null_buffer.grown": "1", "invalid.version": "1",
+        "invalid.caller_intact": "1", "invalid.null_image": "1",
+        "get.grown": "1", "get.version": "1", "get.short": "0",
+        "get.short.prefix": "7b0a00", "get.short.guard": "1",
+    }
+    if (any(trace[key] != value for key, value in required.items())
+            or not re.fullmatch(r"[0-9a-f]{16}", trace["json.hash"])
+            or not re.fullmatch(r"[0-9a-f]{16}", trace["fixed.sixtyfour.prefix"])
+            or not trace["json.malloc_bins.bin8"].startswith("5,4,2,")
+            or not trace["json.page_bins.bin8"].startswith("3,2,1,")):
+        raise harness.HarnessError(f"{description} lost JSON serialization or caller-buffer behavior: {trace}")
+
+
 def run_statistics_level_one_differential(offline: bool) -> dict[str, Any]:
     """Build the same public statistics driver with pinned C level one and Rust."""
 
@@ -1209,6 +1253,66 @@ def run_statistics_level_two_page_huge_differential(offline: bool) -> dict[str, 
         report_name="statistics-level-two-page-huge.json", compile_defines=("-DMI_STAT=2",),
         rust_features=("mi-stat-2",),
     )
+
+
+def run_statistics_json_differential(offline: bool) -> dict[str, Any]:
+    """Compare the public JSON buffer contract under each selected stats level."""
+
+    import x86_64_m4_gate as m4
+
+    harness.require_native_x86_64()
+    pin = harness.load_pin()
+    archive = harness.fetch_archive(pin, offline)
+    profiles: dict[str, Any] = {}
+    with harness.temporary_directory("crabc-mimalloc-x86_64-m7-statistics-json-") as name:
+        temporary = Path(name)
+        source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
+        compiler = harness.require_tool("musl-gcc")
+        for level in (0, 1, 2):
+            profile = temporary / f"stat-{level}"
+            profile.mkdir()
+            c_binary = profile / "json-c"
+            c_build = harness.command_record(
+                [compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+                 *harness.CONFIGURATION_PROFILES["release"], f"-DMI_STAT={level}",
+                 "-I", str(source / "include"), str(STATISTICS_JSON_ORACLE),
+                 str(source / "src/static.c"), "-pthread", "-o", str(c_binary)], cwd=source,
+            )
+            harness.require_success(c_build, f"M7 MI_STAT={level} JSON C build")
+            feature = () if level == 0 else ("--features", f"crabc-mimalloc/mi-stat-{level}")
+            target = profile / "cargo-target"
+            rust_build = harness.command_record(
+                [harness.require_tool("cargo"), "build", "--locked", "--release", "--target",
+                 RUST_TARGET, "-p", m4.ADAPTER_PACKAGE, "--no-default-features", *feature,
+                 "--target-dir", str(target)], cwd=harness.ROOT, env=dict(os.environ),
+                timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
+            )
+            harness.require_success(rust_build, f"M7 MI_STAT={level} JSON Rust adapter build")
+            rust_binary = profile / "json-rust"
+            rust_link = harness.command_record(
+                [compiler, "-std=c11", "-O2", f"-DMI_STAT={level}",
+                 "-I", str(source / "include"), str(STATISTICS_JSON_ORACLE),
+                 str(target / RUST_TARGET / "release" / m4.ADAPTER_STATICLIB),
+                 "-pthread", "-o", str(rust_binary)], cwd=source,
+            )
+            harness.require_success(rust_link, f"M7 MI_STAT={level} JSON Rust driver link")
+            traces = {}
+            for side, binary in (("c", c_binary), ("rust", rust_binary)):
+                execution = harness.command_record((str(binary),), cwd=profile, env={}, timeout_seconds=600)
+                harness.require_success(execution, f"M7 MI_STAT={level} JSON {side} execution")
+                trace = parse_options_trace(str(execution["stdout"]),
+                    f"M7 MI_STAT={level} JSON {side}", STATISTICS_JSON_TRACE_BEGIN, STATISTICS_JSON_TRACE_END)
+                require_statistics_json(trace, level, f"M7 MI_STAT={level} JSON {side}")
+                traces[side] = trace
+            compare_options_traces(traces["c"], traces["rust"])
+            profiles[str(level)] = {"status": "passed", "compared_key_count": len(traces["c"]),
+                                    "trace": traces["c"], "c_build": c_build["command"],
+                                    "rust_build": rust_build["command"]}
+    report = {"status": "passed", "profiles": profiles,
+              "compared_key_count": sum(value["compared_key_count"] for value in profiles.values())}
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    harness.write_json(ARTIFACTS / "statistics-json.json", report)
+    return report
 
 
 def run_adapter_differential(
@@ -1345,6 +1449,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run the pinned-C/Rust level-two nonzero-bin final-output differential")
     mode.add_argument("--statistics-level-two-page-huge-differential", action="store_true",
         help="run the pinned-C/Rust level-two huge/page final-output differential")
+    mode.add_argument("--statistics-json-differential", action="store_true",
+        help="compare pinned-C/Rust public JSON buffer behavior under each statistics profile")
     mode.add_argument("--adapter-differential", action="store_true",
         help="run the shared-driver pinned-C/native-adapter M7 differential")
     mode.add_argument("--option-profiles-differential", action="store_true",
@@ -1410,6 +1516,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         report = run_statistics_level_two_page_huge_differential(arguments.offline)
         print(f"M7 level-two huge/page differential passed: {report['compared_key_count']} keys")
         print(json.dumps(report["trace"], sort_keys=True))
+        return 0
+    if arguments.statistics_json_differential:
+        report = run_statistics_json_differential(arguments.offline)
+        print(f"M7 statistics JSON differential passed: {report['compared_key_count']} keys "
+              f"in {len(report['profiles'])} profiles")
         return 0
     if arguments.adapter_differential:
         report = run_adapter_differential(arguments.offline)
