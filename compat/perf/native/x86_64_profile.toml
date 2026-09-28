@@ -4,7 +4,7 @@ schema = "crabc.perf.native-x86-rust-facade-profile/v1"
 architecture = "x86_64"
 os = "linux"
 target = "x86_64-unknown-linux-musl"
-image = "crabc-core-evidence@sha256:307d75f06680c631437f9faa5f7c726613fcea6f1875dda8cf368ad4b6da1b3d"
+image = "crabc-core-evidence@sha256:279f273841b44bfe0301943c172a6b28dbb61c0bae23694ad5c4229b28d30d20"
 stock_std = "image-owned stock x86_64-unknown-linux-musl std measurement infrastructure"
 
 [normal]
