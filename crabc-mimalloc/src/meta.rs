@@ -6081,15 +6081,14 @@ mod tests {
         .expect("the canonical metadata OS singleton regression remains current-thread local");
     }
 
-    /// The canonical metadata-publication fault receiver: `_mi_meta_zalloc`
-    /// (`src/subproc.c:29-37`) reaching a fresh detached-Theap page through
-    /// `mi_arenas_page_alloc_fresh_area` (`src/arena.c:781-869`) while one
-    /// primitive stays unavailable. Each case is one fresh process owner.
+    /// A detached metadata request reaching a fresh page while one OS
+    /// primitive stays unavailable. Each case has one fresh process owner.
     /// A failed request publishes no capability, rolls its private mapping
     /// back, and leaves the live metadata owner, its PageMap entry, and the
     /// engine usable: the same request succeeds once the primitive recovers.
-    /// `m2_vm_x86_64.c`'s metadata publication profile prints the same facts
-    /// from pinned C with persistent `mmap`/`mprotect` failures.
+    /// The recovery trace records each lazy PageMap submap separately because
+    /// the kernel may place fresh mappings on opposite sides of a submap
+    /// boundary in otherwise equivalent processes.
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn emit_metadata_publication_fault_receiver_trace() {
@@ -6101,6 +6100,7 @@ mod tests {
             ("arena-commit-failure", false, fault::Point::Commit),
         ];
         let mut deltas = [0i64; 3];
+        let mut recovery = [[0i64; 5]; 3];
         std::println!("CRABC_MI_M2_METADATA_PUBLICATION_TRACE_BEGIN");
         for (selected, (name, disallow_arena, point)) in CASES.into_iter().enumerate() {
             let facts = thread::spawn(move || {
@@ -6135,6 +6135,7 @@ mod tests {
 
                 let fault = fault::install(fault::Plan::disabled());
                 let before = statistics();
+                let lazy_before = map.test_published_submap_count().unwrap();
                 fault.set(fault::Plan::every(point, crabc_core::Errno::NOMEM));
                 let failed = allocator.zalloc(config, REQUEST_SIZE);
                 let reached = fault.observed() != 0;
@@ -6163,17 +6164,26 @@ mod tests {
                     let page = unsafe { map.checked_lookup(block.pointer().as_ptr()) };
                     !page.is_null() && page != warm_page
                 });
+                let after_retry = statistics();
+                let recovery = [
+                    after_retry.reserved_current - before.reserved_current,
+                    after_retry.committed_current - before.committed_current,
+                    after_retry.reserved_total - before.reserved_total,
+                    after_retry.committed_total - before.committed_total,
+                    (map.test_published_submap_count().unwrap() - lazy_before) as i64,
+                ];
                 drop(fault);
                 if let Ok(mut retry) = retry { allocator.free(&mut retry).unwrap(); }
                 allocator.free(&mut warm).unwrap();
                 // The process and canonical metadata owners stay process-lived.
                 core::mem::forget(owner);
-                (facts, committed_delta)
+                (facts, committed_delta, recovery)
             })
             .join()
             .expect("metadata publication fault case");
-            let (facts, committed_delta) = facts;
+            let (facts, committed_delta, recovered) = facts;
             deltas[selected] = committed_delta;
+            recovery[selected] = recovered;
             let case = selected + 1;
             assert!(facts.iter().all(|fact| *fact), "metadata publication case {case} ({name}): {facts:?}");
             for (field, value) in ["request_failed", "no_capability", "fault_reached", "live_owner_intact",
@@ -6188,6 +6198,26 @@ mod tests {
             std::println!("metadata_publication.{}.committed_delta={delta}", index + 1);
         }
         std::println!("CRABC_MI_M2_METADATA_PUBLICATION_DELTAS_END");
+        std::println!("CRABC_MI_M2_METADATA_PUBLICATION_RECOVERY_BEGIN");
+        for (index, values) in recovery.into_iter().enumerate() {
+            for (field, value) in ["reserved_current_delta", "committed_current_delta",
+                "reserved_total_delta", "committed_total_delta", "lazy_submaps"]
+                .into_iter().zip(values) {
+                std::println!("metadata_recovery.{}.{field}={value}", index + 1);
+            }
+        }
+        std::println!("CRABC_MI_M2_METADATA_PUBLICATION_RECOVERY_END");
+        let normalized = recovery.map(|row| {
+            let charge = row[4] * crate::page_map::PAGE_MAP_SUB_SIZE as i64;
+            [row[0] - charge, row[1] - charge, row[2] - charge, row[3] - charge]
+        });
+        assert_eq!(normalized, [
+            [131072, 65536, 131072, 65536],
+            [131072, -720896, 917504, 65536],
+            [0, -720896, 403439616, 65536],
+        ], "each published lazy PageMap submap must carry its full VM charge");
+        assert!(recovery.iter().any(|row| row[4] != 0),
+            "the recovery sequence must exercise lazy PageMap publication");
     }
 
     #[test]

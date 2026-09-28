@@ -13387,6 +13387,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                         "source-indexed-fault-seam-inventory": "os::tests::emit_m2_fault_seam_inventory_c_rust_trace",
                         "os-aligned-page-publication-fault-receiver": "os_page::tests::emit_os_publication_fault_receiver_trace",
                         "metadata-publication-fault-receiver": "meta::tests::emit_metadata_publication_fault_receiver_trace",
+                        "metadata-publication-recovery": "meta::tests::emit_metadata_publication_fault_receiver_trace",
                     }.get(raw_check.get("id"))
                     or not (ALLOCATOR_ROOT / "x86_64_fault_seam_inventory.py").is_file()
                 ):
@@ -14690,7 +14691,8 @@ def _m2_x86_64_fault_check_records(
     """Bind the named partial fault component to retained process streams."""
 
     component = next(item for item in summary["components"] if item["id"] == "fault-injection")
-    receipt_keys = ("huge_branch_receipt", "os_publication_receipt", "metadata_publication_receipt")
+    receipt_keys = ("huge_branch_receipt", "os_publication_receipt",
+        "metadata_publication_receipt", "metadata_publication_receipt")
     if len(component["checks"]) != len(receipt_keys):
         raise HarnessError("native x86 M2 fault-inventory check roster is absent")
     producer = _m2_x86_64_fault_producer()

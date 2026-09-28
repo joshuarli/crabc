@@ -163,7 +163,8 @@
           "void* _mi_malloc_generic"
         ],
         "evidence_check_ids": [
-          "metadata-publication-fault-receiver"
+          "metadata-publication-fault-receiver",
+          "metadata-publication-recovery"
         ]
       }
     ],
@@ -637,7 +638,8 @@
           }
         ],
         "evidence_check_ids": [
-          "metadata-publication-fault-receiver"
+          "metadata-publication-fault-receiver",
+          "metadata-publication-recovery"
         ],
         "missing_conditions": [
           "The named source relation is bounded; it does not promote an unselected receiver."
@@ -656,7 +658,8 @@
           }
         ],
         "evidence_check_ids": [
-          "metadata-publication-fault-receiver"
+          "metadata-publication-fault-receiver",
+          "metadata-publication-recovery"
         ],
         "missing_conditions": [
           "The named source relation is bounded; it does not promote an unselected receiver."
@@ -675,7 +678,8 @@
           }
         ],
         "evidence_check_ids": [
-          "metadata-publication-fault-receiver"
+          "metadata-publication-fault-receiver",
+          "metadata-publication-recovery"
         ],
         "missing_conditions": [
           "The named source relation is bounded; it does not promote an unselected receiver."
@@ -710,10 +714,16 @@
         "kind": "c-rust-fault-seam-inventory",
         "target": "meta::tests::emit_metadata_publication_fault_receiver_trace",
         "expected_passed_test_count": 1
+      },
+      {
+        "id": "metadata-publication-recovery",
+        "kind": "c-rust-fault-seam-inventory",
+        "target": "meta::tests::emit_metadata_publication_fault_receiver_trace",
+        "expected_passed_test_count": 1
       }
     ],
     "remaining_conditions": [
-      "The ordinary OS claim/publication receiver compares a repeated faulted request and a recovered request per case; the metadata-publication receiver remains single-request because a multi-request sequence exposes lazy PageMap submap mappings missing from subprocess reserved/committed statistics (pinned C `_mi_os_zalloc` counts them), which the vm-primitives statistics owner must supply. Both receivers are required independently of hardware.",
+      "The ordinary OS claim/publication and metadata-publication receivers compare faulted requests with recovered requests. The metadata receiver charges each actual lazy PageMap submap by its exact 64 KiB reserved/committed extent; cross-process virtual-address placement can change the number of such submaps. Unselected metadata callers remain unqualified.",
       "The selected node-62 fault diagnostic relation is source-bound and private; general diagnostic receivers, FILE parity, and recursive output remain unqualified.",
       "Ambient hardware huge-page success, physical NUMA placement, unselected callers, and general callback/statistics owners remain unqualified.",
       "The fault-injection component and M2 remain partial."

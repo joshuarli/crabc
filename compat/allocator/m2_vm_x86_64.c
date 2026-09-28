@@ -3923,6 +3923,26 @@ static bool capture_aligned_overmap_matrix_child(
 }
 
 #if defined(CRABC_M2_METADATA_PUBLICATION_PROFILE)
+typedef struct metadata_publication_record_s {
+  bool facts[8];
+  int64_t committed_delta;
+  int64_t retry_reserved_delta;
+  int64_t retry_committed_delta;
+  int64_t retry_reserved_total_delta;
+  int64_t retry_committed_total_delta;
+  size_t retry_lazy_submaps;
+} metadata_publication_record_t;
+
+static size_t metadata_publication_lazy_submaps(void) {
+  mi_page_map_t* const pmap = _mi_page_map();
+  const size_t count = mi_atomic_load_acquire(&pmap->committed_count);
+  size_t published = 0;
+  for (size_t index = 1; index < count; index++) {
+    published += mi_atomic_load_ptr_acquire(mi_page_t*, &pmap->submaps[index]) != NULL;
+  }
+  return published;
+}
+
 /* One COW child per case: a live 64-byte detached-Theap block, then a 1 KiB
  * `_mi_meta_zalloc` whose fresh page meets a persistently failing `mmap`
  * (case 1) or `mprotect` commit (cases 2-3). Cases 1-2 take the source OS
@@ -3946,6 +3966,9 @@ static int run_metadata_publication_child(int descriptor) {
   mi_page_t* const warm_page = _mi_ptr_page(warm);
   const int64_t reserved = subproc->stats.reserved.current;
   const int64_t committed = subproc->stats.committed.current;
+  const int64_t reserved_total = subproc->stats.reserved.total;
+  const int64_t committed_total = subproc->stats.committed.total;
+  const size_t lazy_before = metadata_publication_lazy_submaps();
   memset(&metadata_publication_probe, 0, sizeof(metadata_publication_probe));
   metadata_publication_probe.fail_mmap = metadata_publication_case == 1;
   metadata_publication_probe.fail_mprotect = metadata_publication_case != 1;
@@ -3977,35 +4000,55 @@ static int run_metadata_publication_child(int descriptor) {
   mi_page_t* const retry_page = (retry == NULL ? NULL : _mi_safe_ptr_page(retry));
   facts[7] = retry_page != NULL && retry_page != warm_page
       && _mi_meta_is_meta_page(subproc, retry_page);
+  const int64_t retry_reserved_delta = subproc->stats.reserved.current - reserved;
+  const int64_t retry_committed_delta = subproc->stats.committed.current - committed;
+  const int64_t retry_reserved_total_delta = subproc->stats.reserved.total - reserved_total;
+  const int64_t retry_committed_total_delta = subproc->stats.committed.total - committed_total;
+  const size_t retry_lazy_submaps = metadata_publication_lazy_submaps() - lazy_before;
   if (retry != NULL) _mi_meta_free(subproc, retry, retry_memid);
   _mi_meta_free(subproc, warm, warm_memid);
   if (!facts[0] && failed != NULL) _mi_meta_free(subproc, failed, failed_memid);
-  struct { bool facts[8]; int64_t committed_delta; } record;
+  metadata_publication_record_t record;
   memcpy(record.facts, facts, sizeof(facts));
   record.committed_delta = committed_delta;
+  record.retry_reserved_delta = retry_reserved_delta;
+  record.retry_committed_delta = retry_committed_delta;
+  record.retry_reserved_total_delta = retry_reserved_total_delta;
+  record.retry_committed_total_delta = retry_committed_total_delta;
+  record.retry_lazy_submaps = retry_lazy_submaps;
   return write(descriptor, &record, sizeof(record)) == sizeof(record) ? 0 : 40;
 }
 
 int main(void) {
   const char* fields[] = {"request_failed", "no_capability", "fault_reached", "live_owner_intact",
       "reserved_restored", "committed_recorded", "retry_zeroed_malloc", "retry_page_published"};
-  int64_t deltas[3] = {0};
+  metadata_publication_record_t records[3] = {0};
   puts("CRABC_MI_M2_METADATA_PUBLICATION_TRACE_BEGIN");
   for (unsigned selected = 1; selected <= 3; selected++) {
-    struct { bool facts[8]; int64_t committed_delta; } record;
+    metadata_publication_record_t record;
     memset(&record, 0, sizeof(record));
     metadata_publication_case = selected;
     if (!capture_large_page_retry_child("metadata publication child",
         run_metadata_publication_child, &record, sizeof(record))) return 1;
     for (size_t i = 0; i < 8; i++)
       printf("metadata_publication.%u.%s=%u\n", selected, fields[i], (unsigned)record.facts[i]);
-    deltas[selected - 1] = record.committed_delta;
+    records[selected - 1] = record;
   }
   puts("CRABC_MI_M2_METADATA_PUBLICATION_TRACE_END");
   puts("CRABC_MI_M2_METADATA_PUBLICATION_DELTAS_BEGIN");
   for (unsigned selected = 1; selected <= 3; selected++)
-    printf("metadata_publication.%u.committed_delta=%lld\n", selected, (long long)deltas[selected - 1]);
+    printf("metadata_publication.%u.committed_delta=%lld\n", selected, (long long)records[selected - 1].committed_delta);
   puts("CRABC_MI_M2_METADATA_PUBLICATION_DELTAS_END");
+  puts("CRABC_MI_M2_METADATA_PUBLICATION_RECOVERY_BEGIN");
+  for (unsigned selected = 1; selected <= 3; selected++) {
+    const metadata_publication_record_t* const record = &records[selected - 1];
+    printf("metadata_recovery.%u.reserved_current_delta=%lld\n", selected, (long long)record->retry_reserved_delta);
+    printf("metadata_recovery.%u.committed_current_delta=%lld\n", selected, (long long)record->retry_committed_delta);
+    printf("metadata_recovery.%u.reserved_total_delta=%lld\n", selected, (long long)record->retry_reserved_total_delta);
+    printf("metadata_recovery.%u.committed_total_delta=%lld\n", selected, (long long)record->retry_committed_total_delta);
+    printf("metadata_recovery.%u.lazy_submaps=%zu\n", selected, record->retry_lazy_submaps);
+  }
+  puts("CRABC_MI_M2_METADATA_PUBLICATION_RECOVERY_END");
   return 0;
 }
 #elif defined(CRABC_M2_OS_PUBLICATION_PROFILE)

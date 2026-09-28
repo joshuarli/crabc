@@ -181,10 +181,25 @@ METADATA_PUBLICATION_BEGIN = "CRABC_MI_M2_METADATA_PUBLICATION_TRACE_BEGIN"
 METADATA_PUBLICATION_END = "CRABC_MI_M2_METADATA_PUBLICATION_TRACE_END"
 METADATA_PUBLICATION_DELTAS_BEGIN = "CRABC_MI_M2_METADATA_PUBLICATION_DELTAS_BEGIN"
 METADATA_PUBLICATION_DELTAS_END = "CRABC_MI_M2_METADATA_PUBLICATION_DELTAS_END"
+METADATA_RECOVERY_BEGIN = "CRABC_MI_M2_METADATA_PUBLICATION_RECOVERY_BEGIN"
+METADATA_RECOVERY_END = "CRABC_MI_M2_METADATA_PUBLICATION_RECOVERY_END"
+METADATA_RECOVERY_CHECK_ID = "metadata-publication-recovery"
+METADATA_RECOVERY_SUBMAP_BYTES = 65536
+METADATA_RECOVERY_FIELDS = ("reserved_current_delta", "committed_current_delta",
+    "reserved_total_delta", "committed_total_delta", "lazy_submaps")
+METADATA_RECOVERY_KEYS = tuple(
+    f"metadata_recovery.{selected}.{field}" for selected in range(1, 4)
+    for field in METADATA_RECOVERY_FIELDS
+)
+METADATA_RECOVERY_BASE = (
+    (131072, 65536, 131072, 65536),
+    (131072, -720896, 917504, 65536),
+    (0, -720896, 403439616, 65536),
+)
 # Raw primitive counts are mechanism-specific (C sees each wrapped mmap hint
-# retry; Rust's FaultPlan sees one transition), so only the committed-byte
-# delta, which each failed fresh-page claim changes by its source rollback
-# accounting, is a shared value.
+# retry; Rust's FaultPlan sees one transition). The failure-only relation
+# compares the committed-byte rollback; recovery has its own mapped-submap
+# accounting relation below.
 METADATA_PUBLICATION_DELTA_KEYS = tuple(
     f"metadata_publication.{selected}.committed_delta" for selected in range(1, 4)
 )
@@ -195,15 +210,16 @@ METADATA_PUBLICATION_KEYS = tuple(
                   "retry_page_published")
 )
 # The detached-Theap metadata request meets one persistently unavailable
-# primitive while its fresh page is claimed. Both languages keep their own
-# fault mechanism (C link-wrapped imports, Rust's test-only FaultPlan); the
-# receipt compares only observed ownership and accounting relations.
+# primitive while its fresh page is claimed, then retries after recovery.
+# Both languages keep their own fault mechanism (C link-wrapped imports,
+# Rust's test-only FaultPlan); lazy PageMap mappings are accounted per actual
+# publication because their virtual addresses can differ between processes.
 METADATA_PUBLICATION_BOUNDARY = {
     "source": "src/subproc.c:29-37; src/page.c:1048-1065; src/arena.c:781-869",
     "cases": ["os-map-failure", "os-commit-failure", "arena-commit-failure"],
-    "c_fault": "persistent __wrap_mmap or __wrap_mprotect ENOMEM around one _mi_meta_zalloc",
-    "rust_fault": "FaultPlan::every(Map|Commit) around one MetadataEngine::zalloc",
-    "excluded": "PageMap submap publication (completed PageMap matrix), huge/NUMA hardware, cleanup-release failure (OS publication receiver)",
+    "c_fault": "persistent __wrap_mmap or __wrap_mprotect ENOMEM around one _mi_meta_zalloc, then recovery request",
+    "rust_fault": "FaultPlan::every(Map|Commit) around one MetadataEngine::zalloc, then recovery request",
+    "excluded": "huge/NUMA hardware, cleanup-release failure (OS publication receiver), unselected metadata callers",
 }
 FAULT_PROFILE_DEFINE = "-DCRABC_M2_FAULT_SEAM_INVENTORY_PROFILE=1"
 HUGE_RETRY_HELPER_TEST_DEFINE = "-DCRABC_M2_FAULT_SEAM_RETRY_HELPER_TEST=1"
@@ -429,7 +445,7 @@ FAULT_COMPONENT_UNQUALIFIED_MATRIX = [
     },
 ]
 FAULT_COMPONENT_REMAINING_CONDITIONS = [
-    "The ordinary OS claim/publication receiver compares a repeated faulted request and a recovered request per case; the metadata-publication receiver remains single-request because a multi-request sequence exposes lazy PageMap submap mappings missing from subprocess reserved/committed statistics (pinned C `_mi_os_zalloc` counts them), which the vm-primitives statistics owner must supply. Both receivers are required independently of hardware.",
+    "The ordinary OS claim/publication and metadata-publication receivers compare faulted requests with recovered requests. The metadata receiver charges each actual lazy PageMap submap by its exact 64 KiB reserved/committed extent; cross-process virtual-address placement can change the number of such submaps. Unselected metadata callers remain unqualified.",
     "The selected node-62 fault diagnostic relation is source-bound and private; general diagnostic receivers, FILE parity, and recursive output remain unqualified.",
     "Ambient hardware huge-page success, physical NUMA placement, unselected callers, and general callback/statistics owners remain unqualified.",
     "The fault-injection component and M2 remain partial.",
@@ -534,15 +550,15 @@ SOURCE_ROWS = (
     ),
 )
 
-# The one fault-inventory check that proves each source row's branches.
+# The fault-inventory checks that prove each source row's branches.
 SOURCE_ROW_CHECK_IDS = {
-    "os-aligned-page-publication": OS_PUBLICATION_CHECK_ID,
-    "metadata-page-publication": METADATA_PUBLICATION_CHECK_ID,
+    "os-aligned-page-publication": (OS_PUBLICATION_CHECK_ID,),
+    "metadata-page-publication": (METADATA_PUBLICATION_CHECK_ID, METADATA_RECOVERY_CHECK_ID),
 }
 
 
-def _source_row_check_id(source_row: str) -> str:
-    return SOURCE_ROW_CHECK_IDS.get(source_row, FAULT_COMPONENT_CHECK_ID)
+def _source_row_check_ids(source_row: str) -> list[str]:
+    return list(SOURCE_ROW_CHECK_IDS.get(source_row, (FAULT_COMPONENT_CHECK_ID,)))
 
 
 # This is a finite *admission* domain, not a claim to enumerate Linux errors
@@ -827,6 +843,11 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
         "kind": "c-rust-fault-seam-inventory",
         "target": METADATA_PUBLICATION_TARGET,
         "expected_passed_test_count": 1,
+    }, {
+        "id": METADATA_RECOVERY_CHECK_ID,
+        "kind": "c-rust-fault-seam-inventory",
+        "target": METADATA_PUBLICATION_TARGET,
+        "expected_passed_test_count": 1,
     }]:
         raise EvidenceError("fault inventory M2 check roster changed")
     definitions = component.get("bounded_source_definitions")
@@ -840,7 +861,7 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
         if (
             not isinstance(definition, Mapping)
             or set(definition) != {"evidence_check_ids", "id", "required_definitions", "source_anchor"}
-            or definition.get("evidence_check_ids") != [_source_row_check_id(row.identifier)]
+            or definition.get("evidence_check_ids") != _source_row_check_ids(row.identifier)
             or definition.get("required_definitions") != list(required_definitions)
             or definition.get("source_anchor") != anchor
         ):
@@ -859,7 +880,7 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
             or set(branch) != {"disposition", "evidence_check_ids", "id", "missing_conditions", "source_anchors", "source_scope"}
             or branch.get("disposition") != "admitted-current-source-c-rust-relation"
             or branch.get("source_scope") != row.c_branch
-            or branch.get("evidence_check_ids") != [_source_row_check_id(row.source_row)]
+            or branch.get("evidence_check_ids") != _source_row_check_ids(row.source_row)
             or branch.get("source_anchors") != [anchors_by_source_row[row.source_row]]
             or branch.get("missing_conditions") != [BRANCH_OPEN_CONDITION]
         ):
@@ -2537,6 +2558,34 @@ def _parse_metadata_publication_deltas(output: str, *, source: str) -> dict[str,
     return values
 
 
+def _parse_metadata_recovery(output: str, *, source: str) -> tuple[tuple[int, ...], ...]:
+    if output.count(METADATA_RECOVERY_BEGIN) != 1 or output.count(METADATA_RECOVERY_END) != 1:
+        raise EvidenceError(f"{source} metadata recovery markers changed")
+    start = output.index(METADATA_RECOVERY_BEGIN) + len(METADATA_RECOVERY_BEGIN)
+    finish = output.index(METADATA_RECOVERY_END)
+    if finish <= start:
+        raise EvidenceError(f"{source} metadata recovery markers are reversed")
+    values: dict[str, int] = {}
+    for line in output[start:finish].strip().splitlines():
+        if line.count("=") != 1:
+            raise EvidenceError(f"{source} metadata recovery observation is malformed: {line}")
+        key, raw = line.split("=", 1)
+        if key in values or key not in METADATA_RECOVERY_KEYS or not re.fullmatch(r"-?[0-9]+", raw):
+            raise EvidenceError(f"{source} metadata recovery observation changed: {line}")
+        values[key] = int(raw)
+    if tuple(values) != METADATA_RECOVERY_KEYS:
+        raise EvidenceError(f"{source} metadata recovery roster changed")
+    rows = tuple(tuple(values[f"metadata_recovery.{selected}.{field}"]
+        for field in METADATA_RECOVERY_FIELDS) for selected in range(1, 4))
+    normalized = tuple(tuple(row[index] - row[4] * METADATA_RECOVERY_SUBMAP_BYTES
+        for index in range(4)) for row in rows)
+    if normalized != METADATA_RECOVERY_BASE or not any(row[4] > 0 for row in rows):
+        raise EvidenceError(f"{source} lazy PageMap submap statistics changed: {rows}")
+    if any(row[4] < 0 for row in rows):
+        raise EvidenceError(f"{source} lazy PageMap submap ownership changed: {rows}")
+    return rows
+
+
 def validate_metadata_publication_report(report: Mapping[str, Any]) -> dict[str, Any]:
     """Replay the metadata-publication receiver from retained C/Rust streams."""
     expected = {"schema", "format", "profile", "status", "boundary", "upstream",
@@ -2576,12 +2625,18 @@ def validate_metadata_publication_report(report: Mapping[str, Any]) -> dict[str,
         or report.get("rust_source_files") != _metadata_publication_rust_source_files()):
         raise ValueError("metadata publication Rust receiver changed")
     deltas = []
+    recovery = []
     for language, record in (("C", c_run), ("Rust", rust_run)):
         _parse_fixed_trace(_combined_output(record), begin=METADATA_PUBLICATION_BEGIN,
             end=METADATA_PUBLICATION_END, keys=METADATA_PUBLICATION_KEYS, source=language)
         deltas.append(_parse_metadata_publication_deltas(_combined_output(record), source=language))
+        recovery.append(_parse_metadata_recovery(_combined_output(record), source=language))
+        if "mimalloc: warning:" in record["stderr"]:
+            raise ValueError(f"{language} disabled-warning metadata recovery emitted a warning")
     if deltas[0] != deltas[1]:
         raise ValueError(f"metadata publication committed accounting differs: C {deltas[0]} Rust {deltas[1]}")
+    if tuple(row[4] for row in recovery[0])[1:] != tuple(row[4] for row in recovery[1])[1:]:
+        raise ValueError("metadata recovery stable-case lazy ownership differs")
     before = runner.validate_runtime_ticket_zero_soak_source_state(report.get("source_state_before"), "metadata receiver before")
     after = runner.validate_runtime_ticket_zero_soak_source_state(report.get("source_state_after"), "metadata receiver after")
     if not before["worktree_clean"] or before != after:
@@ -2825,7 +2880,8 @@ def main() -> int:
         if arguments.metadata_publication_receiver:
             run_metadata_publication_receiver(offline=arguments.offline)
             print("allocator x86-64 fault seam inventory: metadata publication C/Rust receiver PASS "
-                  f"({len(METADATA_PUBLICATION_KEYS)} relations)")
+                  f"({len(METADATA_PUBLICATION_KEYS)} publication facts, "
+                  f"{len(METADATA_RECOVERY_KEYS)} recovery observations)")
             return 0
         if arguments.compile_only:
             compile_huge_branch_profile(offline=arguments.offline)
