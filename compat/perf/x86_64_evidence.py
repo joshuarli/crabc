@@ -2682,6 +2682,23 @@ def _verify_cache_topology(checkout: Path, record: object, *, cpu: int, index: i
             f"attempt {index} cache size classifications differ from cache entries")
 
 
+def _verify_governor(record: object, *, index: int) -> None:
+    """A readable selected governor must occur in the available sysfs roster."""
+
+    require(isinstance(record, dict)
+            and set(record) == {"scaling_governor", "scaling_available_governors"},
+            f"attempt {index} governor availability differs")
+    selected = record["scaling_governor"]
+    available = record["scaling_available_governors"]
+    require(all(value is None or (isinstance(value, str) and value == value.strip())
+                for value in (selected, available))
+            and (not selected or not any(character.isspace() for character in selected)),
+            f"attempt {index} governor observation differs from sysfs text")
+    if selected and available:
+        require(selected in available.split(),
+                f"attempt {index} selected governor is absent from available governors")
+
+
 def _verify_attempt_tools(checkout: Path, attempt: Mapping[str, Any], product: Mapping[str, Any], index: int) -> None:
     tools = attempt["tools"]
     expected = {"before", "after", "host_cpuinfo_diagnostics", "compile_policy", "link_policy"}
@@ -2745,7 +2762,7 @@ def _verify_attempt_tools(checkout: Path, attempt: Mapping[str, Any], product: M
         type(peer_cpu) is int and peer_cpu in allowed_affinity and peer_cpu != host["benchmark_cpu"]
     ), f"attempt {index} peer CPU differs from the original allowed affinity")
     _verify_cache_topology(checkout, host["cache_topology"], cpu=host["benchmark_cpu"], index=index)
-    require(isinstance(host["governor"], dict) and set(host["governor"]) == {"scaling_governor", "scaling_available_governors"}, f"attempt {index} governor availability differs")
+    _verify_governor(host["governor"], index=index)
     require(isinstance(host["environment"], dict), f"attempt {index} environment record is absent")
     require(host["environment"].get("CRABC_PERF_CONTAINER_POLICY") == PERFORMANCE_CONTAINER_POLICY, f"attempt {index} container authority differs")
     require(isinstance(host["docker_image_id"], str) and re.fullmatch(r"sha256:[0-9a-f]{64}", host["docker_image_id"]) is not None

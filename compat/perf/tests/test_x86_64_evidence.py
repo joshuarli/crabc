@@ -942,6 +942,36 @@ class CollectorCompositionTests(unittest.TestCase):
                 self.assertEqual(list(checked.blockers), release["blockers"])
 
                 original_last = json.loads(attempt_paths[-1].read_text(encoding="utf-8"))
+                contradictory_governor = copy.deepcopy(original_last)
+                contradictory_governor["tools"]["before"]["host"]["governor"]["scaling_governor"] = "powersave"
+                contradictory_governor["tools"]["after"] = copy.deepcopy(contradictory_governor["tools"]["before"])
+                attempt_paths[-1].write_text(json.dumps(contradictory_governor), encoding="utf-8")
+                governor_rehashed = {**report, "uncontended_host": host, "scorecard": scorecard, "release": release,
+                                     "attempts": [*report["attempts"][:-1],
+                                                  {"index": 3, "report": identity(attempt_paths[-1])}]}
+                report_path.write_text(json.dumps(governor_rehashed), encoding="utf-8")
+                with self.assertRaisesRegex(evidence.EvidenceError, "governor is absent from available governors"):
+                    evidence.validate_collector_report(ROOT, report_path)
+                for selected, available in ((None, None), ("performance", None), (None, "performance powersave")):
+                    with self.subTest(governor=(selected, available)):
+                        unavailable = copy.deepcopy(original_last)
+                        unavailable["tools"]["before"]["host"]["governor"] = {
+                            "scaling_governor": selected, "scaling_available_governors": available,
+                        }
+                        unavailable["tools"]["after"] = copy.deepcopy(unavailable["tools"]["before"])
+                        attempt_paths[-1].write_text(json.dumps(unavailable), encoding="utf-8")
+                        governor_rehashed["attempts"][-1]["report"] = identity(attempt_paths[-1])
+                        report_path.write_text(json.dumps(governor_rehashed), encoding="utf-8")
+                        self.assertTrue(evidence.validate_collector_report(ROOT, report_path).evidence_valid)
+                malformed = copy.deepcopy(original_last)
+                malformed["tools"]["before"]["host"]["governor"]["scaling_governor"] = True
+                malformed["tools"]["after"] = copy.deepcopy(malformed["tools"]["before"])
+                attempt_paths[-1].write_text(json.dumps(malformed), encoding="utf-8")
+                governor_rehashed["attempts"][-1]["report"] = identity(attempt_paths[-1])
+                report_path.write_text(json.dumps(governor_rehashed), encoding="utf-8")
+                with self.assertRaisesRegex(evidence.EvidenceError, "governor observation differs from sysfs text"):
+                    evidence.validate_collector_report(ROOT, report_path)
+
                 for change, expected in (("cpu", "cache topology CPU differs"),
                                          ("shared", "cache shared CPU list differs"),
                                          ("classification", "cache size classifications differ")):
