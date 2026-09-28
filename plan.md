@@ -36,7 +36,9 @@ are not transferable passes for a different revision.
   runtime, native-facade and allocator M9 inputs do not exist yet. The pinned
   standalone unwinder now returns a phase error for faulting CFI
   register or expression memory reads; a guarded source-built regression and
-  valid cleanup control pass, while installed-product unwind proof remains open.
+  valid cleanup control pass. A forked child fixture confirms that denied
+  self-memory reads return a phase error without a fault while valid child
+  unwinding reaches end of stack; installed-product unwind proof remains open.
   Allocator M5 remains open. C mimalloc remains the selected
   backend; allocator M2–M11 remain open. A frozen M5 source run at `e0b9ecbc7`
   passed seven gates, failed its churn and upstream stress gates on one seed-2
@@ -59,7 +61,10 @@ are not transferable passes for a different revision.
   metadata, bitmap, PageMap, and allocator-recursion components; VM primitives,
   arenas, initialization, and fault injection remain partial. Its direct fresh
   OS page-area metadata-commit receiver matches pinned C for both successful
-  and failed cleanup, including warning timing and accounting. Every freestanding-C runner builds `libc.a` through
+  and failed cleanup, including warning timing and accounting. A fresh OS
+  singleton publication and terminal-release receiver matches 107 C/Rust
+  relations for mapping extent, PageMap state, counters, and exact unmap.
+  Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). On an idle host the development engine harness
   measures the Rust local path at about 0.33× pinned C single-thread with
