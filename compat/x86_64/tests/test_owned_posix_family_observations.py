@@ -4,6 +4,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
@@ -135,6 +136,40 @@ class ObservationsTests(unittest.TestCase):
             with self.subTest(invalid=invalid):
                 with self.assertRaises(observations.ObservationError):
                     observations._timer_unit_transcript(observations.ROOT, 'tls-reset-tests', {'stdout': invalid, 'stderr': b''})
+
+    def test_timer_oracle_failure_once_rejects_a_rehashed_error_transcript(self):
+        layout = observations.LAYOUTS['posix-timers']
+        self.fixture('posix-timers')
+        for suffix, data in (('.stdout', b'behavior\n'), (layout.stderr_suffix, b''),
+                             (layout.status_suffix, b'0\n')):
+            (self.leaf / ('oracle-dynamic' + suffix)).write_bytes(data)
+        for mode in observations.MODES:
+            stem = observations._stem('posix-timers', layout, mode, 'failure')
+            for suffix, data in (('.stdout', b'creation failure reclaims detached workers under bounded address space\n'),
+                                 (layout.stderr_suffix, b''), (layout.status_suffix, b'0\n')):
+                (self.leaf / (stem + suffix)).write_bytes(data)
+        for stem in ('tls-reset-tests', 'tls-import-tests'):
+            for suffix, data in (('.stdout', b''), (layout.stderr_suffix, b''),
+                                 (layout.status_suffix, b'0\n')):
+                (self.leaf / (stem + suffix)).write_bytes(data)
+        for attempt, status in ((1, b'0\n'), (2, b'-9\n')):
+            stem = f'oracle-failure-{attempt}'
+            for suffix, data in (('.stdout', b''), ('.stderr', b''), ('.status', status)):
+                (self.leaf / (stem + suffix)).write_bytes(data)
+        (self.leaf / 'oracle-failure-2.json').write_text(
+            '{"pid": 1234, "tasks": {"1234": {"status": "sleeping", '
+            '"wchan": "futex_wait", "syscall": "202"}}}\n')
+
+        with patch.object(observations, '_timer_unit_transcript'):
+            result = observations.collect('posix-timers', self.leaf, static_required=True)
+            self.assertEqual(set(result['supplemental']['oracle-race-observations']), {'1', '2'})
+            (self.leaf / 'oracle-failure-1.stderr').write_bytes(b'failed timer_create check\n')
+            with self.assertRaisesRegex(observations.ObservationError, 'timer oracle race transcript'):
+                observations.collect('posix-timers', self.leaf, static_required=True)
+            (self.leaf / 'oracle-failure-1.stderr').write_bytes(b'')
+            (self.leaf / 'oracle-failure-2.stdout').write_bytes(b'unexpected output\n')
+            with self.assertRaisesRegex(observations.ObservationError, 'timer oracle race transcript'):
+                observations.collect('posix-timers', self.leaf, static_required=True)
 
     def test_static_fork_requires_both_nested_roles_and_exact_modes(self):
         source_root = self.leaf / 'source-root'

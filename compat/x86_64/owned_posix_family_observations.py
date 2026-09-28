@@ -251,6 +251,8 @@ def _timers(leaf, root, layout, modes, expected):
         raw, record = _observation(leaf, stem, race_layout, expected, success=False)
         if raw['status'] not in (b'0\n', b'-9\n'):
             raise ObservationError('timer oracle race has unexpected terminal status')
+        if raw['stdout'] or raw['stderr']:
+            raise ObservationError('timer oracle race transcript differs')
         proc = leaf / (stem + '.json')
         if raw['status'] == b'-9\n':
             _, record['proc'] = _file(proc, leaf)
