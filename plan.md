@@ -147,7 +147,7 @@ are not transferable passes for a different revision.
   upstream `test-api.c` through the native adapter. M6 now source-differentiates
   quiescent non-main and isolated process-main Heap block visitation across 138
   adapter keys, including all five exported Heap membership and region queries
-  and the quiescent page-utilization query; fourteen
+  and the quiescent page-utilization query; fifteen
   runnable evidence rows pass, including fresh-process Heap membership
   regressions and a ten-case source-built main-Heap population differential
   across one to 1000 non-main Heaps, direct/fork execution, and reserved-arena
@@ -164,8 +164,10 @@ are not transferable passes for a different revision.
   rows match pinned C with freed-page omission.
   Mixed process-main abandoned regular and OS pages now preserve source
   traversal order and selection across ten pinned-C callback keys.
+  Public default-Theap switching and direct allocation now match 32 pinned-C
+  main, worker, and fork observations while retaining same-thread TLD ownership.
   All ten required gates
-  remain blocked by 11 named missing API and lifetime evidence entries;
+  remain blocked by 10 named missing API and lifetime evidence entries;
   accumulated mixed-workload main-Heap page-population parity remains unproved.
   Integrated products are
   compared against an evidence-only pinned v3.5.0 C product (the selected C
