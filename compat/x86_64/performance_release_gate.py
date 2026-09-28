@@ -265,6 +265,19 @@ def allocator_metric_unmet(label: str, metrics: Mapping[str, Any]) -> list[str]:
     return unmet
 
 
+def _allocator_samples_digest(report: Mapping[str, Any]) -> str:
+    """Identify the timed and held-memory observations independent of report metadata."""
+    samples = {
+        group: {
+            name: {lane: row["lanes"][lane]["samples"] for lane in ("pinned_c", "rust_engine")}
+            for name, row in report[group].items()
+        }
+        for group in ("rows", "memory_rows")
+    }
+    encoded = json.dumps(samples, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 def allocator_conditions(reports: Sequence[str]) -> list[dict[str, Any]]:
     count_unmet = []
     if len(reports) < ALLOCATOR_MINIMUM_REPORTS:
@@ -272,6 +285,7 @@ def allocator_conditions(reports: Sequence[str]) -> list[dict[str, Any]]:
     if len(set(reports)) != len(reports):
         count_unmet.append("an allocator report is supplied more than once")
     identities: list[object] = []
+    measurements: dict[str, str] = {}
 
     def read() -> dict[str, Any]:
         unmet = list(count_unmet)
@@ -284,11 +298,16 @@ def allocator_conditions(reports: Sequence[str]) -> list[dict[str, Any]]:
         for report in reports:
             try:
                 validated = reader(ROOT, ROOT / report)
+                digest = _allocator_samples_digest(_read_json(report))
             except Exception as error:  # noqa: BLE001 - the owner's refusal is the unmet detail
                 unmet.append(f"{report}: {type(error).__name__}: {error}")
                 continue
             identities.append(validated.get("identity"))
             unmet.extend(allocator_metric_unmet(report, _rows(validated.get("metrics"))))
+            if digest in measurements:
+                unmet.append(f"{report} and {measurements[digest]} contain the same raw measurements")
+            else:
+                measurements[digest] = report
         if len(identities) == len(reports) and (not identities[0] or any(item != identities[0] for item in identities)):
             unmet.append("allocator reports do not agree on one source/configuration/host identity")
         return _condition("allocator-m9-reports", unmet,

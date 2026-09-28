@@ -148,6 +148,10 @@ class ReceiptTests(unittest.TestCase):
         self.allocator = [self.write(f"allocator-{index}.json", {
             "index": index, "uncontended_host": HOST,
             "provenance": {"git": {"head": SOURCE_REVISION}, "host": HOST_IDENTITY},
+            "rows": {"startup": {"lanes": {"pinned_c": {"samples": [index]},
+                                              "rust_engine": {"samples": [index]}}}},
+            "memory_rows": {"live": {"lanes": {"pinned_c": {"samples": [index]},
+                                                   "rust_engine": {"samples": [index]}}}},
         })
                           for index in range(3)]
         patcher = patch.object(gate, "_module", side_effect=self.module)
@@ -229,7 +233,9 @@ class ReceiptTests(unittest.TestCase):
         self.write("collector.json", {})
         self.write("native.json", {"mode": "full", "status": "complete-evidence",
                                    "uncontended_host": {"status": "uncontended", "evidence": {}}})
-        self.write("allocator-2.json", {"index": 2, "uncontended_host": {"status": "loaded", "evidence": {"x": 1}}})
+        allocator = json.loads(self.allocator[2].read_text(encoding="utf-8"))
+        allocator["uncontended_host"] = {"status": "loaded", "evidence": {"x": 1}}
+        self.write("allocator-2.json", allocator)
         receipt = self.receipt()
         self.assertEqual(receipt["unmet"], [
             "runtime-c-uncontended-host", "native-facade-uncontended-host", "allocator-m9-uncontended-host"])
@@ -275,6 +281,18 @@ class ReceiptTests(unittest.TestCase):
                 with self.assertRaisesRegex(gate.GateInputError, "performance-evidence-identity"):
                     gate.validate_receipt(ROOT, path)
                 self.identities = [{"source": "source-seal", "host": HOST_IDENTITY}] * 3
+
+    def test_rehashed_allocator_reports_cannot_reuse_one_raw_measurement(self):
+        original = json.loads(self.allocator[0].read_text(encoding="utf-8"))
+        for path in self.allocator[1:]:
+            report = json.loads(path.read_text(encoding="utf-8"))
+            report["rows"] = original["rows"]
+            report["memory_rows"] = original["memory_rows"]
+            path.write_text(json.dumps(report), encoding="utf-8")
+        receipt = self.receipt()
+        self.assertFalse(receipt["passed"], receipt)
+        self.assertTrue(any("same raw measurements" in detail
+                            for detail in self.details(receipt, "allocator-m9-reports")))
 
     def test_inputs_and_outputs_stay_inside_the_checkout(self):
         with self.assertRaisesRegex(gate.GateInputError, "below this checkout"):
