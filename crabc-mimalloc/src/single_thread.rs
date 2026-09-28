@@ -38447,25 +38447,24 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         self.session.theap().record_page_search(search_count);
 
         if let Some(candidate) = NonNull::new(candidate) {
-            let immediate = match self.page_make_immediate(candidate) {
-                Ok(true) => true,
-                Err(error) if Self::direct_page_commit_mapping_miss(error) => false,
+            match self.page_make_immediate(candidate) {
+                Ok(true) => {
+                    let queue = self
+                        .session
+                        .queue_mut(bin)
+                        .ok_or(GenericPathError::Lifecycle)? as *mut _;
+                    // SAFETY: the candidate remains a member of this exclusively
+                    // owned regular queue; moving it changes no page-count state.
+                    unsafe { page_queue_move_to_front_metadata(&mut *queue, candidate.as_ptr()) };
+                    self.update_direct_cache(bin);
+                    // SAFETY: choosing this valid live candidate mirrors the source
+                    // post-search owner-only retirement reset without borrowing Page.
+                    unsafe { Page::set_retire_expire_at(candidate, 0) };
+                    return Ok(Some(candidate));
+                }
+                Err(error) if Self::direct_page_commit_mapping_miss(error) => {}
                 Ok(false) => return Err(GenericPathError::Lifecycle),
                 Err(error) => return Err(error),
-            };
-            if immediate {
-            let queue = self
-                .session
-                .queue_mut(bin)
-                .ok_or(GenericPathError::Lifecycle)? as *mut _;
-            // SAFETY: the candidate remains a member of this exclusively
-            // owned regular queue; moving it changes no page-count state.
-            unsafe { page_queue_move_to_front_metadata(&mut *queue, candidate.as_ptr()) };
-            self.update_direct_cache(bin);
-            // SAFETY: choosing this valid live candidate mirrors the source
-            // post-search owner-only retirement reset without borrowing Page.
-            unsafe { Page::set_retire_expire_at(candidate, 0) };
-            return Ok(Some(candidate));
             }
         }
 
