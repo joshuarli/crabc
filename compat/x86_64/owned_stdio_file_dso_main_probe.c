@@ -6,10 +6,12 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <locale.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <wchar.h>
 #include "owned_stdio_file_dso_probe.h"
 
 static ssize_t cookie_read(void *opaque, char *buffer, size_t count)
@@ -132,6 +134,48 @@ static int reverse_cookie_dso_roundtrip(void)
     return 0;
 }
 
+static int wide_dso_roundtrip(const char *path)
+{
+    static const unsigned char expected[] = {0xe2, 0x82, 0xac};
+    unsigned char observed[4];
+    FILE *stream;
+    int descriptor, reader, count, result;
+
+    if (setlocale(LC_CTYPE, "C.UTF-8") == NULL)
+        return 1;
+    stream = fopen(path, "w+");
+    if (stream == NULL || fwide(stream, 0) != 0)
+        return 2;
+    descriptor = fileno(stream);
+    if (descriptor < 0)
+        return 3;
+    errno = EDOM;
+    result = crabc_file_dso_write_wide(stream, &errno);
+    if (result != 0)
+        return 10 + result;
+    if (errno != ERANGE || fwide(stream, 0) <= 0)
+        return 4;
+    if (fseek(stream, 0, SEEK_SET) != 0 || fwide(stream, 0) <= 0 ||
+        fgetwc(stream) != 0x20ac || fgetwc(stream) != WEOF ||
+        !feof(stream) || ferror(stream) != 0)
+        return 5;
+    if (fclose(stream) != 0)
+        return 6;
+    errno = 0;
+    if (fcntl(descriptor, F_GETFD) != -1 || errno != EBADF)
+        return 7;
+    reader = open(path, O_RDONLY);
+    if (reader < 0)
+        return 8;
+    count = read(reader, observed, sizeof(observed));
+    if (close(reader) != 0 || count != sizeof(expected) ||
+        memcmp(observed, expected, sizeof(expected)) != 0)
+        return 9;
+    if (unlink(path) != 0)
+        return 20;
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     static const char expected[] = "buffered!";
@@ -178,7 +222,10 @@ int main(int argc, char **argv)
     result = reverse_cookie_dso_roundtrip();
     if (result != 0)
         return 80 + result;
-    if (write(STDOUT_FILENO, "stdio-file-dso-both-ways-ok\n", 28) != 28)
+    result = wide_dso_roundtrip(argv[1]);
+    if (result != 0)
+        return 100 + result;
+    if (write(STDOUT_FILENO, "stdio-file-dso-wide-ok\n", 23) != 23)
         return 11;
     return 0;
 }

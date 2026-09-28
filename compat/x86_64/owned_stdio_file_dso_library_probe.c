@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <wchar.h>
 #include "owned_stdio_file_dso_probe.h"
 
 int crabc_file_dso_transfer(FILE *stream, int descriptor, int *main_errno)
@@ -157,4 +158,16 @@ int crabc_cookie_dso_check(enum crabc_cookie_dso_stage stage, int *main_errno)
         return 2;
     errno = EAGAIN;
     return valid ? 0 : 3;
+}
+
+int crabc_file_dso_write_wide(FILE *stream, int *main_errno)
+{
+    if (stream == NULL || main_errno != &errno || errno != EDOM ||
+        fwide(stream, 0) != 0)
+        return 1;
+    if (fwide(stream, 1) <= 0 || fwide(stream, -1) <= 0 ||
+        fputwc((wchar_t)0x20ac, stream) != 0x20ac || fflush(stream) != 0)
+        return 2;
+    errno = ERANGE;
+    return 0;
 }

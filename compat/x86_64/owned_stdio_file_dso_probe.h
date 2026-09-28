@@ -25,4 +25,5 @@ enum crabc_cookie_dso_stage {
 
 FILE *crabc_cookie_dso_open(int *main_errno);
 int crabc_cookie_dso_check(enum crabc_cookie_dso_stage stage, int *main_errno);
+int crabc_file_dso_write_wide(FILE *stream, int *main_errno);
 #endif

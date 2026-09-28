@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Collect and reread main/DSO-owned FILE handoffs in both directions.
+"""Collect and reread byte, cookie and wide FILE handoffs across a DSO.
 
 The executable owns pathname and cookie FILEs used by its DSO. The DSO also
 creates a cookie FILE whose callbacks it owns while main uses and closes it.
-Static links run the same functions in one image as a baseline; only dynamic
-cells prove the cross-image handoffs.
+The DSO sets wide orientation on a main-owned pathname FILE, then main reads
+the same non-ASCII character. Static links run the same functions in one image
+as a baseline; only dynamic cells prove the cross-image handoffs.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ SOURCES = (
     "compat/x86_64/owned_stdio_file_dso_probe.h",
     "compat/x86_64/owned_stdio_file_dso_receipt.py",
 )
-EXPECTED_STDOUT = b"stdio-file-dso-both-ways-ok\n"
+EXPECTED_STDOUT = b"stdio-file-dso-wide-ok\n"
 ORACLE_CC = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 ORACLE_ARCHIVE = Path("/opt/musl-1.2.6/lib/libc.a")
 ORACLE_LIBC = Path("/opt/musl-1.2.6/lib/libc.so")
@@ -56,7 +57,7 @@ ELFS = (
     "oracle-libfile-dso.so", "candidate-libfile-dso.so",
     "oracle-pie", "oracle-non-pie", "candidate-pie", "candidate-non-pie",
 )
-STRACE_FILTER = "trace=open,openat,unlink,unlinkat,close,fcntl,fstat,newfstatat,read,write"
+STRACE_FILTER = "trace=open,openat,unlink,unlinkat,close,fcntl,fstat,newfstatat,read,write,writev,pwrite64"
 
 
 class ReceiptError(ValueError):
@@ -230,7 +231,7 @@ def case_command(work: Path, case: str) -> list[str]:
         target = [str(TOOLS["chroot"]), str(root), interpreter, "/consumer", "/scratch/stream"]
     else:
         target = [str(TOOLS["chroot"]), str(root), "/consumer", "/scratch/stream"]
-    return [str(TOOLS["strace"]), "-f", "-qq", "-s", "256", "-e", STRACE_FILTER,
+    return [str(TOOLS["strace"]), "-f", "-qq", "-x", "-s", "256", "-e", STRACE_FILTER,
             "-o", str(work / "raw" / (case + ".strace")), *target]
 
 
@@ -339,6 +340,8 @@ def audit_runtime(work: Path, dynamic: Path) -> None:
                 f"{case} did not unlink the main-owned pathname")
         require(re.search(r'fcntl\([0-9]+, F_GETFD\)\s+=\s+-1 EBADF', trace) is not None,
                 f"{case} did not observe a closed descriptor")
+        require(re.search(r'(?:write|writev|pwrite64)\([^\n]*"\\xe2\\x82\\xac"[^\n]*\)\s+=\s+3\b', trace) is not None,
+                f"{case} did not write the selected UTF-8 bytes")
         execution = work / "execution-roots" / case
         require(same(tree(execution), expected_root(work, case, dynamic)),
                 f"{case} execution root differs from its selected product")
@@ -374,7 +377,8 @@ def audit_elf(work: Path) -> None:
             require(re.search(r"\(NEEDED\).*\[libc\.so\]", dynamic) is not None,
                     f"{role} libc dependency differs")
             for entry in ("crabc_file_dso_transfer", "crabc_cookie_dso_transfer",
-                          "crabc_cookie_dso_open", "crabc_cookie_dso_check"):
+                          "crabc_cookie_dso_open", "crabc_cookie_dso_check",
+                          "crabc_file_dso_write_wide"):
                 require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+\d+\s+" + entry + r"\b", symbols) is not None,
                         f"{role} lacks {entry}")
         elif dynamic_main:
@@ -382,7 +386,8 @@ def audit_elf(work: Path) -> None:
                     and re.search(r"\(NEEDED\).*\[libc\.so\]", dynamic) is not None,
                     f"{role} DSO/libc dependencies differ")
             for entry in ("crabc_file_dso_transfer", "crabc_cookie_dso_transfer",
-                          "crabc_cookie_dso_open", "crabc_cookie_dso_check"):
+                          "crabc_cookie_dso_open", "crabc_cookie_dso_check",
+                          "crabc_file_dso_write_wide"):
                 require(re.search(r"\bFUNC\s+GLOBAL\s+DEFAULT\s+UND\s+" + entry + r"\b", symbols) is not None,
                         f"{role} does not import {entry}")
         else:
