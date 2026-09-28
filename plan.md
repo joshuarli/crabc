@@ -65,8 +65,9 @@ are not transferable passes for a different revision.
   `m8.startup-constructors`, `m8.errno-c-abi`, and
   `m8.static-dynamic-products` pass on
   source-built native-shadow products with physically reread receipts on their respective source revisions;
-  the corpus covers all 34 frozen cases. Full M8 and the
-  merged-revision qualification remain open. All 57 `native_*` integration targets pass; the earlier attachment
+  the corpus covers all 34 frozen cases. The complete nine-leaf M8 gate
+  passed on clean `8a96f1f8f` with no missing evidence; qualification on the
+  merged revision remains open. All 57 `native_*` integration targets pass; the earlier attachment
   defect was stale. The M7 options/environment gate passes its source-matched
   profile and 660-key C/Rust differential; its default-artifact baseline audit
   also passes. Full M7 remains open. Static
