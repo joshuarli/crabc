@@ -182,6 +182,11 @@ pub(crate) unsafe fn allocate(
                 let block = unsafe { pop_immediate(page, zero) };
                 #[cfg(feature = "mi-stat-1")]
                 theap_ref.record_malloc_normal_allocated(unsafe { page.as_ref() }.block_size());
+                #[cfg(feature = "mi-stat-2")]
+                theap_ref.record_malloc_normal_level_two_allocated(
+                    size,
+                    size_class::bin_for_regular_page_block_size(unsafe { page.as_ref() }.block_size()),
+                );
                 return Some(block);
             }
         }
@@ -228,6 +233,10 @@ pub(crate) unsafe fn allocate(
     };
     #[cfg(feature = "mi-stat-1")]
     theap_ref.record_malloc_normal_allocated(first_ref.block_size());
+    #[cfg(feature = "mi-stat-2")]
+    theap_ref.record_malloc_normal_level_two_allocated(
+        size, size_class::bin_for_regular_page_block_size(first_ref.block_size()),
+    );
     debug_assert!(alignment.is_none_or(|alignment| block.as_ptr().addr() & (alignment - 1) == 0));
     Some(block)
 }

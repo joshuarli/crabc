@@ -157,6 +157,10 @@
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-requested-production-differential"],
       "scope": "Pinned C MI_STAT=2 and the Rust native adapter compare one ordinary 63-byte allocation and one 100-byte request aligned to 1 MiB, whose source allocation uses a 1025-byte internal request and an OS-backed singleton. Public process snapshots before/after owner merges and each free compare requested bytes, distinct allocation bins, normal allocation count, huge-page count, alignment, and the source's retained requested current after free. Other sizes, local fast-path allocation counts, remote bin frees, and metadata-Theap fallback remain outside this fixture."
     },
+    "differential:statistics-fast-allocation": {
+      "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-fast-allocation-differential"],
+      "scope": "Pinned C MI_STAT=2 and the Rust native adapter keep one block live and recycle a second block on warmed 64-byte direct, 8 KiB small-queue, and 32 KiB medium-queue pages. A measured calloc consumes the available head with no new page, search, or extension; public process snapshots compare requested bytes, allocation count, selected bin total/peak/current, owner merge, local free, zeroed contents, and stable page-bin current. Other fast allocation sizes and remote bin frees remain outside this fixture."
+    },
     "differential:visitation-profiles": {
       "command": null,
       "scope": "Pinned-C/Rust area/block visitation traces under the debug-padding, secure, and guarded profiles."
@@ -347,10 +351,11 @@
         "differential:statistics-remote-normal",
         "differential:statistics-aligned-huge",
         "differential:statistics-requested-production",
+        "differential:statistics-fast-allocation",
         "differential:adapter"
       ],
       "blocked_by": [
-        "The selected `MI_STAT=1` binned allocation, reset/merge, free, final-output path, first successful page-extension count and touched bytes, one huge arena-singleton allocation/nonlocal free, one regular-page cross-thread remote free with freeing-Theap merge, and one OS-aligned huge singleton with its count-dependent printed byte unit are proven. Later extension, page release/commit failure, other aligned sizes, uninitialized freeing Theap metadata accounting, and other nonlocal and level-one producers remain unproved. `MI_STAT=2` requested-size, normal allocation-count, and bin transitions are proven for one ordinary allocation and one OS-aligned small-object singleton across owner merges and local frees. Other allocation sizes, local fast-path allocation counts, remote bin frees, and huge/page production remain unproved; synthetic owner merge/reset and final requested-size, nonzero-bin, huge, and page output are proven. The public JSON formatter and caller buffer contract are proven under MI_STAT=0, 1, and 2 with a synthetic image, independent of those production producers."
+        "The selected `MI_STAT=1` binned allocation, reset/merge, free, final-output path, first successful page-extension count and touched bytes, one huge arena-singleton allocation/nonlocal free, one regular-page cross-thread remote free with freeing-Theap merge, and one OS-aligned huge singleton with its count-dependent printed byte unit are proven. Later extension, page release/commit failure, other aligned sizes, uninitialized freeing Theap metadata accounting, and other nonlocal and level-one producers remain unproved. `MI_STAT=2` requested-size, normal allocation-count, and bin transitions are proven for one ordinary allocation, one OS-aligned small-object singleton, and warmed direct/small/medium local fast-path calloc allocations across owner merges and local frees. Other allocation shapes and sizes, remote bin frees, and huge/page production remain unproved; synthetic owner merge/reset and final requested-size, nonzero-bin, huge, and page output are proven. The public JSON formatter and caller buffer contract are proven under MI_STAT=0, 1, and 2 with a synthetic image, independent of those production producers."
       ]
     },
     {

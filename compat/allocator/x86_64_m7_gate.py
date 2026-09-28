@@ -978,6 +978,37 @@ STATISTICS_ALIGNED_HUGE_TRACE_END = "CRABC_MI_M7_STATISTICS_ALIGNED_HUGE_TRACE_E
 STATISTICS_REQUESTED_PRODUCTION_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_requested_production_driver.c"
 STATISTICS_REQUESTED_PRODUCTION_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_REQUESTED_PRODUCTION_TRACE_BEGIN"
 STATISTICS_REQUESTED_PRODUCTION_TRACE_END = "CRABC_MI_M7_STATISTICS_REQUESTED_PRODUCTION_TRACE_END"
+STATISTICS_FAST_ALLOCATION_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_fast_allocation_driver.c"
+STATISTICS_FAST_ALLOCATION_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_FAST_ALLOCATION_TRACE_BEGIN"
+STATISTICS_FAST_ALLOCATION_TRACE_END = "CRABC_MI_M7_STATISTICS_FAST_ALLOCATION_TRACE_END"
+
+
+def require_statistics_fast_allocation(trace: Mapping[str, str], description: str) -> None:
+    """Require three warm-page pops with one source bin lifetime each."""
+
+    cases = {"direct64": (64, 8), "small8192": (8192, 36), "medium32768": (32768, 44)}
+    stages = ("allocated", "merged", "freed", "final_merged")
+    stage_fields = ("requested", "bin", "normal_count", "page_bin_current", "searches", "extensions")
+    case_fields = ("request", "usable", "bin_index", "zero_all", "distinct")
+    expected = {"profile.level", *(f"{case}.{field}" for case in cases for field in case_fields),
+                *(f"{case}.{stage}.{field}" for case in cases for stage in stages for field in stage_fields)}
+    if set(trace) != expected or trace["profile.level"] != "2":
+        raise harness.HarnessError(f"{description} lacks the selected fast allocation image: {trace}")
+    for case, (size, bin_index) in cases.items():
+        if any(trace[f"{case}.{field}"] != str(value) for field, value in (
+            ("request", size), ("usable", size), ("bin_index", bin_index),
+            ("zero_all", 1), ("distinct", 1),
+        )):
+            raise harness.HarnessError(f"{description} lost {case} page geometry or calloc zeroing: {trace}")
+        for stage in stages:
+            live = stage in ("allocated", "merged")
+            expected_stage = {
+                "requested": f"{size},{size},{size}",
+                "bin": f"1,0,{int(live)}", "normal_count": "1",
+                "page_bin_current": "0", "searches": "0", "extensions": "0",
+            }
+            if any(trace[f"{case}.{stage}.{field}"] != value for field, value in expected_stage.items()):
+                raise harness.HarnessError(f"{description} lost {case} {stage} fast-page statistics: {trace}")
 
 
 def require_statistics_requested_production(trace: Mapping[str, str], description: str) -> None:
@@ -1442,7 +1473,7 @@ def run_statistics_json_differential(offline: bool) -> dict[str, Any]:
     return report
 
 
-def run_public_level_one_statistics_differential(
+def run_public_statistics_differential(
     offline: bool, *, subject: str, driver: Path, begin: str, end: str,
     report_name: str, require_complete: Any | None = None, stat_level: int = 1,
 ) -> dict[str, Any]:
@@ -1501,7 +1532,7 @@ def run_public_level_one_statistics_differential(
 
 
 def run_statistics_page_extend_differential(offline: bool) -> dict[str, Any]:
-    return run_public_level_one_statistics_differential(
+    return run_public_statistics_differential(
         offline, subject="page-extend", driver=STATISTICS_PAGE_EXTEND_DRIVER,
         begin=STATISTICS_PAGE_EXTEND_TRACE_BEGIN, end=STATISTICS_PAGE_EXTEND_TRACE_END,
         report_name="statistics-page-extend.json", require_complete=require_statistics_page_extend,
@@ -1509,7 +1540,7 @@ def run_statistics_page_extend_differential(offline: bool) -> dict[str, Any]:
 
 
 def run_statistics_huge_differential(offline: bool) -> dict[str, Any]:
-    return run_public_level_one_statistics_differential(
+    return run_public_statistics_differential(
         offline, subject="huge", driver=STATISTICS_HUGE_DRIVER,
         begin=STATISTICS_HUGE_TRACE_BEGIN, end=STATISTICS_HUGE_TRACE_END,
         report_name="statistics-huge.json", require_complete=require_statistics_huge,
@@ -1517,7 +1548,7 @@ def run_statistics_huge_differential(offline: bool) -> dict[str, Any]:
 
 
 def run_statistics_remote_normal_differential(offline: bool) -> dict[str, Any]:
-    return run_public_level_one_statistics_differential(
+    return run_public_statistics_differential(
         offline, subject="remote-normal", driver=STATISTICS_REMOTE_NORMAL_DRIVER,
         begin=STATISTICS_REMOTE_NORMAL_TRACE_BEGIN, end=STATISTICS_REMOTE_NORMAL_TRACE_END,
         report_name="statistics-remote-normal.json", require_complete=require_statistics_remote_normal,
@@ -1525,7 +1556,7 @@ def run_statistics_remote_normal_differential(offline: bool) -> dict[str, Any]:
 
 
 def run_statistics_aligned_huge_differential(offline: bool) -> dict[str, Any]:
-    return run_public_level_one_statistics_differential(
+    return run_public_statistics_differential(
         offline, subject="aligned-huge", driver=STATISTICS_ALIGNED_HUGE_DRIVER,
         begin=STATISTICS_ALIGNED_HUGE_TRACE_BEGIN, end=STATISTICS_ALIGNED_HUGE_TRACE_END,
         report_name="statistics-aligned-huge.json", require_complete=require_statistics_aligned_huge,
@@ -1533,12 +1564,21 @@ def run_statistics_aligned_huge_differential(offline: bool) -> dict[str, Any]:
 
 
 def run_statistics_requested_production_differential(offline: bool) -> dict[str, Any]:
-    return run_public_level_one_statistics_differential(
+    return run_public_statistics_differential(
         offline, subject="requested-production", driver=STATISTICS_REQUESTED_PRODUCTION_DRIVER,
         begin=STATISTICS_REQUESTED_PRODUCTION_TRACE_BEGIN,
         end=STATISTICS_REQUESTED_PRODUCTION_TRACE_END,
         report_name="statistics-requested-production.json", stat_level=2,
         require_complete=require_statistics_requested_production,
+    )
+
+
+def run_statistics_fast_allocation_differential(offline: bool) -> dict[str, Any]:
+    return run_public_statistics_differential(
+        offline, subject="fast-allocation", driver=STATISTICS_FAST_ALLOCATION_DRIVER,
+        begin=STATISTICS_FAST_ALLOCATION_TRACE_BEGIN, end=STATISTICS_FAST_ALLOCATION_TRACE_END,
+        report_name="statistics-fast-allocation.json", stat_level=2,
+        require_complete=require_statistics_fast_allocation,
     )
 
 
@@ -1688,6 +1728,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="compare pinned-C/Rust OS-aligned huge statistics under MI_STAT=1")
     mode.add_argument("--statistics-requested-production-differential", action="store_true",
         help="compare pinned-C/Rust ordinary and OS-aligned requested-size producers under MI_STAT=2")
+    mode.add_argument("--statistics-fast-allocation-differential", action="store_true",
+        help="compare pinned-C/Rust direct, small, and medium local allocation producers under MI_STAT=2")
     mode.add_argument("--adapter-differential", action="store_true",
         help="run the shared-driver pinned-C/native-adapter M7 differential")
     mode.add_argument("--option-profiles-differential", action="store_true",
@@ -1778,6 +1820,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.statistics_requested_production_differential:
         report = run_statistics_requested_production_differential(arguments.offline)
         print(f"M7 requested-size production differential passed: {len(report['c_trace'])} keys")
+        return 0
+    if arguments.statistics_fast_allocation_differential:
+        report = run_statistics_fast_allocation_differential(arguments.offline)
+        print(f"M7 fast allocation statistics differential passed: {len(report['c_trace'])} keys")
         return 0
     if arguments.adapter_differential:
         report = run_adapter_differential(arguments.offline)

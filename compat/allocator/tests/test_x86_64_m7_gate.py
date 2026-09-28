@@ -58,6 +58,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:startup-page-map-failure",
             "differential:statistics",
             "differential:statistics-aligned-huge",
+            "differential:statistics-fast-allocation",
             "differential:statistics-huge",
             "differential:statistics-json",
             "differential:statistics-level-one",
@@ -374,6 +375,35 @@ class M7GateContractTests(unittest.TestCase):
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_requested_production(
                 {**trace, "final_merged.requested": "1088,1088,0"}, "lost requested current")
+
+    def test_statistics_fast_allocation_requires_source_built_profile(self) -> None:
+        summary = self.validate()
+        statistics = self.gate_record(self.contract, "m7.statistics")
+        self.assertIn("differential:statistics-fast-allocation", statistics["evidence"])
+        self.assertIn("differential:statistics-fast-allocation", summary["runnable_evidence"])
+
+    def test_statistics_fast_allocation_reader_rejects_wrong_page_or_producer(self) -> None:
+        trace = {"profile.level": "2"}
+        for case, size, bin_index in (("direct64", 64, 8), ("small8192", 8192, 36),
+                                      ("medium32768", 32768, 44)):
+            trace.update({f"{case}.request": str(size), f"{case}.usable": str(size),
+                          f"{case}.bin_index": str(bin_index), f"{case}.zero_all": "1",
+                          f"{case}.distinct": "1"})
+            for stage in ("allocated", "merged", "freed", "final_merged"):
+                live = stage in ("allocated", "merged")
+                trace.update({f"{case}.{stage}.requested": f"{size},{size},{size}",
+                              f"{case}.{stage}.bin": f"1,0,{int(live)}",
+                              f"{case}.{stage}.normal_count": "1",
+                              f"{case}.{stage}.page_bin_current": "0",
+                              f"{case}.{stage}.searches": "0",
+                              f"{case}.{stage}.extensions": "0"})
+        gate.require_statistics_fast_allocation(trace, "complete")
+        for field, value in (("direct64.allocated.requested", "0,0,0"),
+                             ("small8192.allocated.searches", "1"),
+                             ("medium32768.freed.bin", "1,0,1"),
+                             ("medium32768.zero_all", "0")):
+            with self.assertRaises(harness.HarnessError):
+                gate.require_statistics_fast_allocation({**trace, field: value}, "changed trace")
 
     def test_statistics_aligned_huge_reader_rejects_lost_units_and_merge(self) -> None:
         row = "  huge      :   578.2 KiB   578.2 KiB   578.2 KiB                          not all freed"
