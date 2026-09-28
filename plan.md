@@ -130,7 +130,11 @@ are not transferable passes for a different revision.
   passed again on clean `ea0c28759` with all 16 evidence entries passing and
   13 physical receipt identities matching a post-exit reread; the same nine
   leaves, 16 entries, and 13 post-exit identities passed again on clean
-  `a5613516a`. Qualification on the final merged revision remains open. All 57 `native_*` integration targets pass; the earlier attachment
+  `a5613516a`. The M8 dispatcher and private readers now pin the immutable
+  core image. A clean `740c5e65c` full run passed seven leaves and failed
+  two that share one native stress seed-3 static-PIE RSS breach; the same
+  binary passed that soak in an earlier run. Qualification on the final
+  merged revision remains open. All 57 `native_*` integration targets pass; the earlier attachment
   defect was stale. The M7 options/environment gate passes its source-matched
   profile and 660-key C/Rust differential; its default-artifact baseline audit
   also passes. A selected `MI_STAT=1` binned allocation, merge/reset, free,
