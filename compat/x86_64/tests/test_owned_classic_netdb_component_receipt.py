@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import tempfile
 import sys
 import unittest
 from pathlib import Path
@@ -129,6 +130,45 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
         value["entry"] = "oracle"
         with self.assertRaisesRegex(self.receipt.ReceiptError, "association"):
             self.receipt.validate_association_difference(value)
+
+    def test_execution_evidence_binds_argv_and_file_positions(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp/classic-netdb-reader-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            root = Path(directory)
+            work = root / "receipt"
+            work.mkdir()
+            label = "dynamic-pie-direct-host-numeric"
+            data = {
+                "argv": b'["/lib/ld-crabc-x86_64.so.1","/consumer","host-numeric"]\n',
+                "stdout": b"classic netdb scenario passed\n",
+                "stderr": b"",
+                "status": b"0\n",
+            }
+            record = {}
+            for field, value in data.items():
+                suffix = "argv.json" if field == "argv" else field
+                path = work / f"{label}.{suffix}"
+                path.write_bytes(value)
+                record[field] = self.receipt.identity(root, path)
+
+            self.assertEqual(
+                self.receipt.execution_artifacts(root, work, "dynamic-pie-direct", "host-numeric", record),
+                (data["stdout"], data["stderr"]),
+            )
+            argv_path = work / f"{label}.argv.json"
+            argv_path.write_bytes(b'["/other","host-numeric"]\n')
+            record["argv"] = self.receipt.identity(root, argv_path)
+            with self.assertRaisesRegex(self.receipt.ReceiptError, "execution argv"):
+                self.receipt.execution_artifacts(root, work, "dynamic-pie-direct", "host-numeric", record)
+
+            argv_path.write_bytes(data["argv"])
+            record["argv"] = self.receipt.identity(root, argv_path)
+            sibling = root / "sibling.stdout"
+            sibling.write_bytes(data["stdout"])
+            record["stdout"] = self.receipt.identity(root, sibling)
+            with self.assertRaisesRegex(self.receipt.ReceiptError, "path differs"):
+                self.receipt.execution_artifacts(root, work, "dynamic-pie-direct", "host-numeric", record)
 
 
 if __name__ == "__main__":

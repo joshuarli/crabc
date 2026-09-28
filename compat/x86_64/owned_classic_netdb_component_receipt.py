@@ -410,6 +410,25 @@ def parse_argv(raw: bytes, label: str) -> list[str]:
     return value
 
 
+def execution_artifacts(root: Path, work: Path, entry: str, case: str,
+                        record: Mapping[str, object]) -> tuple[bytes, bytes]:
+    """Bind one retained transcript to its fixed chroot command and file positions."""
+    require(case in CASES and entry in ("oracle", *FULL_CELLS), "execution identity differs")
+    label = f"{entry}-{case}"
+    if entry in ("oracle", "static", "static-pie"):
+        expected_argv = [f"/{entry}", case]
+    elif entry.endswith("-kernel"):
+        expected_argv = ["/consumer", case]
+    else:
+        expected_argv = ["/lib/ld-crabc-x86_64.so.1", "/consumer", case]
+    argv = parse_argv(artifact_bytes(root, record, "argv", work, label), "execution")
+    require(argv == expected_argv, f"execution argv differs: {entry}/{case}")
+    require(artifact_bytes(root, record, "status", work, label) == b"0\n",
+            f"execution failed: {entry}/{case}")
+    return (artifact_bytes(root, record, "stdout", work, label),
+            artifact_bytes(root, record, "stderr", work, label))
+
+
 def command_plan(root: Path, work: Path, static: Path | None, dynamic: Path,
                  tools: Mapping[str, object], mode: str) -> dict[str, list[str]]:
     """The fixed producer argv roster for one retained component mode."""
@@ -569,7 +588,7 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Fal
     for link_mode in ("pie", "non-pie"):
         validate_payload(root, work, payloads[link_mode], dynamic, link_mode)
 
-    raw_oracle: dict[str, tuple[bytes, bytes]] = {}
+    transcripts: dict[tuple[str, str], tuple[bytes, bytes]] = {}
     executions = report["executions"]
     require(isinstance(executions, list) and len(executions) == (1 + len(all_cells)) * len(CASES),
             "classic-netdb execution roster differs")
@@ -581,13 +600,9 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Fal
         label, case = entry["entry"], entry["case"]
         require(label in expected_entries and case in CASES and (label, case) not in seen, "classic-netdb execution identity differs")
         seen.add((label, case))
-        argv = parse_argv(assert_identity(root, entry["argv"], "execution argv").read_bytes(), "execution")
-        require(argv and assert_identity(root, entry["status"], "execution status").read_bytes() == b"0\n", "classic-netdb execution failed")
-        stdout = assert_identity(root, entry["stdout"], "execution stdout").read_bytes()
-        stderr = assert_identity(root, entry["stderr"], "execution stderr").read_bytes()
-        if label == "oracle":
-            raw_oracle[case] = (stdout, stderr)
+        transcripts[(label, case)] = execution_artifacts(root, work, label, case, entry)
     require(seen == {(entry, case) for entry in expected_entries for case in CASES}, "classic-netdb execution matrix is incomplete")
+    raw_oracle = {case: transcripts[("oracle", case)] for case in CASES}
     differences = report["association_differences"]
     require(isinstance(differences, list), "classic-netdb association difference roster differs")
     difference_entries: set[str] = set()
@@ -597,9 +612,7 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Fal
         require(label in all_cells and label not in difference_entries, "classic-netdb association exception roster differs")
         difference_entries.add(label)
     for entry in expected_entries[1:]:
-        record = next(item for item in executions if item["entry"] == entry and item["case"] == "dns-batch")
-        stdout = assert_identity(root, record["stdout"], "dns-batch stdout").read_bytes()
-        stderr = assert_identity(root, record["stderr"], "dns-batch stderr").read_bytes()
+        stdout, stderr = transcripts[(entry, "dns-batch")]
         if stdout != raw_oracle["dns-batch"][0] or stderr != raw_oracle["dns-batch"][1]:
             require(entry in difference_entries and stdout.decode() == ASSOCIATION_OWNED and stderr == b"", "classic-netdb raw transcript differs")
         else:
@@ -609,9 +622,7 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Fal
         for case in CASES:
             if case == "dns-batch":
                 continue
-            row = next(item for item in executions if item["entry"] == entry and item["case"] == case)
-            require((assert_identity(root, row["stdout"], "candidate stdout").read_bytes(),
-                     assert_identity(root, row["stderr"], "candidate stderr").read_bytes()) == raw_oracle[case],
+            require(transcripts[(entry, case)] == raw_oracle[case],
                     f"classic-netdb raw transcript differs: {entry}/{case}")
     network = assert_identity(root, report["network"], "classic-netdb network proof")
     proof = read_json(network, "classic-netdb network proof")
