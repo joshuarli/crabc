@@ -4,10 +4,11 @@
 ``owned_resolver_cancellation.py`` deliberately keeps the cancellation
 observations as raw stdout/stderr pairs because descriptor retirement and the
 last syscall errno are part of the behavior.  This reader turns that producer
-directory into a public, read-only receipt boundary.  It never compiles, links,
-or executes a resolver consumer.  It authenticates the exact application
-object, installed static and dynamic products, driver receipts, ELF facts and
-every retained oracle/candidate observation before returning a report.
+directory into a public receipt boundary. It recompiles the application object
+in ignored scratch without changing retained artifacts, linking, or executing
+a resolver consumer. It authenticates the exact application object, installed
+static and dynamic products, driver receipts, ELF facts, and every retained
+oracle/candidate observation before returning a report.
 
 The receipt is a component proof only.  It neither selects a resolver family
 nor makes a promotion or public-support claim.
@@ -25,6 +26,7 @@ import re
 import stat
 import subprocess
 import sys
+import tempfile
 from typing import Any, Mapping
 
 
@@ -359,6 +361,29 @@ def _replay_artifact_audits(root: Path, work: Path, static: Path, dynamic: Path,
     require(recorded == expected, "cancellation artifact audit no longer replays")
 
 
+def _recompile_workload(root: Path, work: Path, static: Path) -> None:
+    """Bind the retained object to the selected source and installed compiler."""
+
+    compiler = physical_file(static / "bin/crabc-cc", "selected static cancellation compiler")
+    source = physical_file(root / SOURCE, "cancellation workload source")
+    workload = physical_file(work / "workload.o", "cancellation workload object")
+    scratch = root / ".work/x86_64/tmp"
+    scratch.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="resolver-cancellation-source-", dir=scratch) as temporary:
+        rebuilt = Path(temporary) / "workload.o"
+        command = [str(compiler), "--static-pie", "-std=c11", "-fno-builtin", "-c", str(source), "-o", str(rebuilt)]
+        environment = dict(os.environ, LC_ALL="C", PATH="/opt/cargo/bin:/usr/bin:/bin")
+        try:
+            result = subprocess.run(command, cwd=temporary, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment,
+                                    check=False, timeout=120)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ReceiptError("cannot recompile cancellation workload source") from error
+        require(result.returncode == 0, "cannot recompile cancellation workload source")
+        require(physical_file(rebuilt, "recompiled cancellation workload").read_bytes() == workload.read_bytes(),
+                "cancellation workload differs from source compile")
+
+
 def _replay_observations(work: Path, cancellation: Any) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     status = read_json(work / STATUS, "cancellation execution status")
     expected_status = _expected_status(cancellation)
@@ -420,6 +445,7 @@ def validate_report(root: Path, work: Path, *, static_product: Path, dynamic_pro
     require(isinstance(audit, dict) and audit.get("source_sha256") == source_before,
             "cancellation receipt source identity differs")
     _replay_artifact_audits(root, work, static, dynamic, audit, fixture)
+    _recompile_workload(root, work, static)
     _replay_provider_symbols(work, dynamic, cancellation)
     namespace = _verify_namespace(work)
     _verify_dns_fixture(work)

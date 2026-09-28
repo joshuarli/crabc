@@ -61,6 +61,13 @@ class OwnedResolverCancellationReceiptTests(unittest.TestCase):
         self.work.mkdir()
         self.static.mkdir()
         (self.dynamic / "usr/lib").mkdir(parents=True)
+        (self.static / "bin").mkdir()
+        compiler = self.static / "bin/crabc-cc"
+        compiler.write_text(
+            '#!/bin/sh\nwhile [ "$1" != -o ]; do shift; done\n'
+            'shift\nprintf "same application object\\n" > "$1"\n', encoding="utf-8",
+        )
+        compiler.chmod(0o755)
         (self.static / "product").write_bytes(b"static product\n")
         (self.dynamic / "product").write_bytes(b"dynamic product\n")
         (self.dynamic / "usr/lib/libc.so").write_bytes(b"dynamic libc\n")
@@ -193,6 +200,16 @@ class OwnedResolverCancellationReceiptTests(unittest.TestCase):
              patch.object(receipt, "_replay_provider_symbols"):
             with self.assertRaisesRegex(receipt.ReceiptError, "installed product tree differs"):
                 receipt.validate_report(ROOT, self.work, static_product=self.static, dynamic_product=self.dynamic)
+
+    def test_rejects_transplanted_workload_with_recomputed_local_audits(self) -> None:
+        (self.work / "workload.o").write_bytes(b"transplanted application object\n")
+        audit = json.loads((self.work / receipt.ARTIFACT_AUDIT).read_text(encoding="utf-8"))
+        audit["object"] = receipt.artifact_record(self.work / "workload.o")
+        audit["artifacts"] = self._audit_artifacts()
+        self._write(receipt.ARTIFACT_AUDIT, json.dumps(audit, sort_keys=True).encode())
+
+        with self.assertRaisesRegex(receipt.ReceiptError, "workload differs from source compile"):
+            self._validate()
 
     def test_rejects_lifecycle_drift_even_when_candidate_exit_status_is_zero(self) -> None:
         label = "static-et-exec-query-udp.stdout"
