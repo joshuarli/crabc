@@ -70,7 +70,11 @@ are not transferable passes for a different revision.
   independently release split arena singleton claims after owner exit with
   17 matching C/Rust observations. An abandoned regular OS page now reclaims
   and releases after its owner exits; the source-built differential passes its generic-exit cases and
-  retains the OS list ownership until terminal release. A paired medium-churn
+  retains the OS list ownership until terminal release. A second split-owner
+  OS medium survivor matches 23 more C/Rust observations when final unmap
+  fails, including exact retained range, PageMap removal, warning and VM
+  counters; the clean M5 generic-exit gate passes all nine evidence rows.
+  A paired medium-churn
   diagnostic matches C/Rust page-class transitions under four option profiles;
   PageMap retirement precedes arena RSS release with the default purge delay,
   while immediate purge releases at collection. A two-arena pressure profile
@@ -96,7 +100,10 @@ are not transferable passes for a different revision.
   request after the first fills and matches pinned C across 33 claim,
   mapping, purge, and registry observations. A delayed partial release beside
   a live slice in that second arena matches 15 further purge, bitmap, mapping,
-  and survivor observations.
+  and survivor observations. A committed medium OS page matches 136 C/Rust
+  publication, PageMap, terminal-release, and failed-unmap relations. A
+  separate second-arena EIO purge regression matches 16 of 19 fields; Rust
+  still omits the pinned decommit warning and its callback-order observations.
   Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). On an idle host the development engine harness
