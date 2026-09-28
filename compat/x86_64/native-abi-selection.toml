@@ -916,6 +916,14 @@ members = ["_Exit", "_exit", "exit"]
 sources = ["libc/src/c_abi/x86_64/process_exit.rs", "libc/src/c_abi/x86_64/static_c_abi.rs"]
 reason = "Unique selected public process-exit definitions resolve ordinary references from authenticated sibling members of the owned static archive."
 
+# Each linked ELF owns its own dynamic table. The static libc archive only
+# carries a weak hidden reference; a static ET_EXEC link may leave it null.
+[linker_dynamic_table]
+id = "per-image-dynamic-table"
+owner = "elf-linker"
+sources = ["libc/src/c_abi/x86_64/static_dl_iterate_phdr.rs", "compat/x86_64/crabc_cc_static.py", "compat/x86_64/crabc_cc_owned_dynamic.py"]
+reason = "Final ELF linker defines its own .dynamic start or leaves a weak static reference null."
+
 [[structural_groups]]
 id = "loader-entry-stages"
 members = ["__dls2b", "__dls3", "_dlstart"]

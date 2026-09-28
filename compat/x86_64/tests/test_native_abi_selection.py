@@ -1232,6 +1232,133 @@ class LibcStartMainImportBindingTests(unittest.TestCase):
                 self.assertEqual(len(accounting['blockers']), 1)
 
 
+class LinkerDynamicTableBindingTests(unittest.TestCase):
+    """A weak archive reference resolves in each final image's link domain."""
+
+    MEMBER = 'static-dl-iterate.rcgu.o'
+    SOURCES = ['libc/src/c_abi/x86_64/static_dl_iterate_phdr.rs',
+               'compat/x86_64/crabc_cc_static.py',
+               'compat/x86_64/crabc_cc_owned_dynamic.py']
+    STATIC_MODES = ('static-normal', 'static-empty', 'static-pie-normal', 'static-pie-empty')
+    MODES = {
+        'static-normal': ('static', False, False),
+        'static-empty': ('static', False, False),
+        'static-pie-normal': ('static-pie', True, False),
+        'static-pie-empty': ('static-pie', True, False),
+        'owned-pie-normal': ('pie', True, True),
+        'owned-pie-empty': ('pie', True, True),
+        'owned-non-pie-normal': ('non-pie', True, True),
+        'owned-non-pie-empty': ('non-pie', True, True),
+    }
+
+    def rule(self):
+        return {'id': 'per-image-dynamic-table', 'owner': 'elf-linker',
+                'sources': self.SOURCES, 'reason': 'Final ELF linker defines its own .dynamic start or leaves a weak static reference null.'}
+
+    def accounting(self):
+        named = identity('_DYNAMIC')
+        imported = {'index': 0, 'artifact_key': 'candidate-static', 'artifact_sha256': 'a' * 64,
+                    'member_name': self.MEMBER, 'member_occurrence': 0, 'role': 'import', 'table': '.symtab',
+                    'row': symbol('_DYNAMIC', binding='WEAK', visibility='HIDDEN', section='UND',
+                                  kind='NOTYPE', size=0)}
+        shared = {'index': 1, 'artifact_key': 'candidate-shared', 'artifact_sha256': 'b' * 64,
+                  'member_name': None, 'member_occurrence': None, 'role': 'local-definition', 'table': '.symtab',
+                  'row': symbol('_DYNAMIC', binding='LOCAL', visibility='HIDDEN', section='3',
+                                kind='NOTYPE', value='0000000000000900', size=0),
+                  'definition_section': {'name': '.dynamic', 'type': 'DYNAMIC', 'flags': 'WA',
+                                         'index': 3, 'address': '0000000000000900'}}
+        reasons = ['candidate binding ownership is unresolved', selection.ORDINARY_IMPORT_REASON]
+        return {'identities': [{'identity': named, 'selection': {'disposition': 'unresolved', 'owner': None},
+                                'expected_placements': [], 'unresolved': reasons.copy()}],
+                'occurrences': [imported, shared], 'placement_joins': [],
+                'blockers': [{'code': 'identity-unresolved', 'identity': named, 'reason': reason}
+                             for reason in reasons]}
+
+    def companion(self):
+        return {'status': 'crt-startup-observed-with-boundaries',
+                'products': {'candidate-static': {'sha256': 'a' * 64},
+                             'candidate-shared': {'sha256': 'b' * 64}},
+                'cohort_inputs': {'static_manifest': {'sha256': 'c' * 64},
+                                  'dynamic_manifest': {'sha256': 'd' * 64}}}
+
+    def observations(self):
+        facts, executables = {}, {}
+        for name, (linkage, defined, dynamic) in self.MODES.items():
+            section = ({'name': '.dynamic', 'type': 'DYNAMIC', 'flags': 'WA', 'index': 3,
+                        'address': '0000000000000900'} if defined else None)
+            row = symbol('_DYNAMIC', binding='LOCAL', visibility='HIDDEN',
+                         section='3' if defined else 'UND', kind='NOTYPE',
+                         value='0000000000000900' if defined else '0000000000000000', size=0)
+            facts[name] = {'header': {'fields': [{'name': 'Type', 'value':
+                                                 'DYN (Position-Independent Executable file)'
+                                                 if linkage in ('static-pie', 'pie') else 'EXEC (Executable file)'}]},
+                           'sections': [section] if section else [],
+                           'symbol_tables': [{'name': '.symtab', 'rows': [row]}]}
+            executables[name] = {'identity': {'sha256': name}, 'needed': ['libc.so'] if dynamic else [],
+                                 'relocations': [],
+                                 'link': {'validated': {'linkage': linkage,
+                                                        'product_manifest_sha256': 'd' * 64 if dynamic else 'c' * 64,
+                                                        'executable_sha256': name}}}
+        facts['candidate-shared'] = {'sections': [{'name': '.dynamic', 'type': 'DYNAMIC', 'flags': 'WA',
+                                                  'index': 3, 'address': '0000000000000900'}],
+                                     'symbol_tables': [{'name': '.symtab', 'rows': [
+                                         symbol('_DYNAMIC', binding='LOCAL', visibility='HIDDEN', section='3',
+                                                kind='NOTYPE', value='0000000000000900', size=0)]}]}
+        return {'complete_elf_facts': facts, 'executables': executables}
+
+    def link_evidence(self):
+        return {name: {'trace': f'/sealed/libc.a({self.MEMBER})\n',
+                       'map': (f'/sealed/libc.a({self.MEMBER}):(.text.static_dl_iterate_phdr.iterate)\n'
+                               'c::x86_64_static_c_abi::fixed_graph_dlfcn::static_dl_iterate_phdr::iterate\n')}
+                for name in self.STATIC_MODES}
+
+    def bind(self, accounting, companion=None, observations=None, evidence=None):
+        return selection.attach_linker_dynamic_table(
+            accounting, self.rule(), [self.MEMBER],
+            self.companion() if companion is None else companion,
+            self.observations() if observations is None else observations,
+            self.link_evidence() if evidence is None else evidence)
+
+    def test_linker_owned_table_or_null_discharge_only_dynamic_identity(self):
+        accounting = self.accounting()
+        joins = self.bind(accounting)
+        self.assertEqual(len(joins), 1)
+        self.assertEqual(joins[0]['static_import_occurrence_index'], 0)
+        self.assertEqual(joins[0]['shared_local_occurrence_index'], 1)
+        self.assertEqual(joins[0]['null_modes'], ['static-empty', 'static-normal'])
+        self.assertEqual(len(joins[0]['defined_modes']), 6)
+        self.assertEqual(accounting['identities'][0]['selection']['disposition'], 'linker-defined')
+        self.assertEqual(accounting['identities'][0]['unresolved'], [])
+        self.assertEqual(accounting['blockers'], [])
+
+    def test_foreign_weak_duplicate_or_wrong_final_image_retains_both_blockers(self):
+        cases = {
+            'strong import': lambda a, c, o, e: a['occurrences'][0]['row'].update(binding='GLOBAL'),
+            'foreign archive member': lambda a, c, o, e: a['occurrences'][0].update(member_name='foreign.o'),
+            'duplicate archive import': lambda a, c, o, e: a['occurrences'].append(
+                {**copy.deepcopy(a['occurrences'][0]), 'index': 2}),
+            'exported shared symbol': lambda a, c, o, e: a['occurrences'][1].update(table='.dynsym'),
+            'duplicate shared symbol': lambda a, c, o, e: a['occurrences'].append(
+                {**copy.deepcopy(a['occurrences'][1]), 'index': 2}),
+            'shared section mismatch': lambda a, c, o, e: a['occurrences'][1]['definition_section'].update(address='0000000000000800'),
+            'foreign link manifest': lambda a, c, o, e: o['executables']['static-pie-normal']['link']['validated'].update(product_manifest_sha256='x'),
+            'static null becomes definition': lambda a, c, o, e: o['complete_elf_facts']['static-normal']['symbol_tables'][0]['rows'][0].update(section_index='3'),
+            'static pie section missing': lambda a, c, o, e: o['complete_elf_facts']['static-pie-normal']['sections'].clear(),
+            'dynamic pie local points elsewhere': lambda a, c, o, e: o['complete_elf_facts']['owned-pie-normal']['symbol_tables'][0]['rows'][0].update(value='0000000000000800'),
+            'dynamic symbol exported': lambda a, c, o, e: o['complete_elf_facts']['owned-non-pie-normal']['symbol_tables'][0].update(name='.dynsym'),
+            'foreign extraction': lambda a, c, o, e: e['static-normal'].update(trace='/sealed/libc.a(foreign.o)\n'),
+            'foreign mapped body': lambda a, c, o, e: e['static-pie-normal'].update(map='/sealed/libc.a(other.o):(.text.other)\n'),
+        }
+        for label, alter in cases.items():
+            with self.subTest(label=label):
+                accounting, companion = self.accounting(), self.companion()
+                observations, evidence = self.observations(), self.link_evidence()
+                alter(accounting, companion, observations, evidence)
+                self.assertEqual(self.bind(accounting, companion, observations, evidence), [])
+                self.assertEqual(len(accounting['identities'][0]['unresolved']), 2)
+                self.assertEqual(len(accounting['blockers']), 2)
+
+
 class CompanionRejectionTests(unittest.TestCase):
     """One rejected companion is a named blocker, never an aborted report."""
 

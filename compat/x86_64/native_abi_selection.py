@@ -594,7 +594,7 @@ def source_path(value: str) -> Path:
 def validate_contract(value: Any) -> dict[str, Any]:
     result = exact(value, {'schema', 'target', 'inputs', 'profiles', 'owner_groups', 'structural_groups',
                            'object_contracts', 'private_protocols', 'module_private_symbols',
-                           'process_exit_static_imports', 'requirements'},
+                           'process_exit_static_imports', 'linker_dynamic_table', 'requirements'},
                    'selection contract')
     module_private = exact(result['module_private_symbols'], {'id', 'owner', 'family', 'sources', 'reason'},
                            'module-private symbol rule')
@@ -612,6 +612,18 @@ def validate_contract(value: Any) -> dict[str, Any]:
             'process-exit static import rule identity differs')
     string(process_exit['reason'], 'process-exit static import reason')
     for path in strings(process_exit['sources'], 'process-exit static import sources', empty=False):
+        source_path(path)
+    linker_dynamic = exact(result['linker_dynamic_table'], {'id', 'owner', 'sources', 'reason'},
+                           'linker dynamic table rule')
+    require(linker_dynamic['id'] == 'per-image-dynamic-table'
+            and linker_dynamic['owner'] == 'elf-linker'
+            and linker_dynamic['sources'] == [
+                'libc/src/c_abi/x86_64/static_dl_iterate_phdr.rs',
+                'compat/x86_64/crabc_cc_static.py',
+                'compat/x86_64/crabc_cc_owned_dynamic.py',
+            ], 'linker dynamic table rule identity differs')
+    string(linker_dynamic['reason'], 'linker dynamic table reason')
+    for path in strings(linker_dynamic['sources'], 'linker dynamic table sources', empty=False):
         source_path(path)
     require(result['schema'] == CONTRACT_SCHEMA and result['target'] == TARGET, 'selection schema/target changed')
     require(same(result['inputs'], INPUT_PATHS), 'selection input roster differs')
@@ -7268,6 +7280,188 @@ def attach_libc_start_main_imports(accounting: Mapping[str, Any],
              'discharged_reason': ORDINARY_IMPORT_REASON}]
 
 
+def _crt_dynamic_link_evidence(observations: Mapping[str, Any]) -> dict[str, dict[str, str]]:
+    """Read the sealed static link traces and maps for the weak table reference."""
+    result = {}
+    for name in ('static-normal', 'static-empty', 'static-pie-normal', 'static-pie-empty'):
+        extraction = observations['executables'][name]['extraction']
+        result[name] = {}
+        for kind in ('trace', 'map'):
+            retained = exact(extraction[kind], {'path', 'sha256', 'size'},
+                             f'{name} {kind} identity')
+            path = physical_work_path(Path(retained['path']), directory=False)
+            before = file_identity(path)
+            require(retained['path'] == str(path.relative_to(ROOT))
+                    and retained['sha256'] == before['sha256']
+                    and retained['size'] == before['size'],
+                    f'{name} {kind} changed before dynamic table binding')
+            result[name][kind] = path.read_text()
+            require(same(file_identity(path), before),
+                    f'{name} {kind} changed during dynamic table binding')
+    return result
+
+
+def attach_linker_dynamic_table(accounting: Mapping[str, Any], rule: Mapping[str, Any],
+                                rust_members: Sequence[str], crt_companion: Mapping[str, Any] | None,
+                                observations: Mapping[str, Any] | None,
+                                link_evidence: Mapping[str, Mapping[str, str]] | None) -> list[dict[str, Any]]:
+    """Resolve the weak static reference in each final ELF's own link domain.
+
+    The static archive does not define this name. A static ET_EXEC link leaves
+    its weak hidden reference null; static PIE and dynamic images each have a
+    local symbol at their own dynamic section start. Shared libc's local symbol
+    belongs to that DSO and never supplies the executable's table.
+    """
+    rule = exact(rule, {'id', 'owner', 'sources', 'reason'}, 'linker dynamic table rule')
+    require(rule['id'] == 'per-image-dynamic-table' and rule['owner'] == 'elf-linker'
+            and rule['sources'] == [
+                'libc/src/c_abi/x86_64/static_dl_iterate_phdr.rs',
+                'compat/x86_64/crabc_cc_static.py',
+                'compat/x86_64/crabc_cc_owned_dynamic.py',
+            ], 'linker dynamic table rule differs')
+    if crt_companion is None or observations is None or link_evidence is None:
+        return []
+    products = crt_companion.get('products', {})
+    cohort = crt_companion.get('cohort_inputs', {})
+    if (crt_companion.get('status') != 'crt-startup-observed-with-boundaries'
+            or type(products) is not dict or type(cohort) is not dict
+            or not all(type(products.get(name)) is dict and type(products[name].get('sha256')) is str
+                       for name in ('candidate-static', 'candidate-shared'))
+            or not all(type(cohort.get(name)) is dict and type(cohort[name].get('sha256')) is str
+                       for name in ('static_manifest', 'dynamic_manifest'))):
+        return []
+    records, _placements, occurrences = _accounting_indexes(accounting, description='linker dynamic table')
+    key = ('_DYNAMIC', None, False)
+    record = records.get(key)
+    reasons = {'candidate binding ownership is unresolved', ORDINARY_IMPORT_REASON}
+    if (record is None or record.get('selection', {}).get('disposition') != 'unresolved'
+            or record['selection'].get('owner') is not None
+            or record.get('expected_placements') != []
+            or len(record.get('unresolved', [])) != 2
+            or set(record['unresolved']) != reasons):
+        return []
+    rows = [row for row in occurrences.values()
+            if row.get('role') != 'unnamed' and identity_key(row_identity(row['row'])) == key
+            and not row['artifact_key'].startswith('reference-')]
+    static = [row for row in rows if row['artifact_key'] == 'candidate-static']
+    shared = [row for row in rows if row['artifact_key'] == 'candidate-shared']
+    if len(rows) != 2 or len(static) != 1 or len(shared) != 1:
+        return []
+    imported, local = static[0], shared[0]
+    members = set(strings(list(rust_members), 'static Rust members', empty=False))
+    if (imported['role'] != 'import' or imported['table'] != '.symtab'
+            or imported['member_name'] not in members or imported['member_occurrence'] != 0
+            or imported.get('artifact_sha256') != products['candidate-static']['sha256']
+            or {field: imported['row'].get(field) for field in
+                ('type', 'binding', 'visibility', 'section_index', 'size_bytes')} != {
+                    'type': 'NOTYPE', 'binding': 'WEAK', 'visibility': 'HIDDEN',
+                    'section_index': 'UND', 'size_bytes': 0,
+                }
+            or local['role'] != 'local-definition' or local['table'] != '.symtab'
+            or local['member_name'] is not None or local['member_occurrence'] is not None
+            or local.get('artifact_sha256') != products['candidate-shared']['sha256']):
+        return []
+    facts = observations.get('complete_elf_facts', {})
+    executables = observations.get('executables', {})
+    if type(facts) is not dict or type(executables) is not dict:
+        return []
+    shared_fact = facts.get('candidate-shared', {})
+    if type(shared_fact) is not dict:
+        return []
+    shared_sections = [section for section in shared_fact.get('sections', [])
+                       if section.get('name') == '.dynamic']
+    shared_symbols = [(table.get('name'), row) for table in shared_fact.get('symbol_tables', [])
+                      for row in table.get('rows', []) if row.get('name') == '_DYNAMIC']
+    if (len(shared_sections) != 1 or len(shared_symbols) != 1
+            or shared_symbols[0][0] != '.symtab' or not same(shared_symbols[0][1], local['row'])
+            or not same(shared_sections[0], local.get('definition_section'))):
+        return []
+
+    def defined_at_own_dynamic_section(row: Mapping[str, Any], section: Mapping[str, Any]) -> bool:
+        return (row.get('type') == 'NOTYPE' and row.get('binding') == 'LOCAL'
+                and row.get('visibility') == 'HIDDEN' and row.get('size_bytes') == 0
+                and row.get('section_index') == str(section.get('index'))
+                and row.get('value') == section.get('address')
+                and section.get('type') == 'DYNAMIC' and section.get('flags') == 'WA'
+                and re.fullmatch(r'[0-9a-fA-F]{16}', row.get('value', '')) is not None
+                and int(row['value'], 16) != 0)
+
+    if not defined_at_own_dynamic_section(local['row'], shared_sections[0]):
+        return []
+    modes = {
+        'static-normal': ('static', False, False, 'EXEC (Executable file)'),
+        'static-empty': ('static', False, False, 'EXEC (Executable file)'),
+        'static-pie-normal': ('static-pie', True, False, 'DYN (Position-Independent Executable file)'),
+        'static-pie-empty': ('static-pie', True, False, 'DYN (Position-Independent Executable file)'),
+        'owned-pie-normal': ('pie', True, True, 'DYN (Position-Independent Executable file)'),
+        'owned-pie-empty': ('pie', True, True, 'DYN (Position-Independent Executable file)'),
+        'owned-non-pie-normal': ('non-pie', True, True, 'EXEC (Executable file)'),
+        'owned-non-pie-empty': ('non-pie', True, True, 'EXEC (Executable file)'),
+    }
+    if set(link_evidence) != {name for name in modes if name.startswith('static-')}:
+        return []
+    for name, (linkage, defined, dynamic, elf_type) in modes.items():
+        executable, fact = executables.get(name), facts.get(name)
+        if type(executable) is not dict or type(fact) is not dict:
+            return []
+        link = executable.get('link', {}).get('validated', {})
+        manifest = 'dynamic_manifest' if dynamic else 'static_manifest'
+        if (executable.get('needed') != (['libc.so'] if dynamic else [])
+                or link.get('linkage') != linkage
+                or link.get('product_manifest_sha256') != cohort[manifest]['sha256']
+                or link.get('executable_sha256') != executable.get('identity', {}).get('sha256')
+                or [row.get('value') for row in fact.get('header', {}).get('fields', [])
+                    if row.get('name') == 'Type'] != [elf_type]
+                or any(row.get('name') == '_DYNAMIC' for row in executable.get('relocations', []))):
+            return []
+        sections = [section for section in fact.get('sections', []) if section.get('name') == '.dynamic']
+        symbols = [(table.get('name'), row) for table in fact.get('symbol_tables', [])
+                   for row in table.get('rows', []) if row.get('name') == '_DYNAMIC']
+        if len(symbols) != 1 or symbols[0][0] != '.symtab':
+            return []
+        row = symbols[0][1]
+        if defined:
+            if len(sections) != 1 or not defined_at_own_dynamic_section(row, sections[0]):
+                return []
+        elif (sections or {field: row.get(field) for field in
+                           ('type', 'binding', 'visibility', 'section_index', 'size_bytes', 'value')} != {
+                               'type': 'NOTYPE', 'binding': 'LOCAL', 'visibility': 'HIDDEN',
+                               'section_index': 'UND', 'size_bytes': 0, 'value': '0000000000000000',
+                           }):
+            return []
+        if not dynamic:
+            evidence = link_evidence.get(name, {})
+            if type(evidence) is not dict or type(evidence.get('trace')) is not str or type(evidence.get('map')) is not str:
+                return []
+            member = imported['member_name']
+            trace = evidence['trace'].splitlines()
+            mapped = evidence['map'].splitlines()
+            if (sum(line.endswith(f'/libc.a({member})') for line in trace) != 1
+                    or not any(f'libc.a({member}):(.text.' in line
+                               and 'static_dl_iterate_phdr' in line and 'iterate' in line
+                               and '::static_dl_iterate_phdr::iterate' in mapped[index + 1]
+                               for index, line in enumerate(mapped[:-1]))):
+                return []
+    record['selection'] = {'disposition': 'linker-defined', 'owner': rule['owner'],
+                           'group': rule['id'], 'sources': list(rule['sources']), 'reason': rule['reason']}
+    record['unresolved'] = []
+    imported['accounting'] = {'disposition': 'linker-resolved-weak-import', 'owner': rule['owner'],
+                              'scope': 'candidate-static'}
+    local['accounting'] = {'disposition': 'linker-defined-local', 'owner': rule['owner'],
+                           'scope': 'candidate-shared'}
+    accounting['blockers'][:] = [blocker for blocker in accounting['blockers']
+                               if not (blocker.get('code') == 'identity-unresolved'
+                                       and blocker.get('identity') == record['identity']
+                                       and blocker.get('reason') in reasons)]
+    return [{'identity': copy.deepcopy(record['identity']), 'owner': rule['owner'],
+             'static_import_occurrence_index': imported['index'],
+             'static_import_member': imported['member_name'],
+             'shared_local_occurrence_index': local['index'],
+             'null_modes': sorted(name for name, (_linkage, defined, _dynamic, _type) in modes.items() if not defined),
+             'defined_modes': sorted(name for name, (_linkage, defined, _dynamic, _type) in modes.items() if defined),
+             'discharged_reasons': sorted(reasons)}]
+
+
 def attach_native_crt_descriptor_handoff(accounting: Mapping[str, Any],
                                          companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     """Discharge only the current main-image descriptor transport evidence.
@@ -10531,10 +10725,15 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         lambda: (attach_native_crt_startup(accounting, crt_startup_companion),
                  attach_native_crt_descriptor_handoff(accounting, crt_startup_companion)),
         empty=([], []))
+    crt_observations = (_crt_libc_start_main_observations(crt_startup_companion)
+                        if crt_startup_companion is not None else None)
     libc_start_main_import_joins = attach_libc_start_main_imports(
-        accounting, crt_startup_companion, archive_map['static_rust_members'],
-        _crt_libc_start_main_observations(crt_startup_companion)
-        if crt_startup_companion is not None else None,
+        accounting, crt_startup_companion, archive_map['static_rust_members'], crt_observations,
+    )
+    linker_dynamic_table_joins = attach_linker_dynamic_table(
+        accounting, contract['linker_dynamic_table'], archive_map['static_rust_members'],
+        crt_startup_companion, crt_observations,
+        _crt_dynamic_link_evidence(crt_observations) if crt_observations is not None else None,
     )
     # The RuntimeV1 lifecycle join pairs the CRT and prepared-worker receipts;
     # its rejection names the pairing rather than either component.
@@ -10688,6 +10887,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'crt_startup_joins': crt_startup_joins,
             'crt_descriptor_handoff_joins': crt_descriptor_handoff_joins,
             'libc_start_main_import_joins': libc_start_main_import_joins,
+            'linker_dynamic_table_joins': linker_dynamic_table_joins,
             'runtimev1_descriptor_lifecycle_joins': runtimev1_descriptor_lifecycle_joins,
             'syscall_alias_contract_companion': syscall_alias_contract_companion,
             'syscall_alias_contract_joins': syscall_alias_contract_joins,
