@@ -49,6 +49,8 @@ ARENA_OWNED_TRACE_TARGET = "arena::owned::tests::emit_native_owned_arena_purge_t
 RESET_ADVICE_MATRIX_ID = "second-arena-reset-advice-c-rust-matrix"
 RESET_ADVICE_MATRIX_READER = "compat/allocator/m2_second_arena_reset_advice_x86_64.py"
 RESET_ADVICE_MATRIX_VALUE_COUNT = 78
+LEGACY_OS_PAGE_TRIM_ID = "legacy-os-page-suffix-trim-and-raw-release"
+LEGACY_OS_PAGE_TRIM_READER = "compat/allocator/m2_legacy_os_page_trim_x86_64.py"
 LARGE_PAGE_RETRY_CAPTURE_REAP_TEST_DEFINE = (
     "-DCRABC_M2_LARGE_PAGE_RETRY_CAPTURE_REAP_TEST=1"
 )
@@ -104,6 +106,11 @@ CHECKS = (
         "aligned-overmap-cleanup-c-rust-boundary-matrix",
         "c-rust-aligned-overmap-cleanup-boundary-matrix",
         "os::tests::emit_m2_aligned_overmap_cleanup_c_rust_boundary_trace",
+    ),
+    (
+        LEGACY_OS_PAGE_TRIM_ID,
+        "c-rust-legacy-os-page-trim-receiver",
+        LEGACY_OS_PAGE_TRIM_READER,
     ),
     (
         "process-policy-first-arena-clean-primary-fallback",
@@ -1355,6 +1362,27 @@ def run_evidence(
         or reset_advice_evidence.get("source_traces") != reset_advice_evidence.get("rust_traces")
     ):
         raise harness.HarnessError("regular-arena reset-advice matrix receipt is invalid")
+    legacy_trim_command = [
+        "python3", LEGACY_OS_PAGE_TRIM_READER,
+        *(["--offline"] if offline else []),
+        "--rust-test-binary", str(rust_binary),
+    ]
+    legacy_trim_run = harness.command_record(
+        legacy_trim_command, cwd=harness.ROOT, timeout_seconds=900,
+    )
+    harness.require_success(legacy_trim_run, "legacy OS-page suffix-trim C/Rust receiver")
+    legacy_trim_evidence = harness.read_json(
+        harness.ARTIFACT_ROOT / "x86_64/m2-legacy-os-page-trim/evidence.json"
+    )
+    if (
+        legacy_trim_evidence.get("status") != "passed"
+        or legacy_trim_evidence.get("pinned_revision") != pin["revision"]
+        or legacy_trim_evidence.get("comparison", {}).get("status") != "source-different"
+        or legacy_trim_evidence.get("comparison", {}).get("shared_relations") != 8
+        or len(legacy_trim_evidence.get("comparison", {}).get("known_differences", {})) != 3
+        or legacy_trim_evidence.get("c_trace", {}).get("warning_order") != 1
+    ):
+        raise harness.HarnessError("legacy OS-page trim receiver receipt is invalid")
     trace_payload = json.dumps(c_trace, separators=(",", ":"), sort_keys=True).encode("utf-8")
     profile_trace_payload = json.dumps(
         c_profile_trace, separators=(",", ":"), sort_keys=True
@@ -1390,6 +1418,12 @@ def run_evidence(
         "fixture": harness.artifact_record(FIXTURE),
         "format": 1,
         "profile": EVIDENCE_PROFILE,
+        "legacy_os_page_trim": {
+            "command": legacy_trim_command,
+            "comparison": legacy_trim_evidence["comparison"],
+            "fixture": legacy_trim_evidence["fixture"],
+            "rust_test": "os::tests::emit_legacy_os_page_suffix_trim_trace",
+        },
         "reset_advice_matrix": {
             "command": reset_advice_command,
             "comparison": {

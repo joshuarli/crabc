@@ -2050,6 +2050,31 @@ transfer capability.
   infer runtime, lifecycle, backend, or AArch64 support from this metadata
   slice.
 
+### `CRABC-MI-LEGACY-OS-PAGE-PROCESSLESS-TRIM` — bounded unpaired caller difference
+
+- **Port map:** `src/arena.c:781-869` fresh OS page area and
+  `src/os.c:240-294,303-430` aligned mapping/free;
+  `os_page::OsAlignedPageClaim::allocate` and `release`.
+- **Difference:** the selected pinned-C fresh-area caller has a subprocess.
+  When its 192 KiB aligned middle retains an escaped 4 KiB suffix after a
+  failed trim, C records a 192 KiB reserved increase, a 64 KiB metadata
+  commitment, and two mmap calls. It emits the fallback and failed-suffix
+  warnings before final release, then warns on the failed terminal unmap
+  before decreasing reserved and committed statistics. The legacy Rust claim
+  has no `VmProcess`: its same physical middle and suffix have no subprocess
+  statistics or source warning callback. Its failed terminal unmap retains one
+  claim for a raw-only retry; the escaped suffix is separately raw released.
+- **Evidence:** `compat/allocator/m2_legacy_os_page_trim_x86_64.py` builds the
+  pinned C fixture and compares eight exact mapping, MemoryId, and cleanup
+  relations with the Rust receiver. The strict comparison fails on precisely
+  `reserved_claim` (196608 versus 0), `committed_claim` (65536 versus 0), and
+  `mmap_claim` (2 versus 0); the bounded check requires those differences,
+  three C warning bodies in order, warning-before-statistics timing, no Rust
+  warning, zero final deltas, and successful raw cleanup of both live ranges.
+- **Boundary:** this check records the legacy processless route. The paired
+  `allocate_for_process` caller has separate source accounting and warning
+  evidence. Broader OS page receivers and allocator integration remain open.
+
 ### `CRABC-MI-ARENA-RESERVATION-NO-THP` — accepted musl-defaults residency divergence
 
 - **Port map:** `src/prim/unix/prim.c:arena-reservation-thp-advice`

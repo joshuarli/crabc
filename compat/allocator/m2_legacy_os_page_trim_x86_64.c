@@ -60,7 +60,9 @@ static struct {
   bool ordered;
   bool body_exact;
   int64_t reserved_at_suffix;
+  int64_t committed_at_suffix;
   int64_t reserved_at_terminal;
+  int64_t committed_at_terminal;
   mi_subproc_t* subprocess;
 } warnings;
 
@@ -83,9 +85,11 @@ static void capture_warning(const char* message, void* argument) {
     if (warnings.free_failure == 0) {
       warnings.ordered &= warnings.bodies == 1;
       warnings.reserved_at_suffix = warnings.subprocess->stats.reserved.current;
+      warnings.committed_at_suffix = warnings.subprocess->stats.committed.current;
     } else {
       warnings.ordered &= warnings.bodies == 2;
       warnings.reserved_at_terminal = warnings.subprocess->stats.reserved.current;
+      warnings.committed_at_terminal = warnings.subprocess->stats.committed.current;
     }
     warnings.free_failure++;
     warnings.bodies++;
@@ -157,7 +161,9 @@ int main(void) {
       && warnings.bodies == 3 && warnings.fallback == 1 && warnings.free_failure == 2;
   const bool warning_before_stats = warnings.reserved_at_suffix
           == reserved_before + (int64_t)(length + suffix)
-      && warnings.reserved_at_terminal == reserved_before + (int64_t)length;
+      && warnings.committed_at_suffix == committed_before
+      && warnings.reserved_at_terminal == reserved_before + (int64_t)length
+      && warnings.committed_at_terminal == committed_before + MI_ARENA_SLICE_SIZE;
   const bool raw_middle = __real_munmap((void*)middle, length) == 0;
   const bool raw_suffix = __real_munmap((void*)(middle + length), suffix) == 0;
   const bool raw_no_stats = reserved_final == subprocess->stats.reserved.current - reserved_before

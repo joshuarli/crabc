@@ -13309,6 +13309,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-vm-primitives-fixed-lifecycle",
                     "c-rust-vm-primitives-source-profile-matrix",
                     "c-rust-aligned-overmap-cleanup-boundary-matrix",
+                    "c-rust-legacy-os-page-trim-receiver",
                     "c-rust-second-arena-reset-advice-matrix",
                     "c-rust-process-arena-purge-differential",
                     "c-rust-arena-lifecycle-differential",
@@ -13454,6 +13455,14 @@ def validate_x86_64_m2_memory_substrate_contract(
                     or not (ROOT / reader).is_file()
                 ):
                     raise HarnessError("native x86 M2 reset-advice reader is absent")
+            elif raw_check.get("kind") == "c-rust-legacy-os-page-trim-receiver":
+                reader = _m2_x86_64_vm_producer().LEGACY_OS_PAGE_TRIM_READER
+                if (
+                    component_id != "vm-primitives"
+                    or raw_check.get("target") != reader
+                    or not (ROOT / reader).is_file()
+                ):
+                    raise HarnessError("native x86 M2 legacy OS-page receiver is absent")
             elif component_id != "bitmaps":
                 _m2_memory_substrate_source_test_exists(
                     str(raw_check["target"]), str(raw_check["id"])
@@ -14126,6 +14135,10 @@ def _m2_x86_64_vm_check_records(
         check for check in component["checks"]
         if check["id"] == producer.RESET_ADVICE_MATRIX_ID
     )
+    legacy_trim_check = next(
+        check for check in component["checks"]
+        if check["id"] == producer.LEGACY_OS_PAGE_TRIM_ID
+    )
     runtime_thp_check = next(
         check for check in component["checks"]
         if check["id"] == "runtime-source-environment-thp-ready-configuration-admission"
@@ -14333,6 +14346,53 @@ def _m2_x86_64_vm_check_records(
         "id": reset_advice_check["id"],
         "passed_test_count": reset_advice_check["expected_passed_test_count"],
         "target": reset_advice_check["target"],
+    })
+    legacy_trim = evidence.get("legacy_os_page_trim")
+    legacy_command = legacy_trim.get("command") if isinstance(legacy_trim, Mapping) else None
+    legacy_fixture = legacy_trim.get("fixture") if isinstance(legacy_trim, Mapping) else None
+    legacy_comparison = legacy_trim.get("comparison") if isinstance(legacy_trim, Mapping) else None
+    legacy_target = "os::tests::emit_legacy_os_page_suffix_trim_trace"
+    expected_legacy_differences = {
+        "reserved_claim": {"c": 196608, "rust": 0},
+        "committed_claim": {"c": 65536, "rust": 0},
+        "mmap_claim": {"c": 2, "rust": 0},
+    }
+    if (
+        legacy_trim_check != {
+            "id": producer.LEGACY_OS_PAGE_TRIM_ID,
+            "kind": "c-rust-legacy-os-page-trim-receiver",
+            "target": producer.LEGACY_OS_PAGE_TRIM_READER,
+            "expected_passed_test_count": 1,
+        }
+        or legacy_command not in (
+            ["python3", producer.LEGACY_OS_PAGE_TRIM_READER,
+             "--rust-test-binary", str(command[0])],
+            ["python3", producer.LEGACY_OS_PAGE_TRIM_READER,
+             "--offline", "--rust-test-binary", str(command[0])],
+        )
+        or not isinstance(legacy_comparison, Mapping)
+        or legacy_comparison.get("status") != "source-different"
+        or legacy_comparison.get("shared_relations") != 8
+        or legacy_comparison.get("known_differences") != expected_legacy_differences
+        or legacy_trim.get("rust_test") != legacy_target
+        or not isinstance(legacy_fixture, Mapping)
+        or legacy_fixture.get("path") != relative(
+            ALLOCATOR_ROOT / "m2_legacy_os_page_trim_x86_64.c"
+        )
+        or type(legacy_fixture.get("bytes")) is not int
+        or legacy_fixture["bytes"] <= 0
+        or not isinstance(legacy_fixture.get("sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", legacy_fixture["sha256"]) is None
+    ):
+        raise HarnessError("native x86 M2 legacy OS-page receiver receipt is invalid")
+    records.append({
+        "comparison_status": "source-different",
+        "component": "vm-primitives",
+        "command": list(legacy_command),
+        "evidence_scope": "bounded-processless-os-page-suffix-trim-warning-statistics-and-raw-retry",
+        "id": legacy_trim_check["id"],
+        "passed_test_count": 1,
+        "target": legacy_trim_check["target"],
     })
     if runtime_thp_evidence is None:
         return records

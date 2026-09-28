@@ -223,7 +223,8 @@
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "normal-os-offset-full-provenance-and-release-retry",
-          "aligned-overmap-cleanup-c-rust-boundary-matrix"
+          "aligned-overmap-cleanup-c-rust-boundary-matrix",
+          "legacy-os-page-suffix-trim-and-raw-release"
         ]
       },
       {
@@ -244,6 +245,7 @@
           "aligned-map-trim-failure-leak",
           "aligned-map-complete-trim-sequence",
           "aligned-overmap-cleanup-c-rust-boundary-matrix",
+          "legacy-os-page-suffix-trim-and-raw-release",
           "aligned-map-process-os-page-trim-leak"
         ]
       },
@@ -823,7 +825,7 @@
       },
       {
         "id": "vm-range-failure-statistics-and-caller-ownership",
-        "source_scope": "src/os.c:240-712 and normal allocator/arena callers: statistics events, custom commit callbacks beyond the selected process-lived external mi_manage_memory owner, aligned-overmap cleanup, commit/decommit/purge/protect/reset/release errors, and every retained Rust owner receiver. The selected C/Rust aligned-overmap matrix and one process-bound suffix receiver are evidence only for their named finite cleanup rows.",
+        "source_scope": "src/os.c:240-712 and normal allocator/arena callers: statistics events, custom commit callbacks beyond the selected process-lived external mi_manage_memory owner, aligned-overmap cleanup, commit/decommit/purge/protect/reset/release errors, and every retained Rust owner receiver. The selected C/Rust aligned-overmap matrix, process-bound suffix receiver, and processless legacy OS-page suffix receiver are evidence only for their named finite cleanup rows; the legacy claim has no VmProcess and does not reproduce source subprocess warning/accounting events.",
         "required_evidence": [
           "typed subprocess statistics-event and callback owners beyond the selected external process-lived lease",
           "pinned-C native fault differential covering every remaining failure/retry branch and every caller transfer"
@@ -889,6 +891,12 @@
         "id": "aligned-overmap-cleanup-c-rust-boundary-matrix",
         "kind": "c-rust-aligned-overmap-cleanup-boundary-matrix",
         "target": "os::tests::emit_m2_aligned_overmap_cleanup_c_rust_boundary_trace",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "legacy-os-page-suffix-trim-and-raw-release",
+        "kind": "c-rust-legacy-os-page-trim-receiver",
+        "target": "compat/allocator/m2_legacy_os_page_trim_x86_64.py",
         "expected_passed_test_count": 1
       },
       {
@@ -1032,7 +1040,7 @@
     ],
     "remaining_conditions": [
       "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, unmap, and reuse callers and policy beyond the selected fixed regular mapping lifecycle, finite normal no-callback purge decision/range matrix, selected ordinary/external direct page-extension receivers, normal-offset prefix-decommit and full-MemoryId release failure/retry, child-isolated THP transactions, one child-isolated 128-MiB first-arena large-page fallback, and the arena-reservation lifecycle differential's process-owned arena callers (a failed claim commit that reserves a fresh arena and recommits in the first, immediate-purge decommit failure/success/mixed commitment, reset EAGAIN retry/warning-only error/not-fully-committed skip/EINVAL fallback, a failed delayed-purge decommit that consumes its schedule without retry, and a fresh arena whose metadata commit and cleanup `_mi_os_free_ex` unmap both fail, which leaks the mapping while later reservations proceed), the fresh OS page caller beyond the separately qualified on-demand metadata/first-prefix, external callback-refusal, direct failed-metadata-commit successful/failed-cleanup, successful publication/terminal-free, selected failed lazy PageMap registration after both commits, and selected published terminal-unmap-failure subsets (unselected metadata/PageMap publication failures and other terminal-release callers, each requiring exact accounting and ownership evidence), and the arena-destruction differential's failed parent and huge-kind releases in `_mi_arenas_unsafe_destroy_all`, including pinned-C failure ownership and retry evidence for every source branch. Protect/unprotect have no caller in the selected release profile (only MI_SECURE>=5 guard pages and MI_GUARDED blocks call them); those callers belong to the M7 secure and guarded profiles.",
-      "Complete the aligned-overmap substrate beyond the selected native direct map, direct-map fallback, prefix-zero/suffix-only geometry, and direct/prefix/suffix success and Reserved/Committed cleanup-failure matrix, now an equality C/Rust differential of the source `mi_os_prim_free` leak-and-continue rule (fault plan: both sides force a direct candidate, prefix, and suffix release, C through MAP_FIXED_NOREPLACE targets and Rust through its full-trim test geometry, and fail the chosen release ordinal 1, 2, or 3), plus a normal aligned allocation receiver under failed prefix/suffix trim and final free with MemoryId, escaped range, warning order/timing, counters, and raw-only cleanup. The other leak-and-continue Rust receivers (legacy and process OS-page claims, metadata backing, explicit and policy-first arena reservation) still need pinned-C caller differentials under trim failure, as do broader callback/counter paths.",
+      "Complete the aligned-overmap substrate beyond the selected native direct map, direct-map fallback, prefix-zero/suffix-only geometry, and direct/prefix/suffix success and Reserved/Committed cleanup-failure matrix, now an equality C/Rust differential of the source `mi_os_prim_free` leak-and-continue rule (fault plan: both sides force a direct candidate, prefix, and suffix release, C through MAP_FIXED_NOREPLACE targets and Rust through its full-trim test geometry, and fail the chosen release ordinal 1, 2, or 3), plus a normal aligned allocation receiver under failed prefix/suffix trim and final free with MemoryId, escaped range, warning order/timing, counters, and raw-only cleanup. The legacy processless OS-page claim now has one source-differentiated failed-suffix and terminal raw-retry receiver with exact mapping, MemoryId, statistics, and warning timing. Other process OS-page cases, metadata backing, and explicit and policy-first arena reservations still need pinned-C caller differentials under trim failure, as do broader callback/counter paths.",
       "Complete aligned-hint policy beyond the finite normal-release cursor, virtual-address eligibility, strict threshold, one controlled CAS schedule, and selected pinned-C debug/secure source profiles plus one admitted wrapped direct caller: actual secure/debug runtime configuration, ambient source options/attachments, source warning/error reporting, every caller, and broader contention remain required. Also complete Linux THP failed-prctl/production-caller behavior, MAP_HUGETLB/MADV_HUGEPAGE success behavior, and their native differential evidence.",
       "Complete huge-page reservation/free/progress/timeout behavior, high-address hints, mbind and NUMA option/arena-placement policy, plus all associated failure ownership and diagnostics.",
       "Complete the unconditional subprocess statistics-event owner beyond its private selected VM fields (`reserved`, `committed`, `reset`, `purged`, `mmap_calls`, `commit_calls`, `reset_calls`, and `purge_calls`), `arena_count` fresh-high-water and `arena_purges` eligible-expiry counters, and their filtered source-order aggregation. Non-main subprocess creation/destruction, merge/reset at its source teardown call site, the full `mi_stats_t` layout/header, heap/Theap aggregation and reset, public statistics, formatting/callback APIs, other source fields, and the allocator/arena lifecycle and callback routes beyond the selected fixed normal/offset MemoryId owner, normal-offset release counter/failure retry, contained Linux reuse no-op, reset-advice snapshot, one-page protection retry, first-arena adjustment restoration, main-subprocess PageMap reservation/commitment accounting (top-level map and commits, lazy submaps, and release, whose startup reserved/committed current/total/peak and mmap/commit call counts match pinned C after `mi_process_init`, a first allocation, and its free in the `page-map-startup-statistics-c-rust-differential` check), one process-lived external mi_manage_memory callback owner with bounded commit/purge results, and selected ordinary/external direct page-extension receivers remain incomplete."
