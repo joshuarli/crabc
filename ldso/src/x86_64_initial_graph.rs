@@ -2015,6 +2015,13 @@ unsafe fn parse_mapped(
     let registry_main = !mapped;
     #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
     let registry_main = false;
+    // The owned main's direct callbacks and array shapes were checked before
+    // relocation metadata. The registry can retain those load-range proofs.
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    let owned_main_lifecycle_checked = general_initial_graph
+        && registry_main && object.main_crt_mode == MainCrtMode::Owned;
+    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+    let owned_main_lifecycle_checked = false;
     match (init_array_virtual_address, init_array_byte_len) {
         (None, None) => {}
         (Some(address), Some(byte_len))
@@ -2026,10 +2033,11 @@ unsafe fn parse_mapped(
                 if !registry_main {
                     return None;
                 }
-            } else if byte_len % pointer_size != 0
-                || !callback_array_entries_admitted(byte_len, MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES)
-                || address & (pointer_size - 1) != 0
-                || !virtual_range_in_load(phdr, phnum, address, byte_len)
+            } else if !owned_main_lifecycle_checked
+                && (byte_len % pointer_size != 0
+                    || !callback_array_entries_admitted(byte_len, MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES)
+                    || address & (pointer_size - 1) != 0
+                    || !virtual_range_in_load(phdr, phnum, address, byte_len))
             {
                 return None;
             }
@@ -2057,13 +2065,6 @@ unsafe fn parse_mapped(
         // Direct legacy callbacks are validated before relocation. Array
         // storage is bounded here; relocated targets are all preflighted
         // together before any initializer may run.
-        // The owned main's direct callbacks were already checked before its
-        // array metadata; retain that proof when publishing their addresses.
-        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-        let owned_main_callbacks_checked = general_initial_graph
-            && registry_main && object.main_crt_mode == MainCrtMode::Owned;
-        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-        let owned_main_callbacks_checked = false;
         for (address, destination) in [
             (general_init, &mut object.general_init),
             (general_fini, &mut object.general_fini),
@@ -2072,7 +2073,7 @@ unsafe fn parse_mapped(
                 if address == 0 && registry_main {
                     continue;
                 }
-                if address == 0 || (!owned_main_callbacks_checked
+                if address == 0 || (!owned_main_lifecycle_checked
                     && !virtual_range_in_executable_load(phdr, phnum, address, 1)) {
                     return None;
                 }
@@ -5721,10 +5722,15 @@ mod owned_dynamic_symbolic_tag_tests {
 
     #[cfg(crabc_general_initial_lifecycle)]
     #[test]
-    fn main_callbacks_keep_overlapping_executable_load_and_malformed_boundaries() {
+    fn main_callbacks_and_array_keep_overlapping_and_malformed_boundaries() {
         const NOTE: usize = 0x280;
         const EXEC_LOAD: usize = 168;
-        let mut image = ParserImage::new(&[(DT_INIT, 0x40), (DT_FINI, 0x50)]);
+        const ARRAY_LOAD: usize = 224;
+        let mut image = ParserImage::new(&[
+            (DT_INIT, 0x40), (DT_FINI, 0x50),
+            (DT_INIT_ARRAY, 0x3c0), (DT_INIT_ARRAYSZ, 8),
+        ]);
+        image.put_u64(32, 0x3a0);
         image.put_u32(112, PT_NOTE);
         image.put_u64(112 + 16, NOTE as u64);
         image.put_u64(112 + 32, 24);
@@ -5739,14 +5745,31 @@ mod owned_dynamic_symbolic_tag_tests {
         image.put_u64(EXEC_LOAD + 16, 0x40);
         image.put_u64(EXEC_LOAD + 32, 0x80);
         image.put_u64(EXEC_LOAD + 40, 0x80);
+        image.put_u32(ARRAY_LOAD, PT_LOAD);
+        image.put_u32(ARRAY_LOAD + 4, PF_R);
+        image.put_u64(ARRAY_LOAD + 16, 0x3c0);
+        image.put_u64(ARRAY_LOAD + 32, 0x10);
+        image.put_u64(ARRAY_LOAD + 40, 0x10);
         let parse_main = |image: &ParserImage| unsafe {
-            parse_mapped(image.bytes.as_ptr() as u64, image.bytes.as_ptr(), 4,
+            parse_mapped(image.bytes.as_ptr() as u64, image.bytes.as_ptr(), 5,
                 ObjectRole::Main, false, true)
         };
         let owned = parse_main(&image).unwrap();
         assert_eq!(owned.main_crt_mode, MainCrtMode::Owned);
         assert_eq!(owned.general_init, image.bytes.as_ptr() as usize + 0x40);
         assert_eq!(owned.general_fini, image.bytes.as_ptr() as usize + 0x50);
+        assert_eq!(owned.init_array, unsafe { image.bytes.as_ptr().add(0x3c0) } as *const usize);
+        assert_eq!(owned.init_count, 1);
+
+        image.put_u64(DYNAMIC + 8 * 16 + 8, 7);
+        assert!(parse_main(&image).is_none());
+        image.put_u64(DYNAMIC + 8 * 16 + 8, 8);
+        image.put_u64(DYNAMIC + 7 * 16 + 8, 0x3c1);
+        assert!(parse_main(&image).is_none());
+        image.put_u64(DYNAMIC + 7 * 16 + 8, 0x3c0);
+        image.put_u32(ARRAY_LOAD, 0);
+        assert!(parse_main(&image).is_none());
+        image.put_u32(ARRAY_LOAD, PT_LOAD);
 
         image.put_u64(DYNAMIC + 5 * 16 + 8, 0x600);
         assert!(parse_main(&image).is_none());
