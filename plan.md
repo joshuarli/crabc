@@ -117,8 +117,8 @@ are not transferable passes for a different revision.
      frozen lane revision. These receipts must be rerun on merged `main`.
   2. Sixteen Codex lanes resumed on 2026-09-26; `.work/tmp/lane-agents.txt`
      holds the active map, and the parent owns integration to `main`. The
-     `lane/abi-closure` companion-reader refresh is being proven on a current
-     cohort. The source-built static libc now compiles and links both
+     `lane/abi-closure` companion-reader refresh is integrated; its merged-source
+     cohort and ABI assembly are running. The source-built static libc now compiles and links both
      freestanding C and stock Rust std consumers, and automatic exit selects
      the signed native `destroy_on_exit` behavior; their merged-revision
      qualification remains open. `m8.rust-std`, `m8.lua`, and `m8.corpus` pass
@@ -129,11 +129,11 @@ are not transferable passes for a different revision.
      signal-handler-fork `raise-race`). Merge a `[[family.verified_slice]]`
      change only after rerunning its cited commands in a frozen checkout.
   3. Remaining low-churn repository-file pins (`compat/x86_64/core_image.py`
-     now names the core image once): owned `.list` digests in the
-     dynamic sysroot builder and the mimalloc visibility and errno-alias
-     readers, shadow-ABI and churn
-     fixtures, the native perf profile, the Lua admission test, and image-input
-     receipts. The syscall-alias reader now replays packed RELR against a
+     now names the core image once): shadow-ABI and churn fixtures, the native
+     perf profile, and remaining image-input receipts. The owned dynamic
+     `.list` digests, mimalloc visibility, errno-alias, Lua admission, and
+     resolver-network image inputs have passed physical source-built audits.
+     The syscall-alias reader now replays packed RELR against a
      source-built static/dynamic cohort; the timed pthread reader binds its
      four providers to their selected archive members. Their merged-source
      ABI assembly remains open. Keep the frozen AArch64 baseline, pinned-musl header identity,
@@ -142,9 +142,9 @@ are not transferable passes for a different revision.
 - **Other open defects:** fourteen runners pin optimizer shape (raw-syscall
   provider counts, call edges; lane `pattern`). M3's direct-page pop retains
   `retire_expire` and its differential trace passes. M7 exact statistics
-  receipts now match worker page retirement and merge; the remaining mismatch
-  is first-arena reservation before the baseline snapshot. Its source owner
-  is investigating. The pinned musl `raise-race` workload itself can fail
+  receipts now match the 122-key C/Rust differential after startup defers the
+  first arena; the gate still requires MI_STAT>0 and a merged-source receipt.
+  The pinned musl `raise-race` workload itself can fail
   with the same late-handler-fork `ECHILD` pattern as the candidate, so that
   report alone is not a runtime defect. Timing-limited leaves under host load
   need same-oracle comparison and source-bound reruns.
