@@ -253,8 +253,9 @@ are not transferable passes for a different revision.
      qualification remains open. `m8.rust-std`, `m8.lua`, `m8.corpus`,
      `m8.threads-fork`, `m8.weak-interposed`, `m8.startup-constructors`,
      `m8.errno-c-abi`, and `m8.static-dynamic-products` pass on source-built
-     native-shadow products; the other M8 leaves and merged-revision
-     qualification remain open. Known open items from the last lane reports:
+     native-shadow products; all nine M8 leaves pass on the clean frozen
+     `4ae4d70e3` source, while final merged-revision qualification remains
+     open. Known open items from the last lane reports:
      `materialized-dynamic-sysroot` still has load-sensitive deadlines (aio
      fresh-signal and behavior, credentials `threads`, message-queues,
      signal-handler-fork `raise-race`). Merge a `[[family.verified_slice]]`
