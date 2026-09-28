@@ -2478,10 +2478,10 @@ unsafe fn map_elf_with_status(
         if phoff_u64 < file_offset || ph_file_end_u64 > file_end {
             continue;
         }
+        // The whole table is inside this file-backed PT_LOAD. Mapping
+        // already proved p_filesz <= p_memsz and representable load extents,
+        // so its virtual range needs no second search over all PT_LOADs.
         let virtual_address = read_u64(p.add(16)).checked_add(phoff_u64 - file_offset).ok_or(ENOEXEC)?;
-        if !virtual_range_in_load(phdr, phnum, virtual_address, ph_table_len as u64) {
-            return Err(ENOEXEC);
-        }
         runtime_phdr = Some(runtime_address(base, virtual_address).ok_or(ENOEXEC)? as *const u8);
         break;
     }
@@ -5200,6 +5200,34 @@ unsafe fn die(message: &[u8]) -> ! { let _ = syscall3(SYS_WRITE, 2, message.as_p
 #[cfg(test)]
 mod readable_file_load_tests {
     use super::*;
+
+    #[test]
+    fn mapper_rejects_program_headers_outside_file_backed_load() {
+        const SYS_MEMFD_CREATE: i64 = 319;
+        let fd = unsafe { syscall2(SYS_MEMFD_CREATE, b"phdr-boundary\0".as_ptr() as i64, 0) };
+        assert!(fd >= 0);
+        let mut image = [0u8; PAGE as usize];
+        image[..4].copy_from_slice(b"\x7fELF");
+        image[4] = 2;
+        image[5] = 1;
+        image[16..18].copy_from_slice(&3u16.to_le_bytes());
+        image[18..20].copy_from_slice(&62u16.to_le_bytes());
+        image[32..40].copy_from_slice(&64u64.to_le_bytes());
+        image[54..56].copy_from_slice(&56u16.to_le_bytes());
+        image[56..58].copy_from_slice(&1u16.to_le_bytes());
+        let phdr = &mut image[64..120];
+        phdr[..4].copy_from_slice(&PT_LOAD.to_le_bytes());
+        phdr[4..8].copy_from_slice(&PF_R.to_le_bytes());
+        phdr[8..16].copy_from_slice(&0x100u64.to_le_bytes());
+        phdr[16..24].copy_from_slice(&0x100u64.to_le_bytes());
+        phdr[32..40].copy_from_slice(&0x100u64.to_le_bytes());
+        phdr[40..48].copy_from_slice(&0x100u64.to_le_bytes());
+        assert_eq!(unsafe { syscall3(SYS_WRITE, fd, image.as_ptr() as i64, PAGE as i64) }, PAGE as i64);
+        let status = unsafe { FileStatus::of_fd(fd) }.unwrap();
+        assert!(matches!(unsafe { map_elf_with_status(fd, &status, false, true,
+            ObjectRole::Library) }, Err(ENOEXEC)));
+        assert_eq!(unsafe { syscall1(SYS_CLOSE, fd) }, 0);
+    }
 
     fn load(headers: &mut [u8], index: usize, flags: u32, start: u64, filesz: u64, memsz: u64) {
         let header = &mut headers[index * 56..][..56];
