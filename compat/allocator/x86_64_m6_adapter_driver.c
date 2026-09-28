@@ -459,6 +459,17 @@ static mi_subproc_id_t child;
 static int child_facts[12];
 static int child_heap_variants[5];
 static int child_heap_realloc[10];
+static int child_cross_heap_realloc[14];
+static mi_heap_t* cross_thread_source_heap;
+static unsigned char* cross_thread_source_block;
+
+static void* child_cross_thread_source(void* argument) {
+  (void)argument;
+  mi_subproc_add_current_thread(child);
+  cross_thread_source_block = (unsigned char*)mi_heap_malloc(cross_thread_source_heap, 100);
+  if (cross_thread_source_block != NULL) memset(cross_thread_source_block, 0xa8, 100);
+  return NULL;
+}
 
 static void* child_worker(void* argument) {
   (void)argument;
@@ -519,6 +530,54 @@ static void* child_worker(void* argument) {
   child_heap_realloc[8] = rn != NULL && mi_heap_of(rn) == h;
   void* rca = mi_heap_recalloc_aligned_at(h, NULL, 4, 23, 64, 5);
   child_heap_realloc[9] = rca != NULL && (((uintptr_t)rca + 5) % 64) == 0 && zeroed(rca, 92);
+  mi_heap_t* other = mi_heap_new();
+  unsigned char* cross = (unsigned char*)mi_heap_malloc(h, 100);
+  memset(cross, 0x64, 100);
+  unsigned char* cross_plain = (unsigned char*)mi_heap_realloc(other, cross, 80);
+  child_cross_heap_realloc[0] = cross_plain != NULL && cross_plain != cross;
+  child_cross_heap_realloc[1] = cross_plain != NULL && filled(cross_plain, 80, 0x64);
+  child_cross_heap_realloc[2] = cross_plain != NULL && mi_heap_of(cross_plain) == other;
+  if (cross_plain == NULL) cross_plain = cross;
+  unsigned char* cross_zero = (unsigned char*)mi_heap_malloc(h, 80);
+  memset(cross_zero, 0x75, 80);
+  unsigned char* cross_zero_grown = (unsigned char*)mi_heap_rezalloc(other, cross_zero, 400);
+  child_cross_heap_realloc[3] = cross_zero_grown != NULL && cross_zero_grown != cross_zero
+                                && mi_heap_of(cross_zero_grown) == other;
+  child_cross_heap_realloc[4] = cross_zero_grown != NULL && filled(cross_zero_grown, 80, 0x75)
+                                && zeroed(cross_zero_grown + 80, 320);
+  if (cross_zero_grown == NULL) cross_zero_grown = cross_zero;
+  unsigned char* cross_aligned = (unsigned char*)mi_heap_malloc_aligned(h, 200, 64);
+  memset(cross_aligned, 0x86, 200);
+  /* The aligned realloc kernel can reuse a fitting block from Heap A even
+     after Heap B becomes the selected allocation Heap. */
+  unsigned char* cross_fit = (unsigned char*)mi_heap_realloc_aligned(other, cross_aligned, 180, 64);
+  child_cross_heap_realloc[5] = cross_fit == cross_aligned;
+  child_cross_heap_realloc[6] = cross_fit != NULL && filled(cross_fit, 180, 0x86)
+                                && mi_heap_of(cross_fit) == h;
+  if (cross_fit == NULL) cross_fit = cross_aligned;
+  unsigned char* cross_aligned_moved = (unsigned char*)mi_heap_realloc_aligned_at(other, cross_fit, 500, 256, 7);
+  child_cross_heap_realloc[7] = cross_aligned_moved != NULL && cross_aligned_moved != cross_fit
+                                && (((uintptr_t)cross_aligned_moved + 7) % 256) == 0
+                                && mi_heap_of(cross_aligned_moved) == other;
+  child_cross_heap_realloc[8] = cross_aligned_moved != NULL && filled(cross_aligned_moved, 180, 0x86);
+  if (cross_aligned_moved == NULL) cross_aligned_moved = cross_fit;
+  unsigned char* cross_failed = (unsigned char*)mi_heap_malloc(h, 64);
+  memset(cross_failed, 0x97, 64);
+  errno = 0;
+  void* cross_overflow = mi_heap_recalloc(other, cross_failed, SIZE_MAX / 2, 3);
+  child_cross_heap_realloc[9] = cross_overflow == NULL && errno == 0;
+  child_cross_heap_realloc[10] = filled(cross_failed, 64, 0x97) && mi_heap_of(cross_failed) == h;
+  /* A second child member leaves its Heap A page live after thread exit. */
+  cross_thread_source_heap = h;
+  pthread_t cross_thread;
+  int cross_started = pthread_create(&cross_thread, NULL, child_cross_thread_source, NULL) == 0;
+  int cross_joined = cross_started && pthread_join(cross_thread, NULL) == 0;
+  child_cross_heap_realloc[11] = cross_joined && cross_thread_source_block != NULL;
+  unsigned char* cross_thread_moved = cross_joined && cross_thread_source_block != NULL
+      ? (unsigned char*)mi_heap_realloc(other, cross_thread_source_block, 5000) : NULL;
+  child_cross_heap_realloc[12] = cross_thread_moved != NULL && cross_thread_moved != cross_thread_source_block
+                                  && mi_heap_of(cross_thread_moved) == other;
+  child_cross_heap_realloc[13] = cross_thread_moved != NULL && filled(cross_thread_moved, 100, 0xa8);
   child_facts[11] = mi_heap_of(q) == h && mi_heap_contains(h, q)
                  && !mi_heap_contains(NULL, q) && mi_any_heap_contains(q);
   bool ok;
@@ -540,6 +599,13 @@ static void* child_worker(void* argument) {
   mi_free(ra_at);
   mi_free(rn);
   mi_free(rca);
+  mi_free(cross_plain);
+  mi_free(cross_zero_grown);
+  mi_free(cross_aligned_moved);
+  mi_free(cross_failed);
+  if (cross_thread_moved != NULL) mi_free(cross_thread_moved);
+  else if (cross_thread_source_block != NULL) mi_free(cross_thread_source_block);
+  mi_heap_delete(other);
   mi_heap_delete(h);
   child_facts[10] = visit(child, 0, NULL);
   return NULL;
@@ -595,6 +661,12 @@ static void subproc_section(void) {
          child_heap_realloc[0], child_heap_realloc[1], child_heap_realloc[2], child_heap_realloc[3],
          child_heap_realloc[4], child_heap_realloc[5], child_heap_realloc[6], child_heap_realloc[7],
          child_heap_realloc[8], child_heap_realloc[9]);
+  printf("subproc.child.cross_heap_realloc=%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+         child_cross_heap_realloc[0], child_cross_heap_realloc[1], child_cross_heap_realloc[2],
+         child_cross_heap_realloc[3], child_cross_heap_realloc[4], child_cross_heap_realloc[5],
+         child_cross_heap_realloc[6], child_cross_heap_realloc[7], child_cross_heap_realloc[8],
+         child_cross_heap_realloc[9], child_cross_heap_realloc[10], child_cross_heap_realloc[11],
+         child_cross_heap_realloc[12], child_cross_heap_realloc[13]);
   mi_subproc_destroy(child);
   mi_stats_t after = stats_now();
   printf("subproc.child.destroyed.threads=%lld\n", (long long)(after.threads.total - before.threads.total));

@@ -1173,8 +1173,8 @@ pub(crate) unsafe fn native_child_heap_allocate_variant(
 /// reallocation checks its old block, alignment, or multiplied size.
 ///
 /// # Safety
-/// `heap` is a live non-main Heap of the current thread's child and remains
-/// live for the call.
+/// `heap` is a live Heap held against destruction for the call. A Heap of a
+/// different subprocess is refused without selecting or creating a Theap.
 pub(crate) unsafe fn native_child_heap_select_theap(heap: core::ptr::NonNull<crate::types::Heap>) -> bool {
     // SAFETY: the current thread alone accesses its membership slot.
     let Some(current) = (unsafe { current_child_member() }).as_mut() else { return false };
@@ -1185,7 +1185,14 @@ pub(crate) unsafe fn native_child_heap_select_theap(heap: core::ptr::NonNull<cra
     // and the current thread owns its Theap and dynamic local slot.
     let selected = unsafe {
         id.with_owner(|child| match child.as_mut() {
-            Some(child) => member.owner_mut().heap_theap(child, binding, heap).is_ok(),
+            Some(child) => {
+                // A Heap from another subprocess must not publish a Theap
+                // into this member's dynamic local slot.
+                let same_child = child.identity_pointer().is_some_and(|identity| {
+                    heap.as_ref().subprocess_pointer() == identity
+                });
+                same_child && member.owner_mut().heap_theap(child, binding, heap).is_ok()
+            }
             None => false,
         })
     };
@@ -1894,6 +1901,11 @@ pub(crate) mod tests {
                     });
                     // SAFETY: a fresh thread owns its pristine roots.
                     assert_eq!(unsafe { native_subproc_add_current_thread(id) }, Ok(NativeChildThreadAdd::Added));
+                    let foreign_heap = core::ptr::NonNull::new(
+                        crate::subproc::MainSubprocess::global().ready_main_heap_pointer()
+                    ).expect("the process main Heap is live");
+                    // SAFETY: the process main Heap remains live for the call.
+                    assert!(!unsafe { native_child_heap_select_theap(foreign_heap) });
                     let NativePageAllocationResult::Allocated(block) = native_allocate_aligned(200, 16, false)
                         else { panic!("child allocation"); };
                     unsafe { block.as_ptr().write_bytes(0x55, 200) };
@@ -1915,6 +1927,58 @@ pub(crate) mod tests {
                 assert_eq!((after.theaps.total - before.theaps.total, after.theaps.current - before.theaps.current), (2, 1));
                 stop_send.send(()).unwrap();
                 worker.join().expect("the orphaned member finishes");
+            },
+        );
+    }
+
+    /// A live Heap of one child cannot become another child's cached Theap.
+    /// Both child images remain live during the attempted selection.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn native_child_heap_selector_refuses_another_childs_heap() {
+        use crate::runtime_lifecycle::{
+            finish_current_thread_native_after_user_destructors, prepare_native_later_thread_arena,
+            test_initialize_process_from_host_environment, ThreadFinishResult,
+        };
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::native_child_heap_selector_refuses_another_childs_heap",
+            || {
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let first = native_subproc_new().expect("the first child");
+                let second = native_subproc_new().expect("the second child");
+                let (heap_send, heap_receive) = std::sync::mpsc::channel();
+                let (release_send, release_receive) = std::sync::mpsc::channel::<()>();
+                let owner = std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(first) }, Ok(NativeChildThreadAdd::Added));
+                    let heap = native_child_heap_new().expect("a member").expect("a live child").expect("a Heap");
+                    heap_send.send(heap.as_ptr().addr()).unwrap();
+                    release_receive.recv().unwrap();
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                });
+                let foreign_address = heap_receive.recv().unwrap();
+                let probe = std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(second) }, Ok(NativeChildThreadAdd::Added));
+                    let foreign = core::ptr::NonNull::new(foreign_address as *mut crate::types::Heap).unwrap();
+                    // SAFETY: the first child holds this Heap live until the probe returns.
+                    if unsafe { native_child_heap_select_theap(foreign) } {
+                        // A foreign Theap may now be linked into both child
+                        // lifecycles, so stop before either one is destroyed.
+                        std::process::exit(3);
+                    }
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                });
+                probe.join().expect("the foreign Heap is refused");
+                release_send.send(()).unwrap();
+                owner.join().expect("the owning thread finishes");
+                assert_eq!(unsafe { native_subproc_destroy(second) }, Ok(()));
+                assert_eq!(unsafe { native_subproc_destroy(first) }, Ok(()));
             },
         );
     }
