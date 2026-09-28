@@ -122,6 +122,11 @@ OPTION_EFFECTS_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_option_effects_oracl
 OPTION_EFFECTS_RUST_TEST = "diagnostic_output::tests::source_option_effects_trace_for_pinned_c_comparison"
 OPTION_EFFECTS_TRACE_BEGIN = "CRABC_MI_M7_OPTION_EFFECTS_TRACE_BEGIN"
 OPTION_EFFECTS_TRACE_END = "CRABC_MI_M7_OPTION_EFFECTS_TRACE_END"
+DESTROY_ON_EXIT_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_destroy_on_exit_oracle.c"
+DESTROY_ON_EXIT_RUST_TESTS = (
+    "runtime_lifecycle::destroy::tests::physical_destroy_transfers_live_worker_before_arena_and_page_map_release",
+    "runtime_lifecycle::destroy::tests::physical_destroy_os_only_retains_source_pages_but_seals_all_native_access",
+)
 # Every decision family both halves must trace; a family absent from both
 # traces would otherwise compare equal.
 OPTION_EFFECT_FAMILIES = (
@@ -628,6 +633,65 @@ def require_complete_option_effects_trace(trace: Mapping[str, str], description:
         raise harness.HarnessError(f"{description} lacks decision families {missing}")
 
 
+def destroy_on_exit_fields(output: str, prefix: str, description: str) -> list[int]:
+    """Read the seven ordered physical ownership observations."""
+
+    rows = re.findall(rf"^{re.escape(prefix)}\.(\d+)=(\d+)$", output, re.MULTILINE)
+    if [int(index) for index, _ in rows] != list(range(7)):
+        raise harness.HarnessError(f"{description} lacks seven ordered process-done fields")
+    return [int(value) for _, value in rows]
+
+
+def run_destroy_on_exit_differential(offline: bool) -> dict[str, Any]:
+    """Compare physical process-done ownership after a preallocation option set."""
+
+    harness.require_native_x86_64()
+    pin = harness.load_pin()
+    archive = harness.fetch_archive(pin, offline)
+    with harness.temporary_directory("crabc-mimalloc-x86_64-m7-destroy-on-exit-") as name:
+        temporary = Path(name)
+        source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
+        binary = temporary / "destroy-on-exit-c"
+        c_build = harness.command_record([
+            harness.require_tool("musl-gcc"), "-std=c11", "-fPIC", "-ftls-model=initial-exec",
+            "-DMI_SHARED_LIB", "-DMI_SHARED_LIB_EXPORT", "-DMI_LIBC_MUSL=1",
+            "-DMI_PRIM_HAS_PROCESS_ATTACH=1", "-I", str(source / "include"),
+            "-I", str(source / "src"), *harness.CONFIGURATION_PROFILES["release"],
+            str(DESTROY_ON_EXIT_ORACLE), "-pthread", "-o", str(binary),
+        ], cwd=source, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS)
+        harness.require_success(c_build, "pinned C destroy-on-exit build")
+        result: dict[str, Any] = {"c_build_command": c_build["command"], "modes": {}}
+        for mode, test in enumerate(DESTROY_ON_EXIT_RUST_TESTS):
+            c_run = harness.command_record([str(binary), str(mode)], cwd=source, env={}, timeout_seconds=60)
+            harness.require_success(c_run, f"pinned C destroy-on-exit mode {mode}")
+            rust_run = rust_trace(test, f"destroy-on-exit-{mode}")
+            c_fields = destroy_on_exit_fields(str(c_run["stdout"]), "destroy_on_exit", f"C mode {mode}")
+            if str(c_run["stdout"]).splitlines() != [
+                f"destroy_on_exit.{index}={value}" for index, value in enumerate(c_fields)
+            ]:
+                raise harness.HarnessError(f"destroy-on-exit mode {mode} emitted unexpected C output")
+            rust_output = re.sub(
+                rf"^test {re.escape(test)} \.\.\. (?=m2\.process\.destroy\.0=)", "",
+                str(rust_run["stdout"]), count=1, flags=re.MULTILINE,
+            )
+            rust_fields = destroy_on_exit_fields(rust_output, "m2.process.destroy", f"Rust mode {mode}")
+            if c_fields != rust_fields:
+                raise harness.HarnessError(f"destroy-on-exit mode {mode} C/Rust ownership differs: {c_fields} != {rust_fields}")
+            if c_fields[0] != 2 or c_fields[1] != 1 or c_fields[2] != mode or c_fields[3:] != [0, 1, 0, 1]:
+                raise harness.HarnessError(f"destroy-on-exit mode {mode} lacks the source page/arena disposition")
+            if str(c_run["stderr"]).strip() or "mimalloc:" in str(rust_run["stdout"]):
+                raise harness.HarnessError(f"destroy-on-exit mode {mode} changed the quiet final-output state")
+            result["modes"][str(mode)] = {
+                "c_command": c_run["command"], "rust_command": rust_run["command"],
+                "c_exit_status": c_run["status"], "rust_exit_status": rust_run["status"],
+                "c_stderr": c_run["stderr"], "rust_stdout": rust_run["stdout"],
+                "fields": c_fields,
+            }
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    harness.write_json(ARTIFACTS / "destroy-on-exit.json", result)
+    return result
+
+
 def require_complete_error_sites_trace(trace: Mapping[str, str], description: str) -> None:
     """Reject a trace that omits a request or one of its three records."""
 
@@ -922,6 +986,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run the pinned-C/Rust MI_SHOW_ERRORS options and diagnostics differential")
     mode.add_argument("--option-effects-differential", action="store_true",
         help="run the pinned-C/Rust option-effects differential")
+    mode.add_argument("--destroy-on-exit-differential", action="store_true",
+        help="run the pinned-C/Rust process-done option-effects differential")
     mode.add_argument("--thread-init-differential", action="store_true",
         help="run the shared-driver pinned-C/native-adapter thread-initialization failure differential")
     mode.add_argument("--page-map-differential", action="store_true",
@@ -984,6 +1050,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.option_effects_differential:
         report = run_option_effects_differential(arguments.offline)
         print(f"M7 option-effects differential passed: {report['compared_key_count']} keys")
+        return 0
+    if arguments.destroy_on_exit_differential:
+        report = run_destroy_on_exit_differential(arguments.offline)
+        print(f"M7 destroy-on-exit differential passed: {len(report['modes'])} modes")
         return 0
     if arguments.default_baseline_audit:
         if arguments.scratch is None:

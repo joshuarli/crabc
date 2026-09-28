@@ -46,6 +46,7 @@ class M7GateContractTests(unittest.TestCase):
             "audit:default-baseline",
             "differential:adapter",
             "differential:deferred-free-callback",
+            "differential:destroy-on-exit",
             "differential:diagnostic-output-owner",
             "differential:error-reporting-sites",
             "differential:option-effects",
@@ -74,6 +75,18 @@ class M7GateContractTests(unittest.TestCase):
         modes = {name for entry in self.contract["gates"] for name in entry["compile_time_modes"]}
         self.assertIn("MI_GUARDED", modes)
         self.assertNotIn("MI_OVERRIDE", modes)
+
+    def test_destroy_on_exit_requires_its_physical_option_effect_evidence(self) -> None:
+        summary = self.validate()
+        effect = self.gate_record(self.contract, "m7.option-effects")
+        self.assertIn("differential:destroy-on-exit", effect["evidence"])
+        self.assertIn("differential:destroy-on-exit", summary["runnable_evidence"])
+
+    def test_destroy_on_exit_reader_rejects_missing_physical_state(self) -> None:
+        rows = "".join(f"destroy_on_exit.{index}={value}\n" for index, value in enumerate((2, 1, 0, 0, 1, 0, 1)))
+        self.assertEqual(gate.destroy_on_exit_fields(rows, "destroy_on_exit", "fixture"), [2, 1, 0, 0, 1, 0, 1])
+        with self.assertRaises(harness.HarnessError):
+            gate.destroy_on_exit_fields(rows.replace("destroy_on_exit.6=1\n", ""), "destroy_on_exit", "fixture")
 
     def test_default_artifact_reader_rejects_changed_build_or_cpu(self) -> None:
         with harness.temporary_directory("m7-baseline-reader-") as name:
