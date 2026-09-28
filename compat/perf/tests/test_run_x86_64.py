@@ -189,6 +189,15 @@ class TimingLauncherLifecycleTests(unittest.TestCase):
 
 
 class MeasurementCompletenessTests(unittest.TestCase):
+    def test_supplemental_only_smoke_seals_the_live_memory_probe_binary(self) -> None:
+        """The fixed live memory diagnostic needs its legacy workload executable."""
+
+        selected = [row for row in runner.performance_rows(ROOT) if row.name == "allocator_live_4m"]
+        sources, _headers = runner.source_roster(
+            ROOT, SimpleNamespace(local_sources={}), selected, include_memory_observers=True,
+        )
+        self.assertIn("workload", sources)
+
     def test_red_syscall_scorecard_is_complete_when_clients_and_raw_diagnostics_exist(self) -> None:
         """A replayable red verdict must not be relabelled as missing data."""
 

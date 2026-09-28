@@ -845,7 +845,7 @@ def source_roster(
     *,
     include_memory_observers: bool,
 ) -> tuple[dict[str, Path], dict[str, Path]]:
-    """Seal exactly the selected timed and, when requested, observer sources."""
+    """Seal selected timed sources and the fixed live-memory probe input."""
 
     fixtures = root / "compat/perf/fixtures"
     names = {row.name for row in rows}
@@ -860,7 +860,9 @@ def source_roster(
         name: fixtures / name
         for name in evidence.HEADER_FILES
     }
-    if "workload" in legacy_families:
+    # The live memory diagnostic always runs its allocator protocol through
+    # this executable, even when every timed row comes from a supplemental source.
+    if "workload" in legacy_families or include_memory_observers:
         sources["workload"] = fixtures / evidence.STATIC_SOURCE_FILES["workload"]
     if "constructor" in legacy_families:
         sources["constructor"] = fixtures / evidence.STATIC_SOURCE_FILES["constructor"]
