@@ -331,7 +331,8 @@ are not transferable passes for a different revision.
   host's unavailable 1 GiB huge-page path; physical success and nonzero child
   reservation remain unproved. Public main and child regular arena reservation
   failures now match pinned C on the return, null output, errno, and all six
-  ordered warning lines; shared M6 gate registration is in progress.
+  ordered warning lines. The clean source-bound M6 gate passes all eighteen
+  runnable evidence rows, including this warning differential.
   All ten required gates
   remain blocked by 10 named missing API and lifetime evidence entries;
   accumulated mixed-workload main-Heap page-population parity remains unproved.
