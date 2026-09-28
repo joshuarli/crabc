@@ -2020,8 +2020,17 @@ transfer capability.
   releases only the observed range through `_mi_prim_free` after the trace.
   Rust retains one unpublished claim and retries that exact range raw, without
   another warning or statistics event. This ownership difference preserves
-  cleanup capability without changing source accounting or warning order. The
-  focused `allocator-unit` regressions pass. The private native smoke command
+  cleanup capability without changing source accounting or warning order. A
+  separate successful fresh OS singleton receiver maps 262,144 bytes, places
+  its slice 131,072 bytes into that mapping, publishes one 128-KiB block
+  through the PageMap, then unmaps the complete MemoryId extent exactly once.
+  Pinned C and Rust each record reserved/committed deltas of
+  +327,680/+196,608 while the page is live and +65,536/+65,536 after terminal
+  free; the remaining 65,536 bytes belong to the lazily installed PageMap
+  submap. Both record two mmap and two commit calls, no detached-Theap queue
+  page-count change, and no warning during the request and release. The focused
+  `allocator-unit` regressions pass. The private native
+  smoke command
   `./compat/allocator/run-x86_64.sh allocator-perf --smoke --label m2-incremental-on-demand`
   completed successfully and emitted
   `.work/allocator-x86_64/reports/allocator/x86_64/perf/m2-incremental-on-demand.json`;

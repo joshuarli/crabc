@@ -60,6 +60,15 @@ OS_ON_DEMAND_VALUE_KEYS = tuple(
         "mapping_length", "reserved_delta", "committed_delta", "commit_calls",
         "warning_fragments",
     )
+) + tuple(
+    f"os_area_published.{field}" for field in (
+        "mapping_length", "slice_offset", "block_start_offset", "page_offset",
+        "reserved", "block_size", "initially_committed", "initially_zero",
+        "reserved_live", "committed_live", "commit_calls_live",
+        "reserved_after_free", "committed_after_free", "commit_calls_after_free",
+        "primitive_commits", "warning_fragments", "mmap_calls_live",
+        "mmap_calls_after_free", "pages_live", "pages_after_free",
+    )
 )
 OS_PUBLICATION_KEYS = tuple(
     f"os_publication.{selected}.{field}" for selected in range(1, 8)
@@ -87,6 +96,11 @@ OS_PUBLICATION_KEYS = tuple(
         "single_commit_and_release", "statistics", "warning_fragments_order",
         "warning_before_statistics", "unmapped_after_cleanup",
     )
+) + tuple(
+    f"os_area_published.{field}" for field in (
+        "os_memory", "exact_mapping_release", "page_map_lifecycle",
+        "kernel_mapping_lifecycle", "single_terminal_free", "warning_absent",
+    )
 )
 OS_PUBLICATION_BOUNDARY = {
     "source": "src/arena.c:781-1120,1220-1297; src/page-map.c:391-515; src/os.c:240-294",
@@ -102,6 +116,7 @@ OS_PUBLICATION_BOUNDARY = {
     "on_demand_callback": "an external arena rejects one first page prefix through its source callback; its backing and free-slice ownership remain live, no OS commit statistics event occurs, and a later claim succeeds",
     "fresh_os_cleanup": "a direct fresh OS area rejects its metadata commit and cleanup unmap; the retained range and source counters remain observable, commit and free warnings arrive before the reserved decrease, and Rust retries through one raw-only owner",
     "fresh_os_released": "a direct fresh OS area rejects its metadata commit, then successfully unmaps the exact area; only the commit warning arrives while reserved current still includes the area, and no mapping or retry owner remains",
+    "fresh_os_published": "a successful fresh OS singleton publishes through the page map, retains its exact OS MemoryId and VM deltas, then releases its complete mapping without warnings",
     "excluded": "corrupted-alias provenance refusal, general metadata allocator, hardware huge/NUMA, and complete M2",
 }
 METADATA_PUBLICATION_PROFILE_DEFINE = "-DCRABC_M2_METADATA_PUBLICATION_PROFILE=1"
@@ -2288,6 +2303,20 @@ def _validate_os_on_demand_difference(c: Mapping[str, int], rust: Mapping[str, i
     if (tuple(c[released(field)] for field in fields) != released_expected
         or tuple(rust[released(field)] for field in fields) != released_expected):
         raise ValueError(f"fresh OS metadata/release values differ: C {c} Rust {rust}")
+    published = lambda field: f"os_area_published.{field}"
+    published_fields = ("mapping_length", "slice_offset", "block_start_offset",
+        "page_offset", "reserved", "block_size", "initially_committed",
+        "initially_zero", "reserved_live", "committed_live", "commit_calls_live",
+        "reserved_after_free", "committed_after_free", "commit_calls_after_free",
+        "primitive_commits", "warning_fragments", "mmap_calls_live",
+        "mmap_calls_after_free", "pages_live", "pages_after_free")
+    c_published = tuple(c[published(field)] for field in published_fields)
+    rust_published = tuple(rust[published(field)] for field in published_fields)
+    expected_published = (4 * 65536, 2 * 65536, 0, 2 * 65536 - 256,
+        1, 2 * 65536, 1, 1, 5 * 65536, 3 * 65536, 2,
+        65536, 65536, 2, 2, 0, 2, 2, 0, 0)
+    if c_published != expected_published or rust_published != expected_published:
+        raise ValueError(f"fresh OS published values differ: C {c_published} Rust {rust_published}")
 
 
 def validate_os_publication_report(report: Mapping[str, Any]) -> dict[str, Any]:

@@ -2169,6 +2169,114 @@ mod tests {
             && unsafe { map.checked_lookup(start.as_ptr()) }.is_null()
     }
 
+    /// Publishes one process-owned OS singleton and observes its exact mapping
+    /// and subprocess counters through the terminal page release.
+    fn fresh_os_published_relations() -> ([bool; 6], [i64; 20]) {
+        use crate::bootstrap::ExclusiveTheapBootstrap;
+        use crate::diagnostic_output::{OutputCallback, OutputOwner};
+        use crate::page_map::PageMap;
+        let show_errors = b"mimalloc_show_errors=1\0";
+        let max_warnings = b"mimalloc_max_warnings=100\0";
+        let environment = std::boxed::Box::leak(std::boxed::Box::new([
+            show_errors.as_ptr().cast(), max_warnings.as_ptr().cast(), core::ptr::null(),
+        ]));
+        FRESH_OS_CLEANUP_ENVIRONMENT.store(environment.as_mut_ptr(), Ordering::Release);
+        let output = std::boxed::Box::leak(std::boxed::Box::new(
+            OutputOwner::new(fresh_os_cleanup_default_output)));
+        // SAFETY: the leaked environment and output outlive the synchronous
+        // source option initialization and this receiver.
+        unsafe { output.initialize_source_options(fresh_os_cleanup_environment) };
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let warnings = FreshOsCleanupWarnings {
+            fragments: std::sync::Mutex::new(std::vec::Vec::new()),
+            subprocess: subprocess.identity(),
+            reserved_at_commit_warning: AtomicI64::new(i64::MIN),
+            reserved_at_free_warning: AtomicI64::new(i64::MIN),
+        };
+        // SAFETY: the callback uses this stack-backed capture only while it
+        // remains registered and every operation is synchronous.
+        unsafe { output.register_output(Some(capture_fresh_os_cleanup_warning as OutputCallback),
+            &warnings as *const FreshOsCleanupWarnings as *mut c_void) };
+        let policy = std::boxed::Box::leak(std::boxed::Box::new(
+            unsafe { crate::os::VmPolicy::from_process_options(output) }));
+        policy.finish_preloading();
+        let process = VmProcess::new(policy, subprocess);
+        let mut map = PageMap::initialize_for_process(config(4 * KIB), 0, true, process).unwrap();
+        let mut bootstrap = std::boxed::Box::pin(ExclusiveTheapBootstrap::new());
+        let mut session = bootstrap.as_mut().activate_detached_for_main_subprocess(
+            process.main_subprocess().expect("fixture uses process main")).unwrap();
+        warnings.fragments.lock().unwrap().clear();
+        let before = process.subprocess().vm_statistics().snapshot();
+        let pages_before = session.theap().page_count();
+        let fault = fault::install(fault::Plan::disabled());
+        // SAFETY: the detached session pins and exclusively owns this Theap;
+        // its random projection ends before page publication mutates it.
+        let mut random = unsafe { crate::os::CurrentTheapRandom::new(
+            NonNull::from(session.theap())) };
+        let claim = OsAlignedPageClaim::allocate_for_process_with_random(process,
+            config(4 * KIB), 128 * KIB, 128 * KIB, crate::arena::ArenaId::none(),
+            Some(&mut random))
+            .unwrap_or_else(|_| panic!("fresh OS singleton claim"));
+        let layout = claim.layout();
+        let memory = claim.memory_id().unwrap();
+        let base = claim.base().unwrap();
+        let start = claim.slice_start().unwrap();
+        let mut primary = unsafe { session.publish_fresh_page(claim.metadata().unwrap(),
+            layout.block_size(), layout.page_offset(), layout.reserved(), 0,
+            memory.initially_zero(), memory) }.unwrap();
+        assert!(unsafe { claim.publish_secondary_metadata(primary) });
+        unsafe { map.register_range(start.as_ptr(), layout.page_map_size(), primary) }.unwrap();
+        let live = process.subprocess().vm_statistics().snapshot();
+        let pages_live = session.theap().page_count();
+        let registered = unsafe { map.checked_lookup(start.as_ptr()) } == primary.as_ptr();
+        let page_offset = unsafe { primary.as_ref().page_offset() };
+        let page_reserved = unsafe { primary.as_ref().reserved() };
+        let page_block_size = unsafe { primary.as_ref().block_size() };
+        let mut residency = 0;
+        let mapped = unsafe { crabc_core::mm::mincore_raw(base, 4096, &mut residency) }.is_ok();
+        let unmaps = fault.capture_unmap_ranges();
+        claim.into_published().unwrap();
+        let published = unsafe { PublishedOsAlignedPage::from_page_for_process(
+            process, config(4 * KIB), primary) }.unwrap();
+        unsafe { map.unregister_range(start.as_ptr(), layout.page_map_size()) }.unwrap();
+        assert!(unsafe { published.clear_secondary_metadata() });
+        assert!(session.retire_page(unsafe { primary.as_mut() }).is_some());
+        assert!(unsafe { published.reclaim() }.is_ok());
+        let freed = process.subprocess().vm_statistics().snapshot();
+        let pages_free = session.theap().page_count();
+        let (ranges, count) = unmaps.all().unwrap();
+        let exact_release = ranges[..count].iter().any(|&(address, length)|
+            address == base.addr() && length == layout.mapping_length());
+        let unmapped = unsafe { crabc_core::mm::mincore_raw(base, 4096, &mut residency) }
+            == Err(Errno::NOMEM);
+        let warning_count = warnings.fragments.lock().unwrap().len();
+        let facts = [memory.is_os(), exact_release,
+            registered && unsafe { map.checked_lookup(start.as_ptr()) }.is_null(),
+            mapped && unmapped, count == 1, warning_count == 0];
+        let values = [layout.mapping_length() as i64,
+            (start.as_ptr().addr() - base.addr()) as i64,
+            layout.block_start_offset() as i64, page_offset as i64,
+            i64::from(page_reserved), page_block_size as i64,
+            i64::from(memory.initially_committed()), i64::from(memory.initially_zero()),
+            live.reserved_current - before.reserved_current,
+            live.committed_current - before.committed_current,
+            live.commit_calls - before.commit_calls,
+            freed.reserved_current - before.reserved_current,
+            freed.committed_current - before.committed_current,
+            freed.commit_calls - before.commit_calls,
+            live.commit_calls - before.commit_calls, warning_count as i64,
+            live.mmap_calls - before.mmap_calls,
+            freed.mmap_calls - before.mmap_calls,
+            (pages_live - pages_before) as i64,
+            (pages_free as i64) - (pages_before as i64)];
+        drop(unmaps);
+        drop(fault);
+        unsafe { map.destroy() }.unwrap();
+        // SAFETY: remove the stack capture before it becomes invalid.
+        unsafe { output.register_output(None, core::ptr::null_mut()) };
+        (facts, values)
+    }
+
     /// The same seven legal source transitions as the direct-included C
     /// arena/page-map receiver. C's void failed free exposes no retry owner;
     /// Rust must preserve an exact Claim or Published token and account once.
@@ -2262,6 +2370,12 @@ mod tests {
             "warning_before_statistics", "unmapped_after_cleanup"] {
             std::println!("os_area_commit_release.{field}=1");
         }
+        let (published_facts, published_values) = fresh_os_published_relations();
+        for (field, value) in ["os_memory", "exact_mapping_release",
+            "page_map_lifecycle", "kernel_mapping_lifecycle", "single_terminal_free",
+            "warning_absent"].into_iter().zip(published_facts) {
+            std::println!("os_area_published.{field}={}", u8::from(value));
+        }
         std::println!("CRABC_MI_M2_OS_PUBLICATION_TRACE_END");
         std::println!("CRABC_MI_M2_OS_ON_DEMAND_VALUES_BEGIN");
         for (field, value) in [
@@ -2285,6 +2399,17 @@ mod tests {
             "commit_calls", "warning_fragments"].into_iter().zip(cleanup_released_values) {
             std::println!("os_area_commit_release.{field}={value}");
         }
+        for (field, value) in ["mapping_length", "slice_offset",
+            "block_start_offset", "page_offset", "reserved", "block_size",
+            "initially_committed", "initially_zero", "reserved_live", "committed_live",
+            "commit_calls_live", "reserved_after_free", "committed_after_free",
+            "commit_calls_after_free", "primitive_commits", "warning_fragments",
+            "mmap_calls_live", "mmap_calls_after_free", "pages_live", "pages_after_free"]
+            .into_iter().zip(published_values) {
+            std::println!("os_area_published.{field}={value}");
+        }
+        assert!(published_facts.into_iter().all(|value| value),
+            "fresh OS published receiver: {published_facts:?}");
         std::println!("CRABC_MI_M2_OS_ON_DEMAND_VALUES_END");
     }
 

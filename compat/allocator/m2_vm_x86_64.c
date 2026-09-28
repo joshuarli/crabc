@@ -1,12 +1,11 @@
-/* Native x86-64 M2 VM-primitives oracle.
+/* Native x86-64 direct VM oracle.
  *
- * This intentionally includes the fixed v3.5.0 `src/os.c`, `src/arena.c`,
- * `src/init.c`, `src/page.c`, and `src/prim/prim.c` into the probe so their
- * private configuration, OS-allocation, first arena-reserve, preloading-state,
- * direct page-extension, and Unix primitive-dispatch bodies are observed
- * directly. The Python producer omits those five ordinary source objects from
- * the link
- * list. It records address-free fixed-profile facts for the regular lifecycle
+ * The pinned allocator's OS, arena, initialization, page, and primitive
+ * translation units are included directly so their private configuration,
+ * allocation, first arena reserve, preloading state, direct page extension,
+ * and Unix primitive dispatch remain observable. The producer excludes those
+ * ordinary objects from the separate link list to avoid duplicate bodies.
+ * The probe records address-free fixed-profile facts for the regular lifecycle
  * and one bounded, child-only source-option/first-arena policy record. It
  * does not qualify ambient retries, huge-page success/placement, diagnostics,
  * or general arena use.
@@ -4020,6 +4019,11 @@ typedef struct fresh_os_cleanup_record_s {
   int64_t values[5];
 } fresh_os_cleanup_record_t;
 
+typedef struct fresh_os_published_record_s {
+  bool facts[6];
+  int64_t values[20];
+} fresh_os_published_record_t;
+
 static struct {
   mi_subproc_t* subproc;
   int64_t reserved_at_commit_warning;
@@ -4171,6 +4175,81 @@ static int run_fresh_os_commit_released_child(int descriptor) {
   result.values[3] = commits_after - commits_before;
   result.values[4] = (int64_t)fresh_os_cleanup_warning.fragments;
   for (size_t i = 0; i < 8; i++) if (!result.facts[i]) return (int)(20 + i);
+  return write(descriptor, &result, sizeof(result)) == sizeof(result) ? 0 : 40;
+}
+
+/* A successful fresh OS claim becomes a registered page and then returns its
+ * exact underlying mapping through the ordinary terminal page free. */
+static int run_fresh_os_published_child(int descriptor) {
+  mi_process_init();
+  mi_option_set(mi_option_disallow_arena_alloc, 1);
+  mi_option_set(mi_option_allow_large_os_pages, 0);
+  mi_option_set_enabled(mi_option_show_errors, true);
+  mi_subproc_t* const subproc = _mi_subproc_main();
+  memset(&fresh_os_cleanup_warning, 0, sizeof(fresh_os_cleanup_warning));
+  fresh_os_cleanup_warning.subproc = subproc;
+  mi_register_output(fresh_os_cleanup_output, NULL);
+  fresh_os_cleanup_warning.fragments = 0;
+  const int64_t reserved_before = subproc->stats.reserved.current;
+  const int64_t committed_before = subproc->stats.committed.current;
+  const int64_t commits_before = subproc->stats.commit_calls.total;
+  const int64_t mmap_before = subproc->stats.mmap_calls.total;
+  const size_t pages_before = subproc->theap_meta->page_count;
+  memset(&os_publication_probe, 0, sizeof(os_publication_probe));
+  os_publication_probe.active = true;
+  mi_page_t* const page = _mi_arenas_page_alloc(subproc->theap_meta,
+      128 * MI_KiB, 128 * MI_KiB);
+  if (page == NULL) return 20;
+  const mi_memid_t memid = page->memid;
+  uint8_t* const slice = mi_page_slice_start(page);
+  uint8_t* const start = mi_page_start(page);
+  const uint16_t page_reserved = page->reserved;
+  const size_t page_block_size = page->block_size;
+  const size_t page_offset = page->page_offset;
+  const int64_t reserved_live = subproc->stats.reserved.current;
+  const int64_t committed_live = subproc->stats.committed.current;
+  const int64_t commits_live = subproc->stats.commit_calls.total;
+  const int64_t mmap_live = subproc->stats.mmap_calls.total;
+  const size_t pages_live = subproc->theap_meta->page_count;
+  const bool registered = _mi_safe_ptr_page(start) == page;
+  unsigned char residency = 0;
+  const bool mapped = mincore(memid.mem.os.base, _mi_os_page_size(), &residency) == 0;
+  _mi_arenas_page_free(page, subproc->theap_meta);
+  os_publication_probe.active = false;
+  const int64_t reserved_free = subproc->stats.reserved.current;
+  const int64_t committed_free = subproc->stats.committed.current;
+  const int64_t commits_free = subproc->stats.commit_calls.total;
+  const int64_t mmap_free = subproc->stats.mmap_calls.total;
+  const size_t pages_free = subproc->theap_meta->page_count;
+  const bool unmapped = mincore(memid.mem.os.base, _mi_os_page_size(), &residency) == -1
+      && errno == ENOMEM;
+  fresh_os_published_record_t result = {0};
+  result.facts[0] = memid.memkind == MI_MEM_OS && memid.mem.os.base != NULL;
+  result.facts[1] = memid.mem.os.size == os_publication_probe.length;
+  result.facts[2] = registered && _mi_safe_ptr_page(start) == NULL;
+  result.facts[3] = mapped && unmapped;
+  result.facts[4] = os_publication_probe.releases == 1 && !os_publication_probe.retained;
+  result.facts[5] = fresh_os_cleanup_warning.fragments == 0;
+  result.values[0] = (int64_t)memid.mem.os.size;
+  result.values[1] = (int64_t)(slice - (uint8_t*)memid.mem.os.base);
+  result.values[2] = (int64_t)(start - slice);
+  result.values[3] = (int64_t)page_offset;
+  result.values[4] = (int64_t)page_reserved;
+  result.values[5] = (int64_t)page_block_size;
+  result.values[6] = (int64_t)memid.initially_committed;
+  result.values[7] = (int64_t)memid.initially_zero;
+  result.values[8] = reserved_live - reserved_before;
+  result.values[9] = committed_live - committed_before;
+  result.values[10] = commits_live - commits_before;
+  result.values[11] = reserved_free - reserved_before;
+  result.values[12] = committed_free - committed_before;
+  result.values[13] = commits_free - commits_before;
+  result.values[14] = (int64_t)os_publication_probe.commits;
+  result.values[15] = (int64_t)fresh_os_cleanup_warning.fragments;
+  result.values[16] = mmap_live - mmap_before;
+  result.values[17] = mmap_free - mmap_before;
+  result.values[18] = (int64_t)pages_live - (int64_t)pages_before;
+  result.values[19] = (int64_t)pages_free - (int64_t)pages_before;
   return write(descriptor, &result, sizeof(result)) == sizeof(result) ? 0 : 40;
 }
 
@@ -4421,6 +4500,14 @@ int main(void) {
       run_fresh_os_commit_released_child, &released, sizeof(released))) return 1;
   for (size_t i = 0; i < 8; i++)
     printf("os_area_commit_release.%s=%u\n", release_fields[i], (unsigned)released.facts[i]);
+  const char* published_fields[] = {"os_memory", "exact_mapping_release",
+      "page_map_lifecycle", "kernel_mapping_lifecycle", "single_terminal_free",
+      "warning_absent"};
+  fresh_os_published_record_t published = {0};
+  if (!capture_large_page_retry_child("fresh OS published child",
+      run_fresh_os_published_child, &published, sizeof(published))) return 1;
+  for (size_t i = 0; i < 6; i++)
+    printf("os_area_published.%s=%u\n", published_fields[i], (unsigned)published.facts[i]);
   puts("CRABC_MI_M2_OS_PUBLICATION_TRACE_END");
   const char* on_demand_value_fields[] = {"mapping_length", "reserved_after_area",
       "committed_after_area", "commit_calls_after_area", "memory_id_initially_committed",
@@ -4438,6 +4525,15 @@ int main(void) {
   for (size_t i = 0; i < 5; i++)
     printf("os_area_commit_release.%s=%lld\n", cleanup_value_fields[i],
         (long long)released.values[i]);
+  const char* published_value_fields[] = {"mapping_length", "slice_offset",
+      "block_start_offset", "page_offset", "reserved", "block_size", "initially_committed",
+      "initially_zero", "reserved_live", "committed_live", "commit_calls_live",
+      "reserved_after_free", "committed_after_free", "commit_calls_after_free",
+      "primitive_commits", "warning_fragments", "mmap_calls_live",
+      "mmap_calls_after_free", "pages_live", "pages_after_free"};
+  for (size_t i = 0; i < 20; i++)
+    printf("os_area_published.%s=%lld\n", published_value_fields[i],
+        (long long)published.values[i]);
   puts("CRABC_MI_M2_OS_ON_DEMAND_VALUES_END");
   return 0;
 }

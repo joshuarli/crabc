@@ -2673,6 +2673,8 @@ impl Mapping {
         if address.is_null() || length == 0 || commit_size > length {
             return Err(Errno::INVAL);
         }
+        #[cfg(any(test, feature = "native-runtime-test-fault"))]
+        fault::record_unmap_range(address, length);
         // SAFETY: the caller supplies the exact published mapping and proves
         // it has the unique quiescent release capability. Retain the raw
         // syscall boundary rather than recreating a second Mapping owner.
