@@ -963,6 +963,9 @@ STATISTICS_LEVEL_TWO_PAGE_HUGE_TRACE_END = "CRABC_MI_M7_STATISTICS_LEVEL_TWO_PAG
 STATISTICS_JSON_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_json_oracle.c"
 STATISTICS_JSON_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_JSON_TRACE_BEGIN"
 STATISTICS_JSON_TRACE_END = "CRABC_MI_M7_STATISTICS_JSON_TRACE_END"
+STATISTICS_PAGE_EXTEND_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_page_extend_driver.c"
+STATISTICS_PAGE_EXTEND_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_PAGE_EXTEND_TRACE_BEGIN"
+STATISTICS_PAGE_EXTEND_TRACE_END = "CRABC_MI_M7_STATISTICS_PAGE_EXTEND_TRACE_END"
 
 
 def require_statistics_level_one(trace: Mapping[str, str], description: str) -> None:
@@ -1154,6 +1157,19 @@ def require_statistics_json(trace: Mapping[str, str], level: int, description: s
         raise harness.HarnessError(f"{description} lost JSON serialization or caller-buffer behavior: {trace}")
 
 
+def require_statistics_page_extend(trace: Mapping[str, str], description: str) -> None:
+    """Require the first successful page extension's source count and bytes."""
+
+    expected = {
+        "profile.level": "1", "allocation.usable": "64",
+        "allocated.pages_extended": "1", "allocated.page_committed": "8192,8192,8192",
+        "allocated.pages": "1,1,1", "freed.pages_extended": "1",
+        "freed.page_committed": "8192,8192,8192",
+    }
+    if dict(trace) != expected:
+        raise harness.HarnessError(f"{description} lost the source page-extension producer: {trace}")
+
+
 def run_statistics_level_one_differential(offline: bool) -> dict[str, Any]:
     """Build the same public statistics driver with pinned C level one and Rust."""
 
@@ -1315,6 +1331,61 @@ def run_statistics_json_differential(offline: bool) -> dict[str, Any]:
     return report
 
 
+def run_statistics_page_extend_differential(offline: bool) -> dict[str, Any]:
+    """Compare one successful source page extension in the public stats image."""
+
+    import x86_64_m4_gate as m4
+
+    harness.require_native_x86_64()
+    pin = harness.load_pin()
+    archive = harness.fetch_archive(pin, offline)
+    with harness.temporary_directory("crabc-mimalloc-x86_64-m7-statistics-page-extend-") as name:
+        temporary = Path(name)
+        source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
+        compiler = harness.require_tool("musl-gcc")
+        c_binary = temporary / "page-extend-c"
+        c_build = harness.command_record(
+            [compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+             *harness.CONFIGURATION_PROFILES["release"], "-DMI_STAT=1",
+             "-I", str(source / "include"), str(STATISTICS_PAGE_EXTEND_DRIVER),
+             str(source / "src/static.c"), "-pthread", "-o", str(c_binary)], cwd=source,
+        )
+        harness.require_success(c_build, "M7 page-extension C build")
+        target = temporary / "cargo-target"
+        rust_build = harness.command_record(
+            [harness.require_tool("cargo"), "build", "--locked", "--release", "--target",
+             RUST_TARGET, "-p", m4.ADAPTER_PACKAGE, "--features", "crabc-mimalloc/mi-stat-1",
+             "--target-dir", str(target)], cwd=harness.ROOT, env=dict(os.environ),
+             timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
+        )
+        harness.require_success(rust_build, "M7 page-extension Rust adapter build")
+        rust_binary = temporary / "page-extend-rust"
+        rust_link = harness.command_record(
+            [compiler, "-std=c11", "-O2", "-I", str(source / "include"),
+             str(STATISTICS_PAGE_EXTEND_DRIVER),
+             str(target / RUST_TARGET / "release" / m4.ADAPTER_STATICLIB),
+             "-pthread", "-o", str(rust_binary)], cwd=source,
+        )
+        harness.require_success(rust_link, "M7 page-extension Rust driver link")
+        traces = {}
+        for side, binary in (("c", c_binary), ("rust", rust_binary)):
+            execution = harness.command_record((str(binary),), cwd=temporary, env={}, timeout_seconds=60)
+            harness.require_success(execution, f"M7 page-extension {side} execution")
+            traces[side] = parse_options_trace(str(execution["stdout"]),
+                f"M7 page-extension {side}", STATISTICS_PAGE_EXTEND_TRACE_BEGIN,
+                STATISTICS_PAGE_EXTEND_TRACE_END)
+    report = {"status": "failed", "c_trace": traces["c"], "rust_trace": traces["rust"],
+              "c_build": c_build["command"], "rust_build": rust_build["command"]}
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    harness.write_json(ARTIFACTS / "statistics-page-extend.json", report)
+    require_statistics_page_extend(traces["c"], "pinned C page extension")
+    require_statistics_page_extend(traces["rust"], "Rust page extension")
+    compare_options_traces(traces["c"], traces["rust"])
+    report["status"] = "passed"
+    harness.write_json(ARTIFACTS / "statistics-page-extend.json", report)
+    return report
+
+
 def run_adapter_differential(
     offline: bool, *, driver: Path = ADAPTER_DRIVER, begin: str = ADAPTER_TRACE_BEGIN,
     end: str = ADAPTER_TRACE_END, report_name: str = "adapter.json",
@@ -1451,6 +1522,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run the pinned-C/Rust level-two huge/page final-output differential")
     mode.add_argument("--statistics-json-differential", action="store_true",
         help="compare pinned-C/Rust public JSON buffer behavior under each statistics profile")
+    mode.add_argument("--statistics-page-extend-differential", action="store_true",
+        help="compare pinned-C/Rust page extension statistics under MI_STAT=1")
     mode.add_argument("--adapter-differential", action="store_true",
         help="run the shared-driver pinned-C/native-adapter M7 differential")
     mode.add_argument("--option-profiles-differential", action="store_true",
@@ -1521,6 +1594,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         report = run_statistics_json_differential(arguments.offline)
         print(f"M7 statistics JSON differential passed: {report['compared_key_count']} keys "
               f"in {len(report['profiles'])} profiles")
+        return 0
+    if arguments.statistics_page_extend_differential:
+        report = run_statistics_page_extend_differential(arguments.offline)
+        print(f"M7 page-extension statistics differential passed: {len(report['c_trace'])} keys")
         return 0
     if arguments.adapter_differential:
         report = run_adapter_differential(arguments.offline)

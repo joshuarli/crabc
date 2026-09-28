@@ -21316,6 +21316,8 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
                 )
             };
             if slice_pcommitted != 0 {
+                #[cfg(feature = "mi-stat-1")]
+                target.session.theap().record_page_extension_attempted();
                 let page_start = page
                     .as_ptr()
                     .addr()
@@ -21383,7 +21385,10 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
                             ThreadExitMappedRegularPostExitAdoptError::ExtensionDidNotExtend,
                         );
                     }
-                    Ok(_) => {}
+                    Ok(extended) => {
+                        #[cfg(feature = "mi-stat-1")]
+                        target.session.theap().record_page_extension_published(extended as usize, block_size);
+                    }
                     Err(error) => {
                         return Err(ThreadExitMappedRegularPostExitAdoptError::Extension(error));
                     }
@@ -38920,6 +38925,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         &mut self,
         page: NonNull<Page>,
     ) -> Result<(), GenericPathError> {
+        #[cfg(feature = "mi-stat-1")]
+        self.session.theap().record_page_extension_attempted();
         // SAFETY: callers name one selected active page while this engine owns
         // its queue, PageMap lifecycle, and ordinary local-list fields.
         let slice_pcommitted = unsafe { page.as_ref().slice_pcommitted() };
@@ -38928,10 +38935,18 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // queue state while it extends the source local free list.
             let mut free_list = unsafe { LocalFreeList::from_page_at(page) }
                 .map_err(GenericPathError::Local)?;
-            return match free_list.extend().map_err(GenericPathError::Local)? {
-                0 => Err(GenericPathError::Lifecycle),
-                _ => Ok(()),
-            };
+            let extended = free_list.extend().map_err(GenericPathError::Local)?;
+            if extended == 0 {
+                return Err(GenericPathError::Lifecycle);
+            }
+            #[cfg(feature = "mi-stat-1")]
+            {
+                // SAFETY: the page stays live and exclusively selected while
+                // its newly initialized blocks become immediate free-list capacity.
+                let block_size = unsafe { page.as_ref().block_size() };
+                self.session.theap().record_page_extension_published(extended as usize, block_size);
+            }
+            return Ok(());
         }
 
         self.extend_on_demand_page_before_allocation(page)
@@ -39087,7 +39102,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                     .map_err(GenericPathError::PageCommit)
             });
         match extension {
-            Ok(extended) if extended == plan.extend => Ok(()),
+            Ok(extended) if extended == plan.extend => {
+                #[cfg(feature = "mi-stat-1")]
+                self.session.theap().record_page_extension_published(extended as usize, block_size);
+                Ok(())
+            }
             Ok(_) => {
                 if committed {
                     self.page_commit_poison = true;
@@ -41040,8 +41059,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // a full claim committed the entire area. No queue or map observer
             // sees the free-list links until this closure completes.
             let mut free_list = unsafe { LocalFreeList::from_page_at(page) }.ok()?;
+            #[cfg(feature = "mi-stat-1")]
+            self.session.theap().record_page_extension_attempted();
             if slice_pcommitted == 0 {
-                return (free_list.extend().ok()? != 0).then_some(());
+                let extended = free_list.extend().ok()?;
+                if extended == 0 { return None; }
+                #[cfg(feature = "mi-stat-1")]
+                self.session.theap().record_page_extension_published(extended as usize, layout.block_size());
+                return Some(());
             }
             let plan = page::page_area_commit_plan(
                 0,
@@ -41055,7 +41080,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             if plan.commit_size != 0 {
                 return None;
             }
-            (free_list.extend_count(plan.extend).ok()? == plan.extend).then_some(())
+            let extended = free_list.extend_count(plan.extend).ok()?;
+            if extended != plan.extend { return None; }
+            #[cfg(feature = "mi-stat-1")]
+            self.session.theap().record_page_extension_published(extended as usize, layout.block_size());
+            Some(())
         })();
         if initialized.is_none() {
             self.rollback_fresh_os_aligned(claim, page, true, false);

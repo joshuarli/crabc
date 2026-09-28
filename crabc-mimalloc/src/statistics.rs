@@ -987,6 +987,22 @@ impl HeapTheapStatistics {
     #[inline]
     pub(crate) fn page_retired(&self) { self.pages_retire.increase_owner_local(1); }
 
+    /// `mi_page_extend_free` counts an attempted extension before it may
+    /// commit more page area or fail; no touched bytes are recorded yet.
+    #[cfg(feature = "mi-stat-1")]
+    #[inline]
+    pub(crate) fn page_extension_attempted(&self) {
+        self.pages_extended.increase_owner_local(1);
+    }
+
+    /// After the new free-list capacity is visible, `mi_page_extend_free`
+    /// records the added block span as touched page bytes on this Theap.
+    #[cfg(feature = "mi-stat-1")]
+    #[inline]
+    pub(crate) fn page_extension_published(&self, blocks: usize, block_size: usize) {
+        self.page_committed.update_owner_local(bytes_to_i64(blocks.wrapping_mul(block_size)));
+    }
+
     /// `page.c:mi_page_queue_find_free_ex`'s two Theap counter increases,
     /// recorded only by the Theap owner.
     #[inline]

@@ -137,6 +137,10 @@
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-json-differential"],
       "scope": "Pinned C and the Rust native adapter run one public JSON driver under MI_STAT=0, 1, and 2. A synthetic stats image fixes count and bin fields while the driver compares normalized full JSON, caller buffer truncation and final capacity, null/zero-size growth, invalid-image rejection, and process stats JSON entry behavior. Allocation producers remain outside the synthetic image."
     },
+    "differential:statistics-page-extend": {
+      "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-page-extend-differential"],
+      "scope": "Pinned C MI_STAT=1 and the Rust native adapter allocate one 64-byte block on a fresh page and compare the successful first page-extension count and touched-byte count in public process statistics before and after the block free. Later extensions, release, and commit failure remain outside this fixture."
+    },
     "differential:visitation-profiles": {
       "command": null,
       "scope": "Pinned-C/Rust area/block visitation traces under the debug-padding, secure, and guarded profiles."
@@ -322,10 +326,11 @@
         "differential:statistics-level-two-bins",
         "differential:statistics-level-two-page-huge",
         "differential:statistics-json",
+        "differential:statistics-page-extend",
         "differential:adapter"
       ],
       "blocked_by": [
-        "The selected `MI_STAT=1` binned allocation, reset/merge, free, and final-output path is proven; page extension/commit, huge allocation, nonlocal free, and other level-one producers remain unproved. `MI_STAT=2` requested-size, allocation-count, bin, huge, and page producers remain unproved; synthetic owner merge/reset and final requested-size, nonzero-bin, huge, and page output are proven. The public JSON formatter and caller buffer contract are proven under MI_STAT=0, 1, and 2 with a synthetic image, independent of those production producers."
+        "The selected `MI_STAT=1` binned allocation, reset/merge, free, final-output path, and first successful page-extension count and touched bytes are proven; later extension, page release/commit failure, huge allocation, nonlocal free, and other level-one producers remain unproved. `MI_STAT=2` requested-size, allocation-count, bin, huge, and page producers remain unproved; synthetic owner merge/reset and final requested-size, nonzero-bin, huge, and page output are proven. The public JSON formatter and caller buffer contract are proven under MI_STAT=0, 1, and 2 with a synthetic image, independent of those production producers."
       ]
     },
     {

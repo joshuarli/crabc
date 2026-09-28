@@ -6695,6 +6695,20 @@ impl Theap {
         self.statistics.page_retired();
     }
 
+    /// Counts a page-extension attempt before a possible direct area commit.
+    #[cfg(feature = "mi-stat-1")]
+    #[inline]
+    pub(crate) fn record_page_extension_attempted(&self) {
+        self.statistics.page_extension_attempted();
+    }
+
+    /// Counts touched blocks only after the free-list capacity is published.
+    #[cfg(feature = "mi-stat-1")]
+    #[inline]
+    pub(crate) fn record_page_extension_published(&self, blocks: usize, block_size: usize) {
+        self.statistics.page_extension_published(blocks, block_size);
+    }
+
     /// Records the completed `mi_page_queue_find_free_ex` scan in source
     /// order: total visited pages first, then one scan invocation.
     #[inline]

@@ -63,6 +63,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:statistics-level-two-bins",
             "differential:statistics-level-two-page-huge",
             "differential:statistics-level-two-requested",
+            "differential:statistics-page-extend",
             "differential:thread-init-failure",
         ])
         # The options/environment and baseline gates have executable evidence.
@@ -275,6 +276,23 @@ class M7GateContractTests(unittest.TestCase):
             gate.require_statistics_json({**trace, "fixed.length_plus_two": "0"}, 2, "lost final size")
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_json({**trace, "json.malloc_requested": "0,0,0"}, 2, "lost field")
+
+    def test_statistics_page_extension_requires_source_built_producer(self) -> None:
+        summary = self.validate()
+        statistics = self.gate_record(self.contract, "m7.statistics")
+        self.assertIn("differential:statistics-page-extend", statistics["evidence"])
+        self.assertIn("differential:statistics-page-extend", summary["runnable_evidence"])
+
+    def test_statistics_page_extension_reader_rejects_missing_touched_bytes(self) -> None:
+        trace = {"profile.level": "1", "allocation.usable": "64",
+                 "allocated.pages_extended": "1", "allocated.page_committed": "8192,8192,8192",
+                 "allocated.pages": "1,1,1", "freed.pages_extended": "1",
+                 "freed.page_committed": "8192,8192,8192"}
+        gate.require_statistics_page_extend(trace, "complete")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_page_extend({**trace, "allocated.page_committed": "0,0,0"}, "missing bytes")
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_page_extend({**trace, "allocated.pages_extended": "0"}, "missing event")
 
     def test_default_artifact_reader_rejects_changed_build_or_cpu(self) -> None:
         with harness.temporary_directory("m7-baseline-reader-") as name:
