@@ -260,6 +260,74 @@ static int reopen_dso_roundtrip(const char *path)
     return 0;
 }
 
+static int memstream_dso_roundtrip(void)
+{
+    static const unsigned char final[] = {'a', 'l', 'X', 'Y', 'a', '!', 0, 0, 'Z'};
+    char local_buffer[64], **buffer_slot;
+    size_t *length_slot;
+    FILE *stream;
+    int result;
+
+    errno = EDOM;
+    stream = crabc_memstream_dso_open(&buffer_slot, &length_slot, &errno);
+    if (stream == NULL || errno != ERANGE || buffer_slot == NULL ||
+        length_slot == NULL || *buffer_slot == NULL || *length_slot != 0 ||
+        (*buffer_slot)[0] != 0 ||
+        setvbuf(stream, local_buffer, _IOFBF, sizeof(local_buffer)) != 0)
+        return 1;
+    if (fwrite("alpha", 1, 5, stream) != 5 || *length_slot != 0 ||
+        (*buffer_slot)[0] != 0)
+        return 2;
+    errno = EDOM;
+    result = crabc_memstream_dso_checkpoint(stream, CRABC_MEMSTREAM_DSO_FIRST_BUFFERED,
+                                             &errno);
+    if (result != 0 || errno != ERANGE || *length_slot != 5 ||
+        memcmp(*buffer_slot, "alpha\0", 6) != 0)
+        return 10 + result;
+    if (fseek(stream, 2, SEEK_SET) != 0 || fwrite("XY", 1, 2, stream) != 2 ||
+        *length_slot != 5 || fflush(stream) != 0 || *length_slot != 4 ||
+        memcmp(*buffer_slot, "alXYa", 5) != 0)
+        return 20;
+    errno = EDOM;
+    result = crabc_memstream_dso_checkpoint(stream,
+        CRABC_MEMSTREAM_DSO_MAIN_REWRITE_FLUSHED, &errno);
+    if (result != 0 || errno != ERANGE)
+        return 30 + result;
+    if (fseek(stream, 0, SEEK_END) != 0 || fwrite("!", 1, 1, stream) != 1 ||
+        *length_slot != 4)
+        return 40;
+    errno = EDOM;
+    result = crabc_memstream_dso_checkpoint(stream, CRABC_MEMSTREAM_DSO_APPEND_BUFFERED,
+                                             &errno);
+    if (result != 0 || errno != ERANGE || *length_slot != 6 ||
+        memcmp(*buffer_slot, "alXYa!\0", 7) != 0)
+        return 50 + result;
+    if (fseek(stream, 8, SEEK_SET) != 0 || fwrite("Z", 1, 1, stream) != 1 ||
+        fflush(stream) != 0 || *length_slot != sizeof(final) ||
+        memcmp(*buffer_slot, final, sizeof(final)) != 0 ||
+        (*buffer_slot)[sizeof(final)] != 0)
+        return 60;
+    errno = EDOM;
+    result = crabc_memstream_dso_checkpoint(stream,
+        CRABC_MEMSTREAM_DSO_MAIN_HOLE_FLUSHED, &errno);
+    if (result != 0 || errno != ERANGE)
+        return 70 + result;
+    if (fclose(stream) != 0 || *length_slot != sizeof(final) ||
+        memcmp(*buffer_slot, final, sizeof(final)) != 0 ||
+        (*buffer_slot)[sizeof(final)] != 0)
+        return 80;
+    if (write(STDOUT_FILENO, "memstream-final:", 16) != 16 ||
+        write(STDOUT_FILENO, *buffer_slot, *length_slot) != sizeof(final) ||
+        write(STDOUT_FILENO, "\n", 1) != 1)
+        return 81;
+    errno = EDOM;
+    result = crabc_memstream_dso_release(&errno);
+    if (result != 0 || errno != ERANGE || *buffer_slot != NULL ||
+        *length_slot != 0)
+        return 90 + result;
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     static const char expected[] = "buffered!";
@@ -315,7 +383,10 @@ int main(int argc, char **argv)
     result = reopen_dso_roundtrip(argv[1]);
     if (result != 0)
         return 160 + result;
-    if (write(STDOUT_FILENO, "stdio-file-dso-reopen-ok\n", 25) != 25)
+    result = memstream_dso_roundtrip();
+    if (result != 0)
+        return result;
+    if (write(STDOUT_FILENO, "stdio-file-dso-memstream-ok\n", 28) != 28)
         return 11;
     return 0;
 }

@@ -16,7 +16,7 @@ spec.loader.exec_module(receipt)
 
 
 class FileDsoReceiptTests(unittest.TestCase):
-    def test_reopened_old_path_bytes_are_reread(self) -> None:
+    def test_reopened_path_and_memstream_bytes_are_reread(self) -> None:
         case = "oracle-static-process"
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
             work = Path(temporary)
@@ -44,6 +44,11 @@ class FileDsoReceiptTests(unittest.TestCase):
                 'write(3, "dso-exit-once\\n", 14) = 14\n')
             with mock.patch.object(receipt, "CASES", (case,)):
                 receipt.audit_runtime(work, work / "unused-dynamic")
+                (raw / f"{case}.stdout").write_bytes(
+                    receipt.EXPECTED_STDOUT.replace(b"alXYa!\0\0Z", b"alXYa!\0\0Y"))
+                with self.assertRaisesRegex(receipt.ReceiptError, "stdout differs"):
+                    receipt.audit_runtime(work, work / "unused-dynamic")
+                (raw / f"{case}.stdout").write_bytes(receipt.EXPECTED_STDOUT)
                 (scratch / "stream.old").write_bytes(b"beforetaim")
                 with self.assertRaisesRegex(receipt.ReceiptError, "retained pathname bytes differ"):
                     receipt.audit_runtime(work, work / "unused-dynamic")

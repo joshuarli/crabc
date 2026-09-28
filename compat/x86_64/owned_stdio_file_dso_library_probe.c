@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -184,6 +185,83 @@ int crabc_file_dso_reopen(FILE *stream, const char *replacement_path,
         return 2;
     if (fwide(stream, 0) != 0 || ferror(stream) || feof(stream))
         return 3;
+    errno = ERANGE;
+    return 0;
+}
+
+/* The allocation and publication slots stay in this image while main owns
+ * the FILE close. The published allocation remains owned here after close.
+ */
+static FILE *memstream_stream;
+static char *memstream_buffer;
+static size_t memstream_length;
+static unsigned memstream_stage;
+
+FILE *crabc_memstream_dso_open(char ***buffer_slot, size_t **length_slot,
+                               int *main_errno)
+{
+    if (buffer_slot == NULL || length_slot == NULL || main_errno != &errno ||
+        errno != EDOM || memstream_stream != NULL || memstream_stage != 0)
+        return NULL;
+    memstream_stream = open_memstream(&memstream_buffer, &memstream_length);
+    if (memstream_stream == NULL || memstream_buffer == NULL ||
+        memstream_length != 0 || memstream_buffer[0] != 0)
+        return NULL;
+    *buffer_slot = &memstream_buffer;
+    *length_slot = &memstream_length;
+    errno = ERANGE;
+    return memstream_stream;
+}
+
+int crabc_memstream_dso_checkpoint(FILE *stream, enum crabc_memstream_dso_stage stage,
+                                    int *main_errno)
+{
+    static const unsigned char final[] = {'a', 'l', 'X', 'Y', 'a', '!', 0, 0, 'Z', 0};
+
+    if (stream == NULL || stream != memstream_stream || main_errno != &errno ||
+        errno != EDOM || (unsigned)stage != memstream_stage + 1 ||
+        memstream_buffer == NULL)
+        return 1;
+    if (stage == CRABC_MEMSTREAM_DSO_FIRST_BUFFERED) {
+        if (memstream_length != 0 || memstream_buffer[0] != 0 ||
+            fflush(stream) != 0 || memstream_length != 5 ||
+            memcmp(memstream_buffer, "alpha\0", 6) != 0)
+            return 2;
+    } else if (stage == CRABC_MEMSTREAM_DSO_MAIN_REWRITE_FLUSHED) {
+        if (memstream_length != 4 ||
+            memcmp(memstream_buffer, "alXYa", 5) != 0)
+            return 3;
+    } else if (stage == CRABC_MEMSTREAM_DSO_APPEND_BUFFERED) {
+        if (memstream_length != 4 ||
+            memcmp(memstream_buffer, "alXYa", 5) != 0 ||
+            fflush(stream) != 0 || memstream_length != 6 ||
+            memcmp(memstream_buffer, "alXYa!\0", 7) != 0)
+            return 4;
+    } else if (stage == CRABC_MEMSTREAM_DSO_MAIN_HOLE_FLUSHED) {
+        if (memstream_length != 9 ||
+            memcmp(memstream_buffer, final, sizeof(final)) != 0)
+            return 5;
+    } else {
+        return 6;
+    }
+    memstream_stage++;
+    errno = ERANGE;
+    return 0;
+}
+
+int crabc_memstream_dso_release(int *main_errno)
+{
+    static const unsigned char final[] = {'a', 'l', 'X', 'Y', 'a', '!', 0, 0, 'Z', 0};
+
+    if (main_errno != &errno || errno != EDOM || memstream_stage != 4 ||
+        memstream_buffer == NULL || memstream_length != 9 ||
+        memcmp(memstream_buffer, final, sizeof(final)) != 0)
+        return 1;
+    free(memstream_buffer);
+    memstream_buffer = NULL;
+    memstream_length = 0;
+    memstream_stream = NULL;
+    memstream_stage++;
     errno = ERANGE;
     return 0;
 }

@@ -30,4 +30,17 @@ int crabc_file_dso_buffer_exit(const char *stream_path, const char *marker_path,
                                int *main_errno);
 int crabc_file_dso_reopen(FILE *stream, const char *replacement_path,
                           int *main_errno);
+
+enum crabc_memstream_dso_stage {
+    CRABC_MEMSTREAM_DSO_FIRST_BUFFERED = 1,
+    CRABC_MEMSTREAM_DSO_MAIN_REWRITE_FLUSHED,
+    CRABC_MEMSTREAM_DSO_APPEND_BUFFERED,
+    CRABC_MEMSTREAM_DSO_MAIN_HOLE_FLUSHED
+};
+
+FILE *crabc_memstream_dso_open(char ***buffer_slot, size_t **length_slot,
+                               int *main_errno);
+int crabc_memstream_dso_checkpoint(FILE *stream, enum crabc_memstream_dso_stage stage,
+                                    int *main_errno);
+int crabc_memstream_dso_release(int *main_errno);
 #endif
