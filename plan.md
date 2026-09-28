@@ -195,6 +195,9 @@ are not transferable passes for a different revision.
   including read/seek/write callbacks, past-EOF reads, and one close callback.
   It also passes a DSO-owned cookie stream returned to main, which closes it
   through the DSO's callback after buffered I/O and shared errno checks.
+  The same eleven-cell matrix passes a C.UTF-8 wide stream handoff: the DSO
+  establishes wide orientation and writes U+20AC, main reads it back, and the
+  underlying pathname contains the exact three UTF-8 bytes.
   The complete nine-leaf M8 gate
   passed again on clean `ea0c28759` with all 16 evidence entries passing and
   13 physical receipt identities matching a post-exit reread; the same nine
@@ -277,6 +280,9 @@ are not transferable passes for a different revision.
   A retained file-backed dynsym record bound avoids a checked offset on the
   active lookup path, saving 281 and 288 median instructions in paired simple
   and graph startups with unchanged syscalls and 16 more release-text bytes.
+  Zeroed initial TLS backing also supplies empty DTV and module-size slots,
+  saving 28 median instructions in both paired startup rows and 80
+  release-text bytes without changing their syscall traces.
   These remain unqualified under host contention. Allocator rows stay
   6.5–8× on the selected
   accepted-C backend, whose arena the host's THP `always` mode backs with
