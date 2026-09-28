@@ -966,6 +966,9 @@ STATISTICS_JSON_TRACE_END = "CRABC_MI_M7_STATISTICS_JSON_TRACE_END"
 STATISTICS_PAGE_EXTEND_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_page_extend_driver.c"
 STATISTICS_PAGE_EXTEND_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_PAGE_EXTEND_TRACE_BEGIN"
 STATISTICS_PAGE_EXTEND_TRACE_END = "CRABC_MI_M7_STATISTICS_PAGE_EXTEND_TRACE_END"
+STATISTICS_PAGE_SECOND_EXTENSION_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_page_second_extension_driver.c"
+STATISTICS_PAGE_SECOND_EXTENSION_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_PAGE_SECOND_EXTENSION_TRACE_BEGIN"
+STATISTICS_PAGE_SECOND_EXTENSION_TRACE_END = "CRABC_MI_M7_STATISTICS_PAGE_SECOND_EXTENSION_TRACE_END"
 STATISTICS_HUGE_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m7_statistics_huge_driver.c"
 STATISTICS_HUGE_TRACE_BEGIN = "CRABC_MI_M7_STATISTICS_HUGE_TRACE_BEGIN"
 STATISTICS_HUGE_TRACE_END = "CRABC_MI_M7_STATISTICS_HUGE_TRACE_END"
@@ -1367,15 +1370,28 @@ def require_statistics_json(trace: Mapping[str, str], level: int, description: s
         raise harness.HarnessError(f"{description} lost JSON serialization or caller-buffer behavior: {trace}")
 
 
-def require_statistics_page_extend(trace: Mapping[str, str], description: str) -> None:
-    """Require the first successful page extension's source count and bytes."""
+def require_statistics_page_extend(
+    trace: Mapping[str, str], description: str, *, repeated: bool = False,
+) -> None:
+    """Require source page-extension counts, committed bytes, and page lifetime."""
 
-    expected = {
-        "profile.level": "1", "allocation.usable": "64",
-        "allocated.pages_extended": "1", "allocated.page_committed": "8192,8192,8192",
-        "allocated.pages": "1,1,1", "freed.pages_extended": "1",
-        "freed.page_committed": "8192,8192,8192",
-    }
+    if repeated:
+        expected = {"profile.level": "1", "page.same_slice": "1"}
+        for stage, extension_count, committed in (
+            ("one", 1, 8192), ("one_twenty_eight", 1, 8192),
+            ("one_twenty_nine", 2, 16384), ("two_sixty", 3, 24576),
+            ("freed", 3, 24576),
+        ):
+            expected[f"{stage}.pages_extended"] = str(extension_count)
+            expected[f"{stage}.page_committed"] = f"{committed},{committed},{committed}"
+            expected[f"{stage}.pages"] = "1,1,1"
+    else:
+        expected = {
+            "profile.level": "1", "allocation.usable": "64",
+            "allocated.pages_extended": "1", "allocated.page_committed": "8192,8192,8192",
+            "allocated.pages": "1,1,1", "freed.pages_extended": "1",
+            "freed.page_committed": "8192,8192,8192",
+        }
     if dict(trace) != expected:
         raise harness.HarnessError(f"{description} lost the source page-extension producer: {trace}")
 
@@ -1697,6 +1713,18 @@ def run_statistics_page_extend_differential(offline: bool) -> dict[str, Any]:
     )
 
 
+def run_statistics_page_second_extension_differential(offline: bool) -> dict[str, Any]:
+    return run_public_statistics_differential(
+        offline, subject="page-second-extension", driver=STATISTICS_PAGE_SECOND_EXTENSION_DRIVER,
+        begin=STATISTICS_PAGE_SECOND_EXTENSION_TRACE_BEGIN,
+        end=STATISTICS_PAGE_SECOND_EXTENSION_TRACE_END,
+        report_name="statistics-page-second-extension.json", stat_level=1,
+        require_complete=lambda trace, description: require_statistics_page_extend(
+            trace, description, repeated=True,
+        ),
+    )
+
+
 def run_statistics_huge_differential(offline: bool) -> dict[str, Any]:
     return run_public_statistics_differential(
         offline, subject="huge", driver=STATISTICS_HUGE_DRIVER,
@@ -1976,6 +2004,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="compare pinned-C/Rust public JSON buffer behavior under each statistics profile")
     mode.add_argument("--statistics-page-extend-differential", action="store_true",
         help="compare pinned-C/Rust page extension statistics under MI_STAT=1")
+    mode.add_argument("--statistics-page-second-extension-differential", action="store_true",
+        help="compare second and third regular-page extension statistics under MI_STAT=1")
     mode.add_argument("--statistics-huge-differential", action="store_true",
         help="compare pinned-C/Rust huge allocation statistics under MI_STAT=1")
     mode.add_argument("--statistics-huge-page-bin-differential", action="store_true",
@@ -2074,6 +2104,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.statistics_page_extend_differential:
         report = run_statistics_page_extend_differential(arguments.offline)
         print(f"M7 page-extension statistics differential passed: {len(report['c_trace'])} keys")
+        return 0
+    if arguments.statistics_page_second_extension_differential:
+        report = run_statistics_page_second_extension_differential(arguments.offline)
+        print(f"M7 repeated page-extension statistics differential passed: {report['compared_key_count']} keys")
         return 0
     if arguments.statistics_huge_differential:
         report = run_statistics_huge_differential(arguments.offline)

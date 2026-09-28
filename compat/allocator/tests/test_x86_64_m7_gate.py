@@ -70,6 +70,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:statistics-level-two-page-huge",
             "differential:statistics-level-two-requested",
             "differential:statistics-page-extend",
+            "differential:statistics-page-second-extension",
             "differential:statistics-remote-bin",
             "differential:statistics-remote-normal",
             "differential:statistics-remote-normal-fresh",
@@ -306,6 +307,35 @@ class M7GateContractTests(unittest.TestCase):
             gate.require_statistics_page_extend({**trace, "allocated.page_committed": "0,0,0"}, "missing bytes")
         with self.assertRaises(harness.HarnessError):
             gate.require_statistics_page_extend({**trace, "allocated.pages_extended": "0"}, "missing event")
+
+    def test_statistics_second_page_extension_keeps_one_page_and_touched_bytes(self) -> None:
+        summary = self.validate()
+        statistics = self.gate_record(self.contract, "m7.statistics")
+        self.assertIn("differential:statistics-page-second-extension", statistics["evidence"])
+        self.assertIn("differential:statistics-page-second-extension", summary["runnable_evidence"])
+        trace = {"profile.level": "1", "page.same_slice": "1"}
+        for stage, count, committed in (
+            ("one", 1, 8192), ("one_twenty_eight", 1, 8192),
+            ("one_twenty_nine", 2, 16384), ("two_sixty", 3, 24576),
+            ("freed", 3, 24576),
+        ):
+            trace[f"{stage}.pages_extended"] = str(count)
+            trace[f"{stage}.page_committed"] = f"{committed},{committed},{committed}"
+            trace[f"{stage}.pages"] = "1,1,1"
+        gate.require_statistics_page_extend(trace, "complete", repeated=True)
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_page_extend(
+                {**trace, "one_twenty_nine.pages_extended": "1"}, "missing second extension", repeated=True,
+            )
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_page_extend(
+                {**trace, "two_sixty.page_committed": "16384,16384,16384"},
+                "missing third committed span", repeated=True,
+            )
+        with self.assertRaises(harness.HarnessError):
+            gate.require_statistics_page_extend(
+                {**trace, "page.same_slice": "0"}, "split page", repeated=True,
+            )
 
     def test_statistics_huge_requires_source_built_producer(self) -> None:
         summary = self.validate()
