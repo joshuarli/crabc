@@ -4908,15 +4908,17 @@ unsafe fn decode_sysv_hash(
     symtab_address: u64,
     symtab_file_load: Option<(u64, u64)>,
 ) -> Option<SymbolLookupTable> {
-    if !unsafe { virtual_range_in_readable_file_load(phdr, phnum, address, 8) } {
-        return None;
-    }
+    let (_, header_file_end) = unsafe { readable_file_load_segment(phdr, phnum, address, 8) }?;
     let table = runtime_address(base, address)? as *const u8;
     let bucket_count = unsafe { read_u32(table) } as usize;
     let symbol_count = unsafe { read_u32(table.add(4)) } as usize;
     let words = bucket_count.checked_add(symbol_count)?.checked_add(2)?;
     let byte_len = u64::try_from(words.checked_mul(4)?).ok()?;
-    if !unsafe { virtual_range_in_readable_file_load(phdr, phnum, address, byte_len) } {
+    // A later overlapping readable load can hold the entire table even when
+    // the segment that held its fixed header ends before the chains.
+    if !address.checked_add(byte_len).is_some_and(|end| end <= header_file_end)
+        && !unsafe { virtual_range_in_readable_file_load(phdr, phnum, address, byte_len) }
+    {
         return None;
     }
     if symbol_count != 0 {
@@ -5372,6 +5374,22 @@ mod readable_file_load_tests {
         let decoded = unsafe { decode_sysv_hash(headers.as_ptr(), 2, base, 0x80, 0x100, null_load) };
         assert!(matches!(decoded, Some(SymbolLookupTable::Sysv { symbol_count: 2, .. })));
         load(&mut headers, 1, PF_R, 0x100, 0x20, 0x20);
+        assert!(unsafe { decode_sysv_hash(headers.as_ptr(), 2, base, 0x80, 0x100, null_load) }.is_none());
+    }
+
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    #[test]
+    fn sysv_hash_full_table_may_use_a_later_overlapping_readable_load() {
+        let mut headers = [0u8; 112];
+        load(&mut headers, 0, PF_R, 0, 0x88, 0x88);
+        load(&mut headers, 1, PF_R, 0x80, 0x180, 0x180);
+        let mut image = [0u8; 0x200];
+        image[0x80..0x88].copy_from_slice(&[1, 0, 0, 0, 2, 0, 0, 0]);
+        let base = image.as_ptr() as u64;
+        let null_load = unsafe { readable_file_load_segment(headers.as_ptr(), 2, 0x100, 24) };
+        assert_eq!(null_load, Some((0x80, 0x200)));
+        assert!(unsafe { decode_sysv_hash(headers.as_ptr(), 2, base, 0x80, 0x100, null_load) }.is_some());
+        load(&mut headers, 1, PF_R, 0x80, 0x12, 0x12);
         assert!(unsafe { decode_sysv_hash(headers.as_ptr(), 2, base, 0x80, 0x100, null_load) }.is_none());
     }
 }
