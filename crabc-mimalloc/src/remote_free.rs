@@ -570,15 +570,14 @@ pub(crate) unsafe fn push_abandoned_live_allocation(
     ))
 }
 
-/// Selects the exact state-qualified pointer publication for a post-owner-exit
-/// free without reconstructing a page/block claim.
+/// Publishes one checked pointer after owner-exit dispatch without
+/// reconstructing a page/block claim.
 ///
-/// The live snapshot arm preserves the ordinary stale-live race through
-/// [`push_live_allocation`]. The abandoned arms use
-/// [`push_abandoned_live_allocation`], which may still publish to a newly
-/// reclaimed live owner. This consuming wrapper is the narrow production
-/// bridge used by the lower process-facts continuation; detached observations
-/// are intentionally rejected rather than routed through a former owner.
+/// A captured live, abandoned, or mapped-abandoned state reaches the same
+/// source CAS. Its current low-bit head decides whether publication finds an
+/// owner or claims the page, preserving both stale-live owner exit and
+/// abandoned-page reclaim races. This consuming bridge rejects a detached
+/// observation before the CAS because it has no matching claim continuation.
 ///
 /// # Safety
 ///
@@ -587,24 +586,20 @@ pub(crate) unsafe fn push_abandoned_live_allocation(
 pub(crate) unsafe fn push_post_owner_exit_live_allocation(
     allocation: LiveAllocationPointer,
 ) -> Result<LiveRemoteFreePublish, RemoteFreeError> {
-    match allocation.page_state() {
-        LiveAllocationPageState::LiveOwnerAssociated => {
-            // SAFETY: forwarded unchanged to the live state-specific source
-            // publication; it deliberately tolerates an owner-exit CAS race.
-            unsafe { push_live_allocation(allocation) }
-        }
-        LiveAllocationPageState::Abandoned | LiveAllocationPageState::AbandonedMapped => {
-            // SAFETY: forwarded unchanged to the abandoned state-specific
-            // source publication; it deliberately tolerates a reclaim race.
-            unsafe { push_abandoned_live_allocation(allocation) }
-        }
-        // A detached `xthread_id` is not an abandoned source identity. If its
-        // head were unowned, pinned `mi_free_block_mt` would claim it and then
-        // `mi_free_try_collect_mt` would require a detached-specific owner
-        // continuation rather than this abandoned-page claim token. No such
-        // continuation exists at this seam, so refuse before the CAS.
-        LiveAllocationPageState::Detached => Err(RemoteFreeError::NotOwnerAssociated),
+    // A detached `xthread_id` is not an abandoned source identity. If its
+    // head were unowned, pinned `mi_free_block_mt` would claim it and then
+    // `mi_free_try_collect_mt` would require a detached-specific owner
+    // continuation rather than this abandoned-page claim token.
+    if allocation.page_state() == LiveAllocationPageState::Detached {
+        return Err(RemoteFreeError::NotOwnerAssociated);
     }
+    // The current low-bit head, not the captured live/abandoned identity,
+    // decides whether this source CAS publishes to an owner or claims a page.
+    // SAFETY: this checked PageMap observation keeps its canonical block and
+    // page live through the publication and any resulting claim tail.
+    let (page, producer, block, _) = unsafe { page_map_live_allocation_parts(&allocation) };
+    let publication = unsafe { publish_canonical_source_block(page, producer, block) }?;
+    Ok(retain_checked_observation_until_claim_tail(allocation, publication))
 }
 
 /// Source `mi_free_block_mt(page, block, allow_collect=false)` for one exact
