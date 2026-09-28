@@ -31,6 +31,12 @@ class DependencyBoundary(unittest.TestCase):
             with self.subTest(feature=feature), self.assertRaisesRegex(ValueError, 'features'):
                 builder.audit_graph(metadata, self.lock)
 
+    def test_reader_feature_cannot_replace_the_allocation_free_graph(self):
+        metadata = copy.deepcopy(self.metadata)
+        next(n for n in metadata['resolve']['nodes'] if n['id'] == 'gimli')['features'].append('read')
+        with self.assertRaisesRegex(ValueError, 'features'):
+            builder.audit_graph(metadata, self.lock)
+
     def test_transitive_source_checksum_cannot_drift(self):
         self.lock['package'][1]['checksum'] = '0' * 64
         with self.assertRaisesRegex(ValueError, 'source pin'):
@@ -45,6 +51,64 @@ class DependencyBoundary(unittest.TestCase):
             set(builder.audit_graph(self.metadata, patched_lock, patched_unwinding=True)),
             set(builder.FEATURES),
         )
+
+    def test_patched_gimli_requires_a_local_lock_entry(self):
+        with self.assertRaisesRegex(ValueError, 'patched source pin'):
+            builder.audit_graph(self.metadata, self.lock, patched_gimli=True)
+        patched_lock = copy.deepcopy(self.lock)
+        next(package for package in patched_lock['package'] if package['name'] == 'gimli').pop('checksum')
+        self.assertEqual(
+            set(builder.audit_graph(self.metadata, patched_lock, patched_gimli=True)),
+            set(builder.FEATURES),
+        )
+
+    def test_private_gimli_reader_derivative_rejects_source_and_compiled_tamper(self):
+        scratch = builder.ROOT.parent / '.work/x86_64/unwinder-output-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary)
+            registry = root / 'registry/gimli-0.34.0'
+            reader = registry / 'src/read/reader.rs'
+            reader.parent.mkdir(parents=True)
+            reader.write_text('sealed reader\n')
+            (registry / 'Cargo.toml').write_text('[package]\nname = "gimli"\nversion = "0.34.0"\n')
+            (registry / '.cargo-ok').write_bytes(b'{"v":1}')
+            overlay = root / 'reader-overlay.rs'
+            overlay.write_text('remote reader\n')
+            configured = {
+                'target': 'src/read/reader.rs', 'overlay': overlay,
+                'upstream_sha256': builder.digest(reader), 'license': 'MIT OR Apache-2.0',
+            }
+            upstream_tree = builder.tree_digest(registry)
+            patched_tree = builder.tree_digest(registry, {configured['target']: overlay})
+            vendor = root / 'vendor/gimli-0.34.0'
+            shutil.copytree(registry, vendor, ignore=shutil.ignore_patterns('.cargo-ok'))
+            (vendor / '.cargo-checksum.json').write_text('{"directory-source":true}\n')
+            stage_root = root / 'input'
+            stage_root.mkdir()
+            staged = {'source_input': stage_root}
+            packages = {builder.PATCHED_GIMLI: {
+                'source': builder.CRATES_IO_REGISTRY,
+                'manifest_path': str(vendor / 'Cargo.toml'),
+            }}
+            with unittest.mock.patch.object(builder, 'GIMLI_READER_PATCH', configured), \
+                 unittest.mock.patch.object(builder, 'PATCHED_GIMLI_UPSTREAM_TREE_SHA256', upstream_tree), \
+                 unittest.mock.patch.object(builder, 'PATCHED_GIMLI_TREE_SHA256', patched_tree):
+                builder.stage_patched_gimli(packages, staged)
+                builder.verify_staged_patched_gimli(staged)
+                self.assertEqual((Path(staged['gimli']['staged']) / configured['target']).read_text(),
+                                 overlay.read_text())
+                self.assertEqual((vendor / '.cargo-checksum.json').read_text(),
+                                 '{"directory-source":true}\n')
+                (Path(staged['gimli']['staged']) / configured['target']).write_text('changed\n')
+                with self.assertRaisesRegex(ValueError, 'compiled gimli source'):
+                    builder.verify_staged_patched_gimli(staged)
+                with self.assertRaisesRegex(ValueError, 'existing gimli source input'):
+                    builder.stage_patched_gimli(packages, staged)
+                reader.write_text('different pinned source\n')
+                packages[builder.PATCHED_GIMLI]['manifest_path'] = str(registry / 'Cargo.toml')
+                with self.assertRaisesRegex(ValueError, 'reader differs'):
+                    builder.stage_patched_gimli(packages, staged)
 
     def test_tree_digest_requires_declared_overlay_target_and_records_its_content(self):
         scratch = builder.ROOT.parent / '.work/x86_64/unwinder-output-tests'

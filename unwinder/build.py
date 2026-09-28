@@ -41,7 +41,27 @@ PROVIDER_MEMBER = 'crabc-unwind.o'
 PROVIDER_C_ABI_IMPORTS = frozenset({'abort', 'bcmp', 'dl_iterate_phdr', 'memcmp', 'memcpy', 'memmove', 'memset'})
 STANDALONE_CFG = 'crabc_unwinder_standalone'
 PATCHED_UNWINDING = 'unwinding'
+PATCHED_GIMLI = 'gimli'
+# `read-core` seals external Reader implementations through a required method
+# returning a private type. A default body opens only that implementation
+# boundary, so the provider can use fault-contained reads without `alloc`.
+GIMLI_READER_PATCH = {
+    'target': 'src/read/reader.rs',
+    'overlay': ROOT / 'patches/gimli-0.34.0-reader-core-remote.rs',
+    'upstream_sha256': '1359cbadcc0cf7196eab616e4d0e312808a2c80f5e5eaba46c7bcf61df968166',
+    'license': 'MIT OR Apache-2.0',
+}
+PATCHED_GIMLI_UPSTREAM_TREE_SHA256 = '5a9c166bd3f1e217cb6724ec62c2f54fc30a3d1f6242325abeacb9a9cfd54a98'
+PATCHED_GIMLI_TREE_SHA256 = 'b3545ba6cbb58bc92af0202047d4f559979ef1e7e1d4f327b4a2ac9c2b3f2dbd'
 PATCHES = {
+    'src/util.rs': {
+        'overlay': ROOT / 'patches/unwinding-0.2.10-remote-reader.rs',
+        'upstream_sha256': '23347e2066173c980dbc48403045b3967c1685afa674dabc6493aa494179b944',
+    },
+    'src/unwinder/find_fde/mod.rs': {
+        'overlay': ROOT / 'patches/unwinding-0.2.10-find-fde-bounds.rs',
+        'upstream_sha256': '1d44e5d672accd6f13465053a41b96b5c13390d195d48645c930e2fa8c59c751',
+    },
     'src/unwinder/find_fde/phdr.rs': {
         'overlay': ROOT / 'patches/unwinding-0.2.10-phdr-bounds.rs',
         'upstream_sha256': '5c462a8ea77cd67c8cd2c248671b74ac3df475ea134f7ff578a79a0ab0398a68',
@@ -110,7 +130,7 @@ def tree_digest(root, overlays=None):
     return identity.hexdigest()
 
 
-def audit_graph(metadata, lock, patched_unwinding=False):
+def audit_graph(metadata, lock, patched_unwinding=False, patched_gimli=False):
     package_records = metadata['packages']
     package_names = [p['name'] for p in package_records]
     if len(package_names) != len(set(package_names)):
@@ -136,7 +156,8 @@ def audit_graph(metadata, lock, patched_unwinding=False):
             or 'source' in root or 'checksum' in root):
         raise ValueError('unapproved root lock package')
     for name, (version, checksum) in PINS.items():
-        if patched_unwinding and name == PATCHED_UNWINDING:
+        if ((patched_unwinding and name == PATCHED_UNWINDING)
+                or (patched_gimli and name == PATCHED_GIMLI)):
             if (locked[name]['version'] != version
                     or 'source' in locked[name] or 'checksum' in locked[name]):
                 raise ValueError('unapproved patched source pin')
@@ -170,6 +191,7 @@ def staged_manifest_text():
     return (
         f'{(ROOT / "Cargo.toml").read_text()}\n'
         f'[patch.crates-io]\n{PATCHED_UNWINDING} = {{ path = "../{PATCHED_UNWINDING}-0.2.10" }}\n'
+        f'{PATCHED_GIMLI} = {{ path = "../{PATCHED_GIMLI}-0.34.0" }}\n'
     )
 
 
@@ -238,6 +260,7 @@ def stage_patched_unwinding(packages, *, stage_root=None, registry_source=None):
         digest(ROOT / 'Cargo.toml'),
         digest(ROOT / 'Cargo.lock'),
         tree_digest(ROOT / 'src'),
+        digest(GIMLI_READER_PATCH['overlay']),
     ):
         input_identity.update(value.encode())
         input_identity.update(b'\0')
@@ -301,6 +324,100 @@ def stage_patched_unwinding(packages, *, stage_root=None, registry_source=None):
             'license': PATCHED_UNWINDING_LICENSE,
         } for target, overlay in overlays.items()],
     }
+
+
+def stage_patched_gimli(packages, staged):
+    """Copy the pinned reader with one reviewed external-Reader method body."""
+
+    package = packages[PATCHED_GIMLI]
+    if package.get('source') != CRATES_IO_REGISTRY:
+        raise ValueError('gimli source is not the pinned crates.io registry package')
+    upstream = Path(package['manifest_path']).parent
+    if upstream.is_symlink() or not upstream.is_dir():
+        raise ValueError('registry gimli source must be a physical directory')
+    upstream = upstream.resolve(strict=True)
+    source_manifest = tomllib.loads((upstream / 'Cargo.toml').read_text(encoding='utf-8'))
+    source_package = source_manifest.get('package')
+    if (not isinstance(source_package, dict)
+            or source_package.get('name') != PATCHED_GIMLI
+            or source_package.get('version') != PINS[PATCHED_GIMLI][0]):
+        raise ValueError('registry gimli source identity differs from its lock')
+    patch = GIMLI_READER_PATCH
+    source = upstream / patch['target']
+    overlay = patch['overlay']
+    if source.is_symlink() or not source.is_file() or digest(source) != patch['upstream_sha256']:
+        raise ValueError('gimli reader differs from the pinned upstream source')
+    if overlay.is_symlink() or not overlay.is_file():
+        raise ValueError('gimli reader overlay is not a regular checked-in source')
+    source_root = Path(staged['source_input'])
+    # A verified Cargo directory source differs only in transport markers.
+    # Reconstruct the exact pinned registry tree in this private input root
+    # before applying the reviewed reader change.
+    if tree_digest(upstream) != PATCHED_GIMLI_UPSTREAM_TREE_SHA256:
+        checksum = upstream / '.cargo-checksum.json'
+        if checksum.is_symlink() or not checksum.is_file() or (upstream / '.cargo-ok').exists():
+            raise ValueError('gimli source tree differs from the pinned upstream identity')
+        normalized = source_root / 'gimli-registry-source'
+        if not normalized.exists():
+            shutil.copytree(upstream, normalized)
+            mode = stat.S_IMODE(normalized.stat().st_mode)
+            try:
+                normalized.chmod(mode | stat.S_IWUSR)
+                (normalized / '.cargo-checksum.json').unlink()
+                (normalized / '.cargo-ok').write_bytes(b'{"v":1}')
+            finally:
+                normalized.chmod(mode)
+        if normalized.is_symlink() or tree_digest(normalized) != PATCHED_GIMLI_UPSTREAM_TREE_SHA256:
+            raise ValueError('gimli source tree differs from the pinned upstream identity')
+        upstream = normalized
+    upstream_tree_sha256 = tree_digest(upstream)
+    patched_tree_sha256 = tree_digest(upstream, {patch['target']: overlay})
+    if patched_tree_sha256 != PATCHED_GIMLI_TREE_SHA256:
+        raise ValueError('gimli reader overlay differs from the reviewed derivative')
+    target_root = source_root / f'{PATCHED_GIMLI}-{PINS[PATCHED_GIMLI][0]}'
+    if target_root.exists():
+        if target_root.is_symlink() or not target_root.is_dir() or tree_digest(target_root) != patched_tree_sha256:
+            raise ValueError('existing gimli source input differs from the reviewed overlay')
+    else:
+        shutil.copytree(upstream, target_root)
+        target = target_root / patch['target']
+        mode = stat.S_IMODE(target.stat().st_mode)
+        try:
+            target.chmod(mode | stat.S_IWUSR)
+            shutil.copyfile(overlay, target)
+            if tree_digest(target_root) != patched_tree_sha256:
+                raise ValueError('gimli reader overlay was not staged exactly')
+        finally:
+            target.chmod(mode)
+    staged['gimli'] = {
+        'staged': target_root,
+        'upstream_tree_sha256': upstream_tree_sha256,
+        'patched_tree_sha256': patched_tree_sha256,
+        'patch': {
+            'path': str(overlay.relative_to(ROOT.parent)),
+            'sha256': digest(overlay),
+            'target': patch['target'],
+            'upstream_sha256': patch['upstream_sha256'],
+            'compiled_sha256': digest(target_root / patch['target']),
+            'license': patch['license'],
+        },
+    }
+    return staged
+
+
+def verify_staged_patched_gimli(staged):
+    gimli = staged['gimli']
+    patch = gimli['patch']
+    configured = GIMLI_READER_PATCH
+    if tree_digest(gimli['staged']) != gimli['patched_tree_sha256']:
+        raise ValueError('compiled gimli source differs from the reviewed overlay')
+    if (patch['target'] != configured['target']
+            or patch['path'] != str(configured['overlay'].relative_to(ROOT.parent))
+            or patch['upstream_sha256'] != configured['upstream_sha256']
+            or patch['license'] != configured['license']
+            or patch['sha256'] != digest(configured['overlay'])
+            or patch['compiled_sha256'] != digest(gimli['staged'] / patch['target'])):
+        raise ValueError('compiled gimli reader differs from the reviewed overlay')
 
 
 def verify_staged_patched_unwinding(staged):
@@ -398,13 +515,17 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
     staged = stage_patched_unwinding(
         packages, stage_root=stage_root, registry_source=registry_unwinding_source,
     )
+    stage_patched_gimli(packages, staged)
     staged_kwargs = {'cwd': staged['manifest'].parent, 'env': environment}
     run([*cargo, 'generate-lockfile', '--offline', '--manifest-path', staged['manifest']], **staged_kwargs)
     manifest = ['--manifest-path', str(staged['manifest']), '--locked']
     patched_metadata = json.loads(run([*cargo, 'metadata', *manifest, '--format-version=1', '--filter-platform', TARGET], **staged_kwargs))
-    packages = audit_graph(patched_metadata, tomllib.loads((staged['manifest'].parent / 'Cargo.lock').read_text()), patched_unwinding=True)
+    packages = audit_graph(patched_metadata, tomllib.loads((staged['manifest'].parent / 'Cargo.lock').read_text()),
+                           patched_unwinding=True, patched_gimli=True)
     if Path(packages[PATCHED_UNWINDING]['manifest_path']).parent != staged['staged']:
         raise ValueError('Cargo did not compile the staged unwinding source')
+    if Path(packages[PATCHED_GIMLI]['manifest_path']).parent != staged['gimli']['staged']:
+        raise ValueError('Cargo did not compile the staged gimli source')
     # One fat-LTO staticlib compilation fuses the provider graph with the
     # pinned target `core` it was compiled against. Only that fused object is
     # retained; Rust's compiler-builtins members are dropped so compiler helper
@@ -412,6 +533,7 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
     log = run([*cargo, 'rustc', *manifest, '--release', '--target', TARGET, '--crate-type', 'staticlib',
                '--message-format=json', '--', '--cfg', STANDALONE_CFG], **staged_kwargs)
     verify_staged_patched_unwinding(staged)
+    verify_staged_patched_gimli(staged)
     (output / 'cargo.jsonl').write_text(log)
     sysroot = Path(run([*rustc, '--print', 'sysroot'], **kwargs).strip())
     llvm = sysroot / 'lib/rustlib/x86_64-unknown-linux-musl/bin'
@@ -476,6 +598,12 @@ def build(output, *, stage_root=None, cargo_home=None, registry_unwinding_source
             'upstream_tree_sha256': staged['upstream_tree_sha256'],
             'patched_tree_sha256': staged['patched_tree_sha256'],
             'patches': staged['patches'],
+        },
+        'patched_gimli': {
+            'source_input': str(staged['source_input'].relative_to(ROOT.parent)),
+            'upstream_tree_sha256': staged['gimli']['upstream_tree_sha256'],
+            'patched_tree_sha256': staged['gimli']['patched_tree_sha256'],
+            'patch': staged['gimli']['patch'],
         },
         'unwind_abi': sorted(UNWIND_ABI), 'members': [{'name': p.name, 'sha256': digest(p)} for p in members],
         'fused_staticlib': {'member': fused_members[0], 'sha256': digest(fused),

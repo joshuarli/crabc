@@ -69,18 +69,37 @@ class MetadataBoundsExecutionContract(unittest.TestCase):
                 'license': 'MIT OR Apache-2.0',
             })
             files.append({'path': target, 'sha256': patch})
+        gimli_config = metadata_bounds.GIMLI_READER_PATCH
+        gimli_path = gimli_config['path']
+        gimli_digest = metadata_bounds.digest(Path(__file__).parents[2] / gimli_path)
+        gimli_patch = {
+            'path': gimli_path,
+            'sha256': gimli_digest,
+            'target': gimli_config['target'],
+            'upstream_sha256': gimli_config['upstream_sha256'],
+            'compiled_sha256': gimli_digest,
+            'license': gimli_config['license'],
+        }
         provenance = {
             'archive': {'sha256': 'archive'},
             'patched_unwinding': {'patches': patches},
-            'dependencies': [{'name': 'unwinding', 'files': files}],
+            'patched_gimli': {'patch': gimli_patch},
+            'dependencies': [
+                {'name': 'unwinding', 'files': files},
+                {'name': 'gimli', 'files': [{'path': gimli_config['target'], 'sha256': gimli_digest}]},
+            ],
         }
         metadata_bounds.assert_patched_provider(provenance, 'archive')
         provenance['dependencies'][0]['files'][0]['sha256'] = 'unpatched'
         with self.assertRaisesRegex(RuntimeError, 'source audit'):
             metadata_bounds.assert_patched_provider(provenance, 'archive')
         provenance['dependencies'][0]['files'][0]['sha256'] = patches[0]['sha256']
-        provenance['patched_unwinding']['patches'].pop()
+        removed = provenance['patched_unwinding']['patches'].pop()
         with self.assertRaisesRegex(RuntimeError, 'overlay roster'):
+            metadata_bounds.assert_patched_provider(provenance, 'archive')
+        provenance['patched_unwinding']['patches'].append(removed)
+        provenance['dependencies'][1]['files'][0]['sha256'] = 'unpatched'
+        with self.assertRaisesRegex(RuntimeError, 'remote-reader prerequisite'):
             metadata_bounds.assert_patched_provider(provenance, 'archive')
 
 

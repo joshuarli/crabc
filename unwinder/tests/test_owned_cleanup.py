@@ -514,6 +514,8 @@ class OwnedCleanupContract(unittest.TestCase):
                  mock.patch.object(build, "PATCHES", patches), \
                  mock.patch.object(build, "PATCHED_UNWINDING_UPSTREAM_TREE_SHA256", expected_tree), \
                  mock.patch.object(build, "audit_graph", return_value=packages), \
+                 mock.patch.object(build, "stage_patched_gimli"), \
+                 mock.patch.object(build, "verify_staged_patched_gimli"), \
                  mock.patch.object(owned_cleanup, "run_logged_streams", side_effect=streams), \
                  mock.patch.object(owned_cleanup, "run_logged", side_effect=command), \
                  mock.patch.object(owned_cleanup, "prepare_source_graph_package", side_effect=prepare), \
@@ -542,11 +544,15 @@ class OwnedCleanupContract(unittest.TestCase):
     def test_generated_source_graph_manifest_accepts_the_staged_unwinding_directory(self):
         staged_root = Path(self.temporary.name) / "staged-root"
         staged_unwinding = Path(self.temporary.name) / "staged-unwinding"
+        staged_gimli = Path(self.temporary.name) / "staged-gimli"
         staged_root.mkdir(parents=True)
         staged_unwinding.mkdir()
+        staged_gimli.mkdir()
         (staged_root / "Cargo.toml").write_text("[package]\nname = \"crabc-unwinder\"\nversion = \"0.1.0\"\n")
         (staged_unwinding / "Cargo.toml").write_text("[package]\nname = \"unwinding\"\nversion = \"0.2.10\"\n")
-        staged = {"manifest": str(staged_root / "Cargo.toml"), "staged": str(staged_unwinding)}
+        (staged_gimli / "Cargo.toml").write_text("[package]\nname = \"gimli\"\nversion = \"0.34.0\"\n")
+        staged = {"manifest": str(staged_root / "Cargo.toml"), "staged": str(staged_unwinding),
+                  "gimli": {"staged": str(staged_gimli)}}
         for index, package in enumerate((owned_cleanup.BUILD_STD_FIXTURE, owned_cleanup.BUILD_STD_DSO_FIXTURE)):
             application = Path(self.temporary.name) / f"application-{index}"
             application.mkdir()
@@ -557,6 +563,7 @@ class OwnedCleanupContract(unittest.TestCase):
                 manifest["dependencies"]["crabc-cleanup-dependency"]["path"], "../cleanup-dependency",
             )
             self.assertEqual(manifest["patch"]["crates-io"]["unwinding"]["path"], str(staged_unwinding))
+            self.assertEqual(manifest["patch"]["crates-io"]["gimli"]["path"], str(staged_gimli))
             self.assertTrue((application / "cleanup-dependency/src/lib.rs").is_file())
             self.assertEqual(len(prepared["sources"]), 4 if index == 1 else 3)
 
@@ -1290,6 +1297,9 @@ class OwnedCleanupContract(unittest.TestCase):
         provider_graph = {
             "graph": {
                 "provider_custom_builds": [], "patched_unwinding_manifest": {"path": "/staged/Cargo.toml"},
+                "patched_gimli_manifest": {"path": "/staged/gimli/Cargo.toml"},
+                "gimli_upstream_tree_sha256": "0" * 64, "gimli_patched_tree_sha256": "0" * 64,
+                "gimli_patch": {},
                 "patched_tree_sha256": "0" * 64, "patches": [], "provider_package_id": "provider",
                 "provider_source": {"path": "/staged/src/lib.rs"},
             },
@@ -1304,6 +1314,7 @@ class OwnedCleanupContract(unittest.TestCase):
              mock.patch.object(owned_cleanup, "source_build_log_contract"), \
              mock.patch.object(owned_cleanup, "source_graph_profile_contract"), \
              mock.patch.object(build, "verify_staged_patched_unwinding"), \
+             mock.patch.object(build, "verify_staged_patched_gimli"), \
              mock.patch.object(owned_cleanup, "host_build_script_manifest"), \
              mock.patch.object(owned_cleanup, "cargo_graph_provider_artifact", return_value=provider_archive), \
              mock.patch.object(owned_cleanup, "cargo_build_std_runtime_artifacts",

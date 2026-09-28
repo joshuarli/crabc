@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise CFI and expression error propagation through the selected provider."""
+"""Exercise CFI, expression, and callback-lifetime errors through the provider."""
 from metadata_bounds import run_fixture
 
 
@@ -29,6 +29,19 @@ def main() -> None:
         'standalone forked self-read provider regression',
         'forked-self-read-execution.log',
         'forked-self-read',
+    ))
+    print(run_fixture(
+        'unwinder-frame-bounds-runs',
+        'eh_frame_lifetime.rs',
+        'mapped unwind=5\nmapped wait=0\nunmapped unwind=3\nunmapped wait=0\n'
+        'unreadable unwind=3\nunreadable wait=0\n'
+        'oversized unwind=3\noversized wait=0\n'
+        'truncated unwind=3\ntruncated wait=0\n'
+        'long-fde unwind=5\nlong-fde wait=0\n'
+        'EH frame lifetime guarded\n',
+        'standalone EH-frame remote reader regression',
+        'eh-frame-lifetime-execution.log',
+        'eh-frame-lifetime',
     ))
 
 

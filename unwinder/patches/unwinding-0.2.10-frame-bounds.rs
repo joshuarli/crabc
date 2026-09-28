@@ -6,14 +6,14 @@
 // for its full native-word cell. A non-null personality target must be in an
 // executable PT_LOAD; a nonzero LSDA target must be in a readable PT_LOAD.
 // A present cell or target that cannot be resolved is malformed unwind
-// metadata, not absent metadata. The caller still owns the enclosing loader
-// mapping-lifetime obligation and the resulting target's ordinary ABI.
+// metadata, not absent metadata. The selected remote reader guards later EH
+// accesses; a resolved personality target retains its ordinary ABI obligations.
 use core::convert::TryFrom;
 use core::mem;
 use core::ops::Range;
 use core::slice;
 use gimli::{
-    BaseAddresses, CfaRule, Pointer, Register, RegisterRule, UnwindContext,
+    BaseAddresses, CfaRule, Pointer, Register, RegisterRule, Section, UnwindContext,
     UnwindExpression, UnwindTableRow,
 };
 #[cfg(feature = "dwarf-expr")]
@@ -308,10 +308,15 @@ impl Frame {
             ra -= 1;
         }
 
-        let fde_result = match find_fde::get_finder().find_fde(ra as _) {
+        let fde_result = match find_fde::get_finder().find_fde_checked(ra as _)? {
             Some(v) => v,
             None => return Ok(None),
         };
+        // The finder can retain bytes read during its callback. Check the
+        // complete declared EH range after the callback before using a cached
+        // rule, then guard every later read through the remote reader.
+        #[cfg(target_arch = "x86_64")]
+        fde_result.eh_frame.reader().probe_all()?;
         let mut unwinder = UnwindContext::<_, StoreOnStack>::new_in();
         let row = fde_result
             .fde

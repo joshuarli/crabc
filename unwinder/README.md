@@ -33,6 +33,7 @@ Build from the checkout through the pinned native dispatcher:
 ./scripts/dev-x86_64.sh unwinder-dynamic-bounds
 ./scripts/dev-x86_64.sh unwinder-indirect-personality-bounds
 ./scripts/dev-x86_64.sh unwinder-metadata-target-bounds
+./scripts/dev-x86_64.sh unwinder-frame-bounds
 python3 -B -m unittest discover -s unwinder/tests
 ```
 
@@ -51,28 +52,28 @@ retain build evidence. The member is PIC native code with unwind tables. This
 alone does not prove consumer or cross-runtime LTO qualification.
 
 Before compiling, `build.py` verifies the normal checked-in registry lock and
-the complete cached `unwinding 0.2.10` source tree. It creates or reuses only
-an exact content-addressed input beneath `.work/x86_64/unwinder-source-inputs/`,
-copies that verified source, and replaces
-`src/unwinder/find_fde/phdr.rs` and `src/unwinder/frame.rs` with checked-in
-MIT OR Apache-2.0 bounds overlays. Cargo resolves the same version/features
-from that local staged source only for this producer input. The original
-registry source is never modified. `provenance.json` separately records the
-pristine-tree and patched-tree hashes, overlays/licenses/digests, staged input
-identity, and the actual compiled source-file inventory.
+the complete cached `unwinding 0.2.10` and `gimli 0.34.0` source trees. It
+stages the checked-in `unwinding` bounds and remote-reader overlays beneath an
+exact content-addressed `.work/x86_64/unwinder-source-inputs/` directory.
+The local `gimli` derivative gives `Reader::cannot_implement` its existing
+private return value as a default body in `src/read/reader.rs`. That one-line
+change permits an external fault-contained reader with the pinned `read-core`
+feature; enabling `gimli/read` requires a global allocator. The source
+revisions and package pins remain fixed. The original registry sources are
+never modified. `provenance.json` records both pristine and patched tree
+hashes, exact overlay targets/licenses/digests, staged input identity, and
+compiled source-file inventories.
 
 `unwinder-metadata-bounds` links the selected provider into a guard-page
 fixture with a one-byte `PT_GNU_EH_FRAME` header. Its declared readable
 `PT_LOAD` deliberately extends into the guard page, proving that the header's
 own `p_memsz`, not the remaining load range, bounds the header read. The overlay
-requires checked program-header arithmetic, a nonempty non-null header no
-larger than Rust's slice limit, and complete containment in a readable
-`PT_LOAD`; the fixture then proves that lookup returns no FDE instead of
-faulting. Header-slice formation remains explicitly unsafe because only the
-loader can guarantee the mapping's lifetime and actual readability. This is one
-malformed-header behavior only. It does not exercise the separate decoded
-`.eh_frame` pointer path, `PT_DYNAMIC` scan, later DWARF/LSDA references,
-callback reentrancy, or runtime DSO mapping lifetime.
+requires checked program-header arithmetic, a nonempty non-null header within
+its 1 MiB cap, and complete containment in a readable `PT_LOAD`; the fixture
+then proves that lookup returns no FDE instead of faulting. The remote reader
+copies through `process_vm_readv`, so an inaccessible header yields an error
+or short read without a provider fault. This fixture covers one malformed
+header; later DWARF and callback-lifetime reads have separate controls.
 
 `unwinder-eh-frame-bounds` exercises the next, separate decoded-pointer
 boundary. It rejects a direct `.eh_frame` target outside a readable `PT_LOAD`,
@@ -148,8 +149,13 @@ phase error without dereferencing the address in the provider. The guarded
 register-rule fixture in `unwinder/fixtures/guarded_register_rule.rs` proves
 this boundary, while the cleanup fixture proves valid stack reads still unwind.
 The self-read can fail under kernel policy; the provider then returns a phase
-error. This does not validate LSDA contents or keep a mapping alive after a
-successful read, and it does not qualify an installed runtime product.
+error. The selected EH-frame reader bounds the declared section to 16 MiB,
+probes physical readability after `dl_iterate_phdr` returns, and guards every
+later DWARF read. Its 128-byte value cache and 4 KiB probe buffer require no
+allocator. `eh_frame_lifetime.rs` proves a valid mapped frame and valid 8 KiB
+FDE, then rejects callback-time unmap, unreadable header, unreadable EH
+suffix, and oversized metadata with phase errors and no child faults. This
+does not validate LSDA contents or qualify an installed runtime product.
 
 ## Standalone cleanup regression
 

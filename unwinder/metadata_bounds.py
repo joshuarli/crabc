@@ -21,8 +21,16 @@ ROOT = Path(__file__).resolve().parent
 TARGET = 'x86_64-unknown-linux-musl'
 EXPECTED_OUTPUT = 'truncated EH header rejected\n'
 PATCHES = {
+    'src/util.rs': 'unwinder/patches/unwinding-0.2.10-remote-reader.rs',
+    'src/unwinder/find_fde/mod.rs': 'unwinder/patches/unwinding-0.2.10-find-fde-bounds.rs',
     'src/unwinder/find_fde/phdr.rs': 'unwinder/patches/unwinding-0.2.10-phdr-bounds.rs',
     'src/unwinder/frame.rs': 'unwinder/patches/unwinding-0.2.10-frame-bounds.rs',
+}
+GIMLI_READER_PATCH = {
+    'target': 'src/read/reader.rs',
+    'path': 'unwinder/patches/gimli-0.34.0-reader-core-remote.rs',
+    'upstream_sha256': '1359cbadcc0cf7196eab616e4d0e312808a2c80f5e5eaba46c7bcf61df968166',
+    'license': 'MIT OR Apache-2.0',
 }
 
 
@@ -82,6 +90,22 @@ def assert_patched_provider(provenance: dict, archive_sha256: str) -> None:
             raise RuntimeError('provider provenance does not identify the compiled bounded-metadata overlay')
         if compiled.get(target) != patch_digest:
             raise RuntimeError('provider source audit does not match the compiled bounded-metadata overlay')
+    gimli_patch = provenance['patched_gimli']['patch']
+    gimli_config = GIMLI_READER_PATCH
+    gimli_path = gimli_config['path']
+    gimli_digest = digest(ROOT.parent / gimli_path)
+    gimli_compiled = {
+        entry['path']: entry['sha256'] for entry in dependencies['gimli']['files']
+    }
+    if (gimli_patch != {
+            'path': gimli_path,
+            'sha256': gimli_digest,
+            'target': gimli_config['target'],
+            'upstream_sha256': gimli_config['upstream_sha256'],
+            'compiled_sha256': gimli_digest,
+            'license': gimli_config['license'],
+    } or gimli_compiled.get(gimli_config['target']) != gimli_digest):
+        raise RuntimeError('provider provenance does not identify the compiled remote-reader prerequisite')
 
 
 def run_fixture(

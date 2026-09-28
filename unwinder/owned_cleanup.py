@@ -117,7 +117,9 @@ SOURCE_BUILD_RUSTFLAGS = (
 SOURCE_INPUTS = (
     ROOT / "owned_cleanup.py", ROOT / "owned_rust_link.py", ROOT / "cleanup.py",
     ROOT / "build.py", ROOT / "Cargo.toml", ROOT / "Cargo.lock", ROOT / "src/lib.rs",
-    ROOT / "patches/unwinding-0.2.10-phdr-bounds.rs", ROOT / "patches/unwinding-0.2.10-frame-bounds.rs", FIXTURE,
+    ROOT / "patches/gimli-0.34.0-reader-core-remote.rs", ROOT / "patches/unwinding-0.2.10-remote-reader.rs",
+    ROOT / "patches/unwinding-0.2.10-find-fde-bounds.rs", ROOT / "patches/unwinding-0.2.10-phdr-bounds.rs",
+    ROOT / "patches/unwinding-0.2.10-frame-bounds.rs", FIXTURE,
     BUILD_STD_FIXTURE / "Cargo.toml", BUILD_STD_FIXTURE / "Cargo.lock", BUILD_STD_FIXTURE / "src/main.rs",
     BUILD_STD_DSO_FIXTURE / "Cargo.toml", BUILD_STD_DSO_FIXTURE / "Cargo.lock",
     BUILD_STD_DSO_FIXTURE / "src/main.rs", BUILD_STD_DSO_FIXTURE / "src/plugin.rs",
@@ -1849,10 +1851,13 @@ def audit_source_graph(
             "Cargo did not compile the generated source-built consumer manifest")
     staged_manifest = physical(Path(staged["manifest"]), "staged crabc-unwinder manifest")
     staged_unwinding = physical(Path(staged["staged"]), "staged unwinding source", directory=True)
+    staged_gimli = physical(Path(staged["gimli"]["staged"]), "staged gimli source", directory=True)
     require(packages["crabc-unwinder"].get("manifest_path") == str(staged_manifest),
             "Cargo did not compile the staged crabc-unwinder root")
     require(Path(packages[build.PATCHED_UNWINDING].get("manifest_path", "")).parent == staged_unwinding,
             "Cargo did not compile the staged patched unwinding source")
+    require(Path(packages[build.PATCHED_GIMLI].get("manifest_path", "")).parent == staged_gimli,
+            "Cargo did not compile the staged patched gimli source")
     dependency_manifest = physical(package_root.parent / "cleanup-dependency/Cargo.toml",
                                    "generated cleanup dependency manifest")
     require(packages[DEPENDENCY_PACKAGE].get("manifest_path") == str(dependency_manifest)
@@ -1908,8 +1913,9 @@ def audit_source_graph(
         "resolve": {"nodes": [nodes_by_id[packages[name]["id"]] for name in sorted(SOURCE_GRAPH_PACKAGES)]},
     }
     projected_lock = {"package": [locked[name] for name in sorted(SOURCE_GRAPH_PACKAGES)]}
-    build.audit_graph(projected_metadata, projected_lock, patched_unwinding=True)
+    build.audit_graph(projected_metadata, projected_lock, patched_unwinding=True, patched_gimli=True)
     build.verify_staged_patched_unwinding(staged)
+    build.verify_staged_patched_gimli(staged)
     libc_targets = packages["libc"].get("targets")
     require(isinstance(libc_targets, list), "Cargo libc package has no targets")
     provider_custom_builds: list[dict[str, Path]] = []
@@ -1936,10 +1942,14 @@ def audit_source_graph(
         "provider_source": record_file(provider_source, "staged crabc-unwinder source"),
         "provider_link_anchor": source_provider_link_anchor(provider_source),
         "patched_unwinding_manifest": record_file(staged_unwinding / "Cargo.toml", "staged patched unwinding manifest"),
+        "patched_gimli_manifest": record_file(staged_gimli / "Cargo.toml", "staged patched gimli manifest"),
         "source_input": str(Path(staged["source_input"])),
         "upstream_tree_sha256": staged["upstream_tree_sha256"],
         "patched_tree_sha256": staged["patched_tree_sha256"],
         "patches": staged["patches"],
+        "gimli_upstream_tree_sha256": staged["gimli"]["upstream_tree_sha256"],
+        "gimli_patched_tree_sha256": staged["gimli"]["patched_tree_sha256"],
+        "gimli_patch": staged["gimli"]["patch"],
         "provider_custom_builds": provider_custom_builds,
     }
 
@@ -1986,6 +1996,7 @@ def prepare_source_graph_package(
     root.mkdir(mode=0o755)
     staged_manifest = Path(staged["manifest"])
     staged_unwinding = Path(staged["staged"])
+    staged_gimli = Path(staged["gimli"]["staged"])
     manifest_text = manifest_source.read_text(encoding="utf-8").rstrip()
     dependency_section = re.search(r"(?m)^\[dependencies\]\s*$", manifest_text)
     require(dependency_section is not None, "source-built fixture lost its cleanup dependency section")
@@ -1998,6 +2009,7 @@ def prepare_source_graph_package(
     rendered_manifest = (
         manifest_text + "\n\n[patch.crates-io]\n"
         f"unwinding = {{ path = \"{_toml_path(staged_unwinding, 'staged patched unwinding source', directory=True)}\" }}\n"
+        f"gimli = {{ path = \"{_toml_path(staged_gimli, 'staged patched gimli source', directory=True)}\" }}\n"
     )
     generated_manifest = root / "Cargo.toml"
     generated_manifest.write_text(rendered_manifest, encoding="utf-8")
@@ -2116,7 +2128,9 @@ def source_graph_provider(
     # conversion, beneath the already validated per-consumer application.
     stage_root = work_child(application / "unwinder-source-inputs", "private patched unwinding stage root")
     staged = build.stage_patched_unwinding(source_packages, stage_root=stage_root)
+    build.stage_patched_gimli(source_packages, staged)
     build.verify_staged_patched_unwinding(staged)
+    build.verify_staged_patched_gimli(staged)
     prepared = prepare_source_graph_package(application, package, staged, with_plugin)
     generated_manifest = Path(prepared["root"]) / "Cargo.toml"
     run_logged(
@@ -2338,6 +2352,12 @@ def compile_source_built_mode(
         "patched_tree_sha256": provider_graph["graph"]["patched_tree_sha256"],
         "patches": provider_graph["graph"]["patches"],
     })
+    build.verify_staged_patched_gimli({"gimli": {
+        "staged": Path(provider_graph["graph"]["patched_gimli_manifest"]["path"]).parent,
+        "upstream_tree_sha256": provider_graph["graph"]["gimli_upstream_tree_sha256"],
+        "patched_tree_sha256": provider_graph["graph"]["gimli_patched_tree_sha256"],
+        "patch": provider_graph["graph"]["gimli_patch"],
+    }})
     host_build_script_manifest(
         cargo_stream=stdout,
         cargo_stdout=application / "cargo.stdout.jsonl",
