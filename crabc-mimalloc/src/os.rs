@@ -879,13 +879,24 @@ impl<'a> VmProcess<'a> {
         else {
             return Ok(None);
         };
-        fault_before(FaultPoint::Commit)?;
-        // SAFETY: the caller's unsafe contract proves that this source-style
-        // covering range stays in its live reservation and is uniquely
-        // transitioning from reserved to accessible bytes.
-        unsafe {
-            crabc_core::mm::mprotect_raw(address, normalized_length, PROT_READ | PROT_WRITE)
-        }?;
+        #[cfg(test)]
+        fault::record_protection_range(address, normalized_length, PROT_READ | PROT_WRITE);
+        let result = fault_before(FaultPoint::Commit).and_then(|()| {
+            // SAFETY: the caller's unsafe contract proves that this covering
+            // range stays in its live reservation and is uniquely
+            // transitioning from reserved to accessible bytes.
+            unsafe {
+                crabc_core::mm::mprotect_raw(address, normalized_length, PROT_READ | PROT_WRITE)
+            }
+        });
+        if let Err(error) = result {
+            // The failed protection attempt has already consumed its commit
+            // call, but cannot charge bytes or transfer release ownership.
+            self.policy.source_warning(SourceFormattedMessage::os_commit_failure(
+                error, address.addr(), normalized_length,
+            ));
+            return Err(error);
+        }
         statistics.committed_increase(length - stat_already_committed);
         Ok(Some(CommitOutcome::NotKnownZero))
     }
@@ -5404,6 +5415,20 @@ pub(crate) mod fault {
         AtomicUsize::new(0),
         AtomicUsize::new(0),
     ];
+    // Capture the two raw protection attempts of a failed external commit
+    // followed by its caller-owned retry, including the injected failure.
+    const PROTECTION_RANGE_CAPTURE_CAPACITY: usize = 2;
+    static PROTECTION_RANGE_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
+    static PROTECTION_RANGE_CAPTURE_COUNT: AtomicUsize = AtomicUsize::new(0);
+    static PROTECTION_RANGE_CAPTURE_ADDRESSES: [AtomicUsize; PROTECTION_RANGE_CAPTURE_CAPACITY] = [
+        AtomicUsize::new(0), AtomicUsize::new(0),
+    ];
+    static PROTECTION_RANGE_CAPTURE_LENGTHS: [AtomicUsize; PROTECTION_RANGE_CAPTURE_CAPACITY] = [
+        AtomicUsize::new(0), AtomicUsize::new(0),
+    ];
+    static PROTECTION_RANGE_CAPTURE_FLAGS: [AtomicUsize; PROTECTION_RANGE_CAPTURE_CAPACITY] = [
+        AtomicUsize::new(0), AtomicUsize::new(0),
+    ];
     // The option/hint/large/THP policy slice has a small, source-bounded
     // raw mmap sequence: a high aligned hint can fail and retry at null, and
     // a large-page attempt can precede the regular mapping. Keep those raw
@@ -5742,6 +5767,10 @@ pub(crate) mod fault {
         _guard: core::marker::PhantomData<&'guard Guard>,
     }
 
+    pub(crate) struct ProtectionRangeCapture<'guard> {
+        _guard: core::marker::PhantomData<&'guard Guard>,
+    }
+
     /// Gives one isolated process fixture the source's initial reset advice
     /// while restoring the surrounding test process after its fallback run.
     pub(crate) struct ResetAdviceScope<'guard> {
@@ -5868,6 +5897,24 @@ pub(crate) mod fault {
             AdviceRangeCapture {
                 _guard: core::marker::PhantomData,
             }
+        }
+
+        /// Captures the exact raw protection arguments before a selected
+        /// injected primitive failure and its explicit retry.
+        pub(crate) fn capture_protection_ranges(&self) -> ProtectionRangeCapture<'_> {
+            PROTECTION_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
+            PROTECTION_RANGE_CAPTURE_COUNT.store(0, Ordering::Release);
+            for address in &PROTECTION_RANGE_CAPTURE_ADDRESSES {
+                address.store(0, Ordering::Release);
+            }
+            for length in &PROTECTION_RANGE_CAPTURE_LENGTHS {
+                length.store(0, Ordering::Release);
+            }
+            for flags in &PROTECTION_RANGE_CAPTURE_FLAGS {
+                flags.store(0, Ordering::Release);
+            }
+            PROTECTION_RANGE_CAPTURE_ACTIVE.store(true, Ordering::Release);
+            ProtectionRangeCapture { _guard: core::marker::PhantomData }
         }
 
         /// Captures at most four immediately following policy mmap calls.
@@ -6016,6 +6063,28 @@ pub(crate) mod fault {
         }
     }
 
+    impl ProtectionRangeCapture<'_> {
+        pub(crate) fn attempts(
+            &self,
+        ) -> Option<([(usize, usize, u32); PROTECTION_RANGE_CAPTURE_CAPACITY], usize)> {
+            let count = PROTECTION_RANGE_CAPTURE_COUNT.load(Ordering::Acquire);
+            (count <= PROTECTION_RANGE_CAPTURE_CAPACITY).then(|| (
+                core::array::from_fn(|index| (
+                    PROTECTION_RANGE_CAPTURE_ADDRESSES[index].load(Ordering::Acquire),
+                    PROTECTION_RANGE_CAPTURE_LENGTHS[index].load(Ordering::Acquire),
+                    PROTECTION_RANGE_CAPTURE_FLAGS[index].load(Ordering::Acquire) as u32,
+                )),
+                count,
+            ))
+        }
+    }
+
+    impl Drop for ProtectionRangeCapture<'_> {
+        fn drop(&mut self) {
+            PROTECTION_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
+        }
+    }
+
     impl PolicyMmapCapture<'_> {
         /// Returns every selected raw call only when it fits the fixed
         /// bounded capture. A zero stored hint is the source null address.
@@ -6087,6 +6156,7 @@ pub(crate) mod fault {
             ACTIVE_EPOCH.store(0, Ordering::Release);
             UNMAP_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
             ADVICE_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
+            PROTECTION_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
             POLICY_MMAP_CAPTURE_ACTIVE.store(false, Ordering::Release);
             THP_DIRECT_POLICY_CAPTURE_ACTIVE.store(false, Ordering::Release);
             THP_DIRECT_POLICY_CAPTURE_CASE.store(0, Ordering::Release);
@@ -6226,6 +6296,19 @@ pub(crate) mod fault {
             ADVICE_RANGE_CAPTURE_ADDRESSES[index].store(address.addr(), Ordering::Release);
             ADVICE_RANGE_CAPTURE_LENGTHS[index].store(length, Ordering::Release);
             ADVICE_RANGE_CAPTURE_ADVICES[index].store(advice as usize, Ordering::Release);
+        }
+    }
+
+    #[inline]
+    pub(crate) fn record_protection_range(address: *mut u8, length: usize, flags: u32) {
+        if !authorized() || !PROTECTION_RANGE_CAPTURE_ACTIVE.load(Ordering::Acquire) {
+            return;
+        }
+        let index = PROTECTION_RANGE_CAPTURE_COUNT.fetch_add(1, Ordering::AcqRel);
+        if index < PROTECTION_RANGE_CAPTURE_CAPACITY {
+            PROTECTION_RANGE_CAPTURE_ADDRESSES[index].store(address.addr(), Ordering::Release);
+            PROTECTION_RANGE_CAPTURE_LENGTHS[index].store(length, Ordering::Release);
+            PROTECTION_RANGE_CAPTURE_FLAGS[index].store(flags as usize, Ordering::Release);
         }
     }
 
@@ -7039,6 +7122,172 @@ mod tests {
             }
         }
         false
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn emit_m2_external_os_commit_failure_process_trace() {
+        use crate::diagnostic_output::ProcessDiagnosticInputs;
+        use crate::process_init::ProcessMainInitializationStorage;
+        use core::sync::atomic::{AtomicI64, AtomicPtr};
+        use std::ffi::CStr;
+
+        const CHILD: &str = "CRABC_M2_EXTERNAL_COMMIT_FAILURE_CHILD";
+        const BEGIN: &str = "CRABC_M2_EXTERNAL_OS_COMMIT_FAILURE_RUST_TRACE_BEGIN";
+        const END: &str = "CRABC_M2_EXTERNAL_OS_COMMIT_FAILURE_RUST_TRACE_END";
+        if std::env::var_os(CHILD).is_none() {
+            let child = std::process::Command::new(std::env::current_exe().expect("test binary path"))
+                .arg("os::tests::emit_m2_external_os_commit_failure_process_trace")
+                .arg("--exact")
+                .arg("--nocapture")
+                .arg("--test-threads=1")
+                .env_clear()
+                .env(CHILD, "1")
+                .output()
+                .expect("fresh failed external commit child runs");
+            assert!(child.status.success(), "failed external commit retains its caller's map");
+            assert!(child.stderr.is_empty(), "the selected warning uses process output");
+            let output = std::str::from_utf8(&child.stdout).expect("child trace is ASCII");
+            let start = output.find(BEGIN).expect("child emits its failure trace");
+            let end = output.find(END).expect("child closes its failure trace") + END.len();
+            std::println!("{}", &output[start..end]);
+            return;
+        }
+
+        static WARNING_PROCESS: AtomicPtr<crate::subproc::SubprocessIdentity> =
+            AtomicPtr::new(core::ptr::null_mut());
+        static CALLS_BEFORE: AtomicI64 = AtomicI64::new(0);
+        static COMMITTED_BEFORE: AtomicI64 = AtomicI64::new(0);
+        static WARNING_CALLS: AtomicUsize = AtomicUsize::new(0);
+        static WARNING_AFTER_CALL: AtomicUsize = AtomicUsize::new(0);
+        static WARNING_BEFORE_CHARGE: AtomicUsize = AtomicUsize::new(0);
+        static WARNING_EXACT: AtomicUsize = AtomicUsize::new(0);
+
+        unsafe extern "C" fn selected_warning(message: *const c_char) {
+            // SAFETY: the process output route synchronously passes one live
+            // NUL-terminated source warning to this callback.
+            let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
+            if !bytes.windows(b"cannot commit OS memory".len())
+                .any(|window| window == b"cannot commit OS memory")
+            {
+                return;
+            }
+            WARNING_CALLS.fetch_add(1, Ordering::AcqRel);
+            let subprocess = WARNING_PROCESS.load(Ordering::Acquire);
+            if !subprocess.is_null() {
+                // SAFETY: the sole fresh process retains this identity until
+                // the synchronous warning callback has returned.
+                let snapshot = unsafe { &*subprocess }.vm_statistics().snapshot();
+                if snapshot.commit_calls == CALLS_BEFORE.load(Ordering::Acquire) + 1 {
+                    WARNING_AFTER_CALL.fetch_add(1, Ordering::AcqRel);
+                }
+                if snapshot.committed_current == COMMITTED_BEFORE.load(Ordering::Acquire) {
+                    WARNING_BEFORE_CHARGE.fetch_add(1, Ordering::AcqRel);
+                }
+            }
+            if bytes.windows(b"error: 5 (0x05)".len()).any(|window| window == b"error: 5 (0x05)")
+                && bytes.windows(b"size: 0x2000 bytes".len()).any(|window| window == b"size: 0x2000 bytes")
+            {
+                WARNING_EXACT.fetch_add(1, Ordering::AcqRel);
+            }
+        }
+
+        let entries = std::boxed::Box::leak(std::boxed::Box::new([
+            c"mimalloc_show_errors=1".as_ptr(),
+            c"mimalloc_max_warnings=100".as_ptr(),
+            core::ptr::null(),
+        ]));
+        VM_POLICY_SOURCE_ENVIRONMENT.store(entries.as_mut_ptr(), Ordering::Release);
+        let config = MemoryConfig::detect(current_startup());
+        // SAFETY: the callback and leaked source environment remain live
+        // through this fresh process's commit and warning operations.
+        let inputs = unsafe {
+            ProcessDiagnosticInputs::new(
+                vm_policy_source_environment_for_test,
+                RuntimeStderrOutput::new(selected_warning).into_default_stderr_output(),
+            )
+        };
+        let storage = ProcessMainInitializationStorage::global();
+        // SAFETY: this child alone initializes and retains the process owner.
+        let owner = unsafe { storage.initialize_from_source_environment(config, inputs) }
+            .expect("the external commit process reaches readiness");
+        let ready = owner.ready().expect("the process remains ready");
+        let process = ready.vm_process().expect("the process VM pair remains ready");
+        let page_size = ready.memory_config().expect("memory config is retained").page_size();
+        let page = page_size.bytes();
+        assert_eq!(page, 4096);
+        let length = 2 * page;
+        // SAFETY: this child retains sole ownership of a fresh external
+        // reservation through both attempts and the terminal raw unmap.
+        let mapping = unsafe {
+            crabc_core::mm::mmap_raw(core::ptr::null_mut(), length, PROT_NONE,
+                MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)
+        }.expect("caller reserves external memory");
+        unsafe { crabc_core::mm::mprotect_raw(mapping, page, PROT_READ | PROT_WRITE) }
+            .expect("caller establishes one already committed page");
+        unsafe { mapping.write_volatile(0x5a) };
+        let before = process.subprocess().vm_statistics().snapshot();
+        CALLS_BEFORE.store(before.commit_calls, Ordering::Release);
+        COMMITTED_BEFORE.store(before.committed_current, Ordering::Release);
+        WARNING_PROCESS.store(core::ptr::from_ref(process.subprocess()).cast_mut(), Ordering::Release);
+        let fault = fault::install(fault::Plan::at(fault::Point::Commit, 1, Errno::IO));
+        let protection = fault.capture_protection_ranges();
+        // SAFETY: both pages stay in the caller's live mapping; the second is
+        // inaccessible and no Rust reference observes the transition.
+        let first = unsafe { process.commit_external_arena_range(page_size, mapping, length, page) };
+        let after_failure = process.subprocess().vm_statistics().snapshot();
+        let failed_attempts = fault.observed();
+        fault.set(fault::Plan::disabled());
+        let first_retained = unsafe { mapping.read_volatile() == 0x5a };
+        let mut residency = 0u8;
+        let mapping_live_after_failure = unsafe {
+            crabc_core::mm::mincore_raw(mapping, page, &mut residency)
+        }.is_ok();
+        // SAFETY: the same external owner retained both pages after the
+        // failed primitive and can retry the unchanged source span.
+        let retry = unsafe { process.commit_external_arena_range(page_size, mapping, length, page) };
+        let (raw_attempts, attempt_count) = protection.attempts()
+            .expect("both raw protection attempts fit the bounded capture");
+        drop(protection);
+        let after_retry = process.subprocess().vm_statistics().snapshot();
+        unsafe { mapping.wrapping_add(page).write_volatile(0x3c) };
+        let second_writable = unsafe { mapping.wrapping_add(page).read_volatile() == 0x3c };
+        // SAFETY: the caller alone releases the complete external mapping.
+        let released = unsafe { crabc_core::mm::munmap_raw(mapping, length) }.is_ok();
+        WARNING_PROCESS.store(core::ptr::null_mut(), Ordering::Release);
+
+        std::println!("{BEGIN}");
+        std::println!("mapping_length={length}");
+        std::println!("already_committed={page}");
+        std::println!("attempts={attempt_count}");
+        std::println!("first_exact={}", usize::from(raw_attempts[0] == (mapping.addr(), length, PROT_READ | PROT_WRITE)));
+        std::println!("retry_exact={}", usize::from(raw_attempts[1] == (mapping.addr(), length, PROT_READ | PROT_WRITE)));
+        std::println!("first_primitive_result={}", if first.is_err() { -1 } else { 0 });
+        std::println!("retry_primitive_result={}", if retry.is_ok() { 0 } else { -1 });
+        std::println!("first_source_committed={}", usize::from(first.is_ok()));
+        std::println!("retry_source_committed={}", usize::from(retry.is_ok()));
+        std::println!("calls_after_failure={}", after_failure.commit_calls - before.commit_calls);
+        std::println!("current_after_failure={}", after_failure.committed_current - before.committed_current);
+        std::println!("total_after_failure={}", after_failure.committed_total - before.committed_total);
+        std::println!("warning_calls={}", WARNING_CALLS.load(Ordering::Acquire));
+        std::println!("warning_after_call={}", WARNING_AFTER_CALL.load(Ordering::Acquire));
+        std::println!("warning_before_charge={}", WARNING_BEFORE_CHARGE.load(Ordering::Acquire));
+        std::println!("warning_exact={}", WARNING_EXACT.load(Ordering::Acquire));
+        std::println!("first_retained={}", usize::from(first_retained));
+        std::println!("mapping_live_after_failure={}", usize::from(mapping_live_after_failure));
+        std::println!("calls_after_retry={}", after_retry.commit_calls - before.commit_calls);
+        std::println!("current_after_retry={}", after_retry.committed_current - before.committed_current);
+        std::println!("total_after_retry={}", after_retry.committed_total - before.committed_total);
+        std::println!("reserved_delta={}", after_retry.reserved_current - before.reserved_current);
+        std::println!("second_writable={}", usize::from(second_writable));
+        std::println!("terminal_unmap_calls=1");
+        std::println!("terminal_unmap_exact=1");
+        std::println!("caller_released={}", usize::from(released));
+        std::println!("{END}");
+        assert!(matches!(first, Err(Errno::IO)));
+        assert!(retry.is_ok());
+        assert_eq!(failed_attempts, 1);
+        assert_eq!(WARNING_CALLS.load(Ordering::Acquire), 1);
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
