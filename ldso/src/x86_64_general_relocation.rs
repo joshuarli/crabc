@@ -141,6 +141,11 @@ pub(super) unsafe fn find_runtime_symbol<'a>(
 
 unsafe fn definition(objects: &[Object], owner: usize, index: usize) -> Option<Definition> {
     let object = objects.get(owner)?;
+    let symbol = unsafe { symbol_record(object, index) }?;
+    Some(unsafe { definition_at(owner, symbol) })
+}
+
+unsafe fn symbol_record(object: &Object, index: usize) -> Option<*const u8> {
     if index == 0 { return None; }
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let symbol = unsafe { direct_symbol(object, index) }?;
@@ -149,7 +154,7 @@ unsafe fn definition(objects: &[Object], owner: usize, index: usize) -> Option<D
         if index >= object.symcount { return None; }
         unsafe { object.symtab.add(index * 24) }
     };
-    Some(unsafe { definition_at(owner, symbol) })
+    Some(symbol)
 }
 
 /// Decode one already-proven readable 24-byte dynsym record.
@@ -215,14 +220,13 @@ unsafe fn could_be_private_startup_import(
 }
 
 unsafe fn symbol_name(object: &Object, index: usize) -> Option<&[u8]> {
-    if index == 0 { return None; }
-    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-    let symbol = unsafe { direct_symbol(object, index) }?;
-    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
-    let symbol = {
-        if index >= object.symcount { return None; }
-        unsafe { object.symtab.add(index * 24) }
-    };
+    let symbol = unsafe { symbol_record(object, index) }?;
+    unsafe { symbol_name_at(object, symbol) }
+}
+
+/// Decode a name only after the relocation index has proved its dynsym
+/// record readable. The same record can then supply its binding and extent.
+unsafe fn symbol_name_at(object: &Object, symbol: *const u8) -> Option<&[u8]> {
     let offset = unsafe { read_u32(symbol) } as usize;
     if offset >= object.strsz { return None; }
     let name = unsafe { object.strtab.add(offset) };
@@ -377,18 +381,21 @@ unsafe fn lookup(
     scope: &SymbolScope<'_>, objects: &[Object],
     requestor: usize, index: usize, tls: bool, copy: bool,
 ) -> Option<Option<Definition>> {
-    unsafe { lookup_with_name(scope, objects, requestor, index, tls, copy, None) }
+    let symbol = unsafe { symbol_record(objects.get(requestor)?, index) }?;
+    match unsafe { lookup_result_at(scope, objects, requestor, symbol, None, tls, copy) }? {
+        SymbolLookup::Defined(symbol) => Some(Some(symbol)),
+        SymbolLookup::UndefinedWeak => Some(None),
+        SymbolLookup::MissingStrong => None,
+    }
 }
 
-/// Reuse a name already checked against the requesting object's string table.
-/// Relocation dispatch must inspect private imports before ordinary lookup;
-/// carrying that slice avoids decoding the same dynsym name twice.
-unsafe fn lookup_with_name(
+/// Reuse a validated dynsym record and its bounded name after private-import
+/// dispatch. Ordinary lookup still applies the requestor's binding rules.
+unsafe fn lookup_with_record(
     scope: &SymbolScope<'_>, objects: &[Object],
-    requestor: usize, index: usize, tls: bool, copy: bool,
-    requested_name: Option<&[u8]>,
+    requestor: usize, symbol: *const u8, name: &[u8], tls: bool, copy: bool,
 ) -> Option<Option<Definition>> {
-    match unsafe { lookup_result_with_name(scope, objects, requestor, index, tls, copy, requested_name) }? {
+    match unsafe { lookup_result_at(scope, objects, requestor, symbol, Some(name), tls, copy) }? {
         SymbolLookup::Defined(symbol) => Some(Some(symbol)),
         SymbolLookup::UndefinedWeak => Some(None),
         SymbolLookup::MissingStrong => None,
@@ -401,15 +408,17 @@ unsafe fn lookup_result(
     scope: &SymbolScope<'_>, objects: &[Object],
     requestor: usize, index: usize, tls: bool, copy: bool,
 ) -> Option<SymbolLookup> {
-    unsafe { lookup_result_with_name(scope, objects, requestor, index, tls, copy, None) }
+    let symbol = unsafe { symbol_record(objects.get(requestor)?, index) }?;
+    unsafe { lookup_result_at(scope, objects, requestor, symbol, None, tls, copy) }
 }
 
-unsafe fn lookup_result_with_name(
+/// `symbol` is the requestor's already validated relocation-selected record.
+unsafe fn lookup_result_at(
     scope: &SymbolScope<'_>, objects: &[Object],
-    requestor: usize, index: usize, tls: bool, copy: bool,
-    requested_name: Option<&[u8]>,
+    requestor: usize, symbol: *const u8, requested_name: Option<&[u8]>,
+    tls: bool, copy: bool,
 ) -> Option<SymbolLookup> {
-    let requested = unsafe { definition(objects, requestor, index) }?;
+    let requested = unsafe { definition_at(requestor, symbol) };
     if !matches!(requested.binding, 0 | 1 | 2 | STB_GNU_UNIQUE)
         || (requested.binding == 0 && requested.visibility == 3)
         || (tls && requested.kind != 6)
@@ -420,7 +429,7 @@ unsafe fn lookup_result_with_name(
     }
     let name = match requested_name {
         Some(name) => name,
-        None => unsafe { symbol_name(&objects[requestor], index) }?,
+        None => unsafe { symbol_name_at(&objects[requestor], symbol) }?,
     };
     if name.is_empty() { return None; }
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
@@ -518,12 +527,16 @@ unsafe fn word_value(
     kind: u32, index: usize, addend: i64,
 ) -> Option<u64> {
     let object = &objects[owner];
-    // One name read serves both private-name selectors below.
-    let requested_name = if index != 0 { Some(unsafe { symbol_name(object, index) }?) } else { None };
+    // One validated record supplies the private selectors and ordinary lookup.
+    let requested_symbol = if index != 0 { Some(unsafe { symbol_record(object, index) }?) } else { None };
+    let requested_name = match requested_symbol {
+        Some(symbol) => Some(unsafe { symbol_name_at(object, symbol) }?),
+        None => None,
+    };
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     if let Some(requested_name) = requested_name {
         if let Some(address) = x86_64_initial_worker_tls::runtime_function(requested_name) {
-            let requested = unsafe { definition(objects, owner, index) }?;
+            let requested = unsafe { definition_at(owner, requested_symbol?) };
             return (matches!(kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT)
                 && addend == 0 && requested.section == 0 && requested.binding == 1
                 && requested.visibility == 0 && matches!(requested.kind, 0 | 2))
@@ -539,7 +552,7 @@ unsafe fn word_value(
         #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
         if requested_name == Some(b"__crabc_x86_64_loader_tls_runtime_v1")
         {
-            let requested = unsafe { definition(objects, owner, index) }?;
+            let requested = unsafe { definition_at(owner, requested_symbol?) };
             if kind != R_X86_64_GLOB_DAT || addend != 0
                 || owner != 0 || requested.kind != 0 || requested.binding != 2
                 || requested.visibility != 0 || requested.section != 0
@@ -550,7 +563,7 @@ unsafe fn word_value(
         if !scope.initial {
             #[cfg(crabc_general_initial_tls_materialization_v1)]
             if requested_name == Some(b"__tls_get_addr") {
-                let requested = unsafe { definition(objects, owner, index) }?;
+                let requested = unsafe { definition_at(owner, requested_symbol?) };
                 return (matches!(kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT)
                     && addend == 0 && requested.section == 0 && requested.binding == 1
                     && requested.visibility == 0 && matches!(requested.kind, 0 | 2))
@@ -566,7 +579,8 @@ unsafe fn word_value(
         R_X86_64_RELATIVE if index == 0 => add_signed(object.base, addend),
         R_64 | R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT => {
             let address = if index == 0 { 0 } else {
-                match unsafe { lookup_with_name(scope, objects, owner, index, false, false, requested_name) }? {
+                match unsafe { lookup_with_record(scope, objects, owner,
+                    requested_symbol?, requested_name?, false, false) }? {
                     Some(symbol) => unsafe { ordinary_address(objects, symbol) }?,
                     None => 0,
                 }

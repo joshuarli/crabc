@@ -854,6 +854,49 @@ fn ordered_lookup_reuses_name_across_sysv_and_gnu_tables() {
         Some(RuntimeSymbol::Address(address)) if address == gnu.data.as_ptr() as u64));
 }
 
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[test]
+fn ordinary_word_resolution_keeps_requestor_validation_and_mixed_hash_scope() {
+    let mut main = Image::new();
+    let mut sysv = Image::new();
+    let mut gnu = Image::new();
+    main.symbol(1, 1, 2, 0, 0, 0, 8);
+    sysv.symbol(1, 1, 2, 0, 1, 0x1000, 8);
+    gnu.symbol(1, 1, 1, 0, 1, 0x1000, 8);
+    let hash = gnu_hash(b"value");
+    let shift = 5;
+    let bloom = (1u64 << (hash & 63)) | (1u64 << ((hash >> shift) & 63));
+    gnu.put_u64(IMAGE_HASH + 16, bloom);
+    gnu.put_u32(IMAGE_HASH + 24, 1);
+    gnu.put_u32(IMAGE_HASH + 28, hash | 1);
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
+    objects[0] = main.object(false);
+    objects[1] = sysv.object(true);
+    objects[2] = gnu.object(true);
+    objects[2].symbol_lookup = SymbolLookupTable::Gnu {
+        bucket_count: 1, symbol_offset: 1, bloom_count: 1, bloom_shift: shift,
+        bloom: unsafe { gnu.storage.add(IMAGE_HASH + 16).cast() },
+        buckets: unsafe { gnu.storage.add(IMAGE_HASH + 24).cast() },
+        chains: unsafe { gnu.storage.add(IMAGE_HASH + 28).cast() }, symbol_count: 5,
+    };
+    let scope = SymbolScope { indices: &[0, 1, 2], module_count: 0,
+        static_tls_count: 0, initial: true };
+    // The first weak definition wins, even with a later strong GNU export.
+    assert_eq!(unsafe { word_value(&scope, &objects, 0, R_X86_64_GLOB_DAT, 1, 0) },
+               Some(sysv.data.as_ptr() as u64));
+    sysv.symbol(1, 1, 2, 2, 1, 0x1000, 8);
+    assert_eq!(unsafe { word_value(&scope, &objects, 0, R_X86_64_GLOB_DAT, 1, 0) },
+               Some(gnu.data.as_ptr() as u64));
+    // A local hidden definition binds in the requestor, but its dynsym name
+    // must still be bounded before the relocation can write anything.
+    main.symbol(1, 1, 0, 2, 1, 0x1000, 8);
+    assert_eq!(unsafe { word_value(&scope, &objects, 0, R_X86_64_GLOB_DAT, 1, 0) },
+               Some(main.data.as_ptr() as u64));
+    main.put_u32(IMAGE_SYMTAB + 24, 7);
+    assert!(unsafe { word_value(&scope, &objects, 0, R_X86_64_GLOB_DAT, 1, 0) }.is_none());
+    assert!(unsafe { lookup(&scope, &objects[..3], 3, 1, false, false) }.is_none());
+}
+
 #[test]
 fn symbol_scope_is_breadth_first_and_first_weak_definition_wins() {
     let mut graph = InitialGraphState::new(ObjectIdentity { device: 1, inode: 0 });
