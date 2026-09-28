@@ -1685,6 +1685,43 @@ CRABC_MI_M1_RAW_TRACE_END
         ):
             RUNNER.compare_m1_raw_primitive_trace(trace, trace)
 
+    def test_bit_arithmetic_trace_freezes_inputs_and_all_shift_classes(self) -> None:
+        values = RUNNER.m1_bit_arithmetic_values()
+        self.assertEqual(len(values), 653)
+        self.assertEqual(
+            values[: len(RUNNER.M1_BITS_ARITHMETIC_BOUNDARIES)],
+            RUNNER.M1_BITS_ARITHMETIC_BOUNDARIES,
+        )
+        self.assertEqual(
+            RUNNER.M1_BITS_ARITHMETIC_ROTATION_SHIFTS,
+            (*range(64), 64, 65, 127, 128, 129, (1 << 64) - 1),
+        )
+        self.assertEqual(
+            RUNNER.M1_BITS_ARITHMETIC_ROTATION32_SHIFTS,
+            (*range(32), 32, 33, 63, 64, 65, (1 << 32) - 1),
+        )
+        self.assertEqual(
+            RUNNER.m1_bit_arithmetic_trace_summary(),
+            {
+                "compared_result_count": 120816,
+                "geometry_constant_count": 13,
+                "input_count": 653,
+                "rotation32_record_count": 24814,
+                "rotation32_shift_class_count": 38,
+                "rotation_record_count": 45710,
+                "rotation_shift_class_count": 70,
+                "value_record_count": 653,
+            },
+        )
+        with self.assertRaisesRegex(RUNNER.HarnessError, "records; expected 71190"):
+            RUNNER.parse_m1_bit_arithmetic_trace(
+                "test bits::tests::emit_m1_bit_arithmetic_c_rust_trace ... "
+                "CRABC_MI_M1_BITS_TRACE_BEGIN\n"
+                "CRABC_MI_M1_BITS_TRACE_END\n"
+                "test bits::tests::emit_m1_bit_arithmetic_c_rust_trace ... ok\n",
+                source="test input",
+            )
+
     def test_m1_compiler_tls_trace_schema_requires_every_selected_source_fact(self) -> None:
         self.assertEqual(RUNNER.M1_COMPILER_TLS_TRACE_EXPECTED_COUNT, 32)
         self.assertEqual(
@@ -4176,6 +4213,21 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(
             all(component["checks"] for component in summary["components"])
         )
+        configuration = next(
+            component
+            for component in summary["components"]
+            if component["id"] == "configuration-and-arithmetic"
+        )
+        self.assertEqual(
+            configuration["x86_local_checks"],
+            [
+                {
+                    "expected_passed_test_count": 1,
+                    "id": "bit-arithmetic-c-rust-differential",
+                    "target": "bits::tests::emit_m1_bit_arithmetic_c_rust_trace",
+                }
+            ],
+        )
         self.assertIn(
             "AArch64 completion statuses",
             contract["milestone"]["nonclaims"][2],
@@ -4214,6 +4266,19 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(RUNNER.HarnessError, "local check inventory changed"):
             RUNNER.validate_x86_64_m1_foundations_contract(
                 missing_local_check,
+                RUNNER.load_pin(),
+            )
+
+        missing_bit_check = json.loads(json.dumps(contract))
+        configuration = next(
+            component
+            for component in missing_bit_check["components"]
+            if component["id"] == "configuration-and-arithmetic"
+        )
+        configuration["x86_local_checks"].clear()
+        with self.assertRaisesRegex(RUNNER.HarnessError, "local check inventory changed"):
+            RUNNER.validate_x86_64_m1_foundations_contract(
+                missing_bit_check,
                 RUNNER.load_pin(),
             )
 

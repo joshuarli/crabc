@@ -205,6 +205,9 @@ M1_X86_64_COMPILER_TLS_SAME_TLD_TRACE_ARTIFACT_ROOT = (
 M1_X86_64_STATIC_IMAGE_ARTIFACT_ROOT = (
     ARTIFACT_ROOT / "x86_64/m1-foundations/static-image"
 )
+M1_X86_64_BITS_TRACE_ARTIFACT_ROOT = (
+    ARTIFACT_ROOT / "x86_64/m1-foundations/bits-arithmetic-trace"
+)
 M2_MEMORY_SUBSTRATE_CONTRACT = ALLOCATOR_ROOT / "m2-memory-substrate-v3.5.0.json"
 M2_MEMORY_SUBSTRATE_REPORT = REPORT_ROOT / "m2-memory-substrate-latest.json"
 M2_MEMORY_SUBSTRATE_CARGO_TARGET = ARTIFACT_ROOT / "m2-memory-substrate/cargo-target"
@@ -1440,11 +1443,16 @@ M1_X86_64_BOUNDED_SOURCE_DEFINITION_IDS = {
         "os-memory-configuration-image",
     ),
 }
-# These checks extend only the native x86 M1 component.  They are deliberately
-# not added to the paused AArch64 manifest: the frozen record contributes its
-# finite source-test inventory as a status-free boundary, while native x86
-# must execute the facade operations that its new bounded atomic anchors name.
+# These x86-only source witnesses cover operations that need native target
+# behavior but do not belong in the preserved target-neutral test inventory.
 M1_X86_64_LOCAL_CHECKS = {
+    "configuration-and-arithmetic": (
+        {
+            "expected_passed_test_count": 1,
+            "id": "bit-arithmetic-c-rust-differential",
+            "target": "bits::tests::emit_m1_bit_arithmetic_c_rust_trace",
+        },
+    ),
     "atomics-locks-once-and-bootstrap": (
         {
             "expected_passed_test_count": 1,
@@ -3254,6 +3262,118 @@ int main(void) {
 # source's constant false threadpool result.  It intentionally has no raw
 # addresses, random bytes, exact clocks, errno/error paths, allocation hints,
 # huge/THP options, or C fallback branches.
+M1_BITS_ARITHMETIC_TRACE_PROBE = r"""
+#include <inttypes.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#include "mimalloc/bits.h"
+
+#define M1_BITS_RANDOM_COUNT 512
+#define M1_BITS_VALUE_CAPACITY (13 + 128 + M1_BITS_RANDOM_COUNT)
+
+static uint64_t m1_bits_splitmix64(uint64_t* state) {
+  uint64_t mixed;
+  *state += UINT64_C(0x9e3779b97f4a7c15);
+  mixed = *state;
+  mixed = (mixed ^ (mixed >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
+  mixed = (mixed ^ (mixed >> 27)) * UINT64_C(0x94d049bb133111eb);
+  return mixed ^ (mixed >> 31);
+}
+
+int main(void) {
+  static const uint64_t boundaries[] = {
+    UINT64_C(0), UINT64_MAX, UINT64_MAX - 1, INT64_MAX,
+    UINT64_C(1) << 63,
+    UINT64_C(0xaaaaaaaaaaaaaaaa), UINT64_C(0x5555555555555555),
+    UINT64_C(0x0000ffff0000ffff), UINT64_C(0xffff0000ffff0000),
+    UINT64_C(0x0123456789abcdef), UINT64_C(0xfedcba9876543210),
+    UINT64_C(0x00000000ffffffff), UINT64_C(0xffffffff00000000)
+  };
+  uint64_t values[M1_BITS_VALUE_CAPACITY];
+  size_t shifts[64 + 6];
+  uint32_t shifts32[32 + 6];
+  uint64_t state = UINT64_C(0x6a09e667f3bcc909);
+  size_t value_count = 0;
+  size_t shift_count = 0;
+  size_t shift32_count = 0;
+
+  for (size_t index = 0; index < sizeof(boundaries) / sizeof(boundaries[0]); index++) {
+    values[value_count++] = boundaries[index];
+  }
+  for (unsigned int bit = 0; bit < 64; bit++) {
+    uint64_t single_bit = UINT64_C(1) << bit;
+    values[value_count++] = single_bit;
+    values[value_count++] = ~single_bit;
+  }
+  for (size_t index = 0; index < M1_BITS_RANDOM_COUNT; index++) {
+    values[value_count++] = m1_bits_splitmix64(&state);
+  }
+  for (size_t shift = 0; shift < 64; shift++) {
+    shifts[shift_count++] = shift;
+  }
+  shifts[shift_count++] = 64;
+  shifts[shift_count++] = 65;
+  shifts[shift_count++] = 127;
+  shifts[shift_count++] = 128;
+  shifts[shift_count++] = 129;
+  shifts[shift_count++] = SIZE_MAX;
+  for (uint32_t shift = 0; shift < 32; shift++) {
+    shifts32[shift32_count++] = shift;
+  }
+  shifts32[shift32_count++] = 32;
+  shifts32[shift32_count++] = 33;
+  shifts32[shift32_count++] = 63;
+  shifts32[shift32_count++] = 64;
+  shifts32[shift32_count++] = 65;
+  shifts32[shift32_count++] = UINT32_MAX;
+
+  puts("CRABC_MI_M1_BITS_TRACE_BEGIN");
+  printf("g MI_INTPTR_SHIFT %u\n", (unsigned int)MI_INTPTR_SHIFT);
+  printf("g MI_INTPTR_SIZE %u\n", (unsigned int)MI_INTPTR_SIZE);
+  printf("g MI_INTPTR_BITS %u\n", (unsigned int)MI_INTPTR_BITS);
+  printf("g MI_SIZE_SHIFT %u\n", (unsigned int)MI_SIZE_SHIFT);
+  printf("g MI_SIZE_SIZE %u\n", (unsigned int)MI_SIZE_SIZE);
+  printf("g MI_SIZE_BITS %u\n", (unsigned int)MI_SIZE_BITS);
+  printf("g MI_MAX_VABITS %u\n", (unsigned int)MI_MAX_VABITS);
+  printf("g MI_MIN_VABITS %u\n", (unsigned int)MI_MIN_VABITS);
+  printf("g MI_KiB %llu\n", (unsigned long long)MI_KiB);
+  printf("g MI_MiB %llu\n", (unsigned long long)MI_MiB);
+  printf("g MI_GiB %llu\n", (unsigned long long)MI_GiB);
+  printf("g sizeof_size_t %zu\n", sizeof(size_t));
+  printf("g sizeof_uintptr_t %zu\n", sizeof(uintptr_t));
+
+  for (size_t index = 0; index < value_count; index++) {
+    size_t value = (size_t)values[index];
+    size_t bsf_index = 0;
+    size_t bsr_index = 0;
+    bool bsf_found = mi_bsf(value, &bsf_index);
+    bool bsr_found = mi_bsr(value, &bsr_index);
+    printf("v %zu %016" PRIx64 " %zu %zu %zu ", index, values[index],
+           mi_popcount(value), mi_ctz(value), mi_clz(value));
+    if (bsf_found) { printf("%zu ", bsf_index); }
+    else { printf("- "); }
+    if (bsr_found) { printf("%zu\n", bsr_index); }
+    else { puts("-"); }
+
+    for (size_t shift_index = 0; shift_index < shift_count; shift_index++) {
+      size_t shift = shifts[shift_index];
+      printf("r %zu %zu %016" PRIx64 " %016" PRIx64 "\n", index, shift,
+             (uint64_t)mi_rotr(value, shift), (uint64_t)mi_rotl(value, shift));
+    }
+    uint32_t value32 = (uint32_t)value;
+    for (size_t shift_index = 0; shift_index < shift32_count; shift_index++) {
+      uint32_t shift = shifts32[shift_index];
+      printf("r32 %zu %u %08" PRIx32 " %08" PRIx32 "\n", index, shift,
+             value32, mi_rotl32(value32, shift));
+    }
+  }
+  puts("CRABC_MI_M1_BITS_TRACE_END");
+  return (value_count == 653 && shift_count == 70 && shift32_count == 38) ? 0 : 1;
+}
+"""
+
+
 M1_RAW_PRIMITIVE_TRACE_PROBE = r"""
 #include <stdbool.h>
 #include <stdint.h>
@@ -6312,6 +6432,65 @@ def fundamental_trace_schema(architecture: str) -> tuple[frozenset[str], int]:
 # and Rust probe cannot jointly remove a case without this separate inventory
 # failing first.  The selected values are all source-relative facts; addresses,
 # random bytes, and timestamps are intentionally not evidence fields.
+M1_BITS_ARITHMETIC_BOUNDARIES = (
+    0,
+    (1 << 64) - 1,
+    (1 << 64) - 2,
+    (1 << 63) - 1,
+    1 << 63,
+    0xAAAAAAAAAAAAAAAA,
+    0x5555555555555555,
+    0x0000FFFF0000FFFF,
+    0xFFFF0000FFFF0000,
+    0x0123456789ABCDEF,
+    0xFEDCBA9876543210,
+    0x00000000FFFFFFFF,
+    0xFFFFFFFF00000000,
+)
+M1_BITS_ARITHMETIC_RANDOM_COUNT = 512
+M1_BITS_ARITHMETIC_RANDOM_SEED = 0x6A09E667F3BCC909
+M1_BITS_ARITHMETIC_RANDOM_INCREMENT = 0x9E3779B97F4A7C15
+M1_BITS_ARITHMETIC_RANDOM_MASK = (1 << 64) - 1
+M1_BITS_ARITHMETIC_ROTATION_SHIFTS = (
+    *range(64),
+    64,
+    65,
+    127,
+    128,
+    129,
+    (1 << 64) - 1,
+)
+M1_BITS_ARITHMETIC_ROTATION32_SHIFTS = (
+    *range(32),
+    32,
+    33,
+    63,
+    64,
+    65,
+    (1 << 32) - 1,
+)
+M1_BITS_ARITHMETIC_EXPECTED_GEOMETRY = (
+    ("MI_INTPTR_SHIFT", 3),
+    ("MI_INTPTR_SIZE", 8),
+    ("MI_INTPTR_BITS", 64),
+    ("MI_SIZE_SHIFT", 3),
+    ("MI_SIZE_SIZE", 8),
+    ("MI_SIZE_BITS", 64),
+    ("MI_MAX_VABITS", 47),
+    ("MI_MIN_VABITS", 43),
+    ("MI_KiB", 1024),
+    ("MI_MiB", 1024 * 1024),
+    ("MI_GiB", 1024 * 1024 * 1024),
+    ("sizeof_size_t", 8),
+    ("sizeof_uintptr_t", 8),
+)
+M1_BITS_ARITHMETIC_SAMPLE_COUNT = (
+    len(M1_BITS_ARITHMETIC_BOUNDARIES)
+    + 2 * 64
+    + M1_BITS_ARITHMETIC_RANDOM_COUNT
+)
+
+
 M1_RAW_PRIMITIVE_TRACE_EXPECTED_KEYS = frozenset(
     {
         "m1.raw.config.page_size",
@@ -11659,6 +11838,93 @@ def run_m1_raw_primitive_differential(
     }
 
 
+def run_x86_64_m1_bit_arithmetic_differential(
+    pin: Mapping[str, str],
+    *,
+    offline: bool,
+    timeout_seconds: int,
+    test_program: Mapping[str, Any],
+    check: Mapping[str, Any],
+    artifact_root: Path = M1_X86_64_BITS_TRACE_ARTIFACT_ROOT,
+) -> dict[str, Any]:
+    """Compare the selected x86-64 bit helpers with their pinned C definitions."""
+
+    require_native_architecture("x86_64")
+    target = "bits::tests::emit_m1_bit_arithmetic_c_rust_trace"
+    if check.get("target") != target:
+        raise HarnessError("M1 bit-arithmetic differential lost its exact Rust source witness")
+    compiler = require_tool("musl-gcc")
+    archive = fetch_archive(pin, offline=offline)
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    with temporary_directory(prefix="crabc-mimalloc-m1-bits-source-") as temporary:
+        source = safe_extract(archive, Path(temporary), pin["archive_root"])
+        c_oracle = build_x86_64_m1_bit_arithmetic_trace(
+            compiler,
+            source,
+            artifact_root,
+            CONFIGURATION_PROFILES["release"],
+        )
+
+    rust, rust_output = _m1_foundations_run_exact_program_check(
+        test_program, check, nocapture=True
+    )
+    rust_lines = parse_m1_bit_arithmetic_trace(rust_output, source="Rust")
+    if rust["passed_test_count"] != 1:
+        raise HarnessError(
+            "Rust M1 bit-arithmetic trace passed an unexpected test count: "
+            f"{rust['passed_test_count']}"
+        )
+    if c_oracle["lines"] != rust_lines:
+        first_difference = next(
+            (
+                index
+                for index, (c_line, rust_line) in enumerate(zip(c_oracle["lines"], rust_lines))
+                if c_line != rust_line
+            ),
+            min(len(c_oracle["lines"]), len(rust_lines)),
+        )
+        c_line = c_oracle["lines"][first_difference] if first_difference < len(c_oracle["lines"]) else "<end>"
+        rust_line = rust_lines[first_difference] if first_difference < len(rust_lines) else "<end>"
+        raise HarnessError(
+            "Rust M1 bit-arithmetic trace differs from pinned C at record "
+            f"{first_difference}: C={c_line!r}, Rust={rust_line!r}"
+        )
+
+    rust_raw = artifact_root / "m1-bits-rust-trace.txt"
+    rust_raw_bytes = ("\n".join(rust_lines) + "\n").encode("ascii")
+    rust_raw.write_bytes(rust_raw_bytes)
+    summary = m1_bit_arithmetic_trace_summary()
+    return {
+        "c_oracle": {
+            "command": c_oracle["command"],
+            "compiler": compiler,
+            "raw_output": c_oracle["raw_output"],
+            "source_files": c_oracle["source_files"],
+        },
+        "comparison": {
+            **summary,
+            "compared_record_count": len(rust_lines),
+            "status": "matched",
+        },
+        "rust": {
+            "command": rust["command"],
+            "passed_test_count": rust["passed_test_count"],
+            "raw_output": {
+                "bytes": len(rust_raw_bytes),
+                "path": relative(rust_raw),
+                "sha256": hashlib.sha256(rust_raw_bytes).hexdigest(),
+            },
+        },
+        "scope": (
+            "pinned v3.5.0 include/mimalloc/bits.h inline operations and selected x86-64 "
+            "word/address geometry; 653 zero, boundary, single-bit, single-clear-bit, and "
+            "fixed-seed broad inputs; all 64-bit and 32-bit rotation classes plus wrap "
+            "boundaries. This does not claim whole-header or allocator-lifecycle parity."
+        ),
+        "status": "matched",
+    }
+
+
 def run_m1_compiler_tls_differential(
     pin: Mapping[str, str],
     *,
@@ -11898,6 +12164,7 @@ def m1_foundations_report(
     compiler_tls_differential: Mapping[str, Any],
     compiler_tls_same_tld_differential: Mapping[str, Any],
     focused_checks: Sequence[Mapping[str, Any]],
+    bit_arithmetic_differential: Mapping[str, Any] | None = None,
     contract_path: Path = M1_FOUNDATIONS_CONTRACT,
     report_schema: str = "crabc-mimalloc-m1-foundations-report",
     component_status_key: str = "completion_status",
@@ -11907,6 +12174,19 @@ def m1_foundations_report(
     """Render a current-commit M1 evidence report without changing its status."""
 
     c_oracle = shared_oracle.get("c_oracle")
+    x86_64_contract = (
+        contract.get("schema") == "crabc-mimalloc-x86_64-m1-foundations"
+    )
+    if x86_64_contract:
+        if (
+            not isinstance(bit_arithmetic_differential, Mapping)
+            or bit_arithmetic_differential.get("status") != "matched"
+            or not isinstance(bit_arithmetic_differential.get("comparison"), Mapping)
+            or bit_arithmetic_differential["comparison"].get("status") != "matched"
+        ):
+            raise HarnessError("native x86 M1 bit-arithmetic C/Rust differential did not match")
+    elif bit_arithmetic_differential is not None:
+        raise HarnessError("target-neutral M1 received unexpected x86 bit-arithmetic evidence")
     rust_release_layout = shared_oracle.get("rust_release_layout")
     if not isinstance(c_oracle, Mapping) or not isinstance(rust_release_layout, Mapping):
         raise HarnessError("M1 foundations shared oracle lacks release layout evidence")
@@ -12019,6 +12299,11 @@ def m1_foundations_report(
             component_id != "compiler-tls-roots"
             or compiler_tls_same_tld_comparison["status"] == "matched"
         )
+        bit_arithmetic_trace_matched = (
+            component_id != "configuration-and-arithmetic"
+            or not x86_64_contract
+            or bit_arithmetic_differential["comparison"]["status"] == "matched"
+        )
         component_status = component.get(component_status_key)
         complete = (
             component_status in completion_ready_statuses
@@ -12027,6 +12312,7 @@ def m1_foundations_report(
             and raw_trace_matched
             and compiler_tls_trace_matched
             and compiler_tls_same_tld_trace_matched
+            and bit_arithmetic_trace_matched
         )
         if not complete:
             incomplete_components.append(component_id)
@@ -12074,6 +12360,23 @@ def m1_foundations_report(
                 ),
                 "status": compiler_tls_same_tld_comparison["status"],
             }
+        if component_id == "configuration-and-arithmetic" and x86_64_contract:
+            bit_arithmetic_comparison = bit_arithmetic_differential["comparison"]
+            report_component["bit_arithmetic_c_rust_differential"] = {
+                "compared_record_count": bit_arithmetic_comparison["compared_record_count"],
+                "compared_result_count": bit_arithmetic_comparison["compared_result_count"],
+                "geometry_constant_count": bit_arithmetic_comparison["geometry_constant_count"],
+                "input_count": bit_arithmetic_comparison["input_count"],
+                "rotation32_record_count": bit_arithmetic_comparison["rotation32_record_count"],
+                "rotation32_shift_class_count": bit_arithmetic_comparison[
+                    "rotation32_shift_class_count"
+                ],
+                "rotation_record_count": bit_arithmetic_comparison["rotation_record_count"],
+                "rotation_shift_class_count": bit_arithmetic_comparison[
+                    "rotation_shift_class_count"
+                ],
+                "status": bit_arithmetic_comparison["status"],
+            }
         components.append(report_component)
 
     milestone_complete = summary["milestone"]["status"] in completion_ready_statuses and not incomplete_components
@@ -12081,7 +12384,7 @@ def m1_foundations_report(
     if not isinstance(release_layout_artifact, Mapping):
         raise HarnessError("M1 foundations shared release profile lacks its artifact record")
     generic_rust_layout = generic_layout_without_m1_static_reader_fields(rust_layout)
-    return {
+    report = {
         "components": components,
         "contract": m1_foundations_contract_record(contract, pin, contract_path=contract_path),
         "exclusions": list(summary["exclusions"]),
@@ -12151,6 +12454,30 @@ def m1_foundations_report(
         "source": dict(source_attestation),
         "target": dict(summary["target"]),
     }
+    if x86_64_contract:
+        bit_arithmetic_comparison = bit_arithmetic_differential["comparison"]
+        bit_arithmetic_c_oracle = bit_arithmetic_differential["c_oracle"]
+        bit_arithmetic_rust = bit_arithmetic_differential["rust"]
+        report["shared_evidence"]["x86_64_bit_arithmetic_c_rust_trace"] = {
+            "c_compiler": bit_arithmetic_c_oracle["compiler"],
+            "c_command": bit_arithmetic_c_oracle["command"],
+            "c_raw_output": bit_arithmetic_c_oracle["raw_output"],
+            "c_source_files": bit_arithmetic_c_oracle["source_files"],
+            "comparison": {
+                **{
+                    key: value
+                    for key, value in bit_arithmetic_comparison.items()
+                    if key != "status"
+                },
+                "status": bit_arithmetic_comparison["status"],
+            },
+            "rust_command": bit_arithmetic_rust["command"],
+            "rust_passed_test_count": bit_arithmetic_rust["passed_test_count"],
+            "rust_raw_output": bit_arithmetic_rust["raw_output"],
+            "scope": bit_arithmetic_differential["scope"],
+            "status": bit_arithmetic_differential["status"],
+        }
+    return report
 
 
 def _m1_foundations_check_by_id(
@@ -12353,6 +12680,16 @@ def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
         pin, offline=offline
     )
 
+    bits_component, bits_check = _m1_foundations_check_by_id(
+        summary, "bit-arithmetic-c-rust-differential"
+    )
+    bit_arithmetic_differential = run_x86_64_m1_bit_arithmetic_differential(
+        pin,
+        offline=offline,
+        timeout_seconds=summary["execution"]["timeout_seconds"],
+        test_program=test_program,
+        check=bits_check,
+    )
     raw_component, raw_check = _m1_foundations_check_by_id(
         summary, "raw-primitive-c-rust-trace"
     )
@@ -12391,6 +12728,9 @@ def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
     )
     focused_checks = [
         _m1_foundations_differential_check_record(
+            bits_component, bits_check, bit_arithmetic_differential
+        ),
+        _m1_foundations_differential_check_record(
             raw_component, raw_check, raw_primitive_differential
         ),
         _m1_foundations_differential_check_record(
@@ -12404,6 +12744,7 @@ def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
             test_program,
             already_executed_check_ids=frozenset(
                 {
+                    bits_check["id"],
                     raw_check["id"],
                     compiler_tls_check["id"],
                     same_tld_check["id"],
@@ -12430,6 +12771,7 @@ def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
         compiler_tls_differential=compiler_tls_differential,
         compiler_tls_same_tld_differential=compiler_tls_same_tld_differential,
         focused_checks=focused_checks,
+        bit_arithmetic_differential=bit_arithmetic_differential,
         contract_path=M1_X86_64_FOUNDATIONS_CONTRACT,
         report_schema="crabc-mimalloc-x86_64-m1-foundations-report",
         component_status_key="native_status",
@@ -19648,6 +19990,163 @@ def parse_m1_raw_primitive_trace(output: str) -> dict[str, int]:
     )
 
 
+def m1_bit_arithmetic_values() -> tuple[int, ...]:
+    """Return the fixed 64-bit input corpus used by the independent emitters."""
+
+    values = list(M1_BITS_ARITHMETIC_BOUNDARIES)
+    for bit in range(64):
+        value = 1 << bit
+        values.extend((value, M1_BITS_ARITHMETIC_RANDOM_MASK ^ value))
+    state = M1_BITS_ARITHMETIC_RANDOM_SEED
+    mask = M1_BITS_ARITHMETIC_RANDOM_MASK
+    for _ in range(M1_BITS_ARITHMETIC_RANDOM_COUNT):
+        state = (state + M1_BITS_ARITHMETIC_RANDOM_INCREMENT) & mask
+        mixed = state
+        mixed = ((mixed ^ (mixed >> 30)) * 0xBF58476D1CE4E5B9) & mask
+        mixed = ((mixed ^ (mixed >> 27)) * 0x94D049BB133111EB) & mask
+        values.append(mixed ^ (mixed >> 31))
+    return tuple(values)
+
+
+def m1_bit_arithmetic_trace_summary() -> dict[str, int]:
+    """Describe the exact fixed result inventory compared by the native check."""
+
+    sample_count = M1_BITS_ARITHMETIC_SAMPLE_COUNT
+    nonzero_count = sum(value != 0 for value in m1_bit_arithmetic_values())
+    rotation_count = sample_count * len(M1_BITS_ARITHMETIC_ROTATION_SHIFTS)
+    rotation32_count = sample_count * len(M1_BITS_ARITHMETIC_ROTATION32_SHIFTS)
+    compared_result_count = (
+        len(M1_BITS_ARITHMETIC_EXPECTED_GEOMETRY)
+        + sample_count * 5
+        + nonzero_count * 2
+        + rotation_count * 2
+        + rotation32_count
+    )
+    return {
+        "compared_result_count": compared_result_count,
+        "geometry_constant_count": len(M1_BITS_ARITHMETIC_EXPECTED_GEOMETRY),
+        "input_count": sample_count,
+        "rotation32_record_count": rotation32_count,
+        "rotation32_shift_class_count": len(M1_BITS_ARITHMETIC_ROTATION32_SHIFTS),
+        "rotation_record_count": rotation_count,
+        "rotation_shift_class_count": len(M1_BITS_ARITHMETIC_ROTATION_SHIFTS),
+        "value_record_count": sample_count,
+    }
+
+
+def parse_m1_bit_arithmetic_trace(output: str, *, source: str) -> list[str]:
+    """Validate each pinned-C or Rust arithmetic result against fixed 64-bit semantics."""
+
+    begin = "CRABC_MI_M1_BITS_TRACE_BEGIN"
+    end = "CRABC_MI_M1_BITS_TRACE_END"
+    if output.count(begin) != 1 or output.count(end) != 1:
+        raise HarnessError(f"{source} M1 bit-arithmetic trace did not emit one marker pair")
+    start = output.index(begin) + len(begin)
+    stop = output.index(end, start)
+    if stop < start:
+        raise HarnessError(f"{source} M1 bit-arithmetic trace markers are reversed")
+    lines = output[start:stop].strip("\r\n").splitlines()
+    values = m1_bit_arithmetic_values()
+    expected_rotation_count = len(M1_BITS_ARITHMETIC_ROTATION_SHIFTS)
+    expected_rotation32_count = len(M1_BITS_ARITHMETIC_ROTATION32_SHIFTS)
+    expected_line_count = len(M1_BITS_ARITHMETIC_EXPECTED_GEOMETRY) + len(values) * (
+        1 + expected_rotation_count + expected_rotation32_count
+    )
+    if len(lines) != expected_line_count:
+        raise HarnessError(
+            f"{source} M1 bit-arithmetic trace has {len(lines)} records; "
+            f"expected {expected_line_count}"
+        )
+
+    expected_geometry = [
+        f"g {name} {value}" for name, value in M1_BITS_ARITHMETIC_EXPECTED_GEOMETRY
+    ]
+    if lines[: len(expected_geometry)] != expected_geometry:
+        raise HarnessError(f"{source} M1 bit-arithmetic trace has incorrect x86-64 geometry")
+
+    mask64 = (1 << 64) - 1
+    cursor = len(expected_geometry)
+    for index, value in enumerate(values):
+        fields = lines[cursor].split()
+        cursor += 1
+        if len(fields) != 8 or fields[0] != "v":
+            raise HarnessError(f"{source} M1 bit-arithmetic sample {index} is malformed")
+        if fields[1] != str(index) or not re.fullmatch(r"[0-9a-f]{16}", fields[2]):
+            raise HarnessError(f"{source} M1 bit-arithmetic sample {index} lost its input order")
+        if int(fields[2], 16) != value:
+            raise HarnessError(f"{source} M1 bit-arithmetic sample {index} changed its input")
+        trailing = 64 if value == 0 else (value & -value).bit_length() - 1
+        leading = 64 if value == 0 else 64 - value.bit_length()
+        forward_index = "-" if value == 0 else str(trailing)
+        reverse_index = "-" if value == 0 else str(value.bit_length() - 1)
+        expected_value_fields = [
+            str(value.bit_count()),
+            str(trailing),
+            str(leading),
+            forward_index,
+            reverse_index,
+        ]
+        if fields[3:] != expected_value_fields:
+            raise HarnessError(
+                f"{source} M1 bit-arithmetic results are incorrect for sample {index}"
+            )
+
+        for shift in M1_BITS_ARITHMETIC_ROTATION_SHIFTS:
+            fields = lines[cursor].split()
+            cursor += 1
+            if (
+                len(fields) != 5
+                or fields[0] != "r"
+                or fields[1] != str(index)
+                or fields[2] != str(shift)
+                or not re.fullmatch(r"[0-9a-f]{16}", fields[3])
+                or not re.fullmatch(r"[0-9a-f]{16}", fields[4])
+            ):
+                raise HarnessError(
+                    f"{source} M1 64-bit rotation class {shift} is absent for sample {index}"
+                )
+            masked_shift = shift & 63
+            expected_rotr = (
+                (value >> masked_shift) | (value << ((-masked_shift) & 63))
+            ) & mask64
+            expected_rotl = (
+                (value << masked_shift) | (value >> ((-masked_shift) & 63))
+            ) & mask64
+            if int(fields[3], 16) != expected_rotr or int(fields[4], 16) != expected_rotl:
+                raise HarnessError(
+                    f"{source} M1 64-bit rotation result is incorrect for sample {index}, shift {shift}"
+                )
+
+        value32 = value & 0xFFFFFFFF
+        for shift in M1_BITS_ARITHMETIC_ROTATION32_SHIFTS:
+            fields = lines[cursor].split()
+            cursor += 1
+            if (
+                len(fields) != 5
+                or fields[0] != "r32"
+                or fields[1] != str(index)
+                or fields[2] != str(shift)
+                or not re.fullmatch(r"[0-9a-f]{8}", fields[3])
+                or not re.fullmatch(r"[0-9a-f]{8}", fields[4])
+            ):
+                raise HarnessError(
+                    f"{source} M1 32-bit rotation class {shift} is absent for sample {index}"
+                )
+            if int(fields[3], 16) != value32:
+                raise HarnessError(f"{source} M1 rotl32 input changed for sample {index}")
+            masked_shift = shift & 31
+            expected_rotl32 = (
+                (value32 << masked_shift) | (value32 >> ((-masked_shift) & 31))
+            ) & 0xFFFFFFFF
+            if int(fields[4], 16) != expected_rotl32:
+                raise HarnessError(
+                    f"{source} M1 rotl32 result is incorrect for sample {index}, shift {shift}"
+                )
+    if cursor != len(lines):
+        raise HarnessError(f"{source} M1 bit-arithmetic trace contains unclassified records")
+    return lines
+
+
 def parse_m1_compiler_tls_image_trace(output: str) -> dict[str, int]:
     """Parse the constructor-suppressed compiler-TLS root image record."""
 
@@ -22149,6 +22648,48 @@ def build_m1_raw_primitive_trace(
                 "src/prim/unix/prim.c",
             ),
         ),
+    }
+
+
+def build_x86_64_m1_bit_arithmetic_trace(
+    compiler: str,
+    source: Path,
+    artifact_root: Path,
+    profile_flags: Sequence[str],
+) -> dict[str, Any]:
+    """Build and run the pinned header's inline word-operation probe."""
+
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    trace_source = artifact_root / "m1-bits-c-rust-trace-probe.c"
+    trace_binary = artifact_root / "m1-bits-c-rust-trace-probe"
+    trace_source.write_text(M1_BITS_ARITHMETIC_TRACE_PROBE, encoding="utf-8")
+    command = [
+        compiler,
+        "-std=c11",
+        "-I",
+        str(source / "include"),
+        *profile_flags,
+        str(trace_source),
+        "-o",
+        str(trace_binary),
+    ]
+    build = command_record(command, cwd=source)
+    require_success(build, "pinned C M1 bit-arithmetic trace build")
+    run = command_record((str(trace_binary),), cwd=source)
+    require_success(run, "pinned C M1 bit-arithmetic trace execution")
+    lines = parse_m1_bit_arithmetic_trace(str(run["stdout"]), source="pinned C")
+    raw = artifact_root / "m1-bits-c-trace.txt"
+    raw_bytes = ("\n".join(lines) + "\n").encode("ascii")
+    raw.write_bytes(raw_bytes)
+    return {
+        "command": command,
+        "lines": lines,
+        "raw_output": {
+            "bytes": len(raw_bytes),
+            "path": relative(raw),
+            "sha256": hashlib.sha256(raw_bytes).hexdigest(),
+        },
+        "source_files": source_file_records(source, ("include/mimalloc/bits.h",)),
     }
 
 

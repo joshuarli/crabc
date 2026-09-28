@@ -14,6 +14,13 @@
           "unit_id": "core-layouts-and-configuration"
         }
       ],
+      "x86_local_checks": [
+        {
+          "expected_passed_test_count": 1,
+          "id": "bit-arithmetic-c-rust-differential",
+          "target": "bits::tests::emit_m1_bit_arithmetic_c_rust_trace"
+        }
+      ],
       "bounded_source_definitions": [
         {
           "evidence_check_ids": [
