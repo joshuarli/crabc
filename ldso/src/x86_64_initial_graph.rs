@@ -2768,10 +2768,8 @@ unsafe fn materialize_tls_in(
         module_sizes as usize,
     );
     core::ptr::write_unaligned(dtv, module_count);
-    for module_id in 1..dtv_words {
-        core::ptr::write_unaligned(dtv.add(module_id), 0);
-        core::ptr::write_unaligned(module_sizes.add(module_id), 0);
-    }
+    // Both backing choices are zeroed, so unassigned DTV and size slots are
+    // already null. Every assigned slot is written with its module below.
 
     for object in objects {
         if object.tls_memsz == 0 {
@@ -2828,12 +2826,18 @@ mod tls_zero_tail_tests {
         let builtin_bytes = builtin.0.len();
         for backing in [Some((builtin_pointer, builtin_bytes)), None] {
             let installed = unsafe { materialize_tls_in(&objects, 0, backing) }.unwrap();
+            let module_sizes = unsafe { installed.dtv.add(installed.dtv_words) };
             for (index, prefix) in prefixes.iter().enumerate() {
                 let destination = unsafe { installed.thread_pointer.sub((index + 1) * 16) };
                 let image = unsafe { core::slice::from_raw_parts(destination, 16) };
                 assert_eq!(&image[..2], prefix);
                 assert!(image[2..].iter().all(|byte| *byte == 0));
                 assert_eq!(unsafe { core::ptr::read_unaligned(installed.dtv.add(index + 1)) }, destination as usize);
+                assert_eq!(unsafe { core::ptr::read_unaligned(module_sizes.add(index + 1)) }, 16);
+            }
+            for module_id in 3..installed.dtv_words {
+                assert_eq!(unsafe { core::ptr::read_unaligned(installed.dtv.add(module_id)) }, 0);
+                assert_eq!(unsafe { core::ptr::read_unaligned(module_sizes.add(module_id)) }, 0);
             }
             if backing.is_none() {
                 assert_eq!(unsafe { syscall2(SYS_MUNMAP, installed.mapping as i64,
