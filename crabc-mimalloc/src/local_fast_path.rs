@@ -272,8 +272,11 @@ unsafe fn retire_last_local_free(
     let reserved = page_ref.reserved();
     // `_mi_page_retire` on an unflagged, non-huge page selects its ordinary
     // queue: keep it only in the retain branch.
+    if reserved <= 1 {
+        return false;
+    }
     let Some(bin) = size_class::bin(block_size) else { return false };
-    if bin >= BIN_HUGE || reserved <= 1 {
+    if bin >= BIN_HUGE {
         return false;
     }
     // SAFETY: exclusive owner-local Theap, as above.
