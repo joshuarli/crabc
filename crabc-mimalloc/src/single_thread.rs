@@ -2002,72 +2002,97 @@ unsafe fn continue_post_owner_exit_live_allocation_with_terminal_marker(
             })
         }
         remote_free::LiveRemoteFreePublish::ClaimedAbandonedPage(claim) => {
-            if marker.is_retained() {
-                terminalize_post_owner_exit_retained(
-                    marker,
-                    ProcessPostOwnerExitTerminalRetained::Claimed {
-                        owner: ProcessPostOwnerExitClaimTerminalRetained::Uncontinued(claim),
-                    },
-                );
-                return Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained);
-            }
-            // `mi_free_try_collect_mt` first needs process facts here, after
-            // the CAS made this free the page's one owner.
-            let Some((process, main_heap)) = process_page_facts() else {
-                terminalize_post_owner_exit_retained(
-                    marker,
-                    ProcessPostOwnerExitTerminalRetained::Claimed {
-                        owner: ProcessPostOwnerExitClaimTerminalRetained::Uncontinued(claim),
-                    },
-                );
-                return Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained);
-            };
+            // SAFETY: the claim is the unique token from this source CAS;
+            // both callbacks retain the caller's same-process obligations.
+            unsafe { continue_post_owner_exit_claimed_remote_free(
+                marker, claim, process_page_facts, reclaim_on_free,
+            ) }
+        }
+    }
+}
 
-            // SAFETY: the exact claim moved directly out of the source CAS;
-            // no page/block authority is rebuilt. The lower continuation
-            // stages a PageMap mutation lease only if W07 reaches its actual
-            // terminal PageMap/list release callback.
-            let continuation = unsafe {
-                continue_post_owner_exit_remote_claim_with_process_page_facts(
-                    claim, process, main_heap, reclaim_on_free,
-                )
-            };
-            match continuation {
-                Ok(ProcessPostOwnerExitRemoteClaimResult::MutationLeaseReleaseFailure) => {
-                    terminalize_post_owner_exit_retained(
-                        marker,
-                        ProcessPostOwnerExitTerminalRetained::MutationLeaseReleaseFailure,
-                    );
+/// Completes the uncommon abandoned-head claim after the source CAS.
+///
+/// A live-owner publication returns without entering this frame. The claim
+/// remains a single non-copyable token throughout collection or terminal
+/// retention, matching the source's out-of-line abandoned-page collection.
+///
+/// # Safety
+///
+/// `claim` must be the exact token returned by the current source CAS, and
+/// `process_page_facts` must return leases for that same active process.
+#[cold]
+#[inline(never)]
+unsafe fn continue_post_owner_exit_claimed_remote_free(
+    marker: &ProcessPostOwnerExitTerminalMarker,
+    claim: remote_free::ClaimedAbandonedRemoteFree,
+    process_page_facts: impl FnOnce() -> Option<(ProcessPageBackingLease, MainStaticHeapLease<'static>)>,
+    reclaim_on_free: impl FnOnce(ProcessReclaimOnFreeCandidate<'_>) -> abandoned::ReclaimOnFreeOutcome,
+) -> Result<ProcessPostOwnerExitPointerFreeDisposition, ProcessPostOwnerExitPointerFreeRejection> {
+    if marker.is_retained() {
+        terminalize_post_owner_exit_retained(
+            marker,
+            ProcessPostOwnerExitTerminalRetained::Claimed {
+                owner: ProcessPostOwnerExitClaimTerminalRetained::Uncontinued(claim),
+            },
+        );
+        return Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained);
+    }
+    // `mi_free_try_collect_mt` first needs process facts here, after
+    // the CAS made this free the page's one owner.
+    let Some((process, main_heap)) = process_page_facts() else {
+        terminalize_post_owner_exit_retained(
+            marker,
+            ProcessPostOwnerExitTerminalRetained::Claimed {
+                owner: ProcessPostOwnerExitClaimTerminalRetained::Uncontinued(claim),
+            },
+        );
+        return Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained);
+    };
+
+    // SAFETY: the exact claim moved directly out of the source CAS;
+    // no page/block authority is rebuilt. The lower continuation
+    // stages a PageMap mutation lease only if collection reaches its actual
+    // terminal PageMap/list release callback.
+    let continuation = unsafe {
+        continue_post_owner_exit_remote_claim_with_process_page_facts(
+            claim, process, main_heap, reclaim_on_free,
+        )
+    };
+    match continuation {
+        Ok(ProcessPostOwnerExitRemoteClaimResult::MutationLeaseReleaseFailure) => {
+            terminalize_post_owner_exit_retained(
+                marker,
+                ProcessPostOwnerExitTerminalRetained::MutationLeaseReleaseFailure,
+            );
+            Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
+        }
+        Ok(result) => match result.into_scalar_or_terminal() {
+            Ok(disposition) => {
+                if marker.is_retained() {
                     Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
-                }
-                Ok(result) => match result.into_scalar_or_terminal() {
-                    Ok(disposition) => {
-                        if marker.is_retained() {
-                            Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
-                        } else {
-                            Ok(disposition)
-                        }
-                    }
-                    Err(owner) => {
-                        terminalize_post_owner_exit_retained(
-                            marker,
-                            ProcessPostOwnerExitTerminalRetained::Claimed {
-                                owner,
-                            },
-                        );
-                        Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
-                    }
-                },
-                Err(failure) => {
-                    terminalize_post_owner_exit_retained(
-                        marker,
-                        ProcessPostOwnerExitTerminalRetained::Claimed {
-                            owner: failure.into_claim_terminal_retained(None),
-                        },
-                    );
-                    Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
+                } else {
+                    Ok(disposition)
                 }
             }
+            Err(owner) => {
+                terminalize_post_owner_exit_retained(
+                    marker,
+                    ProcessPostOwnerExitTerminalRetained::Claimed {
+                        owner,
+                    },
+                );
+                Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
+            }
+        },
+        Err(failure) => {
+            terminalize_post_owner_exit_retained(
+                marker,
+                ProcessPostOwnerExitTerminalRetained::Claimed {
+                    owner: failure.into_claim_terminal_retained(None),
+                },
+            );
+            Ok(ProcessPostOwnerExitPointerFreeDisposition::Retained)
         }
     }
 }
