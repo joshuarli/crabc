@@ -10,9 +10,9 @@ _start:
 	mov $1, %rax
 	mov $1, %rdi
 	lea crabc_x86_64_math_asinh_records(%rip), %rsi
-	mov $8192, %rdx
+	mov $86528, %rdx
 	syscall
-	cmp $8192, %rax
+	cmp $86528, %rax
 	jne .Lfailure
 	xor %rdi, %rdi
 	mov $60, %rax

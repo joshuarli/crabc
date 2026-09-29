@@ -34,9 +34,16 @@
 
 #define ASINH_F64_CASES 32
 #define ASINH_F32_CASES 32
+#define ASINH_NEIGHBOR_RADIUS 8
+#define ASINH_F64_CENTERS 9
+#define ASINH_F32_CENTERS 9
+#define ASINH_NEIGHBOR_CASES (2 * (2 * ASINH_NEIGHBOR_RADIUS + 1))
 #define ASINH_ROUNDING_CASES 4
 #define ASINH_RECORD_WORDS 4
-#define ASINH_RECORD_COUNT ((ASINH_F64_CASES + ASINH_F32_CASES) * ASINH_ROUNDING_CASES)
+#define ASINH_RECORD_COUNT \
+	((ASINH_F64_CASES + ASINH_F32_CASES + \
+	  (ASINH_F64_CENTERS + ASINH_F32_CENTERS) * ASINH_NEIGHBOR_CASES) * \
+	 ASINH_ROUNDING_CASES)
 #define ASINH_RECORD_STORAGE_WORDS (ASINH_RECORD_COUNT * ASINH_RECORD_WORDS)
 
 typedef double (*double_unary_function)(double);
@@ -46,7 +53,7 @@ typedef float (*float_unary_function)(float);
 static double_unary_function volatile direct_asinh = (asinh);
 static float_unary_function volatile direct_asinhf = (asinhf);
 
-/* The freestanding start object writes these exact 8,192 bytes with syscall. */
+/* The freestanding start object writes this complete fixed record stream. */
 uint64_t crabc_x86_64_math_asinh_records[ASINH_RECORD_STORAGE_WORDS];
 
 static const uint64_t binary64_inputs[ASINH_F64_CASES] = {
@@ -61,7 +68,7 @@ static const uint64_t binary64_inputs[ASINH_F64_CASES] = {
 	UINT64_C(0x3ff0000000000000), UINT64_C(0xbff0000000000000),
 	UINT64_C(0x3fffffffffffffff), UINT64_C(0x4000000000000000),
 	UINT64_C(0x4000000000000001), UINT64_C(0xc000000000000000),
-	UINT64_C(0x418fffffffffffff), UINT64_C(0x4190000000000000),
+	UINT64_C(0x4190000000000000), UINT64_C(0x41a0000000000000),
 	UINT64_C(0x4190000000000001), UINT64_C(0xc190000000000000),
 	UINT64_C(0x7fefffffffffffff), UINT64_C(0xffefffffffffffff),
 	UINT64_C(0x7ff0000000000000), UINT64_C(0xfff0000000000000),
@@ -80,6 +87,23 @@ static const uint32_t binary32_inputs[ASINH_F32_CASES] = {
 	UINT32_C(0x45800001), UINT32_C(0xc5800000), UINT32_C(0x7f7fffff),
 	UINT32_C(0xff7fffff), UINT32_C(0x7f800000), UINT32_C(0xff800000),
 	UINT32_C(0x7fc00041), UINT32_C(0x7f800042),
+};
+
+/* Raw centers straddle each source branch and the subnormal/normal boundary. */
+static const uint64_t binary64_centers[ASINH_F64_CENTERS] = {
+	UINT64_C(0x0000000000000010), UINT64_C(0x0010000000000000),
+	UINT64_C(0x3e50000000000000), UINT64_C(0x3fe0000000000000),
+	UINT64_C(0x3ff0000000000000), UINT64_C(0x4000000000000000),
+	UINT64_C(0x418fffffffffffff), UINT64_C(0x4190000000000000),
+	UINT64_C(0x3ff6a09e667f3bcd),
+};
+
+static const uint32_t binary32_centers[ASINH_F32_CENTERS] = {
+	UINT32_C(0x00000010), UINT32_C(0x00800000),
+	UINT32_C(0x39800000), UINT32_C(0x3f000000),
+	UINT32_C(0x3f800000), UINT32_C(0x40000000),
+	UINT32_C(0x45800000), UINT32_C(0x46000000),
+	UINT32_C(0x3fb504f3),
 };
 
 static const int rounding_modes[ASINH_ROUNDING_CASES] = {
@@ -155,6 +179,8 @@ int crabc_x86_64_math_asinh_probe(void)
 	size_t cursor = 0;
 	size_t input_index;
 	size_t mode_index;
+	size_t center_index;
+	int offset;
 	int status = 0;
 
 	if (fegetenv(&original) != 0 || fesetenv(FE_DFL_ENV) != 0)
@@ -169,6 +195,32 @@ int crabc_x86_64_math_asinh_probe(void)
 			input_index++)
 			status = record_binary32(&cursor, rounding_modes[mode_index],
 				binary32_inputs[input_index]);
+		for (center_index = 0; center_index < ASINH_F64_CENTERS && status == 0;
+			center_index++) {
+			for (offset = -ASINH_NEIGHBOR_RADIUS;
+				offset <= ASINH_NEIGHBOR_RADIUS && status == 0; offset++) {
+				uint64_t magnitude = binary64_centers[center_index] + offset;
+
+				status = record_binary64(&cursor, rounding_modes[mode_index],
+					magnitude);
+				if (status == 0)
+					status = record_binary64(&cursor, rounding_modes[mode_index],
+						magnitude | UINT64_C(0x8000000000000000));
+			}
+		}
+		for (center_index = 0; center_index < ASINH_F32_CENTERS && status == 0;
+			center_index++) {
+			for (offset = -ASINH_NEIGHBOR_RADIUS;
+				offset <= ASINH_NEIGHBOR_RADIUS && status == 0; offset++) {
+				uint32_t magnitude = binary32_centers[center_index] + offset;
+
+				status = record_binary32(&cursor, rounding_modes[mode_index],
+					magnitude);
+				if (status == 0)
+					status = record_binary32(&cursor, rounding_modes[mode_index],
+						magnitude | UINT32_C(0x80000000));
+			}
+		}
 	}
 	if (cursor != ASINH_RECORD_STORAGE_WORDS && status == 0)
 		status = 3;

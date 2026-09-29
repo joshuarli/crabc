@@ -7,7 +7,7 @@ readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly RECORD_SIZE=32
-readonly EXPECTED_RECORDS=256
+readonly EXPECTED_RECORDS=2704
 readonly SELECTED_SYMBOLS=(asinh asinhf)
 readonly FENV_SIBLINGS=(feclearexcept fegetenv fegetround fesetenv fesetround fetestexcept)
 readonly PRIVATE_PROVIDERS=(
@@ -55,8 +55,9 @@ done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-math-asinh.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-math-asinh.XXXXXX")"
+chmod 755 "$work_dir"
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-reference"
@@ -215,7 +216,7 @@ fi
 "$candidate" >"$candidate_output" || fail "freestanding asinh/asinhf fixture failed"
 if ! cmp -s "$reference_output" "$candidate_output"; then
 	cmp -l "$reference_output" "$candidate_output" | sed -n '1,120p' >&2 || true
-	fail "candidate asinh/asinhf record stream differs from pinned musl"
+	fail "candidate asinh/asinhf record stream differs from pinned musl (streams: $work_dir)"
 fi
 
-printf 'x86 static libc asinh/asinhf: PASS (%s records)\n' "$record_count"
+printf 'x86 static libc asinh/asinhf: PASS (%s records; streams: %s)\n' "$record_count" "$work_dir"
