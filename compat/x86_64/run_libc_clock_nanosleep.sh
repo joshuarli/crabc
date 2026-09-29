@@ -117,8 +117,12 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_time_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-clock-nanosleep.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/libc-clock-nanosleep" \
+    "$ROOT_DIR/.work/x86_64/reports/libc-clock-nanosleep"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-clock-nanosleep/run.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
+oracle_output="$ROOT_DIR/.work/x86_64/reports/libc-clock-nanosleep/oracle.stdout"
+candidate_output="$ROOT_DIR/.work/x86_64/reports/libc-clock-nanosleep/candidate.stdout"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-clock-nanosleep-reference"
 candidate="$work_dir/crabc-static-clock-nanosleep-candidate"
@@ -147,7 +151,7 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_clock_nanosleep_probe.c \
     -o "$reference"
-if "$reference"; then
+if "$reference" >"$oracle_output"; then
     :
 else
     status=$?
@@ -163,7 +167,7 @@ build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
-for symbol in __errno_location __clock_nanosleep clock_nanosleep; do
+for symbol in __errno_location __clock_nanosleep clock_nanosleep nanosleep; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
@@ -192,7 +196,7 @@ readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in __errno_location __clock_nanosleep clock_nanosleep; do
+for symbol in __errno_location __clock_nanosleep clock_nanosleep nanosleep; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
@@ -225,12 +229,20 @@ grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
 
 assert_named_syscall __clock_nanosleep e6
+objdump -d --disassemble=nanosleep "$candidate" >"$work_dir/nanosleep-disassembly"
+grep -Eq '\$0x23(,|[[:space:]]|$)' "$work_dir/nanosleep-disassembly" ||
+    fail "nanosleep lacks fixed syscall 35"
+assert_direct_raw_syscall_path nanosleep "$work_dir/nanosleep-disassembly"
 
-if "$candidate"; then
+if "$candidate" >"$candidate_output"; then
     :
 else
     status=$?
     fail "freestanding clock_nanosleep fixture exited ${status}"
+fi
+if ! cmp -s "$oracle_output" "$candidate_output"; then
+    diff -u "$oracle_output" "$candidate_output" >&2 || true
+    fail "pinned-musl and freestanding candidate observations differ"
 fi
 
 printf 'x86 static crabc-libc clock_nanosleep: PASS\n'
