@@ -408,6 +408,20 @@ dynamic workloads retain their exact owned symbol and import placements.
 The selector checks every authenticated archive import occurrence and rejects
 missing selected calls, altered targets, and extra importers or providers.
 
+The ordinary `close` archive import comes from the owned syslog writer. Supply
+`--owned-syslog-work WORK` from the existing installed-header syslog runner
+with the same selected static and dynamic products. The selector replays the
+runner's workload binding and four physical link receipts, then reads the
+archive's sole undefined row and `GOTPCREL` relocation. Both static modes must
+select that exact source section and resolve its final indirect call to the
+unique strong owned provider. In shared libc the writer is inlined into
+`___vsyslog`; the reader matches the source and final Rust module paths after
+the crate hash changes, proves the matching call, and inventories every other
+owned function call through the same resolved provider GOT slot, including
+register-indirect branches. Dynamic syslog workloads must import `close` from
+the selected shared libc. Foreign or duplicate archive rows, final targets,
+call owners, or link receipts keep this ordinary-import reason open.
+
 The owned scanf archive member imports `mbrtowc` once from
 `crabc_owned_scan_vfscanf`. A static-only `fscanf` branch in the existing
 installed-header workload retains that C section in ET_EXEC and static PIE.

@@ -63,6 +63,75 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
                 with self.assertRaises(BOUNDARY.AllocatorBoundaryError):
                     BOUNDARY._ordinary_shared_provider_calls(bytes(forged), **kwargs)
 
+    def test_shared_inlined_caller_requires_owned_module_and_provider_target(self) -> None:
+        image = bytearray(0x400)
+        image[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<H", image, 16, 3)
+        struct.pack_into("<Q", image, 32, 64)
+        struct.pack_into("<HH", image, 54, 56, 2)
+        struct.pack_into("<IIQQQQQQ", image, 64, 1, 5, 0x100, 0x1000, 0, 0x100, 0x100, 0x1000)
+        struct.pack_into("<IIQQQQQQ", image, 120, 1, 6, 0x300, 0x2000, 0, 0x100, 0x100, 0x1000)
+        image[0x110:0x112] = b"\xff\x15"
+        struct.pack_into("<i", image, 0x112, 0x2000 - 0x1016)
+        struct.pack_into("<Q", image, 0x300, 0x3000)
+        source = "_RNvNtNtCabcdefghijkl_1c19x86_64_static_c_abi12owned_module6writer"
+        owner = "_RNvNtNtCmnopqrstuvwx_1c19x86_64_static_c_abi12owned_module6driver"
+        symbols = f"1: 0000000000001010 32 FUNC LOCAL DEFAULT 9 {owner}"
+        kwargs = {"image": bytes(image), "symbol_text": symbols,
+                  "relocations": "0000000000002000  .got + 0x0",
+                  "source_calls": [{"section": ".text." + source, "offset": 7,
+                                    "kind": "R_X86_64_GOTPCREL"}],
+                  "provider_address": 0x3000, "name": "ordinary_provider",
+                  "inlined_owner_leaves": ("6writer", "6driver")}
+        calls = BOUNDARY._ordinary_shared_caller_calls(**kwargs)
+        self.assertEqual([(call["source_function"], call["function"], call["target_address"])
+                          for call in calls], [(source, owner, 0x3000)])
+        for mutation in ("foreign-module", "foreign-target", "missing-call"):
+            with self.subTest(mutation=mutation):
+                forged = dict(kwargs)
+                if mutation == "foreign-module":
+                    forged["symbol_text"] = symbols.replace("owned_module", "foreign_modu")
+                else:
+                    changed = bytearray(image)
+                    if mutation == "foreign-target":
+                        struct.pack_into("<Q", changed, 0x300, 0x3001)
+                    else:
+                        changed[0x110:0x112] = b"\x90\x90"
+                    forged["image"] = bytes(changed)
+                with self.assertRaises(BOUNDARY.AllocatorBoundaryError):
+                    BOUNDARY._ordinary_shared_caller_calls(**forged)
+
+    def test_shared_whole_image_scan_accounts_for_other_owned_and_register_calls(self) -> None:
+        image = bytearray(0x400)
+        image[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<H", image, 16, 3)
+        struct.pack_into("<Q", image, 32, 64)
+        struct.pack_into("<HH", image, 54, 56, 2)
+        struct.pack_into("<IIQQQQQQ", image, 64, 1, 5, 0x100, 0x1000, 0, 0x180, 0x180, 0x1000)
+        struct.pack_into("<IIQQQQQQ", image, 120, 1, 6, 0x300, 0x2000, 0, 0x100, 0x100, 0x1000)
+        for position in (0x110, 0x150):
+            image[position:position + 2] = b"\xff\x15"
+            struct.pack_into("<i", image, position + 2, 0x2000 - (0x1000 + position - 0x100 + 6))
+        image[0x160:0x163] = b"\x48\x8b\x1d"
+        struct.pack_into("<i", image, 0x163, 0x2000 - 0x1067)
+        image[0x170:0x172] = b"\xff\xd3"
+        image[0x178:0x17a] = b"\xff\xd3"
+        struct.pack_into("<Q", image, 0x300, 0x3000)
+        symbols = ("1: 0000000000001010 32 FUNC LOCAL DEFAULT 9 source_owner\n"
+                   "2: 0000000000001050 64 FUNC GLOBAL DEFAULT 9 other_owned\n")
+        kwargs = {"symbol_text": symbols, "relocations": "0000000000002000  .got + 0x0",
+                  "provider_address": 0x3000, "source_functions": {"source_owner"},
+                  "all_defined_callers": True}
+        calls = BOUNDARY._ordinary_shared_provider_calls(bytes(image), **kwargs)
+        self.assertEqual({call["function"] for call in calls}, {"source_owner", "other_owned"})
+        self.assertEqual({call.get("register_call_address", call["call_address"])
+                          for call in calls}, {0x1010, 0x1050, 0x1070, 0x1078})
+        foreign = bytearray(image)
+        foreign[0x190:0x192] = b"\xff\x15"
+        struct.pack_into("<i", foreign, 0x192, 0x2000 - 0x1096)
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "foreign or ambiguous caller"):
+            BOUNDARY._ordinary_shared_provider_calls(bytes(foreign), **kwargs)
+
     def test_ordinary_got_register_call_rejects_missing_or_foreign_target(self) -> None:
         image = bytearray(0x400)
         image[:6] = b"\x7fELF\x02\x01"

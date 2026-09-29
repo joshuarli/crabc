@@ -643,5 +643,89 @@ class OwnedScanMbrtowcImportAttachmentTests(unittest.TestCase):
                         accounting, companion, "mbrtowc", projection_override=projection)
 
 
+def owned_syslog_close_fixture() -> tuple[dict, dict, dict]:
+    accounting, companion, projection = owned_scan_mbrtowc_fixture()
+    name = "close"
+    ident = selection.identity(name)
+    accounting["identities"][0]["identity"] = ident
+    accounting["blockers"][0]["identity"] = ident
+    for placement in accounting["placement_joins"]:
+        placement["identity"] = ident
+    for row in accounting["occurrences"]:
+        row["row"]["name"] = name
+        row["row"]["raw_name"] = name
+    importer = projection["importers"][0]
+    importer["import"]["name"] = name
+    importer["source_calls"][0]["kind"] = "R_X86_64_GOTPCREL"
+    source_function = importer["shared_caller_functions"][0]
+    for field in ("static_provider", "shared_dynsym_provider", "shared_symtab_provider"):
+        projection[field]["name"] = name
+    for mode in ("static", "static-pie"):
+        call = projection["static_final_links"][mode]["importers"][0]["resolved_calls"][0]
+        call["kind"] = "R_X86_64_GOTPCREL"
+        call["got_slot"] = 0x4000
+    shared = projection["shared_final"]
+    source_call = shared["importers"][0]["calls"][0]
+    source_call.update(function="inlined_owned_caller", source_function=source_function, got_slot=0x5000,
+                       branch_kind="indirect-call")
+    shared["importers"][0]["no_call_source_functions"] = []
+    other_owned = {"function": "other_owned_caller", "call_address": 0x6000,
+                   "got_slot": 0x5000, "target_address": shared["provider_address"],
+                   "branch_kind": "indirect-call"}
+    shared["provider_calls"] = [source_call, other_owned]
+    projection["dynamic_final_import_absent"] = False
+    projection["dynamic_final_owned_imports"] = [
+        {"mode": mode, "import_rows": 2,
+         "shared_provider_address": shared["provider_address"]}
+        for mode in ("pie", "non-pie")]
+    return accounting, companion, projection
+
+
+class OwnedSyslogCloseImportAttachmentTests(unittest.TestCase):
+    def test_one_source_importer_joins_selected_static_and_shared_provider(self) -> None:
+        accounting, companion, projection = owned_syslog_close_fixture()
+        joins = selection._attach_ordinary_static_import(
+            accounting, companion, "close", projection_override=projection)
+        self.assertEqual([join["identity"]["name"] for join in joins], ["close"])
+        self.assertEqual(accounting["blockers"], [])
+
+    def test_foreign_or_missing_source_and_final_calls_reject(self) -> None:
+        for mutation in ("foreign-import", "duplicate-import", "weak-provider",
+                         "missing-static-call", "foreign-static-target",
+                         "missing-shared-call", "foreign-shared-target",
+                         "duplicate-shared-call", "foreign-shared-source"):
+            with self.subTest(mutation=mutation):
+                accounting, companion, projection = owned_syslog_close_fixture()
+                if mutation == "foreign-import":
+                    next(row for row in accounting["occurrences"] if row["role"] == "import")[
+                        "member_name"] = "foreign.o"
+                elif mutation == "duplicate-import":
+                    extra = deepcopy(next(row for row in accounting["occurrences"]
+                                          if row["role"] == "import"))
+                    extra["index"] = 103
+                    accounting["occurrences"].append(extra)
+                elif mutation == "weak-provider":
+                    next(row for row in accounting["occurrences"] if row["role"] == "definition")[
+                        "row"]["binding"] = "WEAK"
+                elif mutation == "missing-static-call":
+                    projection["static_final_links"]["static"]["importers"][0]["resolved_calls"].clear()
+                elif mutation == "foreign-static-target":
+                    projection["static_final_links"]["static-pie"]["importers"][0][
+                        "resolved_calls"][0]["target_address"] += 1
+                elif mutation == "missing-shared-call":
+                    projection["shared_final"]["importers"][0]["calls"].clear()
+                elif mutation == "foreign-shared-target":
+                    projection["shared_final"]["provider_calls"][1]["target_address"] += 1
+                elif mutation == "duplicate-shared-call":
+                    projection["shared_final"]["provider_calls"].append(deepcopy(
+                        projection["shared_final"]["provider_calls"][1]))
+                else:
+                    projection["shared_final"]["importers"][0]["calls"][0][
+                        "source_function"] = "foreign_source"
+                with self.assertRaises(selection.SelectionError):
+                    selection._attach_ordinary_static_import(
+                        accounting, companion, "close", projection_override=projection)
+
+
 if __name__ == "__main__":
     unittest.main()

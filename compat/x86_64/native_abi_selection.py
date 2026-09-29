@@ -33,6 +33,7 @@ if str(MODULE_DIR) not in sys.path:
 import native_abi_inventory as inventory
 import native_abi_elf_facts as elf_facts
 import owned_aio_evidence
+import owned_syslog_evidence
 import header_abi_matrix as header_matrix
 import header_callable_disposition as callable_disposition
 import feature_archive_roster as feature_roster
@@ -9005,9 +9006,9 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
     address proof; other ordinary functions have no such storage claim.
     """
     scan_caller = name == 'mbrtowc'
-    independent = name in {'mbrtowc', 'aio_suspend', 'aio_cancel'}
+    independent = name in {'mbrtowc', 'aio_suspend', 'aio_cancel', 'close'}
     require(name in {'__errno_location', 'abort', 'fputs', 'getenv', 'getrusage',
-                     'mbrtowc', 'aio_suspend', 'aio_cancel'}
+                     'mbrtowc', 'aio_suspend', 'aio_cancel', 'close'}
             and (projection_override is not None) == independent,
             'ordinary import identity differs')
     companion = exact(companion, {
@@ -9022,7 +9023,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
         'static_provider_member', 'static_provider', 'shared_dynsym_provider',
         'shared_symtab_provider', 'importers', 'static_final_links',
         'shared_final', 'dynamic_final_import_absent',
-        *({'dynamic_final_owned_imports'} if name in {'aio_suspend', 'aio_cancel'} else set()),
+        *({'dynamic_final_owned_imports'} if name in {'aio_suspend', 'aio_cancel', 'close'} else set()),
     }, 'ordinary import resolution')
     runtime = companion['account']['c_runtime_imports']
     claim = next((row for row in runtime['imports']
@@ -9032,12 +9033,12 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
              and same(projection['static_provider'], claim['static_rust_provider'])
              and same(projection['shared_dynsym_provider'], claim['shared_dynsym_provider'])
              and same(projection['shared_symtab_provider'], claim['shared_symtab_provider']))
-            and projection['dynamic_final_import_absent'] is (name not in {'aio_suspend', 'aio_cancel'})
+            and projection['dynamic_final_import_absent'] is (name not in {'aio_suspend', 'aio_cancel', 'close'})
             and (not independent or all(projection[field]['name'] == name for field in (
                 'static_provider', 'shared_dynsym_provider', 'shared_symtab_provider'))),
             'ordinary import provider account differs')
     importers = projection['importers']
-    require(type(importers) is list and (len(importers) == 1 if scan_caller or name == 'getrusage'
+    require(type(importers) is list and (len(importers) == 1 if scan_caller or name in {'getrusage', 'close'}
                                        else len(importers) == 2 if name == 'aio_suspend'
                                        else len(importers) >= 1 if name == 'aio_cancel'
                                        else len(importers) >= 2),
@@ -9058,7 +9059,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                 and item['shared_caller_functions'],
                 'ordinary archive importer evidence differs')
         if name in {'abort', 'fputs', 'getenv', 'getrusage', 'mbrtowc',
-                    'aio_suspend', 'aio_cancel'}:
+                    'aio_suspend', 'aio_cancel', 'close'}:
             kind = ('R_X86_64_PLT32' if scan_caller or member['member_index'] == c_member['member_index']
                     else 'R_X86_64_GOTPCREL')
             require(all(type(call) is dict and set(call) == {'section', 'offset', 'kind'}
@@ -9135,7 +9136,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
     shared = exact(projection['shared_final'], {
         'provider_address', 'importers', *({'tls_symbol_offset', 'tls_segment_size',
                                           'tls_relocation_slot'} if tls_claim else set()),
-        *({'provider_calls'} if name == 'aio_cancel' else set()),
+        *({'provider_calls'} if name in {'aio_cancel', 'close'} else set()),
     }, 'ordinary shared final')
     require(type(shared['provider_address']) is int and shared['provider_address'] > 0
             and [item.get('member') for item in shared['importers']] ==
@@ -9146,21 +9147,32 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                             for call in item['calls'])
                     for item in shared['importers']),
             'ordinary shared calls or TLS address differ')
-    if name == 'aio_cancel':
+    if name in {'aio_cancel', 'close'}:
         all_calls = [call for item in shared['importers'] for call in item['calls']]
         require(type(shared['provider_calls']) is list and shared['provider_calls']
-                and same(all_calls, shared['provider_calls'])
+                and (same(all_calls, shared['provider_calls']) if name == 'aio_cancel'
+                     else all(call in shared['provider_calls'] for call in all_calls))
                 and all(call.get('target_address') == shared['provider_address']
                         and type(call.get('got_slot')) is int
-                        and call.get('branch_kind') in {'indirect-call', 'tail-jump'}
-                        for call in all_calls)
+                        and call.get('branch_kind') in {'indirect-call', 'tail-jump',
+                                                        'register-indirect-call', 'register-tail-jump'}
+                        for call in shared['provider_calls'])
+                and len({call.get('register_call_address', call.get('call_address'))
+                         for call in shared['provider_calls']}) == len(shared['provider_calls'])
                 and all(type(item.get('no_call_source_functions')) is list
                         and set(item['no_call_source_functions'])
                             == set(source['shared_caller_functions'])
-                            - {call['function'] for call in item['calls']}
+                            - {call.get('source_function', call['function'])
+                               for call in item['calls']}
                         for item, source in zip(shared['importers'], importers)),
                 'ordinary shared whole-image call inventory differs')
-    if name in {'aio_suspend', 'aio_cancel'}:
+        if name == 'close':
+            require(len(all_calls) == 1
+                    and all_calls[0].get('source_function')
+                        == importers[0]['shared_caller_functions'][0]
+                    and all_calls[0]['function'] != all_calls[0]['source_function'],
+                    'ordinary inlined source call ownership differs')
+    if name in {'aio_suspend', 'aio_cancel', 'close'}:
         require(projection['dynamic_final_owned_imports'] == [
             {'mode': mode, 'import_rows': 2,
              'shared_provider_address': shared['provider_address']}
@@ -9202,7 +9214,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                         sorted((call['section'], call['offset']) for call in source_item['source_calls']),
                     f'ordinary {mode} importer final calls differ')
             if name in {'abort', 'fputs', 'getenv', 'getrusage', 'mbrtowc',
-                        'aio_suspend', 'aio_cancel'}:
+                        'aio_suspend', 'aio_cancel', 'close'}:
                 kinds = {(call['section'], call['offset']): call['kind']
                          for call in source_item['source_calls']}
                 require(all((type(call.get('got_slot')) is int and call['got_slot'] > 0)
@@ -9322,6 +9334,68 @@ def attach_owned_aio_ordinary_import(
             raise SelectionError(f'owned AIO ordinary import rejected: {error}') from error
     return (_attach_ordinary_static_import(
         accounting, boundary, name, projection_override=projection), projection)
+
+
+def owned_syslog_close_import_adapter(
+        work: Path | None, *, boundary_report_path: Path | None,
+        paths: Mapping[str, Path]) -> dict[str, Any] | None:
+    """Replay the installed-header syslog links before resolving its close call."""
+    if work is None:
+        return None
+    require(boundary_report_path is not None,
+            'owned syslog close import requires the C boundary account')
+    work = physical_work_path(work, directory=True, own=True)
+    source = ROOT / 'compat/x86_64/owned_syslog_probe.c'
+    workload = physical_work_path(work / 'workload.o', directory=False, own=True)
+    binding = physical_work_path(work / 'workload-object-binding.json', directory=False, own=True)
+    translation_path = physical_work_path(
+        work / 'installed-header-translation.json', directory=False, own=True)
+    stems = {'static': 'static-static-consumer',
+             'static-pie': 'static-static-pie-consumer',
+             'dynamic-pie': 'dynamic-pie-consumer',
+             'dynamic-non-pie': 'dynamic-non-pie-consumer'}
+    try:
+        translation = read_json(translation_path)
+        for field, artifact in (
+                ('dynamic_driver', paths['dynamic_product'] / 'bin/crabc-cc-dynamic'),
+                ('compiler_contract', paths['dynamic_product'] / 'share/crabc/crabc_cc_static.py')):
+            record = exact(translation[field], {'path', 'sha256'},
+                           f'owned syslog {field}')
+            require(record == {'path': str(artifact),
+                               'sha256': hashlib.sha256(artifact.read_bytes()).hexdigest()},
+                    f'owned syslog {field} selects another installed product')
+        owned_syslog_evidence.bind_workload_object(
+            source, workload, hashlib.sha256(source.read_bytes()).hexdigest(),
+            work / 'static-static-link-evidence.json', binding,
+            work / 'workload.relocations', translation_path)
+        links = {}
+        for mode, stem in stems.items():
+            static = mode in {'static', 'static-pie'}
+            product = paths['static_product' if static else 'dynamic_product']
+            receipt = work / (stem + ('.receipt.json' if static else '.crabc-link.json'))
+            link = product_evidence.validate_link(
+                product, workload, work / stem, receipt,
+                mode.removeprefix('dynamic-'))
+            require(same(read_json(work / (stem.removesuffix('-consumer') + '-link-evidence.json')),
+                         link), f'owned syslog {mode} link evidence differs')
+            links[mode] = link
+        boundary = native_c_allocator_boundary.json_object(
+            boundary_report_path, 'owned syslog boundary account')
+        projection = native_c_allocator_boundary.ordinary_import_resolution(
+            boundary, report_path=boundary_report_path,
+            static_product=paths['static_product'],
+            dynamic_product=paths['dynamic_product'],
+            elf_facts_report=paths['elf_report'], name='close',
+            independent_retained_work=work, expected_importers=1,
+            shared_call_inventory=True, retained_link_stems=stems,
+            shared_inlined_owner_leaves=('13write_message', '9___vsyslog'))
+    except (KeyError, TypeError, ValueError, OSError,
+            owned_syslog_evidence.WorkloadBindingError,
+            product_evidence.ProductEvidenceError,
+            native_c_allocator_boundary.AllocatorBoundaryError) as error:
+        raise SelectionError(f'owned syslog close import rejected: {error}') from error
+    return {'workload_binding': file_identity(binding), 'links': links,
+            'projection': projection}
 
 
 def attach_stack_check_static_import(accounting: Mapping[str, Any], rust_members: Sequence[str],
@@ -11948,6 +12022,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   errno_storage_lifecycle_report: Path | None = None,
                   native_c_allocator_boundary_report: Path | None = None,
                   owned_aio_report: Path | None = None,
+                  owned_syslog_work: Path | None = None,
                   stdio_alias_contract_report: Path | None = None,
                   crt_startup_report: Path | None = None,
                   syscall_alias_contract_report: Path | None = None,
@@ -12006,6 +12081,11 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         rejected, 'owned_aio_report',
         lambda: owned_aio_ordinary_import_adapter(
             owned_aio_report, boundary_report_path=native_c_allocator_boundary_report,
+            paths=paths))
+    owned_syslog_close_import_companion = _admit(
+        rejected, 'owned_syslog_work',
+        lambda: owned_syslog_close_import_adapter(
+            owned_syslog_work, boundary_report_path=native_c_allocator_boundary_report,
             paths=paths))
     stdio_alias_contract_companion = _admit(rejected, 'stdio_alias_contract_report', lambda: native_stdio_alias_adapter(
         stdio_alias_contract_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
@@ -12165,6 +12245,14 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             boundary_report_path=native_c_allocator_boundary_report,
             paths=paths, name='aio_cancel'), empty=([], None))
     ordinary_static_import_joins.extend(owned_aio_cancel_joins)
+    owned_syslog_close_joins, _ = _attach(
+        rejected, 'owned_syslog_close_ordinary_import_resolution', accounting,
+        owned_syslog_close_import_companion,
+        lambda: [] if owned_syslog_close_import_companion is None else
+        _attach_ordinary_static_import(
+            accounting, native_c_allocator_boundary_companion, 'close',
+            projection_override=owned_syslog_close_import_companion['projection']))
+    ordinary_static_import_joins.extend(owned_syslog_close_joins)
     rust_allocation_handler_joins, _ = _attach(
         rejected, 'rust_allocation_handler_provenance', accounting, native_c_allocator_boundary_companion,
         lambda: attach_rust_allocation_handlers(
@@ -12344,6 +12432,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'ordinary_static_import_joins': ordinary_static_import_joins,
             'owned_aio_cancel_ordinary_import_projection': owned_aio_cancel_projection,
             'owned_aio_ordinary_import_companion': owned_aio_ordinary_import_companion,
+            'owned_syslog_close_import_companion': owned_syslog_close_import_companion,
             'stack_check_static_import_joins': stack_check_static_import_joins,
             'native_c_allocator_boundary_companion': native_c_allocator_boundary_companion,
             'native_c_allocator_boundary_joins': native_c_allocator_boundary_joins,
@@ -12398,6 +12487,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  errno_storage_lifecycle_report: Path | None = None,
                  native_c_allocator_boundary_report: Path | None = None,
                  owned_aio_report: Path | None = None,
+                 owned_syslog_work: Path | None = None,
                  stdio_alias_contract_report: Path | None = None,
                  crt_startup_report: Path | None = None,
                  syscall_alias_contract_report: Path | None = None,
@@ -12426,6 +12516,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            errno_storage_lifecycle_report=errno_storage_lifecycle_report,
                            native_c_allocator_boundary_report=native_c_allocator_boundary_report,
                            owned_aio_report=owned_aio_report,
+                           owned_syslog_work=owned_syslog_work,
                            stdio_alias_contract_report=stdio_alias_contract_report,
                            crt_startup_report=crt_startup_report,
                            syscall_alias_contract_report=syscall_alias_contract_report,
@@ -12454,6 +12545,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     errno_storage_lifecycle_report: Path | None = None,
                     native_c_allocator_boundary_report: Path | None = None,
                     owned_aio_report: Path | None = None,
+                    owned_syslog_work: Path | None = None,
                     stdio_alias_contract_report: Path | None = None,
                     crt_startup_report: Path | None = None,
                     syscall_alias_contract_report: Path | None = None,
@@ -12484,6 +12576,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              errno_storage_lifecycle_report=errno_storage_lifecycle_report,
                              native_c_allocator_boundary_report=native_c_allocator_boundary_report,
                              owned_aio_report=owned_aio_report,
+                             owned_syslog_work=owned_syslog_work,
                              stdio_alias_contract_report=stdio_alias_contract_report,
                              crt_startup_report=crt_startup_report,
                              syscall_alias_contract_report=syscall_alias_contract_report,
@@ -12520,6 +12613,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--errno-storage-lifecycle-report', type=Path)
     parser.add_argument('--native-c-allocator-boundary-report', type=Path)
     parser.add_argument('--owned-aio-report', type=Path)
+    parser.add_argument('--owned-syslog-work', type=Path)
     parser.add_argument('--stdio-alias-contract-report', type=Path)
     parser.add_argument('--crt-startup-report', type=Path)
     parser.add_argument('--syscall-alias-contract-report', type=Path)
@@ -12547,7 +12641,7 @@ def main(argv: Sequence[str]) -> int:
                                                 'ordinary_declaration_abi_report', 'loader_runtime_registry_report',
                                                 'pthread_alias_contract_report', 'prepared_worker_tls_report',
                                                 'errno_storage_lifecycle_report', 'native_c_allocator_boundary_report',
-                                                'owned_aio_report',
+                                                'owned_aio_report', 'owned_syslog_work',
                                                 'stdio_alias_contract_report', 'crt_startup_report',
                                                 'syscall_alias_contract_report', 'utmpx_receipt_report',
                                                 'pthread_timed_feature_report', 'resolver_alias_receipt_report',

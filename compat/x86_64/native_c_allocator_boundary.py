@@ -1240,7 +1240,8 @@ def _ordinary_shared_caller_calls(image: bytes, symbol_text: str, relocations: s
                                   source_calls: Sequence[Mapping[str, object]],
                                   provider_address: int, name: str,
                                   discarded_functions: set[str] | None = None,
-                                  absent_functions: list[str] | None = None) -> list[dict[str, object]]:
+                                  absent_functions: list[str] | None = None,
+                                  inlined_owner_leaves: tuple[str, str] | None = None) -> list[dict[str, object]]:
     """Read matching shared call forms from source-named functions and GOT slots."""
     functions = set()
     for source in source_calls:
@@ -1274,6 +1275,26 @@ def _ordinary_shared_caller_calls(image: bytes, symbol_text: str, relocations: s
                     names.add(parts[-1])
             require(len(names) <= 1,
                     f"ordinary {name} shared Rust caller is ambiguous: {function}")
+            if not names and inlined_owner_leaves is not None:
+                source_leaf, owner_leaf = inlined_owner_leaves
+                tail = source_mangled.group("tail")
+                require(source_leaf != owner_leaf and tail.endswith(source_leaf),
+                        f"ordinary {name} inlined source caller differs: {function}")
+                owner_tail = tail[:-len(source_leaf)] + owner_leaf
+                for line in symbol_text.splitlines():
+                    parts = line.split()
+                    if len(parts) < 8 or not parts[0].endswith(":"):
+                        continue
+                    shared_mangled = re.fullmatch(
+                        r"(?P<prefix>_R.+C)[A-Za-z0-9]{12}(?P<tail>_1c19x86_64_static_c_abi.+)",
+                        parts[-1])
+                    if (shared_mangled is not None
+                            and shared_mangled.group("prefix") == source_mangled.group("prefix")
+                            and shared_mangled.group("tail") == owner_tail):
+                        names.add(parts[-1])
+                require(len(names) == 1,
+                        f"ordinary {name} inlined shared owner is missing or ambiguous: {function}")
+                inlined = True
             if not names:
                 if discarded_functions is not None and function in discarded_functions:
                     require(absent_functions is not None,
@@ -1355,7 +1376,8 @@ def _ordinary_shared_caller_calls(image: bytes, symbol_text: str, relocations: s
 
 def _ordinary_shared_provider_calls(image: bytes, *, symbol_text: str,
                                     relocations: str, provider_address: int,
-                                    source_functions: set[str]) -> list[dict[str, object]]:
+                                    source_functions: set[str],
+                                    all_defined_callers: bool = False) -> list[dict[str, object]]:
     """Find every final executable branch through the selected provider GOT."""
     require(len(image) >= 64 and image[:6] == b"\x7fELF\x02\x01"
             and struct.unpack_from("<H", image, 16)[0] == 3,
@@ -1374,9 +1396,9 @@ def _ordinary_shared_provider_calls(image: bytes, *, symbol_text: str,
         parts = line.split()
         if (len(parts) >= 8 and parts[0].endswith(":") and parts[3] == "FUNC"
                 and parts[4] in {"GLOBAL", "LOCAL"} and parts[6] != "UND"
-                and parts[-1] in source_functions):
+                and (all_defined_callers or parts[-1] in source_functions)):
             functions.add((parts[-1], int(parts[1], 16), int(parts[2])))
-    require(functions and all(size > 0 for _, _, size in functions),
+    require(functions and (all_defined_callers or all(size > 0 for _, _, size in functions)),
             "ordinary shared source caller symbols are missing")
     headers = struct.unpack_from("<Q", image, 32)[0]
     entry_size, count = struct.unpack_from("<HH", image, 54)
@@ -1399,8 +1421,36 @@ def _ordinary_shared_provider_calls(image: bytes, *, symbol_text: str,
                     and body[offset + 1] in (0x8b, 0x8d) \
                     and body[offset + 2] & 0xc7 == 0x05:
                 load_slot = address + 7 + struct.unpack_from("<i", body, offset + 3)[0]
-                require(load_slot not in slots,
-                        "ordinary shared provider has an unaccounted register GOT load")
+                if load_slot in slots:
+                    owners = sorted({name for name, start, length in functions
+                                     if start <= address < start + length})
+                    require(all_defined_callers and body[offset + 1] == 0x8b
+                            and len(owners) == 1,
+                            "ordinary shared provider has an unaccounted register GOT load")
+                    register = ((body[offset + 2] >> 3) & 7) + (8 if body[offset] & 4 else 0)
+                    encoded = []
+                    for call_offset in range(offset + 7, len(body) - 1):
+                        call_address = virtual + call_offset
+                        if not any(start <= call_address < start + length
+                                   and name == owners[0] for name, start, length in functions):
+                            break
+                        prefix = body[call_offset] if 0x40 <= body[call_offset] <= 0x4f else None
+                        first = call_offset + (prefix is not None)
+                        if first + 1 >= len(body) or body[first] != 0xff:
+                            continue
+                        modrm = body[first + 1]
+                        operand = (modrm & 7) + (8 if prefix is not None and prefix & 1 else 0)
+                        branch = (modrm >> 3) & 7
+                        if modrm & 0xc0 == 0xc0 and operand == register and branch in (2, 4):
+                            encoded.append((call_address, branch))
+                    require(encoded,
+                            "ordinary shared provider register call is missing")
+                    for call_address, branch in encoded:
+                        calls.append({"function": owners[0], "call_address": address,
+                                      "register_call_address": call_address,
+                                      "got_slot": load_slot, "target_address": provider_address,
+                                      "branch_kind": "register-indirect-call" if branch == 2
+                                      else "register-tail-jump"})
             opcode = body[offset:offset + 2]
             if opcode not in (b"\xff\x15", b"\xff\x25"):
                 continue
@@ -1415,6 +1465,10 @@ def _ordinary_shared_provider_calls(image: bytes, *, symbol_text: str,
                           "got_slot": slot, "target_address": provider_address,
                           "branch_kind": "indirect-call" if opcode == b"\xff\x15" else "tail-jump"})
     require(calls, "ordinary shared provider has no final call")
+    register_calls = [call["register_call_address"] for call in calls
+                      if "register_call_address" in call]
+    require(len(register_calls) == len(set(register_calls)),
+            "ordinary shared provider register call is ambiguous")
     require(slots == {call["got_slot"] for call in calls},
             "ordinary shared provider has an unreferenced GOT slot")
     return calls
@@ -1765,7 +1819,9 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
                                required_importer_section: str | None = None,
                                independent_retained_work: Path | None = None,
                                expected_importers: int | None = None,
-                               shared_call_inventory: bool = False) -> dict[str, object]:
+                               shared_call_inventory: bool = False,
+                               retained_link_stems: Mapping[str, str] | None = None,
+                               shared_inlined_owner_leaves: tuple[str, str] | None = None) -> dict[str, object]:
     """Bind all archive callers of one ordinary import to final libc providers."""
     facts = json_object(elf_facts_report, f"{name} ELF facts")["facts"]
     members = facts["candidate-static"]
@@ -1881,9 +1937,17 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
     work = physical_directory(independent_retained_work if independent_retained_work is not None
                               else report_path.parent / report["errno_import"]["work"],
                               f"ordinary {name} retained links")
+    if retained_link_stems is not None:
+        require(independent_retained_work is not None
+                and set(retained_link_stems) == {"static", "static-pie", "dynamic-pie", "dynamic-non-pie"}
+                and all(type(stem) is str and re.fullmatch(r"[a-z][a-z0-9-]*", stem)
+                        for stem in retained_link_stems.values())
+                and len(set(retained_link_stems.values())) == 4,
+                f"ordinary {name} retained link names differ")
     static_modes = {}
     for mode, elf_type in (("static", 2), ("static-pie", 3)):
-        stem = mode if independent_retained_work is not None else f"static-{mode}"
+        stem = (retained_link_stems[mode] if retained_link_stems is not None
+                else mode if independent_retained_work is not None else f"static-{mode}")
         suffix = ".receipt" if independent_retained_work is not None else ".crabc-link"
         executable = physical_file(work / stem, f"ordinary {name} {mode} ELF")
         map_text = physical_file(work / f"{stem}{suffix}.map",
@@ -1962,18 +2026,42 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
     if shared_call_inventory:
         require(independent_retained_work is not None,
                 f"ordinary {name} whole-image call inventory lacks retained links")
+        inlined_calls = []
+        source_functions = {function for item in imported
+                            for function in item["shared_caller_functions"]}
+        if shared_inlined_owner_leaves is not None:
+            require(len(imported) == 1 and len(source_functions) == 1,
+                    f"ordinary {name} inlined source caller is ambiguous")
+            inlined_calls = _ordinary_shared_caller_calls(
+                shared_image, shared_symbols.stdout, shared_relocations.stdout,
+                imported[0]["source_calls"], shared_address, name,
+                inlined_owner_leaves=shared_inlined_owner_leaves)
+            source_functions = {call["function"] for call in inlined_calls}
         final_shared_calls = _ordinary_shared_provider_calls(
             shared_image, symbol_text=shared_symbols.stdout,
             relocations=shared_relocations.stdout, provider_address=shared_address,
-            source_functions={function for item in imported
-                              for function in item["shared_caller_functions"]})
+            source_functions=source_functions,
+            all_defined_callers=shared_inlined_owner_leaves is not None)
+        if inlined_calls:
+            owners = {call["function"]: call["source_function"] for call in inlined_calls}
+            require({(call["function"], call["call_address"], call["got_slot"],
+                      call["target_address"]) for call in final_shared_calls
+                     if call["function"] in owners}
+                    == {(call["function"], call["call_address"], call["got_slot"],
+                         call["target_address"]) for call in inlined_calls},
+                    f"ordinary {name} inlined source calls differ from whole image")
+            final_shared_calls = [{**call, **({"source_function": owners[call["function"]]}
+                                        if call["function"] in owners else {})}
+                                  for call in final_shared_calls]
         for item in imported:
             calls = [call for call in final_shared_calls
-                     if call["function"] in item["shared_caller_functions"]]
+                     if call.get("source_function", call["function"])
+                     in item["shared_caller_functions"]]
             shared_calls.append({"member": dict(item["member"]), "calls": calls,
                                  "no_call_source_functions": sorted(set(
                                      item["shared_caller_functions"])
-                                     - {call["function"] for call in calls})})
+                                     - {call.get("source_function", call["function"])
+                                        for call in calls})})
     else:
         for item in imported:
             absent: list[str] | None = [] if independent_retained_work is not None else None
@@ -1986,7 +2074,9 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
                                  **({"absent_functions": absent} if absent is not None else {})})
     dynamic_imports = []
     for mode in DYNAMIC_MODES:
-        executable = physical_file(work / f"dynamic-{mode}",
+        stem = (retained_link_stems[f"dynamic-{mode}"] if retained_link_stems is not None
+                else f"dynamic-{mode}")
+        executable = physical_file(work / stem,
                                    f"ordinary {name} dynamic {mode} ELF")
         dynamic = subprocess.run(["/usr/bin/readelf", "-dW", str(executable)],
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
