@@ -95,7 +95,7 @@ assert_fixture_tls_capacity() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep nm objdump readelf rustup sort; do
+for tool in ar awk cargo cmp cp diff grep nm objdump readelf rustup sha256sum sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -103,12 +103,17 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_signal_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-signal-execution.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-signal-execution.XXXXXX")"
+chmod 755 "$work_dir"
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-signal-execution-reference"
 candidate="$work_dir/crabc-static-signal-execution-candidate"
+reference_stdout="$work_dir/musl.stdout"
+reference_stderr="$work_dir/musl.stderr"
+candidate_stdout="$work_dir/crabc.stdout"
+candidate_stderr="$work_dir/crabc.stderr"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
 selected_c_abi_symbols="$work_dir/selected-c-abi-symbols"
@@ -132,7 +137,7 @@ done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     compat/x86_64/libc_signal_execution_probe.c -o "$reference"
-if "$reference"; then
+if "$reference" >"$reference_stdout" 2>"$reference_stderr"; then
     :
 else
     status=$?
@@ -217,11 +222,24 @@ assert_named_syscall sigqueue e
 assert_named_syscall sigqueue 81
 assert_named_syscall sigtimedwait 80
 
-if "$candidate"; then
+if "$candidate" >"$candidate_stdout" 2>"$candidate_stderr"; then
     :
 else
     status=$?
     fail "freestanding signal-execution fixture exited ${status}"
 fi
+cmp "$reference_stdout" "$candidate_stdout" ||
+    fail "pinned-musl and crabc stdout differ"
+cmp "$reference_stderr" "$candidate_stderr" ||
+    fail "pinned-musl and crabc stderr differ"
+cp compat/x86_64/libc_signal_execution_probe.c "$work_dir/probe.c"
+cp compat/x86_64/run_libc_signal_execution.sh "$work_dir/runner.sh"
+(
+    cd "$work_dir"
+    sha256sum probe.c runner.sh musl-signal-execution-reference \
+        crabc-static-signal-execution-candidate musl.stdout musl.stderr \
+        crabc.stdout crabc.stderr >sha256sums
+)
 
+printf 'retained signal execution evidence: %s\n' "$work_dir" >&2
 printf 'x86 static crabc-libc signal execution: PASS\n'

@@ -51,7 +51,8 @@ _Static_assert(offsetof(siginfo_t, si_signo) == 0 &&
 _Static_assert(SYS_read == 0 && SYS_write == 1 && SYS_close == 3 &&
     SYS_pipe == 22 && SYS_getpid == 39 && SYS_clone == 56 && SYS_exit == 60 &&
     SYS_wait4 == 61 && SYS_kill == 62 && SYS_rt_sigprocmask == 14 &&
-    SYS_rt_sigtimedwait == 128 && SYS_rt_sigqueueinfo == 129 &&
+    SYS_rt_sigpending == 127 && SYS_rt_sigtimedwait == 128 &&
+    SYS_rt_sigqueueinfo == 129 &&
     SYS_gettid == 186 && SYS_tkill == 200,
     "x86 selected and fixture-only signal syscall numbers");
 _Static_assert(SIGUSR1 == 10 && SIGUSR2 == 12 && SI_QUEUE == -1,
@@ -81,6 +82,10 @@ struct retry_child {
 
 static volatile sig_atomic_t delivered_signal;
 static volatile sig_atomic_t retry_acknowledgement_descriptor = -1;
+static volatile sig_atomic_t masked_delivery_stage;
+static volatile sig_atomic_t first_handler_mask_ok;
+static volatile sig_atomic_t first_handler_pending_ok;
+static volatile sig_atomic_t second_handler_mask_ok;
 
 static long raw_syscall0(long number)
 {
@@ -235,6 +240,45 @@ static void record_delivery(int signal)
     }
 }
 
+static void record_masked_first_delivery(int signal)
+{
+    unsigned long mask = 0;
+    unsigned long pending = 0;
+    const unsigned long usr1_bit = 1UL << (SIGUSR1 - 1);
+    const unsigned long usr2_bit = 1UL << (SIGUSR2 - 1);
+    const unsigned long term_bit = 1UL << (SIGTERM - 1);
+
+    if (signal != SIGUSR1 || masked_delivery_stage != 0)
+        return;
+    masked_delivery_stage = 1;
+    if (raw_syscall4(SYS_rt_sigprocmask, SIG_SETMASK, 0, (long)&mask,
+            sizeof(mask)) == 0 &&
+            (mask & (usr1_bit | usr2_bit | term_bit)) ==
+            (usr1_bit | usr2_bit | term_bit))
+        first_handler_mask_ok = 1;
+    if (raw_syscall2(SYS_kill, raw_syscall0(SYS_getpid), SIGUSR2) != 0)
+        return;
+    if (raw_syscall2(SYS_rt_sigpending, (long)&pending,
+            sizeof(pending)) == 0 && (pending & usr2_bit) != 0)
+        first_handler_pending_ok = 1;
+    masked_delivery_stage = 2;
+}
+
+static void record_masked_second_delivery(int signal)
+{
+    unsigned long mask = 0;
+    const unsigned long usr1_bit = 1UL << (SIGUSR1 - 1);
+    const unsigned long usr2_bit = 1UL << (SIGUSR2 - 1);
+
+    if (signal != SIGUSR2 || masked_delivery_stage != 2)
+        return;
+    if (raw_syscall4(SYS_rt_sigprocmask, SIG_SETMASK, 0, (long)&mask,
+            sizeof(mask)) == 0 && (mask & (usr1_bit | usr2_bit)) ==
+            (usr1_bit | usr2_bit))
+        second_handler_mask_ok = 1;
+    masked_delivery_stage = 3;
+}
+
 static void initialize_retry_child(struct retry_child *control)
 {
     control->release[0] = -1;
@@ -344,9 +388,71 @@ cleanup:
     return result;
 }
 
+static int check_masked_handler_delivery(const sigset_t *usr1_set,
+    const sigset_t *usr2_set, pid_t self)
+{
+    struct sigaction first_action = {0};
+    struct sigaction second_action = {0};
+    sigset_t pending;
+    sigset_t observed_mask;
+
+    if (sigemptyset(&first_action.sa_mask) != 0 ||
+        sigaddset(&first_action.sa_mask, SIGUSR2) != 0 ||
+        sigaddset(&first_action.sa_mask, SIGTERM) != 0 ||
+        sigemptyset(&second_action.sa_mask) != 0)
+        return 1;
+    first_action.sa_handler = record_masked_first_delivery;
+    first_action.sa_flags = SA_RESTART;
+    second_action.sa_handler = record_masked_second_delivery;
+    if (sigaction(SIGUSR1, &first_action, 0) != 0 ||
+        sigaction(SIGUSR2, &second_action, 0) != 0)
+        return 2;
+
+    masked_delivery_stage = 0;
+    first_handler_mask_ok = 0;
+    first_handler_pending_ok = 0;
+    second_handler_mask_ok = 0;
+    if (kill(self, SIGUSR1) != 0 || sigpending(&pending) != 0 ||
+        sigismember(&pending, SIGUSR1) != 1 ||
+        sigismember(&pending, SIGUSR2) != 0)
+        return 3;
+
+    /* The first handler queues SIGUSR2 while the temporary mask blocks it.
+     * SA_RESTART cannot restart sigsuspend: its delivery returns EINTR. */
+    errno = ERANGE;
+    if (sigsuspend(usr2_set) != -1 || errno != EINTR ||
+        masked_delivery_stage != 2 || first_handler_mask_ok != 1 ||
+        first_handler_pending_ok != 1 || second_handler_mask_ok != 0)
+        return 4;
+    if (sigpending(&pending) != 0 ||
+        sigismember(&pending, SIGUSR1) != 0 ||
+        sigismember(&pending, SIGUSR2) != 1)
+        return 5;
+    if (sigprocmask(SIG_SETMASK, 0, &observed_mask) != 0 ||
+        sigismember(&observed_mask, SIGUSR1) != 1 ||
+        sigismember(&observed_mask, SIGUSR2) != 1 ||
+        sigismember(&observed_mask, SIGRTMIN) != 1)
+        return 6;
+
+    errno = ERANGE;
+    if (sigsuspend(usr1_set) != -1 || errno != EINTR ||
+        masked_delivery_stage != 3 || second_handler_mask_ok != 1)
+        return 7;
+    if (sigpending(&pending) != 0 ||
+        sigismember(&pending, SIGUSR1) != 0 ||
+        sigismember(&pending, SIGUSR2) != 0 ||
+        sigprocmask(SIG_SETMASK, 0, &observed_mask) != 0 ||
+        sigismember(&observed_mask, SIGUSR1) != 1 ||
+        sigismember(&observed_mask, SIGUSR2) != 1 ||
+        sigismember(&observed_mask, SIGRTMIN) != 1)
+        return 8;
+    return 0;
+}
+
 static int test_signal_execution(void)
 {
     struct sigaction saved_action;
+    struct sigaction saved_usr2_action;
     struct sigaction action;
     sigset_t saved_mask;
     sigset_t selected;
@@ -360,6 +466,7 @@ static int test_signal_execution(void)
     union sigval payload;
     int waited_signal = 0;
     int action_saved = 0;
+    int usr2_action_saved = 0;
     int mask_saved = 0;
     int result = 1;
     pid_t self = getpid();
@@ -369,6 +476,9 @@ static int test_signal_execution(void)
     if (sigaction(SIGUSR1, 0, &saved_action) != 0)
         goto cleanup;
     action_saved = 1;
+    if (sigaction(SIGUSR2, 0, &saved_usr2_action) != 0)
+        goto cleanup;
+    usr2_action_saved = 1;
     if (sigemptyset(&action.sa_mask) != 0)
         goto cleanup;
     action.sa_handler = record_delivery;
@@ -464,6 +574,9 @@ static int test_signal_execution(void)
         sigismember(&observed_mask, SIGRTMIN) != 1)
         goto cleanup;
 
+    if (check_masked_handler_delivery(&usr1_set, &usr2_set, self) != 0)
+        goto cleanup;
+
     result = 0;
 
 cleanup:
@@ -474,6 +587,8 @@ cleanup:
         (void)sigprocmask(SIG_UNBLOCK, &selected, 0);
     if (action_saved)
         (void)sigaction(SIGUSR1, &saved_action, 0);
+    if (usr2_action_saved)
+        (void)sigaction(SIGUSR2, &saved_usr2_action, 0);
     if (mask_saved)
         (void)sigprocmask(SIG_SETMASK, &saved_mask, 0);
     return result;
