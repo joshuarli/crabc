@@ -3,9 +3,9 @@
 #
 # The same project-header C fixture first runs through pinned musl, then as a
 # true -nostdlib -static candidate linked solely through the selected crabc
-# archive. It proves only nonblocking OFD flock behavior: distinct open
-# descriptions, shared/exclusive conflict and release, stale errno on
-# success, and direct EINVAL/EBADF errors. Fixture setup uses raw Linux
+# archive. The ordered records compare shared/exclusive compatibility,
+# distinct opens, duplicate release, fork-inherited ownership after parent
+# close, stale errno on success, and EINVAL/EBADF. Fixture setup uses raw Linux
 # syscalls, so no unrelated C lifecycle API is pulled in. This is not fcntl
 # record locking, lockf, generic C, CRT, pthread/TLS lifecycle, loader,
 # sysroot, or public x86 support.
@@ -92,7 +92,7 @@ assert_flock_syscall_path() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cat cmp diff grep mapfile mkdir nm objdump readelf rustup sort wc; do
+for tool in ar awk cargo cat chmod cmp cp diff grep mapfile mkdir mktemp nm objdump readelf rustup sha256sum sort wc; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -101,11 +101,14 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_flock_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_x86_flock_reference.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-flock.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/tmp"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/tmp/libc-flock.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-flock-reference"
 candidate="$work_dir/crabc-static-flock-candidate"
+reference_records="$work_dir/musl-records"
+candidate_records="$work_dir/candidate-records"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
@@ -129,7 +132,7 @@ done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_flock_probe.c -o "$reference"
-if "$reference"; then
+if "$reference" >"$reference_records"; then
     :
 else
     status=$?
@@ -210,11 +213,38 @@ grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
 
 assert_flock_syscall_path
 
-if "$candidate"; then
+if "$candidate" >"$candidate_records"; then
     :
 else
     status=$?
     fail "freestanding flock fixture exited ${status}"
 fi
 
+[ -s "$reference_records" ] || fail "pinned-musl fixture emitted no case records"
+if ! cmp -s "$reference_records" "$candidate_records"; then
+    diff -u "$reference_records" "$candidate_records" >&2 || true
+    fail "pinned-musl and freestanding flock cases differ"
+fi
+
+mkdir -p "$ROOT_DIR/.work/x86_64/reports"
+report_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-flock.XXXXXX")"
+chmod 755 "$report_dir"
+cp "$reference" "$report_dir/musl-reference.elf"
+cp "$candidate" "$report_dir/crabc-candidate.elf"
+cp "$reference_records" "$report_dir/musl.records"
+cp "$candidate_records" "$report_dir/crabc.records"
+cp "$candidate_program_headers" "$report_dir/crabc-program-headers.txt"
+cp "$selected_c_abi_symbols" "$report_dir/selected-c-abi-symbols.txt"
+cp "$ROOT_DIR/compat/x86_64/libc_flock_probe.c" "$report_dir/libc_flock_probe.c"
+cp "$ROOT_DIR/compat/x86_64/libc_flock_start.S" "$report_dir/libc_flock_start.S"
+cp "$ROOT_DIR/compat/x86_64/run_libc_flock.sh" "$report_dir/run_libc_flock.sh"
+(
+    cd "$report_dir"
+    sha256sum musl-reference.elf crabc-candidate.elf musl.records crabc.records \
+        crabc-program-headers.txt selected-c-abi-symbols.txt \
+        libc_flock_probe.c libc_flock_start.S run_libc_flock.sh >sha256sums.txt
+)
+
+cat "$reference_records"
+printf 'flock physical receipt: %s\n' "$report_dir"
 printf 'x86 static crabc-libc flock: PASS\n'

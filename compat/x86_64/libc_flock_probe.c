@@ -1,11 +1,12 @@
-/* Static crabc-libc x86-64 nonblocking OFD flock fixture.
+/* Static crabc-libc x86-64 open-description flock fixture.
  *
  * The same project-header C body first runs through pinned musl 1.2.6 and
  * then through a freestanding executable linked solely with the selected
- * crabc archive. It proves nonblocking shared/exclusive flock operations on
- * distinct open file descriptions, conflict and release ordering, stale
- * errno on success, and direct EINVAL/EBADF errors. It deliberately excludes
- * fcntl record locks, lockf, generic C descriptor/path policy, CRT,
+ * crabc archive. It records shared/exclusive compatibility and nonblocking
+ * conflicts across separate opens, duplicate release, inherited ownership
+ * after fork and parent close, stale errno on success, and EINVAL/EBADF. The
+ * ordered records are compared byte for byte across the two executables.
+ * It excludes fcntl record locks, lockf, generic C descriptor/path policy, CRT,
  * pthread/TLS lifecycle, loader, sysroot, and public x86 support.
  */
 
@@ -36,6 +37,7 @@ _Static_assert(SYS_open == 2 && SYS_close == 3 && SYS_pipe == 22 &&
     "x86 selected flock fixture syscall numbers");
 _Static_assert(LOCK_SH == 1 && LOCK_EX == 2 && LOCK_NB == 4 &&
     LOCK_UN == 8, "x86 selected flock operation bits");
+_Static_assert(EWOULDBLOCK == EAGAIN, "Linux lock-conflict errno alias");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&flock),
     int (*)(int, int)), "flock declaration");
 
@@ -218,55 +220,96 @@ static int read_token(int descriptor, char expected)
     return result == 1 && token == expected ? 0 : -1;
 }
 
-static int is_lock_conflict(int error)
+static size_t append_number(char *output, size_t length, int number)
 {
-    return error == EWOULDBLOCK || error == EAGAIN;
+    char digits[12];
+    size_t count = 0;
+    unsigned int magnitude;
+
+    if (number < 0) {
+        output[length++] = '-';
+        magnitude = (unsigned int)(-(long)number);
+    } else {
+        magnitude = (unsigned int)number;
+    }
+    do {
+        digits[count++] = (char)('0' + magnitude % 10);
+        magnitude /= 10;
+    } while (magnitude != 0);
+    while (count != 0)
+        output[length++] = digits[--count];
+    return length;
 }
 
-static int child_case(const struct fixture_file *file,
-    const struct fixture_pipes *pipes, pid_t parent)
+/* A single raw write keeps each parent/child observation as one ordered record. */
+static int observed_flock(const char *case_name, int descriptor, int operation,
+    int initial_errno, int expected_result, int expected_errno)
+{
+    char record[128];
+    size_t length = 0;
+    size_t index;
+    int result;
+    int error;
+
+    errno = initial_errno;
+    result = flock(descriptor, operation);
+    error = errno;
+    for (index = 0; case_name[index] != '\0'; ++index)
+        record[length++] = case_name[index];
+    record[length++] = ' ';
+    length = append_number(record, length, result);
+    record[length++] = ' ';
+    length = append_number(record, length, error);
+    record[length++] = '\n';
+    if (raw_syscall3(SYS_write, 1, (long)(void *)record, length) != (long)length)
+        return -1;
+    return result == expected_result && error == expected_errno ? 0 : -1;
+}
+
+static void child_case(const struct fixture_file *file,
+    const struct fixture_pipes *pipes)
 {
     int descriptor;
     int status = 0;
 
-    if (raw_syscall1(SYS_close, file->descriptor) != 0)
-        return 1;
-    if (raw_syscall1(SYS_close, file->duplicate) != 0)
-        return 2;
     descriptor = (int)raw_syscall3(
         SYS_open, (long)(void *)file->path, O_RDWR, 0600);
     if (descriptor < 0)
-        return 3;
+        raw_exit(3);
 
-    errno = 0;
-    if (flock(descriptor, LOCK_EX | LOCK_NB) != -1 ||
-        !is_lock_conflict(errno))
+    if (observed_flock("child-separate-exclusive-conflict", descriptor,
+            LOCK_EX | LOCK_NB, 0, -1, EWOULDBLOCK) != 0)
         status = 4;
     if (status == 0 && write_token(pipes->child_to_parent[1], 'C') != 0)
         status = 5;
     if (status == 0 && read_token(pipes->parent_to_child[0], 'R') != 0)
         status = 6;
-    if (status == 0) {
-        errno = ERANGE;
-        if (flock(descriptor, LOCK_EX | LOCK_NB) != 0 || errno != ERANGE)
-            status = 7;
-    }
-    if (status == 0 && write_token(pipes->child_to_parent[1], 'S') != 0)
+    if (status == 0 && observed_flock("child-inherited-after-parent-close",
+            descriptor, LOCK_EX | LOCK_NB, 0, -1, EWOULDBLOCK) != 0)
+        status = 7;
+    if (status == 0 && observed_flock("child-inherited-duplicate-unlock",
+            file->duplicate, LOCK_UN | LOCK_NB, ERANGE, 0, ERANGE) != 0)
         status = 8;
-    if (status == 0 && read_token(pipes->parent_to_child[0], 'U') != 0)
+    if (status == 0 && observed_flock("child-separate-exclusive-acquire",
+            descriptor, LOCK_EX | LOCK_NB, EDOM, 0, EDOM) != 0)
         status = 9;
-    if (status == 0) {
-        errno = EDOM;
-        if (flock(descriptor, LOCK_UN | LOCK_NB) != 0 || errno != EDOM)
-            status = 10;
-    }
-    if (status == 0 && write_token(pipes->child_to_parent[1], 'D') != 0)
+    if (raw_syscall1(SYS_close, file->descriptor) != 0 && status == 0)
+        status = 10;
+    if (raw_syscall1(SYS_close, file->duplicate) != 0 && status == 0)
         status = 11;
-    if (raw_syscall1(SYS_close, descriptor) != 0 && status == 0)
+    if (status == 0 && write_token(pipes->child_to_parent[1], 'S') != 0)
         status = 12;
+    if (status == 0 && read_token(pipes->parent_to_child[0], 'U') != 0)
+        status = 13;
+    if (status == 0 && observed_flock("child-exclusive-unlock", descriptor,
+            LOCK_UN | LOCK_NB, E2BIG, 0, E2BIG) != 0)
+        status = 14;
+    if (status == 0 && write_token(pipes->child_to_parent[1], 'D') != 0)
+        status = 15;
+    if (raw_syscall1(SYS_close, descriptor) != 0 && status == 0)
+        status = 16;
     if (status != 0)
         (void)write_token(pipes->child_to_parent[1], 'X');
-    (void)parent;
     raw_exit(status);
 }
 
@@ -291,11 +334,11 @@ static void terminate_child(pid_t child)
 
 static int check_errors(int descriptor)
 {
-    errno = 0;
-    if (flock(-1, LOCK_EX | LOCK_NB) != -1 || errno != EBADF)
+    if (observed_flock("invalid-descriptor", -1, LOCK_EX | LOCK_NB,
+            0, -1, EBADF) != 0)
         return 1;
-    errno = 0;
-    if (flock(descriptor, LOCK_EX | 0x10) != -1 || errno != EINVAL)
+    if (observed_flock("invalid-operation", descriptor, LOCK_EX | 0x10,
+            0, -1, EINVAL) != 0)
         return 2;
     return 0;
 }
@@ -306,6 +349,7 @@ int crabc_x86_64_flock_probe(void)
     struct fixture_pipes pipes;
     pid_t child;
     int observer = -1;
+    int transient_duplicate = -1;
     int status = 0;
 
     if (setup_file(&file) != 0)
@@ -314,19 +358,67 @@ int crabc_x86_64_flock_probe(void)
         (void)cleanup_file(&file);
         return 2;
     }
-    errno = E2BIG;
-    if (flock(file.descriptor, LOCK_SH | LOCK_NB) != 0 || errno != E2BIG)
+    if (observed_flock("parent-initial-shared", file.descriptor,
+            LOCK_SH | LOCK_NB, E2BIG, 0, E2BIG) != 0)
         status = 3;
     if (status == 0) {
         file.duplicate = (int)raw_syscall1(SYS_dup, file.descriptor);
         if (file.duplicate < 0)
             status = 4;
     }
+    if (status == 0) {
+        observer = (int)raw_syscall3(
+            SYS_open, (long)(void *)file.path, O_RDWR, 0600);
+        if (observer < 0)
+            status = 5;
+    }
+    if (status == 0 && observed_flock("separate-shared-compatible",
+            observer, LOCK_SH | LOCK_NB, ERANGE, 0, ERANGE) != 0)
+        status = 6;
+    if (status == 0 && observed_flock("separate-exclusive-conflict",
+            observer, LOCK_EX | LOCK_NB, 0, -1, EWOULDBLOCK) != 0)
+        status = 7;
+    if (status == 0 && observed_flock("duplicate-releases-shared",
+            file.duplicate, LOCK_UN | LOCK_NB, EDOM, 0, EDOM) != 0)
+        status = 8;
+    if (status == 0 && observed_flock("separate-exclusive-after-duplicate",
+            observer, LOCK_EX | LOCK_NB, EOVERFLOW, 0, EOVERFLOW) != 0)
+        status = 9;
+    if (status == 0 && observed_flock("original-shared-conflicts",
+            file.descriptor, LOCK_SH | LOCK_NB, 0, -1, EWOULDBLOCK) != 0)
+        status = 10;
+    if (status == 0 && observed_flock("separate-exclusive-unlock",
+            observer, LOCK_UN | LOCK_NB, ENOTRECOVERABLE, 0,
+            ENOTRECOVERABLE) != 0)
+        status = 11;
+    if (status == 0 && observed_flock("duplicate-reacquires-shared",
+            file.duplicate, LOCK_SH | LOCK_NB, E2BIG, 0, E2BIG) != 0)
+        status = 12;
+    if (status == 0 && observed_flock("separate-shared-reacquire",
+            observer, LOCK_SH | LOCK_NB, ERANGE, 0, ERANGE) != 0)
+        status = 13;
+    if (status == 0 && observed_flock("separate-shared-unlock", observer,
+            LOCK_UN | LOCK_NB, EDOM, 0, EDOM) != 0)
+        status = 14;
+    if (status == 0) {
+        transient_duplicate = (int)raw_syscall1(SYS_dup, file.descriptor);
+        if (transient_duplicate < 0 ||
+            raw_syscall1(SYS_close, transient_duplicate) != 0)
+            status = 15;
+        transient_duplicate = -1;
+    }
+    if (status == 0 && observed_flock("duplicate-close-keeps-shared",
+            observer, LOCK_EX | LOCK_NB, 0, -1, EWOULDBLOCK) != 0)
+        status = 16;
+    if (observer >= 0 && raw_syscall1(SYS_close, observer) != 0 && status == 0)
+        status = 17;
+    observer = -1;
+
     child = status == 0 ? (pid_t)raw_syscall0(SYS_fork) : -1;
-    if (child < 0)
-        status = 5;
+    if (child < 0 && status == 0)
+        status = 18;
     if (child == 0)
-        child_case(&file, &pipes, (pid_t)raw_syscall0(SYS_getpid));
+        child_case(&file, &pipes);
 
     if (status == 0) {
         (void)raw_syscall1(SYS_close, pipes.child_to_parent[1]);
@@ -334,63 +426,62 @@ int crabc_x86_64_flock_probe(void)
         (void)raw_syscall1(SYS_close, pipes.parent_to_child[0]);
         pipes.parent_to_child[0] = -1;
         if (read_token(pipes.child_to_parent[0], 'C') != 0)
-            status = 6;
+            status = 19;
     }
     if (status == 0) {
-        errno = ERANGE;
-        if (flock(file.duplicate, LOCK_UN | LOCK_NB) != 0 || errno != ERANGE)
-            status = 7;
+        if (raw_syscall1(SYS_close, file.descriptor) != 0)
+            status = 20;
+        file.descriptor = -1;
         if (raw_syscall1(SYS_close, file.duplicate) != 0 && status == 0)
-            status = 8;
+            status = 21;
         file.duplicate = -1;
     }
     if (status == 0 && write_token(pipes.parent_to_child[1], 'R') != 0)
-        status = 9;
+        status = 22;
     if (status == 0 && read_token(pipes.child_to_parent[0], 'S') != 0)
-        status = 10;
+        status = 23;
     if (status == 0) {
         observer = (int)raw_syscall3(
             SYS_open, (long)(void *)file.path, O_RDWR, 0600);
         if (observer < 0)
-            status = 11;
+            status = 24;
     }
-    if (status == 0) {
-        errno = 0;
-        if (flock(observer, LOCK_SH | LOCK_NB) != -1 ||
-            !is_lock_conflict(errno))
-            status = 12;
-    }
+    if (status == 0 && observed_flock("parent-shared-conflicts-child",
+            observer, LOCK_SH | LOCK_NB, 0, -1, EWOULDBLOCK) != 0)
+        status = 25;
     if (observer >= 0 && raw_syscall1(SYS_close, observer) != 0 && status == 0)
-        status = 13;
+        status = 26;
     observer = -1;
     if (status == 0 && write_token(pipes.parent_to_child[1], 'U') != 0)
-        status = 14;
+        status = 27;
     if (status == 0 && read_token(pipes.child_to_parent[0], 'D') != 0)
-        status = 15;
+        status = 28;
+    if (status == 0) {
+        file.descriptor = (int)raw_syscall3(
+            SYS_open, (long)(void *)file.path, O_RDWR, 0600);
+        if (file.descriptor < 0)
+            status = 29;
+    }
     if (status == 0)
-        status = check_errors(file.descriptor) == 0 ? 0 : 16;
-    if (status == 0) {
-        errno = EOVERFLOW;
-        if (flock(file.descriptor, LOCK_SH | LOCK_NB) != 0 ||
-            errno != EOVERFLOW)
-            status = 17;
-    }
-    if (status == 0) {
-        errno = ENOTRECOVERABLE;
-        if (flock(file.descriptor, LOCK_UN | LOCK_NB) != 0 ||
-            errno != ENOTRECOVERABLE)
-            status = 18;
-    }
+        status = check_errors(file.descriptor) == 0 ? 0 : 30;
+    if (status == 0 && observed_flock("parent-reacquires-after-child",
+            file.descriptor, LOCK_SH | LOCK_NB, EOVERFLOW, 0,
+            EOVERFLOW) != 0)
+        status = 31;
+    if (status == 0 && observed_flock("parent-final-unlock",
+            file.descriptor, LOCK_UN | LOCK_NB, ENOTRECOVERABLE, 0,
+            ENOTRECOVERABLE) != 0)
+        status = 32;
     if (status == 0) {
         if (wait_child(child) != 0)
-            status = 19;
+            status = 33;
     } else {
         terminate_child(child);
     }
     (void)close_pipe_pair(pipes.child_to_parent);
     (void)close_pipe_pair(pipes.parent_to_child);
     if (cleanup_file(&file) != 0 && status == 0)
-        status = 20;
+        status = 34;
     return status;
 }
 
