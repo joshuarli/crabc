@@ -169,6 +169,22 @@ static void descriptor_lifetime_case(void) {
     CHECK(result == EIO && errno == EIO && observed[0] == 'X');
     CHECK(close(second_slave) == 0 && descriptor_count() == baseline);
 }
+static void naming_ioctl_failure_case(void) {
+    int baseline = descriptor_count();
+    int master = posix_openpt(O_RDWR | O_NOCTTY);
+    CHECK(master >= 0);
+    char name[32];
+    memset(name, 'X', sizeof name);
+    deny_argument(SYS_ioctl, 1, TIOCGPTN, EIO);
+    errno = EDOM;
+    CHECK(grantpt(master) == 0 && errno == EDOM);
+    CHECK(ptsname_r(master, name, sizeof name) == EIO && errno == EDOM && name[0] == 'X');
+    CHECK(ptsname_r(master, 0, sizeof name) == EIO && errno == EDOM);
+    CHECK(ptsname(master) == 0 && errno == EIO);
+    errno = EDOM;
+    CHECK(unlockpt(master) == 0 && errno == EDOM);
+    CHECK(close(master) == 0 && descriptor_count() == baseline);
+}
 static void openpty_case(void) {
     int baseline = descriptor_count(), m = -101, s = -102;
     char name[32]; memset(name, 'X', sizeof name);
@@ -277,6 +293,31 @@ static void login_failures_case(void) {
         CHECK(fcntl(s, F_GETFD) == -1 && errno == EBADF); _exit(0);
     }
     require_child(child, 0); CHECK(close(m) == 0 && close(s) == 0);
+}
+static void session_conflict_case(void) {
+    pid_t child = fork(); CHECK(child >= 0);
+    if (!child) {
+        int first_master, first_slave, second_master, second_slave;
+        CHECK(openpty(&first_master, &first_slave, 0, 0, 0) == 0);
+        CHECK(openpty(&second_master, &second_slave, 0, 0, 0) == 0);
+        CHECK(setsid() == getpid());
+        CHECK(tcgetsid(first_slave) == -1 && errno == ENOTTY);
+        CHECK(tcgetsid(second_slave) == -1 && errno == ENOTTY);
+        CHECK(ioctl(first_slave, TIOCSCTTY, 0) == 0);
+        CHECK(tcgetsid(first_slave) == getpid());
+        struct stat standard_before, standard_after, second_before, second_after;
+        CHECK(fstat(1, &standard_before) == 0 && fstat(second_slave, &second_before) == 0);
+        errno = EDOM;
+        CHECK(login_tty(second_slave) == -1 && errno == EPERM);
+        CHECK(getsid(0) == getpid() && tcgetsid(first_slave) == getpid());
+        CHECK(tcgetsid(second_slave) == -1 && errno == ENOTTY);
+        CHECK(fstat(1, &standard_after) == 0 && fstat(second_slave, &second_after) == 0);
+        CHECK(standard_before.st_dev == standard_after.st_dev && standard_before.st_ino == standard_after.st_ino);
+        CHECK(second_before.st_dev == second_after.st_dev && second_before.st_ino == second_after.st_ino);
+        CHECK(fcntl(first_master, F_GETFD) >= 0 && fcntl(second_master, F_GETFD) >= 0);
+        _exit(0);
+    }
+    require_child(child, 0);
 }
 static int prepare_calls, parent_calls, child_calls, cancel_in_prepare;
 static void prepare(void) {
@@ -398,6 +439,7 @@ int main(int argc, char **argv) {
     CHECK(argc == 2);
     if (!strcmp(argv[1], "naming")) naming_case();
     else if (!strcmp(argv[1], "descriptor-lifetime")) descriptor_lifetime_case();
+    else if (!strcmp(argv[1], "naming-ioctl-failure")) naming_ioctl_failure_case();
     else if (!strcmp(argv[1], "openpty")) openpty_case();
     else if (!strcmp(argv[1], "no-controlling-terminal")) no_controlling_terminal_case();
     else if (!strcmp(argv[1], "optional-errors")) optional_errors_case();
@@ -405,6 +447,7 @@ int main(int argc, char **argv) {
              !strcmp(argv[1], "number-failure") || !strcmp(argv[1], "slave-failure")) open_failure_case(argv[1]);
     else if (!strcmp(argv[1], "login")) login_case();
     else if (!strcmp(argv[1], "login-failures")) login_failures_case();
+    else if (!strcmp(argv[1], "session-conflict")) session_conflict_case();
     else if (!strcmp(argv[1], "forkpty") || !strcmp(argv[1], "pipe-failure") ||
              !strcmp(argv[1], "fork-failure") || !strcmp(argv[1], "child-login-failure")) forkpty_case(argv[1]);
     else if (!strcmp(argv[1], "cancellation")) cancellation_case();
