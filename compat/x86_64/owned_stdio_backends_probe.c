@@ -201,6 +201,85 @@ static int cookies(void)
     return 0;
 }
 
+/* A global flush holds the stream registry while a newer cookie writes to an
+ * older cookie. A failed middle stream must not prevent the older one from
+ * receiving that write, and clearing its error must not replay lost bytes. */
+struct flush_chain {
+    FILE *older;
+    unsigned char events[16];
+    size_t event_count;
+    unsigned char older_bytes[16];
+    size_t older_count;
+    unsigned char newer_bytes[16];
+    size_t newer_count;
+    int closes;
+};
+struct flush_link { struct flush_chain *chain; unsigned char kind; };
+
+static ssize_t flush_chain_write(void *opaque, const char *bytes, size_t length)
+{
+    struct flush_link *link = opaque;
+    struct flush_chain *chain = link->chain;
+    if (chain->event_count >= sizeof chain->events) _Exit(81);
+    chain->events[chain->event_count++] = link->kind;
+    if (link->kind == 'F' && length) { errno = ENOSPC; return -1; }
+    if (link->kind == 'N') {
+        if (length > sizeof chain->newer_bytes - chain->newer_count) _Exit(82);
+        memcpy(chain->newer_bytes + chain->newer_count, bytes, length);
+        chain->newer_count += length;
+        if (length && fwrite("nested", 1, 6, chain->older) != 6) _Exit(83);
+    } else if (link->kind == 'O') {
+        if (length > sizeof chain->older_bytes - chain->older_count) _Exit(84);
+        memcpy(chain->older_bytes + chain->older_count, bytes, length);
+        chain->older_count += length;
+    }
+    return (ssize_t)length;
+}
+
+static int flush_chain_close(void *opaque)
+{
+    ((struct flush_link *)opaque)->chain->closes++;
+    return 0;
+}
+
+static int global_cookie_flush(void)
+{
+    struct flush_chain chain = {0};
+    struct flush_link older_link = {&chain, 'O'};
+    struct flush_link failed_link = {&chain, 'F'};
+    struct flush_link newer_link = {&chain, 'N'};
+    cookie_io_functions_t functions = {NULL, flush_chain_write, NULL, flush_chain_close};
+    FILE *older = fopencookie(&older_link, "w", functions);
+    FILE *failed = fopencookie(&failed_link, "w", functions);
+    FILE *newer = fopencookie(&newer_link, "w", functions);
+    if (!older || !failed || !newer) return 61;
+    chain.older = older;
+    if (fwrite("old", 1, 3, older) != 3 ||
+        fwrite("lost", 1, 4, failed) != 4 ||
+        fwrite("new", 1, 3, newer) != 3) return 62;
+    errno = 0;
+    int status = fflush(NULL);
+    if (status != EOF || errno != ENOSPC || !ferror(failed) ||
+        chain.older_count != 9 || memcmp(chain.older_bytes, "oldnested", 9) ||
+        chain.newer_count != 3 || memcmp(chain.newer_bytes, "new", 3) ||
+        chain.event_count != 5 || memcmp(chain.events, "NNFOO", 5)) return 63;
+    record(60, status, NULL, chain.events, sizeof chain.events);
+    clearerr(failed);
+    errno = 0;
+    status = fflush(NULL);
+    if (status != 0 || errno != 0 || ferror(failed) || chain.event_count != 5) return 64;
+    record(61, status, NULL, chain.events, sizeof chain.events);
+    if (fwrite("retry", 1, 5, failed) != 5) return 65;
+    errno = 0;
+    status = fflush(NULL);
+    if (status != EOF || errno != ENOSPC || !ferror(failed) ||
+        chain.event_count != 6 || memcmp(chain.events, "NNFOOF", 6)) return 66;
+    record(62, status, NULL, chain.events, sizeof chain.events);
+    if (fclose(newer) || fclose(failed) || fclose(older) || chain.closes != 3) return 67;
+    record(63, chain.closes, NULL, chain.older_bytes, chain.older_count);
+    return 0;
+}
+
 /* The same binary record crosses FILE buffering, allocated line input,
  * logical-position restoration, and scanf on two independent backends. */
 static int binary_record(void)
@@ -247,6 +326,7 @@ int main(int argc,char **argv)
 #ifndef DESCRIPTOR_ONLY
     status=memories(); if(status) return status;
     status=cookies(); if(status) return status;
+    status=global_cookie_flush(); if(status) return status;
     status=binary_record(); if(status) return status;
     /* Deliberately left open: ordinary exit must flush the registered cookie.
      * Userdata is static and survives main; no close callback is expected. */
