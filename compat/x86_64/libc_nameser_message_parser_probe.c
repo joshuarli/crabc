@@ -72,6 +72,28 @@ static const unsigned char two_answer_message[] = {
     0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
 };
 
+/* The second owner points to the first owner, which itself has a suffix
+ * pointer into the question. Both hops must stay within the message. */
+static const unsigned char chained_answer_message[] = {
+    0x12, 0x34, 0x81, 0x80, 0, 1, 0, 2, 0, 0, 0, 0,
+    3, 'w', 'w', 'w', 7, 'e', 'x', 'a', 'm', 'p', 'l', 'e',
+    3, 'c', 'o', 'm', 0, 0, 1, 0, 1,
+    3, 'a', 'p', 'i', 0xc0, 0x0c,
+    0, 1, 0, 1, 0, 0, 1, 0x2c, 0, 4, 192, 0, 2, 1,
+    0xc0, 0x21, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 192, 0, 2, 2,
+};
+
+static void trace_case(const char *label)
+{
+    size_t length = 0;
+    while (label[length])
+        length++;
+    /* The fixture is freestanding. A direct write keeps its observations
+     * independent of either runtime's stdio and allocation machinery. */
+    __asm__ volatile("syscall" : : "a"(1L), "D"(1L), "S"(label), "d"(length)
+        : "rcx", "r11", "memory");
+}
+
 static void copy_bytes(unsigned char *destination, const unsigned char *source,
     size_t count)
 {
@@ -114,6 +136,76 @@ static int check_second_answer(const ns_rr *record)
         !ns_rr_rdata(*record) || record->rdata[0] != 0x20 ||
         record->rdata[1] != 0x01 || record->rdata[2] != 0x0d ||
         record->rdata[3] != 0xb8 || record->rdata[15] != 1;
+}
+
+static int check_compressed_and_malformed(void)
+{
+    unsigned char packet[96];
+    unsigned char loops[] = {0xc0, 0x00, 0xc0, 0x00, 0xc0};
+    char name[NS_MAXDNAME];
+    ns_msg message;
+    ns_rr record;
+    const unsigned char *first = packet + NS_HFIXEDSZ + 21;
+    const unsigned char *second = first + 20;
+    const unsigned char *end = packet + sizeof(chained_answer_message);
+
+    copy_bytes(packet, chained_answer_message, sizeof(chained_answer_message));
+    errno = E2BIG;
+    if (ns_initparse_function(packet, sizeof(chained_answer_message), &message) != 0 ||
+        message._sections[ns_s_an] != first || errno != E2BIG)
+        return 20;
+    if (ns_name_uncompress_function(packet, end, first, name, sizeof(name)) != 6 ||
+        !text_equals(name, "api.www.example.com") || errno != E2BIG)
+        return 21;
+    if (ns_name_uncompress_function(packet, end, second, name, sizeof(name)) != 2 ||
+        !text_equals(name, "api.www.example.com") || errno != E2BIG)
+        return 22;
+    if (ns_parserr_function(&message, ns_s_an, 1, &record) != 0 ||
+        !text_equals(ns_rr_name(record), "api.www.example.com") ||
+        ns_rr_rdata(record)[3] != 2 || message._sect != ns_s_an ||
+        message._rrnum != 2 || message._msg_ptr != end || errno != E2BIG)
+        return 23;
+    trace_case("compressed-chain: pass\n");
+
+    errno = 0;
+    if (ns_name_uncompress_function(loops, loops + sizeof(loops), loops,
+            name, sizeof(name)) != -1 || errno != EMSGSIZE)
+        return 24;
+    errno = 0;
+    if (ns_name_uncompress_function(loops, loops + sizeof(loops), loops + 2,
+            name, sizeof(name)) != -1 || errno != EMSGSIZE)
+        return 25;
+    errno = 0;
+    if (ns_name_uncompress_function(loops, loops + sizeof(loops), loops + 4,
+            name, sizeof(name)) != -1 || errno != EMSGSIZE)
+        return 26;
+    trace_case("compression-loops-and-short-pointer: pass\n");
+
+    /* A complete question with an answer cut at each wire field must fail
+     * initialization before a parser cursor can escape the bounded packet. */
+    copy_bytes(packet, one_answer_message, sizeof(one_answer_message));
+    for (size_t length = NS_HFIXEDSZ + 21 + 1;
+         length < sizeof(one_answer_message); length++) {
+        errno = E2BIG;
+        if (ns_initparse_function(packet, (int)length, &message) != -1 ||
+            errno != EMSGSIZE)
+            return 27;
+    }
+    trace_case("short-wire-records: pass\n");
+
+    copy_bytes(packet, one_answer_message, sizeof(one_answer_message));
+    if (ns_initparse_function(packet, sizeof(one_answer_message), &message) != 0)
+        return 28;
+    packet[NS_HFIXEDSZ + 21] = 0xc0;
+    packet[NS_HFIXEDSZ + 22] = NS_HFIXEDSZ + 21;
+    errno = E2BIG;
+    if (ns_parserr_function(&message, ns_s_an, 0, &record) != -1 ||
+        errno != EMSGSIZE || message._sect != ns_s_an ||
+        message._rrnum != 0 || message._msg_ptr != first)
+        return 29;
+    trace_case("parser-loop-cursor: pass\n");
+
+    return 0;
 }
 
 int crabc_x86_64_nameser_message_parser_probe(void)
@@ -177,6 +269,19 @@ int crabc_x86_64_nameser_message_parser_probe(void)
     errno = 0;
     if (ns_parserr_function(&message, ns_s_an, -2, &record) != -1 || errno != ENODEV)
         return 10;
+    if (message._sect != ns_s_an || message._rrnum != 2 ||
+        message._msg_ptr != end_of_message)
+        return 30;
+    errno = E2BIG;
+    if (ns_parserr_function(&message, ns_s_ns, 0, &record) != -1 ||
+        errno != ENODEV || message._sect != ns_s_ns ||
+        message._rrnum != 0 || message._msg_ptr != 0)
+        return 31;
+    if (ns_parserr_function(&message, ns_s_qd, -1, &record) != 0 ||
+        check_question(&record) || message._sect != ns_s_qd ||
+        message._rrnum != 1 || message._msg_ptr != first_answer || errno != ENODEV)
+        return 32;
+    trace_case("cursor-and-errno: pass\n");
 
     copy_bytes(packet, one_answer_message, sizeof(one_answer_message));
     errno = 0;
@@ -221,7 +326,7 @@ int crabc_x86_64_nameser_message_parser_probe(void)
             name, 0) != -1 || errno != EMSGSIZE)
         return 19;
 
-    return 0;
+    return check_compressed_and_malformed();
 }
 
 #ifndef CRABC_NAMESER_MESSAGE_PARSER_FREESTANDING

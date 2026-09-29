@@ -112,8 +112,12 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_nameser_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-nameser-message-parser.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-nameser-message-parser.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-nameser-message-parser"
+reference_trace="$work_dir/musl.trace"
+candidate_trace="$work_dir/crabc.trace"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-nameser-message-parser-reference"
 candidate="$work_dir/crabc-static-nameser-message-parser-candidate"
@@ -167,10 +171,11 @@ fi
 "$ORACLE_CC" -std=c11 -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_nameser_message_parser_probe.c \
     -o "$reference"
-if env -i LC_ALL=C TZ=UTC "$reference"; then
+if env -i LC_ALL=C TZ=UTC "$reference" >"$reference_trace"; then
     :
 else
     status=$?
+    cat "$reference_trace" >&2
     fail "pinned-musl nameser message-parser fixture exited ${status}"
 fi
 
@@ -262,11 +267,20 @@ if grep -Eq 'crabc_core|mimalloc|sha_crypt' \
     fail "candidate selects an unowned runtime dependency"
 fi
 
-if env -i LC_ALL=C TZ=UTC "$candidate"; then
+if env -i LC_ALL=C TZ=UTC "$candidate" >"$candidate_trace"; then
     :
 else
     status=$?
+    cat "$candidate_trace" >&2
     fail "freestanding nameser message-parser fixture exited ${status}"
 fi
+if ! cmp -s "$reference_trace" "$candidate_trace"; then
+    diff -u "$reference_trace" "$candidate_trace" >&2 || true
+    fail "pinned-musl and freestanding parser traces differ"
+fi
+mkdir -p "$report_dir"
+cp "$reference_trace" "$report_dir/musl.trace"
+cp "$candidate_trace" "$report_dir/crabc.trace"
+cat "$candidate_trace"
 
 printf 'x86 static crabc-libc nameser message parser: PASS\n'
