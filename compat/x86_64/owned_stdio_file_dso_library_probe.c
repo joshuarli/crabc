@@ -736,7 +736,7 @@ int crabc_full_dso_close_recovery(FILE *stream, int *main_errno)
     return result;
 }
 
-/* The DSO owns this pathname stream while main changes its pushback and
+/* The DSO adopts a descriptor into FILE while main changes its pushback and
  * logical position. Reading here must observe the same FILE state.
  */
 static FILE *pushback_dso_stream;
@@ -745,11 +745,20 @@ static unsigned pushback_dso_stage;
 
 FILE *crabc_pushback_dso_open(const char *path, int *main_errno)
 {
+    int descriptor;
+
     if (path == NULL || main_errno != &errno || errno != EDOM ||
         pushback_dso_stage != 0)
         return NULL;
-    pushback_dso_stream = fopen(path, "w+");
-    if (pushback_dso_stream == NULL ||
+    descriptor = open(path, O_RDWR | O_CREAT | O_TRUNC, 0666);
+    if (descriptor < 0)
+        return NULL;
+    pushback_dso_stream = fdopen(descriptor, "w+");
+    if (pushback_dso_stream == NULL) {
+        close(descriptor);
+        return NULL;
+    }
+    if (fileno(pushback_dso_stream) != descriptor ||
         setvbuf(pushback_dso_stream, pushback_dso_buffer, _IOFBF,
                 sizeof(pushback_dso_buffer)) != 0 ||
         fwrite("abcdef", 1, 6, pushback_dso_stream) != 6 ||

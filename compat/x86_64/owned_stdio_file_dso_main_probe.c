@@ -735,7 +735,7 @@ static int pushback_dso_roundtrip(const char *path)
     char stream_path[PATH_MAX], observed[6];
     fpos_t position;
     FILE *stream;
-    int length, descriptor, result;
+    int length, descriptor, duplicate, result;
 
     length = snprintf(stream_path, sizeof(stream_path), "%s.pushback", path);
     if (length < 0 || (size_t)length >= sizeof(stream_path))
@@ -745,7 +745,10 @@ static int pushback_dso_roundtrip(const char *path)
     if (stream == NULL || errno != ERANGE)
         return 2;
     descriptor = fileno(stream);
-    if (descriptor < 0 || fcntl(descriptor, F_GETFD) < 0)
+    if (descriptor < 0)
+        return 3;
+    duplicate = dup(descriptor);
+    if (duplicate < 0 || fcntl(descriptor, F_GETFD) < 0)
         return 3;
     errno = EDOM;
     if (fread(observed, 1, sizeof(observed), stream) != sizeof(observed) ||
@@ -764,7 +767,8 @@ static int pushback_dso_roundtrip(const char *path)
         return 10 + result;
     errno = EDOM;
     if (ungetc('R', stream) != 'R' || fsetpos(stream, &position) != 0 ||
-        ftell(stream) != 5 || feof(stream) || ferror(stream) || errno != EDOM)
+        ftell(stream) != 5 || lseek(duplicate, 0, SEEK_CUR) != 5 ||
+        feof(stream) || ferror(stream) || errno != EDOM)
         return 20;
     errno = EDOM;
     result = crabc_pushback_dso_close(stream, &errno);
@@ -772,6 +776,7 @@ static int pushback_dso_roundtrip(const char *path)
         return 30 + result;
     errno = 0;
     if (fcntl(descriptor, F_GETFD) != -1 || errno != EBADF ||
+        lseek(duplicate, 0, SEEK_CUR) != 6 || close(duplicate) != 0 ||
         pathname_readback(stream_path, "abcdef", 6) != 0)
         return 40;
     return 0;
@@ -892,11 +897,15 @@ int main(int argc, char **argv)
         return 1;
     if (unlink(argv[1]) != 0 && errno != ENOENT)
         return 2;
-    stream = fopen(argv[1], "w+");
-    if (stream == NULL)
+    descriptor = open(argv[1], O_RDWR | O_CREAT | O_TRUNC, 0666);
+    if (descriptor < 0)
         return 3;
-    descriptor = fileno(stream);
-    if (descriptor < 0 || fcntl(descriptor, F_GETFD) < 0 ||
+    stream = fdopen(descriptor, "w+");
+    if (stream == NULL) {
+        close(descriptor);
+        return 3;
+    }
+    if (fileno(stream) != descriptor || fcntl(descriptor, F_GETFD) < 0 ||
         setvbuf(stream, buffer, _IOFBF, sizeof(buffer)) != 0)
         return 4;
     errno = EDOM;
