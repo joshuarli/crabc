@@ -98,6 +98,8 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
         declaration["source_form_difference_count"] = 0
         callable_visibility["mismatch_row_count"] = 0
         prototype["mismatch_row_count"] = 0
+        by_id["declaration-macro-visibility"]["difference_rows"] = []
+        by_id["prototype-layout"]["difference_rows"] = []
         comparisons = record_layout["comparison_counts"]
         assert isinstance(comparisons, dict)
         comparisons["mismatch"] = 0
@@ -161,6 +163,56 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
             "record-byte-layout",
             {entry["id"] for entry in generic_reports if isinstance(entry, dict)},
         )
+
+    def test_reviewed_cpp_linkage_forms_keep_the_raw_differences(self) -> None:
+        foundation, _direct, _parity, _control, _probes, reports = AGGREGATE.load_context()
+        facts, assessment = AGGREGATE.build_header_completion_assessment(foundation, reports)
+        self.assertTrue(assessment["complete"])
+        self.assertEqual(facts.declaration_source_form_differences, 2)
+        self.assertEqual(facts.prototype_or_named_declaration_mismatch_rows, 2)
+        report = self.current_report()
+        joins = report["reviewed_cpp_linkage_differences"]
+        self.assertEqual([row["profile"] for row in joins], ["cxx17-gnu", "cxx17-strict"])
+        for row in joins:
+            self.assertEqual(row["header"], "sys/membarrier.h")
+            self.assertEqual(row["prototype_row"]["row"]["comparison"], "mismatch")
+            self.assertEqual(row["declaration_row"]["row"]["source_form_comparison"], "mismatch")
+        self.assertEqual(report["blocker_counts"]["unaccounted_declaration_source_form_differences"], 0)
+        self.assertEqual(report["blocker_counts"]["unaccounted_prototype_or_named_declaration_mismatch_rows"], 0)
+
+    def test_reviewed_cpp_linkage_forms_reject_changed_identity_and_extra_differences(self) -> None:
+        foundation, _direct, _parity, _control, _probes, reports = AGGREGATE.load_context()
+        for mutation in ("signature", "header", "duplicate"):
+            with self.subTest(mutation=mutation):
+                changed = copy.deepcopy(reports)
+                by_id = {row["id"]: row for row in changed}
+                prototype = by_id["prototype-layout"]
+                declaration = by_id["declaration-macro-visibility"]
+                if mutation == "signature":
+                    prototype["difference_rows"][0]["row"]["difference"]["incompatible"][0]["reference_signature"] = "int (int, int)|mangled=_Z10membarrierij"
+                elif mutation == "header":
+                    declaration["difference_rows"][0]["row"]["header"] = "sys/other.h"
+                else:
+                    for report, count_key in ((prototype, "mismatch_row_count"), (declaration, "source_form_difference_count")):
+                        report["difference_rows"].append(copy.deepcopy(report["difference_rows"][0]))
+                        report["summary"][count_key] += 1
+                facts, assessment = AGGREGATE.build_header_completion_assessment(foundation, changed)
+                self.assertFalse(assessment["complete"])
+                self.assertIn("declaration-source-forms", assessment["blockers"])
+                self.assertIn("prototype-or-named-declarations", assessment["blockers"])
+                self.assertGreater(AGGREGATE.header_blocker_counts(facts, self.assessment_contract())["unaccounted_prototype_or_named_declaration_mismatch_rows"], 0)
+
+        changed = copy.deepcopy(reports)
+        by_id = {row["id"]: row for row in changed}
+        by_id["prototype-layout"]["difference_rows"].pop()
+        with self.assertRaisesRegex(AGGREGATE.AggregateError, "prototype row count"):
+            AGGREGATE.build_header_completion_assessment(foundation, changed)
+
+    def test_reviewed_cpp_linkage_join_cannot_be_replaced_after_assessment(self) -> None:
+        report = self.current_report()
+        report["reviewed_cpp_linkage_differences"][0]["reference_signature"] = "int (int, int)|mangled=membarrier"
+        with self.assertRaisesRegex(AGGREGATE.AggregateError, "reviewed C\\+\\+ linkage joins"):
+            AGGREGATE.validate_report(report)
 
     def test_control_rejects_manual_completion_or_omitted_coverage(self) -> None:
         report = self.current_report()
@@ -229,6 +281,7 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=work_root) as temporary:
             temporary_root = Path(temporary)
             foundation: dict[str, object] = {}
+            current_foundation = AGGREGATE.load_toml(AGGREGATE.FOUNDATION_PATH)
             reports: dict[str, Path] = {}
             for identifier, table, schema, path_key in AGGREGATE.GENERIC_REPORTS:
                 report_path = temporary_root / f"{identifier}.json"
@@ -240,16 +293,19 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
                     }
                 else:
                     summary = {"profile_count": 7, "row_count": 1337}
-                report_path.write_text(
-                    json.dumps(
-                        {
+                checked = (
+                    AGGREGATE.load_json(ROOT / current_foundation[table][path_key])
+                    if identifier in {"declaration-macro-visibility", "prototype-layout"}
+                    else {
                             "schema": schema,
                             "target": AGGREGATE.TARGET,
                             "platform": AGGREGATE.PLATFORM,
                             "oracle": AGGREGATE.ORACLE,
                             "summary": summary,
                         }
-                    ),
+                )
+                report_path.write_text(
+                    json.dumps(checked),
                     encoding="utf-8",
                 )
                 foundation[table] = {

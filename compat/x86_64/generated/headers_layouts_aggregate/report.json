@@ -143,10 +143,12 @@
     "callable_ownership_routing_invalid": 0,
     "callable_visibility_mismatch_rows": 0,
     "declaration_identity_mismatch_rows": 0,
-    "declaration_source_form_differences": 0,
+    "declaration_source_form_differences": 2,
     "installed_surface_unmet_requirement_count": 0,
-    "prototype_or_named_declaration_mismatch_rows": 0,
-    "record_byte_layout_mismatch_rows": 0
+    "prototype_or_named_declaration_mismatch_rows": 2,
+    "record_byte_layout_mismatch_rows": 0,
+    "unaccounted_declaration_source_form_differences": 0,
+    "unaccounted_prototype_or_named_declaration_mismatch_rows": 0
   },
   "blockers": [],
   "control": {
@@ -569,6 +571,66 @@
   "family_completion": true,
   "generic_reports": [
     {
+      "difference_rows": [
+        {
+          "index": 841,
+          "row": {
+            "candidate": {
+              "count": 14,
+              "kind_counts": {
+                "function": 1,
+                "macro": 13
+              }
+            },
+            "candidate_only": [],
+            "candidate_status": "ok",
+            "comparison": "matched",
+            "header": "sys/membarrier.h",
+            "matched_identity_count": 14,
+            "profile": "cxx17-gnu",
+            "reference": {
+              "count": 14,
+              "kind_counts": {
+                "function": 1,
+                "macro": 13
+              }
+            },
+            "reference_only": [],
+            "reference_status": "ok",
+            "separately_accounted_source_form_difference_count": 1,
+            "source_form_comparison": "mismatch"
+          }
+        },
+        {
+          "index": 846,
+          "row": {
+            "candidate": {
+              "count": 14,
+              "kind_counts": {
+                "function": 1,
+                "macro": 13
+              }
+            },
+            "candidate_only": [],
+            "candidate_status": "ok",
+            "comparison": "matched",
+            "header": "sys/membarrier.h",
+            "matched_identity_count": 14,
+            "profile": "cxx17-strict",
+            "reference": {
+              "count": 14,
+              "kind_counts": {
+                "function": 1,
+                "macro": 13
+              }
+            },
+            "reference_only": [],
+            "reference_status": "ok",
+            "separately_accounted_source_form_difference_count": 1,
+            "source_form_comparison": "mismatch"
+          }
+        }
+      ],
       "id": "declaration-macro-visibility",
       "path": "compat/x86_64/generated/header_declaration_macro_visibility_matrix/report.json",
       "schema": "crabc.x86_64-header-declaration-macro-feature-visibility-matrix-report/v2",
@@ -607,12 +669,13 @@
         "source_form_comparison_counts": {
           "candidate-only-reviewed-native-callable-extension": 28,
           "candidate-only-reviewed-project-c-abi-extension": 56,
-          "matched": 1252,
+          "matched": 1250,
+          "mismatch": 2,
           "oracle-not-applicable": 1
         },
-        "source_form_difference_count": 0,
-        "source_form_difference_row_count": 0,
-        "source_form_only_difference_row_count": 0
+        "source_form_difference_count": 2,
+        "source_form_difference_row_count": 2,
+        "source_form_only_difference_row_count": 2
       },
       "table": "feature_visibility_matrix"
     },
@@ -652,6 +715,88 @@
       "table": "callable_feature_visibility_matrix"
     },
     {
+      "difference_rows": [
+        {
+          "index": 841,
+          "row": {
+            "candidate": {
+              "count": 14,
+              "kind_counts": {
+                "function": 1,
+                "macro": 13
+              }
+            },
+            "candidate_status": "ok",
+            "comparison": "mismatch",
+            "difference": {
+              "candidate_only": [],
+              "candidate_only_count": 0,
+              "incompatible": [
+                {
+                  "candidate_signature": "int (int, int)|mangled=membarrier",
+                  "kind": "function",
+                  "name": "membarrier",
+                  "reference_signature": "int (int, int)|mangled=_Z10membarrierii"
+                }
+              ],
+              "incompatible_count": 1,
+              "matched_count": 13,
+              "reference_only": [],
+              "reference_only_count": 0
+            },
+            "header": "sys/membarrier.h",
+            "profile": "cxx17-gnu",
+            "reference": {
+              "count": 14,
+              "kind_counts": {
+                "function": 1,
+                "macro": 13
+              }
+            },
+            "reference_status": "ok"
+          }
+        },
+        {
+          "index": 846,
+          "row": {
+            "candidate": {
+              "count": 14,
+              "kind_counts": {
+                "function": 1,
+                "macro": 13
+              }
+            },
+            "candidate_status": "ok",
+            "comparison": "mismatch",
+            "difference": {
+              "candidate_only": [],
+              "candidate_only_count": 0,
+              "incompatible": [
+                {
+                  "candidate_signature": "int (int, int)|mangled=membarrier",
+                  "kind": "function",
+                  "name": "membarrier",
+                  "reference_signature": "int (int, int)|mangled=_Z10membarrierii"
+                }
+              ],
+              "incompatible_count": 1,
+              "matched_count": 13,
+              "reference_only": [],
+              "reference_only_count": 0
+            },
+            "header": "sys/membarrier.h",
+            "profile": "cxx17-strict",
+            "reference": {
+              "count": 14,
+              "kind_counts": {
+                "function": 1,
+                "macro": 13
+              }
+            },
+            "reference_status": "ok"
+          }
+        }
+      ],
       "id": "prototype-layout",
       "path": "compat/x86_64/generated/header_abi_matrix/report.json",
       "schema": "crabc.x86_64-header-abi-matrix-report/v2",
@@ -660,17 +805,22 @@
         "comparison_counts": {
           "candidate-only-reviewed-native-callable-extension": 28,
           "candidate-only-reviewed-project-c-abi-extension": 56,
-          "matched": 1252,
+          "matched": 1250,
+          "mismatch": 2,
           "oracle-not-applicable": 1
         },
         "complete": false,
         "incomplete_reasons": [
-          "0 comparable header/profile rows have prototype or named declaration-form differences",
+          "2 comparable header/profile rows have prototype or named declaration-form differences",
           "1 pinned-musl header/profile rows are oracle-not-applicable",
           "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
         ],
-        "mismatch_fact_counts": {},
-        "mismatch_row_count": 0,
+        "mismatch_fact_counts": {
+          "candidate_only_count": 0,
+          "incompatible_count": 2,
+          "reference_only_count": 0
+        },
+        "mismatch_row_count": 2,
         "pinned_public_header_count": 183,
         "profile_count": 7,
         "reviewed_native_callable_extension_fact_count": 28,
@@ -833,10 +983,19 @@
       "path": "compat/x86_64/header_callable_linkage_audit.py"
     },
     {
+      "path": "compat/x86_64/native_callable_declarations.py"
+    },
+    {
+      "path": "compat/x86_64/native_callable_declarations.toml"
+    },
+    {
       "path": "compat/x86_64/header_callable_visibility_matrix.toml"
     },
     {
       "path": "compat/x86_64/header_abi_matrix.toml"
+    },
+    {
+      "path": "compat/x86_64/header_abi_matrix.py"
     },
     {
       "path": "compat/x86_64/header_record_layout_matrix.toml"
@@ -846,6 +1005,9 @@
     },
     {
       "path": "compat/x86_64/header_declaration_macro_visibility_matrix.toml"
+    },
+    {
+      "path": "compat/x86_64/header_declaration_macro_visibility_matrix.py"
     },
     {
       "path": "compat/x86_64/generated/header_declaration_macro_visibility_matrix/report.json"
@@ -1100,6 +1262,162 @@
   "profile_obligation_count": 21,
   "promotion_ready": false,
   "public_support": false,
+  "reviewed_cpp_linkage_differences": [
+    {
+      "candidate_signature": "int (int, int)|mangled=membarrier",
+      "declaration_row": {
+        "index": 841,
+        "report": "compat/x86_64/generated/header_declaration_macro_visibility_matrix/report.json",
+        "row": {
+          "candidate": {
+            "count": 14,
+            "kind_counts": {
+              "function": 1,
+              "macro": 13
+            }
+          },
+          "candidate_only": [],
+          "candidate_status": "ok",
+          "comparison": "matched",
+          "header": "sys/membarrier.h",
+          "matched_identity_count": 14,
+          "profile": "cxx17-gnu",
+          "reference": {
+            "count": 14,
+            "kind_counts": {
+              "function": 1,
+              "macro": 13
+            }
+          },
+          "reference_only": [],
+          "reference_status": "ok",
+          "separately_accounted_source_form_difference_count": 1,
+          "source_form_comparison": "mismatch"
+        }
+      },
+      "header": "sys/membarrier.h",
+      "profile": "cxx17-gnu",
+      "prototype_row": {
+        "index": 841,
+        "report": "compat/x86_64/generated/header_abi_matrix/report.json",
+        "row": {
+          "candidate": {
+            "count": 14,
+            "kind_counts": {
+              "function": 1,
+              "macro": 13
+            }
+          },
+          "candidate_status": "ok",
+          "comparison": "mismatch",
+          "difference": {
+            "candidate_only": [],
+            "candidate_only_count": 0,
+            "incompatible": [
+              {
+                "candidate_signature": "int (int, int)|mangled=membarrier",
+                "kind": "function",
+                "name": "membarrier",
+                "reference_signature": "int (int, int)|mangled=_Z10membarrierii"
+              }
+            ],
+            "incompatible_count": 1,
+            "matched_count": 13,
+            "reference_only": [],
+            "reference_only_count": 0
+          },
+          "header": "sys/membarrier.h",
+          "profile": "cxx17-gnu",
+          "reference": {
+            "count": 14,
+            "kind_counts": {
+              "function": 1,
+              "macro": 13
+            }
+          },
+          "reference_status": "ok"
+        }
+      },
+      "reference_signature": "int (int, int)|mangled=_Z10membarrierii"
+    },
+    {
+      "candidate_signature": "int (int, int)|mangled=membarrier",
+      "declaration_row": {
+        "index": 846,
+        "report": "compat/x86_64/generated/header_declaration_macro_visibility_matrix/report.json",
+        "row": {
+          "candidate": {
+            "count": 14,
+            "kind_counts": {
+              "function": 1,
+              "macro": 13
+            }
+          },
+          "candidate_only": [],
+          "candidate_status": "ok",
+          "comparison": "matched",
+          "header": "sys/membarrier.h",
+          "matched_identity_count": 14,
+          "profile": "cxx17-strict",
+          "reference": {
+            "count": 14,
+            "kind_counts": {
+              "function": 1,
+              "macro": 13
+            }
+          },
+          "reference_only": [],
+          "reference_status": "ok",
+          "separately_accounted_source_form_difference_count": 1,
+          "source_form_comparison": "mismatch"
+        }
+      },
+      "header": "sys/membarrier.h",
+      "profile": "cxx17-strict",
+      "prototype_row": {
+        "index": 846,
+        "report": "compat/x86_64/generated/header_abi_matrix/report.json",
+        "row": {
+          "candidate": {
+            "count": 14,
+            "kind_counts": {
+              "function": 1,
+              "macro": 13
+            }
+          },
+          "candidate_status": "ok",
+          "comparison": "mismatch",
+          "difference": {
+            "candidate_only": [],
+            "candidate_only_count": 0,
+            "incompatible": [
+              {
+                "candidate_signature": "int (int, int)|mangled=membarrier",
+                "kind": "function",
+                "name": "membarrier",
+                "reference_signature": "int (int, int)|mangled=_Z10membarrierii"
+              }
+            ],
+            "incompatible_count": 1,
+            "matched_count": 13,
+            "reference_only": [],
+            "reference_only_count": 0
+          },
+          "header": "sys/membarrier.h",
+          "profile": "cxx17-strict",
+          "reference": {
+            "count": 14,
+            "kind_counts": {
+              "function": 1,
+              "macro": 13
+            }
+          },
+          "reference_status": "ok"
+        }
+      },
+      "reference_signature": "int (int, int)|mangled=_Z10membarrierii"
+    }
+  ],
   "schema": "crabc.x86_64-headers-layouts-aggregate-report/v3",
   "scope": "finite native x86 header accounting with a pure header-completion assessment; downstream C-ABI provider/archive closure is separately reported and does not gate header completion, promotion, or public support",
   "target": "x86_64-unknown-linux-musl"

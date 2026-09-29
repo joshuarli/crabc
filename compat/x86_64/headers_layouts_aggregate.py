@@ -12,6 +12,7 @@ gap as a header blocker.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import shlex
@@ -138,11 +139,15 @@ TRACKED_INPUTS = (
     "compat/x86_64/header_callable_extension_contract.toml",
     "compat/x86_64/header_callable_extension_contract.py",
     "compat/x86_64/header_callable_linkage_audit.py",
+    "compat/x86_64/native_callable_declarations.py",
+    "compat/x86_64/native_callable_declarations.toml",
     "compat/x86_64/header_callable_visibility_matrix.toml",
     "compat/x86_64/header_abi_matrix.toml",
+    "compat/x86_64/header_abi_matrix.py",
     "compat/x86_64/header_record_layout_matrix.toml",
     "compat/x86_64/header_record_layout_matrix.py",
     "compat/x86_64/header_declaration_macro_visibility_matrix.toml",
+    "compat/x86_64/header_declaration_macro_visibility_matrix.py",
     "compat/x86_64/generated/header_declaration_macro_visibility_matrix/report.json",
     "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
     "compat/x86_64/generated/header_abi_matrix/report.json",
@@ -199,6 +204,7 @@ class HeaderFoundationCompletionFacts:
     missing_reference_declaration_record_count: int
     undispositioned_candidate_callable_count: int
     undispositioned_missing_reference_name_count: int
+    reviewed_cpp_linkage_differences: tuple[Mapping[str, Any], ...] = ()
 
 
 def require(condition: bool, message: str) -> None:
@@ -339,10 +345,9 @@ def header_completion_assessment_contract(
 ) -> HeaderCompletionAssessmentContract:
     """Load the closed, versioned set of inputs for header completion.
 
-    This contract intentionally names neither a provider audit nor a runtime
-    gate.  Those facts remain reportable downstream, but adding one here would
-    create a reverse dependency on later gates in the ordered qualification
-    chain in ``plan.md``.
+    Provider audits and runtime results remain separately reportable so that
+    installed-header correctness can be assessed when those other forms of
+    evidence are unavailable.
     """
 
     raw = foundation.get("header_completion_assessment")
@@ -652,7 +657,81 @@ def generic_reports(foundation: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "table": table,
             }
         )
+        if identifier in {"declaration-macro-visibility", "prototype-layout"}:
+            import header_abi_matrix
+            import header_declaration_macro_visibility_matrix
+
+            reader = (header_abi_matrix if identifier == "prototype-layout"
+                      else header_declaration_macro_visibility_matrix)
+            try:
+                reader.validate_checked_report(report, reader.load_contract())
+            except ValueError as error:
+                raise AggregateError(f"generic report {identifier} rejected: {error}") from error
+            rows = report.get("rows")
+            require(isinstance(rows, list), f"generic report {identifier} rows are invalid")
+            result[-1]["difference_rows"] = [
+                {"index": index, "row": copy.deepcopy(row)}
+                for index, row in enumerate(rows)
+                if isinstance(row, Mapping) and (
+                    row.get("separately_accounted_source_form_difference_count", 0) != 0
+                    if identifier == "declaration-macro-visibility"
+                    else row.get("comparison") == "mismatch"
+                )
+            ]
     return result
+
+
+def reviewed_cpp_linkage_differences(reports: Sequence[Mapping[str, Any]]) -> tuple[Mapping[str, Any], ...]:
+    """Join the exact reviewed source forms while retaining every raw difference.
+
+    These joins identify compiler declaration spellings only. The absence of a
+    matching oracle provider and the candidate's physical linker bindings must
+    be proved by the ordinary declaration ABI reader using its owned products.
+    """
+    from native_callable_declarations import REVIEWED_CPP_LINKAGE_DIFFERENCE, _reviewed_matrix_difference
+
+    by_id = {report["id"]: report for report in reports}
+    declaration = by_id["declaration-macro-visibility"]
+    prototype = by_id["prototype-layout"]
+    source_rows = declaration.get("difference_rows")
+    prototype_rows = prototype.get("difference_rows")
+    require(isinstance(source_rows, list) and isinstance(prototype_rows, list),
+            "header difference rows are missing")
+    source_count = sum(nonnegative_count(record["row"].get("separately_accounted_source_form_difference_count"),
+                                        "source-form row difference count") for record in source_rows)
+    require(source_count == declaration["summary"]["source_form_difference_count"],
+            "source-form row count differs from its retained summary")
+    require(len(prototype_rows) == prototype["summary"]["mismatch_row_count"],
+            "prototype row count differs from its retained summary")
+    reviewed = REVIEWED_CPP_LINKAGE_DIFFERENCE
+    joins = []
+    for profile in reviewed["profiles"]:
+        source = [record for record in source_rows if record["row"].get("header") == reviewed["header"]
+                  and record["row"].get("profile") == profile]
+        prototypes = [record for record in prototype_rows if record["row"].get("header") == reviewed["header"]
+                      and record["row"].get("profile") == profile]
+        if len(source) != 1 or len(prototypes) != 1:
+            continue
+        source_row, prototype_row = source[0]["row"], prototypes[0]["row"]
+        if not (
+            prototype_row.get("difference") == _reviewed_matrix_difference()
+            and prototype_row.get("candidate_status") == prototype_row.get("reference_status") == "ok"
+            and source_row.get("candidate_status") == source_row.get("reference_status") == "ok"
+            and source_row.get("comparison") == "matched"
+            and source_row.get("source_form_comparison") == "mismatch"
+            and source_row.get("candidate_only") == source_row.get("reference_only") == []
+            and source_row.get("matched_identity_count") == 14
+            and source_row.get("separately_accounted_source_form_difference_count") == 1
+        ):
+            continue
+        joins.append({
+            "header": reviewed["header"], "profile": profile,
+            "candidate_signature": reviewed["qual_type"] + "|mangled=" + reviewed["candidate_symbol"],
+            "reference_signature": reviewed["qual_type"] + "|mangled=" + reviewed["reference_symbol"],
+            "declaration_row": {"report": declaration["path"], **copy.deepcopy(source[0])},
+            "prototype_row": {"report": prototype["path"], **copy.deepcopy(prototypes[0])},
+        })
+    return tuple(joins)
 
 
 def load_context() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, str]], list[dict[str, Any]]]:
@@ -1160,6 +1239,7 @@ def header_completion_facts(
         missing_reference_declaration_record_count=missing_reference_records,
         undispositioned_candidate_callable_count=undispositioned_candidates,
         undispositioned_missing_reference_name_count=undispositioned_missing_names,
+        reviewed_cpp_linkage_differences=reviewed_cpp_linkage_differences(reports),
     )
 
 
@@ -1233,14 +1313,15 @@ def assess_header_foundation_completion(
         actual_installed == expected_installed
         and all(isinstance(value, bool) and value for _key, value in facts.installed_surface_requirements)
     )
+    accounted = accounted_cpp_linkage_difference_count(facts)
     requirements = (
         ("installed-surface", installed_surface_complete),
         ("declaration-identity", facts.declaration_identity_mismatch_rows == 0),
-        ("declaration-source-forms", facts.declaration_source_form_differences == 0),
+        ("declaration-source-forms", facts.declaration_source_form_differences == accounted),
         ("callable-visibility", facts.callable_visibility_mismatch_rows == 0),
         (
             "prototype-or-named-declarations",
-            facts.prototype_or_named_declaration_mismatch_rows == 0,
+            facts.prototype_or_named_declaration_mismatch_rows == accounted,
         ),
         ("record-byte-layouts", facts.record_byte_layout_mismatch_rows == 0),
         (
@@ -1264,6 +1345,25 @@ def assess_header_foundation_completion(
             for identifier, complete in requirements
         ],
     }
+
+
+def accounted_cpp_linkage_difference_count(facts: HeaderFoundationCompletionFacts) -> int:
+    """Count only exact, nonduplicated reviewed joins in the supplied facts."""
+    joins = facts.reviewed_cpp_linkage_differences
+    if not joins:
+        return 0
+    try:
+        source = [{"index": row["declaration_row"]["index"], "row": row["declaration_row"]["row"]} for row in joins]
+        prototype = [{"index": row["prototype_row"]["index"], "row": row["prototype_row"]["row"]} for row in joins]
+        reports = [
+            {"id": "declaration-macro-visibility", "path": joins[0]["declaration_row"]["report"],
+             "difference_rows": source, "summary": {"source_form_difference_count": len(source)}},
+            {"id": "prototype-layout", "path": joins[0]["prototype_row"]["report"],
+             "difference_rows": prototype, "summary": {"mismatch_row_count": len(prototype)}},
+        ]
+        return len(joins) if reviewed_cpp_linkage_differences(reports) == joins else 0
+    except (AggregateError, KeyError, TypeError):
+        return 0
 
 
 def build_header_completion_assessment(
@@ -1294,6 +1394,7 @@ def header_blocker_counts(
         for key, value in facts.installed_surface_requirements
         if key not in contract.installed_surface_completion_keys or value is not True
     )
+    accounted = accounted_cpp_linkage_difference_count(facts)
     return {
         "callable_ownership_routing_invalid": int(
             not exact_callable_ownership_routing(facts, contract)
@@ -1303,6 +1404,8 @@ def header_blocker_counts(
         "declaration_source_form_differences": facts.declaration_source_form_differences,
         "installed_surface_unmet_requirement_count": unmet_installed,
         "prototype_or_named_declaration_mismatch_rows": facts.prototype_or_named_declaration_mismatch_rows,
+        "unaccounted_declaration_source_form_differences": max(0, facts.declaration_source_form_differences - accounted),
+        "unaccounted_prototype_or_named_declaration_mismatch_rows": max(0, facts.prototype_or_named_declaration_mismatch_rows - accounted),
         "record_byte_layout_mismatch_rows": facts.record_byte_layout_mismatch_rows,
     }
 
@@ -1422,6 +1525,7 @@ def build_report() -> dict[str, Any]:
         "profile_obligation_count": int(control["profile_obligation_count"]),
         "promotion_ready": False,
         "public_support": False,
+        "reviewed_cpp_linkage_differences": list(facts.reviewed_cpp_linkage_differences),
         "schema": REPORT_SCHEMA,
         "scope": "finite native x86 header accounting with a pure header-completion assessment; downstream C-ABI provider/archive closure is separately reported and does not gate header completion, promotion, or public support",
         "target": TARGET,
@@ -1469,6 +1573,7 @@ def validate_report(report: Mapping[str, Any]) -> None:
         "profile_obligation_count",
         "promotion_ready",
         "public_support",
+        "reviewed_cpp_linkage_differences",
         "schema",
         "scope",
         "target",
@@ -1547,6 +1652,8 @@ def validate_report(report: Mapping[str, Any]) -> None:
     )
     require(report.get("blockers") == expected["blockers"], "aggregate report blockers drifted")
     require(report.get("blocker_counts") == expected["blocker_counts"], "aggregate report blocker counts drifted")
+    require(report.get("reviewed_cpp_linkage_differences") == expected["reviewed_cpp_linkage_differences"],
+            "aggregate report reviewed C++ linkage joins drifted")
 
 
 def render_report(report: Mapping[str, Any]) -> str:
