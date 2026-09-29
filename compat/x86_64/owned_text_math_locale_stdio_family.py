@@ -1401,6 +1401,13 @@ def admission_facts(root: Path, receipt_path: Path) -> dict[str, object]:
         pair: {kind: _snapshot_identity(root, products[pair][kind]) for kind in ("static", "dynamic")}
         for pair in PAIRS
     }
+    # A report checked early can change while later pairs are being joined.
+    # Retain each accepted physical identity for one final admission check.
+    checked_files = {paths[name]: inputs[name] for name in paths}
+    checked_directories = {
+        products[pair][kind]: product_seals[pair][kind]
+        for pair in PAIRS for kind in ("static", "dynamic")
+    }
     components = retained.get("components")
     require(isinstance(components, Mapping) and set(components) == set(COMPONENTS),
             "family admission component roster differs")
@@ -1433,20 +1440,34 @@ def admission_facts(root: Path, receipt_path: Path) -> dict[str, object]:
                         and same(record["evidence_root"],
                                  _snapshot_identity(root, request_pair.evidence_roots[pair])),
                         f"family admission {name} {pair} aggregate evidence changed")
+                checked_files[request_pair.receipt] = record["receipt"]
+                checked_directories[request_pair.evidence_roots[pair]] = record["evidence_root"]
             else:
                 require(same(record["report"], _identity(root, request_pair.reports[pair])),
                         f"family admission {name} {pair} report changed")
+                checked_files[request_pair.reports[pair]] = record["report"]
                 if request_pair.expected_inputs is not None:
                     require(same(record["expected_inputs"],
                                  _identity(root, request_pair.expected_inputs[pair])),
                             f"family admission {name} {pair} expected inputs changed")
-    require(same(current_source_identity(root), source), "family admission source changed")
-    return {
+                    checked_files[request_pair.expected_inputs[pair]] = record["expected_inputs"]
+    result = {
         "assessment": _identity(root, receipt),
         "source": source,
         "static_preparation": _identity(root, static_preparation),
         "dynamic_qualification": _identity(root, dynamic_qualification),
     }
+    checked_files.update({
+        receipt: result["assessment"],
+        static_preparation: result["static_preparation"],
+        dynamic_qualification: result["dynamic_qualification"],
+    })
+    for path, identity in checked_files.items():
+        require(same(_identity(root, path), identity), "declared file changed during admission")
+    for path, identity in checked_directories.items():
+        require(same(_snapshot_identity(root, path), identity), "declared product or evidence changed during admission")
+    require(same(current_source_identity(root), source), "family admission source changed")
+    return result
 
 
 def main() -> int:

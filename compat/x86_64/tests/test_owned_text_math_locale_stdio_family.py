@@ -354,6 +354,33 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
                 coordinator._product_pairs(self.fixture.root, matrix)
         replay.assert_not_called()
 
+    def test_admission_rejects_report_changed_after_its_pair_was_checked(self) -> None:
+        fixture = self.fixture
+        fixture.matrix_path.write_text(json.dumps(fixture.matrix()) + "\n", encoding="utf-8")
+        patches = fixture.patches(fixture.adapter_results())
+        output = Path(".work/coordinator/receipt.json")
+        (fixture.root / output.parent).mkdir()
+        with patches[0], patches[1], patches[2], patches[3]:
+            coordinator.execute(fixture.root, fixture.relative(fixture.request_path), output)
+
+        earlier = fixture.reports["locale"]["primary"]
+        later = fixture.reports["calendar"]["extracted"]
+        original = coordinator._identity
+        changed = False
+
+        def mutate_after_identity(root: Path, path: Path) -> dict[str, object]:
+            nonlocal changed
+            identity = original(root, path)
+            if path == later and not changed:
+                changed = True
+                earlier.write_text("changed after admission checked it\n", encoding="utf-8")
+            return identity
+
+        with patches[0], patches[2], mock.patch.object(coordinator, "_identity", side_effect=mutate_after_identity):
+            with self.assertRaisesRegex(coordinator.FamilyError, "changed during admission"):
+                coordinator.admission_facts(fixture.root, output)
+        self.assertTrue(changed)
+
     def test_stdio_engine_adapter_requires_the_frozen_symbol_surface(self) -> None:
         """Engine credit depends on the reader's frozen-ledger symbol check."""
         import owned_stdio_file_engine_receipt as engine
