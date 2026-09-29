@@ -114,6 +114,10 @@
       "runner": "compat/allocator/x86_64_m6_child_main_heap_reuse.py",
       "scope": "Source-built pinned-C/native-adapter child main-Heap reuse across three successive member threads: fixed Theap and child identity after reattachment, direct allocations from the first and second owners, shared regular-page and prepended OS-page visitor order, abandoned selection before and after the second owner exits, Heap ownership, abandoned-page accounting, and terminal release."
     },
+    "differential:nested-child-public-lifetime": {
+      "runner": "compat/allocator/x86_64_m6_nested_child.py",
+      "scope": "Source-built pinned-C/native-adapter public trace of a child member creating a second-level subprocess, a separate member allocating on its main Heap and visiting its Heap list, both owners exiting with live allocations, then nested-before-parent destruction. The pinned C internal check confirms the second-level child records the first child as its parent and stores its main Heap image on the first child's main Heap. The public mi_heap_of result checks the native child record and main Heap image against that parent Heap."
+    },
     "differential:main-abandoned-heap-visitor": {
       "runner": "compat/allocator/x86_64_m6_main_abandoned_visitor.py",
       "scope": "Source-built pinned-C/native-adapter mi_heap_visit_abandoned_blocks on the process main Heap after a worker's regular page enters its main-arena abandoned bitmap: exact selected bin membership with a separate non-abandoned same-size page, live/freed block filtering, area/block early stops, and null-Heap selection."
@@ -454,6 +458,7 @@
       "acceptance": "Subprocesses follow src/subproc.c: parent-metadata creation with child main Heap and metadata Theap, registry membership, thread admission refusal for threads already in another subprocess, Heap visitation under the Heap-list lock, statistics merge on destruction, and `mi_subproc_destroy` destroying non-main Heaps, the child main Heap, and the child arenas in source order while refusing the process main subprocess.",
       "evidence": [
         "differential:subprocess-lifecycle",
+        "differential:nested-child-public-lifetime",
         "differential:child-arena-fork-owner",
         "differential:child-heap-in-arena",
         "differential:public-heap-adapter",
@@ -462,7 +467,7 @@
         "unit:subprocess"
       ],
       "blocked_by": [
-        "mi_subproc_main, mi_subproc_current, mi_subproc_new, mi_subproc_destroy, mi_subproc_add_current_thread, and mi_subproc_visit_heaps are exported for root children of the process main subprocess; selected child non-main Heap allocation, zeroing, alignment, and reallocation paths match pinned C, while nested children, complete Heap entry and failure coverage, and subprocess statistics entries remain absent."
+        "mi_subproc_main, mi_subproc_current, mi_subproc_new, mi_subproc_destroy, mi_subproc_add_current_thread, and mi_subproc_visit_heaps are exported for root and nested children. A source-built public nested-child creation, allocation, Heap visit, owner-exit, and inner-before-outer teardown trace matches pinned C, including allocation of the inner record and main Heap image from the outer child. Complete Heap entry and failure coverage and subprocess statistics entries remain absent."
       ]
     },
     {
@@ -482,6 +487,7 @@
         "differential:heap-destroy-racing-detach",
         "differential:main-population-after-owner-exit",
         "differential:subprocess-lifecycle",
+        "differential:nested-child-public-lifetime",
         "differential:child-arena-fork-owner",
         "fault:heap-lifecycle"
       ],

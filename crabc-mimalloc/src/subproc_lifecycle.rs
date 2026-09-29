@@ -72,7 +72,7 @@ use crate::main_heap_page::{
 };
 use crate::main_heap_thread::{MainHeapThreadAttachment, MainHeapThreadAttachmentError};
 use crate::meta::{
-    ChildContextCreateFailure, ChildContextCreateStage, ChildContextOwner,
+    ChildContextCreateFailure, ChildContextCreateStage, ChildContextOwner, ChildParentMetadata,
     ChildHeapRelease, ChildHeapStorage, ChildMainHeapBindFailure, ChildMainHeapContextOwner,
     ChildMainHeapReleaseError,
     ChildMainHeapReleaseFailure, ChildMainHeapStage, ChildMetadataPageEngineError,
@@ -169,7 +169,12 @@ pub(crate) unsafe fn new_child<'main>(
     let metadata = attachment.parent_metadata_allocator();
     // SAFETY: forwarded registry, thread, and exclusion obligations.
     unsafe {
-        new_child_with(registry, metadata, parent, config, || {
+        new_child_with(
+            registry,
+            ChildParentMetadata::Process { allocator: metadata, main: parent, config },
+            parent,
+            config,
+            || {
             match heap_owner.allocate_child_heap_storage(attachment) {
                 Ok(Some(storage)) => Ok(ChildHeapStorage::Parent(storage)),
                 Ok(None) => Err(ChildSubprocessNewError::HeapAllocation),
@@ -188,7 +193,7 @@ pub(crate) unsafe fn new_child<'main>(
 /// child initializer or registry teardown races this creation.
 unsafe fn new_child_with<'heap>(
     registry: &'static SourceSubprocessRegistry,
-    metadata: core::pin::Pin<&'static crate::meta::MetaAllocator>,
+    metadata: ChildParentMetadata,
     parent: &'static crate::subproc::MainSubprocess,
     config: crate::os::MemoryConfig,
     allocate_heap: impl FnOnce() -> Result<ChildHeapStorage<'heap>, ChildSubprocessNewError>,
@@ -197,7 +202,7 @@ unsafe fn new_child_with<'heap>(
 
     // subproc.c:161-172: child image, then metadata Theap (whose failure
     // frees the child image first; `allocate` performs that rollback).
-    let mut context = match ChildContextOwner::allocate(metadata, parent, config) {
+    let mut context = match ChildContextOwner::allocate_with(metadata, parent, config) {
         Ok(context) => context,
         Err(ChildContextCreateFailure::Allocation { stage, error }) => {
             return released(match stage {
@@ -216,22 +221,24 @@ unsafe fn new_child_with<'heap>(
 
     // subproc.c:175 `mi_subproc_init`: parent, sequence, then list prepend.
     let memory = context.with_lease(|lease| lease.context_memory_id());
-    let registered = context
-        .with_image(|child| {
+    let registered = metadata.with_identity(|parent_identity| {
+        context.with_image(|child| {
             // SAFETY: the owner pins the exact parent-issued child image and
             // its Malloc provenance; the caller excludes racing registry
-            // teardown and the parent is the registry's main member.
-            unsafe { registry.initialize_child(child.as_ref().get_ref(), parent, memory) }
-        })
-        .unwrap_or(Err(SourceSubprocessRegistryError::InvalidMembership));
+            // teardown and the parent belongs to this registry.
+            unsafe { registry.initialize_child(child.as_ref().get_ref(), parent_identity, memory) }
+        }).unwrap_or(Err(SourceSubprocessRegistryError::InvalidMembership))
+    }).unwrap_or(Err(SourceSubprocessRegistryError::InvalidMembership));
     if let Err(error) = registered {
         // A refusal before list insertion leaves the image unpublished; a
         // lock failure after insertion makes `release_unpublished` refuse.
         return match context.release_unpublished() {
             Ok(()) => released(ChildSubprocessNewError::Registry(error)),
-            Err(failure) => Err(ChildSubprocessNewFailure::Retained(
-                ChildSubprocessRetained::Context { owner: failure.owner, stage: failure.stage },
-            )),
+            Err(failure) => {
+                Err(ChildSubprocessNewFailure::Retained(
+                    ChildSubprocessRetained::Context { owner: failure.owner, stage: failure.stage },
+                ))
+            },
         };
     }
 
@@ -246,9 +253,11 @@ unsafe fn new_child_with<'heap>(
             // run before this function returns the owner.
             return match unsafe { context.rollback_after_child_heap_allocation_failure(registry) } {
                 Ok(()) => released(error),
-                Err(failure) => Err(ChildSubprocessNewFailure::Retained(
-                    ChildSubprocessRetained::Context { owner: failure.owner, stage: failure.stage },
-                )),
+                Err(failure) => {
+                    Err(ChildSubprocessNewFailure::Retained(
+                        ChildSubprocessRetained::Context { owner: failure.owner, stage: failure.stage },
+                    ))
+                },
             };
         }
     };
@@ -699,7 +708,8 @@ pub(crate) struct NativeChildSubprocess {
     lock: crate::lock::PrivateLock,
     owner: core::cell::UnsafeCell<Option<ChildMainHeapContextOwner<'static>>>,
     /// This record's own parent-metadata block, moved out to free it.
-    storage: core::cell::UnsafeCell<Option<crate::meta::MetaAllocation<'static>>>,
+    storage: core::cell::UnsafeCell<Option<crate::meta::ChildMetadataAllocation>>,
+    parent_metadata: ChildParentMetadata,
     registry: &'static SourceSubprocessRegistry,
     /// Threads that still belonged to the child when `mi_subproc_destroy`
     /// destroyed it under them. The record outlives the child until the
@@ -758,7 +768,7 @@ impl NativeSubprocessId {
     ///
     /// # Safety
     /// As for [`Self::record`].
-    unsafe fn with_owner<R>(
+    pub(crate) unsafe fn with_owner<R>(
         self,
         operation: impl FnOnce(&mut Option<ChildMainHeapContextOwner<'static>>) -> R,
     ) -> Result<R, NativeSubprocessError> {
@@ -791,12 +801,16 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
     let metadata = crate::meta::MetaAllocator::global();
     // The Rust record is allocated first so that no child state exists when
     // it fails; source has no such record.
-    let mut storage = metadata
-        .zalloc_for_main_subprocess(config, parent, core::mem::size_of::<NativeChildSubprocess>())
+    let parent_metadata = match current_child_id() {
+        Some(id) => ChildParentMetadata::Child { id, binding },
+        None => ChildParentMetadata::Process { allocator: metadata, main: parent, config },
+    };
+    let mut storage = parent_metadata
+        .allocate(core::mem::size_of::<NativeChildSubprocess>())
         .map_err(NativeSubprocessError::RecordAllocation)?;
     let record = storage.pointer().cast::<NativeChildSubprocess>();
     if record.as_ptr().addr() % core::mem::align_of::<NativeChildSubprocess>() != 0 {
-        return match metadata.free(&mut storage) {
+        return match parent_metadata.free(&mut storage) {
             Ok(()) => Err(NativeSubprocessError::RecordAllocation(crate::meta::MetaError::InitializationRetained)),
             Err(_) => Err(NativeSubprocessError::Retained),
         };
@@ -805,7 +819,7 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
     // READY; `metadata` is the parent's allocator; the native allocation runs
     // on this thread; nothing else can observe the new child yet.
     let child = unsafe {
-        new_child_with(registry, metadata, parent, config, || {
+        new_child_with(registry, parent_metadata, parent, config, || {
             crate::meta::NativeChildHeapImage::allocate()
                 .map(ChildHeapStorage::Native)
                 .ok_or(ChildSubprocessNewError::HeapAllocation)
@@ -814,13 +828,15 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
     let child = match child {
         Ok(child) => child,
         Err(ChildSubprocessNewFailure::Released(error)) => {
-            return match metadata.free(&mut storage) {
+            return match parent_metadata.free(&mut storage) {
                 Ok(()) => Err(NativeSubprocessError::New(error)),
                 Err(_) => Err(NativeSubprocessError::Retained),
             };
         }
         // The retained owners are dropped without freeing anything.
-        Err(ChildSubprocessNewFailure::Retained(_)) => return Err(NativeSubprocessError::Retained),
+        Err(ChildSubprocessNewFailure::Retained(_)) => {
+            return Err(NativeSubprocessError::Retained);
+        }
     };
     // SAFETY: the block is exclusively owned, zeroed, large enough, and
     // aligned for the record, which is written whole before the id escapes.
@@ -829,6 +845,7 @@ pub(crate) fn native_subproc_new() -> Result<NativeSubprocessId, NativeSubproces
             lock: crate::lock::PrivateLock::new(),
             owner: core::cell::UnsafeCell::new(Some(child)),
             storage: core::cell::UnsafeCell::new(Some(storage)),
+            parent_metadata,
             registry,
             orphans: core::cell::UnsafeCell::new(0),
         });
@@ -1721,7 +1738,7 @@ unsafe fn destroy_record(
 unsafe fn free_record(record: &'static NativeChildSubprocess) -> Result<(), NativeSubprocessError> {
     // SAFETY: forwarded exclusivity; the owner cell is empty.
     let mut storage = unsafe { (*record.storage.get()).take() }.ok_or(NativeSubprocessError::Retained)?;
-    crate::meta::MetaAllocator::global().free(&mut storage).map_err(|_| NativeSubprocessError::Retained)
+    record.parent_metadata.free(&mut storage).map_err(|_| NativeSubprocessError::Retained)
 }
 
 #[cfg(test)]

@@ -62,6 +62,40 @@ impl SourceSubprocessMembership {
             )
     }
 
+    /// Follows the immutable source parent chain of a registered child.
+    ///
+    /// # Safety
+    /// Every ancestor in the chain remains allocated while this relation is
+    /// inspected. A child whose parent has been destroyed while it still
+    /// uses parent metadata violates the source subprocess lifetime rule.
+    pub(super) unsafe fn is_descendant_of(
+        &self, ancestor: &SubprocessIdentity, child_is_main: bool,
+    ) -> bool {
+        if child_is_main || !self.initialized.load(Ordering::Acquire)
+            || !ancestor.source_membership.initialized.load(Ordering::Acquire) {
+            return false;
+        }
+        let registry = self.registry.load(Ordering::Acquire);
+        if registry.is_null() || ancestor.source_membership.registry.load(Ordering::Acquire) != registry {
+            return false;
+        }
+        // Each source insertion assigns a fresh sequence before publication,
+        // so no valid parent chain can contain more links than this count.
+        let limit = unsafe { &*registry }.total_count.load(Ordering::Acquire);
+        let mut current = unsafe { *self.parent.get() };
+        for _ in 0..limit {
+            let Some(identity) = NonNull::new(current) else { return false };
+            if identity.as_ptr() == ancestor.as_ptr() { return true; }
+            // SAFETY: the caller retains every parent image, and each
+            // membership parent was Release-published before registration.
+            let member = unsafe { &identity.as_ref().source_membership };
+            if !member.initialized.load(Ordering::Acquire)
+                || member.registry.load(Ordering::Acquire) != registry { return false; }
+            current = unsafe { *member.parent.get() };
+        }
+        false
+    }
+
     pub(super) fn is_initialized(&self) -> bool {
         self.initialized.load(Ordering::Acquire)
     }
@@ -138,7 +172,7 @@ impl SourceSubprocessRegistry {
     pub(crate) unsafe fn initialize_child(
         &'static self,
         subprocess: &ChildSubprocessImage,
-        parent: &MainSubprocess,
+        parent: &SubprocessIdentity,
         memory: MemoryId,
     ) -> Result<(), SourceSubprocessRegistryError> {
         let identity = subprocess.identity();
@@ -174,7 +208,7 @@ impl SourceSubprocessRegistry {
         // if a later lock boundary must retain the partially initialized node.
         unsafe {
             *member.memory.get() = memory;
-            *member.parent.get() = parent.identity_ptr();
+            *member.parent.get() = parent.as_ptr();
             *member.sequence.get() = self.total_count.fetch_add(1, Ordering::Relaxed);
         }
         let guard = self.lock.lock().map_err(SourceSubprocessRegistryError::Lock)?;
@@ -330,6 +364,37 @@ impl SubprocessIdentity {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nested_child_membership_reaches_only_live_ancestors() {
+        let registry = std::boxed::Box::leak(std::boxed::Box::new(SourceSubprocessRegistry::new()));
+        let main = std::boxed::Box::leak(std::boxed::Box::new(MainSubprocess::new()));
+        let outer = std::boxed::Box::leak(std::boxed::Box::new(ChildSubprocessImage::new()));
+        let inner = std::boxed::Box::leak(std::boxed::Box::new(ChildSubprocessImage::new()));
+        // SAFETY: these pinned images remain live and no other thread uses
+        // their isolated registry through the reverse-order unlink.
+        unsafe {
+            registry.initialize_main(main).unwrap();
+            registry.initialize_child(
+                outer, main.identity(), MemoryId::malloc(
+                    core::ptr::from_ref(outer).cast_mut().cast(), size_of::<ChildSubprocessImage>(), true,
+                ),
+            ).unwrap();
+            registry.initialize_child(
+                inner, outer.identity(), MemoryId::malloc(
+                    core::ptr::from_ref(inner).cast_mut().cast(), size_of::<ChildSubprocessImage>(), true,
+                ),
+            ).unwrap();
+            assert!(inner.identity().is_registered_child_of(outer.identity()));
+            assert!(!inner.identity().is_registered_child_of(main.identity()));
+            assert!(inner.identity().is_registered_descendant_of(main.identity()));
+            assert!(inner.identity().is_registered_descendant_of(outer.identity()));
+            assert!(!outer.identity().is_registered_descendant_of(inner.identity()));
+            registry.unlink_child_terminal(inner).unwrap();
+            assert!(!inner.identity().is_registered_descendant_of(main.identity()));
+            registry.unlink_child_terminal(outer).unwrap();
+        }
+    }
 
     #[test]
     fn child_registration_prepends_and_terminal_unlink_preserves_owner_image() {

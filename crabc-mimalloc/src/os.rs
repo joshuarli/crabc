@@ -918,7 +918,7 @@ impl<'a> VmProcess<'a> {
     }
 }
 
-/// Borrowed VM view for one registered child subprocess.
+/// Borrowed VM view for one registered descendant of the process main.
 ///
 /// The policy comes from the owning process, while accounting, arena
 /// ownership, and source sequence selection use the pinned child identity.
@@ -950,7 +950,9 @@ impl<'child> ChildVmProcess<'child> {
         }
         let image: &'child crate::subproc::ChildSubprocessImage = core::pin::Pin::get_ref(child);
         let identity: &'child crate::subproc::SubprocessIdentity = image.identity();
-        if !identity.is_registered_child_of(parent_identity) {
+        // SAFETY: a live child metadata route retains every subprocess in
+        // its source parent chain for this borrowed VM operation.
+        if !unsafe { identity.is_registered_descendant_of(parent_identity) } {
             return Err(ChildVmProcessError::NotRegisteredChild);
         }
         Ok(Self {

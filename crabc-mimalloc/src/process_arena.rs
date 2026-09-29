@@ -1506,7 +1506,7 @@ pub(crate) struct ChildProcessPageArenaLease<'child> {
 }
 
 impl<'child> ChildProcessPageArenaLease<'child> {
-    /// Joins the canonical parent's published map to one registered child.
+    /// Joins the canonical process PageMap to one registered descendant.
     /// The child's own arena backing is selected through its pinned identity.
     pub(crate) fn join(
         page_map: ProcessPageMapRoot,
@@ -1524,7 +1524,9 @@ impl<'child> ChildProcessPageArenaLease<'child> {
         page_map
             .memory_config()
             .map_err(ChildProcessPageArenaLeaseError::PageMap)?;
-        if !child.identity().is_registered_child_of(child.parent_identity()) {
+        // SAFETY: the child's live metadata route retains every subprocess
+        // between its image and the process PageMap owner.
+        if !unsafe { child.identity().is_registered_descendant_of(child.parent_identity()) } {
             return Err(ChildProcessPageArenaLeaseError::ChildNotRegistered);
         }
         Ok(Self { page_map, child })

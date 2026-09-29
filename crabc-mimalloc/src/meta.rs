@@ -1203,32 +1203,260 @@ pub(crate) struct MetadataEngine<'owner> {
 /// engine with a shorter owner lifetime in their reclaimable context.
 pub(crate) type MetaAllocator = MetadataEngine<'static>;
 
+/// The detached metadata Theap that issued a child subprocess's context,
+/// metadata Theap, and native record. A nested child's parent must remain
+/// live until those allocations have all been released.
+#[derive(Clone, Copy)]
+pub(crate) enum ChildParentMetadata {
+    Process {
+        allocator: Pin<&'static MetaAllocator>,
+        main: &'static MainSubprocess,
+        config: MemoryConfig,
+    },
+    Child {
+        id: crate::subproc::lifecycle::NativeSubprocessId,
+        binding: crate::process_init::ProcessMainBackingBinding,
+    },
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ChildMetadataRole { Fresh, Context, Theap, Released }
+
+/// A linear metadata block from either the process detached Theap or a
+/// retained child detached Theap. The route above owns release authority;
+/// this token owns the exact pointer, extent, and typed-image state.
+#[must_use = "child metadata must be released through its parent"]
+pub(crate) enum ChildMetadataAllocation {
+    Process(MetaAllocation<'static>),
+    Child { pointer: NonNull<u8>, size: usize, role: ChildMetadataRole },
+}
+
+impl ChildMetadataAllocation {
+    pub(crate) fn pointer(&self) -> NonNull<u8> {
+        match self { Self::Process(block) => block.pointer(), Self::Child { pointer, .. } => *pointer }
+    }
+
+    pub(crate) fn memory_id(&self) -> MemoryId {
+        match self {
+            Self::Process(block) => block.memory_id(),
+            Self::Child { pointer, size, .. } => MemoryId::malloc(pointer.as_ptr(), *size, true),
+        }
+    }
+
+    fn initialize_child_subprocess_image(&mut self) -> Option<Pin<&mut crate::subproc::ChildSubprocessImage>> {
+        match self {
+            Self::Process(block) => block.initialize_child_subprocess_image(),
+            Self::Child { pointer, size, role } => {
+                type Image = crate::subproc::ChildSubprocessImage;
+                if *role != ChildMetadataRole::Fresh || *size != size_of::<Image>()
+                    || pointer.as_ptr().addr() % align_of::<Image>() != 0 { return None; }
+                // SAFETY: this fresh zeroed exact block is uniquely owned,
+                // aligned, and retained until the child finishes teardown.
+                unsafe { pointer.as_ptr().cast::<Image>().write(Image::new()) };
+                *role = ChildMetadataRole::Context;
+                // SAFETY: the linear token retains this exact pinned image.
+                Some(unsafe { Pin::new_unchecked(&mut *pointer.as_ptr().cast::<Image>()) })
+            }
+        }
+    }
+
+    fn child_subprocess_image_mut(&mut self) -> Option<Pin<&mut crate::subproc::ChildSubprocessImage>> {
+        match self {
+            Self::Process(block) => block.child_subprocess_image_mut(),
+            Self::Child { pointer, role: ChildMetadataRole::Context, .. } => {
+                // SAFETY: only the initializer above assigns this role, and
+                // this mutable token retains its one image allocation.
+                Some(unsafe { Pin::new_unchecked(&mut *pointer.as_ptr().cast()) })
+            }
+            Self::Child { .. } => None,
+        }
+    }
+
+    fn initialize_dynamic_theap_metadata(&mut self) -> Option<&mut Theap> {
+        match self {
+            Self::Process(block) => block.initialize_dynamic_theap_metadata(),
+            Self::Child { pointer, size, role } => {
+                if *role != ChildMetadataRole::Fresh || *size != size_of::<Theap>()
+                    || pointer.as_ptr().addr() % align_of::<Theap>() != 0 { return None; }
+                // SAFETY: the fresh exact block is uniquely retained and
+                // receives a complete empty source image before projection.
+                unsafe { pointer.as_ptr().cast::<Theap>().write(Theap::empty()) };
+                let theap = unsafe { &mut *pointer.as_ptr().cast::<Theap>() };
+                if !theap.set_dynamic_metadata_memid(MemoryId::malloc(pointer.as_ptr(), *size, true)) {
+                    return None;
+                }
+                *role = ChildMetadataRole::Theap;
+                Some(theap)
+            }
+        }
+    }
+
+    fn dynamic_theap_mut(&mut self) -> Option<&mut Theap> {
+        match self {
+            Self::Process(block) => block.dynamic_theap_mut(),
+            Self::Child { pointer, role: ChildMetadataRole::Theap, .. } => {
+                // SAFETY: the role records the complete image initialization;
+                // the unique token retains the live allocation.
+                Some(unsafe { &mut *pointer.as_ptr().cast::<Theap>() })
+            }
+            Self::Child { .. } => None,
+        }
+    }
+
+    fn dynamic_theap_pointer(&self) -> Option<NonNull<Theap>> {
+        match self {
+            Self::Process(block) => block.dynamic_theap_pointer(),
+            Self::Child { pointer, role: ChildMetadataRole::Theap, .. } => Some(pointer.cast()),
+            Self::Child { .. } => None,
+        }
+    }
+
+    /// # Safety
+    /// The caller excludes every concurrent Theap or intrusive-list user.
+    unsafe fn is_unlinked_dynamic_theap(&mut self) -> bool {
+        self.dynamic_theap_mut().is_some_and(|theap| unsafe { theap.is_unlinked_dynamic_metadata() })
+    }
+}
+
+impl ChildParentMetadata {
+    pub(crate) fn with_identity<R>(self, operation: impl FnOnce(&crate::subproc::SubprocessIdentity) -> R) -> Result<R, MetaError> {
+        match self {
+            Self::Process { main, .. } => Ok(operation(main.identity())),
+            Self::Child { id, .. } => {
+                // SAFETY: a nested child retains its parent through teardown.
+                unsafe { id.with_owner(|owner| owner.as_mut().and_then(|child| {
+                    child.with_child_image(|image| operation(image.identity()))
+                })) }.map_err(|_| MetaError::Closed)?.ok_or(MetaError::Closed)
+            }
+        }
+    }
+
+    pub(crate) fn allocate(self, size: usize) -> Result<ChildMetadataAllocation, MetaError> {
+        match self {
+            Self::Process { allocator, main, config } => allocator
+                .zalloc_for_main_subprocess(config, main, size).map(ChildMetadataAllocation::Process),
+            Self::Child { id, binding } => {
+                // SAFETY: the parent id stays live while the new child and
+                // its exact metadata allocations are being created.
+                unsafe { id.with_owner(|owner| {
+                    owner.as_mut().ok_or(MetaError::Closed)?
+                        .with_metadata_page_engine(binding, |_image, engine| engine.allocate_zeroed(size))
+                        .map_err(|_| MetaError::InitializationRetained)?
+                        .map(|pointer| ChildMetadataAllocation::Child {
+                            pointer, size, role: ChildMetadataRole::Fresh,
+                        }).ok_or(MetaError::AllocationUnavailable)
+                }) }.map_err(|_| MetaError::Closed)?
+            }
+        }
+    }
+
+    pub(crate) fn free(self, allocation: &mut ChildMetadataAllocation) -> Result<(), MetaError> {
+        match (self, allocation) {
+            (Self::Process { allocator, .. }, ChildMetadataAllocation::Process(block)) => allocator.free(block),
+            (Self::Child { id, binding }, ChildMetadataAllocation::Child { pointer, role, .. })
+                if *role != ChildMetadataRole::Released => {
+                // SAFETY: this route minted the exact linear block; the
+                // caller ended every typed projection and intrusive edge.
+                let freed = unsafe { id.with_owner(|owner| {
+                    owner.as_mut().ok_or(MetaError::Closed)?
+                        .with_metadata_page_engine(binding, |_image, engine| unsafe { engine.free(*pointer) })
+                        .map_err(|_| MetaError::InitializationRetained)?
+                        .map_err(MetaError::Free)
+                }) }.map_err(|_| MetaError::Closed)?;
+                freed?;
+                *role = ChildMetadataRole::Released;
+                Ok(())
+            }
+            _ => Err(MetaError::ForeignOwner),
+        }
+    }
+
+    /// Attaches a new child's detached metadata Theap to its Heap and the
+    /// actual parent's detached TLD while the parent metadata route is held.
+    ///
+    /// # Safety
+    /// Both child images are pinned and uniquely owned; the parent remains
+    /// live through the child's subsequent detach and release.
+    pub(crate) unsafe fn initialize_child_metadata_theap(
+        self, child_heap: &mut Heap, child_theap: &mut Theap,
+    ) -> Result<(), ChildMetadataTheapError> {
+        match self {
+            Self::Process { allocator, main, config } => unsafe {
+                allocator.initialize_child_metadata_theap(config, main, child_heap, child_theap)
+            },
+            Self::Child { id, .. } => {
+                // SAFETY: the live parent record serializes its detached
+                // metadata Theap and TLD for the complete list insertion.
+                unsafe { id.with_owner(|owner| {
+                    owner.as_mut().ok_or(ChildMetadataTheapError::Metadata(MetaError::Closed))?
+                        .with_metadata_theap(|parent_theap| {
+                            let tld = parent_theap.deferred_free_tld()
+                                .ok_or(ChildMetadataTheapError::Metadata(MetaError::InitializationRetained))?;
+                            // SAFETY: the parent metadata Theap retains this
+                            // detached TLD while the record lock is held.
+                            unsafe { child_theap.initialize_child_metadata(child_heap, &mut *tld.as_ptr()) }
+                                .map_err(ChildMetadataTheapError::Theap)
+                        })
+                        .ok_or(ChildMetadataTheapError::Metadata(MetaError::InitializationRetained))?
+                }) }.map_err(|_| ChildMetadataTheapError::Metadata(MetaError::Closed))?
+            }
+        }
+    }
+
+    /// Removes the child's metadata Theap from its parent's detached TLD
+    /// before its exact metadata allocation is freed.
+    ///
+    /// # Safety
+    /// The child is quiescent, its Heap and Theap remain pinned, and no typed
+    /// projection of `child_theap` is live during the raw list transition.
+    pub(crate) unsafe fn detach_child_metadata_theap(
+        self, child_heap: &mut Heap, child_theap: NonNull<Theap>,
+    ) -> Result<(), ChildMetadataTheapError> {
+        match self {
+            Self::Process { allocator, main, config } => unsafe {
+                allocator.detach_child_metadata_theap(config, main, child_heap, child_theap)
+            },
+            Self::Child { id, .. } => {
+                // SAFETY: the parent record lock excludes every operation on
+                // its detached metadata Theap and TLD during the unlink.
+                unsafe { id.with_owner(|owner| {
+                    owner.as_mut().ok_or(ChildMetadataTheapError::Metadata(MetaError::Closed))?
+                        .with_metadata_theap(|parent_theap| {
+                            let tld = parent_theap.deferred_free_tld()
+                                .ok_or(ChildMetadataTheapError::Metadata(MetaError::InitializationRetained))?;
+                            // SAFETY: the caller's quiescence and parent lock
+                            // preserve both intrusive lists through unlink.
+                            unsafe { (&mut *tld.as_ptr()).detach_one_child_theap_for_heap_destroy(
+                                child_heap, child_theap.as_ptr(),
+                            ) }.map_err(ChildMetadataTheapError::TheapList)
+                        })
+                        .ok_or(ChildMetadataTheapError::Metadata(MetaError::InitializationRetained))?
+                }) }.map_err(|_| ChildMetadataTheapError::Metadata(MetaError::Closed))?
+            }
+        }
+    }
+}
+
 /// Exact parent-issued storage for one reclaimable child source context.
 ///
-/// The parent metadata engine and process-main identity are process-lived;
-/// this owner value and both child allocations are not. The capabilities stay
+/// The process metadata engine is process-lived, while a nested parent and
+/// its metadata blocks remain live only through the child's lifetime. The
+/// capabilities stay
 /// outside the allocated child image, so releasing the context can never
 /// invalidate the value that authorizes that release. Child Heap creation
 /// and its own metadata engine are later source transitions and are not
 /// represented by this owner yet.
-/// This deliberately covers only a root child allocated by the process-main
-/// metadata engine; nested-child parent metadata and user-Heap allocation are
-/// not accepted by this API.
-///
-/// The production API stops at the unregistered preparation stage. The
-/// lifecycle regression may drive the exact later intrusive transitions
-/// through a lease to prove the retained allocations survive them, but this
-/// type does not yet construct a child Heap or publish child readiness.
+/// The process-main route and a retained child-parent route both preserve
+/// the exact issuing metadata Theap through the child's release.
 #[must_use = "a child context owner must be retained through child teardown"]
 pub(crate) struct ChildContextOwner {
-    parent_metadata: Pin<&'static MetaAllocator>,
+    parent_metadata: ChildParentMetadata,
     parent_subprocess: &'static MainSubprocess,
     config: MemoryConfig,
-    // `'static` describes the process-lived allocator that minted this
-    // capability, not the child bytes' validity. The capability's live state
-    // and this owner's borrow-gated projections end at explicit release.
-    context: MetaAllocation<'static>,
-    metadata_theap: Option<MetaAllocation<'static>>,
+    // The capability's live state and this owner's borrow-gated projections
+    // end at explicit release.
+    context: ChildMetadataAllocation,
+    metadata_theap: Option<ChildMetadataAllocation>,
     image_initialized: bool,
     terminal: bool,
 }
@@ -1279,12 +1507,19 @@ impl ChildContextOwner {
         parent_subprocess: &'static MainSubprocess,
         config: MemoryConfig,
     ) -> Result<Self, ChildContextCreateFailure> {
+        Self::allocate_with(
+            ChildParentMetadata::Process { allocator: parent_metadata, main: parent_subprocess, config },
+            parent_subprocess, config,
+        )
+    }
+
+    pub(crate) fn allocate_with(
+        parent_metadata: ChildParentMetadata,
+        parent_subprocess: &'static MainSubprocess,
+        config: MemoryConfig,
+    ) -> Result<Self, ChildContextCreateFailure> {
         let mut context = parent_metadata
-            .zalloc_for_main_subprocess(
-                config,
-                parent_subprocess,
-                size_of::<crate::subproc::ChildSubprocessImage>(),
-            )
+            .allocate(size_of::<crate::subproc::ChildSubprocessImage>())
             .map_err(|error| ChildContextCreateFailure::Allocation {
                 stage: ChildContextCreateStage::AllocateContext,
                 error,
@@ -1308,11 +1543,7 @@ impl ChildContextOwner {
             });
         }
 
-        let metadata_theap = match parent_metadata.zalloc_for_main_subprocess(
-            config,
-            parent_subprocess,
-            size_of::<Theap>(),
-        ) {
+        let metadata_theap = match parent_metadata.allocate(size_of::<Theap>()) {
             Ok(allocation) => allocation,
             Err(error) => {
                 return match parent_metadata.free(&mut owner.context) {
@@ -1333,7 +1564,7 @@ impl ChildContextOwner {
         let theap_initialized = owner
             .metadata_theap
             .as_mut()
-            .and_then(MetaAllocation::initialize_dynamic_theap_metadata)
+            .and_then(ChildMetadataAllocation::initialize_dynamic_theap_metadata)
             .is_some();
         if !theap_initialized {
             return Err(ChildContextCreateFailure::Retained {
@@ -1476,13 +1707,14 @@ impl ChildContextOwner {
                 error: MetaError::InitializationRetained,
             });
         }
-        let parent = self.parent_subprocess;
-        let valid = self.with_image(|image| {
-            let identity = image.identity();
-            identity.is_registered_child_of(parent)
-                && identity.main_heap_publication_state()
-                    == crate::subproc::MainHeapPublicationState::Absent
-                && !identity.has_published_metadata_theap()
+        let valid = self.parent_metadata.with_identity(|parent| {
+            self.with_image(|image| {
+                let identity = image.identity();
+                identity.is_registered_child_of(parent)
+                    && identity.main_heap_publication_state()
+                        == crate::subproc::MainHeapPublicationState::Absent
+                    && !identity.has_published_metadata_theap()
+            }).unwrap_or(false)
         }).unwrap_or(false);
         if !valid {
             return Err(ChildContextReleaseFailure {
@@ -1598,9 +1830,8 @@ pub(crate) enum ChildHeapRelease<'a, 'heap> {
     /// Process destruction (`_mi_subprocs_unsafe_destroy_all`) under
     /// permanent terminal quiescence, when the native entry points are
     /// closed. The `Native` image is not freed block by block: it stays a
-    /// live block on its process-main page, which the main-subprocess
-    /// destruction that follows treats like every other main page (released
-    /// with the main arenas, or retained if OS-backed). Source frees
+    /// live block on its parent's page, which later parent destruction
+    /// releases with that parent's pages. Source frees
     /// it with `_mi_free_subproc_safe` just before; in the release statistics
     /// profile that free changes no statistic unless it empties a page that
     /// is not its queue's only page, which is then freed early.
@@ -2946,13 +3177,14 @@ impl ChildContextOwner {
         mut self,
         mut heap: ChildHeapStorage<'heap>,
     ) -> Result<ChildMainHeapContextOwner<'heap>, ChildMainHeapBindFailure<'heap>> {
-        let parent = self.parent_subprocess;
-        let registered = self.with_image(|image| {
-            let identity = image.identity();
-            identity.is_registered_child_of(parent)
-                && identity.main_heap_publication_state()
-                    == crate::subproc::MainHeapPublicationState::Absent
-                && !identity.has_published_metadata_theap()
+        let registered = self.parent_metadata.with_identity(|parent| {
+            self.with_image(|image| {
+                let identity = image.identity();
+                identity.is_registered_child_of(parent)
+                    && identity.main_heap_publication_state()
+                        == crate::subproc::MainHeapPublicationState::Absent
+                    && !identity.has_published_metadata_theap()
+            }).unwrap_or(false)
         }).unwrap_or(false);
         let error = if self.terminal || !registered {
             Some(ChildMainHeapBindError::ChildNotRegistered)
@@ -2960,8 +3192,14 @@ impl ChildContextOwner {
             ChildHeapStorage::Parent(allocation) => {
                 allocation.was_allocated_by(self.parent_subprocess.identity())
             }
-            // The native runtime allocates only in the process main subprocess.
-            ChildHeapStorage::Native(_) => self.parent_subprocess.is_process_main(),
+            // The native runtime allocates on the caller's current Heap;
+            // verify the exact page Heap before initializing the image.
+            ChildHeapStorage::Native(image) => self.parent_metadata.with_identity(|parent| {
+                // SAFETY: the image token retains this live allocation and
+                // no operation moves its containing page during binding.
+                (unsafe { crate::source_heap_api::heap_of(image.pointer.as_ptr().cast()) })
+                    == parent.ready_main_heap_pointer().cast()
+            }).unwrap_or(false),
         } {
             Some(ChildMainHeapBindError::ParentMismatch)
         } else if !heap.initialize_empty_image() {
@@ -3050,7 +3288,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     ) -> Option<ChildCreatedFacts> {
         let heap = self.heap_storage.as_ref()?.pointer_for_identity();
         let metadata_theap = self.context.metadata_theap.as_ref()
-            .and_then(MetaAllocation::dynamic_theap_pointer)?;
+            .and_then(ChildMetadataAllocation::dynamic_theap_pointer)?;
         let parent_metadata_theap = NonNull::new(parent.identity().test_published_metadata_theap())?;
         self.context.with_image(|child| {
             let identity = child.identity();
@@ -3112,7 +3350,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         let has_heap_projection = self.heap_storage.as_mut()
             .is_some_and(|heap| heap.with_heap(|_| ()).is_some());
         let Some(theap) = self.context.metadata_theap.as_ref()
-            .and_then(MetaAllocation::dynamic_theap_pointer) else {
+            .and_then(ChildMetadataAllocation::dynamic_theap_pointer) else {
             return (has_heap_projection, false, false);
         };
         let published = self.context.with_image(|child| {
@@ -3715,7 +3953,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
         }
         let heap = self.main_heap_pointer().ok_or(ChildMetadataPageEngineError::InvalidTransition)?;
         let metadata_theap = self.context.metadata_theap.as_ref()
-            .and_then(MetaAllocation::dynamic_theap_pointer);
+            .and_then(ChildMetadataAllocation::dynamic_theap_pointer);
         let mut result = Ok(());
         let visited = self.context.with_image(|child| {
             // SAFETY: terminal quiescence keeps the Theap list unchanged and
@@ -3826,12 +4064,11 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     /// issued both metadata capabilities.
     pub(crate) unsafe fn initialize_heap_and_metadata_theap(
         &mut self,
-        config: MemoryConfig,
+        _config: MemoryConfig,
     ) -> Result<(), ChildMetadataTheapError> {
         if self.stage != ChildMainHeapStage::Registered || self.heap_storage.is_none() {
             return Err(ChildMetadataTheapError::Metadata(MetaError::InitializationRetained));
         }
-        let parent = self.context.parent_subprocess;
         let parent_metadata = self.context.parent_metadata;
         let Self { context, heap_storage, .. } = self;
         let heap = heap_storage.as_mut().expect("checked child Heap allocation");
@@ -3847,16 +4084,15 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                 self.stage = ChildMainHeapStage::Terminal;
                 return Err(ChildMetadataTheapError::Metadata(MetaError::InitializationRetained));
             }
-            None => return Err(ChildMetadataTheapError::Metadata(MetaError::InitializationRetained)),
+            None => {
+                return Err(ChildMetadataTheapError::Metadata(MetaError::InitializationRetained));
+            },
         }
         let attached = heap.with_heap(|mut heap_image| {
             context.with_lease(|mut lease| {
                 lease.with_metadata_theap(|theap| unsafe {
                     parent_metadata.initialize_child_metadata_theap(
-                        config,
-                        parent,
-                        heap_image.as_mut().get_unchecked_mut(),
-                        theap,
+                        heap_image.as_mut().get_unchecked_mut(), theap,
                     )
                 })
             })
@@ -3873,7 +4109,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             }
         }
         let Some(theap) = context.metadata_theap.as_ref()
-            .and_then(MetaAllocation::dynamic_theap_pointer) else {
+            .and_then(ChildMetadataAllocation::dynamic_theap_pointer) else {
             self.stage = ChildMainHeapStage::Terminal;
             return Err(ChildMetadataTheapError::Metadata(MetaError::InitializationRetained));
         };
@@ -3938,7 +4174,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             return Err(ChildMainHeapReleaseError::InvalidTransition);
         }
         let metadata_theap = self.context.metadata_theap.as_ref()
-            .and_then(MetaAllocation::dynamic_theap_pointer);
+            .and_then(ChildMetadataAllocation::dynamic_theap_pointer);
         loop {
             let Some(storage) = self.heap_storage.as_mut() else {
                 self.stage = ChildMainHeapStage::Terminal;
@@ -3993,8 +4229,8 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
     /// exact parent metadata engine is the allocator that attached this Theap.
     pub(crate) unsafe fn detach_metadata_theap(
         &mut self,
-        parent_metadata: Pin<&'static MetaAllocator>,
-        config: MemoryConfig,
+        _parent_metadata: Pin<&'static MetaAllocator>,
+        _config: MemoryConfig,
     ) -> Result<(), ChildMetadataTheapError> {
         if self.stage != ChildMainHeapStage::RegistryUnlinked
             || self.metadata_pages_may_exist
@@ -4002,20 +4238,17 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             || !self.page_engine.permits_teardown() {
             return Err(ChildMetadataTheapError::Metadata(MetaError::InitializationRetained));
         }
-        let parent = self.context.parent_subprocess;
+        let parent_metadata = self.context.parent_metadata;
         let Some(heap_storage) = self.heap_storage.as_mut() else {
             return Err(ChildMetadataTheapError::Metadata(MetaError::InitializationRetained));
         };
         let Some(metadata_theap) = self.context.metadata_theap.as_ref()
-            .and_then(MetaAllocation::dynamic_theap_pointer) else {
+            .and_then(ChildMetadataAllocation::dynamic_theap_pointer) else {
             return Err(ChildMetadataTheapError::Metadata(MetaError::InitializationRetained));
         };
         let result = heap_storage.with_heap(|mut heap| unsafe {
             parent_metadata.detach_child_metadata_theap(
-                config,
-                parent,
-                heap.as_mut().get_unchecked_mut(),
-                metadata_theap,
+                heap.as_mut().get_unchecked_mut(), metadata_theap,
             )
         }).unwrap_or(Err(ChildMetadataTheapError::Metadata(MetaError::InitializationRetained)));
         self.stage = if result.is_ok() {
@@ -4043,7 +4276,7 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
             return Err(ChildMainHeapReleaseError::InvalidTransition);
         };
         let metadata_pointer = self.context.metadata_theap.as_ref()
-            .and_then(MetaAllocation::dynamic_theap_pointer);
+            .and_then(ChildMetadataAllocation::dynamic_theap_pointer);
         let metadata_matches = metadata_pointer.is_some_and(|theap| {
             self.context.with_image(|child| {
                 let identity = child.identity();
@@ -4173,7 +4406,6 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                     | ChildMainHeapStage::HeapStorageReleased
                     | ChildMainHeapStage::ArenaBackingDestroyed
             )
-            || !self.context.parent_subprocess.is_process_main()
         {
             return retained(self, ChildMainHeapReleaseStage::Validate,
                 ChildMainHeapReleaseError::InvalidTransition);
@@ -4224,14 +4456,21 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                         ChildMainHeapReleaseError::InvalidTransition);
                 }
             }
-            let parent = self.context.parent_subprocess;
+            let parent_metadata = self.context.parent_metadata;
             // SAFETY: the Heap and its only Theap are gone, so no source
             // observer can classify a metadata page through this child.
-            self.context.with_image(|child| unsafe {
-                let identity = child.identity();
-                identity.clear_metadata_identity_terminal();
-                parent.statistics().merge_child_subprocess_and_reset(identity.statistics());
-            });
+            let merged = parent_metadata.with_identity(|parent| {
+                self.context.with_image(|child| unsafe {
+                    let identity = child.identity();
+                    identity.clear_metadata_identity_terminal();
+                    parent.statistics().merge_child_subprocess_and_reset(identity.statistics());
+                })
+            }).ok().flatten().is_some();
+            if !merged {
+                self.stage = ChildMainHeapStage::Terminal;
+                return retained(self, ChildMainHeapReleaseStage::Context,
+                    ChildMainHeapReleaseError::InvalidTransition);
+            }
             self.stage = ChildMainHeapStage::HeapStorageReleased;
         }
         if self.stage == ChildMainHeapStage::HeapStorageReleased {
@@ -4346,7 +4585,7 @@ unsafe fn detach_child_thread_pages_terminal(
 
 impl ChildContextLease<'_> {
     #[inline]
-    pub(crate) const fn context_memory_id(&self) -> MemoryId {
+    pub(crate) fn context_memory_id(&self) -> MemoryId {
         self.owner.context.memory_id()
     }
 
@@ -4374,7 +4613,7 @@ impl ChildContextLease<'_> {
         self.owner
             .metadata_theap
             .as_mut()
-            .and_then(MetaAllocation::dynamic_theap_mut)
+            .and_then(ChildMetadataAllocation::dynamic_theap_mut)
             .map(operation)
     }
 

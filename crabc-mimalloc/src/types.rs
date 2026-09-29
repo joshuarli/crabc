@@ -5970,7 +5970,10 @@ impl Theap {
             // SAFETY: both pointers are initialized source subprocess
             // identities retained by the live Heap and detached TLD. The
             // child membership publication synchronizes its immutable parent.
-            unsafe { (&*heap.subprocess).is_registered_child_of(&*tld.subprocess) }
+            // SAFETY: the detached metadata Theap retains its parent's TLD,
+            // and every subprocess ancestor stays live until this child
+            // Theap is detached. Nested children reuse that same TLD.
+            unsafe { (&*heap.subprocess).is_registered_descendant_of(&*tld.subprocess) }
         } else {
             false
         };

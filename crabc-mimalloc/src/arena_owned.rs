@@ -1546,7 +1546,9 @@ impl ProcessArenaBacking {
         random: crate::os::OsRandom<'_>,
     ) -> Option<ArenaSliceClaim<'child>> {
         let identity = child.identity();
-        if !identity.is_registered_child_of(child.parent_identity())
+        // SAFETY: the live child process lease retains its parent chain
+        // through this bounded arena claim.
+        if !unsafe { identity.is_registered_descendant_of(child.parent_identity()) }
             || !core::ptr::eq(identity.arena_backing(), self)
             || !self.child_binding_matches(child.process(), config)
         {

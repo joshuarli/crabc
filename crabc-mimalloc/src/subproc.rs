@@ -555,6 +555,16 @@ impl SubprocessIdentity {
             .is_child_of(parent, self.is_process_main())
     }
 
+    /// Whether the registered child reaches an ancestor through source
+    /// parent links. Its detached metadata Theap may share that ancestor's
+    /// detached TLD across several generations.
+    ///
+    /// # Safety
+    /// Every intermediate parent remains allocated for this inspection.
+    pub(crate) unsafe fn is_registered_descendant_of(&self, ancestor: &SubprocessIdentity) -> bool {
+        unsafe { self.source_membership.is_descendant_of(ancestor, self.is_process_main()) }
+    }
+
     #[inline]
     pub(crate) fn is_registered(&self) -> bool {
         self.source_membership.is_initialized()
@@ -1116,7 +1126,7 @@ impl MainSubprocess {
     ///
     /// This is an intentional Rust process-selection gate, not a replacement
     /// for `mi_tld_create`'s unconditional `fetch_add`: ticket zero belongs to
-    /// the separately selected static-main path in this milestone. The CAS
+    /// the separately selected static-main path. The CAS
     /// loop is Relaxed like the source counter and prevents a read-then-add
     /// race from accidentally seizing that static ticket. Once a nonzero old
     /// value is reserved it is a normal source ticket; later TLD allocation
