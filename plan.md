@@ -140,7 +140,12 @@ are not transferable passes for a different revision.
   replay and public promotion remain separate. Two source-built pinned-musl
   differentials match the owned resolver's search/UDP-truncation/TCP-CNAME
   recovery route and its bounded short-TCP-frame failure route; these focused
-  observations do not replace final-candidate family replay.
+  observations do not replace final-candidate family replay. Two separate
+  same-object loader fixtures match pinned musl, accepted-C and native across
+  15 static/dynamic cells each: one retains a callback snapshot while another
+  thread closes and reopens a DSO, and the other opens a DSO from inside an
+  iteration callback and visits it in that traversal. Both have independent
+  physical readers; loader family replay remains separate.
   `performance.release` is a read-only receipt gate whose
   runtime, native-facade and allocator M9 inputs do not exist yet. The pinned
   standalone unwinder now returns a phase error for faulting CFI
