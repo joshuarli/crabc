@@ -9,7 +9,7 @@ _start:
     testl %eax, %eax
     jnz .Lcrabc_tanh_fail
     lea crabc_x86_64_math_tanh_records(%rip), %rsi
-    mov $8192, %edx
+    mov $16896, %edx
 .Lcrabc_tanh_write:
     mov $1, %eax
     mov $1, %edi

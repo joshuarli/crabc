@@ -27,8 +27,8 @@
 
 #pragma STDC FENV_ACCESS ON
 
-#define TANH_F64_CASES 32
-#define TANH_F32_CASES 32
+#define TANH_F64_CASES 68
+#define TANH_F32_CASES 64
 #define TANH_ROUNDING_CASES 4
 #define TANH_RECORD_WORDS 4
 #define TANH_RECORD_COUNT ((TANH_F64_CASES + TANH_F32_CASES) * TANH_ROUNDING_CASES)
@@ -41,7 +41,7 @@ typedef float (*float_unary_function)(float);
 static double_unary_function volatile direct_tanh = (tanh);
 static float_unary_function volatile direct_tanhf = (tanhf);
 
-/* The freestanding start object writes these exact 8,192 bytes with syscall. */
+/* The freestanding start object writes this complete record array with syscall. */
 uint64_t crabc_x86_64_math_tanh_records[TANH_RECORD_STORAGE_WORDS];
 
 static const uint64_t binary64_inputs[TANH_F64_CASES] = {
@@ -61,6 +61,26 @@ static const uint64_t binary64_inputs[TANH_F64_CASES] = {
 	UINT64_C(0xc034000000000000), UINT64_C(0xc034000000000001),
 	UINT64_C(0xc035000000000000), UINT64_C(0xffefffffffffffff),
 	UINT64_C(0xfff0000000000000), UINT64_C(0xfff8000000000041),
+	/* Subnormal and tiny-transition signs; reduction and saturation neighbors. */
+	UINT64_C(0x0000000000000002), UINT64_C(0x800fffffffffffff),
+	UINT64_C(0x8010000000000000), UINT64_C(0x0010000000000001),
+	UINT64_C(0x3c7fffffffffffff), UINT64_C(0x3c80000000000001),
+	UINT64_C(0xbc7fffffffffffff), UINT64_C(0xbc80000000000001),
+	UINT64_C(0x3fcfffffffffffff), UINT64_C(0x3fd0000000000000),
+	UINT64_C(0x3fd0000000000001), UINT64_C(0x3fc62e42fefa39ee),
+	UINT64_C(0x3fc62e42fefa39ef), UINT64_C(0x3fc62e42fefa39f0),
+	UINT64_C(0x3fd62e42fefa39ee), UINT64_C(0x3fd62e42fefa39ef),
+	UINT64_C(0x3fd62e42fefa39f0), UINT64_C(0x3fe62e42fefa39ee),
+	UINT64_C(0x3fe62e42fefa39ef), UINT64_C(0x3fe62e42fefa39f0),
+	UINT64_C(0xbfc62e42fefa39ef), UINT64_C(0xbfd62e42fefa39ef),
+	UINT64_C(0xbfe62e42fefa39ef), UINT64_C(0x3fe0000000000000),
+	UINT64_C(0x4000000000000000), UINT64_C(0x4010000000000000),
+	UINT64_C(0x4020000000000000), UINT64_C(0x4022000000000000),
+	UINT64_C(0x4024000000000000), UINT64_C(0xc000000000000000),
+	UINT64_C(0xc020000000000000), UINT64_C(0xfff0000000000042),
+	/* Binary64 source comparisons inspect the high 32 bits. */
+	UINT64_C(0x3fd058aeffffffff), UINT64_C(0x3fe193eaffffffff),
+	UINT64_C(0x40340000ffffffff), UINT64_C(0xbfd058aeffffffff),
 };
 
 static const uint32_t binary32_inputs[TANH_F32_CASES] = {
@@ -75,6 +95,23 @@ static const uint32_t binary32_inputs[TANH_F32_CASES] = {
 	UINT32_C(0xbf800000), UINT32_C(0xc11fffff), UINT32_C(0xc1200000),
 	UINT32_C(0xc1200001), UINT32_C(0xc1300000), UINT32_C(0xff7fffff),
 	UINT32_C(0xff800000), UINT32_C(0xffc00041),
+	/* Subnormal and tiny-transition signs; reduction and saturation neighbors. */
+	UINT32_C(0x00000002), UINT32_C(0x807fffff),
+	UINT32_C(0x80800000), UINT32_C(0x00800001),
+	UINT32_C(0x337fffff), UINT32_C(0x33800001),
+	UINT32_C(0xb37fffff), UINT32_C(0xb3800001),
+	UINT32_C(0x3e7fffff), UINT32_C(0x3e800000),
+	UINT32_C(0x3e800001), UINT32_C(0x3e317217),
+	UINT32_C(0x3e317218), UINT32_C(0x3e317219),
+	UINT32_C(0x3eb17217), UINT32_C(0x3eb17218),
+	UINT32_C(0x3eb17219), UINT32_C(0x3f317217),
+	UINT32_C(0x3f317218), UINT32_C(0x3f317219),
+	UINT32_C(0xbe317218), UINT32_C(0xbeb17218),
+	UINT32_C(0xbf317218), UINT32_C(0x3f000000),
+	UINT32_C(0x40000000), UINT32_C(0x40800000),
+	UINT32_C(0x41000000), UINT32_C(0x41100000),
+	UINT32_C(0x41980000), UINT32_C(0xc0000000),
+	UINT32_C(0xc1000000), UINT32_C(0xff800042),
 };
 
 static const int rounding_modes[TANH_ROUNDING_CASES] = {
