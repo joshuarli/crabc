@@ -218,7 +218,10 @@ are not transferable passes for a different revision.
   `46b408b16` full M5 run passes nine correctness gates with 27 independently
   reread physical logs. Only codegen/performance remains blocked: the local
   path is below the 0.25× pinned-C structural threshold, and qualifying timing
-  still needs an uncontended host. Source-built
+  still needs an uncontended host. A later clean `02ec193db` full M5 replay
+  passes all nine correctness gates with 28 physical logs, 15 generic-exit
+  differentials, and 123 current-source runtime receipt cases independently
+  reread; codegen/performance remains blocked. Source-built
   C/Rust differentials pass for both dormant and active survivors of a non-abandoning
   full-medium/OS-singleton owner exit, including reclaim and retirement; a
   late remote free after that exit also matches all 17 retained observations.
