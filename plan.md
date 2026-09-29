@@ -464,7 +464,11 @@ are not transferable passes for a different revision.
   rejection in the package reader. A clean `5613d3c39` rerun with exact
   lane-local vendors passed all nine leaves and 16 evidence entries, including
   Rust std, static/dynamic Lua, all 34 corpus cases, 113 stress cases, and three
-  soak seeds. The independent eleven-cell FILE matrix passed. A separate
+  soak seeds. A later clean M8 replay again passes nine leaves, 16 entries,
+  and all 13 independently reread physical receipts. Its canonical M9
+  classifier now runs in the pinned core image and accepts that M8 report;
+  M9 still has seven named unmet conditions, including missing M4–M7 reports.
+  The independent eleven-cell FILE matrix passed. A separate
   source-bound FILE engine receipt passes ten six-cell stream rows plus a new
   four-cell dynamic allocator-interposition row; its public family projection
   remains the existing ten rows and the extra row is verified fail-closed.
@@ -518,12 +522,13 @@ are not transferable passes for a different revision.
   and deterministic `MI_STAT=2` rows match pinned C; static teardown retains
   that count as pinned C does. Full raw output matched in one clean run; a
   later rerun differed only in elapsed and process system time.
-  A clean full M7 gate passes all 36 runnable rows, including 21 statistics
+  A clean full M7 gate passes all 37 runnable rows, including 22 statistics
   evidence rows, while eight required gates remain blocked by their named
   missing profiles or producers. The focused differentials pass; the
   source-built OS-large remote-free probe matches 35 statistics payload keys;
-  its full 50-key stage trace remains unproved because a 64 KiB PageMap submap
-  can be charged at different stages under different address placement. A
+  its full 50-key stage trace now matches with source-accounted PageMap
+  placement, including an opposite-placement control that charges the 64 KiB
+  submap at different stages. A
   source-built `MI_DEBUG=1`/`MI_PADDING=1` probe records a real gap: pinned C
   fills the requested bytes, returns the logical 17-byte usable size, and
   reports a corrupted padding byte; native Rust currently does none of these.
