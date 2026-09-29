@@ -1008,8 +1008,8 @@ are not transferable passes for a different revision.
   trace matches C byte for byte. A bounded M4 aligned-realloc OOM differential
   confirms that failed replacement preserves the live allocation and passes
   its focused gate. On clean fixed source `383ef65af`, the M5 remote-publication
-  gate passes with a retained source-sealed report; the separate abandonment
-  gate and current merged-source M5 qualification remain open.
+  and abandonment/reclaim/release gates pass with retained source-sealed
+  reports; current merged-source M5 qualification remains open.
   A later focused M2 differential matches repeated explicit process init;
   the merged-source M5 remote-publication gate passes with a 9-key pinned-C/Rust
   post-exit parallel reclaim receiver and separate Loom race,
