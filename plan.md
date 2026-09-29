@@ -352,8 +352,9 @@ are not transferable passes for a different revision.
   published OS-page terminal-unmap fault and passes all 95 runnable checks,
   including all 56 VM checks; the same four components remain partial. A direct
   regular-arena delayed-purge failure receiver matches 32 C/Rust fields,
-  including consumed schedule, warning timing, and surviving claims; its
-  shared-gate registration remains open. A second direct receiver matches 24
+  including consumed schedule, warning timing, and surviving claims. Its
+  shared-gate registration passes in a clean 96-check M2 run, with the same
+  four components partial. A second direct receiver matches 24
   fields when two delayed slices flank a live neighbor: the first decommit
   fails, the second succeeds, both schedules are consumed, and the arena
   remains mapped. A third deterministic receiver matches 28 fields just
