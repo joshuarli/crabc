@@ -7,6 +7,8 @@ import contextlib
 import io
 import importlib.util
 import json
+import os
+import subprocess
 import struct
 import tempfile
 import unittest
@@ -268,17 +270,9 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
             )
             with mock.patch.object(runner, "run_checked", side_effect=lambda *args, **kwargs: next(records)), mock.patch.object(
                 runner, "command_record", return_value={"stdout": {"text": ""}}
-            ):
+            ), mock.patch.object(runner.static_authority, "static_undefined_bindings",
+                                 return_value={"required_bindings": []}):
                 runner.elf_audit(artifact, mode="static-pie", dynamic=False)
-
-    def test_unresolved_symbol_rows_exclude_only_the_mandated_null_entry(self) -> None:
-        symbols = (
-            "   0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND \n"
-            "   1: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND resolver_dependency\n"
-        )
-        self.assertEqual(runner.unresolved_symbol_rows(symbols), [
-            "   1: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND resolver_dependency"
-        ])
 
     def test_dynamic_elf_audit_allows_owned_libc_imports(self) -> None:
         with tempfile.TemporaryDirectory(dir=runner.ROOT / ".work") as directory:
@@ -477,6 +471,126 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
                 with self.subTest(changed=changed):
                     with self.assertRaisesRegex(runner.RunnerError, "schema|fields|search-path"):
                         audit(changed)
+
+
+@unittest.skipUnless(os.environ.get("CRABC_RESOLVER_STATIC_PRODUCT"),
+                     "requires an explicit sealed native static product")
+class NativeResolverStaticElfTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import resolver_network_component_receipt
+        cls.reader = resolver_network_component_receipt
+        cls.product = Path(os.environ["CRABC_RESOLVER_STATIC_PRODUCT"])
+        scratch = runner.ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        cls.work = Path(tempfile.mkdtemp(prefix="resolver-static-elf-", dir=scratch))
+        print(f"resolver static ELF evidence: {cls.work}", flush=True)
+        source = cls.work / "tls.c"
+        source.write_text(
+            "__thread volatile int cell=19;\n"
+            "__attribute__((noinline)) int read_cell(void) { return cell; }\n"
+            "int main(void) { return read_cell()!=19; }\n", encoding="ascii")
+        cls.object = cls.work / "tls.o"
+        compiled = runner.command_record(
+            [str(runner.MUSL_COMPILER), "-std=c11", "-fPIC", "-fno-builtin",
+             "-c", str(source), "-o", str(cls.object)],
+            cwd=runner.ROOT, timeout=30)
+        (cls.work / "compile.json").write_bytes(runner.canonical_json(compiled))
+        runner.require_success(compiled, "PIC TLS fixture translation")
+        cls.artifacts = {}
+        for mode in ("static-et-exec", "static-pie"):
+            directory = cls.work / mode
+            directory.mkdir()
+            output = directory / "workload"
+            receipt = directory / "link.receipt.json"
+            linked = runner.command_record(
+                [str(cls.product / "bin/crabc-cc"), "--" + mode,
+                 "--link-receipt", receipt.name, str(cls.object), "-o", str(output)],
+                cwd=directory, timeout=30)
+            (directory / "link.json").write_bytes(runner.canonical_json(linked))
+            runner.require_success(linked, "sealed PIC TLS fixture link")
+            runner.static_receipt_audit(cls.product, "--" + mode, cls.object, output, receipt)
+            symbols = subprocess.check_output(["readelf", "-sW", str(output)], text=True)
+            if not any(" UND __tls_get_addr" in line for line in symbols.splitlines()):
+                raise AssertionError("PIC TLS relaxation did not retain the undefined symbol-table control")
+            executed = runner.command_record([str(output)], cwd=runner.ROOT, timeout=10)
+            (directory / "execution.json").write_bytes(runner.canonical_json(executed))
+            if executed["status"] != 0 or executed["stdout"]["text"] or executed["stderr"]["text"]:
+                raise AssertionError(f"sealed PIC TLS fixture did not execute cleanly: {executed}")
+            cls.artifacts[mode] = output
+
+    def test_sealed_static_links_reject_required_unresolved_references(self):
+        source = self.work / "unresolved.c"
+        source.write_text(
+            "extern int resolver_required_binding(void);\n"
+            "int main(void) { return resolver_required_binding(); }\n", encoding="ascii")
+        object_file = self.work / "unresolved.o"
+        compiled = runner.command_record(
+            [str(runner.MUSL_COMPILER), "-std=c11", "-fPIC", "-fno-builtin",
+             "-c", str(source), "-o", str(object_file)], cwd=runner.ROOT, timeout=30)
+        (self.work / "unresolved-compile.json").write_bytes(runner.canonical_json(compiled))
+        runner.require_success(compiled, "unresolved fixture translation")
+        for mode in self.artifacts:
+            with self.subTest(mode=mode):
+                directory = self.work / (mode + "-unresolved")
+                directory.mkdir()
+                linked = runner.command_record(
+                    [str(self.product / "bin/crabc-cc"), "--" + mode,
+                     "--link-receipt", "link.receipt.json", str(object_file),
+                     "-o", str(directory / "workload")], cwd=directory, timeout=30)
+                (directory / "link.json").write_bytes(runner.canonical_json(linked))
+                self.assertNotEqual(linked["status"], 0)
+                self.assertIn("undefined symbol: resolver_required_binding", linked["stderr"]["text"])
+                self.assertFalse((directory / "link.receipt.json").exists())
+
+    def test_sealed_static_tls_relaxation_has_no_required_runtime_binding(self):
+        for mode, output in self.artifacts.items():
+            with self.subTest(mode=mode):
+                facts = runner.elf_audit(output, mode=mode, dynamic=False)
+                (output.parent / "collector-audit.json").write_bytes(runner.canonical_json(facts))
+                self.assertEqual(facts["static_undefined_bindings"]["required_bindings"], [])
+                self.assertTrue(facts["static_undefined_bindings"]["inert_symtab_rows"])
+
+    def test_both_audits_reject_a_retained_undefined_relocation(self):
+        from loader_debug_abi_evidence import Elf
+        for mode, output in self.artifacts.items():
+            with self.subTest(mode=mode):
+                elf = Elf(output)
+                symbol_table = next(index for index, row in enumerate(elf.sections) if row[1] == 2)
+                symbol_index = next(index for index in range(1, elf.sections[symbol_table][5] // 24)
+                                    if elf.symbol_row(symbol_table, index)["name"] == "__tls_get_addr")
+                comment_index = next(index for index, row in enumerate(elf.sections)
+                                     if runner.static_authority.section_name(elf, row) == ".comment")
+                comment = list(elf.sections[comment_index])
+                self.assertGreaterEqual(comment[5], 24)
+                self.assertFalse(comment[2] & 2)
+                changed = bytearray(elf.data)
+                struct.pack_into("<QQq", changed, comment[4], elf.entry, symbol_index << 32 | 1, 0)
+                comment[1] = 4
+                comment[5] = comment[9] = 24
+                comment[6] = symbol_table
+                comment[7] = comment[2] = 0
+                table_offset = struct.unpack_from("<Q", changed, 40)[0]
+                struct.pack_into("<IIQQQQIIQQ", changed, table_offset + comment_index * 64, *comment)
+                referenced = output.with_name("referenced-undefined")
+                referenced.write_bytes(changed)
+                bindings = runner.static_authority.static_undefined_bindings(referenced)
+                (output.parent / "referenced-bindings.json").write_bytes(runner.canonical_json(bindings))
+                self.assertTrue(bindings["required_bindings"])
+                with self.assertRaisesRegex(runner.RunnerError, "unresolved runtime bindings"):
+                    runner.elf_audit(referenced, mode=mode, dynamic=False)
+                with self.assertRaisesRegex(self.reader.ReceiptError, "unresolved runtime bindings"):
+                    self.reader.replay_elf_audit(
+                        runner.ROOT, referenced, mode=mode, dynamic=False, reader=Path("/usr/bin/readelf"))
+
+    def test_independent_reader_reconstructs_the_sealed_static_tls_audit(self):
+        for mode, output in self.artifacts.items():
+            with self.subTest(mode=mode):
+                observed = self.reader.replay_elf_audit(
+                    runner.ROOT, output, mode=mode, dynamic=False, reader=Path("/usr/bin/readelf"))
+                expected = runner.elf_audit(output, mode=mode, dynamic=False)
+                (output.parent / "reader-audit.json").write_bytes(runner.canonical_json(observed))
+                self.assertEqual(observed, expected)
 
 
 prepare_spec = importlib.util.spec_from_file_location("resolver_network_x86_prepare", HERE / "prepare_x86_64.py")

@@ -37,6 +37,7 @@ sys.path.insert(0, str(ROOT / "compat/x86_64"))
 from scripts.rust_toolchain import pinned_toolchain
 
 import owned_dynamic_receipt as receipt_contract
+import owned_static_link_authority as static_authority
 
 MUSL_ROOT = Path("/opt/musl-1.2.6")
 MUSL_COMPILER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
@@ -59,6 +60,9 @@ RECEIPT_SOURCE_FILES = {
     "workload": ROOT / "compat/resolver-network/workload.c",
     "dns_fixture": ROOT / "compat/resolver-network/dns_server.py",
     "dynamic_receipt_contract": ROOT / "compat/x86_64/owned_dynamic_receipt.py",
+    "static_link_authority": ROOT / "compat/x86_64/owned_static_link_authority.py",
+    "elf_structure": ROOT / "compat/x86_64/loader_debug_abi_evidence.py",
+    "dynamic_elf_structure": ROOT / "compat/x86_64/owned_dynamic_elf.py",
     "reader": ROOT / "compat/x86_64/resolver_network_component_receipt.py",
     "image_manifest": IMAGE_MANIFEST,
     "toolchain_config": ROOT / "rust-toolchain.toml",
@@ -771,22 +775,6 @@ def dynamic_receipt_audit(sysroot: Path, mode: str, object_file: Path, output: P
     return {"receipt": artifact_record(receipt), "link_trace": trace, "input_count": len(expected_inputs)}
 
 
-def unresolved_symbol_rows(symbol_text: str) -> list[str]:
-    """Return non-null ELF symbol-table rows whose section index is ``UND``.
-
-    Every ELF table has index zero, a mandated undefined *null* symbol.  It is
-    not a link dependency, including in a fully static PIE, so scanning for the
-    word ``UND`` alone would reject every valid candidate.
-    """
-
-    unresolved: list[str] = []
-    for line in symbol_text.splitlines():
-        fields = line.split()
-        if len(fields) >= 7 and re.fullmatch(r"[1-9][0-9]*:", fields[0]) and fields[6] == "UND":
-            unresolved.append(line)
-    return unresolved
-
-
 def elf_audit(path: Path, *, mode: str, dynamic: bool) -> dict[str, object]:
     header = run_checked(["readelf", "-hW", str(path)], cwd=ROOT, timeout=10, description=f"{mode} ELF header inspection")
     programs = run_checked(["readelf", "-lW", str(path)], cwd=ROOT, timeout=10, description=f"{mode} ELF program inspection")
@@ -808,14 +796,20 @@ def elf_audit(path: Path, *, mode: str, dynamic: bool) -> dict[str, object]:
             raise RunnerError(f"{mode} ELF does not bind the canonical owned dynamic runtime")
     elif "INTERP" in program_text or "NEEDED" in dynamic_text:
         raise RunnerError(f"{mode} static ELF has a dynamic-runtime dependency")
-    # A static executable has no provider for a non-null ``UND`` row.  The
-    # dynamic driver, however, records an exact owned ``libc.so`` input,
-    # emits the sole DT_NEEDED entry below, and uses --no-undefined. Its
-    # ordinary imports are therefore the intended dynamic ABI boundary rather
-    # than unresolved static-link residue.
-    if not dynamic and unresolved_symbol_rows(symbol_text):
-        raise RunnerError(f"{mode} ELF retains an unresolved symbol")
-    return {"artifact": artifact_record(path), "header": header, "program_headers": programs, "dynamic": dynamic_record, "symbols": symbols}
+    audit = {"artifact": artifact_record(path), "header": header, "program_headers": programs,
+             "dynamic": dynamic_record, "symbols": symbols}
+    if not dynamic:
+        # Static TLS relaxation can leave an undefined regular symbol row
+        # after resolving the access. Classify final tables and relocations
+        # before deciding which rows require a runtime provider.
+        try:
+            bindings = static_authority.static_undefined_bindings(path)
+        except static_authority.StaticLinkAuthorityError as error:
+            raise RunnerError(f"{mode} static ELF binding inspection failed: {error}") from error
+        if bindings["required_bindings"]:
+            raise RunnerError(f"{mode} ELF retains unresolved runtime bindings")
+        audit["static_undefined_bindings"] = bindings
+    return audit
 
 
 def link_artifacts(static_root: Path, dynamic_root: Path, object_file: Path, work: Path, timeout: float) -> dict[str, dict[str, object]]:

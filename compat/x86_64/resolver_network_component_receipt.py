@@ -33,6 +33,7 @@ from scripts.rust_toolchain import pinned_toolchain
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import core_image
+import owned_static_link_authority as static_authority
 
 SOURCE_MOUNT = "/workspace"
 PINNED_IMAGE = core_image.CORE_IMAGE_REFERENCE
@@ -102,6 +103,9 @@ SOURCE_PATHS = {
     "workload": "compat/resolver-network/workload.c",
     "dns_fixture": "compat/resolver-network/dns_server.py",
     "dynamic_receipt_contract": "compat/x86_64/owned_dynamic_receipt.py",
+    "static_link_authority": "compat/x86_64/owned_static_link_authority.py",
+    "elf_structure": "compat/x86_64/loader_debug_abi_evidence.py",
+    "dynamic_elf_structure": "compat/x86_64/owned_dynamic_elf.py",
     "reader": "compat/x86_64/resolver_network_component_receipt.py",
     "image_manifest": IMAGE_MANIFEST,
     "toolchain_config": "rust-toolchain.toml",
@@ -682,13 +686,6 @@ def artifact_path(root: Path, record: Mapping[str, object], description: str, ex
     return assert_receipt_file_identity(root, record, description, expected=expected)
 
 
-def unresolved_symbol_rows(symbol_text: str) -> list[str]:
-    return [
-        line for line in symbol_text.splitlines()
-        if (fields := line.split()) and len(fields) >= 7 and re.fullmatch(r"[1-9][0-9]*:", fields[0]) and fields[6] == "UND"
-    ]
-
-
 def replay_readelf(root: Path, reader: Path, path: Path, arguments: Sequence[str], description: str) -> dict[str, object]:
     """Inspect retained ELF bytes through the receipt-pinned reader only."""
 
@@ -735,14 +732,21 @@ def replay_elf_audit(root: Path, path: Path, *, mode: str, dynamic: bool, reader
     else:
         require("INTERP" not in program_text and "NEEDED" not in dynamic_text,
                 f"{mode} static ELF has a dynamic-runtime dependency")
-    require(dynamic or not unresolved_symbol_rows(symbol_text), f"{mode} ELF retains an unresolved symbol")
-    return {
+    audit = {
         "artifact": file_identity(root, path),
         "header": header,
         "program_headers": programs,
         "dynamic": dynamic_record,
         "symbols": symbols,
     }
+    if not dynamic:
+        try:
+            bindings = static_authority.static_undefined_bindings(path)
+        except static_authority.StaticLinkAuthorityError as error:
+            raise ReceiptError(f"{mode} static ELF binding inspection failed: {error}") from error
+        require(not bindings["required_bindings"], f"{mode} ELF retains unresolved runtime bindings")
+        audit["static_undefined_bindings"] = bindings
+    return audit
 
 
 def validate_reference_link(

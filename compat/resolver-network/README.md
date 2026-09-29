@@ -54,6 +54,16 @@ authenticates their hashes and exact positions in the sealed link recipe.
 The trace must contain every direct object, and each traced archive member
 must belong to one of those authenticated archives.
 
+Static ELF audits distinguish runtime binding requirements from inert regular
+symbol-table rows. `owned_static_link_authority.static_undefined_bindings`
+inspects the physical symbol, relocation, dynamic, section, and program tables;
+both `elf_audit` and the independent `replay_elf_audit` retain its complete
+classification and reject every required binding. A zero-valued, zero-sized,
+unreferenced undefined row in the regular symbol table can remain after static
+TLS relaxation. Undefined dynamic symbols and relocation references remain
+binding requirements. This classification supplements the independently
+authenticated strict static link recipe and runtime input hashes.
+
 The dispatcher runs only the second phase in a native Linux/x86-64 Docker
 container with `--network none` and `SYS_CHROOT`. The runner rejects any
 network namespace that has an interface other than `lo` or a default route.

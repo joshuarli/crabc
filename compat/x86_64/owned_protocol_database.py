@@ -61,6 +61,9 @@ POISON_PROTOCOLS = b"poison 253 deliberately-not-selected\n"
 SOURCE_FILES = (
     Path(__file__).relative_to(ROOT), READER, PROBE, RUST_PROVIDER, PROVIDER_CONTRACT,
     PRODUCT_FIXTURE, DYNAMIC_RECEIPT,
+    Path("compat/x86_64/owned_static_link_authority.py"),
+    Path("compat/x86_64/loader_debug_abi_evidence.py"),
+    Path("compat/x86_64/owned_dynamic_elf.py"),
 )
 
 
