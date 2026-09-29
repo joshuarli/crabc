@@ -29,11 +29,14 @@
 #error "the raw binary32/binary64 fixture requires SSE evaluation"
 #endif
 
-#define LOG2_F64_CASES 27
-#define LOG2_F32_CASES 27
+#define LOG2_F64_CASES 32
+#define LOG2_F32_CASES 32
+#define LOG2_F64_POWER_CASES ((52 + 2046) * 3)
+#define LOG2_F32_POWER_CASES ((23 + 254) * 3)
 #define LOG2_ROUNDING_CASES 4
 #define LOG2_RECORD_WORDS 4
-#define LOG2_RECORD_COUNT ((LOG2_F64_CASES + LOG2_F32_CASES) * LOG2_ROUNDING_CASES)
+#define LOG2_RECORD_COUNT ((LOG2_F64_CASES + LOG2_F32_CASES + \
+	LOG2_F64_POWER_CASES + LOG2_F32_POWER_CASES) * LOG2_ROUNDING_CASES)
 #define LOG2_RECORD_STORAGE_WORDS (LOG2_RECORD_COUNT * LOG2_RECORD_WORDS)
 
 typedef double (*double_unary_function)(double);
@@ -43,7 +46,7 @@ typedef float (*float_unary_function)(float);
 static double_unary_function volatile direct_log2 = (log2);
 static float_unary_function volatile direct_log2f = (log2f);
 
-/* The freestanding start object writes these exact 6,912 bytes with syscall. */
+/* The freestanding start object writes these exact 920,192 bytes with syscall. */
 uint64_t crabc_x86_64_math_log2_records[LOG2_RECORD_STORAGE_WORDS];
 
 static const uint64_t binary64_inputs[LOG2_F64_CASES] = {
@@ -61,6 +64,9 @@ static const uint64_t binary64_inputs[LOG2_F64_CASES] = {
 	UINT64_C(0xfff0000000000000), UINT64_C(0xbff0000000000000),
 	UINT64_C(0xc000000000000000), UINT64_C(0x7ff8000000000041),
 	UINT64_C(0x7ff0000000000042),
+	UINT64_C(0x8000000000000001), UINT64_C(0x8010000000000000),
+	UINT64_C(0xffefffffffffffff), UINT64_C(0xfff8000000000041),
+	UINT64_C(0xfff0000000000042),
 };
 
 static const uint32_t binary32_inputs[LOG2_F32_CASES] = {
@@ -73,6 +79,8 @@ static const uint32_t binary32_inputs[LOG2_F32_CASES] = {
 	UINT32_C(0x41200000), UINT32_C(0x3f330000), UINT32_C(0x7f7fffff),
 	UINT32_C(0x7f800000), UINT32_C(0xff800000), UINT32_C(0xbf800000),
 	UINT32_C(0xc0000000), UINT32_C(0x7fc00041), UINT32_C(0x7f800042),
+	UINT32_C(0x80000001), UINT32_C(0x80800000),
+	UINT32_C(0xff7fffff), UINT32_C(0xffc00041), UINT32_C(0xff800042),
 };
 
 static const int rounding_modes[LOG2_ROUNDING_CASES] = {
@@ -142,12 +150,42 @@ static int record_binary32(size_t *cursor, int rounding_mode, uint32_t input)
 	return 0;
 }
 
+static int record_binary64_neighbors(size_t *cursor, int rounding_mode,
+	uint64_t power)
+{
+	int offset;
+	int status;
+
+	for (offset = -1; offset <= 1; offset++) {
+		status = record_binary64(cursor, rounding_mode, power + offset);
+		if (status != 0)
+			return status;
+	}
+	return 0;
+}
+
+static int record_binary32_neighbors(size_t *cursor, int rounding_mode,
+	uint32_t power)
+{
+	int offset;
+	int status;
+
+	for (offset = -1; offset <= 1; offset++) {
+		status = record_binary32(cursor, rounding_mode, power + offset);
+		if (status != 0)
+			return status;
+	}
+	return 0;
+}
+
 int crabc_x86_64_math_log2_probe(void)
 {
 	fenv_t original;
 	size_t cursor = 0;
 	size_t input_index;
 	size_t mode_index;
+	unsigned int bit_index;
+	unsigned int exponent_bits;
 	int status = 0;
 
 	if (fegetenv(&original) != 0 || fesetenv(FE_DFL_ENV) != 0)
@@ -158,10 +196,26 @@ int crabc_x86_64_math_log2_probe(void)
 			input_index++)
 			status = record_binary64(&cursor, rounding_modes[mode_index],
 				binary64_inputs[input_index]);
+		for (bit_index = 0; bit_index < 52 && status == 0; bit_index++)
+			status = record_binary64_neighbors(&cursor,
+				rounding_modes[mode_index], UINT64_C(1) << bit_index);
+		for (exponent_bits = 1; exponent_bits <= 2046 && status == 0;
+			exponent_bits++)
+			status = record_binary64_neighbors(&cursor,
+				rounding_modes[mode_index],
+				(uint64_t)exponent_bits << 52);
 		for (input_index = 0; input_index < LOG2_F32_CASES && status == 0;
 			input_index++)
 			status = record_binary32(&cursor, rounding_modes[mode_index],
 				binary32_inputs[input_index]);
+		for (bit_index = 0; bit_index < 23 && status == 0; bit_index++)
+			status = record_binary32_neighbors(&cursor,
+				rounding_modes[mode_index], UINT32_C(1) << bit_index);
+		for (exponent_bits = 1; exponent_bits <= 254 && status == 0;
+			exponent_bits++)
+			status = record_binary32_neighbors(&cursor,
+				rounding_modes[mode_index],
+				(uint32_t)exponent_bits << 23);
 	}
 	if (cursor != LOG2_RECORD_STORAGE_WORDS && status == 0)
 		status = 3;

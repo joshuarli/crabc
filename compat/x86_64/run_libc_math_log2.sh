@@ -42,6 +42,7 @@ reference="$work_dir/musl-math-log2-reference"
 candidate="$work_dir/crabc-static-math-log2-candidate"
 reference_records="$work_dir/musl-records"
 candidate_records="$work_dir/candidate-records"
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-math-log2"
 header_cxx_reference="$work_dir/musl-math-log2-header.o"
 header_cxx_candidate="$work_dir/project-math-log2-header.o"
 header_trace="$work_dir/header-trace"
@@ -177,9 +178,12 @@ if grep -Eq 'vfmadd|vfnmadd|vfmsub|vfnmsub' "$disassembly"; then
 	fail "candidate accidentally retains an FMA ISA instruction"
 fi
 "$candidate" >"$candidate_records" || fail "freestanding math log2 fixture failed"
+mkdir -p "$report_dir"
+cp "$reference_records" "$report_dir/musl.records"
+cp "$candidate_records" "$report_dir/crabc.records"
 if ! cmp -s "$reference_records" "$candidate_records"; then
 	cmp -l "$reference_records" "$candidate_records" | head -n 16 >&2 || true
-	fail "pinned-musl and freestanding log2 differential records differ"
+	fail "pinned-musl and freestanding log2 differential records differ; raw streams: $report_dir"
 fi
 
-printf 'x86 static libc math log2: PASS\n'
+printf 'x86 static libc math log2: PASS; raw streams: %s\n' "$report_dir"

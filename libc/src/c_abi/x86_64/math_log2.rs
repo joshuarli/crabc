@@ -14,18 +14,20 @@
 //! `src/math/__math_invalidf.c`.  The Arm MIT notices remain in the checked
 //! input.  The data tables and IEEE error-expression helpers are renamed and
 //! localized in that one assembly input, so they do not become public archive
-//! exports.  The musl 1.2.6 MIT distribution license and exact release
-//! provenance are recorded in `compat/upstreams.toml`; this is not a linked
-//! foreign object and the Rust build never invokes a C compiler.
+//! exports.  The musl 1.2.6 distribution carries the MIT license; this is
+//! not a linked foreign object and the Rust build never invokes a C compiler.
 //!
 //! The generator fixes `-frounding-math`, standard excess precision, scalar
 //! SSE, and no-FMA/no-AVX code generation.  That bounded source closure
 //! preserves musl's close-to-one reconstruction, subnormal normalization,
-//! table reduction, exact powers-of-two paths, sign-sensitive zero/domain
+//! table reduction, power-of-two input behavior, sign-sensitive zero/domain
 //! expressions, and quiet/signaling-NaN behavior rather than delegating to an
-//! ambient log provider.  The focused native differential compares raw
-//! binary32/binary64 results, requested and observed MXCSR directions, and
-//! IEEE exception flags against the same pinned musl build.  The harness uses
+//! ambient log provider.  Under directed rounding, musl can return a result
+//! adjacent to the exact integer logarithm for a power-of-two input; matching
+//! its result bits and exceptions is part of this C ABI contract.  The focused
+//! native differential compares raw binary32/binary64 results, requested and
+//! observed MXCSR directions, and IEEE exception flags against the same pinned
+//! musl build.  The harness uses
 //! existing selected fenv entries only to reset and observe MXCSR; this leaf
 //! does not select fenv API or policy.
 //!
