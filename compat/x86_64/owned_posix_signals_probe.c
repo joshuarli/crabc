@@ -29,6 +29,12 @@ static void tail(const sigset_t *set, unsigned char byte) {
     const unsigned char *bytes=(const unsigned char *)set;
     for (size_t i=sizeof(unsigned long); i<sizeof *set; i++) CHECK(bytes[i]==byte);
 }
+static void action_tail(const struct sigaction *action, unsigned char byte) {
+    const unsigned char *bytes=(const unsigned char *)action;
+    CHECK(sizeof *action==152);
+    for (size_t i=16;i<136;i++) CHECK(bytes[i]==byte);
+    for (size_t i=140;i<sizeof *action;i++) CHECK(bytes[i]==byte);
+}
 static void empty(sigset_t *set) { memset(set,0,sizeof *set); CHECK(!sigemptyset(set)); }
 static void block_pair(void) {
     sigset_t set; empty(&set); CHECK(!sigaddset(&set,SIGUSR1)); CHECK(!sigaddset(&set,SIGUSR2));
@@ -63,7 +69,11 @@ static void actions_masks(void) {
     errno=90; void (*old)(int)=signal(SIGUSR1,handler); int error=errno;
     printf("signal: previous-default=%d errno=%d\n",old==SIG_DFL,error); CHECK(old==SIG_DFL);
     struct sigaction action,queried; memset(&action,0,sizeof action);
-    OBS(sigaction(SIGUSR1,NULL,&action)); CHECK(action.sa_handler==handler && (action.sa_flags&SA_RESTART));
+    memset(&queried,0xa5,sizeof queried);
+    OBS(sigaction(SIGUSR1,NULL,&queried));
+    CHECK(queried.sa_handler==handler && (queried.sa_flags&SA_RESTART)); action_tail(&queried,0xa5);
+    puts("sigaction-partial-output=preserved");
+    memcpy(&action,&queried,sizeof action);
     OBS(raise(SIGUSR1)); CHECK(calls==1);
     CHECK(!sigaddset(&action.sa_mask,SIGUSR2)); action.sa_flags|=SA_NODEFER;
     OBS(sigaction(SIGUSR1,&action,NULL));
