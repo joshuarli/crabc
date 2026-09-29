@@ -3,8 +3,9 @@
 #
 # The same project-header fixture first runs with pinned musl 1.2.6, then as a
 # true `-nostdlib -static` executable linked only with the selected crabc
-# archive. It proves the static thrd_create/thrd_join/thrd_exit slice over the
-# existing selected-worker TLS seam, not general C11 threads, pthread/TLS,
+# archive. It proves the static C11 create/join/exit/detach slice and detached
+# TSS destructor completion over the selected-worker TLS seam, not general
+# C11 threads, pthread/TLS,
 # CRT, loader, sysroot, or public x86 support.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
@@ -56,7 +57,7 @@ assert_selected_c_abi_surface() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff grep mkdir nm objdump readelf rustup sort; do
+for tool in ar cargo chmod cmp diff grep mkdir nm objdump readelf rustup sha256sum sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -65,8 +66,9 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_types_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_pthread_c11_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-c11-lifecycle.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-c11-lifecycle.XXXXXX")"
+chmod 755 "$work_dir"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-c11-lifecycle-reference"
 candidate="$work_dir/crabc-static-c11-lifecycle-candidate"
@@ -96,7 +98,14 @@ done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_c11_lifecycle_probe.c -o "$reference"
-timeout "$EXECUTION_TIMEOUT" "$reference"
+if timeout "$EXECUTION_TIMEOUT" "$reference" \
+    >"$work_dir/reference.stdout" 2>"$work_dir/reference.stderr"; then
+    printf '0\n' >"$work_dir/reference.status"
+else
+    reference_status=$?
+    printf '%s\n' "$reference_status" >"$work_dir/reference.status"
+    fail "pinned-musl reference execution exited ${reference_status}; evidence: $work_dir"
+fi
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -106,7 +115,8 @@ readelf --symbols --wide "$archive" >"$archive_elf_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
-    pthread_create pthread_exit pthread_join thrd_create thrd_exit thrd_join; do
+    pthread_create pthread_exit pthread_join thrd_create thrd_detach \
+    thrd_exit thrd_join thrd_sleep tss_create tss_get tss_set; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
@@ -155,7 +165,8 @@ readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
-    pthread_create pthread_exit pthread_join thrd_create thrd_exit thrd_join \
+    pthread_create pthread_exit pthread_join thrd_create thrd_detach \
+    thrd_exit thrd_join thrd_sleep tss_create tss_get tss_set \
     __crabc_x86_pthread_clone; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
@@ -213,11 +224,27 @@ python3 "$ROOT_DIR/compat/x86_64/elf_call_closure.py" check "$candidate" \
     --syscall 'nr=202' --syscall 'nr=11' --syscalls-only 202,11 ||
     fail "thrd_join no longer reaches the selected-worker futex wait and munmap release"
 
-if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
-    :
+if timeout "$EXECUTION_TIMEOUT" "$candidate" \
+    >"$work_dir/candidate.stdout" 2>"$work_dir/candidate.stderr"; then
+    printf '0\n' >"$work_dir/candidate.status"
 else
     candidate_status=$?
-    fail "candidate execution exited ${candidate_status}"
+    printf '%s\n' "$candidate_status" >"$work_dir/candidate.status"
+    fail "candidate execution exited ${candidate_status}; evidence: $work_dir"
 fi
 
-printf 'x86 static crabc-libc C11 lifecycle: PASS\n'
+sha256sum compat/x86_64/libc_c11_lifecycle_probe.c \
+    compat/x86_64/libc_c11_lifecycle_start.S \
+    compat/x86_64/run_libc_c11_lifecycle.sh \
+    libc/src/c_abi/x86_64/c11_thread_lifecycle.rs \
+    libc/src/c_abi/x86_64/pthread_create_join.rs \
+    libc/src/c_abi/x86_64/pthread_tsd.rs >"$work_dir/source-hashes.sha256"
+(
+    cd "$work_dir"
+    sha256sum musl-c11-lifecycle-reference crabc-static-c11-lifecycle-candidate \
+        reference.stdout reference.stderr reference.status \
+        candidate.stdout candidate.stderr candidate.status \
+        cargo-target/x86_64-unknown-linux-musl/debug/libc.a \
+        cargo-target/x86_64-unknown-linux-musl/debug/libc.a.source-runtime.json
+) >"$work_dir/product-hashes.sha256"
+printf 'x86 static crabc-libc C11 lifecycle: PASS; evidence: %s\n' "$work_dir"

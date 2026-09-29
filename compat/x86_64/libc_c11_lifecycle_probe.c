@@ -3,9 +3,10 @@
  *
  * The runner executes this exact project-header body first with pinned musl
  * and then as a freestanding crabc-libc archive candidate. It selects only
- * thrd_create/thrd_join/thrd_exit over the private selected-worker Static
- * Initial TLS v1 seam; synchronization, TSS, detached lifecycle, and generic
- * C11 thread behavior remain deliberately outside this probe.
+ * thrd_create/thrd_join/thrd_exit/thrd_detach over the private selected-worker
+ * Static Initial TLS v1 seam, including detached C11 TSS destructor completion
+ * and later worker reuse. Synchronization and generic C11 thread behavior
+ * remain outside this probe.
  */
 
 #include <errno.h>
@@ -26,11 +27,14 @@ static void *inline_thread_pointer(void)
 
 static int wait_until_set(volatile int *value)
 {
-	unsigned long spins;
+	const struct timespec delay = {.tv_sec = 0, .tv_nsec = 1000000};
+	unsigned int attempts;
 
-	for (spins = 0; spins != 100000000UL; ++spins) {
+	for (attempts = 0; attempts != 5000; ++attempts) {
 		if (__atomic_load_n(value, __ATOMIC_ACQUIRE) != 0)
 			return 0;
+		if (thrd_sleep(&delay, 0) == -2)
+			return 1;
 	}
 	return 1;
 }
@@ -390,38 +394,150 @@ static int run_registry_growth_round(void)
 	thrd_t reuse_handle = 0;
 	int reuse_result = 0;
 	int additional_result = 0;
+	int result = 0;
 	unsigned int index;
+	unsigned int created = 0;
 
 	for (index = 0; index != held_worker_count; ++index) {
 		workers[index].result = (int)index - 31;
 		workers[index].initial_errno = -1;
 		errno = E2BIG;
-		if (thrd_create(&handles[index], held_worker, &workers[index]) != thrd_success)
-			return 80;
-		if (wait_until_set(&workers[index].entered))
-			return 81;
+		if (thrd_create(&handles[index], held_worker, &workers[index]) != thrd_success) {
+			result = 80;
+			goto release_workers;
+		}
+		++created;
+		if (wait_until_set(&workers[index].entered)) {
+			result = 81;
+			goto release_workers;
+		}
 	}
 	errno = E2BIG;
-	if (thrd_create(&additional_handle, normal_worker, &additional_observation) != thrd_success)
-		return 82;
+	if (thrd_create(&additional_handle, normal_worker, &additional_observation) != thrd_success) {
+		result = 82;
+		goto release_workers;
+	}
 	if (thrd_join(additional_handle, &additional_result) != thrd_success ||
 		additional_result != 7 || additional_observation.initial_errno != 0 || errno != E2BIG)
-		return 83;
-	for (index = 0; index != held_worker_count; ++index)
+		result = 83;
+release_workers:
+	for (index = 0; index != created; ++index)
 		__atomic_store_n(&workers[index].release, 1, __ATOMIC_RELEASE);
-	for (index = 0; index != held_worker_count; ++index) {
+	for (index = 0; index != created; ++index) {
 		int joined_result = 0;
 
 		if (thrd_join(handles[index], &joined_result) != thrd_success ||
-			joined_result != workers[index].result || workers[index].initial_errno != 0)
-			return 84;
+			joined_result != workers[index].result || workers[index].initial_errno != 0) {
+			if (result == 0)
+				result = 84;
+		}
 	}
+	if (result != 0)
+		return result;
 	errno = E2BIG;
 	if (thrd_create(&reuse_handle, normal_worker, &reuse_observation) != thrd_success)
 		return 85;
 	if (thrd_join(reuse_handle, &reuse_result) != thrd_success ||
 		reuse_result != -19 || reuse_observation.initial_errno != 0 || errno != E2BIG)
 		return 86;
+	return 0;
+}
+
+struct detached_tss_observation {
+	volatile int entered;
+	volatile int release;
+	volatile int destructor_count;
+	volatile int destructor_saw_cleared_value;
+	int expected_result;
+};
+
+enum { detached_round_count = 32 };
+static struct detached_tss_observation detached_observations[detached_round_count];
+/* Keep the key active until process exit: destructor completion is visible
+ * before detached worker teardown has necessarily finished. */
+static tss_t detached_tss_key;
+
+static void detached_tss_destructor(void *value)
+{
+	struct detached_tss_observation *observation = value;
+
+	__atomic_store_n(&observation->destructor_saw_cleared_value,
+		tss_get(detached_tss_key) == 0, __ATOMIC_RELEASE);
+	__atomic_fetch_add(&observation->destructor_count, 1, __ATOMIC_RELEASE);
+}
+
+static int detached_tss_worker(void *argument)
+{
+	struct detached_tss_observation *observation = argument;
+
+	if (tss_set(detached_tss_key, observation) != thrd_success)
+		return 139;
+	__atomic_store_n(&observation->entered, 1, __ATOMIC_RELEASE);
+	while (__atomic_load_n(&observation->release, __ATOMIC_ACQUIRE) == 0)
+		__asm__ volatile("pause" ::: "memory");
+	return observation->expected_result;
+}
+
+static int detached_explicit_exit_worker(void *argument)
+{
+	struct detached_tss_observation *observation = argument;
+
+	if (tss_set(detached_tss_key, observation) != thrd_success)
+		return 139;
+	__atomic_store_n(&observation->entered, 1, __ATOMIC_RELEASE);
+	while (__atomic_load_n(&observation->release, __ATOMIC_ACQUIRE) == 0)
+		__asm__ volatile("pause" ::: "memory");
+	thrd_exit(observation->expected_result);
+}
+
+static int run_detached_tss_rounds(void)
+{
+	struct worker_observation reuse_observation = {
+		.observed = 0,
+		.result = -71,
+		.initial_errno = -1,
+		.identity = 0,
+		.thread_pointer = 0,
+	};
+	thrd_t reuse_handle = 0;
+	int joined_result = 0;
+	unsigned int index;
+
+	errno = E2BIG;
+	if (tss_create(&detached_tss_key, detached_tss_destructor) != thrd_success)
+		return 140;
+	for (index = 0; index != detached_round_count; ++index) {
+		struct detached_tss_observation *observation = &detached_observations[index];
+		thrd_t handle = 0;
+
+		observation->expected_result = index & 1 ? INT_MAX : INT_MIN;
+		if (thrd_create(&handle,
+			index & 1 ? detached_explicit_exit_worker : detached_tss_worker,
+			observation) != thrd_success)
+			return 141;
+		if (wait_until_set(&observation->entered)) {
+			__atomic_store_n(&observation->release, 1, __ATOMIC_RELEASE);
+			(void)thrd_join(handle, 0);
+			return 142;
+		}
+		if (thrd_detach(handle) != thrd_success) {
+			__atomic_store_n(&observation->release, 1, __ATOMIC_RELEASE);
+			(void)thrd_join(handle, 0);
+			return 143;
+		}
+		__atomic_store_n(&observation->release, 1, __ATOMIC_RELEASE);
+		if (wait_until_set(&observation->destructor_count))
+			return 144;
+		if (__atomic_load_n(&observation->destructor_count, __ATOMIC_ACQUIRE) != 1 ||
+			__atomic_load_n(&observation->destructor_saw_cleared_value,
+				__ATOMIC_ACQUIRE) != 1 || errno != E2BIG)
+			return 145;
+	}
+	if (thrd_create(&reuse_handle, normal_worker, &reuse_observation) != thrd_success)
+		return 146;
+	if (thrd_join(reuse_handle, &joined_result) != thrd_success ||
+		joined_result != -71 || reuse_observation.initial_errno != 0 || errno != E2BIG)
+		return 147;
 	return 0;
 }
 
@@ -452,6 +568,8 @@ static int run_c11_lifecycle(void)
 		return result;
 #endif
 	if ((result = run_registry_growth_round()) != 0)
+		return result;
+	if ((result = run_detached_tss_rounds()) != 0)
 		return result;
 	return 0;
 }
