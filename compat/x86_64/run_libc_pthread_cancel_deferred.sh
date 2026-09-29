@@ -109,8 +109,11 @@ else
     reference_status=$?
 fi
 printf '%s\n' "$reference_status" >"$work_dir/reference.status"
-sha256sum "$reference" "$work_dir/reference.stdout" "$work_dir/reference.stderr" \
-    "$work_dir/reference.status" >"$work_dir/reference.sha256"
+(
+    cd "$work_dir"
+    sha256sum musl-pthread-cancel-deferred-reference reference.stdout \
+        reference.stderr reference.status >reference.sha256
+)
 if [ "$reference_status" -ne 0 ]; then
     fail "pinned-musl reference execution exited ${reference_status}"
 fi
@@ -218,9 +221,12 @@ else
     candidate_status=$?
 fi
 printf '%s\n' "$candidate_status" >"$work_dir/candidate.status"
-sha256sum "$archive" "$candidate" "$work_dir/candidate.stdout" \
-    "$work_dir/candidate.stderr" "$work_dir/candidate.status" \
-    >"$work_dir/candidate.sha256"
+(
+    cd "$work_dir"
+    sha256sum cargo-target/x86_64-unknown-linux-musl/debug/libc.a \
+        crabc-static-pthread-cancel-deferred-candidate candidate.stdout \
+        candidate.stderr candidate.status >candidate.sha256
+)
 if [ "$candidate_status" -ne 0 ]; then
     fail "candidate execution exited ${candidate_status}"
 fi
