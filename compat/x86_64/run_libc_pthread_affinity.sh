@@ -48,7 +48,7 @@ assert_selected_c_abi_surface() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sed sort; do
+for tool in ar awk cargo chmod cmp diff grep mkdir mktemp nm objdump readelf rustup sed sha256sum sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -57,8 +57,9 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_types_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_pthread_c11_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-pthread-affinity.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/pthread-affinity-size"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/pthread-affinity-size/run.XXXXXX")"
+chmod 755 "$work_dir"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-reference"
 candidate="$work_dir/crabc-static-candidate"
@@ -87,7 +88,12 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_pthread_affinity_probe.c \
     -o "$reference"
-"$reference"
+if "$reference" >"$work_dir/musl.stdout" 2>"$work_dir/musl.stderr"; then
+    :
+else
+    reference_status=$?
+    fail "pinned-musl execution exited ${reference_status}; evidence: ${work_dir}"
+fi
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -154,11 +160,22 @@ fi
 if grep -Eq 'crabc_core|mimalloc|sha_crypt' "$candidate_symbols" "$candidate_disassembly"; then
     fail "candidate selects an unowned runtime dependency"
 fi
-if "$candidate"; then
+if "$candidate" >"$work_dir/crabc.stdout" 2>"$work_dir/crabc.stderr"; then
     :
 else
     candidate_status=$?
-    fail "candidate execution exited ${candidate_status}"
+    fail "candidate execution exited ${candidate_status}; evidence: ${work_dir}"
 fi
 
-printf 'x86 static pthread affinity: PASS\n'
+cmp "$work_dir/musl.stdout" "$work_dir/crabc.stdout" ||
+    fail "musl and crabc stdout differ; evidence: ${work_dir}"
+cmp "$work_dir/musl.stderr" "$work_dir/crabc.stderr" ||
+    fail "musl and crabc stderr differ; evidence: ${work_dir}"
+grep -Fxq 'pthread-affinity-size-differential: PASS' "$work_dir/musl.stdout" ||
+    fail "shared fixture did not report complete size coverage"
+(
+    cd "$work_dir"
+    sha256sum musl-reference crabc-static-candidate musl.stdout musl.stderr \
+        crabc.stdout crabc.stderr >hashes.sha256
+)
+printf 'x86 static pthread affinity: PASS; evidence: %s\n' "$work_dir"

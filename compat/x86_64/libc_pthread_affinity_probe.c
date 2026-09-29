@@ -33,12 +33,16 @@ _Static_assert(__builtin_types_compatible_p(
 
 enum {
     parent_errno_sentinel = E2BIG,
+    /* Leave room for the kernel's variable mask width and a successful tail. */
+    mask_capacity = 4096,
+    sys_write = 1,
     sys_gettid = 186,
     sys_sched_getaffinity = 204
 };
 
 struct guarded_mask {
-    cpu_set_t value;
+    cpu_set_t alignment;
+    unsigned char value[mask_capacity];
     unsigned char trailing[16];
 };
 
@@ -110,9 +114,8 @@ static int trailing_is_unchanged(const struct guarded_mask *mask)
     return 1;
 }
 
-static int nonempty_mask(const cpu_set_t *mask, size_t count)
+static int nonempty_mask(const unsigned char *bytes, size_t count)
 {
-    const unsigned char *bytes = (const unsigned char *)mask;
     size_t index;
 
     for (index = 0; index != count; ++index) {
@@ -122,28 +125,28 @@ static int nonempty_mask(const cpu_set_t *mask, size_t count)
     return 0;
 }
 
-static int zero_tail(const cpu_set_t *mask, size_t initialized)
+static int zero_tail(const unsigned char *bytes, size_t initialized)
 {
-    const unsigned char *bytes = (const unsigned char *)mask;
     size_t index;
 
-    if (initialized > sizeof(*mask))
+    if (initialized > mask_capacity)
         return 0;
-    for (index = initialized; index != sizeof(*mask); ++index) {
+    for (index = initialized; index != mask_capacity; ++index) {
         if (bytes[index] != 0)
             return 0;
     }
     return 1;
 }
 
-static long raw_getaffinity(int task, cpu_set_t *mask)
+static long raw_getaffinity(int task, unsigned char *mask)
 {
-    return raw_syscall3(sys_sched_getaffinity, task, sizeof(*mask),
+    return raw_syscall3(sys_sched_getaffinity, task, mask_capacity,
         (long)(uintptr_t)mask);
 }
 
 static int check_getaffinity(pthread_t thread, int task,
-                             struct guarded_mask *observed)
+                             struct guarded_mask *observed,
+                             size_t *kernel_size)
 {
     struct guarded_mask raw;
     long written;
@@ -151,29 +154,30 @@ static int check_getaffinity(pthread_t thread, int task,
     fill_bytes(observed, sizeof(*observed), 0xa5);
     errno = parent_errno_sentinel;
     if (pthread_getaffinity_np(thread, sizeof(observed->value),
-            &observed->value) != 0 || errno != parent_errno_sentinel)
+            (cpu_set_t *)observed->value) != 0 || errno != parent_errno_sentinel)
         return 0;
     if (!trailing_is_unchanged(observed))
         return 0;
 
     fill_bytes(&raw, sizeof(raw), 0xa5);
-    written = raw_getaffinity(task, &raw.value);
+    written = raw_getaffinity(task, raw.value);
     if (written <= 0 || (size_t)written > sizeof(raw.value) ||
         !trailing_is_unchanged(&raw) ||
-        !same_bytes(&observed->value, &raw.value, (size_t)written) ||
-        !nonempty_mask(&observed->value, (size_t)written) ||
-        !zero_tail(&observed->value, (size_t)written))
+        !same_bytes(observed->value, raw.value, (size_t)written) ||
+        !nonempty_mask(observed->value, (size_t)written) ||
+        !zero_tail(observed->value, (size_t)written))
         return 0;
+    if (kernel_size)
+        *kernel_size = (size_t)written;
     return 1;
 }
 
-static int first_set_cpu(const cpu_set_t *mask)
+static int first_set_cpu(const unsigned char *bytes)
 {
-    const unsigned char *bytes = (const unsigned char *)mask;
     size_t byte_index;
     unsigned int bit_index;
 
-    for (byte_index = 0; byte_index != sizeof(*mask); ++byte_index) {
+    for (byte_index = 0; byte_index != mask_capacity; ++byte_index) {
         unsigned char byte = bytes[byte_index];
 
         for (bit_index = 0; bit_index != 8; ++bit_index) {
@@ -184,24 +188,48 @@ static int first_set_cpu(const cpu_set_t *mask)
     return -1;
 }
 
-static void singleton_mask(cpu_set_t *mask, int cpu)
+static void singleton_mask(unsigned char *bytes, int cpu)
 {
-    unsigned char *bytes = (unsigned char *)mask;
-
-    fill_bytes(mask, sizeof(*mask), 0);
+    fill_bytes(bytes, mask_capacity, 0);
     bytes[(unsigned int)cpu / 8] =
         (unsigned char)(1u << ((unsigned int)cpu % 8));
 }
 
-static int is_singleton_mask(const cpu_set_t *mask, int cpu)
+static int is_singleton_mask(const unsigned char *bytes, int cpu)
 {
-    const unsigned char *bytes = (const unsigned char *)mask;
     size_t index;
     size_t expected_index = (unsigned int)cpu / 8;
     unsigned char expected = (unsigned char)(1u << ((unsigned int)cpu % 8));
 
-    for (index = 0; index != sizeof(*mask); ++index) {
+    for (index = 0; index != mask_capacity; ++index) {
         if (bytes[index] != (index == expected_index ? expected : 0))
+            return 0;
+    }
+    return 1;
+}
+
+static int check_sized_get(pthread_t thread, const unsigned char *allowed,
+                           size_t kernel_size, size_t requested,
+                           int expected_status)
+{
+    struct guarded_mask observed;
+    unsigned char *bytes = observed.value;
+    size_t index;
+
+    fill_bytes(&observed, sizeof(observed), 0xa5);
+    errno = parent_errno_sentinel;
+    if (pthread_getaffinity_np(thread, requested, (cpu_set_t *)bytes) !=
+            expected_status || errno != parent_errno_sentinel ||
+        !trailing_is_unchanged(&observed))
+        return 0;
+    for (index = 0; index != mask_capacity; ++index) {
+        unsigned char expected = 0xa5;
+
+        if (expected_status == 0 && index < kernel_size)
+            expected = allowed[index];
+        else if (expected_status == 0 && index < requested)
+            expected = 0;
+        if (bytes[index] != expected)
             return 0;
     }
     return 1;
@@ -226,7 +254,7 @@ static void *holding_worker(void *opaque)
     state->initial_errno = errno;
     state->task = (int)raw_syscall0(sys_gettid);
     if (state->task <= 0 ||
-        !check_getaffinity(pthread_self(), state->task, &state->self_mask))
+        !check_getaffinity(pthread_self(), state->task, &state->self_mask, 0))
         state->result = 1;
     __atomic_store_n(&state->ready, 1, __ATOMIC_RELEASE);
     while (!__atomic_load_n(&state->release, __ATOMIC_ACQUIRE))
@@ -241,31 +269,46 @@ static int run_pthread_affinity(void)
     struct guarded_mask main_mask;
     struct guarded_mask worker_mask;
     struct guarded_mask narrowed_mask;
-    cpu_set_t singleton;
-    cpu_set_t empty;
-    cpu_set_t short_output;
-    cpu_set_t short_before;
+    struct guarded_mask singleton;
+    struct guarded_mask empty;
     struct worker_state worker = {0};
     void *worker_result = 0;
     int cpu;
+    size_t kernel_size;
+    size_t worker_kernel_size;
 
     errno = parent_errno_sentinel;
-    if (main_thread == 0 || !check_getaffinity(main_thread, 0, &main_mask) ||
+    if (main_thread == 0 ||
+        !check_getaffinity(main_thread, 0, &main_mask, &kernel_size) ||
         pthread_setaffinity_np(main_thread, sizeof(main_mask.value),
-            &main_mask.value) != 0 || errno != parent_errno_sentinel)
+            (cpu_set_t *)main_mask.value) != 0 || errno != parent_errno_sentinel)
         return 10;
 
-    fill_bytes(&short_output, sizeof(short_output), 0xa5);
-    short_before = short_output;
-    errno = parent_errno_sentinel;
-    if (pthread_getaffinity_np(main_thread, 1, &short_output) != EINVAL ||
-        !same_bytes(&short_output, &short_before, sizeof(short_output)) ||
-        errno != parent_errno_sentinel)
+    if (!check_sized_get(main_thread, main_mask.value, kernel_size, 0, EINVAL))
         return 11;
+    if (!check_sized_get(main_thread, main_mask.value, kernel_size,
+            kernel_size - 1, EINVAL))
+        return 13;
+    if (!check_sized_get(main_thread, main_mask.value, kernel_size,
+            kernel_size, 0))
+        return 14;
+    if (!check_sized_get(main_thread, main_mask.value, kernel_size,
+            kernel_size + 1, EINVAL))
+        return 15;
+    if (kernel_size + sizeof(unsigned long) > mask_capacity ||
+        !check_sized_get(main_thread, main_mask.value, kernel_size,
+            kernel_size + sizeof(unsigned long), 0))
+        return 17;
+    if (!check_sized_get(main_thread, main_mask.value, kernel_size,
+            mask_capacity, 0))
+        return 16;
 
     fill_bytes(&empty, sizeof(empty), 0);
     errno = parent_errno_sentinel;
-    if (pthread_setaffinity_np(main_thread, sizeof(empty), &empty) != EINVAL ||
+    if (pthread_setaffinity_np(main_thread, sizeof(empty.value),
+            (cpu_set_t *)empty.value) != EINVAL ||
+        pthread_setaffinity_np(main_thread, 0,
+            (cpu_set_t *)main_mask.value) != EINVAL ||
         errno != parent_errno_sentinel)
         return 12;
 
@@ -274,19 +317,32 @@ static int run_pthread_affinity(void)
         wait_until_set(&worker.ready))
         return 20;
     if (worker.result != 0 || worker.task <= 0 || worker.initial_errno != 0 ||
-        !check_getaffinity(worker_thread, worker.task, &worker_mask))
+        !check_getaffinity(worker_thread, worker.task, &worker_mask,
+            &worker_kernel_size))
         return 21;
 
-    cpu = first_set_cpu(&worker_mask.value);
+    cpu = first_set_cpu(worker_mask.value);
     if (cpu < 0)
         return 22;
-    singleton_mask(&singleton, cpu);
+    singleton_mask(singleton.value, cpu);
     errno = parent_errno_sentinel;
-    if (pthread_setaffinity_np(worker_thread, sizeof(singleton), &singleton) != 0 ||
+    if (pthread_setaffinity_np(worker_thread, (size_t)cpu / 8,
+            (cpu_set_t *)singleton.value) != EINVAL ||
+        pthread_setaffinity_np(worker_thread, (size_t)cpu / 8 + 1,
+            (cpu_set_t *)singleton.value) != 0 ||
         errno != parent_errno_sentinel ||
-        !check_getaffinity(worker_thread, worker.task, &narrowed_mask) ||
-        !is_singleton_mask(&narrowed_mask.value, cpu))
+        !check_getaffinity(worker_thread, worker.task, &narrowed_mask, 0) ||
+        !is_singleton_mask(narrowed_mask.value, cpu) ||
+        worker_kernel_size != kernel_size)
         return 23;
+
+    errno = parent_errno_sentinel;
+    if (pthread_setaffinity_np(worker_thread, sizeof(worker_mask.value),
+            (cpu_set_t *)worker_mask.value) != 0 ||
+        errno != parent_errno_sentinel ||
+        !check_getaffinity(worker_thread, worker.task, &narrowed_mask, 0) ||
+        !same_bytes(narrowed_mask.value, worker_mask.value, mask_capacity))
+        return 25;
 
     __atomic_store_n(&worker.release, 1, __ATOMIC_RELEASE);
     if (pthread_join(worker_thread, &worker_result) != 0 ||
@@ -300,11 +356,18 @@ static int run_pthread_affinity(void)
     before_stale = narrowed_mask;
     errno = parent_errno_sentinel;
     if (pthread_getaffinity_np(worker_thread, sizeof(narrowed_mask.value),
-            &narrowed_mask.value) != ESRCH ||
+            (cpu_set_t *)narrowed_mask.value) != ESRCH ||
         !same_bytes(&narrowed_mask, &before_stale, sizeof(narrowed_mask)) ||
         errno != parent_errno_sentinel)
         return 30;
 #endif
+    {
+        static const char success[] = "pthread-affinity-size-differential: PASS\n";
+
+        if (raw_syscall3(sys_write, 1, (long)(uintptr_t)success,
+                sizeof(success) - 1) != sizeof(success) - 1)
+            return 31;
+    }
     return 0;
 }
 
