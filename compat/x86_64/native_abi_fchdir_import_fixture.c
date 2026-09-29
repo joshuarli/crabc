@@ -1,5 +1,6 @@
 #define _XOPEN_SOURCE 700
 #include <ftw.h>
+#include <unistd.h>
 
 static int visit(const char *path, const struct stat *record, int kind, struct FTW *state)
 {
@@ -12,5 +13,7 @@ static int visit(const char *path, const struct stat *record, int kind, struct F
 
 int main(void)
 {
+    if (fchdir(-1) != -1)
+        return 7;
     return nftw(".", visit, 4, FTW_CHDIR);
 }
