@@ -26,7 +26,8 @@
 //! `fdatasync` through cancellation-point machinery, and `close` coordinates
 //! an AIO hook. The owned product routes all seven transfers/close/sync
 //! entries through its SIGCANCEL/PC-window owner; legacy fixtures retain
-//! direct Linux syscalls. The close point preserves musl's masked-state bypass
+//! direct Linux syscalls, with a pending-request checkpoint before `read`.
+//! The close point preserves musl's masked-state bypass
 //! and post-syscall cancellation exclusion, together with its `close`
 //! `EINTR` success mapping, the `dup2`/`dup3` `EBUSY` retry loops, and the
 //! current musl `pwrite` algorithm: remap C offset `-1` to `-2` before the
@@ -162,7 +163,8 @@ static_archive_member! { read_source {
     /// If Linux examines the buffer, `buffer` must designate `count` writable
     /// bytes for the syscall's duration. The caller owns descriptor lifetime and
     /// concurrent offset policy. The owned runtime uses musl's cancellation-point
-    /// syscall; the older private direct-static fixture retains raw syscall behavior.
+    /// syscall; the older private direct-static fixture checks pending deferred
+    /// cancellation before entering its raw syscall.
     #[no_mangle]
     pub unsafe extern "C" fn read(
         file_descriptor: c_int,
@@ -174,13 +176,20 @@ static_archive_member! { read_source {
         let result = unsafe { crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(raw_syscall::SYS_READ,
             file_descriptor as i64, buffer as i64, count as i64, 0, 0, 0) };
         #[cfg(not(crabc_x86_owned_runtime))]
-        let result = unsafe {
-            raw_syscall::syscall3(
-                raw_syscall::SYS_READ,
-                i64::from(file_descriptor),
-                buffer as usize as i64,
-                count as i64,
-            )
+        let result = {
+            // A pending enabled request takes priority over even an immediate
+            // descriptor error. The legacy worker has no signal/PC-window
+            // delivery, so enter its existing deferred cancellation boundary.
+            crate::x86_64_static_c_abi::pthread_cancel::test_current_selected_pthread_cancellation();
+            // SAFETY: the caller supplies the complete raw Linux read buffer contract.
+            unsafe {
+                raw_syscall::syscall3(
+                    raw_syscall::SYS_READ,
+                    i64::from(file_descriptor),
+                    buffer as usize as i64,
+                    count as i64,
+                )
+            }
         };
         c_ssize_status(result)
     }
