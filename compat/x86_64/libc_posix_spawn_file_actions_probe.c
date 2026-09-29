@@ -1,7 +1,7 @@
 /* Native Linux/x86-64 POSIX spawn file-actions lifecycle evidence.
  *
- * This fixture intentionally observes only the opaque action list's musl
- * representation.  It never executes a spawn, fork, vfork, clone, or exec.
+ * This fixture observes the opaque action list's musl representation and
+ * insertion order.  It never executes a spawn, fork, vfork, clone, or exec.
  */
 
 #if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
@@ -13,6 +13,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <spawn.h>
+#include <stdio.h>
 
 struct crabc_fdop {
     struct crabc_fdop *next;
@@ -47,8 +48,10 @@ typedef int (*file_actions_addfchdir_fn)(posix_spawn_file_actions_t *, int);
 static int check_action(const struct crabc_fdop *op, int cmd, int fd,
                         int srcfd, int oflag, mode_t mode, const char *path)
 {
-    if (!op || op->cmd != cmd || op->fd != fd || op->srcfd != srcfd ||
-        op->oflag != oflag || op->mode != mode)
+    /* Musl leaves fields unused by an action uninitialized. */
+    if (!op || op->cmd != cmd || op->fd != fd ||
+        (cmd == 2 && op->srcfd != srcfd) ||
+        (cmd == 3 && (op->oflag != oflag || op->mode != mode)))
         return 0;
     if (path) {
         const char *left = op->path;
@@ -58,6 +61,138 @@ static int check_action(const struct crabc_fdop *op, int cmd, int fd,
         }
     }
     return 1;
+}
+
+static int check_reused_descriptor_actions(void)
+{
+    static const struct {
+        int cmd;
+        int fd;
+        int srcfd;
+        int oflag;
+        mode_t mode;
+        const char *path;
+    } expected[] = {
+        { 2, 3, 11, 0, 0, 0 },
+        { 1, 3, 0, 0, 0, 0 },
+        { 3, 3, 0, O_WRONLY | O_CREAT | O_TRUNC, 0600,
+          "/tmp/crabc-spawn-first" },
+        { 2, 1, 3, 0, 0, 0 },
+        { 1, 3, 0, 0, 0, 0 },
+        { 3, 3, 0, O_RDONLY, 0, "/tmp/crabc-spawn-second" },
+        { 2, 2, 3, 0, 0, 0 },
+    };
+    posix_spawn_file_actions_t actions;
+    const struct crabc_fdop *ordered[sizeof(expected) / sizeof(expected[0])];
+    const struct crabc_fdop *operation;
+    const struct crabc_fdop *head;
+    char first_path[] = "/tmp/crabc-spawn-first";
+    char second_path[] = "/tmp/crabc-spawn-second";
+    int saved_errno;
+    int index;
+
+    if (posix_spawn_file_actions_init(&actions) != 0 || actions.__actions)
+        return 20;
+    errno = E2BIG;
+    saved_errno = errno;
+
+    if (posix_spawn_file_actions_adddup2(&actions, 11, 3) != 0 ||
+        errno != saved_errno)
+        return 21;
+    if (posix_spawn_file_actions_addclose(&actions, 3) != 0 ||
+        errno != saved_errno)
+        return 22;
+    if (posix_spawn_file_actions_addopen(&actions, 3, first_path,
+            O_WRONLY | O_CREAT | O_TRUNC, 0600) != 0 || errno != saved_errno)
+        return 23;
+    first_path[5] = 'X';
+    if (posix_spawn_file_actions_adddup2(&actions, 3, 1) != 0 ||
+        errno != saved_errno)
+        return 24;
+    if (posix_spawn_file_actions_addclose(&actions, 3) != 0 ||
+        errno != saved_errno)
+        return 25;
+    if (posix_spawn_file_actions_addopen(&actions, 3, second_path,
+            O_RDONLY, 0) != 0 || errno != saved_errno)
+        return 26;
+    second_path[5] = 'Y';
+    if (posix_spawn_file_actions_adddup2(&actions, 3, 2) != 0 ||
+        errno != saved_errno)
+        return 27;
+
+    head = (const struct crabc_fdop *)actions.__actions;
+    if (posix_spawn_file_actions_addclose(&actions, -1) != EBADF ||
+        errno != saved_errno || actions.__actions != head)
+        return 28;
+    if (posix_spawn_file_actions_adddup2(&actions, -1, 3) != EBADF ||
+        errno != saved_errno || actions.__actions != head)
+        return 29;
+    if (posix_spawn_file_actions_adddup2(&actions, 3, -1) != EBADF ||
+        errno != saved_errno || actions.__actions != head)
+        return 30;
+    if (posix_spawn_file_actions_addopen(&actions, -1, 0, O_RDONLY, 0)
+            != EBADF || errno != saved_errno || actions.__actions != head)
+        return 31;
+    if (posix_spawn_file_actions_addfchdir_np(&actions, -1) != EBADF ||
+        errno != saved_errno || actions.__actions != head)
+        return 32;
+
+    operation = head;
+    for (index = (int)(sizeof(expected) / sizeof(expected[0])) - 1;
+         index >= 0; --index) {
+        if (!operation)
+            return 33;
+        ordered[index] = operation;
+        operation = operation->next;
+    }
+    if (operation)
+        return 34;
+    for (index = 0; index < (int)(sizeof(expected) / sizeof(expected[0]));
+         ++index) {
+        const struct crabc_fdop *older = index ? ordered[index - 1] : 0;
+        const struct crabc_fdop *newer =
+            index + 1 < (int)(sizeof(expected) / sizeof(expected[0]))
+                ? ordered[index + 1] : 0;
+        operation = ordered[index];
+        if (operation->next != older || operation->prev != newer ||
+            !check_action(operation, expected[index].cmd,
+                          expected[index].fd, expected[index].srcfd,
+                          expected[index].oflag, expected[index].mode,
+                          expected[index].path)) {
+            fprintf(stderr, "action mismatch %d\n", index);
+            return 35;
+        }
+    }
+
+    /* The executor reaches the oldest node through next, then follows prev. */
+    operation = ordered[0];
+    for (index = 0; index < (int)(sizeof(expected) / sizeof(expected[0]));
+         ++index) {
+        if (operation != ordered[index])
+            return 36;
+        if (printf("action %d %d %d %d %u %s\n", operation->cmd,
+                   operation->fd,
+                   operation->cmd == 2 ? operation->srcfd : 0,
+                   operation->cmd == 3 ? operation->oflag : 0,
+                   operation->cmd == 3 ? (unsigned)operation->mode : 0,
+                   expected[index].path ? operation->path : "-") < 0)
+            return 36;
+        operation = operation->prev;
+    }
+    if (operation)
+        return 36;
+    if (fflush(stdout) != 0)
+        return 37;
+
+    errno = E2BIG;
+    if (posix_spawn_file_actions_destroy(&actions) != 0 || errno != E2BIG ||
+        actions.__actions != head)
+        return 38;
+    if (posix_spawn_file_actions_init(&actions) != 0 || actions.__actions)
+        return 39;
+    if (posix_spawn_file_actions_destroy(&actions) != 0 || actions.__actions)
+        return 40;
+    return 0;
 }
 
 int crabc_x86_64_posix_spawn_file_actions_probe(void)
@@ -146,7 +281,7 @@ int crabc_x86_64_posix_spawn_file_actions_probe(void)
      * contract and deliberately does not dereference the dangling pointer. */
     if (actions.__actions != head)
         return 19;
-    return 0;
+    return check_reused_descriptor_actions();
 }
 
 #ifndef CRABC_POSIX_SPAWN_FILE_ACTIONS_FREESTANDING

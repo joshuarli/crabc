@@ -3,7 +3,8 @@
 #
 # This is deliberately a mixed-runtime differential. The pinned-musl
 # reference and the candidate exercise only the caller-owned action-record
-# lifecycle. The candidate owns the opt-in action provider plus the selected
+# lifecycle, including the list order later consumed by a spawn executor.
+# The candidate owns the opt-in action provider plus the selected
 # allocator wrapper, errno owner, and bundled mimalloc object; pinned musl
 # supplies startup and the process primitives still outside the staged x86
 # runtime. No spawn execution path or pinned-musl action/allocator object is
@@ -26,14 +27,35 @@ archive_member_for_symbol() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo grep nm objdump readelf rustup sort; do require_tool "$tool"; done
+for tool in ar awk cargo cmp grep nm objdump readelf rustup sort; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_posix_spawn_file_actions_header_abi.sh"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-posix-spawn-file-actions.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-posix-spawn-file-actions.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-posix-spawn-file-actions"
+mkdir -p "$report_dir"
+reference_stdout="$report_dir/reference.stdout"
+reference_stderr="$report_dir/reference.stderr"
+reference_status="$report_dir/reference.status"
+candidate_stdout="$report_dir/candidate.stdout"
+candidate_stderr="$report_dir/candidate.stderr"
+candidate_status="$report_dir/candidate.status"
+expected_stdout="$report_dir/expected.stdout"
+rm -f "$reference_stdout" "$reference_stderr" "$reference_status" \
+    "$candidate_stdout" "$candidate_stderr" "$candidate_status"
+cat >"$expected_stdout" <<'EOF'
+action 2 3 11 0 0 -
+action 1 3 0 0 0 -
+action 3 3 0 577 384 /tmp/crabc-spawn-first
+action 2 1 3 0 0 -
+action 1 3 0 0 0 -
+action 3 3 0 0 0 /tmp/crabc-spawn-second
+action 2 2 3 0 0 -
+EOF
 target_dir="$work_dir/cargo-target"
 full_archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 selected_archive="$work_dir/libcrabc-posix-spawn-file-actions.a"
@@ -50,7 +72,16 @@ cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_posix_spawn_file_actions_probe.c \
     -o "$reference"
-env -i LC_ALL=C TZ=UTC "$reference" || fail "pinned-musl reference failed"
+if env -i LC_ALL=C TZ=UTC "$reference" >"$reference_stdout" 2>"$reference_stderr"; then
+    printf '0\n' >"$reference_status"
+else
+    result=$?
+    printf '%s\n' "$result" >"$reference_status"
+    fail "pinned-musl reference failed (status $result)"
+fi
+cmp -s "$expected_stdout" "$reference_stdout" \
+    || fail "pinned-musl reference action records differ from expected bytes"
+[ ! -s "$reference_stderr" ] || fail "pinned-musl reference wrote stderr"
 
 build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a" \
     --features x86-posix-spawn-file-actions
@@ -167,5 +198,17 @@ if grep -Eq '[[:space:]](posix_spawn|posix_spawnp|fork|vfork|clone|execve|posix_
     "$candidate_symbols"; then
     fail "candidate leaked an execution or separately owned spawn entry"
 fi
-env -i LC_ALL=C TZ=UTC "$candidate" || fail "mixed-runtime candidate failed"
+if env -i LC_ALL=C TZ=UTC "$candidate" >"$candidate_stdout" 2>"$candidate_stderr"; then
+    printf '0\n' >"$candidate_status"
+else
+    result=$?
+    printf '%s\n' "$result" >"$candidate_status"
+    fail "mixed-runtime candidate failed (status $result)"
+fi
+cmp -s "$expected_stdout" "$candidate_stdout" \
+    || fail "mixed-runtime candidate action records differ from expected bytes"
+cmp -s "$reference_stdout" "$candidate_stdout" \
+    || fail "mixed-runtime candidate action records differ from pinned musl"
+cmp -s "$reference_stderr" "$candidate_stderr" \
+    || fail "mixed-runtime candidate stderr differs from pinned musl"
 printf 'x86 static libc spawn file-actions lifecycle: PASS\n'
