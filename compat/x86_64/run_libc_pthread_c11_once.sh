@@ -6,10 +6,10 @@
 # archive. It covers four-byte zero/static flags, normal exactly-once
 # initialization, acquire publication, private-futex contention/wake, and
 # retry after cancellation of an initializer with waiters for both APIs.
-# Recursive entry, fork/atfork, TSS, dynamic TLS, a general pthread/C11
-# runtime, family completion, CRT, loader, sysroot, and public x86 support
-# remain outside this artifact.
+# Child observers also check recursive entry, an active control inherited
+# across fork, and publication visible to a child forked after completion.
 set -euo pipefail
+ulimit -c 0
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -120,8 +120,9 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_types_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_pthread_c11_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-pthread-c11-once.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-pthread-c11-once.XXXXXX")"
+chmod a+rx "$work_dir"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-pthread-c11-once-reference"
 candidate="$work_dir/crabc-static-pthread-c11-once-candidate"
@@ -152,7 +153,7 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_pthread_c11_once_probe.c \
     -o "$reference"
-if timeout "$EXECUTION_TIMEOUT" "$reference"; then
+if timeout "$EXECUTION_TIMEOUT" "$reference" >"$work_dir/oracle.stdout" 2>"$work_dir/oracle.stderr"; then
     :
 else
     reference_status=$?
@@ -259,11 +260,15 @@ if grep -Eq '(call|jmp).*pthread_once' "$call_once_disassembly"; then
     fail "call_once candidate crosses an interposable pthread C ABI"
 fi
 
-if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
+if timeout "$EXECUTION_TIMEOUT" "$candidate" >"$work_dir/candidate.stdout" 2>"$work_dir/candidate.stderr"; then
     :
 else
     candidate_status=$?
     fail "candidate execution exited ${candidate_status}"
 fi
 
-printf 'x86 static crabc-libc pthread/C11 once: PASS\n'
+cmp "$work_dir/oracle.stdout" "$work_dir/candidate.stdout" ||
+    fail "candidate stdout differs from pinned musl"
+cmp "$work_dir/oracle.stderr" "$work_dir/candidate.stderr" ||
+    fail "candidate stderr differs from pinned musl"
+printf 'x86 static crabc-libc pthread/C11 once: PASS; evidence: %s\n' "$work_dir"

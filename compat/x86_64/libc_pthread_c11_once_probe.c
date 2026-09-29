@@ -6,9 +6,9 @@
  * initializer, contended wait/wake and acquire visibility, plus retry after
  * cancellation of an initializer with waiters for both pthread_once and
  * call_once.
- * Same-control recursion, fork/atfork, TSS, dynamic TLS, general pthread/C11
- * synchronization, CRT, loader, sysroot, family completion, and public x86
- * support remain outside this fixture.
+ * A child process also observes same-control recursion and the lifetime of a
+ * once word inherited while another thread initializes it. Those cases block
+ * in musl; the parent kills and reaps each child after observing the state.
  */
 
 #if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
@@ -20,6 +20,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <threads.h>
+#include <time.h>
 
 #define CRABC_TYPE_IS(actual, expected) __builtin_types_compatible_p(actual, expected)
 
@@ -104,6 +105,265 @@ static volatile int static_c11_calls;
 static volatile int static_pthread_effect;
 static volatile int static_c11_effect;
 static struct cancelled_once_round *active_cancelled_once;
+
+enum {
+    ONCE_SYS_READ = 0,
+    ONCE_SYS_WRITE = 1,
+    ONCE_SYS_CLOSE = 3,
+    ONCE_SYS_SCHED_YIELD = 24,
+    ONCE_SYS_FORK = 57,
+    ONCE_SYS_WAIT4 = 61,
+    ONCE_SYS_KILL = 62,
+    ONCE_SYS_CLOCK_GETTIME = 228,
+    ONCE_SYS_EXIT_GROUP = 231,
+    ONCE_SYS_PIPE2 = 293,
+    ONCE_CLOCK_MONOTONIC = 1,
+    ONCE_O_NONBLOCK = 2048,
+    ONCE_WNOHANG = 1,
+    ONCE_SIGKILL = 9,
+};
+
+/* Direct Linux syscalls keep the child observer independent of the runtime's
+ * fork, pipe, clock, and wait providers. Only pthread_once is under test. */
+static long once_syscall0(long number)
+{
+    long result;
+    __asm__ volatile("syscall" : "=a"(result) : "a"(number) : "rcx", "r11", "memory");
+    return result;
+}
+
+static long once_syscall1(long number, long arg1)
+{
+    long result;
+    __asm__ volatile("syscall" : "=a"(result) : "a"(number), "D"(arg1) : "rcx", "r11", "memory");
+    return result;
+}
+
+static long once_syscall2(long number, long arg1, long arg2)
+{
+    long result;
+    __asm__ volatile("syscall" : "=a"(result) : "a"(number), "D"(arg1), "S"(arg2) : "rcx", "r11", "memory");
+    return result;
+}
+
+static long once_syscall3(long number, long arg1, long arg2, long arg3)
+{
+    long result;
+    __asm__ volatile("syscall" : "=a"(result) : "a"(number), "D"(arg1), "S"(arg2), "d"(arg3) : "rcx", "r11", "memory");
+    return result;
+}
+
+static long once_syscall4(long number, long arg1, long arg2, long arg3, long arg4)
+{
+    register long fourth __asm__("r10") = arg4;
+    long result;
+    __asm__ volatile("syscall" : "=a"(result) : "a"(number), "D"(arg1), "S"(arg2), "d"(arg3), "r"(fourth) : "rcx", "r11", "memory");
+    return result;
+}
+
+static long long once_elapsed_ns(const struct timespec *start)
+{
+    struct timespec now;
+    if (once_syscall2(ONCE_SYS_CLOCK_GETTIME, ONCE_CLOCK_MONOTONIC, (long)&now) != 0)
+        return -1;
+    return (long long)(now.tv_sec - start->tv_sec) * 1000000000LL +
+        now.tv_nsec - start->tv_nsec;
+}
+
+static void once_child_exit(int status)
+{
+    (void)once_syscall1(ONCE_SYS_EXIT_GROUP, status);
+    for (;;)
+        ;
+}
+
+/* A pipe byte establishes that the child reached its specified point. A
+ * bounded liveness observation then distinguishes a blocked once call from
+ * an unexpected return. The parent always reaps the child. */
+static int once_observe_child(long child, int read_fd, int should_block,
+    char expected_byte)
+{
+    struct timespec start;
+    char byte;
+    int status = 0;
+    int result = 0;
+    long waited;
+
+    if (once_syscall2(ONCE_SYS_CLOCK_GETTIME, ONCE_CLOCK_MONOTONIC, (long)&start) != 0)
+        result = 1;
+    while (result == 0) {
+        long count = once_syscall3(ONCE_SYS_READ, read_fd, (long)&byte, 1);
+        if (count == 1 && byte == expected_byte)
+            break;
+        waited = once_syscall4(ONCE_SYS_WAIT4, child, (long)&status, ONCE_WNOHANG, 0);
+        long long elapsed = once_elapsed_ns(&start);
+        if (count != -11 || waited != 0 || elapsed < 0 || elapsed > 2000000000LL)
+            result = 2;
+        (void)once_syscall0(ONCE_SYS_SCHED_YIELD);
+    }
+    if (result == 0 && once_syscall2(ONCE_SYS_CLOCK_GETTIME, ONCE_CLOCK_MONOTONIC, (long)&start) != 0)
+        result = 3;
+    while (result == 0) {
+        waited = once_syscall4(ONCE_SYS_WAIT4, child, (long)&status, ONCE_WNOHANG, 0);
+        if (waited == child) {
+            if (should_block || status != 0)
+                result = 4;
+            break;
+        }
+        if (waited != 0) {
+            result = 5;
+            break;
+        }
+        long long elapsed = once_elapsed_ns(&start);
+        if (elapsed < 0) {
+            result = 6;
+            break;
+        }
+        if (elapsed > (should_block ? 1000000000LL : 2000000000LL)) {
+            if (!should_block)
+                result = 9;
+            break;
+        }
+        (void)once_syscall0(ONCE_SYS_SCHED_YIELD);
+    }
+    (void)once_syscall1(ONCE_SYS_CLOSE, read_fd);
+    if (should_block || result != 0) {
+        (void)once_syscall2(ONCE_SYS_KILL, child, ONCE_SIGKILL);
+        waited = once_syscall4(ONCE_SYS_WAIT4, child, (long)&status, 0, 0);
+        if (waited != child && waited != -10)
+            result = 7;
+        if (should_block && waited == child && status != ONCE_SIGKILL)
+            result = 8;
+    }
+    return result;
+}
+
+static int once_child_pipe(int *pipe_fds)
+{
+    return once_syscall2(ONCE_SYS_PIPE2, (long)pipe_fds, ONCE_O_NONBLOCK) == 0 ? 0 : 1;
+}
+
+static pthread_once_t recursive_control = PTHREAD_ONCE_INIT;
+static int recursive_signal_fd;
+
+static void recursive_initializer(void)
+{
+    char byte = 'r';
+    (void)once_syscall3(ONCE_SYS_WRITE, recursive_signal_fd, (long)&byte, 1);
+    (void)pthread_once(&recursive_control, recursive_initializer);
+}
+
+static int run_recursive_once_round(void)
+{
+    int pipe_fds[2];
+    long child;
+    int result;
+
+    if (once_child_pipe(pipe_fds))
+        return 1;
+    child = once_syscall0(ONCE_SYS_FORK);
+    if (child == 0) {
+        (void)once_syscall1(ONCE_SYS_CLOSE, pipe_fds[0]);
+        recursive_signal_fd = pipe_fds[1];
+        (void)pthread_once(&recursive_control, recursive_initializer);
+        once_child_exit(81);
+    }
+    (void)once_syscall1(ONCE_SYS_CLOSE, pipe_fds[1]);
+    if (child < 0) {
+        (void)once_syscall1(ONCE_SYS_CLOSE, pipe_fds[0]);
+        return 2;
+    }
+    result = once_observe_child(child, pipe_fds[0], 1, 'r');
+    return result ? 2 + result : 0;
+}
+
+static pthread_once_t fork_control = PTHREAD_ONCE_INIT;
+static volatile int fork_initializer_entered;
+static volatile int fork_initializer_release;
+static volatile int fork_initializer_calls;
+static volatile int fork_initializer_effect;
+
+static void fork_initializer(void)
+{
+    __atomic_fetch_add(&fork_initializer_calls, 1, __ATOMIC_RELAXED);
+    __atomic_store_n(&fork_initializer_entered, 1, __ATOMIC_RELEASE);
+    while (__atomic_load_n(&fork_initializer_release, __ATOMIC_ACQUIRE) == 0)
+        (void)once_syscall0(ONCE_SYS_SCHED_YIELD);
+    __atomic_store_n(&fork_initializer_effect, PTHREAD_EFFECT, __ATOMIC_RELAXED);
+}
+
+static void *fork_initializer_worker(void *unused)
+{
+    (void)unused;
+    return (void *)(long)pthread_once(&fork_control, fork_initializer);
+}
+
+static int run_fork_once_round(void)
+{
+    pthread_t initializer;
+    void *worker_result = (void *)1;
+    int pipe_fds[2];
+    long child;
+    int result;
+
+    if (pthread_create(&initializer, 0, fork_initializer_worker, 0) != 0)
+        return 1;
+    while (__atomic_load_n(&fork_initializer_entered, __ATOMIC_ACQUIRE) == 0)
+        ;
+    if (__atomic_load_n(&fork_control, __ATOMIC_ACQUIRE) != 1 ||
+        once_child_pipe(pipe_fds)) {
+        result = 2;
+        goto release_initializer;
+    }
+    child = once_syscall0(ONCE_SYS_FORK);
+    if (child == 0) {
+        char byte = 'f';
+        (void)once_syscall1(ONCE_SYS_CLOSE, pipe_fds[0]);
+        (void)once_syscall3(ONCE_SYS_WRITE, pipe_fds[1], (long)&byte, 1);
+        (void)pthread_once(&fork_control, fork_initializer);
+        once_child_exit(82);
+    }
+    (void)once_syscall1(ONCE_SYS_CLOSE, pipe_fds[1]);
+    if (child < 0) {
+        (void)once_syscall1(ONCE_SYS_CLOSE, pipe_fds[0]);
+        result = 3;
+        goto release_initializer;
+    }
+    result = once_observe_child(child, pipe_fds[0], 1, 'f');
+    if (result != 0)
+        result += 3;
+release_initializer:
+    __atomic_store_n(&fork_initializer_release, 1, __ATOMIC_RELEASE);
+    if (pthread_join(initializer, &worker_result) != 0 || worker_result != 0)
+        return 12;
+    if (result != 0)
+        return result;
+    if (__atomic_load_n(&fork_control, __ATOMIC_ACQUIRE) != 2 ||
+        __atomic_load_n(&fork_initializer_calls, __ATOMIC_RELAXED) != 1 ||
+        __atomic_load_n(&fork_initializer_effect, __ATOMIC_RELAXED) != PTHREAD_EFFECT)
+        return 13;
+
+    if (once_child_pipe(pipe_fds))
+        return 14;
+    child = once_syscall0(ONCE_SYS_FORK);
+    if (child == 0) {
+        char byte = 'c';
+        (void)once_syscall1(ONCE_SYS_CLOSE, pipe_fds[0]);
+        (void)once_syscall3(ONCE_SYS_WRITE, pipe_fds[1], (long)&byte, 1);
+        if (pthread_once(&fork_control, fork_initializer) != 0 ||
+            __atomic_load_n(&fork_initializer_calls, __ATOMIC_RELAXED) != 1 ||
+            __atomic_load_n(&fork_initializer_effect, __ATOMIC_RELAXED) != PTHREAD_EFFECT)
+            once_child_exit(83);
+        once_child_exit(0);
+    }
+    (void)once_syscall1(ONCE_SYS_CLOSE, pipe_fds[1]);
+    if (child < 0) {
+        (void)once_syscall1(ONCE_SYS_CLOSE, pipe_fds[0]);
+        return 15;
+    }
+    result = once_observe_child(child, pipe_fds[0], 0, 'c');
+    return result ? 15 + result : 0;
+}
 
 static void static_pthread_initializer(void)
 {
@@ -496,6 +756,10 @@ static int run_pthread_c11_once(void)
         return 96 + status;
     if ((status = run_cancelled_once_round(1)) != 0)
         return 112 + status;
+    if ((status = run_recursive_once_round()) != 0)
+        return 128 + status;
+    if ((status = run_fork_once_round()) != 0)
+        return 144 + status;
     return 0;
 }
 

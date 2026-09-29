@@ -1,14 +1,11 @@
 //! Bounded Linux/x86-64 static `pthread_once`/C11 `call_once` artifact.
 //!
-//! This leaf preserves the selected normal and canceled-initializer paths from pinned musl 1.2.6 release commit `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license recorded in `COPYRIGHT`:
+//! This leaf preserves the selected normal and canceled-initializer paths from pinned musl 1.2.6 release commit `9fa28ece75d8a2191de7c5bb53bed224c5947417` under its MIT license:
 //!
-//! - `src/thread/pthread_once.c::{__pthread_once,__pthread_once_full}` maps
-//!   the `0 -> 1 -> 2` initializer state and its contended `3` waiter state.
-//! - `src/thread/call_once.c` maps C11 `call_once` directly to that same
-//!   pthread once state machine.
-//! - `src/thread/__wait.c::__wait` and
-//!   `src/internal/pthread_impl.h::__wake` supply the private futex wait and
-//!   wake shape used when another selected worker owns initialization.
+//! - `__pthread_once` and `__pthread_once_full` map the `0 -> 1 -> 2`
+//!   initializer state and its contended `3` waiter state.
+//! - C11 `call_once` uses the same pthread once state machine.
+//! - Private futex wait and wake preserve musl's contended handoff.
 //!
 //! A four-byte aligned `pthread_once_t`/C11 `once_flag` initialized to zero
 //! may run one non-null initializer. A first caller changes zero to `1`;
@@ -21,11 +18,13 @@
 //! The acquire fast path makes completed initializer effects visible without C
 //! `errno` publication.
 //!
-//! Recursive same-control entry, fork/atfork interaction, dynamic/loader TLS,
-//! TSS, general pthread/C11 synchronization, family promotion, and public x86
-//! support remain outside this private artifact. Musl's weak `pthread_once`
-//! ELF-alias binding is retained as the provider boundary below; it does not
-//! widen this behavior.
+//! Recursive same-control entry changes state `1` to `3` and blocks while the
+//! outer callback waits for it. A child forked while another thread owns state
+//! `1` inherits that state without its owner and also blocks; the parent's
+//! initializer can still complete. A child forked after state `2` observes the
+//! completed callback effects and does not rerun it. These observations do not
+//! create a recovery path for orphaned states. Dynamic/loader TLS, TSS, and
+//! general pthread/C11 synchronization remain separate runtime concerns.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread/C11 once leaf requires little-endian Linux/x86-64");
@@ -142,10 +141,11 @@ unsafe extern "C" fn undo_selected_once(argument: *mut core::ffi::c_void) {
 ///
 /// `control` must designate a live, four-byte-aligned zero-initialized once
 /// control for its entire concurrent lifetime. `init_routine` must be a
-/// non-null C function that returns normally exactly when called; it must not
-/// cancel or terminate its thread, re-enter this control, or destroy/reuse
-/// the control while any selected caller can observe it. Every concurrent
-/// caller must use this same selected once protocol.
+/// non-null C function. Normal return publishes completion; selected pthread
+/// cancellation or exit resets the control for retry. The callback must not
+/// destroy or reuse the control while any selected caller can observe it.
+/// Recursive entry blocks while the outer callback waits for it. Every
+/// concurrent caller must use this same selected once protocol.
 #[inline(always)]
 unsafe fn run_selected_once(control: *mut c_int, init_routine: OnceRoutine) -> c_int {
     // Musl's volatile completed fast path has an acquire barrier. The x86
@@ -227,7 +227,7 @@ unsafe fn run_selected_once(control: *mut c_int, init_routine: OnceRoutine) -> c
     }
 }
 
-// Musl's `src/thread/pthread_once.c` object.
+// Keep the once provider and its weak public alias in one archive member.
 static_archive_member! { pthread_once_source {
     // The source keeps this provider hidden; the directive applies to its definition here.
     core::arch::global_asm!(
@@ -246,9 +246,10 @@ static_archive_member! { pthread_once_source {
     ///
     /// `control` must designate a live, four-byte-aligned `pthread_once_t` with
     /// the selected zero initializer and must outlive every concurrent call.
-    /// `init_routine` must be non-null and must not recursively enter the same
-    /// control or cross fork/atfork transitions. Cancellation or exit of a
-    /// selected pthread worker during initialization resets this control and
+    /// `init_routine` must be non-null. Recursive entry blocks; a forked child
+    /// that inherits an initializer owned by a vanished thread also blocks.
+    /// Cancellation or exit of a selected pthread worker during initialization
+    /// resets this control and
     /// allows a waiting selected caller to retry. This artifact does not promise
     /// cleanup for unselected threads. The control must not be destroyed or
     /// reused while active. The routine and all callers must follow the selected
@@ -267,7 +268,7 @@ static_archive_member! { pthread_once_source {
     }
 }}
 
-// Musl's `src/thread/call_once.c` object.
+// C11 once uses the same private state machine in its own archive member.
 static_archive_member! { call_once_source {
     /// Run a selected C11 once initializer through the private shared state
     /// machine rather than an interposable pthread C symbol.
@@ -276,9 +277,10 @@ static_archive_member! { call_once_source {
     ///
     /// `flag` must designate a live, four-byte-aligned `once_flag` with
     /// `ONCE_FLAG_INIT` representation and must outlive every concurrent call.
-    /// `function` must be non-null and must not recursively enter the same flag or
-    /// cross fork/atfork transitions. Cancellation or exit of a selected pthread
-    /// worker during initialization resets the flag and allows a waiting selected
+    /// `function` must be non-null. Recursive entry blocks; a forked child that
+    /// inherits an initializer owned by a vanished thread also blocks.
+    /// Cancellation or exit of a selected pthread worker during initialization
+    /// resets the flag and allows a waiting selected
     /// caller to retry. This artifact does not promise cleanup for unselected
     /// threads. The flag must not be destroyed or reused while active. The
     /// routine and all callers must follow the selected private once protocol.
