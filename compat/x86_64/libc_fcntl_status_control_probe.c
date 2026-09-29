@@ -32,7 +32,7 @@ _Static_assert(sizeof(long) == 8 && sizeof(void *) == 8,
 _Static_assert(sizeof(int) == 4 && sizeof(pid_t) == 4,
     "x86 fcntl scalar widths");
 _Static_assert(SYS_open == 2 && SYS_close == 3 && SYS_dup == 32 &&
-    SYS_fcntl == 72 && SYS_getpid == 39 && SYS_unlink == 87,
+    SYS_fcntl == 72 && SYS_getpid == 39 && SYS_unlink == 87 && SYS_write == 1,
     "x86 selected fcntl syscall numbers");
 _Static_assert(F_GETFD == 1 && F_SETFD == 2 && F_GETFL == 3 && F_SETFL == 4 &&
     F_DUPFD == 0 && F_GETOWN == 9 && FD_CLOEXEC == 1,
@@ -47,6 +47,7 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&fcntl),
 
 struct fixture_file {
     int descriptor;
+    int independent_descriptor;
     char path[88];
 };
 
@@ -120,6 +121,7 @@ static int make_path(char *output, size_t capacity, long process_id)
 static int setup_file(struct fixture_file *file)
 {
     file->descriptor = -1;
+    file->independent_descriptor = -1;
     if (make_path(file->path, sizeof(file->path), raw_syscall0(SYS_getpid)) != 0)
         return -1;
 
@@ -130,8 +132,21 @@ static int setup_file(struct fixture_file *file)
         0600);
     if (file->descriptor < 0)
         return -1;
-    if (raw_syscall1(SYS_unlink, (long)(void *)file->path) != 0) {
+    file->independent_descriptor = (int)raw_syscall3(
+        SYS_open,
+        (long)(void *)file->path,
+        O_RDWR | O_CLOEXEC,
+        0);
+    if (file->independent_descriptor < 0) {
         (void)raw_syscall1(SYS_close, file->descriptor);
+        file->descriptor = -1;
+        (void)raw_syscall1(SYS_unlink, (long)(void *)file->path);
+        return -1;
+    }
+    if (raw_syscall1(SYS_unlink, (long)(void *)file->path) != 0) {
+        (void)raw_syscall1(SYS_close, file->independent_descriptor);
+        (void)raw_syscall1(SYS_close, file->descriptor);
+        file->independent_descriptor = -1;
         file->descriptor = -1;
         return -1;
     }
@@ -140,9 +155,148 @@ static int setup_file(struct fixture_file *file)
 
 static int cleanup_file(struct fixture_file *file)
 {
+    if (file->independent_descriptor >= 0 &&
+        raw_syscall1(SYS_close, file->independent_descriptor) != 0)
+        return -1;
+    file->independent_descriptor = -1;
     if (file->descriptor >= 0 && raw_syscall1(SYS_close, file->descriptor) != 0)
         return -1;
     file->descriptor = -1;
+    return 0;
+}
+
+/* Every record is an observed C result and errno from the same source body.
+ * Fixed-width hexadecimal keeps the freestanding trace independent of stdio. */
+static int record_result(const char *name, int result, int error)
+{
+    static const char hex[] = "0123456789abcdef";
+    char line[96];
+    size_t length = 0;
+    unsigned int value;
+    int shift;
+
+    while (*name != '\0')
+        line[length++] = *name++;
+    line[length++] = ' ';
+    value = (unsigned int)result;
+    for (shift = 28; shift >= 0; shift -= 4)
+        line[length++] = hex[(value >> shift) & 15];
+    line[length++] = ' ';
+    value = (unsigned int)error;
+    for (shift = 28; shift >= 0; shift -= 4)
+        line[length++] = hex[(value >> shift) & 15];
+    line[length++] = '\n';
+    return raw_syscall3(SYS_write, 1, (long)(void *)line, length) ==
+        (long)length ? 0 : -1;
+}
+
+#define OBSERVE(name, expression, result) do { \
+    errno = E2BIG; \
+    (result) = (expression); \
+    if (record_result((name), (result), errno) != 0) \
+        return 90; \
+} while (0)
+
+static int check_open_description_ownership(const struct fixture_file *file,
+    int duplicate)
+{
+    int original;
+    int result;
+    int discarded;
+
+    OBSERVE("status.primary.initial", fcntl(file->descriptor, F_GETFL), original);
+    if (original < 0 || (original & O_ACCMODE) != O_RDWR)
+        return 1;
+    OBSERVE("status.independent.initial",
+        fcntl(file->independent_descriptor, F_GETFL), result);
+    if (result != original)
+        return 2;
+    OBSERVE("fd.primary.initial", fcntl(file->descriptor, F_GETFD), result);
+    if (result != 0)
+        return 3;
+    OBSERVE("fd.duplicate.initial", fcntl(duplicate, F_GETFD), result);
+    if (result != FD_CLOEXEC)
+        return 4;
+    OBSERVE("fd.independent.initial",
+        fcntl(file->independent_descriptor, F_GETFD), result);
+    if (result != FD_CLOEXEC)
+        return 5;
+
+    OBSERVE("fd.primary.set-extra-bits",
+        fcntl(file->descriptor, F_SETFD, FD_CLOEXEC | 0x7ffe), result);
+    if (result != 0)
+        return 6;
+    OBSERVE("fd.primary.after-set", fcntl(file->descriptor, F_GETFD), result);
+    if (result != FD_CLOEXEC)
+        return 7;
+    OBSERVE("fd.duplicate.after-primary-set", fcntl(duplicate, F_GETFD), result);
+    if (result != FD_CLOEXEC)
+        return 8;
+    OBSERVE("fd.primary.clear", fcntl(file->descriptor, F_SETFD, 0), result);
+    if (result != 0)
+        return 9;
+    OBSERVE("fd.duplicate.clear", fcntl(duplicate, F_SETFD, 0), result);
+    if (result != 0)
+        return 10;
+    OBSERVE("fd.independent.after-clear",
+        fcntl(file->independent_descriptor, F_GETFD), result);
+    if (result != FD_CLOEXEC)
+        return 11;
+
+    OBSERVE("status.primary.set-append",
+        fcntl(file->descriptor, F_SETFL, original | O_APPEND), result);
+    if (result != 0)
+        return 12;
+    OBSERVE("status.duplicate.after-append", fcntl(duplicate, F_GETFL), result);
+    if (result != (original | O_APPEND))
+        return 13;
+    OBSERVE("status.independent.after-append",
+        fcntl(file->independent_descriptor, F_GETFL), result);
+    if (result != original)
+        return 14;
+    OBSERVE("status.primary.restore", fcntl(file->descriptor, F_SETFL, original), result);
+    if (result != 0)
+        return 15;
+    OBSERVE("status.independent.set-nonblock",
+        fcntl(file->independent_descriptor, F_SETFL, original | O_NONBLOCK), result);
+    if (result != 0)
+        return 16;
+    OBSERVE("status.primary.after-independent-set",
+        fcntl(file->descriptor, F_GETFL), result);
+    if (result != original)
+        return 17;
+    OBSERVE("status.independent.after-set",
+        fcntl(file->independent_descriptor, F_GETFL), result);
+    if (result != (original | O_NONBLOCK))
+        return 18;
+    OBSERVE("status.independent.restore",
+        fcntl(file->independent_descriptor, F_SETFL, original), result);
+    if (result != 0)
+        return 19;
+
+    discarded = (int)raw_syscall1(SYS_dup, file->descriptor);
+    if (discarded < 0 || raw_syscall1(SYS_close, discarded) != 0)
+        return 20;
+    errno = 0;
+    result = fcntl(discarded, F_GETFD);
+    if (record_result("fd.closed.get", result, errno) != 0 ||
+        result != -1 || errno != EBADF)
+        return 21;
+    errno = 0;
+    result = fcntl(discarded, F_SETFD, FD_CLOEXEC);
+    if (record_result("fd.closed.set", result, errno) != 0 ||
+        result != -1 || errno != EBADF)
+        return 22;
+    errno = 0;
+    result = fcntl(discarded, F_GETFL);
+    if (record_result("status.closed.get", result, errno) != 0 ||
+        result != -1 || errno != EBADF)
+        return 23;
+    errno = 0;
+    result = fcntl(discarded, F_SETFL, O_NONBLOCK);
+    if (record_result("status.closed.set", result, errno) != 0 ||
+        result != -1 || errno != EBADF)
+        return 24;
     return 0;
 }
 
@@ -211,17 +365,27 @@ static int check_status_flags(const struct fixture_file *file, int duplicate)
 
 static int check_errors(const struct fixture_file *file)
 {
+    int result;
+
     errno = 0;
-    if (fcntl(-1, F_GETFD) != -1 || errno != EBADF)
+    result = fcntl(-1, F_GETFD);
+    if (record_result("fd.negative.get", result, errno) != 0 ||
+        result != -1 || errno != EBADF)
         return 1;
     errno = 0;
-    if (fcntl(-1, F_SETFD, FD_CLOEXEC) != -1 || errno != EBADF)
+    result = fcntl(-1, F_SETFD, FD_CLOEXEC);
+    if (record_result("fd.negative.set", result, errno) != 0 ||
+        result != -1 || errno != EBADF)
         return 2;
     errno = 0;
-    if (fcntl(-1, F_GETFL) != -1 || errno != EBADF)
+    result = fcntl(-1, F_GETFL);
+    if (record_result("status.negative.get", result, errno) != 0 ||
+        result != -1 || errno != EBADF)
         return 3;
     errno = 0;
-    if (fcntl(-1, F_SETFL, O_NONBLOCK) != -1 || errno != EBADF)
+    result = fcntl(-1, F_SETFL, O_NONBLOCK);
+    if (record_result("status.negative.set", result, errno) != 0 ||
+        result != -1 || errno != EBADF)
         return 4;
     return fcntl(file->descriptor, F_GETFD) == 0 ? 0 : 5;
 }
@@ -274,6 +438,8 @@ int crabc_x86_64_fcntl_status_control_probe(void)
     status = check_descriptor_flags(&file, &duplicate);
     if (status == 0)
         status = check_status_flags(&file, duplicate);
+    if (status == 0)
+        status = check_open_description_ownership(&file, duplicate);
     if (status == 0)
         status = check_errors(&file);
     if (status == 0)

@@ -189,11 +189,16 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_fcntl_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_x86_fcntl_status_reference.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-fcntl-status-control.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-fcntl-status-control.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-fcntl-status-control"
+mkdir -p "$report_dir"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-fcntl-status-control-reference"
 candidate="$work_dir/crabc-static-fcntl-status-control-candidate"
+reference_records="$work_dir/musl.records"
+candidate_records="$work_dir/crabc.records"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
@@ -219,12 +224,14 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_fcntl_status_control_probe.c \
     -o "$reference"
-if "$reference"; then
+if "$reference" >"$reference_records"; then
     :
 else
     status=$?
+    cp "$reference_records" "$report_dir/musl.records"
     fail "pinned-musl fcntl status-control fixture exited ${status}"
 fi
+cp "$reference_records" "$report_dir/musl.records"
 
 # The instruction judge requires inlining the raw syscall adapter into each
 # selected wrapper. One codegen unit makes that boundary deterministic.
@@ -307,11 +314,21 @@ assert_fcntl_no_argument_path
 assert_fcntl_scalar_path
 assert_fcntl_unsupported_path
 
-if "$candidate"; then
+if "$candidate" >"$candidate_records"; then
     :
 else
     status=$?
+    cp "$candidate_records" "$report_dir/crabc.records"
     fail "freestanding fcntl status-control fixture exited ${status}"
 fi
+cp "$candidate_records" "$report_dir/crabc.records"
+if ! cmp -s "$reference_records" "$candidate_records"; then
+    diff -u "$reference_records" "$candidate_records" >&2 || true
+    fail "pinned-musl and crabc fcntl observations differ"
+fi
+cp "$reference" "$report_dir/musl.elf"
+cp "$candidate" "$report_dir/crabc.elf"
+cp "$archive.source-runtime.json" "$report_dir/source-runtime.json"
+cp "$candidate_program_headers" "$report_dir/crabc-program-headers.txt"
 
-printf 'x86 static crabc-libc fcntl status control: PASS\n'
+printf 'x86 static crabc-libc fcntl status control: PASS (%s)\n' "$report_dir"
