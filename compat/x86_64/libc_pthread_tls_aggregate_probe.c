@@ -7,7 +7,10 @@
  * private condition, wait for the parent release, return distinct values,
  * and run their clear-before-callback TSD destructors before join publishes
  * the results.  The parent verifies writer exclusion while both readers are
- * held, then completes the condition-mediated lifecycle.
+ * held, then completes the condition-mediated lifecycle. A later handoff
+ * deletes and reuses a key while its first worker is alive, then observes
+ * ordered passes of that one replacement key's destructor on normal return
+ * and explicit pthread_exit.
  *
  * It deliberately does not select cancellation, attributes, timed/shared
  * synchronization, C11 adapters, detached or foreign threads, dynamic TLS,
@@ -39,6 +42,8 @@ enum {
     FIRST_MARKER = 0x11223344,
     SECOND_MARKER = 0x55667788,
     ONCE_PAYLOAD = 0x31415926,
+    FIRST_LIFECYCLE_VALUE = 0x100,
+    SECOND_LIFECYCLE_VALUE = 0x200,
 };
 
 struct raw_timespec {
@@ -97,6 +102,134 @@ static struct aggregate_state state = {
     .lock = PTHREAD_RWLOCK_INITIALIZER,
     .once = PTHREAD_ONCE_INIT,
 };
+
+struct lifecycle_worker {
+    uintptr_t marker;
+    int wait_for_reuse;
+    int status;
+};
+
+static pthread_key_t deleted_key;
+static pthread_key_t replacement_key;
+static volatile int lifecycle_ready;
+static volatile int lifecycle_release;
+static volatile int deleted_destructor_calls;
+static volatile int replacement_calls[2];
+static volatile int lifecycle_failure;
+
+static void emit_lifecycle_event(char worker, int pass)
+{
+    char event[3] = { worker, (char)('0' + pass), '\n' };
+    long result;
+
+    __asm__ volatile("syscall" : "=a"(result)
+        : "a"(1L), "D"(1L), "S"(event), "d"(sizeof(event))
+        : "rcx", "r11", "memory");
+    if (result != (long)sizeof(event))
+        __atomic_store_n(&lifecycle_failure, 1, __ATOMIC_RELAXED);
+}
+
+static void deleted_destructor(void *value)
+{
+    (void)value;
+    __atomic_fetch_add(&deleted_destructor_calls, 1, __ATOMIC_RELAXED);
+}
+
+static void replacement_destructor(void *value)
+{
+    uintptr_t marker = (uintptr_t)value;
+    int index = (marker & ~(uintptr_t)1) == FIRST_LIFECYCLE_VALUE ? 0 : 1;
+    int pass = __atomic_fetch_add(&replacement_calls[index], 1, __ATOMIC_RELAXED);
+
+    if ((marker & ~(uintptr_t)1) !=
+            (index == 0 ? FIRST_LIFECYCLE_VALUE : SECOND_LIFECYCLE_VALUE) ||
+        (marker & 1) != (uintptr_t)pass || pass > 1 ||
+        pthread_getspecific(replacement_key) != 0 || errno != EACCES)
+        __atomic_store_n(&lifecycle_failure, 2, __ATOMIC_RELAXED);
+    emit_lifecycle_event(index == 0 ? 'A' : 'B', pass);
+    if (pass == 0 && pthread_setspecific(replacement_key,
+            (void *)(marker + 1)) != 0)
+        __atomic_store_n(&lifecycle_failure, 3, __ATOMIC_RELAXED);
+}
+
+static void *lifecycle_worker_main(void *opaque)
+{
+    struct lifecycle_worker *worker = opaque;
+
+    worker->status = 0;
+    if (errno != 0)
+        worker->status = 1;
+    errno = EACCES;
+    if (worker->status == 0 && worker->wait_for_reuse) {
+        if (pthread_setspecific(deleted_key, (void *)worker->marker) != 0)
+            worker->status = 2;
+        __atomic_store_n(&lifecycle_ready, 1, __ATOMIC_RELEASE);
+        while (__atomic_load_n(&lifecycle_release, __ATOMIC_ACQUIRE) == 0)
+            ;
+    }
+    if (worker->status == 0 && pthread_getspecific(replacement_key) != 0)
+        worker->status = 3;
+    if (worker->status == 0 &&
+        pthread_setspecific(replacement_key, (void *)(worker->marker + 2)) != 0)
+        worker->status = 4;
+    if (worker->status == 0 &&
+        pthread_getspecific(replacement_key) != (void *)(worker->marker + 2))
+        worker->status = 5;
+    if (worker->status == 0 &&
+        pthread_setspecific(replacement_key, (void *)worker->marker) != 0)
+        worker->status = 6;
+    if (worker->status == 0 && errno != EACCES)
+        worker->status = 7;
+    if (worker->wait_for_reuse == 0)
+        pthread_exit((void *)(worker->status == 0 ? worker->marker :
+            (uintptr_t)worker->status));
+    return (void *)(worker->status == 0 ? worker->marker :
+        (uintptr_t)worker->status);
+}
+
+static int run_key_lifecycle(void)
+{
+    struct lifecycle_worker first = {
+        .marker = FIRST_LIFECYCLE_VALUE, .wait_for_reuse = 1,
+    };
+    struct lifecycle_worker second = { .marker = SECOND_LIFECYCLE_VALUE };
+    pthread_t thread;
+    void *result = 0;
+
+    if (pthread_key_create(&deleted_key, deleted_destructor) != 0)
+        return 1;
+    if (pthread_create(&thread, 0, lifecycle_worker_main, &first) != 0)
+        return 2;
+    if (wait_for_count(&lifecycle_ready, 1) != 0)
+        return 3;
+    if (pthread_key_delete(deleted_key) != 0 ||
+        pthread_key_create(&replacement_key, replacement_destructor) != 0)
+        return 4;
+    if (replacement_key != deleted_key)
+        return 5;
+    __atomic_store_n(&lifecycle_release, 1, __ATOMIC_RELEASE);
+    if (pthread_join(thread, &result) != 0 ||
+        result != (void *)FIRST_LIFECYCLE_VALUE || first.status != 0)
+        return 6;
+    if (__atomic_load_n(&replacement_calls[0], __ATOMIC_RELAXED) != 2 ||
+        __atomic_load_n(&replacement_calls[1], __ATOMIC_RELAXED) != 0 ||
+        __atomic_load_n(&deleted_destructor_calls, __ATOMIC_RELAXED) != 0 ||
+        __atomic_load_n(&lifecycle_failure, __ATOMIC_RELAXED) != 0)
+        return 7;
+    if (pthread_create(&thread, 0, lifecycle_worker_main, &second) != 0)
+        return 8;
+    if (pthread_join(thread, &result) != 0 ||
+        result != (void *)SECOND_LIFECYCLE_VALUE || second.status != 0)
+        return 9;
+    if (__atomic_load_n(&replacement_calls[1], __ATOMIC_RELAXED) != 2 ||
+        __atomic_load_n(&deleted_destructor_calls, __ATOMIC_RELAXED) != 0 ||
+        __atomic_load_n(&lifecycle_failure, __ATOMIC_RELAXED) != 0)
+        return 10;
+    if (pthread_getspecific(replacement_key) != 0 ||
+        pthread_key_delete(replacement_key) != 0 || errno != E2BIG)
+        return 11;
+    return 0;
+}
 
 static void aggregate_once(void)
 {
@@ -160,6 +293,7 @@ int crabc_x86_64_pthread_tls_aggregate_probe(void)
     pthread_t second_thread;
     void *first_result = 0;
     void *second_result = 0;
+    int lifecycle_status;
 
     errno = E2BIG;
     if (pthread_key_create(&state.key, aggregate_destructor) != 0)
@@ -204,6 +338,9 @@ int crabc_x86_64_pthread_tls_aggregate_probe(void)
     if (pthread_once(&state.once, aggregate_once) != 0 ||
         __atomic_load_n(&state.once_calls, __ATOMIC_RELAXED) != 1)
         return 16;
+    lifecycle_status = run_key_lifecycle();
+    if (lifecycle_status != 0)
+        return 20 + lifecycle_status;
     if (pthread_rwlock_destroy(&state.lock) != 0 ||
         pthread_cond_destroy(&state.condition) != 0 ||
         pthread_mutex_destroy(&state.gate) != 0 || errno != E2BIG)
