@@ -30,6 +30,7 @@ if str(HERE) not in sys.path:
 import owned_crypt_runtime_evidence as copies
 import owned_dynamic_qualification as qualification
 import owned_posix_product_evidence as products
+import owned_stdio_file_dso_receipt as dso
 
 SCHEMA = "crabc.x86_64-owned-stdio-file-engine/v1"
 ORACLE_COMPILER = "/usr/local/bin/crabc-x86_64-musl-gcc"
@@ -135,9 +136,12 @@ ROLES: dict[str, dict[str, object]] = {
 }
 SCOPE = tuple(ROLES)
 INTERPOSITION_ROLE = "stdio.allocator-interposition"
-RECEIPT_SCOPE = (*SCOPE, INTERPOSITION_ROLE)
+DSO_ROLE = "stdio.file-dso"
+RECEIPT_SCOPE = (*SCOPE, INTERPOSITION_ROLE, DSO_ROLE)
 INTERPOSITION_SOURCE = "compat/x86_64/owned_stdio_allocator_interposition_probe.c"
 INTERPOSITION_RUNNER = "compat/x86_64/run_owned_stdio_allocator_interposition.sh"
+DSO_SOURCES = {"dso-main": dso.SOURCES[0], "dso-library": dso.SOURCES[1],
+               "dso-header": dso.SOURCES[2], "dso-reader": dso.SOURCES[3]}
 INTERPOSITION_CELLS = ("dynamic-pie-kernel", "dynamic-pie-direct",
                        "dynamic-non-pie-kernel", "dynamic-non-pie-direct")
 INTERPOSITION_ARTIFACTS = (
@@ -347,7 +351,7 @@ def validate_source_product_seals(checkout: Path, work: Path, report: Mapping[st
     same(before_value, after_value, "source/product seals differ")
     require(set(before_value) == {"sources", "static", "dynamic"}, "source/product seal fields drifted")
     raw_sources = before_value["sources"]
-    expected_names = {"runner", "reader", "allocator-probe", "allocator-runner", *SCOPE}
+    expected_names = {"runner", "reader", "allocator-probe", "allocator-runner", *SCOPE, *DSO_SOURCES}
     require(type(raw_sources) is dict and set(raw_sources) == expected_names, "source seal roster differs")
     sources = {role: source_file(checkout, raw_sources[role], str(ROLES[role]["source"]), role + " source")
                for role in SCOPE}
@@ -357,7 +361,9 @@ def validate_source_product_seals(checkout: Path, work: Path, report: Mapping[st
                                   "allocator interposition probe")
     allocator_runner = source_file(checkout, raw_sources["allocator-runner"], INTERPOSITION_RUNNER,
                                    "allocator interposition runner")
-    all_sources = {**sources, "runner": runner, "reader": reader,
+    dso_sources = {role: source_file(checkout, raw_sources[role], path, role + " source")
+                   for role, path in DSO_SOURCES.items()}
+    all_sources = {**sources, **dso_sources, "runner": runner, "reader": reader,
                    "allocator-probe": allocator_probe, "allocator-runner": allocator_runner}
     require(type(report["source"]) is dict, "report source mapping differs")
     same(source_map(checkout, all_sources), report["source"], "report source mapping differs from sealed sources")
@@ -1079,12 +1085,43 @@ def _elf_output(*arguments: str) -> str:
         raise ReceiptError("allocator interposition ELF inspection failed") from error
 
 
+def dso_tree_identity(work: Path) -> dict[str, object]:
+    files = dso.files(work)
+    encoded = json.dumps(files, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {"sha256": hashlib.sha256(encoded).hexdigest(), "entries": len(files)}
+
+
+def validate_dso_differential(checkout: Path, work: Path, report: Mapping[str, Any]) -> None:
+    record = report["dso_differential"]
+    require(type(record) is dict and set(record) == {"work", "tree", "cells"},
+            "FILE DSO differential fields differ")
+    require(record["work"] == "file-dso" and record["cells"] == list(dso.CASES),
+            "FILE DSO differential scope differs")
+    dso_work = directory(work / "file-dso", "FILE DSO differential work")
+    same(record["tree"], dso_tree_identity(dso_work), "FILE DSO differential artifacts differ")
+    dso.source_copies(checkout, dso_work, capture=False)
+    dso.oracle_copies(checkout, dso_work, capture=False)
+    static = directory(Path(report["products"]["static"]), "FILE DSO static product")
+    dynamic = directory(Path(report["products"]["dynamic"]), "FILE DSO dynamic product")
+    plan = dso.commands(checkout, dso_work, static, dynamic)
+    plan.update({case: dso.case_command(dso_work, case) for case in dso.CASES})
+    require(set(path.name.removesuffix(".argv.json") for path in (dso_work / "raw").glob("*.argv.json")) == set(plan),
+            "FILE DSO command roster differs")
+    for label, argv in plan.items():
+        require(dso.read_json(dso_work / "raw" / f"{label}.argv.json") == argv
+                and (dso_work / "raw" / f"{label}.status").read_bytes() == b"0\n",
+                f"FILE DSO {label} command differs")
+    dso.audit_runtime(dso_work, dynamic)
+    dso.audit_elf(dso_work)
+    dso.audit_links(dso_work, static, dynamic)
+
+
 def validate_report(path: Path, checkout: Path, *, require_static: bool = True) -> dict[str, object]:
-    """Validate all eleven physical rows while preserving the ten-row family view.
+    """Validate physical FILE rows while preserving the ten-row family view.
 
     The family adapter's exact scope and rows describe six-cell FILE behavior.
-    Allocator interposition has four dynamic cells, so its verified result is
-    exposed separately after the same fail-closed physical receipt replay.
+    Allocator interposition and cross-DSO use have different cell sets; their
+    verified results are exposed separately after physical receipt replay.
     """
     require(require_static is True, "FILE engine requires supplied-static admission")
     checkout = directory(checkout, "checkout")
@@ -1096,7 +1133,7 @@ def validate_report(path: Path, checkout: Path, *, require_static: bool = True) 
     report = strict_json(report_path, "FILE engine report")
     expected_fields = {"schema", "scope", "rows", "source", "workloads", "products", "seals", "object_seals",
                        "commands", "links", "execution_payloads", "side_effects", "control", "process_proc", "family_completion",
-                       "promotion_ready", "public_support", "allocator_interposition"}
+                       "promotion_ready", "public_support", "allocator_interposition", "dso_differential"}
     require(set(report) == expected_fields, "report fields differ")
     require(report["schema"] == SCHEMA, "report schema differs")
     same(report["scope"], list(RECEIPT_SCOPE), "report scope differs")
@@ -1104,7 +1141,10 @@ def validate_report(path: Path, checkout: Path, *, require_static: bool = True) 
     same(report["rows"], {**{role: row_value(role) for role in SCOPE},
                           INTERPOSITION_ROLE: {"source": INTERPOSITION_SOURCE,
                                                "behavior": "dynamic-FILE-public-allocator-ownership-and-lock-list-lifetime",
-                                               "runtime_cells": list(INTERPOSITION_CELLS)}}, "report rows differ")
+                                               "runtime_cells": list(INTERPOSITION_CELLS)},
+                          DSO_ROLE: {"source": list(DSO_SOURCES.values()),
+                                     "behavior": "adopted-and-borrowed-FILE-lifetime-across-executable-and-DSO",
+                                     "runtime_cells": list(dso.CASES)}}, "report rows differ")
     require(report["family_completion"] is False and report["promotion_ready"] is False
             and report["public_support"] is False, "FILE engine flags differ")
     require(type(report["seals"]) is dict and set(report["seals"]) == {
@@ -1116,6 +1156,7 @@ def validate_report(path: Path, checkout: Path, *, require_static: bool = True) 
     workloads = validate_object_seals(work, report, sources, control)
     surface = validate_frozen_surface(checkout, workloads)
     validate_commands(checkout, work, report, sources, workloads, tools, control)
+    validate_dso_differential(checkout, work, report)
     return {
         "schema": SCHEMA,
         "matrix": "supplied-static",
@@ -1124,6 +1165,7 @@ def validate_report(path: Path, checkout: Path, *, require_static: bool = True) 
         "scope": list(SCOPE),
         "rows": {role: report["rows"][role] for role in SCOPE},
         "allocator_interposition": report["rows"][INTERPOSITION_ROLE],
+        "dso_differential": report["rows"][DSO_ROLE],
         "products": report["products"],
         "source": report["source"],
         "source_product_seal": report["seals"]["source-product-before"],

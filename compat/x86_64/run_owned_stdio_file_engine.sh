@@ -193,6 +193,8 @@ record['sources']['runner'] = source(runner)
 record['sources']['reader'] = source(reader)
 record['sources']['allocator-probe'] = source(root / receipt.INTERPOSITION_SOURCE)
 record['sources']['allocator-runner'] = source(root / receipt.INTERPOSITION_RUNNER)
+for role, path in receipt.DSO_SOURCES.items():
+    record['sources'][role] = source(root / path)
 output.write_text(json.dumps(record, sort_keys=True, separators=(',', ':')) + '\n', encoding='utf-8')
 PY
 }
@@ -538,6 +540,31 @@ mapfile -t allocator_cohorts < <(find "$WORK" -mindepth 1 -maxdepth 1 -type d -n
 [ "${#allocator_cohorts[@]}" -eq 1 ] || fail 'allocator interposition cohort roster differs'
 readonly ALLOCATOR_COHORT="${allocator_cohorts[0]}"
 
+python3 -B - "$ROOT" "$WORK/file-dso" "$STATIC_PRODUCT" "$DYNAMIC_PRODUCT" <<'PY'
+from pathlib import Path
+import sys
+root, work, static, dynamic = map(Path, sys.argv[1:])
+sys.path.insert(0, str(root / 'compat/x86_64'))
+import owned_stdio_file_dso_receipt as dso
+
+work.mkdir()
+(work / 'oracle').mkdir()
+(work / 'candidate').mkdir()
+dso.source_copies(root, work, capture=True)
+dso.oracle_copies(root, work, capture=True)
+for label, argv in dso.commands(root, work, static, dynamic).items():
+    dso.capture(work, label, argv)
+for case in dso.CASES:
+    dso.make_root(work, case, dynamic)
+    scratch = work / 'execution-roots' / case / 'scratch'
+    dso.write_new(work / 'raw' / f'{case}.scratch-before.json', sorted(item.name for item in scratch.iterdir()))
+    dso.capture(work, case, dso.case_command(work, case))
+    dso.write_new(work / 'raw' / f'{case}.scratch-after.json', sorted(item.name for item in scratch.iterdir()))
+dso.audit_runtime(work, dynamic)
+dso.audit_elf(work)
+dso.audit_links(work, static, dynamic)
+PY
+
 capture_tools "$WORK/tools-after.json"
 cmp "$WORK/tools-before.json" "$WORK/tools-after.json" || fail 'tool roster changed during replay'
 capture_source_product_seal source-product-after
@@ -599,14 +626,20 @@ record = {
     'rows': {**{role: receipt.row_value(role) for role in roles},
              receipt.INTERPOSITION_ROLE: {'source': receipt.INTERPOSITION_SOURCE,
                 'behavior': 'dynamic-FILE-public-allocator-ownership-and-lock-list-lifetime',
-                'runtime_cells': list(receipt.INTERPOSITION_CELLS)}},
+                'runtime_cells': list(receipt.INTERPOSITION_CELLS)},
+             receipt.DSO_ROLE: {'source': list(receipt.DSO_SOURCES.values()),
+                'behavior': 'adopted-and-borrowed-FILE-lifetime-across-executable-and-DSO',
+                'runtime_cells': list(receipt.dso.CASES)}},
     'source': {role: source(root / value['source']) for role, value in receipt.ROLES.items()} | {
         'runner': source(root / 'compat/x86_64/run_owned_stdio_file_engine.sh'),
         'reader': source(root / 'compat/x86_64/owned_stdio_file_engine_receipt.py'),
         'allocator-probe': source(root / receipt.INTERPOSITION_SOURCE),
-        'allocator-runner': source(root / receipt.INTERPOSITION_RUNNER)},
+        'allocator-runner': source(root / receipt.INTERPOSITION_RUNNER),
+        **{role: source(root / path) for role, path in receipt.DSO_SOURCES.items()}},
     'allocator_interposition': {'work': allocator.name,
         'artifacts': {name: artifact(allocator / name) for name in receipt.INTERPOSITION_ARTIFACTS}},
+    'dso_differential': {'work': 'file-dso', 'tree': receipt.dso_tree_identity(work / 'file-dso'),
+                         'cells': list(receipt.dso.CASES)},
     'workloads': {role: artifact(work / f'{role}.o') for role in roles},
     'products': {'static': str(static.resolve(strict=True)), 'dynamic': str(dynamic.resolve(strict=True))},
     'seals': {name: artifact(work / f'{name}.json') for name in
@@ -633,4 +666,4 @@ PY
 
 python3 -B "$READER" "$WORK/owned-stdio-file-engine.json" --checkout "$ROOT" --require-static
 chmod a+r "$WORK/owned-stdio-file-engine.json"
-printf 'owned FILE engine: PASS (ten six-cell FILE rows and dynamic allocator interposition; pinned musl, supplied static/static-PIE, dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$WORK"
+printf 'owned FILE engine: PASS (ten six-cell FILE rows, dynamic allocator interposition, and eleven-case FILE DSO differential; pinned musl, supplied static/static-PIE, dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$WORK"
