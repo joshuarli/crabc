@@ -11,6 +11,8 @@
 #include <unistd.h>
 
 #define CHECK(c) do { if (!(c)) { dprintf(2, "atfork registry line %d errno %d\n", __LINE__, errno); _exit(1); } } while (0)
+#define CALLBACK_COUNT 70
+#define RESOURCE_REGISTRATIONS 4096
 
 /* Distinct functions make order observable across the former 32-slot limit. */
 #define CALLBACK_IDS(X) \
@@ -23,9 +25,11 @@
     X(60) X(61) X(62) X(63) X(64) X(65) X(66) X(67) X(68) X(69)
 
 static int registered, next_prepare, next_post, parents, children;
-static void prepare_record(int id) { CHECK(next_prepare-- == id); }
-static void parent_record(int id) { CHECK(next_post++ == id); parents++; }
-static void child_record(int id) { CHECK(next_post++ == id); children++; }
+/* Each block of 70 is a different permutation, so distant link swaps remain visible. */
+static int callback_id(int index) { return (index * 37 + index / CALLBACK_COUNT) % CALLBACK_COUNT; }
+static void prepare_record(int id) { CHECK(callback_id(next_prepare--) == id); }
+static void parent_record(int id) { CHECK(callback_id(next_post++) == id); parents++; }
+static void child_record(int id) { CHECK(callback_id(next_post++) == id); children++; }
 #define DEFINE_CALLBACKS(id) \
     static void prepare_##id(void) { prepare_record(id); } \
     static void parent_##id(void) { parent_record(id); } \
@@ -34,10 +38,11 @@ CALLBACK_IDS(DEFINE_CALLBACKS)
 struct callbacks { void (*prepare)(void), (*parent)(void), (*child)(void); };
 #define CALLBACK_ENTRY(id) {prepare_##id, parent_##id, child_##id},
 static const struct callbacks callbacks[] = { CALLBACK_IDS(CALLBACK_ENTRY) };
+_Static_assert(sizeof callbacks / sizeof *callbacks == CALLBACK_COUNT, "callback table size");
 
 static void register_next(void) {
-    CHECK(registered < (int)(sizeof callbacks / sizeof *callbacks));
-    const struct callbacks *entry = &callbacks[registered];
+    CHECK(registered < RESOURCE_REGISTRATIONS + 16);
+    const struct callbacks *entry = &callbacks[callback_id(registered)];
     int result = pthread_atfork(entry->prepare, entry->parent, entry->child);
     if (result) dprintf(2, "registration %d returned %d\n", registered, result);
     CHECK(result == 0);
@@ -69,6 +74,21 @@ static void *register_from_worker(void *unused) {
     (void)unused;
     register_next();
     return 0;
+}
+/* Each generation inherits the full registry, then extends only its copy. */
+static void inherited_rounds(int generations) {
+    reset_round();
+    pid_t child = fork();
+    CHECK(child >= 0);
+    check_completion(child == 0);
+    if (child == 0) {
+        register_next();
+        if (generations > 1) inherited_rounds(generations - 1);
+        ordinary_round();
+        _exit(0);
+    }
+    wait_child(child);
+    ordinary_round();
 }
 static void deny_fork(void) {
     /* Linux 5.10 sock_filter/sock_fprog layouts, scoped to this process. */
@@ -159,6 +179,9 @@ int main(int argc, char **argv) {
     register_next();
     ordinary_round();
     ordinary_round();
+    while (registered < RESOURCE_REGISTRATIONS) register_next();
+    inherited_rounds(3);
+    CHECK(registered == RESOURCE_REGISTRATIONS);
     deny_fork();
     failed_round();
     register_next();

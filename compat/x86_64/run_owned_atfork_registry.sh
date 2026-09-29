@@ -5,6 +5,7 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly probe="$ROOT/compat/x86_64/owned_atfork_registry_probe.c"
+[ "$(uname -sm)" = 'Linux x86_64' ] || { printf 'atfork registry requires native Linux/x86-64\n' >&2; exit 1; }
 # Aggregate dynamic gates supply an already built installed or extracted
 # product. The focused command also builds and checks both static entries.
 [ "$#" -eq 0 ] || [ "$#" -eq 1 ] || { printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2; exit 2; }
@@ -27,6 +28,7 @@ work="$(mktemp -d "$TMPDIR/owned-atfork-registry.XXXXXX")"
 readonly work
 chmod a+rx "$work"
 printf 'atfork-registry evidence: %s\n' "$work"
+uname -smr >"$work/execution-host.txt"
 "$oracle_cc" -static -fno-pie -no-pie -std=c11 -pthread "$probe" -o "$work/oracle"
 for scenario in ordinary exit-hooks; do
     timeout 20 "$work/oracle" "$scenario" >"$work/oracle-$scenario.stdout"
@@ -55,4 +57,4 @@ for mode in pie non-pie; do
         cmp "$work/oracle-$scenario.stdout" "$work/direct-$mode-$scenario.stdout"
     done
 done
-printf 'owned atfork registry: PASS (musl + installed static/static-PIE/dynamic PIE/non-PIE kernel/direct, 67-70 ordered callbacks, child/parent/worker registration, failed-fork parent completion; atexit/__cxa_atexit order, registration during exit, fork-inherited and worker-thread exit hooks); evidence: %s\n' "$work"
+printf 'owned atfork registry: PASS (musl + installed static/static-PIE/dynamic PIE/non-PIE kernel/direct, 4096-4099 ordered callbacks, three-generation inherited registry, child/parent/worker registration, failed-fork parent completion; atexit/__cxa_atexit order, registration during exit, fork-inherited and worker-thread exit hooks); evidence: %s\n' "$work"

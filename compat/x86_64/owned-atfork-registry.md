@@ -37,11 +37,18 @@ archive's callback table are otherwise unchanged by this registry slice.
 
 Run `./scripts/dev-x86_64.sh owned-atfork-registry` for the installed-product
 differential. `owned_atfork_registry_probe.c` first completes an empty-registry
-fork, then registers 67 distinct callback triples, then verifies exact reverse prepare and forward parent/child
-order. It also observes a null triple, registration and another fork in the
-first child, parent and worker registrations after a completed fork, callback
-records surviving worker exit, repeated forks, and parent completion following
-contained syscall failures. Subsequent registrations bring the count to 70.
+fork, then registers 67 distinct callback triples and verifies exact reverse
+prepare and forward parent/child order. It also observes a null triple,
+registration and another fork in the first child, parent and worker
+registrations after a completed fork, callback records surviving worker exit,
+and repeated forks. The probe extends the registry to 4096 allocated records,
+reusing 70 distinct callbacks with a changed permutation every 70 records so
+order remains observable across distant nodes. Three child generations
+inherit and extend their own copies to 4099 records while the original parent
+retains 4096. Contained syscall
+failures then verify parent completion and subsequent registration at resource
+size. The runner records the native Linux/x86-64 host identity beside raw
+oracle and candidate stdout for every installed entry mode.
 The first regression passed on pinned musl and failed the owned static
 product at registration 33 with `ENOMEM`.
 
