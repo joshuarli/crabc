@@ -4,17 +4,20 @@
 #include <stdio.h>
 #include <unistd.h>
 
-/* musl 1.2.6 sem_wait -> sem_timedwait tests cancellation before consuming
- * an already available unit. This isolated regression also runs against a
+/* musl 1.2.6 sem_trywait consumes an available unit despite pending
+ * cancellation; sem_wait -> sem_timedwait tests cancellation before consuming
+ * the next available unit. This isolated regression also runs against a
  * runtime that has not yet supplied the timed-wait entry. */
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"semaphore-wait-cancel:%d\n",__LINE__); return 1; } } while (0)
 static sem_t semaphore;
-static int returned, cleaned;
+static int returned, cleaned, tried;
 static void cleanup(void *unused) { (void)unused; cleaned=1; }
 static void *worker(void *unused) {
     (void)unused;
     pthread_cleanup_push(cleanup,NULL);
     if (pthread_cancel(pthread_self())) _exit(91);
+    if (sem_trywait(&semaphore)) _exit(93);
+    tried=1;
     if (sem_wait(&semaphore)) _exit(92);
     returned=1;
     pthread_testcancel();
@@ -23,10 +26,10 @@ static void *worker(void *unused) {
 }
 int main(void) {
     alarm(10);
-    CHECK(!sem_init(&semaphore,0,1));
+    CHECK(!sem_init(&semaphore,0,2));
     pthread_t thread; void *result=NULL;
     CHECK(!pthread_create(&thread,NULL,worker,NULL) && !pthread_join(thread,&result));
-    CHECK(result==PTHREAD_CANCELED && cleaned && !returned);
+    CHECK(result==PTHREAD_CANCELED && cleaned && tried && !returned);
     CHECK(!sem_trywait(&semaphore) && sem_trywait(&semaphore)==-1 && errno==EAGAIN);
     CHECK(!sem_destroy(&semaphore));
     puts("owned-semaphore-wait-cancellation-ok");

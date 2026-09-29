@@ -226,6 +226,28 @@ static int shared_process(void) {
     puts("semaphore shared process wake conserves token");
     return 0;
 }
+static int shared_process_cancel_one(void) {
+    sem_t *sem=mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_ANONYMOUS,-1,0); CHECK(sem!=MAP_FAILED);
+    CHECK(!sem_init(sem,1,0));
+    pid_t child=fork(); CHECK(child>=0);
+    if (!child) {
+        struct timespec at=after_milliseconds(30000);
+        if (sem_timedwait(sem,&at)) _exit(96);
+        _exit(24);
+    }
+    struct wait_state s={.sem=sem,.timed=1,.deadline=after_milliseconds(30000),.cleanup_waiters=-1};
+    pthread_t thread; void *result=NULL; CHECK(!pthread_create(&thread,NULL,wait_worker,&s));
+    const struct timespec delay={0,1000000};
+    for (int retry=0;retry<2000 && waiters(sem)!=2;retry++) nanosleep(&delay,NULL);
+    CHECK(waiters(sem)==2 && in_futex(&s));
+    CHECK(!pthread_cancel(thread) && !pthread_join(thread,&result) && result==PTHREAD_CANCELED);
+    CHECK(atomic_load(&s.cleanup) && atomic_load(&s.cleanup_waiters)==1 && waiters(sem)==1);
+    CHECK(!sem_post(sem));
+    int status; CHECK(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==24);
+    CHECK(!assert_tokens(sem,0) && !sem_destroy(sem) && !munmap(sem,4096));
+    puts("semaphore shared process cancel-one/post-one conserves token");
+    return 0;
+}
 static int value_errors(void) {
     sem_t sem, original; memset(&sem,0x5a,sizeof sem); memcpy(&original,&sem,sizeof sem);
     errno=90; CHECK(sem_init(&sem,0,UINT_MAX)==-1 && errno==EINVAL && !memcmp(&sem,&original,sizeof sem));
@@ -253,7 +275,7 @@ int main(void) {
         for (int shared=0;shared<=1;shared++) CHECK(!blocked_wait(timed,state,shared));
     }
     for (int shared=0;shared<=1;shared++) CHECK(!multiple_waiters(shared) && !elapsed_timeout(shared));
-    CHECK(!value_errors() && !token_races() && !shared_process());
+    CHECK(!value_errors() && !token_races() && !shared_process() && !shared_process_cancel_one());
     /* Ignored/default dispositions and public-invalid signal numbers must
      * not set the source's sticky real-handler bookkeeping. */
     struct sigaction ignored={.sa_handler=SIG_IGN}, previous;
