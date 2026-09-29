@@ -46,8 +46,27 @@ static void require_at(bool condition, int line) {
 void* __real_mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset);
 static size_t fail_mmap_at_or_above;  // 0 disables the seam
 static size_t failed_mmap_calls;
+static mi_subproc_t* policy_subproc;
+static size_t policy_attempt_count;
+static int64_t policy_last_mmap_event;
+static int64_t policy_attempts[4][3];
 
 void* __wrap_mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset) {
+  if (policy_subproc != NULL) {
+    /* A hinted retry belongs to the same source primitive allocation event.
+       The event counter advances only when that primitive has returned. */
+    const int64_t event = policy_subproc->stats.mmap_calls.total;
+    if (policy_attempt_count == 0 || event != policy_last_mmap_event) {
+      require(policy_attempt_count < 4);
+      int64_t* attempt = policy_attempts[policy_attempt_count++];
+      attempt[0] = (int64_t)length;
+      attempt[1] = prot;
+      attempt[2] = policy_subproc->stats.committed.current;
+      policy_last_mmap_event = event;
+    }
+    errno = ENOMEM;
+    return MAP_FAILED;
+  }
   if (fail_mmap_at_or_above != 0 && length >= fail_mmap_at_or_above) {
     failed_mmap_calls++;
     errno = ENOMEM;
@@ -1073,8 +1092,7 @@ int main(void) {
          advises a committed, large-page-capable reservation MADV_HUGEPAGE
          when allow_thp is enabled. Each cell emits -2300, allow_thp, eager
          commit, then the reservation's advice record; the Python comparison
-         maps the allow_thp=1 cells to the recorded Rust MADV_NOHUGEPAGE
-         (known difference CRABC-MI-ARENA-RESERVATION-NO-THP) and requires
+         maps the allow_thp=1 cells to Rust MADV_NOHUGEPAGE and requires
          every other field to match. */
   emit_marker(23);
   {
@@ -1095,6 +1113,47 @@ int main(void) {
     mi_option_set(mi_option_allow_thp, 1);
   }
 
+  /* The reservation decision consumes only the count, options and fixed OS
+     observations. Fail every primitive before publication, allowing count
+     boundaries to be exercised without manufacturing live arena headers. */
+  emit(-2400);
+  {
+    static const size_t counts[] = {0, 1, 7, 8, 15, 16, 127, 128, 129, MI_MAX_ARENAS - 4, MI_MAX_ARENAS - 3};
+    static const long reserves[] = {-1, 0, 1, 32 * 1024, 128 * 1024, 1024 * 1024, (long)(SIZE_MAX / MI_KiB), LONG_MAX};
+    static const size_t requests[] = {MI_ARENA_SLICE_SIZE, MI_ARENA_MAX_CHUNK_OBJ_SIZE,
+      3 * MI_ARENA_MIN_SIZE, MI_ARENA_MAX_SIZE - MI_ARENA_MAX_CHUNK_OBJ_SIZE, MI_ARENA_MAX_SIZE};
+    static const long eager_modes[] = {-1, 0, 1, 2, 3};
+    static lifecycle_owner_t policy_owner;
+    size_t cell = 0;
+    for (size_t c = 0; c < sizeof(counts) / sizeof(counts[0]); c++)
+    for (size_t r = 0; r < sizeof(reserves) / sizeof(reserves[0]); r++)
+    for (size_t q = 0; q < sizeof(requests) / sizeof(requests[0]); q++)
+    for (size_t e = 0; e < sizeof(eager_modes) / sizeof(eager_modes[0]); e++)
+    for (int overcommit = 0; overcommit <= 1; overcommit++)
+    for (int large = 0; large <= 1; large++) {
+      memset(&policy_owner, 0, sizeof(policy_owner));
+      configure(overcommit != 0, reserves[r], eager_modes[e], false);
+      mi_option_set(mi_option_allow_large_os_pages, large);
+      mi_atomic_store_relaxed(&policy_owner.subproc.arena_count, counts[c]);
+      memset(policy_attempts, 0, sizeof(policy_attempts));
+      policy_attempt_count = 0;
+      policy_subproc = &policy_owner.subproc;
+      mi_arena_id_t id = _mi_arena_id_none();
+      const bool result = mi_arena_reserve(policy_subproc, requests[q], false, &id);
+      policy_subproc = NULL;
+      require(!result && _mi_arena_from_id(id) == NULL);
+      emit((int64_t)cell++);
+      emit((int64_t)policy_attempt_count);
+      for (size_t attempt = 0; attempt < 4; attempt++)
+      for (size_t value = 0; value < 3; value++) emit(policy_attempts[attempt][value]);
+      emit(policy_owner.subproc.stats.reserved.current);
+      emit(policy_owner.subproc.stats.committed.current);
+      emit(policy_owner.subproc.stats.mmap_calls.total);
+      emit(policy_owner.subproc.stats.commit_calls.total);
+      emit(policy_owner.subproc.stats.arena_count.total);
+      emit((int64_t)mi_arenas_get_count(&policy_owner.subproc));
+    }
+  }
   emit_marker(24);
   return 0;
 }

@@ -2265,6 +2265,8 @@ impl Mapping {
         thp: ThpAdvice,
     ) -> Result<Self> {
         #[cfg(test)]
+        fault::record_process_map_request(process, length, access);
+        #[cfg(test)]
         let mapping = if let Some((direct, over)) = config.aligned_overmap_test_targets {
             let target = if try_alignment == 1 { over } else { direct };
             Self::map_fixed_for_aligned_test(config, length, access, target)
@@ -5505,6 +5507,17 @@ pub(crate) mod fault {
     // arguments visible only while a serial test explicitly captures them.
     // This is evidence for the branch order, never a production callback.
     const POLICY_MMAP_CAPTURE_CAPACITY: usize = 4;
+    // Logical source allocation requests stay distinct from hinted raw mmap
+    // retries. Copy scalar arguments and the caller's commitment correction
+    // before the primitive so failed reservations can be compared without
+    // retaining a reference to mutable subprocess metadata.
+    #[cfg(test)]
+    static PROCESS_MAP_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
+    #[cfg(test)]
+    static PROCESS_MAP_CAPTURE_COUNT: AtomicUsize = AtomicUsize::new(0);
+    #[cfg(test)]
+    static PROCESS_MAP_CAPTURE_VALUES: [[AtomicUsize; 3]; 4] =
+        [const { [const { AtomicUsize::new(0) }; 3] }; 4];
     static POLICY_MMAP_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
     static POLICY_MMAP_CAPTURE_COUNT: AtomicUsize = AtomicUsize::new(0);
     static POLICY_MMAP_CAPTURE_HINTS: [AtomicUsize; POLICY_MMAP_CAPTURE_CAPACITY] = [
@@ -5872,6 +5885,11 @@ pub(crate) mod fault {
         _guard: core::marker::PhantomData<&'guard Guard>,
     }
 
+    #[cfg(test)]
+    pub(crate) struct ProcessMapCapture<'guard> {
+        _guard: core::marker::PhantomData<&'guard Guard>,
+    }
+
     /// A serial capture of one named direct THP policy case.
     pub(crate) struct ThpDirectPolicyCapture<'guard> {
         selected_case: ThpDirectPolicyCase,
@@ -5893,6 +5911,16 @@ pub(crate) mod fault {
     }
 
     impl Guard {
+        #[cfg(test)]
+        pub(crate) fn capture_process_maps(&self) -> ProcessMapCapture<'_> {
+            PROCESS_MAP_CAPTURE_COUNT.store(0, Ordering::Release);
+            for row in &PROCESS_MAP_CAPTURE_VALUES {
+                for value in row { value.store(0, Ordering::Release); }
+            }
+            PROCESS_MAP_CAPTURE_ACTIVE.store(true, Ordering::Release);
+            ProcessMapCapture { _guard: core::marker::PhantomData }
+        }
+
         pub(crate) fn enable_one_synthetic_huge_map(&self) {
             SYNTHETIC_HUGE_HINT.store(0, Ordering::Release);
             SYNTHETIC_HUGE_ONCE.store(true, Ordering::Release);
@@ -6231,6 +6259,8 @@ pub(crate) mod fault {
 
     impl Drop for Guard {
         fn drop(&mut self) {
+            #[cfg(test)]
+            PROCESS_MAP_CAPTURE_ACTIVE.store(false, Ordering::Release);
             SYNTHETIC_HUGE_ONCE.store(false, Ordering::Release);
             SYNTHETIC_HUGE_HINT.store(0, Ordering::Release);
             ACTIVE_EPOCH.store(0, Ordering::Release);
@@ -6415,6 +6445,37 @@ pub(crate) mod fault {
             POLICY_MMAP_CAPTURE_PROTECTIONS[index].store(protection as usize, Ordering::Release);
             POLICY_MMAP_CAPTURE_FLAGS[index].store(flags as usize, Ordering::Release);
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn record_process_map_request(
+        process: super::VmProcess<'_>, length: usize, access: super::MapAccess,
+    ) {
+        if !authorized() || !PROCESS_MAP_CAPTURE_ACTIVE.load(Ordering::Acquire) { return; }
+        let index = PROCESS_MAP_CAPTURE_COUNT.fetch_add(1, Ordering::AcqRel);
+        if index < PROCESS_MAP_CAPTURE_VALUES.len() {
+            let committed = process.subprocess().vm_statistics().snapshot().committed_current;
+            for (target, value) in PROCESS_MAP_CAPTURE_VALUES[index].iter().zip([
+                length, access.protection() as usize, committed as usize,
+            ]) { target.store(value, Ordering::Release); }
+        }
+    }
+
+    #[cfg(test)]
+    impl ProcessMapCapture<'_> {
+        pub(crate) fn attempts(&self) -> Option<([(usize, u32, i64); 4], usize)> {
+            let count = PROCESS_MAP_CAPTURE_COUNT.load(Ordering::Acquire);
+            (count <= 4).then(|| (core::array::from_fn(|index| {
+                let row = &PROCESS_MAP_CAPTURE_VALUES[index];
+                (row[0].load(Ordering::Acquire), row[1].load(Ordering::Acquire) as u32,
+                    row[2].load(Ordering::Acquire) as i64)
+            }), count))
+        }
+    }
+
+    #[cfg(test)]
+    impl Drop for ProcessMapCapture<'_> {
+        fn drop(&mut self) { PROCESS_MAP_CAPTURE_ACTIVE.store(false, Ordering::Release); }
     }
 
     /// Test-only raw THP policy receiver for the finite direct source matrix.

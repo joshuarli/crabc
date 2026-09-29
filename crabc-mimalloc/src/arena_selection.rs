@@ -4,8 +4,8 @@
 //
 //! Arena reservation geometry and source-order registry search. Option values
 //! are snapshots read by the process VM owner, not a second option store.
-//! M2 owns backing selection, memory provenance and release. Page queues and
-//! Heap/Theap lifetime remain the consuming M3/M6 owners.
+//! Backing selection retains memory provenance through explicit release.
+//! Consuming page queues and Heap/Theap owners retain allocation lifetimes.
 
 use super::{ArenaId, ArenaRegistry, ArenaSliceClaim, ArenaView, arena_is_suitable};
 use crate::config::{
@@ -83,7 +83,11 @@ impl ArenaReservationPlan {
         } else {
             reserve_option_bytes / 4
         };
-        let mut reserve = invariants::align_up(reserve, ARENA_SLICE_SIZE)?;
+        // The option byte value is aligned with unsigned source arithmetic
+        // before the minimum and maximum arena clamps. A valid large KiB
+        // option can therefore wrap to zero and still select a minimum arena.
+        let mut reserve = reserve.wrapping_add(ARENA_SLICE_SIZE - 1)
+            & !(ARENA_SLICE_SIZE - 1);
         if (1..=128).contains(&arena_count) {
             let multiplier = 1usize << (arena_count / 8).min(16);
             // Source keeps the unscaled option when multiplication overflows.
@@ -279,6 +283,15 @@ mod tests {
     fn search() -> ArenaSearch {
         ArenaSearch { heap_sequence: 0, heap_count: 1, thread_sequence: 0,
             numa_node: -1, requested: ArenaId::none(), allow_pinned: true }
+    }
+
+    #[test]
+    fn reservation_size_option_alignment_wraps_before_source_minimum_clamp() {
+        let reserve_bytes = (usize::MAX / 1024) * 1024;
+        let plan = ArenaReservationPlan::new(config(true), 0, ARENA_SLICE_SIZE,
+            reserve_bytes, 0, false).expect("wrapped reserve still permits a minimum arena");
+        assert_eq!(plan.primary_size, ARENA_MIN_SIZE);
+        assert_eq!(plan.fallback_size, None);
     }
 
     #[test]

@@ -417,7 +417,8 @@
           "native-vm-fixed-lifecycle-differential",
           "process-policy-first-arena-clean-primary-fallback",
           "process-policy-first-arena-trim-leak",
-          "process-policy-ticket-zero-live-random"
+          "process-policy-ticket-zero-live-random",
+          "arena-reservation-option-wrap-before-clamp"
         ]
       },
       {
@@ -843,7 +844,7 @@
       {
         "id": "arena-first-policy-reserve",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/arena.c:341-406,1886-1912 first mi_arena_reserve sizing/eager-commit adjustment and one regular source map/manage call; the selected normal-release ticket-zero caller uses a resolved 128-MiB policy with allow_large=true.",
+        "source_scope": "src/arena.c:341-406,1886-1912 first mi_arena_reserve sizing/eager-commit adjustment and one regular source map/manage call; the selected normal-release ticket-zero caller uses a resolved 128-MiB policy with allow_large=true. The arena-reservation lifecycle companion now drives the complete Linux reservation-decision class through all-failed regular primitives: count scaling boundaries, option absence/negative/minimum/maximum/wrapped alignment and multiplication-overflow fallback, requested-size headroom and hard ceiling, every eager-commit branch with overcommit and large-page-option observations, exact primary/fallback map ranges and protections, the pre-primitive committed correction, complete restoration after failure, absent publication and unchanged registry count. The caller disables large-page attempts; this proves sizing and correction policy without hardware mappings.",
         "source_anchors": [
           {
             "member": "src/arena.c",
@@ -862,10 +863,11 @@
           "native-vm-fixed-lifecycle-differential",
           "process-policy-first-arena-clean-primary-fallback",
           "process-policy-first-arena-trim-leak",
-          "process-policy-ticket-zero-live-random"
+          "process-policy-ticket-zero-live-random",
+          "arena-reservation-option-wrap-before-clamp"
         ],
         "missing_conditions": [
-          "Later arena-count scaling, ordinary fallback success after source primitive failure, multiple arenas, exclusive/NUMA/huge placement, full manage failure ownership, and every non-ticket-zero arena caller remain unqualified."
+          "The complete regular Linux reservation-decision/failure class is compared by the existing arena-reservation lifecycle companion. Successful large-page attempts, exclusive/NUMA/huge placement, full manage-failure ownership, ambient hint/random attachment and source diagnostics across every arena caller remain unqualified."
         ]
       },
       {
@@ -1113,6 +1115,12 @@
         "expected_passed_test_count": 1
       },
       {
+        "id": "arena-reservation-option-wrap-before-clamp",
+        "kind": "rust-unit",
+        "target": "arena::selection::tests::reservation_size_option_alignment_wraps_before_source_minimum_clamp",
+        "expected_passed_test_count": 1
+      },
+      {
         "id": "process-policy-first-arena-trim-leak",
         "kind": "rust-unit",
         "target": "process_arena::tests::process_default_os_arena_publishes_after_a_leaked_aligned_trim",
@@ -1342,7 +1350,7 @@
       }
     ],
     "remaining_conditions": [
-      "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, unmap, and reuse callers and policy beyond the selected fixed regular mapping lifecycle, finite normal no-callback purge decision/range matrix, selected ordinary/external direct page-extension receivers and external-span commit/purge/reset fault receivers, normal-offset prefix-decommit and full-MemoryId release failure/retry, child-isolated THP transactions, one child-isolated 128-MiB first-arena large-page fallback, and the arena-reservation lifecycle differential's process-owned arena callers (a failed claim commit that reserves a fresh arena and recommits in the first, immediate-purge decommit failure/success/mixed commitment, reset EAGAIN retry/warning-only error/not-fully-committed skip/EINVAL fallback, a failed delayed-purge decommit that consumes its schedule without retry, and a fresh arena whose metadata commit and cleanup `_mi_os_free_ex` unmap both fail, which leaks the mapping while later reservations proceed), the fresh OS page caller beyond the separately qualified on-demand metadata/first-prefix, external callback-refusal, direct failed-metadata-commit successful/failed-cleanup, failed block-commit with failed rollback unmap, successful publication/terminal-free, selected failed lazy PageMap registration after both commits, and selected published terminal-unmap-failure subsets (unselected metadata/PageMap publication failures and other terminal-release callers, each requiring exact accounting and ownership evidence), and the arena-destruction differential's failed parent and huge-kind releases in `_mi_arenas_unsafe_destroy_all`, including pinned-C failure ownership and retry evidence for every source branch. The direct process-owned protect and unprotect failure/retry receivers cover only selected source transitions. Protect/unprotect still have no non-test caller in the selected release profile (only MI_SECURE>=5 guard pages and MI_GUARDED blocks call them); those callers belong to the M7 secure and guarded profiles.",
+      "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, unmap, and reuse callers and policy beyond the selected fixed regular mapping lifecycle, finite normal no-callback purge decision/range matrix, selected ordinary/external direct page-extension receivers and external-span commit/purge/reset fault receivers, normal-offset prefix-decommit and full-MemoryId release failure/retry, child-isolated THP transactions, one child-isolated 128-MiB first-arena large-page fallback, and the arena-reservation lifecycle differential's process-owned arena callers (the complete Linux regular-reservation decision/failure class over count, option, headroom, eager-commit and fallback boundaries, including exact attempted ranges/protections, pre-primitive committed corrections and final counter restoration without publication; a failed claim commit that reserves a fresh arena and recommits in the first, immediate-purge decommit failure/success/mixed commitment, reset EAGAIN retry/warning-only error/not-fully-committed skip/EINVAL fallback, a failed delayed-purge decommit that consumes its schedule without retry, and a fresh arena whose metadata commit and cleanup `_mi_os_free_ex` unmap both fail, which leaks the mapping while later reservations proceed), the fresh OS page caller beyond the separately qualified on-demand metadata/first-prefix, external callback-refusal, direct failed-metadata-commit successful/failed-cleanup, failed block-commit with failed rollback unmap, successful publication/terminal-free, selected failed lazy PageMap registration after both commits, and selected published terminal-unmap-failure subsets (unselected metadata/PageMap publication failures and other terminal-release callers, each requiring exact accounting and ownership evidence), and the arena-destruction differential's failed parent and huge-kind releases in `_mi_arenas_unsafe_destroy_all`, including pinned-C failure ownership and retry evidence for every source branch. The direct process-owned protect and unprotect failure/retry receivers cover only selected source transitions. Protect/unprotect still have no non-test caller in the selected release profile (only MI_SECURE>=5 guard pages and MI_GUARDED blocks call them); those callers belong to the M7 secure and guarded profiles.",
       "Complete the aligned-overmap substrate beyond the selected native direct map, direct-map fallback, prefix-zero/suffix-only geometry, and direct/prefix/suffix success and Reserved/Committed cleanup-failure matrix, now an equality C/Rust differential of the source `mi_os_prim_free` leak-and-continue rule (fault plan: both sides force a direct candidate, prefix, and suffix release, C through MAP_FIXED_NOREPLACE targets and Rust through its full-trim test geometry, and fail the chosen release ordinal 1, 2, or 3), plus a normal aligned allocation receiver under failed prefix/suffix trim and final free with MemoryId, escaped range, warning order/timing, counters, and raw-only cleanup. The legacy processless OS-page claim now has one source-differentiated failed-suffix and terminal raw-retry receiver with exact mapping, MemoryId, statistics, and warning timing. Other process OS-page cases, metadata backing, and unselected explicit or policy-first arena reservations still need pinned-C caller differentials under trim failure, as do broader callback/counter paths.",
       "Complete aligned-hint policy beyond the finite normal-release cursor, virtual-address eligibility, strict threshold, one controlled CAS schedule, and selected pinned-C debug/secure source profiles plus one admitted wrapped direct caller: actual secure/debug runtime configuration, ambient source options/attachments, source warning/error reporting, every caller, and broader contention remain required. Also complete Linux THP failed-prctl and production-caller behavior beyond the selected direct process-owned MADV_HUGEPAGE success, EIO, successful disable-policy, and inherited-disable advice receivers, MAP_HUGETLB success, physical huge-page residency, and their native differential evidence.",
       "Complete huge-page reservation/free/progress/timeout behavior, high-address hints, mbind and NUMA option/arena-placement policy, plus all associated failure ownership and diagnostics.",

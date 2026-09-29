@@ -5178,9 +5178,9 @@ mod tests {
             lifecycle_release(&mut trace, owner, &mut later);
         }
 
-        // 23. The THP advice of a fresh arena reservation (see the C
-        // fixture). At the default allow_thp=1 Rust advises MADV_NOHUGEPAGE,
-        // the recorded CRABC-MI-ARENA-RESERVATION-NO-THP difference.
+        // At default allow_thp=1, Rust advises MADV_NOHUGEPAGE for a fresh
+        // arena; the source instead permits MADV_HUGEPAGE advice. Other
+        // option values retain their source advice behavior.
         trace.marker(23);
         for (allow_thp, eager) in [(1, 1), (1, 0), (2, 1), (2, 0), (0, 1)] {
             let mut options = lifecycle_options(32 * 1024, eager, false, false);
@@ -5204,6 +5204,73 @@ mod tests {
             lifecycle_release(&mut trace, owner, &mut item);
         }
 
+        // The reservation decision reads only the registry count. Every map
+        // fails before publication, so these count boundaries require no
+        // fabricated arena pointer or outstanding allocation owner.
+        trace.emit(-2400);
+        {
+            let counts = [0, 1, 7, 8, 15, 16, 127, 128, 129,
+                crate::config::MAX_ARENAS - 4, crate::config::MAX_ARENAS - 3];
+            let reserves = [-1, 0, 1, 32 * 1024, 128 * 1024, 1024 * 1024,
+                (usize::MAX / KIB) as i64, i64::MAX];
+            let requests = [ARENA_SLICE_SIZE, crate::config::ARENA_MAX_CHUNK_OBJ_SIZE,
+                3 * ARENA_MIN_SIZE, ARENA_MAX_SIZE - crate::config::ARENA_MAX_CHUNK_OBJ_SIZE,
+                ARENA_MAX_SIZE];
+            let mut cell = 0;
+            let isolated = ProcessArenaBacking::new();
+            for count in counts {
+                for reserve in reserves {
+                    for requested in requests {
+                        for eager in [-1, 0, 1, 2, 3] {
+                            for overcommit in [false, true] {
+                                for large in [false, true] {
+                                    let mut options = lifecycle_options(reserve, eager, false, false);
+                                    options.set(VmOption::AllowLargeOsPages, i64::from(large));
+                                    let policy = VmPolicy::new(options).unwrap();
+                                    policy.finish_preloading();
+                                    let subprocess = MainSubprocess::new();
+                                    let process = VmProcess::new(&policy, &subprocess);
+                                    let config = MemoryConfig::from_observations(
+                                        PageSize::new(4096).unwrap(), 1 << 20, overcommit, false,
+                                    );
+                                    isolated.registry.count.store(count, Ordering::Release);
+                                    fault.set(fault::Plan::every(fault::Point::Map, Errno::NOMEM));
+                                    let capture = fault.capture_process_maps();
+                                    let guard = isolated.reserve_lock.lock().unwrap();
+                                    // SAFETY: the lock excludes reservation, every
+                                    // primitive fails before storing a process or
+                                    // mapping owner, and no registry reader exists.
+                                    let result = unsafe { isolated.reserve_locked(
+                                        process, config, requested, false, None,
+                                    ) };
+                                    drop(guard);
+                                    assert!(result.is_none());
+                                    let (attempts, attempt_count) = capture.attempts().unwrap();
+                                    drop(capture);
+                                    fault.set(fault::Plan::disabled());
+                                    trace.emit(cell);
+                                    cell += 1;
+                                    trace.emit(attempt_count as i64);
+                                    for (length, protection, correction) in attempts {
+                                        trace.emit(length as i64);
+                                        trace.emit(protection as i64);
+                                        trace.emit(correction);
+                                    }
+                                    let stats = subprocess.vm_statistics().snapshot();
+                                    trace.emit(stats.reserved_current);
+                                    trace.emit(stats.committed_current);
+                                    trace.emit(stats.mmap_calls);
+                                    trace.emit(stats.commit_calls);
+                                    trace.emit(subprocess.arena_statistics().snapshot().arena_count);
+                                    trace.emit(isolated.registry.count() as i64);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            isolated.registry.count.store(0, Ordering::Release);
+        }
         trace.marker(24);
     }
 

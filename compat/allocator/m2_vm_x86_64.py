@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bounded native x86-64 M2 VM-primitives evidence producer.
+"""Bounded native x86-64 VM-primitives evidence producer.
 
 This module owns neither milestone aggregation nor source-map promotion.  It
 checks the target-local fragment's complete source-policy matrix, compiles a
@@ -160,6 +160,11 @@ CHECKS = (
         "process-policy-first-arena-clean-primary-fallback",
         "rust-unit",
         "process_arena::tests::process_default_os_arena_retries_the_source_smaller_policy_arena_after_clean_primary_failure",
+    ),
+    (
+        "arena-reservation-option-wrap-before-clamp",
+        "rust-unit",
+        "arena::selection::tests::reservation_size_option_alignment_wraps_before_source_minimum_clamp",
     ),
     (
         "process-policy-first-arena-trim-leak",
