@@ -442,6 +442,95 @@ static void trace_option_sequences(void)
     }
 }
 
+/* Reset while a short-option cluster is live, then cross between short and
+ * long parsing. Each call records errno and the entire mutable argv order. */
+static void trace_reset_ordering_boundaries(void)
+{
+    struct option options[] = {
+        { "alpha", no_argument, NULL, 'a' },
+        { "beta", required_argument, NULL, 'b' },
+        { NULL, 0, NULL, 0 },
+    };
+    int index;
+    int result;
+    int step;
+
+    {
+        char *argv[] = { "tool", "-abc", "tail", NULL };
+        errno = 81; optind = 0; opterr = 0; optopt = 801;
+        optarg = (char *)"stale";
+        result = getopt(3, argv, "abc");
+        trace_option("cluster-first", result, -1, 3, argv);
+        optind = 0;
+        index = -7;
+        result = getopt_long(3, argv, "abc", options, &index);
+        trace_option("cluster-optind-reset", result, index, 3, argv);
+        optreset = 1;
+        result = getopt(3, argv, "abc");
+        trace_option("cluster-optreset", result, -1, 3, argv);
+        result = getopt(3, argv, "abc");
+        trace_option("cluster-resume", result, -1, 3, argv);
+    }
+    {
+        char *argv[] = { "tool", "left", "middle", "-b", "value",
+            "right", "--alpha", "--", "tail", NULL };
+        errno = 82; optind = 0; opterr = 0; optopt = 802;
+        optarg = (char *)"stale";
+        for (step = 0; step < 8; ++step) {
+            index = -7;
+            result = getopt_long(9, argv, "ab:", options, &index);
+            trace_option("permute-reset", result, index, 9, argv);
+            if (result == -1) break;
+        }
+        optind = 0;
+        result = getopt_long(9, argv, "+ab:", options, NULL);
+        trace_option("permuted-plus-reset", result, -1, 9, argv);
+    }
+    {
+        char *argv[] = { "tool", "left", "-a", "right", NULL };
+        errno = 83; optind = 0; opterr = 0; optopt = 803;
+        optarg = (char *)"stale";
+        result = getopt_long(4, argv, "+a", options, NULL);
+        trace_option("plus-stop", result, -1, 4, argv);
+        optind = 0;
+        for (step = 0; step < 5; ++step) {
+            result = getopt_long(4, argv, "-a", options, NULL);
+            trace_option("minus-return", result, -1, 4, argv);
+            if (result == -1) break;
+        }
+    }
+    {
+        char *argv[] = { "tool", "-b", NULL };
+        errno = 84; optind = 0; opterr = 0; optopt = 804;
+        optarg = (char *)"stale";
+        result = getopt(2, argv, "-:ab:");
+        trace_option("short-missing-silent", result, -1, 2, argv);
+        errno = 85; optind = 0; opterr = 1; optopt = 805;
+        optarg = (char *)"stale";
+        result = getopt(2, argv, "+ab:");
+        trace_option("short-missing-report", result, -1, 2, argv);
+        errno = 86; optind = 0; opterr = 1; optopt = 806;
+        optarg = (char *)"stale";
+        result = getopt(2, argv, "+:ab:");
+        trace_option("short-missing-colon", result, -1, 2, argv);
+    }
+    {
+        char *argv[] = { "tool", "--beta", NULL };
+        errno = 87; optind = 0; opterr = 0; optopt = 807;
+        optarg = (char *)"stale"; index = -7;
+        result = getopt_long(2, argv, "-:ab:", options, &index);
+        trace_option("long-missing-silent", result, index, 2, argv);
+        errno = 88; optind = 0; opterr = 1; optopt = 808;
+        optarg = (char *)"stale"; index = -7;
+        result = getopt_long(2, argv, "+ab:", options, &index);
+        trace_option("long-missing-report", result, index, 2, argv);
+        errno = 89; optind = 0; opterr = 1; optopt = 809;
+        optarg = (char *)"stale"; index = -7;
+        result = getopt_long(2, argv, "-:ab:", options, &index);
+        trace_option("long-missing-colon", result, index, 2, argv);
+    }
+}
+
 int main(int argc, char **argv)
 {
     int result = check_program_names(argc, argv);
@@ -455,5 +544,6 @@ int main(int argc, char **argv)
     result = check_long_options();
     if (result != 0) return 70 + result;
     trace_option_sequences();
+    trace_reset_ordering_boundaries();
     return 0;
 }
