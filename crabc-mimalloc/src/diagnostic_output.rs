@@ -1113,6 +1113,29 @@ pub(crate) enum SourceErrorDisposition {
     DefaultErrno(Errno),
 }
 
+/// The public pointer-validation entry whose name is carried in a debug
+/// diagnostic. The spelling remains tied to the source operation.
+#[cfg(feature = "mi-debug-1")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SourcePointerOperation {
+    Free,
+    FreeSmall,
+    UFree,
+    UsableSize,
+}
+
+#[cfg(feature = "mi-debug-1")]
+impl SourcePointerOperation {
+    const fn name(self) -> &'static [u8] {
+        match self {
+            Self::Free => b"mi_free",
+            Self::FreeSmall => b"mi_free_small",
+            Self::UFree => b"mi_ufree",
+            Self::UsableSize => b"mi_usable_size",
+        }
+    }
+}
+
 /// One release-live allocation `_mi_error_message` site, carried as a value
 /// until its caller has released every page-engine projection.
 ///
@@ -1122,6 +1145,10 @@ pub(crate) enum SourceErrorDisposition {
 /// source order once no engine borrow is live.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SourceErrorReport {
+    /// Debug pointer validation precedes page lookup and rejects a byte
+    /// offset unless precise guarded allocations are enabled.
+    #[cfg(feature = "mi-debug-1")]
+    UnalignedPointer { operation: SourcePointerOperation, pointer: usize },
     /// `mi_find_page`, `src/page.c:951-954` (EOVERFLOW).
     AllocationTooLarge { size: usize },
     /// An overflowing count product reports its two original operands before
@@ -1162,6 +1189,8 @@ impl SourceErrorReport {
     pub(crate) const fn error(self) -> Errno {
         match self {
             #[cfg(feature = "mi-debug-1")]
+            Self::UnalignedPointer { .. } => Errno::INVAL,
+            #[cfg(feature = "mi-debug-1")]
             Self::CountSizeOverflow { .. } => Errno::OVERFLOW,
             Self::AllocationTooLarge { .. }
             | Self::AlignedLargeAlignmentOffset { .. }
@@ -1185,6 +1214,13 @@ impl SourceErrorReport {
             append_mbind_unsigned_decimal(&mut message.bytes, &mut message.length, value as u64);
         };
         match self {
+            #[cfg(feature = "mi-debug-1")]
+            Self::UnalignedPointer { operation, pointer } => {
+                message.append(operation.name());
+                message.append(b": invalid (unaligned) pointer: ");
+                append_source_pointer(&mut message.bytes, &mut message.length, pointer);
+                message.append(b"\n");
+            }
             Self::AllocationTooLarge { size } => {
                 message.append(b"allocation request is too large (");
                 decimal(&mut message, size);

@@ -1204,20 +1204,76 @@ pub(crate) unsafe fn native_child_theap_allocate(
     size: usize,
     zero: bool,
 ) -> Option<Option<core::ptr::NonNull<u8>>> {
-    // SAFETY: the current thread alone accesses its membership slot.
-    let current = (unsafe { current_child_member() }).as_mut()?;
+    // SAFETY: forwarded current-thread Theap lifetime.
+    unsafe { native_child_theap_allocate_variant(theap, size, None, zero) }
+}
+
+/// Direct ordinary or aligned allocation on a retained non-main child
+/// Theap. The default and cached roots keep their existing selection.
+///
+/// # Safety
+/// `theap` is linked to a live Heap of the calling child's attached TLD;
+/// alignment, when present, has passed the source precheck.
+pub(crate) unsafe fn native_child_theap_allocate_variant(
+    theap: core::ptr::NonNull<crate::types::Theap>,
+    size: usize,
+    aligned: Option<(usize, usize)>,
+    zero: bool,
+) -> Option<Option<core::ptr::NonNull<u8>>> {
+    use crate::single_thread::{DeferredFreeAllocationPhase, GenericAllocationCollection};
+    if !current_thread_is_child_member() { return None; }
     let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
         return Some(None);
     };
+    // SAFETY: forwarded exact current-thread Theap lifetime. Each engine
+    // projection ends before a deferred-free callback can reenter allocation.
+    let mut phase = unsafe { with_native_child_heap_theap_engine(theap, |engine| match aligned {
+        None => engine.begin_deferred_free_allocation(size, zero),
+        Some((alignment, offset)) => engine.begin_deferred_free_aligned_allocation_at(size, alignment, offset, zero),
+    }) }?;
+    loop {
+        match phase {
+            DeferredFreeAllocationPhase::Complete(block) => return Some(block),
+            DeferredFreeAllocationPhase::Collect { collection, continuation } => {
+                // SAFETY: the caller retains this Theap and its attached TLD
+                // throughout the synchronous callback and resumed operation.
+                let tld = core::ptr::NonNull::new(unsafe { crate::types::Theap::tld_at(theap) })?;
+                let force = matches!(collection, GenericAllocationCollection::Force);
+                if let Ok(invocation) = crate::deferred_free::begin_process(theap, tld, force) {
+                    let _ = unsafe { crate::__crabc_runtime::with_native_allocator_callback_boundary(|| unsafe { invocation.invoke() }) };
+                }
+                phase = unsafe { with_native_child_heap_theap_engine(theap, |engine| {
+                    engine.resume_deferred_free_allocation(collection, continuation)
+                }) }?;
+            }
+        }
+    }
+}
+
+/// Borrow only the current member's exact non-main Theap engine for one
+/// operation; no child-record or engine projection escapes this call.
+///
+/// # Safety
+/// The Theap belongs to this thread's attached child TLD and live Heap. The
+/// caller retains both against destruction and invokes no callback while
+/// the projection is held.
+unsafe fn with_native_child_heap_theap_engine<R>(
+    theap: core::ptr::NonNull<crate::types::Theap>,
+    operation: impl for<'session, 'image> FnOnce(
+        &mut crate::single_thread::ChildOrdinaryPageAllocator<'session, 'image, 'static>,
+    ) -> R,
+) -> Option<R> {
+    // SAFETY: the current thread alone accesses its membership slot.
+    let current = (unsafe { current_child_member() }).as_mut()?;
     let (id, binding) = (current.id, current.binding);
     let main_theap = current.member.theap_pointer()?;
     let owner = current.member.owner_mut() as *mut crate::meta::ChildThreadOwner;
     // SAFETY: the caller retains this Theap; the current owner retains its TLD.
     let heap = core::ptr::NonNull::new(unsafe { crate::types::Theap::heap_at(theap) })?;
     let same_tld = unsafe { crate::types::Theap::tld_at(theap) == crate::types::Theap::tld_at(main_theap) };
-    if !same_tld { return Some(None); }
+    if !same_tld { return None; }
     // SAFETY: the record lock excludes concurrent child context operations.
-    let allocated = unsafe {
+    let result = unsafe {
         id.with_owner(|child| match child.as_mut() {
             Some(child) => {
                 let same_child = child.identity_pointer().is_some_and(|identity| {
@@ -1227,15 +1283,14 @@ pub(crate) unsafe fn native_child_theap_allocate(
                     return None;
                 }
                 crate::meta::ChildThreadOwner::with_heap_theap_page_engine(
-                    owner, child, binding, theap, |engine| engine.allocate(size, zero),
+                    owner, child, binding, theap, operation,
                 )
                 .ok()
-                .flatten()
             }
             None => None,
         })
     };
-    Some(allocated.ok().flatten())
+    result.ok().flatten()
 }
 
 /// Resolve the current child thread's Theap for a live Heap. The child main
@@ -1288,6 +1343,54 @@ pub(crate) unsafe fn native_child_heap_theap(
         })
     };
     selected.ok().flatten()
+}
+
+/// Collect an exact live Theap of this child member without resolving its
+/// Heap's cached selector. The source callback runs before any owner or
+/// child-record projection is borrowed.
+///
+/// # Safety
+/// `theap` belongs to this thread's attached child TLD and live Heap,
+/// retained against destruction for the complete synchronous collection.
+pub(crate) unsafe fn native_child_theap_collect(
+    theap: core::ptr::NonNull<crate::types::Theap>,
+    force: bool,
+) {
+    let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else { return };
+    // SAFETY: caller retains the initialized Theap and its current TLD.
+    let Some(tld) = core::ptr::NonNull::new(unsafe { crate::types::Theap::tld_at(theap) }) else { return };
+    if let Ok(invocation) = crate::deferred_free::begin_process(theap, tld, force) {
+        // SAFETY: no child or engine reference survives across user code.
+        let _ = unsafe { crate::__crabc_runtime::with_native_allocator_callback_boundary(|| unsafe { invocation.invoke() }) };
+    }
+    // SAFETY: only the current thread accesses its member slot.
+    let Some(current) = (unsafe { current_child_member() }).as_mut() else { return };
+    let (id, binding) = (current.id, current.binding);
+    let Some(main) = current.member.theap_pointer() else { return };
+    if unsafe { crate::types::Theap::tld_at(main) } != tld.as_ptr() { return; }
+    let collection = if force {
+        crate::single_thread::GenericAllocationCollection::Force
+    } else {
+        crate::single_thread::GenericAllocationCollection::Full
+    };
+    let collect = |engine: &mut crate::single_thread::ChildOrdinaryPageAllocator<'_, '_, 'static>| {
+        engine.resume_deferred_free_allocation(collection, crate::single_thread::DeferredFreeAllocationContinuation::Collection)
+    };
+    let owner = current.member.owner_mut() as *mut crate::meta::ChildThreadOwner;
+    if theap == main {
+        // SAFETY: the current member owns its fixed main Theap exclusively.
+        let _ = unsafe { (*owner).with_page_engine(binding, |_image, engine| collect(engine)) };
+    } else {
+        // SAFETY: the caller retains the member's non-main Theap and child;
+        // the child-record lock excludes concurrent context mutation.
+        let _ = unsafe { id.with_owner(|child| {
+            if let Some(child) = child.as_mut() {
+                let _ = crate::meta::ChildThreadOwner::with_heap_theap_page_engine(
+                    owner, child, binding, theap, collect,
+                );
+            }
+        }) };
+    }
 }
 
 /// Select the current child thread's Theap for a live Heap.

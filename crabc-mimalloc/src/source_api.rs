@@ -19,14 +19,13 @@
 //   (`mi_collect`), `src/heap.c:250-283` (`mi_check_owned` through
 //   `mi_any_heap_contains`), and `src/init.c:501-503` (`mi_is_redirected`).
 //
-// These are the default-Theap public entry points of the selected release
-// profile (`MI_DEBUG=0`, `MI_SECURE=0`, `MI_PADDING=0`, no guarded or
-// override build) over the native runtime's allocation, free, reallocation,
+// These are the default and explicit Theap public entries of the selected
+// unguarded builds over the native runtime's allocation, free, reallocation,
 // PageMap, and collection primitives. The engine owns no errno: each entry
 // reports the errno effect the pinned source has on its path as data, and the
 // C boundary applies it.
 
-//! Pinned mimalloc default-Theap public allocation API over the native
+//! Pinned mimalloc default and explicit Theap allocation API over the native
 //! runtime.
 //!
 //! Every function here is the source entry of the same `mi_` name with its
@@ -218,12 +217,38 @@ pub fn zalloc_small(size: usize) -> Sourced<Block> {
     malloc_zero(size, true)
 }
 
+/// Keeps the disposition selected for this report. A callback may change
+/// registration while it runs; that change selects later reports and does
+/// not retroactively enable the default errno action for this one.
+pub(crate) fn source_error_errno(report: crate::diagnostic_output::SourceErrorReport) -> SourceErrno {
+    match crate::process_init::process_error_message(report) {
+        crate::diagnostic_output::SourceErrorDisposition::Handled => SourceErrno::Unchanged,
+        crate::diagnostic_output::SourceErrorDisposition::DefaultErrno(errno) => SourceErrno::DefaultIfZero(errno),
+    }
+}
+
+/// The selected source diagnostic for a checked-count multiplication
+/// overflow. Release builds are quiet; debug builds notify the error handler
+/// before their ordinary default errno effect is applied by the C boundary.
+pub(crate) fn count_size_overflow_errno(count: usize, size: usize) -> SourceErrno {
+    #[cfg(feature = "mi-debug-1")]
+    {
+        let report = crate::diagnostic_output::SourceErrorReport::CountSizeOverflow { count, size };
+        source_error_errno(report)
+    }
+    #[cfg(not(feature = "mi-debug-1"))]
+    {
+        let _ = (count, size);
+        SourceErrno::Unchanged
+    }
+}
+
 /// `mi_calloc`: an overflowing product fails before any allocation and, in
 /// release, without a message.
 pub fn calloc(count: usize, size: usize) -> Sourced<Block> {
     match size_class::count_size(count, size) {
         Some(total) => malloc_zero(total, true),
-        None => Sourced::quiet(None),
+        None => Sourced::with(None, count_size_overflow_errno(count, size)),
     }
 }
 
@@ -231,8 +256,193 @@ pub fn calloc(count: usize, size: usize) -> Sourced<Block> {
 pub fn mallocn(count: usize, size: usize) -> Sourced<Block> {
     match size_class::count_size(count, size) {
         Some(total) => malloc_zero(total, false),
-        None => Sourced::quiet(None),
+        None => Sourced::with(None, count_size_overflow_errno(count, size)),
     }
+}
+
+/// `mi_theap_calloc`: overflow returns null before accessing the Theap.
+///
+/// # Safety
+/// `theap` is a live Theap of the calling thread's TLD and Heap, retained
+/// against destruction and thread exit for the complete allocation.
+pub unsafe fn theap_calloc(theap: *mut core::ffi::c_void, count: usize, size: usize) -> Sourced<Block> {
+    match size_class::count_size(count, size) {
+        // SAFETY: forwarded current-thread Theap lifetime.
+        Some(total) => unsafe { crate::source_heap_api::theap_malloc(theap, total, true) },
+        None => Sourced::with(None, count_size_overflow_errno(count, size)),
+    }
+}
+
+/// Direct offset-aligned Theap allocation after resolving no Heap selector.
+/// The fixed main Theap uses its persistent owner; each non-main Theap
+/// keeps the engine state stored in its own allocated image.
+///
+/// # Safety
+/// `theap` is a live initialized Theap of the calling thread's TLD and
+/// Heap, which both remain live throughout this call.
+pub unsafe fn theap_malloc_aligned_at(
+    theap: *mut core::ffi::c_void,
+    size: usize,
+    alignment: usize,
+    offset: usize,
+    zero: bool,
+) -> Sourced<Block> {
+    use crate::types::Theap;
+    let Some(theap) = NonNull::new(theap.cast::<Theap>()) else { return Sourced::quiet(None) };
+    let Some(current) = NonNull::new(crate::source_heap_api::theap_get_default().cast::<Theap>()) else {
+        return Sourced::quiet(None);
+    };
+    // SAFETY: both Theaps stay retained by the calling thread.
+    if unsafe { Theap::heap_at(theap) }.is_null()
+        || unsafe { Theap::tld_at(theap) != Theap::tld_at(current) }
+    {
+        return Sourced::quiet(None);
+    }
+    if crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<Theap>()) == Some(theap) {
+        return malloc_zero_aligned_at_native(size, alignment, offset, zero);
+    }
+    let report = if size_class::alignment_is_valid(alignment) && !size_class::request_size_is_valid(size) {
+        Some(crate::diagnostic_output::SourceErrorReport::AlignedTooLarge { size, alignment })
+    } else {
+        crate::diagnostic_output::SourceErrorReport::aligned_precheck(size, alignment, offset)
+    };
+    if let Some(report) = report {
+        return Sourced::with(None, source_error_errno(report));
+    }
+    let child = crate::subproc::lifecycle::current_thread_is_child_member();
+    // SAFETY: validated alignment and retained current-thread Theap.
+    let block = if child {
+        unsafe { crate::subproc::lifecycle::native_child_theap_allocate_variant(
+            theap, size, Some((alignment, offset)), zero,
+        ) }.flatten()
+    } else {
+        unsafe { crate::subproc::main_heaps::native_theap_allocate_variant(
+            theap, size, Some((alignment, offset)), zero,
+        ) }
+    };
+    if block.is_some() { return Sourced::quiet(block); }
+    if child && offset == 0 && alignment >= PAGE_META_ALIGNMENT {
+        for _ in 0..2 {
+            crate::process_init::process_warning_message(
+                crate::diagnostic_output::SourceFormattedMessage::page_alignment_too_large(alignment),
+            );
+        }
+        return Sourced::with(None, SourceErrno::Store(Errno::INVAL));
+    }
+    let report = crate::diagnostic_output::SourceErrorReport::OutOfMemory { size };
+    let _ = crate::process_init::process_error_message(report);
+    Sourced::with(None, aligned_failure_errno(size, alignment, offset))
+}
+
+/// `mi_theap_realloc` or, with `zero`, `mi_theap_rezalloc`. Reuse requires
+/// the old page's Heap to equal the supplied Theap's Heap; replacement
+/// allocation uses that exact Theap without selecting the cached root.
+///
+/// # Safety
+/// `theap` is a retained initialized Theap of the calling thread's live TLD
+/// and Heap. `block` is null or an exact live allocation exclusively held
+/// for this call. A successful result consumes the old block; failure
+/// leaves it unchanged and live.
+pub unsafe fn theap_realloc(
+    theap: *mut core::ffi::c_void,
+    block: *mut u8,
+    new_size: usize,
+    zero: bool,
+) -> Sourced<Block> {
+    let Some(selected) = NonNull::new(theap.cast::<crate::types::Theap>()) else { return Sourced::quiet(None) };
+    let mut earlier = SourceErrno::Unchanged;
+    let size = if let Some(live) = NonNull::new(block) {
+        // SAFETY: the exact live allocation remains stable for the call.
+        let Some(heap) = (unsafe { crate::subproc::main_heaps::heap_of_block(live) }) else {
+            return Sourced::quiet(None);
+        };
+        let observed = unsafe { usable_size_sourced(block) };
+        earlier = observed.errno;
+        let size = observed.value;
+        if new_size > 0 && new_size <= size && new_size >= size / 2
+            && unsafe { crate::types::Theap::heap_at(selected) } == heap.as_ptr()
+        {
+            return Sourced::with(Some(live), earlier);
+        }
+        size
+    } else {
+        // SAFETY: forwarded Theap lifetime; source's null shortcut zeroes
+        // the complete client extent for rezalloc.
+        return unsafe { crate::source_heap_api::theap_malloc(theap, new_size, zero) };
+    };
+    // SAFETY: forwarded Theap lifetime; zeroing happens after allocation.
+    let mut result = unsafe { crate::source_heap_api::theap_malloc(theap, new_size, false) }.after(earlier);
+    let Some(replacement) = result.value else { return result };
+    let copy = size.min(new_size);
+    let word = core::mem::size_of::<usize>();
+    let zero_start = copy.saturating_sub(word) & !(word - 1);
+    // SAFETY: the two live exclusive allocations do not overlap, and the
+    // queried usable extent belongs to the newly returned block.
+    unsafe {
+        let usable = usable_size_validated(replacement.as_ptr());
+        if zero && usable > zero_start {
+            replacement.as_ptr().add(zero_start).write_bytes(0, usable - zero_start);
+        } else if new_size == 0 {
+            replacement.as_ptr().write(0);
+        }
+        core::ptr::copy_nonoverlapping(block, replacement.as_ptr(), copy);
+        result.errno = result.errno.then(free_sourced(block).errno);
+    }
+    result
+}
+
+/// The supplied Theap's aligned realloc kernel. Aligned reuse depends on
+/// pointer alignment and usable extent; the source does not require Heap
+/// equality for this path. A replacement belongs to the supplied Theap.
+///
+/// # Safety
+/// The initialized Theap belongs to the calling thread's retained TLD and
+/// Heap. The old block is null or an exact exclusively held live client.
+/// Success consumes it; a failed allocation leaves it unchanged and live.
+unsafe fn theap_realloc_aligned_at(
+    theap: *mut core::ffi::c_void,
+    block: *mut u8,
+    new_size: usize,
+    alignment: usize,
+    offset: usize,
+    zero: bool,
+) -> Sourced<Block> {
+    if !size_class::alignment_is_valid(alignment) {
+        let report = crate::diagnostic_output::SourceErrorReport::BadAlignment { size: new_size, alignment, offset };
+        return Sourced::with(None, source_error_errno(report));
+    }
+    if alignment <= core::mem::size_of::<usize>() && offset == 0 {
+        // SAFETY: forwarded exact-live-client and Theap obligations.
+        return unsafe { theap_realloc(theap, block, new_size, zero) };
+    }
+    let Some(live) = NonNull::new(block) else {
+        // SAFETY: the caller retains the supplied current-thread Theap.
+        return unsafe { theap_malloc_aligned_at(theap, new_size, alignment, offset, zero) };
+    };
+    // SAFETY: caller retains the exact live client for this observation.
+    let observed = unsafe { usable_size_sourced(block) };
+    let size = observed.value;
+    if new_size <= size && new_size >= size - size / 2
+        && block.addr().wrapping_add(offset) & (alignment - 1) == 0
+    {
+        return Sourced::with(Some(live), observed.errno);
+    }
+    // SAFETY: forwarded retained Theap lifetime; initialize after copying.
+    let mut result = unsafe { theap_malloc_aligned_at(theap, new_size, alignment, offset, false) }.after(observed.errno);
+    let Some(replacement) = result.value else { return result };
+    let copy = size.min(new_size);
+    let zero_start = copy.saturating_sub(core::mem::size_of::<usize>());
+    // SAFETY: the fresh replacement and exact old client do not overlap;
+    // their usable extents cover the zeroed and copied bytes respectively.
+    unsafe {
+        let usable = usable_size_validated(replacement.as_ptr());
+        if zero && usable > zero_start {
+            replacement.as_ptr().add(zero_start).write_bytes(0, usable - zero_start);
+        }
+        core::ptr::copy_nonoverlapping(block, replacement.as_ptr(), copy);
+        result.errno = result.errno.then(free_sourced(block).errno);
+    }
+    result
 }
 
 /// `mi_ublock_size`: the page block size of a successful result.
@@ -261,7 +471,7 @@ pub fn uzalloc_small(size: usize) -> Sourced<(Block, Option<usize>)> {
 pub fn ucalloc(count: usize, size: usize) -> Sourced<(Block, Option<usize>)> {
     match size_class::count_size(count, size) {
         Some(total) => with_block_size(malloc_zero(total, true)),
-        None => Sourced::quiet((None, None)),
+        None => Sourced::with((None, None), count_size_overflow_errno(count, size)),
     }
 }
 
@@ -276,11 +486,35 @@ pub enum FreeOutcome {
     /// The native runtime could not complete a legal free and has retained
     /// its owner; the embedding boundary must not continue as if it freed.
     Retained,
-    /// The debug padding check reported corruption and left the block owned.
-    /// This is the source continuation after an invalid free, not a runtime
+    /// Debug pointer or padding validation rejected this free and left the
+    /// block owned. This is the source continuation after an invalid free, not a runtime
     /// ownership failure.
     #[cfg(feature = "mi-debug-1")]
     RejectedCorruption,
+}
+
+#[cfg(feature = "mi-debug-1")]
+fn pointer_validation_errno(pointer: *const u8, operation: crate::diagnostic_output::SourcePointerOperation) -> Option<SourceErrno> {
+    if pointer.addr() & (crate::config::WORD_SIZE - 1) == 0
+        || crate::source_options_api::option_is_enabled(crate::config::SourceOption::GuardedPrecise as c_int)
+    {
+        return None;
+    }
+    let report = crate::diagnostic_output::SourceErrorReport::UnalignedPointer { operation, pointer: pointer.addr() };
+    Some(source_error_errno(report))
+}
+
+/// `mi_free` with its source diagnostic errno effect.
+///
+/// # Safety
+/// The exact live-client and exclusion obligations of [`free`] apply.
+pub unsafe fn free_sourced(block: *mut u8) -> Sourced<FreeOutcome> {
+    #[cfg(feature = "mi-debug-1")]
+    if let Some(errno) = pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::Free) {
+        return Sourced::with(FreeOutcome::RejectedCorruption, errno);
+    }
+    // SAFETY: forwarded exact live-client contract.
+    Sourced::quiet(unsafe { free_validated(block) })
 }
 
 /// `mi_free`.
@@ -288,9 +522,14 @@ pub enum FreeOutcome {
 /// # Safety
 ///
 /// `block` is null, unmapped by this allocator, or an exact live native
-/// allocation that no other thread accesses during the call and that the
-/// caller never uses again.
+/// allocation that no other thread accesses during the call. A `Freed`
+/// result consumes it; a debug validation refusal leaves the block live.
 pub unsafe fn free(block: *mut u8) -> FreeOutcome {
+    // SAFETY: forwarded exact live-client contract.
+    unsafe { free_sourced(block) }.value
+}
+
+unsafe fn free_validated(block: *mut u8) -> FreeOutcome {
     let Some(block) = NonNull::new(block) else {
         return FreeOutcome::Freed;
     };
@@ -304,6 +543,20 @@ pub unsafe fn free(block: *mut u8) -> FreeOutcome {
     }
 }
 
+/// `mi_free_small` with its source pointer-validation errno effect.
+///
+/// # Safety
+/// `block` is null or a live client from the small allocation family, held
+/// exclusively as required by [`free`].
+pub unsafe fn free_small_sourced(block: *mut u8) -> Sourced<FreeOutcome> {
+    #[cfg(feature = "mi-debug-1")]
+    if let Some(errno) = pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::FreeSmall) {
+        return Sourced::with(FreeOutcome::RejectedCorruption, errno);
+    }
+    // SAFETY: the caller supplies the small exact-live-client contract.
+    Sourced::quiet(unsafe { free_validated(block) })
+}
+
 /// `mi_ufree`: frees `block` and reports its page block size, or 0 for a
 /// null or unmapped pointer.
 ///
@@ -311,10 +564,23 @@ pub unsafe fn free(block: *mut u8) -> FreeOutcome {
 ///
 /// The obligations of [`free`].
 pub unsafe fn ufree(block: *mut u8) -> (FreeOutcome, usize) {
+    // SAFETY: forwarded free obligations.
+    unsafe { ufree_sourced(block) }.value
+}
+
+/// `mi_ufree` with its pointer-validation errno effect.
+///
+/// # Safety
+/// The exact live-client and exclusion obligations of [`free`] apply.
+pub unsafe fn ufree_sourced(block: *mut u8) -> Sourced<(FreeOutcome, usize)> {
+    #[cfg(feature = "mi-debug-1")]
+    if let Some(errno) = pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::UFree) {
+        return Sourced::with((FreeOutcome::RejectedCorruption, 0), errno);
+    }
     // SAFETY: a live pointer stays live until the free below.
     let block_size = NonNull::new(block).and_then(|live| unsafe { native_block_size(live) }).unwrap_or(0);
     // SAFETY: forwarded from this function's contract.
-    (unsafe { free(block) }, block_size)
+    Sourced::quiet((unsafe { free_validated(block) }, block_size))
 }
 
 /// `mi_cfree`: frees `block` only if the PageMap registers a page for it,
@@ -340,6 +606,24 @@ pub unsafe fn cfree(block: *mut u8) -> (FreeOutcome, bool) {
 ///
 /// `block` is null or an exact live native allocation.
 pub unsafe fn usable_size(block: *const u8) -> usize {
+    // SAFETY: forwarded exact live-client contract.
+    unsafe { usable_size_sourced(block) }.value
+}
+
+/// `mi_usable_size` with its source diagnostic errno effect.
+///
+/// # Safety
+/// `block` is null or an exact live native allocation retained for the call.
+pub unsafe fn usable_size_sourced(block: *const u8) -> Sourced<usize> {
+    #[cfg(feature = "mi-debug-1")]
+    if let Some(errno) = pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::UsableSize) {
+        return Sourced::with(0, errno);
+    }
+    // SAFETY: forwarded exact live-client contract.
+    Sourced::quiet(unsafe { usable_size_validated(block) })
+}
+
+unsafe fn usable_size_validated(block: *const u8) -> usize {
     match NonNull::new(block.cast_mut()) {
         // SAFETY: forwarded exact-live-client contract.
         Some(block) => unsafe { native_usable_size(block) }.unwrap_or(0),
@@ -374,7 +658,90 @@ pub const fn is_redirected() -> bool {
 
 /// `mi_collect`.
 pub fn collect(force: bool) {
+    if let Some(main) = crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<crate::types::Theap>()) {
+        let selected = crate::compiler_tls::default_theap();
+        if selected != main || crate::subproc::lifecycle::current_thread_is_child_member() {
+            // SAFETY: this thread retains its selected default Theap.
+            unsafe { theap_collect(selected.as_ptr().cast(), force) };
+            return;
+        }
+    }
     native_collect(force);
+}
+
+/// `mi_theap_collect`: null or uninitialized images have no work. A live
+/// Theap collects only its own page queues and then its owning arenas and
+/// statistics, without selecting a different cached or default root.
+///
+/// # Safety
+/// A non-null `theap` is an address-stable Theap image. If initialized, it
+/// belongs to the calling thread's retained TLD and Heap; the caller excludes
+/// destruction, thread exit, and another mutation of its page queues.
+pub unsafe fn theap_collect(theap: *mut core::ffi::c_void, force: bool) {
+    let Some(theap) = NonNull::new(theap.cast::<crate::types::Theap>()) else { return };
+    // SAFETY: caller retains the image through this initialization check.
+    if unsafe { crate::types::Theap::heap_at(theap) }.is_null() { return; }
+    if crate::subproc::lifecycle::current_thread_is_child_member() {
+        // SAFETY: forwarded retained current-thread Theap contract.
+        unsafe { crate::subproc::lifecycle::native_child_theap_collect(theap, force) };
+    } else if crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<crate::types::Theap>()) == Some(theap) {
+        native_collect(force);
+    } else {
+        // SAFETY: forwarded retained current-thread Theap contract.
+        unsafe { crate::subproc::main_heaps::native_theap_collect(theap, force) };
+    }
+}
+
+/// `mi_theap_stats_get`: copy this Theap's unmerged statistics without
+/// changing the default or cached Theap or merging into its Heap.
+///
+/// # Safety
+/// `theap` is a retained initialized Theap image. `stats` is null or an
+/// aligned readable and writable source statistics image, excluded from
+/// other accesses for the call and disjoint from the Theap metadata.
+pub unsafe fn theap_stats_get(theap: *mut core::ffi::c_void, stats: *mut u8) -> bool {
+    let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else { return false };
+    let Some(theap) = NonNull::new(theap.cast::<crate::types::Theap>()) else { return false };
+    // SAFETY: the caller retains the exact Theap and destination images.
+    unsafe { crate::types::Theap::copy_statistics_into_source_image_at(theap, stats) }
+}
+
+/// `mi_theap_visit_blocks`: visit only this Theap's ordinary and full page
+/// queues, in source bin and queue order. A null Theap has no pages.
+///
+/// # Safety
+/// A non-null `theap` and its Heap stay initialized, retained and quiescent
+/// through the call. Each page, free-list node and block area remains mapped
+/// and stable, without owner or remote-free mutations. If any page exists,
+/// `visitor` is callable through the traversal, does not mutate or free a
+/// visited page or block, and uses each offered area only within its callback.
+/// `argument` satisfies the callback's lifetime and access obligations.
+pub unsafe fn theap_visit_blocks(
+    theap: *const core::ffi::c_void,
+    visit_blocks: bool,
+    visitor: Option<crate::source_heap_api::HeapBlockVisitor>,
+    argument: *mut core::ffi::c_void,
+) -> bool {
+    let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else { return false };
+    let Some(theap) = NonNull::new(theap.cast_mut().cast::<crate::types::Theap>()) else { return true };
+    for bin in 0..=crate::config::BIN_FULL {
+        // SAFETY: caller excludes queue changes; this scalar head does not
+        // keep a Theap projection across callback delivery.
+        let mut page = unsafe { theap.as_ref() }.queue(bin).map_or(core::ptr::null_mut(), |queue| queue.first());
+        while let Some(current) = NonNull::new(page) {
+            let Some(visitor) = visitor else { return false };
+            // SAFETY: the caller retains these immutable source identities
+            // and the queue links through the callback's return.
+            let heap = NonNull::new(unsafe { crate::types::Theap::heap_at(theap) });
+            let Some(heap) = heap else { return false };
+            let next = unsafe { crate::types::Page::queue_next_at(current) };
+            if !unsafe { crate::source_heap_api::visit_heap_page(heap, current, visit_blocks, visitor, argument) } {
+                return false;
+            }
+            page = next;
+        }
+    }
+    true
 }
 
 /// `mi_expand`: the unchanged pointer when `new_size` fits its usable
@@ -384,10 +751,11 @@ pub fn collect(force: bool) {
 ///
 /// `block` is null or an exact live native allocation.
 pub unsafe fn expand(block: *mut u8, new_size: usize) -> Block {
+    if crate::config::PADDING_SIZE != 0 { return None; }
     let block = NonNull::new(block)?;
     // SAFETY: forwarded exact-live-client contract.
     let usable = unsafe { usable_size(block.as_ptr()) };
-    (new_size <= usable).then_some(block)
+    crate::alloc::expansion_fits(usable, new_size).then_some(block)
 }
 
 /// `mi__expand`: [`expand`] storing `ENOMEM` on failure.
@@ -420,6 +788,35 @@ fn realloc_result(result: NativePageAllocationResult) -> Sourced<Block> {
 /// the entries that call it directly (`mi_urealloc`, low-alignment aligned
 /// realloc).
 unsafe fn realloc_zero(block: *mut u8, new_size: usize, zero: bool) -> Sourced<Block> {
+    if let Some(main) = crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<crate::types::Theap>()) {
+        let selected = crate::compiler_tls::default_theap();
+        if selected != main {
+            // SAFETY: the calling thread retains its substituted Theap and
+            // the caller holds the exact live client throughout reallocation.
+            return unsafe { theap_realloc(selected.as_ptr().cast(), block, new_size, zero) };
+        }
+    }
+    // SAFETY: forwarded exact-live-client contract.
+    unsafe { realloc_zero_native(block, new_size, zero) }
+}
+
+/// Reallocate on the fixed main-Heap Theap independently of the default root.
+///
+/// # Safety
+/// `block` is null or an exact live client held exclusively for reallocation.
+/// Success consumes the old block; failure leaves it live and unchanged.
+pub(crate) unsafe fn realloc_zero_native(block: *mut u8, new_size: usize, zero: bool) -> Sourced<Block> {
+    #[cfg(feature = "mi-debug-1")]
+    if let Some(earlier) = pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::UsableSize) {
+        let mut replacement = malloc_zero_native(new_size, zero).after(earlier);
+        if let Some(new_block) = replacement.value {
+            if new_size == 0 { unsafe { new_block.as_ptr().write(0) }; }
+            let freed = unsafe { free_sourced(block) };
+            replacement.errno = replacement.errno.then(freed.errno);
+        }
+        return replacement;
+    }
+
     // SAFETY: forwarded exact-live-client contract.
     realloc_result(unsafe { native_reallocate_source(NonNull::new(block), new_size, zero) })
 }
@@ -448,7 +845,7 @@ pub unsafe fn reallocn(block: *mut u8, count: usize, size: usize) -> Sourced<Blo
     match size_class::count_size(count, size) {
         // SAFETY: forwarded contract.
         Some(total) => unsafe { realloc(block, total) },
-        None => Sourced::quiet(None),
+        None => Sourced::with(None, count_size_overflow_errno(count, size)),
     }
 }
 
@@ -492,7 +889,7 @@ pub unsafe fn recalloc(block: *mut u8, count: usize, size: usize) -> Sourced<Blo
     match size_class::count_size(count, size) {
         // SAFETY: forwarded contract.
         Some(total) => unsafe { rezalloc(block, total) },
-        None => Sourced::quiet(None),
+        None => Sourced::with(None, count_size_overflow_errno(count, size)),
     }
 }
 
@@ -550,10 +947,24 @@ fn aligned_failure_errno(size: usize, alignment: usize, offset: usize) -> Source
 
 /// `mi_theap_malloc_zero_aligned_at`.
 fn malloc_zero_aligned_at(size: usize, alignment: usize, offset: usize, zero: bool) -> Sourced<Block> {
+    if let Some(main) = crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<crate::types::Theap>()) {
+        let selected = crate::compiler_tls::default_theap();
+        if selected != main {
+            // SAFETY: the calling thread retains its substituted default
+            // Theap until restoration, including this entire allocation.
+            return unsafe { theap_malloc_aligned_at(selected.as_ptr().cast(), size, alignment, offset, zero) };
+        }
+    }
+    malloc_zero_aligned_at_native(size, alignment, offset, zero)
+}
+
+/// Aligned allocation on the fixed main-Heap Theap, independent of a
+/// substituted default Theap. Heap-scoped calls use this after selection.
+pub(crate) fn malloc_zero_aligned_at_native(size: usize, alignment: usize, offset: usize, zero: bool) -> Sourced<Block> {
     // The native aligned entry reports these pre-allocation refusals through
     // `_mi_error_message` (`alloc-aligned.c:81-84,163-166,191-193`) and then
     // fails; the errno effect follows each report.
-    let refusal = if !size_class::alignment_is_valid(alignment) || size > MAX_ALLOC_SIZE {
+    let refusal = if !size_class::alignment_is_valid(alignment) || !size_class::request_size_is_valid(size) {
         Some(Errno::INVAL)
     } else if alignment > PAGE_MAX_OVERALLOC_ALIGN && offset != 0 {
         Some(Errno::OVERFLOW)
@@ -593,7 +1004,7 @@ pub fn zalloc_aligned(size: usize, alignment: usize) -> Sourced<Block> {
 pub fn calloc_aligned_at(count: usize, size: usize, alignment: usize, offset: usize) -> Sourced<Block> {
     match size_class::count_size(count, size) {
         Some(total) => malloc_zero_aligned_at(total, alignment, offset, true),
-        None => Sourced::quiet(None),
+        None => Sourced::with(None, count_size_overflow_errno(count, size)),
     }
 }
 
@@ -612,8 +1023,12 @@ pub fn uzalloc_aligned(size: usize, alignment: usize) -> Sourced<(Block, Option<
     with_block_size(malloc_zero_aligned_at(size, alignment, 0, true))
 }
 
-/// `mi_theap_realloc_zero_aligned_at`.
-unsafe fn realloc_zero_aligned_at(
+/// The fixed main Theap's aligned realloc kernel, independent of the default.
+///
+/// # Safety
+/// `block` is null or an exact live client exclusively held for this call;
+/// success consumes it and failure leaves it live and unchanged.
+pub(crate) unsafe fn realloc_zero_aligned_at_native(
     block: *mut u8,
     new_size: usize,
     alignment: usize,
@@ -625,16 +1040,26 @@ unsafe fn realloc_zero_aligned_at(
     }
     if alignment <= core::mem::size_of::<usize>() && offset == 0 {
         // SAFETY: forwarded contract.
-        return unsafe { realloc_zero(block, new_size, zero) };
+        return unsafe { realloc_zero_native(block, new_size, zero) };
     }
     let Some(live) = NonNull::new(block) else {
-        return malloc_zero_aligned_at(new_size, alignment, offset, zero);
+        return malloc_zero_aligned_at_native(new_size, alignment, offset, zero);
     };
-    if new_size > MAX_ALLOC_SIZE {
+    if !size_class::request_size_is_valid(new_size) {
         // The replacement allocation refuses the size before any lookup.
         return Sourced::with(None, SourceErrno::error_message(Errno::INVAL));
     }
     // SAFETY: forwarded exact-live-client contract.
+    #[cfg(feature = "mi-debug-1")]
+    if let Some(earlier) = pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::UsableSize) {
+        let mut replacement = malloc_zero_aligned_at_native(new_size, alignment, offset, zero).after(earlier);
+        if let Some(new_block) = replacement.value {
+            if new_size == 0 { unsafe { new_block.as_ptr().write(0) }; }
+            let freed = unsafe { free_sourced(block) };
+            replacement.errno = replacement.errno.then(freed.errno);
+        }
+        return replacement;
+    }
     match unsafe { native_reallocate_aligned_at(Some(live), new_size, alignment, offset, zero) } {
         NativePageAllocationResult::Allocated(block) => Sourced::quiet(Some(block)),
         NativePageAllocationResult::Unavailable => Sourced::quiet(None),
@@ -642,6 +1067,23 @@ unsafe fn realloc_zero_aligned_at(
             Sourced::with(None, aligned_failure_errno(new_size, alignment, offset))
         }
     }
+}
+
+/// Reallocation using the current default Theap's aligned source kernel.
+///
+/// # Safety
+/// The exact live-client obligations of `realloc` apply.
+unsafe fn realloc_zero_aligned_at(block: *mut u8, new_size: usize, alignment: usize, offset: usize, zero: bool) -> Sourced<Block> {
+    if let Some(main) = crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<crate::types::Theap>()) {
+        let selected = crate::compiler_tls::default_theap();
+        if selected != main {
+            // SAFETY: caller retains the exact live client; the calling
+            // thread retains its substituted default Theap until restoration.
+            return unsafe { theap_realloc_aligned_at(selected.as_ptr().cast(), block, new_size, alignment, offset, zero) };
+        }
+    }
+    // SAFETY: forwarded exact-live-client contract.
+    unsafe { realloc_zero_aligned_at_native(block, new_size, alignment, offset, zero) }
 }
 
 /// `mi_theap_realloc_zero_aligned`: an alignment of at most one word takes
@@ -710,7 +1152,7 @@ pub unsafe fn recalloc_aligned_at(
     match size_class::count_size(count, size) {
         // SAFETY: forwarded contract.
         Some(total) => unsafe { realloc_zero_aligned_at(block, total, alignment, offset, true) },
-        None => Sourced::quiet(None),
+        None => Sourced::with(None, count_size_overflow_errno(count, size)),
     }
 }
 
@@ -723,7 +1165,7 @@ pub unsafe fn recalloc_aligned(block: *mut u8, count: usize, size: usize, alignm
     match size_class::count_size(count, size) {
         // SAFETY: forwarded contract.
         Some(total) => unsafe { realloc_zero_aligned(block, total, alignment, true) },
-        None => Sourced::quiet(None),
+        None => Sourced::with(None, count_size_overflow_errno(count, size)),
     }
 }
 
@@ -779,7 +1221,8 @@ pub fn aligned_alloc(alignment: usize, size: usize) -> Sourced<Block> {
 /// The obligations of [`realloc`].
 pub unsafe fn reallocarray(block: *mut u8, count: usize, size: usize) -> Sourced<Block> {
     let Some(total) = size_class::count_size(count, size) else {
-        return Sourced::with(None, SourceErrno::Store(Errno::OVERFLOW));
+        let earlier = count_size_overflow_errno(count, size);
+        return Sourced::with(None, earlier.then(SourceErrno::Store(Errno::OVERFLOW)));
     };
     // SAFETY: forwarded contract.
     let result = unsafe { realloc(block, total) };
@@ -810,7 +1253,8 @@ pub unsafe fn reallocarr(current: Option<*mut u8>, count: usize, size: usize) ->
         return Sourced::with((Errno::INVAL.raw(), ReallocarrStore::Keep, FreeOutcome::Freed), SourceErrno::Store(Errno::INVAL));
     };
     let Some(total) = size_class::count_size(count, size) else {
-        return Sourced::with((Errno::OVERFLOW.raw(), ReallocarrStore::Keep, FreeOutcome::Freed), SourceErrno::Store(Errno::OVERFLOW));
+        let earlier = count_size_overflow_errno(count, size);
+        return Sourced::with((Errno::OVERFLOW.raw(), ReallocarrStore::Keep, FreeOutcome::Freed), earlier.then(SourceErrno::Store(Errno::OVERFLOW)));
     };
     if total == 0 {
         // SAFETY: forwarded contract.
@@ -1074,8 +1518,9 @@ pub fn new_n(runtime: &impl SourceCRuntime, count: usize, size: usize) -> Source
     match size_class::count_size(count, size) {
         Some(total) => new(runtime, total),
         None => {
+            let earlier = count_size_overflow_errno(count, size);
             let (_, errno) = try_new_handler(runtime, false);
-            Sourced::with(None, errno)
+            Sourced::with(None, earlier.then(errno))
         }
     }
 }
@@ -1166,8 +1611,9 @@ pub unsafe fn new_reallocn(runtime: &impl SourceCRuntime, block: *mut u8, count:
         // SAFETY: forwarded contract.
         Some(total) => unsafe { new_realloc(runtime, block, total) },
         None => {
+            let earlier = count_size_overflow_errno(count, size);
             let (_, errno) = try_new_handler(runtime, false);
-            Sourced::with(None, errno)
+            Sourced::with(None, earlier.then(errno))
         }
     }
 }
@@ -1176,6 +1622,181 @@ pub unsafe fn new_reallocn(runtime: &impl SourceCRuntime, block: *mut u8, count:
 mod tests {
     use super::SourceErrno;
     use crabc_core::Errno;
+
+    #[cfg(feature = "mi-debug-1")]
+    #[test]
+    fn debug_unaligned_client_validation_preserves_old_allocation() {
+        crate::test_process::run_in_fresh_process(
+            "source_api::tests::debug_unaligned_client_validation_preserves_old_allocation",
+            || {
+                unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+                    4096, unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard) },
+                ));
+                let original = super::zalloc_aligned_at(64, 8, 7).value.unwrap();
+                assert_eq!(original.as_ptr().addr() & 7, 1);
+                // SAFETY: the fixture exclusively retains this exact live
+                // interior client throughout the rejected source operations.
+                unsafe { original.as_ptr().write_bytes(0xa7, 64) };
+                let size = unsafe { super::usable_size_sourced(original.as_ptr()) };
+                assert_eq!(size.value, 0);
+                assert_eq!(size.errno.apply(0), Errno::INVAL.raw());
+                assert_eq!(size.errno.apply(29), 29);
+                let rejected = unsafe { super::free_sourced(original.as_ptr()) };
+                assert_eq!(rejected.value, super::FreeOutcome::RejectedCorruption);
+                assert_eq!(rejected.errno.apply(0), Errno::INVAL.raw());
+                let replacement = unsafe { super::rezalloc(original.as_ptr(), 200) };
+                assert_eq!(replacement.errno.apply(0), Errno::INVAL.raw());
+                let replacement = replacement.value.unwrap();
+                assert_ne!(replacement, original);
+                assert!(unsafe { core::slice::from_raw_parts(replacement.as_ptr(), 200) }.iter().all(|byte| *byte == 0));
+                assert!(unsafe { core::slice::from_raw_parts(original.as_ptr(), 64) }.iter().all(|byte| *byte == 0xa7));
+                crate::source_options_api::option_set(crate::config::SourceOption::GuardedPrecise as core::ffi::c_int, 1);
+                assert_eq!(unsafe { super::usable_size(original.as_ptr()) }, 70);
+                assert_eq!(unsafe { super::free(original.as_ptr()) }, super::FreeOutcome::Freed);
+                assert_eq!(unsafe { super::free(replacement.as_ptr()) }, super::FreeOutcome::Freed);
+            },
+        );
+    }
+
+    #[cfg(feature = "mi-debug-1")]
+    #[test]
+    fn count_overflow_keeps_handled_disposition_after_callback_unregistration() {
+        crate::test_process::run_in_fresh_process(
+            "source_api::tests::count_overflow_keeps_handled_disposition_after_callback_unregistration",
+            || {
+                unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+                unsafe extern "C" fn unregister(error: core::ffi::c_int, argument: *mut core::ffi::c_void) {
+                    // SAFETY: the synchronous fixture retains this one
+                    // atomic context until the error delivery returns.
+                    let observed = unsafe { &*argument.cast::<core::sync::atomic::AtomicUsize>() };
+                    observed.store(error as usize, core::sync::atomic::Ordering::Relaxed);
+                    unsafe { crate::source_options_api::register_error(None, core::ptr::null_mut()) };
+                }
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+                    4096, unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard) },
+                ));
+                let observed = core::sync::atomic::AtomicUsize::new(0);
+                // SAFETY: this callback and its context remain live through
+                // the synchronous report; it clears its own registration.
+                unsafe { crate::source_options_api::register_error(Some(unregister), core::ptr::from_ref(&observed).cast_mut().cast()) };
+                let effect = super::count_size_overflow_errno(usize::MAX, 2);
+                assert_eq!(observed.load(core::sync::atomic::Ordering::Relaxed), Errno::OVERFLOW.raw() as usize);
+                assert_eq!(effect, super::SourceErrno::Unchanged);
+                assert_eq!(effect.apply(0), 0);
+            },
+        );
+    }
+
+    #[test]
+    fn switched_default_aligned_allocation_keeps_selected_heap() {
+        crate::test_process::run_in_fresh_process(
+            "source_api::tests::switched_default_aligned_allocation_keeps_selected_heap",
+            || {
+                unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+                    4096, unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard) },
+                ));
+                let heap = crate::source_heap_api::heap_new();
+                assert!(!heap.is_null());
+                // SAFETY: the fresh process retains this Heap and its TLD.
+                let selected = unsafe { crate::source_heap_api::heap_theap(heap) };
+                let base = crate::source_heap_api::theap_get_default();
+                unsafe { crate::source_heap_api::theap_set_default(selected) };
+                let block = super::zalloc_aligned(73, 4096).value.expect("aligned allocation");
+                assert_eq!(unsafe { crate::source_heap_api::heap_of(block.as_ptr()) }, heap);
+                assert_eq!(crate::source_heap_api::theap_get_default(), selected);
+                assert!(unsafe { core::slice::from_raw_parts(block.as_ptr(), 73) }.iter().all(|byte| *byte == 0));
+                unsafe {
+                    super::free(block.as_ptr());
+                    crate::source_heap_api::theap_set_default(base);
+                    crate::source_heap_api::heap_release(heap, true);
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn switched_default_reallocation_keeps_selected_heap() {
+        crate::test_process::run_in_fresh_process(
+            "source_api::tests::switched_default_reallocation_keeps_selected_heap",
+            || {
+                unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+                    4096, unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard) },
+                ));
+                let heap = crate::source_heap_api::heap_new();
+                let selected = unsafe { crate::source_heap_api::heap_theap(heap) };
+                let base = crate::source_heap_api::theap_get_default();
+                // SAFETY: the fresh process retains the Heap, Theap and TLD.
+                unsafe { crate::source_heap_api::theap_set_default(selected) };
+                let block = super::zalloc(48).value.expect("selected allocation");
+                let grown = unsafe { super::rezalloc(block.as_ptr(), 8192) }.value.expect("selected growth");
+                assert_eq!(unsafe { crate::source_heap_api::heap_of(grown.as_ptr()) }, heap);
+                assert!(unsafe { core::slice::from_raw_parts(grown.as_ptr(), 8192) }.iter().all(|byte| *byte == 0));
+                assert_eq!(crate::source_heap_api::theap_get_default(), selected);
+                unsafe {
+                    super::free(grown.as_ptr());
+                    crate::source_heap_api::theap_set_default(base);
+                    crate::source_heap_api::heap_release(heap, true);
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn direct_theap_variants_preserve_roots_and_reallocation_lifetime() {
+        crate::test_process::run_in_fresh_process(
+            "source_api::tests::direct_theap_variants_preserve_roots_and_reallocation_lifetime",
+            || {
+                unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+                    4096, unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard) },
+                ));
+                let heap = crate::source_heap_api::heap_new();
+                let selected = unsafe { crate::source_heap_api::heap_theap(heap) };
+                let base = crate::source_heap_api::theap_get_default();
+                let first = unsafe { crate::source_heap_api::theap_malloc(selected, 128, false) }
+                    .value.expect("the exact Theap has a warmed page");
+                let cached = crate::compiler_tls::cached_theap();
+                // SAFETY: every raw client is held exclusively until its
+                // successful reallocation or its one terminal free.
+                unsafe {
+                    first.as_ptr().write_bytes(0x63, 128);
+                    let reused = super::theap_realloc(selected, first.as_ptr(), 96, false).value.unwrap();
+                    assert_eq!(reused, first);
+                    let zero = super::theap_calloc(selected, 3, 41).value.unwrap();
+                    assert!(core::slice::from_raw_parts(zero.as_ptr(), 123).iter().all(|byte| *byte == 0));
+                    assert_eq!(crate::compiler_tls::cached_theap(), cached);
+                    assert_eq!(crate::source_heap_api::theap_get_default(), base);
+                    assert!(super::theap_calloc(selected, usize::MAX, 2).value.is_none());
+                    let refusal = super::theap_realloc(selected, reused.as_ptr(), usize::MAX, false);
+                    assert!(refusal.value.is_none());
+                    assert_eq!(refusal.errno.apply(91), 91);
+                    assert_eq!(reused.as_ptr().read(), 0x63);
+                    let grown = super::theap_realloc(selected, reused.as_ptr(), 512, true).value.unwrap();
+                    assert_eq!(grown.as_ptr().read(), 0x63);
+                    assert!(core::slice::from_raw_parts(grown.as_ptr().add(128), 384).iter().all(|byte| *byte == 0));
+                    assert_eq!(crate::source_heap_api::heap_of(grown.as_ptr()), heap);
+                    let moved = super::theap_realloc(base, grown.as_ptr(), 384, false).value.unwrap();
+                    assert_ne!(moved, grown);
+                    assert_eq!(crate::source_heap_api::heap_of(moved.as_ptr()), crate::source_heap_api::heap_main());
+                    let aligned = super::theap_malloc_aligned_at(selected, 73, 4096, 0, true).value.unwrap();
+                    assert_eq!(aligned.as_ptr().addr() % 4096, 0);
+                    assert!(core::slice::from_raw_parts(aligned.as_ptr(), 73).iter().all(|byte| *byte == 0));
+                    assert_eq!(crate::source_heap_api::heap_of(aligned.as_ptr()), heap);
+                    super::free(zero.as_ptr());
+                    super::free(moved.as_ptr());
+                    // Heap deletion moves a still-live exact-Theap block to
+                    // the main Heap; its final free follows its page identity.
+                    assert!(crate::source_heap_api::heap_release(heap, false));
+                    assert_eq!(crate::source_heap_api::heap_of(aligned.as_ptr()), crate::source_heap_api::heap_main());
+                    super::free(aligned.as_ptr());
+                }
+                assert_eq!(crate::source_heap_api::theap_get_default(), base);
+            },
+        );
+    }
 
     #[test]
     fn errno_effects_compose_like_sequential_source_assignments() {

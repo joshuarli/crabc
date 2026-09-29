@@ -2148,6 +2148,40 @@ impl ThreadLocalData {
         }
     }
 
+    /// Checks a retained member of this TLD's source list under its list
+    /// lock. An attached main Theap may have other Heap Theaps before or
+    /// after it; final one-member teardown uses the stricter check above.
+    ///
+    /// # Safety
+    /// `theap` is null or a retained, address-stable Theap image. Every live
+    /// list member remains retained through this observation; concurrent
+    /// link mutations use this TLD's list lock.
+    pub(crate) unsafe fn has_linked_theap_member_blocking(
+        &self,
+        theap: *mut Theap,
+    ) -> Result<bool, ThreadLocalTheapListError> {
+        if theap.is_null() { return Ok(false); }
+        let guard = self.theaps_lock.lock().map_err(ThreadLocalTheapListError::Lock)?;
+        let mut current = self.theaps;
+        let mut previous = null_mut();
+        let mut found = false;
+        while !current.is_null() {
+            // SAFETY: source list links are protected by the held lock and
+            // all typed members remain retained for this observation.
+            if unsafe { (*current).tprev != previous
+                || (*current).tld != core::ptr::from_ref(self).cast_mut() }
+            {
+                found = false;
+                break;
+            }
+            found |= current == theap;
+            previous = current;
+            current = unsafe { (*current).tnext };
+        }
+        guard.unlock().map_err(ThreadLocalTheapListError::Lock)?;
+        Ok(found)
+    }
+
     /// Records a live identity on caller-pinned/static bootstrap storage.
     ///
     /// This is the allocation-free bootstrap-only identity update used by
@@ -3909,6 +3943,19 @@ unsafe impl Send for Arena {}
 unsafe impl Sync for Arena {}
 
 impl Page {
+    /// Reads a live page's immutable Heap identity without borrowing its
+    /// independently changing owner-local fields.
+    ///
+    /// # Safety
+    /// `page` names live initialized metadata retained for this read. Its
+    /// Heap identity must not change or be reclaimed concurrently; ordinary
+    /// owner-local counters and remote-free atomics may change independently.
+    #[inline]
+    pub(crate) unsafe fn heap_identity_at(page: NonNull<Self>) -> *mut Heap {
+        // SAFETY: the caller retains this independently immutable field; no
+        // reference to the whole concurrently owned page is formed.
+        unsafe { core::ptr::addr_of!((*page.as_ptr()).heap).read() }
+    }
     const fn empty() -> Self {
         Self {
             self_: AtomicPtr::new(null_mut()),
@@ -6951,6 +6998,25 @@ impl Theap {
         true
     }
 
+    /// Copies this Theap's unmerged source statistics after validating the
+    /// destination image's exact size and version.
+    ///
+    /// # Safety
+    /// `pointer` is a retained initialized Theap image; only its atomic
+    /// statistics fields are read. `destination` is aligned and readable and
+    /// writable for the complete source statistics image, with no competing
+    /// access to that destination through the call.
+    pub(crate) unsafe fn copy_statistics_into_source_image_at(
+        pointer: NonNull<Self>,
+        destination: *mut u8,
+    ) -> bool {
+        if destination.is_null() { return false; }
+        // SAFETY: the caller retains the initialized atomic statistics
+        // subobject and the writable, nonoverlapping destination image.
+        let statistics = unsafe { &*core::ptr::addr_of!((*pointer.as_ptr()).statistics) };
+        unsafe { statistics.copy_into_source_image(destination) }
+    }
+
     /// `mi_thread_stats_print_out`'s read of the calling thread's default
     /// Theap (`src/stats.c:532-538`): its Heap's `heap_seq` and its own
     /// unmerged statistics, or `None` while it is uninitialized.
@@ -7572,6 +7638,29 @@ mod tests {
     use crate::free_list::LocalFreeList;
     use crate::remote_free;
     use core::mem::{align_of, offset_of, size_of, MaybeUninit};
+
+    #[test]
+    fn heap_identity_read_while_owner_updates_ordinary_page_state() {
+        let mut page = std::boxed::Box::new(Page::remote_free_test_page(2, 1));
+        let pointer = AtomicPtr::new(core::ptr::from_mut(&mut *page));
+        let start = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let page = NonNull::new(pointer.load(Ordering::Relaxed)).unwrap();
+                // SAFETY: both threads retain initialized metadata; this
+                // thread exclusively owns the ordinary used counter.
+                let state = unsafe { Page::remote_free_owner_state_at(page) }.unwrap();
+                start.wait();
+                unsafe { *state.used.as_ptr() = 2 };
+            });
+            let page = NonNull::new(pointer.load(Ordering::Relaxed)).unwrap();
+            start.wait();
+            // SAFETY: the counted live client retains metadata and Heap
+            // identity; only the disjoint ordinary used counter changes.
+            assert!(unsafe { Page::heap_identity_at(page) }.is_null());
+        });
+        assert_eq!(page.used(), 2);
+    }
 
     #[test]
     fn heap_page_utilization_requires_non_head_committed_matching_page() {

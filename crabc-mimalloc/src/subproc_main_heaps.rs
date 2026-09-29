@@ -683,6 +683,22 @@ pub(crate) unsafe fn native_theap_allocate(
     size: usize,
     zero: bool,
 ) -> Option<NonNull<u8>> {
+    // SAFETY: forwarded current-thread Theap lifetime.
+    unsafe { native_theap_allocate_variant(theap, size, None, zero) }
+}
+
+/// Allocate on an exact non-main Theap without selecting its Heap or
+/// publishing a different cached root.
+///
+/// # Safety
+/// `theap` stays linked to its live Heap and this thread's TLD. A supplied
+/// alignment is a validated power of two and the Heap is not destroyed.
+pub(crate) unsafe fn native_theap_allocate_variant(
+    theap: NonNull<Theap>,
+    size: usize,
+    aligned: Option<(usize, usize)>,
+    zero: bool,
+) -> Option<NonNull<u8>> {
     let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
     let thread = current_main_thread()?;
     // SAFETY: caller retains the Theap and its TLD for this thread.
@@ -690,7 +706,7 @@ pub(crate) unsafe fn native_theap_allocate(
     if !is_main_subprocess_heap(heap) || unsafe { Theap::tld_at(theap) } != thread.tld.as_ptr() {
         return None;
     }
-    allocate_on_theap(thread, theap, size, None, zero)
+    allocate_on_theap(thread, theap, size, aligned, zero)
 }
 
 fn allocate_on_theap(
@@ -1271,6 +1287,27 @@ pub(crate) unsafe fn native_heap_collect(heap: NonNull<Heap>, force: bool) {
         return;
     }
     let Some(theap) = heap_theap(thread, heap) else { return };
+    collect_on_theap(thread, theap, force);
+}
+
+/// Collect an already selected non-main Theap without reading or replacing
+/// the cached Heap selector.
+///
+/// # Safety
+/// `theap` stays linked to the calling thread's live TLD and Heap, with no
+/// concurrent Heap destruction or thread exit.
+pub(crate) unsafe fn native_theap_collect(theap: NonNull<Theap>, force: bool) {
+    let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else { return };
+    let Some(thread) = current_main_thread() else { return };
+    // SAFETY: the caller retains this Theap and its current-thread TLD.
+    let Some(heap) = NonNull::new(unsafe { Theap::heap_at(theap) }) else { return };
+    if !is_main_subprocess_heap(heap) || unsafe { Theap::tld_at(theap) } != thread.tld.as_ptr() {
+        return;
+    }
+    collect_on_theap(thread, theap, force);
+}
+
+fn collect_on_theap(thread: MainThread, theap: NonNull<Theap>, force: bool) {
     // `_mi_deferred_free(theap, force)`: the selected callback runs with no
     // engine or Theap projection live.
     if let Ok(invocation) = crate::deferred_free::begin_process(theap, thread.tld, force) {

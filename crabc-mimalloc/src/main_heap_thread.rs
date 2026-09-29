@@ -1674,7 +1674,17 @@ impl<'main> MainHeapThreadAttachment<'main> {
         {
             return Err(MainHeapThreadAttachmentError::RootOwnership);
         }
-        let has_exact_theap_member = if callback_reentry {
+        let has_exact_theap_member = if expect_fast_owner {
+            let tld = if callback_reentry {
+                self.current_deferred_callback_tld_mut()?
+            } else {
+                self.current_tld_mut()?
+            };
+            // SAFETY: the attachment retains its own typed Theap and TLD;
+            // the source list lock serializes other Heap link mutations.
+            unsafe { tld.has_linked_theap_member_blocking(theap_pointer) }
+                .map_err(MainHeapThreadAttachmentError::TheapList)?
+        } else if callback_reentry {
             // SAFETY: the callback-only projection revalidated this exact
             // source TLD and its published recurse marker. This reads its
             // retained intrusive-list identity without carrying a TLD borrow

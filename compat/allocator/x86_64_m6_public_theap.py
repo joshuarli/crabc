@@ -21,15 +21,31 @@ SOURCE_STAGES = {
     "switch": "1,1,1",
     "allocate": "1,1,1,1",
     "still_switched": "1,1",
+    "variants": "1,1,1,1,1,1,1,1,1",
+    "overflow": "1,1",
+    "bad_alignment": "1,1",
+    "aligned_selection": "1,1,1,1",
+    "default_aligned_growth": "1,1,1",
+    "reuse": "1,1,1",
+    "expand": "1,1,1",
+    "failed_realloc": "1,1,1,1",
+    "cross_heap": "1,1,1,1",
+    "zero_realloc": "1,1",
+    "null_rezalloc": "1,1",
+    "guarded": "1",
+    "stats": "1,1,1,1,1,1,1",
+    "visitor": "1,1,1,1,1,1,1,1",
+    "collect": "1,1,1,1",
     "restore": "1,1",
     "after": "1,1",
     "done": "1",
 }
 SOURCE_TRACE = {
     **{f"{context}.{stage}": value
-       for context in ("main", "worker", "fork")
+       for context in ("main", "worker", "child", "fork")
        for stage, value in SOURCE_STAGES.items()},
     "main.after_worker": "1",
+    "main.after_child": "1",
     "main.after_fork": "1,1",
     "fork.base": "1,0,1",
 }
@@ -71,10 +87,14 @@ def main() -> None:
         c_run = harness.command_record([str(c_driver)], cwd=temporary, env={}, timeout_seconds=60)
         (ARTIFACTS / "c.log").write_text(str(c_run["stdout"]) + str(c_run["stderr"]))
         harness.require_success(c_run, "public Theap C run")
-        for context in ("main", "worker", "fork"):
+        for context in ("main", "worker", "child", "fork"):
             if re.findall(rf"^source\.{context}=([01]),([01]),([01])$",
                           str(c_run["stderr"]), re.MULTILINE) != [("1", "1", "1")]:
                 raise harness.HarnessError(f"pinned C {context} Theap ownership differs")
+        for context in ("main", "worker", "child", "fork"):
+            if re.findall(rf"^source\.{context}\.collect_empty=([01])$",
+                          str(c_run["stderr"]), re.MULTILINE) != ["1"]:
+                raise harness.HarnessError(f"pinned C {context} force collection leaves live Theap pages")
         c_trace = m7.parse_options_trace(str(c_run["stdout"]), "c", BEGIN, END)
         require_trace(c_trace, "c")
         library = m4.build_adapter_library(temporary)
@@ -91,7 +111,21 @@ def main() -> None:
         rust_trace = m7.parse_options_trace(str(rust_run["stdout"]), "rust", BEGIN, END)
         require_trace(rust_trace, "rust")
         m7.compare_options_traces(c_trace, rust_trace)
-        print(f"public Theap switching: {len(c_trace)} source-built C/Rust keys match")
+        for test in (
+            "source_api::tests::switched_default_aligned_allocation_keeps_selected_heap",
+            "source_api::tests::switched_default_reallocation_keeps_selected_heap",
+            "source_api::tests::direct_theap_variants_preserve_roots_and_reallocation_lifetime",
+            "runtime_lifecycle::tests::worker_fixed_theap_collection_preserves_auxiliary_default",
+            "runtime_lifecycle::tests::runtime_loader_tail_releases_once_before_delayed_output",
+        ):
+            record = harness.command_record(
+                ["python3", "compat/allocator/run_unit_x86_64.py", test],
+                cwd=harness.ROOT, timeout_seconds=900,
+            )
+            (ARTIFACTS / f"{test.rsplit('::', 1)[-1]}.log").write_text(
+                str(record["stdout"]) + str(record["stderr"]))
+            harness.require_success(record, f"public Theap regression {test}")
+        print(f"public Theap allocation and collection: {len(c_trace)} source-built C/Rust keys match; five fresh-process regressions pass")
 
 
 if __name__ == "__main__":

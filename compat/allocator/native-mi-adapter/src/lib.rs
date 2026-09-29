@@ -410,13 +410,14 @@ pub unsafe extern "C" fn mi_free(block: *mut c_void) {
     }
     register_thread_for_pointer_access();
     // SAFETY: the C caller passes null or a live allocation it gives up.
-    freed(unsafe { api::free(block.cast()) });
+    freed(finish(unsafe { api::free_sourced(block.cast()) }));
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn mi_free_small(block: *mut c_void) {
-    // SAFETY: forwarded free contract.
-    unsafe { mi_free(block) }
+    if !block.is_null() { register_thread_for_pointer_access(); }
+    // SAFETY: forwarded small allocation free contract.
+    freed(finish(unsafe { api::free_small_sourced(block.cast()) }));
 }
 
 #[no_mangle]
@@ -443,7 +444,7 @@ pub unsafe extern "C" fn mi_ufree(block: *mut c_void, block_size: *mut usize) {
         register_thread_for_pointer_access();
     }
     // SAFETY: forwarded free contract.
-    let (outcome, size) = unsafe { api::ufree(block.cast()) };
+    let (outcome, size) = finish(unsafe { api::ufree_sourced(block.cast()) });
     freed(outcome);
     // SAFETY: forwarded output.
     unsafe { write_size(block_size, Some(size)) };
@@ -466,7 +467,7 @@ pub unsafe extern "C" fn mi_usable_size(block: *const c_void) -> usize {
         register_thread_for_pointer_access();
     }
     // SAFETY: the C caller passes null or a live allocation.
-    unsafe { api::usable_size(block.cast()) }
+    finish(unsafe { api::usable_size_sourced(block.cast()) })
 }
 
 #[no_mangle]
@@ -1161,6 +1162,120 @@ pub unsafe extern "C" fn mi_theap_zalloc(theap: TheapPointer, size: usize) -> *m
     // SAFETY: the caller retains this thread's selected Theap.
     allocation(unsafe { heaps::theap_malloc(theap, size, true) })
 }
+
+#[no_mangle]
+/// # Safety
+/// `theap` remains linked to the calling thread's live TLD and Heap for
+/// the complete allocation.
+pub unsafe extern "C" fn mi_theap_calloc(theap: TheapPointer, count: usize, size: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: the caller retains the exact current-thread Theap.
+    allocation(unsafe { api::theap_calloc(theap, count, size) })
+}
+
+#[no_mangle]
+/// # Safety
+/// `theap` remains linked to the calling thread's live TLD and Heap, and
+/// `size` does not exceed the pinned header's small-size maximum.
+pub unsafe extern "C" fn mi_theap_malloc_small(theap: TheapPointer, size: usize) -> *mut c_void {
+    // SAFETY: forwarded current-thread Theap and small-size obligations.
+    unsafe { mi_theap_malloc(theap, size) }
+}
+
+#[no_mangle]
+/// # Safety
+/// `theap` remains linked to the calling thread's live TLD and Heap, and
+/// `size` does not exceed the pinned header's small-size maximum.
+pub unsafe extern "C" fn mi_theap_zalloc_small(theap: TheapPointer, size: usize) -> *mut c_void {
+    // SAFETY: forwarded current-thread Theap and small-size obligations.
+    unsafe { mi_theap_zalloc(theap, size) }
+}
+
+#[no_mangle]
+/// # Safety
+/// `theap` remains linked to the calling thread's live TLD and Heap for
+/// the complete allocation.
+pub unsafe extern "C" fn mi_theap_malloc_aligned(theap: TheapPointer, size: usize, alignment: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: the caller retains the exact current-thread Theap.
+    allocation(unsafe { api::theap_malloc_aligned_at(theap, size, alignment, 0, false) })
+}
+
+#[no_mangle]
+/// # Safety
+/// `theap` remains linked to the calling thread's live TLD and Heap for
+/// the complete allocation.
+pub unsafe extern "C" fn mi_theap_zalloc_aligned(theap: TheapPointer, size: usize, alignment: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: the caller retains the exact current-thread Theap.
+    allocation(unsafe { api::theap_malloc_aligned_at(theap, size, alignment, 0, true) })
+}
+
+#[no_mangle]
+/// # Safety
+/// `theap` belongs to the calling thread's live TLD and Heap, retained for
+/// the call. `block` is null or an exact live allocation exclusively held
+/// during reallocation; success consumes it and failure preserves it.
+pub unsafe extern "C" fn mi_theap_realloc(theap: TheapPointer, block: *mut c_void, size: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: the caller supplies the exact live client and Theap.
+    allocation(unsafe { api::theap_realloc(theap, block.cast(), size, false) })
+}
+
+#[no_mangle]
+/// # Safety
+/// `theap` belongs to the calling thread's live TLD and Heap, retained for
+/// the call. `block` is null or an exact live allocation exclusively held
+/// during reallocation; success consumes it and failure preserves it.
+pub unsafe extern "C" fn mi_theap_rezalloc(theap: TheapPointer, block: *mut c_void, size: usize) -> *mut c_void {
+    bind_thread();
+    // SAFETY: the caller supplies the exact live client and Theap.
+    allocation(unsafe { api::theap_realloc(theap, block.cast(), size, true) })
+}
+
+#[no_mangle]
+/// # Safety
+/// A non-null `theap` is retained and address-stable. If initialized, it
+/// belongs to the calling thread's live TLD and Heap, and no other operation
+/// mutates its queues or destroys its Heap during collection.
+pub unsafe extern "C" fn mi_theap_collect(theap: TheapPointer, force: bool) {
+    // SAFETY: the caller retains the supplied current-thread Theap image.
+    unsafe { api::theap_collect(theap, force) };
+}
+
+#[no_mangle]
+/// # Safety
+/// `theap` is a retained initialized image and `stats` is null or an aligned
+/// writable source statistics image, excluded from other accesses for the call.
+pub unsafe extern "C" fn mi_theap_stats_get(theap: TheapPointer, stats: *mut c_void) -> bool {
+    register_thread_for_statistics();
+    // SAFETY: the caller retains both source images for the copy.
+    unsafe { api::theap_stats_get(theap, stats.cast()) }
+}
+
+#[no_mangle]
+/// # Safety
+/// The retained Theap, Heap, page queues, mappings, block areas and free lists
+/// remain quiescent for the traversal. The callback may inspect offered
+/// images only during each call and does not mutate or free a visited page.
+pub unsafe extern "C" fn mi_theap_visit_blocks(
+    theap: *const c_void,
+    visit_blocks: bool,
+    visitor: Option<heaps::HeapBlockVisitor>,
+    argument: *mut c_void,
+) -> bool {
+    bind_thread();
+    // SAFETY: forwarded complete quiescent traversal and callback lifetime.
+    unsafe { api::theap_visit_blocks(theap, visit_blocks, visitor, argument) }
+}
+
+#[no_mangle]
+/// The selected release build has no guarded allocation state.
+pub extern "C" fn mi_theap_guarded_set_sample_rate(_theap: TheapPointer, _rate: usize, _seed: usize) {}
+
+#[no_mangle]
+/// The selected release build has no guarded allocation state.
+pub extern "C" fn mi_theap_guarded_set_size_bound(_theap: TheapPointer, _minimum: usize, _maximum: usize) {}
 
 #[no_mangle]
 /// # Safety

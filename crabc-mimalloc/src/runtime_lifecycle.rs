@@ -12606,7 +12606,7 @@ fn native_free_pointer_first_nonlocal(
     // SAFETY: the held exact-live allocation keeps its page metadata alive;
     // this reads only the raw, immutable Heap identity.
     let process_main_page = !main_heap.is_null()
-        && unsafe { allocation.page().as_ref().heap() } == main_heap;
+        && unsafe { crate::types::Page::heap_identity_at(allocation.page()) } == main_heap;
     let deleted_main_os_page = if process_main_page {
         false
     } else {
@@ -12659,16 +12659,18 @@ fn native_free_pointer_first_nonlocal(
     if !detached {
         // `mi_free_block_mt` records the usable ordinary block size or the
         // huge page's physical block size in the freeing thread's Theap
-        // before publishing its remote free. The captured block size is the
-        // usable size in this release profile. An uninitialized default
-        // Theap needs the metadata-Theap source path.
+        // before publishing its remote free. Normal accounting excludes the
+        // fixed trailing padding record; huge accounting uses the complete
+        // physical span. An uninitialized default Theap needs the metadata
+        // Theap source path.
         let theap = default_theap();
         if unsafe { theap.as_ref().is_initialized() } {
-            if allocation.block_size() <= crate::config::LARGE_MAX_OBJ_SIZE {
-                unsafe { theap.as_ref() }.record_malloc_normal_freed(allocation.block_size());
+            let normal_size = allocation.block_size() - crate::config::PADDING_SIZE;
+            if normal_size <= crate::config::LARGE_MAX_OBJ_SIZE {
+                unsafe { theap.as_ref() }.record_malloc_normal_freed(normal_size);
                 #[cfg(feature = "mi-stat-2")]
                 unsafe { theap.as_ref() }.record_malloc_normal_level_two_freed(
-                    crate::size_class::bin_for_regular_page_block_size(allocation.block_size()),
+                    crate::size_class::bin_for_regular_page_block_size(normal_size),
                 );
             } else {
                 unsafe { theap.as_ref() }.record_malloc_huge_freed(allocation.block_size());
@@ -21736,6 +21738,57 @@ mod tests {
             assert_eq!(current_thread_slot().state, ThreadLifecycleState::Fresh);
             assert!(current_thread_slot().admission.is_none());
         }).join().expect("recursive entry cannot poison the later attachment attempt");
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn worker_fixed_theap_collection_preserves_auxiliary_default() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::worker_fixed_theap_collection_preserves_auxiliary_default",
+            || {
+                unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+                assert!(test_initialize_process_from_host_environment(
+                    4096, unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard) },
+                ));
+                assert!(prepare_native_initial_thread_owner());
+                std::thread::spawn(|| {
+                    let descriptor = admission::current_native_allocator_thread_descriptor();
+                    // SAFETY: this worker retains its descriptor and source
+                    // attachment until the final owner-exit transition.
+                    assert!(unsafe { admission::register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                    let heap = crate::source_heap_api::heap_new();
+                    assert!(!heap.is_null());
+                    let base = crate::source_heap_api::theap_get_default();
+                    let selected = unsafe { crate::source_heap_api::heap_theap(heap) };
+                    assert_eq!(unsafe { crate::source_heap_api::theap_set_default(selected) }, base);
+                    // SAFETY: the operation guard and worker retain both
+                    // Theaps across the collection and callback handoff.
+                    let _operation = admission::NativeAllocatorOperationGuard::enter().unwrap();
+                    // SAFETY: this worker retains both linked Theaps and
+                    // their TLD, as well as the process-static empty image.
+                    let tld = unsafe { &*crate::types::Theap::tld_at(core::ptr::NonNull::new(base.cast()).unwrap()) };
+                    unsafe {
+                        assert!(tld.has_linked_theap_member_blocking(base.cast()).unwrap());
+                        assert!(tld.has_linked_theap_member_blocking(selected.cast()).unwrap());
+                        assert!(!tld.has_linked_theap_member_blocking(core::ptr::null_mut()).unwrap());
+                        assert!(!tld.has_linked_theap_member_blocking(crate::bootstrap::empty_default_theap_ptr()).unwrap());
+                        assert!(!tld.has_exact_theap_member(base.cast()));
+                    }
+                    let phase = with_current_thread_native_persistent_owner(|owner| owner.begin_deferred_free_collection(true));
+                    match &phase { Ok(Ok(_)) => {}, Ok(Err(error)) => panic!("fixed collection source error: {error:?}"), Err(error) => panic!("fixed collection owner error: {error:?}"), }
+                    let phase = phase.unwrap().unwrap();
+                    assert!(run_current_thread_native_deferred_free_phase(phase).is_ok());
+                    assert_eq!(crate::source_heap_api::theap_get_default(), selected);
+                    unsafe {
+                        crate::source_heap_api::theap_set_default(base);
+                        crate::source_heap_api::heap_release(heap, true);
+                    }
+                    drop(_operation);
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                }).join().unwrap();
+            },
+        );
     }
 
     #[test]
