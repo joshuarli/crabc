@@ -11,6 +11,8 @@
 #include <setjmp.h>
 #include <signal.h>
 #include <stddef.h>
+#include <stdio.h>
+#include <limits.h>
 
 #if !defined(__x86_64__) || !defined(__LP64__) || \
 	!defined(__BYTE_ORDER__) || !defined(__ORDER_LITTLE_ENDIAN__) || \
@@ -114,7 +116,20 @@ static int test_machine_context(void)
 {
 	jmp_buf environment;
 
-	return crabc_setjmp_callee_saved_probe(environment);
+	int intact = crabc_setjmp_callee_saved_probe(environment);
+	printf("machine_context=%d\n", intact);
+	return intact;
+}
+
+static int test_setjmp_value(int jump_value, int expected)
+{
+	jmp_buf environment;
+	int result = setjmp(environment);
+
+	if (result == 0)
+		longjmp(environment, jump_value);
+	printf("setjmp(%d)=%d\n", jump_value, result);
+	return result == expected;
 }
 
 static int test___setjmp_alias(void)
@@ -124,6 +139,7 @@ static int test___setjmp_alias(void)
 
 	if (result == 0)
 		_longjmp(environment, 0);
+	printf("__setjmp/_longjmp(0)=%d\n", result);
 	return result == 1;
 }
 
@@ -134,6 +150,7 @@ static int test__setjmp_alias(void)
 
 	if (result == 0)
 		longjmp(environment, -27);
+	printf("_setjmp/longjmp(-27)=%d\n", result);
 	return result == -27;
 }
 
@@ -176,13 +193,90 @@ static int test_sigsetjmp_mask(int savemask)
 	observed = signal_is_blocked(SIGUSR1);
 	if (sigprocmask(SIG_SETMASK, &original, 0) != 0)
 		return 0;
+	printf("sigsetjmp(%d)/siglongjmp(29)=%d mask=%d\n",
+		savemask, result, observed);
 	return result == 29 && observed == (savemask ? 0 : 1);
+}
+
+static int test_siglongjmp_zero(void)
+{
+	sigjmp_buf environment;
+	int result = sigsetjmp(environment, 1);
+
+	if (result == 0)
+		siglongjmp(environment, 0);
+	printf("sigsetjmp(1)/siglongjmp(0)=%d\n", result);
+	return result == 1;
+}
+
+/* Both continuations remain live. The inner return checks its own saved mask;
+ * the outer return then checks that the first mask change was also undone. */
+static int test_nested_signal_masks(int inner_savemask)
+{
+	sigjmp_buf outer;
+	sigjmp_buf inner;
+	sigset_t original;
+	sigset_t base;
+	sigset_t stage;
+	int outer_result;
+	int inner_result;
+	int inner_usr1;
+	int inner_usr2;
+	int outer_usr1;
+	int outer_usr2;
+
+	if (sigprocmask(SIG_SETMASK, 0, &original) != 0)
+		return 0;
+	base = original;
+	if (sigdelset(&base, SIGUSR1) != 0 || sigdelset(&base, SIGUSR2) != 0
+		|| sigprocmask(SIG_SETMASK, &base, 0) != 0)
+		return 0;
+
+	outer_result = sigsetjmp(outer, 1);
+	if (outer_result == 0) {
+		stage = base;
+		if (sigaddset(&stage, SIGUSR1) != 0
+			|| sigprocmask(SIG_SETMASK, &stage, 0) != 0)
+			goto failure;
+		inner_result = sigsetjmp(inner, inner_savemask);
+		if (inner_result == 0) {
+			if (sigaddset(&stage, SIGUSR2) != 0
+				|| sigprocmask(SIG_SETMASK, &stage, 0) != 0)
+				goto failure;
+			siglongjmp(inner, 0);
+		}
+		inner_usr1 = signal_is_blocked(SIGUSR1);
+		inner_usr2 = signal_is_blocked(SIGUSR2);
+		printf("nested(%d) inner=%d mask=%d,%d\n", inner_savemask,
+			inner_result, inner_usr1, inner_usr2);
+		if (inner_result != 1 || inner_usr1 != 1
+			|| inner_usr2 != (inner_savemask ? 0 : 1))
+			goto failure;
+		siglongjmp(outer, -31);
+	}
+	outer_usr1 = signal_is_blocked(SIGUSR1);
+	outer_usr2 = signal_is_blocked(SIGUSR2);
+	printf("nested(%d) outer=%d mask=%d,%d\n", inner_savemask,
+		outer_result, outer_usr1, outer_usr2);
+	if (sigprocmask(SIG_SETMASK, &original, 0) != 0)
+		return 0;
+	return outer_result == -31 && outer_usr1 == 0 && outer_usr2 == 0;
+
+failure:
+	(void)sigprocmask(SIG_SETMASK, &original, 0);
+	return 0;
 }
 
 int main(void)
 {
 	if (!test_machine_context())
 		return 10;
+	if (!test_setjmp_value(0, 1))
+		return 15;
+	if (!test_setjmp_value(7, 7))
+		return 16;
+	if (!test_setjmp_value(INT_MIN, INT_MIN))
+		return 17;
 	if (!test___setjmp_alias())
 		return 11;
 	if (!test__setjmp_alias())
@@ -191,5 +285,11 @@ int main(void)
 		return 13;
 	if (!test_sigsetjmp_mask(0))
 		return 14;
+	if (!test_siglongjmp_zero())
+		return 18;
+	if (!test_nested_signal_masks(1))
+		return 19;
+	if (!test_nested_signal_masks(0))
+		return 20;
 	return 0;
 }
