@@ -18,6 +18,7 @@
 #endif
 
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -87,11 +88,14 @@ _Static_assert(PRIO_MIN == -20 && PRIO_MAX == 20 && PRIO_PROCESS == 0 &&
     PRIO_PGRP == 1 && PRIO_USER == 2 && RUSAGE_SELF == 0 &&
     RUSAGE_CHILDREN == -1 && RUSAGE_THREAD == 1,
     "x86 priority and rusage selectors");
+_Static_assert(E2BIG == 7 && EMFILE == 24,
+    "x86 descriptor-limit fixture errno values");
 _Static_assert(SYS_getrusage == 98 && SYS_getpriority == 140 &&
     SYS_setpriority == 141 && SYS_prlimit64 == 302 && SYS_fork == 57 &&
     SYS_wait4 == 61 && SYS_exit == 60 && SYS_pipe == 22 && SYS_read == 0 &&
     SYS_write == 1 && SYS_close == 3 && SYS_getpid == 39 &&
-    SYS_getpgid == 121 && SYS_geteuid == 107,
+    SYS_getpgid == 121 && SYS_geteuid == 107 && SYS_openat == 257 &&
+    SYS_close_range == 436,
     "x86 selected resource and fixture syscall numbers");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&getrlimit),
     int (*)(int, struct rlimit *)), "getrlimit declaration");
@@ -306,6 +310,62 @@ static int child_limit_transaction(void)
     errno = 0;
     if (setrlimit(RLIMIT_CORE, &inverted) != -1 || errno != EINVAL)
         return 7;
+    return 0;
+}
+
+static int reserved_tail_is_unchanged(const struct rusage *usage);
+
+/* A low soft limit must affect a real descriptor allocation in only this
+ * child. The Linux 5.10 close_range boundary gives the child a known open-fd
+ * set without making assumptions about descriptors inherited from the runner. */
+static int child_nofile_enforcement(void)
+{
+    static const char result[] =
+        "nofile cur=3 errno=7 open=-24 reopen=2 restored=1 children=1\n";
+    const char path[] = "/dev/null";
+    struct rlimit original, limited, old, observed;
+    struct rusage children_before, children_after;
+    long opened;
+
+    if (getrlimit(RLIMIT_NOFILE, &original) != 0 ||
+        original.rlim_cur < 4 || original.rlim_max < 4)
+        return 1;
+    fill_bytes(&children_before, 0xa5, sizeof(children_before));
+    if (getrusage(RUSAGE_CHILDREN, &children_before) != 0)
+        return 2;
+    if (raw_syscall3(SYS_close_range, 3, UINT_MAX, 0) != 0)
+        return 3;
+
+    limited = original;
+    limited.rlim_cur = 3;
+    errno = E2BIG;
+    if (prlimit(0, RLIMIT_NOFILE, &limited, &old) != 0 ||
+        errno != E2BIG || !same_limit(&old, &original))
+        return 4;
+    if (getrlimit(RLIMIT_NOFILE, &observed) != 0 ||
+        errno != E2BIG || !same_limit(&observed, &limited))
+        return 5;
+    opened = raw_syscall4(SYS_openat, AT_FDCWD, (long)path, O_RDONLY, 0);
+    if (opened != -EMFILE || errno != E2BIG)
+        return 6;
+    if (raw_syscall1(SYS_close, 2) != 0)
+        return 7;
+    opened = raw_syscall4(SYS_openat, AT_FDCWD, (long)path, O_RDONLY, 0);
+    if (opened != 2 || raw_syscall1(SYS_close, opened) != 0)
+        return 8;
+    fill_bytes(&children_after, 0xa5, sizeof(children_after));
+    if (getrusage(RUSAGE_CHILDREN, &children_after) != 0 ||
+        !bytes_equal(&children_before, &children_after,
+            sizeof(struct kernel_rusage_prefix)) ||
+        !reserved_tail_is_unchanged(&children_after))
+        return 9;
+    if (setrlimit(RLIMIT_NOFILE, &original) != 0 ||
+        getrlimit(RLIMIT_NOFILE, &observed) != 0 ||
+        !same_limit(&observed, &original))
+        return 10;
+    if (raw_syscall3(SYS_write, 1, (long)result, sizeof(result) - 1) !=
+        (long)sizeof(result) - 1)
+        return 11;
     return 0;
 }
 
@@ -616,6 +676,7 @@ static int child_priority_and_nice(void)
 int crabc_x86_64_process_resources_probe(void)
 {
     int status;
+    struct rlimit nofile_before, nofile_after;
 
     status = check_limit_queries();
     if (status != 0)
@@ -623,6 +684,14 @@ int crabc_x86_64_process_resources_probe(void)
     status = run_child_case(child_limit_transaction);
     if (status != 0)
         return 20 + status;
+    if (getrlimit(RLIMIT_NOFILE, &nofile_before) != 0)
+        return 70;
+    status = run_child_case(child_nofile_enforcement);
+    if (status != 0)
+        return 70 + status;
+    if (getrlimit(RLIMIT_NOFILE, &nofile_after) != 0 ||
+        !same_limit(&nofile_before, &nofile_after))
+        return 74;
     status = check_live_child_prlimit();
     if (status != 0)
         return 30 + status;

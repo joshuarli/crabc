@@ -77,15 +77,16 @@ assert_named_syscall() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff nm objdump readelf rustup; do
+for tool in ar cargo cmp diff nm objdump readelf rustup sha256sum; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-process-resources.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/crabc-x86-64-libc-process-resources.XXXXXX")"
+trap 'printf "x86 static crabc-libc process resources evidence: %s\n" "$work_dir" >&2' EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-process-resources-reference"
 candidate="$work_dir/crabc-static-process-resources-candidate"
@@ -106,7 +107,7 @@ cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -D_LARGEFILE64_SOURCE \
     -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_process_resources_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h limits.h sys/resource.h sys/time.h sys/types.h unistd.h \
+for header in errno.h fcntl.h limits.h sys/resource.h sys/time.h sys/types.h unistd.h \
     sys/syscall.h bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" \
         || fail "fixture did not use the project $header header"
@@ -115,7 +116,7 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -D_LARGEFILE64_SOURCE \
     -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_process_resources_probe.c -o "$reference"
-if "$reference"; then
+if "$reference" >"$work_dir/musl.stream"; then
     :
 else
     status=$?
@@ -215,11 +216,21 @@ grep -Eq '\$0xd|\$13' "$nice_disassembly" \
 grep -Eq '\$0x1|\$1' "$nice_disassembly" \
     || fail "nice lacks the EPERM compatibility mapping"
 
-if "$candidate"; then
+if "$candidate" >"$work_dir/crabc.stream"; then
     :
 else
     status=$?
     fail "freestanding resource fixture exited ${status}"
 fi
+
+cmp "$work_dir/musl.stream" "$work_dir/crabc.stream" \
+    || fail "pinned-musl and crabc process-resource streams differ"
+printf '%s\n' 'musl=0 crabc=0' >"$work_dir/status.txt"
+(
+    cd "$work_dir"
+    sha256sum musl-process-resources-reference \
+        crabc-static-process-resources-candidate musl.stream crabc.stream \
+        >sha256.txt
+)
 
 printf 'x86 static crabc-libc process resources: PASS\n'
