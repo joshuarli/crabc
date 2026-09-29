@@ -67,7 +67,10 @@ are not transferable passes for a different revision.
   reducing the selector to 717 blockers. A source-sealed final-call reader now
   resolves the retained `__popcountdi2` archive calls in ET_EXEC, static PIE,
   and shared libc to their owned targets; the selector discharges that one
-  ordinary-import reason, while broader ABI closure stays open.
+  ordinary-import reason. A later sealed C allocator boundary binds its one
+  retained `getrusage` source call to the owned final targets in both static
+  modes and shared libc, discharging that ordinary-import reason through the
+  final-call attachment; broader ABI closure stays open.
   `libc.c-abi-compat` now runs a physical
   same-cohort text/math/locale/stdio family admission; its current assessment admits seven
   of ten components and retains three allocator components at the selected C
@@ -259,6 +262,10 @@ are not transferable passes for a different revision.
   The next clean run passes all 90 runnable checks, including 51 VM checks;
   registered arena PageMap protection failure and recovery match all 44
   C/Rust fields, with the same four partial components still open.
+  A further clean run passes 91 runnable checks and 52 VM checks after
+  registering two PageMap top-commit faults and same-call recovery; 61 C/Rust
+  fields match and five source-layout-dependent counts stay stable per side
+  through four warnings. The same four partial components remain open.
   Direct registered-arena PageMap receivers now match a first lazy commit
   fault and a two-fault same-call recovery. The latter retains 61 exact
   C/Rust fields plus five raw header-dependent PageMap counts, each unchanged
