@@ -2,7 +2,8 @@
  *
  * One project-header C body executes first with pinned musl 1.2.6 and then
  * with the dependency-free static crabc-libc archive. It proves only the
- * caller-owned mmap/munmap/mprotect/madvise/posix_madvise/mincore/msync lifecycle;
+ * caller-owned mmap/munmap/mprotect/madvise/posix_madvise/mincore/msync lifecycle,
+ * including zero-fill, partial release, fixed replacement, and live neighbors;
  * it is not evidence for the broader <sys/mman.h> family, allocator, CRT,
  * loader, pthread/TLS lifecycle, sysroot, or public x86 support.
  */
@@ -35,7 +36,7 @@ _Static_assert(SYS_munmap == 11, "x86 munmap syscall");
 _Static_assert(SYS_mincore == 27, "x86 mincore syscall");
 _Static_assert(SYS_madvise == 28, "x86 madvise syscall");
 _Static_assert(SYS_msync == 26, "x86 msync syscall");
-_Static_assert(SYS_memfd_create == 319 && SYS_ftruncate == 77 &&
+_Static_assert(SYS_write == 1 && SYS_memfd_create == 319 && SYS_ftruncate == 77 &&
     SYS_dup == 32 && SYS_close == 3 && SYS_pread64 == 17,
     "x86 descriptor syscalls for the file mapping control");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&mmap), CRABC_MMAP_TYPE),
@@ -65,6 +66,101 @@ static long raw_descriptor_call(long number, long first, long second,
         : "a"(number), "D"(first), "S"(second), "d"(third), "r"(fourth_arg)
         : "rcx", "r11", "cc", "memory");
     return result;
+}
+
+#define RECORD(observation, failure) do { \
+    static const char record[] = observation "\n"; \
+    if (raw_descriptor_call(SYS_write, 1, (long)record, \
+            sizeof record - 1, 0) != (long)(sizeof record - 1)) \
+        return failure; \
+} while (0)
+
+static int anonymous_mapping_lifetime(void)
+{
+    volatile unsigned char *bytes;
+    unsigned char residency = 0xa5;
+    size_t offset;
+
+    errno = ERANGE;
+    bytes = mmap(0, CRABC_PAGE_SIZE * 3, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (bytes == MAP_FAILED || errno != ERANGE)
+        return 50;
+    for (offset = 0; offset < CRABC_PAGE_SIZE * 3; ++offset)
+        if (bytes[offset] != 0)
+            return 51;
+    RECORD("anonymous-three-pages zero-filled errno=ERANGE", 52);
+
+    errno = ERANGE;
+    if (mmap(0, 0, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) !=
+            MAP_FAILED || errno != EINVAL ||
+            bytes[0] != 0 || bytes[CRABC_PAGE_SIZE * 3 - 1] != 0)
+        return 53;
+    errno = ERANGE;
+    if (munmap((void *)(bytes + 1), CRABC_PAGE_SIZE) != -1 ||
+            errno != EINVAL || bytes[CRABC_PAGE_SIZE] != 0)
+        return 54;
+    RECORD("invalid-map-and-unaligned-unmap errno=EINVAL mapping-live", 55);
+
+    bytes[0] = 0x17;
+    bytes[CRABC_PAGE_SIZE] = 0x29;
+    bytes[CRABC_PAGE_SIZE * 2] = 0x3b;
+    errno = ERANGE;
+    if (mprotect((void *)(bytes + CRABC_PAGE_SIZE + 1),
+            CRABC_PAGE_SIZE - 1, PROT_NONE) != 0 || errno != ERANGE ||
+            mprotect((void *)(bytes + CRABC_PAGE_SIZE + 1),
+                CRABC_PAGE_SIZE - 1, PROT_READ | PROT_WRITE) != 0 ||
+            errno != ERANGE || bytes[0] != 0x17 ||
+            bytes[CRABC_PAGE_SIZE] != 0x29 ||
+            bytes[CRABC_PAGE_SIZE * 2] != 0x3b)
+        return 56;
+    RECORD("rounded-middle-protection restored bytes-and-errno", 57);
+
+    errno = ERANGE;
+    if (munmap((void *)(bytes + CRABC_PAGE_SIZE), CRABC_PAGE_SIZE) != 0 ||
+            errno != ERANGE || bytes[0] != 0x17 ||
+            bytes[CRABC_PAGE_SIZE * 2] != 0x3b)
+        return 58;
+    errno = 0;
+    if (mincore((void *)(bytes + CRABC_PAGE_SIZE), CRABC_PAGE_SIZE,
+            &residency) != -1 || errno != ENOMEM || residency != 0xa5)
+        return 59;
+    RECORD("partial-unmap middle-absent neighbors-live errno=ENOMEM", 60);
+
+    errno = ERANGE;
+    if (mmap((void *)(bytes + CRABC_PAGE_SIZE), CRABC_PAGE_SIZE,
+            PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0) !=
+            (void *)(bytes + CRABC_PAGE_SIZE) || errno != ERANGE)
+        return 61;
+    for (offset = CRABC_PAGE_SIZE; offset < CRABC_PAGE_SIZE * 2; ++offset)
+        if (bytes[offset] != 0)
+            return 62;
+    if (bytes[0] != 0x17 || bytes[CRABC_PAGE_SIZE * 2] != 0x3b)
+        return 63;
+    RECORD("fixed-noreplace reoccupied-hole zero-filled neighbors-live", 64);
+
+    bytes[CRABC_PAGE_SIZE] = 0x4d;
+    errno = ERANGE;
+    if (mmap((void *)(bytes + CRABC_PAGE_SIZE), CRABC_PAGE_SIZE,
+            PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) !=
+            (void *)(bytes + CRABC_PAGE_SIZE) || errno != ERANGE ||
+            bytes[CRABC_PAGE_SIZE] != 0 || bytes[0] != 0x17 ||
+            bytes[CRABC_PAGE_SIZE * 2] != 0x3b)
+        return 65;
+    RECORD("fixed-replacement zero-filled neighbors-live errno=ERANGE", 66);
+
+    errno = ERANGE;
+    if (munmap((void *)bytes, CRABC_PAGE_SIZE * 3) != 0 || errno != ERANGE)
+        return 67;
+    residency = 0xa5;
+    errno = 0;
+    if (mincore((void *)bytes, CRABC_PAGE_SIZE * 3, &residency) != -1 ||
+            errno != ENOMEM || residency != 0xa5)
+        return 68;
+    RECORD("whole-unmap range-absent errno=ENOMEM", 69);
+    return 0;
 }
 
 static int file_mapping_survives_descriptor_close(void)
@@ -216,7 +312,14 @@ int crabc_x86_64_mapping_core_probe(void)
     errno = ERANGE;
     if (munmap(mapping, CRABC_PAGE_SIZE * 2) != 0 || errno != ERANGE)
         return 22;
-    return file_mapping_survives_descriptor_close();
+    RECORD("anonymous-advice-residency-and-unmap passed", 23);
+    {
+        int result = file_mapping_survives_descriptor_close();
+        if (result != 0)
+            return result;
+    }
+    RECORD("shared-private-file-aliases-survive-descriptor-close", 46);
+    return anonymous_mapping_lifetime();
 }
 
 #ifndef CRABC_MAPPING_CORE_FREESTANDING

@@ -6,7 +6,9 @@
 # selected crabc archive. It proves the coherent caller-owned mapping
 # lifecycle: mmap/munmap, musl-rounded mprotect, madvise, musl's POSIX
 # DONTNEED no-op/direct-positive-error convention, mincore residency, and
-# shared file mapping readback after the original descriptor closes.
+# shared file mapping readback after the original descriptor closes, anonymous
+# zero-fill, partial unmap and remap lifetime, and byte-identical execution
+# records retained with both ELFs in a physical receipt.
 # It is deliberately not the complete <sys/mman.h> family, musl's process-wide
 # __vm_wait contract, owned msync cancellation behavior, mremap, mlock*, shared
 # memory, allocator, CRT, loader, sysroot, or public x86 support.
@@ -129,7 +131,7 @@ assert_fixture_tls_capacity() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep nm objdump readelf rustup sort; do
+for tool in ar awk cargo chmod cmp cp diff grep mktemp nm objdump readelf rustup sha256sum sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -140,8 +142,11 @@ bash "$ROOT_DIR/compat/x86_64/run_x86_mapping_reference.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_x86_madvise_reference.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_x86_mincore_reference.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-mapping-core.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp" "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-mapping-core.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
+report_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-mapping-core.XXXXXX")"
+chmod 755 "$report_dir"
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-mapping-core-reference"
@@ -157,6 +162,8 @@ candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"
+reference_records="$report_dir/musl.records"
+candidate_records="$report_dir/crabc.records"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
@@ -169,7 +176,7 @@ done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_mapping_core_probe.c -o "$reference"
-if "$reference"; then
+if "$reference" >"$reference_records"; then
     :
 else
     status=$?
@@ -244,11 +251,35 @@ assert_named_syscall posix_madvise 1c
 assert_named_syscall mincore 1b
 assert_named_syscall msync 1a
 
-if "$candidate"; then
+cp "$reference" "$report_dir/musl-reference.elf"
+cp "$candidate" "$report_dir/crabc-candidate.elf"
+cp "$candidate_program_headers" "$report_dir/crabc-program-headers.txt"
+cp "$selected_c_abi_symbols" "$report_dir/selected-c-abi-symbols.txt"
+cp "$archive.source-runtime.json" "$report_dir/source-runtime.json"
+cp compat/x86_64/libc_mapping_core_probe.c "$report_dir/libc_mapping_core_probe.c"
+cp compat/x86_64/libc_mapping_core_start.S "$report_dir/libc_mapping_core_start.S"
+cp compat/x86_64/run_libc_mapping_core.sh "$report_dir/run_libc_mapping_core.sh"
+
+if "$candidate" >"$candidate_records"; then
     :
 else
     status=$?
     fail "freestanding mapping-core fixture exited ${status}"
 fi
 
+[ -s "$reference_records" ] || fail "pinned-musl mapping fixture emitted no records"
+if ! cmp -s "$reference_records" "$candidate_records"; then
+    diff -u "$reference_records" "$candidate_records" >&2 || true
+    fail "freestanding mapping records differ from pinned musl"
+fi
+(
+    cd "$report_dir"
+    sha256sum musl-reference.elf crabc-candidate.elf musl.records crabc.records \
+        crabc-program-headers.txt selected-c-abi-symbols.txt source-runtime.json \
+        libc_mapping_core_probe.c libc_mapping_core_start.S \
+        run_libc_mapping_core.sh >sha256sums.txt
+)
+
+cat "$reference_records"
+printf 'mapping-core physical receipt: %s\n' "$report_dir"
 printf 'x86 static crabc-libc mapping core: PASS\n'
