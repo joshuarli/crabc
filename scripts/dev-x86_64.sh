@@ -586,6 +586,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-kernel-residual [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify residual system.kernel-admin C APIs against musl
   owned-vm-mechanisms  test owned VM remap, break, and legacy remap mechanisms
   owned-group  test installed local /etc/group C APIs against musl
+  owned-mount-table [DYNAMIC_SYSROOT]  compare installed mount-table C APIs with musl
   owned-pthread-spin  qualify installed private/shared pthread spin locking
   owned-syslog [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify owned C syslog delivery and state against musl
   owned-pattern  qualify owned C fnmatch/glob/globfree behavior against musl
@@ -7343,7 +7344,7 @@ case "$command" in
     owned-system-cancellation) ;;
     owned-rand) ;;
     owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-c-abi-compat|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-native-allocator-fork|owned-native-worker-lifecycle|owned-native-allocator-stress|owned-allocator-override|owned-native-allocator-policy|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-wordexp-expected-inputs|owned-stdio|owned-stdio-file-engine|owned-numeric-calendar|owned-math-fenv-all-entry|owned-calendar-component|owned-text-locale-numeric-component|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition|owned-regex) ;;
-    owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern|owned-wcsftime|owned-strfmon|owned-native-allocator-dso) ;;
+    owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-mount-table|owned-pattern|owned-wcsftime|owned-strfmon|owned-native-allocator-dso) ;;
     owned-process-globals) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
@@ -7612,7 +7613,7 @@ case "$command" in
         prepare_owned_posix_replay_arguments "$command" "$@"
         set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
-    owned-nftw-relative-base|owned-wcsftime|owned-strfmon|owned-native-allocator-dso)
+    owned-nftw-relative-base|owned-mount-table|owned-wcsftime|owned-strfmon|owned-native-allocator-dso)
         prepare_owned_dynamic_product_argument "$command" "$@"
         set -- "${OWNED_DYNAMIC_PRODUCT_ARGUMENTS[@]}"
         ;;
@@ -9981,6 +9982,10 @@ PY
         [ "$#" -eq 0 ] || fail "owned-group takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_group.sh
+        ;;
+    owned-mount-table)
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_mount_table.sh "$@"
         ;;
     owned-pthread-spin)
         [ "$#" -eq 0 ] || fail "owned-pthread-spin takes no arguments"
