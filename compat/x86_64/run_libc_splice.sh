@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # Native Linux/x86-64 selected static crabc-libc splice evidence.
 #
-# The pinned-musl/project-header fixture proves only one direct regular-file
-# explicit-offset-to-pipe request: raw and wrapper result/pointed-offset
-# behavior agree, stable file positions remain unchanged, stale errno remains
-# on success, and invalid flags or a bad input descriptor report direct
-# EINVAL/EBADF. Fixture-local raw file, pipe, and inspection setup is evidence
-# plumbing, not selected C pathname, descriptor, pipe, or transfer-policy APIs.
+# One project-header body is linked into pinned musl and a freestanding static
+# crabc image. Each image checks raw-kernel and selected-splice paths through
+# file/pipe, tee/pipe, and vmsplice/pipe composition. The streams must match
+# byte for byte. Raw tee/vmsplice and descriptor setup are fixture plumbing;
+# only splice crosses the selected C boundary.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -113,7 +112,7 @@ assert_candidate_excludes_descriptor_policy() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mapfile mkdir nm objdump readelf rustup sort timeout; do
+for tool in ar awk cargo chmod cmp diff grep mapfile mkdir nm objdump readelf rustup sha256sum sort timeout; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -121,8 +120,9 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_splice_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-splice.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-splice.XXXXXX")"
+trap 'chmod -R a+rX "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-splice-reference"
@@ -137,14 +137,15 @@ cd "$ROOT_DIR"
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I "$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_splice_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h fcntl.h sys/types.h stddef.h stdint.h sys/syscall.h \
+for header in errno.h fcntl.h sys/types.h sys/uio.h stddef.h stdint.h sys/syscall.h \
     features.h bits/fcntl.h bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use project $header"
 done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I "$ROOT_DIR/include" compat/x86_64/libc_splice_probe.c -o "$reference"
-timeout "$EXECUTION_TIMEOUT" "$reference" || fail "pinned-musl splice fixture failed"
+timeout "$EXECUTION_TIMEOUT" "$reference" >"$work_dir/musl.stdout" \
+    2>"$work_dir/musl.stderr" || fail "pinned-musl splice fixture failed; $work_dir"
 
 build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -175,6 +176,16 @@ done
 assert_fixture_tls_capacity
 assert_splice_syscall_path
 assert_candidate_excludes_descriptor_policy
-timeout "$EXECUTION_TIMEOUT" "$candidate" || fail "freestanding splice fixture failed"
+timeout "$EXECUTION_TIMEOUT" "$candidate" >"$work_dir/crabc.stdout" \
+    2>"$work_dir/crabc.stderr" || fail "freestanding splice fixture failed; $work_dir"
+cmp -s "$work_dir/musl.stdout" "$work_dir/crabc.stdout" || {
+    diff -u "$work_dir/musl.stdout" "$work_dir/crabc.stdout" >&2 || true
+    fail "pinned-musl and crabc streams differ; $work_dir"
+}
+cmp -s "$work_dir/musl.stderr" "$work_dir/crabc.stderr" ||
+    fail "pinned-musl and crabc error streams differ; $work_dir"
+sha256sum "$reference" "$candidate" "$work_dir/musl.stdout" \
+    "$work_dir/crabc.stdout" "$work_dir/musl.stderr" \
+    "$work_dir/crabc.stderr" >"$work_dir/sha256.txt"
 
-printf 'x86 static crabc-libc splice: PASS\n'
+printf 'x86 static crabc-libc splice: PASS; evidence %s\n' "$work_dir"
