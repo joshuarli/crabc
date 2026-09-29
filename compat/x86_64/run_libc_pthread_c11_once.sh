@@ -5,7 +5,8 @@
 # as a true `-nostdlib -static` executable linked only with the selected crabc
 # archive. It covers four-byte zero/static flags, normal exactly-once
 # initialization, acquire publication, private-futex contention/wake, and
-# retry after cancellation of an initializer with waiters for both APIs.
+# retry after cancellation or explicit pthread exit of an initializer with
+# waiters for both APIs.
 # Distinct POSIX/C11 controls also initialize concurrently, publish separate
 # payloads, and reject alternate callbacks on repeated worker calls.
 # Child observers also check recursive entry, an active control inherited
@@ -173,7 +174,7 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
     pthread_create pthread_join pthread_mutex_init pthread_mutex_destroy \
     pthread_mutex_lock pthread_mutex_unlock pthread_cond_init \
     pthread_cond_destroy pthread_cond_wait pthread_cond_signal \
-    pthread_cond_broadcast pthread_once thrd_create thrd_join call_once; do
+    pthread_cond_broadcast pthread_once pthread_exit thrd_create thrd_join call_once; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
@@ -222,7 +223,7 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
     pthread_create pthread_join pthread_mutex_init pthread_mutex_destroy \
     pthread_mutex_lock pthread_mutex_unlock pthread_cond_init \
     pthread_cond_destroy pthread_cond_wait pthread_cond_signal \
-    pthread_cond_broadcast pthread_once thrd_create thrd_join call_once \
+    pthread_cond_broadcast pthread_once pthread_exit thrd_create thrd_join call_once \
     __crabc_x86_pthread_clone; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"

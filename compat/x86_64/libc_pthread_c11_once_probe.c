@@ -4,8 +4,8 @@
  * against a `-nostdlib -static` executable linked only through the selected
  * crabc archive. It specifies zero/static initialization, exactly one normal
  * initializer, contended wait/wake and acquire visibility, plus retry after
- * cancellation of an initializer with waiters for both pthread_once and
- * call_once.
+ * cancellation or explicit exit of an initializer with waiters for both
+ * pthread_once and call_once.
  * A child process also observes same-control recursion and the lifetime of a
  * once word inherited while another thread initializes it. Those cases block
  * in musl; the parent kills and reaps each child after observing the state.
@@ -44,6 +44,7 @@ enum {
     ONCE_WAITERS = 3,
     PTHREAD_EFFECT = 0x10203040,
     C11_EFFECT = -0x1020304,
+    INTERRUPTED_EXIT_RESULT = 0x52,
 };
 
 /* The gate does not implement once. It simply keeps the first initializer
@@ -83,17 +84,20 @@ struct c11_once_worker {
     int marker;
 };
 
-struct cancelled_once_round {
+struct interrupted_once_round {
     pthread_once_t pthread_control;
     once_flag c11_control;
     int c11;
+    int exit_initializer;
     volatile int initializer_entered;
     volatile int waiter_started;
+    volatile int release_initializer;
     volatile int initializer_calls;
+    volatile int initializer_completions;
     volatile int initializer_effect;
 };
-struct cancelled_once_worker_arg {
-    struct cancelled_once_round *round;
+struct interrupted_once_worker_arg {
+    struct interrupted_once_round *round;
     int waiter;
 };
 
@@ -104,7 +108,7 @@ static volatile int static_pthread_calls;
 static volatile int static_c11_calls;
 static volatile int static_pthread_effect;
 static volatile int static_c11_effect;
-static struct cancelled_once_round *active_cancelled_once;
+static struct interrupted_once_round *active_interrupted_once;
 
 /* Two independent controls must both enter their callbacks before either can
  * complete. The per-control payload is relaxed so only that control's once
@@ -524,34 +528,40 @@ done:
     return 0;
 }
 
-static void cancellable_once_initializer(void)
+static void interrupted_once_initializer(void)
 {
-    struct cancelled_once_round *round = active_cancelled_once;
+    struct interrupted_once_round *round = active_interrupted_once;
     int call = __atomic_fetch_add(&round->initializer_calls, 1, __ATOMIC_RELAXED);
 
     if (call == 0) {
         __atomic_store_n(&round->initializer_entered, 1, __ATOMIC_RELEASE);
+        if (round->exit_initializer) {
+            while (__atomic_load_n(&round->release_initializer, __ATOMIC_ACQUIRE) == 0)
+                ;
+            pthread_exit((void *)(long)INTERRUPTED_EXIT_RESULT);
+        }
         for (;;)
             pthread_testcancel();
     }
     __atomic_store_n(&round->initializer_effect, 0x5a17, __ATOMIC_RELAXED);
+    __atomic_fetch_add(&round->initializer_completions, 1, __ATOMIC_RELAXED);
 }
 
-static void *cancelled_once_worker(void *opaque)
+static void *interrupted_once_worker(void *opaque)
 {
-    struct cancelled_once_worker_arg *worker = opaque;
-    struct cancelled_once_round *round = worker->round;
+    struct interrupted_once_worker_arg *worker = opaque;
+    struct interrupted_once_round *round = worker->round;
 
     if (worker->waiter)
         __atomic_store_n(&round->waiter_started, 1, __ATOMIC_RELEASE);
     if (round->c11)
-        call_once(&round->c11_control, cancellable_once_initializer);
-    else if (pthread_once(&round->pthread_control, cancellable_once_initializer) != 0)
+        call_once(&round->c11_control, interrupted_once_initializer);
+    else if (pthread_once(&round->pthread_control, interrupted_once_initializer) != 0)
         return (void *)2;
     return round;
 }
 
-static int wait_for_cancelled_once_waiter(struct cancelled_once_round *round)
+static int wait_for_interrupted_once_waiter(struct interrupted_once_round *round)
 {
     const int *control = round->c11
         ? (const int *)&round->c11_control
@@ -564,11 +574,14 @@ static int wait_for_cancelled_once_waiter(struct cancelled_once_round *round)
     return 0;
 }
 
-static int run_cancelled_once_round(int c11)
+static int run_interrupted_once_round(int c11, int exit_initializer)
 {
-    struct cancelled_once_round round = { .c11 = c11 };
-    struct cancelled_once_worker_arg initializer_arg = { &round, 0 };
-    struct cancelled_once_worker_arg waiter_arg = { &round, 1 };
+    struct interrupted_once_round round = {
+        .c11 = c11,
+        .exit_initializer = exit_initializer,
+    };
+    struct interrupted_once_worker_arg initializer_arg = { &round, 0 };
+    struct interrupted_once_worker_arg waiter_arg = { &round, 1 };
     pthread_t initializer, waiter;
     void *initializer_result = 0;
     void *waiter_result = 0;
@@ -578,25 +591,29 @@ static int run_cancelled_once_round(int c11)
         round.c11_control = (once_flag)ONCE_FLAG_INIT;
     else
         round.pthread_control = (pthread_once_t)PTHREAD_ONCE_INIT;
-    active_cancelled_once = &round;
+    active_interrupted_once = &round;
     control = c11 ? (const int *)&round.c11_control : (const int *)&round.pthread_control;
-    if (pthread_create(&initializer, 0, cancelled_once_worker, &initializer_arg) != 0)
+    if (pthread_create(&initializer, 0, interrupted_once_worker, &initializer_arg) != 0)
         return 1;
     while (__atomic_load_n(&round.initializer_entered, __ATOMIC_ACQUIRE) == 0)
         ;
-    if (pthread_create(&waiter, 0, cancelled_once_worker, &waiter_arg) != 0)
+    if (pthread_create(&waiter, 0, interrupted_once_worker, &waiter_arg) != 0)
         return 2;
-    if (wait_for_cancelled_once_waiter(&round) != 0)
+    if (wait_for_interrupted_once_waiter(&round) != 0)
         return 3;
-    if (pthread_cancel(initializer) != 0)
+    if (exit_initializer)
+        __atomic_store_n(&round.release_initializer, 1, __ATOMIC_RELEASE);
+    else if (pthread_cancel(initializer) != 0)
         return 4;
     if (pthread_join(initializer, &initializer_result) != 0 ||
-        initializer_result != PTHREAD_CANCELED)
+        initializer_result != (exit_initializer
+            ? (void *)(long)INTERRUPTED_EXIT_RESULT : PTHREAD_CANCELED))
         return 5;
     if (pthread_join(waiter, &waiter_result) != 0 || waiter_result != &round)
         return 6;
-    active_cancelled_once = 0;
+    active_interrupted_once = 0;
     if (__atomic_load_n(&round.initializer_calls, __ATOMIC_RELAXED) != 2 ||
+        __atomic_load_n(&round.initializer_completions, __ATOMIC_RELAXED) != 1 ||
         __atomic_load_n(&round.initializer_effect, __ATOMIC_RELAXED) != 0x5a17 ||
         __atomic_load_n(control, __ATOMIC_ACQUIRE) != ONCE_COMPLETE)
         return 7;
@@ -901,10 +918,14 @@ static int run_pthread_c11_once(void)
         return 64 + status;
     if ((status = run_independent_controls_round()) != 0)
         return 160 + status;
-    if ((status = run_cancelled_once_round(0)) != 0)
+    if ((status = run_interrupted_once_round(0, 0)) != 0)
         return 96 + status;
-    if ((status = run_cancelled_once_round(1)) != 0)
+    if ((status = run_interrupted_once_round(1, 0)) != 0)
         return 112 + status;
+    if ((status = run_interrupted_once_round(0, 1)) != 0)
+        return 176 + status;
+    if ((status = run_interrupted_once_round(1, 1)) != 0)
+        return 192 + status;
     if ((status = run_recursive_once_round()) != 0)
         return 128 + status;
     if ((status = run_fork_once_round()) != 0)
