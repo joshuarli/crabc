@@ -35,6 +35,18 @@ static int worker_body(void) {
 }
 static void *worker(void *unused) { (void)unused; return (void *)(uintptr_t)worker_body(); }
 
+static int implicit_orientation(void) {
+    for (int operation=0;operation<3;operation++) {
+        FILE *f=tmpfile(); CHECK(f && !fwide(f,0));
+        errno=ENOSPC;
+        wint_t result=operation==0 ? fgetwc(f) : operation==1 ? ungetwc(0x20ac,f) : fputwc(0x20ac,f);
+        int saved_errno=errno, width=fwide(f,0), error=!!ferror(f), end=!!feof(f);
+        printf("orient %d %u %d %d %d %d %ld\n",operation,result,saved_errno,width,error,end,ftell(f));
+        CHECK(!fclose(f));
+    }
+    return 0;
+}
+
 static int malformed(const unsigned char *bytes, size_t length) {
     FILE *f=tmpfile(); CHECK(f);
     CHECK(fwrite(bytes,1,length,f)==length);
@@ -46,10 +58,25 @@ static int malformed(const unsigned char *bytes, size_t length) {
     printf("decode %u %d %d %d %ld\n",wc,errno,!!ferror(f),!!feof(f),ftell(f));
     clearerr(f); wc=fgetwc(f);
     printf("resume %u %d %d\n",wc,!!ferror(f),!!feof(f));
+    errno=ENOSPC;
+    wc=ungetwc(0x20ac,f);
+    int saved_errno=errno, error=!!ferror(f), end=!!feof(f);
+    printf("push %u %d %d %d %ld\n",wc,saved_errno,error,end,ftell(f));
+    errno=ENOSPC; wc=fgetwc(f);
+    saved_errno=errno; error=!!ferror(f); end=!!feof(f);
+    printf("pushed-read %u %d %d %d %ld\n",wc,saved_errno,error,end,ftell(f));
+    clearerr(f); errno=ENOSPC;
+    int seek=fseek(f,0,SEEK_SET);
+    saved_errno=errno; error=!!ferror(f); end=!!feof(f);
+    printf("rewind %d %d %d %d %ld\n",seek,saved_errno,error,end,ftell(f));
+    errno=ENOSPC; wc=fgetwc(f);
+    saved_errno=errno; error=!!ferror(f); end=!!feof(f);
+    printf("rewound-read %u %d %d %d %ld\n",wc,saved_errno,error,end,ftell(f));
     CHECK(!fclose(f)); return 0;
 }
 int main(int argc, char **argv) {
     CHECK(argc==2 && setlocale(LC_ALL,"C.UTF-8")); alarm(30);
+    CHECK(!implicit_orientation());
     for (int operation=0;operation<4;operation++) {
         FILE *empty=tmpfile(); char byte=0; CHECK(empty && !fwide(empty,0));
         if (operation==0) CHECK(fread(&byte,0,1,empty)==0);
@@ -95,9 +122,24 @@ int main(int argc, char **argv) {
     CHECK(fputws(long_text,f)==-1 && errno==EILSEQ && !ferror(f) && cookie.position==1024);
     CHECK(uselocale(NULL)==LC_GLOBAL_LOCALE && MB_CUR_MAX==1 && !fclose(f));
     freelocale(plain); CHECK(setlocale(LC_CTYPE,"C.UTF-8"));
-    const unsigned char cases[][5]={{0xc2,'x'},{0xff,'y'},{0xe2,0x82},{0xc0,0x80},{0,0x41}};
-    const size_t sizes[]={2,2,2,2,2};
-    for (int i=0;i<5;i++) CHECK(!malformed(cases[i],sizes[i]));
+    const unsigned char cases[][5]={{0xc2,'x'},{0xff,'y'},{0xe2,0x82},{0xc0,0x80},{0,0x41},{0xe2,'Q','B'}};
+    const size_t sizes[]={2,2,2,2,2,3};
+    for (int i=0;i<6;i++) CHECK(!malformed(cases[i],sizes[i]));
+    f=fopen(argv[1],"w+"); CHECK(f && fwide(f,1)>0);
+    errno=ENOSPC; wint_t written=fputwc(0xd800,f);
+    int saved_errno=errno, error=!!ferror(f), end=!!feof(f);
+    printf("invalid-write %u %d %d %d %ld\n",written,saved_errno,error,end,ftell(f));
+    clearerr(f); errno=ENOSPC; written=fputwc(0x20ac,f);
+    saved_errno=errno; error=!!ferror(f); end=!!feof(f);
+    printf("valid-write %u %d %d %d %ld\n",written,saved_errno,error,end,ftell(f));
+    CHECK(!fflush(f) && !fseek(f,0,SEEK_SET));
+    errno=ENOSPC; wint_t read_back=fgetwc(f);
+    saved_errno=errno; error=!!ferror(f); end=!!feof(f);
+    printf("write-read %u %d %d %d %ld\n",read_back,saved_errno,error,end,ftell(f));
+    errno=ENOSPC; wint_t pushed=ungetwc(0xd800,f);
+    saved_errno=errno; error=!!ferror(f); end=!!feof(f);
+    printf("invalid-push %u %d %d %d %ld\n",pushed,saved_errno,error,end,ftell(f));
+    CHECK(!fclose(f));
     wchar_t *output=NULL; size_t count=777;
     f=open_wmemstream(&output,&count); CHECK(f && output && !count && fwide(f,0)>0);
     CHECK(fputws(L"alpha\u20ac",f)>=0 && !fflush(f) && count==6 && output[5]==0x20ac && !output[6]);
