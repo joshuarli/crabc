@@ -2,8 +2,8 @@
  * One installed-header numeric and clock/calendar composition object.
  *
  * It uses exact representable floating values, source-visible end pointers
- * and errno boundaries.  Calendar state comes only from explicit POSIX TZ
- * strings, never a host zoneinfo file or wall-clock transcript.
+ * and errno boundaries. Calendar state comes from explicit POSIX TZ strings
+ * and one supplied TZif file, never a host zoneinfo file or wall-clock transcript.
  */
 
 #define _GNU_SOURCE 1
@@ -17,6 +17,7 @@
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include <wchar.h>
 
@@ -325,9 +326,56 @@ static int calendar(void)
     return 0;
 }
 
-int main(void)
+static int calendar_tzif(const char *path)
+{
+    static const struct {
+        time_t epoch;
+        long offset;
+        int daylight;
+        const char *name;
+    } edges[] = {
+        { 99999, 0, 0, "STD" },
+        { 100000, 1800, 1, "DST" },
+        { 199999, 1800, 1, "DST" },
+        { 200000, 0, 0, "STD" },
+        { 1704067200, 0, 0, "STD" },
+        { 1710054000, 1800, 1, "DST" },
+    };
+    char setting[4096];
+    struct tm local;
+    struct tm folded;
+    time_t fold_epoch = 200500;
+    unsigned int i;
+
+    if (snprintf(setting, sizeof(setting), ":%s", path) <= 0 ||
+        strlen(setting) >= sizeof(setting) - 1 || setenv("TZ", setting, 1) != 0)
+        return 53;
+    tzset();
+    for (i = 0; i < sizeof(edges) / sizeof(edges[0]); ++i) {
+        time_t epoch = edges[i].epoch;
+        errno = EDOM;
+        if (localtime_r(&epoch, &local) != &local || errno != EDOM ||
+            local.tm_gmtoff != edges[i].offset || local.tm_isdst != edges[i].daylight ||
+            !equal_text(local.tm_zone, edges[i].name))
+            return 54;
+    }
+    if (gmtime_r(&fold_epoch, &folded) != &folded)
+        return 55;
+    folded.tm_isdst = 0;
+    if (mktime(&folded) != 200500 || folded.tm_isdst != 0 || folded.tm_gmtoff != 0)
+        return 56;
+    folded.tm_isdst = 1;
+    if (mktime(&folded) != 198700 || folded.tm_isdst != 1 || folded.tm_gmtoff != 1800)
+        return 57;
+    return 0;
+}
+
+int main(int argc, char **argv)
 {
     int status;
+
+    if (argc != 2)
+        return 58;
 
     status = numeric_locale();
     if (status != 0)
@@ -342,6 +390,9 @@ int main(void)
     if (status != 0)
         return status;
     status = calendar();
+    if (status != 0)
+        return status;
+    status = calendar_tzif(argv[1]);
     if (status != 0)
         return status;
     puts("owned-numeric-calendar-products-ok");

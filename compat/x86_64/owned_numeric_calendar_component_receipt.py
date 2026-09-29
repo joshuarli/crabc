@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reconstruct one bounded installed numeric calendar component receipt.
 
-This reader is deliberately specific to ``run_owned_numeric_calendar.sh``. It
+This reader is deliberately specific to the selected numeric calendar producer. It
 does not turn the selected numeric conversion and clock/calendar probe into
 family closure: the report's flags remain non-promoting. It instead makes a
 retained producer report useful as a component input by replaying every
@@ -34,12 +34,12 @@ import owned_posix_product_evidence as products
 import owned_dynamic_qualification as qualification
 
 
-SCHEMA = "crabc.x86_64-owned-numeric-calendar-products/v2"
+SCHEMA = "crabc.x86_64-owned-numeric-calendar-products/v3"
 SOURCE_MOUNT = "/workspace"
 SCOPE = ("numeric.parse-integer", "numeric.parse-float-locale", "time.clock-calendar")
 HEADERS = (
     "errno.h", "float.h", "inttypes.h", "limits.h", "locale.h", "math.h",
-    "pthread.h", "stdio.h", "stdlib.h", "time.h", "wchar.h",
+    "pthread.h", "stdio.h", "stdlib.h", "string.h", "time.h", "wchar.h",
     "features.h", "bits/alltypes.h",
 )
 ORACLE_STDOUT = b"owned-numeric-calendar-products-ok\n"
@@ -248,6 +248,7 @@ def command_plan(paths: Mapping[str, object], tools: Mapping[str, object], mode:
     if static is not None:
         static = Path(static)
     workload = Path(paths["workload"])
+    tzif = Path(paths["tzif"])
     oracle = Path(paths["oracle"])
     executables = paths["executables"]
     require(isinstance(executables, Mapping), "numeric calendar executable map differs")
@@ -259,7 +260,8 @@ def command_plan(paths: Mapping[str, object], tools: Mapping[str, object], mode:
         "compile": [tool("dynamic_driver"), "--dynamic-pie", "-std=c11", "-D_GNU_SOURCE", "-fno-builtin",
                     "-fno-stack-protector", "-c", m(probe), "-o", m(workload)],
         "oracle-link": [tool("oracle"), "-std=c11", "-static", "-fno-pie", "-no-pie", m(workload), "-o", m(oracle)],
-        "oracle-run": ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", m(oracle)],
+        "zone-input-before": ["sha256sum", m(tzif)],
+        "oracle-run": ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", m(oracle), m(tzif)],
     }
     if mode == FULL_MODE:
         require(static is not None, "full numeric calendar mode needs a static product")
@@ -270,7 +272,7 @@ def command_plan(paths: Mapping[str, object], tools: Mapping[str, object], mode:
                                       m(workload), "-o", m(executable)]
             plan[f"{name}-validate"] = ["python3", "-B", "-", SOURCE_MOUNT, m(static), m(workload),
                                           m(executable), m(receipt), linkage]
-            plan[f"{name}-run"] = ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", m(executable)]
+            plan[f"{name}-run"] = ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", m(executable), m(tzif)]
     for name, linkage in (("dynamic-pie", "pie"), ("dynamic-non-pie", "non-pie")):
         executable = Path(executables[name])
         root_copy = work / f"{name}-root"
@@ -283,9 +285,12 @@ def command_plan(paths: Mapping[str, object], tools: Mapping[str, object], mode:
         copy_tool = m(root / "compat/x86_64/owned_crypt_runtime_evidence.py")
         plan[f"{name}-copy-before"] = ["python3", "-B", copy_tool, "record", *payload]
         plan[f"{name}-copy-audit-before"] = ["python3", "-B", copy_tool, "audit", *payload]
-        plan[f"{name}-kernel"] = ["chroot", m(root_copy), "/consumer"]
-        plan[f"{name}-direct"] = ["chroot", m(root_copy), INTERPRETER, "/consumer"]
+        for point in ("before", "between", "after"):
+            plan[f"{name}-zone-{point}"] = ["sha256sum", m(root_copy / "zone.tzif")]
+        plan[f"{name}-kernel"] = ["chroot", m(root_copy), "/consumer", "/zone.tzif"]
+        plan[f"{name}-direct"] = ["chroot", m(root_copy), INTERPRETER, "/consumer", "/zone.tzif"]
         plan[f"{name}-copy-audit-after"] = ["python3", "-B", copy_tool, "audit", *payload]
+    plan["zone-input-after"] = ["sha256sum", m(tzif)]
     return plan
 
 
@@ -352,7 +357,7 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Fal
     report = read_json(report_path, "numeric calendar component report")
     expected_fields = {
         "schema", "source_mount", "execution_mode", "scope", "sources", "workload", "products", "seals", "commands",
-        "links", "execution_payloads", "source_object_checks", "family_completion", "promotion_ready", "public_support",
+        "links", "execution_payloads", "source_object_checks", "tzif_input", "family_completion", "promotion_ready", "public_support",
     }
     require(isinstance(report, dict) and set(report) == expected_fields, "numeric calendar component report fields differ")
     require(report["schema"] == SCHEMA and report["source_mount"] == SOURCE_MOUNT and report["scope"] == list(SCOPE),
@@ -372,6 +377,9 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Fal
     work = report_path.parent
     workload = assert_identity(root, report["workload"], "installed-header workload", expected=work / "workload.o")
     check_elf_rel(workload)
+    tzif = assert_identity(root, report["tzif_input"], "TZif input", expected=work / "zone.tzif")
+    require(tzif.stat().st_size < 512 and tzif.read_bytes().startswith(b"TZif2"),
+            "TZif input is not a bounded version-two timezone file")
 
     current_seal = source_product_seal(root, static, dynamic)
     require(report["sources"] == current_seal["sources"], "numeric calendar source identity differs")
@@ -392,7 +400,7 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Fal
         "probe": checkout_path(root, SOURCE_PATHS["probe"], "numeric calendar probe"),
         "runner": checkout_path(root, SOURCE_PATHS["runner"], "numeric calendar runner"),
         "reader": checkout_path(root, SOURCE_PATHS["reader"], "numeric calendar reader"),
-        "dynamic": dynamic, "static": static, "workload": workload, "oracle": work / "oracle",
+        "dynamic": dynamic, "static": static, "workload": workload, "tzif": tzif, "oracle": work / "oracle",
         "executables": {"static": work / "static", "static-pie": work / "static-pie",
                         "dynamic-pie": work / "dynamic-pie", "dynamic-non-pie": work / "dynamic-non-pie"},
     }
@@ -408,6 +416,15 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Fal
                       for field in ("argv", "stdout", "stderr", "status")}
         require(parse_argv(raw[label]["argv"], label) == expected_argv, f"{label} retained argv differs")
         require(raw[label]["status"] == b"0\n", f"{label} retained status is not zero")
+    for label in ("zone-input-before", "zone-input-after"):
+        require(raw[label]["stdout"] == f"{digest(tzif)}  {mounted(root, tzif)}\n".encode(),
+                f"{label} TZif digest differs from retained input")
+    for name in ("dynamic-pie", "dynamic-non-pie"):
+        copied = mounted(root, work / f"{name}-root/zone.tzif")
+        for point in ("before", "between", "after"):
+            label = f"{name}-zone-{point}"
+            require(raw[label]["stdout"] == f"{digest(tzif)}  {copied}\n".encode(),
+                    f"{label} copied TZif digest differs from retained input")
     require(raw["header-trace"]["stdout"], "installed header trace stdout is empty")
     trace_paths = header_trace_paths(raw["header-trace"]["stderr"])
     include_root = mounted(root, dynamic / "usr/include") + "/"

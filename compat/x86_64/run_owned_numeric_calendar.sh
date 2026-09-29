@@ -81,6 +81,25 @@ chmod a+rx "$WORK"
 trap 'chmod -R a+rX "$WORK"' EXIT
 printf 'owned numeric calendar products evidence: %s\n' "$WORK"
 
+# This private TZif2 input has a thirty-minute spring gap and autumn fold.
+# The rule-bearing footer governs times after its last explicit transition.
+python3 -B - "$WORK/zone.tzif" <<'PY'
+from pathlib import Path
+import struct
+import sys
+
+def header(count, stride):
+    return b'TZif2' + bytes(15) + struct.pack('>6I', 0, 0, 0, count, 2, 8)
+
+def block(stride):
+    transitions = b''.join(value.to_bytes(stride, 'big', signed=True) for value in (100000, 200000))
+    types = struct.pack('>iBB', 0, 0, 0) + struct.pack('>iBB', 1800, 1, 4)
+    return header(2, stride) + transitions + bytes((1, 0)) + types + b'STD\0DST\0'
+
+Path(sys.argv[1]).write_bytes(block(4) + block(8) +
+                              b'\nSTD0DST-0:30,M3.2.0/2,M11.1.0/2\n')
+PY
+
 if [ -z "$provided_dynamic" ]; then
     provided_static="$WORK/static-product"
     provided_dynamic="$WORK/dynamic-product"
@@ -240,7 +259,7 @@ mapfile -t HOSTED_TRANSLATION < <(python3 -B "$ROOT/compat/x86_64/installed_comp
 readonly COMPILER="$(resolve_compiler)"
 capture header-trace "$COMPILER" -nostdinc -isystem "$DYNAMIC_PRODUCT/usr/include" \
     "${HOSTED_TRANSLATION[@]}" -std=c11 -fPIE -E -H "$PROBE"
-for header in errno.h float.h inttypes.h limits.h locale.h math.h pthread.h stdio.h stdlib.h time.h wchar.h features.h bits/alltypes.h; do
+for header in errno.h float.h inttypes.h limits.h locale.h math.h pthread.h stdio.h stdlib.h string.h time.h wchar.h features.h bits/alltypes.h; do
     grep -Fq "$DYNAMIC_PRODUCT/usr/include/$header" "$WORK/header-trace.stderr" ||
         fail "installed header trace omitted $header"
 done
@@ -249,7 +268,8 @@ capture compile "$DYNAMIC_PRODUCT/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -
 sha256sum "$PROBE" "$RUNNER" "$RECEIPT_READER" "$WORK/workload.o" >"$WORK/source-object-before.sha256"
 
 capture oracle-link "$ORACLE_CC" -std=c11 -static -fno-pie -no-pie "$WORK/workload.o" -o "$WORK/oracle"
-capture oracle-run env -i LC_ALL=C LANG=C TZ=UTC "$WORK/oracle"
+capture zone-input-before sha256sum "$WORK/zone.tzif"
+capture oracle-run env -i LC_ALL=C LANG=C TZ=UTC "$WORK/oracle" "$WORK/zone.tzif"
 [ "$(cat "$WORK/oracle-run.stdout")" = 'owned-numeric-calendar-products-ok' ] || fail 'pinned musl transcript differs'
 [ ! -s "$WORK/oracle-run.stderr" ] || fail 'pinned musl emitted stderr'
 
@@ -262,7 +282,7 @@ if [ -n "$STATIC_PRODUCT" ]; then
                 "$(basename "$receipt")" "$WORK/workload.o" -o "$WORK/$mode"
         )
         validate_link "$mode" "$STATIC_PRODUCT" "$WORK/workload.o" "$WORK/$mode" "$receipt" "$mode"
-        capture "$mode-run" env -i LC_ALL=C LANG=C TZ=UTC "$WORK/$mode"
+        capture "$mode-run" env -i LC_ALL=C LANG=C TZ=UTC "$WORK/$mode" "$WORK/zone.tzif"
         compare_oracle "$mode-run"
     done
 fi
@@ -285,15 +305,21 @@ for mode in pie non-pie; do
         --product "$DYNAMIC_PRODUCT" --execution-root "$root" \
         --source-consumer "$executable" --execution-consumer "$root/consumer" \
         --record "$WORK/dynamic-$mode-execution-payload.json"
-    capture "dynamic-$mode-kernel" chroot "$root" /consumer
+    cp "$WORK/zone.tzif" "$root/zone.tzif"
+    capture "dynamic-$mode-zone-before" sha256sum "$root/zone.tzif"
+    capture "dynamic-$mode-kernel" chroot "$root" /consumer /zone.tzif
     compare_oracle "dynamic-$mode-kernel"
-    capture "dynamic-$mode-direct" chroot "$root" "$INTERPRETER" /consumer
+    capture "dynamic-$mode-zone-between" sha256sum "$root/zone.tzif"
+    capture "dynamic-$mode-direct" chroot "$root" "$INTERPRETER" /consumer /zone.tzif
     compare_oracle "dynamic-$mode-direct"
+    capture "dynamic-$mode-zone-after" sha256sum "$root/zone.tzif"
+    rm "$root/zone.tzif"
     capture "dynamic-$mode-copy-audit-after" python3 -B "$COPIES" audit \
         --product "$DYNAMIC_PRODUCT" --execution-root "$root" \
         --source-consumer "$executable" --execution-consumer "$root/consumer" \
         --record "$WORK/dynamic-$mode-execution-payload.json"
 done
+capture zone-input-after sha256sum "$WORK/zone.tzif"
 
 capture_tools "$WORK/tools-after.json"
 cmp "$WORK/tools-before.json" "$WORK/tools-after.json" || fail 'compiler/linker tool roster changed'
@@ -334,13 +360,14 @@ payloads = {name: {
     'after': identity(work / f'dynamic-{name}-copy-audit-after.stdout'),
 } for name in ('pie', 'non-pie')}
 record = {
-    'schema': 'crabc.x86_64-owned-numeric-calendar-products/v2',
+    'schema': 'crabc.x86_64-owned-numeric-calendar-products/v3',
     'source_mount': '/workspace',
     'execution_mode': ('full-six-mode' if str(static_text) != '.' else
                        'dynamic-only-four-cell-development'),
     'scope': ['numeric.parse-integer', 'numeric.parse-float-locale', 'time.clock-calendar'],
     'sources': json.loads((work / 'source-product-before.json').read_text(encoding='utf-8'))['sources'],
     'workload': identity(work / 'workload.o'),
+    'tzif_input': identity(work / 'zone.tzif'),
     'products': {'dynamic': dynamic.relative_to(root).as_posix()},
     'seals': {name: identity(work / f'{name}.json') for name in
               ('source-product-before', 'source-product-after', 'tools-before', 'tools-after')},

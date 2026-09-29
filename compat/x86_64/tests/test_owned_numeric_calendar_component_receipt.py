@@ -50,6 +50,7 @@ class OwnedNumericCalendarComponentReceiptTests(unittest.TestCase):
         self.write(".work/x86_64/dynamic/share/crabc/crabc_cc_static.py", b"HOSTED_TRANSLATION_FLAGS = ('-fstack-protector-strong',)\n")
         self.static = self.mkdir(".work/x86_64/static")
         self.workload = self.write_elf(".work/x86_64/owned-numeric-calendar-products.fixture/workload.o", etype=1)
+        self.tzif = self.write(".work/x86_64/owned-numeric-calendar-products.fixture/zone.tzif", b"TZif2" + bytes(44))
         self.oracle = self.write(".work/x86_64/owned-numeric-calendar-products.fixture/oracle", b"oracle\n")
         self.static_executable = self.write_elf(".work/x86_64/owned-numeric-calendar-products.fixture/static", etype=2)
         self.static_pie_executable = self.write_elf(".work/x86_64/owned-numeric-calendar-products.fixture/static-pie", etype=3)
@@ -109,7 +110,7 @@ class OwnedNumericCalendarComponentReceiptTests(unittest.TestCase):
         module = self.module
         paths = {"root": self.root, "work": self.work, "probe": self.probe, "runner": self.runner,
                  "reader": self.reader, "static": self.static if mode == "full-six-mode" else None,
-                 "dynamic": self.dynamic, "workload": self.workload, "oracle": self.oracle,
+                 "dynamic": self.dynamic, "workload": self.workload, "tzif": self.tzif, "oracle": self.oracle,
                  "executables": {"static": self.static_executable, "static-pie": self.static_pie_executable,
                                  "dynamic-pie": self.dynamic_pie, "dynamic-non-pie": self.dynamic_non_pie}}
         plan = module.command_plan(paths, self.tool_roster, mode)
@@ -123,6 +124,12 @@ class OwnedNumericCalendarComponentReceiptTests(unittest.TestCase):
                                        for header in module.HEADERS)) + b"\n"
             if "copy-audit" in label:
                 stdout = b"{}\n"
+            if label.startswith("zone-input-"):
+                stdout = f"{hashlib.sha256(self.tzif.read_bytes()).hexdigest()}  {module.mounted(self.root, self.tzif)}\n".encode()
+            if "-zone-" in label:
+                name = label.rsplit("-zone-", 1)[0]
+                copied = module.mounted(self.root, self.work / f"{name}-root/zone.tzif")
+                stdout = f"{hashlib.sha256(self.tzif.read_bytes()).hexdigest()}  {copied}\n".encode()
             if label == "oracle-run" or label.endswith("-run") or label.endswith("-kernel") or label.endswith("-direct"):
                 stdout = module.ORACLE_STDOUT
             if label.endswith("-validate"):
@@ -161,6 +168,7 @@ class OwnedNumericCalendarComponentReceiptTests(unittest.TestCase):
         record = {
             "schema": module.SCHEMA, "source_mount": module.SOURCE_MOUNT, "execution_mode": mode,
             "scope": list(module.SCOPE), "sources": self.seal["sources"], "workload": self.identity(self.workload),
+            "tzif_input": self.identity(self.tzif),
             "products": {"dynamic": self.relative(self.dynamic), **({"static": self.relative(self.static)} if mode == "full-six-mode" else {})},
             "seals": {name: self.identity(self.work / f"{name}.json") for name in
                       ("source-product-before", "source-product-after", "tools-before", "tools-after")},
@@ -217,6 +225,25 @@ class OwnedNumericCalendarComponentReceiptTests(unittest.TestCase):
 
     def test_full_six_mode_control_reconstructs_before_negative_mutations(self) -> None:
         self.assertEqual(self.validate()["execution_mode"], "full-six-mode")
+
+    def test_rehashed_copied_timezone_audit_cannot_name_another_input(self) -> None:
+        record = self.report_value()
+        output = record["commands"]["dynamic-pie-zone-between"]["stdout"]
+        path = self.root / output["path"]
+        path.write_text("0" * 64 + "  " + self.module.mounted(
+            self.root, self.work / "dynamic-pie-root/zone.tzif") + "\n", encoding="ascii")
+        self.rewrite_identity(output)
+        self.rewrite_report(record)
+        with self.assertRaisesRegex(self.module.NumericCalendarReceiptError, "copied TZif digest differs"):
+            self.validate()
+
+    def test_rehashed_timezone_input_cannot_substitute_a_different_file(self) -> None:
+        record = self.report_value()
+        self.tzif.write_bytes(b"TZif2" + bytes(45))
+        self.rewrite_identity(record["tzif_input"])
+        self.rewrite_report(record)
+        with self.assertRaisesRegex(self.module.NumericCalendarReceiptError, "TZif digest differs"):
+            self.validate()
 
     def test_rehashed_transplanted_product_source_is_rejected(self) -> None:
         import owned_dynamic_qualification as qualification

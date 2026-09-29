@@ -870,7 +870,7 @@ def _reader_adapters() -> dict[str, ComponentAdapter]:
     return {
         "locale": _report_adapter("owned_locale_component_receipt", "crabc.x86_64-owned-locale-products/v3", "locale"),
         "numeric": _report_adapter(
-            "owned_numeric_calendar_component_receipt", "crabc.x86_64-owned-numeric-calendar-products/v2", "numeric",
+            "owned_numeric_calendar_component_receipt", "crabc.x86_64-owned-numeric-calendar-products/v3", "numeric",
         ),
         "text-locale-numeric": _text_locale_numeric_adapter,
         "math": _math_adapter,

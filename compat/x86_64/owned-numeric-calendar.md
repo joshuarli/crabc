@@ -21,12 +21,18 @@ comparisons are semantic; the object never inspects ABI padding.
 
 The time half observes individually normalized realtime records and
 nondecreasing monotonic records without ordering the externally adjustable
-realtime calls or recording an exact wall-clock value. It uses only explicit
-POSIX `TZ` strings:
+realtime calls or recording an exact wall-clock value. It uses explicit
+POSIX `TZ` strings and one private TZif2 input:
 `UTC0` checks a leap-year civil-date normalization and a
 `strftime`→`strptime`→`mktime` round trip, while a fixed `EST5EDT` rule checks
 winter and summer local conversions, offsets, names, and DST flags. It never
-sets a clock or reads host zoneinfo files.
+sets a clock or reads host zoneinfo files. The TZif2 input has a thirty-minute
+spring gap and autumn fold. The object checks both sides of each transition,
+resolves the fold with explicit `tm_isdst`, and checks a later instant governed
+by the file's POSIX footer. The runner retains the input bytes and records their
+digest before and after execution. Its private dynamic roots receive byte-identical
+copies whose digests are checked before, between, and after loader entries; the
+copies are removed before the final owned-product payload audit.
 
 The runner retains one pinned-musl static ET_EXEC link using
 `-static -fno-pie -no-pie`, static ET_EXEC and static PIE when a static product
@@ -45,14 +51,15 @@ x86-64 ELF relocatable installed-header object; and compares every candidate
 raw transcript with the retained pinned-musl transcript. Recomputing a report
 hash after changing an argv or a candidate transcript therefore does not make
 the receipt valid. The report schema is
-`crabc.x86_64-owned-numeric-calendar-products/v2` and records one of two
+`crabc.x86_64-owned-numeric-calendar-products/v3` and records one of two
 explicit modes: `full-six-mode` includes static ET_EXEC, static PIE, dynamic
 PIE kernel/direct, and dynamic non-PIE kernel/direct;
 `dynamic-only-four-cell-development` includes only the four dynamic entries.
 The reader validates both shapes, while callers that need a complete component
 pass `--require-static` and reject the dynamic development shape. Historical
 `v1` JSON lacks this reconstructable command, raw-stream, and link-validation
-interface and is not admitted by the `v2` reader.
+interface and is not admitted by the current reader. A `v2` report lacks
+the physical TZif input and copy checkpoints and is also not admitted.
 
 Run it in the pinned native environment:
 
