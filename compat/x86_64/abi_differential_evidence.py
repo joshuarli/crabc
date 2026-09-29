@@ -499,7 +499,9 @@ PRODUCERS = (
     CompanionProducer(
         "ordinary_declaration_abi_report",
         lambda c, r, o: (["python3", "-B", "compat/x86_64/native_declaration_abi.py", "--collect",
-                          "--header-report", str(c.header_declaration_inventory), "--output", str(o)], {}),
+                          "--header-report", str(c.header_declaration_inventory),
+                          "--static-product", str(c.static_product), "--dynamic-product", str(c.dynamic_product),
+                          "--output", str(o)], {}),
         _in, output_parent=".work/x86_64/native-declaration-abi"),
     CompanionProducer(
         "compiler_helper_aggregate_report",

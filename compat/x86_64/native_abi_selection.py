@@ -3449,6 +3449,60 @@ def _ordinary_declaration_layout_joins(
     return joins
 
 
+def _ordinary_declaration_boundary_joins(
+    boundary: Mapping[str, Any] | None, mismatches: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """Join a replayed no-provider boundary without changing raw observations.
+
+    The component reader authenticates pinned provider absence and physical
+    positive and negative links. This join binds only its reviewed reference
+    jobs to the ordinary plan. Other mismatches retain their unresolved state.
+    """
+    if boundary is None:
+        return None, copy.deepcopy(mismatches)
+    classification = boundary['classification']
+    reviewed = callable_declarations.REVIEWED_CPP_LINKAGE_DIFFERENCE
+    require(same({key: classification.get(key) for key in reviewed}, reviewed)
+            and classification.get('disposition') == 'oracle-declared-no-provider',
+            'ordinary reviewed linkage boundary differs from selected declaration contract')
+    indices, jobs = classification.get('reference_job_indices'), boundary.get('jobs')
+    require(type(indices) is list and len(indices) == len(reviewed['profiles'])
+            and all(type(index) is int for index in indices) and len(set(indices)) == len(indices)
+            and type(jobs) is list, 'ordinary reviewed linkage reference controls differ')
+    joins, accounted, profiles = [], set(), []
+    for index in indices:
+        require(0 <= index < len(jobs), 'ordinary reviewed linkage reference control is missing')
+        job = jobs[index]
+        require(job.get('tree') == 'reference' and job.get('header') == reviewed['header']
+                and job.get('language') == 'cxx' and job.get('profile') in reviewed['profiles']
+                and job.get('names') == [reviewed['name']],
+                'ordinary reviewed linkage reference control identity differs')
+        observations = job.get('observations')
+        require(type(observations) is list and len(observations) == 1,
+                'ordinary reviewed linkage reference observations differ')
+        observation = observations[0]
+        require(observation.get('expected_symbol') == reviewed['name']
+                and observation.get('observed_symbol') == reviewed['reference_symbol']
+                and observation.get('status') == 'ordinary-linkage-identity-mismatch'
+                and observation.get('relocation_type') == 'R_X86_64_64',
+                'ordinary reviewed linkage reference spelling differs')
+        matching = [(position, row) for position, row in enumerate(mismatches)
+                    if row.get('tree') == job['tree'] and row.get('header') == job['header']
+                    and row.get('profile') == job['profile']
+                    and same({key: row.get(key) for key in observation}, observation)]
+        require(len(matching) == 1 and matching[0][0] not in accounted,
+                'ordinary reviewed linkage boundary does not join one original mismatch')
+        position, mismatch = matching[0]
+        accounted.add(position)
+        profiles.append(job['profile'])
+        joins.append({'ordinary_job_ordinal': mismatch['ordinal'], 'boundary_job_index': index,
+                      'observation': copy.deepcopy(mismatch)})
+    require(sorted(profiles) == sorted(reviewed['profiles']),
+            'ordinary reviewed linkage reference profiles differ')
+    return {'classification': copy.deepcopy(classification), 'ordinary_job_joins': joins}, [
+        copy.deepcopy(row) for index, row in enumerate(mismatches) if index not in accounted]
+
+
 def ordinary_declaration_abi_adapter(
     report_path: Path | None,
     *,
@@ -3456,6 +3510,7 @@ def ordinary_declaration_abi_adapter(
     header_envelope: Mapping[str, Any],
     callable_account: Mapping[str, Any],
     selected_objects: Sequence[Mapping[str, Any]],
+    product_paths: Mapping[str, Path] | None = None,
 ) -> dict[str, Any] | None:
     """Attach ordinary declaration objects to one authenticated header replay.
 
@@ -3470,12 +3525,11 @@ def ordinary_declaration_abi_adapter(
     report_path = physical_work_path(report_path, directory=False)
     header_report = physical_work_path(header_report, directory=False)
     before = {'ordinary_declaration_report': file_identity(report_path), 'header_report': file_identity(header_report)}
+    reader_arguments = {'header_report': header_report, 'header_envelope': header_envelope}
+    if product_paths is not None:
+        reader_arguments.update(static_product=product_paths['static_product'], dynamic_product=product_paths['dynamic_product'])
     try:
-        replayed = declaration_abi.validate_report(
-            report_path,
-            header_report=header_report,
-            header_envelope=header_envelope,
-        )
+        replayed = declaration_abi.validate_report(report_path, **reader_arguments)
     except (ValueError, OSError) as error:
         raise SelectionError(f'ordinary declaration ABI companion rejected: {error}') from error
     after = {'ordinary_declaration_report': file_identity(report_path), 'header_report': file_identity(header_report)}
@@ -3504,6 +3558,10 @@ def ordinary_declaration_abi_adapter(
         'runtime_semantics': False,
     }, 'ordinary declaration ABI status exceeds component scope')
     joins, mismatches = _ordinary_declaration_plan_joins(replayed, callable_account)
+    boundary = report.get('reviewed_cpp_linkage_boundary')
+    require(boundary is None or product_paths is not None,
+            'ordinary reviewed linkage boundary needs the selected products')
+    boundary_joins, unaccounted_mismatches = _ordinary_declaration_boundary_joins(boundary, mismatches)
     summary = exact(replayed['summary'], {
         'cxx_job_count', 'job_count', 'language_counts', 'observation_count', 'observation_status_counts',
         'reference_category_counts', 'reference_count',
@@ -3527,6 +3585,8 @@ def ordinary_declaration_abi_adapter(
         'summary': copy.deepcopy(summary),
         'callable_joins': joins,
         'linkage_mismatches': mismatches,
+        'reviewed_linkage_boundary': boundary_joins,
+        'unaccounted_linkage_mismatches': unaccounted_mismatches,
         'record_layout_joins': layouts,
         'limits': list(DECLARATION_ABI_LIMITS),
     }
@@ -3625,6 +3685,7 @@ def declaration_adapter(report_path: Path | None, *, selected_objects: Sequence[
         header_envelope=envelope,
         callable_account=typed_callables,
         selected_objects=selected_objects,
+        product_paths=product_paths,
     )
     account['complete'] = False
     require(same(report_before, file_identity(report_path)),

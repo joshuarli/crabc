@@ -2984,7 +2984,7 @@ class OrdinaryDeclarationAbiAttachmentTests(unittest.TestCase):
         ns = next(row for row in result['record_layout_joins'] if row['id'] == 'object:_ns_flagdata')
         self.assertEqual(ns['remaining_layout_limitations'], ['not-proved-by-record-layout'])
 
-    def test_candidate_c_linkage_does_not_erase_pinned_cpp_membarrier_mismatches(self):
+    def _membarrier_jobs(self):
         plans, jobs = [], []
         for tree in ('candidate', 'reference'):
             for profile in ('cxx17-gnu', 'cxx17-strict'):
@@ -3009,6 +3009,10 @@ class OrdinaryDeclarationAbiAttachmentTests(unittest.TestCase):
                 )
                 plans.append(plan)
                 jobs.append({**copy.deepcopy(plan), 'ordinal': len(jobs), 'observations': [observation]})
+        return plans, jobs
+
+    def test_candidate_c_linkage_does_not_erase_pinned_cpp_membarrier_mismatches(self):
+        plans, jobs = self._membarrier_jobs()
         replayed = {'callable_plan': plans, 'report': {'jobs': jobs}}
         with mock.patch.object(selection.declaration_abi, 'linkage_jobs_from_callable_account', return_value=plans):
             joins, mismatches = selection._ordinary_declaration_plan_joins(replayed, {'groups': []})
@@ -3016,6 +3020,51 @@ class OrdinaryDeclarationAbiAttachmentTests(unittest.TestCase):
         self.assertEqual({row['profile'] for row in mismatches}, {'cxx17-gnu', 'cxx17-strict'})
         self.assertEqual(len(mismatches), 2)
         self.assertEqual([row['linkage_mismatch_indices'] for row in joins], [[], [], [0], [0]])
+
+    def test_reviewed_physical_boundary_accounts_only_its_exact_original_reference_jobs(self):
+        plans, jobs = self._membarrier_jobs()
+        replayed = {'callable_plan': plans, 'report': {'jobs': jobs}}
+        with mock.patch.object(selection.declaration_abi, 'linkage_jobs_from_callable_account', return_value=plans):
+            _, mismatches = selection._ordinary_declaration_plan_joins(replayed, {'groups': []})
+        boundary = {
+            'classification': {**copy.deepcopy(selection.callable_declarations.REVIEWED_CPP_LINKAGE_DIFFERENCE),
+                               'disposition': 'oracle-declared-no-provider', 'reference_job_indices': [2, 3]},
+            'jobs': copy.deepcopy(jobs),
+        }
+        joined, unaccounted = selection._ordinary_declaration_boundary_joins(boundary, mismatches)
+        self.assertEqual([row['ordinary_job_ordinal'] for row in joined['ordinary_job_joins']], [2, 3])
+        self.assertEqual(unaccounted, [])
+        self.assertEqual([row['observed_symbol'] for row in mismatches], ['_Z10membarrierii'] * 2)
+        other = {**mismatches[0], 'ordinal': 9, 'header': 'other.h', 'observed_symbol': '_Z5otherv'}
+        _, unaccounted = selection._ordinary_declaration_boundary_joins(boundary, [*mismatches, other])
+        self.assertEqual(unaccounted, [other])
+        self.assertEqual(selection._ordinary_declaration_boundary_joins(None, mismatches), (None, mismatches))
+        for change in ('candidate tree', 'different symbol', 'missing control', 'reused control', 'wrong profile'):
+            with self.subTest(change=change):
+                changed = copy.deepcopy(boundary)
+                if change == 'candidate tree': changed['jobs'][2]['tree'] = 'candidate'
+                elif change == 'different symbol': changed['classification']['reference_symbol'] = '_Z9arbitraryv'
+                elif change == 'missing control': changed['classification']['reference_job_indices'] = [2]
+                elif change == 'reused control': changed['classification']['reference_job_indices'] = [2, 2]
+                else: changed['jobs'][2]['profile'] = 'c11-gnu'
+                with self.assertRaises(selection.SelectionError):
+                    selection._ordinary_declaration_boundary_joins(changed, mismatches)
+
+    def test_ordinary_reader_receives_selected_products_for_its_physical_boundary(self):
+        plans = self._plan()
+        replayed = self._replayed(plans)
+        envelope = {'fixture': True}
+        products = {'static_product': self.ordinary_report.parent / 'static',
+                    'dynamic_product': self.ordinary_report.parent / 'dynamic'}
+        with mock.patch.object(selection, '_common_checkout', return_value=ROOT), \
+             mock.patch.object(selection.declaration_abi, 'linkage_jobs_from_callable_account', return_value=plans), \
+             mock.patch.object(selection.declaration_abi, 'validate_report', return_value=replayed) as reader:
+            selection.ordinary_declaration_abi_adapter(
+                self.ordinary_report, header_report=self.header_report, header_envelope=envelope,
+                callable_account={'groups': []}, selected_objects=list(self.objects.values()), product_paths=products,
+            )
+        reader.assert_called_once_with(self.ordinary_report, header_report=self.header_report,
+                                       header_envelope=envelope, **products)
 
     def test_attachment_rejects_an_object_plan_that_is_not_the_typed_callable_account(self):
         plans = self._plan()

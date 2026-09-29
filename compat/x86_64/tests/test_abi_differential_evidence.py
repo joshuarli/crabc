@@ -102,6 +102,14 @@ class AbiDifferentialEvidenceTests(unittest.TestCase):
             **{name: self.reports[name] for name in evidence.COLLECTED_REPORTS},
         )
 
+    def test_ordinary_declaration_producer_uses_the_selected_static_and_dynamic_products(self) -> None:
+        producer = next(row for row in evidence.PRODUCERS if row.keyword == "ordinary_declaration_abi_report")
+        argv, environment = producer.command(self.cohort(), {}, self.work / "declarations")
+        self.assertEqual(argv[argv.index("--static-product") + 1], str(self.work / "static"))
+        self.assertEqual(argv[argv.index("--dynamic-product") + 1], str(self.work / "dynamic"))
+        self.assertNotIn("--static-preparation", argv)
+        self.assertEqual(environment, {})
+
     def producer(self, keyword: str, *, fails: bool = False, requires: tuple[str, ...] = ()) -> "evidence.CompanionProducer":
         def command(_cohort, reports, output):
             for name in requires:
