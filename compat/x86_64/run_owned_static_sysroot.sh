@@ -1930,7 +1930,9 @@ timeout 30s env -i "$header_consumer/ipc-reference" >"$header_consumer/ipc-refer
     -o "$header_consumer/pthread-reference"
 timeout 20s env -i "$header_consumer/pthread-reference" >"$header_consumer/pthread-reference-output" ||
     fail "pinned-musl pthread composition reference failed"
-[ ! -s "$header_consumer/pthread-reference-output" ] || fail "pthread reference emitted unexpected output"
+printf 'A0\nA1\nB0\nB1\n' >"$header_consumer/pthread-reference-expected"
+cmp -s "$header_consumer/pthread-reference-expected" "$header_consumer/pthread-reference-output" ||
+    fail "pinned-musl pthread destructor transcript changed"
 # Startup publication, termination, cross-thread allocation, and the
 # filesystem/process/signal/time/socket composition compare against a static
 # ET_EXEC pinned-musl image: its kernel auxv, exec, and exit paths are the
