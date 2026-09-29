@@ -56,8 +56,15 @@ enum {
     INNER_DISABLE_ERRNO, INNER_PHASE, HANDLER_RECORDS
 };
 static volatile sig_atomic_t handler_records[HANDLER_RECORDS];
+enum {
+    OUTER_INFO_SIGNAL, OUTER_CONTEXT_POINTER, OUTER_CONTEXT_SIZE,
+    OUTER_CONTEXT_FLAGS, INNER_INFO_SIGNAL, INNER_CONTEXT_POINTER,
+    INNER_CONTEXT_SIZE, INNER_CONTEXT_FLAGS, CONTEXT_RECORDS
+};
+static volatile sig_atomic_t context_records[CONTEXT_RECORDS];
+static volatile sig_atomic_t handler_output_untouched[2];
 static volatile sig_atomic_t handler_phase;
-static uint32_t observations[32];
+static uint32_t observations[46];
 
 /* A fixture-only write leaves the selected libc archive independent of stdio. */
 static long write_observations(void)
@@ -80,7 +87,7 @@ static int same_stack(const stack_t *left, const stack_t *right)
         left->ss_size == right->ss_size;
 }
 
-static void record_alt_stack_delivery(int signal)
+static void record_alt_stack_delivery(int signal, siginfo_t *info, void *raw_context)
 {
     volatile unsigned char marker;
     stack_t running = {0};
@@ -89,14 +96,28 @@ static void record_alt_stack_delivery(int signal)
         .ss_flags = SS_DISABLE,
         .ss_size = 0,
     };
+    stack_t rejected_output = {
+        .ss_sp = alternate_stack + 32,
+        .ss_flags = 0x1357,
+        .ss_size = 0x2468,
+    };
+    const stack_t rejected_output_copy = rejected_output;
     uintptr_t marker_address = (uintptr_t)(const void *)&marker;
     uintptr_t stack_start = (uintptr_t)(const void *)alternate_stack;
     uintptr_t stack_end = stack_start + sizeof(alternate_stack);
     int saved_errno = errno;
     int inner = signal == SIGUSR2;
     int base = inner ? INNER_SIGNAL : OUTER_SIGNAL;
+    int context_base = inner ? INNER_INFO_SIGNAL : OUTER_INFO_SIGNAL;
+    ucontext_t *context = raw_context;
 
     handler_records[base] = signal;
+    context_records[context_base] = info->si_signo;
+    context_records[context_base + 1] =
+        context->uc_stack.ss_sp == (void *)alternate_stack;
+    context_records[context_base + 2] =
+        context->uc_stack.ss_size == sizeof(alternate_stack);
+    context_records[context_base + 3] = context->uc_stack.ss_flags;
     handler_records[base + 1] = marker_address >= stack_start &&
         marker_address < stack_end;
     errno = ERANGE;
@@ -110,8 +131,10 @@ static void record_alt_stack_delivery(int signal)
      * runtimes. An enabled request could invoke size preflight, so handlers
      * never make one. Linux rejects disable while either frame owns the stack. */
     errno = 0;
-    if (sigaltstack(&disable, 0) == -1)
+    if (sigaltstack(&disable, &rejected_output) == -1)
         handler_records[base + 4] = errno;
+    handler_output_untouched[inner] =
+        same_stack(&rejected_output, &rejected_output_copy);
 
     if (inner) {
         handler_records[INNER_PHASE] = handler_phase;
@@ -156,11 +179,22 @@ static int test_altstack(void)
         .ss_flags = SS_ONSTACK,
         .ss_size = MINSIGSTKSZ - 1,
     };
+    stack_t invalid_flags = {
+        .ss_sp = alternate_stack,
+        .ss_flags = 4,
+        .ss_size = sizeof(alternate_stack),
+    };
     stack_t enabled = {
         .ss_sp = alternate_stack,
         .ss_flags = 0,
         .ss_size = sizeof(alternate_stack),
     };
+    stack_t untouched = {
+        .ss_sp = alternate_stack + 32,
+        .ss_flags = 0x1357,
+        .ss_size = 0x2468,
+    };
+    const stack_t untouched_copy = untouched;
     struct sigaction saved_action = {0};
     struct sigaction saved_nested_action = {0};
     struct sigaction action = {0};
@@ -183,24 +217,38 @@ static int test_altstack(void)
     }
 
     errno = 0;
-    if (sigaltstack(&rejected_onstack, 0) != -1 || errno != EINVAL) {
+    if (sigaltstack(&rejected_onstack, &untouched) != -1 ||
+        errno != EINVAL || !same_stack(&untouched, &untouched_copy)) {
         result = 3;
         goto cleanup;
     }
+    observations[40] = same_stack(&untouched, &untouched_copy);
 
     errno = 0;
-    if (sigaltstack(&too_small, 0) != -1 || errno != ENOMEM) {
+    if (sigaltstack(&too_small, &untouched) != -1 ||
+        errno != ENOMEM || !same_stack(&untouched, &untouched_copy)) {
         result = 4;
         goto cleanup;
     }
+    observations[41] = same_stack(&untouched, &untouched_copy);
 
     /* Pinned musl tests the enabled size before SS_ONSTACK, so this
      * intentionally both-invalid record reports ENOMEM, not EINVAL. */
     errno = 0;
-    if (sigaltstack(&too_small_onstack, 0) != -1 || errno != ENOMEM) {
+    if (sigaltstack(&too_small_onstack, &untouched) != -1 ||
+        errno != ENOMEM || !same_stack(&untouched, &untouched_copy)) {
         result = 5;
         goto cleanup;
     }
+    observations[42] = same_stack(&untouched, &untouched_copy);
+
+    errno = 0;
+    if (sigaltstack(&invalid_flags, &untouched) != -1 ||
+        errno != EINVAL || !same_stack(&untouched, &untouched_copy)) {
+        result = 19;
+        goto cleanup;
+    }
+    observations[43] = same_stack(&untouched, &untouched_copy);
 
     errno = ERANGE;
     if (sigaltstack(&enabled, &previous) != 0 || errno != ERANGE ||
@@ -237,8 +285,8 @@ static int test_altstack(void)
         result = 9;
         goto cleanup;
     }
-    action.sa_handler = record_alt_stack_delivery;
-    action.sa_flags = SA_ONSTACK;
+    action.sa_sigaction = record_alt_stack_delivery;
+    action.sa_flags = SA_ONSTACK | SA_SIGINFO;
     action.sa_restorer = 0;
     if (sigaction(SIGUSR1, &action, 0) != 0) {
         result = 10;
@@ -266,7 +314,9 @@ static int test_altstack(void)
         handler_records[INNER_FLAGS] != SS_ONSTACK ||
         handler_records[INNER_QUERY_ERRNO] != ERANGE ||
         handler_records[INNER_DISABLE_ERRNO] != EPERM ||
-        handler_records[INNER_PHASE] != 1) {
+        handler_records[INNER_PHASE] != 1 ||
+        handler_output_untouched[0] != 1 ||
+        handler_output_untouched[1] != 1) {
         result = 11;
         goto cleanup;
     }
@@ -321,6 +371,10 @@ cleanup:
         (void)sigaltstack(&original, 0);
     for (index = 0; index < HANDLER_RECORDS; ++index)
         observations[7 + index] = handler_records[index];
+    for (index = 0; index < CONTEXT_RECORDS; ++index)
+        observations[32 + index] = context_records[index];
+    observations[44] = handler_output_untouched[0];
+    observations[45] = handler_output_untouched[1];
     observations[31] = result;
     if (write_observations() != sizeof(observations) && result == 0)
         result = 18;

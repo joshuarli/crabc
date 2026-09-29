@@ -231,12 +231,14 @@ expected = (
     10, 1, 1, 34, 1, 0, 34, 1, 7, 2,
     12, 1, 1, 34, 1, 1,
     7, 0, 0, 34, 2, 0, 7, 34, 0,
+    10, 1, 1, 0, 12, 1, 1, 0,
+    1, 1, 1, 1, 1, 1,
 )
-assert len(expected) == 32
+assert len(expected) == 46
 with open(sys.argv[2], 'wb') as output:
-    output.write(struct.pack('<32I', *expected))
+    output.write(struct.pack('<46I', *expected))
 with open(sys.argv[1], 'rb') as observed:
-    assert observed.read() == struct.pack('<32I', *expected), 'musl observation drift'
+    assert observed.read() == struct.pack('<46I', *expected), 'musl observation drift'
 PY
 cmp "$work_dir/musl.stdout" "$work_dir/crabc.stdout" ||
     fail "crabc physical observations differ from pinned musl; evidence: ${work_dir}"
