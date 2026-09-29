@@ -12506,16 +12506,32 @@ fn native_free_pointer_first_nonlocal(
 ) -> NativePageFreeResult {
     // A page of a non-main Heap of the process main subprocess takes the
     // Heap-owned route with the process registry.
-    // SAFETY: the exact live allocation keeps its page and Heap alive.
+    // SAFETY: the exact live allocation holds the page. This lookup compares
+    // the raw Heap identity with linked registry entries before using it.
     if let Some(heap) = unsafe { crate::subproc::main_heaps::heap_of_page(allocation.page()) } {
         // SAFETY: forwarded exact-live-allocation contract.
         return unsafe { crate::subproc::main_heaps::native_free_nonlocal(heap, allocation) };
     }
+    // A deleted process-main Heap can leave an OS page carrying its freed
+    // Heap address. Its retained Theap proves the process-main owner without
+    // following that stale address in the child-Heap classification below.
+    let deleted_main_os_page = match unsafe {
+        crate::subproc::main_heaps::retained_deleted_heap_os_page(allocation.page())
+    } {
+        Some(matched) => matched,
+        None => {
+            RUNTIME_PROCESS.retain_page_owner();
+            return NativePageFreeResult::Retained;
+        }
+    };
     // A page of a child subprocess takes that child's own `mi_free_block_mt`
     // route: its abandoned pages belong to the child main Heap and arenas,
     // never to the process-main W03 tail below.
-    // SAFETY: the exact live allocation keeps its page and Heap alive.
-    if unsafe { crate::types::Heap::child_heap_of_page(allocation.page()) }.is_some() {
+    // SAFETY: the retained deleted process-main Theap has already been
+    // excluded, and the exact live allocation holds the remaining page.
+    if !deleted_main_os_page
+        && unsafe { crate::types::Heap::child_heap_of_page(allocation.page()) }.is_some()
+    {
         use crate::single_thread::ChildNonlocalFreeResult;
         let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
             .ready_child_subprocess_inputs()

@@ -747,6 +747,41 @@ pub(crate) unsafe fn local_heap_theap_of_page(page: NonNull<crate::types::Page>)
     (theap != thread.theap && unsafe { Theap::tld_at(theap) } == thread.tld.as_ptr()).then_some(theap)
 }
 
+/// Whether an OS page still names a Theap retained after its process-main
+/// Heap was deleted. The page's Heap field may already name freed memory;
+/// this classification follows only the live retained Theap registry.
+/// `None` means the registry lock was unavailable and callers must not try
+/// another Heap classification from the same raw page identity.
+///
+/// # Safety
+/// `page` is held live by one exact allocation observation for this call.
+pub(crate) unsafe fn retained_deleted_heap_os_page(page: NonNull<Page>) -> Option<bool> {
+    // SAFETY: the held allocation keeps the immutable OS provenance and raw
+    // Theap identity stable. The latter is compared by value only.
+    let page_ref = unsafe { page.as_ref() };
+    if !page_ref.memid().is_os() {
+        return Some(false);
+    }
+    let source_theap = unsafe { Page::theap_at(page) };
+    if source_theap.is_null() {
+        return Some(false);
+    }
+    let retained = &RETAINED_DELETED_HEAP_THEAPS;
+    let guard = retained.lock.lock().ok()?;
+    // SAFETY: the lock protects every link, and each image owns its extra
+    // reference until it is removed from this list.
+    let mut image = unsafe { *retained.head.get() };
+    while !image.is_null() {
+        if unsafe { core::ptr::addr_of_mut!((*image).theap) } == source_theap {
+            drop(guard);
+            return Some(true);
+        }
+        image = unsafe { (*image).retained_deleted_next };
+    }
+    drop(guard);
+    Some(false)
+}
+
 /// Frees a source-local OS block whose Heap has already left the public Heap
 /// list, using the separately retained Theap queue instead of a stale Heap
 /// or TLD pointer. `None` means the page has no such retained owner.

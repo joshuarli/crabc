@@ -709,6 +709,63 @@ mod heap_membership_tests {
         );
     }
 
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn remote_final_free_after_deleted_heap_owner_exit_preserves_page_membership() {
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::heap_membership_tests::remote_final_free_after_deleted_heap_owner_exit_preserves_page_membership",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                crate::source_options_api::option_set(crate::config::SourceOption::ArenaReserve as i32, 0);
+                let (sender, receiver) = std::sync::mpsc::channel();
+                let (allow_exit, wait_for_exit) = std::sync::mpsc::channel();
+                let (remote_handoff, remote_wait) = std::sync::mpsc::channel();
+                let owner = std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    // SAFETY: this fresh worker registers its own descriptor once.
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                    let heap = native_heap_new().expect("a non-main Heap");
+                    // SAFETY: this worker owns the Heap and the exact live
+                    // block through deletion; it transfers the block address
+                    // only after its page is retained by the process.
+                    let block = unsafe { native_heap_allocate(heap, 81, Some((128, 11)), true) }
+                        .expect("one OS-backed aligned block");
+                    assert_eq!(unsafe { native_heap_release(heap, false) }, Ok(HeapReleaseOutcome::Released));
+                    sender.send(block.as_ptr().addr()).expect("the block handoff");
+                    wait_for_exit.recv().expect("the remote worker exists before owner exit");
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                });
+                let remote = std::thread::spawn(move || {
+                    let address = remote_wait.recv().expect("the former owner has exited");
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    // SAFETY: this different worker registers its own descriptor once.
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+                    let block = NonNull::new(address as *mut u8).expect("the transferred block");
+                    // SAFETY: the original owner has exited, this worker is
+                    // the sole holder of the exact live block, and it frees
+                    // it once through the page's remote atomic list.
+                    assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                    assert!(unsafe { is_in_heap_region(block.as_ptr()) });
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::NotAttached);
+                });
+                let address = receiver.recv().expect("the deleted Heap block");
+                allow_exit.send(()).expect("allow the owner to finish");
+                owner.join().expect("the original owner exits first");
+                let block = NonNull::new(address as *mut u8).expect("the retained client address");
+                assert!(unsafe { is_in_heap_region(block.as_ptr()) });
+                remote_handoff.send(address).expect("give the remote worker its block");
+                remote.join().expect("the remote free finishes");
+                // Source leaves this detached OS page registered after both
+                // workers have finished and the final client is gone.
+                assert!(unsafe { is_in_heap_region(block.as_ptr()) });
+                assert_eq!(crate::subproc::main_heaps::retained_deleted_heap_owner_count_for_test(), Some(1));
+            },
+        );
+    }
+
     struct UtilizationPages {
         blocks: Vec<usize>,
         pairs: Vec<(usize, usize)>,
