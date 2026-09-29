@@ -5,8 +5,8 @@
 # true `-nostdlib -static` executable linked solely through the selected
 # crabc archive. Each arm enters a fresh UTS namespace, with the one
 # container-local CAP_SYS_ADMIN grant made by the canonical launcher, before
-# it changes hostname/domain-name state. It proves only get/set hostname and
-# get/set domain-name behavior atop uname. It does not select general
+# it changes hostname/domain-name state. It proves the 64-byte setter limit
+# and the distinct getter buffer rules atop uname. It does not select general
 # namespace management, gethostid, system-file parsing, sysconf, CRT,
 # pthread/TLS lifecycle, loader, sysroot, or public x86 support.
 set -euo pipefail
@@ -77,15 +77,16 @@ run_in_fresh_uts_namespace() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff nm objdump readelf rustup unshare; do
+for tool in ar cargo cmp diff nm objdump readelf rustup sha256sum unshare; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-uts-identity.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-uts-identity.XXXXXX")"
+chmod a+rx "$work_dir"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-uts-identity-reference"
 candidate="$work_dir/crabc-static-uts-identity-candidate"
@@ -113,8 +114,9 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_uts_identity_probe.c \
     -o "$reference"
-if run_in_fresh_uts_namespace "$reference"; then
-    :
+if run_in_fresh_uts_namespace "$reference" \
+    >"$work_dir/oracle.stdout" 2>"$work_dir/oracle.stderr"; then
+    printf '0\n' >"$work_dir/oracle.status"
 else
     status=$?
     fail "pinned-musl UTS-identity fixture exited ${status}; canonical launcher must grant container-local CAP_SYS_ADMIN"
@@ -191,11 +193,23 @@ assert_named_syscall getdomainname 3f
 assert_named_syscall sethostname aa
 assert_named_syscall setdomainname ab
 
-if run_in_fresh_uts_namespace "$candidate"; then
-    :
+if run_in_fresh_uts_namespace "$candidate" \
+    >"$work_dir/candidate.stdout" 2>"$work_dir/candidate.stderr"; then
+    printf '0\n' >"$work_dir/candidate.status"
 else
     status=$?
     fail "freestanding UTS-identity fixture exited ${status}"
 fi
 
-printf 'x86 static crabc-libc UTS-namespace identity: PASS\n'
+cmp "$work_dir/oracle.stdout" "$work_dir/candidate.stdout" \
+    || fail "candidate stdout differs from pinned musl"
+cmp "$work_dir/oracle.stderr" "$work_dir/candidate.stderr" \
+    || fail "candidate stderr differs from pinned musl"
+[ ! -s "$work_dir/oracle.stdout" ] && [ ! -s "$work_dir/oracle.stderr" ] \
+    || fail "UTS-identity fixture unexpectedly wrote output"
+sha256sum compat/x86_64/libc_uts_identity_probe.c \
+    compat/x86_64/libc_uts_identity_start.S \
+    "${reference#"$ROOT_DIR"/}" "${candidate#"$ROOT_DIR"/}" \
+    "${archive#"$ROOT_DIR"/}" >"$work_dir/inputs-and-products.sha256"
+
+printf 'x86 static crabc-libc UTS-namespace identity: PASS; evidence: %s\n' "$work_dir"

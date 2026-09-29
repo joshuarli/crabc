@@ -6,7 +6,8 @@
  * changes the hostname or domain name, so the fixture proves a closed C
  * UTS-identity block without changing the container or host identity. It
  * selects only gethostname, sethostname, getdomainname, and setdomainname
- * atop the separately selected uname record seam. It is not namespace
+ * atop the separately selected uname record seam, including the 64-byte
+ * setter limit and the distinct exact-size getter rules. It is not namespace
  * management, gethostid, system-file parsing, sysconf, process identity,
  * CRT, pthread/TLS lifecycle, loader, sysroot, or public x86 support.
  */
@@ -229,6 +230,72 @@ static int check_setter_error_contract_and_stability(void)
     return 0;
 }
 
+static int check_maximum_name_boundary(void)
+{
+    char maximum[UTS_FIELD_BYTES - 1];
+    char hostname_short[UTS_FIELD_BYTES - 1];
+    char hostname_exact[UTS_FIELD_BYTES];
+    char hostname_long[UTS_FIELD_BYTES + 1];
+    char domain_short[UTS_FIELD_BYTES];
+    char domain_exact[UTS_FIELD_BYTES];
+    char domain_long[UTS_FIELD_BYTES + 1];
+    struct utsname observed;
+
+    fill_bytes(maximum, sizeof(maximum), 'x');
+    errno = EINTR;
+    if (sethostname(maximum, sizeof(maximum)) != 0 || errno != EINTR)
+        return 1;
+    errno = EINTR;
+    if (setdomainname(maximum, sizeof(maximum)) != 0 || errno != EINTR)
+        return 2;
+    if (uname(&observed) != 0 ||
+        !equal_bytes(observed.nodename, maximum, sizeof(maximum)) ||
+        observed.nodename[sizeof(maximum)] != '\0' ||
+        !equal_bytes(observed.domainname, maximum, sizeof(maximum)) ||
+        observed.domainname[sizeof(maximum)] != '\0')
+        return 3;
+
+    fill_bytes(hostname_short, sizeof(hostname_short), BUFFER_SENTINEL);
+    errno = EINTR;
+    if (gethostname(hostname_short, sizeof(hostname_short)) != 0 ||
+        errno != EINTR ||
+        !equal_bytes(hostname_short, maximum, sizeof(hostname_short) - 1) ||
+        hostname_short[sizeof(hostname_short) - 1] != '\0')
+        return 4;
+    fill_bytes(hostname_exact, sizeof(hostname_exact), BUFFER_SENTINEL);
+    errno = EINTR;
+    if (gethostname(hostname_exact, sizeof(hostname_exact)) != 0 ||
+        errno != EINTR ||
+        !equal_bytes(hostname_exact, maximum, sizeof(maximum)) ||
+        hostname_exact[sizeof(maximum)] != '\0')
+        return 5;
+    fill_bytes(hostname_long, sizeof(hostname_long), BUFFER_SENTINEL);
+    if (gethostname(hostname_long, sizeof(hostname_long)) != 0 ||
+        !has_string_and_sentinel_tail(hostname_long, sizeof(hostname_long),
+            maximum, sizeof(maximum)))
+        return 6;
+
+    fill_bytes(domain_short, sizeof(domain_short), BUFFER_SENTINEL);
+    errno = 0;
+    if (getdomainname(domain_short, sizeof(maximum)) != -1 ||
+        errno != EINVAL ||
+        !has_sentinel_bytes(domain_short, sizeof(domain_short)))
+        return 7;
+    fill_bytes(domain_exact, sizeof(domain_exact), BUFFER_SENTINEL);
+    errno = EINTR;
+    if (getdomainname(domain_exact, sizeof(domain_exact)) != 0 ||
+        errno != EINTR ||
+        !equal_bytes(domain_exact, maximum, sizeof(maximum)) ||
+        domain_exact[sizeof(maximum)] != '\0')
+        return 8;
+    fill_bytes(domain_long, sizeof(domain_long), BUFFER_SENTINEL);
+    if (getdomainname(domain_long, sizeof(domain_long)) != 0 ||
+        !has_string_and_sentinel_tail(domain_long, sizeof(domain_long),
+            maximum, sizeof(maximum)))
+        return 9;
+    return 0;
+}
+
 int crabc_x86_64_uts_identity_probe(void)
 {
     int status;
@@ -245,6 +312,9 @@ int crabc_x86_64_uts_identity_probe(void)
     status = check_setter_error_contract_and_stability();
     if (status != 0)
         return 30 + status;
+    status = check_maximum_name_boundary();
+    if (status != 0)
+        return 40 + status;
     return 0;
 }
 
