@@ -383,6 +383,11 @@ are not transferable passes for a different revision.
   their C/Rust traces match and the four partial components remain named.
   A scheduled expiry decommit failure receiver now also matches its pinned C
   trace; a clean 100-check M2 run retains those four partial components.
+  A bounded three-arena purge receiver matches 22 pinned C/Rust fields: a
+  failed first decommit consumes one visit, two arenas remain scheduled, later
+  visits drain them, and global expiry clears. The shared M2 gate passes 101
+  runnable checks with VM, arenas, initialization, and fault injection still
+  partial.
   A separate source-built fresh-arena
   receiver matches 46 C/Rust fields when metadata commit and cleanup unmap
   both fail, leaving a raw escaped map while a later healthy arena claim
