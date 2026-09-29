@@ -3,17 +3,16 @@
 #
 # The same project-header C fixture first executes through pinned musl, then
 # as a true -nostdlib -static candidate linked solely through the selected
-# crabc archive. It proves only nanosleep's ordinary zero-or--1/errno
-# convention and direct non-cancellation path; local raw timer calls merely
-# trigger deterministic interruption. It is not C sleep policy, C clock/timer
-# state, pthread cancellation, libc.so, CRT, loader, sysroot, or public x86
-# support.
+# crabc archive. It proves nanosleep's ordinary zero-or--1/errno convention,
+# invalid timespec, and direct non-cancellation path. Local raw timer calls
+# merely trigger deterministic interruption. It does not establish C sleep
+# policy, C clock/timer state, pthread cancellation, libc.so, CRT, loader,
+# sysroot, or public x86 support.
 set -euo pipefail
-. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
-
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
+readonly SOURCE_RUNTIME_HELPER="$ROOT_DIR/compat/x86_64/native_static_source_runtime_closure.py"
 
 fail() {
     printf 'ERROR: x86 static libc nanosleep: %s\n' "$*" >&2
@@ -71,7 +70,7 @@ assert_named_syscall() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff nm objdump readelf rustup; do
+for tool in ar cmp diff nm objdump python3 readelf readlink sha256sum; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -79,12 +78,21 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_time_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-nanosleep.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
-cargo_target="$work_dir/cargo-target"
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-nanosleep"
+[ "$(readlink -f "$ROOT_DIR/.work")" = "$ROOT_DIR/.work" ] ||
+    fail "checkout .work must be a physical directory"
+mkdir -p "$report_dir"
+[ "$(readlink -f "$report_dir")" = "$report_dir" ] ||
+    fail "nanosleep evidence must remain inside the physical checkout"
+work_dir="$report_dir/latest"
+rm -rf -- "$work_dir"
+mkdir "$work_dir"
+source_runtime_work=reports/libc-nanosleep/latest/source-runtime
+source_runtime_receipt="$work_dir/source-runtime/receipt.json"
 reference="$work_dir/musl-nanosleep-reference"
 candidate="$work_dir/crabc-static-nanosleep-candidate"
-archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
+link_map="$work_dir/candidate.map"
+link_trace="$work_dir/candidate.trace"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
 selected_c_abi_symbols="$work_dir/selected-c-abi-symbols"
@@ -118,9 +126,10 @@ fi
 
 # The instruction judge below requires inlining the raw syscall adapter into
 # each selected wrapper. One codegen unit makes that boundary deterministic.
-build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a" -- \
-    -C codegen-units=1
+archive="$(python3 "$SOURCE_RUNTIME_HELPER" build \
+    --work "$source_runtime_work" --print-archive -- -C codegen-units=1)"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
+[ -f "$source_runtime_receipt" ] || fail "source runtime closure receipt is missing"
 
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
@@ -146,8 +155,15 @@ fi
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_NANOSLEEP_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -Wl,--gc-sections -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
-    -Wl,--no-undefined compat/x86_64/libc_nanosleep_probe.c \
-    compat/x86_64/libc_nanosleep_start.S "$archive" -o "$candidate"
+    -Wl,--no-undefined -Wl,-Map,"$link_map" \
+    -Wl,--trace-symbol=rust_eh_personality \
+    compat/x86_64/libc_nanosleep_probe.c \
+    compat/x86_64/libc_nanosleep_start.S "$archive" -o "$candidate" \
+    2>"$link_trace"
+python3 "$SOURCE_RUNTIME_HELPER" audit-final-link \
+    --receipt "$source_runtime_receipt" --candidate "$candidate" \
+    --link-map "$link_map" --trace "$link_trace" \
+    --label crabc-static-nanosleep-candidate
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
@@ -195,4 +211,9 @@ else
     fail "freestanding nanosleep fixture exited ${status}"
 fi
 
+sha256sum compat/x86_64/libc_nanosleep_probe.c \
+    compat/x86_64/libc_nanosleep_start.S "$reference" "$candidate" \
+    >"$work_dir/executed-inputs.sha256"
+printf 'musl-reference exit=0\ncrabc-candidate exit=0\n' >"$work_dir/results.txt"
 printf 'x86 static crabc-libc nanosleep: PASS\n'
+printf 'x86 static crabc-libc nanosleep evidence: %s\n' "$work_dir"

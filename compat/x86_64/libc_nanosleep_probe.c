@@ -2,9 +2,10 @@
  *
  * The same project-header C body first executes through pinned musl 1.2.6,
  * then through a freestanding executable linked solely with the selected
- * crabc libc.a. It proves only POSIX nanosleep's ordinary zero-or--1/errno
- * result convention and relative EINTR remainder. Fixture-local raw
- * setitimer calls and the already selected simple sigaction/mask boundary
+ * crabc libc.a. It proves POSIX nanosleep's ordinary zero-or--1/errno
+ * result convention, invalid timespec behavior, and relative EINTR remainder.
+ * Fixture-local raw setitimer calls and the already selected simple
+ * sigaction/mask boundary
  * merely make interruption deterministic; they do not select C timer state,
  * general signal policy, pthread cancellation, CRT, loader, sysroot, or
  * public x86 support.
@@ -91,6 +92,13 @@ static int positive_remainder(const struct timespec *value)
            (value->tv_sec != 0 || value->tv_nsec != 0);
 }
 
+static int same_timespec(const struct timespec *left,
+    const struct timespec *right)
+{
+    return left->tv_sec == right->tv_sec &&
+           left->tv_nsec == right->tv_nsec;
+}
+
 static int install_interrupt_handler(struct sigaction *saved_action,
     sigset_t *saved_mask)
 {
@@ -128,27 +136,49 @@ static int restore_interrupt_handler(const struct sigaction *saved_action,
 static int check_immediate_and_error_conventions(void)
 {
     const struct timespec zero = { 0, 0 };
-    const struct timespec invalid = { 0, 1000000000L };
+    const struct timespec short_interval = { 0, 1 };
+    const struct timespec invalid[] = {
+        { -1, 0 }, { 0, -1 }, { 0, 1000000000L },
+        { -1, 1000000000L },
+    };
+    const struct timespec untouched = { -7, -11 };
+    struct timespec remaining;
     const int preserved_errno = ERANGE;
+    size_t index;
 
     errno = preserved_errno;
-    if (nanosleep(&zero, 0) != 0 || errno != preserved_errno)
+    remaining = untouched;
+    if (nanosleep(&zero, &remaining) != 0 || errno != preserved_errno ||
+        !same_timespec(&remaining, &untouched))
         return 1;
 
-    errno = 0;
-    if (nanosleep(&invalid, 0) != -1 || errno != EINVAL)
+    errno = preserved_errno;
+    remaining = untouched;
+    if (nanosleep(&short_interval, &remaining) != 0 ||
+        errno != preserved_errno || !same_timespec(&remaining, &untouched))
         return 2;
 
+    for (index = 0; index < sizeof(invalid) / sizeof(invalid[0]); index++) {
+        errno = preserved_errno;
+        remaining = untouched;
+        if (nanosleep(&invalid[index], &remaining) != -1 ||
+            errno != EINVAL || !same_timespec(&remaining, &untouched))
+            return 3 + (int)index;
+    }
+
     errno = 0;
-    if (nanosleep(0, 0) != -1 || errno != EFAULT)
-        return 3;
+    remaining = untouched;
+    if (nanosleep(0, &remaining) != -1 || errno != EFAULT ||
+        !same_timespec(&remaining, &untouched))
+        return 7;
 
     return 0;
 }
 
-static int check_relative_interruption(void)
+static int check_relative_interruption(int with_remaining)
 {
-    const struct timespec requested = { 2, 0 };
+    const struct timespec expected_request = { 2, 0 };
+    struct timespec requested = expected_request;
     struct timespec remaining = { -1, -1 };
     struct sigaction saved_action;
     sigset_t saved_mask;
@@ -162,9 +192,11 @@ static int check_relative_interruption(void)
         goto cleanup;
     }
     errno = 0;
-    result = nanosleep(&requested, &remaining);
+    result = nanosleep(&requested, with_remaining ? &remaining : 0);
     if (result != -1 || errno != EINTR || !signal_delivered ||
-        !positive_remainder(&remaining))
+        (with_remaining && (!positive_remainder(&remaining) ||
+            remaining.tv_sec >= requested.tv_sec)) ||
+        !same_timespec(&requested, &expected_request))
         status = 3;
 
 cleanup:
@@ -178,9 +210,12 @@ int crabc_x86_64_nanosleep_probe(void)
     status = check_immediate_and_error_conventions();
     if (status != 0)
         return 10 + status;
-    status = check_relative_interruption();
+    status = check_relative_interruption(1);
     if (status != 0)
         return 20 + status;
+    status = check_relative_interruption(0);
+    if (status != 0)
+        return 30 + status;
     return 0;
 }
 
