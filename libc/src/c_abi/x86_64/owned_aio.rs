@@ -76,7 +76,12 @@ const SI_ASYNCIO: c_int = -4;
 const CLOCK_MONOTONIC: c_int = 1;
 const AT_MINSIGSTKSZ: c_ulong = 51;
 const MINSIGSTKSZ: usize = 2_048;
-const PAGE_SIZE: usize = 4_096;
+// AIO's detached threads enter the selected pthread and allocator runtimes
+// before the request body. Their x86 Rust frames require more stack than the
+// musl C worker's signal-stack-derived minimum; an 8 KiB worker overflows in
+// native allocator thread startup. Keep a bounded floor for both AIO worker
+// kinds while retaining the kernel-provided signal minimum when it is larger.
+const AIO_RUNTIME_STACK_FLOOR: usize = 64 * 1_024;
 const NANOS_PER_SECOND: c_long = 1_000_000_000;
 
 const FUTEX_WAIT: i64 = 0;
@@ -811,7 +816,9 @@ unsafe fn get_queue(descriptor: c_int, need: bool) -> *mut AioQueue {
         if IO_THREAD_STACK_SIZE.load(Ordering::Relaxed) == 0 {
             let auxiliary_minimum = unsafe { auxv_observation::__getauxval(AT_MINSIGSTKSZ) } as usize;
             IO_THREAD_STACK_SIZE.store(
-                (MINSIGSTKSZ + 2_048).max(auxiliary_minimum.saturating_add(512)),
+                AIO_RUNTIME_STACK_FLOOR
+                    .max(MINSIGSTKSZ + 2_048)
+                    .max(auxiliary_minimum.saturating_add(512)),
                 Ordering::Release,
             );
         }
@@ -1757,7 +1764,10 @@ unsafe fn list_wait_attributes(event: *mut Sigevent) -> PublicPthreadAttr {
     } else {
         let _ = unsafe { pthread_attr::pthread_attr_init(ptr::addr_of_mut!(attributes).cast()) };
         let _ = unsafe {
-            pthread_attr::pthread_attr_setstacksize(ptr::addr_of_mut!(attributes).cast(), PAGE_SIZE)
+            pthread_attr::pthread_attr_setstacksize(
+                ptr::addr_of_mut!(attributes).cast(),
+                AIO_RUNTIME_STACK_FLOOR,
+            )
         };
         let _ = unsafe {
             pthread_attr::pthread_attr_setguardsize(ptr::addr_of_mut!(attributes).cast(), 0)
@@ -1993,4 +2003,3 @@ pub(super) unsafe fn atfork(who: c_int) {
     // their owner. Reinitialization is musl's explicit sole-child repair.
     let _ = unsafe { pthread_rwlock::pthread_rwlock_init(MAP_LOCK.pointer(), null()) };
 }
-

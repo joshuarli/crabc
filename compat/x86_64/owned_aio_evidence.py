@@ -37,6 +37,7 @@ SOURCE_MOUNT = "/workspace"
 ENVIRONMENT = {"LC_ALL": "C", "PATH": "/usr/bin:/bin", "SOURCE_DATE_EPOCH": "1", "TZ": "UTC"}
 PROBES = {
     "workload": "compat/x86_64/owned_aio_probe.c",
+    "one-write": "compat/x86_64/owned_aio_native_pie_probe.c",
     "behavior": "compat/x86_64/owned_aio_behavior_probe.c",
     "fd-reuse": "compat/x86_64/owned_aio_fd_reuse_probe.c",
     "lio-create-failure": "compat/x86_64/owned_aio_lio_create_failure_probe.c",
@@ -54,14 +55,14 @@ COMPILED_PROBES = (*PROBES, PREPARED_OS_TEST_AIO_SUSPEND)
 OBJECTS = {key: f"{key if key != 'workload' else 'workload'}-workload.o" for key in COMPILED_PROBES}
 OBJECTS["workload"] = "workload.o"
 CONSUMERS = {
-    "workload": "consumer", "behavior": "behavior", "fd-reuse": "fd-reuse",
+    "workload": "consumer", "one-write": "one-write", "behavior": "behavior", "fd-reuse": "fd-reuse",
     "lio-create-failure": "lio-create-failure", "suspend-wake": "suspend-wake",
     "suspend-lifetime": "suspend-lifetime",
     PREPARED_OS_TEST_AIO_SUSPEND: PREPARED_OS_TEST_AIO_SUSPEND,
     "queued-cancel": "queued-cancel", "cancel-cursor": "cancel-cursor",
     "submit-cancel": "submit-cancel", "fresh-signal": "fresh-signal",
 }
-ORACLE_CASES = ("workload", "behavior", "fd-reuse", "lio-create-failure", "suspend-wake", "suspend-lifetime",
+ORACLE_CASES = ("workload", "one-write", "behavior", "fd-reuse", "lio-create-failure", "suspend-wake", "suspend-lifetime",
                 PREPARED_OS_TEST_AIO_SUSPEND)
 STATIC_MODES = (("static", "static"), ("static-pie", "static-pie"))
 DYNAMIC_MODES = (("dynamic-pie", "pie"), ("dynamic-non-pie", "non-pie"))
@@ -69,6 +70,7 @@ ROUTES = ("kernel", "direct")
 HEADERS = ("aio.h", "signal.h", "time.h", "features.h", "bits/alltypes.h")
 STANDARD_TRANSCRIPTS = {
     "workload": b"owned-aio basic ok\n",
+    "one-write": b"aio-one-write=ok\n",
     "behavior": b"owned-aio behavior positioned/nonseekable/append/cancel/partial-sigevent/notify/list/suspend/fork=ok\n",
     "lio-create-failure": b"lio-create-failure-mask-retained=ok\n",
     "suspend-wake": b"aio-suspend wake-all single/list=ok\n",
@@ -708,6 +710,7 @@ def validate_report(root: Path, report_path: Path, expected: object, *, live: bo
         ("source-link-queued-cancel", root / PROBES["queued-cancel"], work / "oracle-queued-cancel"),
         ("source-link-submit-cancel", root / PROBES["submit-cancel"], work / "oracle-submit-cancel"),
         ("source-link-workload", work / OBJECTS["workload"], work / "oracle"),
+        ("source-link-one-write", work / OBJECTS["one-write"], work / "oracle-one-write"),
         ("source-link-behavior", work / OBJECTS["behavior"], work / "oracle-behavior"),
         ("source-link-fd-reuse", work / OBJECTS["fd-reuse"], work / "oracle-fd-reuse"),
         ("source-link-lio-create-failure", work / OBJECTS["lio-create-failure"], work / "oracle-lio-create-failure"),
@@ -776,7 +779,7 @@ def validate_report(root: Path, report_path: Path, expected: object, *, live: bo
             assert_matched_transcript(root, oracle_commands[consumer], candidate, f"owned {label}")
     expected_labels = {"installed-header-trace", *{f"compile-{key}" for key in COMPILED_PROBES},
                        *{label for label, _, _ in source_links}, "oracle-queued-cancel-target",
-                       "oracle-queued-cancel-all", "oracle-submit-cancel", "oracle", "oracle-behavior",
+                       "oracle-queued-cancel-all", "oracle-submit-cancel", "oracle", "oracle-one-write", "oracle-behavior",
                        "oracle-fd-reuse", "oracle-lio-create-failure", "oracle-suspend-wake", "oracle-suspend-lifetime",
                        "oracle-os-test-aio-suspend"}
     if static is not None:

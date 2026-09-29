@@ -11,6 +11,7 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly EVIDENCE="$ROOT/compat/x86_64/owned_aio_evidence.py"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/owned_aio_probe.c"
+readonly ONE_WRITE_PROBE="$ROOT/compat/x86_64/owned_aio_native_pie_probe.c"
 readonly BEHAVIOR_PROBE="$ROOT/compat/x86_64/owned_aio_behavior_probe.c"
 readonly FD_REUSE_PROBE="$ROOT/compat/x86_64/owned_aio_fd_reuse_probe.c"
 readonly LIO_CREATE_FAILURE_PROBE="$ROOT/compat/x86_64/owned_aio_lio_create_failure_probe.c"
@@ -363,6 +364,7 @@ record_raw installed-header-trace "$WORK/installed-header-trace.stdout" "$WORK/i
 	"$compiler_path" -nostdinc -isystem "$dynamic_product/usr/include" "${HOSTED_TRANSLATION[@]}" -fPIE -std=c11 -D_GNU_SOURCE -E -H "$PROBE"
 [ "$header_status" -eq 0 ] || fail 'installed-header trace failed'
 run_compile workload "$PROBE" "$WORK/workload.o"
+run_compile one-write "$ONE_WRITE_PROBE" "$WORK/one-write-workload.o"
 run_compile behavior "$BEHAVIOR_PROBE" "$WORK/behavior-workload.o"
 run_compile fd-reuse "$FD_REUSE_PROBE" "$WORK/fd-reuse-workload.o"
 run_compile lio-create-failure "$LIO_CREATE_FAILURE_PROBE" "$WORK/lio-create-failure-workload.o"
@@ -377,6 +379,10 @@ run_oracle_link source-link-workload "$WORK/workload.o" "$WORK/oracle"
 prepare_root "$WORK/oracle-root"
 cp "$WORK/oracle" "$WORK/oracle-root/consumer"
 run_capture "$WORK/oracle.stdout" /usr/sbin/chroot "$WORK/oracle-root" /consumer
+run_oracle_link source-link-one-write "$WORK/one-write-workload.o" "$WORK/oracle-one-write"
+cp "$WORK/oracle-one-write" "$WORK/oracle-root/one-write"
+run_capture "$WORK/oracle-one-write.stdout" /usr/sbin/chroot "$WORK/oracle-root" /one-write
+grep -Fxq 'aio-one-write=ok' "$WORK/oracle-one-write.stdout" || fail "pinned musl one-write probe did not complete"
 run_oracle_link source-link-behavior "$WORK/behavior-workload.o" "$WORK/oracle-behavior"
 cp "$WORK/oracle-behavior" "$WORK/oracle-root/behavior"
 run_capture "$WORK/oracle-behavior.stdout" /usr/sbin/chroot "$WORK/oracle-root" /behavior
@@ -403,7 +409,7 @@ if [ -n "$static_product" ]; then
 	for mode in static static-pie; do
 		root="$WORK/$mode-root"
 		prepare_root "$root"
-		for key in workload behavior fd-reuse lio-create-failure suspend-wake suspend-lifetime os-test-aio-suspend queued-cancel cancel-cursor submit-cancel fresh-signal; do
+		for key in workload one-write behavior fd-reuse lio-create-failure suspend-wake suspend-lifetime os-test-aio-suspend queued-cancel cancel-cursor submit-cancel fresh-signal; do
 			candidate="$WORK/$mode"
 			[ "$key" = workload ] || candidate="$WORK/$mode-$key"
 			object="$WORK/$key-workload.o"
@@ -414,6 +420,8 @@ if [ -n "$static_product" ]; then
 		done
 		run_capture "$WORK/$mode.stdout" /usr/sbin/chroot "$root" /consumer
 		compare_oracle "$mode"
+		run_capture "$WORK/$mode-one-write.stdout" /usr/sbin/chroot "$root" /one-write
+		compare_transcript oracle-one-write "$mode-one-write"
 		run_capture "$WORK/$mode-behavior.stdout" /usr/sbin/chroot "$root" /behavior
 		compare_transcript oracle-behavior "$mode-behavior"
 		run_fd_reuse_owned "$WORK/$mode-fd-reuse.stdout" /usr/sbin/chroot "$root" /fd-reuse "$FD_REUSE_ATTEMPTS"
@@ -444,7 +452,7 @@ for mode in pie non-pie; do
 	mkdir -p "$root"
 	cp -a "$dynamic_product/." "$root/"
 	prepare_root "$root"
-	for key in workload behavior fd-reuse lio-create-failure suspend-wake suspend-lifetime os-test-aio-suspend queued-cancel cancel-cursor submit-cancel fresh-signal; do
+	for key in workload one-write behavior fd-reuse lio-create-failure suspend-wake suspend-lifetime os-test-aio-suspend queued-cancel cancel-cursor submit-cancel fresh-signal; do
 		candidate="$WORK/dynamic-$mode"
 		[ "$key" = workload ] || candidate="$WORK/dynamic-$mode-$key"
 		object="$WORK/$key-workload.o"
@@ -461,6 +469,8 @@ for mode in pie non-pie; do
 		fi
 		run_capture "$WORK/dynamic-$mode-$route.stdout" "${prefix[@]}" /consumer
 		compare_oracle "dynamic-$mode-$route"
+		run_capture "$WORK/dynamic-$mode-$route-one-write.stdout" "${prefix[@]}" /one-write
+		compare_transcript oracle-one-write "dynamic-$mode-$route-one-write"
 		run_capture "$WORK/dynamic-$mode-$route-behavior.stdout" "${prefix[@]}" /behavior
 		compare_transcript oracle-behavior "dynamic-$mode-$route-behavior"
 		run_fd_reuse_owned "$WORK/dynamic-$mode-$route-fd-reuse.stdout" "${prefix[@]}" /fd-reuse "$FD_REUSE_ATTEMPTS"
