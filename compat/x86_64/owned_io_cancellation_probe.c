@@ -13,6 +13,10 @@
 #include <time.h>
 #include <stddef.h>
 #include <ucontext.h>
+#include <signal.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include "owned_cancellation_proc_witness.h"
 
 _Static_assert(offsetof(ucontext_t,uc_mcontext.gregs[REG_RIP])==168,
@@ -135,6 +139,120 @@ static int exercise(enum operation operation) {
     return 0;
 }
 
+enum signal_operation { SIGNAL_READ, SIGNAL_WRITE, SIGNAL_POLL, SIGNAL_ACCEPT };
+struct signal_state {
+    enum signal_operation operation;
+    int fd;
+    _Atomic int tid, cleanup, returned, error;
+};
+static _Atomic int signal_delivered;
+static void ordinary_signal(int number) {
+    (void)number;
+    atomic_fetch_add(&signal_delivered,1);
+}
+static void signal_cleanup(void *opaque) {
+    struct signal_state *s=opaque;
+    atomic_store(&s->cleanup,1);
+}
+static void *signal_worker(void *opaque) {
+    struct signal_state *s=opaque;
+    char byte='K';
+    struct pollfd watched={.fd=s->fd,.events=POLLIN};
+    pthread_cleanup_push(signal_cleanup,s);
+    errno=90;
+    atomic_store(&s->tid,(int)syscall(SYS_gettid));
+    int result;
+    switch (s->operation) {
+    case SIGNAL_READ: result=read(s->fd,&byte,1); break;
+    case SIGNAL_WRITE: result=write(s->fd,&byte,1); break;
+    case SIGNAL_POLL: result=poll(&watched,1,-1); break;
+    case SIGNAL_ACCEPT: result=accept(s->fd,NULL,NULL); break;
+    default: _exit(121);
+    }
+    atomic_store(&s->returned,result);
+    atomic_store(&s->error,errno);
+    pthread_cleanup_pop(1);
+    return NULL;
+}
+static int signal_syscall_ready(struct signal_state *s, long expected) {
+    struct operation_state witness={0};
+    while (!atomic_load(&s->tid)) {}
+    atomic_store(&witness.tid,atomic_load(&s->tid));
+    return wait_in_syscall(&witness,expected);
+}
+static int exercise_ordinary_signal(enum signal_operation operation, int restart) {
+    /* A user signal must interrupt these calls without consuming pipe data or
+     * accepting a connection. SA_RESTART resumes scalar I/O and accept;
+     * poll still reports EINTR. A resumed call remains cancellable. */
+    struct sigaction action={.sa_handler=ordinary_signal,.sa_flags=restart ? SA_RESTART : 0}, previous;
+    sigemptyset(&action.sa_mask);
+    CHECK(!sigaction(SIGUSR1,&action,&previous));
+    atomic_store(&signal_delivered,0);
+    int descriptors[2]={-1,-1};
+    struct signal_state state={.operation=operation,.fd=-1,.returned=-2};
+    struct sockaddr_un address={.sun_family=AF_UNIX};
+    socklen_t address_length=0;
+    if (operation==SIGNAL_ACCEPT) {
+        state.fd=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0); CHECK(state.fd>=0);
+        int count=snprintf(address.sun_path+1,sizeof address.sun_path-1,
+            "crabc-io-signal-%ld-%d",(long)getpid(),restart);
+        CHECK(count>0 && (size_t)count<sizeof address.sun_path-1);
+        address_length=offsetof(struct sockaddr_un,sun_path)+1+count;
+        CHECK(!bind(state.fd,(struct sockaddr *)&address,address_length));
+        CHECK(!listen(state.fd,1));
+    } else {
+        CHECK(!pipe(descriptors));
+        state.fd=descriptors[operation==SIGNAL_WRITE];
+        if (operation==SIGNAL_WRITE) {
+            int flags=fcntl(state.fd,F_GETFL); CHECK(flags>=0);
+            CHECK(!fcntl(state.fd,F_SETFL,flags|O_NONBLOCK));
+            char fill[4096]; memset(fill,'F',sizeof fill);
+            while (write(state.fd,fill,sizeof fill)>0) {}
+            CHECK(errno==EAGAIN && !fcntl(state.fd,F_SETFL,flags));
+        }
+    }
+    const long numbers[]={SYS_read,SYS_write,SYS_poll,SYS_accept};
+    pthread_t worker; void *joined=(void *)1;
+    CHECK(!pthread_create(&worker,NULL,signal_worker,&state));
+    CHECK(signal_syscall_ready(&state,numbers[operation]));
+    CHECK(!syscall(SYS_tgkill,getpid(),atomic_load(&state.tid),SIGUSR1));
+    while (!atomic_load(&signal_delivered)) {}
+    if (restart && operation!=SIGNAL_POLL) {
+        CHECK(signal_syscall_ready(&state,numbers[operation]));
+        CHECK(!pthread_cancel(worker));
+        CHECK(!pthread_join(worker,&joined) && joined==PTHREAD_CANCELED);
+        CHECK(atomic_load(&state.returned)==-2);
+    } else {
+        CHECK(!pthread_join(worker,&joined) && joined==NULL);
+        CHECK(atomic_load(&state.returned)==-1 && atomic_load(&state.error)==EINTR);
+    }
+    CHECK(atomic_load(&state.cleanup)==1 && fcntl(state.fd,F_GETFD)>=0);
+    if (operation==SIGNAL_READ) {
+        CHECK(write(descriptors[1],"K",1)==1);
+        char byte=0; CHECK(read(descriptors[0],&byte,1)==1 && byte=='K');
+    } else if (operation==SIGNAL_WRITE) {
+        int flags=fcntl(state.fd,F_GETFL); CHECK(flags>=0);
+        CHECK(!fcntl(state.fd,F_SETFL,flags|O_NONBLOCK));
+        CHECK(write(state.fd,"K",1)==-1 && errno==EAGAIN);
+        CHECK(!fcntl(state.fd,F_SETFL,flags));
+    } else if (operation==SIGNAL_POLL) {
+        CHECK(write(descriptors[1],"K",1)==1);
+        struct pollfd watched={.fd=descriptors[0],.events=POLLIN};
+        CHECK(poll(&watched,1,0)==1 && (watched.revents&POLLIN));
+    } else {
+        int peer=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0); CHECK(peer>=0);
+        CHECK(!connect(peer,(struct sockaddr *)&address,address_length));
+        int accepted=accept(state.fd,NULL,NULL); CHECK(accepted>=0);
+        CHECK(!close(accepted) && !close(peer));
+    }
+    if (operation==SIGNAL_ACCEPT) CHECK(!close(state.fd));
+    else CHECK(!close(descriptors[0]) && !close(descriptors[1]));
+    CHECK(!sigaction(SIGUSR1,&previous,NULL));
+    printf("ordinary-signal operation=%d restart=%d returned=%d cleanup=1 descriptor-live=1\n",
+        operation,restart,!(restart && operation!=SIGNAL_POLL));
+    return 0;
+}
+
 static pthread_t initial_thread;
 static struct operation_state initial_state;
 static void initial_cleanup(void *unused) {
@@ -226,6 +344,8 @@ static int exercise_orphan_lock(void) {
 int main(void) {
     alarm(20);
     for (int operation=READ_BYTE;operation<=ASYNC_LOOP;operation++) CHECK(!exercise(operation));
+    for (int operation=SIGNAL_READ;operation<=SIGNAL_ACCEPT;operation++)
+        for (int restart=0;restart<=1;restart++) CHECK(!exercise_ordinary_signal(operation,restart));
     CHECK(!exercise_initial());
     CHECK(!exercise_fork_state());
     CHECK(!exercise_orphan_lock());

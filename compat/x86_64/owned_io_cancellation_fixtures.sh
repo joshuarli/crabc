@@ -17,7 +17,7 @@ readonly OWNED_IO_CANCELLATION_PROBES=(
 owned_io_cancellation_headers() {
     printf '%s\n' errno.h pthread.h stdio.h unistd.h bits/alltypes.h
     case "$1" in
-        owned_io_cancellation) printf '%s\n' ucontext.h sys/wait.h sys/uio.h ;;
+        owned_io_cancellation) printf '%s\n' ucontext.h sys/wait.h sys/uio.h signal.h poll.h sys/socket.h sys/un.h ;;
         owned_descriptor_cancellation) printf '%s\n' sys/uio.h poll.h signal.h sys/select.h sys/epoll.h sys/eventfd.h sys/mman.h ;;
         owned_socket_cancellation) printf '%s\n' sys/socket.h sys/un.h sys/uio.h ;;
         owned_sleep_wait_cancellation) printf '%s\n' time.h threads.h sys/wait.h sys/resource.h ;;
