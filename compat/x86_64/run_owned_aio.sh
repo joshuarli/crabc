@@ -192,7 +192,7 @@ run_fd_reuse_source_observation() {
 		/usr/bin/timeout 30 "$@" >/dev/null
 	case "$status" in
 		0)
-			grep -Fxq 'fd-reuse-regular-to-pipe=ok' "$output" ||
+			grep -Fxq 'fd-reuse-regular-to-pipe-old-request-isolated=ok' "$output" ||
 				fail "pinned musl fd-reuse success transcript is incomplete"
 			;;
 		1)
@@ -207,7 +207,7 @@ run_fd_reuse_owned() {
 	local output="$1"
 	shift
 	run_capture "$output" "$@"
-	grep -Fxq 'fd-reuse-regular-to-pipe=ok' "$output" ||
+	grep -Fxq 'fd-reuse-regular-to-pipe-old-request-isolated=ok' "$output" ||
 		fail "owned fd-reuse product did not complete its detached-queue witness"
 }
 

@@ -3,7 +3,9 @@
  *
  * A completed positioned write first makes the per-fd AIO queue seekable.
  * Immediately after close, pipe(2) should reuse that descriptor number and
- * its AIO read must use read(2), not stale positioned-I/O state. The loop
+ * its AIO read must use read(2), not stale positioned-I/O state. A completed
+ * request for the old descriptor incarnation must not cancel the new pipe
+ * read, even though both controls carry the same descriptor number. The loop
  * intentionally leaves no scheduling gap between completion, close, reuse,
  * and submission. It is shared unchanged by pinned musl and owned products.
  */
@@ -144,10 +146,6 @@ int main(int argc, char **argv)
 		step = "reuse-regular-number";
 		if (read_descriptor != regular_number)
 			goto failure;
-		step = "write-pipe";
-		if (write(write_descriptor, "P", 1) != 1)
-			goto failure;
-
 		pipe_read.aio_fildes = read_descriptor;
 		pipe_read.aio_buf = &received;
 		pipe_read.aio_nbytes = 1;
@@ -157,6 +155,22 @@ int main(int argc, char **argv)
 		pipe_submission = aio_read(&pipe_read);
 		if (pipe_submission)
 			goto pipe_failure;
+		step = "cancel-completed-old-request";
+		errno = EDOM;
+		if (aio_cancel(read_descriptor, &positioned) != AIO_ALLDONE
+			|| errno != ENOENT || aio_error(&positioned) != 0)
+			goto failure;
+		/* Pinned musl may have already used the old seekable queue and
+		 * completed this pipe read with ESPIPE. Preserve that source
+		 * observation at the read-completion boundary. */
+		if (aio_error(&pipe_read) != EINPROGRESS) {
+			step = "wait-pipe-read";
+			record_completion(&pipe_read, &pipe_error, &pipe_result);
+			goto failure;
+		}
+		step = "write-pipe";
+		if (write(write_descriptor, "P", 1) != 1)
+			goto failure;
 		step = "wait-pipe-read";
 		if (wait_for(&pipe_read))
 			goto pipe_failure;
@@ -196,6 +210,6 @@ failure:
 				received, saved_errno);
 		}
 	}
-	puts("fd-reuse-regular-to-pipe=ok");
+	puts("fd-reuse-regular-to-pipe-old-request-isolated=ok");
 	return 0;
 }

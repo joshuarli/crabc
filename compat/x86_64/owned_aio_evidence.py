@@ -78,7 +78,7 @@ STANDARD_TRANSCRIPTS = {
     "lifecycle-boundary": b"aio-lifecycle completion/failure/cancellation/reuse/fork=ok\n",
     PREPARED_OS_TEST_AIO_SUSPEND: b"",
 }
-FD_REUSE_SUCCESS = b"fd-reuse-regular-to-pipe=ok\n"
+FD_REUSE_SUCCESS = b"fd-reuse-regular-to-pipe-old-request-isolated=ok\n"
 SUSPEND_LIFETIME = re.compile(
     rb"aio-suspend-lifetime source-shape-completed=[12] controlled-second-live=1 drained=2\n\Z"
 )
