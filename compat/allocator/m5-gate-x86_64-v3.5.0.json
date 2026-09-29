@@ -143,6 +143,16 @@
       ],
       "scope": "Pinned C and native Rust publish distinct medium-page frees before and after normal owner exit. The first publication is collected on exit, the second reclaims the abandoned page, and forced collection clears its PageMap span exactly once."
     },
+    "differential:live-owner-small-remote-collect-race": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m5_remote_collect_race_evidence.py",
+        "--offline",
+        "--report",
+        "{scratch}/live-owner-small-remote-collect-race.json"
+      ],
+      "scope": "Three foreign producers publish distinct small-page blocks while the original owner repeatedly collects. Pinned C and native Rust agree after the final drain on used count, owned-empty head, and the exact collected block count. A separately selected Loom race composes small-page partial collection with owner exit and an arena reader."
+    },
     "differential:exit-callback-survivor": {
       "command": [
         "python3",
@@ -324,6 +334,7 @@
       "acceptance": "Remote frees publish through the pinned page-local protocol to live owners without owner borrows, and PageMap and metadata stay valid through every legal publication.",
       "evidence": [
         "native:remote-publication",
+        "differential:live-owner-small-remote-collect-race",
         "lifecycle:bounded-laboratory"
       ],
       "blocked_by": []

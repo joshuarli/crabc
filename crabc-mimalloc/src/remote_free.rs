@@ -1694,7 +1694,7 @@ mod tests {
 
     use super::*;
     use core::ptr::NonNull;
-    use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+    use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
     use std::sync::Barrier;
     use std::thread;
     use std::vec::Vec;
@@ -2717,6 +2717,57 @@ mod tests {
         // SAFETY: the scoped producer joined and final owner drain completed.
         unsafe { drop_boxed_test_page(page) };
     }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_m5_remote_collect_race_matches_pinned_c_protocol() {
+        const PRODUCERS: usize = 3;
+        let page = boxed_test_page(PRODUCERS as u16, PRODUCERS);
+        // SAFETY: the test page and all distinct blocks remain pinned until
+        // each producer has joined and the sole owner has drained the head.
+        let producer = unsafe { Page::remote_free_producer_state_at(page) };
+        let owner = unsafe { Page::remote_free_owner_state_at(page) }
+            .expect("the test page starts with a live owner");
+        let mut blocks: [TestBlock; PRODUCERS] = std::array::from_fn(|_| TestBlock([0; 16]));
+        let start = Barrier::new(PRODUCERS + 1);
+        let completed = AtomicUsize::new(0);
+        thread::scope(|scope| {
+            for block in &mut blocks {
+                let start = &start;
+                let completed = &completed;
+                scope.spawn(move || {
+                    start.wait();
+                    // SAFETY: this thread alone owns its block; the pinned
+                    // page outlives all scoped producers and the owner drain.
+                    unsafe { push(producer, block.pointer()) }
+                        .expect("the live page accepts a remote free");
+                    completed.fetch_add(1, Ordering::Release);
+                });
+            }
+            start.wait();
+            while completed.load(Ordering::Acquire) < PRODUCERS {
+                // SAFETY: this thread is the sole owner of the page's local
+                // fields; producers touch only their own block and atomics.
+                unsafe { collect(owner) }.expect("the owner drains remote frees");
+                thread::yield_now();
+            }
+        });
+        // SAFETY: all producers joined; the remaining remote list is stable.
+        unsafe { collect(owner) }.expect("the final owner collection succeeds");
+        let snapshot = unsafe { test_page_snapshot(page) };
+        let used_after = snapshot.remote_free_test_used();
+        let head_owned_empty = snapshot.remote_free_test_head() == 1;
+        let collected_count = snapshot.remote_free_test_local_chain_len(PRODUCERS + 1);
+        assert_eq!(used_after, 0);
+        assert!(head_owned_empty);
+        assert_eq!(collected_count, PRODUCERS);
+        std::println!("CRABC_MI_M5_REMOTE_COLLECT_RACE_BEGIN");
+        std::println!("producer_count={PRODUCERS}\nused_before={PRODUCERS}\nused_after={used_after}");
+        std::println!("head_owned_empty={}\ncollected_count={collected_count}", u8::from(head_owned_empty));
+        std::println!("CRABC_MI_M5_REMOTE_COLLECT_RACE_END");
+        // SAFETY: every producer and the owner projection are quiescent.
+        unsafe { drop_boxed_test_page(page) };
+    }
 }
 
 // The optional Loom scheduler is selected only for this lib-test target. Its
@@ -2744,5 +2795,10 @@ mod publication_collect_race_tests {
     #[should_panic(expected = "Causality violation")]
     fn last_remote_publication_needs_source_head_ordering() {
         loom_tests::last_remote_publication_precedes_owner_detach_without_source_ordering();
+    }
+
+    #[test]
+    fn small_page_owner_exit_and_arena_reader_collect_each_remote_block_once() {
+        loom_tests::small_page_owner_exit_and_arena_reader_collect_each_remote_block_once();
     }
 }

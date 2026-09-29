@@ -1005,6 +1005,32 @@ fn loom_small_page_unown_from_free_keeps_the_page_mapped_with_its_client() {
     });
 }
 
+/// Two foreign frees race with owner exit on a small page after the owner
+/// locally frees its third client. A producer that claims the abandoned head
+/// may collect a predecessor while keeping its own block atomically
+/// reachable. An arena reader can concurrently claim the mapped page and
+/// collect that retained head before terminal release.
+pub(super) fn small_page_owner_exit_and_arena_reader_collect_each_remote_block_once() {
+    model(|| {
+        let page = Arc::new(SourcePage::new(PageImage::live(SMALL_BLOCK_SIZE, 16, 3)));
+        let producers = [spawn_remote_free(&page, 0), spawn_remote_free(&page, 1)];
+        page.owner_local_free(2);
+        let reader_page = Arc::clone(&page);
+        let reader = thread::spawn(move || {
+            if reader_page.arena_try_find_and_claim() {
+                reader_page.arena_reclaim(READER_THREAD_ID);
+                reader_page.owner_collect_until_all_free_then_free();
+            }
+        });
+        page.owner_exit();
+        for producer in producers {
+            producer.join().expect("small-page remote free completes");
+        }
+        reader.join().expect("arena reader completes");
+        page.assert_quiescent(&[0, 1], 0);
+    });
+}
+
 /// Every role on one page: the owner exits and maps the page while both final
 /// clients are freed remotely and an arena reader searches the bitmap. The
 /// reader may lose to an owner bit and restore the bit, or reclaim the page
