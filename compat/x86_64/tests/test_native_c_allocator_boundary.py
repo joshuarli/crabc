@@ -203,6 +203,9 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
         kwargs = {"symbol_text": symbols, "relocations": "0000000000002000  .got + 0x0",
                   "provider_address": 0x3000, "source_functions": {"source_owner"},
                   "all_defined_callers": True}
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "foreign or ambiguous caller"):
+            BOUNDARY._ordinary_shared_provider_calls(
+                bytes(image), **{**kwargs, "all_defined_callers": False})
         calls = BOUNDARY._ordinary_shared_provider_calls(bytes(image), **kwargs)
         self.assertEqual({call["function"] for call in calls}, {"source_owner", "other_owned"})
         self.assertEqual({call.get("register_call_address", call["call_address"])

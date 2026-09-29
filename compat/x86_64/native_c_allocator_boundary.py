@@ -1898,12 +1898,17 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
                                independent_retained_work: Path | None = None,
                                expected_importers: int | None = None,
                                shared_call_inventory: bool = False,
+                               all_defined_shared_callers: bool = False,
                                retained_link_stems: Mapping[str, str] | None = None,
                                shared_inlined_owner_leaves: tuple[str, str] | None = None) -> dict[str, object]:
     """Bind all archive callers of one ordinary import to final libc providers."""
     bulk_memory = name in OWNED_MEMORY_IMPORTS
     require(not bulk_memory or shared_call_inventory,
             f"ordinary {name} requires complete shared call inventory")
+    require(type(all_defined_shared_callers) is bool
+            and (not all_defined_shared_callers
+                 or (shared_call_inventory and independent_retained_work is not None)),
+            f"ordinary {name} all-defined shared caller scope differs")
     facts = json_object(elf_facts_report, f"{name} ELF facts")["facts"]
     members = facts["candidate-static"]
     runtime = report["inputs"]["c_runtime_import_bindings"]
@@ -2129,7 +2134,8 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
             shared_image, symbol_text=shared_symbols.stdout,
             relocations=shared_relocations.stdout, provider_address=shared_address,
             source_functions=source_functions,
-            all_defined_callers=shared_inlined_owner_leaves is not None or bulk_memory)
+            all_defined_callers=(shared_inlined_owner_leaves is not None or bulk_memory
+                                 or all_defined_shared_callers))
         if inlined_calls:
             owners = {call["function"]: call["source_function"] for call in inlined_calls}
             require({(call["function"], call["call_address"], call["got_slot"],

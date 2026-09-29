@@ -9110,6 +9110,11 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
     rows = [row for row in occurrences.values()
             if row.get('artifact_key') in {'candidate-static', 'candidate-shared'}
             and row.get('row', {}).get('name') == name]
+    if name == 'strlen':
+        require(not any(row.get('artifact_key') == 'candidate-loader'
+                        and row.get('row', {}).get('name') == name
+                        for row in occurrences.values()),
+                'strlen has an unexpected candidate loader placement')
     static_imports = [row for row in rows if row.get('artifact_key') == 'candidate-static'
                       and row.get('role') == 'import']
     require(len(rows) == len(importers) + 3 and len(static_imports) == len(importers)
@@ -9325,7 +9330,8 @@ def strlen_ordinary_import_adapter(
             static_product=paths['static_product'],
             dynamic_product=paths['dynamic_product'],
             elf_facts_report=paths['elf_report'], name='strlen',
-            independent_retained_work=work, shared_call_inventory=True)
+            independent_retained_work=work, shared_call_inventory=True,
+            all_defined_shared_callers=True)
     except (KeyError, TypeError, ValueError, OSError,
             strlen_import_receipt.StrlenImportError,
             product_evidence.ProductEvidenceError,
