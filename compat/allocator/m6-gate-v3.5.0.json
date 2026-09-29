@@ -106,6 +106,10 @@
       "runner": "compat/allocator/x86_64_m6_child_abandoned_visitor.py",
       "scope": "Source-built pinned-C/native-adapter visitation of one child-subprocess Heap after its owner exits with abandoned regular and OS singleton pages. A second child member observes selected area and live-block order, freed-block omission, callback early stops, and ordinary versus abandoned traversal."
     },
+    "differential:child-main-heap-visitor": {
+      "runner": "compat/allocator/x86_64_m6_child_main_heap_visitor.py",
+      "scope": "Source-built pinned-C/native-adapter child-subprocess main Heap visitation before and after its allocating thread exits: regular and OS singleton ownership, ordinary and abandoned selection, null-Heap selection on a second child member, area/block order and early stops, and terminal free."
+    },
     "differential:main-abandoned-heap-visitor": {
       "runner": "compat/allocator/x86_64_m6_main_abandoned_visitor.py",
       "scope": "Source-built pinned-C/native-adapter mi_heap_visit_abandoned_blocks on the process main Heap after a worker's regular page enters its main-arena abandoned bitmap: exact selected bin membership with a separate non-abandoned same-size page, live/freed block filtering, area/block early stops, and null-Heap selection."
@@ -323,13 +327,14 @@
         "differential:abandoned-os-heap-visitor",
         "differential:abandoned-combined-heap-visitor",
         "differential:child-abandoned-heap-visitor",
+        "differential:child-main-heap-visitor",
         "differential:main-abandoned-heap-visitor",
         "differential:main-abandoned-os-heap-visitor",
         "differential:main-abandoned-mixed-heap-visitor",
         "unit:heap-statistics-visitation"
       ],
       "blocked_by": [
-        "mi_heap_visit_blocks is exported for quiescent non-main and process-main Heaps of the main subprocess. The shared adapter covers regular-before-OS singleton order, live-block and freed-block filtering, and area/block early stops. A clean-process differential covers exact main-Heap area/block populations through 1 to 1000 non-main Heaps and detached metadata collection. A two-owner mixed-workload differential covers accumulated main-Heap page population and release after both worker owners exit, Heap deletion and destruction, remote final frees, and collection. mi_heap_visit_abandoned_blocks is source-differentiated for worker-abandoned regular and OS singleton pages on a non-main Heap; process-main fixtures cover a selected regular bitmap page against a non-abandoned same-size page, live OS-list order, and a bounded combination of two regular bins and OS pages with live main-thread regular controls. Pinned source places each live OS singleton on the abandoned list immediately. A child-subprocess Heap with abandoned regular and OS pages is source-differentiated after owner exit when a second child member visits it. These fixtures cover freed-block and freed-page omission, area/block early stops, and null-Heap selection. Child main-Heap and full concurrent visitation, broader Heap statistics, and complete lifetime evidence remain open."
+        "mi_heap_visit_blocks is exported for quiescent non-main and process-main Heaps of the main subprocess. The shared adapter covers regular-before-OS singleton order, live-block and freed-block filtering, and area/block early stops. A clean-process differential covers exact main-Heap area/block populations through 1 to 1000 non-main Heaps and detached metadata collection. A two-owner mixed-workload differential covers accumulated main-Heap page population and release after both worker owners exit, Heap deletion and destruction, remote final frees, and collection. mi_heap_visit_abandoned_blocks is source-differentiated for worker-abandoned regular and OS singleton pages on a non-main Heap; process-main fixtures cover a selected regular bitmap page against a non-abandoned same-size page, live OS-list order, and a bounded combination of two regular bins and OS pages with live main-thread regular controls. Pinned source places each live OS singleton on the abandoned list immediately. A child-subprocess Heap with abandoned regular and OS pages is source-differentiated after owner exit when a second child member visits it. A bounded child main-Heap fixture covers direct allocation through its fixed Theap, ordinary and abandoned visitation before and after owner exit, null-Heap selection by a second child member, callback stops, and terminal free. These fixtures cover freed-block and freed-page omission and area/block order. Broader child main-Heap populations, full concurrent visitation, broader Heap statistics, and complete lifetime evidence remain open."
       ]
     },
     {

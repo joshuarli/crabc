@@ -1200,6 +1200,20 @@ unsafe fn heap_allocate(heap: *mut c_void, size: usize, request: Request, zero: 
             (Request::Aligned { alignment, offset }, true) => crate::source_api::zalloc_aligned_at(size, alignment, offset),
         };
     }
+    if crate::subproc::lifecycle::current_child_main_heap() == Some(heap) {
+        // The child main Heap uses this member's fixed Theap. Selecting it
+        // restores the cached source Theap before direct Heap allocation.
+        // SAFETY: the current child member retains its main Heap and Theap.
+        if !unsafe { crate::subproc::lifecycle::native_child_heap_select_theap(heap) } {
+            return Sourced { value: None, errno: report_failure(size, request) };
+        }
+        return match (request, zero) {
+            (Request::Plain, false) => crate::source_api::malloc_zero_native(size, false),
+            (Request::Plain, true) => crate::source_api::malloc_zero_native(size, true),
+            (Request::Aligned { alignment, offset }, false) => crate::source_api::malloc_aligned_at(size, alignment, offset),
+            (Request::Aligned { alignment, offset }, true) => crate::source_api::zalloc_aligned_at(size, alignment, offset),
+        };
+    }
     if let Request::Aligned { alignment, offset } = request {
         // `mi_theap_malloc_zero_aligned_at`'s refusals before any Theap work.
         if let Some(report) = SourceErrorReport::aligned_precheck(size, alignment, offset) {
