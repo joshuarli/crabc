@@ -38,12 +38,17 @@ only its exact source, configuration, image, products, and execution context.
   preserves source wrapping and request headroom. Allocation pops initialize
   source debug padding and use both page keys; explicit main-Heap allocation
   stays on its fixed Theap. Normal-bin statistics and count-overflow diagnostics
-  have expanded source differential coverage. These changes do not close entire
-  allocator milestones.
+  have expanded source differential coverage. Heap dispatch, debug realloc
+  refusal, aligned zero-size reuse, and underlying failure diagnostics now
+  match their source controls. Attached TLD membership uses locked field
+  projections rather than borrowing concurrently mutable metadata. These
+  changes do not close entire allocator milestones.
 - **Qualification:** the launcher and Rust checks now default to the immutable
   declared core image rather than the drifting development tag. Separate clean
-  cohorts have passed all 73 installed cases; full 219-case and family runs
-  continue. Original signal-handler counter-window, AIO watchdog, resolver,
+  cohorts have passed all 219 case executions; their final physical receipt
+  reconstruction and same-source family runs continue. The POSIX cohort also
+  passes all 54 matrix rows and its physical reader. Original signal-handler
+  counter-window, AIO watchdog, resolver,
   compiler, and SQLite timeout failures remain retained. The corpus now retains
   cleanup diagnostics and bounds pipe draining; a clean full 34-case corpus and
   its independent physical reader pass. An isolated pass does not waive a failed
@@ -51,16 +56,20 @@ only its exact source, configuration, image, products, and execution context.
 - **Allocator evidence:** scoped initialization, arena policy, page/local
   operations, remote publication, and generic exit have native C/Rust, Miri,
   or model evidence. Expanded normal statistics pass all three selected
-  statistics modes. A historical full M8 run passes stress, all seeded soaks,
-  ownership/interposition/DSO boundaries, Rust std/LTO, and Lua; its corpus
-  control timeout leaves that aggregate incomplete. Current-source M4/M6
-  debug, Heap/Theap, callback, and lifecycle work remains active.
+  statistics modes. A clean source-qualified run passes all six foundation
+  leaves. Another passes all nine integration leaves, 17 commands, and 14
+  physical receipts, including stress, all seeded soaks, ownership,
+  interposition, DSO boundaries, the full corpus, Rust std/LTO, and Lua.
+  Those historical source seals do not qualify later merged changes.
+  Current-source API/mode and Heap/Theap lifecycle aggregates remain active.
 - **ABI frontier:** complete-function physical provider joins replace many
   per-symbol witnesses. A retained diagnostic assembly reconstructs with 232
-  remaining blockers; older image-bound inputs and missing semantic/declaration
-  companions keep closure open. Fresh same-image, same-source assembly and
-  actual family admissions are still required. The exact pinned C++ membarrier
-  declaration/provider boundary is being proved without remapping its symbols.
+  remaining blockers; a fresh diagnostic assembly reduces this to 159, with
+  identity, family, companion, declaration, and semantic obligations still
+  explicit. Actual family admissions remain required. The two pinned C++
+  membarrier mismatches remain raw; 24 positive and negative provider controls
+  prove their reviewed boundary without remapping symbols. Checked-header and
+  locale companions are being corrected to join the exact supplied products.
 - **Remaining:** complete the planned runtime families and all applicable
   allocator API/mode/source conditions; replay the ordered gates on merged
   source; obtain physical huge-page/NUMA evidence and an uncontended qualified
