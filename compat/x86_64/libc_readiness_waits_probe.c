@@ -85,6 +85,8 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&sigsuspend),
     int (*)(const sigset_t *)), "sigsuspend declaration");
 
 static volatile sig_atomic_t delivered_signal;
+static volatile sig_atomic_t delivery_mask_valid;
+static sigset_t delivery_mask;
 
 /* `pause` cannot atomically exchange a temporary mask. A runtime assertion
  * would need a timer, child, or thread to race a delivery with entry to the
@@ -95,6 +97,7 @@ static volatile sig_atomic_t pause_execution_disabled;
 
 static void record_delivery(int signal)
 {
+    delivery_mask_valid = sigprocmask(SIG_SETMASK, 0, &delivery_mask) == 0;
     delivered_signal = signal;
 }
 
@@ -156,6 +159,11 @@ static void close_if_open(int *file_descriptor)
 static int mask_has_usr1(const sigset_t *mask)
 {
     return sigismember(mask, SIGUSR1) == 1;
+}
+
+static int mask_has_usr2(const sigset_t *mask)
+{
+    return sigismember(mask, SIGUSR2) == 1;
 }
 
 static int check_poll_and_ppoll(void)
@@ -435,6 +443,113 @@ finish:
     return status;
 }
 
+static int check_mixed_readiness(void)
+{
+    int pipe_fds[2] = { -1, -1 };
+    struct pollfd descriptors[2];
+    struct timespec zero = { 0, 0 };
+    fd_set readable;
+    fd_set writable;
+    fd_set exceptional;
+    struct timeval select_zero = { 0, 0 };
+    sigset_t empty = { 0 };
+    int width;
+    int status = 0;
+
+    if (pipe(pipe_fds) != 0)
+        return 1;
+    if (sigemptyset(&empty) != 0) {
+        status = 2;
+        goto finish;
+    }
+    width = (pipe_fds[0] > pipe_fds[1] ? pipe_fds[0] : pipe_fds[1]) + 1;
+    descriptors[0].fd = pipe_fds[0];
+    descriptors[0].events = POLLIN;
+    descriptors[1].fd = pipe_fds[1];
+    descriptors[1].events = POLLOUT;
+
+    descriptors[0].revents = descriptors[1].revents = (short)0x7fff;
+    if (poll(descriptors, 2, 0) != 1 || descriptors[0].revents != 0 ||
+        (descriptors[1].revents & POLLOUT) == 0) {
+        status = 3;
+        goto finish;
+    }
+    descriptors[0].revents = descriptors[1].revents = (short)0x7fff;
+    if (ppoll(descriptors, 2, &zero, &empty) != 1 ||
+        descriptors[0].revents != 0 ||
+        (descriptors[1].revents & POLLOUT) == 0) {
+        status = 4;
+        goto finish;
+    }
+    FD_ZERO(&readable);
+    FD_ZERO(&writable);
+    FD_ZERO(&exceptional);
+    FD_SET(pipe_fds[0], &readable);
+    FD_SET(pipe_fds[1], &writable);
+    if (select(width, &readable, &writable, &exceptional,
+            &select_zero) != 1 || FD_ISSET(pipe_fds[0], &readable) ||
+        !FD_ISSET(pipe_fds[1], &writable) ||
+        FD_ISSET(pipe_fds[0], &exceptional) ||
+        FD_ISSET(pipe_fds[1], &exceptional)) {
+        status = 5;
+        goto finish;
+    }
+    FD_ZERO(&readable);
+    FD_ZERO(&writable);
+    FD_ZERO(&exceptional);
+    FD_SET(pipe_fds[0], &readable);
+    FD_SET(pipe_fds[1], &writable);
+    if (pselect(width, &readable, &writable, &exceptional,
+            &zero, &empty) != 1 || FD_ISSET(pipe_fds[0], &readable) ||
+        !FD_ISSET(pipe_fds[1], &writable) ||
+        FD_ISSET(pipe_fds[0], &exceptional) ||
+        FD_ISSET(pipe_fds[1], &exceptional)) {
+        status = 6;
+        goto finish;
+    }
+    if (write(pipe_fds[1], "m", 1) != 1) {
+        status = 7;
+        goto finish;
+    }
+    if (poll(descriptors, 2, 0) != 2 ||
+        (descriptors[0].revents & POLLIN) == 0 ||
+        (descriptors[1].revents & POLLOUT) == 0) {
+        status = 8;
+        goto finish;
+    }
+    if (ppoll(descriptors, 2, &zero, &empty) != 2 ||
+        (descriptors[0].revents & POLLIN) == 0 ||
+        (descriptors[1].revents & POLLOUT) == 0) {
+        status = 9;
+        goto finish;
+    }
+    FD_ZERO(&readable);
+    FD_ZERO(&writable);
+    FD_SET(pipe_fds[0], &readable);
+    FD_SET(pipe_fds[1], &writable);
+    if (select(width, &readable, &writable, 0, &select_zero) != 2 ||
+        !FD_ISSET(pipe_fds[0], &readable) ||
+        !FD_ISSET(pipe_fds[1], &writable)) {
+        status = 10;
+        goto finish;
+    }
+    FD_ZERO(&readable);
+    FD_ZERO(&writable);
+    FD_SET(pipe_fds[0], &readable);
+    FD_SET(pipe_fds[1], &writable);
+    if (pselect(width, &readable, &writable, 0, &zero, &empty) != 2 ||
+        !FD_ISSET(pipe_fds[0], &readable) ||
+        !FD_ISSET(pipe_fds[1], &writable)) {
+        status = 11;
+        goto finish;
+    }
+
+finish:
+    close_if_open(&pipe_fds[1]);
+    close_if_open(&pipe_fds[0]);
+    return status;
+}
+
 static int check_atomic_signal_waits(void)
 {
     struct sigaction saved_action = { 0 };
@@ -444,8 +559,9 @@ static int check_atomic_signal_waits(void)
     struct timespec saved_timeout;
     sigset_t saved_mask = { 0 };
     sigset_t selected = { 0 };
+    sigset_t temporary = { 0 };
     sigset_t empty = { 0 };
-    sigset_t saved_empty;
+    sigset_t saved_temporary;
     sigset_t observed_mask = { 0 };
     int action_saved = 0;
     int mask_saved = 0;
@@ -462,7 +578,10 @@ static int check_atomic_signal_waits(void)
     }
     mask_saved = 1;
     if (sigemptyset(&selected) != 0 ||
-        sigaddset(&selected, SIGUSR1) != 0 || sigemptyset(&empty) != 0) {
+        sigaddset(&selected, SIGUSR1) != 0 ||
+        sigemptyset(&temporary) != 0 ||
+        sigaddset(&temporary, SIGUSR2) != 0 ||
+        sigemptyset(&empty) != 0) {
         status = 3;
         goto finish;
     }
@@ -476,52 +595,57 @@ static int check_atomic_signal_waits(void)
         status = 5;
         goto finish;
     }
-    if (sigprocmask(SIG_BLOCK, &selected, 0) != 0 ||
+    if (sigprocmask(SIG_SETMASK, &selected, 0) != 0 ||
         sigprocmask(SIG_SETMASK, 0, &observed_mask) != 0 ||
-        !mask_has_usr1(&observed_mask)) {
+        !mask_has_usr1(&observed_mask) || mask_has_usr2(&observed_mask)) {
         status = 6;
         goto finish;
     }
 
     saved_timeout = ppoll_timeout;
-    saved_empty = empty;
+    saved_temporary = temporary;
     delivered_signal = 0;
+    delivery_mask_valid = 0;
     if (raw_tgkill_self(SIGUSR1) != 0) {
         status = 7;
         goto finish;
     }
     errno = 0;
-    if (ppoll(0, 0, &ppoll_timeout, &empty) != -1 || errno != EINTR ||
-        delivered_signal != SIGUSR1 ||
+    if (ppoll(0, 0, &ppoll_timeout, &temporary) != -1 ||
+        errno != EINTR || delivered_signal != SIGUSR1 ||
+        !delivery_mask_valid || !mask_has_usr2(&delivery_mask) ||
         !bytes_equal(&ppoll_timeout, &saved_timeout, sizeof ppoll_timeout) ||
-        !bytes_equal(&empty, &saved_empty, sizeof empty) ||
+        !bytes_equal(&temporary, &saved_temporary, sizeof temporary) ||
         sigprocmask(SIG_SETMASK, 0, &observed_mask) != 0 ||
-        !mask_has_usr1(&observed_mask)) {
+        !mask_has_usr1(&observed_mask) || mask_has_usr2(&observed_mask)) {
         status = 8;
         goto finish;
     }
 
     saved_timeout = pselect_timeout;
-    saved_empty = empty;
+    saved_temporary = temporary;
     delivered_signal = 0;
+    delivery_mask_valid = 0;
     if (raw_tgkill_self(SIGUSR1) != 0) {
         status = 9;
         goto finish;
     }
     errno = 0;
-    if (pselect(0, 0, 0, 0, &pselect_timeout, &empty) != -1 ||
+    if (pselect(0, 0, 0, 0, &pselect_timeout, &temporary) != -1 ||
         errno != EINTR || delivered_signal != SIGUSR1 ||
+        !delivery_mask_valid || !mask_has_usr2(&delivery_mask) ||
         !bytes_equal(&pselect_timeout, &saved_timeout,
             sizeof pselect_timeout) ||
-        !bytes_equal(&empty, &saved_empty, sizeof empty) ||
+        !bytes_equal(&temporary, &saved_temporary, sizeof temporary) ||
         sigprocmask(SIG_SETMASK, 0, &observed_mask) != 0 ||
-        !mask_has_usr1(&observed_mask)) {
+        !mask_has_usr1(&observed_mask) || mask_has_usr2(&observed_mask)) {
         status = 10;
         goto finish;
     }
 
-    saved_empty = empty;
+    saved_temporary = empty;
     delivered_signal = 0;
+    delivery_mask_valid = 0;
     if (raw_tgkill_self(SIGUSR1) != 0) {
         status = 11;
         goto finish;
@@ -529,9 +653,10 @@ static int check_atomic_signal_waits(void)
     errno = 0;
     if (sigsuspend(&empty) != -1 || errno != EINTR ||
         delivered_signal != SIGUSR1 ||
-        !bytes_equal(&empty, &saved_empty, sizeof empty) ||
+        !delivery_mask_valid || mask_has_usr2(&delivery_mask) ||
+        !bytes_equal(&empty, &saved_temporary, sizeof empty) ||
         sigprocmask(SIG_SETMASK, 0, &observed_mask) != 0 ||
-        !mask_has_usr1(&observed_mask)) {
+        !mask_has_usr1(&observed_mask) || mask_has_usr2(&observed_mask)) {
         status = 12;
         goto finish;
     }
@@ -568,9 +693,12 @@ int crabc_x86_64_readiness_waits_probe(void)
     status = check_select_and_pselect();
     if (status != 0)
         return 40 + status;
+    status = check_mixed_readiness();
+    if (status != 0)
+        return 60 + status;
     status = check_atomic_signal_waits();
     if (status != 0)
-        return 70 + status;
+        return 80 + status;
     return 0;
 }
 
