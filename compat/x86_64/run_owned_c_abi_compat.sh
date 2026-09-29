@@ -19,6 +19,7 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly probe="$ROOT/compat/x86_64/owned_c_abi_compat_probe.c"
 readonly interposition_probe="$ROOT/compat/x86_64/owned_c_abi_compat_interposition_probe.c"
+readonly gettext_interposition_probe="$ROOT/compat/x86_64/owned_c_abi_compat_gettext_interposition_probe.c"
 readonly interpreter=/lib/ld-crabc-x86_64.so.1
 readonly musl_interpreter=/lib/ld-musl-x86_64.so.1
 readonly closure="$ROOT/compat/x86_64/owned_c_abi_provider_closure.py"
@@ -371,12 +372,19 @@ step='compile workloads'
     -c "$probe" -o "$work/workload.o"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
     -c "$interposition_probe" -o "$work/interposition.o"
+"$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
+    -c "$gettext_interposition_probe" -o "$work/gettext-interposition.o"
 audit_installed_compile "$installed" "$probe" "$work/workload.o" workload
 audit_installed_compile "$installed" "$interposition_probe" "$work/interposition.o" interposition
+audit_installed_compile "$installed" "$gettext_interposition_probe" "$work/gettext-interposition.o" gettext-interposition
 
 bash "$ROOT/compat/x86_64/run_musl_oracle.sh" >/dev/null
 step='link static musl oracle'
 "$oracle_cc" -static -fno-pie -no-pie -pthread "$work/workload.o" -o "$work/oracle"
+"$oracle_cc" -static -fno-pie -no-pie "$work/gettext-interposition.o" \
+    -o "$work/gettext-interposition-oracle"
+run_capture "$work/gettext-interposition-oracle.stdout" \
+    "$work/gettext-interposition-oracle"
 mkdir -p "$work/oracle-root"
 cp "$work/oracle" "$work/oracle-root/consumer"
 for scenario in "${scenarios[@]}"; do
@@ -398,6 +406,13 @@ fi
 if [ -n "$static_product" ]; then
     validate_product_payload "$static_product" static
     for mode in static static-pie; do
+        step="link gettext interposition $mode"
+        "$static_product/bin/crabc-cc" "-$mode" \
+            "$work/gettext-interposition.o" -o "$work/gettext-interposition-$mode"
+        run_capture "$work/gettext-interposition-$mode.stdout" \
+            "$work/gettext-interposition-$mode"
+        compare_oracle "$work/gettext-interposition-oracle" \
+            "$work/gettext-interposition-$mode"
         candidate="$work/static-$mode"
         receipt="$candidate.receipt.json"
         step="link $mode"

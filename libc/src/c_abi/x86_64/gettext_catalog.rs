@@ -76,6 +76,46 @@ static UTF8_CODESET: [u8; 6] = *b"UTF-8\0";
 
 static CATALOG_LOCK: AtomicBool = AtomicBool::new(false);
 
+// The public delegation edges let an application definition replace the
+// intermediate domain wrapper when the static archive is extracted.
+mod source {
+    use core::ffi::{c_char, c_ulong};
+
+    // LLVM can see both Rust definitions and fold these forwarding calls into
+    // identity returns. The jump keeps musl's public archive extraction edge.
+    core::arch::global_asm!(
+        r#"
+    .text
+    .p2align 4
+    .globl __crabc_x86_gettext_cabi_dgettext
+    .hidden __crabc_x86_gettext_cabi_dgettext
+    .type __crabc_x86_gettext_cabi_dgettext,@function
+__crabc_x86_gettext_cabi_dgettext:
+    jmp dgettext
+    .size __crabc_x86_gettext_cabi_dgettext, .-__crabc_x86_gettext_cabi_dgettext
+    .p2align 4
+    .globl __crabc_x86_gettext_cabi_dngettext
+    .hidden __crabc_x86_gettext_cabi_dngettext
+    .type __crabc_x86_gettext_cabi_dngettext,@function
+__crabc_x86_gettext_cabi_dngettext:
+    jmp dngettext
+    .size __crabc_x86_gettext_cabi_dngettext, .-__crabc_x86_gettext_cabi_dngettext
+"#,
+    );
+
+    unsafe extern "C" {
+        #[link_name = "__crabc_x86_gettext_cabi_dgettext"]
+        pub(super) fn dgettext(domain: *const c_char, msgid: *const c_char) -> *mut c_char;
+        #[link_name = "__crabc_x86_gettext_cabi_dngettext"]
+        pub(super) fn dngettext(
+            domain: *const c_char,
+            msgid1: *const c_char,
+            msgid2: *const c_char,
+            number: c_ulong,
+        ) -> *mut c_char;
+    }
+}
+
 /// Artifact-local state lock.
 ///
 /// All selected state accesses happen while this guard is live. Direct C
@@ -538,7 +578,7 @@ static_archive_member! { textdomain_source {
     /// Return an identity translation for the current domain.
     #[no_mangle]
     pub unsafe extern "C" fn gettext(msgid: *const c_char) -> *mut c_char {
-        unsafe { dcngettext(null_mut(), msgid, null_mut(), 1, 5) }
+        unsafe { source::dgettext(null_mut(), msgid) }
     }
 
     /// Return the no-catalog singular/plural fallback for the current domain.
@@ -548,7 +588,7 @@ static_archive_member! { textdomain_source {
         msgid2: *const c_char,
         number: c_ulong,
     ) -> *mut c_char {
-        unsafe { dcngettext(null_mut(), msgid1, msgid2, number, 5) }
+        unsafe { source::dngettext(null_mut(), msgid1, msgid2, number) }
     }
 }}
 
