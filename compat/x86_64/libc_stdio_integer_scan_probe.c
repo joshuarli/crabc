@@ -99,9 +99,87 @@ static int check_selected_source_overflow(void)
     return 0;
 }
 
+static int check_integer_failure_and_consumption(void)
+{
+    int signed_value = 37;
+    unsigned int unsigned_value = 41;
+    int consumed = -1;
+    char trailing = '?';
+    int result;
+
+    /* A sign without a digit is a matching failure. The scanner has seen
+     * input, so it preserves the destination and count while setting EINVAL. */
+    errno = EINTR;
+    result = sscanf("+", "%d%n", &signed_value, &consumed);
+    if (result != 0 || signed_value != 37 || consumed != -1 || errno != EINVAL)
+        return 1;
+
+    errno = EDOM;
+    result = call_vsscanf("-x", "%u%n", &unsigned_value, &consumed);
+    if (result != 0 || unsigned_value != 41 || consumed != -1 || errno != EINVAL)
+        return 2;
+
+    /* A field width ending immediately after the sign has the same failure,
+     * even though an otherwise valid digit follows outside the field. */
+    errno = EILSEQ;
+    result = sscanf("-7", "%1i%n", &signed_value, &consumed);
+    if (result != 0 || signed_value != 37 || consumed != -1 || errno != EINVAL)
+        return 3;
+
+    /* A prefix without a following hex digit also fails, but does not set
+     * EINVAL: the leading zero was a valid digit before prefix admission. */
+    errno = EDOM;
+    result = sscanf("0x", "%i%n", &signed_value, &consumed);
+    if (result != 0 || signed_value != 37 || consumed != -1 || errno != EDOM)
+        return 4;
+
+    errno = EINTR;
+    result = sscanf("0x1", "%1x%n%c", &unsigned_value, &consumed,
+        &trailing);
+    if (result != 2 || unsigned_value != 0U || consumed != 1 ||
+        trailing != 'x' || errno != EINTR)
+        return 5;
+
+    /* Suppression still parses the entire overflowing source field and
+     * records ERANGE; only the later character contributes an assignment. */
+    consumed = -1;
+    trailing = '?';
+    errno = EILSEQ;
+    result = sscanf("18446744073709551616!", "%*20u%n%c",
+        &consumed, &trailing);
+    if (result != 1 || consumed != 20 || trailing != '!' || errno != ERANGE)
+        return 6;
+
+    /* Successful integer assignment at exact input exhaustion is retained
+     * when a later character directive encounters EOF. */
+    consumed = -1;
+    trailing = '?';
+    errno = EDOM;
+    result = call_vsscanf("18446744073709551616", "%20u%n%c",
+        &unsigned_value, &consumed, &trailing);
+    if (result != 1 || unsigned_value != UINT_MAX || consumed != 20 ||
+        trailing != '?' || errno != ERANGE)
+        return 7;
+
+    /* Input exhaustion before any conversion is an input failure, with no
+     * destination or count store and with the caller's errno intact. */
+    signed_value = 37;
+    consumed = -1;
+    errno = EINTR;
+    result = sscanf(" \t", "%d%n", &signed_value, &consumed);
+    if (result != EOF || signed_value != 37 || consumed != -1 || errno != EINTR)
+        return 8;
+
+    return 0;
+}
+
 int crabc_x86_64_stdio_integer_scan_probe(void)
 {
-    return check_selected_source_overflow();
+    int status = check_selected_source_overflow();
+    if (status != 0)
+        return status;
+    status = check_integer_failure_and_consumption();
+    return status == 0 ? 0 : 20 + status;
 }
 
 #ifndef CRABC_STDIO_INTEGER_SCAN_FREESTANDING
