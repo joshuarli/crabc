@@ -86,6 +86,10 @@
       "runner": "compat/allocator/x86_64_m6_main_visitor_population.py",
       "scope": "Source-built pinned-C/native-adapter main-Heap area and block population through live non-main Heap allocation, destruction, visitor remote collection, and final collection for 1, 2, 10, 100, 250, 500, and 1000 Heaps; includes direct/fork and reserved-arena cases, detached Theap-image frees, and replaced dynamic TLS slot images."
     },
+    "differential:main-population-after-owner-exit": {
+      "runner": "compat/allocator/x86_64_m6_main_population_after_owner_exit.py",
+      "scope": "Source-built pinned-C/native-adapter main-Heap area, live-block, page-class, and page-count traces after two worker owners exit with accumulated regular, medium, and aligned singleton allocations; compares Heap deletion, destruction, moved-page ownership, remote frees, collection, payload, errno, and final PageMap membership."
+    },
     "differential:abandoned-heap-visitor": {
       "runner": "compat/allocator/x86_64_m6_abandoned_visitor.py",
       "scope": "Source-built pinned-C/native-adapter mi_heap_visit_abandoned_blocks over one non-main Heap regular page abandoned after its allocating worker exits: area-before-block order, one freed and two live blocks, and area/block callback early stops."
@@ -305,6 +309,7 @@
         "differential:public-heap-adapter",
         "differential:public-heap-lifecycle",
         "differential:main-heap-visitor-population",
+        "differential:main-population-after-owner-exit",
         "differential:abandoned-heap-visitor",
         "differential:abandoned-os-heap-visitor",
         "differential:abandoned-combined-heap-visitor",
@@ -314,7 +319,7 @@
         "unit:heap-statistics-visitation"
       ],
       "blocked_by": [
-        "mi_heap_visit_blocks is exported for quiescent non-main and process-main Heaps of the main subprocess. The shared adapter covers regular-before-OS singleton order, live-block and freed-block filtering, and area/block early stops. A clean-process differential covers exact main-Heap area/block populations through 1 to 1000 non-main Heaps and detached metadata collection. mi_heap_visit_abandoned_blocks is source-differentiated for worker-abandoned regular and OS singleton pages on a non-main Heap; process-main fixtures cover a selected regular bitmap page against a non-abandoned same-size page, live OS-list order, and a bounded combination of two regular bins and OS pages with live main-thread regular controls. Pinned source places each live OS singleton on the abandoned list immediately. These fixtures cover freed-block and freed-page omission, area/block early stops, and null-Heap selection. Broader mixed workloads, child-subprocess and full concurrent visitation, Heap statistics, and complete lifetime evidence remain open."
+        "mi_heap_visit_blocks is exported for quiescent non-main and process-main Heaps of the main subprocess. The shared adapter covers regular-before-OS singleton order, live-block and freed-block filtering, and area/block early stops. A clean-process differential covers exact main-Heap area/block populations through 1 to 1000 non-main Heaps and detached metadata collection. A two-owner mixed-workload differential covers accumulated main-Heap page population and release after both worker owners exit, Heap deletion and destruction, remote final frees, and collection. mi_heap_visit_abandoned_blocks is source-differentiated for worker-abandoned regular and OS singleton pages on a non-main Heap; process-main fixtures cover a selected regular bitmap page against a non-abandoned same-size page, live OS-list order, and a bounded combination of two regular bins and OS pages with live main-thread regular controls. Pinned source places each live OS singleton on the abandoned list immediately. These fixtures cover freed-block and freed-page omission, area/block early stops, and null-Heap selection. Child-subprocess and full concurrent visitation, broader Heap statistics, and complete lifetime evidence remain open."
       ]
     },
     {
@@ -454,6 +459,7 @@
         "differential:heap-destroy-with-attached-worker",
         "differential:heap-delete-with-attached-worker",
         "differential:heap-destroy-racing-detach",
+        "differential:main-population-after-owner-exit",
         "differential:subprocess-lifecycle",
         "fault:heap-lifecycle"
       ],
