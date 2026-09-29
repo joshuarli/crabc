@@ -374,8 +374,7 @@ def nonfilling_bin_cap(block_size: int) -> int:
     `page_size_for_block` less a 4 KiB page-info allowance under-estimates
     the source `reserved`, so a bin whose live blocks stay at or below this
     bound can never exhaust a page: the owner-local default Theap then never
-    moves a page to `BIN_FULL` and never reaches the M5 abandonment
-    transition.
+    moves a page to `BIN_FULL` or triggers allocation-time abandonment.
     """
 
     return max(0, (page_size_for_block(block_size) - 4 * KIB) // block_size - 1)

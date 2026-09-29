@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed assembly checks for the native x86 initialization M2 admission."""
+"""Fail-closed assembly checks for native x86 initialization evidence."""
 
 from __future__ import annotations
 

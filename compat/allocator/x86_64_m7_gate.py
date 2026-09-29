@@ -341,7 +341,7 @@ def _select(
 def selected_inventory(
     inventory: Mapping[str, Any], api: Mapping[str, Any]
 ) -> tuple[set[str], set[str]]:
-    """Return the applicable interface items and compile-time modes M7 owns."""
+    """Return the selected applicable interfaces and compile-time modes."""
 
     items = _select(
         _by_name(api.get("items"), "item"), "group",
@@ -359,7 +359,7 @@ def selected_inventory(
 
 
 def sibling_owned_items(inventory: Mapping[str, Any]) -> dict[str, str]:
-    """Items that another milestone contract already owns, by owning contract."""
+    """Map interfaces handled by a separate group to their owning contract."""
 
     owned: dict[str, str] = {}
     for path in _string_list(inventory.get("disjoint_from"), "inventory disjoint contracts", allow_empty=True):
@@ -2131,10 +2131,10 @@ def run_adapter_differential(
     offline: bool, *, driver: Path = ADAPTER_DRIVER, begin: str = ADAPTER_TRACE_BEGIN,
     end: str = ADAPTER_TRACE_END, report_name: str = "adapter.json",
 ) -> dict[str, Any]:
-    """Link one shared M7 driver against pinned C and the native adapter.
+    """Link one shared options/statistics driver against C and Rust.
 
-    The M4 gate owns the adapter build; this reuses its C and adapter link
-    steps with an M7 driver in place of the M4 one.
+    Reuse the allocation-operation producer's pinned C and native-adapter
+    link steps so both drivers exercise the same implementation boundary.
     """
 
     import x86_64_m4_gate as m4

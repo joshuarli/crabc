@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
-"""Fail-closed native Linux/x86-64 gate for allocator Milestone 4.
+"""Fail-closed native Linux/x86-64 allocation-operation evidence.
 
-M4 is "calloc, realloc, aligned operations, usable size,
-medium/large/singleton, collection, OOM/failure preservation, C adapter, and
-applicable upstream operation tests" (plan.md Milestones). The reviewed
-contract `m4-gate-x86_64-v3.5.0.json` selects the M4 interface items from the
-pinned API applicability inventory, disjoint from the M6 and M7 contracts,
-partitions them into gates, and names the evidence each gate requires. An
-applicable item the selection reaches but another milestone owns is listed in
+The selected interfaces cover calloc, realloc, alignment, usable size,
+medium/large/singleton allocations, collection, OOM preservation, the C
+adapter, and applicable upstream operation tests. The pinned applicability
+inventory partitions these interfaces into gates with executable evidence.
+An applicable item handled by another interface group is listed in
 `excluded_items` with that owner and reason, never silently dropped.
 
 A gate passes only when it carries no reviewed blocker and every evidence
@@ -28,9 +26,9 @@ The evidence checks this module owns:
   `operations` scenario also requires identical termination for every
   process-terminating `mi_new` case;
 - `--adapter-boundary` audits the native adapter static library: its defined
-  `mi_*` globals include every M4 external function and only functions the
-  pinned header declares (the M6 and M7 gates add theirs to the same
-  adapter), it defines no libc allocator entry or C mimalloc `_mi_*` internal, and a C probe that
+  `mi_*` globals include every selected external function and only functions
+  the pinned header declares. Heap, reservation, option and statistics checks
+  use the same adapter. It defines no libc allocator entry or C mimalloc `_mi_*` internal, and a C probe that
   takes every function's address through the pinned `mimalloc.h` links
   against it alone and runs.
 """
@@ -153,7 +151,7 @@ def selected_inventory(inventory: Mapping[str, Any], api: Mapping[str, Any]) -> 
 
 
 def sibling_owned_items(inventory: Mapping[str, Any]) -> dict[str, str]:
-    """Items that another milestone contract already owns, by owning contract."""
+    """Map interfaces handled by a separate group to their owning contract."""
 
     owned: dict[str, str] = {}
     for path in _string_list(inventory.get("disjoint_from"), "inventory disjoint contracts", allow_empty=True):
@@ -604,8 +602,8 @@ def run_upstream_test_api(offline: bool) -> dict[str, Any]:
     """Link the unmodified pinned `test/test-api.c` against the native adapter only.
 
     Its checks print to stderr; each must report `ok.` and the summary must
-    report no failure. The file needs the M6 Heap/reservation and M7
-    option/statistics exports as well as the M4 ones.
+    report no failure. Its complete interface needs Heap, reservation,
+    option and statistics exports as well as allocation operations.
     """
 
     harness.require_native_x86_64()
@@ -644,7 +642,7 @@ def run_upstream_test_api(offline: bool) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def m4_external_functions(contract: Mapping[str, Any], api: Mapping[str, Any]) -> list[str]:
-    """The M4 gate items the pinned header declares as functions."""
+    """Selected interfaces that the pinned header declares as functions."""
 
     kinds = {item["name"]: item.get("kind") for item in api["items"]}
     return sorted(

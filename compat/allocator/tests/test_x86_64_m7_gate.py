@@ -55,7 +55,7 @@ class M7GateContractTests(unittest.TestCase):
         for name in ("mi_option_get", "mi_option_reset_delay", "mi_options_print_out", "mi_version",
                      "mi_register_error", "mi_stats_print_out", "mi_debug_show_arenas"):
             self.assertIn(name, owned)
-        # Heap/Theap/subprocess statistics and visitation belong to M6, and
+        # Heap/Theap/subprocess statistics and visitation have separate API checks;
         # the declaration-only `mi_stats_merge` is inapplicable.
         for name in ("mi_heap_stats_get", "mi_heap_visit_blocks", "mi_theap_guarded_set_sample_rate",
                      "mi_stats_merge", "mi_malloc"):
