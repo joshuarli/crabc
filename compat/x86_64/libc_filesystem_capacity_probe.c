@@ -23,13 +23,28 @@
 #include <sys/statvfs.h>
 #include <sys/syscall.h>
 
-_Static_assert(SYS_write == 1 && SYS_open == 2 && SYS_close == 3 && SYS_dup == 32 &&
+_Static_assert(SYS_write == 1 && SYS_open == 2 && SYS_close == 3 && SYS_pipe == 22 && SYS_dup == 32 &&
     SYS_getpid == 39 && SYS_unlink == 87 && SYS_statfs == 137 &&
     SYS_fstatfs == 138, "x86 filesystem-capacity fixture syscall numbers");
 _Static_assert(sizeof(struct statfs) == 120 && _Alignof(struct statfs) == 8,
     "x86 statfs record layout");
 _Static_assert(sizeof(struct statvfs) == 112 && _Alignof(struct statvfs) == 8,
     "x86 statvfs record layout");
+_Static_assert(offsetof(struct statfs, f_type) == 0 &&
+    offsetof(struct statfs, f_bsize) == 8 && offsetof(struct statfs, f_blocks) == 16 &&
+    offsetof(struct statfs, f_bfree) == 24 && offsetof(struct statfs, f_bavail) == 32 &&
+    offsetof(struct statfs, f_files) == 40 && offsetof(struct statfs, f_ffree) == 48 &&
+    offsetof(struct statfs, f_fsid) == 56 && offsetof(struct statfs, f_namelen) == 64 &&
+    offsetof(struct statfs, f_frsize) == 72 && offsetof(struct statfs, f_flags) == 80 &&
+    offsetof(struct statfs, f_spare) == 88, "x86 statfs field offsets");
+_Static_assert(offsetof(struct statvfs, f_bsize) == 0 &&
+    offsetof(struct statvfs, f_frsize) == 8 && offsetof(struct statvfs, f_blocks) == 16 &&
+    offsetof(struct statvfs, f_bfree) == 24 && offsetof(struct statvfs, f_bavail) == 32 &&
+    offsetof(struct statvfs, f_files) == 40 && offsetof(struct statvfs, f_ffree) == 48 &&
+    offsetof(struct statvfs, f_favail) == 56 && offsetof(struct statvfs, f_fsid) == 64 &&
+    offsetof(struct statvfs, f_flag) == 72 && offsetof(struct statvfs, f_namemax) == 80 &&
+    offsetof(struct statvfs, f_type) == 88 && offsetof(struct statvfs, __reserved) == 92,
+    "x86 statvfs field offsets");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&statfs),
     int (*)(const char *, struct statfs *)), "statfs declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&fstatfs),
@@ -175,6 +190,16 @@ static int same_statfs_stable_fields(const struct statfs *left,
     return 1;
 }
 
+/* Pipefs has no changing capacity counters, so its complete records agree. */
+static int same_statfs_all_fields(const struct statfs *left,
+    const struct statfs *right)
+{
+    return same_statfs_stable_fields(left, right) &&
+        left->f_blocks == right->f_blocks && left->f_bfree == right->f_bfree &&
+        left->f_bavail == right->f_bavail && left->f_files == right->f_files &&
+        left->f_ffree == right->f_ffree;
+}
+
 static int statfs_tail_is_zero(const struct statfs *value)
 {
     size_t index;
@@ -209,6 +234,15 @@ static int statvfs_mapping_is_consistent(const struct statvfs *value,
         value->f_type == (unsigned int)source->f_type;
 }
 
+static int statvfs_mapping_is_exact(const struct statvfs *value,
+    const struct statfs *source)
+{
+    return statvfs_mapping_is_consistent(value, source) &&
+        value->f_blocks == source->f_blocks && value->f_bfree == source->f_bfree &&
+        value->f_bavail == source->f_bavail && value->f_files == source->f_files &&
+        value->f_ffree == source->f_ffree;
+}
+
 static int same_statvfs_stable_fields(const struct statvfs *left,
     const struct statvfs *right)
 {
@@ -232,6 +266,9 @@ int crabc_x86_64_filesystem_capacity_probe(void)
     struct statfs fd_statfs;
     struct statvfs path_statvfs;
     struct statvfs fd_statvfs;
+    struct statfs pipe_statfs;
+    struct statvfs pipe_statvfs;
+    int pipe_fds[2] = { -1, -1 };
     int descriptor = -1;
     int directory = -1;
     int closed_descriptor = -1;
@@ -346,6 +383,31 @@ int crabc_x86_64_filesystem_capacity_probe(void)
         result = 23;
         goto cleanup;
     }
+    if (raw1(SYS_pipe, (long)(void *)pipe_fds) != 0) {
+        result = 29;
+        goto cleanup;
+    }
+    errno = ERANGE;
+    if (fstatfs(pipe_fds[0], &pipe_statfs) != 0 || errno != ERANGE ||
+        pipe_statfs.f_type != 0x50495045 ||
+        !statfs_tail_is_zero(&pipe_statfs) ||
+        !statfs_capacity_is_sensible(&pipe_statfs) ||
+        fstatfs(pipe_fds[1], &fd_statfs) != 0 ||
+        !same_statfs_all_fields(&pipe_statfs, &fd_statfs) ||
+        !RECORD("pipe.read-write-fstatfs\n")) {
+        result = 30;
+        goto cleanup;
+    }
+    errno = EDOM;
+    if (fstatvfs(pipe_fds[0], &pipe_statvfs) != 0 || errno != EDOM ||
+        !statvfs_mapping_is_exact(&pipe_statvfs, &pipe_statfs) ||
+        fstatvfs(pipe_fds[1], &fd_statvfs) != 0 ||
+        !statvfs_mapping_is_exact(&fd_statvfs, &fd_statfs) ||
+        !same_statvfs_stable_fields(&pipe_statvfs, &fd_statvfs) ||
+        !RECORD("pipe.read-write-fstatvfs\n")) {
+        result = 31;
+        goto cleanup;
+    }
     if (raw1(SYS_unlink, (long)(void *)path) < 0) {
         result = 24;
         goto cleanup;
@@ -364,6 +426,10 @@ int crabc_x86_64_filesystem_capacity_probe(void)
     }
 
 cleanup:
+    if (pipe_fds[0] >= 0 && close_fd(pipe_fds[0]) != 0 && result == 0)
+        result = 32;
+    if (pipe_fds[1] >= 0 && close_fd(pipe_fds[1]) != 0 && result == 0)
+        result = 33;
     if (descriptor >= 0 && close_fd(descriptor) != 0 && result == 0)
         result = 26;
     if (directory >= 0 && close_fd(directory) != 0 && result == 0)
