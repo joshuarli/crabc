@@ -187,6 +187,11 @@ CHECKS = (
         "compat/allocator/m2_registered_arena_page_map_double_fault_x86_64.py",
     ),
     (
+        "registered-arena-terminal-unmap-fault-c-rust-differential",
+        "c-rust-registered-arena-terminal-unmap-fault-differential",
+        "compat/allocator/m2_registered_arena_terminal_unmap_fault_x86_64.py",
+    ),
+    (
         "selected-subprocess-statistics-aggregation",
         "rust-unit",
         "statistics::tests::subprocess_statistics_merges_selected_fields_in_source_declaration_order",
@@ -353,6 +358,7 @@ EXPLICIT_ARENA_SOURCE_CHECK_IDS = (
     "registered-arena-page-map-fault-c-rust-differential",
     "registered-arena-page-map-double-fault-c-rust-differential",
 )
+REGISTERED_ARENA_TERMINAL_UNMAP_CHECK_ID = "registered-arena-terminal-unmap-fault-c-rust-differential"
 PROCESS_PROTECTION_SOURCE_CHECK_IDS = (
     "process-owned-protect-fault-c-rust-differential",
     "process-owned-unprotect-fault-c-rust-differential",
@@ -891,6 +897,22 @@ def load_fragment(path: Path) -> dict[str, Any]:
             for check_id in EXPLICIT_ARENA_SOURCE_CHECK_IDS
         ):
             raise _error("explicit arena receiver lost its aligned map or release branch")
+
+    for definition_id in (
+        "os-free-and-full-memory-id-release",
+        "arena-policy-regular-map-and-manage",
+        "arena-terminal-destroy-and-os-release",
+    ):
+        definition = next((item for item in definitions if item["id"] == definition_id), None)
+        if definition is None or REGISTERED_ARENA_TERMINAL_UNMAP_CHECK_ID not in definition["evidence_check_ids"]:
+            raise _error("registered arena terminal unmap lost its release source boundary")
+    release_branch = next((item for item in branches if item["id"] == "os-free-and-statistics-events"), None)
+    if (
+        release_branch is None
+        or release_branch["disposition"] != "partial-fixed-profile"
+        or REGISTERED_ARENA_TERMINAL_UNMAP_CHECK_ID not in release_branch["evidence_check_ids"]
+    ):
+        raise _error("registered arena terminal unmap lost its open release branch")
 
     unqualified = component.get("unqualified_failure_matrix")
     if not isinstance(unqualified, list) or not unqualified:

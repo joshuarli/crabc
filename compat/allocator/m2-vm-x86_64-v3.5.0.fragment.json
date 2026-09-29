@@ -241,7 +241,8 @@
           "registered-arena-page-map-fault-c-rust-differential",
           "registered-arena-page-map-double-fault-c-rust-differential",
           "process-owned-protect-fault-c-rust-differential",
-          "process-owned-unprotect-fault-c-rust-differential"
+          "process-owned-unprotect-fault-c-rust-differential",
+          "registered-arena-terminal-unmap-fault-c-rust-differential"
         ]
       },
       {
@@ -435,7 +436,25 @@
           "explicit-arena-metadata-fault-c-rust-differential",
           "registered-arena-metadata-fault-c-rust-differential",
           "registered-arena-page-map-fault-c-rust-differential",
-          "registered-arena-page-map-double-fault-c-rust-differential"
+          "registered-arena-page-map-double-fault-c-rust-differential",
+          "registered-arena-terminal-unmap-fault-c-rust-differential"
+        ]
+      },
+      {
+        "id": "arena-terminal-destroy-and-os-release",
+        "source_anchor": {
+          "member": "src/arena.c",
+          "start_line": 1540,
+          "end_line": 1566,
+          "sha256": "0e372615ae6c03b6f5166ac20b7f779ffde17fa2ad012e3a6389fc14548aae7c"
+        },
+        "required_definitions": [
+          "static void mi_arenas_unsafe_destroy",
+          "_mi_os_free_ex",
+          "void _mi_arenas_unsafe_destroy_all"
+        ],
+        "evidence_check_ids": [
+          "registered-arena-terminal-unmap-fault-c-rust-differential"
         ]
       },
       {
@@ -584,7 +603,7 @@
       {
         "id": "os-free-and-statistics-events",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/os.c:240-294 regular OS free, full MemoryId base adjustment, huge dispatch, warnings, and unconditional subprocess committed/reserved counter events; the bounded records inject one normal-offset _mi_os_free_ex primitive failure/retry and, separately, release every selected aligned-overmap returned MemoryId after direct/prefix/suffix cleanup outcomes. The pinned C fixture records its actual void-free counter timing even when a physical cleanup range escaped before that returned-MemoryId release. Two selected explicit OS arena reservations also compare failed prefix or suffix trim, warning-time counters, published registry ownership, terminal arena destroy, and escaped raw-only cleanup. A separate fresh-process receiver compares metadata-protection failure before arena publication, clean or failed cleanup, successful retry, terminal release, and retained raw-only cleanup. Another compares a second metadata-protection failure while the first arena remains registered, then a writable claim and terminal release of that retained arena. Two further process receivers compare registered arenas across ordinary page allocation whose PageMap top commit faults once or twice in the same allocation call, warning-time counters, successful retry, and terminal release.",
+        "source_scope": "src/os.c:240-294 regular OS free, full MemoryId base adjustment, huge dispatch, warnings, and unconditional subprocess committed/reserved counter events; the bounded records inject one normal-offset _mi_os_free_ex primitive failure/retry and, separately, release every selected aligned-overmap returned MemoryId after direct/prefix/suffix cleanup outcomes. The pinned C fixture records its actual void-free counter timing even when a physical cleanup range escaped before that returned-MemoryId release. Two selected explicit OS arena reservations also compare failed prefix or suffix trim, warning-time counters, published registry ownership, terminal arena destroy, and escaped raw-only cleanup. A separate fresh-process receiver compares metadata-protection failure before arena publication, clean or failed cleanup, successful retry, terminal release, and retained raw-only cleanup. Another compares a second metadata-protection failure while the first arena remains registered, then a writable claim and terminal release of that retained arena. Two further process receivers compare registered arenas across ordinary page allocation whose PageMap top commit faults once or twice in the same allocation call, warning-time counters, successful retry, and terminal release. A direct explicit reserved-arena terminal-destroy receiver faults the first unmap, checks its warning before accounting changes, retains that raw mapping after registry retirement, releases the second arena, and cleans the escaped first mapping through a raw call.",
         "source_anchors": [
           {
             "member": "src/os.c",
@@ -608,7 +627,8 @@
           "registered-arena-page-map-fault-c-rust-differential",
           "registered-arena-page-map-double-fault-c-rust-differential",
           "process-owned-protect-fault-c-rust-differential",
-          "process-owned-unprotect-fault-c-rust-differential"
+          "process-owned-unprotect-fault-c-rust-differential",
+          "registered-arena-terminal-unmap-fault-c-rust-differential"
         ],
         "missing_conditions": [
           "The selected normal-offset _mi_os_free_ex failure/retry, finite aligned-overmap source rows, and normal aligned allocation prefix/suffix trim-failure receivers compare full-MemoryId base/size, current/total counter timing, escaped ranges, source warning delivery, and raw-only release cleanup. Warning/error reporting beyond those receivers, huge MemoryId dispatch, unselected allocation transitions, and every other counter/caller route remain unqualified."
@@ -1102,6 +1122,12 @@
         "id": "registered-arena-page-map-double-fault-c-rust-differential",
         "kind": "c-rust-registered-arena-page-map-fault-differential",
         "target": "compat/allocator/m2_registered_arena_page_map_double_fault_x86_64.py",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "registered-arena-terminal-unmap-fault-c-rust-differential",
+        "kind": "c-rust-registered-arena-terminal-unmap-fault-differential",
+        "target": "compat/allocator/m2_registered_arena_terminal_unmap_fault_x86_64.py",
         "expected_passed_test_count": 1
       },
       {

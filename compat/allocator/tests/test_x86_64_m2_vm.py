@@ -37,6 +37,7 @@ EXPECTED_VM_CHECK_IDS = (
     "registered-arena-metadata-fault-c-rust-differential",
     "registered-arena-page-map-fault-c-rust-differential",
     "registered-arena-page-map-double-fault-c-rust-differential",
+    "registered-arena-terminal-unmap-fault-c-rust-differential",
     "selected-subprocess-statistics-aggregation",
     "process-policy-ticket-zero-live-random",
     "aligned-map-trim-failure-leak",
@@ -616,7 +617,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
         self.assertEqual(vm["id"], "vm-primitives")
         self.assertEqual(vm["native_status"], "partial")
         self.assertEqual(tuple(check["id"] for check in vm["checks"]), EXPECTED_VM_CHECK_IDS)
-        self.assertEqual(len(vm["bounded_source_definitions"]), 20)
+        self.assertEqual(len(vm["bounded_source_definitions"]), 21)
         callback_definitions = {
             definition["id"]: definition["source_anchor"]
             for definition in vm["bounded_source_definitions"]
@@ -776,6 +777,25 @@ class NativeVmAssemblyTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         producer.load_fragment(source)
 
+    def test_registered_arena_terminal_unmap_keeps_destroy_and_release_source_anchors(self):
+        producer = RUNNER._m2_x86_64_vm_producer()
+        original = RUNNER.read_json(RUNNER.M2_X86_64_VM_FRAGMENT)
+        bindings = (
+            ("bounded_source_definitions", "os-free-and-full-memory-id-release"),
+            ("bounded_source_definitions", "arena-policy-regular-map-and-manage"),
+            ("bounded_source_definitions", "arena-terminal-destroy-and-os-release"),
+            ("branch_matrix", "os-free-and-statistics-events"),
+        )
+        for section, row_id in bindings:
+            with self.subTest(section=section, row_id=row_id):
+                changed = copy.deepcopy(original)
+                row = next(item for item in changed["component"][section] if item["id"] == row_id)
+                row["evidence_check_ids"].remove(producer.REGISTERED_ARENA_TERMINAL_UNMAP_CHECK_ID)
+                source = mock.Mock()
+                source.read_text.return_value = json.dumps(changed)
+                with self.assertRaises(ValueError):
+                    producer.load_fragment(source)
+
     def test_vm_producer_receipt_rejects_missing_comparison_anchors_and_nonclaims(self):
         summary = self.summary()
         for field, replacement in (
@@ -901,7 +921,11 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "c": {case: dict(trace) for case in cases} if cases else dict(trace),
                 "rust": {case: dict(trace) for case in cases} if cases else dict(trace),
                 "c_commands": copy.deepcopy(commands),
-                "rust_commands": copy.deepcopy(commands),
+                "rust_commands": (
+                    {"run_status": 0, "stderr": ""}
+                    if receiver.get("rust_command_receipt") == "unit-run"
+                    else copy.deepcopy(commands)
+                ),
                 "command": ["python3", receiver["target"], "--offline"],
                 "mismatches": [],
                 "scope": "one fresh process-owned mapping per side",
@@ -936,7 +960,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
             )
         for check_id, receiver in RUNNER.M2_X86_64_VM_PROCESS_RECEIVERS.items():
             field = sorted(receiver["fields"])[0]
-            for name in ("status", "mismatches", "command", "field_missing", "field_different", "command_status"):
+            for name in ("status", "mismatches", "command", "field_missing", "field_different", "command_status", "rust_command_status"):
                 with self.subTest(check_id=check_id, mutation=name):
                     changed = copy.deepcopy(evidence)
                     row = changed[check_id]
@@ -950,13 +974,21 @@ class NativeVmAssemblyTests(unittest.TestCase):
                         (row["c"][receiver["cases"][0]] if receiver["cases"] else row["c"]).pop(field)
                     elif name == "field_different":
                         (row["rust"][receiver["cases"][0]] if receiver["cases"] else row["rust"])[field] = 2
-                    else:
+                    elif name == "command_status":
                         if receiver.get("command_receipts") == "nested-runs":
                             row["c_commands"]["runs"][receiver["cases"][0]]["status"] = 1
                         elif receiver["cases"]:
                             row["c_commands"][receiver["cases"][0]]["run_status"] = 1
                         else:
                             row["c_commands"]["run_status"] = 1
+                    elif receiver.get("rust_command_receipt") == "unit-run":
+                        row["rust_commands"]["run_status"] = 1
+                    elif receiver.get("command_receipts") == "nested-runs":
+                        row["rust_commands"]["runs"][receiver["cases"][0]]["status"] = 1
+                    elif receiver["cases"]:
+                        row["rust_commands"][receiver["cases"][0]]["run_status"] = 1
+                    else:
+                        row["rust_commands"]["run_status"] = 1
                     with self.assertRaises(RUNNER.HarnessError):
                         RUNNER._m2_x86_64_vm_check_records(
                             summary, self.vm_evidence(summary), process_vm_evidence=changed
@@ -1413,6 +1445,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "registered-arena-metadata-fault-c-rust-differential",
                 "registered-arena-page-map-fault-c-rust-differential",
                 "registered-arena-page-map-double-fault-c-rust-differential",
+                "registered-arena-terminal-unmap-fault-c-rust-differential",
                 "process-owned-protect-fault-c-rust-differential",
                 "process-owned-unprotect-fault-c-rust-differential",
             },

@@ -13483,6 +13483,24 @@ M2_X86_64_REGISTERED_ARENA_PAGE_MAP_RECEIVERS = {
         "scope": "pinned-c-rust-two-consecutive-registered-arena-page-map-top-commit-faults-warning-order-retry-and-terminal-destroy",
     },
 }
+M2_X86_64_REGISTERED_ARENA_TERMINAL_RECEIVERS = {
+    "registered-arena-terminal-unmap-fault-c-rust-differential": {
+        "artifact": "m2-registered-arena-terminal-unmap-fault",
+        "target": "compat/allocator/m2_registered_arena_terminal_unmap_fault_x86_64.py",
+        "kind": "c-rust-registered-arena-terminal-unmap-fault-differential",
+        "cases": (),
+        "fields": {
+            "setup", "page_map_ready", "claim_first", "before_mapped", "unmap_calls",
+            "first_range_exact", "second_range_exact", "warning_calls", "warning_exact",
+            "warning_before_accounting", "failed_live", "other_gone",
+            "page_map_still_ready", "registry_after", "reserved_delta",
+            "committed_delta", "commit_calls_delta", "raw_cleanup", "terminal_unmapped",
+        },
+        "commit_fields": set(),
+        "rust_command_receipt": "unit-run",
+        "scope": "pinned-c-rust-explicit-reserved-arena-failed-terminal-unmap-warning-before-accounting-retained-raw-owner-independent-release",
+    },
+}
 M2_X86_64_PROCESS_PROTECTION_RECEIVERS = {
     "process-owned-protect-fault-c-rust-differential": {
         "artifact": "m2-process-owned-protect-fault",
@@ -13538,6 +13556,7 @@ M2_X86_64_VM_PROCESS_RECEIVERS = {
     **M2_X86_64_EXPLICIT_ARENA_TRIM_RECEIVERS,
     **M2_X86_64_EXPLICIT_ARENA_METADATA_FAULT_RECEIVERS,
     **M2_X86_64_REGISTERED_ARENA_PAGE_MAP_RECEIVERS,
+    **M2_X86_64_REGISTERED_ARENA_TERMINAL_RECEIVERS,
     **M2_X86_64_PROCESS_PROTECTION_RECEIVERS,
 }
 
@@ -14095,6 +14114,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-explicit-arena-trim-differential",
                     "c-rust-explicit-arena-metadata-fault-differential",
                     "c-rust-registered-arena-page-map-fault-differential",
+                    "c-rust-registered-arena-terminal-unmap-fault-differential",
                     "c-rust-process-owned-protection-fault-differential",
                     "c-rust-second-arena-reset-advice-matrix",
                     "c-rust-process-arena-purge-differential",
@@ -14283,6 +14303,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                 "c-rust-explicit-arena-trim-differential",
                 "c-rust-explicit-arena-metadata-fault-differential",
                 "c-rust-registered-arena-page-map-fault-differential",
+                "c-rust-registered-arena-terminal-unmap-fault-differential",
                 "c-rust-process-owned-protection-fault-differential",
             }:
                 receiver = M2_X86_64_VM_PROCESS_RECEIVERS.get(raw_check["id"])
@@ -15485,7 +15506,14 @@ def _m2_x86_64_vm_check_records(
                 "rust": {field: rust_trace[field] for field in stable_fields},
             }:
                 raise HarnessError("native x86 M2 process VM stable-field receipt is invalid")
-            if any(observed.get(key) != expected_commands for key in ("c_commands", "rust_commands")):
+            rust_receipt = receiver.get("rust_command_receipt", "source-build")
+            if rust_receipt not in {"source-build", "unit-run"} or (rust_receipt == "unit-run" and cases):
+                raise HarnessError("native x86 M2 process VM Rust command definition is invalid")
+            expected_rust_commands = (
+                {"run_status": 0, "stderr": ""} if rust_receipt == "unit-run" else expected_commands
+            )
+            if (observed.get("c_commands") != expected_commands
+                    or observed.get("rust_commands") != expected_rust_commands):
                 raise HarnessError("native x86 M2 process VM command receipts are invalid")
             if receiver["commit_fields"] and (
                 not matching_integer_traces(
