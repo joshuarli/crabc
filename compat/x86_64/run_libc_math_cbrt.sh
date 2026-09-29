@@ -30,12 +30,13 @@ assert_selected_c_abi_surface() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mktemp nm objdump readelf rustup sort; do require_tool "$tool"; done
+for tool in ar awk cargo cmp diff grep nm objdump readelf rustup sort; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-math-cbrt.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+work_dir="$ROOT_DIR/.work/x86_64/libc-math-cbrt"
+rm -rf -- "$work_dir"
+mkdir -p "$work_dir"
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-math-cbrt-reference"
@@ -58,7 +59,7 @@ disassembly="$work_dir/candidate-disassembly"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
 	compat/x86_64/libc_math_cbrt_probe.c >/dev/null 2>"$header_trace"
-for header in fenv.h float.h math.h stdint.h features.h bits/alltypes.h; do
+for header in errno.h fenv.h float.h math.h stdint.h features.h bits/alltypes.h; do
 	grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
 		fail "fixture did not use project $header"
 done
@@ -168,4 +169,4 @@ if ! cmp -s "$reference_records" "$candidate_records"; then
 	fail "pinned-musl and freestanding cbrt differential records differ"
 fi
 
-printf 'x86 static libc math cbrt: PASS\n'
+printf 'x86 static libc math cbrt: PASS (raw records: %s)\n' "$work_dir"

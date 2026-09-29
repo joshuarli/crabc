@@ -9,7 +9,7 @@ _start:
     testl %eax, %eax
     jnz .Lcrabc_cbrt_fail
     lea crabc_x86_64_math_cbrt_records(%rip), %rsi
-    mov $5376, %edx
+    mov $502656, %edx
 .Lcrabc_cbrt_write:
     mov $1, %eax
     mov $1, %edi
