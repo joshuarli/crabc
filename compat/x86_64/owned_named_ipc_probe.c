@@ -71,6 +71,63 @@ static void shared_namespace_and_lifetime(void) {
     CHECK(sem_post(mapped)==0 && sem_wait(opened)==0);
     CHECK(sem_close(opened)==0 && munmap(mapped,4096)==0);
 }
+static void permissions_and_precedence(void) {
+    mode_t previous=umask(0);
+    int fd=shm_open("read-only",O_CREAT|O_EXCL|O_RDONLY,0444); CHECK(fd>=0);
+    CHECK(close(fd)==0);
+    fd=shm_open("private",O_CREAT|O_EXCL|O_RDWR,0000); CHECK(fd>=0);
+    CHECK(close(fd)==0);
+    umask(previous);
+    pid_t child=fork(); CHECK(child>=0);
+    if(!child) {
+        CHECK(setgid(65534)==0 && setuid(65534)==0);
+        fd=shm_open("read-only",O_RDONLY,0); CHECK(fd>=0 && close(fd)==0);
+        errno=0; CHECK(sem_open("read-only",0)==SEM_FAILED && errno==EACCES);
+        errno=0; CHECK(shm_open("read-only",O_RDWR,0)==-1 && errno==EACCES);
+        errno=0; CHECK(sem_open("private",O_CREAT,0600,~0U)==SEM_FAILED && errno==EACCES);
+        errno=0; CHECK(shm_open("private",O_RDONLY,0)==-1 && errno==EACCES);
+        errno=0; CHECK(sem_open("private",O_CREAT|O_EXCL,0600,~0U)==SEM_FAILED && errno==EEXIST);
+        errno=0; CHECK(shm_open("private",O_CREAT|O_EXCL|O_RDWR,0600)==-1 && errno==EEXIST);
+        errno=0; CHECK(sem_unlink("private")==-1 && errno==EPERM);
+        errno=0; CHECK(shm_unlink("private")==-1 && errno==EPERM);
+        _Exit(0);
+    }
+    child_ok(child);
+    CHECK(shm_unlink("read-only")==0 && shm_unlink("private")==0);
+    errno=0; CHECK(sem_open("absent-exclusive",O_CREAT|O_EXCL,0600,~0U)==SEM_FAILED && errno==EINVAL);
+    errno=0; CHECK(shm_open("absent-exclusive",O_RDONLY,0)==-1 && errno==ENOENT);
+}
+static void unlink_with_forked_mappings(void) {
+    sem_t *semaphore=sem_open("fork-unlinked-sem",O_CREAT|O_EXCL,0600,0U);
+    CHECK(semaphore!=SEM_FAILED);
+    int fd=shm_open("fork-unlinked-shm",O_CREAT|O_EXCL|O_RDWR,0600);
+    CHECK(fd>=0 && ftruncate(fd,4096)==0);
+    int *shared=mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_SHARED,fd,0);
+    CHECK(shared!=MAP_FAILED);
+    *shared=11;
+    int ready[2],done[2]; CHECK(pipe(ready)==0 && pipe(done)==0);
+    pid_t child=fork(); CHECK(child>=0);
+    if(!child) {
+        char token;
+        CHECK(close(ready[1])==0 && close(done[0])==0);
+        CHECK(read(ready[0],&token,1)==1 && token=='x');
+        errno=0; CHECK(sem_open("fork-unlinked-sem",0)==SEM_FAILED && errno==ENOENT);
+        errno=0; CHECK(shm_open("fork-unlinked-shm",O_RDONLY,0)==-1 && errno==ENOENT);
+        CHECK(*shared==11);
+        *shared=23;
+        CHECK(sem_post(semaphore)==0 && write(done[1],"y",1)==1);
+        CHECK(sem_close(semaphore)==0 && munmap(shared,4096)==0 && close(fd)==0);
+        _Exit(0);
+    }
+    CHECK(close(ready[0])==0 && close(done[1])==0);
+    CHECK(sem_unlink("fork-unlinked-sem")==0 && shm_unlink("fork-unlinked-shm")==0);
+    CHECK(write(ready[1],"x",1)==1);
+    char token; CHECK(read(done[0],&token,1)==1 && token=='y');
+    CHECK(*shared==23 && sem_wait(semaphore)==0);
+    child_ok(child);
+    CHECK(close(ready[1])==0 && close(done[0])==0);
+    CHECK(sem_close(semaphore)==0 && munmap(shared,4096)==0 && close(fd)==0);
+}
 #define THREADS 12
 static sem_t *race_handles[THREADS];
 static void *open_race(void *argument) {
@@ -207,7 +264,8 @@ static void failed_mapping_cleanup(void) {
     child_ok(child);
 }
 int main(void) {
-    namespace_rules(); shared_namespace_and_lifetime(); races_and_fork(); saturation_and_reuse();
+    namespace_rules(); shared_namespace_and_lifetime(); permissions_and_precedence();
+    unlink_with_forked_mappings(); races_and_fork(); saturation_and_reuse();
     contended_fork(); blocked_cancellation(); failed_mapping_cleanup();
     pthread_t thread; void *result; CHECK(pthread_create(&thread,NULL,pending_cancel,NULL)==0);
     CHECK(pthread_join(thread,&result)==0 && result==PTHREAD_CANCELED && cancellation_completed==1);
