@@ -455,6 +455,43 @@ static int check_exec_aliases(void)
     return 0;
 }
 
+static int check_exec_failures(void)
+{
+    char *arguments[] = { "consumer", NULL };
+    char *environment[] = { "PATH=/", "EXEC_TOKEN=failed", NULL };
+    static const char absent[] = "/process-control-absent";
+    static const char bare_absent[] = "process-control-absent";
+
+    errno = EDOM;
+    if (execve(absent, arguments, environment) != -1 || errno != ENOENT)
+        return 1;
+    errno = EDOM;
+    if (execv(absent, arguments) != -1 || errno != ENOENT)
+        return 2;
+    errno = EDOM;
+    if (execl(absent, "consumer", (char *)0) != -1 || errno != ENOENT)
+        return 3;
+    errno = EDOM;
+    if (execle(absent, "consumer", (char *)0, environment) != -1 || errno != ENOENT)
+        return 4;
+    errno = EDOM;
+    if (execvp(bare_absent, arguments) != -1 || errno != ENOENT)
+        return 5;
+    errno = EDOM;
+    if (execlp(bare_absent, "consumer", (char *)0) != -1 || errno != ENOENT)
+        return 6;
+    errno = EDOM;
+    if (execvpe(bare_absent, arguments, environment) != -1 || errno != ENOENT)
+        return 7;
+    errno = EDOM;
+    if (fexecve(-1, arguments, environment) != -1 || errno != EBADF)
+        return 8;
+    errno = EDOM;
+    if (execve("/", arguments, environment) != -1 || errno != EACCES)
+        return 9;
+    return 0;
+}
+
 struct bpf_instruction {
     unsigned short code;
     unsigned char yes;
@@ -524,11 +561,18 @@ static int child_nice(void)
 static int child_setpgid(void)
 {
     pid_t self = getpid();
-    if (setpgid(0, 0) != 0 || getpgrp() != self)
+    pid_t original = getpgrp();
+    errno = EDOM;
+    if (setpgid(-1, 0) != -1 || errno != EINVAL || getpgrp() != original)
         return 1;
+    errno = EDOM;
+    if (setpgid(0, 0) != 0 || errno != EDOM || getpgrp() != self)
+        return 2;
     errno = 0;
     if (setsid() != -1 || errno != EPERM)
-        return 2;
+        return 3;
+    if (getpgrp() != self)
+        return 4;
     return 0;
 }
 
@@ -543,8 +587,13 @@ static int child_setpgrp(void)
 static int child_setsid(void)
 {
     pid_t self = getpid();
-    if (setsid() != self || getsid(0) != self || getpgrp() != self)
+    errno = EDOM;
+    if (setsid() != self || errno != EDOM || getsid(0) != self || getpgrp() != self)
         return 1;
+    errno = 0;
+    if (setpgid(0, 0) != -1 || errno != EPERM || getsid(0) != self ||
+        getpgrp() != self)
+        return 2;
     return 0;
 }
 
@@ -638,13 +687,19 @@ static int check_waitpid(void)
     initialize_controlled_child(&state);
     if (start_controlled_child(&state, 42) != 0)
         goto done;
-    if (waitpid(state.child, &status, WNOHANG) != 0 || status != 0x5a5a5a5a)
+    errno = EDOM;
+    if (waitpid(state.child, &status, WNOHANG) != 0 ||
+        status != 0x5a5a5a5a || errno != EDOM)
         goto done;
     if (!release_controlled_child(&state))
         goto done;
-    if (waitpid(state.child, &status, 0) != state.child || !exited_with(status, 42))
+    if (waitpid(state.child, &status, 0) != state.child ||
+        !exited_with(status, 42) || errno != EDOM)
         goto done;
     state.reaped = 1;
+    errno = 0;
+    if (waitpid(state.child, &status, WNOHANG) != -1 || errno != ECHILD)
+        goto done;
     result = 0;
 done:
     cleanup_controlled_child(&state);
@@ -684,19 +739,23 @@ static int check_waitid(void)
     initialize_controlled_child(&state);
     if (start_controlled_child(&state, 44) != 0)
         goto done;
+    errno = 0;
+    if (waitid(P_PID, (id_t)state.child, &info, 0) != -1 || errno != EINVAL)
+        goto done;
     fill_bytes(&info, 0, sizeof(info));
+    errno = EDOM;
     if (waitid(P_PID, (id_t)state.child, &info, WEXITED | WNOHANG) != 0 ||
-        info.si_signo != 0 || info.si_pid != 0)
+        info.si_signo != 0 || info.si_pid != 0 || errno != EDOM)
         goto done;
     if (!release_controlled_child(&state))
         goto done;
     fill_bytes(&info, 0, sizeof(info));
     if (waitid(P_PID, (id_t)state.child, &info, WEXITED | WNOWAIT) != 0 ||
-        !waitid_report_matches(&info, state.child, 44))
+        !waitid_report_matches(&info, state.child, 44) || errno != EDOM)
         goto done;
     fill_bytes(&info, 0, sizeof(info));
     if (waitid(P_PID, (id_t)state.child, &info, WEXITED) != 0 ||
-        !waitid_report_matches(&info, state.child, 44))
+        !waitid_report_matches(&info, state.child, 44) || errno != EDOM)
         goto done;
     state.reaped = 1;
     errno = 0;
@@ -839,16 +898,21 @@ static int check_fork(void)
     pid_t parent = getpid();
     pid_t observed[2] = { 0, 0 };
     int status = 0;
+    int parent_errno;
     pid_t child;
     if (raw_pipe(report) != 0)
         return 1;
+    errno = EDOM;
     child = fork();
     if (child == 0) {
+        int child_errno = errno;
         (void)raw_close(report[0]);
-        raw_exit(fork_child_matches(parent, report[1]) ? 47 : 1);
+        raw_exit(child_errno == EDOM && fork_child_matches(parent, report[1]) ? 47 : 1);
     }
+    parent_errno = errno;
     (void)raw_close(report[1]);
-    if (child <= 0 || !raw_read_full(report[0], observed, sizeof(observed)) ||
+    if (child <= 0 || parent_errno != EDOM ||
+        !raw_read_full(report[0], observed, sizeof(observed)) ||
         observed[0] != child || observed[1] != parent ||
         raw_wait_for(child, &status) != child || !exited_with(status, 47)) {
         (void)raw_close(report[0]);
@@ -1125,6 +1189,9 @@ int main(int argc, char **argv)
     result = check_exec_aliases();
     if (result != 0)
         return 10 + result;
+    result = check_exec_failures();
+    if (result != 0)
+        return 80 + result;
     if (check_fexecve_seccomp(&fexecve_errno) != 0)
         return 30;
     if (run_mutating_child(child_nice) != 0)
