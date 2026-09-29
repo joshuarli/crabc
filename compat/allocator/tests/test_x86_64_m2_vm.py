@@ -33,12 +33,14 @@ EXPECTED_VM_CHECK_IDS = (
     "process-os-page-suffix-trim-and-terminal-release",
     "process-os-page-block-commit-rollback-c-rust-differential",
     "os-page-terminal-unmap-fault-c-rust-differential",
+    "os-page-escaped-map-metadata-fault-c-rust-differential",
     "process-policy-first-arena-clean-primary-fallback",
     "process-policy-first-arena-trim-leak",
     "explicit-arena-prefix-trim-c-rust-differential",
     "explicit-arena-suffix-trim-c-rust-differential",
     "explicit-arena-metadata-fault-c-rust-differential",
     "registered-arena-metadata-fault-c-rust-differential",
+    "fresh-arena-dual-fault-c-rust-differential",
     "registered-arena-page-map-fault-c-rust-differential",
     "registered-arena-page-map-double-fault-c-rust-differential",
     "registered-arena-terminal-unmap-fault-c-rust-differential",
@@ -85,66 +87,87 @@ class NativeVmAssemblyTests(unittest.TestCase):
             "target": "compat/allocator/m2_delayed_purge_failure_x86_64.py",
         }, arenas["checks"])
 
+    def direct_arena_receipts(self, pin, artifact):
+        evidence = {}
+        for check_id, receiver in RUNNER.M2_X86_64_ARENA_DIRECT_RECEIVERS.items():
+            transcript = "".join(
+                f"{receiver['trace_prefix']}{field}={value}\n"
+                for field, value in receiver["trace"].items()
+            )
+            evidence[check_id] = {
+                "status": "passed", "pinned_revision": pin["revision"],
+                "fixture": artifact, "c_executable": artifact,
+                "rust_test": receiver["rust_test"], "trace": dict(receiver["trace"]),
+                "command": ["python3", receiver["target"], "--offline"],
+                "c_stdout": transcript, "c_stderr": "",
+                "rust_stdout": "test receiver ... " + transcript, "rust_stderr": "",
+            }
+        return evidence
+
     def test_direct_arena_receipt_requires_both_physical_traces_and_source_identity(self):
         summary = self.summary()
         pin = {"revision": "pinned-revision"}
-        check_id, receiver = next(iter(RUNNER.M2_X86_64_ARENA_DIRECT_RECEIVERS.items()))
-        transcript = "".join(
-            f"{receiver['trace_prefix']}{field}={value}\n"
-            for field, value in receiver["trace"].items()
-        )
         artifact = {"path": "source-bound", "bytes": 1, "sha256": "a" * 64}
-        evidence = {check_id: {
-            "status": "passed", "pinned_revision": pin["revision"],
-            "fixture": artifact, "c_executable": artifact,
-            "rust_test": receiver["rust_test"], "trace": dict(receiver["trace"]),
-            "command": ["python3", receiver["target"], "--offline"],
-            "c_stdout": transcript, "c_stderr": "",
-            "rust_stdout": transcript, "rust_stderr": "",
-        }}
+        evidence = self.direct_arena_receipts(pin, artifact)
         with mock.patch.object(RUNNER, "artifact_record", return_value=artifact):
             records = RUNNER._m2_x86_64_arena_direct_check_records(summary, pin, evidence)
-            self.assertEqual([record["id"] for record in records], [check_id])
-            for field in ("status", "pinned_revision", "fixture", "c_executable",
-                          "rust_test", "trace", "command", "c_stdout", "rust_stdout",
-                          "c_stderr", "rust_stderr"):
-                with self.subTest(field=field):
-                    changed = copy.deepcopy(evidence)
-                    if field in ("c_stdout", "rust_stdout"):
-                        changed[check_id][field] = changed[check_id][field].replace(
-                            "warning_after_stats=1", "warning_after_stats=0"
-                        )
-                    elif field in ("c_stderr", "rust_stderr"):
-                        changed[check_id][field] = "unexpected diagnostic"
-                    elif field == "trace":
-                        changed[check_id][field]["no_retry"] = 0
-                    else:
+            self.assertEqual([record["id"] for record in records], list(evidence))
+            for check_id, receiver in RUNNER.M2_X86_64_ARENA_DIRECT_RECEIVERS.items():
+                for field in ("status", "pinned_revision", "fixture", "c_executable",
+                              "rust_test", "trace", "command", "c_stderr", "rust_stderr"):
+                    with self.subTest(check_id=check_id, field=field):
+                        changed = copy.deepcopy(evidence)
                         changed[check_id][field] = "stale"
-                    with self.assertRaises(RUNNER.HarnessError):
-                        RUNNER._m2_x86_64_arena_direct_check_records(summary, pin, changed)
-            missing = copy.deepcopy(evidence)
-            missing[check_id]["c_stdout"] = transcript.replace(
-                "warning_after_stats=1\n", ""
-            )
-            with self.assertRaises(RUNNER.HarnessError):
-                RUNNER._m2_x86_64_arena_direct_check_records(summary, pin, missing)
+                        with self.assertRaises(RUNNER.HarnessError):
+                            RUNNER._m2_x86_64_arena_direct_check_records(summary, pin, changed)
+                for side in ("c", "rust"):
+                    for field, value in receiver["trace"].items():
+                        for mutation in ("missing", "changed", "duplicate"):
+                            with self.subTest(check_id=check_id, side=side, field=field, mutation=mutation):
+                                changed = copy.deepcopy(evidence)
+                                line = f"{receiver['trace_prefix']}{field}={value}\n"
+                                replacement = {"missing": "", "changed": f"{receiver['trace_prefix']}{field}={value+1}\n",
+                                               "duplicate": line + line}[mutation]
+                                changed[check_id][f"{side}_stdout"] = changed[check_id][f"{side}_stdout"].replace(line, replacement)
+                                with self.assertRaises(RUNNER.HarnessError):
+                                    RUNNER._m2_x86_64_arena_direct_check_records(summary, pin, changed)
+                missing = copy.deepcopy(evidence)
+                missing.pop(check_id)
+                with self.assertRaisesRegex(RUNNER.HarnessError, "inventory"):
+                    RUNNER._m2_x86_64_arena_direct_check_records(summary, pin, missing)
 
     def test_direct_arena_receiver_binds_offline_and_normal_commands(self):
-        receiver = next(iter(RUNNER.M2_X86_64_ARENA_DIRECT_RECEIVERS.values()))
+        pin = {"revision": "pinned-revision"}
+        artifact = {"path": "source-bound", "bytes": 1, "sha256": "a" * 64}
+        expected = self.direct_arena_receipts(pin, artifact)
+        RUNNER.WORK_ROOT.mkdir(parents=True, exist_ok=True)
         for offline in (False, True):
-            with self.subTest(offline=offline), mock.patch.object(
-                RUNNER, "command_record", return_value={"status": 0}
-            ) as execute, mock.patch.object(
-                RUNNER, "require_success"
-            ), mock.patch.object(
-                RUNNER, "read_json", return_value={"status": "passed"}
-            ), mock.patch(
-                "pathlib.Path.read_text", return_value=""
-            ):
-                evidence = RUNNER._run_m2_x86_64_arena_direct_evidence(offline=offline)
-            command = ["python3", receiver["target"], *(["--offline"] if offline else [])]
-            execute.assert_called_once_with(command, cwd=RUNNER.ROOT, timeout_seconds=900)
-            self.assertEqual(next(iter(evidence.values()))["command"], command)
+            with self.subTest(offline=offline), tempfile.TemporaryDirectory(dir=RUNNER.WORK_ROOT) as temporary:
+                root = Path(temporary)
+                def execute(command, **kwargs):
+                    check_id, receiver = next((key, value) for key, value in RUNNER.M2_X86_64_ARENA_DIRECT_RECEIVERS.items()
+                                              if value["target"] == command[1])
+                    row = expected[check_id]
+                    artifacts = root / "x86_64" / receiver["artifact"]
+                    artifacts.mkdir(parents=True)
+                    (artifacts / "evidence.json").write_text(json.dumps({key: value for key, value in row.items()
+                        if key not in {"command", "c_stdout", "c_stderr", "rust_stdout", "rust_stderr"}}))
+                    for side in ("c", "rust"):
+                        stem = "pinned-c" if side == "c" else "rust"
+                        for stream in ("stdout", "stderr"):
+                            (artifacts / f"{stem}.{stream}").write_text(row[f"{side}_{stream}"])
+                    return {"command": command, "status": 0, "stdout": "", "stderr": ""}
+                with mock.patch.object(RUNNER, "ARTIFACT_ROOT", root), mock.patch.object(
+                    RUNNER, "command_record", side_effect=execute
+                ) as dispatch, mock.patch.object(RUNNER, "artifact_record", return_value=artifact):
+                    evidence = RUNNER._run_m2_x86_64_arena_direct_evidence(offline=offline)
+                    records = RUNNER._m2_x86_64_arena_direct_check_records(self.summary(), pin, evidence)
+                commands = [["python3", receiver["target"], *(["--offline"] if offline else [])]
+                            for receiver in RUNNER.M2_X86_64_ARENA_DIRECT_RECEIVERS.values()]
+                self.assertEqual(dispatch.call_args_list, [mock.call(command, cwd=RUNNER.ROOT, timeout_seconds=900)
+                                                          for command in commands])
+                self.assertEqual([row["command"] for row in evidence.values()], commands)
+                self.assertEqual([row["id"] for row in records], list(expected))
 
     def test_runtime_thp_configuration_producer_registers_its_dataclass_module_before_execution(self):
         """The aggregate loader must make the real lifecycle module importable to dataclasses."""
@@ -987,11 +1010,11 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 [entry["command"] for entry in evidence.values()], expected_commands
             )
 
-    def test_process_vm_receipts_require_complete_case_and_commit_relations(self):
-        summary = self.summary()
+    def process_vm_receipts(self):
         evidence = {}
         for check_id, receiver in RUNNER.M2_X86_64_VM_PROCESS_RECEIVERS.items():
             trace = {field: 1 for field in receiver["fields"]}
+            trace.update(receiver.get("required_values", {}))
             cases = receiver["cases"]
             if receiver.get("command_receipts") == "nested-runs":
                 commands = {"build_status": 0, "runs": {
@@ -1017,6 +1040,16 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "scope": "one fresh process-owned mapping per side",
                 "status": "matched",
             }
+            if receiver.get("alignment_fallback_receipt"):
+                fallback = receiver["alignment_fallback_receipt"]
+                for side, selected in (("c", 0), ("rust", 1)):
+                    observed[side].update({
+                        "mmap_after_failure": 1 + selected, "recovery_mmap_delta": 2 + selected,
+                        "warning_bodies": 3 + selected, "warning_fragments": 3 + selected,
+                        "warning_order": 4123 if selected else 123,
+                        "recovery_registry": observed[side]["registry_before"] + 1,
+                    })
+                observed[fallback] = {"c": 0, "rust": 1}
             if receiver.get("stable_fields"):
                 for field in receiver["stable_fields"]:
                     observed["rust"][field] = 2
@@ -1046,17 +1079,24 @@ class NativeVmAssemblyTests(unittest.TestCase):
                     "commit_rust_commands": {"run_status": 0, "stderr": ""},
                 })
             evidence[check_id] = observed
+        return evidence
+
+    def test_process_vm_receipts_require_complete_case_and_commit_relations(self):
+        summary = self.summary()
+        evidence = self.process_vm_receipts()
         records = RUNNER._m2_x86_64_vm_check_records(
             summary, self.vm_evidence(summary), process_vm_evidence=evidence
         )
         self.assertEqual([record["id"] for record in records[-len(evidence):]], list(evidence))
         self.assertTrue(all(record["comparison_status"] == "matched" for record in records[-len(evidence):]))
-        missing = dict(evidence)
-        missing.pop(next(iter(missing)))
-        with self.assertRaises(RUNNER.HarnessError):
-            RUNNER._m2_x86_64_vm_check_records(
-                summary, self.vm_evidence(summary), process_vm_evidence=missing
-            )
+        for check_id in evidence:
+            with self.subTest(missing_receipt=check_id):
+                missing = dict(evidence)
+                missing.pop(check_id)
+                with self.assertRaisesRegex(RUNNER.HarnessError, "inventory"):
+                    RUNNER._m2_x86_64_vm_check_records(
+                        summary, self.vm_evidence(summary), process_vm_evidence=missing
+                    )
         for check_id, receiver in RUNNER.M2_X86_64_VM_PROCESS_RECEIVERS.items():
             field = sorted(receiver["fields"])[0]
             for name in ("status", "mismatches", "command", "field_missing", "field_different", "command_status", "rust_command_status"):
@@ -1144,6 +1184,63 @@ class NativeVmAssemblyTests(unittest.TestCase):
                             RUNNER._m2_x86_64_vm_check_records(
                                 summary, self.vm_evidence(summary), process_vm_evidence=changed
                             )
+
+    def test_process_vm_collector_reconstructs_complete_physical_receipts(self):
+        summary = self.summary()
+        vm_evidence = self.vm_evidence(summary)
+        expected = self.process_vm_receipts()
+        RUNNER.WORK_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=RUNNER.WORK_ROOT) as temporary:
+            root = Path(temporary)
+            def execute(command, **kwargs):
+                check_id, receiver = next((key, value) for key, value in RUNNER.M2_X86_64_VM_PROCESS_RECEIVERS.items()
+                                          if value["target"] == command[1])
+                artifact = root / "x86_64" / receiver["artifact"] / "evidence.json"
+                artifact.parent.mkdir(parents=True)
+                artifact.write_text(json.dumps({key: value for key, value in expected[check_id].items()
+                                               if key != "command"}))
+                return {"command": command, "status": 0, "stdout": "", "stderr": ""}
+            with mock.patch.object(RUNNER, "ARTIFACT_ROOT", root), mock.patch.object(
+                RUNNER, "command_record", side_effect=execute
+            ) as dispatch:
+                observed = RUNNER._run_m2_x86_64_process_vm_evidence(offline=True)
+            records = RUNNER._m2_x86_64_vm_check_records(summary, vm_evidence, process_vm_evidence=observed)
+            self.assertEqual(observed, expected)
+            self.assertEqual([row["id"] for row in records[-len(expected):]], list(expected))
+            self.assertEqual(dispatch.call_args_list, [mock.call(
+                ["python3", receiver["target"], "--offline"], cwd=RUNNER.ROOT, timeout_seconds=1800
+            ) for receiver in RUNNER.M2_X86_64_VM_PROCESS_RECEIVERS.values()])
+
+    def test_process_vm_fault_observations_reject_matching_but_invalid_postconditions(self):
+        summary = self.summary()
+        vm_evidence = self.vm_evidence(summary)
+        evidence = self.process_vm_receipts()
+        for check_id, receiver in RUNNER.M2_X86_64_VM_PROCESS_RECEIVERS.items():
+            for field in receiver.get("required_values", {}):
+                with self.subTest(check_id=check_id, field=field):
+                    changed = copy.deepcopy(evidence)
+                    for side in ("c", "rust"):
+                        changed[check_id][side][field] += 1
+                    with self.assertRaises(RUNNER.HarnessError):
+                        RUNNER._m2_x86_64_vm_check_records(summary, vm_evidence, process_vm_evidence=changed)
+            if receiver.get("alignment_fallback_receipt"):
+                receipt = receiver["alignment_fallback_receipt"]
+                for mutation in ("missing", "wrong_selection", "unknown_selection", "wrong_warning_order", "wrong_recovery_calls", "wrong_registry"):
+                    with self.subTest(check_id=check_id, mutation=mutation):
+                        changed = copy.deepcopy(evidence)
+                        row = changed[check_id]
+                        if mutation == "missing":
+                            row.pop(receipt)
+                        elif mutation == "wrong_selection":
+                            row[receipt]["rust"] = 0
+                        elif mutation == "unknown_selection":
+                            row[receipt]["rust"] = 2
+                        else:
+                            field = {"wrong_warning_order": "warning_order", "wrong_recovery_calls": "recovery_mmap_delta",
+                                     "wrong_registry": "recovery_registry"}[mutation]
+                            row["rust"][field] += 1
+                        with self.assertRaises(RUNNER.HarnessError):
+                            RUNNER._m2_x86_64_vm_check_records(summary, vm_evidence, process_vm_evidence=changed)
 
     def test_process_vm_receivers_bind_offline_and_normal_reader_commands(self):
         receivers = RUNNER.M2_X86_64_VM_PROCESS_RECEIVERS
@@ -1392,10 +1489,11 @@ class NativeVmAssemblyTests(unittest.TestCase):
         arena_lifecycle_producer = mock.Mock(return_value={})
         vm_check_records_producer = mock.Mock(return_value=vm_records)
         arena_records_producer = mock.Mock(return_value=arena_records)
-        direct_arena_record = {
-            "id": "arena-delayed-purge-decommit-failure-c-rust-differential",
-            "component": "arenas",
-        }
+        direct_arena_records = [
+            {"id": check_id, "component": "arenas"}
+            for check_id in RUNNER.M2_X86_64_ARENA_DIRECT_RECEIVERS
+        ]
+        tld_retry_producer = mock.Mock()
         metadata_records_producer = mock.Mock(return_value=metadata_records)
         metadata_lifecycle_producer = mock.Mock(return_value={})
         thp_process_producer = mock.Mock(return_value={})
@@ -1451,7 +1549,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 _m2_x86_64_process_arena_collect_check_records=arena_records_producer,
                 _run_m2_x86_64_arena_direct_evidence=mock.Mock(return_value={}),
                 _m2_x86_64_arena_direct_check_records=mock.Mock(
-                    return_value=[direct_arena_record]
+                    return_value=direct_arena_records
                 ),
                 _run_m2_x86_64_arena_lifecycle_evidence=arena_lifecycle_producer,
                 _m2_x86_64_arena_lifecycle_check_record=mock.Mock(
@@ -1461,6 +1559,10 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 run_m2_x86_64_metadata_lifecycle_differential=metadata_lifecycle_producer,
                 _run_m2_x86_64_metadata_ownership_evidence=mock.Mock(return_value={}),
                 _run_m2_x86_64_initialization_teardown_evidence=mock.Mock(return_value={}),
+                _m2_x86_64_init_tld_retry_producer=mock.Mock(return_value=tld_retry_producer),
+                _m2_x86_64_init_tld_retry_check_record=mock.Mock(
+                    return_value={"id": "initialization-later-tld-metadata-fault-retry-c-rust-differential"}
+                ),
                 _run_m2_x86_64_exclusive_arena_theap_evidence=mock.Mock(return_value={}),
                 _run_m2_x86_64_arena_destruction_evidence=mock.Mock(return_value={}),
                 _run_m2_x86_64_recursion_evidence=mock.Mock(return_value={}),
@@ -1532,7 +1634,14 @@ class NativeVmAssemblyTests(unittest.TestCase):
         )
         self.assertTrue({record["id"] for record in fault_records}.issubset(observed["ids"]))
         self.assertTrue({record["id"] for record in arena_records}.issubset(observed["ids"]))
-        self.assertIn(direct_arena_record["id"], observed["ids"])
+        self.assertTrue({record["id"] for record in direct_arena_records} <= observed["ids"])
+        _, tld_retry_check = RUNNER._m2_x86_64_check_by_id(
+            summary, "initialization-later-tld-metadata-fault-retry-c-rust-differential"
+        )
+        tld_retry_producer.run_evidence.assert_called_once_with(
+            RUNNER, offline=True, test_program={}, check=tld_retry_check
+        )
+        self.assertIn(tld_retry_check["id"], observed["ids"])
         self.assertTrue({record["id"] for record in metadata_records}.issubset(observed["ids"]))
         owner_check = next(
             check
@@ -1573,10 +1682,12 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "explicit-arena-suffix-trim-c-rust-differential",
                 "explicit-arena-metadata-fault-c-rust-differential",
                 "registered-arena-metadata-fault-c-rust-differential",
+                "fresh-arena-dual-fault-c-rust-differential",
                 "registered-arena-page-map-fault-c-rust-differential",
                 "registered-arena-page-map-double-fault-c-rust-differential",
                 "registered-arena-terminal-unmap-fault-c-rust-differential",
                 "os-page-terminal-unmap-fault-c-rust-differential",
+                "os-page-escaped-map-metadata-fault-c-rust-differential",
                 "process-owned-protect-fault-c-rust-differential",
                 "process-owned-unprotect-fault-c-rust-differential",
             },
