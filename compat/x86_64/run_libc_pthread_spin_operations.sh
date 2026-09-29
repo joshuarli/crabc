@@ -2,9 +2,10 @@
 # Native Linux/x86-64 private pthread spin-operation evidence.
 #
 # The project-header fixture executes against pinned musl and then as a true
-# -nostdlib -static candidate linked from only the selected init/operations
-# objects. The feature remains opt-in and the default archive must retain its
-# frozen export surface.
+# -nostdlib -static candidate linked from only the selected spin objects.
+# Both ELFs and their exact output streams remain in the worktree's ignored
+# evidence directory. The feature remains opt-in and the default archive must
+# retain its frozen export surface.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 export LC_ALL=C
@@ -27,14 +28,15 @@ require_native_linux_x86_64() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo grep mkdir mktemp nm objdump readelf sort timeout uname; do
+for tool in ar cargo chmod cmp grep mkdir mktemp nm objdump readelf sha256sum sort timeout uname; do
     command -v "$tool" >/dev/null 2>&1 || fail "requires $tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_pthread_spin_operations_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-pthread-spin-operations.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-pthread-spin-operations.XXXXXX")"
+chmod 0755 "$work_dir"
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-reference"
@@ -63,7 +65,7 @@ case "$musl_archive" in
     *) fail "pinned musl compiler did not report an absolute libc.a path" ;;
 esac
 [ -f "$musl_archive" ] || fail "pinned musl static archive is missing"
-for symbol in pthread_spin_lock pthread_spin_trylock pthread_spin_unlock; do
+for symbol in pthread_spin_destroy pthread_spin_lock pthread_spin_trylock pthread_spin_unlock; do
     object="$musl_objects/${symbol}.o"
     ar p "$musl_archive" "${symbol}.lo" >"$object"
     readelf --symbols --wide "$object" >"$musl_symbols-${symbol}"
@@ -80,11 +82,23 @@ grep -Eq 'pause' "$work_dir/musl-lock-disassembly" ||
 grep -Eq 'cmpxchg' "$work_dir/musl-lock-disassembly" ||
     fail "pinned musl lock source lost its atomic compare-exchange"
 
-"$ORACLE_CC" -std=c11 -fno-builtin -fno-stack-protector \
+"$ORACLE_CC" -std=c11 -static -fno-pie -no-pie \
+    -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_pthread_spin_operations_probe.c \
     -o "$reference"
-env -i LC_ALL=C TZ=UTC timeout "$EXECUTION_TIMEOUT" "$reference" ||
-    fail "pinned-musl pthread spin-operation fixture failed"
+readelf --program-headers --wide "$reference" >"$work_dir/musl-program-headers"
+readelf --dynamic --wide "$reference" >"$work_dir/musl-dynamic" || true
+if grep -Eq 'Requesting program interpreter|INTERP' "$work_dir/musl-program-headers" ||
+    grep -Eq 'NEEDED|Shared library' "$work_dir/musl-dynamic"; then
+    fail "pinned-musl reference selected a dynamic runtime; evidence: $work_dir"
+fi
+if env -i LC_ALL=C TZ=UTC timeout "$EXECUTION_TIMEOUT" "$reference" \
+    >"$work_dir/musl.stdout" 2>"$work_dir/musl.stderr"; then
+    printf '0\n' >"$work_dir/musl.status"
+else
+    printf '%s\n' "$?" >"$work_dir/musl.status"
+    fail "pinned-musl pthread spin-operation fixture failed; evidence: $work_dir"
+fi
 
 # The feature must not widen the frozen default archive.
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
@@ -113,7 +127,7 @@ cmp -s "$expected_delta" "$feature_delta_symbols" || {
     diff -u "$expected_delta" "$feature_delta_symbols" >&2 || true
     fail "spin-operation feature widened the archive by more than its exact three-name roster"
 }
-for symbol in pthread_spin_init pthread_spin_lock pthread_spin_trylock pthread_spin_unlock; do
+for symbol in pthread_spin_init pthread_spin_destroy pthread_spin_lock pthread_spin_trylock pthread_spin_unlock; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "feature archive does not define ${symbol}"
 done
@@ -150,13 +164,27 @@ mapfile -t init_members <"$work_dir/init-member"
 [ "${#init_members[@]}" = 1 ] || fail "spin init is not owned by one archive member"
 init_member="$members_dir/${init_members[0]}"
 
+(
+    cd "$members_dir"
+    for member in "${members[@]}"; do
+        definitions="$(nm -g --defined-only "$member")"
+        if grep -Eq \
+            '[[:space:]][T][[:space:]]pthread_spin_destroy$' <<<"$definitions"; then
+            printf '%s\n' "$member"
+        fi
+    done
+) >"$work_dir/destroy-member"
+mapfile -t destroy_members <"$work_dir/destroy-member"
+[ "${#destroy_members[@]}" = 1 ] || fail "spin destroy is not owned by one archive member"
+destroy_member="$members_dir/${destroy_members[0]}"
+
 "$ORACLE_CC" -std=c11 -DCRABC_PTHREAD_SPIN_OPERATIONS_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
     -Wl,--gc-sections -Wl,--no-undefined \
     compat/x86_64/libc_pthread_spin_operations_probe.c \
     compat/x86_64/libc_pthread_spin_operations_start.S \
-    "$init_member" "$operation_member" -o "$candidate"
+    "$init_member" "$destroy_member" "$operation_member" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
@@ -166,7 +194,7 @@ objdump -d "$candidate" >"$candidate_disassembly"
 for symbol in pthread_spin_lock pthread_spin_trylock pthread_spin_unlock; do
     objdump -d --disassemble="$symbol" "$candidate" >>"$operations_disassembly"
 done
-for symbol in pthread_spin_init pthread_spin_lock pthread_spin_trylock pthread_spin_unlock; do
+for symbol in pthread_spin_init pthread_spin_destroy pthread_spin_lock pthread_spin_trylock pthread_spin_unlock; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not retain ${symbol}"
 done
@@ -188,7 +216,29 @@ if grep -Eq '\b(call|syscall)\b' "$operations_disassembly"; then
     fail "spin operations unexpectedly call another runtime boundary"
 fi
 
-env -i LC_ALL=C TZ=UTC timeout "$EXECUTION_TIMEOUT" "$candidate" ||
-    fail "freestanding pthread spin-operation fixture failed"
+if env -i LC_ALL=C TZ=UTC timeout "$EXECUTION_TIMEOUT" "$candidate" \
+    >"$work_dir/crabc.stdout" 2>"$work_dir/crabc.stderr"; then
+    printf '0\n' >"$work_dir/crabc.status"
+else
+    printf '%s\n' "$?" >"$work_dir/crabc.status"
+    fail "freestanding pthread spin-operation fixture failed; evidence: $work_dir"
+fi
 
-printf 'x86 static crabc-libc pthread spin operations: PASS (private opt-in)\n'
+printf '%s\n' \
+    'spin local/init/trylock/lock/unlock/destroy errno=stable shared/busy/handoff/payload/destroy errno=stable' \
+    >"$work_dir/expected.stdout"
+cmp -s "$work_dir/expected.stdout" "$work_dir/musl.stdout" ||
+    fail "pinned-musl output differs from the checked transition stream; evidence: $work_dir"
+cmp -s "$work_dir/musl.stdout" "$work_dir/crabc.stdout" ||
+    fail "candidate output differs from pinned musl; evidence: $work_dir"
+cmp -s "$work_dir/musl.stderr" "$work_dir/crabc.stderr" ||
+    fail "candidate diagnostics differ from pinned musl; evidence: $work_dir"
+cmp -s "$work_dir/musl.status" "$work_dir/crabc.status" ||
+    fail "candidate status differs from pinned musl; evidence: $work_dir"
+(
+    cd "$work_dir"
+    sha256sum musl-reference crabc-candidate ./*.stdout ./*.stderr \
+        ./*.status >sha256sum.txt
+)
+
+printf 'x86 static crabc-libc pthread spin operations: PASS (private opt-in); evidence: %s\n' "$work_dir"
