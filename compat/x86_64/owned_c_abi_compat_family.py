@@ -679,15 +679,15 @@ def validate_assessment(root: Path, path: Path) -> dict[str, object]:
 def admission_facts(root: Path, assessment_path: Path) -> dict[str, object]:
     """Check one retained complete assessment against current checkout bytes.
 
-    Full reconstruction replays component readers in the pinned `/workspace`
-    image, so the host ledger does not. It does reject an assessment whose
-    contract, request, cohort receipts, admissions, or selected source no
-    longer match this checkout, and returns the cohort receipt identities the
-    ledger joins to the admitted POSIX family.
+    Full reconstruction replays component behavior in the pinned image. The
+    host checks that the retained request and admitted component receipts
+    still occupy this run, and that their product bindings form the current
+    cohort. It returns the cohort receipt identities for the POSIX family join.
     """
 
     root = root.resolve(strict=True)
     path = family.physical(root, root / assessment_path)
+    require(path.name == "assessment.json", "expected a c-abi-compat family assessment.json")
     retained = family.read(path)
     require(isinstance(retained, dict) and retained.get("schema") == SCHEMA and retained.get("family") == FAMILY,
             "c-abi-compat family assessment identity differs")
@@ -698,8 +698,11 @@ def admission_facts(root: Path, assessment_path: Path) -> dict[str, object]:
             "c-abi-compat family assessment contract changed")
     request = retained.get("request")
     require(isinstance(request, dict) and isinstance(request.get("path"), str)
-            and family.same_json(family.file_identity(root, root / request["path"]), request),
+            and request["path"] == (path.parent / "request.json").relative_to(root).as_posix(),
+            "c-abi-compat family assessment request is outside its run")
+    require(family.same_json(family.file_identity(root, path.parent / "request.json"), request),
             "c-abi-compat family assessment request changed")
+    request_value = _request(root, path.parent)
     roster = load_roster(root)
     components = retained.get("components")
     require(isinstance(components, dict) and set(components) == {c.identifier for c in roster.components}
@@ -724,7 +727,32 @@ def admission_facts(root: Path, assessment_path: Path) -> dict[str, object]:
                 f"c-abi-compat family {name} path differs")
         observed = cohort.canonical._file_identity(root, root / path_value, f"c-abi-compat family {name}")
         require(observed == record, f"c-abi-compat family {name} receipt changed")
+        require(request_value[name] == record["path"], f"c-abi-compat family {name} request differs")
         receipts[name] = record
+    canonical_source, products = cohort.canonical_products(
+        root, root / receipts["static_preparation"]["path"],
+        root / receipts["dynamic_qualification"]["path"])
+    require(retained["cohort"] == {"schema": cohort.SCHEMA, "source": canonical_source, "products": products},
+            "c-abi-compat family assessment cohort binding differs")
+    primary = products[cohort.PAIR]
+    for component in roster.components:
+        identifier = component.identifier
+        result = components[identifier]
+        receipt = path.parent / "runs" / identifier / "receipt.json"
+        record = result.get("receipt")
+        require(isinstance(record, dict) and record.get("path") == receipt.relative_to(root).as_posix(),
+                f"c-abi-compat family {identifier} receipt is outside its run")
+        require(family.same_json(family.file_identity(root, receipt), record),
+                f"c-abi-compat family {identifier} receipt changed")
+        require(family.same_json(family.read(receipt), {key: value for key, value in result.items()
+                                                     if key != "receipt"}),
+                f"c-abi-compat family {identifier} receipt differs from assessment")
+        expected_binding = {"pair": cohort.PAIR, "products": {
+            "static": primary["static"] if component.products == "static-and-dynamic" else None,
+            "dynamic": primary["dynamic"],
+        }}
+        require(result.get("cohort_binding") == expected_binding,
+                f"c-abi-compat family {identifier} cohort binding differs")
     return {"assessment": family.file_identity(root, path), "source": current, **receipts}
 
 

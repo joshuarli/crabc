@@ -291,7 +291,8 @@ class ComponentTests(unittest.TestCase):
         path = work / "assessment.json"
         path.write_text(json.dumps(assessment), encoding="utf-8")
 
-        with patches[1]:
+        with mock.patch.object(cohort, "canonical_products",
+                               return_value=(assessment["cohort"]["source"], self.products)), patches[1]:
             facts = family.admission_facts(ROOT, path.relative_to(ROOT))
             self.assertEqual(facts["source"], SOURCE)
             self.assertEqual(facts["static_preparation"]["path"], preparation.relative_to(ROOT).as_posix())
@@ -316,6 +317,62 @@ class ComponentTests(unittest.TestCase):
         with mock.patch.object(execution.static_products, "source_identity",
                                return_value={**SOURCE, "revision": "o" * 40}):
             with self.assertRaisesRegex(family.CAbiCompatFamilyError, "not bound to current source"):
+                family.admission_facts(ROOT, path.relative_to(ROOT))
+
+    def test_admission_joins_request_and_component_receipts_to_its_run(self) -> None:
+        patches = self._patched()
+        with patches[0], patches[1], patches[2]:
+            work = self._complete_run()
+            assessment = family.collect(ROOT, work)
+        preparation, qualification = (self.base / "preparation.json", self.base / "qualification.json")
+        assessment["cohort"]["source"] = {
+            **SOURCE,
+            "static_preparation": cohort.canonical._file_identity(ROOT, preparation, "p"),
+            "dynamic_qualification": cohort.canonical._file_identity(ROOT, qualification, "q"),
+        }
+        path = work / "assessment.json"
+
+        with mock.patch.object(cohort, "canonical_products",
+                               return_value=(assessment["cohort"]["source"], self.products)), patches[1]:
+            path.write_text(json.dumps(assessment), encoding="utf-8")
+            self.assertEqual(family.admission_facts(ROOT, path.relative_to(ROOT))["source"], SOURCE)
+
+            foreign_request = self.base / "foreign-request.json"
+            shutil.copyfile(work / "request.json", foreign_request)
+            changed = json.loads(json.dumps(assessment))
+            changed["request"] = execution.file_identity(ROOT, foreign_request)
+            path.write_text(json.dumps(changed), encoding="utf-8")
+            with self.assertRaisesRegex(family.CAbiCompatFamilyError, "request.*run"):
+                family.admission_facts(ROOT, path.relative_to(ROOT))
+
+            foreign_receipt = self.base / "foreign-component.json"
+            shutil.copyfile(work / "runs/fmtmsg/receipt.json", foreign_receipt)
+            changed = json.loads(json.dumps(assessment))
+            changed["components"]["fmtmsg"]["receipt"] = execution.file_identity(ROOT, foreign_receipt)
+            path.write_text(json.dumps(changed), encoding="utf-8")
+            with self.assertRaisesRegex(family.CAbiCompatFamilyError, "fmtmsg.*receipt.*run"):
+                family.admission_facts(ROOT, path.relative_to(ROOT))
+
+            changed = json.loads(json.dumps(assessment))
+            changed["cohort"]["products"]["primary"]["dynamic"] = self.products["reproduction"]["dynamic"]
+            path.write_text(json.dumps(changed), encoding="utf-8")
+            with self.assertRaisesRegex(family.CAbiCompatFamilyError, "cohort binding differs"):
+                family.admission_facts(ROOT, path.relative_to(ROOT))
+
+            changed = json.loads(json.dumps(assessment))
+            changed["components"]["fmtmsg"]["cohort_binding"]["products"]["dynamic"] = (
+                self.products["reproduction"]["dynamic"])
+            receipt = work / "runs/fmtmsg/receipt.json"
+            receipt.write_text(json.dumps({key: value for key, value in changed["components"]["fmtmsg"].items()
+                                           if key != "receipt"}), encoding="utf-8")
+            changed["components"]["fmtmsg"]["receipt"] = execution.file_identity(ROOT, receipt)
+            path.write_text(json.dumps(changed), encoding="utf-8")
+            with self.assertRaisesRegex(family.CAbiCompatFamilyError, "fmtmsg.*cohort binding differs"):
+                family.admission_facts(ROOT, path.relative_to(ROOT))
+
+            path.write_text(json.dumps(assessment), encoding="utf-8")
+            (work / "runs/fmtmsg/receipt.json").write_text("{}\n", encoding="utf-8")
+            with self.assertRaisesRegex(family.CAbiCompatFamilyError, "fmtmsg.*receipt changed"):
                 family.admission_facts(ROOT, path.relative_to(ROOT))
 
 
