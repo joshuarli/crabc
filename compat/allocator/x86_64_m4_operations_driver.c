@@ -39,6 +39,9 @@
 #include <wchar.h>
 
 #include "mimalloc.h"
+#ifdef CRABC_MI_M4_SOURCE_CANARY
+#include "mimalloc/internal.h"
+#endif
 
 #define TRACE_BEGIN "CRABC_MI_M4_OPERATIONS_TRACE_BEGIN"
 #define TRACE_END "CRABC_MI_M4_OPERATIONS_TRACE_END"
@@ -739,6 +742,99 @@ static void section_aligned_preservation(void) {
   mi_free(q == NULL ? p : q);
 }
 
+/* Observe public allocation contracts without depending on page placement or
+   free-list encoding. The same calls apply to statistics and padding modes. */
+static void section_api_modes(void) {
+  static const size_t sizes[] = { 0, 1, 7, 8, 9, 17, 33, 64, 129, 1024, 1025, 4096, 65537, 524288, 524289 };
+  static const size_t alignments[] = { 1, 8, 16, 64, 4096, 131072 };
+  char key[96];
+  for (size_t s = 0; s < sizeof sizes / sizeof sizes[0]; s++) {
+    void* p = mi_calloc(1, sizes[s]);
+    const size_t usable = mi_usable_size(p);
+    key_name(key, sizeof key, "api_modes.calloc", s, 0);
+    line(key, "%d,%zu,%d,%zu", p != NULL, usable, p != NULL && is_zero(p, usable), mi_good_size(sizes[s]));
+    if (p == NULL) { continue; }
+    fill(p, usable, 0x37);
+    errno = 23;
+    void* failed = mi_recalloc(p, SIZE_MAX, 2);
+    key_name(key, sizeof key, "api_modes.count_failure", s, 0);
+    line(key, "%d,%d,%d,%d", failed == NULL, errno, mi_usable_size(p) == usable, has_fill(p, usable, 0x37));
+    errno = 0;
+    failed = mi_realloc(p, SIZE_MAX);
+    key_name(key, sizeof key, "api_modes.size_failure", s, 0);
+    line(key, "%d,%d,%d,%d", failed == NULL, errno, mi_usable_size(p) == usable, has_fill(p, usable, 0x37));
+    void* expanded = mi_expand(p, usable);
+    key_name(key, sizeof key, "api_modes.expand", s, 0);
+    line(key, "%d", expanded == p);
+    void* q = mi_rezalloc(p, usable + 17);
+    key_name(key, sizeof key, "api_modes.rezalloc", s, 0);
+    line(key, "%d,%zu,%d,%d", q != NULL, mi_usable_size(q),
+         q != NULL && has_fill(q, usable, 0x37),
+         q != NULL && mi_usable_size(q) >= usable
+           && is_zero((char*)q + usable, mi_usable_size(q) - usable));
+    mi_free(q == NULL ? p : q);
+    p = mi_malloc(sizes[s]);
+    q = mi_realloc(p, 0);
+    key_name(key, sizeof key, "api_modes.zero_replace", s, 0);
+    line(key, "%d,%d,%d", q != NULL, q != p, q != NULL && ((unsigned char*)q)[0] == 0);
+    mi_free(q == NULL ? p : q);
+  }
+  for (size_t a = 0; a < sizeof alignments / sizeof alignments[0]; a++) {
+    for (size_t s = 0; s < sizeof sizes / sizeof sizes[0]; s++) {
+      for (size_t offset = 0; offset <= 7; offset += 7) {
+        if (alignments[a] > 65536 && offset != 0) { continue; }
+        void* p = mi_zalloc_aligned_at(sizes[s], alignments[a], offset);
+        const size_t usable = mi_usable_size(p);
+        snprintf(key, sizeof key, "api_modes.aligned.%zu.%zu.%zu", a, s, offset);
+        line(key, "%d,%zu,%d,%d", p != NULL, usable,
+             p != NULL && (((uintptr_t)p + offset) & (alignments[a] - 1)) == 0,
+             p != NULL && is_zero(p, usable));
+        if (p == NULL) { continue; }
+        fill(p, usable, 0x51);
+        errno = 29;
+        void* failed = mi_recalloc_aligned_at(p, SIZE_MAX, 2, alignments[a], offset);
+        snprintf(key, sizeof key, "api_modes.aligned_failure.%zu.%zu.%zu", a, s, offset);
+        line(key, "%d,%d,%d,%d", failed == NULL, errno,
+             mi_usable_size(p) == usable, has_fill(p, usable, 0x51));
+        errno = 0;
+        failed = mi_realloc_aligned_at(p, SIZE_MAX, alignments[a], offset);
+        snprintf(key, sizeof key, "api_modes.aligned_size_failure.%zu.%zu.%zu", a, s, offset);
+        line(key, "%d,%d,%d,%d", failed == NULL, errno,
+             mi_usable_size(p) == usable, has_fill(p, usable, 0x51));
+        void* q = mi_rezalloc_aligned_at(p, usable + 17, alignments[a], offset);
+        snprintf(key, sizeof key, "api_modes.aligned_grow.%zu.%zu.%zu", a, s, offset);
+        const size_t grown = mi_usable_size(q);
+        line(key, "%d,%zu,%d,%d", q != NULL, grown,
+             q != NULL && has_fill(q, usable, 0x51),
+             q != NULL && grown >= usable && is_zero((char*)q + usable, grown - usable));
+        if (q == NULL) { mi_free(p); continue; }
+        const size_t half = (alignments[a] <= sizeof(void*) && offset == 0)
+                            ? grown / 2 : grown - grown / 2;
+        void* reused = mi_realloc_aligned_at(q, half, alignments[a], offset);
+        snprintf(key, sizeof key, "api_modes.aligned_half.%zu.%zu.%zu", a, s, offset);
+        line(key, "%d,%d", reused == q, reused != NULL && has_fill(reused, usable < half ? usable : half, 0x51));
+        if (offset == 0) {
+          mi_free_size_aligned(reused == NULL ? q : reused, half, alignments[a]);
+        } else {
+          mi_free(reused == NULL ? q : reused);
+        }
+      }
+    }
+  }
+}
+
+#ifdef CRABC_MI_M4_SOURCE_CANARY
+static void section_padding_canary(void) {
+  const uintptr_t keys[2] = { UINT64_C(0x123456789ABCDE0D), UINT64_C(0xFEDCBA9876543210) };
+  const uintptr_t blocks[] = { 0, 0x1000, 0x1010, 0x1FF0 };
+  for (size_t i = 0; i < sizeof blocks / sizeof blocks[0]; i++) {
+    char key[64];
+    snprintf(key, sizeof key, "padding.canary.%zu", i);
+    line(key, "%u", mi_ptr_encode_canary((void*)(uintptr_t)0x1000, (void*)blocks[i], keys));
+  }
+}
+#endif
+
 static void section_conveniences(void) {
   char* s = mi_strdup("mimalloc");
   note("strdup", s);
@@ -1081,6 +1177,10 @@ int main(int argc, char** argv) {
   else if (strcmp(scenario, "oom") == 0) { sections[0] = section_oom; }
   else if (strcmp(scenario, "threads") == 0) { sections[0] = section_threads; }
   else if (strcmp(scenario, "aligned-preservation") == 0) { sections[0] = section_aligned_preservation; }
+  else if (strcmp(scenario, "api-modes") == 0) { sections[0] = section_api_modes; }
+#ifdef CRABC_MI_M4_SOURCE_CANARY
+  else if (strcmp(scenario, "padding-canary") == 0) { sections[0] = section_padding_canary; }
+#endif
   else { return 2; }
   printf("%s\n", TRACE_BEGIN);
   for (int i = 0; i < 8 && sections[i] != NULL; i++) { sections[i](); }

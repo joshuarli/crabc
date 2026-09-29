@@ -5443,8 +5443,8 @@ impl Page {
         }
     }
 
-    /// Reads the immutable key installed before a debug page's first free-list
-    /// extension. Live allocations retain the page and its key until free.
+    /// Reads the two independent immutable keys installed before a debug
+    /// page's first free-list extension. Live allocations retain both until free.
     ///
     /// # Safety
     ///
@@ -5452,10 +5452,10 @@ impl Page {
     /// this scalar read. The caller must not permit page retirement or reuse.
     #[cfg(feature = "mi-debug-1")]
     #[inline]
-    pub(crate) unsafe fn debug_padding_key_at(page: NonNull<Self>) -> usize {
+    pub(crate) unsafe fn debug_padding_keys_at(page: NonNull<Self>) -> [usize; 2] {
         // SAFETY: the caller retains the initialized source page through the
         // short immutable field observation.
-        unsafe { core::ptr::read(core::ptr::addr_of!((*page.as_ptr()).keys[0])) }
+        unsafe { core::ptr::read(core::ptr::addr_of!((*page.as_ptr()).keys)) }
     }
 
     #[cfg(test)]

@@ -11386,59 +11386,7 @@ fn native_allocate_shaped<const ORDINARY_FAST_EIGHT_WORD: bool>(
             }
         }
     }
-    let result = native_allocate_shaped_slow(request, shape, zero);
-    #[cfg(feature = "mi-debug-1")]
-    {
-        if matches!(shape, NativeAllocationShape::Ordinary) {
-            return debug_initialize_native_allocation(result, request, zero);
-        }
-    }
-    result
-}
-
-/// Finishes the source debug fill and trailing padding record after the page
-/// engine returns a block and releases its owner projection.
-#[cfg(feature = "mi-debug-1")]
-fn debug_initialize_native_allocation(
-    result: NativePageAllocationResult,
-    request: usize,
-    zero: bool,
-) -> NativePageAllocationResult {
-    let NativePageAllocationResult::Allocated(block) = result else {
-        return result;
-    };
-    let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
-        RUNTIME_PROCESS.retain_page_owner();
-        return NativePageAllocationResult::Retained;
-    };
-    // SAFETY: the returned block is live and retains its PageMap entry until
-    // the caller receives it; the lookup yields only immutable geometry.
-    let allocation = match unsafe { page_map.lookup_live_allocation(block) } {
-        Ok(Some(allocation)) => allocation,
-        _ => {
-            RUNTIME_PROCESS.retain_page_owner();
-            return NativePageAllocationResult::Retained;
-        }
-    };
-    let page = allocation.page();
-    let block_size = allocation.block_size();
-    let canonical = allocation.canonical_block();
-    // SAFETY: the live allocation retains its initialized page and key.
-    let page_key = unsafe { crate::types::Page::debug_padding_key_at(page) };
-    let huge = crate::size_class::bin(block_size) == Some(crate::config::BIN_HUGE);
-    drop(allocation);
-    // SAFETY: the just-allocated canonical block is uniquely owned by this
-    // operation, and its page remains live until the result is returned.
-    let initialized = unsafe { crate::alloc::initialize_debug_padding(
-        canonical, block_size, if request == 0 { crate::config::WORD_SIZE } else { request },
-        page.as_ptr().addr(), page_key, zero, huge,
-    ) };
-    if initialized.is_none() {
-        RUNTIME_PROCESS.retain_page_owner();
-        NativePageAllocationResult::Retained
-    } else {
-        NativePageAllocationResult::Allocated(block)
-    }
+    native_allocate_shaped_slow(request, shape, zero)
 }
 
 /// The admitted remainder of [`native_allocate_shaped`] after its local fast
@@ -12355,7 +12303,7 @@ unsafe fn debug_check_native_free(
     let canonical = allocation.canonical_block();
     let block_size = allocation.block_size();
     // SAFETY: the allocation keeps its page and immutable key live.
-    let key = unsafe { crate::types::Page::debug_padding_key_at(page) };
+    let key = unsafe { crate::types::Page::debug_padding_keys_at(page) };
     let huge = crate::size_class::bin(block_size) == Some(crate::config::BIN_HUGE);
     // SAFETY: the caller owns the exact live allocation; no other operation
     // may change the trailing record before this source free check finishes.
@@ -12853,7 +12801,7 @@ pub unsafe fn native_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize>
         let page = allocation.page();
         let canonical = allocation.canonical_block();
         // SAFETY: this live allocation retains its page and immutable key.
-        let key = unsafe { crate::types::Page::debug_padding_key_at(page) };
+        let key = unsafe { crate::types::Page::debug_padding_keys_at(page) };
         // SAFETY: the exact live allocation retains the complete block while
         // the read-only usable-size query decodes its trailing record.
         let canonical_usable = unsafe { crate::alloc::debug_padding_usable_size(

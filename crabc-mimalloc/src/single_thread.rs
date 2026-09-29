@@ -37908,7 +37908,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // `MI_SMALL_SIZE_MAX` first pops its direct page, exactly like an
             // ordinary small allocation, before any generic search.
             Some(aligned::AlignedAllocationPlan::Natural) => self.begin_deferred_free_aligned_base(
-                size.max(WORD_SIZE),
+                size,
                 zero,
                 DeferredFreeAlignedCompletion::Natural { alignment },
             ),
@@ -38025,6 +38025,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         zero: bool,
         completion: DeferredFreeAlignedCompletion,
     ) -> DeferredFreeAllocationPhase {
+        let request = if request == 0 && PADDING_SIZE != 0 { WORD_SIZE } else { request };
         if request <= SMALL_SIZE_MAX {
             return match self.begin_deferred_free_small_allocation_with(request, zero, Some(completion)) {
                 DeferredFreeAllocationPhase::Complete(Some(base)) => {
@@ -39596,8 +39597,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return None;
         }
         let config = self.page_map.memory_config();
-        let block_size = config.good_alloc_size(request);
-        if block_size == 0 || block_size < request {
+        let padded_request = request.checked_add(PADDING_SIZE)?;
+        let block_size = config.good_alloc_size(padded_request);
+        if block_size == 0 || block_size < padded_request {
             return None;
         }
         let page = self.allocate_fresh_os_aligned_page(block_size, alignment)?;
@@ -39645,7 +39647,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         if size > SMALL_SIZE_MAX || alignment > size {
             return None;
         }
-        let direct_index = invariants::word_count(size)?;
+        let direct_index = invariants::word_count(size.checked_add(PADDING_SIZE)?)?;
         if direct_index >= PAGES_DIRECT {
             return None;
         }
@@ -39973,9 +39975,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 
     /// Returns the source usable size for one live local allocation.
     ///
-    /// Base allocations expose their full page block size. Once a page has an
-    /// adjusted aligned allocation, each queried pointer is first recovered to
-    /// its canonical base and reports that block size less its own adjustment.
+    /// Each pointer is recovered to its canonical block. Padding modes decode
+    /// that block's logical requested extent; other modes use the full block
+    /// size. An aligned client's interior adjustment is then subtracted.
     ///
     /// # Safety
     ///
@@ -39994,11 +39996,20 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return None;
         }
         let base = self.canonical_block_start(page, block)?;
-        if page.has_interior_pointers() {
-            aligned::usable_size(page.block_size(), block.as_ptr().addr(), base.as_ptr().addr())
-        } else {
-            Some(page.block_size())
-        }
+        #[cfg(not(feature = "mi-debug-1"))]
+        let canonical_usable = page.block_size();
+        #[cfg(feature = "mi-debug-1")]
+        let canonical_usable = {
+            let page_pointer = NonNull::from(page);
+            // SAFETY: the exact live local block retains its page and key.
+            let key = unsafe { Page::debug_padding_keys_at(page_pointer) };
+            // SAFETY: the caller retains the full block and its trailing
+            // record while this source-local usable-size observation runs.
+            unsafe { alloc::debug_padding_usable_size(
+                base, page.block_size(), page_pointer.as_ptr().addr(), key,
+            ) }
+        };
+        aligned::usable_size(canonical_usable, block.as_ptr().addr(), base.as_ptr().addr())
     }
 
     /// Returns one local block by page-map lookup and source local-free push.
@@ -40165,11 +40176,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             )
         };
         #[cfg(feature = "mi-stat-1")]
-        if block_size <= LARGE_MAX_OBJ_SIZE {
+        if block_size - PADDING_SIZE <= LARGE_MAX_OBJ_SIZE {
             self.session.theap().record_malloc_normal_freed(block_size - PADDING_SIZE);
             #[cfg(feature = "mi-stat-2")]
             self.session.theap().record_malloc_normal_level_two_freed(
-                size_class::bin_for_regular_page_block_size(block_size),
+                size_class::bin_for_regular_page_block_size(block_size - PADDING_SIZE),
             );
         } else {
             self.session.theap().record_malloc_huge_freed(block_size);
@@ -41149,11 +41160,15 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // `retire_expire`; queue selection (`mi_page_queue_find_free`)
             // and `_mi_theap_collect_retired` own that byte.
             if let Some(block) = free_list.pop(zero).map_err(GenericPathError::Local)? {
+                drop(free_list);
+                self.initialize_selected_block(page, block, request, zero).map_err(GenericPathError::Local)?;
                 self.record_level_one_normal_allocation(page, request);
                 return Ok(Some(block));
             }
             if free_list.quick_collect().map_err(GenericPathError::Local)? {
                 if let Some(block) = free_list.pop(zero).map_err(GenericPathError::Local)? {
+                    drop(free_list);
+                    self.initialize_selected_block(page, block, request, zero).map_err(GenericPathError::Local)?;
                     self.record_level_one_normal_allocation(page, request);
                     return Ok(Some(block));
                 }
@@ -41170,6 +41185,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             let mut free_list = unsafe { LocalFreeList::from_page_at(page) }
                 .map_err(GenericPathError::Local)?;
             if let Some(block) = free_list.pop(zero).map_err(GenericPathError::Local)? {
+                drop(free_list);
+                self.initialize_selected_block(page, block, request, zero).map_err(GenericPathError::Local)?;
                 self.record_level_one_normal_allocation(page, request);
                 return Ok(Some(block));
             }
@@ -41197,10 +41214,48 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // retired page reached through the direct cache stays retired until
         // queue selection or `_mi_theap_collect_retired` clears it.
         let block = free_list.pop(zero)?;
-        if block.is_some() {
+        drop(free_list);
+        if let Some(block) = block {
+            self.initialize_selected_block(page, block, request, zero)?;
             self.record_level_one_normal_allocation(page, request);
         }
         Ok(block)
+    }
+
+    /// Finishes the selected page pop before an aligned caller adjusts its
+    /// client pointer. The padding record describes the base request, so an
+    /// overallocated client retains the base's logical extent less adjustment.
+    #[inline]
+    fn initialize_selected_block(
+        &self,
+        page: NonNull<Page>,
+        block: NonNull<u8>,
+        request: usize,
+        zero: bool,
+    ) -> Result<(), FreeListError> {
+        #[cfg(feature = "mi-debug-1")]
+        {
+            // SAFETY: the free-list projection has ended. This owner retains
+            // the selected page and the popped block exclusively until return.
+            let (block_size, huge) = unsafe {
+                let page_ref = page.as_ref();
+                let block_size = page_ref.block_size();
+                let memory = page_ref.memid();
+                let huge = page_ref.reserved() == 1 && (block_size > LARGE_MAX_OBJ_SIZE
+                    || (memory.is_os() && memory.os_memory().is_some_and(|os| os.base.addr() < page.as_ptr().addr())));
+                (block_size, huge)
+            };
+            // SAFETY: the page's source key is immutable while the block lives.
+            let key = unsafe { Page::debug_padding_keys_at(page) };
+            // SAFETY: the block was just popped for this checked request; its
+            // complete writable span includes the reserved trailing record.
+            unsafe { alloc::initialize_debug_padding(
+                block, block_size, request, page.as_ptr().addr(), key, zero, huge,
+            ) }.ok_or(FreeListError::InvalidBlock)?;
+        }
+        #[cfg(not(feature = "mi-debug-1"))]
+        let _ = (page, block, request, zero);
+        Ok(())
     }
 
     #[inline]
@@ -41210,11 +41265,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // SAFETY: the selected page is owned by this exact local Theap
             // throughout the pop, and its immutable block size remains live.
             let block_size = unsafe { page.as_ref().block_size() };
-            if block_size <= LARGE_MAX_OBJ_SIZE {
+            if block_size - PADDING_SIZE <= LARGE_MAX_OBJ_SIZE {
                 self.session.theap().record_malloc_normal_allocated(block_size - PADDING_SIZE);
                 #[cfg(feature = "mi-stat-2")]
                 self.session.theap().record_malloc_normal_level_two_allocated(
-                    request, size_class::bin_for_regular_page_block_size(block_size),
+                    request, size_class::bin_for_regular_page_block_size(block_size - PADDING_SIZE),
                 );
             }
         }

@@ -368,7 +368,26 @@ def run_native_tests() -> dict[str, Any]:
     summaries = [line for line in output.splitlines() if line.startswith("test result: ok.")]
     if len(summaries) != len(NATIVE_TESTS) or any(" 0 passed" in line for line in summaries):
         raise harness.HarnessError("M4 native-engine regressions did not run one nonempty suite per target")
+    pin = harness.load_pin()
+    archive = harness.fetch_archive(pin, True)
+    with harness.temporary_directory("crabc-mimalloc-x86_64-m4-canary-") as name:
+        temporary = Path(name)
+        source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
+        c_driver = build_c_driver(source, temporary, profile="debug-1")
+        c_execution = run_driver(c_driver, ("padding-canary",))
+        harness.require_success(c_execution, "M4 pinned two-key padding canary")
+        rust_execution = harness.command_record([
+            harness.require_tool("cargo"), "test", "--locked", "--target", RUST_TARGET,
+            "-p", "crabc-mimalloc", "--lib", "--no-default-features",
+            "alloc::tests::debug_padding_canary_uses_independent_page_keys", "--", "--exact", "--quiet", "--nocapture",
+        ], cwd=harness.ROOT, env=dict(os.environ), timeout_seconds=EVIDENCE_TIMEOUT_SECONDS)
+        harness.require_success(rust_execution, "M4 native two-key padding canary")
+        c_canaries = parse_operations_trace(str(c_execution["stdout"]), "pinned padding canaries")
+        rust_canaries = dict(line.split("=", 1) for line in str(rust_execution["stdout"]).splitlines()
+                             if line.startswith("padding.canary."))
+        compare_operations_traces(c_canaries, rust_canaries)
     report = {"command": execution["command"], "status": "passed", "targets": list(NATIVE_TESTS)}
+    report["padding_canaries"] = c_canaries
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     harness.write_json(ARTIFACTS / "native-operations.json", report)
     return report
@@ -418,7 +437,19 @@ def compare_operations_traces(c_trace: Mapping[str, str], rust_trace: Mapping[st
     )
 
 
-def build_c_driver(source: Path, temporary: Path, driver_source: Path = OPERATIONS_DRIVER) -> Path:
+def api_profile_flags(profile: str) -> tuple[str, ...]:
+    flags = tuple(flag for flag in harness.CONFIGURATION_PROFILES["release"]
+                  if not flag.startswith(("-DMI_DEBUG=", "-DMI_STAT=")))
+    return (*flags, *{
+        "release": ("-DMI_DEBUG=0", "-DMI_STAT=0"),
+        "stat-1": ("-DMI_DEBUG=0", "-DMI_STAT=1"),
+        "stat-2": ("-DMI_DEBUG=0", "-DMI_STAT=2"),
+        "debug-1": ("-DMI_DEBUG=1", "-DMI_STAT=2", "-DMI_PADDING=1"),
+    }[profile])
+
+
+def build_c_driver(source: Path, temporary: Path, driver_source: Path = OPERATIONS_DRIVER,
+                   profile: str = "release") -> Path:
     """Link the shared driver against the pinned release `src/static.c`."""
 
     compiler = harness.require_tool("musl-gcc")
@@ -426,7 +457,8 @@ def build_c_driver(source: Path, temporary: Path, driver_source: Path = OPERATIO
     build = harness.command_record(
         [
             compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
-            *harness.CONFIGURATION_PROFILES["release"], "-I", str(source / "include"),
+            "-DCRABC_MI_M4_SOURCE_CANARY=1",
+            *api_profile_flags(profile), "-I", str(source / "include"),
             str(driver_source), str(source / "src/static.c"), "-pthread", "-o", str(driver),
         ],
         cwd=source,
@@ -435,7 +467,7 @@ def build_c_driver(source: Path, temporary: Path, driver_source: Path = OPERATIO
     return driver
 
 
-def build_adapter_library(temporary: Path) -> Path:
+def build_adapter_library(temporary: Path, profile: str = "release") -> Path:
     """Build the native adapter static library in this run's own target."""
 
     target_dir = temporary / "cargo-target"
@@ -443,6 +475,7 @@ def build_adapter_library(temporary: Path) -> Path:
         [
             harness.require_tool("cargo"), "build", "--locked", "--release", "--target", RUST_TARGET,
             "-p", ADAPTER_PACKAGE, "--target-dir", str(target_dir),
+            *(("--features", f"crabc-mimalloc/mi-{profile}") if profile != "release" else ()),
         ],
         cwd=harness.ROOT, env=dict(os.environ), timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
     )
@@ -450,10 +483,11 @@ def build_adapter_library(temporary: Path) -> Path:
     return target_dir / RUST_TARGET / "release" / ADAPTER_STATICLIB
 
 
-def build_rust_driver(source: Path, temporary: Path, driver_source: Path = OPERATIONS_DRIVER) -> Path:
+def build_rust_driver(source: Path, temporary: Path, driver_source: Path = OPERATIONS_DRIVER,
+                      profile: str = "release") -> Path:
     """Link the same driver, unchanged, against the native adapter only."""
 
-    library = build_adapter_library(temporary)
+    library = build_adapter_library(temporary, profile)
     driver = temporary / "operations-rust"
     link = harness.command_record(
         [
@@ -494,10 +528,32 @@ def run_operations_differential(offline: bool, scenario: str) -> dict[str, Any]:
             name: {side: run_driver(driver, (f"abort:{name}",))["status"] for side, driver in drivers.items()}
             for name in (ABORT_SCENARIOS if scenario == "operations" else ())
         }
+        mode_traces = {}
+        if scenario == "aligned-preservation":
+            for profile in ("debug-1", "release", "stat-1", "stat-2"):
+                profile_directory = temporary / profile
+                profile_directory.mkdir()
+                for side, builder in (("c", build_c_driver), ("rust", build_rust_driver)):
+                    driver = builder(source, profile_directory, profile=profile)
+                    execution = run_driver(driver, ("api-modes",))
+                    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+                    (ARTIFACTS / f"api-modes-{profile}.{side}.log").write_text(
+                        str(execution["stdout"]) + str(execution["stderr"])
+                    )
+                    harness.require_success(execution, f"M4 {profile} {side} API driver")
+                    mode_traces[f"{profile}.{side}"] = parse_operations_trace(
+                        str(execution["stdout"]), f"{profile} {side} API trace",
+                    )
     # Keep both raw traces beside the report so a mismatch can be located.
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     for side, execution in executions.items():
         (ARTIFACTS / f"{scenario}-{side}.trace").write_text(str(execution["stdout"]))
+    for mode, trace in mode_traces.items():
+        (ARTIFACTS / f"api-modes-{mode}.trace").write_text(
+            "".join(f"{key}={value}\n" for key, value in trace.items())
+        )
+    for profile in ("release", "stat-1", "stat-2", "debug-1") if mode_traces else ():
+        compare_operations_traces(mode_traces[f"{profile}.c"], mode_traces[f"{profile}.rust"])
     compare_operations_traces(traces["c"], traces["rust"])
     unequal = {name: status for name, status in terminations.items() if status["c"] != status["rust"]}
     if unequal:
@@ -506,6 +562,7 @@ def run_operations_differential(offline: bool, scenario: str) -> dict[str, Any]:
         "abort_scenarios": terminations,
         "compared_key_count": len(traces["c"]),
         "scenario": scenario,
+        "api_profiles": mode_traces,
         "status": "passed",
         "trace": traces["c"],
     }

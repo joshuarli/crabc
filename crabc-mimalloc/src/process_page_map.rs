@@ -241,7 +241,22 @@ impl LiveAllocationPointer {
     /// the nonzero block size. Ordinary free does not need this extent.
     #[inline]
     pub(crate) fn usable_size(&self) -> usize {
-        self.block_size - (self.client.as_ptr().addr() - self.canonical_block.as_ptr().addr())
+        #[cfg(not(feature = "mi-debug-1"))]
+        let canonical_usable = self.block_size;
+        #[cfg(feature = "mi-debug-1")]
+        let canonical_usable = {
+            // SAFETY: this operation-scoped observation retains the exact
+            // live block and its page's immutable padding key. The caller
+            // excludes concurrent client mutation through its source operation.
+            let key = unsafe { Page::debug_padding_keys_at(self.page) };
+            // SAFETY: the same exact live block retains the full readable
+            // trailing record. Reallocation may copy only the logical client
+            // extent, excluding both padding bytes and the record itself.
+            unsafe { crate::alloc::debug_padding_usable_size(
+                self.canonical_block, self.block_size, self.page.as_ptr().addr(), key,
+            ) }
+        };
+        canonical_usable.saturating_sub(self.client.as_ptr().addr() - self.canonical_block.as_ptr().addr())
     }
 
     /// Consumes this observation into a bounded source for one replacement.

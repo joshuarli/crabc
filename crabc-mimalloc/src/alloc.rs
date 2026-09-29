@@ -47,14 +47,13 @@ pub(crate) enum DebugPaddingError {
 /// Encodes a page/block pair with its source page key. The low byte and bit
 /// nine are clear so a one-byte overrun cannot accidentally form a valid
 /// canary or the reserved freed marker.
-#[cfg(feature = "mi-debug-1")]
+#[cfg(any(feature = "mi-debug-1", test))]
 #[inline]
-fn debug_padding_canary(page_address: usize, block_address: usize, page_key: usize) -> u32 {
-    let secondary_key = page_key.rotate_right(13);
+fn debug_padding_canary(page_address: usize, block_address: usize, page_keys: [usize; 2]) -> u32 {
     let address = if block_address == 0 { page_address } else { block_address };
-    let encoded = (address ^ secondary_key)
-        .rotate_left(page_key as u32)
-        .wrapping_add(page_key);
+    let encoded = (address ^ page_keys[1])
+        .rotate_left(page_keys[0] as u32)
+        .wrapping_add(page_keys[0]);
     (encoded as u32) & 0xFFFF_FE00
 }
 
@@ -65,14 +64,14 @@ fn debug_padding_canary(page_address: usize, block_address: usize, page_key: usi
 ///
 /// `block` must be a uniquely owned writable block of `block_size` bytes.
 /// `block_size >= PADDING_SIZE`, and `request_size` must fit its usable part.
-/// `page_address` and `page_key` must describe that block's live source page.
+/// `page_address` and `page_keys` must describe that block's live source page.
 #[cfg(feature = "mi-debug-1")]
 pub(crate) unsafe fn initialize_debug_padding(
     block: NonNull<u8>,
     block_size: usize,
     request_size: usize,
     page_address: usize,
-    page_key: usize,
+    page_keys: [usize; 2],
     zero: bool,
     huge: bool,
 ) -> Option<usize> {
@@ -87,7 +86,7 @@ pub(crate) unsafe fn initialize_debug_padding(
     let padding = unsafe { block.as_ptr().add(usable_block_size).cast::<DebugPadding>() };
     // SAFETY: the caller owns the entire block; the record is within it.
     unsafe { core::ptr::write_unaligned(padding, DebugPadding {
-        canary: debug_padding_canary(page_address, block.as_ptr().addr(), page_key),
+        canary: debug_padding_canary(page_address, block.as_ptr().addr(), page_keys),
         delta: delta32,
     }) };
     if !huge {
@@ -108,14 +107,14 @@ pub(crate) unsafe fn debug_padding_usable_size(
     block: NonNull<u8>,
     block_size: usize,
     page_address: usize,
-    page_key: usize,
+    page_keys: [usize; 2],
 ) -> usize {
     let Some(usable_block_size) = block_size.checked_sub(crate::config::PADDING_SIZE) else {
         return 0;
     };
     // SAFETY: the caller retains the full block and source page key.
     let record = unsafe { core::ptr::read_unaligned(block.as_ptr().add(usable_block_size).cast::<DebugPadding>()) };
-    if record.canary != debug_padding_canary(page_address, block.as_ptr().addr(), page_key)
+    if record.canary != debug_padding_canary(page_address, block.as_ptr().addr(), page_keys)
         || record.delta as usize > usable_block_size
     {
         0
@@ -136,7 +135,7 @@ pub(crate) unsafe fn check_debug_padding_on_free(
     block: NonNull<u8>,
     block_size: usize,
     page_address: usize,
-    page_key: usize,
+    page_keys: [usize; 2],
     huge: bool,
 ) -> Result<usize, DebugPaddingError> {
     let Some(usable_block_size) = block_size.checked_sub(crate::config::PADDING_SIZE) else {
@@ -145,7 +144,7 @@ pub(crate) unsafe fn check_debug_padding_on_free(
     // SAFETY: the caller retains the complete block and source page key.
     let padding = unsafe { block.as_ptr().add(usable_block_size).cast::<DebugPadding>() };
     let record = unsafe { core::ptr::read_unaligned(padding) };
-    if record.canary != debug_padding_canary(page_address, block.as_ptr().addr(), page_key)
+    if record.canary != debug_padding_canary(page_address, block.as_ptr().addr(), page_keys)
         || record.delta as usize > usable_block_size
     {
         return if record.canary == 0x00DE_AD00 {
@@ -665,6 +664,20 @@ mod tests {
     use std::boxed::Box;
     use std::cell::RefCell;
     use std::vec::Vec;
+
+    #[test]
+    fn debug_padding_canary_uses_independent_page_keys() {
+        let page = 0x1000usize;
+        let keys = [0x1234_5678_9ABC_DE0Dusize, 0xFEDC_BA98_7654_3210usize];
+        for (index, block) in [0usize, 0x1000, 0x1010, 0x1FF0].into_iter().enumerate() {
+            let encoded_address = (if block == 0 { page } else { block }) ^ keys[1];
+            let rotation = keys[0] as u32 % usize::BITS;
+            let expected = encoded_address.rotate_left(rotation).wrapping_add(keys[0]) as u32 & 0xFFFF_FE00;
+            let actual = debug_padding_canary(page, block, keys);
+            std::println!("padding.canary.{index}={actual}");
+            assert_eq!(actual, expected);
+        }
+    }
 
     #[test]
     fn expand_uses_the_full_usable_extent_only_in_the_no_padding_profile() {

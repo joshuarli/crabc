@@ -41,7 +41,7 @@ pub(crate) const fn allocation_plan(
     offset: usize,
     os_page_size: usize,
 ) -> Option<AlignedAllocationPlan> {
-    if size > MAX_ALLOC_SIZE || !size_class::alignment_is_valid(alignment) {
+    if !size_class::request_size_is_valid(size) || !size_class::alignment_is_valid(alignment) {
         return None;
     }
 
@@ -78,7 +78,7 @@ pub(crate) const fn allocation_plan(
         Some(request) => request,
         None => return None,
     };
-    if request > MAX_ALLOC_SIZE {
+    if !size_class::request_size_is_valid(request) {
         return None;
     }
     Some(AlignedAllocationPlan::Overallocate { request })
@@ -183,13 +183,14 @@ pub(crate) fn aligned_reallocation_decision<P: AllocationPointerFacts>(
     offset: usize,
     zero: bool,
 ) -> Option<PointerReallocationDecision<P>> {
-    // The non-offset entry delegates word-sized arguments before checking
-    // their power of two; the offset entry checks every alignment first.
-    if alignment <= size_of::<usize>() && offset == 0 {
-        return Some(ordinary_reallocation_decision(source, new_size, zero));
-    }
+    // This is the offset kernel: its validation precedes delegation even
+    // when the supplied offset is zero. The non-offset wrapper selects the
+    // ordinary kernel before reaching this entry for word-sized arguments.
     if !size_class::alignment_is_valid(alignment) {
         return None;
+    }
+    if alignment <= size_of::<usize>() && offset == 0 {
+        return Some(ordinary_reallocation_decision(source, new_size, zero));
     }
     let source = source.into_overaligned_pointer();
     let source = match source {
@@ -437,7 +438,7 @@ mod tests {
     }
 
     #[test]
-    fn word_sized_aligned_reallocation_delegates_before_alignment_validation() {
+    fn offset_reallocation_validates_word_sized_alignment_before_delegation() {
         let old = crate::alloc::TestAllocationPointer::exact(0x2000, 128).unwrap();
         assert_eq!(
             aligned_reallocation_decision(
@@ -447,7 +448,7 @@ mod tests {
                 0,
                 false,
             ),
-            Some(crate::alloc::PointerReallocationDecision::Reuse(old))
+            None
         );
         assert_eq!(
             aligned_reallocation_decision(
