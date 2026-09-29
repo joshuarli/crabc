@@ -1088,7 +1088,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn selected_constants_match_the_pinned_linux_64_profile() {
+    fn selected_release_constants_match_the_pinned_linux_64_profiles() {
         assert_eq!(WORD_SIZE, 8);
         assert_eq!(MAX_ALIGN_SIZE, 16);
         assert_eq!(SECURE_LEVEL, 0);

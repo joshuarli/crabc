@@ -9492,7 +9492,7 @@ mod tests {
     }
 
     #[test]
-    fn metadata_layout_matches_selected_c_contract() {
+    fn metadata_layout_matches_the_default_release_c_contract() {
         assert_eq!(size_of::<MemoryKind>(), 4);
         assert_eq!(align_of::<MemoryKind>(), 4);
         assert_eq!(size_of::<MemoryInfo>(), 16);
