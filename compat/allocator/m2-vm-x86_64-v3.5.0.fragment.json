@@ -244,7 +244,8 @@
           "process-owned-protect-fault-c-rust-differential",
           "process-owned-unprotect-fault-c-rust-differential",
           "registered-arena-terminal-unmap-fault-c-rust-differential",
-          "os-page-terminal-unmap-fault-c-rust-differential"
+          "os-page-terminal-unmap-fault-c-rust-differential",
+          "os-page-escaped-map-metadata-fault-c-rust-differential"
         ]
       },
       {
@@ -362,7 +363,8 @@
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "normal-os-offset-full-provenance-and-release-retry",
-          "os-page-terminal-unmap-fault-c-rust-differential"
+          "os-page-terminal-unmap-fault-c-rust-differential",
+          "os-page-escaped-map-metadata-fault-c-rust-differential"
         ]
       },
       {
@@ -522,7 +524,8 @@
           "normal-page-extension-direct-commit-failure-and-retry",
           "registered-arena-page-map-fault-c-rust-differential",
           "registered-arena-page-map-double-fault-c-rust-differential",
-          "os-page-terminal-unmap-fault-c-rust-differential"
+          "os-page-terminal-unmap-fault-c-rust-differential",
+          "os-page-escaped-map-metadata-fault-c-rust-differential"
         ]
       },
       {
@@ -638,7 +641,8 @@
           "process-owned-protect-fault-c-rust-differential",
           "process-owned-unprotect-fault-c-rust-differential",
           "registered-arena-terminal-unmap-fault-c-rust-differential",
-          "os-page-terminal-unmap-fault-c-rust-differential"
+          "os-page-terminal-unmap-fault-c-rust-differential",
+          "os-page-escaped-map-metadata-fault-c-rust-differential"
         ],
         "missing_conditions": [
           "The selected normal-offset _mi_os_free_ex failure/retry, finite aligned-overmap source rows, and normal aligned allocation prefix/suffix trim-failure receivers compare full-MemoryId base/size, current/total counter timing, escaped ranges, source warning delivery, and raw-only release cleanup. Warning/error reporting beyond those receivers, huge MemoryId dispatch, unselected allocation transitions, and every other counter/caller route remain unqualified."
@@ -879,7 +883,8 @@
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "normal-os-offset-full-provenance-and-release-retry",
-          "os-page-terminal-unmap-fault-c-rust-differential"
+          "os-page-terminal-unmap-fault-c-rust-differential",
+          "os-page-escaped-map-metadata-fault-c-rust-differential"
         ],
         "missing_conditions": []
       },

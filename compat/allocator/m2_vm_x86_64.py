@@ -152,6 +152,11 @@ CHECKS = (
         "compat/allocator/m2_os_page_terminal_unmap_fault_x86_64.py",
     ),
     (
+        "os-page-escaped-map-metadata-fault-c-rust-differential",
+        "c-rust-process-os-page-terminal-unmap-fault-differential",
+        "compat/allocator/m2_os_page_escaped_map_fault_x86_64.py",
+    ),
+    (
         "process-policy-first-arena-clean-primary-fallback",
         "rust-unit",
         "process_arena::tests::process_default_os_arena_retries_the_source_smaller_policy_arena_after_clean_primary_failure",
@@ -371,6 +376,7 @@ EXPLICIT_ARENA_SOURCE_CHECK_IDS = (
 )
 REGISTERED_ARENA_TERMINAL_UNMAP_CHECK_ID = "registered-arena-terminal-unmap-fault-c-rust-differential"
 OS_PAGE_TERMINAL_UNMAP_CHECK_ID = "os-page-terminal-unmap-fault-c-rust-differential"
+OS_PAGE_ESCAPED_MAP_CHECK_ID = "os-page-escaped-map-metadata-fault-c-rust-differential"
 PROCESS_PROTECTION_SOURCE_CHECK_IDS = (
     "process-owned-protect-fault-c-rust-differential",
     "process-owned-unprotect-fault-c-rust-differential",
@@ -922,6 +928,18 @@ def load_fragment(path: Path) -> dict[str, Any]:
         ),
         (
             OS_PAGE_TERMINAL_UNMAP_CHECK_ID,
+            (
+                "arena-on-demand-page-first-prefix",
+                "os-free-and-full-memory-id-release",
+                "unix-fixed-free-primitive",
+            ),
+            (
+                ("os-free-and-statistics-events", "partial-fixed-profile"),
+                ("unix-free-primitive", "qualified-fixed-profile"),
+            ),
+        ),
+        (
+            OS_PAGE_ESCAPED_MAP_CHECK_ID,
             (
                 "arena-on-demand-page-first-prefix",
                 "os-free-and-full-memory-id-release",
