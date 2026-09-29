@@ -130,7 +130,10 @@ are not transferable passes for a different revision.
   failure remains red under the corrected reader. The full dynamic qualifier
   passes `signal-handler-fork` and `kernel-residual` but stops at installed
   AIO dynamic PIE with status 139 on two runs; the same-source accepted-C AIO
-  control passes. A native 219-case receipt remains unavailable.
+  control passes. A later installed regression traced the native fault to an
+  8 KiB AIO worker stack that could not complete allocator startup; a 64 KiB
+  floor passes native, accepted-C, and pinned-musl controls. A native 219-case
+  receipt remains unavailable while the full qualifier is replayed.
   `consumer.rust-std-lto` passes its
   Rust, native-facade, LTO, and unwind leaves on clean `d6733f516`; its
   pinned-image receipt passed independent physical validation and public
