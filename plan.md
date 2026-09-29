@@ -985,16 +985,27 @@ are not transferable passes for a different revision.
   executable contract filters, so `--m2 --check --x86-64` reaches the partial
   M2 contract. A source-bound process-owned commit fault receiver matches 44
   pinned-C/Rust fields; its fault inventory admits 27 rows, including 44/44
-  commit and 38/38 decommit observations. The M7 statistics gate passes its
-  29 runnable rows after a 49-key initial page-commit failure differential,
-  but retains its named coverage blockers. A fixed `24482abc2` dynamic cohort
-  has passed all 73 installed cases, including Unix evidence, resolver
-  cancellation, synthetic loader, and the authenticated package corpus;
-  second and extracted product checks and same-source family admission remain
-  open. A separate source-sealed ABI selector discharges the `btowc` ordinary
-  import and retains 737 blockers; it is not a current-main closure claim.
+  commit and 38/38 decommit observations. A later process-owned map failure
+  differential matches 35/35 fields, and its full fault inventory admits 28
+  source-bound rows. The M7 statistics gate first passed 29 runnable rows after
+  a 49-key initial page-commit failure differential, then 30 rows after a
+  regular-page release fault matched 21 C/Rust keys; its named coverage blockers
+  remain. A fixed `24482abc2` dynamic cohort passed all 73 installed, 73
+  second-product, and 73 extracted-product cases; its physical 219-case reader
+  published a source-sealed qualification receipt. Its first POSIX family
+  assessment failed on 42 retained filesystem streams because the reader
+  omitted two executed scenarios. The reader now accepts all 15 scenarios and
+  rejects a missing stream, including a replay of those physical files; a fresh
+  source-sealed cohort is required for admission. Four parity receipt
+  attachments remain open. Separate source-sealed ABI
+  selectors discharged `btowc` and then `wctomb` ordinary imports in distinct
+  cohorts, each ending at 737 blockers; neither is a current-main closure claim.
+  The nested subprocess C/Rust trace now matches parent ownership and teardown,
+  but the full M6 gate remains incomplete with ten blocked gates and nine
+  missing evidence entries.
   A later focused M2 differential matches repeated explicit process init;
-  the M5 remote-publication gate matches pinned C and a separate Loom race,
+  the merged-source M5 remote-publication gate passes with a 9-key pinned-C/Rust
+  post-exit parallel reclaim receiver and separate Loom race,
   while M5 codegen and performance remain open. Integrated resolver cancellation
   now matches 847 existing and 84 controlled-network musl cases after fixing
   errno and h_errno lifetime. A failing musl regression led to the x86
