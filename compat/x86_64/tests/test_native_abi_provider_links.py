@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import os
 from pathlib import Path
 import sys
 import shutil
@@ -75,6 +76,25 @@ class ProviderLinkAttachmentTests(unittest.TestCase):
 
 
 class ProviderFixtureObjectTests(unittest.TestCase):
+    def test_link_commands_reserve_owned_driver_relative_sidecars(self):
+        import crabc_cc_static as driver
+        import native_abi_provider_links as links
+        scratch = ROOT / '.work/x86_64/provider-links-object-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        previous = Path.cwd()
+        try:
+            os.chdir(ROOT)
+            with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+                work = Path(temporary)
+                installed = scratch / 'installed'
+                for mode in links.MODES:
+                    argv = links.command(installed, work, mode)
+                    receipt = Path(argv[argv.index('--link-receipt') + 1])
+                    paths = driver.receipt_sidecars(installed, receipt)
+                    self.assertEqual(paths[0].absolute(), work / (mode + '.receipt.json'))
+        finally:
+            os.chdir(previous)
+
     def test_real_object_forces_exact_complete_function_addresses(self):
         import native_abi_provider_links as links
         compiler = shutil.which('gcc')

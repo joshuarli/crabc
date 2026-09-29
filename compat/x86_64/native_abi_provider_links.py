@@ -66,7 +66,8 @@ def command(static: Path, work: Path, label: str) -> list[str]:
                 '-fno-stack-protector', '-c', str(work / 'providers.c'), '-o', str(work / 'providers.o')]
     if label in MODES:
         return [str(static / 'bin/crabc-cc'), '-' + label, '--link-receipt',
-                str(work / (label + '.receipt.json')), str(work / 'providers.o'), '-o', str(work / label)]
+                str((work / (label + '.receipt.json')).relative_to(ROOT)),
+                str(work / 'providers.o'), '-o', str(work / label)]
     return [str(work / label.removesuffix('-run'))]
 
 
