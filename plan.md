@@ -79,7 +79,10 @@ are not transferable passes for a different revision.
   fall from 707 to 705 blockers. A further same-source selector binds the one
   `close` archive importer through both static final calls and the inlined
   syslog writer in shared libc; its whole-image reader resolves 19 owned calls
-  and reduces the selector to 704 blockers. Broader ABI closure stays open.
+  and reduces the selector to 704 blockers. The same owned scanf archive's
+  `mbsinit` import now binds through retained ET_EXEC, static-PIE and shared
+  calls to its owned provider; independent validation reports 703 blockers.
+  Broader ABI closure stays open.
   `libc.c-abi-compat` now runs a physical
   same-cohort text/math/locale/stdio family admission; its current assessment admits seven
   of ten components and retains three allocator components at the selected C
@@ -338,8 +341,10 @@ are not transferable passes for a different revision.
   shared-gate registration remains open. A second direct receiver matches 24
   fields when two delayed slices flank a live neighbor: the first decommit
   fails, the second succeeds, both schedules are consumed, and the arena
-  remains mapped. Its shared-gate registration is also open. A separate
-  source-built fresh-arena
+  remains mapped. A third deterministic receiver matches 28 fields just
+  before, at, and after delayed-purge expiry, including exact advice and
+  retained ownership. These latter two shared-gate registrations remain open.
+  A separate source-built fresh-arena
   receiver matches 46 C/Rust fields when metadata commit and cleanup unmap
   both fail, leaving a raw escaped map while a later healthy arena claim
   succeeds and releases; its shared-gate registration remains open.
@@ -421,15 +426,23 @@ are not transferable passes for a different revision.
   clean M3 owner-only gate pass without a timing claim.
   Remote publication is at 165 Rust instructions after source-equivalent
   owner-word and published-PageMap checks, with its 100-trace and 25-value
-  differentials passing.
+  differentials passing. A clean PageMap lookup change saves one active
+  instruction in remote free and usable-size lookup and 39 linked text bytes.
+  A source-proved eight-word regular-page retirement specialization reduces
+  the native 64-byte local and worker free traces from 90 to 88 instructions,
+  versus 86 in pinned C; local malloc remains 80 versus 87. Neither change is
+  qualifying timing evidence.
   Contended timing is not qualifying. Allocator M3 passes every own
   component and waits only on M2; M4 passes including the unmodified
   upstream `test-api.c` through the native adapter. M6 now source-differentiates
   quiescent non-main and isolated process-main Heap block visitation across 138
   adapter keys, including all five exported Heap membership and region queries
   and the quiescent page-utilization query; seventeen
-  runnable evidence rows pass on a clean M6 gate, while ten required gates
-  remain blocked by named missing producers. The passing rows include
+  runnable evidence rows pass on an earlier clean M6 gate. A later clean gate
+  passes 23 runnable rows, including 19 source-built public Heap alignment
+  observations after a deleted Heap retains its Theap through final OS-page
+  retirement; ten required gates remain blocked by named missing producers.
+  The passing rows include
   fresh-process Heap membership regressions and a ten-case source-built
   main-Heap population differential
   across one to 1000 non-main Heaps, direct/fork execution, and reserved-arena
