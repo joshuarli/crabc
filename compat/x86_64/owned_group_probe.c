@@ -187,8 +187,12 @@ static void enumeration(void)
 static void stream(void)
 {
     char bytes[] = "bad\none:x:1:a,b\ntwo:x:3:c";
+    char first_bytes[] = "first:x:41:alice,bob\n";
+    char second_bytes[] = "second:*:42:\n";
     FILE *input = fmemopen(bytes, sizeof(bytes) - 1, "r");
+    FILE *second;
     struct group *group;
+    struct group *lookup_result;
 
     CHECK(input);
     group = fgetgrent(input);
@@ -197,6 +201,21 @@ static void stream(void)
     errno = EDOM;
     CHECK(!fgetgrent(input) && feof(input) && !ferror(input) && errno == EDOM);
     CHECK(fclose(input) == 0);
+
+    input = fmemopen(first_bytes, sizeof(first_bytes) - 1, "r");
+    CHECK(input);
+    group = fgetgrent(input);
+    CHECK(group && group->gr_gid == 41 && !strcmp(group->gr_mem[1], "bob"));
+    CHECK(fclose(input) == 0);
+    CHECK(!strcmp(group->gr_name, "first") && !strcmp(group->gr_mem[0], "alice"));
+    lookup_result = getgrnam("team");
+    CHECK(lookup_result && lookup_result != group && lookup_result->gr_gid == 10);
+    CHECK(!strcmp(group->gr_name, "first") && !strcmp(group->gr_mem[1], "bob"));
+    second = fmemopen(second_bytes, sizeof(second_bytes) - 1, "r");
+    CHECK(second);
+    CHECK(fgetgrent(second) == group && group->gr_gid == 42);
+    CHECK(!strcmp(group->gr_name, "second") && !group->gr_mem[0]);
+    CHECK(fclose(second) == 0);
 
     input = fopen("/etc/group", "r");
     CHECK(input && close(fileno(input)) == 0);
