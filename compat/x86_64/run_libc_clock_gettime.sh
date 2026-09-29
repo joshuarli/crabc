@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 selected static crabc-libc clock_gettime evidence.
+# Native Linux/x86-64 static clock read and resolution differential.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -73,14 +73,23 @@ assert_named_syscall() {
     assert_direct_raw_syscall_path "$symbol" "$disassembly"
 }
 
+assert_resolution_syscall() {
+    local disassembly="$work_dir/clock_getres-disassembly"
+    objdump -d --disassemble=clock_getres "$candidate" >"$disassembly"
+    grep -Eq '\$0xe5(,|[[:space:]]|$)' "$disassembly" ||
+        fail "clock_getres lacks syscall 229"
+    assert_direct_raw_syscall_path clock_getres "$disassembly"
+}
+
 require_native_linux_x86_64
-for tool in ar cargo cmp diff nm objdump readelf rustup; do require_tool "$tool"; done
+for tool in ar cargo cmp diff nm objdump readelf rustup sha256sum; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_time_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-clock-gettime.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/libc-clock-gettime"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-clock-gettime/run.XXXXXX")"
+chmod 755 "$work_dir"
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-clock-gettime-reference"
@@ -91,14 +100,19 @@ cd "$ROOT_DIR"
 for header in errno.h time.h sys/syscall.h bits/alltypes.h bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$work_dir/header-trace" || fail "fixture did not use project $header"
 done
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector -I"$ROOT_DIR/include" compat/x86_64/libc_clock_gettime_probe.c -o "$reference"
-"$reference" || fail "pinned-musl clock_gettime fixture failed"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -static -fno-pie -no-pie -fno-builtin -fno-stack-protector -I"$ROOT_DIR/include" compat/x86_64/libc_clock_gettime_probe.c -o "$reference"
+readelf --program-headers --wide "$reference" >"$work_dir/reference-program-headers"
+if grep -Eq 'Requesting program interpreter|INTERP' "$work_dir/reference-program-headers"; then
+    fail "pinned-musl reference is not static"
+fi
+( cd "$work_dir"; "$reference" ) >"$work_dir/reference.stdout" 2>"$work_dir/reference.stderr" ||
+    fail "pinned-musl clock query fixture failed; evidence: $work_dir"
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit x86 static libc archive"
 nm -A --defined-only "$archive" >"$work_dir/archive-symbols"
 assert_selected_c_abi_surface "$archive" "$work_dir/selected-symbols" "$work_dir/expected-symbols"
-for symbol in __errno_location __clock_gettime clock_gettime; do grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$work_dir/archive-symbols" || fail "archive does not define ${symbol}"; done
+for symbol in __errno_location __clock_gettime clock_gettime clock_getres; do grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$work_dir/archive-symbols" || fail "archive does not define ${symbol}"; done
 readelf --relocs --wide "$archive" >"$work_dir/archive-relocations"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$work_dir/archive-relocations" || fail "archive errno lacks TPOFF relocation"
 if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|mimalloc|sha_crypt' "$work_dir/archive-relocations"; then fail "archive selects dynamic TLS or unowned dependency"; fi
@@ -109,7 +123,7 @@ readelf --program-headers --wide "$candidate" >"$work_dir/candidate-program-head
 readelf --dynamic --wide "$candidate" >"$work_dir/candidate-dynamic" || true
 readelf --relocs --wide "$candidate" >"$work_dir/candidate-relocations"
 objdump -d "$candidate" >"$work_dir/candidate-disassembly"
-for symbol in __errno_location __clock_gettime clock_gettime; do grep -Eq "[[:space:]]${symbol}$" "$work_dir/candidate-symbols" || fail "candidate does not define ${symbol}"; done
+for symbol in __errno_location __clock_gettime clock_gettime clock_getres; do grep -Eq "[[:space:]]${symbol}$" "$work_dir/candidate-symbols" || fail "candidate does not define ${symbol}"; done
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$work_dir/candidate-symbols")"
 [ -z "$unresolved_symbols" ] || { printf '%s\n' "$unresolved_symbols" >&2; fail "candidate retains unresolved symbol"; }
 if grep -Eq 'Requesting program interpreter|INTERP' "$work_dir/candidate-program-headers" || grep -Eq 'NEEDED' "$work_dir/candidate-dynamic"; then fail "candidate selects dynamic runtime"; fi
@@ -118,5 +132,15 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_a
 objdump -d --disassemble=__errno_location "$candidate" >"$work_dir/errno-disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$work_dir/errno-disassembly" || fail "candidate errno lacks direct fs initial TLS"
 assert_named_syscall
-"$candidate" || fail "freestanding clock_gettime fixture failed"
-printf 'x86 static crabc-libc clock_gettime: PASS\n'
+assert_resolution_syscall
+( cd "$work_dir"; "$candidate" ) >"$work_dir/candidate.stdout" 2>"$work_dir/candidate.stderr" ||
+    fail "freestanding clock query fixture failed; evidence: $work_dir"
+cmp "$work_dir/reference.stdout" "$work_dir/candidate.stdout" ||
+    fail "clock query case streams differ; evidence: $work_dir"
+cmp "$work_dir/reference.stderr" "$work_dir/candidate.stderr" ||
+    fail "clock query diagnostic streams differ; evidence: $work_dir"
+printf '0\n1\n2\n3\n4\n5\n6\n7\n8\n9\nB\n' >"$work_dir/expected.stdout"
+cmp "$work_dir/expected.stdout" "$work_dir/candidate.stdout" ||
+    fail "clock query fixture skipped a required clock; evidence: $work_dir"
+sha256sum "$reference" "$candidate" "$work_dir/"*.stdout "$work_dir/"*.stderr >"$work_dir/sha256sums"
+printf 'x86 static crabc-libc clock query: PASS; evidence: %s\n' "$work_dir"
