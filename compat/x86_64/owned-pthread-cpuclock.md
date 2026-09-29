@@ -38,16 +38,19 @@ releasing that lock.
 Every copied target TID is a snapshot. The caller must keep the target
 executing and must not race completion, `pthread_join`, `pthread_detach`, or
 later reaping that can clear the child-TID word, withdraw the mapping, or
-permit Linux TID reuse. The consumer makes that condition concrete: main stays
-executing while its worker resolves the saved main handle; the worker then
-publishes readiness, spins until the parent releases it, and only then exits.
-It checks worker-to-held-main, worker-self, and parent-to-live-worker IDs,
-their exact 32-bit encoding, `clock_gettime` acceptance, and separate
+permit Linux TID reuse. The consumer makes that condition concrete: main and
+two workers remain executing until all three have resolved the other live
+targets. Each worker publishes its Linux TID before the parent releases both
+workers to query their peer. It checks worker-to-held-main, worker-self,
+parent-to-each-live-worker, and worker-to-live-peer IDs, their exact 32-bit
+encoding, distinct target IDs, `clock_gettime` acceptance, and separate
 caller-errno preservation.
 
-Null and foreign handles fail closed with positive `ESRCH` before the output
-slot is observed. A finished or withdrawn selected-worker registry handle also
-fails closed that way. The retained initial-main token is deliberately not
+After both workers are joined, the owned-product-only portion checks null,
+foreign, and one joined handle for positive `ESRCH` with unchanged output and
+caller `errno`. These handles are excluded from the pinned-musl differential:
+musl dereferences a valid pthread record and has no matching invalid-handle
+precondition. The retained initial-main token is deliberately not
 invalidated when main exits: this bounded route has only the caller-held-live
 main contract above, so querying it after main exits is outside the selected
 case because Linux can reuse its recorded TID. These diagnostics are candidate

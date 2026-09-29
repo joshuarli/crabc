@@ -42,7 +42,8 @@ if [ -z "$provided_dynamic_sysroot" ]; then
         --output "$work/static-sysroot" >"$work/static-build.json"
     for mode in static static-pie; do
         "$work/static-sysroot/bin/crabc-cc" "-$mode" -std=c11 \
-            -D_GNU_SOURCE -fno-builtin -fno-stack-protector "$probe" \
+            -D_GNU_SOURCE -DCRABC_CANDIDATE_DIAGNOSTICS \
+            -fno-builtin -fno-stack-protector "$probe" \
             -o "$work/$mode"
         timeout 20 env -i "$work/$mode" >"$work/$mode.stdout"
         cmp "$work/oracle.stdout" "$work/$mode.stdout"
@@ -55,7 +56,8 @@ fi
 cp -a "$provided_dynamic_sysroot" "$work/execution-root"
 for mode in pie non-pie; do
     "$provided_dynamic_sysroot/bin/crabc-cc-dynamic" "--dynamic-$mode" \
-        -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector "$probe" \
+        -std=c11 -D_GNU_SOURCE -DCRABC_CANDIDATE_DIAGNOSTICS \
+        -fno-builtin -fno-stack-protector "$probe" \
         -o "$work/dynamic-$mode"
     cp "$work/dynamic-$mode" "$work/execution-root/consumer-$mode"
     for entry in kernel direct; do
@@ -71,4 +73,4 @@ for mode in pie non-pie; do
 done
 
 printf '%s\n' \
-    'owned pthread CPU clock: PASS (pinned musl + installed static ET_EXEC/static-PIE and dynamic PIE/non-PIE kernel/direct entries; worker-to-held-main, worker-self, and parent-to-live-worker CPU-clock IDs, clock_gettime acceptance, and errno preservation); evidence:' "$work"
+    'owned pthread CPU clock: PASS (pinned musl + installed static ET_EXEC/static-PIE and dynamic PIE/non-PIE kernel/direct entries; live main/worker/peer CPU-clock IDs, clock_gettime acceptance, errno preservation, and owned invalid-handle diagnostics); evidence:' "$work"

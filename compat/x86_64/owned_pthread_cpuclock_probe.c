@@ -1,12 +1,11 @@
 /* Installed Linux/x86-64 pthread CPU-clock consumer.
  *
  * The same project-header body runs through pinned musl and the installed
- * crabc static and dynamic products.  A worker stays alive until its parent
- * has queried its opaque pthread_t, so the observation is not a completion,
- * join, detach, reaping, or reusable-TID race.  Both worker-self and
- * parent-to-live-worker and worker-to-held-main queries must preserve caller
- * errno, reproduce musl's 32-bit Linux clock encoding, and yield a clock
- * accepted by clock_gettime.
+ * crabc static and dynamic products.  Two workers stay alive while main and
+ * their peer query their opaque pthread_t values.  Every target is executing
+ * during observation, excluding completion, join, detach, reaping, and
+ * reusable-TID races.  All directions preserve caller errno, reproduce musl's
+ * 32-bit Linux clock encoding, and yield a clock accepted by clock_gettime.
  */
 
 #ifndef _GNU_SOURCE
@@ -35,14 +34,29 @@ _Static_assert(SYS_gettid == 186,
 _Static_assert(__builtin_types_compatible_p(__typeof__(&pthread_getcpuclockid),
     int (*)(pthread_t, clockid_t *)), "pthread_getcpuclockid declaration");
 
+enum { WORKER_COUNT = 2 };
+
+struct worker_group;
+
 struct worker_state {
+    struct worker_group *group;
+    int index;
     volatile int ready;
-    volatile int release;
-    pthread_t main_thread;
-    int main_task_id;
+    volatile int cross_done;
     int task_id;
     int main_status;
     int self_status;
+    int peer_status;
+};
+
+struct worker_group {
+    volatile int start_cross;
+    volatile int abort_cross;
+    volatile int release;
+    pthread_t main_thread;
+    int main_task_id;
+    pthread_t threads[WORKER_COUNT];
+    struct worker_state workers[WORKER_COUNT];
 };
 
 static long raw_syscall0(long number)
@@ -108,62 +122,143 @@ static int wait_until_set(const volatile int *value)
 static void *holding_worker(void *opaque)
 {
     struct worker_state *state = opaque;
+    struct worker_group *group = state->group;
+    int peer = 1 - state->index;
 
     state->task_id = (int)raw_syscall0(SYS_gettid);
-    state->main_status = check_cpu_clock(state->main_thread,
-        state->main_task_id, EILSEQ);
+    state->main_status = check_cpu_clock(group->main_thread,
+        group->main_task_id, EILSEQ);
     state->self_status = check_cpu_clock(pthread_self(), state->task_id, E2BIG);
     __atomic_store_n(&state->ready, 1, __ATOMIC_RELEASE);
-    while (!__atomic_load_n(&state->release, __ATOMIC_ACQUIRE))
+    while (!__atomic_load_n(&group->start_cross, __ATOMIC_ACQUIRE))
+        __asm__ volatile("pause" ::: "memory");
+    if (!__atomic_load_n(&group->abort_cross, __ATOMIC_ACQUIRE))
+        state->peer_status = check_cpu_clock(group->threads[peer],
+            group->workers[peer].task_id, EDOM);
+    __atomic_store_n(&state->cross_done, 1, __ATOMIC_RELEASE);
+    while (!__atomic_load_n(&group->release, __ATOMIC_ACQUIRE))
         __asm__ volatile("pause" ::: "memory");
     return state;
 }
 
-/* Main stays executing in this caller while the worker resolves its saved
- * handle. That holds the initial target live through the worker observation. */
-static int run_live_worker_cpu_clock(struct worker_state *worker)
+/* Main and both workers remain executing until every cross-thread clock
+ * lookup completes.  The barriers publish TIDs and handles before peer reads. */
+static int run_live_worker_cpu_clock(struct worker_group *group)
 {
-    pthread_t thread = 0;
     void *result = 0;
-    int status;
+    int created = 0;
+    int status = 0;
+    int i;
 
     errno = ERANGE;
-    if (pthread_create(&thread, NULL, holding_worker, worker) != 0 ||
-        errno != ERANGE)
-        return 10;
-    if (wait_until_set(&worker->ready))
-        return 11;
-    if (worker->main_status != 0) {
-        __atomic_store_n(&worker->release, 1, __ATOMIC_RELEASE);
-        (void)pthread_join(thread, &result);
-        return 20 + worker->main_status;
+    for (i = 0; i != WORKER_COUNT; ++i) {
+        group->workers[i].group = group;
+        group->workers[i].index = i;
+        if (pthread_create(&group->threads[i], NULL, holding_worker,
+                &group->workers[i]) != 0) {
+            status = 10 + i;
+            goto release;
+        }
+        ++created;
+        if (errno != ERANGE) {
+            status = 12 + i;
+            goto release;
+        }
     }
-    if (worker->self_status != 0) {
-        __atomic_store_n(&worker->release, 1, __ATOMIC_RELEASE);
-        (void)pthread_join(thread, &result);
-        return 30 + worker->self_status;
+    for (i = 0; i != WORKER_COUNT; ++i) {
+        if (wait_until_set(&group->workers[i].ready)) {
+            status = 20 + i;
+            goto release;
+        }
+        if (group->workers[i].main_status != 0 ||
+            group->workers[i].self_status != 0) {
+            status = 30 + 10 * i + group->workers[i].main_status +
+                group->workers[i].self_status;
+            goto release;
+        }
     }
-    status = check_cpu_clock(thread, worker->task_id, ERANGE);
-    __atomic_store_n(&worker->release, 1, __ATOMIC_RELEASE);
-    if (pthread_join(thread, &result) != 0 || result != worker ||
-        errno != ERANGE)
-        return 60;
-    return status == 0 ? 0 : 50 + status;
+    if (group->workers[0].task_id == group->workers[1].task_id ||
+        group->workers[0].task_id == group->main_task_id ||
+        group->workers[1].task_id == group->main_task_id) {
+        status = 60;
+        goto release;
+    }
+    for (i = 0; i != WORKER_COUNT; ++i) {
+        status = check_cpu_clock(group->threads[i],
+            group->workers[i].task_id, ERANGE);
+        if (status != 0) {
+            status += 70 + 10 * i;
+            goto release;
+        }
+    }
+    __atomic_store_n(&group->start_cross, 1, __ATOMIC_RELEASE);
+    for (i = 0; i != WORKER_COUNT; ++i) {
+        if (wait_until_set(&group->workers[i].cross_done)) {
+            status = 100 + i;
+            goto release;
+        }
+    }
+    for (i = 0; i != WORKER_COUNT; ++i) {
+        if (group->workers[i].peer_status != 0) {
+            status = 110 + 10 * i + group->workers[i].peer_status;
+            goto release;
+        }
+    }
+
+release:
+    if (status != 0)
+        __atomic_store_n(&group->abort_cross, 1, __ATOMIC_RELEASE);
+    __atomic_store_n(&group->start_cross, 1, __ATOMIC_RELEASE);
+    __atomic_store_n(&group->release, 1, __ATOMIC_RELEASE);
+    errno = ERANGE;
+    for (i = 0; i != created; ++i) {
+        if (pthread_join(group->threads[i], &result) != 0 ||
+            result != &group->workers[i] || errno != ERANGE)
+            status = 140 + i;
+    }
+    return status;
 }
+
+#ifdef CRABC_CANDIDATE_DIAGNOSTICS
+/* Musl dereferences valid pthread records; these diagnostic handles have no
+ * musl differential and exercise only the owned runtime's fail-closed route. */
+static int check_candidate_invalid_handle(pthread_t thread)
+{
+    clockid_t clock_id = (clockid_t)0x5a5a5a5a;
+
+    errno = EILSEQ;
+    if (pthread_getcpuclockid(thread, &clock_id) != ESRCH)
+        return 1;
+    if (clock_id != (clockid_t)0x5a5a5a5a || errno != EILSEQ)
+        return 2;
+    return 0;
+}
+#endif
 
 int main(void)
 {
-    struct worker_state worker = {
+    struct worker_group group = {
         .main_thread = pthread_self(),
         .main_task_id = (int)raw_syscall0(SYS_gettid),
     };
-    int status = check_cpu_clock(worker.main_thread, worker.main_task_id, E2BIG);
+    int status = check_cpu_clock(group.main_thread, group.main_task_id, E2BIG);
 
     if (status != 0)
         return status;
-    status = run_live_worker_cpu_clock(&worker);
+    status = run_live_worker_cpu_clock(&group);
     if (status != 0)
         return 64 + status;
-    puts("pthread_getcpuclockid live worker: ok");
+#ifdef CRABC_CANDIDATE_DIAGNOSTICS
+    status = check_candidate_invalid_handle((pthread_t)0);
+    if (status != 0)
+        return 220 + status;
+    status = check_candidate_invalid_handle((pthread_t)(uintptr_t)1);
+    if (status != 0)
+        return 230 + status;
+    status = check_candidate_invalid_handle(group.threads[0]);
+    if (status != 0)
+        return 240 + status;
+#endif
+    puts("pthread_getcpuclockid live thread graph: ok");
     return 0;
 }
