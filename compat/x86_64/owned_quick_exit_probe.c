@@ -53,6 +53,25 @@ static void child_handler(void) { emit("C", 1); }
 static void parent_handler(void) { emit("P", 1); }
 static void worker_handler(void) { emit("W", 1); }
 static void concurrent_handler(void) { emit("Q", 1); }
+static void split_filler_handler(void) { emit("A", 1); }
+
+/* The first callback has already freed slot 32 when fork copies the table.
+ * Each process must independently refill that slot and drain its 31 inherited
+ * callbacks, with the child completing before the parent resumes dispatch. */
+static void fork_during_quick_exit(void)
+{
+	int status;
+	emit("F", 1);
+	pid_t child = fork();
+	CHECK(child >= 0);
+	if (child == 0) {
+		CHECK(at_quick_exit(child_handler) == 0);
+		quick_exit(61);
+	}
+	CHECK(waitpid(child, &status, 0) == child);
+	CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 61);
+	CHECK(at_quick_exit(parent_handler) == 0);
+}
 
 extern int __cxa_atexit(void (*)(void *), void *, void *);
 
@@ -238,6 +257,14 @@ static void run_fork(void)
 	quick_exit(47);
 }
 
+static void run_fork_during_quick_exit(void)
+{
+	for (int index = 0; index != 31; ++index)
+		CHECK(at_quick_exit(split_filler_handler) == 0);
+	CHECK(at_quick_exit(fork_during_quick_exit) == 0);
+	quick_exit(62);
+}
+
 int main(int argc, char **argv)
 {
 	CHECK(argc == 2);
@@ -255,6 +282,8 @@ int main(int argc, char **argv)
 		run_contention();
 	if (!strcmp(argv[1], "fork"))
 		run_fork();
+	if (!strcmp(argv[1], "fork-during-quick-exit"))
+		run_fork_during_quick_exit();
 	if (!strcmp(argv[1], "atexit-chain"))
 		run_atexit_chain();
 	if (!strcmp(argv[1], "atexit-contention"))

@@ -39,7 +39,11 @@ ELF provider binding; LIFO order; the 32-slot limit and unchanged `errno`;
 reentrant refill; no ordinary-exit, destructor, or buffered-stdio action;
 worker process termination; controlled concurrent registration; a 32-worker
 barrier that contends every available slot; and forked table inheritance with
-copied-lock repair. It retains its artifact directory under
+copied-lock repair. A full-table case also forks from the first quick-exit
+callback, then has child and parent independently refill the freed slot and
+drain the 31 inherited callbacks; the parent waits for the child so the
+callback order and child status are deterministic. It retains its artifact
+directory under
 `.work/x86_64/tmp/` and is a required dynamic qualification case. This is
 component evidence and does not complete a runtime family or public native-x86
 support.
