@@ -162,5 +162,7 @@ for instruction in divsd divss; do
 		fail "candidate lacks ${instruction} domain-error path"
 done
 "$candidate" || fail "freestanding math fmod fixture failed"
+bash "$ROOT_DIR/compat/x86_64/run_libc_math_fmod_mxcsr.sh" ||
+	fail "pinned-musl raw fmod differential failed"
 
 printf 'x86 static libc math fmod: PASS\n'

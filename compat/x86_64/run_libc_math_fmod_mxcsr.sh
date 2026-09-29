@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pinned-musl raw-result and MXCSR differential for subnormal fmod operands.
+# Pinned-musl fmod result, errno, x87 status, and MXCSR differential.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -34,7 +34,13 @@ build_source_runtime_libc "$work/libc.a"
 
 "$work/oracle" >"$work/oracle.records"
 "$work/candidate" >"$work/candidate.records"
-[[ "$(wc -c < "$work/oracle.records")" -eq 512 ]] || {
+report_root="$ROOT/.work/x86_64/reports/libc-math-fmod-mxcsr"
+mkdir -p "$report_root"
+cp "$work/oracle.records" "$report_root/oracle.records"
+cp "$work/candidate.records" "$report_root/candidate.records"
+cp "$work/libc.a.source-runtime.json" "$report_root/source-runtime.json"
+record_bytes="$(wc -c < "$work/oracle.records")"
+[[ "$record_bytes" -gt 512 && "$((record_bytes % 24))" -eq 0 ]] || {
     printf 'pinned musl emitted an incomplete fmod MXCSR matrix\n' >&2
     exit 1
 }
@@ -43,4 +49,5 @@ if ! cmp -s "$work/oracle.records" "$work/candidate.records"; then
     printf 'fmod MXCSR records differ from pinned musl\n' >&2
     exit 1
 fi
-printf 'x86 fmod subnormal MXCSR differential: PASS (32 records)\n'
+printf 'x86 fmod raw fenv/errno/MXCSR differential: PASS (%s records)\n' "$((record_bytes / 24))"
+printf 'raw records: %s\n' "$report_root"
