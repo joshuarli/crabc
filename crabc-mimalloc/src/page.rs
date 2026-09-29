@@ -561,4 +561,168 @@ mod tests {
         assert!(initial_page_slice_pcommitted(0, 8192, 0, page_size).is_none());
         assert!(initial_page_slice_pcommitted(0, 8192, MEDIUM_PAGE_SIZE, 3).is_none());
     }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-stat-2"))]
+    #[test]
+    fn failed_second_regular_extension_commit_retries_same_page_statistics() {
+        crate::test_process::run_in_fresh_process(
+            "page::tests::failed_second_regular_extension_commit_retries_same_page_statistics",
+            || {
+                use core::ffi::{c_char, c_int, c_void};
+                use core::ptr::NonNull;
+                use core::sync::atomic::{AtomicUsize, Ordering};
+                use crate::config::SourceOption;
+                use crate::diagnostic_output::RuntimeStderrOutput;
+                use crate::os::fault;
+                use crate::runtime_lifecycle::{
+                    self, NativePageAllocationResult, NativePageFreeResult,
+                };
+                use crate::statistics::{
+                    FinalStatisticsSnapshot, HeapTheapStatistics,
+                    HeapTheapStatisticsSnapshot,
+                };
+
+                unsafe extern "C" {
+                    static mut stderr: *mut c_void;
+                    fn fputs(message: *const c_char, stream: *mut c_void) -> c_int;
+                }
+
+                static WARNINGS: AtomicUsize = AtomicUsize::new(0);
+
+                unsafe extern "C" fn source_stderr(message: *const c_char) {
+                    // SAFETY: the process-lifetime musl FILE is the selected
+                    // stderr destination and the message is NUL terminated.
+                    unsafe { let _ = fputs(message, stderr); }
+                }
+
+                unsafe extern "C" fn capture_warning(message: *const c_char, _: *mut c_void) {
+                    // SAFETY: the output owner supplies a NUL-terminated
+                    // fragment while invoking this registered callback.
+                    let bytes = unsafe { std::ffi::CStr::from_ptr(message) }.to_bytes();
+                    if bytes.windows(b"cannot commit OS memory".len())
+                        .any(|window| window == b"cannot commit OS memory")
+                    {
+                        WARNINGS.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+
+                fn stats() -> (FinalStatisticsSnapshot, HeapTheapStatisticsSnapshot) {
+                    let mut image = HeapTheapStatistics::new();
+                    // SAFETY: this local source-layout image owns the exact
+                    // header and is exclusively mutable until the copy ends.
+                    assert!(unsafe { runtime_lifecycle::native_stats_get(core::ptr::from_mut(&mut image).cast()) });
+                    (image.final_output_snapshot(), image.snapshot())
+                }
+
+                fn show(
+                    stage: &str,
+                    before: (FinalStatisticsSnapshot, HeapTheapStatisticsSnapshot),
+                    warnings: usize,
+                    failures: usize,
+                ) {
+                    let (now, bins) = stats();
+                    let old = before.0;
+                    std::println!("{stage}.pages_extended={}", now.pages_extended - old.pages_extended);
+                    std::println!("{stage}.page_committed={},{},{}",
+                        now.page_committed.total - old.page_committed.total,
+                        now.page_committed.peak - old.page_committed.peak,
+                        now.page_committed.current - old.page_committed.current);
+                    std::println!("{stage}.pages={},{},{}",
+                        now.pages.total - old.pages.total,
+                        now.pages.peak - old.pages.peak,
+                        now.pages.current - old.pages.current);
+                    std::println!("{stage}.requested={},{},{}",
+                        now.malloc_requested.total - old.malloc_requested.total,
+                        now.malloc_requested.peak - old.malloc_requested.peak,
+                        now.malloc_requested.current - old.malloc_requested.current);
+                    std::println!("{stage}.normal={},{},{}",
+                        now.malloc_normal.total - old.malloc_normal.total,
+                        now.malloc_normal.peak - old.malloc_normal.peak,
+                        now.malloc_normal.current - old.malloc_normal.current);
+                    for (index, (current, previous)) in now.malloc_bins.iter()
+                        .zip(old.malloc_bins.iter()).enumerate()
+                    {
+                        if current.total > previous.total {
+                            std::println!("{stage}.bin={index}:{},{},{}",
+                                current.total - previous.total,
+                                current.peak - previous.peak,
+                                current.current - previous.current);
+                        }
+                    }
+                    for (index, (current, previous)) in bins.page_bin_total.iter()
+                        .zip(before.1.page_bin_total.iter()).enumerate()
+                    {
+                        if current > previous {
+                            std::println!("{stage}.page_bin={index}:{},{}",
+                                current - previous,
+                                bins.page_bin_current[index] - before.1.page_bin_current[index]);
+                        }
+                    }
+                    std::println!("{stage}.commit_calls={}", now.commit_calls - old.commit_calls);
+                    std::println!("{stage}.warnings={warnings}");
+                    std::println!("{stage}.failures={failures}");
+                }
+
+                // SAFETY: the FILE callback remains callable for this whole
+                // fresh process and preserves the source stderr operation.
+                assert!(runtime_lifecycle::test_initialize_process_from_host_environment(
+                    4096, unsafe { RuntimeStderrOutput::new(source_stderr) },
+                ));
+                crate::source_options_api::option_set(SourceOption::PageCommitOnDemand as c_int, 1);
+                crate::source_options_api::option_set(SourceOption::ArenaEagerCommit as c_int, 0);
+                crate::source_options_api::option_set(SourceOption::ShowErrors as c_int, 1);
+                // SAFETY: the callback and null context remain valid until
+                // this fresh test process exits.
+                unsafe { crate::source_options_api::register_output(Some(capture_warning), core::ptr::null_mut()) };
+
+                let before = stats();
+                let mut blocks: [Option<NonNull<u8>>; 130] = [None; 130];
+                for block in blocks.iter_mut().take(128) {
+                    *block = match runtime_lifecycle::native_allocate(64, false) {
+                        NativePageAllocationResult::Allocated(pointer) => Some(pointer),
+                        _ => panic!("regular allocation failed before fault"),
+                    };
+                }
+                std::println!("CRABC_MI_M7_STATISTICS_PAGE_EXTENSION_FAULT_TRACE_BEGIN");
+                std::println!("profile.level=2");
+                std::println!("profile.on_demand={}",
+                    crate::source_options_api::option_get(SourceOption::PageCommitOnDemand as c_int));
+                std::println!("profile.eager_arena={}",
+                    crate::source_options_api::option_get(SourceOption::ArenaEagerCommit as c_int));
+                std::println!("profile.show_errors={}",
+                    crate::source_options_api::option_get(SourceOption::ShowErrors as c_int));
+                show("filled", before, WARNINGS.load(Ordering::Relaxed), 0);
+
+                let fault = fault::install(fault::Plan::at(fault::Point::Commit, 1, crabc_core::Errno::NOMEM));
+                blocks[128] = match runtime_lifecycle::native_allocate(64, false) {
+                    NativePageAllocationResult::Allocated(pointer) => Some(pointer),
+                    _ => panic!("fallback allocation after one failed page commit failed"),
+                };
+                let first = blocks[0].unwrap().as_ptr().addr() >> 16;
+                std::println!("failed_allocation.same_page={}", usize::from(blocks[128].unwrap().as_ptr().addr() >> 16 == first));
+                std::println!("failed_allocation.nonnull=1");
+                assert!(fault.observed() >= 1, "the source direct commit was reached");
+                show("failed_allocation", before, WARNINGS.load(Ordering::Relaxed), 1);
+
+                // SAFETY: this exact fallback allocation is still live and
+                // owned by the current thread; the result consumes it once.
+                assert_eq!(unsafe { runtime_lifecycle::native_free(blocks[128].take().unwrap()) }, NativePageFreeResult::Freed);
+                runtime_lifecycle::native_collect(true);
+                blocks[129] = match runtime_lifecycle::native_allocate(64, false) {
+                    NativePageAllocationResult::Allocated(pointer) => Some(pointer),
+                    _ => panic!("same-page retry allocation failed"),
+                };
+                std::println!("retry.same_page={}", usize::from(blocks[129].unwrap().as_ptr().addr() >> 16 == first));
+                std::println!("retry.nonnull=1");
+                show("retry", before, WARNINGS.load(Ordering::Relaxed), 1);
+                for block in blocks.into_iter().flatten() {
+                    // SAFETY: each pointer names one distinct live local
+                    // allocation and is consumed exactly once here.
+                    assert_eq!(unsafe { runtime_lifecycle::native_free(block) }, NativePageFreeResult::Freed);
+                }
+                show("freed", before, WARNINGS.load(Ordering::Relaxed), 1);
+                std::println!("CRABC_MI_M7_STATISTICS_PAGE_EXTENSION_FAULT_TRACE_END");
+            },
+        );
+    }
 }

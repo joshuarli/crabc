@@ -145,6 +145,10 @@
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-page-second-extension-differential"],
       "scope": "Pinned C MI_STAT=1 and Rust allocate 260 successive 64-byte blocks in one regular-page slice. Public statistics compare the first 8 KiB extension at block 1, the unchanged state at block 128, the second 16 KiB cumulative extension at block 129, the third 24 KiB cumulative extension by block 260, and retained extension and page counts after all frees. Same-slice identity is asserted without comparing addresses."
     },
+    "differential:statistics-page-extension-fault": {
+      "command": ["python3", "compat/allocator/x86_64_m7_statistics_page_extension_fault.py", "--offline"],
+      "scope": "Pinned C and Rust MI_STAT=2 use on-demand regular-page commitment. A one-shot primitive commit failure after 128 live 64-byte blocks leaves the original page at its first 8 KiB free-list extension, reports one warning, and sends that allocation to a fallback page. After freeing and collecting the fallback, the next allocation retries the original page. Exact public requested, normal, size-bin, page-bin, page, extension, commit-call, warning, and failure stages match through terminal frees. The C source is built from the pinned archive with a renamed mprotect test seam; Rust uses its test-only OS fault seam in a fresh process."
+    },
     "differential:statistics-huge": {
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-huge-differential"],
       "scope": "Pinned C MI_STAT=1 and the Rust native adapter allocate a 512 KiB+1 block in the initial Theap, then free its selected-main abandoned arena singleton through the nonlocal pointer-first path. The public process image must retain the physical 589824-byte total and peak, clear current on free, increment huge allocation count once, and leave normal allocation bytes unchanged. Aligned OS singletons, uninitialized freeing Theaps, and other nonlocal producers remain outside this fixture."
@@ -383,6 +387,7 @@
         "differential:statistics-level-two-page-huge",
         "differential:statistics-json",
         "differential:statistics-page-extend",
+        "differential:statistics-page-extension-fault",
         "differential:statistics-page-second-extension",
         "differential:statistics-huge",
         "differential:statistics-huge-page-bin",

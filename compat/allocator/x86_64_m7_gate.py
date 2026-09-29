@@ -1511,10 +1511,36 @@ def require_statistics_json(trace: Mapping[str, str], level: int, description: s
 
 def require_statistics_page_extend(
     trace: Mapping[str, str], description: str, *, repeated: bool = False,
+    faulted: bool = False,
 ) -> None:
-    """Require source page-extension counts, committed bytes, and page lifetime."""
+    """Require source page-extension counts, commit outcomes, and page lifetime."""
 
-    if repeated:
+    if repeated and faulted:
+        raise harness.HarnessError("page extension profiles are mutually exclusive")
+    if faulted:
+        expected = {
+            "profile.level": "2", "profile.on_demand": "1",
+            "profile.eager_arena": "0", "profile.show_errors": "1",
+            "failed_allocation.same_page": "0", "failed_allocation.nonnull": "1",
+            "retry.same_page": "1", "retry.nonnull": "1",
+        }
+        for stage, extension_count, page_bytes, pages, requested, normal, bin_count, page_bin, commit_calls, warnings in (
+            ("filled", 1, 8192, "1,1,1", 8192, "8192,8192,8192", "128,128,128", "1,1", 3, 0),
+            ("failed_allocation", 3, 16384, "2,2,2", 8256, "8256,8256,8256", "129,129,129", "2,2", 5, 1),
+            ("retry", 4, 24576, "2,2,1", 8320, "8320,8256,8256", "130,129,129", "2,1", 6, 1),
+            ("freed", 4, 24576, "2,2,1", 8320, "8320,8256,0", "130,129,0", "2,1", 6, 1),
+        ):
+            expected[f"{stage}.pages_extended"] = str(extension_count)
+            expected[f"{stage}.page_committed"] = f"{page_bytes},{page_bytes},{page_bytes}"
+            expected[f"{stage}.pages"] = pages
+            expected[f"{stage}.requested"] = f"{requested},{requested},{requested}"
+            expected[f"{stage}.normal"] = normal
+            expected[f"{stage}.bin"] = f"8:{bin_count}"
+            expected[f"{stage}.page_bin"] = f"8:{page_bin}"
+            expected[f"{stage}.commit_calls"] = str(commit_calls)
+            expected[f"{stage}.warnings"] = str(warnings)
+            expected[f"{stage}.failures"] = "0" if stage == "filled" else "1"
+    elif repeated:
         expected = {"profile.level": "1", "page.same_slice": "1"}
         for stage, extension_count, committed in (
             ("one", 1, 8192), ("one_twenty_eight", 1, 8192),

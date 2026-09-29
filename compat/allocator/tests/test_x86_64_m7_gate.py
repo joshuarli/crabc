@@ -73,6 +73,7 @@ class M7GateContractTests(unittest.TestCase):
             "differential:statistics-level-two-requested",
             "differential:statistics-os-large-stage-accounted",
             "differential:statistics-page-extend",
+            "differential:statistics-page-extension-fault",
             "differential:statistics-page-second-extension",
             "differential:statistics-remote-bin",
             "differential:statistics-remote-normal",
@@ -348,6 +349,47 @@ class M7GateContractTests(unittest.TestCase):
             gate.require_statistics_page_extend(
                 {**trace, "page.same_slice": "0"}, "split page", repeated=True,
             )
+
+    def test_statistics_failed_extension_retains_attempt_and_retries_original_page(self) -> None:
+        summary = self.validate()
+        statistics = self.gate_record(self.contract, "m7.statistics")
+        evidence = "differential:statistics-page-extension-fault"
+        self.assertIn(evidence, statistics["evidence"])
+        self.assertIn(evidence, summary["runnable_evidence"])
+        trace = {
+            "profile.level": "2", "profile.on_demand": "1",
+            "profile.eager_arena": "0", "profile.show_errors": "1",
+            "failed_allocation.same_page": "0", "failed_allocation.nonnull": "1",
+            "retry.same_page": "1", "retry.nonnull": "1",
+        }
+        for stage, extensions, committed, pages, requested, normal, size_bin, page_bin, commits, warnings in (
+            ("filled", 1, 8192, "1,1,1", 8192, "8192,8192,8192", "128,128,128", "1,1", 3, 0),
+            ("failed_allocation", 3, 16384, "2,2,2", 8256, "8256,8256,8256", "129,129,129", "2,2", 5, 1),
+            ("retry", 4, 24576, "2,2,1", 8320, "8320,8256,8256", "130,129,129", "2,1", 6, 1),
+            ("freed", 4, 24576, "2,2,1", 8320, "8320,8256,0", "130,129,0", "2,1", 6, 1),
+        ):
+            trace.update({
+                f"{stage}.pages_extended": str(extensions),
+                f"{stage}.page_committed": f"{committed},{committed},{committed}",
+                f"{stage}.pages": pages,
+                f"{stage}.requested": f"{requested},{requested},{requested}",
+                f"{stage}.normal": normal,
+                f"{stage}.bin": f"8:{size_bin}",
+                f"{stage}.page_bin": f"8:{page_bin}",
+                f"{stage}.commit_calls": str(commits),
+                f"{stage}.warnings": str(warnings),
+                f"{stage}.failures": "0" if stage == "filled" else "1",
+            })
+        gate.require_statistics_page_extend(trace, "complete", faulted=True)
+        for key, value in (
+            ("failed_allocation.pages_extended", "2"),
+            ("failed_allocation.page_committed", "24576,24576,24576"),
+            ("failed_allocation.warnings", "0"),
+            ("retry.same_page", "0"),
+            ("freed.requested", "0,0,0"),
+        ):
+            with self.subTest(key=key), self.assertRaises(harness.HarnessError):
+                gate.require_statistics_page_extend({**trace, key: value}, key, faulted=True)
 
     def test_statistics_huge_requires_source_built_producer(self) -> None:
         summary = self.validate()
