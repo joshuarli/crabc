@@ -6,10 +6,11 @@
  * records only with socket options, padded send/receive message records,
  * bounded batched message calls, repeated descriptor peeks, the 253-rights
  * limit, close-on-exec, credentials, zero-length records, error precedence,
- * ancillary and payload truncation, and SIOCATMARK. Poisoned public padding
+ * ancillary and payload truncation, short control storage on a full-length
+ * peeked datagram, and SIOCATMARK. Poisoned public padding
  * proves the musl-shaped adapter rather than a raw Linux msghdr call.
  * Fixture-local raw close/fcntl calls clean up and inspect received
- * descriptors; a raw write emits the matched lifetime receipt. They do not
+ * descriptors; raw writes emit matched behavior receipts. They do not
  * select generic descriptor, ioctl,
  * cancellation, allocator, CRT, loader, sysroot, or public x86 support.
  */
@@ -576,6 +577,85 @@ finish:
     return status;
 }
 
+static int check_short_control_with_full_datagram_length(void)
+{
+    static const char payload[] = "length";
+    static const char success[] =
+        "short-control: peek=full-length consume=full-length "
+        "flags=trunc+ctrunc errno=preserved fds=none\n";
+    unsigned char send_control[CMSG_SPACE(sizeof(int))] = { 0 };
+    unsigned char receive_control[CMSG_LEN(sizeof(int))] = { 0 };
+    struct iovec send_iov = { (void *)payload, sizeof(payload) - 1 };
+    char received = 0;
+    struct iovec receive_iov = { &received, 1 };
+    struct msghdr send_message = { 0 };
+    struct msghdr receive_message = { 0 };
+    struct cmsghdr *header = (struct cmsghdr *)(void *)send_control;
+    int pair[2] = { -1, -1 };
+    int baseline;
+    int status = 0;
+    int index;
+
+    if (socketpair(AF_UNIX, SOCK_DGRAM, 0, pair) != 0) {
+        status = 1;
+        goto finish;
+    }
+    baseline = open_descriptor_count();
+    header->cmsg_len = CMSG_LEN(sizeof(int));
+    header->__pad1 = -1;
+    header->cmsg_level = SOL_SOCKET;
+    header->cmsg_type = SCM_RIGHTS;
+    copy_bytes(CMSG_DATA(header), &pair[0], sizeof(pair[0]));
+    send_message.msg_iov = &send_iov;
+    send_message.msg_iovlen = 1;
+    send_message.__pad1 = -1;
+    send_message.msg_control = send_control;
+    send_message.msg_controllen = sizeof(send_control);
+    send_message.__pad2 = -1;
+    receive_message.msg_iov = &receive_iov;
+    receive_message.msg_iovlen = 1;
+    receive_message.msg_control = receive_control;
+
+    errno = ERANGE;
+    if (sendmsg(pair[0], &send_message, 0) != sizeof(payload) - 1 ||
+        errno != ERANGE) {
+        status = 2;
+        goto finish;
+    }
+    /* A header fits at 16 or 19 bytes, but one descriptor needs 20. */
+    for (index = 0; index < 2; ++index) {
+        receive_message.msg_controllen = sizeof(struct cmsghdr) + index * 3;
+        receive_message.msg_flags = 0;
+        receive_message.__pad1 = -1;
+        receive_message.__pad2 = -1;
+        received = 0;
+        errno = EINTR;
+        if (recvmsg(pair[1], &receive_message,
+                MSG_TRUNC | (index == 0 ? MSG_PEEK : 0)) !=
+                sizeof(payload) - 1 ||
+            received != payload[0] ||
+            receive_message.msg_flags != (MSG_TRUNC | MSG_CTRUNC) ||
+            receive_message.msg_controllen != 0 ||
+            receive_message.__pad1 != 0 || receive_message.__pad2 != 0 ||
+            errno != EINTR || open_descriptor_count() != baseline) {
+            status = 3 + index;
+            goto finish;
+        }
+    }
+    errno = 0;
+    if (recvmsg(pair[1], &receive_message, MSG_DONTWAIT) != -1 ||
+        errno != EAGAIN || open_descriptor_count() != baseline)
+        status = 5;
+    if (status == 0 && raw3(SYS_write, 1, (long)success,
+            sizeof(success) - 1) != sizeof(success) - 1)
+        status = 6;
+
+finish:
+    raw_close(pair[1]);
+    raw_close(pair[0]);
+    return status;
+}
+
 static int check_rights_limit_and_discard(void)
 {
     static const char payload = 'm';
@@ -1094,6 +1174,9 @@ int crabc_x86_64_socket_messages_probe(void)
     result = check_rights_peek_and_discard();
     if (result != 0)
         return 80 + result;
+    result = check_short_control_with_full_datagram_length();
+    if (result != 0)
+        return 100 + result;
     result = check_rights_limit_and_discard();
     if (result != 0)
         return 110 + result;
