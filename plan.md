@@ -844,6 +844,10 @@ are not transferable passes for a different revision.
      executable, and current-source
      direct `posix-admission` passed on frozen `83e365c7c`, binding the
      54-cell POSIX family matrix and five native aggregate components.
+     A later clean `dafd7a3a7` cohort passes all 219 dynamic cases, the
+     54-cell matrix, five native components, and independent native and
+     family-admission readers; its 149-spelling family receipt is complete,
+     while campaign and public promotion remain separate.
      These receipts must be rerun on merged `main`.
   2. Sixteen Codex lanes resumed on 2026-09-26; `.work/tmp/lane-agents.txt`
      holds the active map, and the parent owns integration to `main`. The
