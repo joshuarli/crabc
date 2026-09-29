@@ -171,6 +171,7 @@ pub(crate) unsafe fn allocate(
     // SAFETY: the caller's contract makes this the exclusively owned live
     // Theap; the shared projection is the one page sessions use for reads.
     let theap_ref = unsafe { theap.as_ref() };
+    let mut observed_empty_direct_page = core::ptr::null_mut();
     if direct_small {
         let direct_index = invariants::word_count(size)?;
         if direct_index >= PAGES_DIRECT {
@@ -199,6 +200,7 @@ pub(crate) unsafe fn allocate(
             );
             return Some(block);
         }
+        observed_empty_direct_page = direct;
         if let Some(alignment) = alignment {
             if !is_naturally_aligned_small(size, alignment)? {
                 return None;
@@ -229,7 +231,11 @@ pub(crate) unsafe fn allocate(
     // no other owner can change either ordinary free-list field between them.
     let (immediate_available, local_head) = unsafe {
         let state = Page::local_free_list_state_at(first);
-        let immediate_available = !(*state.free.as_ptr()).is_null();
+        // The current owner cannot change an immediate head between the
+        // direct lookup and this queue lookup. Reuse that empty observation
+        // only when the queue still names the same page.
+        let immediate_available = first.as_ptr() != observed_empty_direct_page
+            && !(*state.free.as_ptr()).is_null();
         let local_head = if !immediate_available {
             *state.local_free.as_ptr()
         } else {
