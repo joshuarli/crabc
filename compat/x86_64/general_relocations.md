@@ -40,7 +40,7 @@ edges and does not reorder mapping ownership or TLS IDs.
 
 ## Admitted operations and preflight
 
-The general owner admits NONE, RELATIVE, 64, GLOB_DAT, JUMP_SLOT and COPY
+The general owner admits NONE, RELATIVE, 64, PC32, GLOB_DAT, JUMP_SLOT and COPY
 RELA forms plus existing RELR. Initial-TLS roots also admit DTPMOD64,
 DTPOFF64 and TPOFF64. Static-link GOTTPOFF/TPOFF32 and runtime TLSDESC remain
 unsupported; this slice does not add GNU-unique/common/versioned/IFUNC scope.
@@ -52,7 +52,10 @@ type and symbol resolve, and each destination lies inside one writable
 PT_LOAD. Like musl's `do_relocs`, destinations are not audited against each
 other or against the object's ELF tables; records apply in table order, so a
 repeated destination keeps the last write. Word destinations retain the
-existing eight-byte alignment rule. COPY is a
+existing eight-byte alignment rule. PC32 writes four bytes at an unaligned
+field using the low 32 bits of `S + A - P`; the native lifecycle gate compares
+that form with pinned musl and rejects an out-of-range destination before any
+graph writes. COPY is a
 byte operation and admits unaligned storage. It requires a main-image
 OBJECT definition at the destination, zero addend, an exported non-protected
 DSO OBJECT source, and checked source/destination ranges. Undefined, local,
