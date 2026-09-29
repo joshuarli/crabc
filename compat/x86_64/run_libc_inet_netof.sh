@@ -97,7 +97,8 @@ done
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-inet-netof.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-inet-netof.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-inet-netof-reference"
@@ -133,7 +134,7 @@ nm --undefined-only "$musl_object" | grep -E '[[:space:]]inet_addr$' >/dev/null 
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_inet_netof_probe.c >/dev/null 2>"$header_trace"
-for header in arpa/inet.h stddef.h stdint.h sys/socket.h \
+for header in arpa/inet.h errno.h stddef.h stdint.h sys/socket.h \
     bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use the project $header header"
