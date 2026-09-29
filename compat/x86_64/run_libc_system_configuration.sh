@@ -72,7 +72,7 @@ candidate="$work_dir/crabc-static-system-configuration-candidate"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H compat/x86_64/libc_system_configuration_probe.c >/dev/null 2>"$work_dir/header-trace"
-for header in errno.h limits.h sys/resource.h sys/syscall.h bits/alltypes.h bits/syscall.h unistd.h; do
+for header in errno.h fcntl.h limits.h sys/resource.h sys/syscall.h bits/alltypes.h bits/syscall.h unistd.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$work_dir/header-trace" || fail "fixture did not use project $header"
 done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector -I"$ROOT_DIR/include" compat/x86_64/libc_system_configuration_probe.c -o "$reference"

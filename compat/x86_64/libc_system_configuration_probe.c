@@ -20,6 +20,7 @@
 #endif
 
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stddef.h>
 #include <sys/resource.h>
@@ -45,6 +46,9 @@ _Static_assert(_PC_LINK_MAX == 0 && _PC_2_SYMLINKS == 20 &&
 _Static_assert(SYS_statfs == 137 && SYS_fstatfs == 138,
     "x86 statfs syscall namespace remains header-only here");
 _Static_assert(SYS_write == 1, "x86 raw observation output syscall");
+_Static_assert(SYS_openat == 257 && SYS_close == 3 &&
+    SYS_pipe2 == 293 && SYS_unlinkat == 263 && SYS_getpid == 39,
+    "x86 raw fixture resource syscalls");
 _Static_assert(SYS_prlimit64 == 302, "x86 getdtablesize syscall number");
 _Static_assert(CRABC_TYPE_IS(&sysconf, long (*)(int)), "sysconf declaration");
 _Static_assert(CRABC_TYPE_IS(&confstr, size_t (*)(int, char *, size_t)),
@@ -118,8 +122,9 @@ static int check_common_contract(void)
 /* Each initialized record is written directly so the freestanding candidate
  * and pinned-musl reference expose physical return, errno, and output bytes.
  * A raw Linux write is fixture plumbing; it selects no libc stdio or CRT.
- * Variants: 1 sysconf; 10/11 pathconf with null/absent path; 12/13 fpathconf
- * with -1/9999 descriptor; 20..23 confstr with 0/1/4/16 output bytes.
+ * Variants: 1 sysconf; 10/11/14 pathconf with null/absent/temporary-file
+ * path; 12/13/15..18 fpathconf with -1/9999/file/pipe-read/pipe-write/closed
+ * descriptors; 20..23 confstr with 0/1/4/16 output bytes.
  */
 struct observation {
     long result;
@@ -145,7 +150,151 @@ static int emit(const struct observation *record)
     return written == (long)sizeof *record ? 0 : 1;
 }
 
-static int emit_configuration_observations(void)
+/* Linux syscalls create only fixture resources. Their negative kernel returns
+ * never enter libc errno, leaving the configuration calls' errno observable.
+ */
+static long raw_syscall2(long number, long first, long second)
+{
+    long result;
+    register long fourth __asm__("r10") = 0;
+
+    __asm__ volatile("syscall" : "=a"(result)
+        : "0"(number), "D"(first), "S"(second), "d"(0L), "r"(fourth)
+        : "rcx", "r11", "memory");
+    return result;
+}
+
+static long raw_syscall3(long number, long first, long second, long third)
+{
+    long result;
+
+    __asm__ volatile("syscall" : "=a"(result)
+        : "0"(number), "D"(first), "S"(second), "d"(third)
+        : "rcx", "r11", "memory");
+    return result;
+}
+
+static long raw_syscall4(long number, long first, long second, long third,
+    long fourth_argument)
+{
+    long result;
+    register long fourth __asm__("r10") = fourth_argument;
+
+    __asm__ volatile("syscall" : "=a"(result)
+        : "0"(number), "D"(first), "S"(second), "d"(third), "r"(fourth)
+        : "rcx", "r11", "memory");
+    return result;
+}
+
+struct fixture_resources {
+    char path[96];
+    int file;
+    int pipe[2];
+    int closed;
+};
+
+static int open_fixture_resources(struct fixture_resources *resources)
+{
+    static const char prefix[] =
+        ".work/x86_64/reports/libc-system-configuration/probe-";
+    unsigned long pid = (unsigned long)raw_syscall2(SYS_getpid, 0, 0);
+    unsigned int index = 0;
+    unsigned int digit;
+    int failure;
+    long descriptor;
+
+    for (; index < sizeof prefix - 1; ++index)
+        resources->path[index] = prefix[index];
+    for (digit = 0; digit < 10; ++digit) {
+        resources->path[index + 9 - digit] = (char)('0' + pid % 10);
+        pid /= 10;
+    }
+    index += 10;
+    resources->path[index++] = '-';
+    resources->path[index + 1] = '\0';
+    if (raw_syscall2(SYS_pipe2, (long)resources->pipe, O_CLOEXEC) != 0)
+        return 3;
+    for (digit = 0; digit < 10; ++digit) {
+        resources->path[index] = (char)('0' + digit);
+        descriptor = raw_syscall4(SYS_openat, AT_FDCWD,
+            (long)resources->path, O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC, 0600);
+        if (descriptor >= 0) break;
+        if (descriptor != -EEXIST) {
+            failure = 1;
+            goto close_pipe;
+        }
+    }
+    if (digit == 10) {
+        failure = 2;
+        goto close_pipe;
+    }
+    resources->file = (int)descriptor;
+    descriptor = raw_syscall4(SYS_openat, AT_FDCWD,
+        (long)resources->path, O_RDONLY | O_CLOEXEC, 0);
+    if (descriptor < 0) {
+        failure = 4;
+        goto close_file;
+    }
+    resources->closed = (int)descriptor;
+    if (raw_syscall2(SYS_close, descriptor, 0) != 0) {
+        failure = 5;
+        goto close_file;
+    }
+    return 0;
+
+close_file:
+    raw_syscall2(SYS_close, resources->file, 0);
+    raw_syscall3(SYS_unlinkat, AT_FDCWD, (long)resources->path, 0);
+close_pipe:
+    raw_syscall2(SYS_close, resources->pipe[0], 0);
+    raw_syscall2(SYS_close, resources->pipe[1], 0);
+    return failure;
+}
+
+static int close_fixture_resources(const struct fixture_resources *resources)
+{
+    int failure = 0;
+
+    if (raw_syscall2(SYS_close, resources->file, 0) != 0) failure = 1;
+    if (raw_syscall2(SYS_close, resources->pipe[0], 0) != 0 && !failure)
+        failure = 2;
+    if (raw_syscall2(SYS_close, resources->pipe[1], 0) != 0 && !failure)
+        failure = 3;
+    if (raw_syscall3(SYS_unlinkat, AT_FDCWD, (long)resources->path, 0) != 0)
+        if (!failure) failure = 4;
+    return failure;
+}
+
+static int check_live_configuration_contract(const struct fixture_resources *resources)
+{
+    errno = E2BIG;
+    if (pathconf(resources->path, _PC_NAME_MAX) != 255 || errno != E2BIG)
+        return 1;
+    if (fpathconf(resources->file, _PC_PIPE_BUF) != 4096 || errno != E2BIG)
+        return 2;
+    if (fpathconf(resources->pipe[0], _PC_PIPE_BUF) != 4096 || errno != E2BIG)
+        return 3;
+    if (fpathconf(resources->pipe[1], _PC_NAME_MAX) != 255 || errno != E2BIG)
+        return 4;
+    if (fpathconf(resources->closed, _PC_LINK_MAX) != 8 || errno != E2BIG)
+        return 5;
+
+    errno = 0;
+    if (fpathconf(resources->pipe[0], _PC_ASYNC_IO) != -1 || errno != 0)
+        return 6;
+    errno = 0;
+    if (pathconf(resources->path, _PC_SYMLINK_MAX) != -1 || errno != 0)
+        return 7;
+    errno = 0;
+    if (pathconf(resources->path, 21) != -1 || errno != EINVAL)
+        return 8;
+    errno = 0;
+    if (fpathconf(resources->pipe[1], INT_MAX) != -1 || errno != EINVAL)
+        return 9;
+    return 0;
+}
+
+static int emit_configuration_observations(const struct fixture_resources *resources)
 {
     static const int sysconf_names[] = { _SC_CLK_TCK, _SC_PAGE_SIZE, INT_MAX };
     static const int invalid_path_names[] = { 21, INT_MAX };
@@ -171,15 +320,22 @@ static int emit_configuration_observations(void)
     }
     for (i = 0; i < 21 + sizeof invalid_path_names / sizeof invalid_path_names[0]; ++i) {
         int name = i < 21 ? (int)i : invalid_path_names[i - 21];
-        for (variant = 0; variant < 4; ++variant) {
+        for (variant = 0; variant < 9; ++variant) {
             record = (struct observation){ 0 };
             record.selector = name;
             record.variant = 10 + variant;
             errno = E2BIG;
-            if (variant < 2)
-                record.result = pathconf(variant ? absent_path : NULL, name);
-            else
-                record.result = fpathconf(variant == 2 ? -1 : 9999, name);
+            switch (variant) {
+            case 0: record.result = pathconf(NULL, name); break;
+            case 1: record.result = pathconf(absent_path, name); break;
+            case 2: record.result = fpathconf(-1, name); break;
+            case 3: record.result = fpathconf(9999, name); break;
+            case 4: record.result = pathconf(resources->path, name); break;
+            case 5: record.result = fpathconf(resources->file, name); break;
+            case 6: record.result = fpathconf(resources->pipe[0], name); break;
+            case 7: record.result = fpathconf(resources->pipe[1], name); break;
+            default: record.result = fpathconf(resources->closed, name); break;
+            }
             record.error = errno;
             if (emit(&record)) return 2;
         }
@@ -248,6 +404,8 @@ static int check_pagesize_and_dtable_contract(void)
 
 int crabc_x86_64_system_configuration_probe(void)
 {
+    struct fixture_resources resources = { 0 };
+    int cleanup;
     int status = check_common_contract();
 
     if (status != 0)
@@ -258,8 +416,16 @@ int crabc_x86_64_system_configuration_probe(void)
     status = check_pagesize_and_dtable_contract();
     if (status != 0)
         return 200 + status;
-    status = emit_configuration_observations();
-    return status == 0 ? 0 : 210 + status;
+    status = open_fixture_resources(&resources);
+    if (status != 0)
+        return 210 + status;
+    status = check_live_configuration_contract(&resources);
+    if (status == 0)
+        status = emit_configuration_observations(&resources) ? 10 : 0;
+    cleanup = close_fixture_resources(&resources);
+    if (status != 0)
+        return 220 + status;
+    return cleanup == 0 ? 0 : 240 + cleanup;
 }
 
 #ifndef CRABC_SYSTEM_CONFIGURATION_FREESTANDING
