@@ -7020,7 +7020,6 @@ impl Theap {
 
     /// Records a successfully fresh huge page before its single block is
     /// popped, using the page's physical block size.
-    #[cfg(feature = "mi-stat-1")]
     #[inline]
     pub(crate) fn record_malloc_huge_allocated(&self, block_size: usize) {
         self.statistics.malloc_huge_allocated(block_size);

@@ -38425,7 +38425,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             let Some(page) = self.allocate_fresh_page(block_size, kind) else {
                 return Ok(None);
             };
-            #[cfg(feature = "mi-stat-1")]
             {
                 // `mi_huge_page_alloc` records the fresh page before the
                 // singleton block is popped or its queue becomes full.
@@ -39603,7 +39602,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return None;
         }
         let page = self.allocate_fresh_os_aligned_page(block_size, alignment)?;
-        #[cfg(feature = "mi-stat-1")]
         {
             // `mi_huge_page_alloc` records the fresh aligned singleton before
             // its sole block is popped or the full-page transition runs.
