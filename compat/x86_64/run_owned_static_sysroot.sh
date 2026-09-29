@@ -1671,7 +1671,8 @@ reference_output="$(env -i "$header_consumer/pthread-lifecycle-reference")" ||
     -o "$header_consumer/pthread-signal-reference"
 reference_output="$(env -i "$header_consumer/pthread-signal-reference")" ||
     fail "pinned-musl pthread signal reference failed"
-[ -z "$reference_output" ] || fail "pinned-musl pthread signal reference emitted output"
+[ "$reference_output" = "pthread-signal: blocked SIGUSR2 pending then delivered to worker" ] ||
+    fail "pinned-musl pthread signal reference completion changed"
 
 "$ORACLE_CC" -std=c11 -pthread -fno-builtin \
     -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_io_cancellation_probe.c" \
