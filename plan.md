@@ -85,6 +85,11 @@ are not transferable passes for a different revision.
   The same archive's two `fmodl` calls now bind to the strong owned provider
   in both static modes and shared libc; source-sealed physical validation
   reduces the selector to 702 blockers.
+  A later pinned cohort validates 5,145 identities and 41,133 occurrences;
+  physical final-provider joins for 98 `memcpy` and 87 `memset` allocator
+  archive importers reduce its blockers from 728 to 726. The selector still
+  rejects closure, with 707 identities, 17 family admissions, one declaration
+  companion, and one semantic receipt open.
   Broader ABI closure stays open.
   `libc.c-abi-compat` now runs a physical
   same-cohort text/math/locale/stdio family admission; its current assessment admits seven
@@ -376,6 +381,8 @@ are not transferable passes for a different revision.
   before, at, and after delayed-purge expiry, including exact advice and
   retained ownership. Both are registered in a clean 99-check M2 run, where
   their C/Rust traces match and the four partial components remain named.
+  A scheduled expiry decommit failure receiver now also matches its pinned C
+  trace; a clean 100-check M2 run retains those four partial components.
   A separate source-built fresh-arena
   receiver matches 46 C/Rust fields when metadata commit and cleanup unmap
   both fail, leaving a raw escaped map while a later healthy arena claim
