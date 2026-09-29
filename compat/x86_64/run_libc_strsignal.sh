@@ -4,7 +4,8 @@
 # An isolated project-header fixture first runs through pinned musl 1.2.6,
 # then through a true `-nostdlib -static` candidate. The exact fixed signal
 # description domain is compared without selecting locale translation, error
-# strings, diagnostics, signal delivery, or process termination.
+# strings, diagnostics, signal delivery, or process termination. A second
+# executable provides fixture-local initial TLS solely to observe errno.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -50,7 +51,7 @@ assert_strong_function() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort; do
+for tool in ar awk cargo chmod chown cmp cp diff git grep mkdir nm objdump readelf rustup sha256sum sort stat; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -58,7 +59,8 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_strsignal_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-strsignal.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-strsignal.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
@@ -77,6 +79,17 @@ reference_stdout="$work_dir/reference-stdout"
 reference_stderr="$work_dir/reference-stderr"
 candidate_stdout="$work_dir/candidate-stdout"
 candidate_stderr="$work_dir/candidate-stderr"
+errno_reference="$work_dir/pinned-musl-strsignal-errno-reference"
+errno_candidate="$work_dir/crabc-static-strsignal-errno-candidate"
+errno_start="$work_dir/strsignal-errno-start.S"
+errno_headers="$work_dir/errno-candidate-program-headers"
+errno_dynamic="$work_dir/errno-candidate-dynamic"
+errno_symbols="$work_dir/errno-candidate-symbols"
+errno_header_trace="$work_dir/errno-header-trace"
+errno_reference_stdout="$work_dir/errno-reference-stdout"
+errno_reference_stderr="$work_dir/errno-reference-stderr"
+errno_candidate_stdout="$work_dir/errno-candidate-stdout"
+errno_candidate_stderr="$work_dir/errno-candidate-stderr"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -I "$ROOT_DIR/include" \
@@ -148,4 +161,125 @@ fi
 grep -Eq '^strsignal-domain-fnv1a64=[0-9a-f]{16}$' "$candidate_stdout" ||
     fail "candidate lacks the complete strsignal-domain digest"
 
+# The primary executable still proves the lookup needs no TLS. This separate
+# fixture installs one zero-initialized initial-TLS region so that C errno can
+# be observed without adding an errno dependency to the lookup itself.
+cat >"$errno_start" <<'EOF'
+    .section .bss
+    .balign 64
+strsignal_errno_initial_tls:
+    .zero 4096
+strsignal_errno_thread_pointer:
+    .zero 64
+
+    .text
+    .globl _start
+    .type _start,@function
+_start:
+    lea strsignal_errno_thread_pointer(%rip), %rsi
+    mov $0x1002, %edi
+    mov $158, %eax
+    syscall
+    test %rax, %rax
+    js 1f
+    mov %rsi, %fs:0
+    and $-16, %rsp
+    call crabc_x86_64_strsignal_probe
+    mov %eax, %edi
+    mov $60, %eax
+    syscall
+1:
+    mov $127, %edi
+    mov $60, %eax
+    syscall
+    .size _start, .-_start
+    .section .note.GNU-stack,"",@progbits
+EOF
+
+"$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L \
+    -DCRABC_STRSIGNAL_ERRNO_PROBE -I "$ROOT_DIR/include" -E -H \
+    compat/x86_64/libc_strsignal_probe.c >/dev/null 2>"$errno_header_trace"
+grep -Fq "$ROOT_DIR/include/errno.h" "$errno_header_trace" ||
+    fail "errno fixture did not use the project <errno.h> header"
+
+"$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L \
+    -DCRABC_STRSIGNAL_ERRNO_PROBE -static -fno-pie -no-pie \
+    -fno-builtin -fno-stack-protector -I "$ROOT_DIR/include" \
+    compat/x86_64/libc_strsignal_probe.c -o "$errno_reference"
+if env -i "$errno_reference" >"$errno_reference_stdout" 2>"$errno_reference_stderr"; then :; else
+    status=$?
+    fail "pinned-musl errno fixture exited $status"
+fi
+[ ! -s "$errno_reference_stderr" ] || fail "pinned-musl errno fixture wrote stderr"
+
+"$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L \
+    -DCRABC_STRSIGNAL_ERRNO_PROBE -DCRABC_STRSIGNAL_FREESTANDING \
+    -I "$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
+    -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -Wl,--gc-sections compat/x86_64/libc_strsignal_probe.c \
+    "$errno_start" "$archive" -o "$errno_candidate"
+readelf --program-headers --wide "$errno_candidate" >"$errno_headers"
+readelf --dynamic --wide "$errno_candidate" >"$errno_dynamic" || true
+readelf --symbols --wide "$errno_candidate" >"$errno_symbols"
+read -r tls_filesz tls_memsz tls_alignment < <(
+    awk '$1 == "TLS" { print $5, $6, $NF; exit }' "$errno_headers"
+) || fail "errno fixture lacks a parsable initial TLS segment"
+[ -n "${tls_filesz:-}" ] || fail "errno fixture lacks initial TLS"
+(( tls_filesz == 0 && tls_memsz > 0 && tls_memsz <= 4096 &&
+   tls_alignment > 0 && tls_alignment <= 64 && 64 % tls_alignment == 0 )) ||
+    fail "errno fixture TLS exceeds its aligned scratch region"
+for symbol in __errno_location strsignal; do
+    assert_strong_function "$errno_symbols" "$symbol" "errno candidate"
+done
+if awk '$7 == "UND" && NF >= 8 { print }' "$errno_symbols" | grep . >/dev/null; then
+    fail "errno candidate retains an unresolved symbol"
+fi
+if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \
+    "$errno_headers" "$errno_dynamic"; then
+    fail "errno candidate selects a dynamic dependency"
+fi
+if env -i "$errno_candidate" >"$errno_candidate_stdout" 2>"$errno_candidate_stderr"; then :; else
+    status=$?
+    fail "freestanding errno fixture exited $status"
+fi
+[ ! -s "$errno_candidate_stderr" ] || fail "freestanding errno fixture wrote stderr"
+if ! cmp -s "$errno_reference_stdout" "$errno_candidate_stdout"; then
+    diff -u "$errno_reference_stdout" "$errno_candidate_stdout" >&2 || true
+    fail "errno fixture output differs from pinned musl"
+fi
+
+mkdir -p "$ROOT_DIR/.work/x86_64/reports"
+receipt_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-strsignal.XXXXXX")"
+cp "$reference" "$receipt_dir/oracle-base.elf"
+cp "$candidate" "$receipt_dir/candidate-base.elf"
+cp "$errno_reference" "$receipt_dir/oracle-errno.elf"
+cp "$errno_candidate" "$receipt_dir/candidate-errno.elf"
+cp "$reference_stdout" "$receipt_dir/oracle-base.stdout"
+cp "$reference_stderr" "$receipt_dir/oracle-base.stderr"
+cp "$candidate_stdout" "$receipt_dir/candidate-base.stdout"
+cp "$candidate_stderr" "$receipt_dir/candidate-base.stderr"
+cp "$errno_reference_stdout" "$receipt_dir/oracle-errno.stdout"
+cp "$errno_reference_stderr" "$receipt_dir/oracle-errno.stderr"
+cp "$errno_candidate_stdout" "$receipt_dir/candidate-errno.stdout"
+cp "$errno_candidate_stderr" "$receipt_dir/candidate-errno.stderr"
+{
+    printf 'source_commit\t%s\n' "$(git rev-parse HEAD)"
+    printf 'command\t./scripts/dev-x86_64.sh libc-strsignal\n'
+    printf 'oracle-base\t0\n'
+    printf 'candidate-base\t0\n'
+    printf 'oracle-errno\t0\n'
+    printf 'candidate-errno\t0\n'
+} >"$receipt_dir/statuses.tsv"
+(
+    cd "$receipt_dir"
+    sha256sum ./*.elf ./*.stdout ./*.stderr statuses.tsv >SHA256SUMS
+    chmod 755 ./*.elf
+    chmod 644 ./*.stdout ./*.stderr statuses.tsv SHA256SUMS
+)
+chmod 755 "$receipt_dir"
+receipt_owner="$(stat -c '%u:%g' "$ROOT_DIR")"
+chown "$receipt_owner" "$ROOT_DIR/.work/x86_64/reports"
+chown -R "$receipt_owner" "$receipt_dir"
+
 printf 'x86 static crabc-libc strsignal: PASS\n'
+printf 'receipt: %s\n' "$receipt_dir"

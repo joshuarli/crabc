@@ -8,6 +8,9 @@
 
 #include <stdint.h>
 #include <string.h>
+#if defined(CRABC_STRSIGNAL_ERRNO_PROBE)
+#include <errno.h>
+#endif
 
 static char digest_line[] = "strsignal-domain-fnv1a64=0000000000000000\n";
 
@@ -96,10 +99,63 @@ static int check_signal_descriptions(void)
     return 0;
 }
 
+static int check_storage_and_extreme_inputs(void)
+{
+    const char *trap = strsignal(5);
+    const char *realtime = strsignal(34);
+    const char *unknown = strsignal(0);
+    static const int intervening[] = {
+        INT32_MIN, -1000000, -4, -1, 0, 1, 31, 32, 33, 34, 35,
+        63, 64, 65, 68, 1000000, INT32_MAX
+    };
+    size_t index;
+
+    if (!trap || !realtime || !unknown) return 14;
+    for (index = 0; index < sizeof intervening / sizeof intervening[0]; index++) {
+        const char *description = strsignal(intervening[index]);
+        if (!description) return 15;
+        if (strsignal(intervening[index]) != description) return 16;
+        if (strsignal(5) != trap || strsignal(34) != realtime ||
+            strsignal(0) != unknown) return 17;
+        if (!local_streq(trap, "Trace/breakpoint trap") ||
+            !local_streq(realtime, "RT34") ||
+            !local_streq(unknown, "Unknown signal")) return 18;
+    }
+    if (strsignal(INT32_MIN) != unknown ||
+        strsignal(-1000000) != unknown ||
+        strsignal(1000000) != unknown ||
+        strsignal(INT32_MAX) != unknown) return 19;
+    if (!local_streq(strsignal(33), "RT33") ||
+        !local_streq(strsignal(63), "RT63")) return 20;
+    return 0;
+}
+
+#if defined(CRABC_STRSIGNAL_ERRNO_PROBE)
+static int check_errno_preservation(void)
+{
+    static const int numbers[] = {INT32_MIN, -1, 0, 1, 31, 32, 34, 64, 65, INT32_MAX};
+    size_t index;
+
+    for (index = 0; index < sizeof numbers / sizeof numbers[0]; index++) {
+        errno = EALREADY;
+        if (!strsignal(numbers[index]) || errno != EALREADY) return 21;
+        errno = ENOTTY;
+        if (!strsignal(numbers[index]) || errno != ENOTTY) return 22;
+    }
+    return 0;
+}
+#endif
+
 int crabc_x86_64_strsignal_probe(void)
 {
     int result = check_signal_descriptions();
     if (result) return result;
+    result = check_storage_and_extreme_inputs();
+    if (result) return result;
+#if defined(CRABC_STRSIGNAL_ERRNO_PROBE)
+    result = check_errno_preservation();
+    if (result) return result;
+#endif
 
     write_digest_hex(hash_signal_domain());
     return write_all(digest_line, sizeof digest_line - 1) ? 0 : 31;
