@@ -5,9 +5,9 @@
 # as a true `-nostdlib -static` executable linked solely through the selected
 # crabc archive.  It proves the complete rwlock and rwlockattr family,
 # same-address weak aliases, timed status behavior, private reader/writer
-# contention, and cross-process shared-futex wakeups.  It remains one private
-# artifact within planned `libc.pthread-tls`, not full pthread/TLS, C runtime,
-# sysroot, or public x86 support.
+# contention, and cross-process shared-futex wakeups.  This private static
+# artifact has no general pthread/TLS, C runtime, sysroot, or public x86
+# support contract.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -93,11 +93,14 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_types_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_pthread_c11_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-pthread-rwlock.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-pthread-rwlock.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-pthread-rwlock-reference"
 candidate="$work_dir/crabc-static-pthread-rwlock-candidate"
+reference_observations="$work_dir/musl-rwlock-observations"
+candidate_observations="$work_dir/crabc-rwlock-observations"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
@@ -124,7 +127,7 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_pthread_rwlock_probe.c \
     -o "$reference"
-if timeout "$EXECUTION_TIMEOUT" "$reference"; then
+if timeout "$EXECUTION_TIMEOUT" "$reference" >"$reference_observations"; then
     :
 else
     reference_status=$?
@@ -255,11 +258,19 @@ for timed in pthread_rwlock_timedrdlock pthread_rwlock_timedwrlock; do
         fail "${timed} lacks its CLOCK_REALTIME deadline read or futex wait"
 done
 
-if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
+if timeout "$EXECUTION_TIMEOUT" "$candidate" >"$candidate_observations"; then
     :
 else
     candidate_status=$?
     fail "candidate execution exited ${candidate_status}"
 fi
+if ! cmp -s "$reference_observations" "$candidate_observations"; then
+    diff -u "$reference_observations" "$candidate_observations" >&2 || true
+    fail "candidate rwlock observations differ from pinned musl"
+fi
+evidence_dir="$ROOT_DIR/.work/x86_64/reports/libc-pthread-rwlock"
+mkdir -p "$evidence_dir"
+cp "$reference_observations" "$evidence_dir/musl-observations.txt"
+cp "$candidate_observations" "$evidence_dir/crabc-observations.txt"
 
 printf 'x86 static crabc-libc pthread rwlock: PASS\n'

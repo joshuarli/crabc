@@ -111,6 +111,37 @@ static long raw_syscall2(long number, long argument_one, long argument_two)
     return result;
 }
 
+static long raw_syscall3(long number, long argument_one, long argument_two,
+    long argument_three)
+{
+    long result;
+
+    __asm__ volatile("syscall" : "=a"(result)
+        : "a"(number), "D"(argument_one), "S"(argument_two),
+          "d"(argument_three) : "rcx", "r11", "memory");
+    return result;
+}
+
+static void emit_observation(const char *name, int value)
+{
+    char row[64];
+    int size = 0;
+    int digits = 0;
+    char reverse[16];
+    unsigned int number = (unsigned int)value;
+
+    while (*name)
+        row[size++] = *name++;
+    do {
+        reverse[digits++] = (char)('0' + number % 10);
+        number /= 10;
+    } while (number != 0);
+    while (digits != 0)
+        row[size++] = reverse[--digits];
+    row[size++] = '\n';
+    (void)raw_syscall3(SYS_write, 1, (long)(void *)row, size);
+}
+
 static long raw_syscall4(long number, long argument_one, long argument_two,
     long argument_three, long argument_four)
 {
@@ -736,10 +767,158 @@ static int run_process_shared_case(int parent_holds_writer)
         status = 8;
     if (pthread_rwlock_destroy(&round->rwlock) != 0 && status == 0)
         status = 9;
+    if (status == 0)
+        emit_observation(parent_holds_writer ? "shared-reader=" :
+            "shared-writer=", round->child_lock_result);
     if (raw_syscall2(SYS_munmap, mapped, SHARED_MAPPING_BYTES) != 0 && status == 0)
         status = 10;
     if (errno != E2BIG && status == 0)
         status = 11;
+    return status;
+}
+
+struct queued_writer_round {
+    pthread_rwlock_t rwlock;
+    volatile int entered;
+    int lock_result;
+    int unlock_result;
+};
+
+static void *queued_writer_main(void *opaque)
+{
+    struct queued_writer_round *round = opaque;
+
+    __atomic_store_n(&round->entered, 1, __ATOMIC_RELEASE);
+    round->lock_result = pthread_rwlock_wrlock(&round->rwlock);
+    if (round->lock_result == 0)
+        round->unlock_result = pthread_rwlock_unlock(&round->rwlock);
+    return (void *)(uintptr_t)0x72576c6b;
+}
+
+/* Musl admits another reader while a writer is waiting behind existing
+ * readers.  An expired or invalid deadline is also ignored if that reader
+ * slot can be acquired immediately. */
+static int run_queued_writer_reader_probe(void)
+{
+    struct queued_writer_round round = { .lock_result = -1, .unlock_result = -1 };
+    struct timespec past;
+    struct timespec invalid = { .tv_sec = 1, .tv_nsec = -1 };
+    pthread_t thread;
+    void *result = 0;
+    int status = 0;
+    int holds = 1;
+    int i;
+    int reader_count = -1;
+
+    if (deadline_after(CLOCK_REALTIME, &past, -1) != 0)
+        return 1;
+    if (pthread_rwlock_init(&round.rwlock, 0) != 0 ||
+        pthread_rwlock_rdlock(&round.rwlock) != 0)
+        return 2;
+    if (pthread_create(&thread, 0, queued_writer_main, &round) != 0)
+        return 3;
+    if (wait_for_int(&round.entered, 1) != 0 ||
+        wait_for_waiter_mark((volatile int *)&round.rwlock.__u.__i[0]) != 0 ||
+        wait_for_nonnegative_count((volatile int *)&round.rwlock.__u.__i[1], 1) != 0)
+        status = 4;
+    if (status == 0) {
+        if (pthread_rwlock_tryrdlock(&round.rwlock) != 0) status = 5;
+        else ++holds;
+    }
+    if (status == 0) {
+        if (pthread_rwlock_timedrdlock(&round.rwlock, &past) != 0) status = 6;
+        else ++holds;
+    }
+    if (status == 0) {
+        if (pthread_rwlock_timedrdlock(&round.rwlock, &invalid) != 0) status = 7;
+        else ++holds;
+    }
+    if (status == 0 && pthread_rwlock_trywrlock(&round.rwlock) != EBUSY)
+        status = 8;
+    if (status == 0)
+        reader_count = __atomic_load_n(&round.rwlock.__u.__i[0],
+            __ATOMIC_ACQUIRE) & 0x7fffffff;
+    if (status == 0 && reader_count != 4)
+        status = 10;
+    for (i = 0; i < holds; ++i)
+        if (pthread_rwlock_unlock(&round.rwlock) != 0 && status == 0)
+            status = 9;
+    if (pthread_join(thread, &result) != 0 && status == 0)
+        status = 11;
+    if (status == 0 && (result != (void *)(uintptr_t)0x72576c6b ||
+        round.lock_result != 0 || round.unlock_result != 0))
+        status = 12;
+    if (pthread_rwlock_destroy(&round.rwlock) != 0 && status == 0)
+        status = 13;
+    if (status == 0)
+        emit_observation("queued-reader-count=", reader_count);
+    return status;
+}
+
+struct canceled_deadline_round {
+    pthread_rwlock_t rwlock;
+    volatile int ready;
+    volatile int proceed;
+    int invalid_result;
+    int expired_result;
+    int final_errno;
+};
+
+static void *canceled_deadline_main(void *opaque)
+{
+    struct canceled_deadline_round *round = opaque;
+    struct timespec past;
+    struct timespec invalid = { .tv_sec = 1, .tv_nsec = 1000000000L };
+
+    errno = EACCES;
+    round->invalid_result = -1;
+    round->expired_result = -1;
+    __atomic_store_n(&round->ready, 1, __ATOMIC_RELEASE);
+    while (__atomic_load_n(&round->proceed, __ATOMIC_ACQUIRE) == 0)
+        ;
+    if (deadline_after(CLOCK_REALTIME, &past, -1) == 0) {
+        round->invalid_result = pthread_rwlock_timedwrlock(&round->rwlock, &invalid);
+        round->expired_result = pthread_rwlock_timedwrlock(&round->rwlock, &past);
+    }
+    round->final_errno = errno;
+    pthread_testcancel();
+    return (void *)(uintptr_t)0x756e726561636865ULL;
+}
+
+/* A pending deferred request does not replace a blocked rwlock operation's
+ * invalid-deadline or expired-deadline result.  Delivery occurs at the next
+ * explicit cancellation point after those results have been observed. */
+static int run_canceled_deadline_probe(void)
+{
+    struct canceled_deadline_round round = { 0 };
+    pthread_t thread;
+    void *result = 0;
+    int status = 0;
+
+    if (pthread_rwlock_init(&round.rwlock, 0) != 0 ||
+        pthread_rwlock_rdlock(&round.rwlock) != 0)
+        return 1;
+    if (pthread_create(&thread, 0, canceled_deadline_main, &round) != 0)
+        return 2;
+    if (wait_for_int(&round.ready, 1) != 0)
+        status = 3;
+    if (pthread_cancel(thread) != 0 && status == 0)
+        status = 4;
+    __atomic_store_n(&round.proceed, 1, __ATOMIC_RELEASE);
+    if (pthread_join(thread, &result) != 0 && status == 0)
+        status = 5;
+    if (status == 0 && (result != PTHREAD_CANCELED ||
+        round.invalid_result != EINVAL ||
+        round.expired_result != ETIMEDOUT || round.final_errno != EACCES))
+        status = 6;
+    if (pthread_rwlock_unlock(&round.rwlock) != 0 && status == 0)
+        status = 7;
+    if (pthread_rwlock_destroy(&round.rwlock) != 0 && status == 0)
+        status = 8;
+    if (status == 0) {
+        emit_observation("canceled-invalid=", round.invalid_result);
+        emit_observation("canceled-expired=", round.expired_result);
+    }
     return status;
 }
 
@@ -781,6 +960,12 @@ int crabc_x86_64_pthread_rwlock_probe(void)
     status = run_process_shared_case(0);
     if (status != 0)
         return 275 + status;
+    status = run_queued_writer_reader_probe();
+    if (status != 0)
+        return 300 + status;
+    status = run_canceled_deadline_probe();
+    if (status != 0)
+        return 320 + status;
     return errno == E2BIG ? 0 : 290;
 }
 
