@@ -10,12 +10,17 @@ dynamic products from the checkout into its evidence directory, so one command
 replays every row against the checkout's own source. An eleventh, dynamic-only
 row runs the executable allocator interposer against that same installed
 dynamic product in PIE and non-PIE, through kernel and direct-loader entry.
+The separate `stdio.file-dso` row uses the same product pair for eleven
+pinned-musl and candidate cases: static, static PIE, and dynamic PIE/non-PIE
+through kernel and direct-loader entry. It keeps the ten six-cell rows as the
+public family view.
 
 The closed rows are `stdio.file-backends`, `stdio.process-streams`,
 `stdio.wide-stream`, `stdio.wide-format`, `stdio.file-extensions`,
 `stdio.printf-float`, `stdio.scanf`, `stdio.frozen-surface`,
 `stdio.engine-model`, and `stdio.buffering-lifecycle`. The dynamic row is
-`stdio.allocator-interposition`. The six-cell rows retain
+`stdio.allocator-interposition`; the cross-image row is `stdio.file-dso`.
+The six-cell rows retain
 the actual observations in `owned_stdio_backends_probe.c`,
 `owned_stdio_process_probe.c`, `owned_wide_stdio_probe.c`,
 `owned_wide_format_probe.c`, `owned_stdio_extensions_probe.c`,
@@ -57,6 +62,19 @@ interposers, each hidden FILE allocator tail's jump to its public PLT entry,
 the libc jump-slot relocations, copied runtime bytes, and all eight raw musl
 and candidate outcomes. Rehashing a changed output or redirecting any of the
 three tails to a private allocator fails the row.
+
+The DSO row compiles `owned_stdio_file_dso_main_probe.c` and
+`owned_stdio_file_dso_library_probe.c` once against the installed headers.
+The static cases link both objects into one executable; the dynamic cases
+link the library object as an application DSO and exercise both loader entry
+routes. Main and the DSO each adopt an open descriptor with `fdopen`, lend
+the resulting FILE to the other image, and close it once at the owner side.
+A duplicate of the DSO-owned descriptor checks the shared kernel position
+through `fsetpos` and remains live after `fclose` closes the adopted descriptor.
+The same differential covers buffered flushes, error recovery, stream locks,
+global flushing, and ordinary-exit order. The reader reconstructs raw
+commands, exact outputs and pathname bytes, ELF imports and links, and the
+source and copied-product identities from the retained work tree.
 
 ## Frozen symbol surface
 
@@ -152,7 +170,8 @@ python3 -B compat/x86_64/owned_stdio_file_engine_receipt.py \
 
 It returns `crabc.x86_64-owned-stdio-file-engine/v1`, `matrix` equal to
 `supplied-static`, six exact execution-cell labels for the ten original rows,
-four dynamic cells for the allocator row, the closed rows, exact
+four dynamic cells for the allocator row, eleven static and dynamic DSO cases
+for the cross-image row, the closed rows, exact
 source and product mappings, the source/product before seal, and the
 `frozen_surface` counts. Its
 `family_completion`, `promotion_ready`, and `public_support` flags are all

@@ -17,6 +17,7 @@ spec = importlib.util.spec_from_file_location("owned_stdio_file_engine_receipt",
 assert spec is not None and spec.loader is not None
 receipt = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(receipt)
+DSO_VALIDATOR = receipt.validate_dso_differential
 import owned_dynamic_qualification as qualification
 
 
@@ -140,6 +141,14 @@ class ReceiptFixture:
         self.allocator_probe.write_text("/* allocator interposition */\n")
         self.allocator_runner = self.checkout / receipt.INTERPOSITION_RUNNER
         self.allocator_runner.write_text("#!/usr/bin/env bash\n")
+        self.dso_sources = {}
+        for role, name in receipt.DSO_SOURCES.items():
+            source = self.checkout / name
+            source.write_text("/* " + role + " */\n")
+            self.dso_sources[role] = source
+        self.dso_work = self.work / "file-dso"
+        self.dso_work.mkdir()
+        (self.dso_work / "marker").write_bytes(b"retained FILE DSO evidence\n")
         ledger = self.checkout / receipt.FROZEN_LEDGER
         ledger.parent.mkdir(parents=True, exist_ok=True)
         ledger.write_text("".join(
@@ -191,6 +200,7 @@ class ReceiptFixture:
         sources["reader"] = source_identity(self.checkout, self.reader)
         sources["allocator-probe"] = source_identity(self.checkout, self.allocator_probe)
         sources["allocator-runner"] = source_identity(self.checkout, self.allocator_runner)
+        sources.update({role: source_identity(self.checkout, path) for role, path in self.dso_sources.items()})
         seal = {"sources": sources, "static": self._product_seal(self.static), "dynamic": self._product_seal(self.dynamic)}
         for name in ("source-product-before.json", "source-product-after.json"):
             self.write(name, json.dumps(seal, sort_keys=True, separators=(",", ":")).encode() + b"\n")
@@ -400,13 +410,17 @@ class ReceiptFixture:
         effects = {cell: identity(self.work, self.side_effects[f"stdio.file-backends:{cell}"])
                    for cell in receipt.EXECUTION_CELLS}
         sources = {**self.sources, "runner": self.runner, "reader": self.reader,
-                   "allocator-probe": self.allocator_probe, "allocator-runner": self.allocator_runner}
+                   "allocator-probe": self.allocator_probe, "allocator-runner": self.allocator_runner,
+                   **self.dso_sources}
         self.report = {
             "schema": receipt.SCHEMA, "scope": list(receipt.RECEIPT_SCOPE),
             "rows": {**{role: receipt.row_value(role) for role in receipt.SCOPE},
                      receipt.INTERPOSITION_ROLE: {"source": receipt.INTERPOSITION_SOURCE,
                         "behavior": "dynamic-FILE-public-allocator-ownership-and-lock-list-lifetime",
-                        "runtime_cells": list(receipt.INTERPOSITION_CELLS)}},
+                        "runtime_cells": list(receipt.INTERPOSITION_CELLS)},
+                     receipt.DSO_ROLE: {"source": list(receipt.DSO_SOURCES.values()),
+                        "behavior": "adopted-and-borrowed-FILE-lifetime-across-executable-and-DSO",
+                        "runtime_cells": list(receipt.dso.CASES)}},
             "source": receipt.source_map(self.checkout, sources),
             "workloads": {role: identity(self.work, self.workloads[role]) for role in receipt.SCOPE},
             "products": {"static": str(self.static), "dynamic": str(self.dynamic)},
@@ -430,6 +444,8 @@ class ReceiptFixture:
             "process_proc": {linkage: {name: identity(self.work, path) for name, path in item.items()}
                              for linkage, item in self.process_proc.items()},
             "allocator_interposition": {"work": "owned-stdio-allocator-interposition.fixture", "artifacts": {}},
+            "dso_differential": {"work": "file-dso", "tree": receipt.dso_tree_identity(self.dso_work),
+                                 "cells": list(receipt.dso.CASES)},
             "family_completion": False, "promotion_ready": False, "public_support": False,
         }
         self.path = self.work / "owned-stdio-file-engine.json"
@@ -500,6 +516,7 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
             mock.patch.object(qualification, "source_digest", return_value="a" * 64),
             mock.patch.object(qualification, "ROOT", self.fixture.checkout),
             mock.patch.object(receipt, "_elf_output", side_effect=self.allocator_elf),
+            mock.patch.object(receipt, "validate_dso_differential", return_value=None),
         ]
         for patch in self.patches:
             patch.start()
@@ -551,6 +568,7 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
         self.assertEqual(tuple(report["scope"]), receipt.SCOPE)
         self.assertEqual(tuple(report["rows"]), receipt.SCOPE)
         self.assertEqual(report["allocator_interposition"]["runtime_cells"], list(receipt.INTERPOSITION_CELLS))
+        self.assertEqual(report["dso_differential"]["runtime_cells"], list(receipt.dso.CASES))
 
     def test_rehashed_transplanted_dynamic_product_source_is_rejected(self) -> None:
         state = json.loads(self.fixture.dynamic_state.read_text())
@@ -821,6 +839,29 @@ class OwnedStdioFileEngineReceiptTests(unittest.TestCase):
         self.fixture.write_report()
         with self.assertRaisesRegex(receipt.ReceiptError, "candidate-non-pie-direct raw execution differs"):
             self.validate()
+
+    def test_dso_row_replays_physical_audits_and_rejects_changed_artifacts(self) -> None:
+        work = self.fixture.dso_work
+        raw = work / "raw"
+        raw.mkdir()
+        for case in receipt.dso.CASES:
+            (raw / f"{case}.argv.json").write_text(json.dumps(["case", case]) + "\n")
+            (raw / f"{case}.status").write_bytes(b"0\n")
+        self.fixture.report["dso_differential"]["tree"] = receipt.dso_tree_identity(work)
+        with (mock.patch.object(receipt.dso, "source_copies"),
+              mock.patch.object(receipt.dso, "oracle_copies"),
+              mock.patch.object(receipt.dso, "commands", return_value={}),
+              mock.patch.object(receipt.dso, "case_command", side_effect=lambda _work, case: ["case", case]),
+              mock.patch.object(receipt.dso, "audit_runtime") as runtime,
+              mock.patch.object(receipt.dso, "audit_elf") as elf,
+              mock.patch.object(receipt.dso, "audit_links") as links):
+            DSO_VALIDATOR(self.fixture.checkout, self.fixture.work, self.fixture.report)
+            runtime.assert_called_once_with(work, self.fixture.dynamic)
+            elf.assert_called_once_with(work)
+            links.assert_called_once_with(work, self.fixture.static, self.fixture.dynamic)
+            (raw / f"{receipt.dso.CASES[-1]}.status").write_bytes(b"1\n")
+            with self.assertRaisesRegex(receipt.ReceiptError, "FILE DSO differential artifacts differ"):
+                DSO_VALIDATOR(self.fixture.checkout, self.fixture.work, self.fixture.report)
 
 
 if __name__ == "__main__":
