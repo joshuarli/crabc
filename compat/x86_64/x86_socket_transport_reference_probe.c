@@ -558,6 +558,122 @@ static void tcp_case(void) {
     close(listener);
 }
 
+static void initialized_payload_case(void) {
+    int listener = socket(AF_INET, SOCK_STREAM, 0);
+    int sender = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in address;
+    socklen_t length = sizeof(address);
+    char out[4];
+    struct iovec iov;
+    struct mmsghdr record;
+    loopback(&address);
+    need(listener >= 0 && sender >= 0 &&
+         bind(listener, (struct sockaddr *)&address, sizeof(address)) == 0 &&
+         getsockname(listener, (struct sockaddr *)&address, &length) == 0 &&
+         listen(listener, 1) == 0 &&
+         connect(sender, (struct sockaddr *)&address, sizeof(address)) == 0,
+         "initialized TCP pair");
+    int receiver = accept(listener, NULL, NULL);
+    need(receiver >= 0 && send(sender, "!", 1, MSG_OOB) == 1,
+         "initialized TCP urgent send");
+    memset(out, 0xa5, sizeof(out));
+    need(recv(receiver, out, sizeof(out), MSG_OOB | MSG_PEEK | MSG_TRUNC) == 1 &&
+         (unsigned char)out[0] == 0xa5 && (unsigned char)out[3] == 0xa5,
+         "libc urgent peek trunc discards");
+    need(raw_recvfrom(receiver, out, sizeof(out), MSG_OOB | MSG_PEEK, NULL, NULL) == 1 &&
+         out[0] == '!' && (unsigned char)out[1] == 0xa5,
+         "raw urgent peek copies only one byte");
+    init_mmessage(&record, &iov, out, sizeof(out));
+    need(raw_recvmmsg(receiver, &record, 1, MSG_OOB | MSG_PEEK | MSG_TRUNC, NULL) == 1 &&
+         record.msg_len == 1 && (record.msg_hdr.msg_flags & MSG_OOB),
+         "raw urgent batch discard");
+    need(recvmmsg(receiver, &record, 1, MSG_OOB | MSG_PEEK, NULL) == 1 &&
+         record.msg_len == 1 && out[0] == '!', "libc urgent batch reused copy");
+    need(recv(receiver, out, sizeof(out), MSG_OOB | MSG_TRUNC) == 1,
+         "libc urgent consume discard");
+    errno = 0;
+    need(raw_recvmmsg(receiver, &record, 1, MSG_OOB | MSG_DONTWAIT, NULL) == -1 &&
+         errno == EINVAL && record.msg_len == 1 && (record.msg_hdr.msg_flags & MSG_OOB),
+         "urgent failed batch retains outputs");
+    close(receiver);
+    close(sender);
+    close(listener);
+
+    for (int raw = 0; raw < 2; ++raw) {
+        int fd = socket(AF_INET, SOCK_DGRAM, 0);
+        int closed = socket(AF_INET, SOCK_DGRAM, 0);
+        int enabled = 1;
+        loopback(&address);
+        need(fd >= 0 && closed >= 0 &&
+             bind(fd, (struct sockaddr *)&address, sizeof(address)) == 0 &&
+             bind(closed, (struct sockaddr *)&address, sizeof(address)) == 0,
+             "error queue bound sockets");
+        length = sizeof(address);
+        need(getsockname(closed, (struct sockaddr *)&address, &length) == 0,
+             "error queue closed destination");
+        close(closed);
+        need(connect(fd, (struct sockaddr *)&address, sizeof(address)) == 0 &&
+             setsockopt(fd, IPPROTO_IP, IP_RECVERR, &enabled, sizeof(enabled)) == 0 &&
+             send(fd, "abcdefgh", 8, 0) == 8, "error queue generate local ICMP");
+        memset(out, 0xa5, sizeof(out));
+        init_mmessage(&record, &iov, out, sizeof(out));
+        int flags = MSG_ERRQUEUE | MSG_TRUNC | MSG_DONTWAIT;
+        int count = raw ? raw_recvmmsg(fd, &record, 1, flags, NULL) :
+                          recvmmsg(fd, &record, 1, flags, NULL);
+        need(count == 1 && record.msg_len == sizeof(out) &&
+             !memcmp(out, "abcd", sizeof(out)) &&
+             (record.msg_hdr.msg_flags & (MSG_ERRQUEUE | MSG_TRUNC | MSG_CTRUNC)) ==
+                (MSG_ERRQUEUE | MSG_TRUNC | MSG_CTRUNC), "error queue copies truncated prefix");
+        unsigned int prior_flags = record.msg_hdr.msg_flags;
+        errno = 0;
+        count = raw ? raw_recvmmsg(fd, &record, 1, flags, NULL) :
+                      recvmmsg(fd, &record, 1, flags, NULL);
+        need(count == -1 && errno == EAGAIN && record.msg_len == sizeof(out) &&
+             record.msg_hdr.msg_flags == prior_flags && !memcmp(out, "abcd", sizeof(out)),
+             "error queue failed batch retains outputs");
+        close(fd);
+    }
+}
+
+static void copied_batch_output_case(void) {
+    for (int type = SOCK_STREAM; type <= SOCK_DGRAM; ++type) {
+        int pair[2];
+        char first[4], second[4];
+        struct iovec iov[2];
+        struct mmsghdr records[2];
+        int payload_length = type == SOCK_DGRAM ? 8 : 4;
+        need(socketpair(AF_UNIX, type, 0, pair) == 0, "copied batch pair");
+        init_mmessage(&records[0], &iov[0], first, sizeof(first));
+        init_mmessage(&records[1], &iov[1], second, sizeof(second));
+        need(send(pair[0], "abcdmore", payload_length, 0) == payload_length &&
+             send(pair[0], "efghmore", payload_length, 0) == payload_length,
+             "copied batch send");
+        need(recvmmsg(pair[1], records, 2, MSG_TRUNC | MSG_DONTWAIT, NULL) == 2 &&
+             records[0].msg_len == (unsigned int)payload_length &&
+             records[1].msg_len == (unsigned int)payload_length &&
+             !memcmp(first, "abcd", 4) && !memcmp(second, "efgh", 4),
+             "copied batch initial prefixes and full counts");
+        unsigned int prior_flags = records[1].msg_hdr.msg_flags;
+        need(!!(prior_flags & MSG_TRUNC) == (type == SOCK_DGRAM),
+             "copied batch datagram truncation flags");
+        need(send(pair[0], "xy", 2, 0) == 2 &&
+             raw_recvmmsg(pair[1], records, 2, MSG_DONTWAIT, NULL) == 1 &&
+             records[0].msg_len == 2 && !memcmp(first, "xy", 2) &&
+             records[1].msg_len == (unsigned int)payload_length &&
+             records[1].msg_hdr.msg_flags == prior_flags && !memcmp(second, "efgh", 4),
+             "copied partial batch retains incomplete output");
+        errno = 0;
+        need(recvmmsg(pair[1], records, 2, MSG_TRUNC | MSG_DONTWAIT, NULL) == -1 &&
+             errno == EAGAIN && records[0].msg_len == 2 &&
+             records[1].msg_len == (unsigned int)payload_length &&
+             records[1].msg_hdr.msg_flags == prior_flags &&
+             !memcmp(first, "xy", 2) && !memcmp(second, "efgh", 4),
+             "copied failed batch retains outputs");
+        close(pair[0]);
+        close(pair[1]);
+    }
+}
+
 static void error_case(void) {
     int raw_error_socket, libc_error_socket;
     socklen_t zero = 0;
@@ -598,6 +714,8 @@ int main(void) {
     socket_option_case();
     ipv6_case();
     tcp_case();
+    initialized_payload_case();
+    copied_batch_output_case();
     error_case();
     puts("syscalls=ioctl:16,socket:41,socketpair:53,bind:49,listen:50,connect:42,accept:43,accept4:288,getsockname:51,getpeername:52,shutdown:48,setsockopt:54,sendto:44,recvfrom:45,sendmsg:46,recvmsg:47,recvmmsg:299,sendmmsg:307 abi=iovec16:msghdr56:mmsghdr64:sockaddr_in16:sockaddr_in6-28:storage128 libc-raw=socketpair:udp:ipv6:tcp:options:msg:mmsg errors=EINVAL:invalid-type,ENOPROTOOPT-or-EOPNOTSUPP:invalid-level,EBADF:closed-fd c-api-selection=excluded");
     return 0;

@@ -230,6 +230,181 @@ fn unix_stream_trunc_copies_payload_for_scalar_vectored_and_batched_receives() {
 }
 
 #[test]
+fn tcp_urgent_peek_copy_and_discard_preserve_initialized_prefixes() {
+    let (sender, receiver) = tcp_loopback_pair();
+    net::send(&sender, b"!", net::SendFlags::OOB).unwrap();
+    let mut storage = [MaybeUninit::<u8>::uninit(); 4];
+    let peek = net::RecvFlags::OOB | net::RecvFlags::PEEK;
+    let ((prefix, suffix), count) = net::recv(&receiver, &mut storage, peek).unwrap();
+    assert_eq!(prefix, b"!");
+    assert_eq!((suffix.len(), count), (3, 1));
+    let ((prefix, suffix), count) = net::recv(
+        &receiver, &mut storage, peek | net::RecvFlags::TRUNC,
+    ).unwrap();
+    assert!(prefix.is_empty());
+    assert_eq!((suffix.len(), count), (4, 1));
+
+    let mut first = [MaybeUninit::<u8>::uninit(); 0];
+    let mut second = [MaybeUninit::<u8>::uninit(); 4];
+    let mut buffers = [net::MsgIoSliceMut::new_uninit(&mut first),
+        net::MsgIoSliceMut::new_uninit(&mut second)];
+    let mut message = net::recvmsg(&receiver, &mut buffers, peek).unwrap();
+    assert_eq!(message.bytes(), 1);
+    assert!(message.flags().contains(net::RecvFlags::OOB));
+    let mut prefixes = message.initialized_segments();
+    assert!(prefixes.next().unwrap().is_empty());
+    assert_eq!(prefixes.next().unwrap(), b"!");
+
+    let mut storage = [MaybeUninit::<u8>::uninit(); 4];
+    let mut buffers = [net::MsgIoSliceMut::new_uninit(&mut storage)];
+    let mut messages = [net::MMsgHdr::new_recv(&mut buffers)];
+    for flags in [peek | net::RecvFlags::TRUNC, peek, net::RecvFlags::OOB | net::RecvFlags::TRUNC] {
+        assert_eq!(net::recvmmsg(&receiver, &mut messages, flags, None), Ok(1));
+        assert_eq!(messages[0].bytes(), 1);
+        // SAFETY: the sole record completed into its retained exclusive borrow.
+        let prefix = unsafe { messages[0].initialized_segments() }.next().unwrap();
+        if flags.contains(net::RecvFlags::TRUNC) { assert!(prefix.is_empty()); }
+        else { assert_eq!(prefix, b"!"); }
+    }
+    assert_eq!(net::recvmmsg(&receiver, &mut messages, peek | net::RecvFlags::DONTWAIT, None),
+        Err(crabc_rs::Errno::INVAL));
+    // SAFETY: the failed urgent receive leaves the previous completed discard intact.
+    assert!(unsafe { messages[0].initialized_segments() }.all(|prefix| prefix.is_empty()));
+}
+
+fn udp_error_queue_sender() -> crabc_rs::OwnedFd {
+    let sender = net::socket(net::AddressFamily::INET, net::SocketType::DGRAM,
+        net::SocketFlags::CLOEXEC, None).unwrap();
+    net::bind(&sender, loopback_v4(0)).unwrap();
+    let closed = net::socket(net::AddressFamily::INET, net::SocketType::DGRAM,
+        net::SocketFlags::CLOEXEC, None).unwrap();
+    net::bind(&closed, loopback_v4(0)).unwrap();
+    let destination = net::getsockname(&closed).unwrap();
+    drop(closed);
+    net::connect(&sender, destination).unwrap();
+    let enabled = 1i32;
+    let result: isize;
+    // SAFETY: the fixed x86 Linux setsockopt request enables IP_RECVERR using
+    // a live four-byte integer. No production generic-option API is added.
+    unsafe {
+        core::arch::asm!("syscall", inlateout("rax") 54usize => result,
+            in("rdi") crabc_rs::AsRawFd::as_raw_fd(&sender) as usize,
+            in("rsi") 0usize, in("rdx") 11usize,
+            in("r10") &enabled as *const i32, in("r8") 4usize,
+            lateout("rcx") _, lateout("r11") _, options(nostack));
+    }
+    assert_eq!(result, 0);
+    net::send(&sender, b"abcdefgh", net::SendFlags::empty()).unwrap();
+    sender
+}
+
+#[test]
+fn udp_error_queue_trunc_copies_payload_in_every_receive_form() {
+    let flags = net::RecvFlags::ERRQUEUE | net::RecvFlags::TRUNC | net::RecvFlags::DONTWAIT;
+    for capacity in [0, 1, 4, 16] {
+        let sender = udp_error_queue_sender();
+        let mut storage = [MaybeUninit::<u8>::uninit(); 16];
+        let ((prefix, suffix), count) = net::recv(&sender, &mut storage[..capacity], flags).unwrap();
+        assert_eq!(count, capacity.min(8));
+        assert_eq!(prefix, &b"abcdefgh"[..count]);
+        assert_eq!(suffix.len(), capacity - count);
+    }
+
+    let sender = udp_error_queue_sender();
+    let mut storage = [MaybeUninit::<u8>::uninit(); 4];
+    let destination = net::getpeername(&sender).unwrap();
+    let ((prefix, suffix), count, source) = net::recvfrom(&sender, &mut storage, flags).unwrap();
+    assert_eq!(prefix, b"abcd");
+    assert!(suffix.is_empty());
+    assert_eq!(count, 4);
+    assert_eq!(source, destination);
+
+    #[cfg(feature = "alloc")]
+    for existing in [0, 1] {
+        let sender = udp_error_queue_sender();
+        let mut bytes = Vec::with_capacity(4);
+        if existing == 1 { bytes.push(b'x'); }
+        assert_eq!(net::recv(&sender, crabc_rs::buffer::spare_capacity(&mut bytes), flags),
+            Ok((4 - existing, 4 - existing)));
+        assert_eq!(bytes, if existing == 0 { b"abcd".as_slice() } else { b"xabc".as_slice() });
+    }
+
+    let sender = udp_error_queue_sender();
+    let mut first = [MaybeUninit::<u8>::uninit(); 1];
+    let mut second = [MaybeUninit::<u8>::uninit(); 3];
+    let mut buffers = [net::MsgIoSliceMut::new_uninit(&mut first),
+        net::MsgIoSliceMut::new_uninit(&mut second)];
+    let mut message = net::recvmsg(&sender, &mut buffers, flags).unwrap();
+    assert_eq!(message.bytes(), 4);
+    assert!(message.flags().contains(net::RecvFlags::ERRQUEUE | net::RecvFlags::TRUNC));
+    assert_ne!(message.flags().bits() & 0x8, 0, "MSG_CTRUNC survives without control storage");
+    let mut prefixes = message.initialized_segments();
+    assert_eq!(prefixes.next().unwrap(), b"a");
+    assert_eq!(prefixes.next().unwrap(), b"bcd");
+
+    let sender = udp_error_queue_sender();
+    let mut first = [MaybeUninit::<u8>::uninit(); 4];
+    let mut second = [MaybeUninit::<u8>::uninit(); 4];
+    let mut first_buffers = [net::MsgIoSliceMut::new_uninit(&mut first)];
+    let mut second_buffers = [net::MsgIoSliceMut::new_uninit(&mut second)];
+    let mut messages = [net::MMsgHdr::new_recv(&mut first_buffers),
+        net::MMsgHdr::new_recv(&mut second_buffers)];
+    assert_eq!(net::recvmmsg(&sender, &mut messages, flags, None), Ok(1));
+    assert_eq!(messages[0].bytes(), 4);
+    assert!(messages[0].flags().contains(net::RecvFlags::ERRQUEUE | net::RecvFlags::TRUNC));
+    assert_ne!(messages[0].flags().bits() & 0x8, 0, "MSG_CTRUNC survives without control storage");
+    // SAFETY: only the first record completed; its exclusive destination is live.
+    assert_eq!(unsafe { messages[0].initialized_segments() }.next().unwrap(), b"abcd");
+    assert_eq!(messages[1].bytes(), 0);
+    assert_eq!(net::recvmmsg(&sender, &mut messages, flags, None), Err(crabc_rs::Errno::AGAIN));
+    // SAFETY: the failed error-queue call preserves the first completed record.
+    assert_eq!(unsafe { messages[0].initialized_segments() }.next().unwrap(), b"abcd");
+}
+
+#[test]
+fn copied_batches_preserve_prior_prefixes_flags_and_counts_on_partial_and_error() {
+    let udp = udp_loopback_pair();
+    let unix_stream = net::socketpair(net::AddressFamily::UNIX, net::SocketType::STREAM,
+        net::SocketFlags::CLOEXEC, None).unwrap();
+    let unix_datagram = net::socketpair(net::AddressFamily::UNIX, net::SocketType::DGRAM,
+        net::SocketFlags::CLOEXEC, None).unwrap();
+    for (sender, receiver) in [udp, unix_stream, unix_datagram] {
+        let mut first = [MaybeUninit::<u8>::uninit(); 4];
+        let mut second = [MaybeUninit::<u8>::uninit(); 4];
+        let mut first_buffers = [net::MsgIoSliceMut::new_uninit(&mut first)];
+        let mut second_buffers = [net::MsgIoSliceMut::new_uninit(&mut second)];
+        let mut messages = [net::MMsgHdr::new_recv(&mut first_buffers),
+            net::MMsgHdr::new_recv(&mut second_buffers)];
+        let datagram = net::sockopt::socket_type(&receiver).unwrap() == net::SocketType::DGRAM;
+        let first_payload: &[u8] = if datagram { b"abcdmore" } else { b"abcd" };
+        let second_payload: &[u8] = if datagram { b"efghmore" } else { b"efgh" };
+        net::send(&sender, first_payload, net::SendFlags::empty()).unwrap();
+        net::send(&sender, second_payload, net::SendFlags::empty()).unwrap();
+        let prior_count = second_payload.len();
+        let flags = net::RecvFlags::TRUNC | net::RecvFlags::DONTWAIT;
+        assert_eq!(net::recvmmsg(&receiver, &mut messages, flags, None), Ok(2));
+        // SAFETY: both records completed while retaining exclusive disjoint buffers.
+        assert_eq!(unsafe { messages[0].initialized_segments() }.next().unwrap(), b"abcd");
+        assert_eq!(unsafe { messages[1].initialized_segments() }.next().unwrap(), b"efgh");
+        let prior_flags = messages[1].flags();
+        assert_eq!(prior_flags.contains(net::RecvFlags::TRUNC), datagram);
+        net::send(&sender, b"xy", net::SendFlags::empty()).unwrap();
+        assert_eq!(net::recvmmsg(&receiver, &mut messages, net::RecvFlags::DONTWAIT, None), Ok(1));
+        assert_eq!([messages[0].bytes(), messages[1].bytes()], [2, prior_count]);
+        assert_eq!(messages[1].flags(), prior_flags);
+        // SAFETY: the first prefix was replaced and the incomplete second was preserved.
+        assert_eq!(unsafe { messages[0].initialized_segments() }.next().unwrap(), b"xy");
+        assert_eq!(unsafe { messages[1].initialized_segments() }.next().unwrap(), b"efgh");
+        assert_eq!(net::recvmmsg(&receiver, &mut messages, flags, None), Err(crabc_rs::Errno::AGAIN));
+        assert_eq!([messages[0].bytes(), messages[1].bytes()], [2, prior_count]);
+        assert_eq!(messages[1].flags(), prior_flags);
+        // SAFETY: no record completed the failed call, preserving both exclusive prefixes.
+        assert_eq!(unsafe { messages[0].initialized_segments() }.next().unwrap(), b"xy");
+        assert_eq!(unsafe { messages[1].initialized_segments() }.next().unwrap(), b"efgh");
+    }
+}
+
+#[test]
 fn sendmmsg_rejects_receive_records_before_reading_payload() {
     let (sender, _receiver) = udp_loopback_pair();
     // Initialized storage makes the pre-fix wrong-direction acceptance safe

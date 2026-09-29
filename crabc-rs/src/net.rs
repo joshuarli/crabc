@@ -961,8 +961,10 @@ impl<'a> MMsgHdr<'a> {
     ///
     /// For an outgoing record this is the number sent. For an incoming
     /// datagram with `RecvFlags::TRUNC`, it may exceed the initialized buffer
-    /// capacity, matching Linux's `MSG_TRUNC` contract. For a TCP discard
-    /// receive, the count may be positive while no payload bytes were written.
+    /// capacity, matching Linux's `MSG_TRUNC` contract. An error-queue receive
+    /// reports the copied payload count even with `TRUNC`; its flags still
+    /// identify a truncated payload. For a TCP discard receive, including
+    /// urgent data, the count may be positive while no bytes were written.
     #[inline]
     pub const fn bytes(&self) -> usize {
         self.raw.message_length as usize
@@ -1034,10 +1036,12 @@ impl<'a> MMsgHdr<'a> {
 /// vectored capacity when [`RecvFlags::TRUNC`] is requested. The iterator from
 /// [`initialized_segments`](Self::initialized_segments) yields only the
 /// prefixes actually initialized in caller storage, in segment order.
-/// On x86, TCP `TRUNC` reports discarded bytes with empty initialized prefixes.
+/// Error-queue receives report the copied payload count and retain truncation
+/// in their output flags. On x86, TCP `TRUNC`, including urgent data, reports
+/// discarded bytes with empty initialized prefixes.
 pub struct RecvMsg<'a> {
     buffers: &'a mut [MsgIoSliceMut<'a>],
-    /// Linux's message byte count before any datagram truncation.
+    /// Linux's message byte count; an error-queue count covers copied bytes.
     pub bytes: usize,
     initialized: usize,
     /// Linux flags reported in the received message header.
@@ -1045,7 +1049,7 @@ pub struct RecvMsg<'a> {
 }
 
 impl<'a> RecvMsg<'a> {
-    /// Returns Linux's message byte count before any datagram truncation.
+    /// Returns Linux's message byte count; an error-queue count covers copied bytes.
     #[inline]
     pub const fn bytes(&self) -> usize {
         self.bytes
@@ -1111,9 +1115,10 @@ fn checked_socket_flags(flags: SocketFlags) -> Result<u32> {
         .ok_or(crate::Errno::INVAL)
 }
 
-// TCP's ordinary receive queue treats MSG_TRUNC as a discard request, while
-// datagrams and Unix streams copy bytes. The error queue is a separate copying
-// path. Query immutable socket identity only for a possible discard request;
+// TCP's ordinary and urgent receive queues treat MSG_TRUNC as a discard
+// request, while datagrams and Unix streams copy bytes. The error queue uses
+// a separate copying path. Query immutable socket identity only for a possible
+// discard request;
 // ordinary receives retain their single receive syscall.
 #[cfg(target_arch = "x86_64")]
 #[inline]
@@ -1693,9 +1698,10 @@ pub fn sendto<Fd: AsFd>(
 
 /// Receives bytes from a connected socket.
 ///
-/// The second result is the kernel byte count before any `MSG_TRUNC`
-/// truncation; its first result follows the initialized-buffer contract. On
-/// x86, TCP `TRUNC` discards data instead of copying it, so its initialized
+/// The second result preserves the kernel byte count: ordinary datagram
+/// `TRUNC` may report more than the copied capacity, while `ERRQUEUE` reports
+/// only the copied payload count. The first result follows the initialized-buffer
+/// contract. On x86, TCP `TRUNC` discards data instead of copying it, so its initialized
 /// result is empty even when the count is positive. Datagram truncation keeps
 /// the copied prefix. Ordinary receives perform no socket-identity query.
 #[inline]
@@ -1737,10 +1743,12 @@ pub fn recv<Fd: AsFd, Buf: Buffer<u8>>(
 /// [`RecvMsg`] result reports Linux's full byte count and returned message
 /// flags, while [`RecvMsg::initialized_segments`] exposes only the bytes the
 /// kernel actually initialized. No address or ancillary-control storage is
-/// supplied by this bounded form. `MSG_TRUNC` therefore preserves a full
-/// datagram count even when the returned initialized prefixes fill less than
-/// the message. On x86, TCP `TRUNC` retains its discarded-byte count while
-/// exposing empty initialized segments; ordinary receives do no identity query.
+/// supplied by this bounded form. Ordinary datagram `TRUNC` preserves a full
+/// datagram count even when the initialized prefixes fill less than the message.
+/// `ERRQUEUE` copies the available payload prefix and reports its copied count;
+/// output flags preserve payload and ancillary truncation. On x86, TCP `TRUNC`
+/// retains its discarded-byte count while exposing empty initialized segments;
+/// ordinary receives do no identity query.
 #[inline]
 pub fn recvmsg<'a, Fd: AsFd>(
     fd: Fd,
@@ -1865,9 +1873,11 @@ pub fn sockatmark<Fd: AsFd>(fd: Fd) -> Result<bool> {
 
 /// Receives one datagram and strictly decodes its IPv4 or IPv6 source.
 ///
-/// The returned byte count is the kernel datagram length before any
-/// `MSG_TRUNC` shortening, while the [`Buffer`] output marks only the prefix
-/// actually initialized in caller storage. Source families outside
+/// The returned byte count preserves the kernel result: ordinary datagram
+/// `TRUNC` reports the full datagram length, while `ERRQUEUE` reports the copied
+/// payload count. The [`Buffer`] output marks only the prefix actually
+/// initialized in caller storage. An error-queue source is the original
+/// destination of the failed outgoing datagram. Source families outside
 /// [`SocketAddress`] return [`crate::Errno::AFNOSUPPORT`] instead of exposing
 /// an opaque or partially decoded address. A missing or truncated address
 /// returns [`crate::Errno::INVAL`]. TCP does not return a source address
