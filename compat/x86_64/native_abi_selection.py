@@ -9192,7 +9192,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
             and [item.get('member') for item in shared['importers']] ==
                 [item['member'] for item in importers]
             and all(type(item.get('calls')) is list
-                    and (item['calls'] or name == 'aio_cancel' or bulk_memory)
+                    and (item['calls'] or name in {'aio_cancel', 'fchdir'} or bulk_memory)
                     and all(call.get('target_address') == shared['provider_address']
                             for call in item['calls'])
                     for item in shared['importers']),
@@ -9206,6 +9206,26 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                 'owned scanf shared call roster differs')
     if name in {'aio_cancel', 'close', 'fchdir'} or bulk_memory:
         all_calls = [call for item in shared['importers'] for call in item['calls']]
+        if name == 'fchdir':
+            suffixes = {
+                'walk': '19x86_64_static_c_abi20filesystem_traversal4walk',
+                'finish': '19x86_64_static_c_abi20filesystem_traversal6finish',
+            }
+            shared_names = {call.get('function') for call in shared['provider_calls']}
+            require(len(importers) == len(shared['importers']) == 1
+                    and not all_calls
+                    and set(shared['importers'][0]['no_call_source_functions'])
+                        == set(importers[0]['shared_caller_functions'])
+                    and len(shared['provider_calls']) == 9
+                    and all(type(candidate) is str for candidate in shared_names)
+                    and sum(name.endswith(suffixes['walk']) for name in shared_names) == 1
+                    and sum(name.endswith(suffixes['finish']) for name in shared_names) == 1
+                    and all(any(call['function'].endswith(suffix) for suffix in suffixes.values())
+                            for call in shared['provider_calls'])
+                    and sum(call['function'].endswith(suffixes['walk'])
+                            for call in shared['provider_calls']) == 8,
+                    'fchdir shared traversal source calls differ')
+            all_calls = shared['provider_calls']
         require(type(shared['provider_calls']) is list and (shared['provider_calls'] or name == 'memcmp')
                 and (same(all_calls, shared['provider_calls']) if name == 'aio_cancel'
                      else all(call in shared['provider_calls'] for call in all_calls))
@@ -9216,12 +9236,12 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                         for call in shared['provider_calls'])
                 and len({call.get('register_call_address', call.get('call_address'))
                          for call in shared['provider_calls']}) == len(shared['provider_calls'])
-                and all(type(item.get('no_call_source_functions')) is list
+                and (name == 'fchdir' or all(type(item.get('no_call_source_functions')) is list
                         and set(item['no_call_source_functions'])
                             == set(source['shared_caller_functions'])
                             - {call.get('source_function', call['function'])
                                for call in item['calls']}
-                        for item, source in zip(shared['importers'], importers)),
+                        for item, source in zip(shared['importers'], importers))),
                 'ordinary shared whole-image call inventory differs')
     if name in {'memmove', 'memcmp'}:
         direct_name = 'bcopy' if name == 'memmove' else 'bcmp'
