@@ -30,11 +30,22 @@ import owned_posix_family_workloads as workloads
 import owned_posix_native_observations as native
 
 
-IO_STDOUT = (''.join(f'blocked-operation {number} canceled cleanup=21\n' for number in range(10)) +
-             'initial-thread blocked read canceled cleanup=1\n'
-             'fork retains initial/worker pending state type cleanup\n'
-             'retired task explicit FILE lock remains orphaned\n'
-             'owned-io-cancellation-ok\n').encode()
+IO_ORDINARY_SIGNALS = (
+    b'ordinary-signal operation=0 restart=0 returned=1 cleanup=1 descriptor-live=1\n',
+    b'ordinary-signal operation=0 restart=1 returned=0 cleanup=1 descriptor-live=1\n',
+    b'ordinary-signal operation=1 restart=0 returned=1 cleanup=1 descriptor-live=1\n',
+    b'ordinary-signal operation=1 restart=1 returned=0 cleanup=1 descriptor-live=1\n',
+    b'ordinary-signal operation=2 restart=0 returned=1 cleanup=1 descriptor-live=1\n',
+    b'ordinary-signal operation=2 restart=1 returned=1 cleanup=1 descriptor-live=1\n',
+    b'ordinary-signal operation=3 restart=0 returned=1 cleanup=1 descriptor-live=1\n',
+    b'ordinary-signal operation=3 restart=1 returned=0 cleanup=1 descriptor-live=1\n',
+)
+IO_STDOUT = (''.join(f'blocked-operation {number} canceled cleanup=21\n' for number in range(10)).encode() +
+             b''.join(IO_ORDINARY_SIGNALS) +
+             b'initial-thread blocked read canceled cleanup=1\n'
+             b'fork retains initial/worker pending state type cleanup\n'
+             b'retired task explicit FILE lock remains orphaned\n'
+             b'owned-io-cancellation-ok\n')
 
 
 class NativeExecutionTests(unittest.TestCase):
@@ -326,6 +337,69 @@ class NativeExecutionTests(unittest.TestCase):
             self.execute()
         self.assertFalse(self.work.exists())
         self.assertFalse((self.root / '.work/order').exists())
+
+    def test_current_io_transcript_binds_ordinary_signals_in_every_product_and_mode(self):
+        replacement = execution.io_replacement(self.root, self.matrix)
+        self.assertEqual(replacement['required_operations'], ['READ_FILE', 'ASYNC_LOOP'])
+        self.assertEqual(set(replacement['cells']),
+                         {label + ':' + mode for label in family.PAIRS for mode in family_observations.MODES})
+        for label in family.PAIRS:
+            row = self.matrix['runs'][label]['io-cancellation']['observations']['scenarios']['owned_io_cancellation']
+            self.assertEqual(replacement['replays'][label]['oracle'], row['oracle'])
+            for mode in family_observations.MODES:
+                self.assertEqual(replacement['cells'][label + ':' + mode]['raw'], row['candidates'][mode])
+
+    def test_matched_missing_duplicate_reordered_or_changed_ordinary_signals_fail(self):
+        invalid = []
+        for line in IO_ORDINARY_SIGNALS:
+            invalid.extend((IO_STDOUT.replace(line, b''), IO_STDOUT.replace(line, line + line)))
+        first, second = IO_ORDINARY_SIGNALS[:2]
+        invalid.append(IO_STDOUT.replace(first + second, second + first))
+        for old, new in ((b'returned=1', b'returned=0'), (b'cleanup=1', b'cleanup=0'),
+                         (b'descriptor-live=1', b'descriptor-live=0')):
+            invalid.append(IO_STDOUT.replace(first, first.replace(old, new)))
+        for value in invalid:
+            with self.subTest(transcript=value):
+                for label in family.PAIRS:
+                    replay = self.matrix['runs'][label]['io-cancellation']
+                    leaf = self.root / replay['leaf']
+                    row = replay['observations']['scenarios']['owned_io_cancellation']
+                    row['oracle'] = self.raw(leaf, 'oracle', value)
+                    row['candidates'] = {mode: self.raw(leaf, mode, value) for mode in family_observations.MODES}
+                with self.assertRaisesRegex(RuntimeError, 'I/O.*transcript or raw identity'):
+                    execution.io_replacement(self.root, self.matrix)
+
+    def test_ordinary_signal_raw_mutation_fails_for_each_oracle_and_candidate(self):
+        for label in family.PAIRS:
+            replay = self.matrix['runs'][label]['io-cancellation']
+            leaf = self.root / replay['leaf']
+            row = replay['observations']['scenarios']['owned_io_cancellation']
+            for mode, raw in [('oracle', row['oracle']), *row['candidates'].items()]:
+                with self.subTest(product=label, mode=mode):
+                    path = leaf / raw['stdout']['path']
+                    path.write_bytes(IO_STDOUT.replace(IO_ORDINARY_SIGNALS[0],
+                        IO_ORDINARY_SIGNALS[0].replace(b'returned=1', b'returned=0')))
+                    try:
+                        with self.assertRaisesRegex(RuntimeError, 'I/O.*transcript or raw identity'):
+                            execution.io_replacement(self.root, self.matrix)
+                    finally:
+                        path.write_bytes(IO_STDOUT)
+
+    def test_ordinary_signal_raw_identities_are_rechecked_for_each_oracle_and_candidate(self):
+        for label in family.PAIRS:
+            row = self.matrix['runs'][label]['io-cancellation']['observations']['scenarios']['owned_io_cancellation']
+            for mode, raw in [('oracle', row['oracle']), *row['candidates'].items()]:
+                for field, value in (('sha256', '0' * 64), ('size', len(IO_STDOUT) - 1),
+                                     ('base64', base64.b64encode(IO_STDOUT + b'changed').decode())):
+                    with self.subTest(product=label, mode=mode, field=field):
+                        item = raw['stdout']
+                        before = item[field]
+                        item[field] = value
+                        try:
+                            with self.assertRaisesRegex(RuntimeError, 'I/O.*transcript or raw identity'):
+                                execution.io_replacement(self.root, self.matrix)
+                        finally:
+                            item[field] = before
 
     def test_matched_empty_or_missing_read_file_and_async_loop_transcripts_fail(self):
         for missing in (None, 6, 9):

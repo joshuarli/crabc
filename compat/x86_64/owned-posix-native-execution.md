@@ -32,6 +32,14 @@ static/dynamic cells and their pinned-musl raw transcripts. The installed
 product's four dynamic entries are explicit. The child stress receipt retains
 its null replacement field; the aggregate owns the composite proof.
 
+The replacement proof rereads each complete oracle and candidate transcript,
+including ordinary signal delivery with and without `SA_RESTART` for read,
+write, poll, and accept. Read, write, and accept restart until cancellation;
+poll returns `EINTR` under both dispositions. Every ordered observation must
+retain its cleanup and live-descriptor result. Missing, duplicate, reordered,
+or changed records fail even when all products agree, as do mismatched raw
+bytes, lengths, hashes, or encoded identities.
+
 Execution requires the pinned native Linux/x86-64 environment and fresh output
 under `.work/`, disjoint from all input products and receipt trees. Every step
 retains its exact invocation, environment, streams, status, private scratch,

@@ -146,7 +146,13 @@ def io_replacement(root, matrix):
         'READ_DISABLED', 'READ_MASKED', 'READ_FILE', 'READ_FILE_LOCKED', 'READ_PENDING', 'ASYNC_LOOP']
         and 'for (int operation=READ_BYTE;operation<=ASYNC_LOOP;operation++) CHECK(!exercise(operation));' in content,
         'I/O READ_FILE/ASYNC_LOOP operation contract changed')
+    # Read, write, and accept restart until cancellation; poll returns EINTR
+    # under either handler disposition. Each observation also proves cleanup
+    # and the original descriptor's continued ownership.
+    signal_returns = ((1, 0), (1, 0), (1, 1), (1, 0))
     expected = (''.join(f'blocked-operation {number} canceled cleanup=21\n' for number in range(10)) +
+        ''.join(f'ordinary-signal operation={operation} restart={restart} returned={returned} cleanup=1 descriptor-live=1\n'
+            for operation, returns in enumerate(signal_returns) for restart, returned in enumerate(returns)) +
         'initial-thread blocked read canceled cleanup=1\n'
         'fork retains initial/worker pending state type cleanup\n'
         'retired task explicit FILE lock remains orphaned\nowned-io-cancellation-ok\n').encode()
