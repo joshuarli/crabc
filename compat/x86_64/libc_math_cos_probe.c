@@ -27,8 +27,11 @@
 
 #pragma STDC FENV_ACCESS ON
 
-#define COS_F64_CASES 32
-#define COS_F32_CASES 32
+#define COS_BASE_CASES 32
+#define COS_BOUNDARY_COUNT 12
+#define COS_BOUNDARY_OFFSETS 4
+#define COS_F64_CASES (COS_BASE_CASES + 2 * COS_BOUNDARY_COUNT * COS_BOUNDARY_OFFSETS)
+#define COS_F32_CASES (COS_BASE_CASES + 2 * COS_BOUNDARY_COUNT * COS_BOUNDARY_OFFSETS)
 #define COS_ROUNDING_CASES 4
 #define COS_RECORD_WORDS 4
 #define COS_RECORD_COUNT ((COS_F64_CASES + COS_F32_CASES) * COS_ROUNDING_CASES)
@@ -41,10 +44,10 @@ typedef float (*float_unary_function)(float);
 static double_unary_function volatile direct_cos = (cos);
 static float_unary_function volatile direct_cosf = (cosf);
 
-/* The freestanding start object writes these exact 8,192 bytes with syscall. */
+/* The freestanding start object writes these exact 32,768 bytes with syscall. */
 uint64_t crabc_x86_64_math_cos_records[COS_RECORD_STORAGE_WORDS];
 
-static const uint64_t binary64_inputs[COS_F64_CASES] = {
+static const uint64_t binary64_inputs[COS_BASE_CASES] = {
 	UINT64_C(0x0000000000000000), UINT64_C(0x8000000000000000),
 	UINT64_C(0x0000000000000001), UINT64_C(0x000fffffffffffff),
 	UINT64_C(0x0010000000000000), UINT64_C(0x3e30000000000000),
@@ -63,7 +66,7 @@ static const uint64_t binary64_inputs[COS_F64_CASES] = {
 	UINT64_C(0xffefffffffffffff), UINT64_C(0xfff0000000000000),
 };
 
-static const uint32_t binary32_inputs[COS_F32_CASES] = {
+static const uint32_t binary32_inputs[COS_BASE_CASES] = {
 	UINT32_C(0x00000000), UINT32_C(0x80000000), UINT32_C(0x00000001),
 	UINT32_C(0x007fffff), UINT32_C(0x00800000), UINT32_C(0x38800000),
 	UINT32_C(0x39800000), UINT32_C(0x3f800000), UINT32_C(0x3f060a92),
@@ -76,6 +79,62 @@ static const uint32_t binary32_inputs[COS_F32_CASES] = {
 	UINT32_C(0xc0c90fdb), UINT32_C(0xc9800000), UINT32_C(0xe0ad78ec),
 	UINT32_C(0xff7fffff), UINT32_C(0xff800000),
 };
+
+/* Exact neighbors straddle tiny, kernel, quadrant, and reducer boundaries. */
+static const uint64_t binary64_boundaries[COS_BOUNDARY_COUNT] = {
+	UINT64_C(0x3e46a09dffffffff), UINT64_C(0x3fe921fbffffffff),
+	UINT64_C(0x3fe921fb54442d18), UINT64_C(0x3ff921fb54442d18),
+	UINT64_C(0x400921fb54442d18), UINT64_C(0x4012d97c7f3321d2),
+	UINT64_C(0x401921fb54442d18), UINT64_C(0x413921fb54442d18),
+	UINT64_C(0x41d0000000000000), UINT64_C(0x4330000000000000),
+	UINT64_C(0x5fe0000000000000), UINT64_C(0x7feffffffffffffe),
+};
+
+static const uint32_t binary32_boundaries[COS_BOUNDARY_COUNT] = {
+	UINT32_C(0x39800000), UINT32_C(0x3f490fda),
+	UINT32_C(0x3fc90fdb), UINT32_C(0x4016cbe3),
+	UINT32_C(0x40490fdb), UINT32_C(0x407b53d1),
+	UINT32_C(0x4096cbe4), UINT32_C(0x40afeddf),
+	UINT32_C(0x40c90fdb), UINT32_C(0x40e231d5),
+	UINT32_C(0x60ad78ec), UINT32_C(0x7f7ffffe),
+};
+
+static uint64_t binary64_input(size_t index)
+{
+	size_t boundary_index;
+	uint64_t magnitude;
+
+	if (index < COS_BASE_CASES)
+		return binary64_inputs[index];
+	index -= COS_BASE_CASES;
+	boundary_index = (index / COS_BOUNDARY_OFFSETS) % COS_BOUNDARY_COUNT;
+	magnitude = binary64_boundaries[boundary_index] +
+		(index % COS_BOUNDARY_OFFSETS) - 1;
+	return magnitude | ((uint64_t)(index / (COS_BOUNDARY_OFFSETS *
+		COS_BOUNDARY_COUNT)) << 63);
+}
+
+static uint32_t binary32_input(size_t index)
+{
+	size_t boundary_index;
+	uint32_t magnitude;
+
+	if (index < COS_BASE_CASES)
+		return binary32_inputs[index];
+	index -= COS_BASE_CASES;
+	boundary_index = (index / COS_BOUNDARY_OFFSETS) % COS_BOUNDARY_COUNT;
+	magnitude = binary32_boundaries[boundary_index] +
+		(uint32_t)(index % COS_BOUNDARY_OFFSETS) - 1;
+	return magnitude | ((uint32_t)(index / (COS_BOUNDARY_OFFSETS *
+		COS_BOUNDARY_COUNT)) << 31);
+}
+
+static uint32_t current_mxcsr(void)
+{
+	uint32_t value;
+	__asm__ volatile("stmxcsr %0" : "=m"(value));
+	return value;
+}
 
 static const int rounding_modes[COS_ROUNDING_CASES] = {
 	FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO,
@@ -120,6 +179,7 @@ static int record_binary64(size_t *cursor, int rounding_mode, uint64_t input)
 		((uint64_t)(uint32_t)rounding_mode << 32) |
 		(uint32_t)fegetround();
 	crabc_x86_64_math_cos_records[(*cursor)++] =
+		((uint64_t)current_mxcsr() << 32) |
 		(uint32_t)fetestexcept(FE_ALL_EXCEPT);
 	return 0;
 }
@@ -140,6 +200,7 @@ static int record_binary32(size_t *cursor, int rounding_mode, uint32_t input)
 		((uint64_t)(uint32_t)rounding_mode << 32) |
 		(uint32_t)fegetround();
 	crabc_x86_64_math_cos_records[(*cursor)++] =
+		((uint64_t)current_mxcsr() << 32) |
 		(uint32_t)fetestexcept(FE_ALL_EXCEPT);
 	return 0;
 }
@@ -159,11 +220,11 @@ int crabc_x86_64_math_cos_probe(void)
 		for (input_index = 0; input_index < COS_F64_CASES && status == 0;
 			input_index++)
 			status = record_binary64(&cursor, rounding_modes[mode_index],
-				binary64_inputs[input_index]);
+				binary64_input(input_index));
 		for (input_index = 0; input_index < COS_F32_CASES && status == 0;
 			input_index++)
 			status = record_binary32(&cursor, rounding_modes[mode_index],
-				binary32_inputs[input_index]);
+				binary32_input(input_index));
 	}
 	if (cursor != COS_RECORD_STORAGE_WORDS && status == 0)
 		status = 3;
