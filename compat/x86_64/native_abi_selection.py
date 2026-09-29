@@ -49,6 +49,7 @@ import owned_pthread_alias_contract_reader as pthread_alias_evidence
 import prepared_worker_tls_evidence as prepared_worker_evidence
 import owned_errno_storage_lifecycle as errno_storage_evidence
 import native_c_allocator_boundary
+import native_abi_strlen_import_receipt as strlen_import_receipt
 import owned_posix_product_evidence as product_evidence
 import headers_layouts_aggregate
 import owned_public_data_variable_runtime as public_data_variable_runtime
@@ -9015,10 +9016,10 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
     """
     scan_call_count = {'mbrtowc': 1, 'mbsinit': 1, 'fmodl': 2}.get(name)
     scan_caller = scan_call_count is not None
-    bulk_memory = name in native_c_allocator_boundary.OWNED_MEMORY_IMPORTS
-    independent = name in {'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close'}
+    bulk_memory = name in (*native_c_allocator_boundary.OWNED_MEMORY_IMPORTS, 'strlen')
+    independent = name in {'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close', 'strlen'}
     require(name in {'__errno_location', 'abort', 'fputs', 'getenv', 'getrusage',
-                     'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close',
+                     'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close', 'strlen',
                      *native_c_allocator_boundary.OWNED_MEMORY_IMPORTS}
             and (projection_override is not None) == independent,
             'ordinary import identity differs')
@@ -9034,7 +9035,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
         'static_provider_member', 'static_provider', 'shared_dynsym_provider',
         'shared_symtab_provider', 'importers', 'static_final_links',
         'shared_final', 'dynamic_final_import_absent',
-        *({'dynamic_final_owned_imports'} if name in {'aio_suspend', 'aio_cancel', 'close'} else set()),
+        *({'dynamic_final_owned_imports'} if name in {'aio_suspend', 'aio_cancel', 'close', 'strlen'} else set()),
     }, 'ordinary import resolution')
     runtime = companion['account']['c_runtime_imports']
     claim = next((row for row in runtime['imports']
@@ -9044,7 +9045,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
              and same(projection['static_provider'], claim['static_rust_provider'])
              and same(projection['shared_dynsym_provider'], claim['shared_dynsym_provider'])
              and same(projection['shared_symtab_provider'], claim['shared_symtab_provider']))
-            and projection['dynamic_final_import_absent'] is (name not in {'aio_suspend', 'aio_cancel', 'close'})
+            and projection['dynamic_final_import_absent'] is (name not in {'aio_suspend', 'aio_cancel', 'close', 'strlen'})
             and (not independent or all(projection[field]['name'] == name for field in (
                 'static_provider', 'shared_dynsym_provider', 'shared_symtab_provider'))),
             'ordinary import provider account differs')
@@ -9196,7 +9197,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                         == importers[0]['shared_caller_functions'][0]
                     and all_calls[0]['function'] != all_calls[0]['source_function'],
                     'ordinary inlined source call ownership differs')
-    if name in {'aio_suspend', 'aio_cancel', 'close'}:
+    if name in {'aio_suspend', 'aio_cancel', 'close', 'strlen'}:
         require(projection['dynamic_final_owned_imports'] == [
             {'mode': mode, 'import_rows': 2,
              'shared_provider_address': shared['provider_address']}
@@ -9301,6 +9302,38 @@ def attach_ordinary_import_from_retained_links(
         raise SelectionError(f'owned ordinary import resolution rejected: {error}') from error
     return _attach_ordinary_static_import(
         accounting, companion, name, projection_override=projection)
+
+
+def strlen_ordinary_import_adapter(
+        work_path: Path | None, *, boundary_report_path: Path | None,
+        paths: Mapping[str, Path]) -> dict[str, Any] | None:
+    """Replay every strlen archive edge and its selected final-image provider."""
+    if work_path is None:
+        return None
+    require(boundary_report_path is not None,
+            'strlen import requires the installed C boundary account')
+    work = physical_work_path(work_path, directory=True, own=True)
+    receipt_path = physical_work_path(work / 'report.json', directory=False, own=True)
+    try:
+        receipt = strlen_import_receipt.validate_report(
+            receipt_path, static_product=paths['static_product'],
+            dynamic_product=paths['dynamic_product'])
+        boundary = native_c_allocator_boundary.json_object(
+            boundary_report_path, 'strlen boundary account')
+        projection = native_c_allocator_boundary.ordinary_import_resolution(
+            boundary, report_path=boundary_report_path,
+            static_product=paths['static_product'],
+            dynamic_product=paths['dynamic_product'],
+            elf_facts_report=paths['elf_report'], name='strlen',
+            independent_retained_work=work, shared_call_inventory=True)
+    except (KeyError, TypeError, ValueError, OSError,
+            strlen_import_receipt.StrlenImportError,
+            product_evidence.ProductEvidenceError,
+            native_c_allocator_boundary.AllocatorBoundaryError) as error:
+        raise SelectionError(f'strlen ordinary import rejected: {error}') from error
+    require(receipt['source']['revision'] == selection_source()['revision'],
+            'strlen import selects another source revision')
+    return {'report': file_identity(receipt_path), 'projection': projection}
 
 
 def owned_aio_ordinary_import_adapter(
@@ -12053,6 +12086,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   prepared_worker_tls_report: Path | None = None,
                   errno_storage_lifecycle_report: Path | None = None,
                   native_c_allocator_boundary_report: Path | None = None,
+                  strlen_ordinary_import_work: Path | None = None,
                   owned_aio_report: Path | None = None,
                   owned_syslog_work: Path | None = None,
                   stdio_alias_contract_report: Path | None = None,
@@ -12109,6 +12143,11 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         native_c_allocator_boundary_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
         fixed_c_companion=fixed_c_producer_metadata_companion,
     ))
+    strlen_ordinary_import_companion = _admit(
+        rejected, 'strlen_ordinary_import_work',
+        lambda: strlen_ordinary_import_adapter(
+            strlen_ordinary_import_work,
+            boundary_report_path=native_c_allocator_boundary_report, paths=paths))
     owned_aio_ordinary_import_companion = _admit(
         rejected, 'owned_aio_report',
         lambda: owned_aio_ordinary_import_adapter(
@@ -12251,6 +12290,14 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         rejected, 'native_c_allocator_ordinary_import_resolution', accounting,
         native_c_allocator_boundary_companion,
         lambda: attach_ordinary_static_imports(accounting, native_c_allocator_boundary_companion))
+    strlen_import_joins, _ = _attach(
+        rejected, 'strlen_ordinary_import_resolution', accounting,
+        strlen_ordinary_import_companion,
+        lambda: [] if strlen_ordinary_import_companion is None else
+        _attach_ordinary_static_import(
+            accounting, native_c_allocator_boundary_companion, 'strlen',
+            projection_override=strlen_ordinary_import_companion['projection']))
+    ordinary_static_import_joins.extend(strlen_import_joins)
     for scan_import, caller, call_count in (
             ('mbrtowc', 'crabc_owned_scan_vfscanf', 1),
             ('mbsinit', 'crabc_owned_scan_vfscanf', 1),
@@ -12473,6 +12520,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'owned_syslog_close_import_companion': owned_syslog_close_import_companion,
             'stack_check_static_import_joins': stack_check_static_import_joins,
             'native_c_allocator_boundary_companion': native_c_allocator_boundary_companion,
+            'strlen_ordinary_import_companion': strlen_ordinary_import_companion,
             'native_c_allocator_boundary_joins': native_c_allocator_boundary_joins,
             'native_c_allocator_runtime_import_joins': native_c_allocator_runtime_import_joins,
             'native_c_allocator_private_vm_import_joins': native_c_allocator_private_vm_import_joins,
@@ -12524,6 +12572,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  prepared_worker_tls_report: Path | None = None,
                  errno_storage_lifecycle_report: Path | None = None,
                  native_c_allocator_boundary_report: Path | None = None,
+                 strlen_ordinary_import_work: Path | None = None,
                  owned_aio_report: Path | None = None,
                  owned_syslog_work: Path | None = None,
                  stdio_alias_contract_report: Path | None = None,
@@ -12553,6 +12602,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            prepared_worker_tls_report=prepared_worker_tls_report,
                            errno_storage_lifecycle_report=errno_storage_lifecycle_report,
                            native_c_allocator_boundary_report=native_c_allocator_boundary_report,
+                           strlen_ordinary_import_work=strlen_ordinary_import_work,
                            owned_aio_report=owned_aio_report,
                            owned_syslog_work=owned_syslog_work,
                            stdio_alias_contract_report=stdio_alias_contract_report,
@@ -12582,6 +12632,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     prepared_worker_tls_report: Path | None = None,
                     errno_storage_lifecycle_report: Path | None = None,
                     native_c_allocator_boundary_report: Path | None = None,
+                    strlen_ordinary_import_work: Path | None = None,
                     owned_aio_report: Path | None = None,
                     owned_syslog_work: Path | None = None,
                     stdio_alias_contract_report: Path | None = None,
@@ -12613,6 +12664,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              prepared_worker_tls_report=prepared_worker_tls_report,
                              errno_storage_lifecycle_report=errno_storage_lifecycle_report,
                              native_c_allocator_boundary_report=native_c_allocator_boundary_report,
+                             strlen_ordinary_import_work=strlen_ordinary_import_work,
                              owned_aio_report=owned_aio_report,
                              owned_syslog_work=owned_syslog_work,
                              stdio_alias_contract_report=stdio_alias_contract_report,
@@ -12650,6 +12702,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--prepared-worker-tls-report', type=Path)
     parser.add_argument('--errno-storage-lifecycle-report', type=Path)
     parser.add_argument('--native-c-allocator-boundary-report', type=Path)
+    parser.add_argument('--strlen-ordinary-import-work', type=Path)
     parser.add_argument('--owned-aio-report', type=Path)
     parser.add_argument('--owned-syslog-work', type=Path)
     parser.add_argument('--stdio-alias-contract-report', type=Path)
@@ -12673,13 +12726,15 @@ def main(argv: Sequence[str]) -> int:
         parser.error('--public-data-ordinary-link-report and --loader-debug-abi-report must be supplied together')
     if args.ordinary_declaration_abi_report is not None and args.declaration_report is None:
         parser.error('--ordinary-declaration-abi-report requires --declaration-report')
+    if args.strlen_ordinary_import_work is not None and args.native_c_allocator_boundary_report is None:
+        parser.error('--strlen-ordinary-import-work requires --native-c-allocator-boundary-report')
     kwargs = {key: getattr(args, key) for key in ('measurement_checkout', 'base_inventory', 'static_product', 'dynamic_product',
                                                 'static_preparation', 'declaration_report', 'public_data_ordinary_link_report',
                                                 'loader_debug_abi_report', 'compiler_helper_aggregate_report',
                                                 'ordinary_declaration_abi_report', 'loader_runtime_registry_report',
                                                 'pthread_alias_contract_report', 'prepared_worker_tls_report',
                                                 'errno_storage_lifecycle_report', 'native_c_allocator_boundary_report',
-                                                'owned_aio_report', 'owned_syslog_work',
+                                                'strlen_ordinary_import_work', 'owned_aio_report', 'owned_syslog_work',
                                                 'stdio_alias_contract_report', 'crt_startup_report',
                                                 'syscall_alias_contract_report', 'utmpx_receipt_report',
                                                 'pthread_timed_feature_report', 'resolver_alias_receipt_report',
