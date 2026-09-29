@@ -757,9 +757,54 @@ static void count_allocation_errors(int error, void* argument) {
   if (error == EINVAL) { counts->invalid++; }
 }
 
+struct allocation_oom_output {
+  size_t count;
+  size_t size;
+};
+
+static void capture_allocation_oom(const char* message, void* argument) {
+  struct allocation_oom_output* output = (struct allocation_oom_output*)argument;
+  const char* body = strstr(message, "unable to allocate memory (");
+  size_t size;
+  if (body != NULL && sscanf(body, "unable to allocate memory (%zu bytes)", &size) == 1) {
+    output->count++;
+    output->size = size;
+  }
+}
+
+static void unregister_allocation_error(int error, void* argument) {
+  count_allocation_errors(error, argument);
+  mi_register_error(NULL, NULL);
+}
+
+static void note_heap_aligned_failure(const char* key, mi_heap_t* heap, bool direct) {
+  const long previous_show = mi_option_get(mi_option_show_errors);
+  const long previous_max = mi_option_get(mi_option_max_errors);
+  mi_option_set(mi_option_max_errors, LONG_MAX);
+  mi_option_set_enabled(mi_option_show_errors, true);
+  struct allocation_oom_output output = { 0, SIZE_MAX };
+  struct allocation_error_counts counts = { 0 };
+  mi_register_output(capture_allocation_oom, &output);
+  output = (struct allocation_oom_output){ 0, SIZE_MAX };
+  mi_register_error(count_allocation_errors, &counts);
+  void* p = direct
+    ? mi_theap_malloc_aligned(mi_heap_theap(heap), (size_t)PTRDIFF_MAX - 16, 16)
+    : mi_heap_malloc_aligned_at(heap, (size_t)PTRDIFF_MAX - 8, 8, 1);
+  line(key, "%d,%zu,%zu,%zu,%zu,%zu", p == NULL, output.count, output.size,
+       counts.overflow, counts.memory, counts.invalid);
+  mi_register_error(NULL, NULL);
+  mi_register_output(NULL, NULL);
+  mi_option_set(mi_option_show_errors, previous_show);
+  mi_option_set(mi_option_max_errors, previous_max);
+}
+
 static void section_api_modes(void) {
   static const size_t sizes[] = { 0, 1, 7, 8, 9, 17, 33, 64, 129, 1024, 1025, 4096, 65537, 524288, 524289 };
   static const size_t alignments[] = { 1, 8, 16, 64, 4096, 131072 };
+  const size_t limit_requests[] = {
+    (size_t)PTRDIFF_MAX - 8, (size_t)PTRDIFF_MAX - 7,
+    (size_t)PTRDIFF_MAX - 1, (size_t)PTRDIFF_MAX, (size_t)PTRDIFF_MAX + 1,
+  };
   char key[96];
   mi_heap_t* main_heap = mi_heap_main();
   mi_heap_t* auxiliary_heap = mi_heap_new();
@@ -805,13 +850,67 @@ static void section_api_modes(void) {
     line(key, "%d,%d,%d", q != NULL, q != NULL && mi_heap_of(q) == heaps[h],
          q != NULL && is_zero(q, mi_usable_size(q)));
     mi_free(q == NULL ? p : q);
+    struct allocation_error_counts counts = { 0 };
+    mi_register_error(unregister_allocation_error, &counts);
+    errno = 0;
+    p = mi_heap_malloc_aligned_at(heaps[h], 16, 3, 0);
+    key_name(key, sizeof key, "api_modes.heap_alignment_dispatch", h, 0);
+    line(key, "%d,%d,%zu,%zu,%zu", p == NULL, errno,
+         counts.overflow, counts.memory, counts.invalid);
+    mi_register_error(NULL, NULL);
+    counts = (struct allocation_error_counts){ 0 };
+    mi_register_error(unregister_allocation_error, &counts);
+    errno = 0;
+    p = mi_heap_calloc(heaps[h], SIZE_MAX, 2);
+    key_name(key, sizeof key, "api_modes.heap_count_dispatch", h, 0);
+    line(key, "%d,%d,%zu,%zu,%zu", p == NULL, errno,
+         counts.overflow, counts.memory, counts.invalid);
+    mi_register_error(NULL, NULL);
+    key_name(key, sizeof key, "api_modes.heap_aligned_oom", h, 0);
+    note_heap_aligned_failure(key, heaps[h], false);
+    key_name(key, sizeof key, "api_modes.theap_aligned_oom", h, 0);
+    note_heap_aligned_failure(key, heaps[h], true);
+    for (size_t r = 0; r < sizeof limit_requests / sizeof limit_requests[0]; r++) {
+      counts = (struct allocation_error_counts){ 0 };
+      mi_register_error(count_allocation_errors, &counts);
+      p = mi_heap_malloc(heaps[h], limit_requests[r]);
+      snprintf(key, sizeof key, "api_modes.heap_limit_ordinary.%zu.%zu", h, r);
+      line(key, "%d,%zu,%zu,%zu", p == NULL, counts.overflow, counts.memory, counts.invalid);
+      counts = (struct allocation_error_counts){ 0 };
+      p = mi_heap_malloc_aligned_at(heaps[h], limit_requests[r], 8, 1);
+      snprintf(key, sizeof key, "api_modes.heap_limit_aligned.%zu.%zu", h, r);
+      line(key, "%d,%zu,%zu,%zu", p == NULL, counts.overflow, counts.memory, counts.invalid);
+      mi_register_error(NULL, NULL);
+    }
+    const long previous_precise = mi_option_get(mi_option_guarded_precise);
+    mi_option_set_enabled(mi_option_guarded_precise, false);
+    p = mi_heap_zalloc_aligned_at(heaps[h], 64, 8, 7);
+    fill(p, 64, 0x39);
+    counts = (struct allocation_error_counts){ 0 };
+    mi_register_error(count_allocation_errors, &counts);
+    q = mi_heap_rezalloc(heaps[h], p, 129);
+    key_name(key, sizeof key, "api_modes.heap_ordinary_interior", h, 0);
+    line(key, "%d,%zu,%d", q == NULL, counts.invalid,
+         q == NULL ? has_fill(p, 64, 0x39) : has_fill(q, 64, 0x39));
+    mi_register_error(NULL, NULL);
+    mi_option_set_enabled(mi_option_guarded_precise, true);
+    mi_free(q == NULL ? p : q);
+    mi_option_set_enabled(mi_option_guarded_precise, false);
+    p = mi_heap_zalloc_aligned_at(heaps[h], 64, 8, 7);
+    counts = (struct allocation_error_counts){ 0 };
+    mi_register_error(count_allocation_errors, &counts);
+    q = mi_heap_rezalloc_aligned_at(heaps[h], p, 0, 8, 7);
+    key_name(key, sizeof key, "api_modes.heap_aligned_zero_interior", h, 0);
+    line(key, "%d,%zu,%d", q == p, counts.invalid, q != NULL);
+    const bool old_retained = q != NULL && q != p && counts.invalid > 0;
+    mi_register_error(NULL, NULL);
+    mi_option_set_enabled(mi_option_guarded_precise, true);
+    mi_free(q == NULL ? p : q);
+    if (old_retained) { mi_free(p); }
+    mi_option_set(mi_option_guarded_precise, previous_precise);
   }
   mi_theap_set_default(previous);
   mi_heap_delete(auxiliary_heap);
-  const size_t limit_requests[] = {
-    (size_t)PTRDIFF_MAX - 8, (size_t)PTRDIFF_MAX - 7,
-    (size_t)PTRDIFF_MAX - 1, (size_t)PTRDIFF_MAX, (size_t)PTRDIFF_MAX + 1,
-  };
   for (size_t r = 0; r < sizeof limit_requests / sizeof limit_requests[0]; r++) {
     struct allocation_error_counts counts = { 0 };
     mi_register_error(count_allocation_errors, &counts);

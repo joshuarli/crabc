@@ -38,7 +38,7 @@
         "--differential",
         "operations"
       ],
-      "scope": "One checked-in C driver runs as two separate processes, linked once against the pinned C v3.5.0 release sources and once against the native adapter, and both address-free traces (logical ids, reuse relations, usable size, alignment, 64 KiB slice) must be equal: allocation, zeroing, calloc/mallocn overflow, usable and good size across every size class, the realloc family (ceil-half reuse, grow/shrink copy, rezalloc/recalloc tail zeroing, reallocf release, reallocarray/reallocarr errno), expand, the aligned family (natural, over-allocated, offset, OS-aligned singleton, invalid alignment, meta alignment), posix_memalign/memalign/valloc/pvalloc/aligned_alloc argument rules, umalloc/urealloc/ufree block sizes, the free forms and mi_cfree/mi_check_owned, the strdup/realpath/dupenv conveniences with errno after each call, and identical termination of the plain-C mi_new abort cases."
+      "scope": "One checked-in C driver runs as two separate processes, linked once against the pinned C v3.5.0 release sources and once against the native adapter, and both address-free traces (logical ids, reuse relations, usable size, alignment, 64 KiB slice) must be equal: allocation, zeroing, calloc/mallocn overflow, usable and good size across every size class, the realloc family (ordinary floor-half and aligned ceil-half reuse, grow/shrink copy, rezalloc/recalloc tail zeroing, reallocf release, reallocarray/reallocarr errno), expand, the aligned family (natural, over-allocated, offset, OS-aligned singleton, invalid alignment, meta alignment), posix_memalign/memalign/valloc/pvalloc/aligned_alloc argument rules, umalloc/urealloc/ufree block sizes, the free forms and mi_cfree/mi_check_owned, the strdup/realpath/dupenv conveniences with errno after each call, and identical termination of the plain-C mi_new abort cases."
     },
     "differential:page-kinds": {
       "command": [
@@ -146,7 +146,7 @@
         "mi_zalloc",
         "mi_zalloc_small"
       ],
-      "acceptance": "Default-Theap allocation follows src/alloc.c: `mi_malloc(0)` returns a distinct minimal block, an oversized request still counts its generic call and forces one collection before failing, overflowing counts fail without a message, zeroing entries return zeroed usable bytes, the `u` forms report the page block size, and the `mi_new` family follows the plain-C `mi_try_new_handler` (abort unless nothrow). errno is the default error handler's result; message rendering and registered handlers are M7's error-reporting sites.",
+      "acceptance": "Default-Theap allocation follows src/alloc.c: `mi_malloc(0)` returns a distinct minimal block, an oversized request still counts its generic call and forces one collection before failing, overflowing counts fail without a message in release and report the original count and size with EOVERFLOW in debug, zeroing entries return zeroed usable bytes, the `u` forms report the page block size, and the `mi_new` family follows the plain-C `mi_try_new_handler` (abort unless nothrow). errno is the default error handler's result; message rendering and registered handlers are M7's error-reporting sites.",
       "evidence": [
         "differential:operations",
         "adapter:export-boundary"
@@ -189,7 +189,7 @@
         "mi_rezalloc",
         "mi_urealloc"
       ],
-      "acceptance": "Reallocation follows `mi_theap_realloc_zero_ex`: NULL allocates, zero size returns a zero-initialized minimal block, ceil-half same-Heap reuse, copy of min(old usable, new size), zeroing of the source tail range, the old block survives every failure, and the alloc-posix.c errno rules; `mi_expand` never moves.",
+      "acceptance": "Reallocation follows `mi_theap_realloc_zero_ex`: NULL allocates, zero size returns a zero-initialized minimal block, ordinary floor-half same-Heap reuse and aligned ceil-half reuse, copy of min(old usable, new size), zeroing of the source tail range, the old block survives every failure, and the alloc-posix.c errno rules; `mi_expand` never moves.",
       "evidence": [
         "differential:operations",
         "unit:native-operations",
