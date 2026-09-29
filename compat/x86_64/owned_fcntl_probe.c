@@ -42,6 +42,11 @@ static void scalar(int fd,int cmd,int value) {
     if(result!=(raw<0 ? -1 : raw)) fprintf(stderr,"scalar cmd=%d value=%d\n",cmd,value);
     raw_equivalent(raw,result);
 }
+static void bad_pointer(int fd,int cmd,void *pointer,int expected_errno) {
+    long raw=raw_fcntl(fd,cmd,(uintptr_t)pointer); errno=77;
+    raw_equivalent(raw,fcntl(fd,cmd,pointer));
+    CHECK(raw==-expected_errno);
+}
 static void hint(int fd,int cmd,uint64_t value) {
     uint64_t expected=value, actual=value;
     long raw=raw_fcntl(fd,cmd,(uintptr_t)&expected); errno=77;
@@ -60,7 +65,18 @@ static void basic(const char *path,int directory) {
     CHECK(fcntl(p[0],F_GETPIPE_SZ)>=4096);
     int duplicate=fcntl(p[0],F_DUPFD,40); CHECK(duplicate>=40 && fcntl(duplicate,F_GETFD)==0);
     int cloexec=fcntl(p[0],F_DUPFD_CLOEXEC,50); CHECK(cloexec>=50 && fcntl(cloexec,F_GETFD)==FD_CLOEXEC);
+    CHECK(duplicate!=cloexec && duplicate!=p[0] && cloexec!=p[0]);
+    scalar(duplicate,F_SETFD,FD_CLOEXEC);
+    CHECK(fcntl(duplicate,F_GETFD)==FD_CLOEXEC && fcntl(p[0],F_GETFD)==FD_CLOEXEC);
+    scalar(duplicate,F_SETFD,0);
+    CHECK(fcntl(duplicate,F_GETFD)==0 && fcntl(cloexec,F_GETFD)==FD_CLOEXEC);
+    scalar(p[0],F_SETFD,0);
+    CHECK(fcntl(p[0],F_GETFD)==0 && fcntl(cloexec,F_GETFD)==FD_CLOEXEC);
+    scalar(p[0],F_SETFD,FD_CLOEXEC);
     CHECK(fcntl(duplicate,F_SETFL,O_NONBLOCK)==0 && (fcntl(p[0],F_GETFL)&O_NONBLOCK));
+    CHECK((fcntl(cloexec,F_GETFL)&O_NONBLOCK) && (fcntl(p[0],F_GETFL)&O_ACCMODE)==O_RDONLY);
+    scalar(duplicate,F_SETFL,0);
+    CHECK(!(fcntl(p[0],F_GETFL)&O_NONBLOCK) && !(fcntl(cloexec,F_GETFL)&O_NONBLOCK));
     CHECK(fcntl(p[0],F_GETFD)==FD_CLOEXEC && fcntl(duplicate,F_GETFD)==0);
     scalar(p[0],F_SETPIPE_SZ,4096); CHECK(fcntl(p[0],F_GETPIPE_SZ)==4096);
     CHECK(fcntl(p[0],F_SETOWN,-getpgrp())==0); errno=77;
@@ -89,12 +105,28 @@ static void basic(const char *path,int directory) {
     CHECK(pthread_sigmask(SIG_SETMASK,&previous_mask,NULL)==0);
     errno=77; CHECK(fcntl(p[0],F_DUPFD,-1)==-1 && errno==EINVAL);
     errno=77; CHECK(fcntl(p[0],F_DUPFD_CLOEXEC,-1)==-1 && errno==EINVAL);
-    errno=77; CHECK(fcntl(p[0],F_GETOWN_EX,(void *)1)==-1 && errno==EFAULT);
+    bad_pointer(p[0],F_GETOWN_EX,(void *)1,EFAULT);
+    bad_pointer(-1,F_GETOWN_EX,(void *)1,EBADF);
+    bad_pointer(-1,F_GETLK,(void *)1,EBADF);
+    bad_pointer(-1,F_OFD_GETLK,(void *)1,EBADF);
+    bad_pointer(-1,F_SETLK,(void *)1,EBADF);
+    bad_pointer(-1,F_SETLKW,(void *)1,EBADF);
+    bad_pointer(-1,F_OFD_SETLK,(void *)1,EBADF);
+    bad_pointer(-1,F_OFD_SETLKW,(void *)1,EBADF);
+    bad_pointer(-1,F_GET_RW_HINT,(void *)1,EBADF);
     query(-1,F_GETFD); query(-1,F_GETOWN); query(p[0],-1); query(-1,-1);
+    CHECK(raw_fcntl(p[0],-1,0)==-EINVAL && raw_fcntl(-1,-1,0)==-EBADF);
     scalar(-1,F_SETPIPE_SZ,4096); scalar(-1,F_DUPFD,0);
     CHECK(close(duplicate)==0 && close(cloexec)==0 && close(p[0])==0 && close(p[1])==0);
 
     int fd=open(path,O_CREAT|O_TRUNC|O_RDWR|O_CLOEXEC,0600); CHECK(fd>=0);
+    bad_pointer(fd,F_GETLK,(void *)1,EFAULT);
+    bad_pointer(fd,F_OFD_GETLK,(void *)1,EFAULT);
+    bad_pointer(fd,F_SETLK,(void *)1,EFAULT);
+    bad_pointer(fd,F_SETLKW,(void *)1,EFAULT);
+    bad_pointer(fd,F_OFD_SETLK,(void *)1,EFAULT);
+    bad_pointer(fd,F_OFD_SETLKW,(void *)1,EFAULT);
+    bad_pointer(fd,F_GET_RW_HINT,(void *)1,EFAULT);
     query(fd,F_GETLEASE);
     raw=raw_fcntl(fd,F_SETLEASE,F_WRLCK);
     if(raw==0) CHECK(raw_fcntl(fd,F_SETLEASE,F_UNLCK)==0);
