@@ -59,6 +59,7 @@ for _path in (ROOT, ROOT / "compat/x86_64", ROOT / "unwinder"):
 from scripts.rust_toolchain import pinned_toolchain  # noqa: E402
 import build as provider_build  # noqa: E402  (unwinder/build.py)
 import owned_cleanup  # noqa: E402
+import installed_backtrace  # noqa: E402
 import owned_rust_link  # noqa: E402
 
 SCHEMA = "crabc.x86_64-consumer-rust-std-lto/v1"
@@ -1139,6 +1140,16 @@ def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
     require(isinstance(unwind, dict) and set(unwind) == set(UNWIND_PRODUCTS),
             "consumer gate receipt lacks the installed/extracted unwind matrix")
     for label in UNWIND_PRODUCTS:
+        require(isinstance(unwind[label], dict), f"consumer gate {label} unwind result is malformed")
+        cleanup_receipt = unwind[label].get("receipt")
+        require(isinstance(cleanup_receipt, dict)
+                and retained.get(cleanup_receipt.get("path")) == cleanup_receipt.get("sha256"),
+                f"consumer gate {label} cleanup receipt is not retained")
+        try:
+            cleanup_path = installed_backtrace.require_record(cleanup_receipt, f"{label} cleanup receipt")
+            installed_backtrace.owned_receipt(cleanup_path, products[label])
+        except (owned_cleanup.OwnedCleanupError, OSError) as error:
+            raise GateError(f"consumer gate {label} cleanup evidence changed: {error}") from error
         require(isinstance(unwind[label], dict) and isinstance(unwind[label].get("cross_dso"), dict)
                 and set(unwind[label]["cross_dso"]) == set(CROSS_DSO_ORIGINS),
                 f"consumer gate {label} lacks a cross-DSO consumer")

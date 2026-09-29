@@ -179,6 +179,12 @@ class ReceiptReaderTests(unittest.TestCase):
         }
         self.record["gates"]["rust-std"]["lanes"]["stock-std"]["candidate_build"] = {
             "link_receipt": {"path": str(link_receipt), "sha256": GATE.sha256_file(link_receipt)}}
+        for label in GATE.UNWIND_PRODUCTS:
+            cleanup_receipt = root / label / "receipt.json"
+            cleanup_receipt.write_text("{}\n")
+            digest = GATE.sha256_file(cleanup_receipt)
+            self.record["unwind"][label]["receipt"] = {"path": str(cleanup_receipt), "sha256": digest}
+            self.record["retained_files"][str(cleanup_receipt)] = digest
         self.receipt = root / "receipt.json"
         qualification = mock.MagicMock()
         qualification.source_digest.return_value = "a" * 64
@@ -189,6 +195,7 @@ class ReceiptReaderTests(unittest.TestCase):
                               side_effect=lambda *_: (copy.deepcopy(self.cohort), self.product_paths)),
             mock.patch.object(GATE, "product_pair", side_effect=self.snapshot_product_pair),
             mock.patch.object(GATE.owned_cleanup, "provider_snapshot", return_value=copy.deepcopy(self.provider)),
+            mock.patch.object(GATE.installed_backtrace, "owned_receipt", return_value={}),
         ]
         for patch in self.patches:
             patch.start()
@@ -234,6 +241,18 @@ class ReceiptReaderTests(unittest.TestCase):
         record["unwind"]["primary"]["cross_dso"]["stock-std"]["unmet"] = ["execution failed"]
         with self.assertRaisesRegex(GATE.GateError, "cross-DSO"):
             self.validate(record)
+
+    def test_changed_nested_cleanup_evidence_fails_even_when_summary_passes(self) -> None:
+        with mock.patch.object(GATE.installed_backtrace, "owned_receipt",
+                               side_effect=GATE.owned_cleanup.OwnedCleanupError("stock static stdout changed")):
+            with self.assertRaisesRegex(GATE.GateError, "cleanup evidence.*stdout changed"):
+                self.validate(self.record)
+
+    def test_cleanup_reader_receives_each_physical_product_pair(self) -> None:
+        self.validate(self.record)
+        expected = [mock.call(Path(self.record["unwind"][label]["receipt"]["path"]), self.products[label])
+                    for label in GATE.UNWIND_PRODUCTS]
+        self.assertEqual(GATE.installed_backtrace.owned_receipt.call_args_list, expected)
 
     def test_current_receipt_accepts_reproduction_cohort_product(self) -> None:
         reproduction = self.receipt.parent / "reproduction"
