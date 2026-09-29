@@ -203,4 +203,4 @@ for mode in pie non-pie; do
     done
 done
 
-printf 'owned VM mechanisms: PASS (same workload object, pinned musl, static/static-PIE/dynamic PIE/non-PIE kernel/direct chroots, exact weak/hidden and strong ELF bindings with preemptible dynamic imports, emitted selected vmlock waits, resize/fixed/zero-size remaps, lifetime/protection/error behavior, musl break limit, and raw legacy-remap error translation); evidence: %s\n' "$work"
+printf 'owned VM mechanisms: PASS (same workload object, pinned musl, static/static-PIE/dynamic PIE/non-PIE kernel/direct chroots, exact weak/hidden and strong ELF bindings with preemptible dynamic imports, emitted selected vmlock waits, relocation/growth/shrink/fixed/retained-old remaps, zero-fill and partial-failure lifetimes, lock/advice composition, unchanged musl break, and raw legacy-remap error translation); evidence: %s\n' "$work"

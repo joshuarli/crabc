@@ -163,17 +163,147 @@ static int zero_size_shared_remap_is_an_alias(void)
     return 0;
 }
 
+static int forced_relocation_zero_fills_growth_and_retires_old_range(void)
+{
+    volatile unsigned char *range = mmap(
+        NULL, PAGE_SIZE * 4, PROT_NONE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0
+    );
+    volatile unsigned char *source;
+    volatile unsigned char *moved;
+    unsigned char residency = 0;
+
+    CHECK(range != MAP_FAILED);
+    source = mmap((void *)(range + PAGE_SIZE), PAGE_SIZE,
+        PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+    CHECK(source == range + PAGE_SIZE);
+    source[0] = 0x9a;
+    source[PAGE_SIZE - 1] = 0x67;
+
+    errno = E2BIG;
+    moved = mremap((void *)source, PAGE_SIZE, PAGE_SIZE * 3, MREMAP_MAYMOVE);
+    CHECK(moved != MAP_FAILED && moved != source && errno == E2BIG);
+    CHECK(moved[0] == 0x9a && moved[PAGE_SIZE - 1] == 0x67);
+    CHECK(moved[PAGE_SIZE] == 0 && moved[PAGE_SIZE * 2 - 1] == 0);
+    CHECK(moved[PAGE_SIZE * 2] == 0 && moved[PAGE_SIZE * 3 - 1] == 0);
+    errno = 0;
+    CHECK(mincore((void *)source, PAGE_SIZE, &residency) == -1 && errno == ENOMEM);
+    CHECK(expect_write_fault(range) == 0);
+    CHECK(expect_write_fault(range + PAGE_SIZE * 2) == 0);
+    CHECK(munmap((void *)range, PAGE_SIZE * 4) == 0);
+    CHECK(munmap((void *)moved, PAGE_SIZE * 3) == 0);
+    return 0;
+}
+
+static int failed_fixed_overlap_preserves_source_and_destination(void)
+{
+    volatile unsigned char *source = mmap(
+        NULL, PAGE_SIZE * 2, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0
+    );
+    volatile unsigned char *destination = mmap(
+        NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0
+    );
+
+    CHECK(source != MAP_FAILED && destination != MAP_FAILED);
+    source[0] = 0x71;
+    source[PAGE_SIZE] = 0x82;
+    destination[0] = 0x93;
+    errno = 0;
+    CHECK(mremap((void *)source, PAGE_SIZE * 2, PAGE_SIZE,
+        MREMAP_MAYMOVE | MREMAP_FIXED, (void *)(source + PAGE_SIZE))
+        == MAP_FAILED && errno == EINVAL);
+    CHECK(source[0] == 0x71 && source[PAGE_SIZE] == 0x82);
+    CHECK(destination[0] == 0x93);
+    CHECK(munmap((void *)destination, PAGE_SIZE) == 0);
+    CHECK(munmap((void *)source, PAGE_SIZE * 2) == 0);
+    return 0;
+}
+
+static int dontunmap_keeps_old_range_with_new_zero_pages(void)
+{
+    volatile unsigned char *source = mmap(
+        NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0
+    );
+    volatile unsigned char *destination = mmap(
+        NULL, PAGE_SIZE, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0
+    );
+    volatile unsigned char *moved;
+    unsigned char residency = 0;
+
+    CHECK(source != MAP_FAILED && destination != MAP_FAILED);
+    source[0] = 0x4b;
+    source[PAGE_SIZE - 1] = 0xd2;
+    destination[0] = 0xe3;
+    errno = E2BIG;
+    moved = mremap((void *)source, PAGE_SIZE, PAGE_SIZE,
+        MREMAP_MAYMOVE | MREMAP_FIXED | MREMAP_DONTUNMAP, (void *)destination);
+    CHECK(moved == destination && errno == E2BIG);
+    CHECK(moved[0] == 0x4b && moved[PAGE_SIZE - 1] == 0xd2);
+    CHECK(source[0] == 0 && source[PAGE_SIZE - 1] == 0);
+    CHECK(mincore((void *)source, PAGE_SIZE, &residency) == 0);
+    source[0] = 0x36;
+    CHECK(moved[0] == 0x4b);
+    CHECK(munmap((void *)source, PAGE_SIZE) == 0);
+    CHECK(moved[0] == 0x4b);
+    CHECK(munmap((void *)moved, PAGE_SIZE) == 0);
+    return 0;
+}
+
+static int shrink_releases_tail_and_advice_preserves_remaining_range(void)
+{
+    volatile unsigned char *mapping = mmap(
+        NULL, PAGE_SIZE * 2, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0
+    );
+    volatile unsigned char *shrunk;
+    unsigned char residency = 0;
+
+    CHECK(mapping != MAP_FAILED);
+    mapping[0] = 0x25;
+    mapping[PAGE_SIZE] = 0x68;
+    errno = E2BIG;
+    shrunk = mremap((void *)mapping, PAGE_SIZE * 2, PAGE_SIZE, 0);
+    CHECK(shrunk == mapping && errno == E2BIG && shrunk[0] == 0x25);
+    errno = 0;
+    CHECK(mincore((void *)(shrunk + PAGE_SIZE), PAGE_SIZE, &residency) == -1
+        && errno == ENOMEM);
+
+    errno = E2BIG;
+    CHECK(posix_madvise((void *)shrunk, PAGE_SIZE, POSIX_MADV_DONTNEED) == 0
+        && errno == E2BIG && shrunk[0] == 0x25);
+    CHECK(mlock((void *)shrunk, PAGE_SIZE) == 0);
+    errno = 0;
+    CHECK(mlock2((void *)shrunk, PAGE_SIZE, ~MLOCK_ONFAULT) == -1 && errno == EINVAL);
+    CHECK(shrunk[0] == 0x25);
+    CHECK(munlock((void *)shrunk, PAGE_SIZE) == 0);
+    errno = E2BIG;
+    CHECK(madvise((void *)shrunk, PAGE_SIZE, MADV_DONTNEED) == 0 && errno == E2BIG);
+    CHECK(shrunk[0] == 0);
+    CHECK(munmap((void *)shrunk, PAGE_SIZE) == 0);
+    return 0;
+}
+
 static int musl_brk_limit(void)
 {
     void *current = sbrk(0);
+    long kernel_break = raw5(SYS_brk, 0, 0, 0, 0, 0);
 
     CHECK(current != (void *)-1);
+    CHECK((long)current == kernel_break);
     errno = E2BIG;
     CHECK(sbrk(0) == current && errno == E2BIG);
     errno = 0;
     CHECK(sbrk(1) == (void *)-1 && errno == ENOMEM);
     errno = 0;
+    CHECK(sbrk(-1) == (void *)-1 && errno == ENOMEM);
+    errno = 0;
     CHECK(brk(current) == -1 && errno == ENOMEM);
+    CHECK(sbrk(0) == current);
+    CHECK(raw5(SYS_brk, 0, 0, 0, 0, 0) == kernel_break);
     return 0;
 }
 
@@ -207,6 +337,10 @@ int main(void)
     CHECK(resize_preserves_content_protection_and_error_boundary() == 0);
     CHECK(fixed_move_retires_old_mapping_and_replaces_destination() == 0);
     CHECK(zero_size_shared_remap_is_an_alias() == 0);
+    CHECK(forced_relocation_zero_fills_growth_and_retires_old_range() == 0);
+    CHECK(failed_fixed_overlap_preserves_source_and_destination() == 0);
+    CHECK(dontunmap_keeps_old_range_with_new_zero_pages() == 0);
+    CHECK(shrink_releases_tail_and_advice_preserves_remaining_range() == 0);
     CHECK(musl_brk_limit() == 0);
     CHECK(remap_file_pages_has_raw_linux_error_translation() == 0);
     puts("owned-vm-mechanisms-ok");
