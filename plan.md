@@ -83,9 +83,12 @@ are not transferable passes for a different revision.
   opt-in v2 reset now preserves the fourteen live allocator TLS objects;
   source-built native and accepted-C timer runners and callback-ordinal
   controls pass in all static and dynamic modes. Both private registry reports
-  pass independent physical replay. Native full dynamic qualification remains
-  blocked at a separate pthread-scheduling `EINVAL` case that also fails on
-  pre-v2 native-shadow products; the same-source accepted-C control passes.
+  pass independent physical replay. The pthread-scheduling workload now sets a
+  fixture-local 32 MiB allocator reservation under its original 256 MiB address
+  limit; source-built native and accepted-C static/dynamic runs and the installed
+  package case pass. A separate forked control exhausts the same limit with
+  retained 1 MiB mappings before 512 requests in native, accepted-C, and musl
+  runs. Full three-product native-shadow qualification is running.
   `consumer.rust-std-lto` passes its
   Rust, native-facade, LTO, and unwind leaves on clean `d6733f516`; its
   pinned-image receipt passed independent physical validation and public
@@ -404,7 +407,7 @@ are not transferable passes for a different revision.
   clean M6 gate passes all twenty-one runnable rows. Child callback
   registration now matches eighteen pinned-C lifecycle and refusal/retry keys,
   including retained child owner identity and terminal caller-held unmap; the
-  final 22-row clean gate rerun remains in progress.
+  clean M6 gate passes all twenty-two runnable rows.
   All ten required gates
   remain blocked by 10 named missing API and lifetime evidence entries;
   accumulated mixed-workload main-Heap page-population parity remains unproved.
