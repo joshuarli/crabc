@@ -3,8 +3,9 @@
 #
 # The same project-header C fixture first runs against pinned musl, then as a
 # true -nostdlib -static executable linked solely through the selected crabc
-# archive.  It selects only getrandom and getentropy, including Linux's fixed
-# getrandom syscall and the bounded 256-byte getentropy request contract.  It
+# archive. Their fixed-width observations compare status, errno, and untouched
+# guards without recording entropy bytes. It selects only getrandom and
+# getentropy, including Linux's fixed syscall and the 256-byte request cap. It
 # does not select C PRNG state, allocator APIs, filesystem randomness helpers,
 # resolver/account databases, CRT, pthread/TLS lifecycle, loader, sysroot, or
 # public x86 support.
@@ -69,14 +70,17 @@ assert_named_syscall() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff nm objdump readelf rustup; do
+for tool in ar cargo cmp diff nm objdump od readelf rustup; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-random-entropy.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp" "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-random-entropy.XXXXXX")"
+report_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-random-entropy.XXXXXX")"
+chmod 755 "$report_dir"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-random-entropy-reference"
@@ -93,6 +97,8 @@ candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"
+reference_observations="$report_dir/musl-observations.bin"
+candidate_observations="$report_dir/crabc-observations.bin"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
@@ -106,12 +112,13 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_random_entropy_probe.c \
     -o "$reference"
-if "$reference"; then
+if "$reference" >"$reference_observations"; then
     :
 else
     status=$?
-    fail "pinned-musl random-entropy fixture exited ${status}"
+    fail "pinned-musl random-entropy fixture exited ${status}; observations: ${report_dir}"
 fi
+od -An -tu1 -w6 "$reference_observations" >"$report_dir/musl-observations.rows"
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a" -- \
     -C codegen-units=1
@@ -191,11 +198,18 @@ grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
 
 assert_named_syscall getrandom 13e
 
-if "$candidate"; then
+if "$candidate" >"$candidate_observations"; then
     :
 else
     status=$?
-    fail "freestanding random-entropy fixture exited ${status}"
+    fail "freestanding random-entropy fixture exited ${status}; observations: ${report_dir}"
+fi
+od -An -tu1 -w6 "$candidate_observations" >"$report_dir/crabc-observations.rows"
+cp "$archive.source-runtime.json" "$report_dir/source-runtime.json"
+if ! cmp -s "$reference_observations" "$candidate_observations"; then
+    diff -u "$report_dir/musl-observations.rows" \
+        "$report_dir/crabc-observations.rows" >&2 || true
+    fail "pinned-musl and crabc observations differ; observations: ${report_dir}"
 fi
 
-printf 'x86 static crabc-libc random entropy: PASS\n'
+printf 'x86 static crabc-libc random entropy: PASS; observations: %s\n' "$report_dir"
