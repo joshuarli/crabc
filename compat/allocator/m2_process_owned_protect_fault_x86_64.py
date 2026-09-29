@@ -92,8 +92,10 @@ def c_oracle(*, offline: bool) -> tuple[dict[str, int], dict[str, Any]]:
             str(FIXTURE), "-Wl,--wrap=mprotect", "-pthread", "-o", str(binary),
         ]
         build = harness.command_record(command, cwd=source, timeout_seconds=300)
+        (ARTIFACTS / "pinned-c-build.json").write_text(json.dumps(build, indent=2) + "\n")
         harness.require_success(build, "pinned C process-owned protect fault build")
         execution = harness.command_record([str(binary)], cwd=source, env={}, timeout_seconds=120)
+        (ARTIFACTS / "pinned-c-run.json").write_text(json.dumps(execution, indent=2) + "\n")
         harness.require_success(execution, "pinned C process-owned protect fault")
         return trace(str(execution["stdout"]), "C"), {
             "build_status": build["status"], "run_status": execution["status"],
@@ -108,6 +110,7 @@ def rust_receiver() -> tuple[dict[str, int], dict[str, Any]]:
         "--message-format=json",
     ]
     build = harness.command_record(command, cwd=ROOT, timeout_seconds=3600)
+    (ARTIFACTS / "rust-build.json").write_text(json.dumps(build, indent=2) + "\n")
     harness.require_success(build, "Rust process-owned protect fault receiver build")
     candidates: list[Path] = []
     for line in str(build["stdout"]).splitlines():
@@ -127,6 +130,7 @@ def rust_receiver() -> tuple[dict[str, int], dict[str, Any]]:
         [str(candidates[0]), TEST, "--exact", "--nocapture", "--test-threads=1"],
         cwd=ROOT, env={}, timeout_seconds=120,
     )
+    (ARTIFACTS / "rust-run.json").write_text(json.dumps(execution, indent=2) + "\n")
     harness.require_success(execution, "Rust process-owned protect fault receiver")
     if "test result: ok. 1 passed; 0 failed" not in str(execution["stdout"]):
         raise RuntimeError("Rust process-owned protect fault receiver did not execute once")
@@ -137,6 +141,7 @@ def rust_receiver() -> tuple[dict[str, int], dict[str, Any]]:
 
 
 def run(*, offline: bool, c_only: bool) -> dict[str, Any]:
+    harness.require_native_x86_64()
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     c, c_commands = c_oracle(offline=offline)
     rust, rust_commands = ({}, {}) if c_only else rust_receiver()

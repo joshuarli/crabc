@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import copy
+import importlib.util
+from pathlib import Path
+import tempfile
 import json
 import sys
 import unittest
@@ -1681,6 +1684,68 @@ class NativeVmAssemblyTests(unittest.TestCase):
         direct_primitive_source["c_command"].append("/pinned/src/prim/prim.c")
         with self.assertRaises(RUNNER.HarnessError):
             RUNNER._m2_x86_64_vm_check_records(summary, direct_primitive_source)
+
+
+class ProcessOwnedProtectionFaultProducerTests(unittest.TestCase):
+    def producers(self):
+        for operation in ("protect", "unprotect"):
+            path = RUNNER.ALLOCATOR_ROOT / f"m2_process_owned_{operation}_fault_x86_64.py"
+            spec = importlib.util.spec_from_file_location(f"protection_fault_{operation}", path)
+            producer = importlib.util.module_from_spec(spec)
+            with mock.patch.dict(sys.modules, {"run": RUNNER}):
+                spec.loader.exec_module(producer)
+            yield operation, producer
+
+    def output(self, operation, producer, language):
+        marker = f"CRABC_M2_PROCESS_OWNED_{operation.upper()}_FAULT_{language}_TRACE"
+        return (marker + "_BEGIN\n" +
+                "\n".join(f"{key}={value}" for key, value in producer.expected().items()) +
+                "\n" + marker + "_END\n")
+
+    def test_protection_fault_producers_refuse_non_native_execution_before_building(self):
+        for operation, producer in self.producers():
+            with self.subTest(operation=operation), mock.patch.object(
+                RUNNER, "require_native_x86_64", side_effect=RUNNER.HarnessError("not native")
+            ), mock.patch.object(producer, "c_oracle", side_effect=AssertionError("non-native C build reached")) as oracle:
+                with self.assertRaisesRegex(RUNNER.HarnessError, "not native"):
+                    producer.run(offline=True, c_only=True)
+                oracle.assert_not_called()
+
+    def test_protection_fault_c_receipts_retain_commands_and_physical_output(self):
+        RUNNER.WORK_ROOT.mkdir(parents=True, exist_ok=True)
+        for operation, producer in self.producers():
+            with self.subTest(operation=operation), tempfile.TemporaryDirectory(dir=RUNNER.WORK_ROOT) as temporary:
+                build = {"command": ["musl-gcc", "fixture.c"], "status": 0, "stdout": "", "stderr": ""}
+                execution = {"command": ["pinned-c-oracle"], "status": 0,
+                             "stdout": self.output(operation, producer, "C"), "stderr": ""}
+                with mock.patch.object(producer, "ARTIFACTS", Path(temporary)), mock.patch.object(
+                    RUNNER, "load_pin", return_value={"archive_root": "pinned"}
+                ), mock.patch.object(RUNNER, "fetch_archive", return_value=Path(temporary)/"archive"), mock.patch.object(
+                    RUNNER, "safe_extract", return_value=Path(temporary)
+                ), mock.patch.object(RUNNER, "require_tool", return_value="musl-gcc"), mock.patch.object(
+                    RUNNER, "command_record", side_effect=[build, execution]
+                ):
+                    values, receipt = producer.c_oracle(offline=True)
+                self.assertEqual(values, producer.expected())
+                self.assertEqual(json.loads((Path(temporary)/"pinned-c-build.json").read_text()), build)
+                self.assertEqual(json.loads((Path(temporary)/"pinned-c-run.json").read_text()), execution)
+
+    def test_protection_fault_rust_receipts_retain_exact_test_and_physical_output(self):
+        for operation, producer in self.producers():
+            with self.subTest(operation=operation), tempfile.TemporaryDirectory(dir=RUNNER.WORK_ROOT) as temporary:
+                event = {"reason": "compiler-artifact", "target": {"name": "crabc_mimalloc", "kind": ["lib"]},
+                         "profile": {"test": True}, "executable": "/owned/crabc_mimalloc-hash"}
+                build = {"command": ["cargo", "test"], "status": 0, "stdout": json.dumps(event), "stderr": ""}
+                execution = {"command": [event["executable"], producer.TEST, "--exact", "--nocapture", "--test-threads=1"],
+                             "status": 0, "stdout": self.output(operation, producer, "RUST") +
+                             "test result: ok. 1 passed; 0 failed\n", "stderr": ""}
+                with mock.patch.object(producer, "ARTIFACTS", Path(temporary)), mock.patch.object(
+                    RUNNER, "command_record", side_effect=[build, execution]
+                ):
+                    values, receipt = producer.rust_receiver()
+                self.assertEqual(values, producer.expected())
+                self.assertEqual(json.loads((Path(temporary)/"rust-build.json").read_text()), build)
+                self.assertEqual(json.loads((Path(temporary)/"rust-run.json").read_text()), execution)
 
 
 if __name__ == "__main__":
