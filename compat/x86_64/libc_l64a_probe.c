@@ -2,10 +2,10 @@
  *
  * One X/Open 700 project-header C body runs through pinned musl 1.2.6 and
  * then through a selected one-member `-nostdlib -static` crabc archive. It
- * proves only l64a's low-32-bit, low-to-high radix-64 encoder and the one
- * shared seven-byte static result buffer. It leaves sibling a64l decoding,
- * general numeric conversion, errno/TLS, locale, allocation, and C runtime
- * state outside this artifact.
+ * proves l64a's low-32-bit, low-to-high radix-64 encoder and its one shared
+ * seven-byte static result buffer, including a second task in the same
+ * address space. It leaves sibling a64l decoding and general numeric
+ * conversion outside this artifact.
  */
 
 #ifndef _XOPEN_SOURCE
@@ -19,6 +19,7 @@
 #endif
 
 #include <stdlib.h>
+#include <stdint.h>
 
 #ifndef CRABC_L64A_FREESTANDING
 #include <errno.h>
@@ -75,6 +76,111 @@ static int check_shared_buffer(l64a_signature function)
     return 0;
 }
 
+/* Each fixed-width record preserves the LP64 input and every output byte.
+ * The same body runs against pinned musl and the selected freestanding owner.
+ */
+struct l64a_record {
+    unsigned long input;
+    unsigned char output[7];
+    unsigned char length;
+};
+
+_Static_assert(sizeof(struct l64a_record) == 16, "l64a record width");
+
+static int emit_record(unsigned long input, const unsigned char output[7],
+                       unsigned char length)
+{
+    struct l64a_record record = { input, { 0, 0, 0, 0, 0, 0, 0 }, length };
+    long written;
+    unsigned int index;
+
+    for (index = 0; index < 7; ++index)
+        record.output[index] = output[index];
+    __asm__ volatile("syscall" : "=a"(written)
+                     : "a"(1L), "D"(1L), "S"(&record), "d"(sizeof(record))
+                     : "rcx", "r11", "memory");
+    return written == (long)sizeof(record) ? 0 : 1;
+}
+
+static int record_value(l64a_signature function, long value)
+{
+    unsigned char bytes[7] = { 0, 0, 0, 0, 0, 0, 0 };
+    char *result = function(value);
+    unsigned int index = 0;
+
+    if (!result)
+        return 1;
+    while (index < 7 && result[index]) {
+        bytes[index] = (unsigned char)result[index];
+        ++index;
+    }
+    if (index > 6 || result[index] != 0)
+        return 2;
+    return emit_record((unsigned long)value, bytes, (unsigned char)index);
+}
+
+static unsigned char worker_stack[65536] __attribute__((aligned(16)));
+static int worker_stage;
+static char *worker_result;
+
+extern long crabc_l64a_spawn_shared_worker(void *stack_top);
+
+void crabc_l64a_shared_worker(void)
+{
+    worker_result = l64a(64);
+    __atomic_store_n(&worker_stage, 1, __ATOMIC_RELEASE);
+}
+
+static int check_cross_task_storage(l64a_signature function)
+{
+    char *main_result = function(1);
+    unsigned long spins = 0;
+    unsigned char outcome[7] = { 0, 0, 0, 0, 0, 0, 0 };
+
+    if (!main_result || !text_equal(main_result, "/"))
+        return 1;
+    __atomic_store_n(&worker_stage, 0, __ATOMIC_RELAXED);
+    if (crabc_l64a_spawn_shared_worker(worker_stack + sizeof(worker_stack)) <= 0)
+        return 2;
+    while (!__atomic_load_n(&worker_stage, __ATOMIC_ACQUIRE)) {
+        if (++spins == 1000000000UL)
+            return 3;
+        __asm__ volatile("pause");
+    }
+    outcome[0] = worker_result == main_result;
+    outcome[1] = text_equal(main_result, "./");
+    if (!outcome[0] || !outcome[1])
+        return 4;
+    return emit_record(0xffffffffffffffffUL, outcome, 2);
+}
+
+static int check_differential(l64a_signature function)
+{
+    static const long boundaries[] = {
+        0L, 1L, -1L, 0x7fffffffL, 0x80000000L, -2147483648L,
+        0xffffffffL, 0x100000000L, 0x100000001L,
+        0x7fffffffffffffffL, (-0x7fffffffffffffffL - 1L),
+        -0x100000000L, -0x100000001L
+    };
+    unsigned int index;
+    unsigned int position;
+
+    for (index = 0; index < sizeof(boundaries) / sizeof(boundaries[0]); ++index)
+        if (record_value(function, boundaries[index]))
+            return 1;
+    for (position = 0; position < 6; ++position) {
+        for (index = 0; index < 64; ++index) {
+            unsigned long value = (unsigned long)index << (position * 6);
+            if (record_value(function, (long)value))
+                return 2;
+            if (position < 5 && record_value(function,
+                    (long)(value | 0xa5a5a5a500000000UL)))
+                return 3;
+        }
+    }
+    return check_cross_task_storage(function) ? 4 : 0;
+}
+
 int crabc_x86_64_l64a_probe(void)
 {
     const l64a_signature function = l64a;
@@ -90,6 +196,8 @@ int crabc_x86_64_l64a_probe(void)
     if (result != 0) return 10 + result;
     result = check_shared_buffer(function);
     if (result != 0) return 20 + result;
+    result = check_differential(function);
+    if (result != 0) return 30 + result;
 
 #ifndef CRABC_L64A_FREESTANDING
     if (errno != E2BIG) return 40;

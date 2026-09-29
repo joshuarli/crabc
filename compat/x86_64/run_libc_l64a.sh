@@ -77,7 +77,7 @@ case "$(uname -m)" in
     x86_64|amd64) ;;
     *) fail "requires native x86-64" ;;
 esac
-for tool in ar awk cargo cmp diff grep mkdir mktemp nm objdump readelf rustup sort; do
+for tool in ar awk cargo cmp cp diff grep mkdir mktemp nm objdump readelf rustup sha256sum sort wc; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -91,12 +91,19 @@ grep -Fqx $'l64a\ta64l.lo\tT\tGLOBAL\t0\t34' "$AARCH64_STATIC_ABI" ||
 grep -Fqx $'a64l\ta64l.lo\tT\tGLOBAL\t0\t64' "$AARCH64_STATIC_ABI" ||
     fail "AArch64 musl ABI oracle lost shared a64l.lo provenance"
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-l64a.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp" "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-l64a.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-l64a"
+mkdir -p "$report_dir"
+rm -f "$report_dir/musl.records" "$report_dir/crabc.records" \
+    "$report_dir/receipt.txt"
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-l64a-reference"
 candidate="$work_dir/crabc-static-l64a-candidate"
+reference_records="$work_dir/musl.records"
+candidate_records="$work_dir/crabc.records"
 musl_archive="$("$ORACLE_CC" -print-file-name=libc.a)"
 musl_object="$work_dir/musl-a64l.o"
 header_trace="$work_dir/header-trace"
@@ -129,14 +136,15 @@ done
 
 "$ORACLE_CC" -std=c11 -D_XOPEN_SOURCE=700 -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_l64a_probe.c >/dev/null 2>"$header_trace"
-for header in stdlib.h features.h bits/alltypes.h errno.h; do
+for header in stdlib.h stdint.h features.h bits/alltypes.h errno.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use project $header"
 done
 
 "$ORACLE_CC" -std=c11 -D_XOPEN_SOURCE=700 -fno-builtin -fno-stack-protector \
-    -I"$ROOT_DIR/include" compat/x86_64/libc_l64a_probe.c -o "$reference"
-"$reference" || fail "pinned-musl l64a fixture failed"
+    -I"$ROOT_DIR/include" compat/x86_64/libc_l64a_probe.c \
+    compat/x86_64/libc_l64a_start.S -o "$reference"
+"$reference" >"$reference_records" || fail "pinned-musl l64a fixture failed"
 
 build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -219,6 +227,25 @@ if grep -Eq 'crabc_core|mimalloc|sha_crypt' \
     fail "candidate selects an unowned runtime dependency"
 fi
 
-"$candidate" || fail "freestanding l64a fixture failed"
+"$candidate" >"$candidate_records" || fail "freestanding l64a fixture failed"
+reference_bytes="$(wc -c <"$reference_records")"
+candidate_bytes="$(wc -c <"$candidate_records")"
+[ "$reference_bytes" -gt 0 ] || fail "pinned musl emitted no differential records"
+[ "$reference_bytes" -eq "$candidate_bytes" ] ||
+    fail "pinned musl and candidate emitted different record counts"
+[ "$((reference_bytes % 16))" -eq 0 ] || fail "differential contains a partial record"
+cp "$reference_records" "$report_dir/musl.records"
+cp "$candidate_records" "$report_dir/crabc.records"
+if ! cmp -s "$reference_records" "$candidate_records"; then
+    cmp "$reference_records" "$candidate_records" >&2 || true
+    fail "pinned musl and candidate l64a records differ"
+fi
+{
+    printf 'oracle=musl-1.2.6\n'
+    printf 'record_width=16\n'
+    printf 'records=%s\n' "$((reference_bytes / 16))"
+    (cd "$report_dir" && sha256sum musl.records crabc.records)
+} >"$report_dir/receipt.txt"
 
-printf 'x86 static libc l64a: PASS\n'
+printf 'x86 static libc l64a: PASS (%s differential records; %s)\n' \
+    "$((reference_bytes / 16))" "$report_dir/receipt.txt"
