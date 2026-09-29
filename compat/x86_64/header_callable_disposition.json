@@ -1492,10 +1492,10 @@
         "members": [
           "seqbuf_dump"
         ],
-        "provider_target": "program-supplied Linux UAPI sequencer callback; no crabc archive member is selected",
+        "provider_target": "program-supplied Linux UAPI sequencer callback retaining its C or C++ declaration linkage; no crabc archive member is selected",
         "resolution": "consumer-supplied",
         "semantic_family": "libc.headers-layouts",
-        "source_oracle": "Pinned Linux 5.10 UAPI sys/soundcard.h callback declaration boundary"
+        "source_oracle": "Pinned musl 1.2.6 sys/soundcard.h and Linux 5.10 UAPI consumer callback declaration boundary"
       },
       {
         "id": "x86-header-callable-oracle-no-provider-v1",

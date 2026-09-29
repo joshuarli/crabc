@@ -55,14 +55,19 @@ provider_target = "compiler builtin boundary; no crabc archive member is selecte
 source_oracle = "Pinned musl 1.2.6 alloca.h compiler-builtin declaration boundary"
 members = ["alloca"]
 
+# The sequencer callback is defined by the consuming application. Its
+# declaration keeps ordinary C or C++ linkage; a C++ callback need not emit
+# the C identifier as its linker symbol. Match the pinned header's physical
+# compiler target before routing a consumer definition, without selecting a
+# libc provider or forcing a C linkage redeclaration.
 [[deferred_owner_group]]
 id = "x86-header-callable-consumer-supplied-v1"
 semantic_family = "libc.headers-layouts"
 linkage_owner_family = "libc.c-abi-compat"
 linkage_owner_obligation = "final-callable-provider-archive-closure"
 resolution = "consumer-supplied"
-provider_target = "program-supplied Linux UAPI sequencer callback; no crabc archive member is selected"
-source_oracle = "Pinned Linux 5.10 UAPI sys/soundcard.h callback declaration boundary"
+provider_target = "program-supplied Linux UAPI sequencer callback retaining its C or C++ declaration linkage; no crabc archive member is selected"
+source_oracle = "Pinned musl 1.2.6 sys/soundcard.h and Linux 5.10 UAPI consumer callback declaration boundary"
 members = ["seqbuf_dump"]
 
 # Musl 1.2.6 declares the two priority-ceiling attribute entries in pthread.h

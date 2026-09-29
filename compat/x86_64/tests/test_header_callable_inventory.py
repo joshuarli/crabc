@@ -49,6 +49,74 @@ AUDIT = load_module("header_callable_linkage_audit_test", AUDIT_PATH)
 
 
 class HeaderCallableInventoryTests(unittest.TestCase):
+    @unittest.skipUnless(
+        Path("/opt/musl-1.2.6/include").is_dir()
+        and Path("/opt/linux-5.10-uapi/include").is_dir()
+        and all(shutil.which(tool) for tool in ("clang", "ar", "ld", "nm")),
+        "requires the pinned native header oracle and compiler tools",
+    )
+    def test_soundcard_consumer_callback_preserves_oracle_language_and_archive_linkage(self) -> None:
+        """Application callbacks keep the language linkage of their installed declaration."""
+        scratch = ROOT / ".work" / "x86_64" / "header-callable-inventory-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        contract = INVENTORY.load_contract()
+        resource = INVENTORY.compiler_resource_include("clang")
+        roots = (ROOT / "include", Path("/opt/musl-1.2.6/include"))
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            consumer = work / "consumer.c"
+            provider = work / "provider.c"
+            consumer.write_text(
+                "#include <sys/soundcard.h>\nvoid (*callback_address)(void) = SEQ_DUMPBUF;\n",
+                encoding="utf-8",
+            )
+            provider.write_text(
+                "#include <sys/soundcard.h>\nvoid seqbuf_dump(void) {}\n",
+                encoding="utf-8",
+            )
+            archives = {}
+            consumers = {}
+            for root_index, header_root in enumerate(roots):
+                for profile in contract.profiles:
+                    key = (root_index, profile.identifier)
+                    stem = f"{root_index}-{profile.identifier}"
+                    consumer_object = work / f"{stem}-consumer.o"
+                    provider_object = work / f"{stem}-provider.o"
+                    command = [
+                        "clang", "-x", "c" if profile.language == "c" else "c++",
+                        f"-std={profile.standard}", "-nostdinc",
+                        "-I", str(header_root), "-isystem", str(resource),
+                        "-isystem", "/opt/linux-5.10-uapi/include",
+                    ]
+                    if profile.language == "cxx":
+                        command.append("-nostdinc++")
+                    command.extend(f"-D{define}" for define in profile.defines)
+                    for source, output in ((consumer, consumer_object), (provider, provider_object)):
+                        subprocess.run(command + ["-c", str(source), "-o", str(output)], check=True)
+                    expected = "seqbuf_dump" if profile.language == "c" else "_Z11seqbuf_dumpv"
+                    undefined = subprocess.check_output(["nm", "-u", str(consumer_object)], text=True)
+                    self.assertEqual(undefined.split(), ["U", expected])
+                    archive = work / f"{stem}-provider.a"
+                    subprocess.run(["ar", "rcs", str(archive), str(provider_object)], check=True)
+                    linked = work / f"{stem}-linked.o"
+                    subprocess.run(["ld", "-r", str(consumer_object), str(archive), "-o", str(linked)], check=True)
+                    self.assertEqual(subprocess.check_output(["nm", "-u", str(linked)], text=True), "")
+                    defined = subprocess.check_output(["nm", "--defined-only", str(linked)], text=True)
+                    self.assertIn(["T", expected], [line.split()[-2:] for line in defined.splitlines()])
+                    archives[key] = archive
+                    consumers[key] = consumer_object
+            for root_index in range(len(roots)):
+                for profile in contract.profiles:
+                    opposite = "cxx17-gnu" if profile.language == "c" else "c11-gnu"
+                    linked = work / f"{root_index}-{profile.identifier}-opposite.o"
+                    subprocess.run([
+                        "ld", "-r", str(consumers[(root_index, profile.identifier)]),
+                        str(archives[(root_index, opposite)]), "-o", str(linked),
+                    ], check=True)
+                    expected = "seqbuf_dump" if profile.language == "c" else "_Z11seqbuf_dumpv"
+                    undefined = subprocess.check_output(["nm", "-u", str(linked)], text=True)
+                    self.assertEqual(undefined.split(), ["U", expected])
+
     def test_contract_keeps_the_fixed_profiles_and_no_header_text_parser(self) -> None:
         contract = INVENTORY.load_contract()
 
