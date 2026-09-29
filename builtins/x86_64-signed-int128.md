@@ -19,10 +19,11 @@ private scope wording, the `crabc-builtins.o` membership, both symbols, and a
 byte-reproducible rebuild.
 
 This helper pair is crabc-owned Rust source rather than a copied musl helper.
-The pinned musl 1.2.6 x86 toolchain is the native C/ABI execution baseline: it
-runs the same defined C quotient/remainder cases before the freestanding
-candidate.  It does not make musl an implementation fallback or an ownership
-claim for the helper algorithm.
+The pinned musl 1.2.6 x86 toolchain supplies the C/ABI execution baseline and
+its pinned GCC `libgcc.a` supplies the reference `__divti3` and `__modti3`
+definitions. The reference ELF retains both symbols, and its link trace names
+`libgcc.a`. This use is confined to the reference image; the candidate link
+trace and map attribute its extracted helper object to the crabc archive.
 
 ## Native boundary
 
@@ -33,11 +34,17 @@ freestanding static link fails without the fresh archive and names each
 missing symbol, and that the archive-backed `ET_EXEC` retains and calls both
 definitions.  It rejects an interpreter, dynamic runtime dependency, TLS
 segment, and unresolved symbol before running the pinned-musl reference and
-candidate images.
+candidate images. Each image writes the quotient and remainder as exact
+128-bit hexadecimal result bits for every case. The runner compares their
+complete byte streams and retains the streams, link traces, map, symbol lists,
+and ELF inspections below its ignored `.work/x86_64/reports` directory.
 
-The cases cover signs on a value above 64 bits and C's truncation-toward-zero
-remainder rule for mixed signs.  They deliberately exclude division by zero
-and `INT128_MIN / -1`, which do not provide a defined signed-C result.
+The defined C cases cover both signs, high-limb divisors, the minimum signed
+value as dividend and divisor, and C's truncation-toward-zero remainder rule.
+`INT128_MIN / -1` has no representable C result. That one case calls the two
+compiler helpers directly and compares their returned bit patterns, without
+evaluating the undefined C division or remainder expression. Zero divisors
+remain outside the helper contract measured here.
 
 Run the runner inside the pinned native x86 evidence image after ensuring it
 exists with `./scripts/dev-x86_64.sh image`:

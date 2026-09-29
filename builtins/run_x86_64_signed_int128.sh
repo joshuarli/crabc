@@ -5,7 +5,7 @@
 # program first establishes the ordinary C quotient/remainder results, then a
 # freestanding C object is shown to require exactly __divti3 and __modti3.  A
 # link without that archive must fail, while the archive-backed static image
-# must retain both definitions and execute the same cases.
+# must retain both definitions and emit the same result bits for every case.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -35,7 +35,7 @@ case "$(uname -m)" in
     *) fail "refuses emulation on $(uname -m)" ;;
 esac
 
-for tool in grep mktemp nm objdump python3 readelf; do
+for tool in chmod cmp grep mktemp nm objdump python3 readelf; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned x86 musl compiler wrapper"
@@ -45,8 +45,9 @@ done
 
 bash "${ROOT_DIR}/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-signed-int128.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "${ROOT_DIR}/.work/x86_64/reports"
+work_dir="$(mktemp -d "${ROOT_DIR}/.work/x86_64/reports/signed-int128.XXXXXX")"
+chmod 755 "$work_dir"
 archive="${work_dir}/libcrabc-builtins.a"
 provenance="${work_dir}/libcrabc-builtins.a.provenance.json"
 object="${work_dir}/signed-int128.o"
@@ -55,7 +56,12 @@ without_archive="${work_dir}/without-builtins"
 without_archive_log="${work_dir}/without-builtins.log"
 candidate="${work_dir}/with-builtins"
 candidate_link_log="${work_dir}/with-builtins-link.log"
+candidate_map="${work_dir}/with-builtins.map"
 reference="${work_dir}/pinned-musl-reference"
+reference_link_log="${work_dir}/pinned-musl-reference-link.log"
+reference_symbols="${work_dir}/pinned-musl-reference-symbols.txt"
+reference_stream="${work_dir}/pinned-musl-reference.stdout"
+candidate_stream="${work_dir}/with-builtins.stdout"
 symbols="${work_dir}/object-undefined.txt"
 candidate_symbols="${work_dir}/candidate-defined-symbols.txt"
 candidate_undefined="${work_dir}/candidate-undefined-symbols.txt"
@@ -101,6 +107,9 @@ for symbol in __divti3 __modti3; do
         fail "native C object did not require ${symbol}"
     }
 done
+if grep -Evq '[[:space:]](__divti3|__modti3)$' "$symbols"; then
+    fail "native C object admitted an unexpected helper boundary"
+fi
 
 if oracle_cc \
     -nostdlib -static -no-pie \
@@ -117,10 +126,17 @@ done
 oracle_cc \
     -nostdlib -static -no-pie \
     -Wl,--build-id=none -Wl,--no-undefined -Wl,-e,_start -Wl,-t \
+    -Wl,-Map,"$candidate_map" \
     "$start_object" "$object" "$archive" -o "$candidate" >"$candidate_link_log" 2>&1
 if grep -Eq 'libgcc|compiler-rt|libc\.a|/crt[^[:space:]]*\.o' "$candidate_link_log"; then
     fail "candidate link admitted an ambient CRT or compiler runtime"
 fi
+grep -Fxq "$archive" "$candidate_link_log" || {
+    fail "candidate link trace did not name the owned archive"
+}
+grep -Fq "$archive(crabc-builtins.o)" "$candidate_map" || {
+    fail "candidate map did not attribute the extracted member to the owned archive"
+}
 
 readelf --file-header --wide "$candidate" >"$header"
 grep -Fq 'Type:                              EXEC (Executable file)' "$header" || {
@@ -155,8 +171,21 @@ for symbol in __divti3 __modti3; do
 done
 
 oracle_cc -std=c11 -O2 -fno-builtin -fno-stack-protector -fno-pie -no-pie \
-    "$PROBE" -o "$reference"
-"$reference"
-"$candidate"
+    -static -Wl,-t "$PROBE" -o "$reference" >"$reference_link_log" 2>&1
+grep -Eq 'libgcc\.a' "$reference_link_log" || {
+    fail "reference link trace did not name pinned compiler helper archive"
+}
+nm --defined-only "$reference" >"$reference_symbols"
+for symbol in __divti3 __modti3; do
+    grep -Eq "[[:space:]]${symbol}$" "$reference_symbols" || {
+        fail "reference ELF did not retain pinned ${symbol}"
+    }
+done
+"$reference" >"$reference_stream"
+"$candidate" >"$candidate_stream"
+[ -s "$reference_stream" ] || fail "reference emitted no result stream"
+if ! cmp -s "$reference_stream" "$candidate_stream"; then
+    fail "candidate result stream differs from pinned reference: $reference_stream $candidate_stream"
+fi
 
-printf 'private x86 signed __int128 compiler-helper ABI: PASS\n'
+printf 'private x86 signed __int128 compiler-helper ABI: PASS (%s)\n' "$work_dir"
