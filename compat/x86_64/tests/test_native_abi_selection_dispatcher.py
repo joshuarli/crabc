@@ -25,11 +25,13 @@ class NativeAbiSelectionDispatcherTests(unittest.TestCase):
         scripts = self.checkout / "scripts"
         scripts.mkdir(parents=True)
         shutil.copy2(ROOT / "scripts/dev-x86_64.sh", scripts / "dev-x86_64.sh")
+        (self.checkout / "compat/x86_64").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / "compat/x86_64/core_image.py", self.checkout / "compat/x86_64/core_image.py")
         self.work = self.checkout / ".work/x86_64"
         self.work.mkdir(parents=True)
         self.runner_log = self.work / "reader-arguments.json"
         reader = self.checkout / "compat/x86_64/native_abi_selection.py"
-        reader.parent.mkdir(parents=True)
+        reader.parent.mkdir(parents=True, exist_ok=True)
         reader.write_text(
             "import json, os, pathlib, sys\n"
             "pathlib.Path(os.environ['ABI_SELECTION_READER_LOG']).write_text(json.dumps(sys.argv[1:]))\n"

@@ -9,7 +9,8 @@ set -euo pipefail
 
 readonly ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly PLATFORM="linux/amd64"
-readonly IMAGE="${CRABC_X86_64_CORE_IMAGE:-crabc-core-evidence:x86_64}"
+IMAGE="${CRABC_X86_64_CORE_IMAGE:-}"
+readonly BUILD_IMAGE="${CRABC_X86_64_CORE_IMAGE:-crabc-core-evidence:x86_64}"
 readonly DOCKERFILE="$ROOT_DIR/docker/Dockerfile.x86_64"
 readonly WORK_BOUNDARY="$ROOT_DIR/.work/x86_64"
 normalize_absolute_path() {
@@ -3646,13 +3647,21 @@ require_native_linux_x86_64_host() {
 build_image() {
     docker build \
         --platform "$PLATFORM" \
-        --tag "$IMAGE" \
+        --tag "$BUILD_IMAGE" \
         --file "$DOCKERFILE" \
         "$ROOT_DIR"
 }
 
 ensure_image() {
+    # Launch the declared immutable image even when a development tag has moved.
+    # Rebuilding is an explicit operation because it cannot restore a missing ID.
+    if [ -z "$IMAGE" ]; then
+        IMAGE="$(python3 -B "$ROOT_DIR/compat/x86_64/core_image.py")"
+    fi
     if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+        if [ -z "${CRABC_X86_64_CORE_IMAGE:-}" ] || [[ "$IMAGE" = sha256:* || "$IMAGE" = *@sha256:* ]]; then
+            fail "pinned native core image $IMAGE is unavailable; install the declared image before running native evidence"
+        fi
         build_image
     fi
 

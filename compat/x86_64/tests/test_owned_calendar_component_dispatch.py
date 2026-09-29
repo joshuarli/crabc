@@ -37,6 +37,8 @@ class OwnedCalendarComponentDispatchTests(unittest.TestCase):
                         str(self.checkout), "HEAD"], check=True)
         (self.checkout / "scripts").mkdir()
         shutil.copy2(ROOT / "scripts/dev-x86_64.sh", self.checkout / "scripts/dev-x86_64.sh")
+        (self.checkout / "compat/x86_64").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / "compat/x86_64/core_image.py", self.checkout / "compat/x86_64/core_image.py")
         self.work = self.checkout / ".work/x86_64"
         self.work.mkdir(parents=True)
         self.static = self.work / "products/static product"
@@ -47,7 +49,7 @@ class OwnedCalendarComponentDispatchTests(unittest.TestCase):
         # The host-side archive retention is a producer operation; record it
         # instead of reaching the network from a dispatcher test.
         runner = self.checkout / "compat/x86_64/run_owned_calendar_component.py"
-        runner.parent.mkdir(parents=True)
+        runner.parent.mkdir(parents=True, exist_ok=True)
         runner.write_text(
             "import json, os, sys\n"
             "with open(os.environ['CALENDAR_DISPATCH_LOG'], 'a', encoding='utf-8') as log:\n"

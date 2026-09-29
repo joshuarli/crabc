@@ -21,11 +21,13 @@ class WorktreeGitDispatchTests(unittest.TestCase):
             source = work / "source"
             (source / "scripts").mkdir(parents=True)
             shutil.copyfile(ROOT / "scripts/dev-x86_64.sh", source / "scripts/dev-x86_64.sh")
+            (source / "compat/x86_64").mkdir(parents=True)
+            shutil.copyfile(ROOT / "compat/x86_64/core_image.py", source / "compat/x86_64/core_image.py")
             def git(*arguments):
                 return subprocess.run(["git", "-c", "core.hooksPath=/dev/null", *arguments],
                     cwd=source, check=True, capture_output=True, text=True)
             git("init", "-q")
-            git("add", "scripts/dev-x86_64.sh")
+            git("add", "scripts/dev-x86_64.sh", "compat/x86_64/core_image.py")
             git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture")
             linked = work / "linked"
             git("worktree", "add", "--detach", str(linked), "HEAD")

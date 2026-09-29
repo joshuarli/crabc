@@ -28,6 +28,8 @@ class NativeAbiInventoryDispatcherTests(unittest.TestCase):
         scripts = self.checkout / "scripts"
         scripts.mkdir()
         shutil.copy2(ROOT / "scripts/dev-x86_64.sh", scripts / "dev-x86_64.sh")
+        (self.checkout / "compat/x86_64").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / "compat/x86_64/core_image.py", self.checkout / "compat/x86_64/core_image.py")
         self.inputs = self.checkout / ".work/retained-products"
         self.inputs.mkdir(parents=True)
         self.static_product = self.inputs / "static"
@@ -117,7 +119,7 @@ class NativeAbiInventoryDispatcherTests(unittest.TestCase):
         report.parent.mkdir()
         report.write_text("{}\n", encoding="utf-8")
         runner = self.checkout / "compat/x86_64/native_abi_inventory.py"
-        runner.parent.mkdir(parents=True)
+        runner.parent.mkdir(parents=True, exist_ok=True)
         runner.write_text(
             "import json, os, pathlib, sys\n"
             "pathlib.Path(os.environ['ABI_DISPATCH_RUNNER_LOG']).write_text(json.dumps(sys.argv[1:]))\n",

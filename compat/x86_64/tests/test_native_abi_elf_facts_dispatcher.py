@@ -41,7 +41,7 @@ class NativeAbiElfFactsDispatcherTests(base_dispatcher.NativeAbiInventoryDispatc
         report.parent.mkdir()
         report.write_text('{}\n')
         runner = self.checkout / 'compat/x86_64/native_abi_elf_facts.py'
-        runner.parent.mkdir(parents=True)
+        runner.parent.mkdir(parents=True, exist_ok=True)
         runner.write_text(
             'import json, os, pathlib, sys\n'
             "pathlib.Path(os.environ['ABI_DISPATCH_RUNNER_LOG']).write_text(json.dumps(sys.argv[1:]))\n"

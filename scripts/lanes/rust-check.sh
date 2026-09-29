@@ -5,6 +5,16 @@
 set -u
 root=$(git rev-parse --show-toplevel)
 work=$root/.work/x86_64
+image=${CRABC_X86_64_CORE_IMAGE:-$(python3 -B "$root/compat/x86_64/core_image.py")} || exit
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+    printf 'ERROR: native Rust-check image %s is unavailable\n' "$image" >&2
+    exit 1
+fi
+identity=$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image") || exit
+if [ "$identity" != linux/amd64 ]; then
+    printf 'ERROR: native Rust-check image %s is %s; expected linux/amd64\n' "$image" "$identity" >&2
+    exit 1
+fi
 mkdir -p "$work/target-check" "$work/tmp"
 in_image() {
     docker run --rm --init --platform linux/amd64 --workdir /workspace \
@@ -12,7 +22,7 @@ in_image() {
         --env CARGO_TARGET_DIR=/workspace/.work/x86_64/target-check \
         --env TMPDIR=/workspace/.work/x86_64/tmp \
         --volume "$root:/workspace" --volume "$work:/workspace/.work/x86_64" \
-        crabc-core-evidence:x86_64 "$@"
+        "$image" "$@"
 }
 if [ "$#" -gt 0 ]; then in_image "$@"; exit; fi
 status=0

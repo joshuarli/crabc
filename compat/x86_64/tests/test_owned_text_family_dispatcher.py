@@ -8,12 +8,15 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[3]
 WORK = ROOT / ".work/text-family-dispatcher-tests"
+sys.path.insert(0, str(ROOT / "compat/x86_64"))
+from core_image import CORE_IMAGE_ID
 
 
 class OwnedTextFamilyDispatcherTests(unittest.TestCase):
@@ -37,6 +40,8 @@ class OwnedTextFamilyDispatcherTests(unittest.TestCase):
         scripts = self.checkout / "scripts"
         scripts.mkdir()
         shutil.copy2(ROOT / "scripts/dev-x86_64.sh", scripts / "dev-x86_64.sh")
+        (self.checkout / "compat/x86_64").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / "compat/x86_64/core_image.py", self.checkout / "compat/x86_64/core_image.py")
         (self.checkout / ".work/x86_64").mkdir(parents=True)
         self.runner_log = self.checkout / ".work/x86_64/docker-arguments.json"
         binaries = self.checkout / ".work/x86_64/bin"
@@ -96,7 +101,7 @@ class OwnedTextFamilyDispatcherTests(unittest.TestCase):
                 calls = [json.loads(line) for line in self.runner_log.read_text(encoding="utf-8").splitlines()]
                 run = next(call for call in calls if call[0] == "run")
                 expected = [
-                    "crabc-core-evidence:x86_64", "python3", "-B",
+                    CORE_IMAGE_ID, "python3", "-B",
                     "/workspace/compat/x86_64/owned_text_math_locale_stdio_family.py", *arguments,
                 ]
                 self.assertEqual(run[-len(expected):], expected)

@@ -27,6 +27,8 @@ class PublicDataOrdinaryLinkDispatcherTests(unittest.TestCase):
         scripts = self.checkout / 'scripts'
         scripts.mkdir(parents=True)
         shutil.copy2(ROOT / 'scripts/dev-x86_64.sh', scripts / 'dev-x86_64.sh')
+        (self.checkout / "compat/x86_64").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / "compat/x86_64/core_image.py", self.checkout / "compat/x86_64/core_image.py")
         self.work = self.checkout / '.work/x86_64'
         self.evidence = self.work / 'public-data-ordinary-link'
         self.evidence.mkdir(parents=True)
@@ -58,7 +60,7 @@ class PublicDataOrdinaryLinkDispatcherTests(unittest.TestCase):
         )
         docker.chmod(0o755)
         reader = self.checkout / 'compat/x86_64/public_data_ordinary_link_evidence.py'
-        reader.parent.mkdir(parents=True)
+        reader.parent.mkdir(parents=True, exist_ok=True)
         reader.write_text(
             'import json, os, pathlib, sys\n'
             "pathlib.Path(os.environ['DATA_READER_LOG']).write_text(json.dumps(sys.argv[1:]))\n"
