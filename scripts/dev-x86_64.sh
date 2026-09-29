@@ -749,6 +749,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-lchown  run the static x86 crabc-libc lchown leaf
   libc-hasmntopt  run the static x86 crabc-libc hasmntopt leaf
   libc-mktemp  run the static x86 crabc-libc historical mktemp slice
+  libc-temporary-objects  compare x86 temporary-object creation with pinned musl
   libc-temporary-names  run the opt-in static x86 tmpnam/tempnam slice
   libc-file-handles  run the opt-in static x86 file-handle syscall slice
   libc-posix-spawn-file-actions  run the opt-in mixed-runtime x86 spawn file-actions lifecycle
@@ -6724,6 +6725,10 @@ run_libc_mktemp_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_mktemp.sh
 }
 
+run_libc_temporary_objects_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_temporary_objects.sh
+}
+
 run_libc_temporary_names_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_temporary_names.sh
 }
@@ -7258,7 +7263,7 @@ case "$command" in
     sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-setscheduler-header-abi|sched-getaffinity-header-abi|sched-setaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi) ;;
     sched-cpu-set-source-form) ;;
     ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|protocol-database-header-abi|ether-line-header-abi|ether-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-protocol-database|libc-ether-line|libc-ether|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkdirat-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkdirat|libc-mkfifoat|mktemp-header-abi|libc-mktemp) ;;
-    temporary-names-header-abi|libc-temporary-names) ;;
+    temporary-names-header-abi|libc-temporary-names|libc-temporary-objects) ;;
     file-handles-header-abi|libc-file-handles) ;;
     posix-spawn-file-actions-header-abi|libc-posix-spawn-file-actions|process-exec-header-abi|libc-process-exec) ;;
     readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|renameat2-header-abi|libc-renameat2|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync) ;;
@@ -10453,6 +10458,11 @@ PY
         [ "$#" -eq 0 ] || fail "libc-mktemp takes no arguments"
         ensure_image
         run_libc_mktemp_probe
+        ;;
+    libc-temporary-objects)
+        [ "$#" -eq 0 ] || fail "libc-temporary-objects takes no arguments"
+        ensure_image
+        run_libc_temporary_objects_probe
         ;;
     libc-temporary-names)
         [ "$#" -eq 0 ] || fail "libc-temporary-names takes no arguments"
