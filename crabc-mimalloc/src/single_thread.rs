@@ -1906,13 +1906,17 @@ pub(crate) unsafe fn delete_non_main_heap_pages(
         let memory = unsafe { page.as_ref() }.memid();
         let used = unsafe { Page::used_at_claimed(page) };
         if used == 0 || target.is_none() {
+            // A worker-abandoned regular OS page shares this Heap list with
+            // singletons. Its terminal preflight must retain the multi-block
+            // geometry when destroy discards its live blocks.
+            let regular = unsafe { page.as_ref() }.reserved() > 1;
             // SAFETY: as above; a destroy discards the live blocks. The
             // terminal release records the Heap's page statistics once.
             unsafe { Page::discard_used_for_heap_destroy(page) };
             // SAFETY: the claimed, list-member, zero-use OS page.
             let released = unsafe {
                 release_claimed_non_arena_page_with_list_removal(
-                    page_map, backing.process(), page, memory, false,
+                    page_map, backing.process(), page, memory, regular,
                     |page| if Heap::remove_os_abandoned_page_at(heap, page) {
                         NonArenaPageListRemoval::Removed
                     } else {
