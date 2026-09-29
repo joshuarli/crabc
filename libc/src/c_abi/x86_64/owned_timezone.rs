@@ -442,6 +442,17 @@ fn refresh_tzset() {
     unsafe { configure(); }
 }
 
+/// Initialize process zone names before a first `%Z` parse. Pinned musl reads
+/// null global names in that case; the parser needs usable names even when the
+/// caller has not made an explicit timezone conversion or `tzset` call.
+pub(super) fn names_for_strptime() -> [*mut c_char; 2] {
+    let _guard = TimezoneGuard::acquire();
+    unsafe {
+        if __tzname[0].is_null() || __tzname[1].is_null() { configure(); }
+        __tzname
+    }
+}
+
 /// Refresh process timezone state from caller-coordinated TZ/environment data.
 #[no_mangle]
 #[linkage = "weak"]

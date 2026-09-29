@@ -43,6 +43,14 @@ static void run(const char *path, int check, int tag, int version, int count,
 }
 int main(int argc, char **argv) {
     CHECK(argc==3); int check=!strcmp(argv[2],"check");
+    if (check) {
+        const char input[] = "UTCtail";
+        struct tm initial = { .tm_isdst = -1 };
+        CHECK(!setenv("TZ", "UTC0", 1));
+        char *end = strptime(input, "%Z", &initial);
+        CHECK(end==input+3 && initial.tm_isdst==0);
+        puts("0 initial-strptime-zone=UTC dst=0");
+    }
     run(argv[1],check,1,0,0,0,3600,3600,"",3600,-3600,0,"ONE");
     run(argv[1],check,2,0,0,0,-18000,-18000,"",-18000,18000,0,"ONE");
     run(argv[1],check,3,'2',0,0,0,0,"XXX-3",10800,-10800,0,"XXX");

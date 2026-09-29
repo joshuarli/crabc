@@ -120,6 +120,7 @@ CLOCK_CONTROL_SCENARIOS = (
 )
 SECCOMP_DENIED_SYSCALLS = ("adjtimex", "clock_adjtime", "settimeofday", "clock_settime")
 TZIF_SPECIFICATION_STDOUT = (
+    b"0 initial-strptime-zone=UTC dst=0\n"
     b"1 offset=3600 timezone=-3600 dst=0 name=ONE\n"
     b"2 offset=-18000 timezone=18000 dst=0 name=ONE\n"
     b"3 offset=10800 timezone=-10800 dst=0 name=XXX\n"

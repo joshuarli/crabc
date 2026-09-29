@@ -13,6 +13,8 @@
 //! probe retains both that oracle failure and the bounded candidate result.
 //! Digits, punctuation, control bytes and high bytes also terminate the owned
 //! fallback instead of being consumed by the source signed-character loop.
+//! A first `%Z` parse also initializes timezone names before dereferencing
+//! them; pinned musl faults when the application has not called `tzset`.
 
 use core::{ffi::{c_char, c_int}, ptr};
 use super::{owned_timezone, timegm::Tm};
@@ -189,8 +191,9 @@ unsafe fn parse(mut input: *const u8, mut format: *const u8, value: *mut Tm) -> 
                 }
                 b'Z' => {
                     let mut matched = false;
+                    let names = owned_timezone::names_for_strptime();
                     for daylight in 0..2 {
-                        let name = owned_timezone::__tzname[daylight];
+                        let name = names[daylight];
                         let length = strlen(name);
                         if strncmp(input.cast(), name, length) == 0 {
                             (*value).daylight_saving = daylight as c_int;
