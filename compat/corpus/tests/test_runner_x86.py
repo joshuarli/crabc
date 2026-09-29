@@ -8,6 +8,7 @@ import importlib.util
 import io
 import json
 import os
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -29,6 +30,56 @@ class NativeManifestTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.manifest = RUNNER.load_manifest()
+
+    def test_unobserved_runner_exit_retains_kernel_snapshot_outside_execution_tree(self) -> None:
+        scratch = RUNNER.ROOT / ".work/x86_64/tmp/corpus-runner-timeout-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary) / "case-oracle"
+            root.mkdir()
+            program = root / "program"
+            program.write_bytes(b"fixture")
+            program.chmod(0o700)
+            case = dataclasses.replace(self.manifest.cases[0], path="/program")
+            lifetime = RUNNER._lifetime_module()
+            process = mock.Mock(pid=os.getpid(), returncode=None)
+            process.communicate.side_effect = subprocess.TimeoutExpired(["fixture"], 12)
+            process.wait.side_effect = subprocess.TimeoutExpired(["fixture"], 3)
+            with mock.patch.object(RUNNER.subprocess, "Popen", return_value=process), \
+                 mock.patch.object(lifetime.os, "killpg"), \
+                 mock.patch.object(lifetime.PrivateAdmissionDescendantBoundary, "kill_process"):
+                with self.assertRaisesRegex(RUNNER.CorpusError, "could not observe its runner exit"):
+                    RUNNER.execute_case(root, case)
+            diagnostic = json.loads((root.parent / "case-oracle-diagnostics/runner-exit-timeout.json").read_text())
+            self.assertEqual(diagnostic["pid"], os.getpid())
+            self.assertRegex(diagnostic["process_state"], r"^[A-Z]")
+            self.assertIn("State:", diagnostic["task_status"])
+            self.assertEqual(list(root.iterdir()), [program])
+
+    def test_timeout_pipe_drain_has_a_deadline_and_rejects_incomplete_containment(self) -> None:
+        scratch = RUNNER.ROOT / ".work/x86_64/tmp/corpus-runner-timeout-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary) / "case-candidate"
+            root.mkdir()
+            program = root / "program"
+            program.write_bytes(b"fixture")
+            program.chmod(0o700)
+            case = dataclasses.replace(self.manifest.cases[0], path="/program")
+            lifetime = RUNNER._lifetime_module()
+            process = mock.Mock(pid=731, returncode=-9)
+            process.communicate.side_effect = (
+                subprocess.TimeoutExpired(["fixture"], 12),
+                subprocess.TimeoutExpired(["fixture"], 3),
+            )
+            with mock.patch.object(RUNNER.subprocess, "Popen", return_value=process), \
+                 mock.patch.object(lifetime.os, "killpg"), \
+                 mock.patch.object(lifetime.PrivateAdmissionDescendantBoundary, "kill_process"), \
+                 mock.patch.object(lifetime.PrivateAdmissionDescendantBoundary, "reap_adopted_descendants") as reap:
+                with self.assertRaisesRegex(RUNNER.CorpusError, "pipes remained open"):
+                    RUNNER.execute_case(root, case)
+            self.assertIsNotNone(process.communicate.call_args.kwargs.get("timeout"))
+            self.assertEqual(reap.call_count, 2)
 
     def test_native_manifest_seals_the_unchanged_34_case_workload(self) -> None:
         with self.manifest.source_manifest.open("rb") as stream:

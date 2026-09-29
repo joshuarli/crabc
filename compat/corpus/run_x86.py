@@ -1253,23 +1253,32 @@ def execute_case(root: Path, case: CaseSpec) -> ProcessResult:
         fail(f"case package executable is unavailable: {case.path}")
     request = json.dumps([str(root), case.cwd, case.path, list(case.argv), CASE_ENVIRONMENT], separators=(",", ":"))
     qualification = _lifetime_module()
+    # Kernel diagnostics belong beside the chroot, so retaining a failed
+    # supervisor cannot change the application's execution tree seal.
+    diagnostics = _private_directory(root.with_name(root.name + "-diagnostics"), "native corpus case diagnostics", dedicated=True)
     try:
         with qualification.private_admission_subreaper() as boundary:
             process = subprocess.Popen([sys.executable, "-c", CHROOT_LEAF, request], cwd=ROOT, env=SUPERVISOR_ENVIRONMENT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
-            boundary.register_private_runner(process)
+            boundary.register_private_runner(process, diagnostics_root=diagnostics)
             try:
                 stdout, stderr = process.communicate(case.stdin, timeout=TIMEOUT_SECONDS)
                 boundary.reject_unexpected_descendants()
                 return ProcessResult(process.returncode, stdout, stderr)
             except subprocess.TimeoutExpired:
                 boundary.terminate_and_reap(process)
-                stdout, stderr = process.communicate()
+                try:
+                    stdout, stderr = process.communicate(timeout=3)
+                except subprocess.TimeoutExpired as error:
+                    boundary.reap_adopted_descendants()
+                    raise qualification.QualificationRunError(
+                        "private admission pipes remained open after descendant cleanup"
+                    ) from error
                 return ProcessResult(process.returncode, stdout, stderr, True)
             except BaseException:
                 boundary.terminate_and_reap(process)
                 raise
     except qualification.QualificationRunError as error:
-        raise CorpusError(f"private root descendant boundary failed: {error}") from error
+        raise CorpusError(f"private root descendant boundary failed: {error}; diagnostics: {diagnostics}") from error
 
 
 def executable_elf_record(root: Path, case: CaseSpec) -> dict[str, object]:

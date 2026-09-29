@@ -182,7 +182,26 @@ class PrivateAdmissionDescendantBoundary:
             "task_status": status,
             "read_errors": {name: error for name, (_, error) in readings.items() if error},
         }
-        write_new_json(self._diagnostics_root / "runner-exit-timeout.json", diagnostic)
+        # The caller owns an existing evidence directory. It may be a corpus
+        # case directory rather than a qualification receipt transaction.
+        root = self._diagnostics_root
+        try:
+            relative = root.relative_to(ROOT / ".work")
+        except ValueError as error:
+            raise QualificationRunError("runner diagnostics escape checkout work") from error
+        current = ROOT / ".work"
+        for part in relative.parts:
+            current /= part
+            if part == ".." or current.is_symlink() or not current.is_dir():
+                raise QualificationRunError("runner diagnostics directory is not physical")
+        if root.resolve() != root:
+            raise QualificationRunError("runner diagnostics directory is not physical")
+        encoded = (json.dumps(diagnostic, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        with (root / "runner-exit-timeout.json").open("xb") as output:
+            output.write(encoded)
+            output.flush()
+            os.fsync(output.fileno())
+            os.fchmod(output.fileno(), 0o444)
 
     def adopted_children(self) -> set[int]:
         children = direct_child_processes()

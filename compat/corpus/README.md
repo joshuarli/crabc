@@ -165,6 +165,14 @@ Stateful workloads may have different before/after execution hashes; retained
 validation reconstructs the after hash. Newly created evidence parents use
 mode 0755; existing parent permissions remain the caller's choice. Fresh run
 roots stay private until the native checks and retention step finish.
+Each case registers a sibling `<case>-<side>-diagnostics` directory with the
+descendant supervisor. If a killed runner cannot be observed dead within its
+three-second reap deadline, that directory retains `runner-exit-timeout.json`
+with the bounded kernel task status, wait channel, stack, and read errors.
+The failure names the directory and remains a rejected boundary; a kernel
+snapshot never substitutes for observed death. Diagnostic files stay outside
+the sealed execution tree. The final pipe drain also has a three-second
+deadline and rejects a still-open pipe after another descendant cleanup.
 In quiet mode it separately emits the retained evidence
 directory, pass/fail status, and report path. The JSON records the absolute
 source mount used for those paths, so a host-side reader can remap the
