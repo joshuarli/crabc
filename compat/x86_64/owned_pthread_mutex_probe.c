@@ -252,6 +252,64 @@ static int robust_shared_process_death_case(void)
     return 0;
 }
 
+struct robust_handoff_state {
+    pthread_mutex_t mutex;
+    atomic_int owner_ready;
+    atomic_int release_owner;
+    atomic_int waiter_tid;
+};
+
+static void *robust_handoff_waiter(void *argument)
+{
+    struct robust_handoff_state *state = argument;
+    atomic_store(&state->waiter_tid, (int)syscall(SYS_gettid));
+    struct timespec deadline = realtime_after(10000);
+    errno = E2BIG;
+    int result = pthread_mutex_timedlock(&state->mutex, &deadline);
+    if (result != EOWNERDEAD || errno != E2BIG) return (void *)(intptr_t)114;
+    if (pthread_mutex_consistent(&state->mutex) ||
+        pthread_mutex_unlock(&state->mutex)) return (void *)(intptr_t)115;
+    return 0;
+}
+
+static int robust_waiter_handoff_case(int kind, int pi)
+{
+    struct robust_handoff_state *state = mmap(0, sizeof(*state),
+        PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    pthread_mutexattr_t attributes;
+    if (state == MAP_FAILED) return 116;
+    if (pthread_mutexattr_init(&attributes) ||
+        pthread_mutexattr_settype(&attributes, kind) ||
+        pthread_mutexattr_setrobust(&attributes, PTHREAD_MUTEX_ROBUST) ||
+        (pi && pthread_mutexattr_setprotocol(&attributes, PTHREAD_PRIO_INHERIT)) ||
+        pthread_mutexattr_setpshared(&attributes, PTHREAD_PROCESS_SHARED) ||
+        pthread_mutex_init(&state->mutex, &attributes) ||
+        pthread_mutexattr_destroy(&attributes)) return 117;
+    pid_t child = fork();
+    if (child < 0) return 118;
+    if (!child) {
+        if (pthread_mutex_lock(&state->mutex)) _Exit(119);
+        atomic_store(&state->owner_ready, 1);
+        while (!atomic_load(&state->release_owner)) sched_yield();
+        _Exit(0);
+    }
+    wait_for(&state->owner_ready);
+    pthread_t waiter;
+    if (pthread_create(&waiter, 0, robust_handoff_waiter, state)) return 120;
+    wait_for(&state->waiter_tid);
+    witness_pthread_futex_wait(atomic_load(&state->waiter_tid), pi ? 6 : 0);
+    atomic_store(&state->release_owner, 1);
+    int status = 0;
+    void *result = 0;
+    if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
+        WEXITSTATUS(status)) return 121;
+    if (pthread_join(waiter, &result)) return 122;
+    if (result) return (int)(intptr_t)result;
+    if (pthread_mutex_destroy(&state->mutex) ||
+        munmap(state, sizeof(*state))) return 123;
+    return 0;
+}
+
 static int robust_case(void)
 {
     if (robust_one_case(PTHREAD_MUTEX_RECURSIVE, 0) ||
@@ -262,6 +320,17 @@ static int robust_case(void)
         robust_normal_recovery_case(1) ||
         robust_shared_process_death_case()) return 47;
     puts("pthread robust normal/recursive/error-checking owner death, process sharing, recovery, and pre-consistent condition admission: PASS");
+    return 0;
+}
+
+static int robust_handoff_case(void)
+{
+    int result;
+    if ((result = robust_waiter_handoff_case(PTHREAD_MUTEX_NORMAL, 0)) ||
+        (result = robust_waiter_handoff_case(PTHREAD_MUTEX_RECURSIVE, 0)) ||
+        (result = robust_waiter_handoff_case(PTHREAD_MUTEX_ERRORCHECK, 0)) ||
+        (result = robust_waiter_handoff_case(PTHREAD_MUTEX_NORMAL, 1))) return result;
+    puts("pthread process-shared robust and PI parked-waiter owner-death handoff: PASS");
     return 0;
 }
 
@@ -762,6 +831,7 @@ int main(int argc, char **argv)
     if (!strcmp(argv[1], "errorcheck")) return errorcheck_case();
     if (!strcmp(argv[1], "timed")) return timed_case();
     if (!strcmp(argv[1], "robust")) return robust_case();
+    if (!strcmp(argv[1], "robust-handoff")) return robust_handoff_case();
     if (!strcmp(argv[1], "recursive-condition")) return recursive_condition_case();
     if (!strcmp(argv[1], "c11")) return c11_case();
     if (!strcmp(argv[1], "pi")) return pi_case();
