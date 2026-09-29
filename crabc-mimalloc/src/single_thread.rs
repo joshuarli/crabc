@@ -2087,6 +2087,31 @@ fn claim_child_mapped_regular_from_arenas<'arena>(
     Ok(None)
 }
 
+/// Validates and appends a claimed child page to its ordinary queue. The
+/// backing-specific allocation continuation updates the direct cache and
+/// page count after this queue transition.
+#[inline(never)]
+fn push_claimed_child_regular_page<Session: TheapPageSession>(
+    session: &mut Session,
+    bin: usize,
+    block_size: usize,
+    page: NonNull<Page>,
+) -> Result<(), GenericPathError> {
+    // SAFETY: the adopted page is claimed, reassociated with this Theap,
+    // and in no queue; the caller owns the target queue.
+    let valid = unsafe {
+        let page_ref = page.as_ref();
+        page_ref.block_size() == block_size && page_ref.is_queue_detached()
+    };
+    let Some(queue) = session.queue_mut(bin) else { return Err(GenericPathError::Lifecycle) };
+    if !valid {
+        return Err(GenericPathError::Lifecycle);
+    }
+    // SAFETY: the page passed the detached-page validation above.
+    unsafe { page_queue_push_at_end_metadata(queue, page.as_ptr()) };
+    Ok(())
+}
+
 /// Consumes a coherent PageMap pointer observation through the source
 /// post-owner-exit publication and lower process-facts continuation.
 ///
@@ -38646,18 +38671,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         )? else {
             return Ok(MappedRegularReclaimBeforeFresh::NoCandidate);
         };
-        // SAFETY: the adopted page is claimed, reassociated with this
-        // Theap, and in no queue; this engine owns the queue.
-        let valid = unsafe {
-            let page_ref = page.as_ref();
-            page_ref.block_size() == block_size && page_ref.is_queue_detached()
-        };
-        let Some(queue) = self.session.queue_mut(bin) else { return Err(GenericPathError::Lifecycle) };
-        if !valid {
-            return Err(GenericPathError::Lifecycle);
-        }
-        // SAFETY: as above.
-        unsafe { page_queue_push_at_end_metadata(queue, page.as_ptr()) };
+        push_claimed_child_regular_page(&mut self.session, bin, block_size, page)?;
         self.update_direct_cache(bin);
         self.session.note_page_added();
         // SAFETY: the page is now a member of this engine's queue.
@@ -38690,6 +38704,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// `pages_abandoned`). The child production profile commits pages whole
     /// (it has no on-demand page commit), so only a commit failure of an
     /// on-demand page reaches this.
+    #[inline(never)]
     fn reabandon_child_reclaimed_page<M: abandoned::MappedAbandonedPages>(
         &mut self,
         bin: usize,
