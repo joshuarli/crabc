@@ -106,6 +106,13 @@ static const float complex f_values[] = {
 	CMPLXF(0.0f, __builtin_nanf("0x234")),
 	CMPLXF(__builtin_nanf("0x345"), 1.0f),
 	CMPLXF(1.0f, __builtin_nanf("0x456")),
+	/* Keep both component signs and NaN signaling visible in returned bits and flags. */
+	CMPLXF(-0.0f, -0.0f),
+	CMPLXF(-FLT_MAX, -FLT_MAX),
+	CMPLXF(FLT_MAX, FLT_TRUE_MIN),
+	CMPLXF(-__builtin_inff(), -__builtin_inff()),
+	CMPLXF(__builtin_inff(), __builtin_nansf("0x567")),
+	CMPLXF(__builtin_nansf("0x678"), 1.0f),
 };
 static const double complex d_values[] = {
 	CMPLX(0.0, 0.0), CMPLX(-0.0, 0.0), CMPLX(0.0, -0.0),
@@ -120,6 +127,13 @@ static const double complex d_values[] = {
 	CMPLX(0.0, __builtin_nan("0x2345")),
 	CMPLX(__builtin_nan("0x3456"), 1.0),
 	CMPLX(1.0, __builtin_nan("0x4567")),
+	/* Overflow, underflow, and exceptional inputs exercise distinct complex paths. */
+	CMPLX(-0.0, -0.0),
+	CMPLX(-DBL_MAX, -DBL_MAX),
+	CMPLX(DBL_MAX, DBL_TRUE_MIN),
+	CMPLX(-__builtin_inf(), -__builtin_inf()),
+	CMPLX(__builtin_inf(), __builtin_nans("0x5678")),
+	CMPLX(__builtin_nans("0x6789"), 1.0),
 };
 static const long double complex l_values[] = {
 	CMPLXL(0.0L, 0.0L), CMPLXL(-0.0L, 0.0L), CMPLXL(0.0L, -0.0L),
@@ -134,6 +148,17 @@ static const long double complex l_values[] = {
 	CMPLXL(0.0L, __builtin_nanl("0x2345")),
 	CMPLXL(__builtin_nanl("0x3456"), 1.0L),
 	CMPLXL(1.0L, __builtin_nanl("0x4567")),
+	/* Wide exponents must retain the x87 ABI and its exception behavior. */
+	CMPLXL(-0.0L, -0.0L),
+	CMPLXL(-LDBL_MAX, -LDBL_MAX),
+	CMPLXL(LDBL_MAX, LDBL_TRUE_MIN),
+	CMPLXL(LDBL_MIN / 2.0L, -LDBL_MIN / 2.0L),
+	CMPLXL(0x1p10000L, 0x1p-10000L),
+	CMPLXL(0x1p-10000L, 0x1p10000L),
+	CMPLXL(-__builtin_infl(), -__builtin_infl()),
+	CMPLXL(__builtin_infl(), __builtin_nansl("0x5678")),
+	CMPLXL(__builtin_nansl("0x6789"), 1.0L),
+	CMPLXL(1.0L, __builtin_nansl("0x789a")),
 };
 
 static const struct f_pair f_pairs[] = {
@@ -151,6 +176,9 @@ static const struct f_pair f_pairs[] = {
 	{CMPLXF(1.0f, 1.0f), CMPLXF(__builtin_nanf("0x23"), 0.0f)},
 	{CMPLXF(__builtin_inff(), __builtin_inff()), CMPLXF(0.0f, 0.0f)},
 	{CMPLXF(-1.0f, -0.0f), CMPLXF(0x1p-1f, __builtin_inff())},
+	{CMPLXF(FLT_MAX, FLT_TRUE_MIN), CMPLXF(FLT_TRUE_MIN, -FLT_MAX)},
+	{CMPLXF(__builtin_nansf("0x12"), 1.0f), CMPLXF(2.0f, -0.0f)},
+	{CMPLXF(__builtin_inff(), -__builtin_inff()), CMPLXF(-1.0f, 1.0f)},
 };
 static const struct d_pair d_pairs[] = {
 	{CMPLX(1.0, 1.0), CMPLX(2.0, -1.0)},
@@ -167,6 +195,9 @@ static const struct d_pair d_pairs[] = {
 	{CMPLX(1.0, 1.0), CMPLX(__builtin_nan("0x23"), 0.0)},
 	{CMPLX(__builtin_inf(), __builtin_inf()), CMPLX(0.0, 0.0)},
 	{CMPLX(-1.0, -0.0), CMPLX(0x1p-1, __builtin_inf())},
+	{CMPLX(DBL_MAX, DBL_TRUE_MIN), CMPLX(DBL_TRUE_MIN, -DBL_MAX)},
+	{CMPLX(__builtin_nans("0x12"), 1.0), CMPLX(2.0, -0.0)},
+	{CMPLX(__builtin_inf(), -__builtin_inf()), CMPLX(-1.0, 1.0)},
 };
 static const struct l_pair l_pairs[] = {
 	{CMPLXL(1.0L, 1.0L), CMPLXL(2.0L, -1.0L)},
@@ -183,6 +214,11 @@ static const struct l_pair l_pairs[] = {
 	{CMPLXL(1.0L, 1.0L), CMPLXL(__builtin_nanl("0x23"), 0.0L)},
 	{CMPLXL(__builtin_infl(), __builtin_infl()), CMPLXL(0.0L, 0.0L)},
 	{CMPLXL(-1.0L, -0.0L), CMPLXL(0x1p-1L, __builtin_infl())},
+	{CMPLXL(LDBL_MAX, LDBL_TRUE_MIN), CMPLXL(LDBL_TRUE_MIN, -LDBL_MAX)},
+	{CMPLXL(-LDBL_MAX, LDBL_MAX), CMPLXL(0x1p-10000L, -0x1p10000L)},
+	{CMPLXL(0x1p10000L, 0x1p-10000L), CMPLXL(0x1p-10000L, 0x1p10000L)},
+	{CMPLXL(__builtin_nansl("0x12"), 1.0L), CMPLXL(2.0L, -0.0L)},
+	{CMPLXL(__builtin_infl(), -__builtin_infl()), CMPLXL(-1.0L, 1.0L)},
 };
 
 static long raw_write(const void *buffer, size_t length)

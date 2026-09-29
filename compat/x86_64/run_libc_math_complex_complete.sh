@@ -7,7 +7,7 @@ readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly RECORD_SIZE=64
-readonly EXPECTED_RECORDS=5712
+readonly EXPECTED_RECORDS=7604
 readonly SELECTED_SYMBOLS=(
 	cabs cabsf cabsl cacos cacosf cacosh cacoshf cacoshl cacosl carg cargf
 	cargl casin casinf casinh casinhf casinhl casinl catan catanf catanh
@@ -149,5 +149,10 @@ if ! cmp -s "$reference_output" "$candidate_output"; then
 	cmp -l "$reference_output" "$candidate_output" | sed -n '1,120p' >&2 || true
 	fail "candidate complete math.complex record stream differs from pinned musl"
 fi
+
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-math-complex-complete"
+mkdir -p "$report_dir"
+cp "$reference_output" "$report_dir/musl.records"
+cp "$candidate_output" "$report_dir/crabc.records"
 
 printf 'x86 static libc complete math.complex: PASS (%s records)\n' "$record_count"
