@@ -129,14 +129,17 @@ assert_capacity_syscall_paths() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cat cmp diff grep mapfile mkdir nm objdump readelf rustup sort; do require_tool "$tool"; done
+for tool in ar awk cargo cat chmod cmp cp diff grep mapfile mkdir nm objdump readelf rustup sha256sum sort; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_x86_statfs_reference.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_filesystem_capacity_header_abi.sh" >/dev/null
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-filesystem-capacity.XXXXXX)"; trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp" "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-filesystem-capacity.XXXXXX")"; trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"; archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 candidate="$work_dir/crabc-static-filesystem-capacity-candidate"; header_trace="$work_dir/header-trace"
+oracle="$work_dir/musl-reference"; oracle_records="$work_dir/musl.records"
+candidate_records="$work_dir/crabc.records"
 archive_symbols="$work_dir/archive-symbols"; archive_relocations="$work_dir/archive-relocations"
 selected_symbols="$work_dir/selected-c-abi-symbols"; expected_symbols="$work_dir/expected-c-abi-symbols"
 candidate_symbols="$work_dir/candidate-symbols"; candidate_program_headers="$work_dir/candidate-program-headers"
@@ -144,8 +147,11 @@ candidate_dynamic="$work_dir/candidate-dynamic"; candidate_relocations="$work_di
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -I"$ROOT_DIR/include" -E -H compat/x86_64/libc_filesystem_capacity_probe.c >/dev/null 2>"$header_trace"
 for header in errno.h fcntl.h stddef.h stdint.h sys/statfs.h sys/statvfs.h sys/syscall.h bits/alltypes.h; do grep -Fq "$ROOT_DIR/include/$header" "$header_trace" || fail "fixture did not use project $header"; done
-"$ORACLE_CC" -std=c11 -fno-builtin -fno-stack-protector -I"$ROOT_DIR/include" compat/x86_64/libc_filesystem_capacity_probe.c -o "$work_dir/oracle"
-"$work_dir/oracle"
+"$ORACLE_CC" -std=c11 -fno-builtin -fno-stack-protector -I"$ROOT_DIR/include" compat/x86_64/libc_filesystem_capacity_probe.c -o "$oracle"
+if "$oracle" >"$oracle_records"; then :; else
+    status=$?
+    fail "pinned-musl fixture exited ${status}"
+fi
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit libc.a"
 nm -A --defined-only "$archive" >"$archive_symbols"; assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
@@ -162,5 +168,34 @@ if grep -Eq 'Requesting program interpreter|INTERP' "$candidate_program_headers"
 if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' "$candidate_relocations" "$candidate_symbols"; then fail "candidate retains dynamic TLS"; fi
 if grep -Eq 'crabc_core|mimalloc|sha_crypt' "$candidate_symbols"; then fail "candidate selects unowned dependency"; fi
 grep -Eq '[[:space:]]TLS[[:space:]]' "$candidate_program_headers" || fail "candidate lacks TLS"; assert_fixture_tls_capacity; assert_capacity_syscall_paths
-"$candidate"
+if "$candidate" >"$candidate_records"; then :; else
+    status=$?
+    fail "freestanding fixture exited ${status}"
+fi
+[ -s "$oracle_records" ] || fail "pinned-musl fixture emitted no case records"
+if ! cmp -s "$oracle_records" "$candidate_records"; then
+    diff -u "$oracle_records" "$candidate_records" >&2 || true
+    fail "pinned-musl and freestanding capacity cases differ"
+fi
+report_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-filesystem-capacity.XXXXXX")"
+chmod 755 "$report_dir"
+cp "$oracle" "$report_dir/musl-reference.elf"
+cp "$candidate" "$report_dir/crabc-candidate.elf"
+cp "$oracle_records" "$report_dir/musl.records"
+cp "$candidate_records" "$report_dir/crabc.records"
+cp "$header_trace" "$report_dir/project-header-trace.txt"
+cp "$candidate_program_headers" "$report_dir/crabc-program-headers.txt"
+cp "$selected_symbols" "$report_dir/selected-c-abi-symbols.txt"
+cp "$ROOT_DIR/compat/x86_64/libc_filesystem_capacity_probe.c" "$report_dir/libc_filesystem_capacity_probe.c"
+cp "$ROOT_DIR/compat/x86_64/libc_filesystem_capacity_start.S" "$report_dir/libc_filesystem_capacity_start.S"
+cp "$ROOT_DIR/compat/x86_64/run_libc_filesystem_capacity.sh" "$report_dir/run_libc_filesystem_capacity.sh"
+(
+    cd "$report_dir"
+    sha256sum musl-reference.elf crabc-candidate.elf musl.records crabc.records \
+        project-header-trace.txt crabc-program-headers.txt selected-c-abi-symbols.txt \
+        libc_filesystem_capacity_probe.c libc_filesystem_capacity_start.S \
+        run_libc_filesystem_capacity.sh >sha256sums.txt
+)
+cat "$oracle_records"
+printf 'filesystem-capacity physical receipt: %s\n' "$report_dir"
 printf 'x86 static crabc-libc filesystem capacity: PASS\n'
