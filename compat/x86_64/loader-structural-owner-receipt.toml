@@ -273,7 +273,7 @@ requires = [
   "run enters run_with_initial_tls under crabc_general_initial_tls_materialization_v1",
   "run_with_initial_tls selects canonical initial libc after discovery and before TLS planning",
   "the selected general-lifecycle plus dynamic-main-thread cfg suppresses in-function dispatch_dependency_initializers",
-  "owned_dependency_constructors is retained in OwnedCrtHandoffV1 and __crabc_x86_64_dynamic_executable_init calls it after executable preinit",
+  "owned_dependency_constructors is retained in OwnedCrtHandoffV1 and __crabc_x86_64_dynamic_executable_init calls it after libc initialization; executable preinit and the separate CRT _init/init-array walk are confined to legacy roots",
 ]
 meaning = "Every candidate normal-consumer cell uses one named entry branch and the one owned-CRT constructor handoff tail below. The reader rejects a different cfg, direct/kernel branch, canonical-libc omission, or constructor owner."
 

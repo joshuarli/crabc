@@ -571,7 +571,7 @@ def validate_native_shadow_creator_handoff(body: str) -> None:
 
 
 def validate_registry_body(body: str) -> None:
-    expected = runtime_registry.RESOLVERS
+    expected = runtime_registry.RESOLVERS | runtime_registry.NATIVE_RESOLVERS
     found = dict(re.findall(r'b"([^"]+)"\s*=>\s*Some\((\w+)\s+as\s+\*const\s*\(\)', _rust_without_comments(body)))
     require(found == expected, "selected runtime registry resolver target differs")
 
@@ -671,10 +671,15 @@ def validate_source_algorithms(root: Path = ROOT) -> dict[str, object]:
     # the retained callback constructs dependencies and then the main image,
     # so the CRT-owned _init/init-array walk is compiled only for legacy roots.
     _ordered(crt_body, (
+        "#[cfg(not(crabc_owned_dynamic_runtime))]\n        invoke_linker_array(",
         "__crabc_preinit_array_start_address()", "if let Some(callback) = dependency_constructors",
-        "callback();", "#[cfg(not(crabc_owned_dynamic_runtime))]", "_init();",
+        "callback();", "_init();",
         "__crabc_init_array_start_address()",
     ), "owned CRT constructor tail")
+    legacy_tail = _braced_body(crt_body,
+        "#[cfg(not(crabc_owned_dynamic_runtime))]\n        {", "legacy CRT constructor tail")
+    _ordered(legacy_tail, ("_init();", "__crabc_init_array_start_address()"),
+             "legacy CRT constructor tail")
     lock = _source(root, "ldso/src/x86_64_runtime_lock.rs")
     validate_runtime_lock_source(lock)
     worker = _source(root, "ldso/src/x86_64_initial_worker_tls.rs")
