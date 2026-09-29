@@ -46,6 +46,11 @@ enum {
     FIXTURE_EXECLE_STATUS = 43,
     FIXTURE_EXECVP_STATUS = 44,
     FIXTURE_EXECVP_SEARCH_STATUS = 45,
+    FIXTURE_FEXECVE_PATH_STATUS = 46,
+    FIXTURE_FEXECVE_CLOEXEC_STATUS = 47,
+    FIXTURE_EXECVEAT_RELATIVE_STATUS = 48,
+    FIXTURE_EXECVEAT_EMPTY_STATUS = 49,
+    FIXTURE_EXECVEAT_CLOEXEC_STATUS = 50,
     FIXTURE_AT_FDCWD = -100,
     FIXTURE_AT_EMPTY_PATH = 0x1000,
 };
@@ -85,7 +90,7 @@ _Static_assert(sizeof(long) == 8 && sizeof(void *) == 8,
     "x86-64 LP64 words");
 _Static_assert(SYS_execve == 59 && SYS_execveat == 322 && SYS_fork == 57 &&
     SYS_wait4 == 61 && SYS_exit == 60 && SYS_mmap == 9 && SYS_openat == 257 &&
-    SYS_prctl == 157 && SYS_seccomp == 317,
+    SYS_prctl == 157 && SYS_seccomp == 317 && SYS_fcntl == 72,
     "Linux x86-64 process-exec and fixture syscall numbers");
 _Static_assert(E2BIG == FIXTURE_E2BIG && ENOENT == FIXTURE_ENOENT &&
     ENOEXEC == FIXTURE_ENOEXEC && ENOSYS == FIXTURE_ENOSYS &&
@@ -356,6 +361,39 @@ static int text_equals(const char *left, const char *right)
     }
 }
 
+static int write_descriptor_number(char text[16], int descriptor)
+{
+    char reversed[16];
+    unsigned int value = (unsigned int)descriptor;
+    size_t length = 0;
+    size_t index;
+
+    do {
+        if (length == sizeof(reversed) - 1)
+            return -1;
+        reversed[length++] = (char)('0' + value % 10);
+        value /= 10;
+    } while (value != 0);
+    for (index = 0; index < length; ++index)
+        text[index] = reversed[length - index - 1];
+    text[length] = '\0';
+    return 0;
+}
+
+static long read_descriptor_number(const char *text)
+{
+    long descriptor = 0;
+
+    if (*text == '\0')
+        return -1;
+    for (; *text != '\0'; ++text) {
+        if (*text < '0' || *text > '9' || descriptor > 214748364)
+            return -1;
+        descriptor = descriptor * 10 + *text - '0';
+    }
+    return descriptor;
+}
+
 static const char *environment_value(const char *name)
 {
     size_t name_length = 0;
@@ -382,6 +420,11 @@ static int mode_requires_explicit_environment(const char *mode)
         text_equals(mode, "execvpe-explicit") ||
         text_equals(mode, "execvpe-explicit-searched") ||
         text_equals(mode, "fexecve-explicit") ||
+        text_equals(mode, "fexecve-path") ||
+        text_equals(mode, "fexecve-cloexec") ||
+        text_equals(mode, "execveat-relative") ||
+        text_equals(mode, "execveat-empty") ||
+        text_equals(mode, "execveat-cloexec") ||
         text_equals(mode, "fexecve-enosys-musl-procfd");
 }
 
@@ -426,6 +469,16 @@ static int expected_child_status(const char *mode)
         return FIXTURE_EXECVP_STATUS;
     if (text_equals(mode, "execvp-after-eacces"))
         return FIXTURE_EXECVP_SEARCH_STATUS;
+    if (text_equals(mode, "fexecve-path"))
+        return FIXTURE_FEXECVE_PATH_STATUS;
+    if (text_equals(mode, "fexecve-cloexec"))
+        return FIXTURE_FEXECVE_CLOEXEC_STATUS;
+    if (text_equals(mode, "execveat-relative"))
+        return FIXTURE_EXECVEAT_RELATIVE_STATUS;
+    if (text_equals(mode, "execveat-empty"))
+        return FIXTURE_EXECVEAT_EMPTY_STATUS;
+    if (text_equals(mode, "execveat-cloexec"))
+        return FIXTURE_EXECVEAT_CLOEXEC_STATUS;
     return 0;
 }
 
@@ -444,6 +497,23 @@ static int check_exec_child(int argc, char **argv)
             !text_equals(argv[5], "stack-word-three") ||
             !text_equals(argv[6], "stack-word-four"))
             return 94;
+    } else if (text_equals(mode, "fexecve-path") ||
+        text_equals(mode, "fexecve-cloexec") ||
+        text_equals(mode, "execveat-empty") ||
+        text_equals(mode, "execveat-cloexec")) {
+        long descriptor;
+        long flags;
+
+        if (argc != 4 || (descriptor = read_descriptor_number(argv[3])) < 0)
+            return 94;
+        flags = raw_syscall3(SYS_fcntl, descriptor, F_GETFD, 0);
+        if (text_equals(mode, "fexecve-cloexec") ||
+            text_equals(mode, "execveat-cloexec")) {
+            if (flags != -FIXTURE_EBADF)
+                return 98;
+        } else if (flags < 0) {
+            return 98;
+        }
     } else if (argc != 3) {
         return 94;
     }
@@ -507,6 +577,14 @@ static int open_helper(void)
 {
     long descriptor = raw_syscall4(SYS_openat, FIXTURE_AT_FDCWD,
         (long)(uintptr_t)helper_path, O_RDONLY, 0);
+
+    return descriptor < 0 ? -1 : (int)descriptor;
+}
+
+static int open_owned_path(const char *path, int flags)
+{
+    long descriptor = raw_syscall4(SYS_openat, FIXTURE_AT_FDCWD,
+        (long)(uintptr_t)path, flags, 0);
 
     return descriptor < 0 ? -1 : (int)descriptor;
 }
@@ -647,6 +725,144 @@ static int check_fexecve_success(const char *self)
         return 1;
     (void)fexecve(descriptor, argv, explicit_environment);
     return exec_returned();
+}
+
+/* The helper is an owned ELF hard link; each successful replacement validates
+ * its own argv and environment before returning a distinct child status. */
+static int check_fexecve_path(const char *self)
+{
+    char *argv[] = { "fexecve-path", (char *)child_flag,
+        "fexecve-path", (char *)0, (char *)0 };
+    char descriptor_text[16];
+    int descriptor = open_owned_path(helper_path, O_PATH);
+
+    (void)self;
+    if (descriptor < 0 || write_descriptor_number(descriptor_text, descriptor))
+        return 1;
+    argv[3] = descriptor_text;
+    (void)fexecve(descriptor, argv, explicit_environment);
+    return exec_returned();
+}
+
+static int check_fexecve_cloexec(const char *self)
+{
+    char *argv[] = { "fexecve-cloexec", (char *)child_flag,
+        "fexecve-cloexec", (char *)0, (char *)0 };
+    char descriptor_text[16];
+    int descriptor = open_owned_path(helper_path, O_RDONLY | O_CLOEXEC);
+
+    (void)self;
+    if (descriptor < 0 || write_descriptor_number(descriptor_text, descriptor))
+        return 1;
+    argv[3] = descriptor_text;
+    (void)fexecve(descriptor, argv, explicit_environment);
+    return exec_returned();
+}
+
+static int check_execveat_relative(const char *self)
+{
+    char *argv[] = { "execveat-relative", (char *)child_flag,
+        "execveat-relative", (char *)0 };
+    int directory = open_owned_path("process-exec-relative",
+        O_RDONLY | O_DIRECTORY);
+
+    (void)self;
+    if (directory < 0)
+        return 1;
+    (void)raw_syscall5(SYS_execveat, directory,
+        (long)(uintptr_t)"process-exec-helper", (long)(uintptr_t)argv,
+        (long)(uintptr_t)explicit_environment, 0);
+    return exec_returned();
+}
+
+static int check_execveat_empty(const char *self)
+{
+    char *argv[] = { "execveat-empty", (char *)child_flag,
+        "execveat-empty", (char *)0, (char *)0 };
+    char descriptor_text[16];
+    int descriptor = open_helper();
+
+    (void)self;
+    if (descriptor < 0 || write_descriptor_number(descriptor_text, descriptor))
+        return 1;
+    argv[3] = descriptor_text;
+    (void)raw_syscall5(SYS_execveat, descriptor,
+        (long)(uintptr_t)"", (long)(uintptr_t)argv,
+        (long)(uintptr_t)explicit_environment, FIXTURE_AT_EMPTY_PATH);
+    return exec_returned();
+}
+
+static int check_execveat_cloexec(const char *self)
+{
+    char *argv[] = { "execveat-cloexec", (char *)child_flag,
+        "execveat-cloexec", (char *)0, (char *)0 };
+    char descriptor_text[16];
+    int descriptor = open_owned_path(helper_path, O_PATH | O_CLOEXEC);
+
+    (void)self;
+    if (descriptor < 0 || write_descriptor_number(descriptor_text, descriptor))
+        return 1;
+    argv[3] = descriptor_text;
+    (void)raw_syscall5(SYS_execveat, descriptor,
+        (long)(uintptr_t)"", (long)(uintptr_t)argv,
+        (long)(uintptr_t)explicit_environment, FIXTURE_AT_EMPTY_PATH);
+    return exec_returned();
+}
+
+static int check_execveat_descriptor_errors(const char *self)
+{
+    char *argv[] = { "execveat-errors", (char *)0 };
+    int descriptor = open_helper();
+
+    (void)self;
+    if (descriptor < 0)
+        return 1;
+    if (raw_syscall5(SYS_execveat, -1, (long)(uintptr_t)"",
+            (long)(uintptr_t)argv, (long)(uintptr_t)explicit_environment,
+            FIXTURE_AT_EMPTY_PATH) != -FIXTURE_EBADF)
+        return 2;
+    if (raw_syscall5(SYS_execveat, descriptor, (long)(uintptr_t)"",
+            (long)(uintptr_t)argv, (long)(uintptr_t)explicit_environment,
+            0) != -FIXTURE_ENOENT)
+        return 3;
+    if (raw_syscall5(SYS_execveat, descriptor,
+            (long)(uintptr_t)"process-exec-helper", (long)(uintptr_t)argv,
+            (long)(uintptr_t)explicit_environment, 0) != -ENOTDIR)
+        return 4;
+    if (raw_syscall5(SYS_execveat, descriptor, (long)(uintptr_t)"",
+            (long)(uintptr_t)argv, (long)(uintptr_t)explicit_environment,
+            FIXTURE_AT_EMPTY_PATH | 0x2000) != -EINVAL)
+        return 5;
+    return 0;
+}
+
+static int check_fexecve_descriptor_errors(const char *self)
+{
+    char *argv[] = { "fexecve-errors", (char *)0 };
+    int directory = open_owned_path("process-exec-relative",
+        O_RDONLY | O_DIRECTORY);
+    int nonexecutable = open_owned_path(
+        "process-exec-eacces/process-exec-eacces-candidate", O_RDONLY);
+    int script = open_owned_path("process-exec-script", O_RDONLY | O_CLOEXEC);
+
+    (void)self;
+    if (directory < 0 || nonexecutable < 0 || script < 0)
+        return 1;
+    errno = FIXTURE_ERRNO_SENTINEL;
+    if (fexecve(directory, argv, explicit_environment) != -1 ||
+        errno != FIXTURE_EACCES)
+        return 2;
+    errno = FIXTURE_ERRNO_SENTINEL;
+    if (fexecve(nonexecutable, argv, explicit_environment) != -1 ||
+        errno != FIXTURE_EACCES)
+        return 3;
+    /* The script's interpreter is owned by this fixture; the kernel still
+     * needs the script descriptor after exec and CLOEXEC makes it unavailable. */
+    errno = FIXTURE_ERRNO_SENTINEL;
+    if (fexecve(script, argv, explicit_environment) != -1 ||
+        errno != FIXTURE_ENOENT)
+        return 4;
+    return 0;
 }
 
 static int check_empty_path_component(char **environment, const char *mode)
@@ -1025,6 +1241,17 @@ static int run_parent(const char *self)
         { "execlp-no-mmap", check_execlp_without_mmap, 0 },
         { "execlp-large-argv", check_execlp_large_argv, 0 },
         { "fexecve-explicit", check_fexecve_success, 0 },
+        { "fexecve-path", check_fexecve_path, FIXTURE_FEXECVE_PATH_STATUS },
+        { "fexecve-cloexec", check_fexecve_cloexec,
+            FIXTURE_FEXECVE_CLOEXEC_STATUS },
+        { "execveat-relative", check_execveat_relative,
+            FIXTURE_EXECVEAT_RELATIVE_STATUS },
+        { "execveat-empty", check_execveat_empty,
+            FIXTURE_EXECVEAT_EMPTY_STATUS },
+        { "execveat-cloexec", check_execveat_cloexec,
+            FIXTURE_EXECVEAT_CLOEXEC_STATUS },
+        { "execveat-descriptor-errors", check_execveat_descriptor_errors, 0 },
+        { "fexecve-descriptor-errors", check_fexecve_descriptor_errors, 0 },
         { "fexecve-enosys", check_fexecve_enosys, 0 },
     };
     size_t index;

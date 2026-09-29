@@ -266,11 +266,16 @@ prepare_runtime_tree() {
 
     mkdir -p "$runtime_dir/process-exec-eacces" \
         "$runtime_dir/process-exec-enoent" \
-        "$runtime_dir/process-exec-enoexec-dir"
+        "$runtime_dir/process-exec-enoexec-dir" \
+        "$runtime_dir/process-exec-relative"
     ln "$executable" "$runtime_dir/process-exec-fixture"
     ln "$runtime_dir/process-exec-fixture" "$runtime_dir/process-exec-helper"
+    ln "$runtime_dir/process-exec-fixture" \
+        "$runtime_dir/process-exec-relative/process-exec-helper"
     printf 'exit 77\n' >"$runtime_dir/process-exec-enoexec"
     chmod 755 "$runtime_dir/process-exec-enoexec"
+    printf '#!./process-exec-helper\n' >"$runtime_dir/process-exec-script"
+    chmod 755 "$runtime_dir/process-exec-script"
     : >"$runtime_dir/process-exec-enotdir"
     printf 'not executable\n' \
         >"$runtime_dir/process-exec-eacces/process-exec-eacces-candidate"
@@ -280,6 +285,16 @@ prepare_runtime_tree() {
     printf 'exit 76\n' \
         >"$runtime_dir/process-exec-enoexec-dir/process-exec-eacces-candidate"
     chmod 755 "$runtime_dir/process-exec-enoexec-dir/process-exec-eacces-candidate"
+    readelf --file-header --wide "$runtime_dir/process-exec-fixture" \
+        >"$runtime_dir/owned-elf-header"
+    (
+        cd "$runtime_dir"
+        sha256sum process-exec-fixture process-exec-helper \
+            process-exec-relative/process-exec-helper process-exec-enoexec \
+            process-exec-script \
+            process-exec-eacces/process-exec-eacces-candidate \
+            >owned-input-sha256
+    )
 }
 
 run_runtime_tree() {
@@ -568,6 +583,12 @@ for stream in stdout stderr status; do
     cmp "$work_dir/reference.$stream" "$work_dir/candidate.$stream" ||
         fail "pinned-musl and candidate $stream differ; evidence: $work_dir"
 done
+for runtime in reference candidate; do
+    test -s "$work_dir/$runtime-runtime/owned-elf-header" ||
+        fail "$runtime owned ELF header trace is empty"
+    test -s "$work_dir/$runtime-runtime/owned-input-sha256" ||
+        fail "$runtime owned input hash trace is empty"
+done
 
 # A consumer strong execvpe override replaces only the weak public alias. The
 # runtime probe proves execvp continues through strong internal __execvpe.
@@ -594,7 +615,10 @@ env -i LC_ALL=C PATH=. "$override_candidate" ||
         crabc-process-exec-strong-override execve-only fexecve-only \
         libcrabc-process-exec.a \
         reference.stdout reference.stderr reference.status \
-        candidate.stdout candidate.stderr candidate.status >sha256sum.txt
+        candidate.stdout candidate.stderr candidate.status \
+        reference-runtime/owned-elf-header reference-runtime/owned-input-sha256 \
+        candidate-runtime/owned-elf-header candidate-runtime/owned-input-sha256 \
+        >sha256sum.txt
 )
 printf 'x86 libc process exec evidence: %s\n' "$work_dir"
 printf 'x86 libc process exec: PASS\n'
