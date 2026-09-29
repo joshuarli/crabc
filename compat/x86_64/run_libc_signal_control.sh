@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Native Linux/x86-64 selected static crabc-libc signal-control evidence.
 #
-# The same project-header C fixture first runs against pinned musl, then as a
+# The same C fixture first runs statically against pinned musl, then as a
 # true `-nostdlib -static` executable linked solely through the selected
 # crabc `libc.a`. It proves only simple signal action/set/mask/pending behavior,
 # including musl's partial output writes and `sigaction`'s exact hidden
@@ -61,17 +61,20 @@ assert_selected_c_abi_surface() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff nm objdump readelf rustup; do
+for tool in ar cargo cmp diff nm objdump readelf rustup sha256sum; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-signal-control.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-signal-control.XXXXXX")"
+trap 'chmod -R a+rX "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-signal-control-reference"
+reference_program_headers="$work_dir/reference-program-headers"
+reference_dynamic="$work_dir/reference-dynamic"
 candidate="$work_dir/crabc-static-signal-control-candidate"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
@@ -97,9 +100,21 @@ for header in errno.h signal.h sys/syscall.h bits/syscall.h bits/alltypes.h bits
         || fail "fixture did not use the project $header header"
 done
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -static -no-pie \
+    -fno-builtin -fno-stack-protector \
     compat/x86_64/libc_signal_control_probe.c -o "$reference"
-"$reference"
+readelf --program-headers --wide "$reference" >"$reference_program_headers"
+readelf --dynamic --wide "$reference" >"$reference_dynamic" || true
+if grep -Eq 'Requesting program interpreter|INTERP' "$reference_program_headers" ||
+    grep -Eq 'NEEDED' "$reference_dynamic"; then
+    fail "pinned musl reference has a dynamic runtime input; evidence: $work_dir"
+fi
+if "$reference" >"$work_dir/musl.stdout" 2>"$work_dir/musl.stderr"; then
+    printf '0\n' >"$work_dir/musl.status"
+else
+    printf '%s\n' "$?" >"$work_dir/musl.status"
+    fail "pinned musl probe failed with status $(cat "$work_dir/musl.status"); evidence: $work_dir"
+fi
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -212,6 +227,26 @@ grep -Eq '\$0xf,%rax|\$0x0*15,%rax' "$restorer_disassembly" \
 grep -Eq '\bsyscall\b' "$restorer_disassembly" \
     || fail "candidate restorer lacks x86 syscall instruction"
 
-"$candidate"
+if "$candidate" >"$work_dir/crabc.stdout" 2>"$work_dir/crabc.stderr"; then
+    printf '0\n' >"$work_dir/crabc.status"
+else
+    printf '%s\n' "$?" >"$work_dir/crabc.status"
+    fail "crabc probe failed with status $(cat "$work_dir/crabc.status"); evidence: $work_dir"
+fi
+cmp "$work_dir/musl.status" "$work_dir/crabc.status" \
+    || fail "exit status differs from pinned musl; evidence: $work_dir"
+cmp "$work_dir/musl.stdout" "$work_dir/crabc.stdout" \
+    || fail "stdout differs from pinned musl; evidence: $work_dir"
+cmp "$work_dir/musl.stderr" "$work_dir/crabc.stderr" \
+    || fail "stderr differs from pinned musl; evidence: $work_dir"
+(
+    cd "$work_dir"
+    sha256sum "$ROOT_DIR/compat/x86_64/libc_signal_control_probe.c" \
+        "$ROOT_DIR/compat/x86_64/libc_signal_control_start.S" \
+        "$ROOT_DIR/compat/x86_64/run_libc_signal_control.sh" \
+        "$archive" "$reference" "$candidate" \
+        musl.stdout musl.stderr musl.status \
+        crabc.stdout crabc.stderr crabc.status >sha256sums.txt
+)
 
-printf 'x86 static crabc-libc signal control: PASS\n'
+printf 'x86 static crabc-libc signal control: PASS (evidence: %s)\n' "$work_dir"

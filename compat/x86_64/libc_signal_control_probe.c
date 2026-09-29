@@ -1,6 +1,6 @@
 /* Static crabc-libc x86-64 signal-control fixture.
  *
- * The same project-header C body first executes through pinned musl 1.2.6,
+ * The same C body first executes through pinned musl 1.2.6,
  * then through a freestanding executable linked solely with the selected
  * crabc `libc.a`. It selects only simple application signal-set helpers,
  * disposition installation/query, the calling-thread mask, and pending-state
@@ -43,7 +43,8 @@ _Static_assert(offsetof(struct sigaction, sa_restorer) == 144,
     "x86 sigaction restorer offset");
 _Static_assert(SYS_rt_sigaction == 13 && SYS_rt_sigprocmask == 14 &&
     SYS_rt_sigpending == 127, "x86 signal syscall numbers");
-_Static_assert(SYS_getpid == 39 && SYS_gettid == 186 && SYS_tgkill == 234,
+_Static_assert(SYS_write == 1 && SYS_getpid == 39 && SYS_gettid == 186 &&
+    SYS_tgkill == 234,
     "x86 fixture-only delivery syscall numbers");
 _Static_assert(SIGUSR1 == 10 && SIGUSR2 == 12, "x86 signal constants");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&sigaction),
@@ -55,9 +56,16 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&sigprocmask),
     int (*)(int, const sigset_t *, sigset_t *)), "sigprocmask declaration");
 
 static volatile sig_atomic_t delivered;
+static volatile sig_atomic_t delivery_count;
+static volatile sig_atomic_t delivery_order[2];
 
 static void record_delivery(int signal)
 {
+    sig_atomic_t index = delivery_count;
+
+    if (index < 2)
+        delivery_order[index] = signal;
+    delivery_count = index + 1;
     delivered = signal;
 }
 
@@ -165,6 +173,15 @@ static int wait_for_delivery(int signal)
     return -1;
 }
 
+static int write_record(const char *record, size_t length)
+{
+    return raw_syscall3(SYS_write, 1, (long)(uintptr_t)record,
+        (long)length) == (long)length ? 0 : -1;
+}
+
+#define WRITE_RECORD(record) \
+    write_record(record, sizeof(record) - 1)
+
 static int expect_invalid_set_operation(int (*operation)(sigset_t *, int),
     sigset_t *set, int signal)
 {
@@ -226,8 +243,10 @@ static int test_action_mask_and_pending(void)
     sigset_t saved_mask = {0};
     sigset_t usr1_set = {0};
     sigset_t usr2_set = {0};
+    sigset_t both_set = {0};
     sigset_t reserved_set = {0};
     sigset_t old_mask;
+    sigset_t before_order_mask;
     sigset_t pending;
     unsigned long raw_mask = 0;
     int saved_usr1_ready = 0;
@@ -373,10 +392,92 @@ static int test_action_mask_and_pending(void)
         goto cleanup;
     }
 
+    if (sigemptyset(&both_set) != 0 ||
+        sigaddset(&both_set, SIGUSR1) != 0 ||
+        sigaddset(&both_set, SIGUSR2) != 0) {
+        result = 23;
+        goto cleanup;
+    }
+    fill_set_words(&before_order_mask, set_poison);
+    errno = 91;
+    if (sigprocmask(SIG_BLOCK, &both_set, &before_order_mask) != 0 ||
+        errno != 91 || sigismember(&before_order_mask, SIGUSR1) != 0 ||
+        sigismember(&before_order_mask, SIGUSR2) != 0 ||
+        !tail_has_value(&before_order_mask, set_poison)) {
+        result = 24;
+        goto cleanup;
+    }
+    delivered = 0;
+    delivery_count = 0;
+    if (raw_tgkill_self(SIGUSR2) != 0 ||
+        raw_tgkill_self(SIGUSR1) != 0 || delivered != 0) {
+        result = 25;
+        goto cleanup;
+    }
+    fill_set_words(&pending, set_poison);
+    errno = 92;
+    if (sigpending(&pending) != 0 || errno != 92 ||
+        sigismember(&pending, SIGUSR1) != 1 ||
+        sigismember(&pending, SIGUSR2) != 1 ||
+        !tail_has_value(&pending, set_poison)) {
+        result = 26;
+        goto cleanup;
+    }
+    fill_set_words(&old_mask, set_poison);
+    errno = 0;
+    if (sigprocmask(-1, &both_set, &old_mask) != -1 ||
+        errno != EINVAL || old_mask.__bits[0] != set_poison ||
+        !tail_has_value(&old_mask, set_poison)) {
+        result = 27;
+        goto cleanup;
+    }
+    errno = 93;
+    if (sigprocmask(-1, 0, &old_mask) != 0 || errno != 93 ||
+        sigismember(&old_mask, SIGUSR1) != 1 ||
+        sigismember(&old_mask, SIGUSR2) != 1 ||
+        !tail_has_value(&old_mask, set_poison)) {
+        result = 28;
+        goto cleanup;
+    }
+    errno = 0;
+    if (sigprocmask(SIG_BLOCK, (const sigset_t *)(uintptr_t)1, 0) != -1 ||
+        errno != EFAULT || delivered != 0) {
+        result = 29;
+        goto cleanup;
+    }
+    errno = 0;
+    if (sigpending((sigset_t *)(uintptr_t)1) != -1 || errno != EFAULT) {
+        result = 30;
+        goto cleanup;
+    }
+    if (sigprocmask(SIG_SETMASK, &before_order_mask, 0) != 0 ||
+        delivery_count != 2 || delivery_order[0] != SIGUSR1 ||
+        delivery_order[1] != SIGUSR2) {
+        result = 31;
+        goto cleanup;
+    }
+    fill_set_words(&old_mask, set_poison);
+    if (sigprocmask(SIG_SETMASK, 0, &old_mask) != 0 ||
+        old_mask.__bits[0] != before_order_mask.__bits[0] ||
+        !tail_has_value(&old_mask, set_poison)) {
+        result = 32;
+        goto cleanup;
+    }
+    fill_set_words(&pending, set_poison);
+    if (sigpending(&pending) != 0 ||
+        sigismember(&pending, SIGUSR1) != 0 ||
+        sigismember(&pending, SIGUSR2) != 0 ||
+        !tail_has_value(&pending, set_poison)) {
+        result = 33;
+        goto cleanup;
+    }
+    if (WRITE_RECORD("mask=restored;pending=clear;errno=preserved;delivery=usr1,usr2\n") != 0)
+        result = 34;
+
 cleanup:
     /* Do not restore a default disposition while our fixture signal is pending. */
     if (saved_mask_ready && result != 0)
-        (void)sigprocmask(SIG_UNBLOCK, &usr1_set, 0);
+        (void)sigprocmask(SIG_UNBLOCK, &both_set, 0);
     if (saved_usr2_ready)
         (void)sigaction(SIGUSR2, &saved_usr2, 0);
     if (saved_usr1_ready)
@@ -389,10 +490,12 @@ cleanup:
 int crabc_x86_64_signal_control_probe(void)
 {
     int set_result = test_set_helpers();
+    int action_result;
 
     if (set_result != 0)
         return set_result;
-    return test_action_mask_and_pending() == 0 ? 0 : 100;
+    action_result = test_action_mask_and_pending();
+    return action_result == 0 ? 0 : 100 + action_result;
 }
 
 #ifndef CRABC_SIGNAL_CONTROL_FREESTANDING
