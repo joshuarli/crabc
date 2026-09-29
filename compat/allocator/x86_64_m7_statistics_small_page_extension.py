@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 import run as harness
 import x86_64_m7_gate as m7
@@ -60,6 +61,18 @@ def main() -> int:
         begin=BEGIN, end=END, report_name="statistics-small-page-extension.json",
         stat_level=2, require_complete=require_source_shape,
     )
+    pin = harness.load_pin()
+    report["provenance"] = {
+        "pin": {key: pin[key] for key in ("tag", "revision", "sha256")},
+        "git": m7.engine.git_provenance(),
+        "source_seal": m7.integrated.source_seal(),
+        "files": {name: m7.engine.file_record(path) for name, path in (
+            ("c_driver", DRIVER), ("reader", Path(__file__)),
+            ("rust_statistics", harness.ROOT / "crabc-mimalloc/src/statistics.rs"),
+            ("gate_contract", m7.CONTRACT),
+        )},
+    }
+    harness.write_json(m7.ARTIFACTS / "statistics-small-page-extension.json", report)
     print(f"8 KiB regular-page statistics: {report['status']} ({report['compared_key_count']} exact keys)")
     print(m7.ARTIFACTS / "statistics-small-page-extension.json")
     return 0
