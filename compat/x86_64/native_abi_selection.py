@@ -55,6 +55,7 @@ import native_abi_memcmp_import_receipt as memcmp_import_receipt
 import native_abi_fchdir_import_receipt as fchdir_import_receipt
 import native_abi_btowc_import_receipt as btowc_import_receipt
 import native_abi_wctomb_import_receipt as wctomb_import_receipt
+import native_abi_wcsrtombs_import_receipt as wcsrtombs_import_receipt
 import owned_posix_product_evidence as product_evidence
 import headers_layouts_aggregate
 import owned_public_data_variable_runtime as public_data_variable_runtime
@@ -9024,9 +9025,9 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
     scan_call_count = {'mbrtowc': 1, 'mbsinit': 1, 'fmodl': 2}.get(name)
     scan_caller = scan_call_count is not None
     bulk_memory = name in (*native_c_allocator_boundary.OWNED_MEMORY_IMPORTS, 'strlen', 'memmove', 'memcmp', 'bcmp')
-    independent = name in {'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp', 'fchdir', 'btowc', 'wctomb'}
+    independent = name in {'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp', 'fchdir', 'btowc', 'wctomb', 'wcsrtombs'}
     require(name in {'__errno_location', 'abort', 'fputs', 'getenv', 'getrusage',
-                     'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp', 'fchdir', 'btowc', 'wctomb',
+                     'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp', 'fchdir', 'btowc', 'wctomb', 'wcsrtombs',
                      *native_c_allocator_boundary.OWNED_MEMORY_IMPORTS}
             and (projection_override is not None) == independent,
             'ordinary import identity differs')
@@ -9042,7 +9043,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
         'static_provider_member', 'static_provider', 'shared_dynsym_provider',
         'shared_symtab_provider', 'importers', 'static_final_links',
         'shared_final', 'dynamic_final_import_absent',
-        *({'dynamic_final_owned_imports'} if name in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp', 'fchdir', 'btowc', 'wctomb'} else set()),
+        *({'dynamic_final_owned_imports'} if name in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp', 'fchdir', 'btowc', 'wctomb', 'wcsrtombs'} else set()),
     }, 'ordinary import resolution')
     runtime = companion['account']['c_runtime_imports']
     claim = next((row for row in runtime['imports']
@@ -9052,12 +9053,12 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
              and same(projection['static_provider'], claim['static_rust_provider'])
              and same(projection['shared_dynsym_provider'], claim['shared_dynsym_provider'])
              and same(projection['shared_symtab_provider'], claim['shared_symtab_provider']))
-            and projection['dynamic_final_import_absent'] is (name not in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp', 'fchdir', 'btowc', 'wctomb'})
+            and projection['dynamic_final_import_absent'] is (name not in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp', 'fchdir', 'btowc', 'wctomb', 'wcsrtombs'})
             and (not independent or all(projection[field]['name'] == name for field in (
                 'static_provider', 'shared_dynsym_provider', 'shared_symtab_provider'))),
             'ordinary import provider account differs')
     importers = projection['importers']
-    require(type(importers) is list and (len(importers) == 1 if scan_caller or name in {'getrusage', 'close', 'memcmp', 'btowc', 'wctomb'}
+    require(type(importers) is list and (len(importers) == 1 if scan_caller or name in {'getrusage', 'close', 'memcmp', 'btowc', 'wctomb', 'wcsrtombs'}
                                        else len(importers) == 2 if name == 'aio_suspend'
                                        else len(importers) == 1 if name == 'fchdir'
                                        else len(importers) >= 1 if name == 'aio_cancel'
@@ -9079,7 +9080,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                 and item['shared_caller_functions'],
                 'ordinary archive importer evidence differs')
         if name in {'abort', 'fputs', 'getenv', 'getrusage', 'mbrtowc', 'mbsinit', 'fmodl',
-                    'aio_suspend', 'aio_cancel', 'close', 'fchdir', 'btowc', 'wctomb'} or bulk_memory:
+                    'aio_suspend', 'aio_cancel', 'close', 'fchdir', 'btowc', 'wctomb', 'wcsrtombs'} or bulk_memory:
             kind = ('R_X86_64_PLT32' if scan_caller or name in {'btowc', 'wctomb'} or member['member_index'] == c_member['member_index']
                     else 'R_X86_64_GOTPCREL')
             require(all(type(call) is dict and set(call) == {'section', 'offset', 'kind'}
@@ -9105,6 +9106,11 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                         and item['source_calls'][0]['section'] == '.text.crabc_owned_vfwscanf'
                         and item['shared_caller_functions'] == ['crabc_owned_vfwscanf'],
                         'wctomb wide scanner source call differs')
+            if name == 'wcsrtombs':
+                require(len(item['source_calls']) == 1
+                        and item['source_calls'][0]['section'] == '.text.wcstombs'
+                        and item['shared_caller_functions'] == ['wcstombs'],
+                        'wcsrtombs conversion wrapper source call differs')
             if scan_caller:
                 caller = ('crabc_owned_scan_decfloat' if name == 'fmodl'
                           else 'crabc_owned_scan_vfscanf')
@@ -9277,7 +9283,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                         == importers[0]['shared_caller_functions'][0]
                     and all_calls[0]['function'] != all_calls[0]['source_function'],
                     'ordinary inlined source call ownership differs')
-    if name in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp', 'fchdir', 'btowc', 'wctomb'}:
+    if name in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp', 'fchdir', 'btowc', 'wctomb', 'wcsrtombs'}:
         require(projection['dynamic_final_owned_imports'] == [
             {'mode': mode, 'import_rows': 2,
              'shared_provider_address': shared['provider_address']}
@@ -9323,7 +9329,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                         and len({call['call_address'] for call in calls}) == scan_call_count,
                         f'owned scanf {mode} call roster differs')
             if name in {'abort', 'fputs', 'getenv', 'getrusage', 'mbrtowc', 'mbsinit', 'fmodl',
-                        'aio_suspend', 'aio_cancel', 'close', 'fchdir', 'btowc', 'wctomb'} or bulk_memory:
+                        'aio_suspend', 'aio_cancel', 'close', 'fchdir', 'btowc', 'wctomb', 'wcsrtombs'} or bulk_memory:
                 kinds = {(call['section'], call['offset']): call['kind']
                          for call in source_item['source_calls']}
                 require(all((type(call.get('got_slot')) is int and call['got_slot'] > 0)
@@ -9596,6 +9602,38 @@ def wctomb_ordinary_import_adapter(
         raise SelectionError(f'wctomb ordinary import rejected: {error}') from error
     require(receipt['source']['revision'] == selection_source()['revision'],
             'wctomb import selects another source revision')
+    return {'report': file_identity(receipt_path), 'projection': projection}
+
+
+def wcsrtombs_ordinary_import_adapter(
+        work_path: Path | None, *, boundary_report_path: Path | None,
+        paths: Mapping[str, Path]) -> dict[str, Any] | None:
+    """Bind the wcstombs archive call to the installed wcsrtombs provider."""
+    if work_path is None:
+        return None
+    require(boundary_report_path is not None,
+            'wcsrtombs import requires the installed C boundary account')
+    work = physical_work_path(work_path, directory=True, own=True)
+    receipt_path = physical_work_path(work / 'report.json', directory=False, own=True)
+    try:
+        receipt = wcsrtombs_import_receipt.validate_report(
+            receipt_path, static_product=paths['static_product'],
+            dynamic_product=paths['dynamic_product'])
+        boundary = native_c_allocator_boundary.json_object(
+            boundary_report_path, 'wcsrtombs boundary account')
+        projection = native_c_allocator_boundary.ordinary_import_resolution(
+            boundary, report_path=boundary_report_path,
+            static_product=paths['static_product'],
+            dynamic_product=paths['dynamic_product'],
+            elf_facts_report=paths['elf_report'], name='wcsrtombs',
+            independent_retained_work=work, expected_importers=1)
+    except (KeyError, TypeError, ValueError, OSError,
+            wcsrtombs_import_receipt.WcsrtombsImportError,
+            product_evidence.ProductEvidenceError,
+            native_c_allocator_boundary.AllocatorBoundaryError) as error:
+        raise SelectionError(f'wcsrtombs ordinary import rejected: {error}') from error
+    require(receipt['source']['revision'] == selection_source()['revision'],
+            'wcsrtombs import selects another source revision')
     return {'report': file_identity(receipt_path), 'projection': projection}
 
 
@@ -12355,6 +12393,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   fchdir_ordinary_import_work: Path | None = None,
                   btowc_ordinary_import_work: Path | None = None,
                   wctomb_ordinary_import_work: Path | None = None,
+                  wcsrtombs_ordinary_import_work: Path | None = None,
                   owned_aio_report: Path | None = None,
                   owned_syslog_work: Path | None = None,
                   stdio_alias_contract_report: Path | None = None,
@@ -12440,6 +12479,11 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         rejected, 'wctomb_ordinary_import_work',
         lambda: wctomb_ordinary_import_adapter(
             wctomb_ordinary_import_work,
+            boundary_report_path=native_c_allocator_boundary_report, paths=paths))
+    wcsrtombs_ordinary_import_companion = _admit(
+        rejected, 'wcsrtombs_ordinary_import_work',
+        lambda: wcsrtombs_ordinary_import_adapter(
+            wcsrtombs_ordinary_import_work,
             boundary_report_path=native_c_allocator_boundary_report, paths=paths))
     owned_aio_ordinary_import_companion = _admit(
         rejected, 'owned_aio_report',
@@ -12644,6 +12688,14 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             accounting, native_c_allocator_boundary_companion, 'wctomb',
             projection_override=wctomb_ordinary_import_companion['projection']))
     ordinary_static_import_joins.extend(wctomb_import_joins)
+    wcsrtombs_import_joins, _ = _attach(
+        rejected, 'wcsrtombs_ordinary_import_resolution', accounting,
+        wcsrtombs_ordinary_import_companion,
+        lambda: [] if wcsrtombs_ordinary_import_companion is None else
+        _attach_ordinary_static_import(
+            accounting, native_c_allocator_boundary_companion, 'wcsrtombs',
+            projection_override=wcsrtombs_ordinary_import_companion['projection']))
+    ordinary_static_import_joins.extend(wcsrtombs_import_joins)
     for scan_import, caller, call_count in (
             ('mbrtowc', 'crabc_owned_scan_vfscanf', 1),
             ('mbsinit', 'crabc_owned_scan_vfscanf', 1),
@@ -12872,6 +12924,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'fchdir_ordinary_import_companion': fchdir_ordinary_import_companion,
             'btowc_ordinary_import_companion': btowc_ordinary_import_companion,
             'wctomb_ordinary_import_companion': wctomb_ordinary_import_companion,
+            'wcsrtombs_ordinary_import_companion': wcsrtombs_ordinary_import_companion,
             'native_c_allocator_boundary_joins': native_c_allocator_boundary_joins,
             'native_c_allocator_runtime_import_joins': native_c_allocator_runtime_import_joins,
             'native_c_allocator_private_vm_import_joins': native_c_allocator_private_vm_import_joins,
@@ -12929,6 +12982,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  fchdir_ordinary_import_work: Path | None = None,
                   btowc_ordinary_import_work: Path | None = None,
                  wctomb_ordinary_import_work: Path | None = None,
+                 wcsrtombs_ordinary_import_work: Path | None = None,
                  owned_aio_report: Path | None = None,
                  owned_syslog_work: Path | None = None,
                  stdio_alias_contract_report: Path | None = None,
@@ -12964,6 +13018,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            fchdir_ordinary_import_work=fchdir_ordinary_import_work,
                            btowc_ordinary_import_work=btowc_ordinary_import_work,
                            wctomb_ordinary_import_work=wctomb_ordinary_import_work,
+                           wcsrtombs_ordinary_import_work=wcsrtombs_ordinary_import_work,
                            owned_aio_report=owned_aio_report,
                            owned_syslog_work=owned_syslog_work,
                            stdio_alias_contract_report=stdio_alias_contract_report,
@@ -12999,6 +13054,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     fchdir_ordinary_import_work: Path | None = None,
                   btowc_ordinary_import_work: Path | None = None,
                     wctomb_ordinary_import_work: Path | None = None,
+                    wcsrtombs_ordinary_import_work: Path | None = None,
                     owned_aio_report: Path | None = None,
                     owned_syslog_work: Path | None = None,
                     stdio_alias_contract_report: Path | None = None,
@@ -13036,6 +13092,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              fchdir_ordinary_import_work=fchdir_ordinary_import_work,
                            btowc_ordinary_import_work=btowc_ordinary_import_work,
                              wctomb_ordinary_import_work=wctomb_ordinary_import_work,
+                             wcsrtombs_ordinary_import_work=wcsrtombs_ordinary_import_work,
                              owned_aio_report=owned_aio_report,
                              owned_syslog_work=owned_syslog_work,
                              stdio_alias_contract_report=stdio_alias_contract_report,
@@ -13079,6 +13136,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--fchdir-ordinary-import-work', type=Path)
     parser.add_argument('--btowc-ordinary-import-work', type=Path)
     parser.add_argument('--wctomb-ordinary-import-work', type=Path)
+    parser.add_argument('--wcsrtombs-ordinary-import-work', type=Path)
     parser.add_argument('--owned-aio-report', type=Path)
     parser.add_argument('--owned-syslog-work', type=Path)
     parser.add_argument('--stdio-alias-contract-report', type=Path)
@@ -13114,6 +13172,8 @@ def main(argv: Sequence[str]) -> int:
         parser.error('--btowc-ordinary-import-work requires --native-c-allocator-boundary-report')
     if args.wctomb_ordinary_import_work is not None and args.native_c_allocator_boundary_report is None:
         parser.error('--wctomb-ordinary-import-work requires --native-c-allocator-boundary-report')
+    if args.wcsrtombs_ordinary_import_work is not None and args.native_c_allocator_boundary_report is None:
+        parser.error('--wcsrtombs-ordinary-import-work requires --native-c-allocator-boundary-report')
     kwargs = {key: getattr(args, key) for key in ('measurement_checkout', 'base_inventory', 'static_product', 'dynamic_product',
                                                 'static_preparation', 'declaration_report', 'public_data_ordinary_link_report',
                                                 'loader_debug_abi_report', 'compiler_helper_aggregate_report',
@@ -13123,6 +13183,7 @@ def main(argv: Sequence[str]) -> int:
                                                 'strlen_ordinary_import_work', 'memmove_ordinary_import_work', 'memcmp_ordinary_import_work',
                                                 'fchdir_ordinary_import_work', 'btowc_ordinary_import_work',
                                                 'wctomb_ordinary_import_work',
+                                                'wcsrtombs_ordinary_import_work',
                                                 'owned_aio_report', 'owned_syslog_work',
                                                 'stdio_alias_contract_report', 'crt_startup_report',
                                                 'syscall_alias_contract_report', 'utmpx_receipt_report',
