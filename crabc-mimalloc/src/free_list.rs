@@ -14,7 +14,7 @@
 // (`mi_free_block_local`).
 //
 // The default path uses direct links; the debug profile uses the source page
-// key to encode them. This module neither detaches `xthread_free` nor performs
+// key pair to encode them. This module neither detaches `xthread_free` nor performs
 // queue/theap/allocation policy. Its bounded raw collection transfer supports
 // both source force modes after `remote_free` has detached the current live
 // producer-list snapshot. A concurrent producer may publish a later atomic
@@ -41,18 +41,15 @@ const LINK_ALIGN: usize = align_of::<*mut u8>();
 
 #[cfg(feature = "mi-debug-1")]
 #[inline]
-fn encode_page_link(page_address: usize, page_key: usize, next_address: usize) -> usize {
+pub(super) fn encode_page_link(page_address: usize, keys: [usize; 2], next_address: usize) -> usize {
     let address = if next_address == 0 { page_address } else { next_address };
-    (address ^ page_key.rotate_right(13))
-        .rotate_left(page_key as u32)
-        .wrapping_add(page_key)
+    (address ^ keys[1]).rotate_left(keys[0] as u32).wrapping_add(keys[0])
 }
 
 #[cfg(feature = "mi-debug-1")]
 #[inline]
-fn decode_page_link(page_address: usize, page_key: usize, encoded: usize) -> usize {
-    let address = encoded.wrapping_sub(page_key)
-        .rotate_right(page_key as u32) ^ page_key.rotate_right(13);
+pub(super) fn decode_page_link(page_address: usize, keys: [usize; 2], encoded: usize) -> usize {
+    let address = encoded.wrapping_sub(keys[0]).rotate_right(keys[0] as u32) ^ keys[1];
     if address == page_address { 0 } else { address }
 }
 
@@ -96,6 +93,8 @@ pub(crate) struct LocalFreeList {
     page_address: usize,
     #[cfg(feature = "mi-debug-1")]
     page_key: usize,
+    #[cfg(feature = "mi-debug-1")]
+    page_key2: usize,
     capacity: NonNull<u16>,
     reserved: u16,
     free: NonNull<*mut Block>,
@@ -157,6 +156,8 @@ impl LocalFreeList {
             page_address: base.as_ptr().addr(),
             #[cfg(feature = "mi-debug-1")]
             page_key: 0,
+            #[cfg(feature = "mi-debug-1")]
+            page_key2: 0,
             capacity: NonNull::from(capacity),
             reserved,
             free: NonNull::from(free),
@@ -189,6 +190,8 @@ impl LocalFreeList {
             page_address,
             #[cfg(feature = "mi-debug-1")]
             page_key,
+            #[cfg(feature = "mi-debug-1")]
+            page_key2,
             capacity,
             reserved,
             free,
@@ -227,6 +230,8 @@ impl LocalFreeList {
             page_address,
             #[cfg(feature = "mi-debug-1")]
             page_key,
+            #[cfg(feature = "mi-debug-1")]
+            page_key2,
             capacity,
             reserved,
             free,
@@ -676,7 +681,7 @@ impl LocalFreeList {
         {
             // SAFETY: the node's first word is the source encoded link.
             let encoded = unsafe { ptr::read(block.as_ptr().cast::<usize>()) };
-            let address = decode_page_link(self.page_address, self.page_key, encoded);
+            let address = decode_page_link(self.page_address, [self.page_key, self.page_key2], encoded);
             if address == 0 {
                 ptr::null_mut()
             } else {
@@ -693,7 +698,7 @@ impl LocalFreeList {
         unsafe { ptr::write(block.as_ptr().cast::<*mut u8>(), next) };
         #[cfg(feature = "mi-debug-1")]
         {
-            let encoded = encode_page_link(self.page_address, self.page_key, next.addr());
+            let encoded = encode_page_link(self.page_address, [self.page_key, self.page_key2], next.addr());
             // SAFETY: source `mi_block_set_next` stores this encoded scalar in
             // the same first word that the direct profile uses for a pointer.
             unsafe { ptr::write(block.as_ptr().cast::<usize>(), encoded) };
@@ -760,7 +765,7 @@ pub(crate) unsafe fn collect_local(
         ptr::write(tail.as_ptr().cast::<*mut u8>(), free.as_ptr().cast());
         #[cfg(feature = "mi-debug-1")]
         ptr::write(tail.as_ptr().cast::<usize>(),
-            encode_page_link(state.page_address, state.page_key, free.as_ptr().addr()));
+            encode_page_link(state.page_address, [state.page_key, state.page_key2], free.as_ptr().addr()));
         *state.free.as_ptr() = local_free.as_ptr();
         *state.local_free.as_ptr() = ptr::null_mut();
         *state.free_is_zero.as_ptr() = false;
@@ -852,7 +857,7 @@ fn raw_list_tail(
         let next: *mut u8 = {
             // SAFETY: the validated node's first word holds the source link.
             let encoded = unsafe { ptr::read(block.as_ptr().cast::<usize>()) };
-            let address = decode_page_link(state.page_address, state.page_key, encoded);
+            let address = decode_page_link(state.page_address, [state.page_key, state.page_key2], encoded);
             if address == 0 { ptr::null_mut() } else { block.as_ptr().map_addr(|_| address).cast() }
         };
         let Some(next) = NonNull::new(next.cast::<Block>()) else {
@@ -910,6 +915,8 @@ mod tests {
             page_address: base.as_ptr().addr(),
             #[cfg(feature = "mi-debug-1")]
             page_key: 0,
+            #[cfg(feature = "mi-debug-1")]
+            page_key2: 0,
             capacity: NonNull::from(&mut state.capacity),
             reserved,
             free: NonNull::from(&mut state.free),
@@ -937,6 +944,8 @@ mod tests {
             page_address: storage.0.as_mut_ptr().addr(),
             #[cfg(feature = "mi-debug-1")]
             page_key: 0,
+            #[cfg(feature = "mi-debug-1")]
+            page_key2: 0,
             capacity: state.capacity,
             reserved,
             free: NonNull::from(&mut state.free),

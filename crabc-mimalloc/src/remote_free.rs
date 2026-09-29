@@ -656,7 +656,7 @@ pub(crate) unsafe fn push_live_allocation_without_collect(
         |previous_block| {
             // SAFETY: this exact block remains producer-owned until the CAS
             // publishes its first word into the source remote list.
-            unsafe { block_set_next(block, thread_free_block(previous_block)) };
+            unsafe { block_set_next_for_page(producer_links(producer), block, thread_free_block(previous_block)) };
         },
     )?;
     // The still-counted block kept the page registered and unreleased
@@ -828,9 +828,9 @@ unsafe fn push_source_block_mt<const CANONICAL_ALIGNED: bool>(
     let owner_after_publication = |previous| allow_collect || is_owned(previous);
     let set_next = |previous_block| {
         // SAFETY: the caller retains exclusive ownership of `block`; the
-        // source normal-release profile stores its unencoded next pointer
+        // source profile stores its direct or page-key-encoded next link
         // before the release half of the publishing compare/exchange.
-        unsafe { block_set_next(block, thread_free_block(previous_block)) };
+        unsafe { block_set_next_for_page(producer_links(state), block, thread_free_block(previous_block)) };
     };
     if CANONICAL_ALIGNED {
         // The checked current allocation supplies an aligned canonical block.
@@ -857,7 +857,7 @@ unsafe fn push_source_block_mt<const CANONICAL_ALIGNED: bool>(
 /// detached metadata page under its private lock or quiescent Heap visitor;
 /// this caller must exclusively own its non-atomic `used`, `free`,
 /// `local_free`, and `free_is_zero` fields. Every block
-/// reachable from the detached remote list must be a valid, unencoded block
+/// reachable from the detached remote list must be a valid source block
 /// link written by [`push`] and stay live through this call. The surrounding
 /// lifecycle must prohibit abandonment, detachment, retirement, reuse, and
 /// release while producers or this collection can access the page. No whole
@@ -1030,7 +1030,8 @@ pub(crate) unsafe fn push_abandoned(
     block: NonNull<u8>,
 ) -> Result<AbandonedRemotePush, RemoteFreeError> {
     // SAFETY: the valid current block keeps the page metadata stable. The
-    // producer projection contains only the two atomic source fields, and the
+    // producer projection contains the two atomic fields and immutable debug
+    // keys, and the
     // helper performs pinned `allow_collect=true` publication regardless of
     // whether a concurrent claimant has since installed a live identity.
     let producer = unsafe { Page::remote_free_producer_state_at(page) };
@@ -1144,7 +1145,7 @@ where
     // SAFETY: a successful AcqRel detach synchronizes with every producer's
     // release publication in the captured list. The caller of `collect`
     // supplied the sole owner proof for non-atomic page fields and each
-    // source-shaped unencoded block link.
+    // source-shaped block link.
     unsafe { collect_detached_to_local(state, head) }
 }
 
@@ -1157,13 +1158,13 @@ unsafe fn collect_partly_state(
 ) -> Result<usize, RemoteFreeError> {
     // SAFETY: caller proves `head` is a valid source block and the low owner
     // bit excludes ordinary-field mutation by another owner.
-    let next = unsafe { block_next(head) };
+    let next = unsafe { block_next_for_page(owner_links(state), head) };
     let mut collected = 0;
     if let Some(next) = NonNull::new(next) {
         // SAFETY: the source leaves its just-published head in the atomic
         // list but detaches its already-linked predecessor chain before it
         // moves that chain into owner-local state.
-        unsafe { block_set_next(head, ptr::null_mut()) };
+        unsafe { block_set_next_for_page(owner_links(state), head, ptr::null_mut()) };
         // SAFETY: `next` is now detached from the remote head and the caller
         // owns every affected ordinary field through the low owner bit.
         collected = unsafe { collect_detached_to_local(state, next) }?;
@@ -1179,7 +1180,7 @@ unsafe fn collect_partly_state(
         let observed = word_load_relaxed(unsafe { state.xthread_free.as_ref() });
         if !is_owned(observed)
             || thread_free_block_address(observed) != head.as_ptr().addr()
-            || !unsafe { block_next(head) }.is_null()
+            || !unsafe { block_next_for_page(owner_links(state), head) }.is_null()
         {
             return Err(RemoteFreeError::PartialHeadMismatch);
         }
@@ -1503,7 +1504,7 @@ where
 ///
 /// # Safety
 ///
-/// `head` must be the detached valid unencoded list described by `state`; no
+/// `head` must be the detached valid source list described by `state`; no
 /// producer may mutate any node in that list after the successful detach.
 unsafe fn collect_detached_to_local(
     state: PageRemoteFreeOwnerState,
@@ -1514,15 +1515,14 @@ unsafe fn collect_detached_to_local(
     }
 
     // `mi_page_thread_collect_to_local` walks to the tail before it changes
-    // either page count or local-list head. In the frozen no-padding,
-    // unencoded profile, the only source check here is list count versus page
-    // capacity and `used`.
+    // either page count or local-list head. List count must stay within page
+    // capacity and `used` in both direct and encoded-link profiles.
     let mut count = 1usize;
     let mut tail = head;
     loop {
         // SAFETY: the caller proves `tail` is one live source free-list node
         // whose first word was initialized before the release publication.
-        let next = unsafe { block_next(tail) };
+        let next = unsafe { block_next_for_page(owner_links(state), tail) };
         let Some(next) = NonNull::new(next) else {
             break;
         };
@@ -1545,7 +1545,7 @@ unsafe fn collect_detached_to_local(
     // SAFETY: the detached tail and the owner's former local head are valid
     // disjoint source list fragments. Linking them before the owner publishes
     // the new local head preserves the existing local-free merge invariant.
-    unsafe { block_set_next(tail, *local_free) };
+    unsafe { block_set_next_for_page(owner_links(state), tail, *local_free) };
     *local_free = head.as_ptr();
     *used -= count;
     Ok(count)
@@ -1597,6 +1597,78 @@ fn thread_free_create_address(
         return Err(RemoteFreeError::UnalignedBlock);
     }
     Ok(address | usize::from(owned))
+}
+
+// A debug page's two source keys are initialized before its first block is
+// published and stay immutable while any counted client can free remotely.
+// Copying them with the atomic projection leaves no whole-page reference in
+// a producer or owner collection loop.
+#[derive(Clone, Copy)]
+struct PageLinks {
+    #[cfg(feature = "mi-debug-1")]
+    page_address: usize,
+    #[cfg(feature = "mi-debug-1")]
+    keys: [usize; 2],
+}
+
+#[inline]
+fn producer_links(state: PageRemoteFreeProducerState) -> PageLinks {
+    #[cfg(feature = "mi-debug-1")]
+    {
+        PageLinks { page_address: state.page_address, keys: state.keys }
+    }
+    #[cfg(not(feature = "mi-debug-1"))]
+    {
+        let _ = state;
+        PageLinks {}
+    }
+}
+
+#[inline]
+fn owner_links(state: PageRemoteFreeOwnerState) -> PageLinks {
+    #[cfg(feature = "mi-debug-1")]
+    {
+        PageLinks { page_address: state.page_address, keys: state.keys }
+    }
+    #[cfg(not(feature = "mi-debug-1"))]
+    {
+        let _ = state;
+        PageLinks {}
+    }
+}
+
+#[inline]
+unsafe fn block_next_for_page(links: PageLinks, block: NonNull<Block>) -> *mut Block {
+    #[cfg(feature = "mi-debug-1")]
+    {
+        // SAFETY: a published source block has an initialized encoded first
+        // word; the page key and null sentinel were copied before collection.
+        let encoded = unsafe { ptr::read(block.as_ptr().cast::<usize>()) };
+        let address = crate::free_list::decode_page_link(links.page_address, links.keys, encoded);
+        core::ptr::with_exposed_provenance_mut(address)
+    }
+    #[cfg(not(feature = "mi-debug-1"))]
+    {
+        let _ = links;
+        unsafe { block_next(block) }
+    }
+}
+
+#[inline]
+unsafe fn block_set_next_for_page(links: PageLinks, block: NonNull<Block>, next: *mut Block) {
+    #[cfg(feature = "mi-debug-1")]
+    {
+        // SAFETY: the producer owns this current block until its release CAS;
+        // the owner has exclusive access to detached list nodes afterward.
+        let address = if next.is_null() { 0 } else { next.expose_provenance() };
+        let encoded = crate::free_list::encode_page_link(links.page_address, links.keys, address);
+        unsafe { ptr::write(block.as_ptr().cast::<usize>(), encoded) };
+    }
+    #[cfg(not(feature = "mi-debug-1"))]
+    {
+        let _ = links;
+        unsafe { block_set_next(block, next) }
+    }
 }
 
 #[inline]

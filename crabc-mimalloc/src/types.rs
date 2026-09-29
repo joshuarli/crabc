@@ -3621,6 +3621,8 @@ pub(super) struct PageFreeListState {
     pub(super) page_address: usize,
     #[cfg(feature = "mi-debug-1")]
     pub(super) page_key: usize,
+    #[cfg(feature = "mi-debug-1")]
+    pub(super) page_key2: usize,
     pub(super) capacity: NonNull<u16>,
     pub(super) reserved: u16,
     pub(super) free: NonNull<*mut Block>,
@@ -3632,9 +3634,10 @@ pub(super) struct PageFreeListState {
 /// Narrow producer projection for the source remote-free protocol.
 ///
 /// The pointers name precisely the two atomic source fields a remote producer
-/// may inspect. No `Page` reference is retained or manufactured: a producer
-/// has no permission to read `theap`, `local_free`, `used`, or any other
-/// non-atomic field. The associated-page [`crate::remote_free::push`] path
+/// may inspect. The debug profile also copies the two immutable page keys
+/// installed before the first allocation. No `Page` reference is retained or
+/// manufactured: a producer has no permission to read `theap`, `local_free`,
+/// `used`, or any other mutable owner field. The associated-page [`crate::remote_free::push`] path
 /// preserves the low owner bit, while the abandoned-page
 /// [`crate::remote_free::push_abandoned`] path may claim it. In either case,
 /// the surrounding caller retains the stable live page lifetime; only the
@@ -3643,13 +3646,18 @@ pub(super) struct PageFreeListState {
 pub(super) struct PageRemoteFreeProducerState {
     pub(super) xthread_id: NonNull<AtomicUsize>,
     pub(super) xthread_free: NonNull<AtomicUsize>,
+    #[cfg(feature = "mi-debug-1")]
+    pub(super) page_address: usize,
+    #[cfg(feature = "mi-debug-1")]
+    pub(super) keys: [usize; 2],
 }
 
 // SAFETY: this projection grants access only to two initialized atomic
 // subobjects of one stable live `Page`. Constructing it is unsafe and carries
 // the page-lifetime obligation documented by
 // `Page::remote_free_producer_state_at`; moving a copy to a producer thread
-// grants no access to any owner-only ordinary field.
+// grants no access to any owner-only ordinary field. The debug keys remain
+// immutable until the last counted client has completed its publication.
 unsafe impl Send for PageRemoteFreeProducerState {}
 
 /// Narrow owner-only projection for remote-list collection.
@@ -3666,6 +3674,10 @@ unsafe impl Send for PageRemoteFreeProducerState {}
 #[derive(Clone, Copy)]
 pub(super) struct PageRemoteFreeOwnerState {
     pub(super) xthread_free: NonNull<AtomicUsize>,
+    #[cfg(feature = "mi-debug-1")]
+    pub(super) page_address: usize,
+    #[cfg(feature = "mi-debug-1")]
+    pub(super) keys: [usize; 2],
     pub(super) free: NonNull<*mut Block>,
     pub(super) local_free: NonNull<*mut Block>,
     pub(super) used: NonNull<usize>,
@@ -3689,6 +3701,8 @@ pub(super) struct PageLocalCollectState {
     pub(super) page_address: usize,
     #[cfg(feature = "mi-debug-1")]
     pub(super) page_key: usize,
+    #[cfg(feature = "mi-debug-1")]
+    pub(super) page_key2: usize,
     pub(super) capacity: u16,
     pub(super) reserved: u16,
     pub(super) free: NonNull<*mut Block>,
@@ -3816,7 +3830,7 @@ const fn empty_page_queues() -> [PageQueue; BIN_COUNT] {
 pub(crate) const EMPTY_PAGE_QUEUES: [PageQueue; BIN_COUNT] = empty_page_queues();
 
 // Source `keys` exists when padding or encoded free lists are selected. The
-// release image omits it; the debug image carries its single key after memid.
+// release image omits it; the debug image carries both keys after memid.
 #[repr(C)]
 pub(crate) struct Page {
     self_: AtomicPtr<Page>,
@@ -4200,7 +4214,9 @@ impl Page {
             // field exclusively and consumes the next value before the page
             // or any of its free-list nodes can be observed.
             self.keys[0] = unsafe { (*theap.as_ptr()).random.next() as usize };
+            self.keys[1] = unsafe { (*theap.as_ptr()).random.next() as usize };
             debug_assert_ne!(self.keys[0], 0);
+            debug_assert_ne!(self.keys[1], 0);
         }
         // SAFETY: forwarded exact Heap identity/lifetime contract.
         unsafe { self.associate_exclusive_owner_with_heap_pointer(theap, heap, owner) };
@@ -4507,6 +4523,10 @@ impl Page {
             let owner = unsafe {
                 PageRemoteFreeOwnerState {
                     xthread_free: NonNull::new_unchecked(core::ptr::addr_of_mut!((*raw).xthread_free)),
+                    #[cfg(feature = "mi-debug-1")]
+                    page_address: page.addr().get(),
+                    #[cfg(feature = "mi-debug-1")]
+                    keys: (*raw).keys,
                     free: NonNull::new_unchecked(core::ptr::addr_of_mut!((*raw).free)),
                     local_free: NonNull::new_unchecked(core::ptr::addr_of_mut!((*raw).local_free)),
                     used: NonNull::new_unchecked(core::ptr::addr_of_mut!((*raw).used)),
@@ -4880,8 +4900,8 @@ impl Page {
     /// that lifetime: its still-counted source `used` contribution prevents
     /// final page release until its remote publication reaches
     /// `xthread_free`. Page abandonment may race that publication, but reuse
-    /// and final release may not. Remote producer code itself must not inspect
-    /// any non-atomic page field, and a producer that claims an abandoned low
+    /// and final release may not. A debug producer may copy only the
+    /// immutable page address and keys; a producer that claims an abandoned low
     /// owner bit must complete the corresponding source owner protocol.
     #[inline]
     pub(super) unsafe fn remote_free_producer_state_at(
@@ -4890,12 +4910,17 @@ impl Page {
         let page = page.as_ptr();
         // SAFETY: the caller proves initialized stable page metadata. These
         // derive raw pointers to the exact atomic subobjects without creating
-        // a `Page` reference or reading a non-atomic field.
+        // a `Page` reference. Debug keys were installed before publication
+        // and stay immutable while this counted client retains the page.
         let xthread_id = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).xthread_id)) };
         let xthread_free = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).xthread_free)) };
         PageRemoteFreeProducerState {
             xthread_id,
             xthread_free,
+            #[cfg(feature = "mi-debug-1")]
+            page_address: page.addr(),
+            #[cfg(feature = "mi-debug-1")]
+            keys: unsafe { (*page).keys },
         }
     }
 
@@ -4953,6 +4978,10 @@ impl Page {
         let free_is_zero = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).free_is_zero)) };
         Some(PageRemoteFreeOwnerState {
             xthread_free,
+            #[cfg(feature = "mi-debug-1")]
+            page_address: page.addr(),
+            #[cfg(feature = "mi-debug-1")]
+            keys: unsafe { (*page).keys },
             free,
             local_free,
             used,
@@ -5142,6 +5171,8 @@ impl Page {
             page_address: page.addr(),
             #[cfg(feature = "mi-debug-1")]
             page_key: unsafe { (*page).keys[0] },
+            #[cfg(feature = "mi-debug-1")]
+            page_key2: unsafe { (*page).keys[1] },
             capacity,
             reserved,
             // SAFETY: these are initialized owner-only subobjects; the
@@ -5221,6 +5252,8 @@ impl Page {
             page_address: page.addr(),
             #[cfg(feature = "mi-debug-1")]
             page_key: unsafe { (*page).keys[0] },
+            #[cfg(feature = "mi-debug-1")]
+            page_key2: unsafe { (*page).keys[1] },
             capacity,
             reserved,
             free: unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).free)) },
@@ -5325,6 +5358,10 @@ impl Page {
         let free_is_zero = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).free_is_zero)) };
         Some(PageRemoteFreeOwnerState {
             xthread_free,
+            #[cfg(feature = "mi-debug-1")]
+            page_address: page.addr(),
+            #[cfg(feature = "mi-debug-1")]
+            keys: unsafe { (*page).keys },
             free,
             local_free,
             used,
@@ -5387,6 +5424,8 @@ impl Page {
             page_address: page.addr(),
             #[cfg(feature = "mi-debug-1")]
             page_key: unsafe { (*page).keys[0] },
+            #[cfg(feature = "mi-debug-1")]
+            page_key2: unsafe { (*page).keys[1] },
             // SAFETY: these raw pointers name only the caller-owned ordinary
             // subobjects and manufacture no whole-page reference.
             capacity: unsafe {
@@ -7504,7 +7543,7 @@ const _: [(); 32] = [(); size_of::<PageQueue>()];
 #[cfg(not(feature = "mi-debug-1"))]
 const _: [(); 128] = [(); size_of::<Page>()];
 #[cfg(feature = "mi-debug-1")]
-const _: [(); 136] = [(); size_of::<Page>()];
+const _: [(); 144] = [(); size_of::<Page>()];
 const _: [(); 8] = [(); align_of::<Page>()];
 // `Heap` stops at the source `memid` field and uses allocator-private futex
 // locks in place of pthread ABI objects. Its size is intentionally not a C
@@ -9453,7 +9492,7 @@ mod tests {
     }
 
     #[test]
-    fn metadata_layout_matches_the_default_release_c_contract() {
+    fn metadata_layout_matches_selected_c_contract() {
         assert_eq!(size_of::<MemoryKind>(), 4);
         assert_eq!(align_of::<MemoryKind>(), 4);
         assert_eq!(size_of::<MemoryInfo>(), 16);
@@ -9509,7 +9548,7 @@ mod tests {
         assert_eq!(offset_of!(PageQueue, last), 8);
         assert_eq!(offset_of!(PageQueue, count), 16);
         assert_eq!(offset_of!(PageQueue, block_size), 24);
-        assert_eq!(size_of::<Page>(), if cfg!(feature = "mi-debug-1") { 136 } else { 128 });
+        assert_eq!(size_of::<Page>(), if cfg!(feature = "mi-debug-1") { 144 } else { 128 });
         assert_eq!(align_of::<Page>(), 8);
         assert_eq!(offset_of!(Page, self_), 0);
         assert_eq!(offset_of!(Page, xthread_id), 8);
@@ -9529,6 +9568,12 @@ mod tests {
         assert_eq!(offset_of!(Page, next), 88);
         assert_eq!(offset_of!(Page, prev), 96);
         assert_eq!(offset_of!(Page, memid), 104);
+        #[cfg(feature = "mi-debug-1")]
+        {
+            assert_eq!(crate::config::PAGE_KEY_COUNT, 2);
+            assert_eq!(offset_of!(Page, keys), 128);
+            assert_eq!(size_of::<[usize; 2]>(), 16);
+        }
     }
 
     #[test]
@@ -9538,7 +9583,7 @@ mod tests {
         const STORAGE_WORDS: usize = (PAGE_OFFSET + 2 * BLOCK_SIZE) / size_of::<usize>();
         const LIVE_THREAD_ID: usize = 12;
 
-        assert_eq!(PAGE_OFFSET, if cfg!(feature = "mi-debug-1") { 136 } else { 128 });
+        assert_eq!(PAGE_OFFSET, if cfg!(feature = "mi-debug-1") { 144 } else { 128 });
         assert_eq!(STORAGE_WORDS * size_of::<usize>(), PAGE_OFFSET + 2 * BLOCK_SIZE);
 
         // This address-stable backing contains one source-stride `Page`

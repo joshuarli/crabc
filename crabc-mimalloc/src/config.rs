@@ -69,7 +69,7 @@ pub(crate) const GUARDED: bool = false;
 pub(crate) const OPT_SIMD: bool = false;
 pub(crate) const PADDING_SIZE: usize = if DEBUG_LEVEL >= 1 { 8 } else { 0 };
 pub(crate) const PADDING_WSIZE: usize = PADDING_SIZE / WORD_SIZE;
-pub(crate) const PAGE_KEY_COUNT: usize = 1;
+pub(crate) const PAGE_KEY_COUNT: usize = if DEBUG_LEVEL >= 1 { 2 } else { 1 };
 
 pub(crate) const ARENA_SLICE_SHIFT: usize = 13 + 3;
 pub(crate) const BCHUNK_BITS_SHIFT: usize = 6 + 3;
@@ -1109,7 +1109,7 @@ mod tests {
         assert!(!OPT_SIMD);
         assert_eq!(PADDING_SIZE, if cfg!(feature = "mi-debug-1") { 8 } else { 0 });
         assert_eq!(PADDING_WSIZE, usize::from(cfg!(feature = "mi-debug-1")));
-        assert_eq!(PAGE_KEY_COUNT, 1);
+        assert_eq!(PAGE_KEY_COUNT, if cfg!(feature = "mi-debug-1") { 2 } else { 1 });
         assert!(ENABLE_LARGE_PAGES);
         assert!(PAGE_META_IS_SEPARATED);
         assert!(PAGE_META_IS_ALIGNED);

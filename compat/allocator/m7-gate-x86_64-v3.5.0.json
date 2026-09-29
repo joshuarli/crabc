@@ -225,6 +225,10 @@
       "command": ["python3", "compat/allocator/x86_64_m7_debug_padding_page.py", "--offline"],
       "scope": "Source-built pinned C and Rust adapter compare a regular 32-byte-bin page under MI_DEBUG=1, MI_PADDING=1, and MI_STAT=2: logical usable size, fill, same-page ownership, corrupted-padding retention, diagnostics, and page/bin/requested statistics through collection."
     },
+    "differential:debug-remote-links": {
+      "command": ["python3", "compat/allocator/x86_64_m7_debug_remote_links.py", "--offline"],
+      "scope": "Source-built pinned C and Rust adapter compare a foreign thread's two frees on an ordinary debug page, followed by owner collection and reused allocations."
+    },
     "differential:secure-profile": {
       "command": null,
       "scope": "Pinned-C/Rust encoded free lists, guard pages, randomized allocation, and double-free/corruption detection under each MI_SECURE level and MI_FREE_IS_CHECKED."
@@ -467,10 +471,11 @@
         "differential:debug-profile",
         "differential:debug-padding-17",
         "differential:debug-padding-page",
+        "differential:debug-remote-links",
         "differential:show-errors-profile"
       ],
       "blocked_by": [
-        "The default-off `MI_DEBUG=1` and `MI_PADDING=1` profile covers ordinary allocation and regular-page fill, padding checks, diagnostics, and statistics; its source-built differentials do not cover the remaining debug assertions, aligned/huge paths, or arena-print behavior. MI_SHOW_ERRORS has a separate compile-time profile and differential.",
+        "The default-off `MI_DEBUG=1` and `MI_PADDING=1` profile covers ordinary allocation, regular-page fill and two-block remote-free reuse, padding checks, diagnostics, and statistics; its source-built differentials do not cover the remaining debug assertions, aligned/huge paths, or arena-print behavior. MI_SHOW_ERRORS has a separate compile-time profile and differential.",
         "`mi_debug_show_arenas` and `mi_arenas_print` are absent, including their prefixed test-adapter mapping.",
         "No applicability decision exists for the TSAN/UBSAN and Valgrind/ASAN/ETW modes."
       ]
