@@ -41,6 +41,11 @@ enum {
     FIXTURE_ENOSYS = 38,
     FIXTURE_ENAMETOOLONG = 36,
     FIXTURE_ERRNO_SENTINEL = 34,
+    FIXTURE_EXECVE_STATUS = 41,
+    FIXTURE_EXECV_STATUS = 42,
+    FIXTURE_EXECLE_STATUS = 43,
+    FIXTURE_EXECVP_STATUS = 44,
+    FIXTURE_EXECVP_SEARCH_STATUS = 45,
     FIXTURE_AT_FDCWD = -100,
     FIXTURE_AT_EMPTY_PATH = 0x1000,
 };
@@ -190,6 +195,13 @@ static char inherited_path[] = "PATH=.";
 static char inherited_token[] = "CRABC_EXEC_TOKEN=inherited";
 static char *inherited_environment[] = {
     inherited_path,
+    inherited_token,
+    (char *)0,
+};
+static char searched_after_eacces_path[] =
+    "PATH=./process-exec-enoent:./process-exec-eacces:.";
+static char *searched_after_eacces_environment[] = {
+    searched_after_eacces_path,
     inherited_token,
     (char *)0,
 };
@@ -382,6 +394,8 @@ static const char *expected_path_for_mode(const char *mode)
         text_equals(mode, "execvp-inherited") ||
         text_equals(mode, "execlp-inherited"))
         return ".";
+    if (text_equals(mode, "execvp-after-eacces"))
+        return "./process-exec-enoent:./process-exec-eacces:.";
     if (text_equals(mode, "cwd-leading"))
         return ":crabc-missing-leading";
     if (text_equals(mode, "cwd-interior"))
@@ -398,6 +412,21 @@ static int mode_uses_stack_variadic_arguments(const char *mode)
     return text_equals(mode, "execl-inherited") ||
         text_equals(mode, "execle-explicit") ||
         text_equals(mode, "execlp-inherited");
+}
+
+static int expected_child_status(const char *mode)
+{
+    if (text_equals(mode, "execve-explicit"))
+        return FIXTURE_EXECVE_STATUS;
+    if (text_equals(mode, "execv-inherited"))
+        return FIXTURE_EXECV_STATUS;
+    if (text_equals(mode, "execle-explicit"))
+        return FIXTURE_EXECLE_STATUS;
+    if (text_equals(mode, "execvp-inherited"))
+        return FIXTURE_EXECVP_STATUS;
+    if (text_equals(mode, "execvp-after-eacces"))
+        return FIXTURE_EXECVP_SEARCH_STATUS;
+    return 0;
 }
 
 static int check_exec_child(int argc, char **argv)
@@ -426,24 +455,28 @@ static int check_exec_child(int argc, char **argv)
     if (mode_requires_explicit_environment(mode) &&
         !text_equals(environment_value("CRABC_EXEC_TOKEN"), "explicit"))
         return 93;
-    if ((text_equals(mode, "execvp-inherited") ||
+    if ((text_equals(mode, "execv-inherited") ||
+            text_equals(mode, "execvp-inherited") ||
+            text_equals(mode, "execvp-after-eacces") ||
             text_equals(mode, "execlp-inherited")) &&
         !text_equals(environment_value("CRABC_EXEC_TOKEN"), "inherited"))
         return 95;
+    if (environment_value("LC_ALL") != (const char *)0)
+        return 97;
     if (text_equals(mode, "cwd-only") &&
         environment_value("CRABC_EXEC_TOKEN") != (const char *)0)
         return 96;
-    return 0;
+    return expected_child_status(mode);
 }
 
-static int install_syscall_enosys_filter(long syscall_number)
+static int install_syscall_errno_filter(long syscall_number, int error)
 {
     struct crabc_bpf_instruction filter[] = {
         CRABC_BPF_STATEMENT(CRABC_BPF_LD | CRABC_BPF_W | CRABC_BPF_ABS, 0),
         CRABC_BPF_JUMP(CRABC_BPF_JMP | CRABC_BPF_JEQ | CRABC_BPF_K,
             syscall_number, 0, 1),
         CRABC_BPF_STATEMENT(CRABC_BPF_RET | CRABC_BPF_K,
-            CRABC_SECCOMP_RET_ERRNO | FIXTURE_ENOSYS),
+            CRABC_SECCOMP_RET_ERRNO | error),
         CRABC_BPF_STATEMENT(CRABC_BPF_RET | CRABC_BPF_K,
             CRABC_SECCOMP_RET_ALLOW),
     };
@@ -458,6 +491,11 @@ static int install_syscall_enosys_filter(long syscall_number)
             (long)(uintptr_t)&program) != 0)
         return -1;
     return 0;
+}
+
+static int install_syscall_enosys_filter(long syscall_number)
+{
+    return install_syscall_errno_filter(syscall_number, FIXTURE_ENOSYS);
 }
 
 static int install_execveat_enosys_filter(void)
@@ -500,12 +538,14 @@ static int check_execv_success(const char *self)
         (char *)0,
     };
 
+    environ = inherited_environment;
     (void)execv(self, argv);
     return exec_returned();
 }
 
 static int check_execl_success(const char *self)
 {
+    environ = inherited_environment;
     (void)execl(self, "execl-inherited", child_flag, "execl-inherited",
         "stack-word-one", "stack-word-two", "stack-word-three",
         "stack-word-four", (char *)0);
@@ -531,6 +571,22 @@ static int check_execvp_success(const char *self)
 
     (void)self;
     environ = inherited_environment;
+    (void)execvp(helper_name, argv);
+    return exec_returned();
+}
+
+/* Search must continue after both a missing directory entry and EACCES. */
+static int check_execvp_after_eacces(const char *self)
+{
+    char *argv[] = {
+        "execvp-after-eacces",
+        (char *)child_flag,
+        "execvp-after-eacces",
+        (char *)0,
+    };
+
+    (void)self;
+    environ = searched_after_eacces_environment;
     (void)execvp(helper_name, argv);
     return exec_returned();
 }
@@ -640,8 +696,11 @@ static int check_default_path(const char *self)
 
     (void)self;
     environ = empty_environment;
-    (void)execvp("true", argv);
-    return exec_returned();
+    /* All search attempts receive ENOENT without executing a host image. */
+    if (install_syscall_errno_filter(SYS_execve, FIXTURE_ENOENT) != 0)
+        return 1;
+    errno = FIXTURE_ERRNO_SENTINEL;
+    return execvp("true", argv) == -1 && errno == FIXTURE_ENOENT ? 0 : 2;
 }
 
 static int check_enoexec_is_terminal(const char *self)
@@ -885,6 +944,41 @@ static int check_fexecve_enosys(const char *self)
 
 typedef int (*isolated_check)(const char *);
 
+struct check_case {
+    const char *name;
+    isolated_check check;
+    int expected_exit;
+};
+
+/* Raw wait status keeps exit and signal failures distinct in both streams. */
+static int trace_case(const char *name, int status)
+{
+    char line[96];
+    char digits[16];
+    size_t length = 0;
+    size_t digit_count = 0;
+    unsigned int value;
+
+    while (*name != '\0' && length < sizeof(line) - 18)
+        line[length++] = *name++;
+    line[length++] = ' ';
+    if (status < 0) {
+        line[length++] = '-';
+        value = (unsigned int)(-status);
+    } else {
+        value = (unsigned int)status;
+    }
+    do {
+        digits[digit_count++] = (char)('0' + value % 10);
+        value /= 10;
+    } while (value != 0);
+    while (digit_count != 0)
+        line[length++] = digits[--digit_count];
+    line[length++] = '\n';
+    return raw_syscall3(SYS_write, 1, (long)(uintptr_t)line, length) ==
+        (long)length ? 0 : -1;
+}
+
 static int run_isolated(const char *self, isolated_check check)
 {
     long child = raw_syscall0(SYS_fork);
@@ -894,47 +988,53 @@ static int run_isolated(const char *self, isolated_check check)
     if (child < 0)
         return -1;
     if (child == 0)
-        raw_exit(check(self) == 0 ? 0 : 127);
+        raw_exit(check(self));
     do {
         waited = raw_syscall4(SYS_wait4, child, (long)(uintptr_t)&status, 0, 0);
     } while (waited == -FIXTURE_EINTR);
-    return waited == child && status == 0 ? 0 : -1;
+    return waited == child ? status : -1;
 }
 
 static int run_parent(const char *self)
 {
-    static isolated_check const checks[] = {
-        check_direct_failure_errno,
-        check_execve_success,
-        check_execv_success,
-        check_execl_success,
-        check_execle_success,
-        check_execvp_success,
-        check_execlp_success,
-        check_execvpe_success,
-        check_execvpe_searched_explicit_environment,
-        check_empty_path_leading,
-        check_empty_path_interior,
-        check_empty_path_trailing,
-        check_empty_path_whole,
-        check_default_path,
-        check_enoexec_is_terminal,
-        check_eacces_precedence,
-        check_enotdir_last,
-        check_enoent_last,
-        check_eacces_last_explicit_environment,
-        check_enoexec_after_eacces_is_terminal,
-        check_enoexec_before_eacces_is_terminal,
-        check_path_name_bounds_and_slash_bypass,
-        check_execlp_without_mmap,
-        check_execlp_large_argv,
-        check_fexecve_success,
-        check_fexecve_enosys,
+    static const struct check_case checks[] = {
+        { "direct-failure-errno", check_direct_failure_errno, 0 },
+        { "execve-explicit", check_execve_success, FIXTURE_EXECVE_STATUS },
+        { "execv-inherited", check_execv_success, FIXTURE_EXECV_STATUS },
+        { "execl-inherited", check_execl_success, 0 },
+        { "execle-explicit", check_execle_success, FIXTURE_EXECLE_STATUS },
+        { "execvp-inherited", check_execvp_success, FIXTURE_EXECVP_STATUS },
+        { "execvp-after-eacces", check_execvp_after_eacces,
+            FIXTURE_EXECVP_SEARCH_STATUS },
+        { "execlp-inherited", check_execlp_success, 0 },
+        { "execvpe-explicit", check_execvpe_success, 0 },
+        { "execvpe-search-env", check_execvpe_searched_explicit_environment, 0 },
+        { "empty-path-leading", check_empty_path_leading, 0 },
+        { "empty-path-interior", check_empty_path_interior, 0 },
+        { "empty-path-trailing", check_empty_path_trailing, 0 },
+        { "empty-path-whole", check_empty_path_whole, 0 },
+        { "default-path", check_default_path, 0 },
+        { "enoexec-terminal", check_enoexec_is_terminal, 0 },
+        { "eacces-precedence", check_eacces_precedence, 0 },
+        { "enotdir-last", check_enotdir_last, 0 },
+        { "enoent-last", check_enoent_last, 0 },
+        { "eacces-last-explicit-env", check_eacces_last_explicit_environment, 0 },
+        { "enoexec-after-eacces", check_enoexec_after_eacces_is_terminal, 0 },
+        { "enoexec-before-eacces", check_enoexec_before_eacces_is_terminal, 0 },
+        { "name-bounds-slash", check_path_name_bounds_and_slash_bypass, 0 },
+        { "execlp-no-mmap", check_execlp_without_mmap, 0 },
+        { "execlp-large-argv", check_execlp_large_argv, 0 },
+        { "fexecve-explicit", check_fexecve_success, 0 },
+        { "fexecve-enosys", check_fexecve_enosys, 0 },
     };
     size_t index;
 
     for (index = 0; index < sizeof(checks) / sizeof(checks[0]); ++index) {
-        if (run_isolated(self, checks[index]) != 0)
+        int status = run_isolated(self, checks[index].check);
+
+        if (trace_case(checks[index].name, status) != 0)
+            return (int)(index + 1);
+        if (status != checks[index].expected_exit << 8)
             return (int)(index + 1);
     }
     return 0;

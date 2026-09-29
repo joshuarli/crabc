@@ -275,6 +275,8 @@ prepare_runtime_tree() {
     printf 'not executable\n' \
         >"$runtime_dir/process-exec-eacces/process-exec-eacces-candidate"
     chmod 644 "$runtime_dir/process-exec-eacces/process-exec-eacces-candidate"
+    printf 'not executable\n' >"$runtime_dir/process-exec-eacces/process-exec-helper"
+    chmod 644 "$runtime_dir/process-exec-eacces/process-exec-helper"
     printf 'exit 76\n' \
         >"$runtime_dir/process-exec-enoexec-dir/process-exec-eacces-candidate"
     chmod 755 "$runtime_dir/process-exec-enoexec-dir/process-exec-eacces-candidate"
@@ -283,11 +285,21 @@ prepare_runtime_tree() {
 run_runtime_tree() {
     local runtime_dir="$1"
     local label="$2"
+    local stream_prefix="$3"
+    local status
 
     (
         cd "$runtime_dir"
-        env -i LC_ALL=C PATH=. ./process-exec-fixture
-    ) || fail "$label process-exec fixture failed"
+        if env -i LC_ALL=C PATH=. ./process-exec-fixture \
+            >"$stream_prefix.stdout" 2>"$stream_prefix.stderr"; then
+            status=0
+        else
+            status=$?
+        fi
+        printf '%s\n' "$status" >"$stream_prefix.status"
+    )
+    [ "$(cat "$stream_prefix.status")" = 0 ] ||
+        fail "$label process-exec fixture failed; evidence: $stream_prefix"
 }
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
@@ -295,8 +307,8 @@ case "$(uname -m)" in
     x86_64|amd64) ;;
     *) fail "refuses emulation on $(uname -m)" ;;
 esac
-for tool in ar awk cargo chmod cmp comm cp diff env grep ld ln mkdir mktemp nm \
-    objdump readelf rustup sort strings; do
+for tool in ar awk cargo cat chmod cmp comm cp diff env grep ld ln mkdir mktemp nm \
+    objdump readelf rustup sha256sum sort strings; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -304,8 +316,9 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_process_exec_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-process-exec.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-process-exec.XXXXXX")"
+chmod 755 "$work_dir"
 baseline_target="$work_dir/cargo-baseline"
 featured_target="$work_dir/cargo-featured"
 baseline_archive="$baseline_target/x86_64-unknown-linux-musl/release/libc.a"
@@ -334,8 +347,10 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -static -fno-pie -no-pie -fno-builtin \
     -fno-stack-protector -I"$ROOT_DIR/include" \
     compat/x86_64/libc_process_exec_probe.c -o "$reference"
+assert_static_candidate_shape "$reference" reference
 prepare_runtime_tree "$reference" "$work_dir/reference-runtime"
-run_runtime_tree "$work_dir/reference-runtime" "pinned-musl reference"
+run_runtime_tree "$work_dir/reference-runtime" "pinned-musl reference" \
+    "$work_dir/reference"
 
 # Keep the feature topology observable despite the workspace release profile.
 for target_dir in "$baseline_target" "$featured_target"; do
@@ -546,7 +561,13 @@ assert_execve_syscall_path "$candidate"
 assert_fexecve_syscall_path "$candidate"
 assert_default_path_rodata "$candidate"
 prepare_runtime_tree "$candidate" "$work_dir/candidate-runtime"
-run_runtime_tree "$work_dir/candidate-runtime" "crabc candidate"
+run_runtime_tree "$work_dir/candidate-runtime" "crabc candidate" \
+    "$work_dir/candidate"
+
+for stream in stdout stderr status; do
+    cmp "$work_dir/reference.$stream" "$work_dir/candidate.$stream" ||
+        fail "pinned-musl and candidate $stream differ; evidence: $work_dir"
+done
 
 # A consumer strong execvpe override replaces only the weak public alias. The
 # runtime probe proves execvp continues through strong internal __execvpe.
@@ -567,4 +588,13 @@ override_internal_value="$(symbol_value "$work_dir/strong-override.symbols" __ex
 env -i LC_ALL=C PATH=. "$override_candidate" ||
     fail "strong execvpe override or internal execvp route failed"
 
+(
+    cd "$work_dir"
+    sha256sum musl-process-exec-reference crabc-process-exec-candidate \
+        crabc-process-exec-strong-override execve-only fexecve-only \
+        libcrabc-process-exec.a \
+        reference.stdout reference.stderr reference.status \
+        candidate.stdout candidate.stderr candidate.status >sha256sum.txt
+)
+printf 'x86 libc process exec evidence: %s\n' "$work_dir"
 printf 'x86 libc process exec: PASS\n'
