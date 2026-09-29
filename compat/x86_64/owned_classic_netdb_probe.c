@@ -308,6 +308,24 @@ static void services(void) {
     struct servent *byname=getservbyname(requested,tcp);CHECK(byname&&byname->s_name==requested);
     struct servent *byport=getservbyport(htons(45001),tcp);CHECK(byport&&byport!=byname&&!strcmp(byport->s_name,"tcp-second")&&byname->s_name==requested);
     CHECK(!getservbyport(htons(45003),tcp));CHECK(!getservbyport_r(htons(45003),tcp,&s,b,sizeof b,&r)&&r==&s&&!strcmp(s.s_name,"twenty-character-name"));
+
+    /* Each lookup opens the current services file; successful legacy calls
+     * reuse their result record when the file contents change. */
+    struct servent *shared_name=getservbyname("alt",tcp);
+    struct servent *shared_port=getservbyport(htons(45001),tcp);
+    CHECK(shared_name&&shared_port&&shared_name!=shared_port);
+    const char replacement[]="first 45005/tcp current\nsecond 45006/udp current\n";
+    file("/etc/services",replacement,sizeof replacement-1);
+    CHECK(getservbyname_r("alt",tcp,&s,b,sizeof b,&r)==ENOENT&&!r);
+    CHECK(!getservbyname_r("current",tcp,&s,b,sizeof b,&r)&&r==&s&&s.s_port==htons(45005));
+    CHECK(getservbyname("current",tcp)==shared_name&&shared_name->s_port==htons(45005));
+    CHECK(!getservbyport(htons(45001),tcp));
+    CHECK(getservbyport(htons(45005),tcp)==shared_port&&!strcmp(shared_port->s_name,"first"));
+    CHECK(!getservbyport_r(htons(45006),udp,&s,b,sizeof b,&r)&&r==&s&&!strcmp(s.s_name,"second"));
+    const char moved[]="moved 45007/tcp current\n";
+    file("/etc/services",moved,sizeof moved-1);
+    CHECK(getservbyport_r(htons(45005),tcp,&s,b,sizeof b,&r)==ENOENT&&!r);
+    CHECK(!getservbyport_r(htons(45007),tcp,&s,b,sizeof b,&r)&&r==&s&&!strcmp(s.s_name,"moved"));
 }
 static void service_buffers(void) {
     struct servent s,*r;_Alignas(16) char raw[128];
