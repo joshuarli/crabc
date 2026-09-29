@@ -4,10 +4,10 @@
 # The same project-header C fixture first runs through pinned musl, then as a
 # true `-nostdlib -static` executable linked solely through the selected
 # crabc archive. It proves pointer-bearing F_GETLK/F_SETLK record locks:
-# parent ownership across fork, release on duplicate close, conflict with an
-# OFD lock on another open description, stale errno on success, and Linux
-# errors. Fixture setup uses raw syscalls, so no C descriptor lifecycle symbols
-# are pulled in. This is not F_SETLKW cancellation, public
+# parent ownership across fork, release on duplicate close, reciprocal
+# POSIX/OFD conflicts, an inherited OFD lock after the parent's close, stale
+# errno on success, and Linux errors. Fixture setup uses raw syscalls, so no C
+# descriptor lifecycle symbols are pulled in. This is not F_SETLKW cancellation, public
 # OFD fcntl commands, lockf, flock, generic fcntl, CRT,
 # pthread/TLS lifecycle, loader, sysroot, or public x86 support.
 set -euo pipefail
@@ -122,7 +122,7 @@ assert_fixture_tls_capacity() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cat cmp diff grep mkdir nm objdump readelf rustup wc; do
+for tool in ar awk cargo cat chmod cmp cp diff grep mkdir mktemp nm objdump readelf rustup sha256sum wc; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -137,6 +137,8 @@ trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-fcntl-record-locks-reference"
 candidate="$work_dir/crabc-static-fcntl-record-locks-candidate"
+reference_records="$work_dir/musl-records"
+candidate_records="$work_dir/candidate-records"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
@@ -162,7 +164,7 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_fcntl_record_locks_probe.c \
     -o "$reference"
-if "$reference"; then
+if "$reference" >"$reference_records"; then
     :
 else
     status=$?
@@ -247,11 +249,42 @@ grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
 
 assert_fcntl_record_lock_path
 
-if "$candidate"; then
+if "$candidate" >"$candidate_records"; then
     :
 else
     status=$?
     fail "freestanding fcntl record-lock fixture exited ${status}"
 fi
 
+[ -s "$reference_records" ] || fail "pinned-musl fixture emitted no case records"
+if ! cmp -s "$reference_records" "$candidate_records"; then
+    diff -u "$reference_records" "$candidate_records" >&2 || true
+    fail "pinned-musl and freestanding record-lock cases differ"
+fi
+
+mkdir -p "$ROOT_DIR/.work/x86_64/reports"
+report_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-fcntl-record-locks.XXXXXX")"
+chmod 755 "$report_dir"
+cp "$reference" "$report_dir/musl-reference.elf"
+cp "$candidate" "$report_dir/crabc-candidate.elf"
+cp "$reference_records" "$report_dir/musl.records"
+cp "$candidate_records" "$report_dir/crabc.records"
+cp "$candidate_program_headers" "$report_dir/crabc-program-headers.txt"
+cp "$selected_c_abi_symbols" "$report_dir/selected-c-abi-symbols.txt"
+cp "$ROOT_DIR/compat/x86_64/libc_fcntl_record_locks_probe.c" \
+    "$report_dir/libc_fcntl_record_locks_probe.c"
+cp "$ROOT_DIR/compat/x86_64/libc_fcntl_record_locks_start.S" \
+    "$report_dir/libc_fcntl_record_locks_start.S"
+cp "$ROOT_DIR/compat/x86_64/run_libc_fcntl_record_locks.sh" \
+    "$report_dir/run_libc_fcntl_record_locks.sh"
+(
+    cd "$report_dir"
+    sha256sum musl-reference.elf crabc-candidate.elf musl.records crabc.records \
+        crabc-program-headers.txt selected-c-abi-symbols.txt \
+        libc_fcntl_record_locks_probe.c libc_fcntl_record_locks_start.S \
+        run_libc_fcntl_record_locks.sh >sha256sums.txt
+)
+
+cat "$reference_records"
+printf 'record-lock physical receipt: %s\n' "$report_dir"
 printf 'x86 static crabc-libc fcntl record locks: PASS\n'
