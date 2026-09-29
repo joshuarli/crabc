@@ -59,8 +59,11 @@ for tool in ar awk cargo cmp diff grep mkdir nm objdump python3 readelf rustup s
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_stdio_standard_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-stdio-path-stream.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+[ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ] || fail "requires checkout-local TMPDIR"
+case "$(realpath "$TMPDIR")" in "$ROOT_DIR"/.work/*) ;; *) fail "TMPDIR escapes checkout .work" ;; esac
+work_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-libc-stdio-path-stream.XXXXXX")"
+trap 'chmod -R a+rX "$work_dir"' EXIT
+printf 'x86 pathname stream evidence: %s\n' "$work_dir"
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-path-stream-reference"
@@ -185,4 +188,48 @@ for syscall_name in SYS_OPEN SYS_CLOSE SYS_LSEEK; do
 done
 timeout "$EXECUTION_TIMEOUT" "$candidate" || fail "freestanding pathname-stream fixture failed"
 
-printf 'x86 static crabc-libc fixed pathname stream: PASS\n'
+# The default archive above deliberately has only one fixed path slot. Build
+# the separately selected owned runtime for a same-object musl comparison of
+# adopted descriptors, pathname replacement, update transitions, and lifetime.
+owned_probe="$ROOT_DIR/compat/x86_64/libc_stdio_path_stream_owned_probe.c"
+owned_object="$work_dir/path-stream-owned.o"
+owned_reference="$work_dir/musl-owned-path-stream-reference"
+owned_candidate="$work_dir/crabc-owned-path-stream-candidate"
+owned_sysroot="$work_dir/owned-sysroot"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
+    "$owned_probe" >/dev/null 2>"$work_dir/owned-header-trace"
+for header in errno.h fcntl.h stdio.h string.h unistd.h; do
+    grep -Fq "$ROOT_DIR/include/$header" "$work_dir/owned-header-trace" ||
+        fail "owned fixture did not use the project $header header"
+done
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" \
+    -fno-builtin -fno-stack-protector -c "$owned_probe" -o "$owned_object"
+"$ORACLE_CC" -static -fno-pie -no-pie "$owned_object" -o "$owned_reference"
+python3 -B "$ROOT_DIR/scripts/build_x86_64_owned_sysroot.py" \
+    --output "$owned_sysroot" >"$work_dir/owned-sysroot-build.json"
+( cd "$work_dir"; "$owned_sysroot/bin/crabc-cc" -static \
+    --link-receipt path-stream-owned.crabc-link.json \
+    "$owned_object" -o "$owned_candidate" )
+readelf --program-headers --wide "$owned_candidate" >"$work_dir/owned-candidate-program-headers"
+readelf --dynamic --wide "$owned_candidate" >"$work_dir/owned-candidate-dynamic" || true
+if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \
+    "$work_dir/owned-candidate-program-headers" "$work_dir/owned-candidate-dynamic"; then
+    fail "owned candidate selected a dynamic runtime"
+fi
+for runtime in reference candidate; do
+    if [ "$runtime" = reference ]; then owned_program="$owned_reference"; else owned_program="$owned_candidate"; fi
+    set +e
+    timeout "$EXECUTION_TIMEOUT" "$owned_program" \
+        "$work_dir/path-a" "$work_dir/path-b" "$work_dir/missing" \
+        >"$work_dir/owned-$runtime.stdout" 2>"$work_dir/owned-$runtime.stderr"
+    owned_status=$?
+    set -e
+    printf '%s\n' "$owned_status" >"$work_dir/owned-$runtime.status"
+    [ "$owned_status" -eq 0 ] || fail "$runtime owned pathname-stream fixture exited $owned_status"
+done
+for suffix in stdout stderr status; do
+    cmp "$work_dir/owned-reference.$suffix" "$work_dir/owned-candidate.$suffix" ||
+        fail "owned pathname-stream $suffix differs from pinned musl"
+done
+
+printf 'x86 static crabc-libc fixed and owned pathname streams: PASS; evidence: %s\n' "$work_dir"
