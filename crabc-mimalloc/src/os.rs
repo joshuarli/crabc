@@ -402,14 +402,14 @@ impl MemoryConfig {
             physical_memory_in_kib: detected_physical_memory_in_kib()
                 .unwrap_or(Self::DEFAULT_PHYSICAL_MEMORY_IN_KIB),
             virtual_address_bits: crate::config::MAX_VABITS,
-            has_overcommit: read_small_file(
+            has_overcommit: read_small_file::<32, _>(
                 b"/proc/sys/vm/overcommit_memory\0",
                 overcommit_from_bytes,
             )
             .unwrap_or(true),
             has_partial_free: true,
             has_virtual_reserve: true,
-            has_transparent_huge_pages: read_small_file(
+            has_transparent_huge_pages: read_small_file::<64, _>(
                 b"/sys/kernel/mm/transparent_hugepage/enabled\0",
                 transparent_huge_pages_from_bytes,
             )
@@ -1746,6 +1746,10 @@ impl VmPolicy {
 }
 
 fn detected_physical_memory_in_kib() -> Option<usize> {
+    #[cfg(test)]
+    if let Some(observation) = tests::memory_detection_sysinfo() {
+        return observation.ok().and_then(|(totalram, mem_unit)| physical_memory_in_kib(totalram, mem_unit));
+    }
     let info = crabc_core::system::sysinfo().ok()?;
     physical_memory_in_kib(info.totalram, info.mem_unit)
 }
@@ -1772,13 +1776,39 @@ fn transparent_huge_pages_from_bytes(bytes: &[u8]) -> bool {
     !contains_bytes(bytes, b"[never]")
 }
 
-fn read_small_file<T>(path: &'static [u8], interpret: impl FnOnce(&[u8]) -> T) -> Option<T> {
-    let fd = unsafe { crabc_core::fs::openat_raw(crabc_core::AT_FDCWD, path.as_ptr(), 0, 0) }.ok()?;
-    let mut buffer = [0u8; 64];
-    let read = crabc_core::io::read(fd, &mut buffer);
-    let _ = crabc_core::io::close(fd);
+// Each source detector performs one bounded read and closes once before it
+// interprets the bytes. Read failure retains the caller's fallback; close
+// failure never warrants a retry because Linux may already have reused fd.
+fn read_small_file<const CAPACITY: usize, T>(path: &'static [u8], interpret: impl FnOnce(&[u8]) -> T) -> Option<T> {
+    let fd = memory_detection_open(path).ok()?;
+    let mut buffer = [0u8; CAPACITY];
+    let read = memory_detection_read(fd, &mut buffer);
+    let _ = memory_detection_close(fd);
     let count = read.ok()?;
     if count == 0 { None } else { Some(interpret(&buffer[..count.min(buffer.len())])) }
+}
+
+#[inline]
+fn memory_detection_open(path: &'static [u8]) -> Result<i32> {
+    #[cfg(test)]
+    if let Some(result) = tests::memory_detection_open(path) { return result; }
+    // SAFETY: every detection path is static and NUL terminated, and the
+    // primitive borrows it only for this allocation-free read-only open.
+    unsafe { crabc_core::fs::openat_raw(crabc_core::AT_FDCWD, path.as_ptr(), 0, 0) }
+}
+
+#[inline]
+fn memory_detection_read(fd: i32, buffer: &mut [u8]) -> Result<usize> {
+    #[cfg(test)]
+    if let Some(result) = tests::memory_detection_read(fd, buffer) { return result; }
+    crabc_core::io::read(fd, buffer)
+}
+
+#[inline]
+fn memory_detection_close(fd: i32) -> Result<()> {
+    #[cfg(test)]
+    if let Some(result) = tests::memory_detection_close(fd) { return result; }
+    crabc_core::io::close(fd)
 }
 
 #[inline]
@@ -6549,6 +6579,7 @@ mod tests {
 
     use super::*;
     use crabc_core::Errno;
+
     #[cfg(target_arch = "x86_64")]
     use crate::diagnostic_output::{
         HugePageWarningRoute, OutputCallback, OutputOwner, RuntimeStderrOutput,
@@ -6559,6 +6590,174 @@ mod tests {
     use core::ffi::{c_char, c_void, CStr};
     #[cfg(target_arch = "x86_64")]
     use core::sync::atomic::{AtomicBool, AtomicI64, AtomicPtr, AtomicUsize};
+
+    struct MemoryDetectionProbe {
+        selected: usize,
+        thp: bool,
+        sysinfo: bool,
+        events: std::vec::Vec<&'static str>,
+        descriptor: Option<i32>,
+        replacement: Option<i32>,
+        read_capacity: usize,
+        valid: bool,
+    }
+
+    std::thread_local! {
+        static MEMORY_DETECTION_PROBE: core::cell::RefCell<Option<MemoryDetectionProbe>> =
+            const { core::cell::RefCell::new(None) };
+    }
+
+    pub(super) fn memory_detection_open(path: &'static [u8]) -> Option<Result<i32>> {
+        MEMORY_DETECTION_PROBE.with(|cell| {
+            let mut state = cell.borrow_mut();
+            let probe = state.as_mut()?;
+            let selected_path = if probe.thp {
+                b"/sys/kernel/mm/transparent_hugepage/enabled\0".as_slice()
+            } else { b"/proc/sys/vm/overcommit_memory\0".as_slice() };
+            if probe.sysinfo || path != selected_path { return None; }
+            probe.events.push("open");
+            if probe.selected == 0 { return Some(Err(Errno::ACCESS)); }
+            // SAFETY: this private native witness owns the returned real
+            // descriptor; only its selected close primitive consumes it.
+            let result = unsafe { crabc_core::fs::openat_raw(
+                crabc_core::AT_FDCWD, b"/dev/null\0".as_ptr(), 0, 0,
+            ) };
+            probe.descriptor = result.as_ref().ok().copied();
+            Some(result)
+        })
+    }
+
+    pub(super) fn memory_detection_read(fd: i32, buffer: &mut [u8]) -> Option<Result<usize>> {
+        MEMORY_DETECTION_PROBE.with(|cell| {
+            let mut state = cell.borrow_mut();
+            let probe = state.as_mut()?;
+            if probe.descriptor != Some(fd) { return None; }
+            probe.events.push("read");
+            probe.read_capacity = buffer.len();
+            if probe.selected == 1 || probe.selected == 7 { return Some(Err(
+                if probe.selected == 1 { Errno::INTR } else { Errno::IO }
+            )); }
+            if probe.selected == 2 { return Some(Ok(0)); }
+            if probe.selected == 6 {
+                buffer.fill(b'0');
+                if probe.thp {
+                    let start = buffer.len() - 7;
+                    buffer[start..].copy_from_slice(b"[never]");
+                }
+                return Some(Ok(buffer.len()));
+            }
+            let payload: &[u8] = if probe.thp {
+                if probe.selected == 5 { b"[ne" } else { b"[never]" }
+            } else if probe.selected == 5 { b"1" } else { b"2" };
+            buffer[..payload.len()].copy_from_slice(payload);
+            Some(Ok(payload.len()))
+        })
+    }
+
+    pub(super) fn memory_detection_close(fd: i32) -> Option<Result<()>> {
+        MEMORY_DETECTION_PROBE.with(|cell| {
+            let mut state = cell.borrow_mut();
+            let probe = state.as_mut()?;
+            if probe.descriptor != Some(fd) { return None; }
+            probe.events.push("close");
+            probe.descriptor = None;
+            let result = crabc_core::io::close(fd);
+            probe.valid &= result.is_ok();
+            Some(if probe.selected == 3 && result.is_ok() {
+                // SAFETY: the original descriptor is closed. This witness
+                // retains a new file at that number so an erroneous retry
+                // would consume a distinct owner's live descriptor.
+                let replacement = unsafe { crabc_core::fs::openat_raw(
+                    crabc_core::AT_FDCWD, b"/dev/null\0".as_ptr(), 0, 0,
+                ) }.expect("open a replacement descriptor after kernel close");
+                probe.valid &= replacement == fd;
+                probe.replacement = Some(replacement);
+                Err(Errno::INTR)
+            } else { result })
+        })
+    }
+
+    pub(super) fn memory_detection_sysinfo() -> Option<Result<(u64, u32)>> {
+        MEMORY_DETECTION_PROBE.with(|cell| {
+            let mut state = cell.borrow_mut();
+            let probe = state.as_mut()?;
+            if !probe.sysinfo { return None; }
+            probe.events.push("sysinfo");
+            Some(match probe.selected {
+                0 => Err(Errno::PERM),
+                1 => Err(Errno::IO),
+                2 => Ok((17, 0)),
+                3 => Ok((usize::MAX as u64, 2)),
+                4 => Ok((17, 1024)),
+                5 => Ok((4097, 1)),
+                6 => Ok((0, 1024)),
+                _ => panic!("unknown sysinfo observation"),
+            })
+        })
+    }
+
+    #[test]
+    fn memory_detection_overcommit_uses_source_read_extent_and_one_close() {
+        MEMORY_DETECTION_PROBE.with(|cell| *cell.borrow_mut() = Some(MemoryDetectionProbe {
+            selected: 4, thp: false, sysinfo: false, events: std::vec::Vec::new(), descriptor: None,
+            replacement: None, read_capacity: 0, valid: true,
+        }));
+        let config = MemoryConfig::detect(current_startup());
+        assert!(!config.has_overcommit());
+        let probe = MEMORY_DETECTION_PROBE.with(|cell| cell.borrow_mut().take().unwrap());
+        assert!(probe.valid && probe.descriptor.is_none());
+        assert_eq!(probe.events, ["open", "read", "close"]);
+        assert_eq!(probe.read_capacity, 32, "overcommit reads one source-sized buffer");
+    }
+
+    fn memory_detection_fault_matrix() -> std::vec::Vec<(&'static str, usize, bool)> {
+        let mut relations = std::vec::Vec::new();
+        for thp in [false, true] {
+            for selected in 0..8 {
+                MEMORY_DETECTION_PROBE.with(|cell| *cell.borrow_mut() = Some(MemoryDetectionProbe {
+                    selected, thp, sysinfo: false, events: std::vec::Vec::new(), descriptor: None,
+                    replacement: None, read_capacity: 0, valid: true,
+                }));
+                let config = MemoryConfig::detect(current_startup());
+                let detected = if thp { config.has_transparent_huge_pages() }
+                    else { config.has_overcommit() };
+                let probe = MEMORY_DETECTION_PROBE.with(|cell| cell.borrow_mut().take().unwrap());
+                let expected = if selected <= 2 || selected == 7 { !thp }
+                    else { selected == 5 || (selected == 6 && !thp) };
+                let released = if let Some(replacement) = probe.replacement {
+                    let survived = crabc_core::io::fcntl_getfd(replacement).is_ok();
+                    crabc_core::io::close(replacement).is_ok() && survived
+                } else { probe.descriptor.is_none() };
+                let events: &[&str] = if selected == 0 { &["open"] }
+                    else { &["open", "read", "close"] };
+                let relation = probe.valid && detected == expected && released
+                    && probe.events == events
+                    && probe.read_capacity == if selected == 0 { 0 } else if thp { 64 } else { 32 };
+                relations.push((if thp { "thp" } else { "overcommit" }, selected, relation));
+            }
+        }
+        for selected in 0..7 {
+            MEMORY_DETECTION_PROBE.with(|cell| *cell.borrow_mut() = Some(MemoryDetectionProbe {
+                selected, thp: false, sysinfo: true, events: std::vec::Vec::new(), descriptor: None,
+                replacement: None, read_capacity: 0, valid: true,
+            }));
+            let detected = MemoryConfig::detect(current_startup()).physical_memory_in_kib();
+            let probe = MEMORY_DETECTION_PROBE.with(|cell| cell.borrow_mut().take().unwrap());
+            let expected = if selected < 4 { MemoryConfig::DEFAULT_PHYSICAL_MEMORY_IN_KIB }
+                else if selected == 4 { 17 } else if selected == 5 { 4 } else { 0 };
+            relations.push(("sysinfo", selected, probe.valid && probe.events == ["sysinfo"]
+                && detected == expected && probe.descriptor.is_none()));
+        }
+        relations
+    }
+
+    #[test]
+    fn memory_detection_faults_preserve_fallbacks_and_descriptor_lifetimes() {
+        for (source, selected, relation) in memory_detection_fault_matrix() {
+            assert!(relation, "{source} detection observation {selected} violated its primitive contract");
+        }
+    }
+
 
     /* This deadline exists only in the native test schedule. The production
      * source CAS never waits; a missed helper handoff must fail the witness
@@ -12294,6 +12493,10 @@ mod tests {
             "m2.fault.rust.huge.free_continues_after_failed_page_and_records_retry_bits={}",
             usize::from(continued_free_relation),
         );
+        for (source, selected, relation) in memory_detection_fault_matrix() {
+            std::println!("m2.fault.detection.{source}.{selected}={}", usize::from(relation));
+            assert!(relation, "{source} detection observation {selected} failed");
+        }
         std::println!("CRABC_MI_M2_FAULT_SEAM_INVENTORY_RUST_TRACE_END");
     }
 

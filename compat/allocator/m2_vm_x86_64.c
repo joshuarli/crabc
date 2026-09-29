@@ -161,17 +161,173 @@ static long m2_fault_inventory_mbind_syscall(
     void* start, unsigned long length, unsigned long mode,
     const unsigned long* mask, unsigned long maxnode, unsigned flags);
 #endif
+#if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
+#include <sys/syscall.h>
+#include <sys/sysinfo.h>
+static long m2_detection_open(const char* path, int flags, int mode);
+static long m2_detection_read(int fd, void* buffer, size_t length);
+static long m2_detection_close(int fd);
+static int m2_detection_sysinfo(struct sysinfo* info);
+/* Token dispatch preserves the concrete argument types at each selected
+ * import. All other raw imports retain their ordinary syscall expression;
+ * no variadic interceptor consumes their arguments. */
+#define syscall(number, ...) M2_RAW_##number(__VA_ARGS__)
+#define M2_RAW_SYS_open(path, flags, mode) m2_detection_open(path, flags, mode)
+#define M2_RAW_SYS_read(fd, buffer, length) m2_detection_read(fd, buffer, length)
+#define M2_RAW_SYS_close(fd) m2_detection_close(fd)
+#define M2_RAW_SYS_access(...) syscall(SYS_access, __VA_ARGS__)
+#define M2_RAW_SYS_getcpu(...) syscall(SYS_getcpu, __VA_ARGS__)
+#define M2_RAW_SYS_getrandom(...) syscall(SYS_getrandom, __VA_ARGS__)
+#define sysinfo(info) m2_detection_sysinfo(info)
+#endif
 #undef mi_atomic_cas_strong_acq_rel
 #define mi_atomic_cas_strong_acq_rel(p, expected, desired) \
   m2_large_page_retry_compare_exchange((p), (expected), (desired))
 #if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
 #include CRABC_M2_FAULT_SEAM_PRIM_PROFILE
+#undef syscall
+#undef sysinfo
+#undef M2_RAW_SYS_open
+#undef M2_RAW_SYS_read
+#undef M2_RAW_SYS_close
+#undef M2_RAW_SYS_access
+#undef M2_RAW_SYS_getcpu
+#undef M2_RAW_SYS_getrandom
 #else
 #include "prim/prim.c"
 #endif
 #undef mi_atomic_cas_strong_acq_rel
 #define mi_atomic_cas_strong_acq_rel(p, exp, des) \
   mi_atomic_cas_strong((p), (exp), (des), mi_memory_order(acq_rel), mi_memory_order(acquire))
+
+#if defined(CRABC_M2_FAULT_SEAM_INVENTORY_PROFILE)
+typedef struct memory_detection_probe_s {
+  bool active;
+  bool thp;
+  bool valid;
+  size_t selected;
+  size_t opens;
+  size_t reads;
+  size_t closes;
+  size_t capacity;
+  int descriptor;
+  int replacement;
+  size_t sysinfo_calls;
+} memory_detection_probe_t;
+static memory_detection_probe_t memory_detection_probe = {0};
+
+static long m2_detection_open(const char* path, int flags, int mode) {
+  if (!memory_detection_probe.active) return syscall(SYS_open, path, flags, mode);
+  memory_detection_probe_t* p = &memory_detection_probe;
+  p->opens++;
+  p->valid = p->valid && flags == O_RDONLY && mode == 0 && strcmp(path, p->thp
+      ? "/sys/kernel/mm/transparent_hugepage/enabled"
+      : "/proc/sys/vm/overcommit_memory") == 0;
+  if (p->selected == 0) { errno = EACCES; return -1; }
+  p->descriptor = (int)syscall(SYS_open, "/dev/null", O_RDONLY, 0);
+  p->valid = p->valid && p->descriptor >= 0;
+  return p->descriptor;
+}
+
+static long m2_detection_read(int fd, void* buffer, size_t length) {
+  if (!memory_detection_probe.active) return syscall(SYS_read, fd, buffer, length);
+  memory_detection_probe_t* p = &memory_detection_probe;
+  p->reads++;
+  p->capacity = length;
+  p->valid = p->valid && fd == p->descriptor && p->reads == 1;
+  if (p->selected == 1 || p->selected == 7) {
+    errno = p->selected == 1 ? EINTR : EIO;
+    return -1;
+  }
+  if (p->selected == 2) return 0;
+  if (p->selected == 6) {
+    memset(buffer, '0', length);
+    if (p->thp) memcpy((char*)buffer + length - 7, "[never]", 7);
+    return (long)length;
+  }
+  const char* payload = p->thp
+      ? (p->selected == 5 ? "[ne" : "[never]")
+      : (p->selected == 5 ? "1" : "2");
+  const size_t count = strlen(payload);
+  memcpy(buffer, payload, count);
+  return (long)count;
+}
+
+static long m2_detection_close(int fd) {
+  if (!memory_detection_probe.active) return syscall(SYS_close, fd);
+  memory_detection_probe_t* p = &memory_detection_probe;
+  p->closes++;
+  p->valid = p->valid && fd == p->descriptor && p->closes == 1;
+  const long result = syscall(SYS_close, fd);
+  p->valid = p->valid && result == 0;
+  if (p->selected == 3) {
+    p->replacement = (int)syscall(SYS_open, "/dev/null", O_RDONLY, 0);
+    p->valid = p->valid && p->replacement == fd;
+    errno = EINTR;
+    return -1;
+  }
+  return result;
+}
+
+static int m2_detection_sysinfo(struct sysinfo* info) {
+  if (!memory_detection_probe.active) return sysinfo(info);
+  memory_detection_probe_t* p = &memory_detection_probe;
+  p->sysinfo_calls++;
+  p->valid = p->valid && p->sysinfo_calls == 1;
+  if (p->selected < 2) { errno = p->selected == 0 ? EPERM : EIO; return -1; }
+  memset(info, 0, sizeof(*info));
+  info->totalram = p->selected == 3 ? SIZE_MAX : (p->selected == 5 ? 4097 : 17);
+  info->mem_unit = p->selected == 2 ? 0 : (p->selected == 3 ? 2 : (p->selected == 5 ? 1 : 1024));
+  if (p->selected == 6) info->totalram = 0;
+  return 0;
+}
+
+static bool emit_memory_detection_fault_matrix(void) {
+  bool complete = true;
+  for (size_t thp = 0; thp < 2; thp++) {
+    for (size_t selected = 0; selected < 8; selected++) {
+      memory_detection_probe = (memory_detection_probe_t){
+          .active = true, .thp = thp != 0, .valid = true,
+          .selected = selected, .descriptor = -1, .replacement = -1,
+      };
+      const bool detected = thp ? unix_detect_thp() : unix_detect_overcommit();
+      memory_detection_probe.active = false;
+      const memory_detection_probe_t* p = &memory_detection_probe;
+      const bool expected = selected <= 2 || selected == 7 ? !thp : selected == 5 || (selected == 6 && !thp);
+      bool released = selected == 0;
+      if (selected == 3) {
+        released = fcntl(p->replacement, F_GETFD) >= 0;
+        released = syscall(SYS_close, p->replacement) == 0 && released;
+      } else if (selected != 0) {
+        errno = 0;
+        released = fcntl(p->descriptor, F_GETFD) == -1 && errno == EBADF;
+      }
+      const bool relation = p->valid && detected == expected && released
+          && p->opens == 1 && p->reads == (selected == 0 ? 0 : 1)
+          && p->closes == (selected == 0 ? 0 : 1)
+          && p->capacity == (selected == 0 ? 0 : (thp ? 64 : 32));
+      printf("m2.fault.detection.%s.%zu=%u\n", thp ? "thp" : "overcommit", selected, (unsigned)relation);
+      complete = complete && relation;
+    }
+  }
+  for (size_t selected = 0; selected < 7; selected++) {
+    memory_detection_probe = (memory_detection_probe_t){
+        .active = true, .valid = true, .selected = selected,
+    };
+    size_t physical = 32 * 1024 * 1024;
+    unix_detect_physical_memory(4096, &physical);
+    memory_detection_probe.active = false;
+    const size_t expected = selected < 4 ? 32 * 1024 * 1024
+        : (selected == 4 ? 17 : (selected == 5 ? 4 : 0));
+    const bool relation = memory_detection_probe.valid
+        && memory_detection_probe.sysinfo_calls == 1 && physical == expected
+        && memory_detection_probe.opens == 0 && memory_detection_probe.closes == 0;
+    printf("m2.fault.detection.sysinfo.%zu=%u\n", selected, (unsigned)relation);
+    complete = complete && relation;
+  }
+  return complete;
+}
+#endif
 
 static uintptr_t m2_aligned_hint_fetch_add(
     _Atomic(uintptr_t)* cursor, uintptr_t amount) {
@@ -5086,6 +5242,7 @@ int main(void) {
       record.placement_failure_is_best_effort_and_retains_one_os_huge_owner);
   U("m2.fault.c.huge.free_continues_after_failed_page_and_applies_source_stats",
       record.free_continues_after_failed_page_and_applies_source_stats);
+  if (!emit_memory_detection_fault_matrix()) return 3;
   puts("CRABC_MI_M2_FAULT_SEAM_INVENTORY_C_TRACE_END");
   puts("CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_C_TRACE_BEGIN");
   U("default_mbind", diagnostic.default_mbind);

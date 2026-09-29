@@ -4,9 +4,9 @@
 This is deliberately a reader for one fixed source-bound receipt, not a
 second fault injector.  ``m2_vm_x86_64.c`` keeps the C bodies direct-included
 and ``os::tests::emit_m2_fault_seam_inventory_c_rust_trace`` keeps Rust
-injection behind its existing test-only ``FaultPlan``.  This module names the
+injection behind test-only primitive fault/capture seams.  This module names the
 complete set of source groups the receipt must account for, including the
-metadata receiver that remains unadmitted. The ordinary OS publication profile
+selected metadata and Linux observation receivers. The ordinary OS publication profile
 runs independently while the canonical aggregate still requires both profiles.  A passing receipt is
 therefore bounded evidence for selected OS paths; it does not complete M2.
 """
@@ -28,8 +28,8 @@ from typing import Any, Mapping, Sequence
 
 
 SCHEMA = "crabc-mimalloc-x86_64-fault-seam-inventory-evidence"
-# Format 7 includes the process-owned first-map failure and retry stream.
-FORMAT = 7
+# Format 8 includes the primitive memory-detection failure/lifetime matrix.
+FORMAT = 8
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "compat/allocator/m2_vm_x86_64.c"
 REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/fault-seam-inventory.json"
@@ -251,20 +251,25 @@ FAULT_DIAGNOSTIC_DEFAULT_C_BEGIN = "CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_C_DEFA
 FAULT_DIAGNOSTIC_DEFAULT_C_END = "CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_C_DEFAULT_END"
 FAULT_DIAGNOSTIC_DEFAULT_RUST_BEGIN = "CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_RUST_DEFAULT_BEGIN"
 FAULT_DIAGNOSTIC_DEFAULT_RUST_END = "CRABC_MI_M2_FAULT_DIAGNOSTIC_RELATION_RUST_DEFAULT_END"
+DETECTION_TRACE_KEYS = tuple(
+    f"m2.fault.detection.{source}.{selected}"
+    for source, count in (("overcommit", 8), ("thp", 8), ("sysinfo", 7))
+    for selected in range(count)
+)
 C_TRACE_KEYS = (
     "m2.fault.c.huge.partial_primitive_failure_retains_one_os_huge_owner_and_stats",
     "m2.fault.c.huge.timeout_after_progress_retains_one_os_huge_owner_and_stats",
     "m2.fault.c.huge.noncontiguous_adjustment_rejects_owner_after_source_cleanup",
     "m2.fault.c.huge.placement_failure_is_best_effort_and_retains_one_os_huge_owner",
     "m2.fault.c.huge.free_continues_after_failed_page_and_applies_source_stats",
-)
+) + DETECTION_TRACE_KEYS
 RUST_TRACE_KEYS = (
     "m2.fault.rust.huge.partial_primitive_failure_retains_one_os_huge_owner_and_stats",
     "m2.fault.rust.huge.timeout_after_progress_retains_one_os_huge_owner_and_stats",
     "m2.fault.rust.huge.noncontiguous_adjustment_retains_rejected_cleanup_owner",
     "m2.fault.rust.huge.placement_failure_is_best_effort_and_retains_mapping_owner",
     "m2.fault.rust.huge.free_continues_after_failed_page_and_records_retry_bits",
-)
+) + DETECTION_TRACE_KEYS
 FAULT_DIAGNOSTIC_TRACE_KEYS = (
     "default_mbind", "default_mapping_survives", "default_stats_survive",
     "default_continuation_flush",
@@ -374,6 +379,7 @@ RUST_TRACE_SOURCE_FILES = (
     "crabc-core/src/error.rs", "crabc-core/src/lib.rs", "crabc-core/src/mm.rs",
     "crabc-core/src/mm_x86_64.rs", "crabc-core/src/param.rs", "crabc-core/src/syscall.rs",
     "crabc-core/src/syscall_x86_64.rs", "crabc-core/src/thread.rs",
+    "crabc-core/src/fs.rs", "crabc-core/src/io.rs", "crabc-core/src/system.rs",
     "crabc-mimalloc/Cargo.toml", "crabc-mimalloc/src/config.rs",
     "crabc-mimalloc/src/diagnostic_output.rs", "crabc-mimalloc/src/invariants.rs",
     "crabc-mimalloc/src/lib.rs", "crabc-mimalloc/src/lock.rs",
@@ -403,6 +409,7 @@ NONCLAIMS = (
     "This selected node-62 EPERM receiver proves current-source C/Rust private diagnostic delivery through the stored default sink and custom callback; it does not qualify general FILE short-write/error/buffering parity, recursive output, selected x86 libc startup, or ambient NUMA placement.",
     "This fixed primitive-response profile does not qualify successful hardware huge pages or physical NUMA placement.",
     "The metadata-publication receiver admits only one detached-Theap `_mi_meta_zalloc` under three sustained primitive failures; ordinary OS publication has its own required receiver.",
+    "The Linux detection receiver injects file/sysinfo observations at primitive boundaries and checks real descriptor lifetime; it does not qualify ambient hardware data or other initialization callers.",
     "This receipt leaves the fault-injection component and M2 partial.",
 )
 FRAGMENT_PATH = ROOT / "compat/allocator/m2-fault-seam-inventory-x86_64-v3.5.0.fragment.json"
@@ -426,6 +433,7 @@ SOURCE_ANCHORS = (
     {"member": "src/page-map.c", "start_line": 214, "end_line": 515, "sha256": "b0218dd17e7a38ed3018fcb3f2941f5421fd72afb05c02023ce49bf21734edd3"},
     {"member": "src/arena.c", "start_line": 781, "end_line": 1297, "sha256": "93215720a105d4e9cbc359f17668dbd08aa0271e01064f3c03fa47b7243bd383"},
     {"member": "src/page.c", "start_line": 1048, "end_line": 1117, "sha256": "fd4a63385b988fa96324171916bc0db89af60818c6edf5ca79ba67b724253e6f"},
+    {"member": "src/prim/unix/prim.c", "start_line": 92, "end_line": 214, "sha256": "249dd9551c48b8eec02ddb6e37cfea379862a983ee2536e4e26190b712a3595e"},
 )
 SOURCE_REQUIRED_DEFINITIONS = (
     ("void mi_os_prim_free", "void _mi_os_free_ex", "void _mi_os_free"),
@@ -436,12 +444,13 @@ SOURCE_REQUIRED_DEFINITIONS = (
     ("static bool mi_page_map_init_once", "bool _mi_page_map_register"),
     ("static uint8_t* mi_arenas_page_alloc_fresh_area", "static mi_page_t* mi_arenas_page_alloc_fresh", "static void mi_arenas_page_free_prim"),
     ("static mi_decl_noinline void* mi_malloc_generic_fallback", "void* _mi_malloc_generic"),
+    ("static bool unix_detect_overcommit", "static bool unix_detect_thp", "static void unix_detect_physical_memory"),
 )
 BRANCH_OPEN_CONDITION = "The named source relation is bounded; it does not promote an unselected receiver."
 FAULT_COMPONENT_UNQUALIFIED_MATRIX = [
     {
         "id": "remaining-ambient-and-hardware-fault-receivers",
-        "source_scope": "Ambient option/detection, hardware huge-page success, physical NUMA placement, generic callbacks/statistics, and unselected OS/PageMap callers.",
+        "source_scope": "Ambient option acquisition and unselected detection callers, hardware huge-page success, physical NUMA placement, generic callbacks/statistics, and unselected OS/PageMap callers.",
         "required_evidence": [
             "typed owner-specific fault rows",
             "native current-source receiver evidence",
@@ -452,6 +461,7 @@ FAULT_COMPONENT_REMAINING_CONDITIONS = [
     "The ordinary OS claim/publication and metadata-publication receivers compare faulted requests with recovered requests. The metadata receiver charges each actual lazy PageMap submap by its exact 64 KiB reserved/committed extent; cross-process virtual-address placement can change the number of such submaps. Unselected metadata callers remain unqualified.",
     "The selected node-62 fault diagnostic relation is source-bound and private; general diagnostic receivers, FILE parity, and recursive output remain unqualified.",
     "Ambient hardware huge-page success, physical NUMA placement, unselected callers, and general callback/statistics owners remain unqualified.",
+    "The Linux detection matrix admits only direct overcommit/THP observation and physical-memory sysinfo conversion. Open/read errors retain their source fallback; every successful open closes its exact real descriptor once, including EOF and read/close EINTR, and no close retry may consume a reused descriptor. Process initialization beyond these observations remains unqualified.",
     "The fault-injection component and M2 remain partial.",
 ]
 
@@ -551,6 +561,13 @@ SOURCE_ROWS = (
         "metadata-page-publication", "src/subproc.c:29-37; src/page.c:1048-1117",
         ("meta.rs MetadataEngine::zalloc through single_thread.rs allocate_generic_with_retry",),
         tuple("metadata-publication-" + case for case in METADATA_PUBLICATION_BOUNDARY["cases"]),
+    ),
+    SourceRow(
+        "linux-memory-detection-fault-lifetimes", "src/prim/unix/prim.c:92-214",
+        ("os.rs MemoryConfig detection primitives",),
+        ("linux-detection-open-fallback", "linux-detection-read-fallback-and-close",
+         "linux-detection-close-error-no-retry", "linux-detection-bounded-short-read",
+         "linux-detection-sysinfo-failure-and-conversion"),
     ),
 )
 
@@ -754,6 +771,20 @@ BRANCH_ROWS = (
         "no capability, live metadata owner and PageMap entry intact, reserved restored, zeroed Malloc-provenance retry after recovery",
     ) for index, (case, point) in enumerate(zip(METADATA_PUBLICATION_BOUNDARY["cases"],
         ("Map", "Commit", "Commit")), 1)),
+    *(BranchRow(identifier, "linux-memory-detection-fault-lifetimes", branch,
+        "MemoryConfig raw Linux observation", point, 1, error, owner, outcome)
+      for identifier, branch, point, error, owner, outcome in (
+        ("linux-detection-open-fallback", "unix_detect_overcommit/unix_detect_thp failed read-only open",
+         "Open", "EACCES", "no descriptor exists and each source fallback remains selected", "terminal-fallback"),
+        ("linux-detection-read-fallback-and-close", "unix_detect_overcommit/unix_detect_thp read error and EOF",
+         "Read", "EINTR|EIO|EOF", "one successful open closes the same real descriptor exactly once without a read retry", "terminal-fallback"),
+        ("linux-detection-close-error-no-retry", "unix_detect_overcommit/unix_detect_thp ignored close error",
+         "Close", "EINTR", "valid observed bytes survive close failure and the closed descriptor never acquires a retry owner", "terminal-observation"),
+        ("linux-detection-bounded-short-read", "unix_detect_overcommit/unix_detect_thp one bounded read",
+         "Read", "none", "32-byte overcommit and 64-byte THP extents preserve incomplete bracket and full-buffer semantics", "terminal-observation"),
+        ("linux-detection-sysinfo-failure-and-conversion", "unix_detect_physical_memory failed or malformed sysinfo",
+         "Sysinfo", "EPERM|EIO|zero-unit|overflow", "32-GiB fallback survives errors; exact KiB, floor rounding, and zero observations follow source conversion", "terminal-observation"),
+      )),
 )
 
 UNQUALIFIED_BRANCHES: tuple[dict[str, str], ...] = ()

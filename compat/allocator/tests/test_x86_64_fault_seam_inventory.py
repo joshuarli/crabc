@@ -721,6 +721,7 @@ class FaultInventoryShapeTests(unittest.TestCase):
                 "page-map-completed-dependency",
                 "os-aligned-page-publication",
                 "metadata-page-publication",
+                "linux-memory-detection-fault-lifetimes",
             ],
         )
         self.assertEqual(list(INVENTORY.STOPPED_RECEIVERS), [])
@@ -968,6 +969,17 @@ class FaultInventoryShapeTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(INVENTORY.EvidenceError, "marker count changed"):
                 INVENTORY.validate_report(report)
+
+    def test_report_rejects_failed_detection_lifetime_from_either_raw_stream(self) -> None:
+        for language, stream in (("C", "c_run"), ("Rust", "rust_run")):
+            for key in INVENTORY.DETECTION_TRACE_KEYS:
+                with self.subTest(language=language, observation=key):
+                    with _retained_profile_contract() as (runner, profile):
+                        report = _valid_report(runner, profile)
+                        raw = report["huge_branch_receipt"][stream]
+                        raw["stdout"] = raw["stdout"].replace(f"{key}=1", f"{key}=0")
+                        with self.assertRaisesRegex(INVENTORY.EvidenceError, "relations changed"):
+                            INVENTORY.validate_report(report)
 
     def test_report_rejects_a_c_command_with_an_added_source_file(self) -> None:
         with _retained_profile_contract() as (runner, profile):

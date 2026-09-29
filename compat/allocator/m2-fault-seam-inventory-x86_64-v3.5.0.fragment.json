@@ -166,6 +166,23 @@
           "metadata-publication-fault-receiver",
           "metadata-publication-recovery"
         ]
+      },
+      {
+        "id": "linux-memory-detection-fault-lifetimes",
+        "source_anchor": {
+          "member": "src/prim/unix/prim.c",
+          "start_line": 92,
+          "end_line": 214,
+          "sha256": "249dd9551c48b8eec02ddb6e37cfea379862a983ee2536e4e26190b712a3595e"
+        },
+        "required_definitions": [
+          "static bool unix_detect_overcommit",
+          "static bool unix_detect_thp",
+          "static void unix_detect_physical_memory"
+        ],
+        "evidence_check_ids": [
+          "source-indexed-fault-seam-inventory"
+        ]
       }
     ],
     "branch_matrix": [
@@ -706,12 +723,107 @@
         "missing_conditions": [
           "The named source relation is bounded; it does not promote an unselected receiver."
         ]
+      },
+      {
+        "id": "linux-detection-open-fallback",
+        "disposition": "admitted-current-source-c-rust-relation",
+        "source_scope": "unix_detect_overcommit/unix_detect_thp failed read-only open",
+        "source_anchors": [
+          {
+            "member": "src/prim/unix/prim.c",
+            "start_line": 92,
+            "end_line": 214,
+            "sha256": "249dd9551c48b8eec02ddb6e37cfea379862a983ee2536e4e26190b712a3595e"
+          }
+        ],
+        "evidence_check_ids": [
+          "source-indexed-fault-seam-inventory"
+        ],
+        "missing_conditions": [
+          "The named source relation is bounded; it does not promote an unselected receiver."
+        ]
+      },
+      {
+        "id": "linux-detection-read-fallback-and-close",
+        "disposition": "admitted-current-source-c-rust-relation",
+        "source_scope": "unix_detect_overcommit/unix_detect_thp read error and EOF",
+        "source_anchors": [
+          {
+            "member": "src/prim/unix/prim.c",
+            "start_line": 92,
+            "end_line": 214,
+            "sha256": "249dd9551c48b8eec02ddb6e37cfea379862a983ee2536e4e26190b712a3595e"
+          }
+        ],
+        "evidence_check_ids": [
+          "source-indexed-fault-seam-inventory"
+        ],
+        "missing_conditions": [
+          "The named source relation is bounded; it does not promote an unselected receiver."
+        ]
+      },
+      {
+        "id": "linux-detection-close-error-no-retry",
+        "disposition": "admitted-current-source-c-rust-relation",
+        "source_scope": "unix_detect_overcommit/unix_detect_thp ignored close error",
+        "source_anchors": [
+          {
+            "member": "src/prim/unix/prim.c",
+            "start_line": 92,
+            "end_line": 214,
+            "sha256": "249dd9551c48b8eec02ddb6e37cfea379862a983ee2536e4e26190b712a3595e"
+          }
+        ],
+        "evidence_check_ids": [
+          "source-indexed-fault-seam-inventory"
+        ],
+        "missing_conditions": [
+          "The named source relation is bounded; it does not promote an unselected receiver."
+        ]
+      },
+      {
+        "id": "linux-detection-bounded-short-read",
+        "disposition": "admitted-current-source-c-rust-relation",
+        "source_scope": "unix_detect_overcommit/unix_detect_thp one bounded read",
+        "source_anchors": [
+          {
+            "member": "src/prim/unix/prim.c",
+            "start_line": 92,
+            "end_line": 214,
+            "sha256": "249dd9551c48b8eec02ddb6e37cfea379862a983ee2536e4e26190b712a3595e"
+          }
+        ],
+        "evidence_check_ids": [
+          "source-indexed-fault-seam-inventory"
+        ],
+        "missing_conditions": [
+          "The named source relation is bounded; it does not promote an unselected receiver."
+        ]
+      },
+      {
+        "id": "linux-detection-sysinfo-failure-and-conversion",
+        "disposition": "admitted-current-source-c-rust-relation",
+        "source_scope": "unix_detect_physical_memory failed or malformed sysinfo",
+        "source_anchors": [
+          {
+            "member": "src/prim/unix/prim.c",
+            "start_line": 92,
+            "end_line": 214,
+            "sha256": "249dd9551c48b8eec02ddb6e37cfea379862a983ee2536e4e26190b712a3595e"
+          }
+        ],
+        "evidence_check_ids": [
+          "source-indexed-fault-seam-inventory"
+        ],
+        "missing_conditions": [
+          "The named source relation is bounded; it does not promote an unselected receiver."
+        ]
       }
     ],
     "unqualified_failure_matrix": [
       {
         "id": "remaining-ambient-and-hardware-fault-receivers",
-        "source_scope": "Ambient option/detection, hardware huge-page success, physical NUMA placement, generic callbacks/statistics, and unselected OS/PageMap callers.",
+        "source_scope": "Ambient option acquisition and unselected detection callers, hardware huge-page success, physical NUMA placement, generic callbacks/statistics, and unselected OS/PageMap callers.",
         "required_evidence": [
           "typed owner-specific fault rows",
           "native current-source receiver evidence"
@@ -766,6 +878,7 @@
       "The ordinary OS claim/publication and metadata-publication receivers compare faulted requests with recovered requests. The metadata receiver charges each actual lazy PageMap submap by its exact 64 KiB reserved/committed extent; cross-process virtual-address placement can change the number of such submaps. Unselected metadata callers remain unqualified.",
       "The selected node-62 fault diagnostic relation is source-bound and private; general diagnostic receivers, FILE parity, and recursive output remain unqualified.",
       "Ambient hardware huge-page success, physical NUMA placement, unselected callers, and general callback/statistics owners remain unqualified.",
+      "The Linux detection matrix admits only direct overcommit/THP observation and physical-memory sysinfo conversion. Open/read errors retain their source fallback; every successful open closes its exact real descriptor once, including EOF and read/close EINTR, and no close retry may consume a reused descriptor. Process initialization beyond these observations remains unqualified.",
       "The fault-injection component and M2 remain partial."
     ]
   }
