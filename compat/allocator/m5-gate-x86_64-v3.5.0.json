@@ -153,6 +153,16 @@
       ],
       "scope": "Three foreign producers publish distinct small-page blocks while the original owner repeatedly collects. Pinned C and native Rust agree after the final drain on used count, owned-empty head, and the exact collected block count. A separately selected Loom race composes small-page partial collection with owner exit and an arena reader."
     },
+    "differential:remote-owner-collect-final-release": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m5_remote_owner_collect_evidence.py",
+        "--offline",
+        "--report",
+        "{scratch}/remote-owner-collect-final-release.json"
+      ],
+      "scope": "Three bounded foreign workers publish distinct medium-page clients while one owner client preserves the page. Pinned C checks the owned delayed list and exact block membership before and after owner collection; C and native Rust compare the unchanged used count before collection, the final live count after collection, and one terminal PageMap release."
+    },
     "differential:post-exit-parallel-reclaim": {
       "command": [
         "python3",
@@ -345,6 +355,7 @@
       "evidence": [
         "native:remote-publication",
         "differential:live-owner-small-remote-collect-race",
+        "differential:remote-owner-collect-final-release",
         "differential:post-exit-parallel-reclaim",
         "lifecycle:bounded-laboratory"
       ],

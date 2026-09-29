@@ -2768,6 +2768,75 @@ mod tests {
         // SAFETY: every producer and the owner projection are quiescent.
         unsafe { drop_boxed_test_page(page) };
     }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn x86_64_m5_remote_owner_collect_preserves_pending_and_collected_membership() {
+        const PRODUCERS: usize = 3;
+        const CLIENTS: usize = PRODUCERS + 1;
+        let page = boxed_test_page(CLIENTS as u16, CLIENTS);
+        // SAFETY: the pinned test page and each distinct block remain live
+        // until every producer joins and the sole owner completes collection.
+        let producer = unsafe { Page::remote_free_producer_state_at(page) };
+        let owner = unsafe { Page::remote_free_owner_state_at(page) }
+            .expect("the source test page begins owner-associated");
+        let mut blocks: [TestBlock; CLIENTS] = std::array::from_fn(|_| TestBlock([0; 16]));
+        let addresses: [usize; CLIENTS] = std::array::from_fn(|index| blocks[index].0.as_ptr().addr());
+        let start = Barrier::new(PRODUCERS + 1);
+        thread::scope(|scope| {
+            for block in &mut blocks[..PRODUCERS] {
+                let start = &start;
+                scope.spawn(move || {
+                    start.wait();
+                    // SAFETY: this worker owns only its own block, and the
+                    // page has a live owner and one untouched counted client.
+                    unsafe { push(producer, block.pointer()) }
+                        .expect("the bounded foreign publication succeeds");
+                });
+            }
+            start.wait();
+        });
+
+        let used_before = unsafe { test_page_snapshot(page) }.remote_free_test_used();
+        let pending = unsafe { test_page_snapshot(page) }.remote_free_test_head();
+        let owned_before = is_owned(pending);
+        let mut seen = [0u8; PRODUCERS];
+        let mut pending_count = 0;
+        let mut cursor = thread_free_block(pending);
+        while let Some(block) = NonNull::new(cursor) {
+            pending_count += 1;
+            assert!(pending_count <= PRODUCERS, "the pending list is bounded");
+            for (index, address) in addresses[..PRODUCERS].iter().enumerate() {
+                if block.as_ptr().addr() == *address { seen[index] += 1; }
+            }
+            // SAFETY: joined producers published a complete source link before
+            // their release CAS; the owner has not detached the list yet.
+            cursor = unsafe { block_next_for_page(owner_links(owner), block) };
+        }
+        let pending_chain_valid = seen == [1; PRODUCERS];
+        // SAFETY: only this owner mutates the page's ordinary fields and the
+        // scoped publishers have joined before its source collection.
+        let collected_count = unsafe { collect(owner) }
+            .expect("the owner collects all pending remote blocks");
+        let snapshot = unsafe { test_page_snapshot(page) };
+        let used_after = snapshot.remote_free_test_used();
+        let owned_empty_after = snapshot.remote_free_test_head() == 1;
+        let collected_chain_valid = snapshot.remote_free_test_local_chain_len(CLIENTS + 1)
+            == PRODUCERS;
+        assert_eq!(used_before, CLIENTS);
+        assert!(owned_before && pending_chain_valid);
+        assert_eq!(pending_count, PRODUCERS);
+        assert_eq!(used_after, 1);
+        assert!(owned_empty_after && collected_chain_valid);
+        assert_eq!(collected_count, PRODUCERS);
+        std::println!("CRABC_MI_M5_REMOTE_OWNER_COLLECT_PROTOCOL_BEGIN");
+        std::println!("used_before={used_before}\nowned_before={}\npending_count={pending_count}\npending_chain_valid={}", u8::from(owned_before), u8::from(pending_chain_valid));
+        std::println!("used_after={used_after}\nowned_empty_after={}\ncollected_count={collected_count}\ncollected_chain_valid={}", u8::from(owned_empty_after), u8::from(collected_chain_valid));
+        std::println!("CRABC_MI_M5_REMOTE_OWNER_COLLECT_PROTOCOL_END");
+        // SAFETY: owner and all producer projections are now quiescent; the
+        // untouched client keeps the source page counted through collection.
+        unsafe { drop_boxed_test_page(page) };
+    }
 }
 
 // The optional Loom scheduler is selected only for this lib-test target. Its
