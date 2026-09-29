@@ -3,10 +3,10 @@
  *
  * This raw-bit corpus runs through pinned musl 1.2.6 and one freestanding
  * crabc archive. It calls both same-address names under every MXCSR rounding
- * direction and records input/result bits plus IEEE exception flags around the
- * integer-table, fractional-exp2, pow, overflow/underflow, signed-zero,
- * infinity, quiet-NaN, and signaling-NaN paths. It selects only binary64 GNU
- * decimal exponentiation: binary32 exp10f/pow10f, all long-double variants,
+ * direction and records input/result bits, IEEE exception flags, and errno
+ * around the integer-table, fractional-exp2, pow, overflow/underflow,
+ * signed-zero, infinity, quiet-NaN, and signaling-NaN paths. It selects only
+ * binary64 GNU decimal exponentiation: binary32 exp10f/pow10f, long-double variants,
  * fenv policy, special math, and general libm remain outside this leaf.
  */
 
@@ -17,6 +17,7 @@
 #endif
 
 #include <fenv.h>
+#include <errno.h>
 #include <float.h>
 #include <math.h>
 #include <stddef.h>
@@ -27,11 +28,18 @@
 
 #pragma STDC FENV_ACCESS ON
 
-#define EXP10_F64_CASES 32
+#define EXP10_F64_CASES 36
+#define EXP10_THRESHOLDS 9
+#define EXP10_THRESHOLD_RADIUS 16
+#define EXP10_TABLE_INTEGERS 31
 #define EXP10_ALIASES 2
 #define EXP10_ROUNDING_CASES 4
-#define EXP10_RECORD_WORDS 4
-#define EXP10_RECORD_COUNT (EXP10_F64_CASES * EXP10_ALIASES * EXP10_ROUNDING_CASES)
+#define EXP10_RECORD_WORDS 5
+#define EXP10_INPUTS_PER_ALIAS (EXP10_F64_CASES + \
+	EXP10_THRESHOLDS * (2 * EXP10_THRESHOLD_RADIUS + 1) + \
+	EXP10_TABLE_INTEGERS * 3)
+#define EXP10_RECORD_COUNT \
+	(EXP10_INPUTS_PER_ALIAS * EXP10_ALIASES * EXP10_ROUNDING_CASES)
 #define EXP10_RECORD_STORAGE_WORDS (EXP10_RECORD_COUNT * EXP10_RECORD_WORDS)
 
 typedef double (*double_unary_function)(double);
@@ -40,8 +48,15 @@ typedef double (*double_unary_function)(double);
 static double_unary_function volatile direct_exp10 = (exp10);
 static double_unary_function volatile direct_pow10 = (pow10);
 
-/* The freestanding start object writes these exact 8,192 bytes with syscall. */
+/* The freestanding start object reads this extent before writing. */
 uint64_t crabc_x86_64_math_exp10_records[EXP10_RECORD_STORAGE_WORDS];
+const size_t crabc_x86_64_math_exp10_record_bytes =
+	sizeof(crabc_x86_64_math_exp10_records);
+
+#ifdef CRABC_MATH_EXP10_FREESTANDING
+static int local_errno;
+int *__errno_location(void) { return &local_errno; }
+#endif
 
 /* Keep the record extent with the producer; composed probes do not guess it. */
 const uint64_t *crabc_x86_64_math_exp10_record_data(size_t *length)
@@ -68,6 +83,19 @@ static const uint64_t binary64_inputs[EXP10_F64_CASES] = {
 	UINT64_C(0x7fefffffffffffff), UINT64_C(0xffefffffffffffff),
 	UINT64_C(0x7ff0000000000000), UINT64_C(0xfff0000000000000),
 	UINT64_C(0x7ff8000000000041), UINT64_C(0x7ff0000000000042),
+	UINT64_C(0xfff8000000000041), UINT64_C(0xfff0000000000042),
+	UINT64_C(0x7fffffffffffffff), UINT64_C(0xffffffffffffffff),
+};
+
+/* The source switches among its integer table, exp2 reconstruction, and pow
+ * paths at these values. The range edges exercise directed overflow and
+ * gradual underflow, including their adjacent representable inputs. */
+static const uint64_t binary64_thresholds[EXP10_THRESHOLDS] = {
+	UINT64_C(0x402e000000000000), UINT64_C(0xc02e000000000000),
+	UINT64_C(0x4030000000000000), UINT64_C(0xc030000000000000),
+	UINT64_C(0x40734413509f79ff), UINT64_C(0xc07434e6420f4374),
+	UINT64_C(0xc074400000000000), UINT64_C(0x4073500000000000),
+	UINT64_C(0xc074300000000000),
 };
 
 static const int rounding_modes[EXP10_ROUNDING_CASES] = {
@@ -93,6 +121,7 @@ static int record_binary64(size_t *cursor, int rounding_mode,
 
 	if (fesetround(rounding_mode) != 0 || feclearexcept(FE_ALL_EXCEPT) != 0)
 		return 1;
+	errno = 77;
 	if (alias_index == 0)
 		result = direct_exp10(double_from_bits(input));
 	else
@@ -107,6 +136,22 @@ static int record_binary64(size_t *cursor, int rounding_mode,
 		(uint32_t)fegetround();
 	crabc_x86_64_math_exp10_records[(*cursor)++] =
 		(uint32_t)fetestexcept(FE_ALL_EXCEPT);
+	crabc_x86_64_math_exp10_records[(*cursor)++] = (uint32_t)errno;
+	return 0;
+}
+
+static int record_neighbors(size_t *cursor, int rounding_mode,
+	unsigned int alias_index, uint64_t center, unsigned radius)
+{
+	unsigned offset;
+	int status;
+
+	for (offset = 0; offset <= 2 * radius; offset++) {
+		status = record_binary64(cursor, rounding_mode, alias_index,
+			center - radius + offset);
+		if (status != 0)
+			return status;
+	}
 	return 0;
 }
 
@@ -116,6 +161,8 @@ int crabc_x86_64_math_exp10_probe(void)
 	size_t cursor = 0;
 	size_t input_index;
 	size_t mode_index;
+	size_t threshold_index;
+	int integer;
 	unsigned int alias_index;
 	int status = 0;
 
@@ -131,6 +178,15 @@ int crabc_x86_64_math_exp10_probe(void)
 				input_index++)
 				status = record_binary64(&cursor, rounding_modes[mode_index],
 					alias_index, binary64_inputs[input_index]);
+			for (threshold_index = 0;
+				threshold_index < EXP10_THRESHOLDS && status == 0;
+				threshold_index++)
+				status = record_neighbors(&cursor, rounding_modes[mode_index],
+					alias_index, binary64_thresholds[threshold_index],
+					EXP10_THRESHOLD_RADIUS);
+			for (integer = -15; integer <= 15 && status == 0; integer++)
+				status = record_neighbors(&cursor, rounding_modes[mode_index],
+					alias_index, double_bits((double)integer), 1);
 		}
 	}
 	if (cursor != EXP10_RECORD_STORAGE_WORDS && status == 0)
