@@ -55,13 +55,14 @@ assert_mq_setattr_syscall_path() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mapfile mkdir nm objdump readelf rustup sort wc; do require_tool "$tool"; done
+for tool in ar awk cargo chmod cmp diff grep mapfile mkdir nm objdump readelf rustup sha256sum sort wc; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_mq_setattr_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_x86_mqueue_reference.sh" >/dev/null
 
-work_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-libc-mq-setattr.XXXXXX")"; trap 'rm -rf -- "$work_dir"' EXIT
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-mq-setattr.XXXXXX")"
+chmod 755 "$work_dir"
 cargo_target="$work_dir/cargo-target"; archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 candidate="$work_dir/crabc-static-mq-setattr-candidate"; header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"; archive_relocations="$work_dir/archive-relocations"
@@ -77,7 +78,13 @@ for header in errno.h fcntl.h mqueue.h stddef.h stdint.h sys/syscall.h sys/types
 done
 "$ORACLE_CC" -std=c11 -fno-builtin -fno-stack-protector -I"$ROOT_DIR/include" \
     compat/x86_64/libc_mq_setattr_probe.c -o "$work_dir/oracle"
-"$work_dir/oracle"
+if "$work_dir/oracle" >"$work_dir/oracle.stdout" 2>"$work_dir/oracle.stderr"; then
+    oracle_status=0
+else
+    oracle_status=$?
+fi
+printf '%s\n' "$oracle_status" >"$work_dir/oracle.status"
+[ "$oracle_status" -eq 0 ] || fail "pinned-musl probe failed with status $oracle_status; evidence: $work_dir"
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit libc.a"
@@ -108,5 +115,20 @@ if grep -Eq 'crabc_core|mimalloc|sha_crypt' "$candidate_symbols"; then fail "can
 grep -Eq '[[:space:]]TLS[[:space:]]' "$candidate_program_headers" || fail "candidate lacks TLS"
 assert_fixture_tls_capacity
 assert_mq_setattr_syscall_path
-"$candidate"
-printf 'x86 static crabc-libc mq_setattr: PASS\n'
+if "$candidate" >"$work_dir/candidate.stdout" 2>"$work_dir/candidate.stderr"; then
+    candidate_status=0
+else
+    candidate_status=$?
+fi
+printf '%s\n' "$candidate_status" >"$work_dir/candidate.status"
+(cd "$work_dir" && sha256sum oracle crabc-static-mq-setattr-candidate \
+    oracle.stdout candidate.stdout oracle.stderr candidate.stderr \
+    oracle.status candidate.status >SHA256SUMS)
+[ "$candidate_status" -eq 0 ] || fail "candidate probe failed with status $candidate_status; evidence: $work_dir"
+cmp -s "$work_dir/oracle.stdout" "$work_dir/candidate.stdout" || {
+    diff -u "$work_dir/oracle.stdout" "$work_dir/candidate.stdout" >&2 || true
+    fail "musl/candidate attribute traces differ; evidence: $work_dir"
+}
+cmp -s "$work_dir/oracle.stderr" "$work_dir/candidate.stderr" || fail "musl/candidate stderr differs; evidence: $work_dir"
+cmp -s "$work_dir/oracle.status" "$work_dir/candidate.status" || fail "musl/candidate status differs; evidence: $work_dir"
+printf 'x86 static crabc-libc mq_setattr: PASS (physical differential; evidence: %s)\n' "$work_dir"

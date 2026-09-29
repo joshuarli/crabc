@@ -20,8 +20,9 @@ enum {
     queue_flags = O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC,
 };
 
-_Static_assert(SYS_close == 3 && SYS_getpid == 39 && SYS_mq_open == 240 &&
-    SYS_mq_unlink == 241 && SYS_mq_getsetattr == 245,
+_Static_assert(SYS_write == 1 && SYS_close == 3 && SYS_getpid == 39 &&
+    SYS_mq_open == 240 && SYS_mq_unlink == 241 && SYS_mq_timedsend == 242 &&
+    SYS_mq_getsetattr == 245,
     "x86 mq_setattr fixture syscalls");
 _Static_assert(sizeof(mqd_t) == sizeof(int), "x86 mqd_t is an int descriptor");
 _Static_assert(sizeof(struct mq_attr) == 64 && _Alignof(struct mq_attr) == 8,
@@ -76,6 +77,76 @@ static long raw4(long number, long argument_one, long argument_two,
     return result;
 }
 
+static long raw5(long number, long argument_one, long argument_two,
+    long argument_three, long argument_four, long argument_five)
+{
+    long result;
+    register long register_four __asm__("r10") = argument_four;
+    register long register_five __asm__("r8") = argument_five;
+
+    __asm__ volatile("syscall" : "=a"(result)
+        : "a"(number), "D"(argument_one), "S"(argument_two),
+          "d"(argument_three), "r"(register_four), "r"(register_five)
+        : "rcx", "r11", "memory");
+    return result;
+}
+
+static size_t append_text(char *buffer, size_t length, const char *text)
+{
+    while (*text)
+        buffer[length++] = *text++;
+    return length;
+}
+
+static size_t append_number(char *buffer, size_t length, long value)
+{
+    char digits[24];
+    size_t count = 0;
+    unsigned long magnitude;
+
+    if (value < 0) {
+        buffer[length++] = '-';
+        magnitude = (unsigned long)(-(value + 1)) + 1;
+    } else {
+        magnitude = (unsigned long)value;
+    }
+    do {
+        digits[count++] = (char)('0' + magnitude % 10);
+        magnitude /= 10;
+    } while (magnitude);
+    while (count)
+        buffer[length++] = digits[--count];
+    return length;
+}
+
+/* Each record describes observable status, errno, and the four kernel fields. */
+static int trace_case(const char *name, long status, int error,
+    const struct mq_attr *old, const struct mq_attr *current)
+{
+    char buffer[192];
+    size_t length = append_text(buffer, 0, name);
+    const struct mq_attr *records[2] = { old, current };
+    size_t index;
+
+    buffer[length++] = ' ';
+    length = append_number(buffer, length, status);
+    buffer[length++] = ' ';
+    length = append_number(buffer, length, error);
+    for (index = 0; index < 2; ++index) {
+        const struct mq_attr *record = records[index];
+        buffer[length++] = ' ';
+        length = append_number(buffer, length, record->mq_flags);
+        buffer[length++] = ' ';
+        length = append_number(buffer, length, record->mq_maxmsg);
+        buffer[length++] = ' ';
+        length = append_number(buffer, length, record->mq_msgsize);
+        buffer[length++] = ' ';
+        length = append_number(buffer, length, record->mq_curmsgs);
+    }
+    buffer[length++] = '\n';
+    return raw3(SYS_write, 1, (long)(void *)buffer, length) == (long)length;
+}
+
 static int queue_name(char *name, size_t capacity, long process_id)
 {
     static const char prefix[] = "crabc-x86-mq-setattr-";
@@ -125,7 +196,11 @@ static int attributes_match(const struct mq_attr *attributes, long flags)
 static int query_attributes(int descriptor, struct mq_attr *attributes)
 {
     clear_attributes(attributes);
+#ifndef CRABC_MQ_SETATTR_FREESTANDING
+    return mq_getattr(descriptor, attributes) == 0;
+#else
     return raw3(SYS_mq_getsetattr, descriptor, 0, (long)(void *)attributes) == 0;
+#endif
 }
 
 static int close_descriptor(int descriptor)
@@ -140,8 +215,11 @@ int crabc_x86_64_mq_setattr_probe(void)
     struct mq_attr new_attributes;
     struct mq_attr old_attributes;
     struct mq_attr observed_attributes;
+    const char message = 'x';
     int descriptor = -1;
     int result = 0;
+    int status;
+    int error;
 
     if (queue_name(name, sizeof(name), raw0(SYS_getpid)) != 0)
         return 10;
@@ -154,7 +232,12 @@ int crabc_x86_64_mq_setattr_probe(void)
         result = 11;
         goto cleanup;
     }
-    if (!query_attributes(descriptor, &observed_attributes) ||
+    clear_attributes(&old_attributes);
+    errno = ERANGE;
+    status = query_attributes(descriptor, &observed_attributes) ? 0 : -1;
+    error = errno;
+    if (!trace_case("get-empty", status, error, &old_attributes,
+            &observed_attributes) || status != 0 || error != ERANGE ||
         !attributes_match(&observed_attributes, 0)) {
         result = 12;
         goto cleanup;
@@ -163,31 +246,138 @@ int crabc_x86_64_mq_setattr_probe(void)
     clear_attributes(&new_attributes);
     clear_attributes(&old_attributes);
     new_attributes.mq_flags = O_NONBLOCK;
+    new_attributes.mq_maxmsg = 99;
+    new_attributes.mq_msgsize = 99;
+    new_attributes.mq_curmsgs = 99;
     errno = ERANGE;
-    if (mq_setattr(descriptor, &new_attributes, &old_attributes) != 0 ||
-        errno != ERANGE || !attributes_match(&old_attributes, 0) ||
-        !query_attributes(descriptor, &observed_attributes) ||
+    status = mq_setattr(descriptor, &new_attributes, &old_attributes);
+    error = errno;
+    if (!query_attributes(descriptor, &observed_attributes) ||
+        !trace_case("set-nonblock", status, error, &old_attributes,
+            &observed_attributes) || status != 0 || error != ERANGE ||
+        !attributes_match(&old_attributes, 0) ||
         !attributes_match(&observed_attributes, O_NONBLOCK)) {
         result = 13;
         goto cleanup;
     }
 
-    clear_attributes(&new_attributes);
+    clear_attributes(&old_attributes);
     errno = EDOM;
-    if (mq_setattr(descriptor, &new_attributes, (struct mq_attr *)0) != 0 ||
-        errno != EDOM || !query_attributes(descriptor, &observed_attributes) ||
-        !attributes_match(&observed_attributes, 0)) {
+    status = mq_setattr(descriptor, &new_attributes, &old_attributes);
+    error = errno;
+    if (!query_attributes(descriptor, &observed_attributes) ||
+        !trace_case("set-again", status, error, &old_attributes,
+            &observed_attributes) || status != 0 || error != EDOM ||
+        !attributes_match(&old_attributes, O_NONBLOCK) ||
+        !attributes_match(&observed_attributes, O_NONBLOCK)) {
+        result = 18;
+        goto cleanup;
+    }
+
+    if (raw5(SYS_mq_timedsend, descriptor, (long)(void *)&message,
+            1, 3, 0) != 0) {
+        result = 19;
+        goto cleanup;
+    }
+    clear_attributes(&old_attributes);
+    errno = EDOM;
+    status = query_attributes(descriptor, &observed_attributes) ? 0 : -1;
+    error = errno;
+    if (!trace_case("get-one-message", status, error, &old_attributes,
+            &observed_attributes) || status != 0 || error != EDOM ||
+        observed_attributes.mq_flags != O_NONBLOCK ||
+        observed_attributes.mq_curmsgs != 1) {
+        result = 20;
+        goto cleanup;
+    }
+
+    clear_attributes(&new_attributes);
+    clear_attributes(&old_attributes);
+    errno = EDOM;
+    status = mq_setattr(descriptor, &new_attributes, &old_attributes);
+    error = errno;
+    if (!query_attributes(descriptor, &observed_attributes) ||
+        !trace_case("clear-with-message", status, error, &old_attributes,
+            &observed_attributes) || status != 0 || error != EDOM ||
+        old_attributes.mq_flags != O_NONBLOCK ||
+        old_attributes.mq_curmsgs != 1 ||
+        observed_attributes.mq_flags != 0 ||
+        observed_attributes.mq_curmsgs != 1) {
         result = 14;
         goto cleanup;
     }
 
     clear_attributes(&new_attributes);
+    clear_attributes(&old_attributes);
     new_attributes.mq_flags = 1;
+    old_attributes.mq_flags = 12345;
     errno = E2BIG;
-    if (mq_setattr(descriptor, &new_attributes, &old_attributes) != -1 ||
-        errno != EINVAL || !query_attributes(descriptor, &observed_attributes) ||
-        !attributes_match(&observed_attributes, 0)) {
+    status = mq_setattr(descriptor, &new_attributes, &old_attributes);
+    error = errno;
+    if (!query_attributes(descriptor, &observed_attributes) ||
+        !trace_case("invalid-flags", status, error, &old_attributes,
+            &observed_attributes) || status != -1 || error != EINVAL ||
+        old_attributes.mq_flags != 12345 ||
+        observed_attributes.mq_flags != 0 ||
+        observed_attributes.mq_curmsgs != 1) {
         result = 15;
+        goto cleanup;
+    }
+
+    clear_attributes(&old_attributes);
+    errno = ERANGE;
+    status = mq_setattr(descriptor, (const struct mq_attr *)0,
+        &old_attributes);
+    error = errno;
+    if (!query_attributes(descriptor, &observed_attributes) ||
+        !trace_case("null-new-query", status, error, &old_attributes,
+            &observed_attributes) || status != 0 || error != ERANGE ||
+        old_attributes.mq_flags != 0 || old_attributes.mq_curmsgs != 1) {
+        result = 21;
+        goto cleanup;
+    }
+
+    clear_attributes(&new_attributes);
+    new_attributes.mq_flags = O_NONBLOCK;
+    clear_attributes(&old_attributes);
+    errno = EDOM;
+    status = mq_setattr(descriptor, &new_attributes, (struct mq_attr *)0);
+    error = errno;
+    if (!query_attributes(descriptor, &observed_attributes) ||
+        !trace_case("null-old", status, error, &old_attributes,
+            &observed_attributes) || status != 0 || error != EDOM ||
+        observed_attributes.mq_flags != O_NONBLOCK ||
+        observed_attributes.mq_curmsgs != 1) {
+        result = 22;
+        goto cleanup;
+    }
+
+    new_attributes.mq_flags = 0;
+    old_attributes.mq_flags = 12345;
+    errno = EDOM;
+    status = mq_setattr(descriptor, (const struct mq_attr *)(uintptr_t)1,
+        &old_attributes);
+    error = errno;
+    if (!query_attributes(descriptor, &observed_attributes) ||
+        !trace_case("bad-new-pointer", status, error, &old_attributes,
+            &observed_attributes) || status != -1 || error != EFAULT ||
+        old_attributes.mq_flags != 12345 ||
+        observed_attributes.mq_flags != O_NONBLOCK) {
+        result = 23;
+        goto cleanup;
+    }
+
+    errno = EDOM;
+    status = mq_setattr(descriptor, &new_attributes,
+        (struct mq_attr *)(uintptr_t)1);
+    error = errno;
+    clear_attributes(&old_attributes);
+    if (!query_attributes(descriptor, &observed_attributes) ||
+        !trace_case("bad-old-pointer", status, error, &old_attributes,
+            &observed_attributes) || status != -1 || error != EFAULT ||
+        observed_attributes.mq_flags != 0 ||
+        observed_attributes.mq_curmsgs != 1) {
+        result = 24;
         goto cleanup;
     }
 
@@ -197,8 +387,15 @@ int crabc_x86_64_mq_setattr_probe(void)
     }
     descriptor = -1;
     clear_attributes(&new_attributes);
+    clear_attributes(&old_attributes);
+    old_attributes.mq_flags = 12345;
     errno = EFBIG;
-    if (mq_setattr(-1, &new_attributes, &old_attributes) != -1 || errno != EBADF) {
+    status = mq_setattr(-1, &new_attributes, &old_attributes);
+    error = errno;
+    clear_attributes(&observed_attributes);
+    if (!trace_case("bad-descriptor", status, error, &old_attributes,
+            &observed_attributes) || status != -1 || error != EBADF ||
+        old_attributes.mq_flags != 12345) {
         result = 17;
         goto cleanup;
     }
