@@ -63,6 +63,37 @@ class ObservationsTests(unittest.TestCase):
                 with self.assertRaises(observations.ObservationError):
                     observations.collect('spawn', self.leaf, static_required=True)
 
+    def test_syslog_transport_boundary_and_connection_require_all_raw_cells(self):
+        scenarios = ('normal', 'transport', 'boundary', 'connection',
+                     'worker', 'fork', 'cancellation')
+        for static in (True, False):
+            with self.subTest(static=static):
+                leaf = self.leaf / str(static)
+                leaf.mkdir()
+                prefixes = ['oracle-kernel', 'dynamic-pie-kernel', 'dynamic-pie-direct',
+                            'dynamic-non-pie-kernel', 'dynamic-non-pie-direct']
+                if static:
+                    prefixes += ['static-static-kernel', 'static-static-pie-kernel']
+                for scenario in scenarios:
+                    for prefix in prefixes:
+                        for suffix, raw in (('.stdout', scenario.encode() + b'\n'),
+                                            ('.stderr', b''), ('.status', b'0\n')):
+                            (leaf / (prefix + '-' + scenario + suffix)).write_bytes(raw)
+                result = observations.collect('syslog', leaf, static_required=static)
+                self.assertEqual(tuple(result['scenarios']), scenarios)
+                for scenario in ('transport', 'boundary', 'connection'):
+                    stream = leaf / ('dynamic-pie-direct-' + scenario + '.stdout')
+                    original = stream.read_bytes()
+                    stream.write_bytes(b'changed\n')
+                    with self.assertRaisesRegex(observations.ObservationError, 'raw observation differs'):
+                        observations.collect('syslog', leaf, static_required=static)
+                    stream.write_bytes(original)
+                    status = leaf / ('oracle-kernel-' + scenario + '.status')
+                    status.unlink()
+                    with self.assertRaises(observations.ObservationError):
+                        observations.collect('syslog', leaf, static_required=static)
+                    status.write_bytes(b'0\n')
+
     def test_changed_stream_bytes_are_not_stripped(self):
         self.fixture('spawn')
         (self.leaf / 'pie-kernel.stdout').write_bytes(b'behavior\n\n')

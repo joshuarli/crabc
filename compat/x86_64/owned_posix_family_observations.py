@@ -51,7 +51,7 @@ LAYOUTS = {
     'kernel-residual': Layout('kernel_residual', ('cpucount', 'configuration', 'sysconf-signal-stack', 'sysconf-table', 'hostid-membarrier', 'membarrier-expedited', 'personality', 'prctl', 'scheduler', 'syscall', 'ulimit', 'uts-namespace', 'uts-seccomp', 'all'), 'static-{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}'),
     'global-state-composition': Layout('posix_composition'),
     'linux-control': Layout('linux_control', stderr_suffix='.stdout.stderr', status_suffix='.stdout.status', dynamic='dynamic-{mode}'),
-    'syslog': Layout('syslog', ('normal', 'worker', 'fork', 'cancellation'), 'static-{mode}-kernel-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-kernel-{scenario}'),
+    'syslog': Layout('syslog', ('normal', 'transport', 'boundary', 'connection', 'worker', 'fork', 'cancellation'), 'static-{mode}-kernel-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-kernel-{scenario}'),
     'system-cancellation': Layout('system_cancellation', ('normal', 'failure', 'timeout'), 'static-{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}'),
     'spawn': Layout('dynamic_spawn'),
     'process-trio': Layout('process_trio', ('ordinary', 'errors', 'redirect'), 'static-{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}'),
