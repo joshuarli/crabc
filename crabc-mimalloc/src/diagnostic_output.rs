@@ -11,7 +11,9 @@
 // `src/prim/prim-tls.c:34-38`, the warning gate's C11 fetch-add at
 // `include/mimalloc/atomic.h:88,98`, selected final statistics formatting and process
 // information at `src/stats.c:151-430,568-597`, and its retained/physical
-// process ordering at `src/init.c:633-650` / `src/subproc.c:241-245`.
+// process ordering at `src/init.c:633-650` / `src/subproc.c:241-245`, and
+// request checks at `src/alloc-aligned.c:154-168` /
+// `include/mimalloc/internal.h:604-618`.
 //
 // The C source keeps one 16 KiB delayed byte buffer, one lock, independently
 // published output function/argument pointers, and an AcqRel warning counter.
@@ -1122,6 +1124,10 @@ pub(crate) enum SourceErrorDisposition {
 pub(crate) enum SourceErrorReport {
     /// `mi_find_page`, `src/page.c:951-954` (EOVERFLOW).
     AllocationTooLarge { size: usize },
+    /// An overflowing count product reports its two original operands before
+    /// the public allocation entry returns; release profiles remain quiet.
+    #[cfg(feature = "mi-debug-1")]
+    CountSizeOverflow { count: usize, size: usize },
     /// `_mi_malloc_generic` after its forced-collection retry,
     /// `src/page.c:1061-1064` (ENOMEM).
     OutOfMemory { size: usize },
@@ -1155,6 +1161,8 @@ impl SourceErrorReport {
     /// The `err` argument of the source call.
     pub(crate) const fn error(self) -> Errno {
         match self {
+            #[cfg(feature = "mi-debug-1")]
+            Self::CountSizeOverflow { .. } => Errno::OVERFLOW,
             Self::AllocationTooLarge { .. }
             | Self::AlignedLargeAlignmentOffset { .. }
             | Self::ReservationTooLarge { .. } => Errno::OVERFLOW,
@@ -1179,6 +1187,14 @@ impl SourceErrorReport {
         match self {
             Self::AllocationTooLarge { size } => {
                 message.append(b"allocation request is too large (");
+                decimal(&mut message, size);
+                message.append(b" bytes)\n");
+            }
+            #[cfg(feature = "mi-debug-1")]
+            Self::CountSizeOverflow { count, size } => {
+                message.append(b"allocation request is too large (");
+                decimal(&mut message, count);
+                message.append(b" * ");
                 decimal(&mut message, size);
                 message.append(b" bytes)\n");
             }
@@ -1264,12 +1280,13 @@ impl SourceErrorReport {
     /// The aligned entry's checks that fail before any allocation, in the
     /// source order of `mi_theap_malloc_zero_aligned_at`: the alignment, then
     /// (after a small fast path that cannot serve these requests) the size,
-    /// then a nonzero offset with an OS-page-scale alignment.
+    /// then a nonzero offset with an OS-page-scale alignment. The client
+    /// size limit leaves room for the selected trailing padding record.
     pub(crate) fn aligned_precheck(size: usize, alignment: usize, offset: usize) -> Option<Self> {
         if !crate::size_class::alignment_is_valid(alignment) {
             return Some(Self::BadAlignment { size, alignment, offset });
         }
-        if size > MAX_ALLOC_SIZE {
+        if !crate::size_class::request_size_is_valid(size) {
             return Some(Self::AlignedTooLarge { size, alignment });
         }
         if alignment > crate::config::PAGE_MAX_OVERALLOC_ALIGN && offset != 0 {
@@ -3262,6 +3279,41 @@ mod tests {
             std::println!("delivery.{index}={},{:016x}", deliveries.lengths[index], deliveries.hashes[index]);
         }
         std::println!("CRABC_MI_M7_DELAYED_OUTPUT_SATURATION_TRACE_END");
+    }
+
+    #[cfg(feature = "mi-debug-1")]
+    #[test]
+    fn count_size_overflow_report_preserves_operands_and_source_error() {
+        use super::{SourceErrorDisposition, SourceErrorReport};
+        use crabc_core::Errno;
+
+        for (count, size) in [(usize::MAX, 2), (2, usize::MAX), (usize::MAX, usize::MAX)] {
+            assert!(count.checked_mul(size).is_none());
+            let report = SourceErrorReport::CountSizeOverflow { count, size };
+            assert_eq!(report.error(), Errno::OVERFLOW);
+            assert_eq!(report.default_disposition(), SourceErrorDisposition::DefaultErrno(Errno::NOMEM));
+            let message = report.message();
+            assert_eq!(&message.bytes[..message.length],
+                std::format!("allocation request is too large ({count} * {size} bytes)\n").as_bytes());
+        }
+    }
+
+    #[test]
+    fn aligned_precheck_reserves_padding_before_selecting_offset_errors() {
+        use super::SourceErrorReport;
+
+        let maximum_request = crate::config::MAX_ALLOC_SIZE - crate::config::PADDING_SIZE;
+        let oversized = maximum_request + 1;
+        let alignment = crate::config::PAGE_MAX_OVERALLOC_ALIGN * 2;
+        assert_eq!(SourceErrorReport::aligned_precheck(maximum_request, alignment, 0), None);
+        assert_eq!(SourceErrorReport::aligned_precheck(oversized, alignment, 1),
+            Some(SourceErrorReport::AlignedTooLarge { size: oversized, alignment }));
+        assert_eq!(SourceErrorReport::aligned_precheck(oversized, 3, 1),
+            Some(SourceErrorReport::BadAlignment { size: oversized, alignment: 3, offset: 1 }));
+        assert_eq!(SourceErrorReport::aligned_precheck(maximum_request, alignment, 1),
+            Some(SourceErrorReport::AlignedLargeAlignmentOffset {
+                size: maximum_request, alignment, offset: 1,
+            }));
     }
 
     #[test]
