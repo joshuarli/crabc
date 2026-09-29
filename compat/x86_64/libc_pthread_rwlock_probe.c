@@ -1043,6 +1043,110 @@ static int run_lifecycle_reuse_probe(void)
     return errno == E2BIG ? 0 : 6;
 }
 
+struct worker_owned_round {
+    pthread_rwlock_t rwlock;
+    volatile int phase;
+    volatile int release_writer;
+    volatile int release_reader;
+    int writer_result;
+    int writer_unlock;
+    int reader_result;
+    int reader_unlock;
+    int worker_errno;
+};
+
+/* The worker releases only holds it acquired. Atomic phases make the
+ * contender's observations occur while that worker still owns each hold. */
+static void *worker_owned_main(void *opaque)
+{
+    struct worker_owned_round *round = opaque;
+
+    errno = EACCES;
+    round->writer_result = pthread_rwlock_trywrlock(&round->rwlock);
+    __atomic_store_n(&round->phase, 1, __ATOMIC_RELEASE);
+    while (__atomic_load_n(&round->release_writer, __ATOMIC_ACQUIRE) == 0)
+        ;
+    if (round->writer_result == 0)
+        round->writer_unlock = pthread_rwlock_unlock(&round->rwlock);
+    __atomic_store_n(&round->phase, 2, __ATOMIC_RELEASE);
+
+    round->reader_result = pthread_rwlock_tryrdlock(&round->rwlock);
+    __atomic_store_n(&round->phase, 3, __ATOMIC_RELEASE);
+    while (__atomic_load_n(&round->release_reader, __ATOMIC_ACQUIRE) == 0)
+        ;
+    if (round->reader_result == 0)
+        round->reader_unlock = pthread_rwlock_unlock(&round->rwlock);
+    round->worker_errno = errno;
+    __atomic_store_n(&round->phase, 4, __ATOMIC_RELEASE);
+    return (void *)(uintptr_t)0x776f726b65726f77ULL;
+}
+
+static int run_worker_owned_probe(void)
+{
+    struct worker_owned_round round = {
+        .writer_result = -1, .writer_unlock = -1,
+        .reader_result = -1, .reader_unlock = -1, .worker_errno = -1,
+    };
+    pthread_t thread;
+    void *result = 0;
+    int writer_read = -1, writer_write = -1;
+    int reader_write = -1, reader_read = -1;
+    int after_write = -1;
+    int status = 0;
+
+    errno = E2BIG;
+    if (pthread_rwlock_init(&round.rwlock, 0) != 0)
+        return 1;
+    if (pthread_create(&thread, 0, worker_owned_main, &round) != 0)
+        return 2;
+    if (wait_for_int(&round.phase, 1) != 0)
+        status = 3;
+    if (status == 0 && round.writer_result == 0) {
+        writer_read = pthread_rwlock_tryrdlock(&round.rwlock);
+        if (writer_read == 0)
+            (void)pthread_rwlock_unlock(&round.rwlock);
+        writer_write = pthread_rwlock_trywrlock(&round.rwlock);
+        if (writer_write == 0)
+            (void)pthread_rwlock_unlock(&round.rwlock);
+    }
+    __atomic_store_n(&round.release_writer, 1, __ATOMIC_RELEASE);
+    if (status == 0 && wait_for_int(&round.phase, 3) != 0)
+        status = 4;
+    if (status == 0 && round.reader_result == 0) {
+        reader_write = pthread_rwlock_trywrlock(&round.rwlock);
+        if (reader_write == 0)
+            (void)pthread_rwlock_unlock(&round.rwlock);
+        reader_read = pthread_rwlock_tryrdlock(&round.rwlock);
+        if (reader_read == 0)
+            (void)pthread_rwlock_unlock(&round.rwlock);
+    }
+    __atomic_store_n(&round.release_reader, 1, __ATOMIC_RELEASE);
+    if (pthread_join(thread, &result) != 0 && status == 0)
+        status = 5;
+    if (status == 0) {
+        after_write = pthread_rwlock_trywrlock(&round.rwlock);
+        if (after_write == 0 && pthread_rwlock_unlock(&round.rwlock) != 0)
+            status = 6;
+    }
+    if (status == 0 && (result != (void *)(uintptr_t)0x776f726b65726f77ULL ||
+        round.writer_result != 0 || round.writer_unlock != 0 ||
+        round.reader_result != 0 || round.reader_unlock != 0 ||
+        writer_read != EBUSY || writer_write != EBUSY ||
+        reader_write != EBUSY || reader_read != 0 || after_write != 0 ||
+        round.worker_errno != EACCES || errno != E2BIG))
+        status = 7;
+    if (pthread_rwlock_destroy(&round.rwlock) != 0 && status == 0)
+        status = 8;
+    if (status == 0) {
+        emit_observation("worker-writer-read=", writer_read);
+        emit_observation("worker-writer-write=", writer_write);
+        emit_observation("worker-reader-write=", reader_write);
+        emit_observation("worker-reader-read=", reader_read);
+        emit_observation("worker-release-reuse=", after_write);
+    }
+    return status;
+}
+
 struct canceled_deadline_round {
     pthread_rwlock_t rwlock;
     volatile int ready;
@@ -1157,6 +1261,9 @@ int crabc_x86_64_pthread_rwlock_probe(void)
     status = run_lifecycle_reuse_probe();
     if (status != 0)
         return 365 + status;
+    status = run_worker_owned_probe();
+    if (status != 0)
+        return 380 + status;
     status = run_canceled_deadline_probe();
     if (status != 0)
         return 320 + status;

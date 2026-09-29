@@ -84,7 +84,7 @@ assert_weak_hidden_alias_pair() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort timeout; do
+for tool in ar awk cargo cmp cp diff grep mkdir nm objdump readelf rustup sha256sum sort timeout; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -101,6 +101,8 @@ reference="$work_dir/musl-pthread-rwlock-reference"
 candidate="$work_dir/crabc-static-pthread-rwlock-candidate"
 reference_observations="$work_dir/musl-rwlock-observations"
 candidate_observations="$work_dir/crabc-rwlock-observations"
+reference_errors="$work_dir/musl-rwlock-stderr"
+candidate_errors="$work_dir/crabc-rwlock-stderr"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
@@ -127,7 +129,7 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_pthread_rwlock_probe.c \
     -o "$reference"
-if timeout "$EXECUTION_TIMEOUT" "$reference" >"$reference_observations"; then
+if timeout "$EXECUTION_TIMEOUT" "$reference" >"$reference_observations" 2>"$reference_errors"; then
     :
 else
     reference_status=$?
@@ -258,7 +260,7 @@ for timed in pthread_rwlock_timedrdlock pthread_rwlock_timedwrlock; do
         fail "${timed} lacks its CLOCK_REALTIME deadline read or futex wait"
 done
 
-if timeout "$EXECUTION_TIMEOUT" "$candidate" >"$candidate_observations"; then
+if timeout "$EXECUTION_TIMEOUT" "$candidate" >"$candidate_observations" 2>"$candidate_errors"; then
     :
 else
     candidate_status=$?
@@ -268,9 +270,29 @@ if ! cmp -s "$reference_observations" "$candidate_observations"; then
     diff -u "$reference_observations" "$candidate_observations" >&2 || true
     fail "candidate rwlock observations differ from pinned musl"
 fi
+if ! cmp -s "$reference_errors" "$candidate_errors"; then
+    diff -u "$reference_errors" "$candidate_errors" >&2 || true
+    fail "candidate rwlock stderr differs from pinned musl"
+fi
 evidence_dir="$ROOT_DIR/.work/x86_64/reports/libc-pthread-rwlock"
 mkdir -p "$evidence_dir"
 cp "$reference_observations" "$evidence_dir/musl-observations.txt"
 cp "$candidate_observations" "$evidence_dir/crabc-observations.txt"
+cp "$reference_errors" "$evidence_dir/musl-stderr.txt"
+cp "$candidate_errors" "$evidence_dir/crabc-stderr.txt"
+cp "$reference" "$evidence_dir/musl-reference.elf"
+cp "$candidate" "$evidence_dir/crabc-candidate.elf"
+cp "$archive" "$evidence_dir/crabc-libc.a"
+cp "$header_trace" "$evidence_dir/header-trace.txt"
+(
+    cd "$evidence_dir"
+    sha256sum musl-reference.elf crabc-candidate.elf crabc-libc.a \
+        musl-observations.txt crabc-observations.txt musl-stderr.txt \
+        crabc-stderr.txt header-trace.txt >SHA256SUMS
+)
+sha256sum "$ROOT_DIR/compat/x86_64/libc_pthread_rwlock_probe.c" \
+    "$ROOT_DIR/compat/x86_64/libc_pthread_rwlock_start.S" \
+    "$ROOT_DIR/compat/x86_64/run_libc_pthread_rwlock.sh" \
+    >"$evidence_dir/SOURCE-SHA256SUMS"
 
 printf 'x86 static crabc-libc pthread rwlock: PASS\n'
