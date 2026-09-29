@@ -376,6 +376,11 @@ are not transferable passes for a different revision.
   A failed huge-arena primitive unmap now emits the pinned-C warning before
   accounting; its focused differential matches while all eight M3 components
   pass, with M1/M2 prerequisites still required for the M3 gate.
+  A separate process-owned huge primitive receiver matches 30 pinned-C/Rust
+  fields for one retained 1 GiB prefix after later mapping failures, warning
+  order, accounting, terminal release, and an ordinary later map. Its virtual
+  first-map stand-in does not qualify physical huge-page residency or arena
+  publication; shared M2 registration remains open.
   A source-equivalent shared child mapped-page claim scan reduces linked Rust
   allocator text by 2,256 bytes. Sharing the following child queue insertion
   and outlining cold reabandonment remove another 583 bytes; sharing the
