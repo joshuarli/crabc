@@ -1,9 +1,9 @@
 /* Static crabc-libc x86-64 unnamed POSIX-semaphore compatibility fixture.
  *
  * The same project-header C body first runs against pinned musl, then through
- * a true -nostdlib/-static candidate.  Raw mmap/fork/wait/exit plumbing is
- * fixture-local: it only puts one pshared sem_t in MAP_SHARED storage so the
- * selected sem_wait/sem_post futex handoff crosses a child process.
+ * a true -nostdlib/-static candidate. Raw mmap/fork/wait/exit plumbing is
+ * fixture-local: pshared sem_t records in MAP_SHARED storage exercise a
+ * parent/child handoff and two contending child waiters.
  */
 
 #if !defined(_GNU_SOURCE)
@@ -55,6 +55,7 @@ struct shared_semaphore_state {
     sem_t semaphore;
     volatile int child_seen_waiter;
     volatile int child_posted;
+    int completed;
 };
 
 static long raw_syscall0(long number)
@@ -83,6 +84,16 @@ static long raw_syscall2(long number, long first, long second)
     __asm__ volatile ("syscall"
         : "=a" (result)
         : "a" (number), "D" (first), "S" (second)
+        : "rcx", "r11", "memory");
+    return result;
+}
+
+static long raw_syscall3(long number, long first, long second, long third)
+{
+    long result;
+    __asm__ volatile ("syscall"
+        : "=a" (result)
+        : "a" (number), "D" (first), "S" (second), "d" (third)
         : "rcx", "r11", "memory");
     return result;
 }
@@ -125,6 +136,13 @@ static void raw_exit(int status)
         __asm__ volatile ("pause" : : : "memory");
 }
 
+static void report(const char *message, unsigned long length)
+{
+    (void)raw_syscall3(SYS_write, 1, (long)message, (long)length);
+}
+
+#define REPORT(message) report(message, sizeof(message) - 1)
+
 static int check_unchanged_words(const sem_t *semaphore, int expected)
 {
     int index;
@@ -141,6 +159,7 @@ static int check_local_semantics(void)
     sem_t semaphore;
     int value;
     int index;
+    int words[8];
 
     for (index = 0; index < 8; ++index)
         semaphore.__val[index] = 0x13579bdf;
@@ -150,6 +169,10 @@ static int check_local_semantics(void)
     if (semaphore.__val[0] != 2 || semaphore.__val[1] != 0 ||
         semaphore.__val[2] != 128)
         return 11;
+    for (index = 3; index < 8; ++index) {
+        if (semaphore.__val[index] != 0x13579bdf)
+            return 25;
+    }
     if (sem_getvalue(&semaphore, &value) != 0 || value != 2 || errno != E2BIG)
         return 12;
     if (sem_trywait(&semaphore) != 0 || sem_getvalue(&semaphore, &value) != 0 ||
@@ -165,23 +188,34 @@ static int check_local_semantics(void)
         return 16;
     if (sem_wait(&semaphore) != 0 || errno != EAGAIN)
         return 17;
+    if (sem_destroy(&semaphore) != 0)
+        return 18;
 
     if (sem_init(&semaphore, 0, CRABC_SEMAPHORE_VALUE_MAX) != 0)
-        return 18;
+        return 19;
     errno = E2BIG;
     if (sem_post(&semaphore) != -1 || errno != EOVERFLOW ||
         sem_getvalue(&semaphore, &value) != 0 || value != CRABC_SEMAPHORE_VALUE_MAX)
-        return 19;
+        return 20;
+    for (index = 0; index < 8; ++index)
+        words[index] = semaphore.__val[index];
+    if (sem_destroy(&semaphore) != 0)
+        return 21;
+    for (index = 0; index < 8; ++index) {
+        if (semaphore.__val[index] != words[index])
+            return 22;
+    }
 
     for (index = 0; index < 8; ++index)
         semaphore.__val[index] = 0x2468ace0;
     errno = E2BIG;
     if (sem_init(&semaphore, 0, (unsigned)CRABC_SEMAPHORE_VALUE_MAX + 1U) != -1 ||
         errno != EINVAL || !check_unchanged_words(&semaphore, 0x2468ace0))
-        return 20;
-    if (sem_destroy(&semaphore) != 0 ||
-        !check_unchanged_words(&semaphore, 0x2468ace0))
-        return 21;
+        return 23;
+    if (sem_init(&semaphore, -1, 0) != 0 || semaphore.__val[2] != 0 ||
+        sem_destroy(&semaphore) != 0)
+        return 24;
+    REPORT("local value errno overflow destroy: ok\n");
     return 0;
 }
 
@@ -193,7 +227,6 @@ static int check_pshared_wait_post(void)
     long waited;
     int status = -1;
     int value = -1;
-    unsigned long spins;
 
     mapping = raw_syscall6(SYS_mmap, 0, (long)sizeof(*shared),
         PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
@@ -214,13 +247,8 @@ static int check_pshared_wait_post(void)
         return 32;
     }
     if (child == 0) {
-        for (spins = 0; spins < 10000000UL; ++spins) {
-            if (shared->semaphore.__val[1] > 0)
-                break;
+        while (__atomic_load_n(&shared->semaphore.__val[1], __ATOMIC_ACQUIRE) <= 0)
             (void)raw_syscall0(SYS_sched_yield);
-        }
-        if (shared->semaphore.__val[1] <= 0)
-            raw_exit(101);
         shared->child_seen_waiter = 1;
         if (sem_post(&shared->semaphore) != 0)
             raw_exit(102);
@@ -243,6 +271,70 @@ static int check_pshared_wait_post(void)
         return 35;
     if (raw_syscall2(SYS_munmap, mapping, (long)sizeof(*shared)) != 0)
         return 36;
+    REPORT("shared parent wait child post: ok\n");
+    return 0;
+}
+
+static int check_two_shared_waiters(void)
+{
+    struct shared_semaphore_state *shared;
+    long mapping;
+    long children[2];
+    long waited;
+    int status;
+    int value;
+    int index;
+
+    mapping = raw_syscall6(SYS_mmap, 0, (long)sizeof(*shared),
+        PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    if (raw_is_linux_error(mapping))
+        return 40;
+    shared = (struct shared_semaphore_state *)(uintptr_t)mapping;
+    shared->completed = 0;
+    if (sem_init(&shared->semaphore, 2, 0) != 0 ||
+        shared->semaphore.__val[2] != 0)
+        return 41;
+
+    for (index = 0; index < 2; ++index) {
+        children[index] = raw_syscall0(SYS_fork);
+        if (raw_is_linux_error(children[index]))
+            return 42;
+        if (children[index] == 0) {
+            errno = E2BIG;
+            if (sem_wait(&shared->semaphore) != 0 || errno != EAGAIN)
+                raw_exit(110 + index);
+            (void)__atomic_fetch_add(&shared->completed, 1, __ATOMIC_RELEASE);
+            raw_exit(0);
+        }
+    }
+    while (__atomic_load_n(&shared->semaphore.__val[1], __ATOMIC_ACQUIRE) != 2)
+        (void)raw_syscall0(SYS_sched_yield);
+    errno = E2BIG;
+    if (sem_getvalue(&shared->semaphore, &value) != 0 || value != 0 ||
+        errno != E2BIG)
+        return 43;
+    if (sem_post(&shared->semaphore) != 0 || errno != E2BIG)
+        return 44;
+    while (__atomic_load_n(&shared->completed, __ATOMIC_ACQUIRE) != 1)
+        (void)raw_syscall0(SYS_sched_yield);
+    if (sem_getvalue(&shared->semaphore, &value) != 0 || value != 0 ||
+        sem_trywait(&shared->semaphore) != -1 || errno != EAGAIN)
+        return 45;
+    if (sem_post(&shared->semaphore) != 0)
+        return 46;
+    for (index = 0; index < 2; ++index) {
+        status = -1;
+        waited = raw_syscall4(SYS_wait4, children[index], (long)&status, 0, 0);
+        if (waited != children[index] || status != 0)
+            return 47;
+    }
+    if (__atomic_load_n(&shared->completed, __ATOMIC_ACQUIRE) != 2 ||
+        sem_getvalue(&shared->semaphore, &value) != 0 || value != 0 ||
+        sem_destroy(&shared->semaphore) != 0)
+        return 48;
+    if (raw_syscall2(SYS_munmap, mapping, (long)sizeof(*shared)) != 0)
+        return 49;
+    REPORT("shared two waiters two tokens: ok\n");
     return 0;
 }
 
@@ -252,7 +344,9 @@ int crabc_x86_64_posix_semaphore_probe(void)
 
     if ((result = check_local_semantics()) != 0)
         return result;
-    return check_pshared_wait_post();
+    if ((result = check_pshared_wait_post()) != 0)
+        return result;
+    return check_two_shared_waiters();
 }
 
 #if !defined(CRABC_POSIX_SEMAPHORE_FREESTANDING)

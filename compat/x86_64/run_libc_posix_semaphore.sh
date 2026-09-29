@@ -2,10 +2,8 @@
 # Native Linux/x86-64 selected static unnamed POSIX-semaphore evidence.
 #
 # One project-header C fixture first runs against pinned musl, then through a
-# true -nostdlib/-static crabc-libc archive.  It selects only sem_init,
-# sem_destroy, sem_getvalue, sem_trywait, sem_wait, and sem_post: private and
-# MAP_SHARED pshared value/waiter/futex handoff.  Timed and named semaphores,
-# cancellation, and signal-action restart policy remain outside this artifact.
+# true -nostdlib/-static crabc-libc archive. It selects six unnamed operations
+# and a MAP_SHARED single-waiter and two-waiter token handoff.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -57,13 +55,15 @@ assert_static_closure() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort timeout; do require_tool "$tool"; done
+for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sha256sum sort timeout; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_posix_semaphore_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-posix-semaphore.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-posix-semaphore.XXXXXX")"
+trap 'chmod -R a+rX "$work_dir" 2>/dev/null || true' EXIT
+printf 'x86 static libc POSIX semaphore evidence: %s\n' "$work_dir"
 target_dir="$work_dir/cargo-target"; archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-posix-semaphore-reference"
 candidate="$work_dir/crabc-static-posix-semaphore-candidate"
@@ -83,7 +83,11 @@ for header in errno.h semaphore.h sys/mman.h sys/syscall.h fcntl.h features.h bi
 done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_posix_semaphore_probe.c -o "$reference"
-timeout 10s "$reference" || fail "pinned-musl POSIX-semaphore fixture failed"
+reference_status=0
+timeout 10s "$reference" >"$work_dir/reference.stdout" 2>"$work_dir/reference.stderr" \
+    || reference_status=$?
+printf '%s\n' "$reference_status" >"$work_dir/reference.status"
+[ "$reference_status" -eq 0 ] || fail "pinned-musl POSIX-semaphore fixture failed (status $reference_status)"
 
 # The instruction judge requires the raw futex adapter in the selected
 # wrapper. One codegen unit makes that boundary deterministic.
@@ -144,6 +148,21 @@ grep -Eq 'mov.*\$0xca,%eax|mov.*\$202,%eax' \
 grep -Eq '[[:space:]]syscall([[:space:]]|$)' \
     "$work_dir/sem_wait-disassembly" "$work_dir/sem_post-disassembly" \
     || fail "candidate does not execute a futex syscall"
-timeout 10s "$candidate" || fail "freestanding POSIX-semaphore fixture failed"
+candidate_status=0
+timeout 10s "$candidate" >"$work_dir/candidate.stdout" 2>"$work_dir/candidate.stderr" \
+    || candidate_status=$?
+printf '%s\n' "$candidate_status" >"$work_dir/candidate.status"
+[ "$candidate_status" -eq 0 ] || fail "freestanding POSIX-semaphore fixture failed (status $candidate_status)"
+[ -s "$work_dir/reference.stdout" ] || fail "pinned-musl fixture emitted no observations"
+cmp "$work_dir/reference.status" "$work_dir/candidate.status" \
+    || fail "exit statuses differ"
+cmp "$work_dir/reference.stdout" "$work_dir/candidate.stdout" \
+    || fail "stdout streams differ"
+cmp "$work_dir/reference.stderr" "$work_dir/candidate.stderr" \
+    || fail "stderr streams differ"
+( cd "$work_dir" && sha256sum musl-posix-semaphore-reference \
+    crabc-static-posix-semaphore-candidate reference.stdout candidate.stdout \
+    reference.stderr candidate.stderr reference.status candidate.status ) \
+    >"$work_dir/physical.sha256"
 
 printf 'x86 static libc unnamed POSIX semaphore: PASS\n'
