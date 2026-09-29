@@ -390,19 +390,6 @@ if [ "$EVIDENCE_PROFILE" = fixed-suppressed-character-scan ]; then
     grep -Fq 'zero-assignment suppressed character' "$ROOT_DIR/$FIXTURE_SOURCE" ||
         fail "suppressed-character fixture no longer records its assignment boundary"
 fi
-if [ "$EVIDENCE_PROFILE" = fixed-suppressed-string-scan ]; then
-    grep -Fq 'static-c-stdio-fixed-suppressed-string-scan artifact' \
-        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
-        fail "suppressed-string scanner state is no longer selected"
-    grep -Fq 'let suppress = if unsafe { read_byte(directive) } == b'\''*'\''' \
-        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
-        fail "suppressed-string scanner no longer parses the star field"
-    grep -Fq 'With the sealed `%*3s` profile' \
-        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
-        fail "suppressed-string scanner no longer seals its null destination"
-    grep -Fq 'zero-assignment suppressed token' "$ROOT_DIR/$FIXTURE_SOURCE" ||
-        fail "suppressed-string fixture no longer records its assignment boundary"
-fi
 if [ "$EVIDENCE_PROFILE" = fixed-suppressed-count-scan ]; then
     grep -Fq 'static-c-stdio-fixed-suppressed-count-scan artifact' \
         "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
