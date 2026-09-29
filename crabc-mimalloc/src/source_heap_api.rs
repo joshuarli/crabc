@@ -1038,7 +1038,7 @@ mod heap_visit_tests {
     }
 }
 
-/// `mi_heap_visit_blocks` for a quiescent Heap of the process main subprocess.
+/// `mi_heap_visit_blocks` for a quiescent Heap of a live subprocess.
 /// A null visitor is refused before Heap selection.
 ///
 /// # Safety
@@ -1060,7 +1060,7 @@ pub unsafe fn heap_visit_blocks(
 }
 
 /// Visits only abandoned arena pages and OS-abandoned pages of a quiescent
-/// Heap in the process main subprocess. A null visitor is refused before
+/// Heap in a live subprocess. A null visitor is refused before
 /// selecting the Heap.
 ///
 /// # Safety
@@ -1097,12 +1097,16 @@ unsafe fn heap_visit_blocks_selected(
     let Some(heap) = NonNull::new(selected.cast::<Heap>()) else { return false };
     // SAFETY: caller keeps the Heap live and traversal quiescent.
     let heap_ref = unsafe { heap.as_ref() };
-    if !heap_ref.is_bound_to_main_subprocess(MainSubprocess::global()) {
+    // SAFETY: the caller retains the Heap's owning subprocess through this
+    // traversal; its identity is immutable after Heap initialization.
+    let Some(subprocess) = (unsafe { heap_ref.subprocess_pointer().as_ref() }) else { return false };
+    if !subprocess.is_process_main()
+        && !subprocess.is_registered_child_of(MainSubprocess::global().identity()) {
         return false;
     }
     let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
         .ready_child_subprocess_inputs() else { return false };
-    let registry = MainSubprocess::global().identity().arena_backing().registry();
+    let registry = subprocess.arena_backing().registry();
     for index in 0..registry.count() {
         // SAFETY: the caller excludes arena retirement for this traversal.
         let Some(arena) = (unsafe { registry.arena_at(index) }) else { continue };
