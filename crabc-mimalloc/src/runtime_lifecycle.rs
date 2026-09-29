@@ -510,6 +510,10 @@ pub enum NativePageFreeResult {
     Unavailable,
     InvalidPointer,
     Retained,
+    /// Debug padding rejected the free after reporting its source error; the
+    /// allocation remains owned and the caller may continue as in pinned C.
+    #[cfg(feature = "mi-debug-1")]
+    RejectedCorruption,
 }
 
 /// Result of one private scoped later-worker page-engine round trip.
@@ -11352,7 +11356,7 @@ fn native_allocate_shaped<const ORDINARY_FAST_EIGHT_WORD: bool>(
     // aligned branch accepts only an offset-zero, power-of-two alignment no
     // larger than the request, so that branch may precede the aligned
     // precheck below. Ordinary requests may use regular queue heads too.
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", not(feature = "mi-debug-1")))]
     if let Some(owner) = native_local_fast_owner() {
         let alignment = match shape {
             NativeAllocationShape::Ordinary => Some(None),
@@ -11382,7 +11386,59 @@ fn native_allocate_shaped<const ORDINARY_FAST_EIGHT_WORD: bool>(
             }
         }
     }
-    native_allocate_shaped_slow(request, shape, zero)
+    let result = native_allocate_shaped_slow(request, shape, zero);
+    #[cfg(feature = "mi-debug-1")]
+    {
+        if matches!(shape, NativeAllocationShape::Ordinary) {
+            return debug_initialize_native_allocation(result, request, zero);
+        }
+    }
+    result
+}
+
+/// Finishes the source debug fill and trailing padding record after the page
+/// engine returns a block and releases its owner projection.
+#[cfg(feature = "mi-debug-1")]
+fn debug_initialize_native_allocation(
+    result: NativePageAllocationResult,
+    request: usize,
+    zero: bool,
+) -> NativePageAllocationResult {
+    let NativePageAllocationResult::Allocated(block) = result else {
+        return result;
+    };
+    let Some(page_map) = RUNTIME_PROCESS.page_map_for_live_native_allocation() else {
+        RUNTIME_PROCESS.retain_page_owner();
+        return NativePageAllocationResult::Retained;
+    };
+    // SAFETY: the returned block is live and retains its PageMap entry until
+    // the caller receives it; the lookup yields only immutable geometry.
+    let allocation = match unsafe { page_map.lookup_live_allocation(block) } {
+        Ok(Some(allocation)) => allocation,
+        _ => {
+            RUNTIME_PROCESS.retain_page_owner();
+            return NativePageAllocationResult::Retained;
+        }
+    };
+    let page = allocation.page();
+    let block_size = allocation.block_size();
+    let canonical = allocation.canonical_block();
+    // SAFETY: the live allocation retains its initialized page and key.
+    let page_key = unsafe { crate::types::Page::debug_padding_key_at(page) };
+    let huge = crate::size_class::bin(block_size) == Some(crate::config::BIN_HUGE);
+    drop(allocation);
+    // SAFETY: the just-allocated canonical block is uniquely owned by this
+    // operation, and its page remains live until the result is returned.
+    let initialized = unsafe { crate::alloc::initialize_debug_padding(
+        canonical, block_size, if request == 0 { crate::config::WORD_SIZE } else { request },
+        page.as_ptr().addr(), page_key, zero, huge,
+    ) };
+    if initialized.is_none() {
+        RUNTIME_PROCESS.retain_page_owner();
+        NativePageAllocationResult::Retained
+    } else {
+        NativePageAllocationResult::Allocated(block)
+    }
 }
 
 /// The admitted remainder of [`native_allocate_shaped`] after its local fast
@@ -11665,6 +11721,11 @@ fn native_reallocate_pointer_first_local(
                 RUNTIME_PROCESS.retain_page_owner();
                 NativePageAllocationResult::Retained
             }
+            #[cfg(feature = "mi-debug-1")]
+            NativePageFreeResult::RejectedCorruption => {
+                native_reallocate_release_unpublished_replacement(replacement);
+                NativePageAllocationResult::Retained
+            }
         };
     }
     // SAFETY: the revalidated old block is local to the current child thread.
@@ -11883,6 +11944,11 @@ fn native_reallocate_pointer_first_nonlocal(
             // old source.
             native_reallocate_release_unpublished_replacement(replacement);
             RUNTIME_PROCESS.retain_page_owner();
+            NativePageAllocationResult::Retained
+        }
+        #[cfg(feature = "mi-debug-1")]
+        NativePageFreeResult::RejectedCorruption => {
+            native_reallocate_release_unpublished_replacement(replacement);
             NativePageAllocationResult::Retained
         }
     }
@@ -12233,7 +12299,20 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
     let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
         return NativePageFreeResult::Retained;
     };
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(feature = "mi-debug-1")]
+    {
+        // SAFETY: forwarded exact live-client requirement. The check has no
+        // owner projection and ends before error callbacks may reenter.
+        match unsafe { debug_check_native_free(block) } {
+            Ok(()) => {}
+            Err(Some(report)) => {
+                let _ = crate::process_init::process_error_message(report);
+                return NativePageFreeResult::RejectedCorruption;
+            }
+            Err(None) => return NativePageFreeResult::Retained,
+        }
+    }
+    #[cfg(all(target_arch = "x86_64", not(feature = "mi-debug-1")))]
     if let Some(owner) = native_local_fast_owner() {
         // Pinned `mi_free` reaches the page by `_mi_ptr_page` with no
         // readiness check; an active process's PageMap is published and
@@ -12254,6 +12333,64 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
     }
     // SAFETY: forwarded exact-live-allocation contract.
     unsafe { native_free_pointer_first(block) }
+}
+
+/// Validates source padding before any local or remote free changes a page.
+/// An invalid record leaves the allocation owned and reports after the
+/// PageMap observation has ended.
+///
+/// # Safety
+///
+/// `block` must be an exact live native allocation whose PageMap registration
+/// and page key remain stable through this operation.
+#[cfg(feature = "mi-debug-1")]
+unsafe fn debug_check_native_free(
+    block: core::ptr::NonNull<u8>,
+) -> Result<(), Option<SourceErrorReport>> {
+    let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation().ok_or(None)?;
+    // SAFETY: the caller retains the exact live native allocation.
+    let allocation = unsafe { page_map.lookup_live_allocation(block) }
+        .map_err(|_| None)?.ok_or(None)?;
+    let page = allocation.page();
+    let canonical = allocation.canonical_block();
+    let block_size = allocation.block_size();
+    // SAFETY: the allocation keeps its page and immutable key live.
+    let key = unsafe { crate::types::Page::debug_padding_key_at(page) };
+    let huge = crate::size_class::bin(block_size) == Some(crate::config::BIN_HUGE);
+    // SAFETY: the caller owns the exact live allocation; no other operation
+    // may change the trailing record before this source free check finishes.
+    let result = unsafe { crate::alloc::check_debug_padding_on_free(
+        canonical, block_size, page.as_ptr().addr(), key, huge,
+    ) };
+    if let Ok(usable_size) = result {
+        // SAFETY: the caller still owns this live block. Source debug free
+        // fills at most one MiB before its free-list link replaces word zero.
+        unsafe { core::ptr::write_bytes(canonical.as_ptr(), 0xDF, usable_size.min(crate::config::MIB)) };
+    }
+    drop(allocation);
+    match result {
+        Ok(_) => Ok(()),
+        Err(crate::alloc::DebugPaddingError::DoubleFree) => Err(Some(
+            SourceErrorReport::PaddingDoubleFree {
+                block: canonical.as_ptr().addr(),
+                usable_size: block_size - crate::config::PADDING_SIZE,
+            },
+        )),
+        Err(crate::alloc::DebugPaddingError::CorruptRecord { usable_size }) => Err(Some(
+            SourceErrorReport::PaddingOverflow {
+                block: canonical.as_ptr().addr(),
+                usable_size,
+                wrong_offset: usable_size,
+            },
+        )),
+        Err(crate::alloc::DebugPaddingError::CorruptByte { usable_size, wrong_offset }) => Err(Some(
+            SourceErrorReport::PaddingOverflow {
+                block: canonical.as_ptr().addr(),
+                usable_size,
+                wrong_offset,
+            },
+        )),
+    }
 }
 
 /// The pointer-first remainder of [`native_free`] after its admission and
@@ -12696,7 +12833,21 @@ pub unsafe fn native_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize>
         // registry, scheduler, session, or terminal lifecycle path.
         Ok(None) | Err(_) => return None,
     };
+    #[cfg(not(feature = "mi-debug-1"))]
     let usable_size = allocation.usable_size();
+    #[cfg(feature = "mi-debug-1")]
+    let usable_size = {
+        let page = allocation.page();
+        let canonical = allocation.canonical_block();
+        // SAFETY: this live allocation retains its page and immutable key.
+        let key = unsafe { crate::types::Page::debug_padding_key_at(page) };
+        // SAFETY: the exact live allocation retains the complete block while
+        // the read-only usable-size query decodes its trailing record.
+        let canonical_usable = unsafe { crate::alloc::debug_padding_usable_size(
+            canonical, allocation.block_size(), page.as_ptr().addr(), key,
+        ) };
+        canonical_usable.saturating_sub(block.as_ptr().addr() - canonical.as_ptr().addr())
+    };
     drop(allocation);
     Some(usable_size)
 }

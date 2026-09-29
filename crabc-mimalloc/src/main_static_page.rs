@@ -2984,10 +2984,11 @@ fn first_ordinary_fresh_page_size(config: MemoryConfig, request: usize) -> Optio
     if request <= SMALL_SIZE_MAX {
         return Some(SMALL_PAGE_SIZE);
     }
-    let bin = size_class::bin(request)?;
+    let bin = size_class::bin_for_request(request)?;
     let (block_size, kind) = if bin == BIN_HUGE {
-        let block_size = config.good_alloc_size(request);
-        if block_size == 0 || block_size < request {
+        let padded_request = request.checked_add(crate::config::PADDING_SIZE)?;
+        let block_size = config.good_alloc_size(padded_request);
+        if block_size == 0 || block_size < padded_request {
             return None;
         }
         (block_size, PageKind::Singleton)

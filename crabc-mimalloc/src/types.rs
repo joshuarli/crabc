@@ -3617,6 +3617,10 @@ pub(super) struct PageFreeListState {
     pub(super) area: NonNull<u8>,
     pub(super) area_bytes: usize,
     pub(super) block_size: usize,
+    #[cfg(feature = "mi-debug-1")]
+    pub(super) page_address: usize,
+    #[cfg(feature = "mi-debug-1")]
+    pub(super) page_key: usize,
     pub(super) capacity: NonNull<u16>,
     pub(super) reserved: u16,
     pub(super) free: NonNull<*mut Block>,
@@ -3681,6 +3685,10 @@ pub(super) struct PageLocalCollectState {
     pub(super) area: NonNull<u8>,
     pub(super) area_bytes: usize,
     pub(super) block_size: usize,
+    #[cfg(feature = "mi-debug-1")]
+    pub(super) page_address: usize,
+    #[cfg(feature = "mi-debug-1")]
+    pub(super) page_key: usize,
     pub(super) capacity: u16,
     pub(super) reserved: u16,
     pub(super) free: NonNull<*mut Block>,
@@ -3807,8 +3815,8 @@ const fn empty_page_queues() -> [PageQueue; BIN_COUNT] {
 
 pub(crate) const EMPTY_PAGE_QUEUES: [PageQueue; BIN_COUNT] = empty_page_queues();
 
-// `keys` is absent exactly as in the default C layout: both `MI_PADDING` and
-// `MI_ENCODE_FREELIST` resolve to zero for this profile.
+// Source `keys` exists when padding or encoded free lists are selected. The
+// release image omits it; the debug image carries its single key after memid.
 #[repr(C)]
 pub(crate) struct Page {
     self_: AtomicPtr<Page>,
@@ -3829,6 +3837,8 @@ pub(crate) struct Page {
     next: *mut Page,
     prev: *mut Page,
     memid: MemoryId,
+    #[cfg(feature = "mi-debug-1")]
+    keys: [usize; crate::config::PAGE_KEY_COUNT],
 }
 
 /// Public-source custom commit/decommit hook retained by externally managed
@@ -3905,6 +3915,8 @@ impl Page {
             next: null_mut(),
             prev: null_mut(),
             memid: MemoryId::static_empty(),
+            #[cfg(feature = "mi-debug-1")]
+            keys: [0; crate::config::PAGE_KEY_COUNT],
         }
     }
 
@@ -3940,6 +3952,8 @@ impl Page {
             next: null_mut(),
             prev: null_mut(),
             memid: MemoryId::none(),
+            #[cfg(feature = "mi-debug-1")]
+            keys: [0; crate::config::PAGE_KEY_COUNT],
         }
     }
 
@@ -4180,6 +4194,14 @@ impl Page {
         self.next = null_mut();
         self.prev = null_mut();
         self.memid = memid;
+        #[cfg(feature = "mi-debug-1")]
+        {
+            // SAFETY: fresh-page publication holds the source Theap's random
+            // field exclusively and consumes the next value before the page
+            // or any of its free-list nodes can be observed.
+            self.keys[0] = unsafe { (*theap.as_ptr()).random.next() as usize };
+            debug_assert_ne!(self.keys[0], 0);
+        }
         // SAFETY: forwarded exact Heap identity/lifetime contract.
         unsafe { self.associate_exclusive_owner_with_heap_pointer(theap, heap, owner) };
         // `MI_PAGE_META_IS_ALIGNED` is enabled in the frozen profile. As in
@@ -5116,6 +5138,10 @@ impl Page {
             area,
             area_bytes,
             block_size,
+            #[cfg(feature = "mi-debug-1")]
+            page_address: page.addr(),
+            #[cfg(feature = "mi-debug-1")]
+            page_key: unsafe { (*page).keys[0] },
             capacity,
             reserved,
             // SAFETY: these are initialized owner-only subobjects; the
@@ -5191,6 +5217,10 @@ impl Page {
             area,
             area_bytes,
             block_size,
+            #[cfg(feature = "mi-debug-1")]
+            page_address: page.addr(),
+            #[cfg(feature = "mi-debug-1")]
+            page_key: unsafe { (*page).keys[0] },
             capacity,
             reserved,
             free: unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).free)) },
@@ -5353,6 +5383,10 @@ impl Page {
             area,
             area_bytes,
             block_size,
+            #[cfg(feature = "mi-debug-1")]
+            page_address: page.addr(),
+            #[cfg(feature = "mi-debug-1")]
+            page_key: unsafe { (*page).keys[0] },
             // SAFETY: these raw pointers name only the caller-owned ordinary
             // subobjects and manufacture no whole-page reference.
             capacity: unsafe {
@@ -5368,6 +5402,21 @@ impl Page {
                 NonNull::new_unchecked(core::ptr::addr_of_mut!((*page).free_is_zero))
             },
         }
+    }
+
+    /// Reads the immutable key installed before a debug page's first free-list
+    /// extension. Live allocations retain the page and its key until free.
+    ///
+    /// # Safety
+    ///
+    /// `page` must name initialized live page metadata kept stable through
+    /// this scalar read. The caller must not permit page retirement or reuse.
+    #[cfg(feature = "mi-debug-1")]
+    #[inline]
+    pub(crate) unsafe fn debug_padding_key_at(page: NonNull<Self>) -> usize {
+        // SAFETY: the caller retains the initialized source page through the
+        // short immutable field observation.
+        unsafe { core::ptr::read(core::ptr::addr_of!((*page.as_ptr()).keys[0])) }
     }
 
     #[cfg(test)]
@@ -7452,16 +7501,25 @@ const _: [(); 648] = [(); size_of::<Arena>()];
 const _: [(); 8] = [(); align_of::<Arena>()];
 const _: [(); 8] = [(); size_of::<Block>()];
 const _: [(); 32] = [(); size_of::<PageQueue>()];
+#[cfg(not(feature = "mi-debug-1"))]
 const _: [(); 128] = [(); size_of::<Page>()];
+#[cfg(feature = "mi-debug-1")]
+const _: [(); 136] = [(); size_of::<Page>()];
 const _: [(); 8] = [(); align_of::<Page>()];
 // `Heap` stops at the source `memid` field and uses allocator-private futex
 // locks in place of pthread ABI objects. Its size is intentionally not a C
 // layout assertion.
 const _: [(); 136] = [(); size_of::<TheapRandomImage>()];
 const _: [(); 4] = [(); align_of::<TheapRandomImage>()];
+#[cfg(not(feature = "mi-debug-1"))]
 const _: [(); 8104] = [(); size_of::<Theap>()];
+#[cfg(feature = "mi-debug-1")]
+const _: [(); 8112] = [(); size_of::<Theap>()];
 const _: [(); 8] = [(); align_of::<Theap>()];
+#[cfg(not(feature = "mi-debug-1"))]
 const _: [(); 129] = [(); PAGES_DIRECT];
+#[cfg(feature = "mi-debug-1")]
+const _: [(); 130] = [(); PAGES_DIRECT];
 const _: [(); 74] = [(); BIN_FULL];
 
 #[cfg(test)]
@@ -9451,7 +9509,7 @@ mod tests {
         assert_eq!(offset_of!(PageQueue, last), 8);
         assert_eq!(offset_of!(PageQueue, count), 16);
         assert_eq!(offset_of!(PageQueue, block_size), 24);
-        assert_eq!(size_of::<Page>(), 128);
+        assert_eq!(size_of::<Page>(), if cfg!(feature = "mi-debug-1") { 136 } else { 128 });
         assert_eq!(align_of::<Page>(), 8);
         assert_eq!(offset_of!(Page, self_), 0);
         assert_eq!(offset_of!(Page, xthread_id), 8);
@@ -9480,8 +9538,8 @@ mod tests {
         const STORAGE_WORDS: usize = (PAGE_OFFSET + 2 * BLOCK_SIZE) / size_of::<usize>();
         const LIVE_THREAD_ID: usize = 12;
 
-        assert_eq!(PAGE_OFFSET, 128);
-        assert_eq!(STORAGE_WORDS * size_of::<usize>(), 256);
+        assert_eq!(PAGE_OFFSET, if cfg!(feature = "mi-debug-1") { 136 } else { 128 });
+        assert_eq!(STORAGE_WORDS * size_of::<usize>(), PAGE_OFFSET + 2 * BLOCK_SIZE);
 
         // This address-stable backing contains one source-stride `Page`
         // followed by its two-block area. It adds no metadata wrapper or
@@ -9497,7 +9555,7 @@ mod tests {
             core::sync::atomic::Ordering::Relaxed,
         );
         // SAFETY: the word-aligned storage is large enough for the complete
-        // 128-byte `Page`; it is uninitialized and written exactly once.
+        // source-sized `Page`; it is uninitialized and written exactly once.
         unsafe { page_pointer.write(initial) };
         // SAFETY: `page_pointer` comes from the live backing allocation and
         // cannot be null.
@@ -9769,12 +9827,13 @@ mod tests {
         assert_eq!(size_of::<TheapRandomImage>(), 136);
         assert_eq!(offset_of!(Theap, pages_free_direct), 0);
         assert_eq!(offset_of!(Theap, tld), PAGES_DIRECT * size_of::<*mut Page>());
-        assert_eq!(offset_of!(Theap, heap), 1_040);
-        assert_eq!(offset_of!(Theap, random), 1_080);
-        assert_eq!(offset_of!(Theap, pages), 1_312);
-        assert_eq!(offset_of!(Theap, memid), 3_712);
-        assert_eq!(offset_of!(Theap, statistics), 3_736);
-        assert_eq!(size_of::<Theap>(), 8_104);
+        let direct_offset = if cfg!(feature = "mi-debug-1") { 8 } else { 0 };
+        assert_eq!(offset_of!(Theap, heap), 1_040 + direct_offset);
+        assert_eq!(offset_of!(Theap, random), 1_080 + direct_offset);
+        assert_eq!(offset_of!(Theap, pages), 1_312 + direct_offset);
+        assert_eq!(offset_of!(Theap, memid), 3_712 + direct_offset);
+        assert_eq!(offset_of!(Theap, statistics), 3_736 + direct_offset);
+        assert_eq!(size_of::<Theap>(), 8_104 + direct_offset);
         assert_eq!(align_of::<Theap>(), 8);
     }
 

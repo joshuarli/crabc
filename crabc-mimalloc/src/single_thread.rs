@@ -165,7 +165,7 @@ use crate::main_theap::{
 };
 use crate::config::{
     ARENA_BIN_COUNT, ARENA_SLICE_SIZE, BIN_COUNT, BIN_FULL, BIN_HUGE, LARGE_MAX_OBJ_SIZE,
-    MAX_ALIGN_SIZE, MAX_ALLOC_SIZE, MEDIUM_MAX_OBJ_SIZE, PAGES_DIRECT, PAGE_MAX_OVERALLOC_ALIGN,
+    MAX_ALIGN_SIZE, MAX_ALLOC_SIZE, MEDIUM_MAX_OBJ_SIZE, PADDING_SIZE, PAGES_DIRECT, PAGE_MAX_OVERALLOC_ALIGN,
     SMALL_MAX_OBJ_SIZE, SMALL_SIZE_MAX, WORD_SIZE,
 };
 use crate::free_list::{FreeListError, LocalFreeList};
@@ -20574,7 +20574,7 @@ fn mapped_regular_adoption_request_geometry(
     if !size_class::request_size_is_valid(request) {
         return None;
     }
-    let bin = size_class::bin(request)?;
+    let bin = size_class::bin_for_request(request)?;
     if bin >= ARENA_BIN_COUNT || bin == BIN_FULL || bin == BIN_HUGE {
         return None;
     }
@@ -38061,10 +38061,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         zero: bool,
         completion: Option<DeferredFreeAlignedCompletion>,
     ) -> DeferredFreeAllocationPhase {
-        let Some(bin) = size_class::bin(request) else {
+        let Some(bin) = size_class::bin_for_request(request) else {
             return DeferredFreeAllocationPhase::Complete(None);
         };
-        let direct_index = match invariants::word_count(request) {
+        let direct_index = match request.checked_add(PADDING_SIZE).and_then(invariants::word_count) {
             Some(index) if index < PAGES_DIRECT => index,
             _ => return DeferredFreeAllocationPhase::Complete(None),
         };
@@ -38106,10 +38106,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         request: usize,
         zero: bool,
     ) -> Option<GenericAllocationContinuation> {
-        let bin = size_class::bin(request)?;
+        let bin = size_class::bin_for_request(request)?;
         if bin == BIN_HUGE {
-            let block_size = self.page_map.memory_config().good_alloc_size(request);
-            if block_size == 0 || block_size < request {
+            let padded_request = request.checked_add(PADDING_SIZE)?;
+            let block_size = self.page_map.memory_config().good_alloc_size(padded_request);
+            if block_size == 0 || block_size < padded_request {
                 return None;
             }
             return Some(GenericAllocationContinuation {
@@ -38120,9 +38121,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 zero,
             });
         }
-        // With no per-block padding, regular `mi_good_size` is exactly the
-        // selected queue's block size. The huge branch above alone needs an
-        // OS page-size calculation.
+        // A regular block's padded size is exactly the selected queue's
+        // block size. The huge branch above needs an OS page-size calculation.
         let block_size = size_class::bin_size(bin)?;
         let kind = size_class::page_kind_for_block_size(block_size)?;
         if kind == PageKind::Singleton {
@@ -38280,8 +38280,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     }
 
     fn allocate_small_direct(&mut self, request: usize, zero: bool) -> Option<NonNull<u8>> {
-        let bin = size_class::bin(request)?;
-        let direct_index = invariants::word_count(request)?;
+        let bin = size_class::bin_for_request(request)?;
+        let direct_index = invariants::word_count(request.checked_add(PADDING_SIZE)?)?;
         if direct_index >= PAGES_DIRECT {
             return None;
         }
@@ -38334,10 +38334,11 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// after forced whole-Theap page collection, exactly at the generic OOM
     /// boundary; a non-huge queue is otherwise searched by its source bin.
     fn allocate_generic(&mut self, request: usize, zero: bool) -> Option<NonNull<u8>> {
-        let bin = size_class::bin(request)?;
+        let bin = size_class::bin_for_request(request)?;
         if bin == BIN_HUGE {
-            let block_size = self.page_map.memory_config().good_alloc_size(request);
-            if block_size == 0 || block_size < request {
+            let padded_request = request.checked_add(PADDING_SIZE)?;
+            let block_size = self.page_map.memory_config().good_alloc_size(padded_request);
+            if block_size == 0 || block_size < padded_request {
                 return None;
             }
             return self.allocate_generic_with_retry(
@@ -40165,7 +40166,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         };
         #[cfg(feature = "mi-stat-1")]
         if block_size <= LARGE_MAX_OBJ_SIZE {
-            self.session.theap().record_malloc_normal_freed(block_size);
+            self.session.theap().record_malloc_normal_freed(block_size - PADDING_SIZE);
             #[cfg(feature = "mi-stat-2")]
             self.session.theap().record_malloc_normal_level_two_freed(
                 size_class::bin_for_regular_page_block_size(block_size),
@@ -41210,7 +41211,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // throughout the pop, and its immutable block size remains live.
             let block_size = unsafe { page.as_ref().block_size() };
             if block_size <= LARGE_MAX_OBJ_SIZE {
-                self.session.theap().record_malloc_normal_allocated(block_size);
+                self.session.theap().record_malloc_normal_allocated(block_size - PADDING_SIZE);
                 #[cfg(feature = "mi-stat-2")]
                 self.session.theap().record_malloc_normal_level_two_allocated(
                     request, size_class::bin_for_regular_page_block_size(block_size),

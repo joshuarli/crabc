@@ -13,8 +13,8 @@
 // zeroing branch of `mi_page_malloc_zero`), and `src/free.c:28-50`
 // (`mi_free_block_local`).
 //
-// This is the frozen normal-release path only: `MI_ENCODE_FREELIST == 0` and
-// `MI_PADDING == 0`. This module neither detaches `xthread_free` nor performs
+// The default path uses direct links; the debug profile uses the source page
+// key to encode them. This module neither detaches `xthread_free` nor performs
 // queue/theap/allocation policy. Its bounded raw collection transfer supports
 // both source force modes after `remote_free` has detached the current live
 // producer-list snapshot. A concurrent producer may publish a later atomic
@@ -38,6 +38,23 @@ const MAX_EXTEND_SIZE: usize = 8 * 1024;
 const MIN_EXTEND: usize = 1;
 const LINK_SIZE: usize = size_of::<*mut u8>();
 const LINK_ALIGN: usize = align_of::<*mut u8>();
+
+#[cfg(feature = "mi-debug-1")]
+#[inline]
+fn encode_page_link(page_address: usize, page_key: usize, next_address: usize) -> usize {
+    let address = if next_address == 0 { page_address } else { next_address };
+    (address ^ page_key.rotate_right(13))
+        .rotate_left(page_key as u32)
+        .wrapping_add(page_key)
+}
+
+#[cfg(feature = "mi-debug-1")]
+#[inline]
+fn decode_page_link(page_address: usize, page_key: usize, encoded: usize) -> usize {
+    let address = encoded.wrapping_sub(page_key)
+        .rotate_right(page_key as u32) ^ page_key.rotate_right(13);
+    if address == page_address { 0 } else { address }
+}
 
 /// An invalid state at the scalar, single-threaded free-list boundary.
 ///
@@ -75,6 +92,10 @@ pub(crate) struct LocalFreeList {
     base: NonNull<u8>,
     bytes: usize,
     block_size: usize,
+    #[cfg(feature = "mi-debug-1")]
+    page_address: usize,
+    #[cfg(feature = "mi-debug-1")]
+    page_key: usize,
     capacity: NonNull<u16>,
     reserved: u16,
     free: NonNull<*mut Block>,
@@ -132,6 +153,10 @@ impl LocalFreeList {
             base,
             bytes: required,
             block_size,
+            #[cfg(feature = "mi-debug-1")]
+            page_address: base.as_ptr().addr(),
+            #[cfg(feature = "mi-debug-1")]
+            page_key: 0,
             capacity: NonNull::from(capacity),
             reserved,
             free: NonNull::from(free),
@@ -160,6 +185,10 @@ impl LocalFreeList {
             area,
             area_bytes,
             block_size,
+            #[cfg(feature = "mi-debug-1")]
+            page_address,
+            #[cfg(feature = "mi-debug-1")]
+            page_key,
             capacity,
             reserved,
             free,
@@ -194,6 +223,10 @@ impl LocalFreeList {
             base: area,
             bytes: required,
             block_size,
+            #[cfg(feature = "mi-debug-1")]
+            page_address,
+            #[cfg(feature = "mi-debug-1")]
+            page_key,
             capacity,
             reserved,
             free,
@@ -370,14 +403,14 @@ impl LocalFreeList {
             let next = self.block_at(index + 1)?;
             // SAFETY: `block` and `next` are distinct aligned block starts
             // within the uniquely owned backing allocation. This writes the
-            // default-profile direct pointer link without an integer roundtrip.
-            unsafe { Self::write_next(block, next.as_ptr()) };
+            // selected profile's source free-list link.
+            unsafe { self.write_next(block, next.as_ptr()) };
             index += 1;
         }
         // SAFETY: `last` is the final initialized block. `free` is null by
         // the checked extension precondition, exactly as the scalar source
         // path's final `mi_block_set_next` write.
-        unsafe { Self::write_next(last, self.free()) };
+        unsafe { self.write_next(last, self.free()) };
         self.set_free(first.as_ptr());
         let next_capacity = capacity
             .checked_add(extend)
@@ -407,7 +440,7 @@ impl LocalFreeList {
         // SAFETY: `block` was checked as the current owner-list head and this
         // operation owns its link word. Clearing that link is the source's
         // `block->next = 0` non-leak transition before client use.
-        unsafe { Self::write_next(block, ptr::null_mut()) };
+        unsafe { ptr::write(block.as_ptr().cast::<usize>(), 0) };
         self.set_free(next);
         // SAFETY: this owner has exclusive access to the ordinary field.
         unsafe { ptr::write(self.used.as_ptr(), used + 1) };
@@ -455,7 +488,7 @@ impl LocalFreeList {
         // SAFETY: `block` is a validated initialized block that the caller
         // owns uniquely as an allocation; `local_free` is null or a validated
         // link target in the same backing allocation.
-        unsafe { Self::write_next(block, self.local_free()) };
+        unsafe { self.write_next(block, self.local_free()) };
         // SAFETY: this owner has exclusive access to the ordinary field.
         unsafe { ptr::write(self.used.as_ptr(), used - 1) };
         self.set_local_free(block.as_ptr());
@@ -532,7 +565,7 @@ impl LocalFreeList {
         // SAFETY: `tail` is the terminal node of the validated local list and
         // `free` is the validated immediate head. The source force path links
         // precisely these two owned list fragments.
-        unsafe { Self::write_next(tail, free.as_ptr()) };
+        unsafe { self.write_next(tail, free.as_ptr()) };
         self.set_free(local_free.as_ptr());
         self.set_local_free(ptr::null_mut());
         // SAFETY: this owner has exclusive access to the ordinary field.
@@ -609,7 +642,7 @@ impl LocalFreeList {
         // SAFETY: `block` is an initialized free-list node. Every link is
         // written by `write_next` before it is read, and no typed reference is
         // formed over caller-owned allocation memory.
-        let next = unsafe { Self::read_next(block) };
+        let next = unsafe { self.read_next(block) };
         if let Some(next) = NonNull::new(next) {
             self.validate_initialized_block(next)
                 .map_err(|_| FreeListError::CorruptFreeList)?;
@@ -634,18 +667,37 @@ impl LocalFreeList {
     }
 
     #[inline]
-    unsafe fn read_next(block: NonNull<u8>) -> *mut u8 {
+    unsafe fn read_next(&self, block: NonNull<u8>) -> *mut u8 {
         // SAFETY: the caller proves `block` points at one initialized link
         // word in a live, aligned, caller-owned block allocation.
-        unsafe { ptr::read(block.as_ptr().cast::<*mut u8>()) }
+        #[cfg(not(feature = "mi-debug-1"))]
+        return unsafe { ptr::read(block.as_ptr().cast::<*mut u8>()) };
+        #[cfg(feature = "mi-debug-1")]
+        {
+            // SAFETY: the node's first word is the source encoded link.
+            let encoded = unsafe { ptr::read(block.as_ptr().cast::<usize>()) };
+            let address = decode_page_link(self.page_address, self.page_key, encoded);
+            if address == 0 {
+                ptr::null_mut()
+            } else {
+                block.as_ptr().map_addr(|_| address)
+            }
+        }
     }
 
     #[inline]
-    unsafe fn write_next(block: NonNull<u8>, next: *mut u8) {
+    unsafe fn write_next(&self, block: NonNull<u8>, next: *mut u8) {
         // SAFETY: the caller proves `block` points at one writable, aligned
-        // link word in a live, uniquely owned page block. Direct pointer
-        // storage is the exact `MI_ENCODE_FREELIST == 0` representation.
+        // link word in a live, uniquely owned page block.
+        #[cfg(not(feature = "mi-debug-1"))]
         unsafe { ptr::write(block.as_ptr().cast::<*mut u8>(), next) };
+        #[cfg(feature = "mi-debug-1")]
+        {
+            let encoded = encode_page_link(self.page_address, self.page_key, next.addr());
+            // SAFETY: source `mi_block_set_next` stores this encoded scalar in
+            // the same first word that the direct profile uses for a pointer.
+            unsafe { ptr::write(block.as_ptr().cast::<usize>(), encoded) };
+        }
     }
 }
 
@@ -704,7 +756,11 @@ pub(crate) unsafe fn collect_local(
     // Caller exclusivity covers these ordinary fields. This is exactly the
     // source force append before the local head replaces `free`.
     unsafe {
+        #[cfg(not(feature = "mi-debug-1"))]
         ptr::write(tail.as_ptr().cast::<*mut u8>(), free.as_ptr().cast());
+        #[cfg(feature = "mi-debug-1")]
+        ptr::write(tail.as_ptr().cast::<usize>(),
+            encode_page_link(state.page_address, state.page_key, free.as_ptr().addr()));
         *state.free.as_ptr() = local_free.as_ptr();
         *state.local_free.as_ptr() = ptr::null_mut();
         *state.free_is_zero.as_ptr() = false;
@@ -790,7 +846,15 @@ fn raw_list_tail(
         // SAFETY: `block` has just been validated as an initialized list node
         // in the caller-proved writable page area. The source normal profile
         // stores its unencoded next pointer in this first word.
+        #[cfg(not(feature = "mi-debug-1"))]
         let next = unsafe { ptr::read(block.as_ptr().cast::<*mut u8>()) };
+        #[cfg(feature = "mi-debug-1")]
+        let next: *mut u8 = {
+            // SAFETY: the validated node's first word holds the source link.
+            let encoded = unsafe { ptr::read(block.as_ptr().cast::<usize>()) };
+            let address = decode_page_link(state.page_address, state.page_key, encoded);
+            if address == 0 { ptr::null_mut() } else { block.as_ptr().map_addr(|_| address).cast() }
+        };
         let Some(next) = NonNull::new(next.cast::<Block>()) else {
             return Ok(block);
         };
@@ -842,6 +906,10 @@ mod tests {
             area: base,
             area_bytes: N,
             block_size,
+            #[cfg(feature = "mi-debug-1")]
+            page_address: base.as_ptr().addr(),
+            #[cfg(feature = "mi-debug-1")]
+            page_key: 0,
             capacity: NonNull::from(&mut state.capacity),
             reserved,
             free: NonNull::from(&mut state.free),
@@ -865,6 +933,10 @@ mod tests {
             area: NonNull::new(storage.0.as_mut_ptr()).expect("test storage is non-null"),
             area_bytes: N,
             block_size,
+            #[cfg(feature = "mi-debug-1")]
+            page_address: storage.0.as_mut_ptr().addr(),
+            #[cfg(feature = "mi-debug-1")]
+            page_key: 0,
             capacity: state.capacity,
             reserved,
             free: NonNull::from(&mut state.free),

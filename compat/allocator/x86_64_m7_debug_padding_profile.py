@@ -44,10 +44,10 @@ def main() -> int:
             *common, str(source / "src/static.c"), "-pthread", "-o", str(c_binary),
         ], cwd=source)
         harness.require_success(c_build, "pinned debug-padding C build")
-        target = temporary / "cargo-target"
+        target = harness.WORK_ROOT / "cargo-target/m7-debug-padding-profile"
         rust_build = harness.command_record([
             cargo, "build", "--locked", "--offline", "--release", "--target", RUST_TARGET,
-            "-p", ADAPTER, "--no-default-features", "--features", "crabc-mimalloc/mi-stat-2",
+            "-p", ADAPTER, "--no-default-features", "--features", "crabc-mimalloc/mi-debug-1",
             "--target-dir", str(target),
         ], cwd=harness.ROOT, env=dict(os.environ), timeout_seconds=3600)
         harness.require_success(rust_build, "native debug-padding adapter build")
@@ -99,9 +99,12 @@ def main() -> int:
             "rust_source_sha256": {
                 path: hashlib.sha256((harness.ROOT / path).read_bytes()).hexdigest()
                 for path in (
-                    "crabc-mimalloc/src/config.rs", "crabc-mimalloc/src/size_class.rs",
+                    "crabc-mimalloc/Cargo.toml", "crabc-mimalloc/src/config.rs",
+                    "crabc-mimalloc/src/size_class.rs", "crabc-mimalloc/src/alloc.rs",
+                    "crabc-mimalloc/src/free_list.rs", "crabc-mimalloc/src/page.rs",
                     "crabc-mimalloc/src/local_fast_path.rs", "crabc-mimalloc/src/runtime_lifecycle.rs",
-                    "crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/diagnostic_output.rs",
+                    "crabc-mimalloc/src/types.rs", "crabc-mimalloc/src/single_thread.rs",
+                    "crabc-mimalloc/src/source_api.rs", "crabc-mimalloc/src/diagnostic_output.rs",
                     "compat/allocator/native-mi-adapter/src/lib.rs", "Cargo.lock",
                 )
             },

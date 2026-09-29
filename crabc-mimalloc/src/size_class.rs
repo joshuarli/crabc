@@ -72,6 +72,18 @@ pub(crate) const fn bin(size: usize) -> Option<usize> {
     Some(bin_from_wsize(wsize))
 }
 
+/// Selects the bin for a client request after reserving the source trailing
+/// padding record. Page metadata and already padded internal requests use
+/// [`bin`] directly.
+#[inline]
+pub(crate) const fn bin_for_request(size: usize) -> Option<usize> {
+    let padded = match size.checked_add(PADDING_SIZE) {
+        Some(padded) => padded,
+        None => return None,
+    };
+    bin(padded)
+}
+
 /// The block size of an initialized regular page is an exact machine-word
 /// multiple from the queue table, so its bin does not need request rounding.
 #[inline]
@@ -112,8 +124,7 @@ pub(crate) const fn bin_size(bin: usize) -> Option<usize> {
 
 /// Port of `mi_good_size` for a validated selected Linux-profile OS page size.
 ///
-/// The pinned default has no padding. The expression remains written in terms
-/// of `PADDING_SIZE` so its source invariant stays visible: small objects use
+/// The expression uses the selected padding size: small objects use
 /// their queue block size, larger valid requests round to the supplied OS page
 /// size, and requests above `MI_MAX_ALLOC_SIZE` are returned unchanged.
 #[inline]
@@ -135,13 +146,13 @@ pub(crate) const fn good_size(size: usize, os_page_size: usize) -> Option<usize>
     Some(size)
 }
 
-/// The request bound checked by `src/page.c:mi_find_page` before allocating.
+/// The client request bound before `mi_find_page` receives its padded size.
 #[inline]
 pub(crate) const fn request_size_is_valid(size: usize) -> bool {
-    size <= MAX_ALLOC_SIZE
+    size <= MAX_ALLOC_SIZE - PADDING_SIZE
 }
 
-/// Port of the default-profile size branches in `_mi_arenas_page_alloc`.
+/// Port of the selected-profile size branches in `_mi_arenas_page_alloc`.
 ///
 /// A zero block size cannot initialize a page; C reaches a later division by
 /// that value only under an internal allocator invariant, so the Rust boundary
@@ -220,15 +231,16 @@ mod tests {
     }
 
     fn reference_good_size(size: usize, os_page_size: usize) -> Option<usize> {
-        if size <= LARGE_MAX_OBJ_SIZE {
-            return Some(BIN_BLOCK_SIZES[reference_bin(size)?]);
+        if size <= LARGE_MAX_OBJ_SIZE - PADDING_SIZE {
+            return Some(BIN_BLOCK_SIZES[reference_bin(size + PADDING_SIZE)?]);
         }
-        if size <= MAX_ALLOC_SIZE {
-            let remainder = size % os_page_size;
+        if size <= MAX_ALLOC_SIZE - PADDING_SIZE {
+            let padded_size = size + PADDING_SIZE;
+            let remainder = padded_size % os_page_size;
             return Some(if remainder == 0 {
-                size
+                padded_size
             } else {
-                size + (os_page_size - remainder)
+                padded_size + (os_page_size - remainder)
             });
         }
         Some(size)
@@ -292,8 +304,8 @@ mod tests {
         assert_eq!(bin_size(BIN_COUNT), None);
 
         for size in [
-            MAX_ALLOC_SIZE.saturating_sub(1),
-            MAX_ALLOC_SIZE,
+            MAX_ALLOC_SIZE - PADDING_SIZE - 1,
+            MAX_ALLOC_SIZE - PADDING_SIZE,
             MAX_ALLOC_SIZE + 1,
             usize::MAX - (WORD_SIZE - 1),
             usize::MAX - (WORD_SIZE - 2),
@@ -309,6 +321,16 @@ mod tests {
             assert_eq!(block_size % WORD_SIZE, 0, "block size {block_size}");
             assert_eq!(Some(bin_for_regular_page_block_size(block_size)), bin(block_size));
         }
+    }
+
+    #[test]
+    fn client_request_bins_reserve_the_selected_padding_at_each_queue_boundary() {
+        for &boundary in BIN_BLOCK_SIZES.iter().filter(|&&size| size > 0 && size <= LARGE_MAX_OBJ_SIZE) {
+            for request in [boundary.saturating_sub(PADDING_SIZE + 1), boundary.saturating_sub(PADDING_SIZE), boundary] {
+                assert_eq!(bin_for_request(request), request.checked_add(PADDING_SIZE).and_then(reference_bin));
+            }
+        }
+        assert_eq!(bin_for_request(usize::MAX), None);
     }
 
     #[test]
@@ -373,7 +395,7 @@ mod tests {
         ] {
             assert!(request_size_is_valid(size));
         }
-        assert!(!request_size_is_valid(MAX_ALLOC_SIZE + 1));
+        assert!(!request_size_is_valid(MAX_ALLOC_SIZE - PADDING_SIZE + 1));
         assert!(!request_size_is_valid(usize::MAX));
 
         for (boundary, expected) in [

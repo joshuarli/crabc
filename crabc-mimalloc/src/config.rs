@@ -48,6 +48,9 @@ const SOURCE_ENVIRONMENT_ENTRY_LIMIT: usize = 10_000;
 // `CMakeLists.txt` Release defaults plus `types.h` defaults. An unset C
 // preprocessor option evaluates to zero in the upstream `#if` expressions.
 pub(crate) const SECURE_LEVEL: usize = 0;
+#[cfg(feature = "mi-debug-1")]
+pub(crate) const DEBUG_LEVEL: usize = 1;
+#[cfg(not(feature = "mi-debug-1"))]
 pub(crate) const DEBUG_LEVEL: usize = 0;
 // The second optional source profile includes the first profile's producers;
 // Cargo's additive feature selection therefore chooses the highest level.
@@ -61,11 +64,11 @@ pub(crate) const FREE_IS_CHECKED: bool = false;
 pub(crate) const FREE_USE_PAGEMAP: bool = false;
 pub(crate) const OPT_FREE_SMALL: bool = false;
 pub(crate) const ENABLE_LARGE_PAGES: bool = true;
-pub(crate) const ENCODE_FREELIST: bool = false;
+pub(crate) const ENCODE_FREELIST: bool = DEBUG_LEVEL >= 1;
 pub(crate) const GUARDED: bool = false;
 pub(crate) const OPT_SIMD: bool = false;
-pub(crate) const PADDING_SIZE: usize = 0;
-pub(crate) const PADDING_WSIZE: usize = 0;
+pub(crate) const PADDING_SIZE: usize = if DEBUG_LEVEL >= 1 { 8 } else { 0 };
+pub(crate) const PADDING_WSIZE: usize = PADDING_SIZE / WORD_SIZE;
 pub(crate) const PAGE_KEY_COUNT: usize = 1;
 
 pub(crate) const ARENA_SLICE_SHIFT: usize = 13 + 3;
@@ -329,17 +332,15 @@ impl SourceOption {
         }
     }
 
-    /// The initial descriptor value of the selected Linux/x86-64 and
-    /// Linux/AArch64 LP64 release profiles.
+    /// The initial descriptor value of the selected Linux LP64 profile.
     ///
-    /// `MI_DEBUG == 0`, no `MI_GUARDED`, non-Android, non-Apple, and
-    /// `MI_INTPTR_SIZE > 4` select these conditional defaults. The optional
-    /// `MI_SHOW_ERRORS` image changes only the initial `show_errors` value.
-    /// A guarded or debug profile must select its own source defaults.
+    /// No `MI_GUARDED`, non-Android, non-Apple, and `MI_INTPTR_SIZE > 4`
+    /// select these conditional defaults. Debug and `MI_SHOW_ERRORS` both
+    /// enable initial error output.
     pub(crate) const fn default_value(self) -> i64 {
         match self {
             // Source `MI_DEBUG || defined(MI_SHOW_ERRORS)`.
-            Self::ShowErrors => if cfg!(feature = "mi-show-errors") { 1 } else { 0 },
+            Self::ShowErrors => if DEBUG_LEVEL != 0 || cfg!(feature = "mi-show-errors") { 1 } else { 0 },
             Self::ShowStats => 0,
             // `MI_DEFAULT_VERBOSE`.
             Self::Verbose => 0,
@@ -1070,7 +1071,10 @@ fn ascii_eq_ignore_case(left: &[u8], right: &[u8]) -> bool {
 
 const _: [(); 8] = [(); WORD_SIZE];
 const _: [(); 1] = [(); ENABLE_LARGE_PAGES as usize];
+#[cfg(not(feature = "mi-debug-1"))]
 const _: [(); 1] = [(); (!ENCODE_FREELIST) as usize];
+#[cfg(feature = "mi-debug-1")]
+const _: [(); 1] = [(); ENCODE_FREELIST as usize];
 const _: [(); 1] = [(); (!GUARDED) as usize];
 const _: [(); 1] = [(); (!OPT_SIMD) as usize];
 const _: [(); 1] = [(); PAGE_META_IS_SEPARATED as usize];
@@ -1084,11 +1088,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn selected_release_constants_match_the_pinned_linux_64_profiles() {
+    fn selected_constants_match_the_pinned_linux_64_profile() {
         assert_eq!(WORD_SIZE, 8);
         assert_eq!(MAX_ALIGN_SIZE, 16);
         assert_eq!(SECURE_LEVEL, 0);
-        assert_eq!(DEBUG_LEVEL, 0);
+        assert_eq!(DEBUG_LEVEL, usize::from(cfg!(feature = "mi-debug-1")));
         let expected_stat_level = if cfg!(feature = "mi-stat-2") {
             2
         } else if cfg!(feature = "mi-stat-1") {
@@ -1100,11 +1104,11 @@ mod tests {
         assert!(!FREE_IS_CHECKED);
         assert!(!FREE_USE_PAGEMAP);
         assert!(!OPT_FREE_SMALL);
-        assert!(!ENCODE_FREELIST);
+        assert_eq!(ENCODE_FREELIST, cfg!(feature = "mi-debug-1"));
         assert!(!GUARDED);
         assert!(!OPT_SIMD);
-        assert_eq!(PADDING_SIZE, 0);
-        assert_eq!(PADDING_WSIZE, 0);
+        assert_eq!(PADDING_SIZE, if cfg!(feature = "mi-debug-1") { 8 } else { 0 });
+        assert_eq!(PADDING_WSIZE, usize::from(cfg!(feature = "mi-debug-1")));
         assert_eq!(PAGE_KEY_COUNT, 1);
         assert!(ENABLE_LARGE_PAGES);
         assert!(PAGE_META_IS_SEPARATED);
@@ -1126,7 +1130,7 @@ mod tests {
         assert_eq!(BIN_HUGE, 73);
         assert_eq!(BIN_FULL, 74);
         assert_eq!(BIN_COUNT, 75);
-        assert_eq!(PAGES_DIRECT, 129);
+        assert_eq!(PAGES_DIRECT, if cfg!(feature = "mi-debug-1") { 130 } else { 129 });
         assert_eq!(MAX_SINGLETON_BIN, 60);
         assert_eq!(MAX_ALLOC_SIZE, isize::MAX as usize);
         assert!(!PAGE_MAP_FLAT);

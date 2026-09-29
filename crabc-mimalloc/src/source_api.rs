@@ -276,6 +276,11 @@ pub enum FreeOutcome {
     /// The native runtime could not complete a legal free and has retained
     /// its owner; the embedding boundary must not continue as if it freed.
     Retained,
+    /// The debug padding check reported corruption and left the block owned.
+    /// This is the source continuation after an invalid free, not a runtime
+    /// ownership failure.
+    #[cfg(feature = "mi-debug-1")]
+    RejectedCorruption,
 }
 
 /// `mi_free`.
@@ -294,6 +299,8 @@ pub unsafe fn free(block: *mut u8) -> FreeOutcome {
         NativePageFreeResult::Freed => FreeOutcome::Freed,
         NativePageFreeResult::InvalidPointer => FreeOutcome::Unmapped,
         NativePageFreeResult::Unavailable | NativePageFreeResult::Retained => FreeOutcome::Retained,
+        #[cfg(feature = "mi-debug-1")]
+        NativePageFreeResult::RejectedCorruption => FreeOutcome::RejectedCorruption,
     }
 }
 

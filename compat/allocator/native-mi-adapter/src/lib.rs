@@ -265,6 +265,8 @@ fn freed(outcome: FreeOutcome) {
         // there is no C backend to recover it.
         unsafe { abort() }
     }
+    // A debug padding report rejects the caller's invalid free and leaves
+    // that block owned, exactly as pinned `mi_free` returns after its callback.
 }
 
 #[inline]

@@ -1142,6 +1142,13 @@ pub(crate) enum SourceErrorReport {
     /// `mi_page_map_init_once`, `src/page-map.c:302-305` (ENOMEM): the page
     /// map's reservation, in KiB, could not be mapped.
     PageMapReservation { kib: usize },
+    /// `mi_check_padding_on_free` found the source freed canary (EAGAIN).
+    #[cfg(feature = "mi-debug-1")]
+    PaddingDoubleFree { block: usize, usable_size: usize },
+    /// `mi_check_padding_on_free` found a changed record or padding byte
+    /// (EFAULT). A changed record reports the full usable block size.
+    #[cfg(feature = "mi-debug-1")]
+    PaddingOverflow { block: usize, usable_size: usize, wrong_offset: usize },
 }
 
 impl SourceErrorReport {
@@ -1156,6 +1163,10 @@ impl SourceErrorReport {
             | Self::TheapAllocation
             | Self::PageMapReservation { .. } => Errno::NOMEM,
             Self::AlignedTooLarge { .. } | Self::BadAlignment { .. } => Errno::INVAL,
+            #[cfg(feature = "mi-debug-1")]
+            Self::PaddingDoubleFree { .. } => Errno::AGAIN,
+            #[cfg(feature = "mi-debug-1")]
+            Self::PaddingOverflow { .. } => Errno::FAULT,
         }
     }
 
@@ -1218,6 +1229,24 @@ impl SourceErrorReport {
                 message.append(b", offset ");
                 decimal(&mut message, offset);
                 message.append(b")\n");
+            }
+            #[cfg(feature = "mi-debug-1")]
+            Self::PaddingDoubleFree { block, usable_size } => {
+                message.append(b"double free detected of heap block ");
+                append_source_pointer(&mut message.bytes, &mut message.length, block);
+                message.append(b" with size ");
+                decimal(&mut message, usable_size);
+                message.append(b"\n");
+            }
+            #[cfg(feature = "mi-debug-1")]
+            Self::PaddingOverflow { block, usable_size, wrong_offset } => {
+                message.append(b"buffer overflow in heap block ");
+                append_source_pointer(&mut message.bytes, &mut message.length, block);
+                message.append(b" of size ");
+                decimal(&mut message, usable_size);
+                message.append(b": write after ");
+                decimal(&mut message, wrong_offset);
+                message.append(b" bytes\n");
             }
         }
         message

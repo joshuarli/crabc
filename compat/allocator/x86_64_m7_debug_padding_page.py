@@ -47,7 +47,7 @@ def main() -> int:
         rust_build = harness.command_record([
             cargo, "build", "--locked", "--offline", "--release", "--target", TARGET,
             "-p", "crabc-mimalloc-native-mi-adapter", "--no-default-features",
-            "--features", "crabc-mimalloc/mi-stat-2", "--target-dir", str(target),
+            "--features", "crabc-mimalloc/mi-debug-1", "--target-dir", str(target),
         ], cwd=harness.ROOT, env=dict(os.environ), timeout_seconds=3600)
         harness.require_success(rust_build, "native debug-padding page adapter build")
         rust_binary = temporary / "debug-padding-page-rust"
@@ -121,9 +121,12 @@ def main() -> int:
             "rust_source_sha256": {
                 path: hashlib.sha256((harness.ROOT / path).read_bytes()).hexdigest()
                 for path in (
-                    "crabc-mimalloc/src/config.rs", "crabc-mimalloc/src/page.rs",
+                    "crabc-mimalloc/Cargo.toml", "crabc-mimalloc/src/config.rs",
+                    "crabc-mimalloc/src/page.rs", "crabc-mimalloc/src/alloc.rs",
+                    "crabc-mimalloc/src/free_list.rs", "crabc-mimalloc/src/types.rs",
                     "crabc-mimalloc/src/local_fast_path.rs", "crabc-mimalloc/src/runtime_lifecycle.rs",
-                    "crabc-mimalloc/src/size_class.rs", "compat/allocator/native-mi-adapter/src/lib.rs",
+                    "crabc-mimalloc/src/size_class.rs", "crabc-mimalloc/src/single_thread.rs",
+                    "compat/allocator/native-mi-adapter/src/lib.rs",
                     "Cargo.lock",
                 )
             },

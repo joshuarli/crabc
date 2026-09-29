@@ -4,8 +4,11 @@
 // "LICENSE" at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/alloc.c:364-377` (`mi_expand`) and
-// `src/alloc.c:379-439` (`mi_theap_realloc_zero_ex`). This module owns the
+// Source map: pinned mimalloc v3.5.0 `src/alloc.c:68-119` (debug fill and
+// padding), `src/free.c:618-742` (padding decode and free check),
+// `include/mimalloc/internal.h:1226-1242` (canary encoding),
+// `src/alloc.c:364-377` (`mi_expand`), and `src/alloc.c:379-439`
+// (`mi_theap_realloc_zero_ex`). This module owns the block-local padding and
 // address-independent expansion/reallocation decisions and copy/zero extents.
 // Allocation, byte access, old block release, and failure preservation stay in
 // the live allocator owner.
@@ -17,6 +20,157 @@ use core::ptr::NonNull;
 use crate::invariants;
 use crate::process_page_map::LiveAllocationPointer;
 use crate::types::Heap;
+
+/// Source `mi_padding_t` at the end of each block in the debug profile.
+/// The requested end is recovered from `delta`; the record itself stays at
+/// the fixed page usable block boundary.
+#[cfg(feature = "mi-debug-1")]
+#[repr(C)]
+struct DebugPadding {
+    canary: u32,
+    delta: u32,
+}
+
+#[cfg(feature = "mi-debug-1")]
+const _: [(); crate::config::PADDING_SIZE] = [(); size_of::<DebugPadding>()];
+
+/// The source distinguishes a previously freed canary from an overwritten
+/// record, and reports the first modified padding byte separately.
+#[cfg(feature = "mi-debug-1")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DebugPaddingError {
+    DoubleFree,
+    CorruptRecord { usable_size: usize },
+    CorruptByte { usable_size: usize, wrong_offset: usize },
+}
+
+/// Encodes a page/block pair with its source page key. The low byte and bit
+/// nine are clear so a one-byte overrun cannot accidentally form a valid
+/// canary or the reserved freed marker.
+#[cfg(feature = "mi-debug-1")]
+#[inline]
+fn debug_padding_canary(page_address: usize, block_address: usize, page_key: usize) -> u32 {
+    let secondary_key = page_key.rotate_right(13);
+    let address = if block_address == 0 { page_address } else { block_address };
+    let encoded = (address ^ secondary_key)
+        .rotate_left(page_key as u32)
+        .wrapping_add(page_key);
+    (encoded as u32) & 0xFFFF_FE00
+}
+
+/// Initializes requested bytes and the trailing source padding record after
+/// a block has been popped from a page free list.
+///
+/// # Safety
+///
+/// `block` must be a uniquely owned writable block of `block_size` bytes.
+/// `block_size >= PADDING_SIZE`, and `request_size` must fit its usable part.
+/// `page_address` and `page_key` must describe that block's live source page.
+#[cfg(feature = "mi-debug-1")]
+pub(crate) unsafe fn initialize_debug_padding(
+    block: NonNull<u8>,
+    block_size: usize,
+    request_size: usize,
+    page_address: usize,
+    page_key: usize,
+    zero: bool,
+    huge: bool,
+) -> Option<usize> {
+    let usable_block_size = block_size.checked_sub(crate::config::PADDING_SIZE)?;
+    let delta = usable_block_size.checked_sub(request_size)?;
+    let delta32 = u32::try_from(delta).ok()?;
+    if !huge && !zero {
+        // SAFETY: the caller's unique block covers the source usable extent.
+        unsafe { core::ptr::write_bytes(block.as_ptr(), 0xD0, usable_block_size) };
+    }
+    // SAFETY: the trailing record occupies exactly the reserved final bytes.
+    let padding = unsafe { block.as_ptr().add(usable_block_size).cast::<DebugPadding>() };
+    // SAFETY: the caller owns the entire block; the record is within it.
+    unsafe { core::ptr::write_unaligned(padding, DebugPadding {
+        canary: debug_padding_canary(page_address, block.as_ptr().addr(), page_key),
+        delta: delta32,
+    }) };
+    if !huge {
+        // SAFETY: the checked delta is within the usable part of the block.
+        unsafe { core::ptr::write_bytes(block.as_ptr().add(request_size), 0xDE, delta.min(16)) };
+    }
+    Some(request_size)
+}
+
+/// Decodes the logical usable size without changing the padding record.
+///
+/// # Safety
+///
+/// `block` must remain live and readable for `block_size` bytes. The caller
+/// must retain the source page and its stable key through this observation.
+#[cfg(feature = "mi-debug-1")]
+pub(crate) unsafe fn debug_padding_usable_size(
+    block: NonNull<u8>,
+    block_size: usize,
+    page_address: usize,
+    page_key: usize,
+) -> usize {
+    let Some(usable_block_size) = block_size.checked_sub(crate::config::PADDING_SIZE) else {
+        return 0;
+    };
+    // SAFETY: the caller retains the full block and source page key.
+    let record = unsafe { core::ptr::read_unaligned(block.as_ptr().add(usable_block_size).cast::<DebugPadding>()) };
+    if record.canary != debug_padding_canary(page_address, block.as_ptr().addr(), page_key)
+        || record.delta as usize > usable_block_size
+    {
+        0
+    } else {
+        usable_block_size - record.delta as usize
+    }
+}
+
+/// Verifies the source record and the first 16 padding bytes before free.
+/// A valid canary is changed to the source freed marker before byte checking.
+///
+/// # Safety
+///
+/// `block` must remain live and readable and writable for `block_size` bytes.
+/// The caller owns this exact allocation until a successful check returns.
+#[cfg(feature = "mi-debug-1")]
+pub(crate) unsafe fn check_debug_padding_on_free(
+    block: NonNull<u8>,
+    block_size: usize,
+    page_address: usize,
+    page_key: usize,
+    huge: bool,
+) -> Result<usize, DebugPaddingError> {
+    let Some(usable_block_size) = block_size.checked_sub(crate::config::PADDING_SIZE) else {
+        return Err(DebugPaddingError::CorruptRecord { usable_size: 0 });
+    };
+    // SAFETY: the caller retains the complete block and source page key.
+    let padding = unsafe { block.as_ptr().add(usable_block_size).cast::<DebugPadding>() };
+    let record = unsafe { core::ptr::read_unaligned(padding) };
+    if record.canary != debug_padding_canary(page_address, block.as_ptr().addr(), page_key)
+        || record.delta as usize > usable_block_size
+    {
+        return if record.canary == 0x00DE_AD00 {
+            Err(DebugPaddingError::DoubleFree)
+        } else {
+            Err(DebugPaddingError::CorruptRecord { usable_size: usable_block_size })
+        };
+    }
+    let usable_size = usable_block_size - record.delta as usize;
+    // SAFETY: `padding` is the caller-owned trailing record. Marking it before
+    // the byte check matches source double-free detection after corruption.
+    unsafe { core::ptr::write_unaligned(padding.cast::<u32>(), 0x00DE_AD00) };
+    if !huge {
+        for offset in 0..(record.delta as usize).min(16) {
+            // SAFETY: the checked delta remains within the usable block span.
+            if unsafe { core::ptr::read(block.as_ptr().add(usable_size + offset)) } != 0xDE {
+                return Err(DebugPaddingError::CorruptByte {
+                    usable_size,
+                    wrong_offset: usable_size + offset,
+                });
+            }
+        }
+    }
+    Ok(usable_size)
+}
 
 /// Selects the pinned `mi_expand` result after its non-null pointer has been
 /// validated and its usable size observed.

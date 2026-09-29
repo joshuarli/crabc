@@ -246,6 +246,9 @@ mi-stat-1 = []
 # Pinned MI_STAT=2 retains level-one count producers and enables the source's
 # per-bin and requested-size final statistics layout. The default remains zero.
 mi-stat-2 = ["mi-stat-1"]
+# Pinned MI_DEBUG=1 selects byte-precise padding, encoded free lists, and the
+# source's default level-two statistics. The release allocator keeps this off.
+mi-debug-1 = ["mi-stat-2"]
 # Pinned MI_SHOW_ERRORS changes the initial show_errors descriptor while
 # retaining release allocation layout and algorithms.
 mi-show-errors = []
