@@ -313,6 +313,14 @@ class ReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(gate.GateInputError, "differs from a fresh evaluation"):
             gate.validate_receipt(ROOT, path)
 
+    def test_passing_receipt_cannot_replace_a_replayed_condition_detail(self):
+        path = gate.write_receipt(self.directory / "gate", self.receipt())
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["conditions"][0]["detail"] = "unverified performance evidence"
+        path.write_text(json.dumps(record), encoding="utf-8")
+        with self.assertRaisesRegex(gate.GateInputError, "differs from a fresh evaluation"):
+            gate.validate_receipt(ROOT, path)
+
     def test_failing_receipt_is_retained_but_rereads_as_named_unmet_conditions(self):
         self.blockers = ("3 of 114 rows fail a per-workload gate",)
         receipt = self.receipt()

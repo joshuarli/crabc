@@ -147,7 +147,7 @@ def _number(value: object) -> float | None:
 
 
 def runtime_row_unmet(name: str, attempt: int, row: Mapping[str, Any]) -> list[str]:
-    """Recheck one retained scorecard row against the plan's per-workload rules."""
+    """Recheck one retained row against the runtime's per-workload release bounds."""
     label = f"{name} attempt {attempt}"
     unmet: list[str] = []
     upper = _number(row.get("cpu", {}).get("one_sided_95_upper"))
@@ -500,11 +500,14 @@ def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
     if changed:
         raise GateInputError("performance-release inputs changed after evaluation: " + ", ".join(changed))
     fresh = build_receipt(inputs)
-    # Details may spell host or container paths; the verdicts may not differ.
+    # Failed details may spell host or container paths. A passing receipt has
+    # stable details and must retain exactly what the replayed readers returned.
     def verdicts(value: Mapping[str, Any]) -> list[tuple[object, object]]:
         return [(row.get("id"), row.get("met")) for row in value["conditions"]]
 
-    if verdicts(fresh) != verdicts(record) or (fresh["unmet"], fresh["passed"]) != (record["unmet"], record["passed"]):
+    if (verdicts(fresh) != verdicts(record)
+            or (fresh["unmet"], fresh["passed"]) != (record["unmet"], record["passed"])
+            or (fresh["passed"] and fresh["conditions"] != record["conditions"])):
         raise GateInputError("performance-release receipt differs from a fresh evaluation of its inputs")
     if not fresh["passed"]:
         named = [f"{row['id']}: " + "; ".join(row["detail"]) for row in fresh["conditions"] if row["met"] is not True]
