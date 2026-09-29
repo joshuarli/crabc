@@ -33,8 +33,12 @@ with pinned musl and owned static/static-PIE products, then runs owned dynamic
 PIE and non-PIE programs by both kernel and direct interpreter entry. Archive,
 final executable, and shared-provider symbol tables must contain one strong
 global/default definition of each entry. The workload checks logical and
-physical current-directory spelling, terminal drain and deferred cancellation,
-pipe transfers in both directions, and STREAMS results. The public unsafe
+physical current-directory spelling, revalidation after a directory rename,
+and independent `PWD` changes across `fork`. It retains a returned logical
+name while the live directory moves. The workload also checks terminal drain
+and deferred cancellation, pipe transfers in both directions, pipe descriptor
+duplication and closure across `fork`, raw versus wrapped `vmsplice` errors on
+a regular file, and STREAMS results. The public unsafe
 `vmsplice` boundary documents writable read-side buffers, retained source
 pages, and permanent gift-page restrictions from the Linux
 [`vmsplice(2)` contract](https://man7.org/linux/man-pages/man2/vmsplice.2.html).
@@ -44,7 +48,12 @@ installs a local seccomp filter returning `EPERM` for `mount`, `umount2`, and
 `vhangup`, then compares raw and installed error translation. The runner opens
 a private pseudo-terminal before `chroot` and passes it only as an inherited
 descriptor for the terminal cases. Its supplied dynamic product and all
-evidence paths must be physical paths under checkout `.work`.
+evidence paths must be physical paths under checkout `.work`. The runner writes
+`receipt.json` beside its raw output. It hashes the source, installed workload
+object, linked and executed images, provider and interpreter products, captured
+outputs, and source and object checks made after execution. The copied images,
+provider, and interpreter must match the linked and installed inputs byte for
+byte.
 
 This is private product evidence. It does not select mount namespace policy,
 filesystem ownership, STREAMS emulation, terminal/session management, a

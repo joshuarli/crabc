@@ -127,6 +127,59 @@ static void current_directory_case(void)
     puts("current-directory ok");
 }
 
+static void current_directory_identity_case(void)
+{
+    char *saved;
+    char *name;
+    pid_t child;
+    int status;
+
+    if (unlink("/identity-logical") < 0)
+        CHECK(errno == ENOENT);
+    if (rmdir("/identity-moved") < 0)
+        CHECK(errno == ENOENT);
+    if (rmdir("/identity-original") < 0)
+        CHECK(errno == ENOENT);
+    CHECK(mkdir("/identity-original", 0700) == 0);
+    CHECK(symlink("/identity-original", "/identity-logical") == 0);
+    CHECK(chdir("/identity-logical") == 0);
+    CHECK(setenv("PWD", "/identity-logical", 1) == 0);
+
+    errno = EDOM;
+    saved = get_current_dir_name();
+    CHECK(saved != NULL && strcmp(saved, "/identity-logical") == 0 && errno == EDOM);
+
+    CHECK(rename("/identity-original", "/identity-moved") == 0);
+    errno = ERANGE;
+    name = get_current_dir_name();
+    CHECK(name != NULL && strcmp(name, "/identity-moved") == 0 && errno == ENOENT);
+    CHECK(strcmp(saved, "/identity-logical") == 0);
+    free(name);
+
+    CHECK(unlink("/identity-logical") == 0);
+    CHECK(symlink("/identity-moved", "/identity-logical") == 0);
+    errno = EDOM;
+    name = get_current_dir_name();
+    CHECK(name != NULL && strcmp(name, "/identity-logical") == 0 && errno == EDOM);
+    free(name);
+
+    child = fork();
+    CHECK(child >= 0);
+    if (child == 0) {
+        CHECK(setenv("PWD", "/identity-original", 1) == 0);
+        errno = ERANGE;
+        name = get_current_dir_name();
+        CHECK(name != NULL && strcmp(name, "/identity-moved") == 0 && errno == ENOENT);
+        free(name);
+        _exit(0);
+    }
+    CHECK(waitpid(child, &status, 0) == child);
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    CHECK(strcmp(saved, "/identity-logical") == 0);
+    free(saved);
+    puts("current-directory identity ok");
+}
+
 static void privileged_error_case(void)
 {
     pid_t child = fork();
@@ -271,6 +324,57 @@ static void vmsplice_case(void)
     puts("vmsplice ok");
 }
 
+static void descriptor_lifecycle_case(void)
+{
+    char source[] = "pipe across fork";
+    char destination[sizeof(source)] = { 0 };
+    struct iovec vector = { source, sizeof(source) - 1 };
+    int pipefd[2];
+    int writer;
+    int regular;
+    pid_t child;
+    int status;
+    long raw;
+
+    CHECK(pipe(pipefd) == 0);
+    writer = dup(pipefd[1]);
+    CHECK(writer >= 0);
+    CHECK(close(pipefd[1]) == 0);
+    errno = EDOM;
+    CHECK(isastream(writer) == 0 && errno == EDOM);
+    errno = 0;
+    CHECK(isastream(pipefd[1]) == -1 && errno == EBADF);
+
+    child = fork();
+    CHECK(child >= 0);
+    if (child == 0) {
+        CHECK(close(pipefd[0]) == 0);
+        errno = EDOM;
+        CHECK(vmsplice(writer, &vector, 1, 0) == (ssize_t)(sizeof(source) - 1));
+        CHECK(errno == EDOM);
+        CHECK(close(writer) == 0);
+        _exit(0);
+    }
+    CHECK(close(writer) == 0);
+    CHECK(read(pipefd[0], destination, sizeof(destination)) == (ssize_t)(sizeof(source) - 1));
+    CHECK(memcmp(destination, source, sizeof(source) - 1) == 0);
+    CHECK(waitpid(child, &status, 0) == child);
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    CHECK(close(pipefd[0]) == 0);
+
+    regular = open("/vmsplice-regular", O_RDWR | O_CREAT | O_TRUNC, 0600);
+    CHECK(regular >= 0);
+    errno = E2BIG;
+    raw = raw6(SYS_vmsplice, regular, (long)(intptr_t)&vector, 1, 0, 0, 0);
+    CHECK(raw < 0 && raw >= -4095 && errno == E2BIG);
+    errno = ERANGE;
+    CHECK(vmsplice(regular, &vector, 1, 0) == -1 && errno == -raw);
+    errno = EDOM;
+    CHECK(isastream(regular) == 0 && errno == EDOM);
+    CHECK(close(regular) == 0);
+    puts("descriptor-lifecycle ok");
+}
+
 static void streams_case(void)
 {
     int regular = open("/regular-stream-file", O_RDWR | O_CREAT | O_TRUNC, 0600);
@@ -291,6 +395,8 @@ int main(int argc, char **argv)
     CHECK(argc == 2);
     if (!strcmp(argv[1], "cwd"))
         current_directory_case();
+    else if (!strcmp(argv[1], "cwd-identity"))
+        current_directory_identity_case();
     else if (!strcmp(argv[1], "privileged-errors"))
         privileged_error_case();
     else if (!strcmp(argv[1], "terminal"))
@@ -299,6 +405,8 @@ int main(int argc, char **argv)
         terminal_cancellation_case();
     else if (!strcmp(argv[1], "vmsplice"))
         vmsplice_case();
+    else if (!strcmp(argv[1], "descriptor-lifecycle"))
+        descriptor_lifecycle_case();
     else if (!strcmp(argv[1], "streams"))
         streams_case();
     else

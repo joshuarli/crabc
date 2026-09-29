@@ -6,6 +6,7 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/owned_unix_mechanisms_probe.c"
+readonly PROVIDER_SOURCE="$ROOT/libc/src/c_abi/x86_64/owned_unix_mechanisms.rs"
 
 [ "$#" -le 1 ] || {
     printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2
@@ -39,7 +40,10 @@ readonly work="$(mktemp -d "$TMPDIR/owned-unix-mechanisms.XXXXXX")"
 chmod a+rx "$work"
 printf 'owned unix mechanisms evidence: %s\n' "$work"
 readonly execution_root="$work/execution-root"
-readonly cases=(cwd privileged-errors terminal terminal-cancel vmsplice streams)
+readonly cases=(cwd cwd-identity privileged-errors terminal terminal-cancel vmsplice descriptor-lifecycle streams)
+
+sha256sum "$PROBE" "$PROVIDER_SOURCE" "$ROOT/compat/x86_64/run_owned_unix_mechanisms.sh" \
+    >"$work/source-before.sha256"
 
 # The source has no public aliases among these eight strong providers. Check
 # archive, final static links, and the shared provider independently.
@@ -109,6 +113,8 @@ if [ -z "$provided_dynamic" ]; then
 fi
 "$provided_dynamic/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
     -c "$PROBE" -o "$work/workload.o"
+sha256sum -c "$work/source-before.sha256" >"$work/source-after-compile.txt"
+sha256sum "$work/workload.o" >"$work/object-before.sha256"
 
 "$ORACLE_CC" -static -fno-pie -no-pie -pthread "$work/workload.o" -o "$work/oracle"
 assert_mechanism_symbols "$work/oracle" --syms "$work/oracle-symbols.txt"
@@ -157,4 +163,63 @@ for mode in pie non-pie; do
     done
 done
 
-printf 'owned unix mechanisms: PASS (same installed object, musl, static/static-PIE, dynamic PIE/non-PIE, kernel/direct, logical cwd, seccomp-contained privileged errors, tty drain cancellation, vmsplice pipe, and STREAMS probes); evidence: %s\n' "$work"
+sha256sum -c "$work/source-before.sha256" >"$work/source-after-execution.txt"
+sha256sum -c "$work/object-before.sha256" >"$work/object-after-execution.txt"
+python3 -B - "$work" "$PROBE" "$PROVIDER_SOURCE" \
+    "$ROOT/compat/x86_64/run_owned_unix_mechanisms.sh" "$provided_dynamic" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+work, probe, provider, runner, product = map(Path, sys.argv[1:])
+def identity(path):
+    path = path.resolve(strict=True)
+    if not path.is_file():
+        raise SystemExit(f"owned unix mechanisms missing physical file: {path}")
+    return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+
+executables = [work / "oracle", work / "dynamic-pie", work / "dynamic-non-pie"]
+if (work / "static").is_file():
+    executables.extend([work / "static", work / "static-pie"])
+executed = sorted(path for path in (work / "execution-root").iterdir()
+                  if path.name == "oracle" or path.name.startswith("consumer-"))
+outputs = sorted([*work.glob("*.stdout"), *work.glob("*.stderr")])
+installed_provider = identity(product / "usr/lib/libc.so")
+installed_interpreter = identity(product / "lib/ld-crabc-x86_64.so.1")
+executed_provider = identity(work / "execution-root/usr/lib/libc.so")
+executed_interpreter = identity(work / "execution-root/lib/ld-crabc-x86_64.so.1")
+for installed, copied in ((installed_provider, executed_provider),
+                          (installed_interpreter, executed_interpreter)):
+    if installed["sha256"] != copied["sha256"]:
+        raise SystemExit("owned unix mechanisms executed runtime differs from installed input")
+for original in executables:
+    name = original.name.removeprefix("dynamic-")
+    copied = work / "execution-root" / ("oracle" if name == "oracle" else "consumer-" + name)
+    if identity(original)["sha256"] != identity(copied)["sha256"]:
+        raise SystemExit(f"owned unix mechanisms executed image differs from link: {original}")
+receipt = {
+    "schema": 1,
+    "evidence_root": str(work.resolve(strict=True)),
+    "sources": [identity(path) for path in (probe, provider, runner)],
+    "installed_object": identity(work / "workload.o"),
+    "oracle": identity(work / "oracle"),
+    "dynamic_provider": installed_provider,
+    "dynamic_interpreter": installed_interpreter,
+    "executed_provider": executed_provider,
+    "executed_interpreter": executed_interpreter,
+    "executables": [identity(path) for path in executables],
+    "executed_copies": [identity(path) for path in executed],
+    "case_outputs": [identity(path) for path in outputs],
+    "source_and_object_checks": [identity(work / name) for name in (
+        "source-before.sha256", "source-after-compile.txt",
+        "source-after-execution.txt", "object-before.sha256",
+        "object-after-execution.txt")],
+}
+if (work / "static-sysroot/usr/lib/libc.a").is_file():
+    receipt["static_archive"] = identity(work / "static-sysroot/usr/lib/libc.a")
+(work / "receipt.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n",
+                                   encoding="utf-8")
+PY
+
+printf 'owned unix mechanisms: PASS (same installed object, musl, static/static-PIE, dynamic PIE/non-PIE, kernel/direct, cwd identity across rename/fork, seccomp-contained privileged errors, tty drain cancellation, vmsplice pipe/descriptor lifecycle, and STREAMS probes); evidence: %s/receipt.json\n' "$work"
