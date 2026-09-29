@@ -92,8 +92,9 @@ enum SymbolLookup { Defined(Definition), UndefinedWeak, MissingStrong }
 
 pub(super) enum RuntimeSymbol { Address(u64), Tls { module: usize, offset: usize } }
 
-/// Read-only dlsym lookup over an explicitly ordered scope. The same symbol
-/// eligibility and full-definition extent checks as relocation remain active.
+/// Read-only dlsym lookup over an explicitly ordered scope. Binding, type,
+/// and full-definition extent checks remain active. Dynamic symbol visibility
+/// does not remove a named symbol from this lookup.
 ///
 /// Each scope member is examined as its own one-object table: dlsym needs no
 /// cross-object relocation context, so the caller can pass retained records
@@ -123,7 +124,7 @@ pub(super) unsafe fn find_runtime_symbol<'a>(
             for index in 1..objects[0].symcount {
                 let symbol = unsafe { definition(objects, 0, index) }?;
                 if symbol.section == 0 || !matches!(symbol.binding, 1 | 2 | STB_GNU_UNIQUE)
-                    || !matches!(symbol.visibility, 0 | 3) || !matches!(symbol.kind, 0 | 1 | 2 | 6)
+                    || !matches!(symbol.kind, 0 | 1 | 2 | 6)
                 { continue; }
                 if unsafe { symbol_name(&objects[0], index) }? == name { return Some(Some(symbol)); }
             }
@@ -131,8 +132,11 @@ pub(super) unsafe fn find_runtime_symbol<'a>(
         })()? else {
             continue;
         };
+        // A retained dynamic symbol remains findable by name even when its
+        // st_other visibility is INTERNAL or HIDDEN. The ELF hash lookup and
+        // binding/type tests decide dlsym eligibility.
         if symbol.section == 0 || !matches!(symbol.binding, 1 | 2 | STB_GNU_UNIQUE)
-            || !matches!(symbol.visibility, 0 | 3) || !matches!(symbol.kind, 0 | 1 | 2 | 6)
+            || !matches!(symbol.kind, 0 | 1 | 2 | 6)
         { continue; }
         if symbol.kind == 6 {
             let object = &objects[0];

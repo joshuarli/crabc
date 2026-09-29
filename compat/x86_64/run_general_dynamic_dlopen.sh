@@ -125,6 +125,38 @@ for provider in first second; do
     "$driver" --dynamic-shared-object "${flags[@]}" "$ROOT/compat/x86_64/general_dynamic_scope_plugin.c" -o "$work/libscope-$provider.so"
     "$oracle_cc" -fPIC -shared "${flags[@]}" "$ROOT/compat/x86_64/general_dynamic_scope_plugin.c" \
         -Wl,-z,now,-soname,"libscope-$provider.so" -o "$work/oracle/libscope-$provider.so"
+    if [ "$provider" = second ]; then
+        for image in "$work/libscope-second.so" "$work/oracle/libscope-second.so"; do
+            python3 -B - "$image" <<'PY_SCOPE_VISIBILITY'
+from pathlib import Path
+import struct
+import sys
+
+path = Path(sys.argv[1])
+image = bytearray(path.read_bytes())
+assert image[:6] == b'\x7fELF\x02\x01'
+sections_at = struct.unpack_from('<Q', image, 40)[0]
+section_size, section_count = struct.unpack_from('<HH', image, 58)
+sections = [struct.unpack_from('<IIQQQQIIQQ', image, sections_at + i * section_size)
+            for i in range(section_count)]
+matches = 0
+for section in sections:
+    if section[1] != 11:  # SHT_DYNSYM
+        continue
+    strings = sections[section[6]]
+    for at in range(section[4], section[4] + section[5], section[9]):
+        name_offset = struct.unpack_from('<I', image, at)[0]
+        start = strings[4] + name_offset
+        end = image.index(0, start)
+        if image[start:end] == b'scope_hidden_value':
+            assert image[at + 5] == 0
+            image[at + 5] = 2  # STV_HIDDEN, retained in .dynsym
+            matches += 1
+assert matches == 1
+path.write_bytes(image)
+PY_SCOPE_VISIBILITY
+        done
+    fi
     cp "$work/libscope-$provider.so" "$work/execution-root/usr/lib/"
 done
 "$driver" "$entry_mode" "$ROOT/compat/x86_64/general_dynamic_iterate_consumer.c" -o "$work/iterate"
@@ -189,8 +221,8 @@ printf 'general constructor visibility: PASS (foreign dlsym/iterate visibility, 
 "$oracle_cc" "${oracle_entry_flags[@]}" "$ROOT/compat/x86_64/general_dynamic_scope_consumer.c" \
     -Wl,-rpath,"$work/oracle" -o "$work/oracle/scope"
 cp "$work/scope" "$work/execution-root/scope"
-timeout 20 chroot "$work/execution-root" /scope >"$work/scope.stdout"
 LD_LIBRARY_PATH="$work/oracle" timeout 20 "$work/oracle/scope" >"$work/oracle-scope.stdout"
+timeout 20 chroot "$work/execution-root" /scope >"$work/scope.stdout"
 cmp "$work/scope.stdout" "$work/oracle-scope.stdout"
 printf 'general runtime scope: PASS (musl differential, caller RTLD_NEXT and promotion); evidence: %s\n' "$work"
 

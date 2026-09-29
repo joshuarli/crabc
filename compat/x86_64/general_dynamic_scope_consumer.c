@@ -16,6 +16,10 @@ int main(void)
     if (!first || !second) return 1;
     int (*next)(void) = (int (*)(void))dlsym(first, "scope_next");
     if (!next || next() != 22) return 2;
+    int (*hidden)(void) = (int (*)(void))dlsym(second, "scope_hidden_value");
+    if (!hidden || hidden() != 44) return 11;
+    int (*next_hidden)(void) = (int (*)(void))dlsym(first, "scope_next_hidden");
+    if (!next_hidden || next_hidden() != 44) return 10;
     if (*(int *)dlsym(first, "scope_value") != 11
         || *(int *)dlsym(RTLD_DEFAULT, "scope_value") != 22) return 3;
     if (dlopen("libscope-first.so", RTLD_NOW | RTLD_NOLOAD | RTLD_GLOBAL) != first) return 4;
