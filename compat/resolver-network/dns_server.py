@@ -49,6 +49,7 @@ RECORDS: dict[tuple[str, int], tuple[str, bytes | None]] = {
     ("malformed.example.test.", 1): ("malformed-sequence", socket.inet_aton("198.51.100.43")),
     ("source-spoof.example.test.", 1): ("source-spoof-sequence", socket.inet_aton("198.51.100.53")),
     ("alias.example.test.", 1): ("cname", socket.inet_aton("198.51.100.44")),
+    ("chain.example.test.", 1): ("cname-chain", socket.inet_aton("198.51.100.54")),
     ("tc.example.test.", 1): ("tc-sequence", socket.inet_aton("198.51.100.45")),
     ("fallback.example.test.", 1): ("answer", socket.inet_aton("198.51.100.18")),
     ("searchhost.search.test.", 1): ("answer", socket.inet_aton("198.51.100.17")),
@@ -324,6 +325,13 @@ def encode_answer(
         address_owner = struct.pack("!H", 0xC000 | target_offset)
         address = address_owner + struct.pack("!HHIH", qtype, 1, 60, len(value)) + value
         return struct.pack("!HHHHHH", identifier, flags, 1, 2, 0, 0) + question_bytes + cname + address
+    if behavior == "cname-chain":
+        middle = b"\x06middle\x07example\x04test\x00"
+        final = b"\x05final\x07example\x04test\x00"
+        first = answer_record(5, middle)
+        second = middle + struct.pack("!HHIH", 5, 1, 60, len(final)) + final
+        address = final + struct.pack("!HHIH", qtype, 1, 60, len(value)) + value
+        return struct.pack("!HHHHHH", identifier, flags, 1, 3, 0, 0) + question_bytes + first + second + address
     answer = b"\xc0\x0c" + struct.pack("!HHIH", qtype, 1, 60, len(value)) + value
     return struct.pack("!HHHHHH", identifier, flags, 1, 1, 0, 0) + question_bytes + answer
 

@@ -265,6 +265,37 @@ out:
     return found;
 }
 
+#if defined(__x86_64__)
+static int cname_chain_address(void)
+{
+    struct addrinfo hints;
+    struct addrinfo *results = NULL;
+    struct addrinfo *second = NULL;
+    struct in_addr address;
+    int matched;
+
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_INET;
+    hints.ai_flags = AI_CANONNAME;
+    if (getaddrinfo("chain.example.test", NULL, &hints, &results) != 0)
+        return 0;
+    if (getaddrinfo("a.example.test", NULL, &hints, &second) != 0) {
+        freeaddrinfo(results);
+        return 0;
+    }
+    matched = results && results->ai_canonname &&
+        strcmp(results->ai_canonname, "final.example.test") == 0 &&
+        results->ai_family == AF_INET &&
+        results->ai_addrlen >= sizeof(struct sockaddr_in) &&
+        inet_pton(AF_INET, "198.51.100.54", &address) == 1 &&
+        memcmp(&((struct sockaddr_in *)results->ai_addr)->sin_addr,
+            &address, sizeof address) == 0;
+    freeaddrinfo(second);
+    freeaddrinfo(results);
+    return matched;
+}
+#endif
+
 static int query_aaaa(const char *name, const char *expected)
 {
     unsigned char packet[2048];
@@ -338,6 +369,12 @@ static int resolver_cases(void)
             "198.51.100.44"))
         return fail("resolver-cname");
     puts("resolver.cname=target.example.test");
+
+#if defined(__x86_64__)
+    if (!install_nameservers(0) || !cname_chain_address())
+        return fail("resolver-cname-chain");
+    puts("resolver.cname-chain=final.example.test");
+#endif
 
     if (!install_nameservers(0) ||
         !query_a("tc.example.test", "198.51.100.45"))

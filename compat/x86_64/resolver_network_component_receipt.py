@@ -71,6 +71,7 @@ EXPECTED_STDOUT = (
     b"resolver.malformed-wrong-id=accepted-valid\n"
     b"resolver.source-spoof=accepted-valid-source\n"
     b"resolver.cname=target.example.test\n"
+    b"resolver.cname-chain=final.example.test\n"
     b"resolver.tc-tcp=accepted-over-tcp\n"
     b"resolver.search=searchhost.search.test\n"
     b"resolver.fallback=second-server\n"
@@ -91,6 +92,7 @@ EXPECTED_STDOUT = (
 REQUIRED_SERVER_NAMES = {
     "a.example.test.", "aaaa.example.test.", "nxdomain.example.test.",
     "nodata.example.test.", "malformed.example.test.", "source-spoof.example.test.", "alias.example.test.",
+    "chain.example.test.",
     "tc.example.test.", "searchhost.search.test.", "fallback.example.test.",
 }
 SOURCE_PATHS = {
@@ -988,12 +990,15 @@ def recompute_event_contract(
                      event.get("name") == "fallback.example.test." and
                      event.get("transport") in {"udp", "tcp"} and event.get("action") == "answer")
     cname = count(lambda event: event.get("name") == "alias.example.test." and event.get("action") == "cname")
+    cname_chain = count(lambda event: event.get("name") == "chain.example.test." and
+                        event.get("role") == "valid" and event.get("transport") == "udp" and
+                        event.get("action") == "cname-chain")
     tc_udp = count(lambda event: event.get("name") == "tc.example.test." and event.get("transport") == "udp" and event.get("action") == "tc-sequence")
     tc_tcp = count(lambda event: event.get("name") == "tc.example.test." and event.get("transport") == "tcp" and event.get("action") == "answer")
     passed = (REQUIRED_SERVER_NAMES <= names and all(value >= executions for value in name_counts.values()) and
               malformed >= executions and source_spoof >= executions and source_other == 0 and
               valid_drop >= executions and drop >= executions and fallback >= executions and
-              cname >= executions and tc_udp >= executions and tc_tcp >= executions)
+              cname >= executions and cname_chain >= executions and tc_udp >= executions and tc_tcp >= executions)
     result = {
         "expected_execution_count": executions,
         "query_counts": name_counts,
@@ -1006,6 +1011,7 @@ def recompute_event_contract(
         "drop_endpoint_observations": drop,
         "fallback_query_observations": fallback,
         "cname_query_observations": cname,
+        "cname_chain_query_observations": cname_chain,
         "tc_udp_truncated_observations": tc_udp,
         "tc_tcp_retry_observations": tc_tcp,
         "passed": passed,

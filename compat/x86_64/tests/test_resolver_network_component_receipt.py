@@ -77,6 +77,7 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
             {"name": "fallback.example.test.", "role": "drop", "transport": "udp", "action": "drop"},
             {"name": "fallback.example.test.", "role": "fallback", "transport": "udp", "action": "drop"},
             {"name": "alias.example.test.", "role": "valid", "transport": "udp", "action": "cname"},
+            {"name": "chain.example.test.", "role": "valid", "transport": "udp", "action": "cname-chain"},
             {"name": "tc.example.test.", "role": "valid", "transport": "udp", "action": "tc-sequence"},
             {"name": "tc.example.test.", "role": "valid", "transport": "tcp", "action": "answer"},
         ])
@@ -92,6 +93,7 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
             {"role": "drop", "action": "drop"},
             {"name": "fallback.example.test.", "role": "fallback", "transport": "udp", "action": "answer"},
             {"name": "alias.example.test.", "action": "cname"},
+            {"name": "chain.example.test.", "role": "valid", "transport": "udp", "action": "cname-chain"},
             {"name": "tc.example.test.", "transport": "udp", "action": "tc-sequence"},
             {"name": "tc.example.test.", "transport": "tcp", "action": "answer"},
             {"name": "source-spoof.example.test.", "role": "valid", "transport": "udp",
@@ -100,6 +102,11 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
         ])
         aggregate = events * 2
         self.assertTrue(self.reader.recompute_event_contract(aggregate, executions=2)["passed"])
+        wrong_chain = [
+            {**event, "role": "fallback"} if event.get("name") == "chain.example.test." else event
+            for event in aggregate
+        ]
+        self.assertFalse(self.reader.recompute_event_contract(wrong_chain, executions=2)["passed"])
         swapped = {"reference": aggregate, "installed-static-et-exec": []}
         self.assertFalse(self.reader.recompute_event_contract(
             aggregate, executions=2, by_execution=swapped,

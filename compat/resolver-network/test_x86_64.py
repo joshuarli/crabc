@@ -124,6 +124,7 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
                 {"name": "fallback.example.test.", "role": "fallback", "transport": "udp", "action": "answer"},
                 {"name": "fallback.example.test.", "role": "fallback", "transport": "udp", "action": "answer"},
                 {"name": "alias.example.test.", "action": "cname"},
+                {"name": "chain.example.test.", "role": "valid", "transport": "udp", "action": "cname-chain"},
                 {"name": "tc.example.test.", "transport": "udp", "action": "tc-sequence"},
                 {"name": "source-spoof.example.test.", "role": "valid", "transport": "udp",
                  "action": "source-spoof-sequence", "forged_source": "127.0.0.4",
@@ -133,6 +134,11 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
         self.assertFalse(runner.event_contract(events)["passed"])
         events.append({"name": "tc.example.test.", "transport": "tcp", "action": "answer"})
         self.assertTrue(runner.event_contract(events)["passed"])
+        wrong_chain = [
+            {**event, "action": "answer"} if event.get("name") == "chain.example.test." else event
+            for event in events
+        ]
+        self.assertFalse(runner.event_contract(wrong_chain)["passed"])
         without_fallback_answer = [
             {**event, "action": "drop"} if event.get("role") == "fallback" else event
             for event in events
@@ -152,6 +158,7 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
             {"role": "drop", "action": "drop"},
             {"name": "fallback.example.test.", "role": "fallback", "transport": "udp", "action": "answer"},
             {"name": "alias.example.test.", "action": "cname"},
+            {"name": "chain.example.test.", "role": "valid", "transport": "udp", "action": "cname-chain"},
             {"name": "tc.example.test.", "transport": "udp", "action": "tc-sequence"},
             {"name": "tc.example.test.", "transport": "tcp", "action": "answer"},
         ])
