@@ -10,6 +10,9 @@ extern int general_shared_tls_value(void);
 extern int general_shared_tbss_value(void);
 extern void *general_shared_tls_address(void);
 extern int general_shared_constructor_stage_value(void);
+extern int general_consumer_shared_value(void);
+extern int general_consumer_shared_tbss_value(void);
+extern void *general_consumer_shared_address(void);
 
 __thread int general_main_tls
     __attribute__((tls_model("global-dynamic"), aligned(512))) = 4;
@@ -94,10 +97,14 @@ int main(void) {
     if (general_left_initial_value() != 30) return 43;
     if (general_right_initial_value() != 40) return 44;
     if (general_shared_tls_value() != 10) return 45;
+    if (general_consumer_shared_value() != 10
+        || general_consumer_shared_tbss_value() != 0
+        || general_consumer_shared_address() != general_shared_tls_address()) return 52;
     if (general_left_alignment() != 0 || general_right_alignment() != 0
         || ((long)&general_main_tls & 511) != 0) return 46;
     if (general_left_bump() != 36) return 47;
     if (general_shared_tls_value() != 11) return 48;
+    if (general_consumer_shared_value() != 11) return 53;
     if (general_right_initial_value() != 41) return 49;
     if (general_right_bump() != 50) return 50;
     general_main_tls += 5;

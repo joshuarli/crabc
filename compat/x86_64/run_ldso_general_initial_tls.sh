@@ -6,10 +6,11 @@
 # materialize the main thread before TLS relocations are observed by code, and
 # reject malformed/runtime-growth-shaped inputs before ARCH_SET_FS. The
 # positive diamond has duplicate shared dependencies plus distinct template,
-# tbss, alignment, and candidate-only dependency DT_INIT_ARRAY constructor
-# witnesses. The naked pinned-musl reference intentionally bypasses CRT
-# dispatch, so it remains the initial-TLS value/layout oracle rather than a
-# constructor-order differential. The candidate exercises only
+# tbss, alignment, a PT_TLS-free DSO importing shared TLS, and candidate-only
+# dependency DT_INIT_ARRAY constructor witnesses. The naked pinned-musl
+# reference intentionally bypasses CRT dispatch, so it remains the initial-TLS
+# value/layout oracle rather than a constructor-order differential. The
+# candidate exercises only
 # dependency-first startup callbacks after initial TLS materialization; it
 # does not exercise pthread workers, main/CRT lifecycle, dynamic CRT handoff,
 # dlopen/dlclose, DTV replacement, or public RuntimeV1 publication.
@@ -22,6 +23,7 @@ readonly MAIN="$ROOT_DIR/compat/x86_64/ldso_general_initial_tls_main.c"
 readonly LEFT="$ROOT_DIR/compat/x86_64/ldso_general_initial_tls_left.c"
 readonly RIGHT="$ROOT_DIR/compat/x86_64/ldso_general_initial_tls_right.c"
 readonly SHARED="$ROOT_DIR/compat/x86_64/ldso_general_initial_tls_shared.c"
+readonly CONSUMER="$ROOT_DIR/compat/x86_64/ldso_general_initial_tls_consumer.c"
 readonly CAPACITY="$ROOT_DIR/compat/x86_64/ldso_general_initial_tls_capacity.c"
 readonly TRACE="$ROOT_DIR/compat/x86_64/ldso_general_initial_tls_trace.c"
 readonly MUSL_LOADER="/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"
@@ -40,7 +42,10 @@ fi
 [ -f "$MUSL_LIBC_ARCHIVE" ] || fail 'pinned musl archive is missing'
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh"
 
-work_dir="$(mktemp -d /tmp/crabc-x86-general-initial-tls.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/ldso-general-initial-tls.XXXXXX")"
+receipt_dir="$work_dir/receipt"
+mkdir "$receipt_dir"
 if [ "${CRABC_LDSO_GENERAL_INITIAL_TLS_KEEP_WORK:-0}" = 1 ]; then
     printf '%s\n' "retained general initial-TLS work directory: $work_dir" >&2
 else
@@ -94,7 +99,8 @@ fi
 left_dir="$work_dir/left"
 right_dir="$work_dir/right"
 shared_dir="$work_dir/shared"
-mkdir "$left_dir" "$right_dir" "$shared_dir"
+consumer_dir="$work_dir/consumer"
+mkdir "$left_dir" "$right_dir" "$shared_dir" "$consumer_dir"
 
 cc -fPIC -shared -nostdlib -ftls-model=global-dynamic -mtls-dialect=gnu \
     -Wl,--hash-style=sysv -Wl,-z,now -Wl,-soname,libshared.so \
@@ -107,6 +113,10 @@ cc -fPIC -shared -nostdlib -ftls-model=global-dynamic -mtls-dialect=gnu \
     -Wl,--hash-style=sysv -Wl,-z,now -Wl,-soname,libright.so -Wl,-rpath,"$shared_dir" \
     "$RIGHT" -L"$shared_dir" -Wl,--no-as-needed -l:libshared.so \
     -o "$right_dir/libright.so"
+cc -fPIC -shared -nostdlib -ftls-model=global-dynamic -mtls-dialect=gnu \
+    -Wl,--hash-style=sysv -Wl,-z,now -Wl,-soname,libconsumer.so -Wl,-rpath,"$shared_dir" \
+    "$CONSUMER" -L"$shared_dir" -Wl,--no-as-needed -l:libshared.so \
+    -o "$consumer_dir/libconsumer.so"
 
 build_main() {
     local selected_interpreter="$1"
@@ -128,9 +138,9 @@ build_main() {
     esac
     cc -nostdlib -fPIE -pie -ftls-model=global-dynamic -mtls-dialect=gnu \
         -Wl,--hash-style=sysv -Wl,-z,now -Wl,--allow-shlib-undefined \
-        -Wl,--dynamic-linker,"$selected_interpreter" -Wl,-rpath,"$left_dir:$right_dir:$shared_dir" \
+        -Wl,--dynamic-linker,"$selected_interpreter" -Wl,-rpath,"$left_dir:$right_dir:$shared_dir:$consumer_dir" \
         "${main_cppflags[@]}" "$START" "$MAIN" -L"$left_dir" -L"$right_dir" \
-        -L"$shared_dir" -Wl,--no-as-needed -l:libleft.so -l:libright.so -l:libshared.so \
+        -L"$shared_dir" -L"$consumer_dir" -Wl,--no-as-needed -l:libleft.so -l:libright.so -l:libshared.so -l:libconsumer.so \
         "${main_linker_inputs[@]}" \
         -o "$output"
 }
@@ -152,10 +162,32 @@ require_needed_names() {
     [ "$actual" = "$expected" ] || fail "unexpected DT_NEEDED graph in $binary"
 }
 
-require_needed_names "$work_dir/main-crabc" libleft.so libright.so libshared.so
+require_needed_names "$work_dir/main-crabc" libleft.so libright.so libshared.so libconsumer.so
+require_needed_names "$work_dir/main-musl" libleft.so libright.so libshared.so libconsumer.so
 require_needed_names "$left_dir/libleft.so" libshared.so
 require_needed_names "$right_dir/libright.so" libshared.so
 require_needed_names "$shared_dir/libshared.so"
+require_needed_names "$consumer_dir/libconsumer.so" libshared.so
+
+# This DSO has no PT_TLS and therefore cannot take a module ID. Its named
+# GNU dynamic-TLS relocations must bind the shared provider's initialized and
+# zero-filled TLS through the ordinary DSO dependency edge.
+if readelf -lW "$consumer_dir/libconsumer.so" | grep ' TLS ' >/dev/null; then
+    fail 'consumer unexpectedly owns PT_TLS'
+fi
+consumer_relocations="$(readelf -rW "$consumer_dir/libconsumer.so")"
+for symbol in general_shared_tls general_shared_tbss; do
+    for relocation in R_X86_64_DTPMOD64 R_X86_64_DTPOFF64; do
+        grep -Eq "${relocation}.*${symbol}([[:space:]]|$)" <<<"$consumer_relocations" \
+            || fail "consumer lacks named $relocation for $symbol"
+    done
+    if ! readelf -Ws "$consumer_dir/libconsumer.so" | awk -v symbol="$symbol" '$4 == "TLS" && $7 == "UND" && $8 == symbol { found = 1 } END { exit found ? 0 : 1 }'; then
+        fail "consumer lacks an undefined TLS import for $symbol"
+    fi
+done
+if grep -Eq 'R_X86_64_(TPOFF64|TPOFF32|GOTTPOFF|TLSDESC|GOTPC32_TLSDESC|TLSDESC_CALL)' <<<"$consumer_relocations"; then
+    fail 'consumer escaped the GNU dynamic-TLS relocation profile'
+fi
 
 require_dependency_init_array() {
     local binary="$1"
@@ -192,7 +224,7 @@ for binary in "$work_dir/main-crabc" "$left_dir/libleft.so" "$right_dir/libright
     fi
 done
 
-relocations="$(readelf -rW "$work_dir/main-crabc" "$left_dir/libleft.so" "$right_dir/libright.so" "$shared_dir/libshared.so")"
+relocations="$(readelf -rW "$work_dir/main-crabc" "$left_dir/libleft.so" "$right_dir/libright.so" "$shared_dir/libshared.so" "$consumer_dir/libconsumer.so")"
 for relocation in R_X86_64_DTPMOD64 R_X86_64_DTPOFF64; do
     grep -q "$relocation" <<<"$relocations" || fail "fixture did not exercise $relocation"
 done
@@ -222,8 +254,23 @@ main_musl_interpreter="$(readelf -lW "$work_dir/main-musl" | sed -n 's/.*Request
 [ "$main_crabc_interpreter" = "$interpreter" ] || fail 'candidate PT_INTERP drifted'
 [ "$main_musl_interpreter" = "$MUSL_LOADER" ] || fail 'musl reference PT_INTERP drifted'
 
-(cd "$work_dir" && env -i PATH=/usr/bin:/bin "$work_dir/main-musl")
-(cd "$work_dir" && env -i PATH=/usr/bin:/bin "$work_dir/main-crabc")
+for mode in musl crabc; do
+    if (cd "$work_dir" && env -i PATH=/usr/bin:/bin "$work_dir/main-$mode") >"$receipt_dir/main-$mode.output" 2>&1; then
+        printf 'status=0\n' >"$receipt_dir/main-$mode.status"
+    else
+        status=$?
+        printf 'status=%s\n' "$status" >"$receipt_dir/main-$mode.status"
+        cat "$receipt_dir/main-$mode.output" >&2
+        fail "$mode initial-TLS graph exited $status"
+    fi
+done
+
+for binary in "$interpreter" "$work_dir/main-musl" "$work_dir/main-crabc" "$left_dir/libleft.so" "$right_dir/libright.so" "$shared_dir/libshared.so" "$consumer_dir/libconsumer.so"; do
+    name="$(basename "$binary")"
+    hash="$(sha256sum "$binary")"
+    printf '%s  %s\n' "${hash%% *}" "$name" >>"$receipt_dir/sha256sums.txt"
+    readelf -hW -lW -dW -rW -sW "$binary" >"$receipt_dir/$name.readelf"
+done
 
 # Trace expected failures to prove malformed input does not get as far as the
 # private ARCH_SET_FS transition. The tracer itself is ordinary harness code,
@@ -243,6 +290,7 @@ expect_candidate_rejection_before_fs() {
         printf '%s\n' "$output" >&2
         exit 1
     fi
+    printf '%s\t%s\n' "$case_name" "$expected_message" >>"$receipt_dir/pre-fs-rejections.txt"
 }
 
 program_header_offset_for_type() {
@@ -432,4 +480,12 @@ cp "$work_dir/capacity/libleft.so" "$left_dir/libleft.so"
 expect_candidate_rejection_before_fs graph object-capacity
 mv "$left_dir/libleft.so.valid" "$left_dir/libleft.so"
 
-printf '%s\n' 'x86 general initial TLS materialization: PASS (dependency-first DT_INIT_ARRAY TLS callbacks; initial-only DTPMOD64/DTPOFF64 diamond; generation-one state; pre-FS rejection)'
+case "${CRABC_LDSO_GENERAL_INITIAL_TLS_ROOT:-source}" in
+    source) receipt_name=ldso-general-initial-tls-source ;;
+    crabc-target) receipt_name=ldso-general-initial-tls-target-root ;;
+esac
+report_dir="$ROOT_DIR/.work/x86_64/reports/$receipt_name"
+mkdir -p "$(dirname "$report_dir")"
+rm -rf -- "$report_dir"
+cp -a "$receipt_dir" "$report_dir"
+printf '%s\n' "x86 general initial TLS materialization: PASS (PT_TLS-free DSO import; pinned musl value oracle; dependency-first TLS callbacks; pre-FS rejection); receipt: $report_dir"
