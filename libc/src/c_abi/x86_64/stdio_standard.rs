@@ -1,8 +1,8 @@
 //! Bounded standard and pathname-stream C stdio core for Linux/x86-64.
 //!
 //! This target-local leaf owns the three process-lifetime stream objects
-//! exported as `stdin`, `stdout`, and `stderr`, plus one separately selected
-//! fixed pathname/tmpfile stream slot. The permanent streams expose their selected
+//! exported as `stdin`, `stdout`, and `stderr`, plus two fixed records shared
+//! by pathname and temporary-file calls. The permanent streams expose their selected
 //! byte/block operations: `fgetc`/`getc`/`getchar`, `ungetc`, `fread`,
 //! `fputc`/`putc`/`putchar`, `fwrite`, `fflush`, `feof`, `ferror`,
 //! `clearerr`, `fileno`, and GNU/BSD-only `fileno_unlocked`, `feof_unlocked`,
@@ -54,8 +54,9 @@
 //! -1`; this x86 leaf deliberately admits no permanent-stream configuration,
 //! so its exact fixed result remains false without modeling a general line
 //! buffering mode, cursor, or output transition.
-//! The sibling pathname/tmpfile block admits only one active `fopen("r")`,
-//! `fopen("w+")`, or `tmpfile` stream at a time, its exact `fclose`, pre-I/O
+//! The sibling pathname/tmpfile block admits one active `fopen("r")` or
+//! `fopen("w+")` stream and up to two active `tmpfile` streams. A live pathname
+//! stream leaves one record available for `tmpfile`. It selects their exact `fclose`, pre-I/O
 //! caller-buffered `_IOFBF` configuration, and its selected
 //! `fseek`/`fseeko`/`ftell`/`ftello`/`rewind`/`fgetpos`/`fsetpos` routes. It is
 //! a deliberately lock-free, externally-serialized state machine: it does
@@ -64,7 +65,7 @@
 //! `feof_unlocked`, and `ferror_unlocked` aliases,
 //! `fdopen`, `freopen`, append modes, dynamic stream allocation, a general
 //! stream registry, formatters/scanners, line or unbuffered configuration,
-//! wide streams, callbacks, memory/tmp/popen streams other than this single
+//! wide streams, callbacks, memory/tmp/popen streams other than this bounded
 //! private tmpfile lifecycle, or an open-file registry.
 //!
 //! ## Fixed source and license provenance
@@ -90,7 +91,7 @@
 //! | `src/stdio/ext.c` | private `__freading(stdin)` direction, `__fsetlocking(stdin, request)` no-op, `__freadable(stdin)` access, `__fwritable(stderr)` access, `__fbufsize(stderr)` fixed-capacity, and `__flbf(stderr)` fixed-line-buffer observations; no general FILE, lock, input, output, or buffering contract |
 //! | `src/stdio/fflush.c` | selected explicit-flush entry |
 //! | `src/stdio/{fopen,fclose,setvbuf,fseek,ftell,fgetpos,fsetpos,rewind}.c` | one fixed pathname-stream lifecycle, caller-buffered full buffering, and logical-position routes |
-//! | `src/stdio/tmpfile.c`, `src/temp/__randname.c` | one exclusive pathname created below `/tmp` with requested mode `0600`, immediately unlinked, and adopted as a `w+` fixed stream; Linux `getrandom` plus hex encoding replaces musl's noncryptographic name generator without adding a PRNG |
+//! | `src/stdio/tmpfile.c`, `src/temp/__randname.c` | each exclusive pathname is created below `/tmp` with requested mode `0600`, immediately unlinked, and adopted as a `w+` fixed stream; Linux `getrandom` plus hex encoding replaces musl's noncryptographic name generator without adding a PRNG |
 //!
 //! The intentional boundaries are explicit. Musl's private x86 `FILE` record
 //! is a 232-byte internal layout tied to its full stream list, lock state,
@@ -99,10 +100,10 @@
 //! public `FILE` remains opaque. It retains the observable `UNGET` headroom,
 //! input lookahead, musl-shaped buffered-output discard-on-error behavior,
 //! error/EOF state, and selected C entry contracts without importing those
-//! unselected owners. The pathname sibling deliberately reuses one static
-//! state record and one static `BUFSIZ + UNGET` backing object rather than
-//! importing musl's allocation-backed open-file list. It is therefore one
-//! regular-file pathname/tmpfile stream, not a generic `FILE` implementation.
+//! unselected owners. The pathname sibling uses two static state records and
+//! two static `BUFSIZ + UNGET` backing objects rather than importing musl's
+//! allocation-backed open-file list. It has a bounded two-stream capacity,
+//! not a generic `FILE` implementation.
 //! The temporary-name spelling is deliberately unobservable through the API;
 //! this translation uses 96 kernel-random bits and musl's 100-attempt bound, then
 //! fails closed if immediate unlinking fails rather than returning a named
@@ -217,15 +218,16 @@ static mut STDOUT_STORAGE: [u8; STREAM_STORAGE] = [0; STREAM_STORAGE];
 // Musl's permanent stderr record is unbuffered, but it still reserves the
 // eight-byte pushback prefix in its static data shape.
 static mut STDERR_STORAGE: [u8; UNGET] = [0; UNGET];
-// The pathname vertical deliberately has exactly one owned stream record and
-// one static backing object. This is a fixed lifecycle slot, not a general
-// stream allocator or registry.
+// The pathname stream has one fixed record. A second fixed record lets two
+// unnamed temporary files retain independent descriptors and buffer state.
 static mut PATH_STREAM_STORAGE: [u8; STREAM_STORAGE] = [0; STREAM_STORAGE];
+static mut TMPFILE_STREAM_STORAGE: [u8; STREAM_STORAGE] = [0; STREAM_STORAGE];
 
 static mut STDIN_STREAM: StandardStream = StandardStream::new(0, F_PERM | F_NOWR);
 static mut STDOUT_STREAM: StandardStream = StandardStream::new(1, F_PERM | F_NORD);
 static mut STDERR_STREAM: StandardStream = StandardStream::new(2, F_PERM | F_NORD);
 static mut PATH_STREAM: StandardStream = StandardStream::new(-1, F_PATH);
+static mut TMPFILE_STREAM: StandardStream = StandardStream::new(-1, F_PATH);
 static mut STANDARD_STREAMS_READY: bool = false;
 
 /// C's permanent input stream data symbol.
@@ -284,22 +286,22 @@ pub(crate) fn is_permanent_stream(stream: *const StandardStream) -> bool {
 
 #[inline]
 unsafe fn is_active_path_stream(stream: *const StandardStream) -> bool {
-    stream == ptr::addr_of!(PATH_STREAM)
-        // SAFETY: pointer equality above proves the record is the one static
-        // pathname slot before its flags are inspected.
+    (stream == ptr::addr_of!(PATH_STREAM) || stream == ptr::addr_of!(TMPFILE_STREAM))
+        // SAFETY: pointer equality above proves this is one of the two fixed
+        // records before its flags are inspected.
         && unsafe { (*stream).flags & (F_PATH | F_ACTIVE) == F_PATH | F_ACTIVE }
 }
 
 #[inline]
 unsafe fn is_selected_stream(stream: *const StandardStream) -> bool {
     is_permanent_stream(stream)
-        // SAFETY: the path helper dereferences only the exact private slot.
+        // SAFETY: the path helper dereferences only the two fixed records.
         || unsafe { is_active_path_stream(stream) }
 }
 
 #[inline]
 unsafe fn is_path_stream(stream: *const StandardStream) -> bool {
-    // SAFETY: this is the exact private pathname slot predicate.
+    // SAFETY: this predicate accepts only the two fixed records.
     unsafe { is_active_path_stream(stream) }
 }
 
@@ -312,7 +314,7 @@ unsafe fn reject_stream() {
     unsafe { errno::set_errno(EINVAL) };
 }
 
-/// Install the one private pathname slot after `open(2)` succeeds.
+/// Install the private pathname record after `open(2)` succeeds.
 ///
 /// The caller has already established that the slot is inactive. The backing
 /// object has process lifetime and supplies eight bytes of pushback headroom,
@@ -334,15 +336,44 @@ unsafe fn initialize_path_stream(file_descriptor: c_int, flags: u32) -> *mut Sta
     }
 }
 
-/// Forget a closed pathname stream after its descriptor lifecycle ends.
+/// Install an unnamed temporary file in the first free fixed record.
+///
+/// The caller has established that at least one record is inactive and owns
+/// the descriptor until the returned stream is closed.
+unsafe fn initialize_tmpfile_stream(file_descriptor: c_int) -> *mut StandardStream {
+    // Keep the pathname record available for fopen until a second tmpfile
+    // needs it.
+    if !unsafe { is_active_path_stream(ptr::addr_of!(TMPFILE_STREAM)) } {
+        // SAFETY: the caller's free-record preflight and external serialization
+        // grant this call exclusive use of this record and its backing bytes.
+        unsafe {
+            let buffer = ptr::addr_of_mut!(TMPFILE_STREAM_STORAGE).cast::<u8>().add(UNGET);
+            TMPFILE_STREAM.flags = F_PATH | F_ACTIVE;
+            TMPFILE_STREAM.file_descriptor = file_descriptor;
+            TMPFILE_STREAM.buffer = buffer;
+            TMPFILE_STREAM.capacity = BUFSIZ;
+            TMPFILE_STREAM.read_position = buffer;
+            TMPFILE_STREAM.read_end = buffer;
+            TMPFILE_STREAM.write_position = buffer;
+            return ptr::addr_of_mut!(TMPFILE_STREAM);
+        }
+    }
+    unsafe { initialize_path_stream(file_descriptor, 0) }
+}
+
+/// Forget a closed fixed stream after its descriptor lifecycle ends.
 ///
 /// No caller-held pointer remains a valid selected stream after this reset.
 /// The static backing bytes remain process-owned and are reinitialized by the
-/// next successful `fopen` before any read or write consumes them.
-unsafe fn reset_path_stream() {
-    // SAFETY: only `fclose` reaches this after it has claimed the exact slot.
+/// next successful `fopen` or `tmpfile` before any read or write consumes them.
+unsafe fn reset_path_stream(stream: *mut StandardStream) {
+    // SAFETY: only `fclose` reaches this after it has claimed one exact record.
     unsafe {
-        PATH_STREAM = StandardStream::new(-1, F_PATH);
+        if stream == ptr::addr_of_mut!(PATH_STREAM) {
+            PATH_STREAM = StandardStream::new(-1, F_PATH);
+        } else {
+            TMPFILE_STREAM = StandardStream::new(-1, F_PATH);
+        }
     }
 }
 
@@ -989,8 +1020,8 @@ core::arch::global_asm!(
 ///
 /// # Safety
 ///
-/// A non-null `stream` must be one permanent exported pointer or the
-/// still-active pointer returned by this module's `fopen`; callers must
+/// A non-null `stream` must be one permanent exported pointer or a
+/// still-active pointer returned by this module's `fopen` or `tmpfile`; callers must
 /// externally serialize every selected stream affected by the call.
 #[no_mangle]
 pub unsafe extern "C" fn fflush(stream: *mut StandardStream) -> c_int {
@@ -998,8 +1029,8 @@ pub unsafe extern "C" fn fflush(stream: *mut StandardStream) -> c_int {
     unsafe { ensure_standard_streams() };
     if stream.is_null() {
         // SAFETY: these are the only output streams this module owns. Preserve
-        // every flush attempt like musl's global walk, including the separately
-        // selected path slot when its externally serialized lifecycle is live.
+        // every flush attempt like musl's global walk, including each active
+        // fixed stream record under external lifecycle serialization.
         let stdout_status = unsafe { flush_output(ptr::addr_of_mut!(STDOUT_STREAM)) };
         let stderr_status = unsafe { flush_output(ptr::addr_of_mut!(STDERR_STREAM)) };
         let path_status = if unsafe { is_active_path_stream(ptr::addr_of!(PATH_STREAM)) } {
@@ -1007,7 +1038,13 @@ pub unsafe extern "C" fn fflush(stream: *mut StandardStream) -> c_int {
         } else {
             0
         };
-        if stdout_status == EOF || stderr_status == EOF || path_status == EOF {
+        let tmpfile_status = if unsafe { is_active_path_stream(ptr::addr_of!(TMPFILE_STREAM)) } {
+            unsafe { flush_output(ptr::addr_of_mut!(TMPFILE_STREAM)) }
+        } else {
+            0
+        };
+        if stdout_status == EOF || stderr_status == EOF || path_status == EOF
+            || tmpfile_status == EOF {
             EOF
         } else {
             0
@@ -1596,8 +1633,8 @@ pub unsafe extern "C" fn fopen(
 /// no userspace PRNG and retains musl's [`TMPFILE_MAX_ATTEMPTS`]-attempt retry
 /// bound. Unlike musl's clock/TID `__randname` helper, this name source has no
 /// userspace random state; unlike musl's ignored unlink result, this bounded
-/// route fails closed if unlinking cannot establish unnamed ownership. A busy
-/// fixed stream slot fails before creating an object, and every later failure
+/// route fails closed if unlinking cannot establish unnamed ownership. Two busy
+/// fixed stream records fail before creating an object, and every later failure
 /// closes any descriptor it has acquired.
 ///
 /// Linux LP64 exposes `tmpfile64` only as the preprocessing alias in
@@ -1609,9 +1646,11 @@ pub unsafe extern "C" fn fopen(
 /// and close a successful result through this module's [`fclose`].
 #[no_mangle]
 pub unsafe extern "C" fn tmpfile() -> *mut StandardStream {
-    // SAFETY: the predicate dereferences only the one private slot.
-    if unsafe { is_active_path_stream(ptr::addr_of!(PATH_STREAM)) } {
-        // SAFETY: the bounded runtime has no second stream record to consume.
+    // SAFETY: the predicate dereferences only the two fixed private records.
+    if unsafe { is_active_path_stream(ptr::addr_of!(PATH_STREAM)) }
+        && unsafe { is_active_path_stream(ptr::addr_of!(TMPFILE_STREAM)) }
+    {
+        // SAFETY: both bounded stream records are in use.
         unsafe { errno::set_errno(EMFILE) };
         return ptr::null_mut();
     }
@@ -1704,10 +1743,10 @@ pub unsafe extern "C" fn tmpfile() -> *mut StandardStream {
             return ptr::null_mut();
         }
 
-        // SAFETY: external serialization and the busy-slot preflight grant
-        // ownership of the inactive fixed record; zero direction flags are
+        // SAFETY: external serialization and the capacity preflight grant
+        // ownership of one inactive fixed record; zero direction flags are
         // exactly the read/write `w+` stream state.
-        return unsafe { initialize_path_stream(descriptor as c_int, 0) };
+        return unsafe { initialize_tmpfile_stream(descriptor as c_int) };
     }
 
     // SAFETY: every bounded candidate failed to open; preserve the final
@@ -1716,7 +1755,7 @@ pub unsafe extern "C" fn tmpfile() -> *mut StandardStream {
     ptr::null_mut()
 }
 
-/// Close the one selected pathname or tmpfile stream.
+/// Close a selected pathname or tmpfile stream.
 ///
 /// Pending selected output is flushed first. The static slot is retired even
 /// when flushing or closing reports an error, matching the lifecycle boundary
@@ -1729,7 +1768,7 @@ pub unsafe extern "C" fn tmpfile() -> *mut StandardStream {
 /// transition.
 #[no_mangle]
 pub unsafe extern "C" fn fclose(stream: *mut StandardStream) -> c_int {
-    // SAFETY: this predicate dereferences only the exact private pathname slot.
+    // SAFETY: this predicate dereferences only the two fixed private records.
     if !unsafe { is_path_stream(stream) } {
         // SAFETY: no caller stream was dereferenced on this closed boundary.
         unsafe { reject_stream() };
@@ -1751,7 +1790,7 @@ pub unsafe extern "C" fn fclose(stream: *mut StandardStream) -> c_int {
         )
     });
     // SAFETY: no future call may treat this pointer as an active selected slot.
-    unsafe { reset_path_stream() };
+    unsafe { reset_path_stream(stream) };
     if close_status < 0 {
         return EOF;
     }

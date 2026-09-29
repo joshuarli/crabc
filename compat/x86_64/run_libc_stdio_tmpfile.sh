@@ -47,7 +47,7 @@ assert_fixture_tls_capacity() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort timeout; do
+for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf realpath rustup sort timeout; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -55,11 +55,16 @@ done
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-stdio-tmpfile.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+[ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ] || fail "requires checkout-local TMPDIR"
+case "$(realpath "$TMPDIR")" in "$ROOT_DIR"/.work/*) ;; *) fail "TMPDIR escapes checkout .work" ;; esac
+work_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-libc-stdio-tmpfile.XXXXXX")"
+trap 'chmod -R a+rX "$work_dir"' EXIT
+printf 'x86 tmpfile evidence: %s\n' "$work_dir"
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-stdio-tmpfile-reference"
+reference_program_headers="$work_dir/reference-program-headers"
+reference_dynamic="$work_dir/reference-dynamic"
 candidate="$work_dir/crabc-static-stdio-tmpfile-candidate"
 trace="$work_dir/header-trace"
 cxx_trace="$work_dir/header-cxx-trace"
@@ -77,7 +82,7 @@ cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -D_LARGEFILE64_SOURCE \
     -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_stdio_tmpfile_probe.c >/dev/null 2>"$trace"
-for header in errno.h fcntl.h stdio.h sys/stat.h unistd.h features.h \
+for header in errno.h fcntl.h stdio.h sys/stat.h sys/wait.h unistd.h features.h \
     bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$trace" ||
         fail "fixture did not use the project $header header"
@@ -94,11 +99,21 @@ done
 "$ORACLE_CC" -std=c++17 -x c++ -D_LARGEFILE64_SOURCE \
     -I"$ROOT_DIR/include" -fsyntax-only \
     compat/x86_64/libc_stdio_tmpfile_header_probe.cpp
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -D_LARGEFILE64_SOURCE -fno-builtin \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -D_LARGEFILE64_SOURCE -static \
+    -fno-pie -no-pie -fno-builtin \
     -fno-stack-protector -I"$ROOT_DIR/include" \
     compat/x86_64/libc_stdio_tmpfile_probe.c -o "$reference"
-timeout "$EXECUTION_TIMEOUT" "$reference" ||
-    fail "pinned-musl tmpfile fixture failed"
+readelf --program-headers --wide "$reference" >"$reference_program_headers"
+readelf --dynamic --wide "$reference" >"$reference_dynamic" || true
+if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \
+    "$reference_program_headers" "$reference_dynamic"; then
+    fail "pinned-musl reference selected a dynamic runtime"
+fi
+reference_status=0
+timeout "$EXECUTION_TIMEOUT" "$reference" \
+    >"$work_dir/reference.stdout" 2>"$work_dir/reference.stderr" || reference_status=$?
+printf '%s\n' "$reference_status" >"$work_dir/reference.status"
+[ "$reference_status" -eq 0 ] || fail "pinned-musl tmpfile fixture exited $reference_status"
 
 nm -A --defined-only "$ORACLE_ARCHIVE" >"$oracle_archive_symbols" 2>/dev/null
 grep -Eq '[[:space:]]T[[:space:]]tmpfile$' "$oracle_archive_symbols" ||
@@ -111,8 +126,8 @@ build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
-for symbol in __errno_location __crabc_x86_static_tls_bootstrap fclose fcntl \
-    fileno fseek fstat fread fwrite tmpfile umask; do
+for symbol in __errno_location __crabc_x86_static_tls_bootstrap _exit fclose fcntl \
+    fileno fork fseek fstat fread fwrite readlink stat tmpfile umask waitpid write; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
@@ -139,7 +154,8 @@ readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in fclose fcntl fileno fseek fstat fread fwrite tmpfile umask; do
+for symbol in _exit fclose fcntl fileno fork fseek fstat fread fwrite readlink \
+    stat tmpfile umask waitpid write; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate lacks ${symbol}"
 done
@@ -172,7 +188,13 @@ grep -Eq 'call.*__crabc_x86_static_tls_bootstrap' \
     fail "fixture start does not delegate first-thread TLS to libc"
 grep -Eq '[[:space:]]syscall$' "$candidate_disassembly" ||
     fail "candidate lacks a direct Linux syscall instruction"
-timeout "$EXECUTION_TIMEOUT" "$candidate" ||
-    fail "freestanding tmpfile fixture failed"
+candidate_status=0
+timeout "$EXECUTION_TIMEOUT" "$candidate" \
+    >"$work_dir/candidate.stdout" 2>"$work_dir/candidate.stderr" || candidate_status=$?
+printf '%s\n' "$candidate_status" >"$work_dir/candidate.status"
+for suffix in stdout stderr status; do
+    cmp "$work_dir/reference.$suffix" "$work_dir/candidate.$suffix" ||
+        fail "freestanding tmpfile $suffix differs from pinned musl"
+done
 
 printf 'x86 static crabc-libc bounded tmpfile stream: PASS\n'
