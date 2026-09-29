@@ -202,17 +202,19 @@ PY
 }
 
 retain_link_identities() {
-    python3 -B - "$work/link-identities.json" "$@" -- "${link_identity_records[@]}" <<'PY'
+    python3 -B - "$work/link-identities.json" "$work" "$@" -- "${link_identity_records[@]}" <<'PY'
+import hashlib
 import json
 from pathlib import Path
 import sys
 
+work = Path(sys.argv[2]).resolve(strict=True)
 expected_fields = {
     'linkage', 'product', 'product_format', 'product_manifest_sha256',
     'workload_sha256', 'executable_sha256', 'receipt_sha256',
 }
 separator = sys.argv.index('--')
-expected_linkages = set(sys.argv[2:separator])
+expected_linkages = set(sys.argv[3:separator])
 if not expected_linkages:
     raise SystemExit('retained process-trio link identities have no expected modes')
 records = {}
@@ -231,12 +233,29 @@ for item in sys.argv[separator + 1:]:
     records[linkage] = identity
 if set(records) != expected_linkages:
     raise SystemExit('retained process-trio link identities omit a product mode')
+executions = {}
+for linkage in sorted(expected_linkages):
+    entries = ('kernel', 'direct') if linkage in ('pie', 'non-pie') else ('static',)
+    for entry in entries:
+        label = f'dynamic-{linkage}-{entry}' if entry != 'static' else f'static-{linkage}'
+        for scenario in ('ordinary', 'errors', 'redirect'):
+            streams = {}
+            for stream in ('stdout', 'stderr', 'status'):
+                path = work / f'{label}-{scenario}.{stream}'
+                if path.is_symlink() or not path.is_file() or path.resolve(strict=True).parent != work:
+                    raise SystemExit(f'process-trio output is not a physical work file: {path}')
+                contents = path.read_bytes()
+                if stream == 'status' and contents != b'0\n':
+                    raise SystemExit(f'process-trio output has unsuccessful status: {path}')
+                streams[stream] = hashlib.sha256(contents).hexdigest()
+            executions[f'{label}/{scenario}'] = {'linkage': linkage, 'sha256': streams}
 Path(sys.argv[1]).write_text(
     json.dumps(
         {
-            'schema': 'crabc.x86_64-owned-process-trio-link-identities/v1',
+            'schema': 'crabc.x86_64-owned-process-trio-link-identities/v2',
             'expected_linkages': sorted(expected_linkages),
             'links': records,
+            'executions': executions,
         },
         indent=2,
         sort_keys=True,

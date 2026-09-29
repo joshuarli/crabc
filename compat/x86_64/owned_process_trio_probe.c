@@ -158,6 +158,30 @@ static void nested_robust_case(void) {
     CHECK(pthread_join(thread, 0) == 0);
     CHECK(munmap(state.stack, 2 * 1024 * 1024) == 0);
 }
+struct shared_kernel_tables {
+    int fd;
+};
+static int shared_kernel_tables_child(void *arg) {
+    struct shared_kernel_tables *state = arg;
+    CHECK(chdir("/state") == 0);
+    CHECK(close(state->fd) == 0);
+    return 31;
+}
+static void clone_shared_kernel_tables_case(void) {
+    char *stack = mmap(0, 1024 * 1024, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(stack != MAP_FAILED);
+    struct shared_kernel_tables state = { .fd = open("/dev/null", O_RDONLY) };
+    CHECK(state.fd >= 0);
+    pid_t pid = clone(shared_kernel_tables_child, stack + 1024 * 1024,
+        SIGCHLD | CLONE_FILES | CLONE_FS, &state);
+    CHECK(pid > 0); wait_for(pid, 31);
+    char cwd[32];
+    CHECK(getcwd(cwd, sizeof cwd) && !strcmp(cwd, "/state"));
+    CHECK(fcntl(state.fd, F_GETFD) == -1 && errno == EBADF);
+    CHECK(chdir("/") == 0);
+    CHECK(munmap(stack, 1024 * 1024) == 0);
+}
 static void vfork_cases(void) {
     volatile int shared = 0;
     pid_t pid = vfork();
@@ -268,6 +292,7 @@ int main(int argc, char **argv) {
     nested_robust_case();
     atomic_store(&sibling_running, 0);
     CHECK(pthread_join(other, 0) == 0);
+    clone_shared_kernel_tables_case();
     vfork_cases();
     daemon_cases(0);
     puts("owned-process-trio-ok");

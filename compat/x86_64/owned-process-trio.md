@@ -83,8 +83,10 @@ selected link: the complete selected product payload, one workload object, the
 output and receipt, selected CRT/runtime inputs, linker trace, ELF form, and
 the static no-DSO or dynamic no-foreign-import/application-DSO boundary. It
 retains all four identities when static modes are selected, or the two dynamic
-identities for the established dynamic-only replay, together with raw
-status/stdout/stderr files. For each of the existing `ordinary`, `errors`, and
+identities for the established dynamic-only replay. The same receipt binds
+each executed mode and scenario to SHA-256 digests of its physical raw
+status/stdout/stderr files, rejecting missing, symlinked, or unsuccessful
+artifacts before writing the receipt. For each of the existing `ordinary`, `errors`, and
 `redirect` scenarios, those raw artifacts are compared exactly to the
 pinned-musl artifacts; this preserves the existing semantic normalization
 rather than collapsing an error stream or process exit into the success marker.
@@ -93,6 +95,7 @@ The probe covers invalid flags, raw clone failure and mask/lock rollback,
 parent/child ID slots, pidfd, successful errno preservation, main and worker
 clone with another live parent worker, caller TSD and child thread creation,
 nested adopted robust-list preservation, restricted shared-VM callback,
+non-VM clone sharing of kernel descriptor and filesystem tables,
 vfork shared-memory suspension and exec, daemon sessions and intermediate
 child reaping, directory/descriptor options, missing `/dev/null`, and denied
 fork/vfork/clone syscalls. The nested robust regression first passed musl and
