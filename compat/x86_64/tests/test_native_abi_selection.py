@@ -26,6 +26,7 @@ SPEC.loader.exec_module(selection)
 if str(ROOT / 'compat/x86_64') not in sys.path:
     sys.path.insert(0, str(ROOT / 'compat/x86_64'))
 import native_data_declarations as data_declarations
+import native_abi_fchdir_import_receipt as fchdir_import_receipt
 
 
 def identity(name, version=None, default=False):
@@ -38,6 +39,45 @@ def symbol(name, *, binding='GLOBAL', visibility='DEFAULT', section='1', kind='F
             'type': kind, 'value': value, 'size_bytes': size, 'size': str(size),
             'row_index': 1, 'raw': 'retained fixture row', 'other': None,
             'version_index': None, 'common_alignment': None}
+
+
+class FchdirOrdinaryImportTests(unittest.TestCase):
+    def test_source_bound_four_link_receipt_rejects_mutated_workload(self):
+        work_name = os.environ.get('CRABC_FCHDIR_ORDINARY_IMPORT_WORK')
+        if work_name is None:
+            self.skipTest('set CRABC_FCHDIR_ORDINARY_IMPORT_WORK to a retained physical receipt')
+        work = Path(work_name)
+        report = json.loads((work / 'report.json').read_text())
+        static = Path(report['static_product'])
+        dynamic = Path(report['dynamic_product'])
+        fchdir_import_receipt.validate_report(work / 'report.json',
+                                              static_product=static, dynamic_product=dynamic)
+        original_digest = fchdir_import_receipt.digest
+        def changed_workload(path):
+            return '0' * 64 if Path(path) == work / 'workload.o' else original_digest(path)
+        with mock.patch.object(fchdir_import_receipt, 'digest', side_effect=changed_workload):
+            with self.assertRaisesRegex(fchdir_import_receipt.FchdirImportError,
+                                        'source, products, or workload changed'):
+                fchdir_import_receipt.validate_report(work / 'report.json',
+                                                      static_product=static, dynamic_product=dynamic)
+
+    def test_selector_discharge_is_exactly_the_sealed_fchdir_reason(self):
+        baseline_name = os.environ.get('CRABC_FCHDIR_SELECTION_BASELINE')
+        selected_name = os.environ.get('CRABC_FCHDIR_SELECTION_FINAL')
+        if baseline_name is None or selected_name is None:
+            self.skipTest('set both CRABC_FCHDIR_SELECTION report paths')
+        baseline = json.loads(Path(baseline_name).read_text())
+        selected = json.loads(Path(selected_name).read_text())
+        blocked = {'code': 'identity-unresolved', 'identity': identity('fchdir'),
+                   'reason': selection.ORDINARY_IMPORT_REASON}
+        self.assertIn(blocked, baseline['closure']['blockers'])
+        self.assertNotIn(blocked, selected['closure']['blockers'])
+        self.assertEqual([row for row in baseline['closure']['blockers'] if row != blocked],
+                         selected['closure']['blockers'])
+        self.assertEqual(baseline['measurement'], selected['measurement'])
+        self.assertEqual(len(baseline['occurrences']), len(selected['occurrences']))
+        self.assertEqual([row['identity'] for row in selected['ordinary_static_import_joins']
+                          if row['identity'] == identity('fchdir')], [identity('fchdir')])
 
 
 class SelectionContractTests(unittest.TestCase):
