@@ -186,6 +186,18 @@ static char *explicit_environment[] = {
 static char *empty_environment[] = {
     (char *)0,
 };
+static char inherited_path[] = "PATH=.";
+static char inherited_token[] = "CRABC_EXEC_TOKEN=inherited";
+static char *inherited_environment[] = {
+    inherited_path,
+    inherited_token,
+    (char *)0,
+};
+static char cwd_only_path[] = "PATH=";
+static char *cwd_only_environment[] = {
+    cwd_only_path,
+    (char *)0,
+};
 static char cwd_leading_path[] = "PATH=:crabc-missing-leading";
 static char *cwd_leading_environment[] = {
     cwd_leading_path,
@@ -207,10 +219,40 @@ static char *eacces_precedence_environment[] = {
     eacces_precedence_path,
     (char *)0,
 };
+static char enotdir_last_path[] =
+    "PATH=./process-exec-enoent:./process-exec-enotdir";
+static char *enotdir_last_environment[] = {
+    enotdir_last_path,
+    (char *)0,
+};
+static char enoent_last_path[] =
+    "PATH=./process-exec-enotdir:./process-exec-enoent";
+static char *enoent_last_environment[] = {
+    enoent_last_path,
+    (char *)0,
+};
+static char eacces_last_path[] =
+    "PATH=./process-exec-enotdir:./process-exec-eacces";
+static char *eacces_last_environment[] = {
+    eacces_last_path,
+    (char *)0,
+};
 static char enoexec_after_eacces_path[] =
     "PATH=./process-exec-eacces:./process-exec-enoexec-dir:./process-exec-enoent";
 static char *enoexec_after_eacces_environment[] = {
     enoexec_after_eacces_path,
+    (char *)0,
+};
+static char enoexec_before_eacces_path[] =
+    "PATH=./process-exec-enoexec-dir:./process-exec-eacces";
+static char *enoexec_before_eacces_environment[] = {
+    enoexec_before_eacces_path,
+    (char *)0,
+};
+static char searched_explicit_path[] = "PATH=./process-exec-enoent:.";
+static char *searched_explicit_environment[] = {
+    searched_explicit_path,
+    inherited_token,
     (char *)0,
 };
 static char slash_bypass_search_path[] = "PATH=./process-exec-enoent";
@@ -326,6 +368,7 @@ static int mode_requires_explicit_environment(const char *mode)
     return text_equals(mode, "execve-explicit") ||
         text_equals(mode, "execle-explicit") ||
         text_equals(mode, "execvpe-explicit") ||
+        text_equals(mode, "execvpe-explicit-searched") ||
         text_equals(mode, "fexecve-explicit") ||
         text_equals(mode, "fexecve-enosys-musl-procfd");
 }
@@ -345,6 +388,8 @@ static const char *expected_path_for_mode(const char *mode)
         return "crabc-missing-interior::crabc-after";
     if (text_equals(mode, "cwd-trailing"))
         return "crabc-missing-trailing:";
+    if (text_equals(mode, "cwd-only"))
+        return "";
     return (const char *)0;
 }
 
@@ -381,6 +426,13 @@ static int check_exec_child(int argc, char **argv)
     if (mode_requires_explicit_environment(mode) &&
         !text_equals(environment_value("CRABC_EXEC_TOKEN"), "explicit"))
         return 93;
+    if ((text_equals(mode, "execvp-inherited") ||
+            text_equals(mode, "execlp-inherited")) &&
+        !text_equals(environment_value("CRABC_EXEC_TOKEN"), "inherited"))
+        return 95;
+    if (text_equals(mode, "cwd-only") &&
+        environment_value("CRABC_EXEC_TOKEN") != (const char *)0)
+        return 96;
     return 0;
 }
 
@@ -478,6 +530,7 @@ static int check_execvp_success(const char *self)
     };
 
     (void)self;
+    environ = inherited_environment;
     (void)execvp(helper_name, argv);
     return exec_returned();
 }
@@ -485,6 +538,7 @@ static int check_execvp_success(const char *self)
 static int check_execlp_success(const char *self)
 {
     (void)self;
+    environ = inherited_environment;
     (void)execlp(helper_name, "execlp-inherited", child_flag,
         "execlp-inherited", "stack-word-one", "stack-word-two",
         "stack-word-three", "stack-word-four", (char *)0);
@@ -501,6 +555,23 @@ static int check_execvpe_success(const char *self)
     };
 
     (void)self;
+    (void)execvpe(helper_name, argv, explicit_environment);
+    return exec_returned();
+}
+
+/* The PATH used to find the image is inherited even when envp has a different
+ * PATH; the replacement image receives envp and not the search environment. */
+static int check_execvpe_searched_explicit_environment(const char *self)
+{
+    char *argv[] = {
+        "execvpe-explicit-searched",
+        (char *)child_flag,
+        "execvpe-explicit-searched",
+        (char *)0,
+    };
+
+    (void)self;
+    environ = searched_explicit_environment;
     (void)execvpe(helper_name, argv, explicit_environment);
     return exec_returned();
 }
@@ -554,6 +625,12 @@ static int check_empty_path_trailing(const char *self)
     return check_empty_path_component(cwd_trailing_environment, "cwd-trailing");
 }
 
+static int check_empty_path_whole(const char *self)
+{
+    (void)self;
+    return check_empty_path_component(cwd_only_environment, "cwd-only");
+}
+
 static int check_default_path(const char *self)
 {
     char *argv[] = {
@@ -600,6 +677,45 @@ static int check_eacces_precedence(const char *self)
     return 0;
 }
 
+static int check_search_errno(char **search_environment, int expected,
+    int explicit_envp)
+{
+    char *argv[] = {
+        "process-exec-eacces-candidate",
+        (char *)0,
+    };
+    int result;
+
+    environ = search_environment;
+    errno = FIXTURE_ERRNO_SENTINEL;
+    if (explicit_envp)
+        result = execvpe("process-exec-eacces-candidate", argv,
+            explicit_environment);
+    else
+        result = execvp("process-exec-eacces-candidate", argv);
+    return result == -1 && errno == expected ? 0 : 1;
+}
+
+/* Without EACCES, the last attempted component's ENOTDIR or ENOENT wins. */
+static int check_enotdir_last(const char *self)
+{
+    (void)self;
+    return check_search_errno(enotdir_last_environment, ENOTDIR, 0);
+}
+
+static int check_enoent_last(const char *self)
+{
+    (void)self;
+    return check_search_errno(enoent_last_environment, ENOENT, 0);
+}
+
+/* EACCES wins regardless of its position and envp cannot redirect search. */
+static int check_eacces_last_explicit_environment(const char *self)
+{
+    (void)self;
+    return check_search_errno(eacces_last_environment, EACCES, 1);
+}
+
 /* A later ENOEXEC remains terminal even after an earlier EACCES candidate. */
 static int check_enoexec_after_eacces_is_terminal(const char *self)
 {
@@ -615,6 +731,22 @@ static int check_enoexec_after_eacces_is_terminal(const char *self)
     errno = FIXTURE_ERRNO_SENTINEL;
     if (execvp("process-exec-eacces-candidate", argv) != -1 ||
         errno != FIXTURE_ENOEXEC)
+        return 1;
+    return 0;
+}
+
+static int check_enoexec_before_eacces_is_terminal(const char *self)
+{
+    char *argv[] = {
+        "process-exec-eacces-candidate",
+        (char *)0,
+    };
+
+    (void)self;
+    environ = enoexec_before_eacces_environment;
+    errno = FIXTURE_ERRNO_SENTINEL;
+    if (execvpe("process-exec-eacces-candidate", argv,
+            explicit_environment) != -1 || errno != FIXTURE_ENOEXEC)
         return 1;
     return 0;
 }
@@ -780,13 +912,19 @@ static int run_parent(const char *self)
         check_execvp_success,
         check_execlp_success,
         check_execvpe_success,
+        check_execvpe_searched_explicit_environment,
         check_empty_path_leading,
         check_empty_path_interior,
         check_empty_path_trailing,
+        check_empty_path_whole,
         check_default_path,
         check_enoexec_is_terminal,
         check_eacces_precedence,
+        check_enotdir_last,
+        check_enoent_last,
+        check_eacces_last_explicit_environment,
         check_enoexec_after_eacces_is_terminal,
+        check_enoexec_before_eacces_is_terminal,
         check_path_name_bounds_and_slash_bypass,
         check_execlp_without_mmap,
         check_execlp_large_argv,
