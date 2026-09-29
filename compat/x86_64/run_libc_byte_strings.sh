@@ -59,15 +59,18 @@ assert_selected_c_abi_surface() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff grep nm objdump readelf rustup sort; do
+for tool in ar cargo chmod cmp cp diff grep mkdir mktemp nm objdump readelf rustup sha256sum sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-byte-strings.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp" "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-byte-strings.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
+report_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-byte-strings.XXXXXX")"
+chmod 755 "$report_dir"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-byte-strings-reference"
 candidate="$work_dir/crabc-static-byte-strings-candidate"
@@ -85,7 +88,7 @@ candidate_disassembly="$work_dir/candidate-disassembly"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_byte_strings_probe.c >/dev/null 2>"$header_trace"
-for header in string.h strings.h sys/mman.h sys/syscall.h bits/alltypes.h \
+for header in errno.h string.h strings.h sys/mman.h sys/syscall.h bits/alltypes.h \
     bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" \
         || fail "fixture did not use the project $header header"
@@ -95,9 +98,10 @@ done
     -I"$ROOT_DIR/include" compat/x86_64/libc_byte_strings_probe.c \
     -o "$reference"
 if "$reference"; then
-    :
+    printf '0\n' >"$report_dir/musl.status"
 else
     status=$?
+    printf '%s\n' "$status" >"$report_dir/musl.status"
     fail "pinned-musl byte-string fixture exited ${status}"
 fi
 
@@ -172,10 +176,31 @@ if grep -Eq 'crabc_core|mimalloc|sha_crypt' \
 fi
 
 if "$candidate"; then
-    :
+    printf '0\n' >"$report_dir/crabc.status"
 else
     status=$?
+    printf '%s\n' "$status" >"$report_dir/crabc.status"
     fail "freestanding byte-string fixture exited ${status}"
 fi
 
-printf 'x86 static crabc-libc byte strings: PASS\n'
+cmp -s "$report_dir/musl.status" "$report_dir/crabc.status" \
+    || fail "pinned-musl and freestanding status records differ"
+cp "$reference" "$report_dir/musl.elf"
+cp "$candidate" "$report_dir/crabc.elf"
+cp "$candidate_symbols" "$report_dir/crabc.symbols"
+cp "$candidate_program_headers" "$report_dir/crabc.program-headers"
+cp "$candidate_dynamic" "$report_dir/crabc.dynamic"
+cp "$candidate_relocations" "$report_dir/crabc.relocations"
+cp "$header_trace" "$report_dir/project-header-trace"
+sha256sum compat/x86_64/libc_byte_strings_probe.c \
+    compat/x86_64/libc_byte_strings_start.S \
+    compat/x86_64/run_libc_byte_strings.sh "$archive" \
+    >"$report_dir/inputs.sha256"
+(
+    cd "$report_dir"
+    sha256sum musl.elf crabc.elf musl.status crabc.status \
+        crabc.symbols crabc.program-headers crabc.dynamic crabc.relocations \
+        project-header-trace >physical.sha256
+)
+
+printf 'x86 static crabc-libc byte strings: PASS (raw receipt: %s)\n' "$report_dir"

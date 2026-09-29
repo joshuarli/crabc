@@ -4,9 +4,10 @@
  * a freestanding executable linked only with the selected crabc archive. It
  * deliberately closes over the 14 byte-string entry points below. The test
  * cases pin byte (rather than signed-char) ordering, bounded zero-length
- * calls, high-bit data, returned pointer offsets, set scans, and substring
- * edge cases. Raw mapping syscalls are fixture plumbing for the page-edge
- * terminator check; this is not a copy, token, locale, or allocator surface.
+ * calls, high-bit data, returned pointer offsets, read-only overlap, errno
+ * preservation, set scans, and substring edge cases. Raw mapping syscalls
+ * are fixture plumbing for protected-page string boundaries; this is not a
+ * copy, token, locale, or allocator surface.
  */
 
 #ifndef _GNU_SOURCE
@@ -21,6 +22,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <errno.h>
 #include <string.h>
 #include <strings.h>
 #include <sys/mman.h>
@@ -58,6 +60,16 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&strspn),
     size_t (*)(const char *, const char *)), "strspn declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&strstr),
     char *(*)(const char *, const char *)), "strstr declaration");
+
+#ifdef CRABC_BYTE_STRINGS_FREESTANDING
+static int fixture_errno;
+
+/* The selected leaf has no TLS owner; keep its errno observation local. */
+int *__errno_location(void)
+{
+    return &fixture_errno;
+}
+#endif
 
 static long raw_syscall4(long number, long argument1, long argument2,
     long argument3, long argument4)
@@ -426,6 +438,99 @@ static int check_alignment_sweep(void)
     return status;
 }
 
+/* Read-only overlap is defined for every selected two-string operation. */
+static int check_shared_read_only_inputs(void)
+{
+    static const char text[] = { 'a', (char)0x80, 'b', 'c', '\0' };
+
+    if (strcmp(text, text) != 0 || strncmp(text, text + 1, 0) != 0 ||
+        strncmp(text, text, sizeof(text)) != 0 ||
+        strverscmp(text, text) != 0)
+        return 1;
+    if (strspn(text, text) != sizeof(text) - 1 ||
+        strcspn(text, text) != 0 || strpbrk(text, text) != text)
+        return 2;
+    if (strstr(text, text) != text || strstr(text, text + 1) != text + 1 ||
+        strstr(text + 1, text + 1) != text + 1 ||
+        strstr(text, text + sizeof(text) - 1) != text)
+        return 3;
+    return 0;
+}
+
+/* Put both independently terminated inputs against protected pages. */
+static int check_paired_guarded_strings(void)
+{
+    enum { PAGE_BYTES = 4096, MAX_LENGTH = 63 };
+    unsigned char *left_map = raw_mmap(PAGE_BYTES * 2);
+    unsigned char *right_map = raw_mmap(PAGE_BYTES * 2);
+    int status = 0;
+
+    if (left_map == MAP_FAILED || right_map == MAP_FAILED) {
+        status = 1;
+        goto done;
+    }
+    if (raw_mprotect(left_map + PAGE_BYTES, PAGE_BYTES, PROT_NONE) != 0 ||
+        raw_mprotect(right_map + PAGE_BYTES, PAGE_BYTES, PROT_NONE) != 0) {
+        status = 2;
+        goto done;
+    }
+    for (size_t length = 0; length <= MAX_LENGTH && status == 0; ++length) {
+        char *left = (char *)(left_map + PAGE_BYTES - length - 1);
+        char *right = (char *)(right_map + PAGE_BYTES - length - 1);
+
+        for (size_t index = 0; index < length; ++index)
+            left[index] = right[index] = (char)(index + 1);
+        left[length] = right[length] = '\0';
+        if (strcmp(left, right) != 0 ||
+            strncmp(left, right, length + 1) != 0 ||
+            strverscmp(left, right) != 0 ||
+            strspn(left, right) != length ||
+            strcspn(left, right) != 0 ||
+            strpbrk(left, right) != (length == 0 ? NULL : left) ||
+            strstr(left, right) != left)
+            status = 3;
+        if (length == 0 || status != 0)
+            continue;
+        left[length - 1] = (char)0x80;
+        right[length - 1] = (char)0x7f;
+        if (strcmp(left, right) != 1 || strcmp(right, left) != -1 ||
+            strncmp(left, right, length - 1) != 0 ||
+            strncmp(left, right, length) != 1 ||
+            strverscmp(left, right) <= 0 ||
+            strspn(left, right) != length - 1 ||
+            strcspn(left, right) != (length == 1 ? 1 : 0) ||
+            strpbrk(left, right) != (length == 1 ? NULL : left) ||
+            strstr(left, right) != NULL ||
+            strchr(left, 0x180) != left + length - 1 ||
+            strrchr(left, 0x180) != left + length - 1 ||
+            strchrnul(left, 0x180) != left + length - 1)
+            status = 4;
+    }
+done:
+    if (left_map != MAP_FAILED && raw_munmap(left_map, PAGE_BYTES * 2) != 0)
+        status = 5;
+    if (right_map != MAP_FAILED && raw_munmap(right_map, PAGE_BYTES * 2) != 0)
+        status = 6;
+    return status;
+}
+
+static int check_errno_preservation(void)
+{
+    static const char text[] = { 'a', (char)0x80, 'b', '\0' };
+
+    errno = 77;
+    if (strlen(text) != 3 || strnlen(text, 3) != 3 ||
+        strcmp(text, text) != 0 || strncmp(text, text, 3) != 0 ||
+        strverscmp(text, text) != 0 ||
+        strchr(text, 'a') != text || strchrnul(text, 'x') != text + 3 ||
+        strrchr(text, 'b') != text + 2 ||
+        index(text, 'a') != text || rindex(text, 'b') != text + 2 ||
+        strspn(text, text) != 3 || strcspn(text, "z") != 3 ||
+        strpbrk(text, text) != text || strstr(text, text) != text)
+        return 1;
+    return errno == 77 ? 0 : 2;
+}
+
 int crabc_x86_64_byte_strings_probe(void)
 {
     int status;
@@ -454,6 +559,15 @@ int crabc_x86_64_byte_strings_probe(void)
     status = check_alignment_sweep();
     if (status != 0)
         return 80 + status;
+    status = check_shared_read_only_inputs();
+    if (status != 0)
+        return 90 + status;
+    status = check_paired_guarded_strings();
+    if (status != 0)
+        return 100 + status;
+    status = check_errno_preservation();
+    if (status != 0)
+        return 110 + status;
     return 0;
 }
 
