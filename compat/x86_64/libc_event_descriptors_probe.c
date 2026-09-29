@@ -359,6 +359,93 @@ cleanup:
     return status;
 }
 
+static int check_eventfd_epoll_readiness(void)
+{
+    const uint64_t counter_token = UINT64_C(0x1020304050607080);
+    const uint64_t semaphore_token = UINT64_C(0x8070605040302010);
+    struct epoll_event interest = { 0 };
+    struct epoll_event observed = { 0 };
+    eventfd_t value = 0;
+    int epoll = -1;
+    int counter = -1;
+    int semaphore = -1;
+    int status = 0;
+
+    epoll = epoll_create1(EPOLL_CLOEXEC);
+    counter = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (epoll < 0 || counter < 0) {
+        status = 1;
+        goto cleanup;
+    }
+    interest.events = EPOLLIN | EPOLLOUT;
+    interest.data.u64 = counter_token;
+    if (epoll_ctl(epoll, EPOLL_CTL_ADD, counter, &interest) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLOUT || observed.data.u64 != counter_token) {
+        status = 2;
+        goto cleanup;
+    }
+
+    /* The largest writable counter is readable but cannot accept another
+     * increment; draining it reverses the two readiness bits. */
+    if (eventfd_write(counter, UINT64_MAX - 1) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLIN || observed.data.u64 != counter_token) {
+        status = 3;
+        goto cleanup;
+    }
+    errno = 0;
+    if (!expect_error(eventfd_write(counter, 1), EAGAIN) ||
+        eventfd_read(counter, &value) != 0 || value != UINT64_MAX - 1 ||
+        errno != EAGAIN ||
+        epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLOUT || observed.data.u64 != counter_token) {
+        status = 4;
+        goto cleanup;
+    }
+    if (epoll_ctl(epoll, EPOLL_CTL_DEL, counter, 0) != 0) {
+        status = 5;
+        goto cleanup;
+    }
+
+    semaphore = eventfd(0, EFD_NONBLOCK | EFD_SEMAPHORE);
+    if (semaphore < 0) {
+        status = 6;
+        goto cleanup;
+    }
+    interest.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
+    interest.data.u64 = semaphore_token;
+    if (epoll_ctl(epoll, EPOLL_CTL_ADD, semaphore, &interest) != 0 ||
+        eventfd_write(semaphore, 2) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLIN || observed.data.u64 != semaphore_token ||
+        epoll_wait(epoll, &observed, 1, 0) != 0) {
+        status = 7;
+        goto cleanup;
+    }
+
+    /* One semaphore read leaves the counter readable. Rearming a one-shot
+     * edge interest must report that existing readiness once more. */
+    if (eventfd_read(semaphore, &value) != 0 || value != 1 ||
+        epoll_ctl(epoll, EPOLL_CTL_MOD, semaphore, &interest) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLIN || observed.data.u64 != semaphore_token ||
+        eventfd_read(semaphore, &value) != 0 || value != 1 ||
+        epoll_ctl(epoll, EPOLL_CTL_MOD, semaphore, &interest) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 0 ||
+        eventfd_write(semaphore, 1) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLIN || observed.data.u64 != semaphore_token) {
+        status = 8;
+    }
+
+cleanup:
+    if (semaphore >= 0 && close(semaphore) != 0 && status == 0) status = 9;
+    if (counter >= 0 && close(counter) != 0 && status == 0) status = 10;
+    if (epoll >= 0 && close(epoll) != 0 && status == 0) status = 11;
+    return status;
+}
+
 static int read_created_event(int fd, int watch)
 {
     unsigned char bytes[64] = { 0 };
@@ -448,6 +535,9 @@ int crabc_x86_64_event_descriptors_probe(void)
     int status = check_eventfd();
 
     if (status != 0) return status;
+    status = check_eventfd_epoll_readiness();
+    if (status != 0) return 300 + status;
+    /* The epoll argument filter is permanent for this process. */
     status = check_epoll();
     if (status != 0) return 100 + status;
     status = check_inotify();
