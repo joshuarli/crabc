@@ -988,6 +988,12 @@ are not transferable passes for a different revision.
   passes. FILE DSO ownership, regex, wordexp, robust mutex, VM, and descriptor
   pipeline focused evidence also passes on its lane source. These receipts do
   not replace merged-source family, allocator, or promotion gates.
+  Merged main also replays the 831-function static replacement gate after
+  preserving application `getrandom` overrides through `getentropy`, and the
+  installed filesystem gate after correcting the `fchmodat2`-ENOSYS requested
+  mode. The fixed-graph loader now admits `RTLD_NOLOAD` acquisition of retained
+  initial DSOs while its bounded sibling keeps its narrower admission rule;
+  focused loader and nine-profile Rust checks pass on the integrated source.
 - **Housekeeping:** superseded branches are archived under
   `refs/archive/branches/`, old stashes under `refs/archive/stash/`, and
   pre-campaign evidence receipts in `.work/archive/*-receipts.tar.gz`. A fresh
