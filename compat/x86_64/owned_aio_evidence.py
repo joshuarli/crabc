@@ -43,6 +43,7 @@ PROBES = {
     "lio-create-failure": "compat/x86_64/owned_aio_lio_create_failure_probe.c",
     "suspend-wake": "compat/x86_64/owned_aio_suspend_wake_probe.c",
     "suspend-lifetime": "compat/x86_64/owned_aio_suspend_lifetime_probe.c",
+    "lifecycle-boundary": "compat/x86_64/owned_aio_lifecycle_boundary_probe.c",
     "queued-cancel": "compat/x86_64/owned_aio_cancel_defect_probe.c",
     "cancel-cursor": "compat/x86_64/owned_aio_cancel_cursor_probe.c",
     "submit-cancel": "compat/x86_64/owned_aio_submit_cancel_probe.c",
@@ -57,12 +58,12 @@ OBJECTS["workload"] = "workload.o"
 CONSUMERS = {
     "workload": "consumer", "one-write": "one-write", "behavior": "behavior", "fd-reuse": "fd-reuse",
     "lio-create-failure": "lio-create-failure", "suspend-wake": "suspend-wake",
-    "suspend-lifetime": "suspend-lifetime",
+    "suspend-lifetime": "suspend-lifetime", "lifecycle-boundary": "lifecycle-boundary",
     PREPARED_OS_TEST_AIO_SUSPEND: PREPARED_OS_TEST_AIO_SUSPEND,
     "queued-cancel": "queued-cancel", "cancel-cursor": "cancel-cursor",
     "submit-cancel": "submit-cancel", "fresh-signal": "fresh-signal",
 }
-ORACLE_CASES = ("workload", "one-write", "behavior", "fd-reuse", "lio-create-failure", "suspend-wake", "suspend-lifetime",
+ORACLE_CASES = ("workload", "one-write", "behavior", "fd-reuse", "lio-create-failure", "suspend-wake", "suspend-lifetime", "lifecycle-boundary",
                 PREPARED_OS_TEST_AIO_SUSPEND)
 STATIC_MODES = (("static", "static"), ("static-pie", "static-pie"))
 DYNAMIC_MODES = (("dynamic-pie", "pie"), ("dynamic-non-pie", "non-pie"))
@@ -74,6 +75,7 @@ STANDARD_TRANSCRIPTS = {
     "behavior": b"owned-aio behavior positioned/nonseekable/append/cancel/partial-sigevent/notify/list/suspend/fork=ok\n",
     "lio-create-failure": b"lio-create-failure-mask-retained=ok\n",
     "suspend-wake": b"aio-suspend wake-all single/list=ok\n",
+    "lifecycle-boundary": b"aio-lifecycle completion/failure/cancellation/reuse/fork=ok\n",
     PREPARED_OS_TEST_AIO_SUSPEND: b"",
 }
 FD_REUSE_SUCCESS = b"fd-reuse-regular-to-pipe=ok\n"
@@ -716,6 +718,7 @@ def validate_report(root: Path, report_path: Path, expected: object, *, live: bo
         ("source-link-lio-create-failure", work / OBJECTS["lio-create-failure"], work / "oracle-lio-create-failure"),
         ("source-link-suspend-wake", work / OBJECTS["suspend-wake"], work / "oracle-suspend-wake"),
         ("source-link-suspend-lifetime", work / OBJECTS["suspend-lifetime"], work / "oracle-suspend-lifetime"),
+        ("source-link-lifecycle-boundary", work / OBJECTS["lifecycle-boundary"], work / "oracle-lifecycle-boundary"),
         ("source-link-os-test-aio-suspend", work / OBJECTS[PREPARED_OS_TEST_AIO_SUSPEND],
          work / "oracle-os-test-aio-suspend"),
     ]
@@ -780,7 +783,7 @@ def validate_report(root: Path, report_path: Path, expected: object, *, live: bo
     expected_labels = {"installed-header-trace", *{f"compile-{key}" for key in COMPILED_PROBES},
                        *{label for label, _, _ in source_links}, "oracle-queued-cancel-target",
                        "oracle-queued-cancel-all", "oracle-submit-cancel", "oracle", "oracle-one-write", "oracle-behavior",
-                       "oracle-fd-reuse", "oracle-lio-create-failure", "oracle-suspend-wake", "oracle-suspend-lifetime",
+                       "oracle-fd-reuse", "oracle-lio-create-failure", "oracle-suspend-wake", "oracle-suspend-lifetime", "oracle-lifecycle-boundary",
                        "oracle-os-test-aio-suspend"}
     if static is not None:
         expected_labels |= {f"link-{mode}-{key}" for mode, _ in STATIC_MODES for key in CONSUMERS}
