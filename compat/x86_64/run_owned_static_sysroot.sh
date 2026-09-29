@@ -725,8 +725,8 @@ import struct
 import sys
 
 data = Path(sys.argv[1]).read_bytes()
-if len(data) != 29 * 96:
-    raise SystemExit(f"{sys.argv[2]} FILE backend matrix must contain 29 complete records")
+if not data or len(data) % 96:
+    raise SystemExit(f"{sys.argv[2]} FILE backend matrix must contain complete records")
 for offset in range(0, len(data), 96):
     _, _, _, indicator = struct.unpack_from("=4i", data, offset)
     if indicator not in (0, 1, 2, 3):

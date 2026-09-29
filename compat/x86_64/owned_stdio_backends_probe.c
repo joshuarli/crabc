@@ -280,6 +280,57 @@ static int global_cookie_flush(void)
     return 0;
 }
 
+struct closing_cookie {
+    FILE *nested;
+    int writes, closes;
+    unsigned char events[2];
+};
+
+static ssize_t closing_cookie_write(void *opaque, const char *bytes, size_t length)
+{
+    struct closing_cookie *state = opaque;
+    (void)bytes; (void)length;
+    if (state->writes + state->closes >= 2) _Exit(86);
+    state->events[state->writes++ + state->closes] = 'W';
+    errno = EIO;
+    return -1;
+}
+
+static int closing_cookie_close(void *opaque)
+{
+    struct closing_cookie *state = opaque;
+    if (state->writes + state->closes >= 2) _Exit(87);
+    state->events[state->writes + state->closes++] = 'C';
+    if (fputs("closed", state->nested) < 0 || fclose(state->nested)) _Exit(85);
+    state->nested = NULL;
+    errno = ENOSPC;
+    return -1;
+}
+
+/* A failed pending cookie write still leaves a live close callback. That
+ * callback closes a different stream, publishing its caller-owned buffer. */
+static int failed_cookie_close(void)
+{
+    char *output = NULL;
+    size_t size = 99;
+    struct closing_cookie state = {0};
+    state.nested = open_memstream(&output, &size);
+    cookie_io_functions_t functions = {NULL, closing_cookie_write, NULL, closing_cookie_close};
+    FILE *f = fopencookie(&state, "w", functions);
+    if (!state.nested || !f || fwrite("lost", 1, 4, f) != 4) return 81;
+    errno = 0;
+    int status = fclose(f);
+    int saved_errno = errno;
+    if (status != EOF || saved_errno != ENOSPC || state.writes != 1 || state.closes != 1 ||
+        state.nested || size != 6 || memcmp(output, "closed\0", 7) ||
+        memcmp(state.events, "WC", 2)) return 82;
+    errno = saved_errno;
+    record(75, status, NULL, output, size + 1);
+    record(76, state.writes + state.closes, NULL, state.events, sizeof state.events);
+    free(output);
+    return 0;
+}
+
 /* The same binary record crosses FILE buffering, allocated line input,
  * logical-position restoration, and scanf on two independent backends. */
 static int binary_record(void)
@@ -369,6 +420,7 @@ int main(int argc,char **argv)
     status=memories(); if(status) return status;
     status=cookies(); if(status) return status;
     status=global_cookie_flush(); if(status) return status;
+    status=failed_cookie_close(); if(status) return status;
     status=binary_record(); if(status) return status;
     status=cookie_read_recovery(); if(status) return status;
     status=fixed_seek_recovery(); if(status) return status;
