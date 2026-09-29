@@ -104,9 +104,11 @@ are not transferable passes for a different revision.
   the 100 `ECHILD` waits in both backends when the final signal-handler fork
   occurs after the testcase's child check; the waits execute in the child,
   with default `SIGCHLD` and no child-reaping defect shown. Its guarded 52-case
-  matrix passes, but one separate intermittent native PIE-direct timeout
-  leaves the parent in `wait4` while 99 children remain runnable; their
-  stalled user-space path is still unclassified. A later native-shadow source cohort passes
+  matrix passes. A forced fork window reproduces the separate PIE-direct
+  timeout under pinned musl, accepted-C, and native: child processes inherit a
+  frozen counter after the parent checks it, and a guarded diagnostic reaps all
+  100 children. Both signal/fork failures are fixture races; the upstream
+  workload remains unchanged. A later native-shadow source cohort passes
   `signal-handler-fork` and all three allocator C ABI leaves but stops at
   `kernel-residual`: a forked child does not get the expected `-EPERM` from
   private expedited `membarrier`. Registration timing is under focused
