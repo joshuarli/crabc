@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include <errno.h>
+#include <locale.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -81,6 +82,103 @@ static int forwarded_wscan(const wchar_t *source, const wchar_t *format, ...)
     return result;
 }
 
+struct scan_fault_cookie {
+    const char *bytes;
+    size_t position;
+    size_t length;
+    size_t fail_after;
+};
+
+static ssize_t scan_fault_read(void *opaque, char *buffer, size_t count)
+{
+    struct scan_fault_cookie *cookie = opaque;
+    if (!count || cookie->position == cookie->length) return 0;
+    if (cookie->position == cookie->fail_after) {
+        errno = EIO;
+        return -1;
+    }
+    if (count > 1) count = 1;
+    *buffer = cookie->bytes[cookie->position++];
+    return 1;
+}
+
+static int scan_stream_boundaries(void)
+{
+    char digits[] = "12x";
+    FILE *file = fmemopen(digits, 3, "r");
+    if (!file) return 11;
+    int value = -1, consumed = -1;
+    errno = EDOM;
+    int assigned = forwarded_scan(file, "%d%n", &value, &consumed);
+    int scan_errno = errno;
+    long position = ftell(file);
+    int next = fgetc(file);
+    int failed = ferror(file);
+    printf("scan-lookahead %d %d %d %d %ld %d %d\n", assigned, value,
+        consumed, scan_errno, position, next, failed);
+    if (fclose(file)) return 12;
+
+    struct scan_fault_cookie cookie = { "12 34", 0, 5, 3 };
+    cookie_io_functions_t operations = { scan_fault_read, NULL, NULL, NULL };
+    file = fopencookie(&cookie, "r", operations);
+    if (!file) return 13;
+    if (setvbuf(file, NULL, _IONBF, 0)) return 14;
+    int second = -1;
+    consumed = -1;
+    errno = 0;
+    assigned = forwarded_scan(file, "%d %d%n", &value, &second, &consumed);
+    printf("scan-read-error %d %d %d %d %d %d %zu\n", assigned, value,
+        second, consumed, errno, ferror(file), cookie.position);
+    if (fclose(file)) return 15;
+
+    char allocation_input[] = "ab cd";
+    file = fmemopen(allocation_input, sizeof allocation_input - 1, "r");
+    if (!file) return 16;
+    char *allocated = NULL;
+    consumed = -1;
+    errno = EDOM;
+    assigned = forwarded_scan(file, "%ms %*s%n", &allocated, &consumed);
+    scan_errno = errno;
+    position = ftell(file);
+    printf("scan-allocation %d %s %d %d %ld\n", assigned,
+        allocated ? allocated : "(null)", consumed, scan_errno, position);
+    free(allocated);
+    if (fclose(file)) return 17;
+
+    if (!setlocale(LC_CTYPE, "C.UTF-8")) return 18;
+    char utf8[] = { '7', ' ', (char)0xc3, (char)0xa9, 'X' };
+    file = fmemopen(utf8, sizeof utf8, "r");
+    if (!file) return 19;
+    wchar_t wide[8] = { 0x7777 };
+    value = -1;
+    consumed = -1;
+    errno = EDOM;
+    assigned = forwarded_scan(file, "%d %ls%n", &value, wide, &consumed);
+    scan_errno = errno;
+    position = ftell(file);
+    printf("scan-locale-valid %d %d %x %x %x %d %d %ld\n", assigned,
+        value, (unsigned)wide[0], (unsigned)wide[1], (unsigned)wide[2],
+        consumed, scan_errno, position);
+    if (fclose(file)) return 20;
+
+    char malformed[] = { '7', ' ', (char)0xc3, 'x' };
+    file = fmemopen(malformed, sizeof malformed, "r");
+    if (!file) return 21;
+    for (size_t index = 0; index < 8; ++index) wide[index] = 0x7777;
+    value = -1;
+    consumed = -1;
+    errno = 0;
+    assigned = forwarded_scan(file, "%d %ls%n", &value, wide, &consumed);
+    scan_errno = errno;
+    position = ftell(file);
+    failed = ferror(file);
+    printf("scan-locale-error %d %d %x %d %d %ld %d\n", assigned,
+        value, (unsigned)wide[0], consumed, scan_errno, position, failed);
+    if (fclose(file)) return 22;
+    if (!setlocale(LC_CTYPE, "C")) return 23;
+    return 0;
+}
+
 static void dump(const char *label, const void *data, size_t length)
 {
     const unsigned char *bytes = data;
@@ -91,6 +189,8 @@ static void dump(const char *label, const void *data, size_t length)
 
 int main(void)
 {
+    int scan_status = scan_stream_boundaries();
+    if (scan_status) return scan_status;
     char fixed[64] = {0};
     FILE *file = fmemopen(fixed, sizeof fixed, "w+");
     if (!file) return 1;
