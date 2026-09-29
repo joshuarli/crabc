@@ -416,10 +416,11 @@ unsafe fn retire_last_local_free(
     // SAFETY: the caller holds the page live and owns its ordinary geometry.
     let page_ref = unsafe { page.as_ref() };
     let block_size = page_ref.block_size();
-    let reserved = page_ref.reserved();
     // `_mi_page_retire` on an unflagged, non-huge page selects its ordinary
-    // queue: keep it only in the retain branch.
-    if reserved <= 1 {
+    // queue: keep it only in the retain branch. An eight-word regular page
+    // always has multiple reserved blocks; a forced singleton starts with a
+    // larger base request even when its client's requested size is small.
+    if block_size != 8 * WORD_SIZE && page_ref.reserved() <= 1 {
         return false;
     }
     // A page with multiple reserved blocks uses a word-aligned regular bin
