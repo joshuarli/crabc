@@ -14,6 +14,7 @@ readonly PROBE="$ROOT/compat/x86_64/owned_environment_lifecycle_probe.c"
 readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 readonly NORMAL_SCENARIO=normal
 readonly ALLOCATION_SCENARIO=allocation-failure
+readonly PUTENV_INHERITANCE_SCENARIO=putenv-inheritance
 declare -a link_identity_records=()
 
 usage() {
@@ -268,7 +269,7 @@ done
 mkdir "$work/oracle-root"
 "$ORACLE_CC" -static -fno-pie -no-pie -pthread "$work/workload.o" \
     -o "$work/oracle-root/consumer"
-for scenario in "$NORMAL_SCENARIO" "$ALLOCATION_SCENARIO"; do
+for scenario in "$NORMAL_SCENARIO" "$ALLOCATION_SCENARIO" "$PUTENV_INHERITANCE_SCENARIO"; do
     command=(/consumer)
     [ "$scenario" = "$NORMAL_SCENARIO" ] || command+=("$scenario")
     run_capture "$work/oracle-${scenario}.stdout" \
@@ -301,6 +302,8 @@ if [ -n "$static_product" ]; then
         compare_oracle "$mode" "$NORMAL_SCENARIO" "$work/$mode-root" /consumer
         compare_oracle "$mode" "$ALLOCATION_SCENARIO" "$work/$mode-root" \
             /consumer "$ALLOCATION_SCENARIO"
+        compare_oracle "$mode" "$PUTENV_INHERITANCE_SCENARIO" "$work/$mode-root" \
+            /consumer "$PUTENV_INHERITANCE_SCENARIO"
     done
 fi
 
@@ -321,6 +324,10 @@ for mode in pie non-pie; do
         "$work/$mode-root" /consumer "$ALLOCATION_SCENARIO"
     compare_oracle "dynamic-$mode-direct" "$ALLOCATION_SCENARIO" \
         "$work/$mode-root" "$INTERPRETER" /consumer "$ALLOCATION_SCENARIO"
+    compare_oracle "dynamic-$mode-kernel" "$PUTENV_INHERITANCE_SCENARIO" \
+        "$work/$mode-root" /consumer "$PUTENV_INHERITANCE_SCENARIO"
+    compare_oracle "dynamic-$mode-direct" "$PUTENV_INHERITANCE_SCENARIO" \
+        "$work/$mode-root" "$INTERPRETER" /consumer "$PUTENV_INHERITANCE_SCENARIO"
 done
 
 retain_link_identities
@@ -328,4 +335,4 @@ assert_retained_identity_tampering_rejected "$installed" "$work/workload.o" \
     "$work/consumer-pie" "$work/consumer-pie.crabc-link.json" pie \
     "$work/pie.link-identity.json"
 
-printf 'owned environment lifecycle: PASS (same installed-driver C object through musl and sealed owned static/static-PIE/dynamic PIE/non-PIE kernel/direct links; raw status/stdout/stderr and shared-validator identities retained; caller-serialized replacement/removal/clear, fixture-seccomp ENOMEM rollback, direct environ and borrowed values, fork snapshot, exec and spawn child environments); evidence: %s\n' "$work"
+printf 'owned environment lifecycle: PASS (same installed-driver C object through musl and sealed owned static/static-PIE/dynamic PIE/non-PIE kernel/direct links; raw status/stdout/stderr and shared-validator identities retained; caller-serialized replacement/removal/clear, fixture-seccomp ENOMEM rollback, direct environ and borrowed values, fork snapshot, exec and spawn child environments, putenv alias inheritance across fork and execv); evidence: %s\n' "$work"

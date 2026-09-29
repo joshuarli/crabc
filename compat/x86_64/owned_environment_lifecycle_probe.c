@@ -309,6 +309,55 @@ static void run_spawn_environment(void)
     CHECK(clearenv() == 0);
 }
 
+static void run_putenv_inheritance(void)
+{
+    static char aliased_entry[] = "ALIAS=first!";
+    char *const arguments[] = { "/consumer", "inherit-child", NULL };
+    int ready[2];
+    pid_t child;
+    char signal = 0;
+
+    CHECK(clearenv() == 0);
+    CHECK(putenv(aliased_entry) == 0);
+    CHECK(getenv("ALIAS") == aliased_entry + 6);
+    aliased_entry[6] = 's';
+    aliased_entry[7] = 'e';
+    aliased_entry[8] = 'c';
+    aliased_entry[9] = 'o';
+    aliased_entry[10] = 'n';
+    aliased_entry[11] = 'd';
+    CHECK(text_equal(getenv("ALIAS"), "second"));
+    CHECK(setenv("OWNED", "stable", 1) == 0);
+    CHECK(pipe(ready) == 0);
+    child = fork();
+    CHECK(child >= 0);
+    if (child == 0) {
+        CHECK(close(ready[1]) == 0);
+        CHECK(read(ready[0], &signal, 1) == 1 && signal == 'G');
+        CHECK(close(ready[0]) == 0);
+        execv(arguments[0], arguments);
+        _exit(126);
+    }
+    CHECK(close(ready[0]) == 0);
+    aliased_entry[6] = 't';
+    aliased_entry[7] = 'h';
+    aliased_entry[8] = 'i';
+    aliased_entry[9] = 'r';
+    aliased_entry[10] = 'd';
+    aliased_entry[11] = '!';
+    CHECK(text_equal(getenv("ALIAS"), "third!"));
+    CHECK(write(ready[1], "G", 1) == 1);
+    CHECK(close(ready[1]) == 0);
+    wait_for_exit(child, 0);
+    CHECK(unsetenv("ALIAS") == 0 && getenv("ALIAS") == NULL);
+    CHECK(text_equal(aliased_entry, "ALIAS=third!"));
+    CHECK(text_equal(getenv("OWNED"), "stable"));
+    CHECK(clearenv() == 0 && environ == NULL);
+    CHECK(putenv(aliased_entry) == 0);
+    CHECK(getenv("ALIAS") == aliased_entry + 6);
+    CHECK(clearenv() == 0 && text_equal(aliased_entry, "ALIAS=third!"));
+}
+
 /* Musl rejects a null, empty, or '='-containing name with EINVAL before it
  * looks at the environment; a successful call and a missing unset name leave
  * errno untouched. clearenv also succeeds on an already-cleared vector. */
@@ -358,6 +407,14 @@ static void run_spawn_child(void)
     CHECK(environ != NULL && environ[0] != NULL && environ[1] == NULL);
 }
 
+static void run_inherit_child(void)
+{
+    CHECK(text_equal(getenv("ALIAS"), "second"));
+    CHECK(text_equal(getenv("OWNED"), "stable"));
+    CHECK(environ != NULL && environ[0] != NULL && environ[1] != NULL &&
+        environ[2] == NULL);
+}
+
 int main(int argc, char **argv)
 {
     if (argc == 2) {
@@ -367,6 +424,17 @@ int main(int argc, char **argv)
         }
         if (text_equal(argv[1], "spawn-child")) {
             run_spawn_child();
+            return 0;
+        }
+        if (text_equal(argv[1], "inherit-child")) {
+            run_inherit_child();
+            return 0;
+        }
+        if (text_equal(argv[1], "putenv-inheritance")) {
+            run_putenv_inheritance();
+            CHECK(write(1, "environment-putenv-inheritance-ok\n",
+                sizeof("environment-putenv-inheritance-ok\n") - 1) ==
+                (ssize_t)(sizeof("environment-putenv-inheritance-ok\n") - 1));
             return 0;
         }
         if (text_equal(argv[1], "allocation-failure")) {
