@@ -14,6 +14,7 @@ readonly PROBE="$ROOT/compat/x86_64/owned_pattern_probe.c"
 readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 readonly OWNED_SYMBOLS='fnmatch glob globfree'
 readonly CASES=(
+    fnmatch-edge-matrix
     fnmatch-escaped
     fnmatch-range
     fnmatch-nested-class

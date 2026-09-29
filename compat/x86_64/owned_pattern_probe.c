@@ -24,6 +24,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "owned_fnmatch_edge_probe.c"
+
 static int failure_line;
 
 #define CHECK(condition) do { \
@@ -606,7 +608,7 @@ static int fnmatch_corpus(int trace)
  * returns once the scan reaches one.  Without FNM_PATHNAME the same character
  * makes fnmatch_internal return FNM_NOMATCH, and a component containing it can
  * never match; the owned translation returns that FNM_NOMATCH instead (the
- * intentional difference in owned-pattern.md).  Each call runs in a child with
+ * intentional difference). Each call runs in a child with
  * an alarm: the runner requires every pinned musl child to die of SIGALRM and
  * every owned child to report FNM_NOMATCH, so this selector's transcript is
  * checked against those fixed outcomes rather than compared across runtimes.
@@ -802,6 +804,7 @@ static int glob_corpus(int trace)
 
 static int run_selected_case(const char *selector)
 {
+    if (!strcmp(selector, "fnmatch-edge-matrix")) return matcher_edge_matrix_case();
     if (!strcmp(selector, "fnmatch-pathname-unmatchable")) return fnmatch_pathname_unmatchable_case();
     if (!strcmp(selector, "fnmatch-corpus")) return fnmatch_corpus(0);
     if (!strcmp(selector, "fnmatch-corpus-trace")) return fnmatch_corpus(1);
