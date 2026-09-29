@@ -82,6 +82,9 @@ are not transferable passes for a different revision.
   and reduces the selector to 704 blockers. The same owned scanf archive's
   `mbsinit` import now binds through retained ET_EXEC, static-PIE and shared
   calls to its owned provider; independent validation reports 703 blockers.
+  The same archive's two `fmodl` calls now bind to the strong owned provider
+  in both static modes and shared libc; source-sealed physical validation
+  reduces the selector to 702 blockers.
   Broader ABI closure stays open.
   `libc.c-abi-compat` now runs a physical
   same-cohort text/math/locale/stdio family admission; its current assessment admits seven
