@@ -438,10 +438,13 @@ fn extended_attributes_preserve_path_link_fd_and_buffer_contracts() {
             }
             Err(error) => return Err(error),
         }
+        #[cfg(target_arch = "aarch64")]
         assert_eq!(
             fs::getxattr(&path, "user.crabc-rs", &mut [0_u8; 0]).unwrap(),
             4,
         );
+        #[cfg(target_arch = "x86_64")]
+        assert_eq!(fs::getxattr_size(&path, "user.crabc-rs").unwrap(), 4);
         let mut get = [0_u8; 32];
         let get_length = fs::getxattr(&path, "user.crabc-rs", &mut get).unwrap();
         assert_eq!(&get[..get_length], b"path");

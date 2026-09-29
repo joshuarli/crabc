@@ -3640,11 +3640,32 @@ where
     f(path)
 }
 
+/// Queries the byte length of an extended attribute, following the final link.
+///
+/// This sizing observation initializes no caller buffer and allocates nothing.
+/// The value may change before [`getxattr`] fills storage; a larger value then
+/// returns [`Errno::RANGE`] from that fill instead of exposing an unwritten prefix.
+#[inline]
+pub fn getxattr_size<P: PathArg, Name: PathArg>(path: P, name: Name) -> Result<usize> {
+    path.into_with_c_str(|path| {
+        name.into_with_c_str(|name| {
+            // SAFETY: both names are live NUL-terminated strings. Linux's
+            // null, zero-length output form queries size without writing.
+            unsafe {
+                crabc_core::fs::getxattr_raw(
+                    path.as_ptr().cast(), name.as_ptr().cast(), ptr::null_mut(), 0,
+                )
+            }
+        })
+    })
+}
+
 /// Reads an extended attribute into caller-provided storage.
 ///
-/// A zero-length output buffer is the Linux size-query form. A successful
-/// nonzero-buffer read returns only the initialized prefix; `ERANGE` means the
-/// supplied buffer was too short and no owned allocation or retry is hidden.
+/// A successful read returns only the initialized prefix. [`Errno::RANGE`]
+/// means the supplied buffer was too short, including an empty buffer when
+/// the value is nonempty. Use [`getxattr_size`] for a byte-length query. An
+/// empty attribute can be read into empty storage; no allocation or retry is hidden.
 #[inline]
 pub fn getxattr<P: PathArg, Name: PathArg, Buf: Buffer<u8>>(
     path: P,
@@ -3666,11 +3687,36 @@ pub fn getxattr<P: PathArg, Name: PathArg, Buf: Buffer<u8>>(
             }
         })
     })?;
+    if initialized > length {
+        return Err(Errno::RANGE);
+    }
     // SAFETY: Linux initialized exactly the reported output prefix.
     unsafe { Ok(value.assume_init(initialized)) }
 }
 
+/// Queries an attribute's byte length without following a final symbolic link.
+///
+/// This observes the link's own attributes. The size may change before
+/// [`lgetxattr`] fills storage, which then returns [`Errno::RANGE`] if too short.
+#[inline]
+pub fn lgetxattr_size<P: PathArg, Name: PathArg>(path: P, name: Name) -> Result<usize> {
+    path.into_with_c_str(|path| {
+        name.into_with_c_str(|name| {
+            // SAFETY: both names are live NUL-terminated strings. Linux's
+            // null, zero-length output form queries size without writing.
+            unsafe {
+                crabc_core::fs::lgetxattr_raw(
+                    path.as_ptr().cast(), name.as_ptr().cast(), ptr::null_mut(), 0,
+                )
+            }
+        })
+    })
+}
+
 /// Reads an extended attribute without following a final symbolic link.
+///
+/// The initialized-prefix and undersized-buffer rules are those of [`getxattr`].
+/// Use [`lgetxattr_size`] for a byte-length query on the link itself.
 #[inline]
 pub fn lgetxattr<P: PathArg, Name: PathArg, Buf: Buffer<u8>>(
     path: P,
@@ -3692,11 +3738,33 @@ pub fn lgetxattr<P: PathArg, Name: PathArg, Buf: Buffer<u8>>(
             }
         })
     })?;
+    if initialized > length {
+        return Err(Errno::RANGE);
+    }
     // SAFETY: Linux initialized exactly the reported output prefix.
     unsafe { Ok(value.assume_init(initialized)) }
 }
 
+/// Queries an open descriptor's extended-attribute byte length.
+///
+/// The descriptor borrow keeps the object live; its value may still change
+/// before [`fgetxattr`] fills storage, which returns [`Errno::RANGE`] if too short.
+#[inline]
+pub fn fgetxattr_size<Fd: AsFd, Name: PathArg>(fd: Fd, name: Name) -> Result<usize> {
+    let fd = fd.as_fd();
+    name.into_with_c_str(|name| {
+        // SAFETY: the descriptor borrow and NUL-terminated name remain live.
+        // Linux's null, zero-length output form queries size without writing.
+        unsafe {
+            crabc_core::fs::fgetxattr_raw(fd.as_raw_fd(), name.as_ptr().cast(), ptr::null_mut(), 0)
+        }
+    })
+}
+
 /// Reads a descriptor extended attribute into caller-provided storage.
+///
+/// The initialized-prefix and undersized-buffer rules are those of [`getxattr`].
+/// Use [`fgetxattr_size`] for a byte-length query on the descriptor's object.
 #[inline]
 pub fn fgetxattr<Fd: AsFd, Name: PathArg, Buf: Buffer<u8>>(
     fd: Fd,
@@ -3712,6 +3780,9 @@ pub fn fgetxattr<Fd: AsFd, Name: PathArg, Buf: Buffer<u8>>(
             crabc_core::fs::fgetxattr_raw(fd.as_raw_fd(), name.as_ptr().cast(), pointer, length)
         }
     })?;
+    if initialized > length {
+        return Err(Errno::RANGE);
+    }
     // SAFETY: Linux initialized exactly the reported output prefix.
     unsafe { Ok(value.assume_init(initialized)) }
 }
@@ -3790,10 +3861,26 @@ pub fn fsetxattr<Fd: AsFd, Name: PathArg>(
     })
 }
 
+/// Queries the byte length of a path's NUL-separated extended-attribute names.
+///
+/// The final symbolic link is followed. Names may change before [`listxattr`]
+/// fills storage; growth then returns [`Errno::RANGE`] when the buffer is too short.
+#[inline]
+pub fn listxattr_size<P: PathArg>(path: P) -> Result<usize> {
+    path.into_with_c_str(|path| {
+        // SAFETY: the path is live and NUL-terminated. Linux's null,
+        // zero-length output form queries size without writing.
+        unsafe { crabc_core::fs::listxattr_raw(path.as_ptr().cast(), ptr::null_mut(), 0) }
+    })
+}
+
 /// Lists extended-attribute names into caller-provided storage.
 ///
 /// Returned names are Linux's NUL-separated byte sequence, without a lossy
-/// UTF-8 conversion or a hidden allocation.
+/// UTF-8 conversion or a hidden allocation. Only the initialized prefix is
+/// returned. A short buffer, including empty storage for a nonempty list,
+/// returns [`Errno::RANGE`]; an empty list succeeds with an empty prefix.
+/// Use [`listxattr_size`] for a byte-length query.
 #[inline]
 pub fn listxattr<P: PathArg, Buf: Buffer<u8>>(path: P, mut list: Buf) -> Result<Buf::Output> {
     let (pointer, length) = list.parts_mut();
@@ -3802,11 +3889,32 @@ pub fn listxattr<P: PathArg, Buf: Buffer<u8>>(path: P, mut list: Buf) -> Result<
         // NUL-terminated for this direct syscall.
         unsafe { crabc_core::fs::listxattr_raw(path.as_ptr().cast(), pointer, length) }
     })?;
+    // A successful zero-length syscall is a size query, not an initialized
+    // prefix. Reject its count before crossing the sealed Buffer boundary.
+    if initialized > length {
+        return Err(Errno::RANGE);
+    }
     // SAFETY: Linux initialized exactly the reported output prefix.
     unsafe { Ok(list.assume_init(initialized)) }
 }
 
+/// Queries name-list byte length without following a final symbolic link.
+///
+/// The result includes each NUL terminator. Names may change before
+/// [`llistxattr`] fills storage, which returns [`Errno::RANGE`] if too short.
+#[inline]
+pub fn llistxattr_size<P: PathArg>(path: P) -> Result<usize> {
+    path.into_with_c_str(|path| {
+        // SAFETY: the path is live and NUL-terminated. Linux's null,
+        // zero-length output form queries size without writing.
+        unsafe { crabc_core::fs::llistxattr_raw(path.as_ptr().cast(), ptr::null_mut(), 0) }
+    })
+}
+
 /// Lists extended-attribute names without following a final symbolic link.
+///
+/// The initialized-prefix and undersized-buffer rules are those of [`listxattr`].
+/// Use [`llistxattr_size`] for a byte-length query on the link itself.
 #[inline]
 pub fn llistxattr<P: PathArg, Buf: Buffer<u8>>(path: P, mut list: Buf) -> Result<Buf::Output> {
     let (pointer, length) = list.parts_mut();
@@ -3815,11 +3923,29 @@ pub fn llistxattr<P: PathArg, Buf: Buffer<u8>>(path: P, mut list: Buf) -> Result
         // NUL-terminated for this direct syscall.
         unsafe { crabc_core::fs::llistxattr_raw(path.as_ptr().cast(), pointer, length) }
     })?;
+    if initialized > length {
+        return Err(Errno::RANGE);
+    }
     // SAFETY: Linux initialized exactly the reported output prefix.
     unsafe { Ok(list.assume_init(initialized)) }
 }
 
+/// Queries name-list byte length on an open descriptor's object.
+///
+/// The result includes each NUL terminator. Names may change before
+/// [`flistxattr`] fills storage, which returns [`Errno::RANGE`] if too short.
+#[inline]
+pub fn flistxattr_size<Fd: AsFd>(fd: Fd) -> Result<usize> {
+    let fd = fd.as_fd();
+    // SAFETY: the descriptor borrow remains live. Linux's null,
+    // zero-length output form queries size without writing.
+    unsafe { crabc_core::fs::flistxattr_raw(fd.as_raw_fd(), ptr::null_mut(), 0) }
+}
+
 /// Lists descriptor extended-attribute names into caller-provided storage.
+///
+/// The initialized-prefix and undersized-buffer rules are those of [`listxattr`].
+/// Use [`flistxattr_size`] for a byte-length query on the descriptor's object.
 #[inline]
 pub fn flistxattr<Fd: AsFd, Buf: Buffer<u8>>(fd: Fd, mut list: Buf) -> Result<Buf::Output> {
     let fd = fd.as_fd();
@@ -3827,6 +3953,9 @@ pub fn flistxattr<Fd: AsFd, Buf: Buffer<u8>>(fd: Fd, mut list: Buf) -> Result<Bu
     // SAFETY: `Buffer` supplies writable output storage and the descriptor
     // borrow remains live for the direct syscall.
     let initialized = unsafe { crabc_core::fs::flistxattr_raw(fd.as_raw_fd(), pointer, length) }?;
+    if initialized > length {
+        return Err(Errno::RANGE);
+    }
     // SAFETY: Linux initialized exactly the reported output prefix.
     unsafe { Ok(list.assume_init(initialized)) }
 }
