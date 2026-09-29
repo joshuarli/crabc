@@ -48,7 +48,7 @@ chmod a+rx "$work"
 printf 'signal helpers evidence: %s\n' "$work"
 readonly probe="$ROOT/compat/x86_64/owned_signal_helpers_probe.c"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly cases=(actions interrupt failed-interrupt restart partial-action pause-query-failure pause-threaded cancellation reporting partial-reporting)
+readonly cases=(actions fork-action-mask interrupt failed-interrupt restart partial-action pause-query-failure pause-threaded cancellation reporting partial-reporting)
 # Musl's historical entry points are overridable weak aliases, not merely
 # functions that happen to forward to signal. Retain binding/address evidence.
 assert_signal_aliases() {
@@ -219,4 +219,4 @@ record = {'schema': 'crabc.x86_64-owned-signal-helpers/v1', 'workload_object_sha
           'dynamic_product_manifest_sha256': digest(dynamic / 'share/crabc/manifest.json')}
 (work / 'signal-helpers.json').write_text(json.dumps(record, indent=2, sort_keys=True) + '\n')
 PY_RECORD
-printf 'owned signal helpers: PASS (same object, musl + installed entries, aliases/actions/masks, EINTR and cancellation bookkeeping, reporting locale/orientation/error state); evidence: %s\n' "$work"
+printf 'owned signal helpers: PASS (same object, musl + installed entries, aliases/actions/masks/fork, EINTR and cancellation bookkeeping, reporting locale/orientation/error state); evidence: %s\n' "$work"

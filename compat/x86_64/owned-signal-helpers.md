@@ -64,10 +64,10 @@ static-PIE, dynamic PIE and dynamic non-PIE products. Static and oracle scenario
 retain their ordinary execution; dynamic forms run through kernel and direct
 interpreter entry in a disposable root. Each link passes the shared
 `owned_posix_product_evidence.validate_link` audit for its exact product,
-receipt, runtime inputs, trace and ELF contract. All eight scenarios retain and
+receipt, runtime inputs, trace and ELF contract. All eleven scenarios retain and
 compare raw status, stdout and stderr. The `signal-helpers.json` receipt records
-the link identities, object identity, oracle hashes and all 48 comparisons when
-static cells are selected (32 in dynamic-only mode). Input identities are
+the link identities, object identity, oracle hashes and all 66 comparisons when
+static cells are selected (44 in dynamic-only mode). Input identities are
 checked again after replay. Existing ELF weak-alias address/size checks remain.
 
 `owned_dynamic_qualification.py` registers `signal-helpers` for each dynamic
@@ -76,14 +76,16 @@ reproduction and extracted static products and the cross-product object check.
 This runner supports those six static cells without asserting family closure.
 Artifacts remain under the reported `.work/x86_64/tmp` evidence directory.
 
-The eight isolated scenarios cover alias identity and restart flags; queued
-signal delivery and disposition/mask transitions; invalid and reserved signal
+The isolated scenarios cover alias identity and restart flags; queued
+signal delivery and disposition/mask transitions, including inherited action
+and mask across fork while pending signals remain process-local; invalid and
+reserved signal
 rejection; successful and failed action-installation EINTR bookkeeping;
 mask-syscall failure after an installed action; cancellation after helper use;
 reporting bytes, null and empty prefixes, retained locale/orientation, and
 EBADF; and nonblocking pipe partial-write EAGAIN behavior. The initial
-regression passed all eight musl cases and failed the owned static link on
-all eight missing providers. Pipe-capacity setup uses raw `SYS_fcntl` because
+regression passed the initial musl cases and failed the owned static link on
+the eight missing providers. Pipe-capacity setup uses raw `SYS_fcntl` because
 the current owned `fcntl(F_GETPIPE_SZ)` returns `EINVAL`; descriptor-control
 completion is separate work. All helper behavior itself crosses installed C
 boundaries. The fixture does not attempt asynchronous-handler reporting or

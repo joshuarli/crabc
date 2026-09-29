@@ -12,6 +12,7 @@
 #include <string.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 #include <wchar.h>
@@ -62,6 +63,38 @@ static void action_cases(void) {
     }
     CHECK(sigignore(SIGKILL) == -1 && errno == EINVAL);
     CHECK(sigignore(SIGSTOP) == -1 && errno == EINVAL);
+    CHECK(sigaction(SIGUSR1, &saved, 0) == 0);
+    CHECK(sigprocmask(SIG_SETMASK, &saved_mask, 0) == 0);
+}
+static void fork_action_mask_case(void) {
+    struct sigaction saved;
+    sigset_t saved_mask, blocked, pending;
+    CHECK(sigaction(SIGUSR1, 0, &saved) == 0);
+    CHECK(sigprocmask(SIG_SETMASK, 0, &saved_mask) == 0);
+    CHECK(sigset(SIGUSR1, first) != SIG_ERR);
+    errno = EDOM;
+    CHECK(sighold(SIGUSR1) == 0 && errno == EDOM);
+    CHECK(raise(SIGUSR1) == 0 && first_calls == 0);
+    CHECK(sigpending(&pending) == 0 && sigismember(&pending, SIGUSR1) == 1);
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (child == 0) {
+        CHECK(sigprocmask(SIG_SETMASK, 0, &blocked) == 0);
+        CHECK(sigismember(&blocked, SIGUSR1) == 1);
+        require_action(first, 0);
+        CHECK(sigpending(&pending) == 0 && sigismember(&pending, SIGUSR1) == 0);
+        errno = ECHILD;
+        CHECK(sigset(SIGUSR1, second) == SIG_HOLD && errno == ECHILD);
+        CHECK(first_calls == 0 && second_calls == 0);
+        CHECK(raise(SIGUSR1) == 0 && second_calls == 1);
+        _exit(0);
+    }
+    int status;
+    CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    CHECK(sigpending(&pending) == 0 && sigismember(&pending, SIGUSR1) == 1);
+    errno = EBUSY;
+    CHECK(sigset(SIGUSR1, second) == SIG_HOLD && errno == EBUSY);
+    CHECK(first_calls == 0 && second_calls == 1);
     CHECK(sigaction(SIGUSR1, &saved, 0) == 0);
     CHECK(sigprocmask(SIG_SETMASK, &saved_mask, 0) == 0);
 }
@@ -236,6 +269,7 @@ static void partial_reporting_case(void) {
 int main(int argc, char **argv) {
     CHECK(argc == 2);
     if (!strcmp(argv[1], "actions")) action_cases();
+    else if (!strcmp(argv[1], "fork-action-mask")) fork_action_mask_case();
     else if (!strcmp(argv[1], "interrupt")) interrupt_bookkeeping(0, 0);
     else if (!strcmp(argv[1], "failed-interrupt")) interrupt_bookkeeping(1, 0);
     else if (!strcmp(argv[1], "restart")) interrupt_bookkeeping(0, 1);
