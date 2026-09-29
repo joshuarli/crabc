@@ -68,12 +68,15 @@ class ProviderLinkAttachmentTests(unittest.TestCase):
                 self.assertTrue(accounting['blockers'])
 
     def test_shared_public_exposure_does_not_acquire_private_owner(self):
-        accounting = self.accounting(private=True)
-        leaked = copy.deepcopy(accounting['occurrences'][0])
-        leaked.update(index=2, artifact_key='candidate-shared', table='.dynsym', member_name=None)
-        accounting['occurrences'].append(leaked)
-        self.assertEqual(self.attach(accounting, self.proof(accounting)), [])
-        self.assertTrue(accounting['blockers'])
+        for symbol_type in ('FUNC', 'OBJECT'):
+            with self.subTest(symbol_type=symbol_type):
+                accounting = self.accounting(private=True)
+                accounting['occurrences'][0]['row']['type'] = symbol_type
+                leaked = copy.deepcopy(accounting['occurrences'][0])
+                leaked.update(index=2, artifact_key='candidate-shared', table='.dynsym', member_name=None)
+                accounting['occurrences'].append(leaked)
+                self.assertEqual(self.attach(accounting, self.proof(accounting)), [])
+                self.assertTrue(accounting['blockers'])
 
 
 class ProviderFixtureObjectTests(unittest.TestCase):
