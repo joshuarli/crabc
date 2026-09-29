@@ -522,30 +522,32 @@ mod tests {
         }
 
         let fault = fault::install(fault::Plan::disabled());
-        let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 1 << 20, true, false);
-        let metadata = MetaAllocator::test_static_owner();
-        let subprocess = metadata.test_default_subprocess();
-        let mut options = VmOptions::uninitialized();
-        options.initialize_all(|_| VmOptionEnvironment::Absent);
-        options.set(VmOption::ReserveHugeOsPages, 1);
-        options.set(VmOption::ReserveHugeOsPagesAt, 0);
-        let storage = ProcessMainInitializationStorage::test_static_owner();
-        let map = ProcessPageMapStorage::test_static_owner();
-        let binding = unsafe { storage.test_prepare_vm_process_backing_binding(config, options, subprocess, map) }.unwrap();
-        metadata.bind_process_backing(binding).unwrap();
-        let output = OutputOwner::new(unused_output);
-        unsafe { output.initialize_source_options(empty_environment) };
-        unsafe { output.option_set(SourceOption::ShowErrors, 1) }.unwrap();
-        unsafe { output.option_set(SourceOption::MaxWarnings, 100) }.unwrap();
-        let warnings = AtomicUsize::new(0);
-        unsafe { output.register_output(Some(capture as OutputCallback),
-            (&warnings as *const AtomicUsize).cast_mut().cast()) };
-        fault.set(fault::Plan::at(fault::Point::HugeMap, 1, Errno::NOMEM));
-        let result = unsafe { subprocess.arena_backing().reserve_startup_options_with_mbind_warning(
-            binding.process(), config, metadata, None, MbindWarningRoute::new(&output)) };
-        assert_eq!(result.huge, Some(Err(Errno::NOMEM)));
-        std::println!("m2.startup_huge_failure.warning_count={}", warnings.load(Ordering::Acquire));
-        assert_eq!(warnings.load(Ordering::Acquire), 1);
+        for (node_option, field) in [(0, "explicit_warnings"), (-1, "interleaved_warnings")] {
+            let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 1 << 20, true, false);
+            let metadata = MetaAllocator::test_static_owner();
+            let subprocess = metadata.test_default_subprocess();
+            let mut options = VmOptions::uninitialized();
+            options.initialize_all(|_| VmOptionEnvironment::Absent);
+            options.set(VmOption::ReserveHugeOsPages, 1);
+            options.set(VmOption::ReserveHugeOsPagesAt, node_option);
+            let storage = ProcessMainInitializationStorage::test_static_owner();
+            let map = ProcessPageMapStorage::test_static_owner();
+            let binding = unsafe { storage.test_prepare_vm_process_backing_binding(config, options, subprocess, map) }.unwrap();
+            metadata.bind_process_backing(binding).unwrap();
+            let output = OutputOwner::new(unused_output);
+            unsafe { output.initialize_source_options(empty_environment) };
+            unsafe { output.option_set(SourceOption::ShowErrors, 1) }.unwrap();
+            unsafe { output.option_set(SourceOption::MaxWarnings, 100) }.unwrap();
+            let warnings = AtomicUsize::new(0);
+            unsafe { output.register_output(Some(capture as OutputCallback),
+                (&warnings as *const AtomicUsize).cast_mut().cast()) };
+            fault.set(fault::Plan::at(fault::Point::HugeMap, 1, Errno::NOMEM));
+            let result = unsafe { subprocess.arena_backing().reserve_startup_options_with_mbind_warning(
+                binding.process(), config, metadata, None, MbindWarningRoute::new(&output)) };
+            assert_eq!(result.huge, Some(Err(Errno::NOMEM)));
+            std::println!("m2.startup_huge_failure.{field}={}", warnings.load(Ordering::Acquire));
+            assert_eq!(warnings.load(Ordering::Acquire), 1);
+        }
     }
 
     fn fill_registry(backing: &ProcessArenaBacking) -> usize {

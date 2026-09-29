@@ -33,8 +33,13 @@ int main(void) {
   mi_option_set(mi_option_show_errors, 1);
   mi_option_set(mi_option_max_warnings, 100);
   mi_register_output(warning, NULL);
-  const int result = mi_reserve_huge_os_pages_at_ex(1, 0, 0, false, NULL);
-  if (result != ENOMEM || primitive_warnings != 1) return 2;
-  printf("m2.startup_huge_failure.warning_count=%zu\n", reservation_warnings);
+  const int explicit_result = mi_reserve_huge_os_pages_at_ex(1, 0, 0, false, NULL);
+  if (explicit_result != ENOMEM || primitive_warnings != 1) return 2;
+  printf("m2.startup_huge_failure.explicit_warnings=%zu\n", reservation_warnings);
+  reservation_warnings = 0;
+  primitive_warnings = 0;
+  const int interleaved_result = mi_reserve_huge_os_pages_interleave(1, 0, 0);
+  if (interleaved_result != ENOMEM || primitive_warnings != 1) return 3;
+  printf("m2.startup_huge_failure.interleaved_warnings=%zu\n", reservation_warnings);
   return 0;
 }

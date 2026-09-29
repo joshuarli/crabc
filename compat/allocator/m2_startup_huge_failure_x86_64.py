@@ -50,7 +50,7 @@ def run(offline: bool) -> Path:
     (artifacts / "pinned-c.stderr").write_text(str(c_run["stderr"]), encoding="utf-8")
     harness.require_success(c_run, "pinned C startup huge failure oracle")
     c_values = fields(str(c_run["stdout"]))
-    if c_values != {"warning_count": 1}:
+    if c_values != {"explicit_warnings": 1, "interleaved_warnings": 1}:
         raise harness.HarnessError(f"pinned C startup huge failure changed: {c_values}")
 
     rust = harness.command_record(

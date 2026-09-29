@@ -584,8 +584,8 @@ M2_X86_64_ARENA_DIRECT_RECEIVERS = {
         "fixture": "compat/allocator/m2_startup_huge_failure_x86_64.c",
         "rust_test": "arena::owned::huge::tests::failed_startup_huge_reservation_reports_the_source_failure_warning",
         "trace_prefix": "m2.startup_huge_failure.",
-        "trace": {"warning_count": 1},
-        "scope": "pinned-c-rust-empty-huge-reservation-startup-final-warning-after-primitive-failure",
+        "trace": {"explicit_warnings": 1, "interleaved_warnings": 1},
+        "scope": "pinned-c-rust-empty-huge-reservation-explicit-and-interleaved-startup-final-warning-after-primitive-failure",
     },
     "arena-delayed-purge-decommit-failure-c-rust-differential": {
         "artifact": "m2-delayed-purge-failure",
