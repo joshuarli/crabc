@@ -62,6 +62,11 @@
     "trace_test": "single_thread::local_trace::emit_m3_local_trace",
     "determinism_test": "single_thread::local_trace::m3_local_trace_is_deterministic_across_fresh_engines"
   },
+  "queue_reorder_differential": {
+    "c_fixture": "compat/allocator/m3_queue_reorder_x86_64.c",
+    "rust_test": "types::page_queue::tests::full_queue_reordering_preserves_owner_membership_and_bytes",
+    "runner": "compat/allocator/m3_queue_reorder_x86_64.py"
+  },
   "workloads": [
     {
       "id": "bin-matrix",

@@ -1008,12 +1008,12 @@ where
     failure
 }
 
-/// Why the test-only page-free M1 collect witness rejected the source shape.
+/// Why the test-only page-free collection image can be rejected.
 ///
-/// The bounded M1 terminal differential admits only the source empty visitor
+/// The bounded terminal differential admits only the source empty visitor
 /// path: both selected Theaps have zero pages, empty queues/direct cache, and
-/// no retired range.  Page-bearing collection, release, and abandonment stay
-/// with their M3/M5 lifecycle owners.
+/// no retired range. Page-bearing collection, release, and abandonment need
+/// their ordinary page lifecycle owners.
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum M1PageFreeCollectError {
@@ -1026,7 +1026,7 @@ pub(crate) enum M1PageFreeCollectError {
 
 /// Records the source deferred-free then retired-page prepass for one empty
 /// `MI_ABANDON` coordinator call. Page callbacks are terminal failures: a
-/// page-bearing fixture must not silently widen this M1 witness.
+/// page-bearing fixture must not silently widen this empty-image witness.
 #[cfg(test)]
 struct M1PageFreeCollectCallbacks {
     phase: u8,
@@ -1103,7 +1103,7 @@ impl TheapCollectAbandonCallbacks for M1PageFreeCollectCallbacks {
 }
 
 /// Exercises the generic queue-half coordinator's selected page-free branch
-/// on the finite M1 same-TLD terminal image.
+/// on a finite same-TLD terminal image.
 ///
 /// This deliberately does not invent a local count-only substitute. It enters
 /// [`theap_collect_abandon_queues`], which proves every queue is empty before
@@ -1111,7 +1111,7 @@ impl TheapCollectAbandonCallbacks for M1PageFreeCollectCallbacks {
 /// closures witness only their order and the retained empty image; they do
 /// not implement the production prepass algorithms. The test-only callbacks
 /// reject any page visit or terminal owner, keeping the witness bounded to
-/// the page-free M1 input.
+/// the page-free input.
 #[cfg(test)]
 pub(crate) fn test_m1_collect_abandon_page_free(
     theap: &mut Theap,
@@ -1795,8 +1795,12 @@ mod tests {
     }
 
     unsafe fn assert_queue(queue: &PageQueue, expected: &[*mut Page]) {
+        unsafe { assert_queue_with_owner(null_mut(), queue, expected) };
+    }
+
+    unsafe fn assert_queue_with_owner(owner: *mut Theap, queue: &PageQueue, expected: &[*mut Page]) {
         assert!(unsafe {
-            page_queue_is_valid_for_test(null_mut(), core::ptr::from_ref(queue))
+            page_queue_is_valid_for_test(owner, core::ptr::from_ref(queue))
         });
         assert_eq!(queue.count, expected.len());
         assert_eq!(queue.first, expected.first().copied().unwrap_or(null_mut()));
@@ -2095,6 +2099,113 @@ mod tests {
             assert_eq!(theap.pages_full_size(), 8 * block_size);
             page_queue_remove_metadata(&mut full, &mut second);
             assert_eq!(theap.pages_full_size(), 0);
+        }
+    }
+
+    #[test]
+    fn full_queue_reordering_preserves_owner_membership_and_bytes() {
+        fn names(
+            queue: &PageQueue,
+            first: *mut Page,
+            middle: *mut Page,
+            last: *mut Page,
+        ) -> std::string::String {
+            let mut result = std::string::String::new();
+            let mut current = queue.first;
+            let mut previous = null_mut();
+            while !current.is_null() {
+                assert!(result.len() < 3, "the queue must terminate within three pages");
+                // SAFETY: the test owns each initialized queue member and
+                // bounds the walk by the three pages it assembled.
+                assert_eq!(unsafe { (*current).prev }, previous);
+                // SAFETY: the same exclusive queue ownership keeps this
+                // page's full-membership flag initialized for observation.
+                assert_eq!(unsafe { page_is_in_full(&*current) }, page_queue_is_full(queue));
+                result.push(if current == first {
+                    'A'
+                } else if current == middle {
+                    'B'
+                } else if current == last {
+                    'C'
+                } else {
+                    panic!("unknown queue member")
+                });
+                // SAFETY: this local test owns all three pages and both
+                // queues for the complete bounded walk.
+                previous = current;
+                current = unsafe { (*current).next };
+            }
+            assert_eq!(result.len(), queue.count);
+            assert_eq!(previous, queue.last);
+            result
+        }
+
+        fn line(
+            step: &str,
+            theap: &Theap,
+            regular: &PageQueue,
+            full: &PageQueue,
+            first: *mut Page,
+            middle: *mut Page,
+            last: *mut Page,
+        ) -> std::string::String {
+            std::format!(
+                "M3Q {step} regular={} full={} bytes={} pages={}",
+                names(regular, first, middle, last),
+                names(full, first, middle, last),
+                theap.pages_full_size(),
+                theap.page_count()
+            )
+        }
+
+        let block_size = 32;
+        let mut theap = Theap::empty();
+        let mut regular = PageQueue::empty(block_size);
+        let mut full = PageQueue::empty((LARGE_MAX_OBJ_WSIZE + 2) * WORD_SIZE);
+        let mut first = page(block_size);
+        let mut middle = page(block_size);
+        let mut last = page(block_size);
+        assert!(first.set_capacity_reserved(4, 4));
+        assert!(middle.set_capacity_reserved(6, 6));
+        assert!(last.set_capacity_reserved(8, 8));
+        first.abandoned_test_set_theap(&mut theap);
+        middle.abandoned_test_set_theap(&mut theap);
+        last.abandoned_test_set_theap(&mut theap);
+
+        // SAFETY: all three initialized pages are stable, exclusively owned,
+        // and start detached. Both complete queues and the accounting Theap
+        // stay owned throughout this source queue-helper sequence.
+        unsafe {
+            page_queue_push_at_end_metadata(&mut regular, &mut first);
+            page_queue_push_at_end_metadata(&mut regular, &mut middle);
+            page_queue_push_at_end_metadata(&mut regular, &mut last);
+            theap.note_page_added();
+            theap.note_page_added();
+            theap.note_page_added();
+            std::println!("{}", line("start", &theap, &regular, &full, &mut first, &mut middle, &mut last));
+            page_queue_enqueue_from_metadata(&mut full, &mut regular, &mut first);
+            std::println!("{}", line("first-full", &theap, &regular, &full, &mut first, &mut middle, &mut last));
+            assert_eq!(theap.pages_full_size(), 4 * block_size);
+            page_queue_enqueue_from_metadata(&mut full, &mut regular, &mut middle);
+            std::println!("{}", line("middle-full", &theap, &regular, &full, &mut first, &mut middle, &mut last));
+            assert_eq!(theap.pages_full_size(), 10 * block_size);
+            assert_queue_with_owner(&mut theap, &regular, &[&mut last as *mut Page]);
+            assert_queue_with_owner(&mut theap, &full, &[&mut first as *mut Page, &mut middle as *mut Page]);
+
+            page_queue_move_to_front_metadata(&mut full, &mut middle);
+            std::println!("{}", line("full-front", &theap, &regular, &full, &mut first, &mut middle, &mut last));
+            assert_eq!(theap.pages_full_size(), 10 * block_size);
+            assert_queue_with_owner(&mut theap, &full, &[&mut middle as *mut Page, &mut first as *mut Page]);
+
+            page_queue_enqueue_from_ex_metadata(&mut regular, &mut full, false, &mut middle);
+            std::println!("{}", line("second-position", &theap, &regular, &full, &mut first, &mut middle, &mut last));
+            assert_eq!(theap.pages_full_size(), 4 * block_size);
+            assert_queue_with_owner(&mut theap, &regular, &[&mut last as *mut Page, &mut middle as *mut Page]);
+            page_queue_enqueue_from_full_metadata(&mut regular, &mut full, &mut first);
+            std::println!("{}", line("full-return", &theap, &regular, &full, &mut first, &mut middle, &mut last));
+            assert_eq!(theap.pages_full_size(), 0);
+            assert_queue_with_owner(&mut theap, &regular, &[&mut last as *mut Page, &mut middle as *mut Page, &mut first as *mut Page]);
+            assert_queue_with_owner(&mut theap, &full, &[]);
         }
     }
 
