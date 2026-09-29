@@ -154,7 +154,8 @@ bash "$ROOT_DIR/compat/x86_64/run_fcntl_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_poll_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_vector_io_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-descriptor-pipeline.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-descriptor-pipeline.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"

@@ -42,7 +42,8 @@ _Static_assert(SYS_pipe2 == 293 && SYS_fcntl == 72 && SYS_poll == 7 &&
 _Static_assert(O_NONBLOCK == 0x800 && O_CLOEXEC == 0x80000 &&
     FD_CLOEXEC == 1 && F_GETFD == 1 && F_SETFD == 2 && F_GETFL == 3 &&
     F_SETFL == 4, "x86 descriptor flag ABI");
-_Static_assert(POLLIN == 0x0001 && POLLHUP == 0x0010 && POLLNVAL == 0x0020,
+_Static_assert(POLLIN == 0x0001 && POLLOUT == 0x0004 &&
+    POLLHUP == 0x0010 && POLLNVAL == 0x0020,
     "x86 poll ABI");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&pipe2),
     int (*)(int *, int)), "pipe2 declaration");
@@ -80,13 +81,20 @@ int crabc_x86_64_descriptor_pipeline_probe(void)
     static const char expected[] = "left-right";
     char first[4] = { 0, 0, 0, 0 };
     char second[6] = { 0, 0, 0, 0, 0, 0 };
+    char short_first[2] = { 'x', 'x' };
+    char short_second[4] = { 'x', 'x', 'x', 'x' };
     struct iovec outgoing[2] = {
         { (void *)"left", 4 }, { (void *)"-right", 6 },
     };
     struct iovec incoming[2] = {
         { first, sizeof(first) }, { second, sizeof(second) },
     };
+    struct iovec short_incoming[2] = {
+        { short_first, sizeof(short_first) },
+        { short_second, sizeof(short_second) },
+    };
     struct pollfd readiness = { .fd = -1, .events = POLLIN, .revents = 0 };
+    struct pollfd write_readiness = { .fd = -1, .events = POLLOUT, .revents = 0 };
     int pipe_descriptors[2] = { -1, -1 };
     int duplicate = -1;
     int closed_descriptor = -1;
@@ -120,6 +128,19 @@ int crabc_x86_64_descriptor_pipeline_probe(void)
         status = 4;
         goto finish;
     }
+    errno = 0;
+    if (readv(pipe_descriptors[0], short_incoming, 2) != -1 ||
+        errno != EAGAIN || short_first[0] != 'x' || short_second[0] != 'x') {
+        status = 16;
+        goto finish;
+    }
+    write_readiness.fd = pipe_descriptors[1];
+    errno = 74;
+    if (poll(&write_readiness, 1, 0) != 1 ||
+        write_readiness.revents != POLLOUT || errno != 74) {
+        status = 17;
+        goto finish;
+    }
     if (writev(pipe_descriptors[1], outgoing, 2) != (ssize_t)sizeof(expected) - 1) {
         status = 5;
         goto finish;
@@ -131,8 +152,21 @@ int crabc_x86_64_descriptor_pipeline_probe(void)
     }
 
     duplicate = dup(pipe_descriptors[0]);
-    if (duplicate < 0 || close(pipe_descriptors[0]) != 0) {
+    if (duplicate < 0 || fcntl(duplicate, F_GETFD) != 0 ||
+        fcntl(pipe_descriptors[0], F_GETFD) != FD_CLOEXEC ||
+        (fcntl(duplicate, F_GETFL) & O_NONBLOCK) == 0) {
         status = 7;
+        goto finish;
+    }
+    if (fcntl(duplicate, F_SETFL, 0) != 0 ||
+        (fcntl(pipe_descriptors[0], F_GETFL) & O_NONBLOCK) != 0 ||
+        fcntl(pipe_descriptors[0], F_SETFL, O_NONBLOCK) != 0 ||
+        (fcntl(duplicate, F_GETFL) & O_NONBLOCK) == 0) {
+        status = 18;
+        goto finish;
+    }
+    if (close(pipe_descriptors[0]) != 0) {
+        status = 20;
         goto finish;
     }
     pipe_descriptors[0] = -1;
@@ -148,6 +182,19 @@ int crabc_x86_64_descriptor_pipeline_probe(void)
         status = 9;
         goto finish;
     }
+    {
+        struct iovec short_outgoing[2] = {
+            { (void *)"a", 1 }, { (void *)"bc", 2 },
+        };
+        if (writev(pipe_descriptors[1], short_outgoing, 2) != 3 ||
+            readv(duplicate, short_incoming, 2) != 3 ||
+            !same_bytes(short_first, "ab", 2) ||
+            short_second[0] != 'c' || short_second[1] != 'x' ||
+            short_second[2] != 'x' || short_second[3] != 'x') {
+            status = 19;
+            goto finish;
+        }
+    }
     if (close(pipe_descriptors[1]) != 0) {
         status = 10;
         goto finish;
@@ -156,6 +203,11 @@ int crabc_x86_64_descriptor_pipeline_probe(void)
     readiness.revents = 0;
     if (poll(&readiness, 1, 0) != 1 || (readiness.revents & POLLHUP) == 0) {
         status = 11;
+        goto finish;
+    }
+    errno = 75;
+    if (readv(duplicate, short_incoming, 2) != 0 || errno != 75) {
+        status = 21;
         goto finish;
     }
 
