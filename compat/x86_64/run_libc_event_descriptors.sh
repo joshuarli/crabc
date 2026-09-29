@@ -96,7 +96,8 @@ assert_x86_event_descriptor_register_paths() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort timeout; do
+for tool in ar awk cargo cat chmod cmp cp diff grep mkdir mktemp nm objdump od readelf rustup \
+    sha256sum sort timeout wc; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -105,7 +106,11 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_epoll_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_event_descriptors_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-event-descriptors.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp" \
+    "$ROOT_DIR/.work/x86_64/reports/libc-event-descriptors"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-event-descriptors.XXXXXX")"
+report_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-event-descriptors/run.XXXXXX")"
+chmod 755 "$report_dir"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-event-descriptors-reference"
@@ -141,12 +146,16 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_event_descriptors_probe.c \
     compat/x86_64/libc_event_descriptors_start.S -o "$reference"
-if (cd "$reference_work" && timeout "$EXECUTION_TIMEOUT" "$reference"); then
-    :
+if (cd "$reference_work" && timeout "$EXECUTION_TIMEOUT" "$reference" \
+    >"$report_dir/musl.records" 2>"$report_dir/musl.stderr"); then
+    printf '0\n' >"$report_dir/musl.status"
 else
     reference_status=$?
-    fail "pinned-musl reference execution exited $reference_status"
+    printf '%s\n' "$reference_status" >"$report_dir/musl.status"
+    fail "pinned-musl reference execution exited $reference_status; receipt: $report_dir"
 fi
+[ "$(wc -c <"$report_dir/musl.records")" -eq 64 ] ||
+    fail "pinned-musl reference emitted an unexpected receipt length; receipt: $report_dir"
 
 # Pin one codegen unit for the instruction-level syscall ABI judge below.
 # Multi-unit dev builds may retain calls to private raw_syscall helpers; the
@@ -252,11 +261,46 @@ assert_named_syscall inotify_add_watch fe
 assert_named_syscall inotify_rm_watch ff
 assert_x86_event_descriptor_register_paths
 
-if (cd "$candidate_work" && timeout "$EXECUTION_TIMEOUT" "$candidate"); then
-    :
+if (cd "$candidate_work" && timeout "$EXECUTION_TIMEOUT" "$candidate" \
+    >"$report_dir/crabc.records" 2>"$report_dir/crabc.stderr"); then
+    printf '0\n' >"$report_dir/crabc.status"
 else
     candidate_status=$?
-    fail "candidate execution exited $candidate_status"
+    printf '%s\n' "$candidate_status" >"$report_dir/crabc.status"
+    fail "candidate execution exited $candidate_status; receipt: $report_dir"
 fi
+cmp -s "$report_dir/musl.records" "$report_dir/crabc.records" ||
+    fail "candidate observations differ from pinned musl; receipt: $report_dir"
+cmp -s "$report_dir/musl.stderr" "$report_dir/crabc.stderr" ||
+    fail "candidate diagnostics differ from pinned musl; receipt: $report_dir"
+od -An -tx8 -w8 "$report_dir/musl.records" | awk '{ print $1 }' \
+    >"$report_dir/observations.txt"
+cat >"$report_dir/expected-observations.txt" <<'EOF'
+0000000000000011
+0000000000000001
+9a8b7c6d5e4f3021
+0000000000000100
+0000000000000010
+0000000000000001
+0000000000008000
+0000000000000016
+EOF
+cmp -s "$report_dir/expected-observations.txt" "$report_dir/observations.txt" ||
+    fail "pinned-musl observations differ from the inotify/epoll contract; receipt: $report_dir"
+cp "$reference" "$report_dir/musl.elf"
+cp "$candidate" "$report_dir/crabc.elf"
+(
+    cd "$ROOT_DIR"
+    sha256sum compat/x86_64/libc_event_descriptors_probe.c \
+        compat/x86_64/libc_event_descriptors_start.S \
+        compat/x86_64/run_libc_event_descriptors.sh
+) >"$report_dir/source.sha256"
+(
+    cd "$report_dir"
+    sha256sum musl.elf crabc.elf musl.records crabc.records \
+        musl.status crabc.status musl.stderr crabc.stderr observations.txt \
+        expected-observations.txt \
+        >artifact.sha256
+)
 
-printf 'x86 static crabc-libc event descriptors: PASS\n'
+printf 'x86 static crabc-libc event descriptors: PASS (%s)\n' "$report_dir"

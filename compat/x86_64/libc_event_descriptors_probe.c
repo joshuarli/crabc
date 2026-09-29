@@ -530,6 +530,143 @@ cleanup:
     return status;
 }
 
+static int check_inotify_epoll_lifecycle(void)
+{
+    struct inotify_epoll_receipt {
+        uint64_t duplicate_errno;
+        uint64_t create_ready;
+        uint64_t token;
+        uint64_t create_mask;
+        uint64_t name_capacity;
+        uint64_t ignored_ready;
+        uint64_t ignored_mask;
+        uint64_t removed_errno;
+    };
+    _Static_assert(sizeof(struct inotify_epoll_receipt) == 64,
+        "inotify epoll observation record has eight 64-bit fields");
+    const uint64_t token = UINT64_C(0x9a8b7c6d5e4f3021);
+    const char name[] = "epoll-created";
+    unsigned char bytes[64] = { 0 };
+    struct epoll_event interest = { 0 };
+    struct epoll_event observed = { 0 };
+    struct inotify_event event;
+    struct inotify_epoll_receipt receipt = { 0 };
+    ssize_t length;
+    int epoll = -1;
+    int descriptor = -1;
+    int created = -1;
+    int watch = -1;
+    int status = 0;
+
+    epoll = epoll_create1(EPOLL_CLOEXEC);
+    descriptor = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+    if (epoll < 0 || descriptor < 0 ||
+        !has_descriptor_flags(epoll, FD_CLOEXEC, 0) ||
+        !has_descriptor_flags(descriptor, FD_CLOEXEC, O_NONBLOCK)) {
+        status = 1;
+        goto cleanup;
+    }
+    watch = inotify_add_watch(descriptor, ".", IN_CREATE);
+    interest.events = EPOLLIN | EPOLLONESHOT;
+    interest.data.u64 = token;
+    if (watch < 0 || epoll_ctl(epoll, EPOLL_CTL_ADD, descriptor, &interest) != 0) {
+        status = 2;
+        goto cleanup;
+    }
+    errno = 0;
+    if (!expect_error(epoll_ctl(epoll, EPOLL_CTL_ADD, descriptor, &interest),
+            EEXIST)) {
+        status = 3;
+        goto cleanup;
+    }
+    receipt.duplicate_errno = (uint64_t)errno;
+    errno = E2BIG;
+    if (epoll_wait(epoll, &observed, 1, 0) != 0 || errno != E2BIG) {
+        status = 4;
+        goto cleanup;
+    }
+    created = open(name, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (created < 0 || close(created) != 0) {
+        status = 5;
+        goto cleanup;
+    }
+    created = -1;
+    observed.events = 0;
+    observed.data.u64 = 0;
+    if (epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLIN || observed.data.u64 != token) {
+        status = 6;
+        goto cleanup;
+    }
+    receipt.create_ready = observed.events;
+    receipt.token = observed.data.u64;
+    if (epoll_wait(epoll, &observed, 1, 0) != 0) {
+        status = 7;
+        goto cleanup;
+    }
+    length = read(descriptor, bytes, sizeof(bytes));
+    if (length < (ssize_t)sizeof(event)) {
+        status = 8;
+        goto cleanup;
+    }
+    __builtin_memcpy(&event, bytes, sizeof(event));
+    if (event.wd != watch || event.mask != IN_CREATE ||
+        event.len < sizeof(name) ||
+        __builtin_memcmp(bytes + sizeof(event), name, sizeof(name)) != 0 ||
+        length != (ssize_t)(sizeof(event) + event.len)) {
+        status = 9;
+        goto cleanup;
+    }
+    receipt.create_mask = event.mask;
+    receipt.name_capacity = event.len;
+    errno = E2BIG;
+    if (epoll_ctl(epoll, EPOLL_CTL_MOD, descriptor, &interest) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 0 || errno != E2BIG) {
+        status = 10;
+        goto cleanup;
+    }
+    if (inotify_rm_watch(descriptor, watch) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLIN || observed.data.u64 != token) {
+        status = 11;
+        goto cleanup;
+    }
+    receipt.ignored_ready = observed.events;
+    length = read(descriptor, bytes, sizeof(bytes));
+    if (length != (ssize_t)sizeof(event)) {
+        status = 12;
+        goto cleanup;
+    }
+    __builtin_memcpy(&event, bytes, sizeof(event));
+    if (event.wd != watch || event.mask != IN_IGNORED || event.len != 0) {
+        status = 13;
+        goto cleanup;
+    }
+    receipt.ignored_mask = event.mask;
+    errno = 0;
+    if (!expect_error(inotify_rm_watch(descriptor, watch), EINVAL)) {
+        status = 14;
+        goto cleanup;
+    }
+    receipt.removed_errno = (uint64_t)errno;
+    if (epoll_ctl(epoll, EPOLL_CTL_MOD, descriptor, &interest) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 0 ||
+        !has_descriptor_flags(descriptor, FD_CLOEXEC, O_NONBLOCK)) {
+        status = 14;
+        goto cleanup;
+    }
+    if (write(STDOUT_FILENO, &receipt, sizeof(receipt)) !=
+        (ssize_t)sizeof(receipt)) {
+        status = 15;
+    }
+
+cleanup:
+    if (created >= 0 && close(created) != 0 && status == 0) status = 16;
+    if (descriptor >= 0 && close(descriptor) != 0 && status == 0) status = 17;
+    if (epoll >= 0 && close(epoll) != 0 && status == 0) status = 18;
+    return status;
+}
+
 int crabc_x86_64_event_descriptors_probe(void)
 {
     int status = check_eventfd();
@@ -537,11 +674,13 @@ int crabc_x86_64_event_descriptors_probe(void)
     if (status != 0) return status;
     status = check_eventfd_epoll_readiness();
     if (status != 0) return 300 + status;
+    status = check_inotify();
+    if (status != 0) return 200 + status;
+    status = check_inotify_epoll_lifecycle();
+    if (status != 0) return 400 + status;
     /* The epoll argument filter is permanent for this process. */
     status = check_epoll();
     if (status != 0) return 100 + status;
-    status = check_inotify();
-    if (status != 0) return 200 + status;
     return 0;
 }
 
