@@ -276,6 +276,7 @@ class PublicDataVariableRuntimeContractTests(unittest.TestCase):
             for scenario, command in zip(reader.execution_plan(), capture.commands):
                 with self.subTest(scenario=scenario['id']), \
                      mock.patch.object(dynamic_driver, 'validate'), \
+                     mock.patch.object(static_driver, 'linker', return_value='/tools/ld.lld'), \
                      mock.patch.object(dynamic_driver, 'run', return_value='') as run:
                     dynamic_driver.execute(installed, command[1:])
                     self.assertNotIn('-nostdinc', command)
@@ -679,6 +680,9 @@ class PublicDataVariableRuntimeExecutionRootTests(unittest.TestCase):
         self.assertEqual(admitted.call_count, 1)
         self.assertEqual(source_capture.call_count, 1)
         self.assertEqual(companion_projection.call_count, 1)
+        companion_projection.assert_called_once_with(
+            ROOT, supplied, static_product=self.directory / 'static', dynamic_product=self.directory / 'dynamic',
+        )
 
         def mutate_report(*_args: object, **_kwargs: object) -> dict[str, str]:
             report.write_text('{"replaced":true}\n', encoding='utf-8')
@@ -890,6 +894,36 @@ class PublicDataVariableRuntimePublicReplayTests(unittest.TestCase):
             path, root=ROOT, static_preparation=self.static_primary,
             static_product=self.static_primary, dynamic_product=self.dynamic_product,
             **self.companions,
+        )
+
+    def test_declaration_companion_reader_receives_the_supplied_owned_products(self) -> None:
+        envelope = {'current_selecting_source': {'matches_retained': True}}
+        with mock.patch.object(reader.header_declaration_inventory, 'validate_report', return_value=envelope), \
+             mock.patch.object(reader.native_declaration_abi, 'validate_report',
+                               side_effect=ValueError('stop after declaration-boundary replay')) as declaration_reader:
+            with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'stop after declaration-boundary replay'):
+                reader._current_companion_projection(
+                    ROOT, self.companions, static_product=self.static_primary, dynamic_product=self.dynamic_product,
+                )
+        declaration_reader.assert_called_once_with(
+            self.companions['declaration_abi_report'], header_report=self.companions['header_report'],
+            header_envelope=envelope, static_product=self.static_primary, dynamic_product=self.dynamic_product,
+        )
+
+    def test_collection_replays_declaration_links_against_its_admitted_product_pair(self) -> None:
+        collector = reader.Collector(
+            ROOT, self.directory / 'new-collection', self.directory / 'preparation',
+            self.static_primary, self.dynamic_product, self.companions,
+        )
+        with mock.patch.dict(os.environ, {reader.IMAGE_ENV: reader.IMAGE}), \
+             mock.patch.object(reader.ordinary_link, 'admit_inputs', return_value=self.cohort), \
+             mock.patch.object(reader.static_products, 'source_identity', return_value=self.source), \
+             mock.patch.object(reader, '_current_companion_projection',
+                               side_effect=reader.PublicDataVariableRuntimeError('stop before runtime collection')) as projection:
+            with self.assertRaisesRegex(reader.PublicDataVariableRuntimeError, 'stop before runtime collection'):
+                collector.collect()
+        projection.assert_called_once_with(
+            ROOT, self.companions, static_product=self.static_primary, dynamic_product=self.dynamic_product,
         )
 
     def test_public_replay_binds_all_command_object_link_root_and_final_boundaries(self) -> None:

@@ -531,13 +531,16 @@ def _oracle_root_setup(root: Path, receipt_root: Path, consumer: Path,
 COMPANION_NAMES = ('header_report', 'declaration_abi_report', 'ordinary_link_report', 'errno_report')
 
 
-def _current_companion_projection(root: Path, paths: Mapping[str, Path]) -> dict[str, Any]:
+def _current_companion_projection(root: Path, paths: Mapping[str, Path], *,
+                                  static_product: Path, dynamic_product: Path) -> dict[str, Any]:
     """Replay the four existing owners used by the h_errno composition.
 
     This component does not replace their evidence.  It requires each public
     reader first, then records only the small facts that meet at the installed
     declaration boundary.  Every caller passes these reports again during
     retained replay; a copied report alone never transfers a cohort.
+    Declaration link controls receive the same supplied product pair that the
+    runtime collector admits before and after replay.
     """
     require(set(paths) == set(COMPANION_NAMES), 'public-data runtime companion roster differs')
     for name, path in paths.items():
@@ -550,6 +553,7 @@ def _current_companion_projection(root: Path, paths: Mapping[str, Path]) -> dict
                 'header declaration report source differs from current selection')
         declaration = native_declaration_abi.validate_report(
             paths['declaration_abi_report'], header_report=paths['header_report'], header_envelope=header,
+            static_product=static_product, dynamic_product=dynamic_product,
         )
         declaration_contract = native_data_declarations.load_contract()
         selected_declarations = [{key: item[key] for key in (
@@ -869,7 +873,9 @@ class Collector:
         self.output.mkdir()
         before = ordinary_link.admit_inputs(self.root, self.static_preparation, self.static_product, self.dynamic_product)
         source_before = static_products.source_identity(self.root)
-        companions_before = _current_companion_projection(self.root, self.companions)
+        companions_before = _current_companion_projection(
+            self.root, self.companions, static_product=self.static_product, dynamic_product=self.dynamic_product,
+        )
         sources = _source_capture(self.output)
         captured_companions = _capture_companions(self.output, self.companions)
         oracle = ordinary_link.qualification.capture_oracle(self.output)
@@ -887,7 +893,9 @@ class Collector:
             self.links[scenario['id']] = linked
             self._execute(scenario, linked)
         after = ordinary_link.admit_inputs(self.root, self.static_preparation, self.static_product, self.dynamic_product)
-        companions_after = _current_companion_projection(self.root, self.companions)
+        companions_after = _current_companion_projection(
+            self.root, self.companions, static_product=self.static_product, dynamic_product=self.dynamic_product,
+        )
         require(same(before, after) and same(source_before, static_products.source_identity(self.root))
                 and same(companions_before, companions_after),
                 'supplied products or collector source changed during public-data runtime collection')
@@ -1119,7 +1127,9 @@ def _recheck_live_collection_boundary(*, receipt_root: Path, report_path: Path, 
         require(digest(current) == original['sha256'] and current.stat().st_size == original['size']
                 and stat.S_IMODE(current.stat().st_mode) == original['mode'],
                 'public-data runtime companion changed during replay: ' + name)
-    require(companions['projection'] == _current_companion_projection(root, supplied_companions),
+    require(companions['projection'] == _current_companion_projection(
+        root, supplied_companions, static_product=static_product, dynamic_product=dynamic_product,
+    ),
             'public-data runtime companion projection changed during replay')
     ordinary_link.qualification.validate_oracle(receipt_root, oracle)
     ordinary_link.validate_oracle_static_inputs(receipt_root, oracle_static_inputs)
@@ -1188,7 +1198,9 @@ def validate_report(report_path: Path, *, root: Path = ROOT, static_preparation:
         require(digest(current) == original['sha256'] and current.stat().st_size == original['size']
                 and stat.S_IMODE(current.stat().st_mode) == original['mode'],
                 'current public-data runtime companion differs: ' + name)
-    require(companions['projection'] == _current_companion_projection(root, supplied_companions),
+    require(companions['projection'] == _current_companion_projection(
+        root, supplied_companions, static_product=static_product, dynamic_product=dynamic_product,
+    ),
             'public-data runtime companion projection differs')
     ordinary_link.qualification.validate_oracle(receipt_root, report['oracle'])
     ordinary_link.validate_oracle_static_inputs(receipt_root, report['oracle_static_inputs'])
