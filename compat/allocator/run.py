@@ -14475,6 +14475,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                         "os-aligned-page-publication-fault-receiver": "os_page::tests::emit_os_publication_fault_receiver_trace",
                         "metadata-publication-fault-receiver": "meta::tests::emit_metadata_publication_fault_receiver_trace",
                         "metadata-publication-recovery": "meta::tests::emit_metadata_publication_fault_receiver_trace",
+                        "process-owned-decommit-fault-receiver": "os::tests::emit_m2_process_owned_decommit_fault_c_rust_trace",
                     }.get(raw_check.get("id"))
                     or not (ALLOCATOR_ROOT / "x86_64_fault_seam_inventory.py").is_file()
                 ):
@@ -16346,7 +16347,7 @@ def _m2_x86_64_fault_check_records(
 
     component = next(item for item in summary["components"] if item["id"] == "fault-injection")
     receipt_keys = ("huge_branch_receipt", "os_publication_receipt",
-        "metadata_publication_receipt", "metadata_publication_receipt")
+        "metadata_publication_receipt", "metadata_publication_receipt", "decommit_receipt")
     if len(component["checks"]) != len(receipt_keys):
         raise HarnessError("native x86 M2 fault-inventory check roster is absent")
     producer = _m2_x86_64_fault_producer()
@@ -16362,9 +16363,16 @@ def _m2_x86_64_fault_check_records(
     results = []
     for check, receipt_key in zip(component["checks"], receipt_keys):
         receipt = evidence.get(receipt_key)
-        if not isinstance(receipt, Mapping) or not isinstance(receipt.get("rust_run"), Mapping):
+        if not isinstance(receipt, Mapping):
             raise HarnessError("native x86 M2 fault-inventory Rust receipt is absent")
-        command = receipt["rust_run"].get("command")
+        if receipt_key == "decommit_receipt":
+            commands = receipt.get("rust_commands")
+            rust_run = commands.get("run") if isinstance(commands, Mapping) else None
+        else:
+            rust_run = receipt.get("rust_run")
+        if not isinstance(rust_run, Mapping):
+            raise HarnessError("native x86 M2 fault-inventory Rust receipt is absent")
+        command = rust_run.get("command")
         if not isinstance(command, list) or not all(isinstance(argument, str) and argument for argument in command):
             raise HarnessError("native x86 M2 fault-inventory executed receipt changed")
         results.append({

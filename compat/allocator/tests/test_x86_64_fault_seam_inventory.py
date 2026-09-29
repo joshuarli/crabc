@@ -29,6 +29,72 @@ def _trace(begin: str, end: str, keys: tuple[str, ...]) -> str:
     return "\n".join((begin, *(f"{key}=1" for key in keys), end, ""))
 
 
+def _os_on_demand_values(language: str) -> str:
+    values = dict.fromkeys(INVENTORY.OS_ON_DEMAND_VALUE_KEYS, 1)
+    values.update({
+        "os_on_demand.mapping_length": 131072,
+        "os_on_demand.reserved_after_area": 131072,
+        "os_on_demand.committed_after_area": 0,
+        "os_on_demand.commit_calls_after_area": 1,
+        "os_on_demand.expected_first_prefix": 65536,
+        "os_on_demand.memory_id_initially_committed": 1 if language == "C" else 0,
+        "os_on_demand.block_prefix_commit_calls": 0 if language == "C" else 1,
+        "os_on_demand.block_prefix_committed_bytes": 0 if language == "C" else 65536,
+        "os_on_demand.committed_after_release": -65536 if language == "C" else 0,
+    })
+    for prefix, fields, numbers in (
+        ("os_area_commit_cleanup", ("mapping_length", "reserved_delta", "committed_delta",
+            "commit_calls", "warning_fragments"), (131072, 0, -131072, 1, 4)),
+        ("os_area_commit_release", ("mapping_length", "reserved_delta", "committed_delta",
+            "commit_calls", "warning_fragments"), (131072, 0, -131072, 1, 2)),
+        ("os_area_published", ("mapping_length", "slice_offset", "block_start_offset",
+            "page_offset", "reserved", "block_size", "initially_committed", "initially_zero",
+            "reserved_live", "committed_live", "commit_calls_live", "reserved_after_free",
+            "committed_after_free", "commit_calls_after_free", "primitive_commits",
+            "warning_fragments", "mmap_calls_live", "mmap_calls_after_free", "pages_live",
+            "pages_after_free"), (262144, 131072, 0, 130816, 1, 131072, 1, 1,
+                327680, 196608, 2, 65536, 65536, 2, 2, 0, 2, 2, 0, 0)),
+        ("os_area_published_free_failure", ("mapping_length", "reserved_live",
+            "committed_live", "reserved_after_free", "committed_after_free",
+            "commit_calls_after_free", "mmap_calls_after_free", "warning_fragments",
+            "reserved_at_warning", "committed_at_warning"),
+            (262144, 327680, 196608, 65536, 65536, 2, 2, 2, 327680, 196608)),
+        ("os_medium_published", ("mapping_length", "slice_offset", "block_start_offset",
+            "page_offset", "reserved", "block_size", "initially_committed", "initially_zero",
+            "reserved_live", "committed_live", "commit_calls_live", "reserved_after_free",
+            "committed_after_free", "commit_calls_after_free", "primitive_commits",
+            "warning_fragments", "mmap_calls_live", "mmap_calls_after_free", "pages_live",
+            "pages_after_free"), (589824, 65536, 0, 65408, 16, 32768, 1, 1,
+                655360, 589824, 2, 65536, 65536, 2, 2, 0, 2, 2, 0, 0)),
+        ("os_medium_free_failure", ("mapping_length", "reserved_live",
+            "committed_live", "reserved_after_free", "committed_after_free",
+            "commit_calls_after_free", "mmap_calls_after_free", "warning_fragments",
+            "reserved_at_warning", "committed_at_warning"),
+            (589824, 655360, 589824, 65536, 65536, 2, 2, 2, 655360, 589824)),
+        ("os_area_page_map_failure", ("mapping_length", "reserved_after_failure",
+            "committed_after_failure", "commit_calls_after_failure", "mmap_calls_after_failure",
+            "warning_fragments", "reserved_at_warning", "committed_at_warning"),
+            (262144, 65536, 65536, 2, 3, 4, 262144, 131072)),
+    ):
+        values.update({f"{prefix}.{field}": number for field, number in zip(fields, numbers)})
+    return "\n".join((INVENTORY.OS_ON_DEMAND_VALUES_BEGIN,
+        *(f"{key}={values[key]}" for key in INVENTORY.OS_ON_DEMAND_VALUE_KEYS),
+        INVENTORY.OS_ON_DEMAND_VALUES_END, ""))
+
+
+def _metadata_recovery_values() -> str:
+    rows = (1, 2, 3)
+    values = {
+        f"metadata_recovery.{row}.{field}": base + (65536 if index < 4 else 0)
+        for row, bases in zip(rows, INVENTORY.METADATA_RECOVERY_BASE)
+        for index, (field, base) in enumerate(zip(INVENTORY.METADATA_RECOVERY_FIELDS,
+            (*bases, 1)))
+    }
+    return "\n".join((INVENTORY.METADATA_RECOVERY_BEGIN,
+        *(f"{key}={values[key]}" for key in INVENTORY.METADATA_RECOVERY_KEYS),
+        INVENTORY.METADATA_RECOVERY_END, ""))
+
+
 def _fault_diagnostic_relation_trace(begin: str, end: str) -> str:
     prefix = b"mimalloc: warning: thread 0xA: "
     body = b"failed to bind huge (1GiB) pages to numa node 62 (error: 1 (0x01))\n"
@@ -154,6 +220,13 @@ def _valid_report(runner: object, profile: dict[str, object]) -> dict[str, objec
         ),
     }
     state = _clean_source_state()
+    decommit = INVENTORY._decommit_receiver()
+    decommit_values = decommit.expected_values()
+    decommit_trace = lambda language: "\n".join((
+        f"CRABC_M2_PROCESS_OWNED_DECOMMIT_FAULT_{language}_TRACE_BEGIN",
+        *(f"{field}={decommit_values[field]}" for field in decommit.FIELDS),
+        f"CRABC_M2_PROCESS_OWNED_DECOMMIT_FAULT_{language}_TRACE_END", "",
+    ))
     return {
         "architecture": "x86_64",
         "branch_records": INVENTORY._branch_records(),
@@ -162,6 +235,23 @@ def _valid_report(runner: object, profile: dict[str, object]) -> dict[str, objec
         "format": INVENTORY.FORMAT,
         "os_publication_receipt": _valid_os_publication_report(),
         "metadata_publication_receipt": _valid_metadata_publication_report(),
+        "decommit_receipt": {
+            "status": "matched", "c": decommit_values, "rust": dict(decommit_values),
+            "mismatches": [], "scope": "process-owned decommit fault and retry",
+            "c_commands": {
+                "build": {"command": ["musl-gcc", "-DMI_LIBC_MUSL=1", str(decommit.FIXTURE),
+                    "-Wl,--wrap=madvise", "-o", "/evidence/decommit-fault"],
+                    "status": 0, "stdout": "", "stderr": ""},
+                "run": {"command": ["/evidence/decommit-fault"], "status": 0,
+                    "stdout": decommit_trace("C"), "stderr": ""},
+            },
+            "rust_commands": {"run": {
+                "command": ["python3", "compat/allocator/run_unit_x86_64.py", INVENTORY.DECOMMIT_TARGET],
+                "status": 0, "stdout": decommit_trace("RUST")
+                    + "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
+                "stderr": "",
+            }},
+        },
         "huge_branch_receipt": {
             "c_build": c_build,
             "c_compiled_source_closure": {
@@ -240,13 +330,14 @@ def _valid_os_publication_report() -> dict[str, object]:
         "source_state_before": _clean_source_state(), "source_state_after": _clean_source_state(),
         "c_build": {"command": INVENTORY._os_publication_c_command(runner, "musl-gcc", source, binary),
             "cwd": str(source), "status": 0, "stdout": "", "stderr": ""},
-        "c_run": {"command": [str(binary)], "cwd": str(source), "status": 0, "stdout": stream, "stderr": ""},
+        "c_run": {"command": [str(binary)], "cwd": str(source), "status": 0,
+            "stdout": stream + _os_on_demand_values("C"), "stderr": ""},
         "c_source_files": list(INVENTORY.PINNED_C_SOURCE_FILES),
         "fixture": INVENTORY._local_file_record(INVENTORY.FIXTURE),
         "rust_build": {"command": runner._m2_x86_64_vm_rust_build_command(), "cwd": str(INVENTORY.ROOT),
             "status": 0, "stdout": "", "stderr": ""},
         "rust_run": {"command": [str(rust_binary), INVENTORY.OS_PUBLICATION_TARGET, "--exact", "--test-threads=1", "--nocapture"],
-            "cwd": str(INVENTORY.ROOT), "status": 0, "stdout": stream + "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n", "stderr": ""},
+            "cwd": str(INVENTORY.ROOT), "status": 0, "stdout": stream + _os_on_demand_values("Rust") + "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n", "stderr": ""},
         "rust_source_files": INVENTORY._rust_trace_source_files(),
     }
 
@@ -267,7 +358,7 @@ def _valid_metadata_publication_report() -> dict[str, object]:
     stream = _trace(
         INVENTORY.METADATA_PUBLICATION_BEGIN, INVENTORY.METADATA_PUBLICATION_END,
         INVENTORY.METADATA_PUBLICATION_KEYS,
-    ) + _metadata_publication_deltas()
+    ) + _metadata_publication_deltas() + _metadata_recovery_values()
     pin = runner.load_pin()
     return {
         "schema": INVENTORY.SCHEMA, "format": INVENTORY.FORMAT,
@@ -534,8 +625,9 @@ class FaultInventoryShapeTests(unittest.TestCase):
                 "path": path,
             }
 
-        def capture_vm(*, offline: bool, test_program: object) -> object:
+        def capture_vm(*, offline: bool, test_program: object, arena_owned_check: object) -> object:
             del offline
+            del arena_owned_check
             observed["vm_provenance_bound"] = runner._m2_x86_64_vm_test_program_is_bound(test_program)
             if not observed["vm_provenance_bound"]:
                 raise AssertionError("standalone producer gave the VM validator an unbound test program")
@@ -599,6 +691,16 @@ class FaultInventoryShapeTests(unittest.TestCase):
                 "id": INVENTORY.METADATA_PUBLICATION_CHECK_ID,
                 "kind": "c-rust-fault-seam-inventory",
                 "target": INVENTORY.METADATA_PUBLICATION_TARGET,
+                "expected_passed_test_count": 1,
+            }, {
+                "id": INVENTORY.METADATA_RECOVERY_CHECK_ID,
+                "kind": "c-rust-fault-seam-inventory",
+                "target": INVENTORY.METADATA_PUBLICATION_TARGET,
+                "expected_passed_test_count": 1,
+            }, {
+                "id": INVENTORY.DECOMMIT_CHECK_ID,
+                "kind": "c-rust-fault-seam-inventory",
+                "target": INVENTORY.DECOMMIT_TARGET,
                 "expected_passed_test_count": 1,
             }],
         )
@@ -668,6 +770,14 @@ class FaultInventoryShapeTests(unittest.TestCase):
                 INVENTORY.validate_report(report)["huge_branch_receipt"],
                 report["huge_branch_receipt"],
             )
+
+    def test_report_rejects_a_rewritten_process_owned_decommit_stream(self) -> None:
+        with _retained_profile_contract() as (runner, profile):
+            report = _valid_report(runner, profile)
+            run = report["decommit_receipt"]["c_commands"]["run"]
+            run["stdout"] = run["stdout"].replace("warning_after_attempt=1", "warning_after_attempt=0")
+            with self.assertRaisesRegex(ValueError, "decommit relation"):
+                INVENTORY.validate_report(report)
 
     def test_report_requires_its_current_fragment_projection(self) -> None:
         """A receiver receipt cannot omit the fragment that defines its boundary."""
