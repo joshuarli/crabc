@@ -529,6 +529,88 @@ impl super::Theap {
 }
 
 impl super::ThreadLocalData {
+    /// Detach the next auxiliary Theap of a finishing thread from both source
+    /// lists while its TLD lock retains the selected image. A concurrent Heap
+    /// destroy must acquire that same lock before dropping its list reference.
+    /// The Heap lock is tried under the TLD lock, with source backoff on
+    /// contention, so opposing detach traversals cannot deadlock.
+    ///
+    /// # Safety
+    /// `tld` and `main` belong to the finishing thread. The caller has
+    /// drained every auxiliary Theap, cleared its cached root, and retains
+    /// each returned Theap until it drops the Heap-list reference exactly
+    /// once. No other thread adds a Theap to this TLD.
+    pub(crate) unsafe fn take_next_auxiliary_theap_for_thread_done(
+        tld: core::ptr::NonNull<Self>,
+        main: core::ptr::NonNull<super::Theap>,
+        subprocess: &SubprocessIdentity,
+    ) -> Result<Option<core::ptr::NonNull<super::Theap>>, SourceHeapRegistryError> {
+        loop {
+            // SAFETY: the caller retains this TLD and the lock protects its
+            // list against a concurrent Heap detach and final decref.
+            let tld_pointer = tld.as_ptr();
+            let tld_guard = unsafe { (*tld_pointer).theaps_lock.lock() }
+                .map_err(SourceHeapRegistryError::ListLockAcquire)?;
+            let mut current = unsafe { (*tld_pointer).theaps };
+            while current == main.as_ptr() {
+                // SAFETY: the held TLD lock retains this list member.
+                current = unsafe { (*current).tnext };
+            }
+            let Some(theap) = core::ptr::NonNull::new(current) else {
+                tld_guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)?;
+                return Ok(None);
+            };
+            // SAFETY: the TLD lock keeps a listed Theap live while the Heap
+            // destroyer may detach it only by acquiring this same lock.
+            let heap = unsafe { (*current).heap.load(Ordering::Acquire) };
+            let heap_guard = if heap.is_null() {
+                None
+            } else {
+                // SAFETY: a listed Theap's non-null Heap identity remains
+                // live until it has left this TLD list.
+                match unsafe { (*heap).theaps_lock.try_lock() } {
+                    Some(guard) => Some(guard),
+                    None => {
+                        tld_guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)?;
+                        subprocess.record_statistics_heap_delete_wait();
+                        let _ = crate::os::thread_yield();
+                        continue;
+                    }
+                }
+            };
+            if heap_guard.is_some() {
+                // SAFETY: both locks protect the two intrusive lists; this
+                // Theap still carries its Heap-list reference for the caller.
+                unsafe {
+                    (*heap).statistics.merge_from_and_reset(&(*current).statistics);
+                    let (next, prev) = (*(*current).hnext.get(), *(*current).hprev.get());
+                    if !next.is_null() { *(*next).hprev.get() = prev; }
+                    if !prev.is_null() { *(*prev).hnext.get() = next; }
+                    else { core::ptr::addr_of_mut!((*heap).theaps).write(next); }
+                    *(*current).hnext.get() = core::ptr::null_mut();
+                    *(*current).hprev.get() = core::ptr::null_mut();
+                    (*current).heap.store(core::ptr::null_mut(), Ordering::Release);
+                }
+            }
+            // SAFETY: the held TLD lock protects the selected Theap and its
+            // neighbours until the image leaves this list.
+            unsafe {
+                let (next, prev) = ((*current).tnext, (*current).tprev);
+                if !next.is_null() { (*next).tprev = prev; }
+                if !prev.is_null() { (*prev).tnext = next; }
+                else { core::ptr::addr_of_mut!((*tld_pointer).theaps).write(next); }
+                (*current).tnext = core::ptr::null_mut();
+                (*current).tprev = core::ptr::null_mut();
+                (*current).tld = core::ptr::null_mut();
+            }
+            if let Some(guard) = heap_guard {
+                guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)?;
+            }
+            tld_guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)?;
+            return Ok(Some(theap));
+        }
+    }
+
     /// Source `_mi_tld_detach_theaps` (`theap.c:414-445`) and the list pass
     /// of `mi_thread_theaps_done` (`init.c:401-415`) for one Theap of a
     /// finishing thread: its statistics merge into its Heap and it leaves the

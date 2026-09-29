@@ -1175,18 +1175,17 @@ pub(crate) fn native_thread_done() -> bool {
     let empty = unsafe { NonNull::new_unchecked(crate::bootstrap::empty_default_theap_ptr()) };
     cached_set(empty);
     let identity = MainSubprocess::global().identity();
-    // SAFETY: as above.
-    let mut current = unsafe { ThreadLocalData::theaps_head_at(thread.tld) };
-    while let Some(theap) = NonNull::new(current) {
-        // SAFETY: read before the Theap leaves the list.
-        current = unsafe { Theap::tld_next_at(theap) };
-        if theap == thread.theap {
-            continue;
-        }
-        // SAFETY: the drained Theap owns no page.
-        if unsafe { ThreadLocalData::detach_theap_for_thread_done(thread.tld, theap, identity) }.is_err() {
-            return false;
-        }
+    loop {
+        // SAFETY: this finishing thread has drained its auxiliary Theaps and
+        // cleared its cached root. The TLD lock keeps each selected image
+        // live across a concurrent Heap destroy until both lists are unlinked.
+        let theap = match unsafe {
+            ThreadLocalData::take_next_auxiliary_theap_for_thread_done(thread.tld, thread.theap, identity)
+        } {
+            Ok(Some(theap)) => theap,
+            Ok(None) => break,
+            Err(_) => return false,
+        };
         // SAFETY: the Heap's reference, dropped once.
         unsafe { theap_decref(theap) };
     }

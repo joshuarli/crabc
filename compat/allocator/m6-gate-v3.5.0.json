@@ -66,6 +66,18 @@
       "runner": "compat/allocator/x86_64_m6_heap_destroy_after_workers.py",
       "scope": "Source-built pinned-C/native-adapter Heap whose creating worker exits with a live page, whose second worker allocates regular and aligned pages after that exit, and whose main-thread destroy retires every live page after both workers exit; compare Heap identity, payload, PageMap membership, errno, and page/Theap statistics."
     },
+    "differential:heap-destroy-with-attached-worker": {
+      "runner": "compat/allocator/x86_64_m6_heap_destroy_with_attached_worker.py",
+      "scope": "Source-built pinned-C/native-adapter Heap destruction after its creator exits while a second worker retains a live Theap: the creator's page retires, the worker's regular and aligned pages remain registered, the cached Theap survives through worker exit, and errno and page/Theap statistics match."
+    },
+    "differential:heap-delete-with-attached-worker": {
+      "runner": "compat/allocator/x86_64_m6_heap_delete_with_attached_worker.py",
+      "scope": "Source-built pinned-C/native-adapter Heap deletion after its creator exits while a second worker retains a live Theap: regular and aligned pages remain registered through the delete and joined worker, their final frees follow source page movement, and errno and page/Theap statistics match."
+    },
+    "differential:heap-destroy-racing-detach": {
+      "runner": "compat/allocator/x86_64_m6_heap_destroy_racing_detach.py",
+      "scope": "Source-built pinned-C/native-adapter twelve independent 64-round races between non-main Heap destruction and the second worker's thread exit after the creating worker has exited: every creator page retires and Heap/Theap counts return to baseline."
+    },
     "differential:deleted-heap-remote-exit": {
       "runner": "compat/allocator/x86_64_m6_deleted_heap_remote_exit.py",
       "scope": "Source-built pinned-C/native-adapter deleted process-main Heap with an aligned OS-backed live block, remote final free before or after the owner exits, Heap and region identity, errno, collection, and page/Theap statistics."
@@ -199,11 +211,14 @@
         "differential:deleted-heap-remote-exit",
         "differential:heap-delete-after-owner-exit",
         "differential:heap-destroy-after-workers",
+        "differential:heap-destroy-with-attached-worker",
+        "differential:heap-delete-with-attached-worker",
+        "differential:heap-destroy-racing-detach",
         "differential:heap-destroy",
         "unit:heap-lifecycle"
       ],
       "blocked_by": [
-        "Non-main Heaps exist for threads of the process main subprocess (`subproc::main_heaps`, exported as mi_heap_new/mi_heap_main/mi_heap_delete/mi_heap_destroy/mi_heap_collect) and of child subprocesses (`types::heap_registry::lifecycle`). Process-main and child-subprocess mi_heap_theap have bounded source-built evidence. Heaps selected from one live exclusive parent have source-built allocation, delete, destroy, and failure traces in both subprocesses. A deleted process-main Heap's remote final free matches pinned C in both owner-exit orders. Deleting a worker-created Heap after that owner exits matches pinned C for regular and aligned singleton pages through page movement, remote final free, and collection. Destroying a Heap used by two exited workers matches pinned C for regular and aligned live pages; mi_heap_set_numa_affinity and concurrent detachment and failure coverage remain unproved or absent."
+        "Non-main Heaps exist for threads of the process main subprocess (`subproc::main_heaps`, exported as mi_heap_new/mi_heap_main/mi_heap_delete/mi_heap_destroy/mi_heap_collect) and of child subprocesses (`types::heap_registry::lifecycle`). Process-main and child-subprocess mi_heap_theap have bounded source-built evidence. Heaps selected from one live exclusive parent have source-built allocation, delete, destroy, and failure traces in both subprocesses. A deleted process-main Heap's remote final free matches pinned C in both owner-exit orders. Deleting a worker-created Heap after that owner exits matches pinned C for regular and aligned singleton pages through page movement, remote final free, and collection. Destroying a Heap used by two exited workers matches pinned C for regular and aligned live pages. Source-built destroy and delete now also cover a still-attached second worker after creator exit, and twelve 64-round processes race worker exit with destruction. mi_heap_set_numa_affinity, deterministic lock-contention overlap, and failure coverage remain unproved or absent."
       ]
     },
     {
@@ -436,11 +451,14 @@
         "differential:deleted-heap-remote-exit",
         "differential:heap-delete-after-owner-exit",
         "differential:heap-destroy-after-workers",
+        "differential:heap-destroy-with-attached-worker",
+        "differential:heap-delete-with-attached-worker",
+        "differential:heap-destroy-racing-detach",
         "differential:subprocess-lifecycle",
         "fault:heap-lifecycle"
       ],
       "blocked_by": [
-        "A deleted process-main Heap's remote final free matches pinned C before and after its owner exits. A worker-created Heap deleted after its owner exits matches pinned C through regular and singleton page movement, remote frees, and collection. A Heap created by one worker and used by another after the creator exits matches pinned C when the main thread destroys its three live regular/aligned pages after both workers exit. The heap-destroy, arena-destroy, and subprocess-lifecycle differentials cover the main-Heap Theap-list pass, quiescent arena-group retirement, and quiescent root-child subprocess destruction; concurrent Theap detachment and broader failure-path differentials remain open."
+        "A deleted process-main Heap's remote final free matches pinned C before and after its owner exits. A worker-created Heap deleted after its owner exits matches pinned C through regular and singleton page movement, remote frees, and collection. A Heap created by one worker and used by another after the creator exits matches pinned C when the main thread destroys its three live regular/aligned pages after both workers exit. New source-built traces cover delete and destroy while that second worker remains attached, plus twelve 64-round destruction versus worker-exit race processes with owner counts returning to baseline. The heap-destroy, arena-destroy, and subprocess-lifecycle differentials cover the main-Heap Theap-list pass, quiescent arena-group retirement, and quiescent root-child subprocess destruction; deterministic lock-contention overlap and broader failure-path differentials remain open."
       ]
     },
     {
