@@ -109,7 +109,7 @@ def storage(value):
         return Path(os.environ["MIRI_TEST_IMAGE_STORAGE"]) / value.lstrip("/")
     raise RuntimeError("unexpected simulated container storage path")
 
-cache = storage(os.environ.get("MIRI_CACHE_DIR", "/image-cache"))
+cache = storage(os.environ.get("XDG_CACHE_HOME", "/image-cache"))
 sysroot = storage(os.environ["MIRI_SYSROOT"]) if "MIRI_SYSROOT" in os.environ else cache / "miri"
 for directory, marker in ((cache, "cache-write"), (sysroot, "sysroot-write")):
     directory.mkdir(parents=True, exist_ok=True)
@@ -129,7 +129,7 @@ else:
             "MIRI_TEST_TMP_MOUNT": str(self.boundary),
             "MIRI_TEST_IMAGE_STORAGE": str(self.external),
             "MIRI_TEST_CAPTURE": str(self.capture),
-            "MIRI_CACHE_DIR": "/image-cache",
+            "XDG_CACHE_HOME": "/image-cache",
         }
         self.contract = {"miri": {
             "target": "x86_64-unknown-linux-gnu",
@@ -141,7 +141,7 @@ else:
     def execute(self, *, inherited_sysroot: bool) -> None:
         environment = dict(self.environment)
         if inherited_sysroot:
-            environment["MIRI_CACHE_DIR"] = "/tmp/inherited-cache"
+            environment["XDG_CACHE_HOME"] = "/tmp/inherited-cache"
             environment["MIRI_SYSROOT"] = "/image-sysroot"
         with mock.patch.dict(os.environ, environment):
             with mock.patch.object(gate, "ARTIFACT_ROOT", self.boundary / "artifacts"):
@@ -149,6 +149,37 @@ else:
         self.assertEqual(result["status"], "passed", result)
         for path in self.capture.read_text().splitlines():
             self.assertTrue(Path(path).resolve().is_relative_to(self.boundary), path)
+
+    @unittest.skipUnless(
+        Path("/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl/bin/cargo-miri").is_file(),
+        "requires the pinned allocator image's cargo-miri",
+    )
+    def test_pinned_miri_setup_builds_a_physical_checkout_owned_sysroot(self) -> None:
+        command_record = gate.run.command_record
+        selected = []
+
+        def execute(command, **kwargs):
+            if "--list" not in command:
+                return command_record(command, **kwargs)
+            setup = command_record(
+                ("cargo", "miri", "setup", "--print-sysroot", "--target", self.contract["miri"]["target"]),
+                **kwargs,
+            )
+            self.assertEqual(setup["status"], 0, setup)
+            sysroot = Path(str(setup["stdout"]).strip()).resolve(strict=True)
+            selected.append(sysroot)
+            physical_tmp = Path("/tmp").resolve(strict=True)
+            self.assertEqual(sysroot, physical_tmp / "crabc-m3-miri-cache/miri")
+            self.assertTrue((sysroot / "lib/rustlib" / self.contract["miri"]["target"] / "lib").is_dir())
+            print(f"Pinned Miri physical sysroot: {sysroot}", flush=True)
+            return {"status": 0, "stdout": "", "stderr": ""}
+
+        environment = {"MIRI_SYSROOT": "/inherited-sysroot", "XDG_CACHE_HOME": "/tmp/inherited-cache"}
+        with mock.patch.dict(os.environ, environment):
+            with mock.patch.object(gate.run, "command_record", side_effect=execute):
+                with mock.patch.object(gate, "ARTIFACT_ROOT", self.boundary / "artifacts"):
+                    gate.run_miri(self.contract)
+        self.assertEqual(len(selected), 1)
 
     def test_miri_cache_and_built_sysroot_use_the_checkout_tmp_mount(self) -> None:
         self.execute(inherited_sysroot=False)
