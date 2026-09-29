@@ -17,6 +17,7 @@ readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly EXECUTION_TIMEOUT=20s
+readonly REPORT_ROOT="$ROOT_DIR/.work/x86_64/reports"
 
 fail() {
     printf 'ERROR: x86 static libc pthread/C11 TSD: %s\n' "$*" >&2
@@ -89,7 +90,8 @@ assert_selected_tsd_sources() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sed sort timeout; do
+for tool in ar awk cargo chmod cmp cp diff grep mkdir mktemp mv nm objdump \
+    readelf rustup sed sha256sum sort timeout; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -98,8 +100,10 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_types_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_pthread_c11_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-pthread-c11-tsd.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp" "$REPORT_ROOT"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-pthread-c11-tsd.XXXXXX")"
+receipt_stage=
+trap 'rm -rf -- "$work_dir"; if [ -n "$receipt_stage" ]; then rm -rf -- "$receipt_stage"; fi' EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-pthread-c11-tsd-reference"
 candidate="$work_dir/crabc-static-pthread-c11-tsd-candidate"
@@ -130,10 +134,12 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_pthread_c11_tsd_probe.c \
     -o "$reference"
-if timeout "$EXECUTION_TIMEOUT" "$reference"; then
-    :
+if timeout "$EXECUTION_TIMEOUT" "$reference" \
+    >"$work_dir/oracle.stdout" 2>"$work_dir/oracle.stderr"; then
+    printf '0\n' >"$work_dir/oracle.status"
 else
     reference_status=$?
+    printf '%s\n' "$reference_status" >"$work_dir/oracle.status"
     fail "pinned-musl reference execution exited ${reference_status}"
 fi
 
@@ -225,11 +231,47 @@ objdump -d --disassemble=__pthread_key_create "$candidate" >"$key_create_disasse
 grep -Eq 'lock[[:space:]]+cmpxchg' "$key_create_disassembly" ||
     fail "pthread_key_create lacks its private atomic key-table lock"
 
-if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
-    :
+if timeout "$EXECUTION_TIMEOUT" "$candidate" \
+    >"$work_dir/candidate.stdout" 2>"$work_dir/candidate.stderr"; then
+    printf '0\n' >"$work_dir/candidate.status"
 else
     candidate_status=$?
+    printf '%s\n' "$candidate_status" >"$work_dir/candidate.status"
     fail "candidate execution exited ${candidate_status}"
 fi
 
-printf 'x86 static crabc-libc pthread/C11 TSD: PASS\n'
+cmp "$work_dir/oracle.stdout" "$work_dir/candidate.stdout" ||
+    fail "candidate stdout differs from pinned musl"
+cmp "$work_dir/oracle.stderr" "$work_dir/candidate.stderr" ||
+    fail "candidate stderr differs from pinned musl"
+
+# Publish only the two executable images and their direct observations. Build
+# intermediates remain in the temporary directory and are removed on exit.
+receipt_stage="$(mktemp -d "$REPORT_ROOT/.libc-pthread-c11-tsd.XXXXXX")"
+chmod a+rx "$receipt_stage"
+cp "$reference" "$receipt_stage/musl-reference.elf"
+cp "$candidate" "$receipt_stage/crabc-candidate.elf"
+cp "$header_trace" "$receipt_stage/header-trace"
+for observation in oracle.stdout oracle.stderr oracle.status \
+    candidate.stdout candidate.stderr candidate.status; do
+    cp "$work_dir/$observation" "$receipt_stage/$observation"
+done
+sha256sum "$archive" | awk '{ print $1 "  selected-libc.a" }' \
+    >"$receipt_stage/archive.sha256"
+(
+    cd "$ROOT_DIR"
+    sha256sum compat/x86_64/libc_pthread_c11_tsd_probe.c \
+        compat/x86_64/libc_pthread_c11_tsd_start.S \
+        compat/x86_64/run_libc_pthread_c11_tsd.sh
+) >"$receipt_stage/source.sha256"
+(
+    cd "$receipt_stage"
+    sha256sum musl-reference.elf crabc-candidate.elf header-trace \
+        oracle.stdout oracle.stderr oracle.status \
+        candidate.stdout candidate.stderr candidate.status archive.sha256 \
+        source.sha256
+) >"$receipt_stage/SHA256SUMS"
+receipt_dir="$REPORT_ROOT/libc-pthread-c11-tsd-${receipt_stage##*.}"
+mv "$receipt_stage" "$receipt_dir"
+
+printf 'x86 static crabc-libc pthread/C11 TSD: PASS; evidence: %s\n' "$receipt_dir"
