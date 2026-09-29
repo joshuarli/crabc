@@ -4,8 +4,10 @@
 # The same project-header C fixture first executes through pinned musl, then
 # as a true -nostdlib -static candidate linked solely through the selected
 # crabc archive. It proves only clock_nanosleep's zero-or-positive-errno
-# convention and direct non-cancellation path; local raw timer/clock calls
-# merely trigger deterministic interruption. It is not a C sleep or clock/
+# convention, relative remainder/retry, and absolute deadline/retry for
+# realtime and monotonic clocks through the direct non-cancellation path;
+# local raw timer/clock calls merely trigger deterministic interruption.
+# It is not a C sleep or clock/
 # timer surface, pthread cancellation, libc.so, CRT, loader, sysroot, or
 # public x86 support.
 set -euo pipefail

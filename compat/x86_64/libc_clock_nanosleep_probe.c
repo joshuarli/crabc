@@ -4,7 +4,9 @@
  * then through a freestanding executable linked solely with the selected
  * crabc libc.a.  It proves clock_nanosleep's zero-or-positive-errno result,
  * nanosleep's -1/errno result, interrupted relative remainders, and absolute
- * deadline retry. Fixture-local raw clock_gettime/setitimer calls and the already
+ * deadline retry for realtime and monotonic clocks, including untouched
+ * remaining storage on errors and completed retries. Fixture-local raw
+ * clock_gettime/setitimer calls and the already
  * selected simple sigaction/mask boundary merely make interruptions
  * deterministic; they do not select C clock queries, interval timers,
  * generic signal policy, pthread cancellation, CRT, loader, sysroot, or
@@ -137,9 +139,9 @@ static int emit_result(const char *name, int result, int observed_errno)
         emit_number(observed_errno) || emit("\n") ? -1 : 0;
 }
 
-static int raw_clock_gettime(struct timespec *value)
+static int raw_clock_gettime(int clock_id, struct timespec *value)
 {
-    return raw_syscall2(SYS_clock_gettime, CLOCK_MONOTONIC,
+    return raw_syscall2(SYS_clock_gettime, clock_id,
         (long)(void *)value) == 0 ? 0 : -1;
 }
 
@@ -267,22 +269,29 @@ static int check_immediate_and_error_conventions(void)
         { "invalid-flags-null", CLOCK_MONOTONIC, 2, 0 },
     };
     for (unsigned int i = 0; i < sizeof(precedence) / sizeof(precedence[0]); i++) {
+        struct timespec remaining = { 123, 456 };
+
         errno = preserved_errno;
         int result = clock_nanosleep(precedence[i].clock_id,
-            precedence[i].flags, precedence[i].request, 0);
+            precedence[i].flags, precedence[i].request, &remaining);
         if (emit_result(precedence[i].name, result, errno) != 0 ||
-            errno != preserved_errno)
+            errno != preserved_errno || remaining.tv_sec != 123 ||
+            remaining.tv_nsec != 456)
             return 9;
     }
+    if (emit("error-remaining=untouched\n") != 0)
+        return 10;
 
     return 0;
 }
 
-static int check_relative_interruption(int clock_id, const char *label)
+static int check_relative_interruption(int clock_id, const char *interrupted_label,
+    const char *retry_label)
 {
     const struct timespec requested = { 2, 0 };
     const int preserved_errno = E2BIG;
     struct timespec remaining = { -1, -1 };
+    struct timespec retry_remaining = { 123, 456 };
     struct sigaction saved_action;
     sigset_t saved_mask;
     int result;
@@ -300,14 +309,24 @@ static int check_relative_interruption(int clock_id, const char *label)
         !less_than_request(&remaining, &requested) ||
         errno != preserved_errno)
         status = 3;
-    if (!status && emit(label) != 0)
+    if (!status && emit(interrupted_label) != 0)
         status = 5;
+    if (!status) {
+        signal_delivered = 0;
+        result = clock_nanosleep(clock_id, 0, &remaining, &retry_remaining);
+        if (result != 0 || signal_delivered || errno != preserved_errno ||
+            retry_remaining.tv_sec != 123 || retry_remaining.tv_nsec != 456)
+            status = 6;
+        if (!status && emit(retry_label) != 0)
+            status = 7;
+    }
 
 cleanup:
     return restore_interrupt_handler(&saved_action, &saved_mask) == 0 ? status : 4;
 }
 
-static int check_absolute_interruption(void)
+static int check_absolute_interruption(int clock_id,
+    const char *interrupted_label, const char *retry_label)
 {
     const int preserved_errno = EBUSY;
     struct timespec requested;
@@ -320,7 +339,7 @@ static int check_absolute_interruption(void)
 
     if (install_interrupt_handler(&saved_action, &saved_mask) != 0)
         return 1;
-    if (raw_clock_gettime(&requested) != 0) {
+    if (raw_clock_gettime(clock_id, &requested) != 0) {
         status = 2;
         goto cleanup;
     }
@@ -330,28 +349,28 @@ static int check_absolute_interruption(void)
         status = 3;
         goto cleanup;
     }
-    result = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &requested,
+    result = clock_nanosleep(clock_id, TIMER_ABSTIME, &requested,
         &remaining);
     if (result != EINTR || !signal_delivered || errno != preserved_errno ||
         remaining.tv_sec != 123 || remaining.tv_nsec != 456)
         status = 4;
-    if (!status && emit("monotonic-absolute-eintr=unchanged-remainder\n") != 0)
+    if (!status && emit(interrupted_label) != 0)
         status = 6;
 
     if (!status) {
         /* Retry the original deadline. The second wait must finish at or
          * after that deadline and leave the ignored remainder untouched. */
         signal_delivered = 0;
-        result = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &requested,
+        result = clock_nanosleep(clock_id, TIMER_ABSTIME, &requested,
             &remaining);
         if (result != 0 || signal_delivered || errno != preserved_errno ||
             remaining.tv_sec != 123 || remaining.tv_nsec != 456 ||
-            raw_clock_gettime(&observed) != 0 ||
+            raw_clock_gettime(clock_id, &observed) != 0 ||
             observed.tv_sec < requested.tv_sec ||
             (observed.tv_sec == requested.tv_sec &&
              observed.tv_nsec < requested.tv_nsec))
             status = 7;
-        if (!status && emit("monotonic-absolute-retry=deadline\n") != 0)
+        if (!status && emit(retry_label) != 0)
             status = 8;
     }
 
@@ -428,16 +447,25 @@ int crabc_x86_64_clock_nanosleep_probe(void)
     if (status != 0)
         return 10 + status;
     status = check_relative_interruption(CLOCK_MONOTONIC,
-        "monotonic-relative-eintr=bounded-remainder\n");
+        "monotonic-relative-eintr=bounded-remainder\n",
+        "monotonic-relative-retry=completed/untouched-remainder\n");
     if (status != 0)
         return 20 + status;
     status = check_relative_interruption(CLOCK_REALTIME,
-        "realtime-relative-eintr=bounded-remainder\n");
+        "realtime-relative-eintr=bounded-remainder\n",
+        "realtime-relative-retry=completed/untouched-remainder\n");
     if (status != 0)
         return 25 + status;
-    status = check_absolute_interruption();
+    status = check_absolute_interruption(CLOCK_MONOTONIC,
+        "monotonic-absolute-eintr=unchanged-remainder\n",
+        "monotonic-absolute-retry=deadline\n");
     if (status != 0)
         return 30 + status;
+    status = check_absolute_interruption(CLOCK_REALTIME,
+        "realtime-absolute-eintr=unchanged-remainder\n",
+        "realtime-absolute-retry=deadline\n");
+    if (status != 0)
+        return 35 + status;
     status = check_nanosleep();
     if (status != 0)
         return 40 + status;
