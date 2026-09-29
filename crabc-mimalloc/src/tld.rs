@@ -1342,6 +1342,56 @@ mod tests {
     }
 
     #[test]
+    fn emit_m2_later_tld_fault_retry_c_rust_trace() {
+        thread::spawn(|| {
+            let storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let metadata = MetaAllocator::test_static_owner();
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("ticket zero attaches before later TLD demand");
+            metadata.prepare_for_main_subprocess(memory_config(), subprocess)
+                .expect("the selected metadata owner is ready");
+            metadata.get_ref().test_fail_next_direct_zeroed_size(
+                crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE,
+            );
+            let failed = unsafe {
+                ThreadLocalDataOwner::begin_with_test_metadata(
+                    subprocess, metadata, memory_config(),
+                )
+            };
+            let failed_unavailable = matches!(
+                failed, Err(ThreadLocalDataError::Metadata(MetaError::AllocationUnavailable))
+            );
+            let failed_total = subprocess.total_thread_count();
+            let failed_live = subprocess.live_thread_count();
+            let mut retried = unsafe {
+                ThreadLocalDataOwner::begin_with_test_metadata(
+                    subprocess, metadata, memory_config(),
+                )
+            }.expect("the next ticket receives its metadata TLD");
+            let retry_sequence = retried.current().unwrap().thread_sequence().get();
+            let retry_is_metadata = retried.current().unwrap().memory_id().kind() == MemoryKind::Malloc;
+            let retry_total = subprocess.total_thread_count();
+            let retry_live = subprocess.live_thread_count();
+            retried.teardown().expect("the retry releases its metadata owner");
+            let releases = usize::from(metadata.test_allocation_audit().live_capability_count == 0);
+            let final_live = subprocess.live_thread_count();
+            let trace = [
+                usize::from(failed_unavailable), failed_total, failed_live,
+                usize::from(retry_is_metadata), retry_sequence, retry_total,
+                retry_live, releases, final_live,
+            ];
+            assert_eq!(trace, [1, 2, 1, 1, 2, 3, 2, 1, 1]);
+            for (index, value) in trace.into_iter().enumerate() {
+                std::println!("m2.init.tld_retry.{index}={value}");
+            }
+            main.teardown().expect("the initial TLD releases after the retry");
+        }).join().expect("the direct TLD retry trace completes");
+    }
+
+    #[test]
     fn native_threads_receive_unique_source_sequences_and_exact_live_count() {
         const THREADS: usize = 3;
         let (subprocess, metadata) = fixture();

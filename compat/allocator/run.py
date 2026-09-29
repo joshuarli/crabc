@@ -14404,6 +14404,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-recursive-output-differential",
                     "c-rust-runtime-thp-source-environment-admission",
                     "c-rust-initialization-tld-source-matrix",
+                    "c-rust-initialization-tld-fault-retry-differential",
                     "c-rust-init-recursion-lifecycle",
                     "c-rust-fault-seam-inventory",
                     "c-oracle-teardown-receipt",
@@ -14453,6 +14454,14 @@ def validate_x86_64_m2_memory_substrate_contract(
                     or not (ALLOCATOR_ROOT / "x86_64_initialization_tld_evidence.py").is_file()
                 ):
                     raise HarnessError("native x86 M2 initialization evidence target is absent")
+            elif raw_check.get("kind") == "c-rust-initialization-tld-fault-retry-differential":
+                if (
+                    component_id != "initialization"
+                    or raw_check.get("id") != "initialization-later-tld-metadata-fault-retry-c-rust-differential"
+                    or raw_check.get("target") != "tld::tests::emit_m2_later_tld_fault_retry_c_rust_trace"
+                    or not (ALLOCATOR_ROOT / "x86_64_m2_init_tld_retry.py").is_file()
+                ):
+                    raise HarnessError("native x86 M2 TLD fault/retry target is absent")
             elif raw_check.get("kind") in {"c-oracle-teardown-receipt", "rust-teardown-owner"}:
                 teardown = {
                     check_id: (kind, target)
@@ -16175,7 +16184,7 @@ def _m2_x86_64_metadata_check_records(
 
 def _m2_x86_64_initialization_check_records(
     summary: Mapping[str, Any], evidence: object, teardown_evidence: object = None,
-    exclusive_arena_evidence: object = None,
+    exclusive_arena_evidence: object = None, tld_retry_evidence: object = None,
 ) -> list[dict[str, Any]]:
     """Bind the initialization checks in the memory substrate record to their closed native receipts."""
 
@@ -16236,7 +16245,38 @@ def _m2_x86_64_initialization_check_records(
             checks.get("initialization-exclusive-arena-theap-slice-c-rust-differential"),
             exclusive_arena_evidence,
         ),
+        _m2_x86_64_init_tld_retry_check_record(
+            checks.get("initialization-later-tld-metadata-fault-retry-c-rust-differential"),
+            tld_retry_evidence,
+        ),
     ]
+
+
+def _m2_x86_64_init_tld_retry_producer() -> Any:
+    path = ALLOCATOR_ROOT / "x86_64_m2_init_tld_retry.py"
+    spec = importlib.util.spec_from_file_location("crabc_m2_init_tld_retry", path)
+    if spec is None or spec.loader is None:
+        raise HarnessError("native x86 M2 TLD fault/retry producer is absent")
+    producer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(producer)
+    return producer
+
+
+def _m2_x86_64_init_tld_retry_check_record(check: object, evidence: object) -> dict[str, Any]:
+    if (
+        not isinstance(check, Mapping) or not isinstance(evidence, Mapping)
+        or evidence.get("status") != "passed"
+        or evidence.get("comparison", {}).get("status") != "matched"
+        or evidence.get("rust_passed_test_count") != check["expected_passed_test_count"]
+    ):
+        raise HarnessError("native x86 M2 TLD fault/retry receipt is invalid")
+    return {
+        "comparison_status": "matched", "component": "initialization",
+        "command": list(evidence["rust_command"]),
+        "evidence_scope": "pinned-c-rust-later-tld-metadata-fault-retry-and-release",
+        "id": check["id"], "passed_test_count": evidence["rust_passed_test_count"],
+        "target": check["target"],
+    }
 
 
 def _m2_x86_64_exclusive_arena_theap_producer() -> Any:
@@ -16459,6 +16499,7 @@ def m2_x86_64_memory_substrate_report(
     fault_evidence: Mapping[str, Any] | None = None,
     initialization_teardown_evidence: Mapping[str, Any] | None = None,
     exclusive_arena_theap_evidence: Mapping[str, Any] | None = None,
+    tld_retry_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Render native memory substrate receipts while keeping every open component partial."""
 
@@ -16476,7 +16517,7 @@ def m2_x86_64_memory_substrate_report(
     )
     expected_initialization_records = _m2_x86_64_initialization_check_records(
         summary, initialization_evidence, initialization_teardown_evidence,
-        exclusive_arena_theap_evidence,
+        exclusive_arena_theap_evidence, tld_retry_evidence,
     )
     expected_fault_records = _m2_x86_64_fault_check_records(summary, fault_evidence)
     expected_anchors = {
@@ -16757,6 +16798,12 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     exclusive_arena_theap_evidence = _run_m2_x86_64_exclusive_arena_theap_evidence(
         offline=offline, test_program=test_program, summary=summary
     )
+    _, tld_retry_check = _m2_x86_64_check_by_id(
+        summary, "initialization-later-tld-metadata-fault-retry-c-rust-differential"
+    )
+    tld_retry_evidence = _m2_x86_64_init_tld_retry_producer().run_evidence(
+        sys.modules[__name__], offline=offline, test_program=test_program, check=tld_retry_check,
+    )
     fault_evidence = _run_m2_x86_64_fault_evidence(
         offline=offline, test_program=test_program, vm_evidence=vm_evidence
     )
@@ -16857,7 +16904,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     ))
     initialization_checks = _m2_x86_64_initialization_check_records(
         summary, initialization_evidence, initialization_teardown_evidence,
-        exclusive_arena_theap_evidence,
+        exclusive_arena_theap_evidence, tld_retry_evidence,
     )
     fault_checks = _m2_x86_64_fault_check_records(summary, fault_evidence)
     focused_checks = [
@@ -16913,6 +16960,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         fault_evidence=fault_evidence,
         initialization_teardown_evidence=initialization_teardown_evidence,
         exclusive_arena_theap_evidence=exclusive_arena_theap_evidence,
+        tld_retry_evidence=tld_retry_evidence,
     )
     write_json(M2_X86_64_MEMORY_SUBSTRATE_REPORT, report)
     return report

@@ -263,7 +263,7 @@
           { "member": "src/init.c", "start_line": 253, "end_line": 272, "sha256": "077d0451e7d7a572cdb1cfd6ff9b95bd43e06c22345679faf1c8e7e16f70b9d8" }
         ],
         "evidence_check_ids": ["initialization-tld-direct-source-matrix"],
-        "missing_conditions": ["This one direct allocation-failure arm does not qualify the later Theap/list/TLS/root publication receiving routes, automatic teardown, or runtime ownership."]
+        "missing_conditions": ["The separate direct fault/retry differential now covers the consumed ticket, subsequent metadata TLD attachment, and explicit release. Later Theap/list/TLS/root publication receiving routes, automatic teardown, and runtime ownership remain unqualified by this arm."]
       },
       {
         "id": "later-main-theap-metadata-list-and-root-publication-success",
@@ -305,6 +305,12 @@
       }
     ],
     "checks": [
+      {
+        "id": "initialization-later-tld-metadata-fault-retry-c-rust-differential",
+        "kind": "c-rust-initialization-tld-fault-retry-differential",
+        "target": "tld::tests::emit_m2_later_tld_fault_retry_c_rust_trace",
+        "expected_passed_test_count": 1
+      },
       {
         "id": "initialization-tld-direct-source-matrix",
         "kind": "c-rust-initialization-tld-source-matrix",

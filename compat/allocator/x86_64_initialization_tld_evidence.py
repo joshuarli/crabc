@@ -760,6 +760,7 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
     ]:
         raise EvidenceError("initialization M2 source-map roster changed")
     expected_checks = (
+        ("initialization-later-tld-metadata-fault-retry-c-rust-differential", "c-rust-initialization-tld-fault-retry-differential", "tld::tests::emit_m2_later_tld_fault_retry_c_rust_trace", 1),
         ("initialization-tld-direct-source-matrix", "c-rust-initialization-tld-source-matrix", "x86_64_initialization_tld_evidence::seven_fixed_direct_tld_and_ordinary_later_main_branches", 7),
         ("initialization-explicit-worker-recovery-lifecycle", "c-rust-init-recursion-lifecycle", "main_heap_thread::tests::emit_x86_64_init_recursion_teardown_c_rust_trace", 1),
         *((check_id, kind, target, 1) for check_id, kind, target in AUTOMATIC_TEARDOWN_CHECKS),

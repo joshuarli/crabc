@@ -31,6 +31,12 @@ class NativeInitializationM2AssemblyTests(unittest.TestCase):
             ],
             [
                 (
+                    "initialization-later-tld-metadata-fault-retry-c-rust-differential",
+                    "c-rust-initialization-tld-fault-retry-differential",
+                    "tld::tests::emit_m2_later_tld_fault_retry_c_rust_trace",
+                    1,
+                ),
+                (
                     "initialization-tld-direct-source-matrix",
                     "c-rust-initialization-tld-source-matrix",
                     "x86_64_initialization_tld_evidence::seven_fixed_direct_tld_and_ordinary_later_main_branches",
