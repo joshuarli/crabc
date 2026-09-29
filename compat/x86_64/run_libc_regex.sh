@@ -42,7 +42,7 @@ assert_selected_c_abi_surface() {
 [ "$#" -eq 0 ] || fail "usage: $0"
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mapfile mkdir mktemp nm objdump readelf rustup sort; do
+for tool in ar awk cargo chmod cmp diff grep mapfile mkdir mktemp nm objdump readelf rustup sha256sum sort timeout; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -50,8 +50,14 @@ done
 [ -d "$MUSL_ROOT/include" ] || fail "missing pinned musl include tree"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-regex.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+case "${CRABC_WORK_DIR:-$ROOT_DIR/.work/x86_64}" in
+    "$ROOT_DIR"/.work/x86_64|"$ROOT_DIR"/.work/x86_64/*)
+        work_root="${CRABC_WORK_DIR:-$ROOT_DIR/.work/x86_64}" ;;
+    *) fail "CRABC_WORK_DIR must stay below $ROOT_DIR/.work/x86_64" ;;
+esac
+mkdir -p "$work_root"
+work_dir="$(mktemp -d "$work_root/libc-regex.XXXXXX")"
+chmod 0755 "$work_dir"
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-regex-reference"
@@ -67,6 +73,30 @@ dynamic="$work_dir/candidate-dynamic"
 relocations="$work_dir/candidate-relocations"
 disassembly="$work_dir/candidate-disassembly"
 implementation="$ROOT_DIR/libc/src/c_abi/x86_64/regex.rs"
+
+record_evidence() {
+    local file
+    : >"$work_dir/SHA256SUMS"
+    for file in "$ROOT_DIR/compat/x86_64/libc_regex_probe.c" "$reference" "$candidate" \
+        "$work_dir/musl-reference.stdout" "$work_dir/musl-reference.stderr" \
+        "$work_dir/musl-reference.status" "$work_dir/crabc-candidate.stdout" \
+        "$work_dir/crabc-candidate.stderr" "$work_dir/crabc-candidate.status"; do
+        if [ -f "$file" ]; then sha256sum "$file" >>"$work_dir/SHA256SUMS"; fi
+    done
+    printf 'retained x86 static regex evidence: %s\n' "$work_dir" >&2
+}
+trap record_evidence EXIT
+
+run_recorded() {
+    local name="$1" status
+    shift
+    set +e
+    timeout 10 "$@" >"$work_dir/$name.stdout" 2>"$work_dir/$name.stderr"
+    status=$?
+    set -e
+    printf '%s\n' "$status" >"$work_dir/$name.status"
+    [ "$status" -eq 0 ] || fail "$name failed with status $status"
+}
 
 builtin_include="$($CANDIDATE_CC -print-file-name=include)"
 [ -d "$builtin_include" ] || fail "missing compiler builtin include directory"
@@ -93,7 +123,7 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/libc_regex_probe.c" \
     -o "$reference"
-"$reference" || fail "pinned-musl selected regex fixture failed with status $?"
+run_recorded musl-reference "$reference"
 
 cd "$ROOT_DIR"
 build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
@@ -141,5 +171,9 @@ fi
 if grep -Eq 'mimalloc|sha_crypt|wordexp|/bin/sh' "$symbols" "$disassembly"; then
     fail "candidate selects an allocator, cryptography, or shell-expansion dependency"
 fi
-"$candidate" || fail "freestanding selected regex fixture failed with status $?"
+run_recorded crabc-candidate "$candidate"
+for stream in stdout stderr status; do
+    cmp "$work_dir/musl-reference.$stream" "$work_dir/crabc-candidate.$stream" ||
+        fail "pinned-musl and crabc $stream differ"
+done
 printf 'x86 static crabc-libc bounded regex: PASS\n'
