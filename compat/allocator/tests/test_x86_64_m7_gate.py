@@ -43,46 +43,9 @@ class M7GateContractTests(unittest.TestCase):
     def test_checked_in_contract_partitions_the_m7_items_and_modes(self) -> None:
         summary = self.validate()
         self.assertEqual(summary["gate_ids"], list(gate.GATE_IDS))
-        self.assertEqual(sorted(summary["runnable_evidence"]), [
-            "audit:default-baseline",
-            "differential:adapter",
-            "differential:deferred-free-callback",
-            "differential:destroy-on-exit",
-            "differential:diagnostic-output-owner",
-            "differential:error-reporting-sites",
-            "differential:option-effects",
-            "differential:option-profiles",
-            "differential:optional-isa",
-            "differential:options-environment",
-            "differential:page-max-candidates",
-            "differential:reclaim-options",
-            "differential:show-errors-profile",
-            "differential:startup-page-map-failure",
-            "differential:statistics",
-            "differential:statistics-aligned-huge",
-            "differential:statistics-fast-allocation",
-            "differential:statistics-huge",
-            "differential:statistics-huge-page-bin",
-            "differential:statistics-huge-page-bin-fresh",
-            "differential:statistics-huge-page-bin-fresh-then-allocate",
-            "differential:statistics-json",
-            "differential:statistics-level-one",
-            "differential:statistics-level-one-output-merge",
-            "differential:statistics-level-two-bins",
-            "differential:statistics-level-two-page-huge",
-            "differential:statistics-level-two-requested",
-            "differential:statistics-os-large-stage-accounted",
-            "differential:statistics-page-extend",
-            "differential:statistics-page-extension-fault",
-            "differential:statistics-page-second-extension",
-            "differential:statistics-remote-bin",
-            "differential:statistics-remote-normal",
-            "differential:statistics-remote-normal-fresh",
-            "differential:statistics-remote-normal-fresh-cfree",
-            "differential:statistics-remote-normal-fresh-usable",
-            "differential:statistics-requested-production",
-            "differential:thread-init-failure",
-        ])
+        self.assertEqual(set(summary["runnable_evidence"]), {
+            name for name, record in self.contract["evidence"].items() if record.get("command")
+        })
         # The options/environment and baseline gates have executable evidence.
         self.assertEqual(
             summary["blocked_gate_ids"],
@@ -640,27 +603,56 @@ class M7GateContractTests(unittest.TestCase):
         self.assertIn("differential:statistics-fast-allocation", summary["runnable_evidence"])
 
     def test_statistics_fast_allocation_reader_rejects_wrong_page_or_producer(self) -> None:
-        trace = {"profile.level": "2"}
-        for case, size, bin_index in (("direct64", 64, 8), ("small8192", 8192, 36),
-                                      ("medium32768", 32768, 44)):
-            trace.update({f"{case}.request": str(size), f"{case}.usable": str(size),
-                          f"{case}.bin_index": str(bin_index), f"{case}.zero_all": "1",
-                          f"{case}.distinct": "1"})
-            for stage in ("allocated", "merged", "freed", "final_merged"):
-                live = stage in ("allocated", "merged")
-                trace.update({f"{case}.{stage}.requested": f"{size},{size},{size}",
-                              f"{case}.{stage}.bin": f"1,0,{int(live)}",
-                              f"{case}.{stage}.normal_count": "1",
-                              f"{case}.{stage}.page_bin_current": "0",
-                              f"{case}.{stage}.searches": "0",
-                              f"{case}.{stage}.extensions": "0"})
-        gate.require_statistics_fast_allocation(trace, "complete")
-        for field, value in (("direct64.allocated.requested", "0,0,0"),
-                             ("small8192.allocated.searches", "1"),
-                             ("medium32768.freed.bin", "1,0,1"),
-                             ("medium32768.zero_all", "0")):
+        sizes = list(range(8, 65, 8))
+        for power in range(13):
+            sizes.extend(size << power for size in (80, 96, 112, 128))
+        cases = {f"subword{request}": request for request in range(8)}
+        previous = 0
+        for index, size in enumerate(sizes, 1):
+            cases.update({f"bin{index}.lower": previous + 1,
+                          f"bin{index}.middle": (previous + size) // 2 + 1,
+                          f"bin{index}.upper": size})
+            previous = size
+        for level in (0, 1, 2):
+            trace = {"profile.level": str(level),
+                     **{f"geometry.bin{index}": str(size) for index, size in enumerate(sizes, 1)}}
+            for case, request in cases.items():
+                minimum = (8 if request <= 8 else ((request + 15) // 16) * 16) if request <= 64 else request
+                bin_index = next(index for index, size in enumerate(sizes, 1) if size >= minimum)
+                usable = sizes[bin_index - 1]
+                trace.update({f"{case}.request": str(request), f"{case}.usable": str(usable),
+                              f"{case}.bin_index": str(bin_index), f"{case}.zero_all": "1",
+                              f"{case}.distinct": "1"})
+                for stage in ("prepared", "allocated", "merged", "reset", "freed", "final_merged", "terminal"):
+                    live = 1 if stage in ("prepared", "allocated", "merged", "reset") else -1 if stage == "terminal" else 0
+                    allocations = 2 if stage == "prepared" else 1
+                    total = allocations * usable if level else 0
+                    requested = allocations * request if level == 2 else 0
+                    bin_total = allocations if level == 2 else 0
+                    trace.update({f"{case}.{stage}.normal": f"{total},0,{live * usable if level else 0}",
+                                  f"{case}.{stage}.huge": "0,0,0",
+                                  f"{case}.{stage}.requested": f"{requested},{requested},{requested}",
+                                  f"{case}.{stage}.bin": f"{bin_total},0,{live if level == 2 else 0}",
+                                  f"{case}.{stage}.normal_count": str(bin_total),
+                                  f"{case}.{stage}.page_bin_current": "0",
+                                  f"{case}.{stage}.searches": "0", f"{case}.{stage}.extensions": "0"})
+            gate.require_statistics_fast_allocation(trace, f"complete level {level}")
+            for field, value in (("bin60.upper.request", "524289"),
+                                 ("bin36.upper.allocated.searches", "1"),
+                                 ("subword0.zero_all", "0"),
+                                 ("bin44.upper.prepared.normal_count", "99")):
+                with self.subTest(level=level, field=field), self.assertRaises(harness.HarnessError):
+                    gate.require_statistics_fast_allocation({**trace, field: value}, "changed trace")
+            incomplete = dict(trace)
+            del incomplete["bin60.middle.reset.requested"]
             with self.assertRaises(harness.HarnessError):
-                gate.require_statistics_fast_allocation({**trace, field: value}, "changed trace")
+                gate.require_statistics_fast_allocation(incomplete, "omitted boundary")
+            if level == 2:
+                for field, value in (("subword1.allocated.requested", "8,8,8"),
+                                     ("subword0.prepared.requested", "16,16,16"),
+                                     ("bin44.upper.freed.bin", "1,0,1")):
+                    with self.subTest(field=field), self.assertRaises(harness.HarnessError):
+                        gate.require_statistics_fast_allocation({**trace, field: value}, "lost producer")
 
     def test_statistics_aligned_huge_reader_rejects_lost_units_and_merge(self) -> None:
         row = "  huge      :   578.2 KiB   578.2 KiB   578.2 KiB                          not all freed"

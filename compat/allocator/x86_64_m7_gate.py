@@ -1260,31 +1260,79 @@ def require_statistics_remote_bin(trace: Mapping[str, str], description: str) ->
 
 
 def require_statistics_fast_allocation(trace: Mapping[str, str], description: str) -> None:
-    """Require three warm-page pops with one source bin lifetime each."""
+    """Require every normal-bin boundary and its complete local lifetime."""
 
-    cases = {"direct64": (64, 8), "small8192": (8192, 36), "medium32768": (32768, 44)}
-    stages = ("allocated", "merged", "freed", "final_merged")
-    stage_fields = ("requested", "bin", "normal_count", "page_bin_current", "searches", "extensions")
+    try:
+        level = int(trace["profile.level"])
+    except (KeyError, ValueError) as error:
+        raise harness.HarnessError(f"{description} lacks a statistics profile") from error
+    if level not in (0, 1, 2):
+        raise harness.HarnessError(f"{description} has an unsupported statistics profile")
+    sizes = [word * 8 for word in range(1, 9)]
+    base = 64
+    while base < 512 * 1024:
+        sizes.extend(base * quarter // 4 for quarter in range(5, 9))
+        base *= 2
+    geometry = {f"geometry.bin{index}": str(size) for index, size in enumerate(sizes, 1)}
+    cases = {f"subword{request}": request for request in range(8)}
+    previous = 0
+    for index, size in enumerate(sizes, 1):
+        cases.update({f"bin{index}.lower": previous + 1,
+                      f"bin{index}.middle": previous + (size - previous) // 2 + 1,
+                      f"bin{index}.upper": size})
+        previous = size
+    stages = ("prepared", "allocated", "merged", "reset", "freed", "final_merged", "terminal")
+    stage_fields = ("normal", "huge", "requested", "bin", "normal_count",
+                    "page_bin_current", "searches", "extensions")
     case_fields = ("request", "usable", "bin_index", "zero_all", "distinct")
-    expected = {"profile.level", *(f"{case}.{field}" for case in cases for field in case_fields),
+    expected = {"profile.level", *geometry,
+                *(f"{case}.{field}" for case in cases for field in case_fields),
                 *(f"{case}.{stage}.{field}" for case in cases for stage in stages for field in stage_fields)}
-    if set(trace) != expected or trace["profile.level"] != "2":
-        raise harness.HarnessError(f"{description} lacks the selected fast allocation image: {trace}")
-    for case, (size, bin_index) in cases.items():
+    if set(trace) != expected or any(trace[key] != value for key, value in geometry.items()):
+        raise harness.HarnessError(f"{description} lacks the complete normal-bin allocation image")
+    for case, request in cases.items():
+        words = (request + 7) // 8
+        selected_size = (8 if words <= 1 else ((words + 1) & ~1) * 8) if request <= 64 else request
+        bin_index = next(index for index, size in enumerate(sizes, 1) if size >= selected_size)
+        usable = sizes[bin_index - 1]
         if any(trace[f"{case}.{field}"] != str(value) for field, value in (
-            ("request", size), ("usable", size), ("bin_index", bin_index),
+            ("request", request), ("usable", usable), ("bin_index", bin_index),
             ("zero_all", 1), ("distinct", 1),
         )):
-            raise harness.HarnessError(f"{description} lost {case} page geometry or calloc zeroing: {trace}")
+            raise harness.HarnessError(f"{description} lost {case} page geometry or calloc zeroing")
         for stage in stages:
-            live = stage in ("allocated", "merged")
+            if stage == "prepared":
+                for field, total, current in (
+                    ("normal", 2 * usable if level else 0, usable if level else 0),
+                    ("requested", 2 * request if level == 2 else 0, 2 * request if level == 2 else 0),
+                    ("bin", 2 if level == 2 else 0, 1 if level == 2 else 0),
+                    ("huge", 0, 0),
+                ):
+                    try:
+                        observed_total, observed_peak, observed_current = map(
+                            int, trace[f"{case}.{stage}.{field}"].split(","))
+                    except ValueError as error:
+                        raise harness.HarnessError(f"{description} malformed {case} prepared {field}") from error
+                    if ((observed_total, observed_current) != (total, current)
+                            or not 0 <= observed_peak <= total):
+                        raise harness.HarnessError(f"{description} lost {case} initial {field} allocation")
+                if trace[f"{case}.prepared.normal_count"] != ("2" if level == 2 else "0"):
+                    raise harness.HarnessError(f"{description} lost {case} initial allocation count")
+                continue
+            current = 1 if stage in ("allocated", "merged", "reset") else -1 if stage == "terminal" else 0
             expected_stage = {
-                "requested": f"{size},{size},{size}",
-                "bin": f"1,0,{int(live)}", "normal_count": "1",
+                "normal": f"{usable},0,{current * usable}" if level else "0,0,0",
+                "huge": "0,0,0",
+                "requested": f"{request},{request},{request}" if level == 2 else "0,0,0",
+                "bin": f"1,0,{current}" if level == 2 else "0,0,0",
+                "normal_count": "1" if level == 2 else "0",
                 "page_bin_current": "0", "searches": "0", "extensions": "0",
             }
-            if any(trace[f"{case}.{stage}.{field}"] != value for field, value in expected_stage.items()):
-                raise harness.HarnessError(f"{description} lost {case} {stage} fast-page statistics: {trace}")
+            for field, value in expected_stage.items():
+                if trace[f"{case}.{stage}.{field}"] != value:
+                    raise harness.HarnessError(
+                        f"{description} lost {case} {stage} {field}: "
+                        f"{trace[f'{case}.{stage}.{field}']} != {value}")
 
 
 def require_statistics_requested_production(trace: Mapping[str, str], description: str) -> None:
@@ -1822,6 +1870,7 @@ def run_public_statistics_differential(
     report_name: str, require_complete: Any | None = None, stat_level: int = 1,
     comparison_excluded_keys: frozenset[str] = frozenset(),
     driver_defines: tuple[str, ...] = (),
+    retain_artifacts: bool = False,
 ) -> dict[str, Any]:
     """Run one public statistics driver with pinned C and the selected adapter profile."""
 
@@ -1846,7 +1895,8 @@ def run_public_statistics_differential(
         target = temporary / "cargo-target"
         rust_build = harness.command_record(
             [harness.require_tool("cargo"), "build", "--locked", "--release", "--target",
-             RUST_TARGET, "-p", m4.ADAPTER_PACKAGE, "--features", f"crabc-mimalloc/mi-stat-{stat_level}",
+             RUST_TARGET, "-p", m4.ADAPTER_PACKAGE,
+             *(("--features", f"crabc-mimalloc/mi-stat-{stat_level}") if stat_level else ()),
              "--target-dir", str(target)], cwd=harness.ROOT, env=dict(os.environ),
              timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
         )
@@ -1860,14 +1910,35 @@ def run_public_statistics_differential(
         )
         harness.require_success(rust_link, f"M7 {subject} Rust driver link")
         traces = {}
+        executions = {}
+        artifacts = {}
         for side, binary in (("c", c_binary), ("rust", rust_binary)):
             execution = harness.command_record((str(binary),), cwd=temporary, env={}, timeout_seconds=60)
             harness.require_success(execution, f"M7 {subject} {side} execution")
             traces[side] = parse_options_trace(str(execution["stdout"]),
                 f"M7 {subject} {side}", begin, end)
+            if retain_artifacts:
+                retained = ARTIFACTS / subject
+                retained.mkdir(parents=True, exist_ok=True)
+                product = retained / binary.name
+                shutil.copy2(binary, product)
+                for stream in ("stdout", "stderr"):
+                    (retained / f"{side}.{stream}").write_text(execution[stream], encoding="utf-8")
+                artifacts[side] = engine.file_record(product)
+                executions[side] = execution
+        if retain_artifacts:
+            shutil.copy2(driver, retained / driver.name)
+            artifacts["driver"] = engine.file_record(retained / driver.name)
+            archive_product = retained / m4.ADAPTER_STATICLIB
+            shutil.copy2(target / RUST_TARGET / "release" / m4.ADAPTER_STATICLIB, archive_product)
+            artifacts["rust_archive"] = engine.file_record(archive_product)
     report = {"status": "failed", "c_trace": traces["c"], "rust_trace": traces["rust"],
               "c_build": c_build["command"], "rust_build": rust_build["command"],
               "comparison_excluded_keys": sorted(comparison_excluded_keys)}
+    if retain_artifacts:
+        report.update({"artifacts": artifacts, "executions": executions, "stat_level": stat_level,
+                       "pin": pin, "rust_link": rust_link["command"],
+                       "builds": {"c": c_build, "rust": rust_build, "rust_link": rust_link}})
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     harness.write_json(ARTIFACTS / report_name, report)
     if require_complete is not None:
@@ -2025,12 +2096,22 @@ def run_statistics_requested_production_differential(offline: bool) -> dict[str,
 
 
 def run_statistics_fast_allocation_differential(offline: bool) -> dict[str, Any]:
-    return run_public_statistics_differential(
-        offline, subject="fast-allocation", driver=STATISTICS_FAST_ALLOCATION_DRIVER,
-        begin=STATISTICS_FAST_ALLOCATION_TRACE_BEGIN, end=STATISTICS_FAST_ALLOCATION_TRACE_END,
-        report_name="statistics-fast-allocation.json", stat_level=2,
-        require_complete=require_statistics_fast_allocation,
-    )
+    profiles = {}
+    for level in (0, 1, 2):
+        profiles[str(level)] = run_public_statistics_differential(
+            offline, subject=f"fast-allocation-level-{level}", driver=STATISTICS_FAST_ALLOCATION_DRIVER,
+            begin=STATISTICS_FAST_ALLOCATION_TRACE_BEGIN, end=STATISTICS_FAST_ALLOCATION_TRACE_END,
+            report_name=f"statistics-fast-allocation-level-{level}.json", stat_level=level,
+            driver_defines=(f"-DCRABC_STAT_LEVEL={level}",),
+            require_complete=require_statistics_fast_allocation, retain_artifacts=True,
+        )
+    report = {"status": "passed", "profiles": profiles,
+              "compared_key_count": sum(profile["compared_key_count"] for profile in profiles.values()),
+              "provenance": {"seal": integrated.source_seal(), "git": engine.git_provenance(),
+                             "driver": engine.file_record(STATISTICS_FAST_ALLOCATION_DRIVER),
+                             "gate": engine.file_record(Path(__file__))}}
+    harness.write_json(ARTIFACTS / "statistics-fast-allocation.json", report)
+    return report
 
 
 def run_statistics_remote_bin_differential(offline: bool) -> dict[str, Any]:
@@ -2209,7 +2290,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode.add_argument("--statistics-requested-production-differential", action="store_true",
         help="compare pinned-C/Rust ordinary and OS-aligned requested-size producers under MI_STAT=2")
     mode.add_argument("--statistics-fast-allocation-differential", action="store_true",
-        help="compare pinned-C/Rust direct, small, and medium local allocation producers under MI_STAT=2")
+        help="compare pinned-C/Rust local normal-bin allocation lifetimes under MI_STAT=0, 1, and 2")
     mode.add_argument("--statistics-remote-bin-differential", action="store_true",
         help="compare pinned-C/Rust freeing-Theap size-bin attribution under MI_STAT=2")
     mode.add_argument("--adapter-differential", action="store_true",
@@ -2343,7 +2424,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if arguments.statistics_fast_allocation_differential:
         report = run_statistics_fast_allocation_differential(arguments.offline)
-        print(f"M7 fast allocation statistics differential passed: {len(report['c_trace'])} keys")
+        print(f"M7 fast allocation statistics differential passed: {report['compared_key_count']} keys in {len(report['profiles'])} modes")
         return 0
     if arguments.statistics_remote_bin_differential:
         report = run_statistics_remote_bin_differential(arguments.offline)
