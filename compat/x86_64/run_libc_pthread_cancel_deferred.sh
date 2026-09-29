@@ -3,8 +3,9 @@
 #
 # The same project-header fixture first runs against pinned musl 1.2.6, then
 # as a `-nostdlib -static` executable linked only with the selected crabc
-# archive. It selects one disabled/masked-then-explicit-testcancel worker route
-# plus its cleanup-LIFO-before-selected-TSD exit order. It does not select
+# archive. It selects disabled/masked workers whose queued requests reach
+# explicit testcancel and invalid-descriptor read cancellation points, plus
+# cleanup-LIFO-before-selected-TSD exit order. It does not select
 # async or blocking cancellation, signal policy, a general pthread runtime,
 # CRT, loader, sysroot, or public x86 support.
 set -euo pipefail
@@ -17,6 +18,9 @@ readonly EXECUTION_TIMEOUT=20s
 
 fail() {
     printf 'ERROR: x86 static libc deferred pthread cancellation: %s\n' "$*" >&2
+    if [ -n "${work_dir:-}" ]; then
+        printf 'evidence: %s\n' "$work_dir" >&2
+    fi
     exit 1
 }
 
@@ -57,7 +61,7 @@ assert_selected_c_abi_surface() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mapfile mkdir mktemp nm objdump readelf rustup sort timeout; do
+for tool in ar awk cargo cmp diff grep mapfile mkdir mktemp nm objdump readelf rustup sha256sum sort timeout; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -65,8 +69,9 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_types_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-pthread-cancel-deferred.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-pthread-cancel-deferred.XXXXXX")"
+chmod 755 "$work_dir"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-pthread-cancel-deferred-reference"
 candidate="$work_dir/crabc-static-pthread-cancel-deferred-candidate"
@@ -90,7 +95,7 @@ cancellation_testcancel_disassembly="$work_dir/cancellation-testcancel-disassemb
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_pthread_cancel_deferred_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h pthread.h stdint.h bits/alltypes.h; do
+for header in errno.h pthread.h stdint.h unistd.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use the project $header header"
 done
@@ -98,10 +103,15 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
     -fno-stack-protector -I"$ROOT_DIR/include" \
     compat/x86_64/libc_pthread_cancel_deferred_probe.c -o "$reference"
-if timeout "$EXECUTION_TIMEOUT" "$reference"; then
-    :
+if timeout "$EXECUTION_TIMEOUT" "$reference" >"$work_dir/reference.stdout" 2>"$work_dir/reference.stderr"; then
+    reference_status=0
 else
     reference_status=$?
+fi
+printf '%s\n' "$reference_status" >"$work_dir/reference.status"
+sha256sum "$reference" "$work_dir/reference.stdout" "$work_dir/reference.stderr" \
+    "$work_dir/reference.status" >"$work_dir/reference.sha256"
+if [ "$reference_status" -ne 0 ]; then
     fail "pinned-musl reference execution exited ${reference_status}"
 fi
 
@@ -116,7 +126,8 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
     pthread_create pthread_exit pthread_join pthread_cancel \
     pthread_setcancelstate pthread_setcanceltype pthread_testcancel \
     _pthread_cleanup_push _pthread_cleanup_pop \
-    pthread_key_create pthread_key_delete pthread_getspecific pthread_setspecific; do
+    pthread_key_create pthread_key_delete pthread_getspecific pthread_setspecific \
+    read; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
@@ -149,7 +160,7 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
     pthread_create pthread_exit pthread_join pthread_cancel \
     pthread_setcancelstate pthread_setcanceltype pthread_testcancel \
     _pthread_cleanup_push _pthread_cleanup_pop \
-    pthread_key_create pthread_key_delete pthread_getspecific pthread_setspecific \
+    pthread_key_create pthread_key_delete pthread_getspecific pthread_setspecific read \
     __crabc_x86_pthread_clone; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
@@ -201,11 +212,17 @@ if grep -Eqi 'tgkill|tkill|rt_sigaction|rt_sigprocmask|\$0x(ea|c8|c9|d)' \
     fail "selected deferred cancellation must not select a signal route"
 fi
 
-if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
-    :
+if timeout "$EXECUTION_TIMEOUT" "$candidate" >"$work_dir/candidate.stdout" 2>"$work_dir/candidate.stderr"; then
+    candidate_status=0
 else
     candidate_status=$?
+fi
+printf '%s\n' "$candidate_status" >"$work_dir/candidate.status"
+sha256sum "$archive" "$candidate" "$work_dir/candidate.stdout" \
+    "$work_dir/candidate.stderr" "$work_dir/candidate.status" \
+    >"$work_dir/candidate.sha256"
+if [ "$candidate_status" -ne 0 ]; then
     fail "candidate execution exited ${candidate_status}"
 fi
 
-printf 'x86 static crabc-libc deferred pthread cancellation: PASS\n'
+printf 'x86 static crabc-libc deferred pthread cancellation: PASS; evidence: %s\n' "$work_dir"

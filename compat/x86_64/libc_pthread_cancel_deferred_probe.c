@@ -5,7 +5,8 @@
  * crabc archive.  It selects one deliberately bounded route: a default
  * joinable pointer-returning worker keeps one request pending through DISABLE
  * and MASKED states, where explicit pthread_testcancel calls return.  After
- * ENABLE it reaches the sole selected cancellation point.  That exit runs
+ * ENABLE it reaches either explicit pthread_testcancel or read on an invalid
+ * descriptor.  Both cancellation points must deliver before returning.  Exit runs
  * cleanup handlers LIFO with cancellation disabled, then the selected TSD
  * destructor, publishes PTHREAD_CANCELED, and uses the existing clear-tid
  * join seam.
@@ -28,6 +29,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <unistd.h>
 
 #define CRABC_TYPE_IS(actual, expected) \
     __builtin_types_compatible_p(actual, expected)
@@ -58,6 +60,8 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_getspecific),
     void *(*)(pthread_key_t)), "pthread_getspecific declaration");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_key_delete),
     int (*)(pthread_key_t)), "pthread_key_delete declaration");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&read),
+    ssize_t (*)(int, void *, size_t)), "read declaration");
 _Static_assert(PTHREAD_CANCEL_ENABLE == 0 && PTHREAD_CANCEL_DISABLE == 1 &&
     PTHREAD_CANCEL_MASKED == 2, "cancellation state values");
 _Static_assert(PTHREAD_CANCEL_DEFERRED == 0 && PTHREAD_CANCEL_ASYNCHRONOUS == 1,
@@ -80,7 +84,13 @@ enum cancellation_order {
     CANCELLATION_ORDER_TSD = 4,
 };
 
+enum cancellation_point {
+    CANCELLATION_POINT_EXPLICIT,
+    CANCELLATION_POINT_READ,
+};
+
 struct cancellation_round {
+    enum cancellation_point point;
     volatile int phase;
     volatile int release_after_cancel;
     volatile int allow_enable;
@@ -287,8 +297,16 @@ static void *deferred_cancellation_worker(void *opaque)
                                errno != EACCES) {
                         cancellation_failure(round, 20);
                     } else {
-                        /* This is the single selected delivery point. */
-                        pthread_testcancel();
+                        if (round->point == CANCELLATION_POINT_READ) {
+                            char byte = 0;
+
+                            /* An invalid descriptor cannot block.  A pending
+                             * request must be delivered before read reports
+                             * EBADF, independent of scheduling or timing. */
+                            (void)read(-1, &byte, 1);
+                        } else {
+                            pthread_testcancel();
+                        }
                         cancellation_failure(round, 21);
                     }
                 }
@@ -304,12 +322,13 @@ static void *deferred_cancellation_worker(void *opaque)
     return 0;
 }
 
-int crabc_x86_64_pthread_cancel_deferred_probe(void)
+static int run_cancellation_round(enum cancellation_point point,
+    int *main_errno_location)
 {
     pthread_t worker;
     void *worker_result = 0;
-    int *main_errno_location = __errno_location();
     struct cancellation_round round = {
+        .point = point,
         .phase = CANCELLATION_PHASE_INITIAL,
         .release_after_cancel = 0,
         .allow_enable = 0,
@@ -325,12 +344,6 @@ int crabc_x86_64_pthread_cancel_deferred_probe(void)
         .invalid_state_old = -1,
         .invalid_type_old = -1,
     };
-
-    if (main_errno_location == 0 || errno != 0)
-        return 100;
-    if (pthread_key_create(&cancellation_tsd_key, cancellation_tsd_destructor) != 0)
-        return 101;
-    errno = EACCES;
 
     if (pthread_create(&worker, 0, deferred_cancellation_worker, &round) != 0)
         return 102;
@@ -380,10 +393,32 @@ int crabc_x86_64_pthread_cancel_deferred_probe(void)
         round.order[2] != CANCELLATION_ORDER_OUTER ||
         round.order[3] != CANCELLATION_ORDER_TSD)
         return 115;
-    if (pthread_key_delete(cancellation_tsd_key) != 0)
-        return 116;
     if (errno != EACCES || __errno_location() != main_errno_location)
         return 117;
+    return 0;
+}
+
+int crabc_x86_64_pthread_cancel_deferred_probe(void)
+{
+    int *main_errno_location = __errno_location();
+    int result;
+
+    if (main_errno_location == 0 || errno != 0)
+        return 100;
+    if (pthread_key_create(&cancellation_tsd_key, cancellation_tsd_destructor) != 0)
+        return 101;
+    errno = EACCES;
+
+    result = run_cancellation_round(CANCELLATION_POINT_EXPLICIT,
+        main_errno_location);
+    if (result != 0)
+        return result;
+    result = run_cancellation_round(CANCELLATION_POINT_READ,
+        main_errno_location);
+    if (result != 0)
+        return result;
+    if (pthread_key_delete(cancellation_tsd_key) != 0)
+        return 116;
     return 0;
 }
 
