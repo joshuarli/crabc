@@ -438,6 +438,90 @@ static void kernel_timer(void)
     errno = 0; CHECK(timer_create(CLOCK_MONOTONIC, &event, &timer) == -1 && errno == EINVAL);
     puts("kernel none/signal/thread-id: lifecycle, delivery, raw-delete errno");
 }
+
+/* A thread-directed timer must stay pending on its selected task while that
+ * task blocks the signal. A second timer reuses that live task and accumulates
+ * periodic overruns before the task accepts its notification. */
+static atomic_int directed_phase, directed_tid, directed_overrun;
+static void directed_wait_pending(void)
+{
+    for (int attempt = 0; attempt < 2000; ++attempt) {
+        sigset_t pending;
+        CHECK(sigpending(&pending) == 0);
+        if (sigismember(&pending, SIGUSR2) == 1) return;
+        struct timespec delay = {0, 1000000};
+        CHECK(nanosleep(&delay, NULL) == 0);
+    }
+    CHECK(0);
+}
+static void *directed_timer_worker(void *unused)
+{
+    (void)unused;
+    sigset_t set;
+    CHECK(sigemptyset(&set) == 0 && sigaddset(&set, SIGUSR2) == 0);
+    CHECK(pthread_sigmask(SIG_BLOCK, &set, NULL) == 0);
+    atomic_store(&directed_tid, gettid());
+    atomic_store(&directed_phase, 1);
+    for (int pass = 0; pass < 2; ++pass) {
+        wait_count(&directed_phase, pass ? 6 : 2);
+        directed_wait_pending();
+        atomic_store(&directed_phase, pass ? 7 : 3);
+        wait_count(&directed_phase, pass ? 8 : 4);
+        siginfo_t info;
+        struct timespec limit = {2, 0};
+        CHECK(sigtimedwait(&set, &info, &limit) == SIGUSR2);
+        CHECK(info.si_code == SI_TIMER && info.si_value.sival_int == (pass ? 71 : 70));
+        CHECK(info.si_overrun >= 0);
+        if (pass) atomic_store(&directed_overrun, info.si_overrun);
+        else {
+            CHECK(info.si_overrun == 0);
+            sigset_t pending;
+            CHECK(sigpending(&pending) == 0 && sigismember(&pending, SIGUSR2) == 0);
+        }
+        atomic_store(&directed_phase, pass ? 9 : 5);
+    }
+    wait_count(&directed_phase, 10);
+    siginfo_t info;
+    struct timespec now = {0};
+    while (sigtimedwait(&set, &info, &now) == SIGUSR2) {}
+    return NULL;
+}
+static void directed_timer_delivery(void)
+{
+    pthread_t task;
+    CHECK(pthread_create(&task, NULL, directed_timer_worker, NULL) == 0);
+    wait_count(&directed_phase, 1);
+    struct sigevent event = {.sigev_notify = SIGEV_THREAD_ID, .sigev_signo = SIGUSR2};
+    event.sigev_notify_thread_id = atomic_load(&directed_tid);
+    timer_t timer;
+    event.sigev_value.sival_int = 70;
+    CHECK(timer_create(CLOCK_MONOTONIC, &event, &timer) == 0);
+    struct itimerspec arm = {.it_value = {0, 1000000}};
+    CHECK(timer_settime(timer, 0, &arm, NULL) == 0);
+    atomic_store(&directed_phase, 2);
+    wait_count(&directed_phase, 3);
+    atomic_store(&directed_phase, 4);
+    wait_count(&directed_phase, 5);
+    CHECK(timer_delete(timer) == 0);
+    errno = 0;
+    CHECK(timer_gettime(timer, &arm) == -1 && errno == EINVAL);
+
+    event.sigev_value.sival_int = 71;
+    CHECK(timer_create(CLOCK_MONOTONIC, &event, &timer) == 0);
+    arm = (struct itimerspec){.it_value = {0, 1000000}, .it_interval = {0, 1000000}};
+    CHECK(timer_settime(timer, 0, &arm, NULL) == 0);
+    atomic_store(&directed_phase, 6);
+    wait_count(&directed_phase, 7);
+    struct timespec delay = {0, 30000000};
+    CHECK(nanosleep(&delay, NULL) == 0);
+    atomic_store(&directed_phase, 8);
+    wait_count(&directed_phase, 9);
+    CHECK(atomic_load(&directed_overrun) > 0);
+    CHECK(timer_delete(timer) == 0);
+    atomic_store(&directed_phase, 10);
+    CHECK(pthread_join(task, NULL) == 0);
+    puts("worker-directed timer: blocked pending overrun, one-shot delivery, live task reuse");
+}
 static void failure_reclamation(void)
 {
     struct rlimit previous, bounded;
@@ -590,7 +674,7 @@ int main(int argc, char **argv)
     alarm(20);
     if (argc > 2) plugin_path = argv[2];
     creator_cancellation();
-    kernel_timer(); thread_timer(); overlapping_timer_workers(); thread_timer_contract(); pending_delete_contract();
+    kernel_timer(); directed_timer_delivery(); thread_timer(); overlapping_timer_workers(); thread_timer_contract(); pending_delete_contract();
     pid_t child = fork(); CHECK(child >= 0);
     if (!child) { kernel_timer(); thread_timer(); _Exit(0); }
     int status; CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
