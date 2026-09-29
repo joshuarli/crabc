@@ -329,9 +329,19 @@ pub unsafe fn theap_malloc_aligned_at(
         }
         return Sourced::with(None, SourceErrno::Store(Errno::INVAL));
     }
-    let report = crate::diagnostic_output::SourceErrorReport::OutOfMemory { size };
-    let _ = crate::process_init::process_error_message(report);
-    Sourced::with(None, aligned_failure_errno(size, alignment, offset))
+    let os_page_size = native_os_page_size().expect("a retained initialized Theap has OS page-size facts");
+    let request = crate::aligned::allocation_failure_request(size, alignment, offset, os_page_size);
+    let mut errno = SourceErrno::Unchanged;
+    if request > MAX_ALLOC_SIZE {
+        for _ in 0..2 {
+            errno = errno.then(source_error_errno(crate::diagnostic_output::SourceErrorReport::AllocationTooLarge { size: request }));
+        }
+    }
+    if offset == 0 && alignment >= PAGE_META_ALIGNMENT && !naturally_aligned(size, alignment) {
+        errno = SourceErrno::Store(Errno::INVAL).then(errno);
+    }
+    errno = errno.then(source_error_errno(crate::diagnostic_output::SourceErrorReport::OutOfMemory { size: request }));
+    Sourced::with(None, errno)
 }
 
 /// `mi_theap_realloc` or, with `zero`, `mi_theap_rezalloc`. Reuse requires
@@ -1050,9 +1060,11 @@ pub(crate) unsafe fn realloc_zero_aligned_at_native(
     // SAFETY: forwarded exact-live-client contract.
     #[cfg(feature = "mi-debug-1")]
     if let Some(earlier) = pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::UsableSize) {
+        if new_size == 0 && block.addr().wrapping_add(offset) & (alignment - 1) == 0 {
+            return Sourced::with(Some(live), earlier);
+        }
         let mut replacement = malloc_zero_aligned_at_native(new_size, alignment, offset, zero).after(earlier);
-        if let Some(new_block) = replacement.value {
-            if new_size == 0 { unsafe { new_block.as_ptr().write(0) }; }
+        if replacement.value.is_some() {
             let freed = unsafe { free_sourced(block) };
             replacement.errno = replacement.errno.then(freed.errno);
         }
@@ -1656,6 +1668,9 @@ mod tests {
                 let refused = unsafe { super::theap_realloc(theap, original.as_ptr(), 200, true) };
                 assert_eq!(refused.errno.apply(0), Errno::INVAL.raw());
                 assert!(refused.value.is_none());
+                let reused = unsafe { super::rezalloc_aligned_at(original.as_ptr(), 0, 8, 7) };
+                assert_eq!(reused.errno.apply(0), Errno::INVAL.raw());
+                assert_eq!(reused.value, Some(original));
                 let replacement = unsafe { super::rezalloc_aligned_at(original.as_ptr(), 200, 16, 0) };
                 assert_eq!(replacement.errno.apply(0), Errno::INVAL.raw());
                 let replacement = replacement.value.unwrap();
