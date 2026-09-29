@@ -37,6 +37,7 @@ use crate::compiler_tls::{
     is_empty_dynamic_backing, DynamicThreadLocalBacking,
 };
 use crate::arena::{ArenaId, ExclusiveArenaTheapReservation};
+use crate::lock::PrivateLock;
 use crate::meta::{ChildPageEngineState, MetaAllocation, MetaAllocator};
 use crate::os_page::OsAlignedPageOwner;
 use crate::process_init::{ProcessMainBackingBinding, ProcessMainInitializationStorage};
@@ -44,7 +45,7 @@ use crate::runtime_lifecycle::{native_allocate_aligned, native_free, NativePageA
 use crate::subproc::MainSubprocess;
 use crate::thread_local::{ThreadLocalBackingOwner, ThreadLocalKey, ThreadLocalSlotIndex, TLS_INDEX_BITS, TLS_INDEX_MASK};
 use crate::types::heap_registry::lifecycle::{HeapKeySource, HeapReleaseError, HeapReleaseOutcome, NonMainHeapImage};
-use crate::types::{Heap, LiveThreadId, MemoryId, Theap, ThreadLocalData, ThreadSequence};
+use crate::types::{Heap, LiveThreadId, MemoryId, Page, Theap, ThreadLocalData, ThreadSequence};
 
 /// One thread's Theap for a non-main Heap of the process main subprocess:
 /// the source `mi_theap_t` at offset zero, then this Theap's own page-engine
@@ -55,6 +56,43 @@ pub(crate) struct MainHeapTheapImage {
     theap: Theap,
     page_engine: ChildPageEngineState,
     allocation: Option<MainHeapTheapAllocation>,
+    retained_deleted_next: *mut MainHeapTheapImage,
+    retained_deleted_os_pages: usize,
+}
+
+/// Holds the exact Theap image while a deleted Heap still has an OS page in
+/// one of its local queues. The page keeps its source Heap identity and may
+/// need the queue again when its final block is freed. Only pointer identity
+/// is observed through the list; a borrow of the image requires a matching
+/// source-local page observation and native process admission.
+struct RetainedDeletedHeapTheaps {
+    lock: PrivateLock,
+    head: UnsafeCell<*mut MainHeapTheapImage>,
+}
+
+// SAFETY: the lock serializes list links. A listed image has one additional
+// Theap reference, so its metadata stays mapped until list removal.
+unsafe impl Sync for RetainedDeletedHeapTheaps {}
+
+static RETAINED_DELETED_HEAP_THEAPS: RetainedDeletedHeapTheaps = RetainedDeletedHeapTheaps {
+    lock: PrivateLock::new(),
+    head: UnsafeCell::new(core::ptr::null_mut()),
+};
+
+#[cfg(test)]
+pub(crate) fn retained_deleted_heap_owner_count_for_test() -> Option<usize> {
+    let retained = &RETAINED_DELETED_HEAP_THEAPS;
+    let guard = retained.lock.lock().ok()?;
+    let mut count = 0usize;
+    // SAFETY: the lock protects every link and each listed image has a live
+    // reference until it is removed.
+    let mut image = unsafe { *retained.head.get() };
+    while !image.is_null() {
+        count = count.checked_add(1)?;
+        image = unsafe { (*image).retained_deleted_next };
+    }
+    drop(guard);
+    Some(count)
 }
 
 enum MainHeapTheapAllocation {
@@ -162,6 +200,27 @@ fn is_main_subprocess_heap(heap: NonNull<Heap>) -> bool {
     // SAFETY: the caller's live Heap; immutable fields.
     let heap = unsafe { heap.as_ref() };
     !heap.is_subprocess_main() && core::ptr::eq(heap.subprocess_pointer(), MainSubprocess::global().identity().as_ptr())
+}
+
+/// Checks a raw page Heap identity before following it. A deleted Heap's
+/// live OS page can still carry its former address after the image has left
+/// the list and been freed; pointer equality under the list lock is safe in
+/// that state, whereas projecting Heap fields is not.
+fn is_linked_non_main_heap_identity(heap: NonNull<Heap>) -> bool {
+    let main = MainSubprocess::global();
+    if heap.as_ptr() == main.ready_main_heap_pointer() {
+        return false;
+    }
+    let mut found = false;
+    let visited = main.identity().heap_list().visit_heaps(|candidate| {
+        if candidate == heap {
+            found = true;
+            false
+        } else {
+            true
+        }
+    });
+    visited.is_ok() && found
 }
 
 /// Runs one operation on this thread's slot array with its image published
@@ -316,6 +375,70 @@ unsafe fn theap_decref(theap: NonNull<Theap>) {
     }
 }
 
+/// Whether a still-linked Theap queue contains an OS page that Heap deletion
+/// cannot reach through the Heap's abandoned OS-page list.
+///
+/// # Safety
+/// The caller excludes mutation of this Theap's queues and their pages.
+unsafe fn local_os_page_count(theap: NonNull<Theap>) -> Option<usize> {
+    let mut found = 0usize;
+    for bin in 0..crate::config::BIN_COUNT {
+        // SAFETY: the caller retains the live Theap and its queue exclusion.
+        let queue = unsafe { theap.as_ref() }.queue(bin)?;
+        let mut page = queue.first();
+        let mut seen = 0;
+        while let Some(current) = NonNull::new(page) {
+            if seen >= queue.count() {
+                return None;
+            }
+            // SAFETY: each linked page stays live until this Heap operation
+            // has finished detaching the Theap.
+            let image = unsafe { current.as_ref() };
+            if image.memid().is_os() && unsafe { Page::theap_at(current) } == theap.as_ptr() {
+                found = found.checked_add(1)?;
+            }
+            page = unsafe { Page::next_at(current) };
+            seen += 1;
+        }
+        if seen != queue.count() {
+            return None;
+        }
+    }
+    Some(found)
+}
+
+/// Takes an additional image reference before its Heap and cached references
+/// can disappear, then publishes that owner for a later page-local free.
+///
+/// # Safety
+/// The Theap belongs to the Heap being deleted, its queues are quiescent,
+/// and its image remains live through this call.
+unsafe fn retain_deleted_theap_if_needed(theap: NonNull<Theap>) -> bool {
+    let needed = unsafe { local_os_page_count(theap) };
+    if needed == Some(0) {
+        return true;
+    }
+    // SAFETY: the Heap still owns its listed Theap reference. On an unusual
+    // queue or lock failure, this additional reference deliberately remains
+    // terminally retained instead of exposing a stale page->theap pointer.
+    unsafe { Theap::incref_at(theap) };
+    let Some(needed) = needed else {
+        return false;
+    };
+    let retained = &RETAINED_DELETED_HEAP_THEAPS;
+    let Ok(guard) = retained.lock.lock() else { return false };
+    let image = theap.cast::<MainHeapTheapImage>().as_ptr();
+    // SAFETY: the held lock excludes list mutation, and the extra reference
+    // above keeps this image live after Heap deletion.
+    unsafe {
+        (*image).retained_deleted_os_pages = needed;
+        (*image).retained_deleted_next = *retained.head.get();
+        *retained.head.get() = image;
+    }
+    drop(guard);
+    true
+}
+
 /// Pinned `_mi_heap_theap` (`prim-tls.h:389-397`, `heap.c:59-99`) on this
 /// thread for a non-main Heap of the process main subprocess.
 fn heap_theap(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull<Theap>> {
@@ -398,6 +521,8 @@ fn create_theap(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull<Theap
         core::ptr::addr_of_mut!((*image).theap).write(Theap::empty());
         core::ptr::addr_of_mut!((*image).page_engine).write(ChildPageEngineState::Active);
         core::ptr::addr_of_mut!((*image).allocation).write(Some(allocation));
+        core::ptr::addr_of_mut!((*image).retained_deleted_next).write(core::ptr::null_mut());
+        core::ptr::addr_of_mut!((*image).retained_deleted_os_pages).write(0);
         let theap = &mut (*image).theap;
         let provenance = if requested.as_ptr().is_null() {
             theap.set_dynamic_metadata_memid(memory)
@@ -609,11 +734,134 @@ fn allocate_on_theap(
 /// # Safety
 /// `page` is the page of a live block associated with the calling thread.
 pub(crate) unsafe fn local_heap_theap_of_page(page: NonNull<crate::types::Page>) -> Option<NonNull<Theap>> {
+    // SAFETY: the caller's live page keeps this raw identity stable. The
+    // linked-list check excludes a freed Heap before following its Theap.
+    let heap = NonNull::new(unsafe { page.as_ref() }.heap())?;
+    if !is_linked_non_main_heap_identity(heap) {
+        return None;
+    }
     // SAFETY: forwarded; a raw field read of a page this thread owns.
     let theap = NonNull::new(unsafe { crate::types::Page::theap_at(page) })?;
     let thread = current_main_thread()?;
     // SAFETY: a page this thread owns names one of its live Theaps.
     (theap != thread.theap && unsafe { Theap::tld_at(theap) } == thread.tld.as_ptr()).then_some(theap)
+}
+
+/// Frees a source-local OS block whose Heap has already left the public Heap
+/// list, using the separately retained Theap queue instead of a stale Heap
+/// or TLD pointer. `None` means the page has no such retained owner.
+///
+/// # Safety
+/// `allocation` is one exact live block associated with `current`, and the
+/// caller has admitted the native operation. No concurrent local owner may
+/// change this page's ordinary fields during the free.
+pub(crate) unsafe fn native_free_deleted_heap_local(
+    allocation: &mut Option<crate::process_page_map::LiveAllocationPointer>,
+    current: LiveThreadId,
+) -> Option<NativePageFreeResult> {
+    let page = allocation.as_ref()?.page();
+    // SAFETY: the held live allocation keeps the page metadata initialized;
+    // this raw pointer value is compared with retained owners, never followed.
+    let source_theap = unsafe { Page::theap_at(page) };
+    let retained = &RETAINED_DELETED_HEAP_THEAPS;
+    let guard = match retained.lock.lock() {
+        Ok(guard) => guard,
+        Err(_) => return Some(NativePageFreeResult::Retained),
+    };
+    // SAFETY: the held lock protects each list link. Every listed image owns
+    // an additional Theap reference until it is unlinked.
+    let mut image = unsafe { *retained.head.get() };
+    while !image.is_null() && unsafe { core::ptr::addr_of!((*image).theap).cast_mut() } != source_theap {
+        image = unsafe { (*image).retained_deleted_next };
+    }
+    drop(guard);
+    let theap = NonNull::new(image.cast::<Theap>())?;
+    let allocation = allocation.take()?;
+    let Some(thread) = current_main_thread() else { return Some(NativePageFreeResult::Retained) };
+    if thread.thread != current {
+        return Some(NativePageFreeResult::Retained);
+    }
+    let Some(binding) = binding() else { return Some(NativePageFreeResult::Retained) };
+    let Ok(page_map) = (unsafe { binding.page_map().page_map_for_owned_ranges() }) else {
+        return Some(NativePageFreeResult::Retained);
+    };
+    let session = match unsafe {
+        crate::single_thread::SourceRetainedTheapSession::from_deleted_heap_local_allocation(
+            &allocation, current, theap, thread.sequence.get(),
+        )
+    } {
+        Ok(session) => session,
+        Err(_) => return Some(NativePageFreeResult::Retained),
+    };
+    let backing = crate::page_backing::RuntimeFirstRegularPageBacking::source_registry(binding.process(), thread.numa_node);
+    // SAFETY: the registry's ref keeps the exact Theap and queue mapped;
+    // the held allocation proves the page, block, and local thread identity.
+    let Some(mut engine) = (unsafe {
+        crate::single_thread::PageAllocatorEngine::activate_source_retained_local_free(
+            session, backing, ArenaId::none(), page_map,
+        )
+    }) else { return Some(NativePageFreeResult::Retained) };
+    // SAFETY: the retained list reference keeps this queue image live through
+    // the local free and forced retirement. Arena pages may leave too; only
+    // OS pages consume the deleted-Heap claim.
+    let Some(os_pages_before) = (unsafe { local_os_page_count(theap) }) else {
+        return Some(NativePageFreeResult::Retained);
+    };
+    // SAFETY: the session owns the page's ordinary local fields for this
+    // exact current block and the caller consumes it once.
+    let freed = unsafe { engine.free_captured_live_allocation(allocation) }.is_ok();
+    let retired = freed && engine.collect_deleted_heap_retired_pages();
+    let finished = engine.finish_source_retained_local_free().is_ok();
+    if !(freed && retired && finished) {
+        return Some(NativePageFreeResult::Retained);
+    }
+    let Some(os_pages_after) = (unsafe { local_os_page_count(theap) }) else {
+        return Some(NativePageFreeResult::Retained);
+    };
+    let Some(released_pages) = os_pages_before.checked_sub(os_pages_after) else {
+        return Some(NativePageFreeResult::Retained);
+    };
+    if !release_retained_deleted_os_pages(theap, released_pages) {
+        return Some(NativePageFreeResult::Retained);
+    }
+    Some(NativePageFreeResult::Freed)
+}
+
+fn release_retained_deleted_os_pages(theap: NonNull<Theap>, released_pages: usize) -> bool {
+    let retained = &RETAINED_DELETED_HEAP_THEAPS;
+    let Ok(guard) = retained.lock.lock() else { return false };
+    // SAFETY: the lock protects the intrusive list and this image's extra
+    // reference; no queue remains when the caller enters this removal.
+    let mut previous = core::ptr::null_mut::<MainHeapTheapImage>();
+    let mut current = unsafe { *retained.head.get() };
+    while !current.is_null() && current.cast::<Theap>() != theap.as_ptr() {
+        previous = current;
+        current = unsafe { (*current).retained_deleted_next };
+    }
+    if current.is_null() {
+        drop(guard);
+        return false;
+    }
+    let Some(remaining) = (unsafe { (*current).retained_deleted_os_pages }).checked_sub(released_pages) else {
+        drop(guard);
+        return false;
+    };
+    unsafe { (*current).retained_deleted_os_pages = remaining };
+    if remaining != 0 {
+        drop(guard);
+        return true;
+    }
+    let next = unsafe { (*current).retained_deleted_next };
+    unsafe {
+        if previous.is_null() { *retained.head.get() = next; }
+        else { (*previous).retained_deleted_next = next; }
+        (*current).retained_deleted_next = core::ptr::null_mut();
+    }
+    drop(guard);
+    // SAFETY: the list reference is consumed exactly once after no page
+    // queue can name this image again.
+    unsafe { theap_decref(theap) };
+    true
 }
 
 /// The native local free of `block` through `theap` (see
@@ -635,9 +883,10 @@ pub(crate) unsafe fn native_free_local(theap: NonNull<Theap>, block: NonNull<u8>
 /// # Safety
 /// `page` is the page of a live block.
 pub(crate) unsafe fn heap_of_page(page: NonNull<crate::types::Page>) -> Option<NonNull<Heap>> {
-    // SAFETY: forwarded; the page's Heap is immutable while a block lives.
+    // SAFETY: forwarded; the page's raw Heap identity is stable for this
+    // observation, but its old image may already have been freed.
     let heap = NonNull::new(unsafe { page.as_ref() }.heap())?;
-    is_main_subprocess_heap(heap).then_some(heap)
+    is_linked_non_main_heap_identity(heap).then_some(heap)
 }
 
 /// `mi_free_block_mt` with `mi_free_try_collect_mt` for a block of such a
@@ -707,15 +956,24 @@ pub(crate) unsafe fn native_heap_release(heap: NonNull<Heap>, destroy: bool) -> 
     }
     let main_subprocess = MainSubprocess::global();
     let main_heap = NonNull::new(main_subprocess.ready_main_heap_pointer()).ok_or(HeapReleaseError::InvalidChild)?;
+    let mut retained_os_pages = true;
     // `mi_heap_free_theaps`.
     // SAFETY: the Heap and its Theaps are live.
     unsafe {
         heap.as_ref().detach_and_take_theaps(main_subprocess.identity(), |theap| {
+            // SAFETY: the detached Theap still has its Heap-list reference,
+            // and no caller may mutate this Heap's pages during deletion.
+            if !destroy {
+                retained_os_pages &= unsafe { retain_deleted_theap_if_needed(theap) };
+            }
             heap.as_ref().merge_detached_theap_statistics(theap.as_ref());
             theap_decref(theap);
         })
     }
     .map_err(HeapReleaseError::List)?;
+    if !retained_os_pages {
+        return Err(HeapReleaseError::Retained);
+    }
     let target = if destroy {
         None
     } else {

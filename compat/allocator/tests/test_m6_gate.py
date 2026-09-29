@@ -53,6 +53,7 @@ class M6GateContractTests(unittest.TestCase):
             "differential:child-heap-in-arena": "compat/allocator/x86_64_m6_child_heap_in_arena.py",
             "differential:main-heap-visitor-population": "compat/allocator/x86_64_m6_main_visitor_population.py",
             "differential:public-heap-adapter": "compat/allocator/x86_64_m6_adapter.py",
+            "differential:public-heap-alignment": "compat/allocator/x86_64_m6_public_heap_alignment.py",
             "differential:public-heap-lifecycle": "compat/allocator/heap_lifecycle.py",
             "differential:public-theap": "compat/allocator/x86_64_m6_public_theap.py",
             "differential:managed-os-lifecycle": "compat/allocator/x86_64_m6_manage_os_memory_alias.py",
@@ -135,6 +136,21 @@ class M6GateContractTests(unittest.TestCase):
         arena = self.gate_record(report, "m6.arena")
         self.assertEqual(arena["status"], "failed")
         self.assertEqual(arena["evidence"][row], "failed")
+
+    def test_public_heap_alignment_row_is_required_and_failure_is_visible(self) -> None:
+        row = "differential:public-heap-alignment"
+        removed = copy.deepcopy(self.contract)
+        self.gate_record(removed, "m6.heap-allocation")["evidence"].remove(row)
+        with self.assertRaisesRegex(harness.HarnessError, "declared but unused"):
+            self.validate(removed)
+
+        summary = self.validate()
+        results = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
+        results[row] = {"status": "failed"}
+        report = gate.gate_report(self.contract, summary, results)
+        allocation = self.gate_record(report, "m6.heap-allocation")
+        self.assertEqual(allocation["status"], "failed")
+        self.assertEqual(allocation["evidence"][row], "failed")
 
     def test_managed_os_lifecycle_row_is_required_and_failure_is_visible(self) -> None:
         row = "differential:managed-os-lifecycle"

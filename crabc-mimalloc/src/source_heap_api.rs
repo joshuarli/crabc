@@ -624,6 +624,91 @@ mod heap_membership_tests {
         );
     }
 
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn live_aligned_block_frees_after_heap_delete() {
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::heap_membership_tests::live_aligned_block_frees_after_heap_delete",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                crate::source_options_api::option_set(crate::config::SourceOption::ArenaReserve as i32, 0);
+                let heap = native_heap_new().expect("a non-main Heap");
+                // SAFETY: the Heap is live and this thread keeps the exact
+                // block live through Heap deletion and the following free.
+                let block = unsafe { native_heap_allocate(heap, 81, Some((128, 11)), true) }
+                    .expect("one live aligned block");
+                assert_eq!((block.as_ptr().addr() + 11) % 128, 0);
+                // SAFETY: the exact live block has at least 81 initialized bytes.
+                assert_eq!(unsafe { block.as_ptr().read() }, 0);
+                // SAFETY: no other thread uses the Heap or its page here.
+                assert_eq!(unsafe { native_heap_release(heap, false) }, Ok(HeapReleaseOutcome::Released));
+                let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                    .ready_child_subprocess_inputs().expect("the live page map");
+                // SAFETY: the exact live allocation retains its page, and
+                // this thread excludes any concurrent page ownership move.
+                let page = unsafe { binding.page_map().lookup_registered_page(block.as_ptr()) }
+                    .expect("a readable map").expect("a registered page");
+                let page_theap = unsafe { Page::theap_at(page) };
+                assert_eq!(unsafe { heap_of(block.as_ptr()) }, heap.as_ptr().cast());
+                assert!(!page_theap.is_null());
+                assert_eq!(crate::subproc::main_heaps::retained_deleted_heap_owner_count_for_test(), Some(1));
+                // SAFETY: deleting the Heap retains this exact live block
+                // and its page registration until the caller frees it.
+                assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                assert_eq!(crate::subproc::main_heaps::retained_deleted_heap_owner_count_for_test(), Some(0));
+                // The final retired OS page has left the process PageMap;
+                // this lookup only probes its former address and dereferences nothing.
+                assert!(unsafe { binding.page_map().lookup_registered_page(block.as_ptr()) }
+                    .expect("a readable map").is_none());
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn deleted_heap_keeps_theap_until_last_os_page_retires() {
+        crate::test_process::run_in_fresh_process(
+            "source_heap_api::heap_membership_tests::deleted_heap_keeps_theap_until_last_os_page_retires",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                crate::source_options_api::option_set(crate::config::SourceOption::ArenaReserve as i32, 0);
+                let heap = native_heap_new().expect("a non-main Heap");
+                // SAFETY: both exact allocations stay live until their
+                // respective frees, and this thread owns the Heap throughout.
+                let first = unsafe { native_heap_allocate(heap, 81, Some((128, 11)), true) }
+                    .expect("the first aligned page");
+                let last = unsafe { native_heap_allocate(heap, 1000, Some((128, 7)), true) }
+                    .expect("the second aligned page");
+                let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                    .ready_child_subprocess_inputs().expect("the live page map");
+                // SAFETY: both client blocks are live and exclude concurrent
+                // page movement during these registration observations.
+                let first_page = unsafe { binding.page_map().lookup_registered_page(first.as_ptr()) }
+                    .expect("a readable map").expect("the first page");
+                let last_page = unsafe { binding.page_map().lookup_registered_page(last.as_ptr()) }
+                    .expect("a readable map").expect("the last page");
+                assert_ne!(first_page, last_page);
+                assert!(unsafe { first_page.as_ref() }.memid().is_os());
+                assert!(unsafe { last_page.as_ref() }.memid().is_os());
+                // SAFETY: this thread excludes concurrent Heap use.
+                assert_eq!(unsafe { native_heap_release(heap, false) }, Ok(HeapReleaseOutcome::Released));
+                assert_eq!(crate::subproc::main_heaps::retained_deleted_heap_owner_count_for_test(), Some(1));
+                // SAFETY: each exact live block is returned once, with no
+                // competing owner of either ordinary page queue.
+                assert_eq!(unsafe { native_free(first) }, NativePageFreeResult::Freed);
+                assert_eq!(crate::subproc::main_heaps::retained_deleted_heap_owner_count_for_test(), Some(1));
+                assert!(unsafe { binding.page_map().lookup_registered_page(last.as_ptr()) }
+                    .expect("a readable map").is_some());
+                assert_eq!(unsafe { native_free(last) }, NativePageFreeResult::Freed);
+                assert_eq!(crate::subproc::main_heaps::retained_deleted_heap_owner_count_for_test(), Some(0));
+            },
+        );
+    }
+
     struct UtilizationPages {
         blocks: Vec<usize>,
         pairs: Vec<(usize, usize)>,

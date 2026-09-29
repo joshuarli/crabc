@@ -54,6 +54,10 @@
       "runner": "compat/allocator/x86_64_m6_adapter.py",
       "scope": "Shared-driver pinned-C/native-adapter traces of the exported M6 entries: mi_reserve_os_memory and mi_reserve_os_memory_ex (committed, lazily committed, too-small, exclusive, failing, and over-limit reservations with their statistics and errno), mi_heap_new, mi_heap_main, the mi_heap_malloc/zalloc/calloc/mallocn/small and aligned[_at] allocation entries with their failure errors and messages, the mi_heap_realloc family (in-place reuse only within the block's own Heap, including from another thread), mi_realloc of a Heap block, mi_heap_strdup/strndup/realpath, mi_heap_alloc_new[_n], mi_heap_collect with its deferred-free callback and page release, Heap PageMap and quiescent utilization queries for null, foreign, interior, moved, and joined-remote-free non-head pages, main-Heap delete/destroy warnings, test-api.c heap-os1/heap-os2/heap-many with page and Heap statistics, a clean forked process-main Heap visitor traversing regular and OS singleton pages with live-block filtering and early stops, and a second thread allocating from a shared Heap, deleting its own, and finishing before the Heap is destroyed, and the subprocess entries: main and current ids, Heap visitation with an early stop, main-id add/destroy being ignored, the other-subprocess warning, a child whose thread allocates, creates, visits, and deletes a Heap and finishes, and destruction of that child with its statistics merged, and a child destroyed under a thread that still belongs to it, with its Heap, Theap, and thread statistics merged into main."
     },
+    "differential:public-heap-alignment": {
+      "runner": "compat/allocator/x86_64_m6_public_heap_alignment.py",
+      "scope": "Source-built pinned-C/native-adapter mi_heap_zalloc_aligned_at over ordinary and large alignments with offsets, zeroed client extents, invalid alignment and overflow errno, a worker-owned Theap, source Heap identity and a live OS-backed aligned block through mi_heap_delete and its final free, and mi_heap_destroy with a live aligned block."
+    },
     "differential:main-heap-visitor-population": {
       "runner": "compat/allocator/x86_64_m6_main_visitor_population.py",
       "scope": "Source-built pinned-C/native-adapter main-Heap area and block population through live non-main Heap allocation, destruction, visitor remote collection, and final collection for 1, 2, 10, 100, 250, 500, and 1000 Heaps; includes direct/fork and reserved-arena cases, detached Theap-image frees, and replaced dynamic TLS slot images."
@@ -244,11 +248,12 @@
       "evidence": [
         "differential:public-heap-lifecycle",
         "differential:public-heap-adapter",
+        "differential:public-heap-alignment",
         "upstream:test-api-heaps",
         "unit:heap-allocation"
       ],
       "blocked_by": [
-        "Every Heap-scoped allocation entry is exported for main-subprocess threads and follows its source path through the Heap's Theap; selected child-subprocess plain, zeroing, aligned through 128 MiB, owned-block, and same-child cross-Heap paths match pinned C, including the 256 MiB alignment refusal. The required Heap allocation unit runner and complete per-entry failure and lifetime coverage remain open."
+        "Every Heap-scoped allocation entry is exported for main-subprocess threads and follows its source path through the Heap's Theap; selected child-subprocess plain, zeroing, aligned through 128 MiB, owned-block, and same-child cross-Heap paths match pinned C, including the 256 MiB alignment refusal. Public aligned-at zeroing, offsets, failure errno, and one OS-backed live block across Heap deletion now have a direct differential. The required Heap allocation unit runner and complete per-entry failure and lifetime coverage remain open."
       ]
     },
     {

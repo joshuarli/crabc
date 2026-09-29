@@ -12309,6 +12309,22 @@ unsafe fn native_free_pointer_first(block: core::ptr::NonNull<u8>) -> NativePage
             RUNTIME_PROCESS.retain_page_owner();
             return NativePageFreeResult::Retained;
         }
+        // A deleted Heap can leave an OS-backed page associated with this
+        // thread even though its Heap and ordinary Theap roots are gone.
+        // Compare its raw Theap identity with the retained queue owner
+        // before any ordinary path can follow that stale page pointer.
+        let mut held = Some(allocation);
+        // SAFETY: the held PageMap observation proves the exact live block
+        // and its source-local thread identity for this one operation.
+        if let Some(result) = unsafe {
+            crate::subproc::main_heaps::native_free_deleted_heap_local(&mut held, current)
+        } {
+            if result == NativePageFreeResult::Retained {
+                RUNTIME_PROCESS.retain_page_owner();
+            }
+            return result;
+        }
+        let allocation = held.expect("an unmatched retained Heap leaves its allocation untouched");
         // A page of this thread's Theap for a non-main Heap of the process
         // main subprocess is freed through that Theap's own engine.
         // SAFETY: the observation associated the page with this thread.

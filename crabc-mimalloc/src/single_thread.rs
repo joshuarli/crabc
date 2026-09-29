@@ -4497,6 +4497,7 @@ pub(crate) struct OwnerLocalMainHeapPageSession {
 pub(crate) struct SourceRetainedTheapSession {
     theap: NonNull<Theap>,
     thread: LiveThreadId,
+    sequence: usize,
     _not_send_or_sync: PhantomData<*mut ()>,
 }
 
@@ -4567,8 +4568,55 @@ impl SourceRetainedTheapSession {
         Ok(Self {
             theap,
             thread: current,
+            sequence: theap_ref.thread_sequence().ok_or(SourceRetainedTheapSessionError::InvalidTheap)?,
             _not_send_or_sync: PhantomData,
         })
+    }
+
+    /// Forms a free-only source view from a deleted Heap's separately
+    /// retained Theap. Its TLD link has already been cleared, so the calling
+    /// thread supplies its current sequence while the held page supplies the
+    /// exact source thread identity and queue membership.
+    ///
+    /// # Safety
+    /// `retained_theap` has a live list reference for the entire operation;
+    /// `allocation` is the exact current source-local block on one of its OS
+    /// pages, and no other owner mutates its ordinary queue or page fields.
+    pub(crate) unsafe fn from_deleted_heap_local_allocation(
+        allocation: &LiveAllocationPointer,
+        current: LiveThreadId,
+        retained_theap: NonNull<Theap>,
+        sequence: usize,
+    ) -> Result<Self, SourceRetainedTheapSessionError> {
+        if allocation.page_state() != LiveAllocationPageState::LiveOwnerAssociated
+            || !allocation.is_associated_with(current)
+        {
+            return Err(SourceRetainedTheapSessionError::NotLiveAssociated);
+        }
+        let page = allocation.page();
+        // SAFETY: the held allocation retains this registered OS page and
+        // its immutable source queue identity through the local operation.
+        let page_ref = unsafe { page.as_ref() };
+        if !page_ref.memid().is_os() || page_ref.theap() != retained_theap.as_ptr() {
+            return Err(SourceRetainedTheapSessionError::InvalidTheap);
+        }
+        // SAFETY: the registry's additional reference keeps this image live;
+        // no cleared TLD or freed Heap pointer is dereferenced here.
+        let theap_ref = unsafe { retained_theap.as_ref() };
+        if !theap_ref.is_initialized() || !theap_ref.is_bound_to_main_subprocess(crate::subproc::MainSubprocess::global()) {
+            return Err(SourceRetainedTheapSessionError::InvalidTheap);
+        }
+        if page_is_in_full(page_ref) && theap_ref.allows_page_abandon() {
+            return Err(SourceRetainedTheapSessionError::FullTheapCanAbandon);
+        }
+        let bin = page_queue_bin(page_ref).ok_or(SourceRetainedTheapSessionError::MissingQueue)?;
+        let queue = theap_ref.queue(bin).ok_or(SourceRetainedTheapSessionError::MissingQueue)?;
+        // SAFETY: the retained Theap owns this page's complete queue links;
+        // the check rejects a stale or unrelated raw page association.
+        if !unsafe { page_queue_has_member_link_coherence(queue, page) } {
+            return Err(SourceRetainedTheapSessionError::QueueLinkIncoherent);
+        }
+        Ok(Self { theap: retained_theap, thread: current, sequence, _not_send_or_sync: PhantomData })
     }
 
     #[inline]
@@ -4586,7 +4634,7 @@ impl SourceRetainedTheapSession {
     }
 
     #[inline]
-    fn thread_sequence(&self) -> Option<usize> { self.theap().thread_sequence() }
+    fn thread_sequence(&self) -> Option<usize> { Some(self.sequence) }
 }
 
 impl theap_page_session_sealed::Sealed for SourceRetainedTheapSession {}
@@ -4702,6 +4750,13 @@ unsafe impl TheapPageSession for SourceRetainedTheapSession {
 }
 
 impl<'arena, 'map, B: PageBacking<'arena>> PageAllocatorEngine<'arena, 'map, SourceRetainedTheapSession, B> {
+    /// Releases pages retired by a deleted Heap's final local frees. No
+    /// future allocation can revisit that Heap's detached Theap queue, so
+    /// the queue must be drained before its retained image reference leaves.
+    pub(crate) fn collect_deleted_heap_retired_pages(&mut self) -> bool {
+        self.collect_retired_pages_with_admission(true, true)
+    }
+
     /// Activates a free-only engine over one retained source Theap.
     ///
     /// # Safety
@@ -40540,11 +40595,22 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// [`Self::collect_all_pages_for_allocation_retry`]. Its caller selects
     /// when to perform arena collection.
     fn collect_retired_pages(&mut self, force: bool) -> bool {
+        self.collect_retired_pages_with_admission(force, false)
+    }
+
+    /// The retained source session may drain only pages already retired by
+    /// its captured local free. It never admits fresh allocation or general
+    /// collection through the ordinary session gate.
+    fn collect_retired_pages_with_admission(&mut self, force: bool, retained_source: bool) -> bool {
         #[cfg(test)]
         if force {
             self.forced_collect_retired_call_count += 1;
         }
-        if self.is_collection_poisoned() {
+        if self.is_collection_poisoned()
+            && !(retained_source
+                && self.session.permits_retained_source_local_free()
+                && !self.has_retained_collection_poison())
+        {
             return false;
         }
         if !self.retry_pending_os_release() {
