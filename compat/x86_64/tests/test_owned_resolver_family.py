@@ -432,6 +432,15 @@ class OwnedResolverFamilyTests(unittest.TestCase):
             path = self._file("complete-assessment.json", json.dumps(assessment))
             self.assertEqual(family.admission_facts(ROOT, path)["source"]["revision"], source["revision"])
 
+            changed_work = cancellation_work / "late-artifact"
+            changed_work.write_text("changed after behavior replay\n", encoding="utf-8")
+            try:
+                with self.assertRaisesRegex(family.ResolverFamilyError,
+                                            "resolver-cancellation work input changed"):
+                    family.admission_facts(ROOT, path)
+            finally:
+                changed_work.unlink()
+
             source_mutations = (
                 ("resolver-network-physical", network_file, "receipt", "resolver-network source"),
                 ("resolver-alias-private-bodies", alias_file, "selected_source", "resolver alias source"),

@@ -906,7 +906,7 @@ def _validate_admission_cohort(root: Path, request: Path, components: Mapping[st
     """Rebind retained component roots to the current canonical product cohort.
 
     Behavior replay needs its isolated execution environment. Product paths,
-    manifests, retained input files, and source claims can still be checked
+    manifests, retained input trees, and source claims can still be checked
     here, so a substituted component cannot inherit a completed assessment.
     """
 
@@ -927,9 +927,8 @@ def _validate_admission_cohort(root: Path, request: Path, components: Mapping[st
                         for name, path in paths.items()),
                 f"resolver family assessment {identifier} input paths differ")
         for name, path in paths.items():
-            if path.is_file():
-                require(inputs[name] == _identity(root, path),
-                        f"resolver family assessment {identifier} {name} input changed")
+            require(inputs[name] == _input_identity(root, path),
+                    f"resolver family assessment {identifier} {name} input changed")
         if identifier == "resolver-family-cohort":
             cohort_paths = paths
         else:
