@@ -36,6 +36,8 @@ enum {
     FIXTURE_PROT_WRITE = 2,
     FIXTURE_MAP_PRIVATE = 2,
     FIXTURE_MAP_ANONYMOUS = 0x20,
+    FIXTURE_POLLIN = 1,
+    FIXTURE_OPAQUE_FLAG = 0x40000000U,
     PTY_FLAGS = O_RDWR | O_NOCTTY | O_CLOEXEC,
 };
 
@@ -52,6 +54,13 @@ enum {
 #define FIXTURE_TIOCSWINSZ 0x5414UL
 #define FIXTURE_TIOCSPTLCK 0x40045431UL
 #define FIXTURE_TIOCGPTPEER 0x5441UL
+#define FIXTURE_TIOCINQ 0x541bUL
+
+struct fixture_pollfd {
+    int fd;
+    short events;
+    short revents;
+};
 
 struct kernel_termios_x86 {
     uint32_t c_iflag;
@@ -65,7 +74,8 @@ struct kernel_termios_x86 {
 _Static_assert(sizeof(long) == 8 && sizeof(void *) == 8,
     "x86 LP64 scalar widths");
 _Static_assert(SYS_close == 3 && SYS_mmap == 9 && SYS_mprotect == 10 &&
-    SYS_munmap == 11 && SYS_ioctl == 16 && SYS_openat == 257,
+    SYS_munmap == 11 && SYS_ioctl == 16 && SYS_openat == 257 &&
+    SYS_write == 1 && SYS_poll == 7,
     "x86 fixture syscall numbers");
 _Static_assert(PTY_FLAGS == (O_RDWR | O_NOCTTY | O_CLOEXEC),
     "x86 PTY flags");
@@ -76,7 +86,11 @@ _Static_assert(FIXTURE_TCGETS == 0x5401UL && FIXTURE_TCSETS == 0x5402UL &&
     FIXTURE_TIOCSWINSZ == 0x5414UL,
     "x86 selected terminal request words");
 _Static_assert(FIXTURE_TIOCSPTLCK == 0x40045431UL &&
-    FIXTURE_TIOCGPTPEER == 0x5441UL, "x86 PTY setup request words");
+    FIXTURE_TIOCGPTPEER == 0x5441UL && FIXTURE_TIOCINQ == 0x541bUL,
+    "x86 PTY setup and input-count request words");
+_Static_assert(sizeof(struct fixture_pollfd) == 8 &&
+    offsetof(struct fixture_pollfd, revents) == 6,
+    "x86 poll record layout");
 _Static_assert(NCCS == 32 && sizeof(struct termios) == PUBLIC_TERMIOS_BYTES &&
     _Alignof(struct termios) == 4, "x86 public termios layout");
 _Static_assert(offsetof(struct termios, c_iflag) == 0 &&
@@ -231,6 +245,20 @@ static int raw_unmap(void *address, size_t length)
     return raw_syscall3(SYS_munmap, (long)(uintptr_t)address, (long)length, 0) == 0
         ? 0
         : -1;
+}
+
+static int raw_write_exact(int fd, const void *bytes, size_t length)
+{
+    return raw_syscall3(SYS_write, fd, (long)(uintptr_t)bytes,
+        (long)length) == (long)length ? 0 : -1;
+}
+
+static int raw_wait_readable(int fd)
+{
+    struct fixture_pollfd entry = {fd, FIXTURE_POLLIN, 0};
+
+    return raw_syscall3(SYS_poll, (long)(uintptr_t)&entry, 1, 1000) == 1 &&
+        (entry.revents & FIXTURE_POLLIN) != 0 ? 0 : -1;
 }
 
 static void fill_bytes(void *destination, size_t length, unsigned char value)
@@ -477,6 +505,45 @@ cleanup:
     return result;
 }
 
+/* Raw input on the slave makes the queue effect observable without relying on
+ * terminal output timing. The master writes only after the slave is ready;
+ * poll ensures the line discipline has accepted the input byte. */
+static int test_pty_input_flush(int master, int slave,
+    const struct termios *saved_attributes)
+{
+    static const unsigned char input[] = {'q'};
+    struct termios raw_attributes;
+    int queued;
+
+    copy_bytes(&raw_attributes, saved_attributes, sizeof raw_attributes);
+    cfmakeraw(&raw_attributes);
+    if (tcsetattr(slave, TCSANOW, &raw_attributes) != 0)
+        return 1;
+    if (raw_write_exact(master, input, sizeof input) != 0 ||
+        raw_wait_readable(slave) != 0)
+        return 2;
+    queued = -1;
+    if (raw_ioctl_pointer(slave, FIXTURE_TIOCINQ, &queued) != 0 ||
+        queued != (int)sizeof input)
+        return 3;
+    errno = EDOM;
+    if (tcflush(slave, TCIFLUSH) != 0 || errno != EDOM)
+        return 4;
+    queued = -1;
+    if (raw_ioctl_pointer(slave, FIXTURE_TIOCINQ, &queued) != 0 || queued != 0)
+        return 5;
+    if (raw_write_exact(master, input, sizeof input) != 0 ||
+        raw_wait_readable(slave) != 0)
+        return 6;
+    errno = EDOM;
+    if (tcflush(slave, TCIOFLUSH) != 0 || errno != EDOM)
+        return 7;
+    queued = -1;
+    if (raw_ioctl_pointer(slave, FIXTURE_TIOCINQ, &queued) != 0 || queued != 0)
+        return 8;
+    return 0;
+}
+
 static int test_termios_control(void)
 {
     const unsigned char tail_poison = 0x5a;
@@ -488,6 +555,7 @@ static int test_termios_control(void)
     struct winsize changed_size;
     struct termios public_attributes;
     struct termios changed_attributes;
+    struct termios readback_attributes;
     int master = -1;
     int slave = -1;
     int attributes_saved = 0;
@@ -526,20 +594,39 @@ static int test_termios_control(void)
         goto cleanup;
     }
 
+    /* Every timing must carry both defined mode bits and an opaque bit in
+     * each flag word through the public C record and Linux's kernel prefix. */
     for (int action = TCSANOW; action <= TCSAFLUSH; action++) {
         copy_bytes(&changed_attributes, &public_attributes,
             sizeof changed_attributes);
+        changed_attributes.c_iflag ^= IXON | IUTF8 | FIXTURE_OPAQUE_FLAG;
+        changed_attributes.c_oflag ^= OPOST | FIXTURE_OPAQUE_FLAG;
+        changed_attributes.c_cflag ^= CLOCAL | FIXTURE_OPAQUE_FLAG;
+        changed_attributes.c_lflag ^= ECHO | ICANON | FIXTURE_OPAQUE_FLAG;
         changed_attributes.c_cc[VINTR] =
             (unsigned char)(public_attributes.c_cc[VINTR] ^ (action + 1));
         changed_attributes.c_cc[VEOL] =
             (unsigned char)(public_attributes.c_cc[VEOL] ^ (action + 5));
+        if (cfsetospeed(&changed_attributes, B115200) != 0 ||
+            cfsetispeed(&changed_attributes, B9600) != 0) {
+            result = 9;
+            goto cleanup;
+        }
         copy_bytes(&expected_attributes, &changed_attributes,
             sizeof expected_attributes);
+        fill_bytes(&readback_attributes, sizeof readback_attributes,
+            tail_poison);
         errno = EDOM;
         if (tcsetattr(slave, action, &changed_attributes) != 0 || errno != EDOM ||
             raw_ioctl_pointer(slave, FIXTURE_TCGETS, &observed_attributes) != 0 ||
             !equal_bytes(&observed_attributes, &expected_attributes,
                 sizeof observed_attributes) ||
+            tcgetattr(slave, &readback_attributes) != 0 ||
+            !equal_bytes(&readback_attributes, &expected_attributes,
+                sizeof expected_attributes) ||
+            cfgetospeed(&readback_attributes) != B115200 ||
+            cfgetispeed(&readback_attributes) != B9600 ||
+            !public_tail_has_value(&readback_attributes, tail_poison) ||
             !public_tail_has_value(&changed_attributes, tail_poison) ||
             raw_ioctl_pointer(slave, FIXTURE_TCSETS, &saved_attributes) != 0) {
             result = 10 + action;
@@ -575,6 +662,14 @@ static int test_termios_control(void)
     errno = 0;
     if (tcflush(master, -1) != -1 || errno != EINVAL) {
         result = 23;
+        goto cleanup;
+    }
+    if (test_pty_input_flush(master, slave, &public_attributes) != 0) {
+        result = 27;
+        goto cleanup;
+    }
+    if (raw_ioctl_pointer(slave, FIXTURE_TCSETS, &saved_attributes) != 0) {
+        result = 28;
         goto cleanup;
     }
 

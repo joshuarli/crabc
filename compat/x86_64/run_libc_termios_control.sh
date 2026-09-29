@@ -60,18 +60,24 @@ assert_selected_c_abi_surface() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff nm objdump readelf rustup; do
+for tool in ar cargo cmp diff nm objdump readelf rustup sha256sum; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-termios-control.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-termios-control.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-termios-control-reference"
 candidate="$work_dir/crabc-static-termios-control-candidate"
+reference_stdout="$work_dir/musl-reference.stdout"
+reference_stderr="$work_dir/musl-reference.stderr"
+candidate_stdout="$work_dir/crabc-candidate.stdout"
+candidate_stderr="$work_dir/crabc-candidate.stderr"
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-termios-control"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
@@ -104,7 +110,13 @@ done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     compat/x86_64/libc_termios_control_probe.c -o "$reference"
-"$reference"
+if "$reference" >"$reference_stdout" 2>"$reference_stderr"; then
+    reference_status=0
+else
+    reference_status=$?
+    cat "$reference_stderr" >&2
+    fail "pinned musl reference exited ${reference_status}"
+fi
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -243,6 +255,28 @@ grep -Eq 'mov[[:alnum:]]*[[:space:]]+%rsi,%rdx' "$tcsetwinsize_disassembly" \
 grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$tcsetwinsize_disassembly" \
     || fail "tcsetwinsize lacks its named ioctl syscall"
 
-"$candidate"
+if "$candidate" >"$candidate_stdout" 2>"$candidate_stderr"; then
+    candidate_status=0
+else
+    candidate_status=$?
+    cat "$candidate_stderr" >&2
+    fail "freestanding crabc candidate exited ${candidate_status}"
+fi
+
+mkdir -p "$report_dir"
+cp "$reference" "$report_dir/musl-reference.elf"
+cp "$candidate" "$report_dir/crabc-candidate.elf"
+cp "$reference_stdout" "$reference_stderr" "$candidate_stdout" \
+    "$candidate_stderr" "$report_dir/"
+printf 'pinned_musl_exit=%s\ncrabc_candidate_exit=%s\n' \
+    "$reference_status" "$candidate_status" >"$report_dir/status.txt"
+(
+    cd "$report_dir"
+    sha256sum musl-reference.elf crabc-candidate.elf \
+        musl-reference.stdout musl-reference.stderr \
+        crabc-candidate.stdout crabc-candidate.stderr status.txt \
+        >sha256sums.txt
+)
 
 printf 'x86 static crabc-libc termios control: PASS\n'
+printf 'raw report: %s\n' "$report_dir"
