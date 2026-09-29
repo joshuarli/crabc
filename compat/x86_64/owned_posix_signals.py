@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 HERE = ROOT / "compat/x86_64"
 CONTRACT = HERE / "owned-posix-signals.toml"
 ORACLE = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
-REQUIRED_SCENARIOS = ("sets", "actions-masks", "queue-delivery", "suspend-delivery",
+REQUIRED_SCENARIOS = ("sets", "initial-handler-mask", "threaded-handler-mask", "actions-masks", "queue-delivery", "suspend-delivery",
                       "sigpause-cancellation", "sigsuspend-cancellation", "interrupt-bookkeeping",
                       "alternate-stack", "alternate-minimum", "signalfd", "waits")
 import crabc_cc_static as compiler_contract

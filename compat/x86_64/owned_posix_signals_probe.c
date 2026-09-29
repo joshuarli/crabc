@@ -65,6 +65,36 @@ static void sets(void) {
 }
 static volatile sig_atomic_t calls;
 static void handler(int signal_number) { if (signal_number==SIGUSR1) calls++; }
+static unsigned long internal_thread_signals(void) {
+    const unsigned long mask=(1UL<<(33-1))|(1UL<<(34-1));
+    unsigned long current=0;
+    CHECK(!syscall(SYS_rt_sigprocmask,SIG_SETMASK,NULL,&current,sizeof current));
+    return current&mask;
+}
+static void block_internal_thread_signals(void) {
+    const unsigned long mask=(1UL<<(33-1))|(1UL<<(34-1));
+    CHECK(!syscall(SYS_rt_sigprocmask,SIG_BLOCK,&mask,NULL,sizeof mask));
+    CHECK(internal_thread_signals()==mask);
+}
+static void initial_handler_unmasks_internal_signals(void) {
+    block_internal_thread_signals();
+    struct sigaction action={0}; action.sa_handler=handler;
+    CHECK(!sigemptyset(&action.sa_mask));
+    errno=90; int result=sigaction(SIGUSR1,&action,NULL),error=errno;
+    printf("first-handler-internal-mask: result=%d errno=%d remaining=%lu\n",result,error,internal_thread_signals());
+    CHECK(!result && !internal_thread_signals());
+}
+static void *idle_thread(void *unused) { return unused; }
+static void threaded_handler_preserves_internal_mask(void) {
+    pthread_t thread; CHECK(!pthread_create(&thread,NULL,idle_thread,NULL));
+    CHECK(!pthread_join(thread,NULL));
+    block_internal_thread_signals();
+    struct sigaction action={0}; action.sa_handler=handler;
+    CHECK(!sigemptyset(&action.sa_mask));
+    errno=90; int result=sigaction(SIGUSR1,&action,NULL),error=errno;
+    printf("threaded-first-handler-internal-mask: result=%d errno=%d remaining=%lu\n",result,error,internal_thread_signals());
+    CHECK(!result && internal_thread_signals()==((1UL<<(33-1))|(1UL<<(34-1))));
+}
 static void actions_masks(void) {
     errno=90; void (*old)(int)=signal(SIGUSR1,handler); int error=errno;
     printf("signal: previous-default=%d errno=%d\n",old==SIG_DFL,error); CHECK(old==SIG_DFL);
@@ -278,6 +308,8 @@ int main(int argc,char **argv) {
     CHECK(argc==2); CHECK(!setvbuf(stdout,NULL,_IONBF,0));
     sigset_t baseline; empty(&baseline); CHECK(!sigprocmask(SIG_SETMASK,&baseline,NULL));
     if (!strcmp(argv[1],"sets")) sets();
+    else if (!strcmp(argv[1],"initial-handler-mask")) initial_handler_unmasks_internal_signals();
+    else if (!strcmp(argv[1],"threaded-handler-mask")) threaded_handler_preserves_internal_mask();
     else if (!strcmp(argv[1],"actions-masks")) actions_masks();
     else if (!strcmp(argv[1],"queue-delivery")) queue_delivery();
     else if (!strcmp(argv[1],"suspend-delivery")) suspend_delivery();

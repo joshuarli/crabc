@@ -23,8 +23,9 @@
 //! bytes remain caller-resident. `sigprocmask` still forwards the caller's raw
 //! kernel-visible word and only clears musl's reserved 32–34 bits when it
 //! reports an old mask. The intentionally excluded `sigaction.c` behavior is
-//! the `handler_set` bookkeeping and first-real-handler
-//! internal-signal unmask. SIGABRT lock wrapping is selected only by the owned
+//! the `handler_set` bookkeeping. The owned runtime preserves the first-real-
+//! handler internal-signal unmask; the private static artifact has no thread
+//! lifecycle state. SIGABRT lock wrapping is selected only by the owned
 //! runtime via owned_process_lock; the default fixture retains its old boundary.
 //! The owned runtime also preserves the sticky `__eintr_valid_flag` contract
 //! consumed by semaphore timed waits. The remaining bookkeeping requires the
@@ -42,6 +43,8 @@ const EINVAL: c_int = 22;
 const SIG_ERR: usize = usize::MAX;
 const APPLICATION_SIGNAL_MAX: c_int = 64;
 const SA_RESTART: i32 = 0x1000_0000;
+#[cfg(crabc_x86_owned_runtime)]
+const SIG_UNBLOCK: i64 = 1;
 // musl 1.2.6 src/signal/sigaction.c::__eintr_valid_flag is sticky: a real
 // non-SA_RESTART handler makes timed-futex EINTR observable process-wide,
 // even if the kernel subsequently rejects that installation. Queries, DFL,
@@ -49,6 +52,16 @@ const SA_RESTART: i32 = 0x1000_0000;
 #[cfg(crabc_x86_owned_runtime)]
 static INTERRUPTING_SIGNAL_HANDLER_INSTALLED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
+
+// Before any thread has been created, the first real handler must make the
+// cancellation and synchronous-call signals deliverable in its thread. The
+// process-wide one-time state remains set after fork, as musl's static flag does.
+#[cfg(crabc_x86_owned_runtime)]
+static INTERNAL_SIGNALS_UNMASKED_FOR_HANDLER: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+#[cfg(crabc_x86_owned_runtime)]
+const INTERNAL_THREAD_SIGNAL_MASK: u64 = (1_u64 << 32) | (1_u64 << 33);
 
 #[cfg(crabc_x86_owned_runtime)]
 pub(super) fn interrupting_signal_handler_installed() -> bool {
@@ -114,11 +127,36 @@ static_archive_member! { sigaction_source {
             core::ptr::null()
         } else {
             #[cfg(crabc_x86_owned_runtime)]
-            // Match musl's predicate and pre-syscall placement, including failed
-            // attempts to install a handler for SIGKILL or SIGSTOP.
-            if unsafe { (*action.cast::<PublicSigAction>()).handler > 1
-                && (*action.cast::<PublicSigAction>()).flags & SA_RESTART == 0 } {
-                INTERRUPTING_SIGNAL_HANDLER_INSTALLED.store(true, core::sync::atomic::Ordering::Release);
+            {
+                // SAFETY: the caller supplied a complete public action record.
+                let requested = unsafe { &*action.cast::<PublicSigAction>() };
+                if requested.handler > 1 {
+                    if !crate::x86_64_static_c_abi::pthread_create_join::process_became_threaded()
+                        && !INTERNAL_SIGNALS_UNMASKED_FOR_HANDLER
+                            .swap(true, core::sync::atomic::Ordering::AcqRel)
+                    {
+                        // SAFETY: Linux reads one complete local kernel mask.
+                        // Unmask before attempting the action syscall, so a
+                        // rejected SIGKILL/SIGSTOP action still has this effect.
+                        let _ = unsafe {
+                            raw_syscall::syscall4(
+                                raw_syscall::SYS_RT_SIGPROCMASK,
+                                SIG_UNBLOCK,
+                                (&INTERNAL_THREAD_SIGNAL_MASK as *const u64) as usize as i64,
+                                0,
+                                core::mem::size_of::<u64>() as i64,
+                            )
+                        };
+                    }
+                    // A real non-restarting handler makes timed-futex EINTR
+                    // observable even if the action syscall rejects it.
+                    if requested.flags & SA_RESTART == 0 {
+                        INTERRUPTING_SIGNAL_HANDLER_INSTALLED.store(
+                            true,
+                            core::sync::atomic::Ordering::Release,
+                        );
+                    }
+                }
             }
             // SAFETY: `action` satisfies this C entry point's public-record
             // contract, and `kernel_action` is writable local storage.

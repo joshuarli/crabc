@@ -805,12 +805,18 @@ fn current_linux_thread_group_id() -> Option<c_int> {
     Some(result as c_int)
 }
 
-/// Musl's `libc.threaded`, reduced to the one first-thread duty owned here:
-/// registering for expedited private membarriers. As in musl it is never
-/// cleared, so a fork child of a threaded process does not register again
-/// (Linux copies the registration into the child's address space).
+/// Sticky process history of first thread creation. It prevents repeated
+/// expedited private membarrier registration and tells signal installation
+/// whether internal thread signals still need their pre-thread unmask. A fork
+/// child inherits this history, including the kernel's membarrier registration.
 #[cfg(crabc_x86_owned_runtime)]
 static PROCESS_BECAME_THREADED: AtomicU8 = AtomicU8::new(0);
+
+/// Whether first thread creation has started in this process lineage.
+#[cfg(crabc_x86_owned_runtime)]
+pub(super) fn process_became_threaded() -> bool {
+    PROCESS_BECAME_THREADED.load(Ordering::Acquire) != 0
+}
 
 /// Acquire the bounded registry lock exclusively, for any mutation or
 /// scan-to-publish decision, without entering a broader pthread lock.

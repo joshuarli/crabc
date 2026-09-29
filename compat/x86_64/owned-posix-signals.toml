@@ -4,7 +4,7 @@
 # (pending, queued, timeout, invalid timeout, EINTR restart) in every mode.
 schema = "crabc.x86_64-owned-posix-signals/v1"
 capability = "process.signal"
-scenarios = ["sets", "actions-masks", "queue-delivery", "suspend-delivery", "sigpause-cancellation", "sigsuspend-cancellation", "interrupt-bookkeeping", "alternate-stack", "alternate-minimum", "signalfd", "waits"]
+scenarios = ["sets", "initial-handler-mask", "threaded-handler-mask", "actions-masks", "queue-delivery", "suspend-delivery", "sigpause-cancellation", "sigsuspend-cancellation", "interrupt-bookkeeping", "alternate-stack", "alternate-minimum", "signalfd", "waits"]
 reused_cases = ["signal-helpers", "io-cancellation", "pthread-signal", "posix-timers"]
 
 [primary_spelling_owner]
