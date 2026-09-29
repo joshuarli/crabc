@@ -3,9 +3,8 @@
 #
 # One project-header C fixture first runs through pinned musl 1.2.6 and then
 # as a true `-nostdlib -static` candidate linked only with the selected crabc
-# archive. It proves the one caller-supplied-dirfd FIFO-creation entry, not a
-# special-node family, process umask API, path-policy framework, libc.so, CRT,
-# loader, sysroot, or public x86 support.
+# archive. Ordered case records compare CWD and caller-supplied-dirfd
+# resolution, kernel mode masking, pathname errors, and fixture cleanup.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -88,7 +87,7 @@ assert_static_closure() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort; do
+for tool in ar awk cargo chmod cmp cp diff grep mkdir mktemp nm objdump readelf rmdir rustup sha256sum sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -96,8 +95,10 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_mkfifoat_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-mkfifoat.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+report_root="$ROOT_DIR/.work/x86_64/reports/libc-mkfifoat"
+mkdir -p "$report_root"
+work_dir="$(mktemp -d "$report_root/run.XXXXXX")"
+chmod 755 "$work_dir"
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-mkfifoat-reference"
@@ -109,6 +110,10 @@ archive_symbols="$work_dir/archive-symbols"
 selected_c_abi_symbols="$work_dir/selected-c-abi-symbols"
 expected_c_abi_symbols="$work_dir/expected-c-abi-symbols"
 mkfifoat_disassembly="$work_dir/mkfifoat-disassembly"
+reference_stdout="$work_dir/musl.stdout"
+reference_stderr="$work_dir/musl.stderr"
+candidate_stdout="$work_dir/crabc.stdout"
+candidate_stderr="$work_dir/crabc.stderr"
 
 cd "$ROOT_DIR"
 mkdir "$reference_work" "$candidate_work"
@@ -121,8 +126,14 @@ done
 
 "$ORACLE_CC" -std=c11 -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_mkfifoat_probe.c -o "$reference"
-(cd "$reference_work" && (umask 000; "$reference")) ||
-    fail "pinned-musl mkfifoat fixture failed"
+if (cd "$reference_work" && (umask 000; "$reference")) \
+    >"$reference_stdout" 2>"$reference_stderr"; then
+    printf '0\n' >"$work_dir/musl.exit"
+else
+    status=$?
+    printf '%s\n' "$status" >"$work_dir/musl.exit"
+    fail "pinned-musl mkfifoat fixture exited $status; raw evidence: $work_dir"
+fi
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -154,7 +165,36 @@ if grep -Eq 'call.*(mkfifo|mknod|mknodat|umask)' "$mkfifoat_disassembly"; then
     fail "mkfifoat delegates to an unselected C entry"
 fi
 
-(cd "$candidate_work" && (umask 000; "$candidate")) ||
-    fail "freestanding mkfifoat fixture failed"
+(cd "$candidate_work" && (umask 000; "$candidate")) \
+    >"$candidate_stdout" 2>"$candidate_stderr" && status=0 || status=$?
+printf '%s\n' "$status" >"$work_dir/crabc.exit"
+if [ "$status" -ne 0 ]; then
+    fail "freestanding mkfifoat fixture exited $status; raw evidence: $work_dir"
+fi
+[ -s "$reference_stdout" ] || fail "pinned-musl fixture emitted no cases"
+if ! cmp -s "$reference_stdout" "$candidate_stdout"; then
+    diff -u "$reference_stdout" "$candidate_stdout" >&2 || true
+    fail "mkfifoat case records differ; raw evidence: $work_dir"
+fi
+if ! cmp -s "$reference_stderr" "$candidate_stderr"; then
+    diff -u "$reference_stderr" "$candidate_stderr" >&2 || true
+    fail "mkfifoat stderr differs; raw evidence: $work_dir"
+fi
+rmdir "$reference_work" "$candidate_work" ||
+    fail "mkfifoat fixture left filesystem entries; raw evidence: $work_dir"
 
+cp "$ROOT_DIR/compat/x86_64/libc_mkfifoat_probe.c" "$work_dir/"
+cp "$ROOT_DIR/compat/x86_64/libc_mkfifoat_start.S" "$work_dir/"
+cp "$ROOT_DIR/compat/x86_64/run_libc_mkfifoat.sh" "$work_dir/"
+(
+    cd "$work_dir"
+    sha256sum musl-mkfifoat-reference crabc-static-mkfifoat-candidate \
+        musl.stdout musl.stderr musl.exit crabc.stdout crabc.stderr crabc.exit \
+        libc_mkfifoat_probe.c libc_mkfifoat_start.S run_libc_mkfifoat.sh \
+        candidate-program-headers candidate-symbols mkfifoat-disassembly \
+        selected-c-abi-symbols >sha256sums.txt
+)
+
+cat "$reference_stdout"
+printf 'mkfifoat physical receipt: %s\n' "$work_dir"
 printf 'x86 static crabc-libc mkfifoat: PASS\n'
