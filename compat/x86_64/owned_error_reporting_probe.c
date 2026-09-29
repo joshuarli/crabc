@@ -1,10 +1,10 @@
 /*
  * Same-source pinned-musl and installed-product witness for the selected C
- * diagnostic entries.  The normal body covers the process-name aliases,
- * perror orientation preservation, all direct and va_list spellings, errno
- * text, ordinary exit, and record integrity.  The two conditional bodies
- * retain the source object's public strerror/perror call boundaries through
- * actual final static and shared links.
+ * diagnostic entries.  The normal body covers process-name aliases, exact
+ * prefix and newline bytes, errno and orientation preservation, all direct
+ * and va_list spellings, ordinary exit and stdio flush, and record integrity.
+ * The conditional bodies retain public strerror/perror call boundaries
+ * through actual final static and shared links.
  */
 #define _GNU_SOURCE 1
 
@@ -23,7 +23,10 @@
 
 #define CHECK(condition) \
     do { \
-        if (!(condition)) return __LINE__; \
+        if (!(condition)) { \
+            fprintf(stdout, "owned error-reporting check failed at line %d\n", __LINE__); \
+            return __LINE__; \
+        } \
     } while (0)
 
 struct captured_stderr {
@@ -76,6 +79,13 @@ static int captured_stderr_equals(
     char observed[2048];
     int count = finish_stderr_capture(capture, observed, sizeof observed);
 
+    if (count >= 0 && ((size_t)count != strlen(expected)
+        || memcmp(observed, expected, (size_t)count))) {
+        fputs("observed stderr:\n", stdout);
+        fwrite(observed, 1, (size_t)count, stdout);
+        fputs("\nexpected stderr:\n", stdout);
+        fputs(expected, stdout);
+    }
     return count >= 0
         && (size_t)count == strlen(expected)
         && !memcmp(observed, expected, (size_t)count);
@@ -139,6 +149,7 @@ int main(int argc, char **argv)
     CHECK(begin_stderr_capture(&capture));
     errno = 777;
     perror("strerror boundary");
+    CHECK(errno == 777);
     CHECK(captured_stderr_equals(&capture,
         "strerror boundary: application strerror\n"));
     puts("owned-error-reporting-interpose-strerror-ok");
@@ -158,6 +169,7 @@ int main(int argc, char **argv)
     CHECK(begin_stderr_capture(&capture));
     errno = ENOENT;
     warn("from warning");
+    CHECK(errno == ENOENT);
     CHECK(captured_stderr_equals(&capture,
         "perror-boundary: from warning: application perror\n"));
     program_invocation_short_name = saved_name;
@@ -178,6 +190,7 @@ int main(int argc, char **argv)
     errno = 777;
     /* musl's libc-local perror -> strerror edge remains local in a DSO link. */
     perror("strerror boundary");
+    CHECK(errno == 777);
     CHECK(captured_stderr_equals(&capture,
         "strerror boundary: No error information\n"));
     puts("owned-error-reporting-interpose-strerror-ok");
@@ -202,6 +215,7 @@ int main(int argc, char **argv)
     errno = ENOENT;
     /* musl's libc-local warn -> perror edge remains local in a DSO link. */
     warn("from warning");
+    CHECK(errno == ENOENT);
     CHECK(captured_stderr_equals(&capture,
         "perror-boundary: from warning: No such file or directory\n"));
     program_invocation_short_name = saved_name;
@@ -250,12 +264,16 @@ static int read_child_output(int descriptor, char *destination, size_t capacity)
 
 static int exit_case(int kind)
 {
-    static const int statuses[] = { 41, 42, 43, 44 };
+    static const int statuses[] = { 41, 42, 43, 44, 0, 255, 0, 255 };
     static const char *const diagnostics[] = {
         "exit-name: err=1: No such file or directory\n",
         "exit-name: errx=2\n",
         "exit-name: verr=3: No such file or directory\n",
         "exit-name: verrx=4\n",
+        "exit-name: No such file or directory\n",
+        "exit-name: \n",
+        "exit-name: No such file or directory\n",
+        "exit-name: \n",
     };
     int error_pipe[2];
     int output_pipe[2];
@@ -264,7 +282,7 @@ static int exit_case(int kind)
     char error_bytes[128];
     char output_bytes[128];
 
-    CHECK(kind >= 0 && kind < 4 && !pipe(error_pipe) && !pipe(output_pipe));
+    CHECK(kind >= 0 && kind < 8 && !pipe(error_pipe) && !pipe(output_pipe));
     child = fork();
     CHECK(child >= 0);
     if (child == 0) {
@@ -276,13 +294,18 @@ static int exit_case(int kind)
             || atexit(exit_notice)) {
             _Exit(127);
         }
+        fputs("before-exit/", stdout);
         program_invocation_short_name = "exit-name";
         errno = ENOENT;
         switch (kind) {
         case 0: err(statuses[kind], "err=%d", 1);
         case 1: errx(statuses[kind], "errx=%d", 2);
         case 2: call_verr(statuses[kind], "verr=%d", 3);
-        default: call_verrx(statuses[kind], "verrx=%d", 4);
+        case 3: call_verrx(statuses[kind], "verrx=%d", 4);
+        case 4: err(statuses[kind], NULL);
+        case 5: errx(statuses[kind], NULL);
+        case 6: call_verr(statuses[kind], NULL);
+        default: call_verrx(statuses[kind], NULL);
         }
     }
     close(error_pipe[1]);
@@ -292,7 +315,7 @@ static int exit_case(int kind)
     CHECK(read_child_output(error_pipe[0], error_bytes, sizeof error_bytes) >= 0
         && !strcmp(error_bytes, diagnostics[kind]));
     CHECK(read_child_output(output_pipe[0], output_bytes, sizeof output_bytes) >= 0
-        && !strcmp(output_bytes, "atexit-buffered\n"));
+        && !strcmp(output_bytes, "before-exit/atexit-buffered\n"));
     return 0;
 }
 
@@ -385,11 +408,19 @@ static int normal_case(void)
         "No such file or directory\n"
         "prefix: No such file or directory\n"
         "invalid: No error information\n"
+        "zero: No error information\n"
+        "head: No such file or directory\n"
+        "line\nbreak: No such file or directory\n"
         "warning-owner: warn=7: No such file or directory\n"
         "warning-owner: warnx=8\n"
         "warning-owner: vwarn=9: No such file or directory\n"
         "warning-owner: vwarnx=10\n"
         "warning-owner: percent=No such file or directory: No such file or directory\n"
+        "warning-owner: No such file or directory\n"
+        "warning-owner: \n"
+        "warning-owner: pct=% \303\251\n"
+        "[warning-owner: shared-stream\n"
+        "]\n"
         "(null): null-name\n"
         ": empty-name\n";
     struct captured_stderr capture;
@@ -401,27 +432,55 @@ static int normal_case(void)
     perror(NULL);
     CHECK(errno == ENOENT && fwide(stderr, 0) == 0);
     perror("");
+    CHECK(errno == ENOENT && fwide(stderr, 0) == 0);
     perror("prefix");
+    CHECK(errno == ENOENT && fwide(stderr, 0) == 0);
     errno = 999;
     perror("invalid");
     CHECK(errno == 999);
+    errno = 0;
+    perror("zero");
+    CHECK(errno == 0 && fwide(stderr, 0) == 0);
+    errno = ENOENT;
+    perror("head\0ignored");
+    CHECK(errno == ENOENT);
+    perror("line\nbreak");
+    CHECK(errno == ENOENT);
 
     saved_name = program_invocation_short_name;
     program_invocation_short_name = "warning-owner";
     errno = ENOENT;
     warn("warn=%d", 7);
+    CHECK(errno == ENOENT);
     warnx("warnx=%d", 8);
+    CHECK(errno == ENOENT);
     call_vwarn("vwarn=%d", 9);
+    CHECK(errno == ENOENT);
     call_vwarnx("vwarnx=%d", 10);
+    CHECK(errno == ENOENT);
     warn("percent=%m");
+    CHECK(errno == ENOENT);
+    warn(NULL);
+    CHECK(errno == ENOENT);
+    warnx(NULL);
+    CHECK(errno == ENOENT);
+    warnx("pct=%% %s", "\303\251");
+    CHECK(errno == ENOENT);
+    CHECK(fputc('[', stderr) == '[');
+    warnx("shared-stream");
+    CHECK(errno == ENOENT && fputc(']', stderr) == ']');
+    CHECK(fputc('\n', stderr) == '\n' && fflush(stderr) == 0);
+    CHECK(fwide(stderr, 0) < 0);
     program_invocation_short_name = NULL;
     warnx("null-name");
+    CHECK(errno == ENOENT);
     program_invocation_short_name = "";
     warnx("empty-name");
+    CHECK(errno == ENOENT);
     program_invocation_short_name = saved_name;
 
     CHECK(captured_stderr_equals(&capture, expected));
-    for (int kind = 0; kind < 4; kind++) CHECK(!exit_case(kind));
+    for (int kind = 0; kind < 8; kind++) CHECK(!exit_case(kind));
     CHECK(!concurrency_case());
     return 0;
 }
@@ -436,8 +495,11 @@ static int worker_case(void)
     CHECK(begin_stderr_capture(&capture));
     errno = EACCES;
     perror("worker-perror");
+    CHECK(errno == EACCES);
     call_vwarn("worker-vwarn=%d", 11);
+    CHECK(errno == EACCES);
     call_vwarnx("worker-vwarnx=%d", 12);
+    CHECK(errno == EACCES);
     CHECK(captured_stderr_equals(&capture,
         "worker-perror: Permission denied\n"
         "worker-owner: worker-vwarn=11: Permission denied\n"

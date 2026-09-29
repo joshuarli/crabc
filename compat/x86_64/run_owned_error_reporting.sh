@@ -368,4 +368,4 @@ for mode in pie non-pie; do
     done
 done
 
-printf 'owned error-reporting: PASS (pinned musl static replacement source oracle and matching static/static-PIE application strerror/perror replacement; same-object static/static-PIE and dynamic PIE/non-PIE delivery; kernel/direct dynamic entry; source-permitted concurrent fragments, stderr orientation, errno text, ordinary exit, worker, and shared DSO public/local-edge resolution); evidence: %s\n' "$work"
+printf 'owned error-reporting: PASS (pinned musl static replacement source oracle and matching static/static-PIE application strerror/perror replacement; same-object static/static-PIE and dynamic PIE/non-PIE delivery; kernel/direct dynamic entry; errno preservation, exact prefix/newline and edge-string bytes, shared stdio ordering, ordinary exit and flush, worker TLS, source-permitted concurrent fragments, stderr orientation, and shared DSO public/local-edge resolution); evidence: %s\n' "$work"
