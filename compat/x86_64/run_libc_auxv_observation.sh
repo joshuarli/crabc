@@ -5,8 +5,9 @@
 # true `-nostdlib -static` candidate through the selected archive. It proves
 # only validated initial-vector getauxval lookup, musl's weak same-address
 # private alias, constructor-before-main publication, and errno behavior. The
-# fixture checks AT_PAGESZ/AT_PHENT/AT_PHNUM plus zero-valued AT_SECURE and
-# absent AT_NULL/ENOENT behavior. It does not select loader state,
+# fixture checks every initial kernel auxv tag against the raw vector, with
+# present zero and nonzero values, absent tags, stale errno, and AT_RANDOM
+# storage surviving from the constructor into main. It does not select loader state,
 # secure-execution policy, environment storage, libc.so, CRT completion, C ABI
 # closure, family promotion, or public x86 support.
 set -euo pipefail
@@ -31,6 +32,25 @@ require_native_linux_x86_64() {
 
 require_tool() {
     command -v "$1" >/dev/null 2>&1 || fail "requires $1"
+}
+
+checkout_local_tmpdir() {
+    local physical_work_dir physical_tmpdir
+
+    [ -n "${TMPDIR:-}" ] || fail "requires a checkout-local TMPDIR"
+    physical_work_dir="$(realpath -e "$ROOT_DIR/.work")" \
+        || fail "checkout .work directory must exist"
+    [ "$physical_work_dir" = "$ROOT_DIR/.work" ] \
+        || fail "checkout .work directory must be physical"
+    physical_tmpdir="$(realpath -e "$TMPDIR")" \
+        || fail "TMPDIR must be a physical checkout .work directory"
+    [ "$physical_tmpdir" = "$TMPDIR" ] \
+        || fail "TMPDIR must be a physical checkout .work directory"
+    case "$physical_tmpdir" in
+        "$physical_work_dir"/*) ;;
+        *) fail "TMPDIR must be a physical checkout .work directory" ;;
+    esac
+    printf '%s\n' "$physical_tmpdir"
 }
 
 assert_selected_c_abi_surface() {
@@ -82,7 +102,7 @@ assert_weak_same_address_alias() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort; do
+for tool in ar awk cargo cmp cp diff grep mkdir nm objdump readelf realpath rustup sha256sum sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -90,8 +110,21 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_machine_context_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-auxv-observation.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+work_tmpdir="$(checkout_local_tmpdir)"
+work_dir="$(mktemp -d "$work_tmpdir/crabc-x86-64-libc-auxv-observation.XXXXXX")"
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-auxv-observation"
+cleanup_work_dir() {
+    local status=$?
+
+    trap - EXIT
+    if [ "$status" -eq 0 ]; then
+        rm -rf -- "$work_dir"
+    else
+        printf 'x86 static libc auxv observation retained failure evidence: %s\n' "$work_dir" >&2
+    fi
+    exit "$status"
+}
+trap cleanup_work_dir EXIT
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-auxv-observation-reference"
@@ -126,7 +159,13 @@ done
 readelf --symbols --wide "$reference" >"$reference_symbols"
 assert_weak_same_address_alias "$reference_symbols" getauxval __getauxval \
     "pinned-musl static reference"
-"$reference" || fail "pinned-musl auxv-observation fixture failed"
+if "$reference" >"$work_dir/musl.stdout" 2>"$work_dir/musl.stderr"; then
+    printf '0\n' >"$work_dir/musl.status"
+else
+    reference_status=$?
+    printf '%s\n' "$reference_status" >"$work_dir/musl.status"
+    fail "pinned-musl auxv-observation fixture exited $reference_status"
+fi
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -205,6 +244,28 @@ if grep -Eq '[[:space:]]syscall([[:space:]]|$)|panic_(bounds_check|nounwind)|rus
     fail "__getauxval selects a syscall or Rust panic machinery"
 fi
 
-"$candidate" || fail "freestanding auxv-observation fixture failed"
+if "$candidate" >"$work_dir/crabc.stdout" 2>"$work_dir/crabc.stderr"; then
+    printf '0\n' >"$work_dir/crabc.status"
+else
+    candidate_status=$?
+    printf '%s\n' "$candidate_status" >"$work_dir/crabc.status"
+    fail "freestanding auxv-observation fixture exited $candidate_status"
+fi
+cmp -s "$work_dir/musl.stdout" "$work_dir/crabc.stdout" ||
+    fail "candidate stdout differs from pinned musl"
+cmp -s "$work_dir/musl.stderr" "$work_dir/crabc.stderr" ||
+    fail "candidate stderr differs from pinned musl"
 
-printf 'x86 static crabc-libc auxv observation: PASS\n'
+mkdir -p "$report_dir"
+cp "$reference" "$report_dir/musl.elf"
+cp "$candidate" "$report_dir/crabc.elf"
+for name in musl crabc; do
+    cp "$work_dir/$name.stdout" "$work_dir/$name.stderr" "$work_dir/$name.status" "$report_dir/"
+done
+(
+    cd "$report_dir"
+    sha256sum musl.elf crabc.elf musl.stdout crabc.stdout \
+        musl.stderr crabc.stderr musl.status crabc.status >artifacts.sha256
+)
+
+printf 'x86 static crabc-libc auxv observation: PASS (%s)\n' "$report_dir"
