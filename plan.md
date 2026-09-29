@@ -563,11 +563,14 @@ are not transferable passes for a different revision.
   taken ownership. Two clean 32-process runs match pinned C across 2,048
   race rounds per side, and the attached-worker destroy/delete traces each
   match five observations.
+  A two-worker mixed page population and release trace after both owners exit
+  now matches fourteen pinned-C keys and is registered in the visitation and
+  destruction-lifetime gates.
   The M6 contract check lists 105 interface items, ten blocked gates, and
   nine missing evidence entries; a full M6 aggregate pass is not claimed.
   All ten required gates
   remain blocked by named missing API and lifetime evidence;
-  accumulated mixed-workload main-Heap page-population parity remains unproved.
+  child-subprocess and fully concurrent visitation remain unproved.
   Integrated products are
   compared against an evidence-only pinned v3.5.0 C product (the selected C
   backend is `libmimalloc-sys` 0.1.49, mimalloc 3.3.2); the port map

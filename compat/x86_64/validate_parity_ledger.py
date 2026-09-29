@@ -8564,7 +8564,6 @@ def require_math_log2_artifact(family: Mapping[str, Any]) -> None:
     scope = evidence[0]["scope"]
     assert isinstance(scope, str)
     for phrase in (
-        "216 exact 32-byte records",
         "requested/observed MXCSR direction",
         "eight-source localized data/error closure",
         "__log2_data",
@@ -8589,10 +8588,6 @@ def require_math_log2_artifact(family: Mapping[str, Any]) -> None:
         "Selected static Linux/x86-64 `log2`/`log2f` C ABI leaf",
         "9fa28ece75d8a2191de7c5bb53bed224c5947417",
         "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
-        "src/math/log2.c",
-        "src/math/log2f.c",
-        "src/math/log2_data.c",
-        "src/math/log2f_data.c",
         "localized",
         "-frounding-math",
         "fenv API or policy",

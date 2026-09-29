@@ -2,16 +2,14 @@
 //!
 //! ## Fixed source and license provenance
 //!
-//! `math_log2_musl_x86_64.S` is a checked assembly translation of pinned musl
-//! 1.2.6 release commit `9fa28ece75d8a2191de7c5bb53bed224c5947417`, from the
+//! The selected assembly is a checked translation of pinned musl 1.2.6
+//! release commit `9fa28ece75d8a2191de7c5bb53bed224c5947417`, from the
 //! release archive whose SHA-256 is
 //! `d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a`.
-//! `compat/x86_64/generate_libc_math_log2.py` verifies the normalized complete
-//! source-tree digest and pinned GCC 15.2.0 input before translating exactly
-//! `src/math/log2.c`, `src/math/log2f.c`, `src/math/log2_data.c`,
-//! `src/math/log2f_data.c`, `src/math/__math_divzero.c`,
-//! `src/math/__math_divzerof.c`, `src/math/__math_invalid.c`, and
-//! `src/math/__math_invalidf.c`.  The Arm MIT notices remain in the checked
+//! Its generator verifies the normalized complete source-tree digest and
+//! pinned GCC 15.2.0 input before translating the binary32/binary64 log2
+//! algorithms, both data tables, and their invalid/divide-by-zero helpers.
+//! The Arm MIT notices remain in the checked
 //! input.  The data tables and IEEE error-expression helpers are renamed and
 //! localized in that one assembly input, so they do not become public archive
 //! exports.  The musl 1.2.6 distribution carries the MIT license; this is
@@ -27,8 +25,8 @@
 //! its result bits and exceptions is part of this C ABI contract.  The focused
 //! native differential compares raw binary32/binary64 results, requested and
 //! observed MXCSR directions, and IEEE exception flags against the same pinned
-//! musl build.  The harness uses
-//! existing selected fenv entries only to reset and observe MXCSR; this leaf
+//! musl build.  The harness uses existing selected fenv entries only to reset
+//! and observe MXCSR; this leaf
 //! does not select fenv API or policy.
 //!
 //! System V AMD64 passes and returns binary64/binary32 in `xmm0`.  This leaf
