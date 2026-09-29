@@ -56,6 +56,109 @@ static void deny_scheduler(void) {
     CHECK(prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0)==0);
     CHECK(prctl(PR_SET_SECCOMP,2,&program)==0);
 }
+static void deny_live_scheduler_changes(void) {
+    struct filter f[]={
+        {0x20,0,0,0},
+        {0x15,1,0,SYS_sched_setscheduler},
+        {0x15,0,1,SYS_sched_setparam},
+        {0x06,0,0,0x50000|EPERM},
+        {0x06,0,0,0x7fff0000}
+    };
+    struct { unsigned short len; struct filter *filter; } program={5,f};
+    CHECK(prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0)==0);
+    CHECK(prctl(PR_SET_SECCOMP,2,&program)==0);
+}
+struct scheduling_observation { int policy, priority; size_t stack, guard; };
+static void *observe_scheduling(void *arg) {
+    struct scheduling_observation *observed=arg;
+    struct sched_param parameter={.sched_priority=-1};
+    pthread_attr_t attributes;
+    observed->policy=-1;
+    CHECK(pthread_getschedparam(pthread_self(),&observed->policy,&parameter)==0);
+    observed->priority=parameter.sched_priority;
+    CHECK(pthread_getattr_np(pthread_self(),&attributes)==0);
+    CHECK(pthread_attr_getstacksize(&attributes,&observed->stack)==0);
+    CHECK(pthread_attr_getguardsize(&attributes,&observed->guard)==0);
+    return arg;
+}
+static void *held_scheduling_worker(void *arg) {
+    atomic_int *release=arg;
+    while (!atomic_load(release)) sched_yield();
+    return arg;
+}
+static void joined_scheduling(pthread_attr_t *attributes, int expected_policy,
+                              size_t expected_stack, size_t expected_guard) {
+    struct scheduling_observation observed={.policy=-1,.priority=-1};
+    pthread_t thread; void *result=NULL;
+    CHECK(pthread_create(&thread,attributes,observe_scheduling,&observed)==0);
+    CHECK(pthread_join(thread,&result)==0 && result==&observed);
+    CHECK(observed.policy==expected_policy && observed.priority==0);
+    if (expected_stack) CHECK(observed.stack>=expected_stack && observed.guard==expected_guard);
+}
+static int inherited_scheduling_and_defaults(void) {
+    pthread_attr_t attributes, snapshot, current;
+    struct sched_param zero={.sched_priority=0}, bad={.sched_priority=1};
+    int policy=-1;
+    errno=77;
+    CHECK(pthread_attr_init(&attributes)==0);
+    CHECK(pthread_attr_setschedpolicy(&attributes,SCHED_OTHER)==0);
+    CHECK(pthread_attr_setschedparam(&attributes,&zero)==0);
+    CHECK(pthread_attr_setinheritsched(&attributes,PTHREAD_INHERIT_SCHED)==0);
+    CHECK(pthread_setschedparam(pthread_self(),SCHED_BATCH,&zero)==0 && errno==77);
+    CHECK(pthread_getschedparam(pthread_self(),&policy,&zero)==0 && policy==SCHED_BATCH);
+    joined_scheduling(&attributes,SCHED_BATCH,0,0);
+    CHECK(pthread_attr_setinheritsched(&attributes,PTHREAD_EXPLICIT_SCHED)==0);
+    joined_scheduling(&attributes,SCHED_OTHER,0,0);
+    CHECK(pthread_attr_setinheritsched(&attributes,PTHREAD_INHERIT_SCHED)==0);
+    CHECK(pthread_attr_setschedpolicy(&attributes,-1)==0);
+    CHECK(pthread_attr_setschedparam(&attributes,&bad)==0);
+    joined_scheduling(&attributes,SCHED_BATCH,0,0);
+    CHECK(pthread_setschedparam(pthread_self(),SCHED_OTHER,&zero)==0);
+    CHECK(pthread_setschedparam(pthread_self(),SCHED_BATCH,&bad)==EINVAL && errno==77);
+    CHECK(pthread_getschedparam(pthread_self(),&policy,&zero)==0 && policy==SCHED_OTHER && zero.sched_priority==0);
+    CHECK(pthread_attr_destroy(&attributes)==0);
+
+    pid_t denied=fork(); CHECK(denied>=0);
+    if (!denied) {
+        struct sched_param parameter={.sched_priority=0};
+        atomic_int release=0;
+        pthread_t thread; void *result=NULL;
+        CHECK(pthread_create(&thread,NULL,held_scheduling_worker,&release)==0);
+        deny_live_scheduler_changes();
+        errno=77;
+        CHECK(pthread_setschedparam(thread,SCHED_OTHER,&parameter)==EPERM && errno==77);
+        CHECK(pthread_setschedprio(thread,0)==EPERM && errno==77);
+        CHECK(pthread_getschedparam(thread,&policy,&parameter)==0 && policy==SCHED_OTHER && parameter.sched_priority==0);
+        atomic_store(&release,1);
+        CHECK(pthread_join(thread,&result)==0 && result==&release);
+        _Exit(0);
+    }
+    int status;
+    CHECK(waitpid(denied,&status,0)==denied && WIFEXITED(status) && WEXITSTATUS(status)==0);
+
+    CHECK(pthread_attr_init(&attributes)==0);
+    CHECK(pthread_attr_setstacksize(&attributes,262144)==0);
+    CHECK(pthread_attr_setguardsize(&attributes,16384)==0);
+    CHECK(pthread_setattr_default_np(&attributes)==0);
+    CHECK(pthread_getattr_default_np(&snapshot)==0);
+    pid_t child=fork(); CHECK(child>=0);
+    if (!child) {
+        CHECK(pthread_getattr_default_np(&current)==0 && !memcmp(&current,&snapshot,sizeof current));
+        CHECK(pthread_attr_setstacksize(&attributes,524288)==0);
+        CHECK(pthread_attr_setguardsize(&attributes,32768)==0);
+        CHECK(pthread_setattr_default_np(&attributes)==0);
+        CHECK(pthread_getattr_default_np(&current)==0 && !memcmp(&current,&attributes,sizeof current));
+        joined_scheduling(NULL,SCHED_OTHER,524288,32768);
+        _Exit(0);
+    }
+    CHECK(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==0);
+    CHECK(pthread_getattr_default_np(&current)==0 && !memcmp(&current,&snapshot,sizeof current));
+    CHECK(pthread_attr_init(&current)==0 && !memcmp(&current,&snapshot,sizeof current));
+    joined_scheduling(NULL,SCHED_OTHER,262144,16384);
+    CHECK(pthread_attr_destroy(&attributes)==0);
+    puts("pthread inherited/explicit policy, live permission, and forked defaults: PASS");
+    return 0;
+}
 /* Scope, concurrency, affinity, thread names, and C11 identity/exit. A
  * named thread's comm file is reached through /proc, which the dynamic cells'
  * chroot does not mount; musl then reports the open error, so the probe
@@ -161,6 +264,7 @@ static int surface(void) {
 }
 int main(int argc, char **argv) {
     if (argc==2 && !strcmp(argv[1],"surface")) return surface();
+    if (argc==2 && !strcmp(argv[1],"inherit")) return inherited_scheduling_and_defaults();
     target(pthread_self());
     sigset_t inherited; sigemptyset(&inherited); sigaddset(&inherited,SIGUSR2);
     CHECK(pthread_sigmask(SIG_BLOCK,&inherited,NULL)==0);
