@@ -61,7 +61,13 @@ only its exact source, configuration, image, products, and execution context.
   physical receipts, including stress, all seeded soaks, ownership,
   interposition, DSO boundaries, the full corpus, Rust std/LTO, and Lua.
   Those historical source seals do not qualify later merged changes.
-  Current-source API/mode and Heap/Theap lifecycle aggregates remain active.
+  A clean merged-source run at `86c4bb932` passes all eleven API/mode gates,
+  all ten evidence classes, and its independent physical reader; all four
+  modes match 983 C/Rust fields each. The scoped Heap/Theap aggregate passes
+  all 37 executable rows, while its ten gates retain reviewed conditions and
+  eight missing runner classes. All five option-effect receivers pass,
+  including 112 profiles and 2,100 keys; controlled PageMap decisions now
+  match exact source layout and counts. Hardware obligations remain open.
 - **ABI frontier:** complete-function physical provider joins replace many
   per-symbol witnesses. A retained diagnostic assembly reconstructs with 232
   remaining blockers; a fresh diagnostic assembly reduces this to 159, with
@@ -70,6 +76,9 @@ only its exact source, configuration, image, products, and execution context.
   membarrier mismatches remain raw; 24 positive and negative provider controls
   prove their reviewed boundary without remapping symbols. Checked-header and
   locale companions are being corrected to join the exact supplied products.
+  Strong symbol-only archive imports now retain complete relocation absence
+  without claiming a call. Owned CRT lifecycle frames bind zero-size opening
+  symbols to exact ordered fragments and complete executable bytes.
 - **Remaining:** complete the planned runtime families and all applicable
   allocator API/mode/source conditions; replay the ordered gates on merged
   source; obtain physical huge-page/NUMA evidence and an uncontended qualified
@@ -85,8 +94,10 @@ only its exact source, configuration, image, products, and execution context.
 
 Use `.agents/skills/lanes/SKILL.md` for Codex coordination, or the
 `.claude/skills/lanes` skill for Claude Code; both use
-`.claude/agents/crabc-lane.md` for lane boundaries and handoffs. Keep at most 16
-concurrent lane agents, each with one bounded, unique deliverable and an
+`.claude/agents/crabc-lane.md` for lane boundaries and handoffs. Keep all 16
+lane slots occupied while useful work remains, subject to the tool's current
+capacity. Every Codex lane uses only `gpt-6.1-sol` with `medium` reasoning effort;
+set both explicitly when spawning. Each lane has one bounded, unique deliverable and an
 exclusive write boundary in `.work/worktrees/lane-<id>`. The parent session
 alone integrates to `main`. A failure outside a lane's boundary goes to one
 owner. Nobody uses `git stash`. Qualifying performance measurements wait for an
