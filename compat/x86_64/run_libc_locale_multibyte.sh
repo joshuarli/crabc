@@ -63,13 +63,32 @@ assert_fixture_tls_capacity() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep nm objdump readelf rustup sort; do require_tool "$tool"; done
+for tool in ar awk cargo cmp cp diff grep nm objdump readelf rustup sha256sum sort; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_locale_multibyte_header_abi.sh" >/dev/null
 
 work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-locale-multibyte.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/reports"
+report_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-locale-multibyte.XXXXXX")"
+retain_evidence() {
+    local result="$?" artifact
+    for artifact in musl-locale-multibyte-reference crabc-static-locale-multibyte-candidate \
+        reference.stdout reference.stderr candidate.stdout candidate.stderr \
+        reference.status candidate.status; do
+        if [ -f "$work_dir/$artifact" ]; then
+            cp "$work_dir/$artifact" "$report_dir/$artifact"
+        fi
+    done
+    printf 'runner_exit_status=%s\n' "$result" >"$report_dir/runner.status"
+    (cd "$report_dir" && sha256sum musl-locale-multibyte-reference \
+        crabc-static-locale-multibyte-candidate reference.stdout \
+        reference.stderr candidate.stdout candidate.stderr 2>/dev/null) \
+        >"$report_dir/sha256sums" || true
+    printf 'x86 static libc locale/multibyte evidence: %s\n' "$report_dir"
+    rm -rf -- "$work_dir"
+}
+trap retain_evidence EXIT
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-locale-multibyte-reference"
@@ -96,7 +115,10 @@ done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_locale_multibyte_probe.c -o "$reference"
-"$reference" || fail "pinned-musl locale/multibyte fixture failed"
+reference_status=0
+"$reference" >"$work_dir/reference.stdout" 2>"$work_dir/reference.stderr" || reference_status="$?"
+printf '%s\n' "$reference_status" >"$work_dir/reference.status"
+[ "$reference_status" -eq 0 ] || fail "pinned-musl locale/multibyte fixture failed"
 
 build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -162,5 +184,12 @@ if grep -Eq 'crabc_core|mimalloc|sha_crypt' \
     "$symbols" "$disassembly"; then
     fail "candidate selects an unowned runtime dependency"
 fi
-"$candidate" || fail "freestanding locale/multibyte fixture failed"
+candidate_status=0
+"$candidate" >"$work_dir/candidate.stdout" 2>"$work_dir/candidate.stderr" || candidate_status="$?"
+printf '%s\n' "$candidate_status" >"$work_dir/candidate.status"
+[ "$candidate_status" -eq 0 ] || fail "freestanding locale/multibyte fixture failed"
+cmp -s "$work_dir/reference.stdout" "$work_dir/candidate.stdout" ||
+    fail "locale/multibyte stdout differs from pinned musl"
+cmp -s "$work_dir/reference.stderr" "$work_dir/candidate.stderr" ||
+    fail "locale/multibyte stderr differs from pinned musl"
 printf 'x86 static libc locale/multibyte: PASS\n'

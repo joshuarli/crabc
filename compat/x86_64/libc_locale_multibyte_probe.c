@@ -335,6 +335,57 @@ static int check_string_conversions(void)
     return 0;
 }
 
+static int check_resumed_string_conversion(void)
+{
+    static const char bad_first_tail[] = { (char)0xe2, '(', '\0' };
+    static const char bad_last_tail[] = { (char)0xe2, (char)0x82, '(', '\0' };
+    static const char valid_tail[] = { (char)0xe2, (char)0x82, (char)0xac, '\0' };
+    const char *source;
+    wchar_t wide = 0x55aa;
+    mbstate_t state = { 0, 0 };
+
+    if (setlocale(LC_CTYPE, "C.UTF-8") == NULL)
+        return 1;
+    if (mbrtowc(&wide, bad_first_tail, 1, &state) != (size_t)-2 ||
+        mbsinit(&state) || wide != 0x55aa)
+        return 2;
+
+    source = bad_first_tail + 1;
+    errno = EINTR;
+    if (mbsrtowcs(NULL, &source, 0, &state) != (size_t)-1 ||
+        errno != EILSEQ || source != bad_first_tail + 1 || mbsinit(&state))
+        return 3;
+
+    errno = EINTR;
+    if (mbsrtowcs(&wide, &source, 1, &state) != (size_t)-1 ||
+        errno != EILSEQ || source != bad_first_tail ||
+        !mbsinit(&state) || wide != 0x55aa)
+        return 4;
+
+    if (mbrtowc(&wide, bad_last_tail, 1, &state) != (size_t)-2 ||
+        mbsinit(&state))
+        return 5;
+    source = bad_last_tail + 1;
+    errno = EINTR;
+    if (mbsrtowcs(&wide, &source, 1, &state) != (size_t)-1 ||
+        errno != EILSEQ || source != bad_last_tail ||
+        !mbsinit(&state) || wide != 0x55aa)
+        return 6;
+
+    if (mbrtowc(&wide, valid_tail, 1, &state) != (size_t)-2 ||
+        mbsinit(&state))
+        return 7;
+    if (setlocale(LC_CTYPE, "C") == NULL || MB_CUR_MAX != 1)
+        return 8;
+    source = valid_tail + 1;
+    errno = EINTR;
+    if (mbsrtowcs(&wide, &source, 1, &state) != 1 ||
+        source != valid_tail + 3 || wide != 0x20ac ||
+        errno != EINTR || !mbsinit(&state))
+        return 9;
+    return 0;
+}
+
 int crabc_x86_64_locale_multibyte_probe(void)
 {
     int status = check_named_locale_selection();
@@ -348,7 +399,10 @@ int crabc_x86_64_locale_multibyte_probe(void)
     if (status != 0)
         return 80 + status;
     status = check_string_conversions();
-    return status == 0 ? 0 : 180 + status;
+    if (status != 0)
+        return 180 + status;
+    status = check_resumed_string_conversion();
+    return status == 0 ? 0 : 220 + status;
 }
 
 #ifndef CRABC_LOCALE_MULTIBYTE_FREESTANDING
