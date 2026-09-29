@@ -1,15 +1,11 @@
-/* Static x86-64 sealed assignment-suppressed scanset scanf fixture.
+/* Static x86-64 bounded narrow scanset scanf fixture.
  *
- * This fixture owns only musl vfscanf's non-wide literal `%*3[abc]`
- * conversion state through the existing no-external-FILE, NUL-terminated
- * `sscanf`/`vsscanf` boundary. It uses fixed C-locale narrow byte strings,
- * gives the scanner no destination, and makes no assignment. Its trailing
- * vsscanf sentinel is fixture-local ABI evidence that suppression leaves
- * va_list untouched. Following literals only prove the preexisting raw
- * member-run consumption boundary; they do not establish literal matching.
- * This is not evidence for unsuppressed scansets, other scanset grammar,
- * `%c`/`%s`, pointer, integer, floating, wide, stream, locale, or general
- * stdio behavior.
+ * The NUL-string `sscanf`/`vsscanf` boundary stores bounded member runs,
+ * parses ranges and negation, and preserves assignment and count semantics.
+ * Suppressed scansets consume input without a destination or assignment; the
+ * trailing vsscanf sentinel checks that suppression leaves va_list untouched.
+ * Following literals expose consumption without establishing literal matching.
+ * No external FILE, wide, allocating, or locale scanset behavior is selected.
  */
 
 #include <errno.h>
@@ -106,19 +102,86 @@ static int check_selected_suppressed_scanset_scan(void)
     return 0;
 }
 
+static int check_bounded_scanset_storage(void)
+{
+    char bytes[5] = { 'X', 'X', 'X', 'X', 'X' };
+    char next = 'X';
+    int consumed = -1;
+    int result;
+
+    /* A range fills only the selected width, writes its terminator, and
+     * leaves the next byte for a later conversion. `%n` sees that width. */
+    errno = EDOM;
+    result = sscanf("abcz", "%3[a-c]%n%c", bytes, &consumed, &next);
+    if (result != 2 || bytes[0] != 'a' || bytes[1] != 'b' ||
+        bytes[2] != 'c' || bytes[3] != '\0' || bytes[4] != 'X' ||
+        consumed != 3 || next != 'z' || errno != EDOM)
+        return 10;
+
+    /* A negated set admits raw leading whitespace and stops at a member. */
+    bytes[0] = bytes[1] = bytes[2] = bytes[3] = 'X';
+    consumed = -1;
+    next = 'X';
+    errno = EINTR;
+    result = sscanf(" z!", "%2[^a-c]%n%c", bytes, &consumed, &next);
+    if (result != 2 || bytes[0] != ' ' || bytes[1] != 'z' ||
+        bytes[2] != '\0' || bytes[3] != 'X' || consumed != 2 ||
+        next != '!' || errno != EINTR)
+        return 11;
+
+    /* A first nonmember is a matching failure with no store or count. */
+    bytes[0] = bytes[1] = 'X';
+    consumed = -1;
+    errno = EILSEQ;
+    result = sscanf("z", "%3[a-c]%n", bytes, &consumed);
+    if (result != 0 || bytes[0] != 'X' || bytes[1] != 'X' ||
+        consumed != -1 || errno != EILSEQ)
+        return 12;
+
+    /* Initial EOF leaves the destination and following count untouched. */
+    errno = EDOM;
+    result = sscanf("", "%3[a-c]%n", bytes, &consumed);
+    if (result != EOF || bytes[0] != 'X' || consumed != -1 || errno != EDOM)
+        return 13;
+
+    /* A later failed scanset preserves the earlier assignment and leaves
+     * both the failed field and its following `%n` untouched. */
+    bytes[0] = 'X';
+    consumed = -1;
+    next = 'X';
+    errno = EILSEQ;
+    result = sscanf("qz", "%c%2[a-c]%n", &next, bytes, &consumed);
+    if (result != 1 || next != 'q' || bytes[0] != 'X' ||
+        consumed != -1 || errno != EILSEQ)
+        return 15;
+
+    /* Musl's descending range retains its endpoints but does not admit the
+     * range marker itself. */
+    bytes[0] = bytes[1] = bytes[2] = 'X';
+    consumed = -1;
+    errno = EDOM;
+    result = sscanf("za-", "%3[z-a]%n", bytes, &consumed);
+    if (result != 1 || bytes[0] != 'z' || bytes[1] != 'a' ||
+        bytes[2] != '\0' || consumed != 2 || errno != EDOM)
+        return 16;
+
+    /* Suppression consumes a bounded range, and only `%n` gets a pointer. */
+    consumed = -1;
+    errno = EINTR;
+    result = sscanf("abc!", "%*3[a-c]%n!", &consumed);
+    if (result != 0 || consumed != 3 || errno != EINTR)
+        return 14;
+
+    return 0;
+}
+
 static int check_candidate_limitations(void)
 {
 #ifdef CRABC_STDIO_FIXED_SUPPRESSED_SCANSET_SCAN_FREESTANDING
     int result;
 
-    /* Keep the selected grammar to exactly the literal non-wide `%*3[abc]`
-     * spelling. These musl-accepted forms remain candidate-only and fail
-     * closed rather than becoming a general scanset parser. */
-    errno = 0;
-    result = sscanf("abc", "%3[abc]");
-    if (result != 0 || errno != EINVAL)
-        return 30;
-
+    /* Unbounded, leading-zero-width, and wide forms remain outside the
+     * selected bounded narrow scanset contract. */
     errno = 0;
     result = sscanf("abc", "%*[abc]");
     if (result != 0 || errno != EINVAL)
@@ -128,16 +191,6 @@ static int check_candidate_limitations(void)
     result = sscanf("abc", "%*03[abc]");
     if (result != 0 || errno != EINVAL)
         return 32;
-
-    errno = 0;
-    result = sscanf("abc", "%*3[a-z]");
-    if (result != 0 || errno != EINVAL)
-        return 33;
-
-    errno = 0;
-    result = sscanf("z", "%*3[^abc]");
-    if (result != 0 || errno != EINVAL)
-        return 34;
 
     errno = 0;
     result = sscanf("abc", "%*3l[abc]");
@@ -151,6 +204,9 @@ int crabc_x86_64_stdio_fixed_suppressed_scanset_scan_probe(void)
 {
     int status = check_selected_suppressed_scanset_scan();
 
+    if (status != 0)
+        return status;
+    status = check_bounded_scanset_storage();
     if (status != 0)
         return status;
     return check_candidate_limitations();

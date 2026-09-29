@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the sealed x86 static suppressed-scanset scanf profile.
+# Run the x86 static bounded narrow scanset scanf profile.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

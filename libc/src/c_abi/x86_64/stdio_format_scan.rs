@@ -26,13 +26,12 @@
 //! message through the existing selected error-string table. Input accepts
 //! literals and format whitespace, assignment suppression and width, the same
 //! integer length forms for `%d`/`%i`/`%u`/`%o`/`%x`/`%X`, plus `%c`, `%s`,
-//! `%n`, and the separately sealed literal non-wide assignment-suppressed
-//! `%*3[abc]` state.
+//! `%n`, and bounded narrow scansets with suppression, ranges, and negation.
 //!
 //! The byte-string implementation is allocation-free and has no `FILE`,
 //! stream lock, locale-object, decimal or long-double floating conversion,
-//! wide-character, scanset grammar outside that separately sealed literal
-//! suppressed state, positional argument, pointer-valued `%p`, or permanent
+//! wide-character, unbounded or wide scansets, positional argument,
+//! pointer-valued `%p`, or permanent
 //! stream boundary. Stream formatting uses the same integer and
 //! byte-string grammar but deliberately rejects `%m` and floating `%a`/`%A`;
 //! `%m` is byte-buffer-only. Stream
@@ -73,12 +72,12 @@
 //! | `src/stdio/vfprintf.c` (`printf_core`, `fmt_fp`) | selected integer/byte-string parser plus bare `%m` no-argument errno-message behavior and binary64 `%a`/`%A` spelling, flag, width, precision, and count-store behavior |
 //! | `src/stdio/{printf,vprintf,fprintf,vfprintf}.c` | direct/VaList forwarding into the selected formatter and permanent-stream byte sink; stream entries reject floating and all non-permanent FILE pointers |
 //! | `src/errno/__strerror.h`; `src/errno/strerror.c` | selected immutable fixed-C-locale `%m` message lookup, shared directly with the existing `strerror` leaf |
-//! | `src/stdio/sscanf.c`, `vsscanf.c`, `vfscanf.c`; `src/internal/intscan.c` | NUL-terminated byte scanner, assignment/count discipline, prefix admission, selected integer/string conversions, and sealed `vfscanf` format-NUL, raw-literal, `%%`, format-whitespace, assignment-suppressed raw-character, assignment-suppressed token-string, assignment-suppressed scanset, and assignment-suppressed count states: after the string entry boundary establishes input, format-NUL returns the existing assignment count without entering a scanner state or accessing varargs; the raw literal matches one non-`%`, non-whitespace format byte without assignment; `%%` skips C-locale input whitespace before one literal percent; format whitespace coalesces its run while consuming zero or more input-space bytes without assignment; fixed non-wide `%*3c` consumes three raw bytes without a destination, va_list access, or assignment; fixed non-wide `%*3s` skips C-locale input whitespace before consuming its bounded token without a destination, va_list access, terminator, or assignment; fixed literal non-wide `%*3[abc]` consumes at most three raw `a`/`b`/`c` bytes without input-whitespace skipping, a destination, va_list access, a terminator, or an assignment; and literal non-wide `%*n` reads no source byte and performs no va_list access, count store, or assignment |
+//! | `src/stdio/sscanf.c`, `vsscanf.c`, `vfscanf.c`; `src/internal/intscan.c` | NUL-terminated byte scanner, assignment/count discipline, prefix admission, selected integer/string conversions, and format-NUL, raw-literal, `%%`, format-whitespace, assignment-suppressed raw-character, assignment-suppressed token-string, bounded narrow scanset, and assignment-suppressed count states: after the string entry boundary establishes input, format-NUL returns the existing assignment count without entering a scanner state or accessing varargs; the raw literal matches one non-`%`, non-whitespace format byte without assignment; `%%` skips C-locale input whitespace before one literal percent; format whitespace coalesces its run while consuming zero or more input-space bytes without assignment; fixed non-wide `%*3c` consumes three raw bytes without a destination, va_list access, or assignment; fixed non-wide `%*3s` skips C-locale input whitespace before consuming its bounded token without a destination, va_list access, terminator, or assignment; bounded narrow `%[` stores or suppresses raw byte runs with range and negation membership without input-whitespace skipping, while `%n` observes their consumption; and literal non-wide `%*n` reads no source byte and performs no va_list access, count store, or assignment |
 //! | `src/stdio/{scanf,vscanf,fscanf,vfscanf}.c`; `src/stdio/{sscanf,vsscanf}.c`; `src/stdio/vfscanf.c`; `src/internal/intscan.c` | one-byte-lookahead permanent-stream scanner with delimiter preservation, EOF/matching-failure distinction, `%n`, and selected integer/byte-string/character assignments; musl `weak_alias` forms make the six `__isoc99_*` spellings weak, same-address aliases of those existing entries |
 //!
 //! The full musl formatter/scanner also owns decimal and long-double
-//! conversion, locale, wide input, scansets outside the sealed literal
-//! suppressed state, positional arguments, stream
+//! conversion, locale, wide input, unbounded and wide scansets,
+//! positional arguments, stream
 //! buffering/cancellation, floating exception side effects, and error
 //! propagation through its complete `FILE` machinery. None of those owners is
 //! imported here. The stream entries also do not claim wide, floating,
@@ -1646,30 +1645,65 @@ unsafe fn scan_from_string(
                     assignments += 1;
                 }
             }
-            b'['
-                if length == Length::None
-                    && suppress
-                    && parsed_width == 3
-                    && unsafe { read_byte(width_start) } == b'3'
-                    && unsafe { read_byte(width_start.wrapping_add(1)) } == b'[' =>
+            b'[' if length == Length::None && parsed_width != 0
+                && unsafe { read_byte(width_start) } != b'0' =>
             {
-                // This selected non-wide `%*3[abc]` consumes at most three
-                // members and leaves the first nonmember for the next format
-                // byte. Other scanset spellings fail closed below.
-                if unsafe { read_byte(directive) } != b'a'
-                    || unsafe { read_byte(directive.wrapping_add(1)) } != b'b'
-                    || unsafe { read_byte(directive.wrapping_add(2)) } != b'c'
-                    || unsafe { read_byte(directive.wrapping_add(3)) } != b']'
-                {
-                    unsafe { errno::set_errno(EINVAL) };
-                    return assignments;
+                // A bounded narrow scanset consumes raw bytes without input
+                // whitespace skipping. The byte table is local to this call;
+                // `^` inverts membership and an interior `-` spans a range.
+                let invert = unsafe { read_byte(directive) } == b'^';
+                if invert {
+                    directive = directive.wrapping_add(1);
                 }
-                directive = directive.wrapping_add(4);
-                let mut copied = 0usize;
-                while copied < 3 {
-                    let byte = unsafe { read_byte(cursor) };
-                    if !matches!(byte, b'a' | b'b' | b'c') {
+                let mut members = [false; 256];
+                let mut previous = None;
+                if unsafe { read_byte(directive) } == b']' {
+                    members[b']' as usize] = true;
+                    previous = Some(b']');
+                    directive = directive.wrapping_add(1);
+                }
+                loop {
+                    let byte = unsafe { read_byte(directive) };
+                    if byte == 0 {
+                        unsafe { errno::set_errno(EINVAL) };
+                        return assignments;
+                    }
+                    directive = directive.wrapping_add(1);
+                    if byte == b']' {
                         break;
+                    }
+                    if byte == b'-' {
+                        let end = unsafe { read_byte(directive) };
+                        if let Some(start) = previous {
+                            if end != 0 && end != b']' {
+                                for member in start..end {
+                                    members[member as usize] = true;
+                                }
+                                members[end as usize] = true;
+                                previous = Some(end);
+                                directive = directive.wrapping_add(1);
+                                continue;
+                            }
+                        }
+                    }
+                    members[byte as usize] = true;
+                    previous = Some(byte);
+                }
+                let mut copied = 0usize;
+                let destination = if suppress {
+                    core::ptr::null_mut()
+                } else {
+                    unsafe { args.next_arg::<*mut c_char>() }
+                };
+                while copied < parsed_width {
+                    let byte = unsafe { read_byte(cursor) };
+                    if byte == 0 || members[byte as usize] == invert {
+                        break;
+                    }
+                    if !destination.is_null() {
+                        // SAFETY: `%[` requires space for the selected field
+                        // width plus its terminating NUL in the caller buffer.
+                        unsafe { destination.add(copied).write(byte as c_char) };
                     }
                     cursor = cursor.wrapping_add(1);
                     copied += 1;
@@ -1680,6 +1714,12 @@ unsafe fn scan_from_string(
                     } else {
                         assignments
                     };
+                }
+                if !destination.is_null() {
+                    // SAFETY: The selected width leaves one caller-owned byte
+                    // for the NUL terminator after the copied member run.
+                    unsafe { destination.add(copied).write(0) };
+                    assignments += 1;
                 }
             }
             b'n' => {

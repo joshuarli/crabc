@@ -403,26 +403,6 @@ if [ "$EVIDENCE_PROFILE" = fixed-suppressed-string-scan ]; then
     grep -Fq 'zero-assignment suppressed token' "$ROOT_DIR/$FIXTURE_SOURCE" ||
         fail "suppressed-string fixture no longer records its assignment boundary"
 fi
-if [ "$EVIDENCE_PROFILE" = fixed-suppressed-scanset-scan ]; then
-    grep -Fq 'static-c-stdio-fixed-suppressed-scanset-scan artifact' \
-        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
-        fail "suppressed-scanset scanner state is no longer selected"
-    grep -Fq "b'['" \
-        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
-        fail "suppressed-scanset scanner no longer owns the selected bracket directive"
-    grep -Fq 'parsed_width == 3' \
-        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
-        fail "suppressed-scanset scanner no longer retains its three-byte width"
-    grep -Fq "read_byte(width_start) } == b'3'" \
-        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
-        fail "suppressed-scanset scanner no longer retains its literal width spelling"
-    grep -Fq "b'a' | b'b' | b'c'" \
-        "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
-        fail "suppressed-scanset scanner no longer retains its exact C-locale members"
-    grep -Fq 'raw narrow bytes' \
-        "$ROOT_DIR/compat/x86_64/libc_stdio_fixed_suppressed_scanset_scan_probe.c" ||
-        fail "suppressed-scanset fixture no longer records its raw-byte boundary"
-fi
 if [ "$EVIDENCE_PROFILE" = fixed-suppressed-count-scan ]; then
     grep -Fq 'static-c-stdio-fixed-suppressed-count-scan artifact' \
         "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_format_scan.rs" ||
