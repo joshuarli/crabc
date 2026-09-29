@@ -423,13 +423,14 @@ the selected shared libc. Foreign or duplicate archive rows, final targets,
 call owners, or link receipts keep this ordinary-import reason open.
 
 The owned scanf archive member imports `mbrtowc` once from
-`crabc_owned_scan_vfscanf`. A static-only `fscanf` branch in the existing
+`crabc_owned_scan_vfscanf`, and the same member imports `mbsinit` once from
+that function. A static-only `fscanf` branch in the existing
 installed-header workload retains that C section in ET_EXEC and static PIE.
-The ordinary call reader authenticates its archive symbol and `PLT32`
-relocation, decodes both final direct calls to the unique Rust provider, and
-finds the corresponding direct call and two strong provider symbol rows in
-shared libc. Dynamic executables do not import the implementation. The
-selector joins the exact archive occurrence and both placements, rejecting
+The ordinary call reader authenticates each archive symbol and `PLT32`
+relocation, decodes each final direct call to its unique Rust provider, and
+finds the corresponding direct calls and strong provider symbol rows in
+shared libc. Dynamic executables do not import either implementation. The
+selector joins each exact archive occurrence and both placements, rejecting
 foreign or duplicate callers and providers; the scanf caller remains distinct
 from the fixed C allocator import roster.
 

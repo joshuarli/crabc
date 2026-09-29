@@ -564,9 +564,8 @@ class OrdinaryGetenvImportAttachmentTests(unittest.TestCase):
                     selection._attach_ordinary_static_import(accounting, companion, "getenv")
 
 
-def owned_scan_mbrtowc_fixture() -> tuple[dict, dict, dict]:
+def owned_scan_mbrtowc_fixture(name: str = "mbrtowc") -> tuple[dict, dict, dict]:
     accounting, companion = abort_fixture()
-    name = "mbrtowc"
     ident = selection.identity(name)
     accounting["identities"][0]["identity"] = ident
     accounting["blockers"][0]["identity"] = ident
@@ -641,6 +640,46 @@ class OwnedScanMbrtowcImportAttachmentTests(unittest.TestCase):
                 with self.assertRaises(selection.SelectionError):
                     selection._attach_ordinary_static_import(
                         accounting, companion, "mbrtowc", projection_override=projection)
+
+
+class OwnedScanMbsinitImportAttachmentTests(unittest.TestCase):
+    def test_retained_scan_call_binds_unique_owned_provider(self) -> None:
+        accounting, companion, projection = owned_scan_mbrtowc_fixture("mbsinit")
+        joins = selection._attach_ordinary_static_import(
+            accounting, companion, "mbsinit", projection_override=projection)
+        self.assertEqual([join["identity"]["name"] for join in joins], ["mbsinit"])
+        self.assertEqual(accounting["blockers"], [])
+
+    def test_foreign_or_duplicate_source_and_final_target_rejects(self) -> None:
+        for mutation in ("foreign-import", "duplicate-import", "weak-provider",
+                         "duplicate-provider", "foreign-static-call", "foreign-shared-call"):
+            with self.subTest(mutation=mutation):
+                accounting, companion, projection = owned_scan_mbrtowc_fixture("mbsinit")
+                if mutation == "foreign-import":
+                    next(row for row in accounting["occurrences"] if row["role"] == "import")[
+                        "member_name"] = "foreign.o"
+                elif mutation == "duplicate-import":
+                    extra = deepcopy(next(row for row in accounting["occurrences"]
+                                      if row["role"] == "import"))
+                    extra["index"] = 103
+                    accounting["occurrences"].append(extra)
+                elif mutation == "weak-provider":
+                    next(row for row in accounting["occurrences"] if row["role"] == "definition")[
+                        "row"]["binding"] = "WEAK"
+                elif mutation == "duplicate-provider":
+                    extra = deepcopy(next(row for row in accounting["occurrences"]
+                                      if row["role"] == "definition"))
+                    extra["index"] = 103
+                    accounting["occurrences"].append(extra)
+                elif mutation == "foreign-static-call":
+                    projection["static_final_links"]["static-pie"]["importers"][0][
+                        "resolved_calls"][0]["target_address"] += 1
+                else:
+                    projection["shared_final"]["importers"][0]["calls"][0][
+                        "target_address"] += 1
+                with self.assertRaises(selection.SelectionError):
+                    selection._attach_ordinary_static_import(
+                        accounting, companion, "mbsinit", projection_override=projection)
 
 
 def owned_syslog_close_fixture() -> tuple[dict, dict, dict]:
