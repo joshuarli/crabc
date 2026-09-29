@@ -762,15 +762,15 @@ impl PageMap {
     /// The map must remain active throughout the lookup.
     #[inline(always)]
     unsafe fn submap_at_active(&self, index: usize) -> Option<NonNull<PageEntry>> {
+        let header = self.header;
         // SAFETY: the caller keeps the initialized mapped header live.
-        let header = unsafe { self.header.as_ref() };
-        if index >= header.committed_count.load(Ordering::Acquire) {
+        if index >= unsafe { header.as_ref() }.committed_count.load(Ordering::Acquire) {
             return None;
         }
         // SAFETY: the Acquire count proves the raw pointer word is committed;
         // its atomic view is aligned and pairs with submap publication.
         NonNull::new(
-            unsafe { atomic_submap_slot(self.header, index) }.load(Ordering::Acquire),
+            unsafe { atomic_submap_slot(header, index) }.load(Ordering::Acquire),
         )
     }
 
