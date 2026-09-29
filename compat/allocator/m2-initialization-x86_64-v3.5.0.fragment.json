@@ -18,6 +18,7 @@
     "completion_status": "partial",
     "source_units": [
       "src/init.c",
+      "src/libc.c",
       "src/heap.c",
       "src/theap.c",
       "src/threadlocal.c",
@@ -211,6 +212,40 @@
           "mi_slot_fast_set(NULL)"
         ],
         "evidence_check_ids": ["initialization-tld-direct-source-matrix"]
+      },
+      {
+        "id": "process-loader-tail-after-once",
+        "source_anchor": {
+          "member": "src/init.c",
+          "start_line": 505,
+          "end_line": 533,
+          "sha256": "8eadfa1134c837f8a2e13ab433b20e2ef00d5c9895afc7232638f05c656ce6d8"
+        },
+        "required_definitions": [
+          "void _mi_auto_process_init(void)",
+          "mi_process_init();",
+          "_mi_options_post_init();"
+        ],
+        "evidence_check_ids": [
+          "initialization-process-once-body-and-loader-tail"
+        ]
+      },
+      {
+        "id": "process-once-enter-release",
+        "source_anchor": {
+          "member": "src/libc.c",
+          "start_line": 115,
+          "end_line": 140,
+          "sha256": "e19d20143539c56e12ab1125023f89f3fb831cea2748ef24d70417be647f23e8"
+        },
+        "required_definitions": [
+          "bool _mi_atomic_once_enter(mi_atomic_once_t* once)",
+          "void _mi_atomic_once_release(mi_atomic_once_t* once)",
+          "mi_atomic_store_release(&once->tid,1)"
+        ],
+        "evidence_check_ids": [
+          "initialization-process-once-body-and-loader-tail"
+        ]
       }
     ],
     "branch_matrix": [
@@ -324,6 +359,12 @@
         "expected_passed_test_count": 1
       },
       {
+        "id": "initialization-process-once-body-and-loader-tail",
+        "kind": "c-rust-process-init-once-boundaries",
+        "target": "x86_64_m2_concurrent_init::process_body_and_loader_tail",
+        "expected_passed_test_count": 2
+      },
+      {
         "id": "initialization-automatic-pthread-destructor-c-oracle",
         "kind": "c-oracle-teardown-receipt",
         "target": "x86_64_automatic_pthread_destructor_evidence",
@@ -381,7 +422,7 @@
     "remaining_conditions": [
       "The selected ordinary later-main rows compare the direct pinned-C `_mi_thread_init_with_heap(mi_heap_main())` caller's Malloc TLD/Theap, dual list, default/fixed-TLS root, counter, and explicit-finish post-state with Rust's `MainHeapThreadAttachment`. The C fixtures separately verify source order. Rust does not alias that order or infer allocation attempts from tickets. The paired Theap-failure row compares only retained failure post-state under source-specific C and typed Rust faults.",
       "Automatic teardown is qualified by the pinned-C automatic, cancellation, and process-done pthread-key receipts and by the Rust owner-exit phase, physical process-destroy, and fork-repair owners. Their installed-product composition (natural return, pthread_exit, cancellation, and fork through libc) is proven by the runtime lane's `owned-native-allocator-stress` and `owned-native-allocator-fork`, not by this allocator gate.",
-      "The embedded receipt pairs repeated explicit process initialization with pinned C for initialized default, stable owner identity, and unchanged total/live thread counts. C treats the second call as a no-op; Rust's private owner constructor returns AlreadyInitialized while preserving its first owner. A separate direct eight-field C/Rust differential in `x86_64_m2_concurrent_init.py` now observes a real C output callback after default attachment, recursive owner entry, a waiting distinct process-init caller, final default identity, and unchanged thread counts against Rust's coordinator callback interval. Its Rust interval is a controlled post-attachment observer, so this does not establish identical callback delivery or invocation timing. The receipt's Rust-only startup rows (missing facts, PageMap-failure retention, startup-output recursion) remain ownership evidence; the first-allocation entropy fault and loader tail have separate pinned-C comparisons. Installed-product startup remains open."
+      "The embedded receipt pairs repeated explicit process initialization with pinned C for initialized default, stable owner identity, and unchanged total/live thread counts. C treats the second call as a no-op; Rust's private owner constructor returns AlreadyInitialized while preserving its first owner. A separate direct eight-field C/Rust differential in `x86_64_m2_concurrent_init.py` now observes a real C output callback after default attachment, recursive owner entry, a waiting distinct process-init caller, final default identity, and unchanged thread counts against Rust's coordinator callback interval. The source process-body callback keeps distinct callers blocked. A separate real delayed stderr flush now compares the loader-tail release boundary: process readiness and once release precede the flush, recursive process initialization is complete, and a distinct caller returns before the flush finishes. The outer runtime owner must preserve this same split; installed-product startup remains separately required. The reservation callback Rust interval remains a controlled post-attachment observer, so general callback delivery and timing are not inferred. The receipt's Rust-only startup rows (missing facts, PageMap-failure retention, startup-output recursion) remain ownership evidence; the first-allocation entropy fault and loader tail have separate pinned-C comparisons. Installed-product startup remains open."
     ]
   }
 }

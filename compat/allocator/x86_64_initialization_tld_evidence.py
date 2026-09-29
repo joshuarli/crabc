@@ -31,6 +31,7 @@ from typing import Any, Mapping, Sequence
 ROOT = Path(__file__).resolve().parents[2]
 RUNNER_PATH = ROOT / "compat/allocator/run.py"
 RECURSION_PATH = ROOT / "compat/allocator/x86_64_init_recursion_evidence.py"
+ONCE_BOUNDARIES_PATH = ROOT / "compat/allocator/x86_64_m2_concurrent_init.py"
 FRAGMENT_PATH = ROOT / "compat/allocator/m2-initialization-x86_64-v3.5.0.fragment.json"
 REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/initialization-tld-matrix.json"
 TARGET = "x86_64-unknown-linux-musl"
@@ -146,6 +147,8 @@ EXPECTED_ANCHORS = (
     ("src/init.c", 377, 421, "5b55d25943fc70dab37a7d64c842c304411f8742ad77ccf912827e2518b04e8f"),
     ("src/theap.c", 414, 450, "f118f2b4bf34099f31d2742f99e252202caf5ed92c1d13748f077e8a91ce99eb"),
     ("src/threadlocal.c", 205, 214, "f15d366c5bf21e176e97e68da940447dd55a4966c5787874c7e3f130c4e329c1"),
+    ('src/init.c', 505, 533, '8eadfa1134c837f8a2e13ab433b20e2ef00d5c9895afc7232638f05c656ce6d8'),
+    ('src/libc.c', 115, 140, 'e19d20143539c56e12ab1125023f89f3fb831cea2748ef24d70417be647f23e8'),
 )
 EXPECTED_REQUIRED_DEFINITIONS = (
     ("mi_tld_detached.memid = memid_static",),
@@ -206,6 +209,8 @@ EXPECTED_REQUIRED_DEFINITIONS = (
         "if (mi_slot_fast_peek() != NULL)",
         "mi_slot_fast_set(NULL)",
     ),
+    ('void _mi_auto_process_init(void)', 'mi_process_init();', '_mi_options_post_init();'),
+    ('bool _mi_atomic_once_enter(mi_atomic_once_t* once)', 'void _mi_atomic_once_release(mi_atomic_once_t* once)', 'mi_atomic_store_release(&once->tid,1)'),
 )
 EXPECTED_SCOPE = {
     "aarch64_status_reused": False,
@@ -640,6 +645,8 @@ def source_input_records() -> list[dict[str, str]]:
         "compat/allocator/m2_later_main_theap_publication_success_x86_64.c",
         "compat/allocator/x86_64_initialization_tld_evidence.py",
         "compat/allocator/x86_64_init_recursion_evidence.py",
+        "compat/allocator/x86_64_m2_concurrent_init.py",
+        "compat/allocator/x86_64_m2_concurrent_init.c",
         "compat/allocator/x86_64-init-recursion-evidence-v3.5.0.json",
         "compat/upstreams.toml",
         *BRANCH_RUST_SOURCES,
@@ -745,6 +752,7 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
         raise EvidenceError("initialization M2 component state changed")
     if component.get("source_units") != [
         "src/init.c",
+        "src/libc.c",
         "src/heap.c",
         "src/theap.c",
         "src/threadlocal.c",
@@ -764,6 +772,7 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
         ("initialization-later-tld-metadata-fault-retry-c-rust-differential", "c-rust-initialization-tld-fault-retry-differential", "tld::tests::emit_m2_later_tld_fault_retry_c_rust_trace", 1),
         ("initialization-tld-direct-source-matrix", "c-rust-initialization-tld-source-matrix", "x86_64_initialization_tld_evidence::seven_fixed_direct_tld_and_ordinary_later_main_branches", 7),
         ("initialization-explicit-worker-recovery-lifecycle", "c-rust-init-recursion-lifecycle", "main_heap_thread::tests::emit_x86_64_init_recursion_teardown_c_rust_trace", 1),
+        ("initialization-process-once-body-and-loader-tail", "c-rust-process-init-once-boundaries", "x86_64_m2_concurrent_init::process_body_and_loader_tail", 2),
         *((check_id, kind, target, 1) for check_id, kind, target in AUTOMATIC_TEARDOWN_CHECKS),
         (
             "initialization-exclusive-arena-theap-slice-c-rust-differential",
@@ -829,7 +838,7 @@ def report_from_results(
     *, provenance: Mapping[str, str], before: Mapping[str, Any], after: Mapping[str, Any],
     anchors: Sequence[Mapping[str, Any]], rows: Sequence[Mapping[str, Any]],
     c_probes: Sequence[Mapping[str, Any]], rust_probes: Sequence[Mapping[str, Any]],
-    init_recursion: Mapping[str, Any],
+    init_recursion: Mapping[str, Any], once_boundaries: Mapping[str, Any],
 ) -> dict[str, Any]:
     pin = run.load_pin()
     report = {
@@ -837,6 +846,7 @@ def report_from_results(
         "c_probes": [dict(probe) for probe in c_probes],
         "format": 1,
         "init_recursion": dict(init_recursion),
+        "once_boundaries": dict(once_boundaries),
         "init_recursion_binding": {
             "source_input_paths": [record["path"] for record in source_input_records()],
             "source_state_after": dict(after),
@@ -867,7 +877,7 @@ def report_from_results(
 
 def validate_report(report: Mapping[str, Any]) -> None:
     expected = {
-        "branch_rows", "c_probes", "format", "init_recursion", "init_recursion_binding", "kind", "profile", "provenance",
+        "branch_rows", "c_probes", "format", "init_recursion", "init_recursion_binding", "once_boundaries", "kind", "profile", "provenance",
         "rust_probes", "scope", "source", "source_state_after", "source_state_before", "status", "target", "upstream",
     }
     if not isinstance(report, Mapping) or set(report) != expected or report.get("format") != 1 or report.get("status") != "passed":
@@ -929,6 +939,43 @@ def validate_report(report: Mapping[str, Any]) -> None:
         or source.get("inputs") != source_input_records()
     ):
         raise EvidenceError("initialization evidence source provenance changed")
+    boundaries = report.get("once_boundaries")
+    if (
+        not isinstance(boundaries, Mapping)
+        or boundaries.get("comparison") != "matched"
+        or boundaries.get("loader_tail", {}).get("comparison") != "matched"
+        or boundaries.get("upstream_version") != pin["version"]
+        or boundaries.get("upstream_revision") != pin["revision"]
+        or boundaries.get("provenance", {}).get("fixture_sha256") != sha256_file(ROOT / "compat/allocator/x86_64_m2_concurrent_init.c")
+        or boundaries.get("provenance", {}).get("rust_source_sha256") != sha256_file(ROOT / "crabc-mimalloc/src/process_init.rs")
+    ):
+        raise EvidenceError("initialization once-boundary source binding changed")
+    spec = importlib.util.spec_from_file_location("crabc_initialization_once_boundaries", ONCE_BOUNDARIES_PATH)
+    if spec is None or spec.loader is None:
+        raise EvidenceError("initialization once-boundary producer is absent")
+    once = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(once)
+    try:
+        for tail, prefix, comparison in (
+            (False, "process-body", boundaries), (True, "loader-tail", boundaries["loader_tail"]),
+        ):
+            records = {}
+            for language in ("C", "RUST"):
+                raw = boundaries["raw"][f"{prefix}-{language.lower()}"]
+                path = ROOT / raw["path"]
+                if path.resolve().parent != (ROOT / "compat/reports/allocator/x86_64/concurrent-process-init").resolve():
+                    raise ValueError("once-boundary raw output escaped its report location")
+                if sha256_file(path) != raw["sha256"]:
+                    raise ValueError("once-boundary raw output digest changed")
+                output = path.read_text(encoding="utf-8")
+                records[language] = once.parse_trace(output, language, tail=tail)
+                if language == "RUST" and run.parse_rust_test_count(output) != 1:
+                    raise ValueError("once-boundary Rust probe did not pass exactly once")
+            once.compare(records["C"], records["RUST"])
+            if records["C"] != comparison["c"] or records["RUST"] != comparison["rust"]:
+                raise ValueError("once-boundary parsed output differs from its receipt")
+    except (KeyError, TypeError, ValueError, OSError) as error:
+        raise EvidenceError(f"initialization once-boundary evidence is invalid: {error}") from error
     load_fragment()
     recursion.validate_report(report["init_recursion"])
     binding = report.get("init_recursion_binding")
@@ -1010,10 +1057,17 @@ def run_evidence(*, offline: bool, report_path: Path) -> dict[str, Any]:
                 "source": {"path": BRANCH_RUST_SOURCES[index], "sha256": sha256_file(ROOT / BRANCH_RUST_SOURCES[index])},
             })
         init_recursion = recursion.run_evidence(offline=offline, report_path=temporary / "init-recursion.json")
+        spec = importlib.util.spec_from_file_location("crabc_initialization_once_boundaries", ONCE_BOUNDARIES_PATH)
+        if spec is None or spec.loader is None:
+            raise EvidenceError("initialization once-boundary producer is absent")
+        once = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(once)
+        once_boundaries = once.collect()
+
         after = source_state()
         report = report_from_results(
             provenance=provenance, before=before, after=after, anchors=anchors, rows=rows,
-            c_probes=c_probes, rust_probes=rust_probes, init_recursion=init_recursion,
+            c_probes=c_probes, rust_probes=rust_probes, init_recursion=init_recursion, once_boundaries=once_boundaries,
         )
     run.write_json(report_path, report)
     return report

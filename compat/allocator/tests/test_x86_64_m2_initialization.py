@@ -48,6 +48,12 @@ class NativeInitializationM2AssemblyTests(unittest.TestCase):
                     "main_heap_thread::tests::emit_x86_64_init_recursion_teardown_c_rust_trace",
                     1,
                 ),
+                (
+                    "initialization-process-once-body-and-loader-tail",
+                    "c-rust-process-init-once-boundaries",
+                    "x86_64_m2_concurrent_init::process_body_and_loader_tail",
+                    2,
+                ),
                 *(
                     (check_id, kind, target, 1)
                     for check_id, kind, target in RUNNER._m2_x86_64_initialization_producer().AUTOMATIC_TEARDOWN_CHECKS

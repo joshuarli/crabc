@@ -4,7 +4,7 @@
 // `LICENSE` at the root of this distribution.
 // SPDX-License-Identifier: MIT
 //
-// Source map: pinned mimalloc v3.5.0 `src/init.c:184-214,305-360,536-592`
+// Source map: pinned mimalloc v3.5.0 `src/init.c:184-214,305-360,505-592`
 // (`mi_heap_main_init_once`, `_mi_thread_init_with_heap`, and
 // `mi_process_init_once`), `src/libc.c:115-140`
 // (`_mi_atomic_once_enter`/`_mi_atomic_once_release` through `once.rs`), and
@@ -18,8 +18,9 @@
 //! initialized subset to its owning thread. The native runtime moves the
 //! owner into its final slot before `ProcessMainStartup` resumes source huge
 //! then regular reservations and diagnostic post-init. No mutable owner or
-//! random projection spans a callback; final process readiness remains a
-//! separate publication. Dropping an unfinished continuation retains source
+//! random projection spans a callback. Process readiness and its once release
+//! precede the loader diagnostic/reseed tail, as the two source entries require.
+//! Dropping an unfinished continuation retains source
 //! state rather than reopening initialization. Historical explicit-config
 //! fixtures remain policy-unbound; they do not manufacture ambient defaults.
 //! Pthread lifetime-hook integration and process shutdown belong to the
@@ -103,7 +104,7 @@ enum VmPolicyStartup {
 /// `_mi_thread_init` before the runtime's startup call runs only the once
 /// body: the policy stays preloading, delayed output stays buffered, and a
 /// later runtime startup completes the tail. See
-/// [`ProcessMainInitializationStorage::complete_runtime_startup_tail`].
+/// [`ProcessMainInitializationStorage::complete_runtime_startup_after_first_allocation`].
 #[cfg(target_arch = "x86_64")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProcessStartEntry {
@@ -123,8 +124,9 @@ enum ProcessStartupDiagnostics<'owner> {
 
 /// Final process-lifetime state for the bounded source main-process startup.
 ///
-/// `READY` is published only after every predecessor in the source order has
-/// completed. `RETAINED` is terminal: a failure after the coordinator wins
+/// `READY` is published after the `mi_process_init_once` body has completed,
+/// before its once release and the separate loader diagnostic/reseed tail.
+/// `RETAINED` is terminal: a failure after the coordinator wins
 /// the static ticket-zero selection may leave a static Heap, detached metadata
 /// image, PageMap, TLD, or TLS root live, so retrying as if the process were
 /// cold would invent an unsafe second startup branch.
@@ -1449,7 +1451,19 @@ impl ProcessMainStartup {
         self.complete_with_hook(|| {})
     }
 
-    fn complete_with_hook(mut self, before_release: impl FnOnce()) -> Result<(), ProcessMainInitError> {
+    fn complete_with_hook(self, before_release: impl FnOnce()) -> Result<(), ProcessMainInitError> {
+        self.complete_once_body_with_hook(before_release)?.complete()
+    }
+
+    /// Completes `mi_process_init` and releases its once envelope, returning
+    /// the separate `_mi_auto_process_init` diagnostic/reseed continuation.
+    /// The embedding runtime must publish its completed process owner and
+    /// release any outer initialization-once claim before completing the tail.
+    pub(crate) fn complete_once_body(self) -> Result<ProcessMainRuntimeStartupTail, ProcessMainInitError> {
+        self.complete_once_body_with_hook(|| {})
+    }
+
+    fn complete_once_body_with_hook(mut self, before_release: impl FnOnce()) -> Result<ProcessMainRuntimeStartupTail, ProcessMainInitError> {
         self.storage.ensure_allocation_ready()?;
         if self.storage.state.load(Ordering::Acquire) != SOURCE_ATTACHED {
             return Err(ProcessMainInitError::Retained);
@@ -1493,29 +1507,64 @@ impl ProcessMainStartup {
         } else { crate::arena::StartupArenaReservationOutcomes::empty() };
         unsafe { (*self.storage.startup_reservations.get()).write(reservations) };
 
-        // `_mi_auto_process_init` continues after its `mi_process_init` with
-        // the loader tail; a first-allocation entry defers it to the later
-        // runtime startup call.
-        #[cfg(target_arch = "x86_64")]
-        if self.entry == ProcessStartEntry::RuntimeStartup {
-            self.storage.runtime_startup_tail.store(true, Ordering::Relaxed);
-            let output = match diagnostics {
-                ProcessStartupDiagnostics::Selected(output) => Some(output),
-                ProcessStartupDiagnostics::Unconnected => None,
-            };
-            // SAFETY: source startup still has exclusive dispatch ownership
-            // after automatic attachment and the startup reservation work;
-            // no attachment/Theap/random borrow is live here.
-            unsafe { run_runtime_startup_tail(output, metadata, self.subprocess) }?;
-        }
-
         if self.storage.state.load(Ordering::Acquire) != SOURCE_ATTACHED {
             return Err(ProcessMainInitError::Retained);
         }
         let completion = self.completion.take().ok_or(ProcessMainInitError::Retained)?;
         self.storage.publish_terminal_state_and_release_with_hook(completion, READY, before_release);
-        Ok(())
+        Ok(ProcessMainRuntimeStartupTail {
+            #[cfg(target_arch = "x86_64")]
+            storage: self.storage,
+            #[cfg(target_arch = "x86_64")]
+            metadata,
+            #[cfg(target_arch = "x86_64")]
+            subprocess: self.subprocess,
+            #[cfg(target_arch = "x86_64")]
+            diagnostics,
+            #[cfg(target_arch = "x86_64")]
+            entry: self.entry,
+            _not_send_or_sync: PhantomData,
+        })
+    }
+}
 
+/// The loader-only remainder after `mi_process_init` has published readiness
+/// and released once. It carries immutable process inputs, so synchronous
+/// diagnostic reentry cannot borrow or hold an initializing owner. A
+/// first-allocation entry deliberately leaves this tail for runtime startup.
+#[must_use = "runtime startup must complete its diagnostic and random-reseed tail"]
+pub(crate) struct ProcessMainRuntimeStartupTail {
+    #[cfg(target_arch = "x86_64")]
+    storage: &'static ProcessMainInitializationStorage,
+    #[cfg(target_arch = "x86_64")]
+    metadata: core::pin::Pin<&'static MetaAllocator>,
+    #[cfg(target_arch = "x86_64")]
+    subprocess: &'static MainSubprocess,
+    #[cfg(target_arch = "x86_64")]
+    diagnostics: ProcessStartupDiagnostics<'static>,
+    #[cfg(target_arch = "x86_64")]
+    entry: ProcessStartEntry,
+    _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+impl ProcessMainRuntimeStartupTail {
+    pub(crate) fn complete(self) -> Result<(), ProcessMainInitError> {
+        #[cfg(target_arch = "x86_64")]
+        if self.entry == ProcessStartEntry::RuntimeStartup {
+            // Loader startup is serialized by its caller. Claim before
+            // delivery so recursive runtime entry never repeats the flush.
+            if self.storage.runtime_startup_tail.swap(true, Ordering::AcqRel) {
+                return Ok(());
+            }
+            let output = match self.diagnostics {
+                ProcessStartupDiagnostics::Selected(output) => Some(output),
+                ProcessStartupDiagnostics::Unconnected => None,
+            };
+            // SAFETY: the original initial thread owns this loader tail and
+            // no attachment/Theap/random projection spans output delivery.
+            unsafe { run_runtime_startup_tail(output, self.metadata, self.subprocess) }?;
+        }
+        Ok(())
     }
 }
 
@@ -3809,6 +3858,115 @@ mod tests {
         teardown_tx.send(()).expect("the original owner still owns teardown");
         contender.join().expect("the contender finishes");
         initializer.join().expect("the original owner finishes");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    struct LoaderTailObservation {
+        storage: &'static ProcessMainInitializationStorage,
+        main_static: &'static MainStaticAttachmentStorage,
+        subprocess: &'static MainSubprocess,
+        metadata: core::pin::Pin<&'static MetaAllocator>,
+        page_map: &'static ProcessPageMapStorage,
+        entered: mpsc::Sender<()>,
+        returned: mpsc::Receiver<bool>,
+        observed: core::cell::Cell<Option<(bool, bool, bool)>>,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    std::thread_local! {
+        static LOADER_TAIL_OBSERVATION: core::cell::Cell<*const LoaderTailObservation> =
+            const { core::cell::Cell::new(core::ptr::null()) };
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn observe_loader_tail(_message: *const core::ffi::c_char) {
+        LOADER_TAIL_OBSERVATION.with(|slot| {
+            // SAFETY: the initializer installs its stack-local observation
+            // only for the synchronous startup flush and clears it afterward.
+            let Some(observation) = (unsafe { slot.get().as_ref() }) else { return; };
+            if observation.observed.get().is_some() { return; }
+            let ready = observation.storage.state.load(Ordering::Acquire) == READY;
+            let recursive = unsafe { observation.storage.initialize_with_test_components(
+                memory_config(), observation.main_static, observation.subprocess,
+                observation.metadata, observation.page_map,
+            ) };
+            let recursive_complete = matches!(recursive, Err(ProcessMainInitError::AlreadyInitialized));
+            let _ = observation.entered.send(());
+            let contender_completed = observation.returned.recv_timeout(Duration::from_secs(2))
+                .unwrap_or(false);
+            observation.observed.set(Some((ready, recursive_complete, contender_completed)));
+        });
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_loader_tail_once_release_c_rust_trace() {
+        let config = memory_config();
+        let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (returned_tx, returned_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let contender = thread::spawn(move || {
+            entered_rx.recv_timeout(Duration::from_secs(5)).expect("the loader flush is reached");
+            let empty_before = unsafe { !default_theap().as_ref().is_initialized() };
+            let result = unsafe { storage.initialize_with_test_components(
+                config, main_static, subprocess, metadata, page_map_storage,
+            ) };
+            let empty_after = unsafe { !default_theap().as_ref().is_initialized() };
+            let complete = matches!(result, Err(ProcessMainInitError::AlreadyInitialized));
+            let _ = returned_tx.send(complete);
+            let _ = finished_tx.send(());
+            empty_before && empty_after && complete
+        });
+        let trace = thread::spawn(move || {
+            let output = std::boxed::Box::leak(std::boxed::Box::new(OutputOwner::new(observe_loader_tail)));
+            // SAFETY: the null environment means unavailable reads; this
+            // isolated source table and delayed output have a single caller.
+            unsafe {
+                output.initialize_source_options(|| core::ptr::null());
+                output.raw_message(crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(
+                    c"loader startup delayed diagnostic\n",
+                ));
+            }
+            let observation = LoaderTailObservation {
+                storage, main_static, subprocess, metadata, page_map: page_map_storage,
+                entered: entered_tx, returned: returned_rx, observed: core::cell::Cell::new(None),
+            };
+            let (mut owner, startup) = unsafe {
+                storage.prepare_with_test_components_and_vm_options(
+                    config, resolved_vm_options(), main_static, subprocess, metadata,
+                    page_map_storage, Some(output),
+                )
+            }.expect("the isolated source body attaches its owner");
+            let first = default_theap();
+            LOADER_TAIL_OBSERVATION.with(|slot| slot.set(&observation));
+            let completed = startup.complete();
+            LOADER_TAIL_OBSERVATION.with(|slot| slot.set(core::ptr::null()));
+            completed.expect("the loader startup tail completes");
+            let (ready, recursive_complete, contender_completed) = observation.observed.get()
+                .expect("the real delayed flush delivered to the default stderr primitive");
+            let trace = [
+                ("ready_before_tail_output", ready),
+                ("recursive_init_complete", recursive_complete),
+                ("contender_completes_during_tail", contender_completed),
+                ("default_owner_preserved", first == default_theap()),
+                ("counters_preserved", subprocess.total_thread_count() == 1 && subprocess.live_thread_count() == 1),
+                ("tail_claim_not_repeated", !unsafe { storage.complete_runtime_startup_after_first_allocation() }
+                    .expect("the completed runtime tail remains claimed")),
+            ];
+            finished_rx.recv_timeout(Duration::from_secs(5))
+                .expect("the original owner stays attached until its contender returns");
+            owner.teardown().expect("the initial source owner retains teardown");
+            trace
+        }).join().expect("the loader-tail initializer completes");
+        assert!(contender.join().expect("the process-init contender completes"));
+        std::println!("CRABC_MI_LOADER_TAIL_RUST_TRACE_BEGIN");
+        for (key, value) in trace {
+            std::println!("trace.loader_tail.{key}={}", usize::from(value));
+        }
+        std::println!("CRABC_MI_LOADER_TAIL_RUST_TRACE_END");
+        assert!(trace.iter().all(|(_, value)| *value),
+            "process initialization must release once before loader-tail output: {trace:?}");
     }
 
     #[test]
