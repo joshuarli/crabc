@@ -368,10 +368,9 @@ static int check_resolver_runtime(void)
         return 42;
     if (res_search("dns", C_IN, T_A, answer, sizeof(answer)) < 12)
         return 35;
-#ifdef CRABC_RESOLVER_RUNTIME_FREESTANDING
-    if (h_errno != 0)
+    /* A positive res_query preserves the preceding negative resolver status. */
+    if (h_errno != HOST_NOT_FOUND)
         return 36;
-#endif
     return 0;
 }
 
