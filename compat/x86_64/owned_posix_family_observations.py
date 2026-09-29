@@ -43,7 +43,7 @@ class Layout:
 
 LAYOUTS = {
     # The runner's full `cases` roster, in its order.
-    'legacy-filesystem': Layout('posix_filesystem', ('aliases', 'directory', 'traversal', 'temporary', 'handles', 'comparators', 'directory-edges', 'directory-threads', 'traversal-flags', 'traversal-permissions', 'legacy-edges', 'handle-edges', 'alias-edges'), 'static-{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}'),
+    'legacy-filesystem': Layout('posix_filesystem', ('aliases', 'directory', 'traversal', 'temporary', 'handles', 'comparators', 'directory-edges', 'directory-threads', 'traversal-flags', 'traversal-descriptor', 'traversal-permissions', 'legacy-edges', 'handle-edges', 'alias-edges', 'namespace-boundaries'), 'static-{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}'),
     'control-residual': Layout('process_control'),
     'credentials-profile': Layout('credentials_profile', ('direct', 'aliases', 'transitions', 'threads'), '{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}', status_suffix='.stdout.status'),
     'environment-lifecycle': Layout('environment_lifecycle', ('normal', 'allocation-failure'), '{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}', '.stdout.stderr', '.stdout.status'),

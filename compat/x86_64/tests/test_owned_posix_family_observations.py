@@ -38,6 +38,23 @@ class ObservationsTests(unittest.TestCase):
         self.assertEqual(set(result['scenarios']['normal']['candidates']), set(observations.MODES))
         self.assertEqual(result['scenarios']['normal']['oracle']['stdout']['path'], 'oracle.stdout')
 
+    def test_legacy_filesystem_accepts_all_executed_scenarios(self):
+        self.fixture('legacy-filesystem')
+        layout = observations.LAYOUTS['legacy-filesystem']
+        for scenario in ('traversal-descriptor', 'namespace-boundaries'):
+            for mode in ('oracle', *observations.MODES):
+                stem = observations._stem('legacy-filesystem', layout, mode, scenario,
+                                          oracle=mode == 'oracle')
+                for suffix, raw in (('.stdout', b'behavior\n'), ('.stderr', b''),
+                                    ('.status', b'0\n')):
+                    (self.leaf / (stem + suffix)).write_bytes(raw)
+        result = observations.collect('legacy-filesystem', self.leaf, static_required=True)
+        self.assertIn('traversal-descriptor', result['scenarios'])
+        self.assertIn('namespace-boundaries', result['scenarios'])
+        (self.leaf / 'oracle-namespace-boundaries.stdout').unlink()
+        with self.assertRaises(observations.ObservationError):
+            observations.collect('legacy-filesystem', self.leaf, static_required=True)
+
     def test_missing_status_or_empty_stderr_is_not_inferred_from_success(self):
         for suffix in ('.status', '.stderr'):
             with self.subTest(suffix=suffix):
