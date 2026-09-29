@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 import json
 import os
+import re
 from pathlib import Path
 import stat
 import tomllib
@@ -474,10 +475,62 @@ def _libc_test_reader(root: Path, leaf: Path, mount: str, dynamic: Path, *, stat
         native.same(report.get("status"), "passed" if status == 0 else "incomplete", "libc-test outer status")
         native.require("fatal_error" not in report and report.get("candidate_link_blocker") is None,
                        "libc-test campaign has a retained blocker")
-        native._libc_product(reader, report)
+        copied_product, product_identity = native._libc_product(reader, report)
+        oracle = native._libc_oracle(reader, report)
         definitions, _ = native._libc_test_source(reader, report, contract)
         records = {record["id"]: record for record in report["units"]}
         kinds = {definition["id"]: definition for definition in definitions}
+        raw_counts: dict[str, int] = {}
+        for record in report["units"]:
+            native.require(isinstance(record.get("status"), str), "libc-test unit status is malformed")
+            raw_counts[record["status"]] = raw_counts.get(record["status"], 0) + 1
+        native.same(report["counts"], raw_counts, "libc-test retained raw status counts")
+        native.same(report["source_graph"]["dynamic_runtime_modes"], ["dynamic-pie"], "libc-test runtime mode")
+        object_paths = {name: leaf / "objects/candidate" / (name + ".o") for name in kinds}
+        selected = {unit.identifier for unit in roster.libc_test_units}
+        required_objects = selected | set(contract.COMMON_MEMBERS) | {contract.RUNTIME_HELPER}
+        mapped = lambda path: Path(reader.recorded(path))
+        # The upstream harness and support objects are part of each selected
+        # executable's graph even though they do not credit another capability.
+        for name in sorted(required_objects):
+            native.require(name in kinds, f"libc-test has no unit {name}")
+            definition, record = kinds[name], records[name]
+            kind = definition["kind"]
+            native.same([record["kind"], record["suite"]], [kind, definition["suite"]], f"libc-test {name} role")
+            source = leaf / "source-prepared" / definition["source"]
+            reader.bind(record["source"], source, f"libc-test {name} source")
+            translation, header = record["candidate_translation"], record["header_translation"]
+            native.same([translation["status"], header["status"], header["foreign_headers"]],
+                        ["passed", "passed", []], f"libc-test {name} translation")
+            reader.bind(translation["object"], object_paths[name], f"libc-test {name} object")
+            quote_dirs = [leaf / "source-prepared/src/common"] + ([leaf / "generated/candidate"] if kind == "api" else [])
+            native.same(record["quote_include_dirs"], list(map(str, map(mapped, quote_dirs))),
+                        f"libc-test {name} quote include closure")
+            command = contract.compile_command(mapped(copied_product), mapped(source), mapped(object_paths[name]),
+                                               shared_object=kind == "dso", quote_dirs=list(map(mapped, quote_dirs)), kind=kind)
+            native._command_streams(reader, translation["record"], command=command)
+            native.same(translation["record"]["environment"], report["product"]["compiler_environment"],
+                        f"libc-test {name} installed compiler environment")
+            header_command = contract.header_command(Path(report["product"]["compiler"]["path"]), mapped(copied_product),
+                mapped(source), shared_object=kind == "dso", quote_dirs=list(map(mapped, quote_dirs)), kind=kind,
+                translation=contract.installed_translation_flags(copied_product))
+            native._command_streams(reader, header["record"], command=header_command)
+            native.same(header["record"]["environment"], report["product"]["compiler_environment"],
+                        f"libc-test {name} header compiler environment")
+            reader.bind(header["trace"], reader.local(header["record"]["stderr"]["path"]), f"libc-test {name} header trace")
+            trace = native.read_bytes(reader.local(header["trace"]["path"])).decode("utf-8", errors="replace")
+            paths = [match.group(1) for line in trace.splitlines() if (match := re.match(r"^\.+\s+(.*)$", line))]
+            native.same(header["trace_paths"], paths, f"libc-test {name} retained header closure")
+            for path in paths:
+                local = reader.local(path, within=reader.root)
+                native.require(any(local.is_relative_to(parent) for parent in
+                                   (copied_product / "usr/include", leaf / "source-prepared/src", leaf / "generated")),
+                               f"libc-test {name} header escapes installed and prepared inputs")
+        helper = kinds[contract.RUNTIME_HELPER]
+        for side in ("candidate", "oracle"):
+            native._libc_test_link(reader, records[contract.RUNTIME_HELPER][side + "_link"], unit=helper, side=side,
+                                  objects=[object_paths[contract.RUNTIME_HELPER], *[object_paths[name] for name in contract.COMMON_MEMBERS]],
+                                  contract=contract, product=copied_product)
         accounted: dict[str, object] = {}
         for unit in roster.libc_test_units:
             native.require(unit.identifier in kinds, f"libc-test has no unit {unit.identifier}")
@@ -496,6 +549,9 @@ def _libc_test_reader(root: Path, leaf: Path, mount: str, dynamic: Path, *, stat
                 accounted[unit.identifier] = {"kind": kind, "status": "passed", "object": reader.identity(obj)}
                 continue
             native.same(kind, "runtime", f"libc-test {unit.identifier} kind")
+            linked = {side: native._libc_test_link(reader, record[side + "_link"], unit=definition, side=side,
+                objects=[obj, *[object_paths[name] for name in contract.COMMON_MEMBERS]], contract=contract, product=copied_product)
+                for side in ("candidate", "oracle")}
             runtime, results, raw = record["runtime"], {}, {}
             for side in ("oracle", "candidate"):
                 run = runtime[side]
@@ -505,7 +561,23 @@ def _libc_test_reader(root: Path, leaf: Path, mount: str, dynamic: Path, *, stat
                 status_path = leaf / "execution" / unit.identifier / (side + ".status.json")
                 reader.bind(run["status_record"], status_path, f"libc-test {unit.identifier} {side} status")
                 native.same(native.read_json(status_path), run["record"], f"libc-test {unit.identifier} {side} record")
-                results[side] = native._command_streams(reader, run["record"], expected_status=1 if failed else 0)
+                for stream in ("stdout", "stderr"):
+                    reader.bind(run["record"][stream], leaf / "execution" / unit.identifier / (side + "." + stream),
+                                f"libc-test {unit.identifier} {side} raw {stream}")
+                native.same(run["record"]["environment"],
+                            {"LC_ALL": "C", "PATH": "/usr/bin:/bin", "SOURCE_DATE_EPOCH": "1", "TZ": "UTC"},
+                            f"libc-test {unit.identifier} runtime environment")
+                identity = native._libc_execution_identity(reader, run["execution_identity"], name=unit.identifier, side=side,
+                    source=leaf / "source-prepared" / definition["source"], command=run["record"]["command"])
+                results[side] = {**native._command_streams(reader, run["record"], expected_status=1 if failed else 0),
+                                 "execution_identity": identity}
+                roles = contract.unit_dso_roles(unit.identifier)
+                native.require(not roles["initial"] and not roles["runtime"] and unit.identifier not in contract.SHELL_RUNTIME_UNITS,
+                               f"libc-test {unit.identifier} requires an unselected runtime companion")
+                payload = [{"source": reader.binding(leaf / "links" / side / "common/runtest.exe"), "destination": "/runtest"},
+                           {"source": reader.binding(linked[side]), "destination": "/" + unit.identifier}]
+                native._libc_root_phases(reader, run, name=unit.identifier, side=side, payload=payload, controls=[], topology=roles,
+                                        product_identity=product_identity, oracle=oracle, product=copied_product)
                 raw[side] = [native.read_bytes(reader.local(run["record"][stream]["path"]))
                              for stream in ("stdout", "stderr")]
             if unit.disposition is None:
@@ -680,9 +752,9 @@ def admission_facts(root: Path, assessment_path: Path) -> dict[str, object]:
     """Check one retained complete assessment against current checkout bytes.
 
     Full reconstruction replays component behavior in the pinned image. The
-    host checks that the retained request and admitted component receipts
-    still occupy this run, and that their product bindings form the current
-    cohort. It returns the cohort receipt identities for the POSIX family join.
+    host checks that the retained request, admitted component receipts,
+    execution records, and artifact snapshots still occupy this run, and that
+    their product bindings form the current cohort. It returns the cohort receipt identities for the POSIX family join.
     """
 
     root = root.resolve(strict=True)
@@ -753,6 +825,22 @@ def admission_facts(root: Path, assessment_path: Path) -> dict[str, object]:
         }}
         require(result.get("cohort_binding") == expected_binding,
                 f"c-abi-compat family {identifier} cohort binding differs")
+        step = receipt.parent
+        execution = {name: family.file_identity(root, step / name)
+                     for name in ("invocation.json", "stdout", "stderr", "status")}
+        require(result.get("execution") == execution, f"c-abi-compat family {identifier} execution changed")
+        command = component_command(root, component, products, request_value["source_mount"])
+        require(family.same_json(family.read(step / "invocation.json"),
+                                 family.invocation(Path(request_value["source_mount"]), command,
+                                                   family.case_environment(root, step, request_value["source_mount"]))),
+                f"c-abi-compat family {identifier} invocation differs")
+        require((step / "status").read_bytes() in ((b"0\n", b"1\n") if component.reader == "libc-test" else (b"0\n",)),
+                f"c-abi-compat family {identifier} admitted a failed execution")
+        leaf = _leaf(root, step, request_value["source_mount"], component)
+        require(result.get("leaf") == leaf.relative_to(root).as_posix(),
+                f"c-abi-compat family {identifier} retained leaf differs")
+        require(result.get("artifacts") == _snapshot_identity(leaf),
+                f"c-abi-compat family {identifier} artifacts changed")
     return {"assessment": family.file_identity(root, path), "source": current, **receipts}
 
 

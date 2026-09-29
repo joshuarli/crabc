@@ -376,6 +376,80 @@ class ComponentTests(unittest.TestCase):
                 family.admission_facts(ROOT, path.relative_to(ROOT))
 
 
+    def test_admission_rejects_changed_retained_artifacts_and_execution(self) -> None:
+        patches = self._patched()
+        with patches[0], patches[1], patches[2]:
+            work = self._complete_run()
+            assessment = family.collect(ROOT, work)
+        preparation, qualification = self.base / "preparation.json", self.base / "qualification.json"
+        assessment["cohort"]["source"] = {
+            **SOURCE,
+            "static_preparation": cohort.canonical._file_identity(ROOT, preparation, "p"),
+            "dynamic_qualification": cohort.canonical._file_identity(ROOT, qualification, "q"),
+        }
+        path = work / "assessment.json"
+        path.write_text(json.dumps(assessment), encoding="utf-8")
+        step = work / "runs/fmtmsg"
+        leaf = next((step / "tmp").iterdir())
+        with mock.patch.object(cohort, "canonical_products",
+                               return_value=(assessment["cohort"]["source"], self.products)), patches[1]:
+            family.admission_facts(ROOT, path.relative_to(ROOT))
+            for payload, message in ((leaf / "raw.stdout", "fmtmsg.*artifacts changed"),
+                                     (step / "stdout", "fmtmsg.*execution changed")):
+                with self.subTest(payload=payload.name):
+                    original = payload.read_bytes()
+                    payload.write_bytes(b"changed retained result\n")
+                    with self.assertRaisesRegex(family.CAbiCompatFamilyError, message):
+                        family.admission_facts(ROOT, path.relative_to(ROOT))
+                    payload.write_bytes(original)
+
+
+class LibcTestReaderTests(unittest.TestCase):
+    """The family reuses the complete campaign's physical libc-test graph."""
+
+    def setUp(self) -> None:
+        import test_owned_posix_native_observations as observations
+
+        self.fixture = observations.NativeObservationsTests(methodName="runTest")
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.report = self.fixture.libc_test_fixture()
+        self.unit = next(unit for unit in self.report["units"] if unit["id"] == "functional/case_000")
+        self.roster = family.Roster(("memory.allocator-basic",), (), (
+            family.LibcTestUnit("functional/case_000", ("memory.allocator-basic",), None, None),
+            family.LibcTestUnit("api/unistd", ("memory.allocator-basic",), None, None),
+        ))
+
+    def read(self) -> dict[str, object]:
+        fixture = self.fixture
+        return family._libc_test_reader(fixture.root, fixture.leaf, fixture.mount, fixture.product,
+                                        status=0, roster=self.roster, companions={})
+
+    def test_selected_units_replay_without_launching_tools(self) -> None:
+        with mock.patch("subprocess.run", side_effect=AssertionError("reader executed a tool")), \
+             mock.patch("subprocess.Popen", side_effect=AssertionError("reader launched a process")):
+            result = self.read()
+        self.assertEqual(set(result["units"]), {unit.identifier for unit in self.roster.libc_test_units})
+
+    def test_selected_units_reject_foreign_compile_link_and_runtime_inputs(self) -> None:
+        self.read()
+        original = json.dumps(self.report)
+        mutations = {
+            "foreign compiler": lambda unit: unit["candidate_translation"]["record"]["command"].__setitem__(0, "/foreign/compiler"),
+            "foreign sealed link": lambda unit: unit["candidate_link"]["receipt"]["link_command"].insert(1, "/foreign/libc.so"),
+            "foreign runtime command": lambda unit: unit["runtime"]["candidate"]["record"]["command"].__setitem__(-1, "/functional/case_001"),
+            "missing private root receipt": lambda unit: unit["runtime"]["candidate"].pop("root_payload"),
+        }
+        for description, mutate in mutations.items():
+            with self.subTest(description=description):
+                report = json.loads(original)
+                unit = next(unit for unit in report["units"] if unit["id"] == "functional/case_000")
+                mutate(unit)
+                self.fixture.put(self.fixture.leaf / "libc-test.json", report)
+                with self.assertRaises(family.CAbiCompatFamilyError):
+                    self.read()
+
+
 class DispatchTests(unittest.TestCase):
     """Observe the dispatcher's translated, network-isolated family invocation."""
 
