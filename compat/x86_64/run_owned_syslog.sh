@@ -104,7 +104,7 @@ run_scenarios() {
     local -a command=("$consumer")
 
     if [ "$entry" = direct ]; then command=("$interpreter" "$consumer"); fi
-    for scenario in normal transport worker fork cancellation; do
+    for scenario in normal transport boundary connection worker fork cancellation; do
         # Each consumer clears a stale private socket name itself.  Resetting
         # the private regular console here makes LOG_CONS output observable
         # without relying on an ordering artifact from another scenario.
@@ -341,5 +341,5 @@ fi
 link_product dynamic "$installed" pie
 link_product dynamic "$installed" non-pie
 
-printf 'owned syslog: PASS (same installed-header workload object with pinned musl; private AF_UNIX datagram replacement, stream fallback, and console, static/static-PIE/dynamic-PIE/non-PIE, main/worker/fork/deferred-cancellation, raw status/stdout/stderr, and shared-validator receipts; %s); evidence: %s\n' \
+printf 'owned syslog: PASS (same installed-header workload object with pinned musl; private AF_UNIX datagram replacement, delayed and eager connection, 1024-byte wire limit, explicit facility, stream fallback, and console, static/static-PIE/dynamic-PIE/non-PIE, main/worker/fork/deferred-cancellation, raw status/stdout/stderr, and shared-validator receipts; %s); evidence: %s\n' \
     "$matrix" "$work"

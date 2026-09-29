@@ -71,8 +71,8 @@ static int receive_record(int descriptor, char record[1025])
     int count;
 
     if (poll(&ready, 1, 2000) != 1 || !(ready.revents & POLLIN)) return -1;
-    count = recv(descriptor, record, 1024, 0);
-    if (count < 0 || count >= 1024) return -1;
+    count = recv(descriptor, record, 1024, MSG_TRUNC);
+    if (count < 0 || count > 1024) return -1;
     record[count] = 0;
     return count;
 }
@@ -293,6 +293,82 @@ static int transport(void)
     return 0;
 }
 
+static int boundary(void)
+{
+    char payload[1600];
+    char record[1025];
+    char prefix[16];
+    char *message;
+    int descriptor;
+    int count;
+    int index;
+    time_t before;
+
+    descriptor = receiver_open();
+    CHECK(descriptor >= 0);
+    openlog("boundary", LOG_NDELAY, LOG_LOCAL2);
+    before = time(0);
+    errno = EACCES;
+    syslog(LOG_LOCAL6 | LOG_WARNING, "explicit-facility: %m");
+    CHECK(errno == EACCES);
+    CHECK(expect_wire(descriptor, LOG_LOCAL6 | LOG_WARNING, "boundary", 0,
+                      "explicit-facility: Permission denied\n", before));
+
+    memset(payload, 'T', sizeof payload - 1);
+    payload[sizeof payload - 1] = 0;
+    syslog(LOG_ERR, "%s", payload);
+    count = receive_record(descriptor, record);
+    CHECK(count == 1024);
+    snprintf(prefix, sizeof prefix, "<%d>", LOG_LOCAL2 | LOG_ERR);
+    CHECK(!strncmp(record, prefix, strlen(prefix)));
+    message = strstr(record, "boundary: ");
+    CHECK(message != 0);
+    CHECK(timestamp_shape(record + strlen(prefix)));
+    message += sizeof "boundary: " - 1;
+    CHECK(message < record + count - 1);
+    for (index = 0; message + index < record + count - 1; ++index) {
+        CHECK(message[index] == 'T');
+    }
+    CHECK(record[count - 1] == '\n' && record[count] == 0);
+    CHECK(no_record(descriptor));
+
+    CHECK(close(descriptor) == 0);
+    closelog();
+    puts("owned-syslog-boundary-ok");
+    return 0;
+}
+
+static int connection(void)
+{
+    int descriptor;
+    time_t before;
+
+    unlink("/dev/log");
+    openlog("eager", LOG_NDELAY, LOG_LOCAL3);
+    descriptor = receiver_open();
+    CHECK(descriptor >= 0);
+    errno = EINVAL;
+    before = time(0);
+    syslog(LOG_INFO, "retry-after-eager-failure: %m");
+    CHECK(expect_wire(descriptor, LOG_LOCAL3 | LOG_INFO, "eager", 0,
+                      "retry-after-eager-failure: Invalid argument\n", before));
+    CHECK(close(descriptor) == 0);
+
+    closelog();
+    unlink("/dev/log");
+    openlog("lazy", 0, LOG_LOCAL4);
+    descriptor = receiver_open();
+    CHECK(descriptor >= 0);
+    before = time(0);
+    syslog(LOG_NOTICE, "first-lazy-connection");
+    CHECK(expect_wire(descriptor, LOG_LOCAL4 | LOG_NOTICE, "lazy", 0,
+                      "first-lazy-connection\n", before));
+    CHECK(close(descriptor) == 0);
+    closelog();
+    puts("owned-syslog-connection-ok");
+    return 0;
+}
+
 struct worker_arguments {
     int ready_descriptor;
 };
@@ -418,6 +494,8 @@ int main(int argc, char **argv)
     if (argc != 2) return 2;
     if (!strcmp(argv[1], "normal")) return normal();
     if (!strcmp(argv[1], "transport")) return transport();
+    if (!strcmp(argv[1], "boundary")) return boundary();
+    if (!strcmp(argv[1], "connection")) return connection();
     if (!strcmp(argv[1], "worker")) return worker();
     if (!strcmp(argv[1], "fork")) return forked();
     if (!strcmp(argv[1], "cancellation")) return cancellation();
