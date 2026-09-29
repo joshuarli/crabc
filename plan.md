@@ -89,7 +89,11 @@ are not transferable passes for a different revision.
   physical final-provider joins for 98 `memcpy` and 87 `memset` allocator
   archive importers reduce its blockers from 728 to 726. The selector still
   rejects closure, with 707 identities, 17 family admissions, one declaration
-  companion, and one semantic receipt open.
+  companion, and one semantic receipt open. A newer source-sealed cohort
+  validates 5,151 identities and 41,168 occurrences. Its physical `strlen`
+  receipt accounts for 48 archive importers and 112 source calls, and lowers
+  identical-product selection from 734 to 733 blockers. Full closure remains
+  open.
   Broader ABI closure stays open.
   `libc.c-abi-compat` now runs a physical
   same-cohort text/math/locale/stdio family admission; its current assessment admits seven
