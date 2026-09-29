@@ -32,6 +32,9 @@ for row in 'one 101' 'two 202'; do
         -o "$work/oracle/libowned-runtime-tls-$name.so"
     readelf -rW "$work/libowned-runtime-tls-$name.so" >"$work/$name.relocations"
     grep -Eq 'R_X86_64_(DTPMOD64|DTPOFF64|TLSGD)' "$work/$name.relocations"
+    readelf -Ws "$work/libowned-runtime-tls-$name.so" >"$work/$name.symbols"
+    awk '$4 == "TLS" && $7 != "UND" && $8 == "tls_value" { found = 1 }
+        END { exit !found }' "$work/$name.symbols"
     readelf -lW "$work/libowned-runtime-tls-$name.so" >"$work/$name.segments"
     grep -Eq ' TLS ' "$work/$name.segments"
 done
