@@ -981,6 +981,18 @@ are not transferable passes for a different revision.
 - **Latest integrated evidence:** The clean detached `ed44dbd16` full M2 run
   reports metadata, bitmaps, PageMap, and allocator recursion complete, while
   VM primitives, arenas, initialization, and fault injection remain partial.
+  The integrated M1 configuration and layout test names again match their
+  executable contract filters, so `--m2 --check --x86-64` reaches the partial
+  M2 contract. A source-bound process-owned commit fault receiver matches 44
+  pinned-C/Rust fields; its fault inventory admits 27 rows, including 44/44
+  commit and 38/38 decommit observations. The M7 statistics gate passes its
+  29 runnable rows after a 49-key initial page-commit failure differential,
+  but retains its named coverage blockers. A fixed `24482abc2` dynamic cohort
+  has passed all 73 installed cases, including Unix evidence, resolver
+  cancellation, synthetic loader, and the authenticated package corpus;
+  second and extracted product checks and same-source family admission remain
+  open. A separate source-sealed ABI selector discharges the `btowc` ordinary
+  import and retains 737 blockers; it is not a current-main closure claim.
   A later focused M2 differential matches repeated explicit process init;
   the M5 remote-publication gate matches pinned C and a separate Loom race,
   while M5 codegen and performance remain open. Integrated resolver cancellation
