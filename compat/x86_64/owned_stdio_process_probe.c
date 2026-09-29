@@ -52,6 +52,75 @@ static void *worker(void *unused) {
         return (void *)1;
     return 0;
 }
+
+/* A popen writer remains on the FILE list across fork. The child inherits
+   pending bytes and ordinary exit flushes its copy; immediate termination
+   closes its descriptor without writing them. The parent then pclose's its
+   own copy and reaps the shell, making the final pathname deterministic. */
+static int inherited_process_buffer(const char *path, int preflush, int finish) {
+    FILE *stream = popen("cat >\"$CRABC_PROCESS_PATH\"", "w");
+    CHECK(stream && fwrite("forked", 1, 6, stream) == 6);
+    if (preflush) CHECK(!fflush(NULL));
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        if (finish == 0) exit(0);
+        if (finish == 1) _Exit(0);
+        abort();
+    }
+    int status;
+    CHECK(waitpid(child, &status, 0) == child);
+    if (finish == 2) CHECK(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT);
+    else CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    CHECK(pclose(stream) == 0);
+    FILE *readback = fopen(path, "r");
+    char actual[16] = {0};
+    size_t expected_length = finish == 0 && !preflush ? 12 : 6;
+    CHECK(readback && fread(actual, 1, sizeof actual, readback) == expected_length);
+    CHECK(!memcmp(actual, "forkedforked", expected_length));
+    CHECK(!fclose(readback) && !unlink(path));
+    return 0;
+}
+
+struct process_flush_event { int descriptor; char marker; int fail; };
+static ssize_t process_flush_write(void *opaque, const char *bytes, size_t count) {
+    struct process_flush_event *event = opaque;
+    (void)bytes;
+    /* A zero-length callback asks the cookie backend to flush its own state. */
+    if (!count) return 0;
+    if (write(event->descriptor, &event->marker, 1) != 1) return -1;
+    if (event->fail) { errno = ENOSPC; return -1; }
+    return (ssize_t)count;
+}
+
+/* The child adds a failing and a successful cookie stream after inheriting
+   the process stream. All three flush through one pipe, so the shell's cat
+   records FILE-list order without a scheduling race between output files.
+   A failed middle write must not prevent the older process stream flushing. */
+static int process_exit_flush_order(const char *path) {
+    FILE *stream = popen("cat >\"$CRABC_PROCESS_PATH\"", "w");
+    CHECK(stream && fputs("A", stream) >= 0);
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (!child) {
+        struct process_flush_event failure = {fileno(stream), 'F', 1};
+        struct process_flush_event success = {fileno(stream), 'B', 0};
+        cookie_io_functions_t operations = {NULL, process_flush_write, NULL, NULL};
+        FILE *failed = fopencookie(&failure, "w", operations);
+        FILE *newer = fopencookie(&success, "w", operations);
+        CHECK(failed && newer && fputs("x", failed) >= 0 && fputs("y", newer) >= 0);
+        exit(0);
+    }
+    int status;
+    CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && !WEXITSTATUS(status));
+    CHECK(pclose(stream) == 0);
+    FILE *readback = fopen(path, "r");
+    char actual[8] = {0};
+    CHECK(readback && fread(actual, 1, sizeof actual, readback) == 4);
+    CHECK(!memcmp(actual, "BFAA", 4));
+    CHECK(!fclose(readback) && !unlink(path));
+    return 0;
+}
 int main(int argc, char **argv) {
     CHECK(argc == 2);
     alarm(20);
@@ -75,6 +144,11 @@ int main(int argc, char **argv) {
     CHECK(fcntl(descriptor, F_GETFD) == -1 && errno == EBADF);
     /* Private argv path is supplied by the harness; environment avoids shell quoting. */
     CHECK(!setenv("CRABC_PROCESS_PATH", argv[1], 1));
+    CHECK(!inherited_process_buffer(argv[1], 0, 0));
+    CHECK(!inherited_process_buffer(argv[1], 0, 1));
+    CHECK(!inherited_process_buffer(argv[1], 0, 2));
+    CHECK(!inherited_process_buffer(argv[1], 1, 0));
+    CHECK(!process_exit_flush_order(argv[1]));
     first = popen("cat >\"$CRABC_PROCESS_PATH\"", "we");
     CHECK(first && fwrite("buffered-child\n", 1, 15, first) == 15 && pclose(first) == 0);
     first = fopen(argv[1], "r");
