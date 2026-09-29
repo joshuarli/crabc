@@ -103,7 +103,7 @@ int crabc_x86_64_socket_tcp_probe(void)
     int second_client = -1, second_peer = -1, refused = -1, unused = -1;
     int error = -1, status = 0;
     char byte = 0;
-    int connected;
+    int connected, pending_connect;
 
     listener = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     if (listener < 0 || tcp_flags(listener, F_GETFD) != FD_CLOEXEC ||
@@ -140,6 +140,7 @@ int crabc_x86_64_socket_tcp_probe(void)
         status = 5;
         goto finish;
     }
+    pending_connect = connected == -1;
     if (!tcp_ready(client, POLLOUT, POLLOUT) ||
         !tcp_error(client, &error) || error != 0 ||
         !tcp_ready(listener, POLLIN, POLLIN)) {
@@ -159,6 +160,27 @@ int crabc_x86_64_socket_tcp_probe(void)
         status = 7;
         goto finish;
     }
+    /* A pending connect reports its completion once; a later connect on the
+     * same established socket reports EISCONN without changing its flags. */
+    errno = 0;
+    connected = connect(client, (const struct sockaddr *)&address,
+        sizeof(address));
+    if (pending_connect) {
+        if (connected != 0) {
+            status = 18;
+            goto finish;
+        }
+        errno = 0;
+        connected = connect(client, (const struct sockaddr *)&address,
+            sizeof(address));
+    }
+    if (connected != -1 || errno != EISCONN ||
+        tcp_flags(client, F_GETFD) != FD_CLOEXEC ||
+        (tcp_flags(client, F_GETFL) & O_NONBLOCK) == 0) {
+        status = 18;
+        goto finish;
+    }
+    tcp_observe('f', (unsigned int)errno);
     if (send(client, "a", 1, 0) != 1 ||
         !tcp_ready(peer, POLLIN, POLLIN) ||
         recv(peer, &byte, 1, 0) != 1 || byte != 'a') {

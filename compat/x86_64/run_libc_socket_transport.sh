@@ -78,7 +78,7 @@ assert_named_syscall() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff nm objdump readelf rustup; do
+for tool in ar cargo cmp diff nm objdump readelf rustup sha256sum; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -249,5 +249,19 @@ fi
 mkdir -p "$report_dir"
 cp "$work_dir/musl-transport.trace" "$report_dir/musl-transport.trace"
 cp "$work_dir/crabc-transport.trace" "$report_dir/crabc-transport.trace"
+evidence_dir="$(mktemp -d "$report_dir/evidence.XXXXXX")"
+cp "$reference" "$candidate" "$archive" \
+    "$work_dir/musl-transport.trace" "$work_dir/crabc-transport.trace" \
+    "$archive_symbols" "$archive_relocations" "$candidate_symbols" \
+    "$candidate_program_headers" "$candidate_dynamic" \
+    "$candidate_relocations" "$candidate_disassembly" \
+    "$evidence_dir/"
+cp compat/x86_64/libc_socket_transport_probe.c \
+    compat/x86_64/libc_socket_tcp_probe.c \
+    compat/x86_64/libc_socket_transport_start.S \
+    compat/x86_64/run_libc_socket_transport.sh "$evidence_dir/"
+printf 'musl=0\ncrabc=0\ntrace=identical\n' >"$evidence_dir/status"
+(cd "$evidence_dir" && sha256sum -- * >SHA256SUMS)
 
 printf 'x86 static crabc-libc socket transport: PASS\n'
+printf 'socket transport evidence: %s\n' "$evidence_dir"
