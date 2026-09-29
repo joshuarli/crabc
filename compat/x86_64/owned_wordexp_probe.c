@@ -283,6 +283,39 @@ static int offsets_append_reuse(void)
     return check_freed(&words) ? 0 : 10;
 }
 
+/* REUSE releases the old result before validating the replacement. An
+ * unsuccessful replacement leaves the caller's offset choice available for
+ * an APPEND that starts from the empty record. */
+static int reuse_failure_append_recovery(void)
+{
+    static const char *const original[] = { "original" };
+    static const char *const recovered[] = { "recovered" };
+    static const char *const replacement[] = { "replacement" };
+    wordexp_t words = { 0 };
+
+    words.we_offs = 2;
+    if (wordexp("original", &words, WRDE_DOOFFS) != 0 ||
+        !check_words(&words, 1, original))
+        return 1;
+    if (wordexp("$(printf ignored)", &words,
+            WRDE_DOOFFS | WRDE_REUSE | WRDE_NOCMD) != WRDE_CMDSUB ||
+        words.we_wordv != NULL || words.we_wordc != 0 || words.we_offs != 2)
+        return 2;
+    if (wordexp("recovered", &words, WRDE_DOOFFS | WRDE_APPEND) != 0 ||
+        words.we_offs != 2 || !check_words(&words, 1, recovered) ||
+        words.we_wordv[0] != NULL || words.we_wordv[1] != NULL)
+        return 3;
+    if (wordexp("one;two", &words,
+            WRDE_DOOFFS | WRDE_REUSE | WRDE_APPEND | WRDE_NOCMD) != WRDE_BADCHAR ||
+        words.we_wordv != NULL || words.we_wordc != 0 || words.we_offs != 2)
+        return 4;
+    if (wordexp("replacement", &words, WRDE_DOOFFS | WRDE_APPEND) != 0 ||
+        words.we_offs != 2 || !check_words(&words, 1, replacement) ||
+        words.we_wordv[0] != NULL || words.we_wordv[1] != NULL)
+        return 5;
+    return check_freed(&words) ? 0 : 6;
+}
+
 /* A selected command requires a usable shell; ordinary expansion does not.
  * The reader distinguishes the fixed musl shell dependency from the owned
  * evaluator's result. All three unavailable-shell fixtures use this object. */
@@ -523,6 +556,9 @@ int main(int argc, char *argv[])
     result = offsets_append_reuse();
     if (result != 0)
         return 32 + result;
+    result = reuse_failure_append_recovery();
+    if (result != 0)
+        return 48 + result;
     puts("owned-wordexp: PASS");
     return 0;
 }
