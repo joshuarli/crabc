@@ -1,4 +1,6 @@
 /* Loopback TCP state and readiness observations for the static socket leaf.
+ * Both peers' address, descriptor flags, empty receive queue, half-close,
+ * and errno transitions are checked against the same pinned-musl execution.
  * Raw poll, getsockopt, fcntl, write, and close observe kernel state without
  * selecting additional libc entry points in the freestanding candidate.
  */
@@ -57,6 +59,12 @@ static int tcp_flags(int fd, int command)
     return (int)tcp_raw3(SYS_fcntl, fd, command, 0);
 }
 
+static int tcp_descriptor_state(int fd, int close_on_exec, int nonblocking)
+{
+    return tcp_flags(fd, F_GETFD) == (close_on_exec ? FD_CLOEXEC : 0) &&
+        tcp_flags(fd, F_GETFL) == (O_RDWR | (nonblocking ? O_NONBLOCK : 0));
+}
+
 static int tcp_ready(int fd, short events, short required)
 {
     struct pollfd entry = { .fd = fd, .events = events };
@@ -81,7 +89,7 @@ static struct sockaddr_in tcp_loopback(void)
     return address;
 }
 
-static char tcp_trace[32];
+static char tcp_trace[128];
 static size_t tcp_trace_length;
 
 static void tcp_observe(char label, unsigned int value)
@@ -98,6 +106,7 @@ int crabc_x86_64_socket_tcp_probe(void)
 {
     struct sockaddr_in address = tcp_loopback();
     struct sockaddr_in peer_address = { 0 };
+    struct sockaddr_in client_address = { 0 };
     socklen_t length = sizeof(address);
     int listener = -1, client = -1, peer = -1;
     int second_client = -1, second_peer = -1, refused = -1, unused = -1;
@@ -106,13 +115,24 @@ int crabc_x86_64_socket_tcp_probe(void)
     int connected, pending_connect;
 
     listener = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
-    if (listener < 0 || tcp_flags(listener, F_GETFD) != FD_CLOEXEC ||
-        (tcp_flags(listener, F_GETFL) & O_NONBLOCK) == 0 ||
+    if (listener < 0 || !tcp_descriptor_state(listener, 1, 1) ||
         bind(listener, (const struct sockaddr *)&address, sizeof(address)) != 0 ||
         getsockname(listener, (struct sockaddr *)&address, &length) != 0 ||
         length != sizeof(address) || address.sin_port == 0 ||
         listen(listener, 2) != 0) {
         status = 1;
+        goto finish;
+    }
+    length = sizeof(peer_address);
+    errno = 0;
+    if (getpeername(listener, (struct sockaddr *)&peer_address, &length) != -1 ||
+        errno != ENOTCONN || length != sizeof(peer_address)) {
+        status = 19;
+        goto finish;
+    }
+    tcp_observe('g', (unsigned int)errno);
+    if (!tcp_descriptor_state(listener, 1, 1)) {
+        status = 20;
         goto finish;
     }
     errno = 0;
@@ -128,8 +148,7 @@ int crabc_x86_64_socket_tcp_probe(void)
     }
     tcp_observe('b', (unsigned int)errno);
     client = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
-    if (client < 0 || tcp_flags(client, F_GETFD) != FD_CLOEXEC ||
-        (tcp_flags(client, F_GETFL) & O_NONBLOCK) == 0) {
+    if (client < 0 || !tcp_descriptor_state(client, 1, 1)) {
         status = 4;
         goto finish;
     }
@@ -148,18 +167,46 @@ int crabc_x86_64_socket_tcp_probe(void)
         goto finish;
     }
     tcp_observe('c', (unsigned int)error);
+    length = sizeof(client_address);
+    errno = EDOM;
+    if (getsockname(client, (struct sockaddr *)&client_address, &length) != 0 ||
+        errno != EDOM || length != sizeof(client_address) ||
+        client_address.sin_family != AF_INET ||
+        client_address.sin_addr.s_addr != 0x0100007fU ||
+        client_address.sin_port == 0) {
+        status = 25;
+        goto finish;
+    }
+    tcp_observe('m', (unsigned int)errno);
     length = sizeof(peer_address);
     peer = accept4(listener, (struct sockaddr *)&peer_address, &length,
         SOCK_CLOEXEC | SOCK_NONBLOCK);
     if (peer < 0 || length != sizeof(peer_address) ||
         peer_address.sin_family != AF_INET ||
         peer_address.sin_addr.s_addr != 0x0100007fU ||
-        peer_address.sin_port == 0 ||
-        tcp_flags(peer, F_GETFD) != FD_CLOEXEC ||
-        (tcp_flags(peer, F_GETFL) & O_NONBLOCK) == 0) {
+        peer_address.sin_port != client_address.sin_port ||
+        !tcp_descriptor_state(peer, 1, 1)) {
         status = 7;
         goto finish;
     }
+    errno = 0;
+    if (recv(peer, &byte, 1, 0) != -1 || errno != EAGAIN ||
+        !tcp_descriptor_state(peer, 1, 1)) {
+        status = 21;
+        goto finish;
+    }
+    tcp_observe('h', (unsigned int)errno);
+    length = sizeof(peer_address);
+    errno = EDOM;
+    if (getpeername(client, (struct sockaddr *)&peer_address, &length) != 0 ||
+        errno != EDOM || length != sizeof(peer_address) ||
+        peer_address.sin_family != AF_INET ||
+        peer_address.sin_addr.s_addr != 0x0100007fU ||
+        peer_address.sin_port != address.sin_port) {
+        status = 22;
+        goto finish;
+    }
+    tcp_observe('i', (unsigned int)errno);
     /* A pending connect reports its completion once; a later connect on the
      * same established socket reports EISCONN without changing its flags. */
     errno = 0;
@@ -175,8 +222,7 @@ int crabc_x86_64_socket_tcp_probe(void)
             sizeof(address));
     }
     if (connected != -1 || errno != EISCONN ||
-        tcp_flags(client, F_GETFD) != FD_CLOEXEC ||
-        (tcp_flags(client, F_GETFL) & O_NONBLOCK) == 0) {
+        !tcp_descriptor_state(client, 1, 1)) {
         status = 18;
         goto finish;
     }
@@ -187,7 +233,16 @@ int crabc_x86_64_socket_tcp_probe(void)
         status = 8;
         goto finish;
     }
+    errno = 0;
+    if (recv(peer, &byte, 1, 0) != -1 || errno != EAGAIN ||
+        !tcp_descriptor_state(peer, 1, 1)) {
+        status = 23;
+        goto finish;
+    }
+    tcp_observe('j', (unsigned int)errno);
+    errno = EDOM;
     if (shutdown(client, SHUT_WR) != 0 ||
+        errno != EDOM ||
         !tcp_ready(peer, POLLIN, POLLIN) || recv(peer, &byte, 1, 0) != 0 ||
         send(peer, "b", 1, 0) != 1 ||
         !tcp_ready(client, POLLIN, POLLIN) ||
@@ -195,6 +250,14 @@ int crabc_x86_64_socket_tcp_probe(void)
         status = 9;
         goto finish;
     }
+    tcp_observe('k', (unsigned int)errno);
+    errno = 0;
+    if (send(client, "x", 1, MSG_NOSIGNAL) != -1 || errno != EPIPE ||
+        !tcp_descriptor_state(client, 1, 1)) {
+        status = 24;
+        goto finish;
+    }
+    tcp_observe('l', (unsigned int)errno);
     tcp_close(peer);
     peer = -1;
     if (!tcp_ready(client, POLLIN, POLLIN) || recv(client, &byte, 1, 0) != 0) {
@@ -210,8 +273,7 @@ int crabc_x86_64_socket_tcp_probe(void)
         goto finish;
     }
     second_peer = accept(listener, NULL, NULL);
-    if (second_peer < 0 || tcp_flags(second_peer, F_GETFD) != 0 ||
-        (tcp_flags(second_peer, F_GETFL) & O_NONBLOCK) != 0) {
+    if (second_peer < 0 || !tcp_descriptor_state(second_peer, 0, 0)) {
         status = 12;
         goto finish;
     }
