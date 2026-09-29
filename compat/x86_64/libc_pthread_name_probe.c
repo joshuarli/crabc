@@ -313,13 +313,13 @@ release:
 #if defined(CRABC_PTHREAD_NAME_FREESTANDING)
 static int check_candidate_nonself_rejection(void)
 {
-    static const char too_long_name[] = "0123456789abcdef";
+    static const char valid_name[] = "0123456789abcde";
     const int preserved_errno = ERANGE;
     pthread_t foreign = (pthread_t)(uintptr_t)1;
     char output[CRABC_TASK_COMM_LEN];
 
     errno = preserved_errno;
-    if (pthread_setname_np(foreign, too_long_name) != ESRCH)
+    if (pthread_setname_np(foreign, valid_name) != ESRCH)
         return 1;
     if (errno != preserved_errno)
         return 2;
