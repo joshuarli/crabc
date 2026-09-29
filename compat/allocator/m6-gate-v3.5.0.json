@@ -58,6 +58,10 @@
       "runner": "compat/allocator/x86_64_m6_public_heap_alignment.py",
       "scope": "Source-built pinned-C/native-adapter mi_heap_zalloc_aligned_at over ordinary and large alignments with offsets, zeroed client extents, invalid alignment and overflow errno, a worker-owned Theap, source Heap identity and a live OS-backed aligned block through mi_heap_delete and its final free, and mi_heap_destroy with a live aligned block."
     },
+    "differential:heap-delete-after-owner-exit": {
+      "runner": "compat/allocator/x86_64_m6_heap_delete_after_owner_exit.py",
+      "scope": "Source-built pinned-C/native-adapter Heap created with regular and aligned OS-backed live pages on a worker; after that owner exits, another thread deletes the Heap, remotely frees both moved live blocks, and collects them while comparing Heap identity, PageMap membership, payload, and errno."
+    },
     "differential:deleted-heap-remote-exit": {
       "runner": "compat/allocator/x86_64_m6_deleted_heap_remote_exit.py",
       "scope": "Source-built pinned-C/native-adapter deleted process-main Heap with an aligned OS-backed live block, remote final free before or after the owner exits, Heap and region identity, errno, collection, and page/Theap statistics."
@@ -189,11 +193,12 @@
         "differential:child-heap-in-arena",
         "differential:public-heap-adapter",
         "differential:deleted-heap-remote-exit",
+        "differential:heap-delete-after-owner-exit",
         "differential:heap-destroy",
         "unit:heap-lifecycle"
       ],
       "blocked_by": [
-        "Non-main Heaps exist for threads of the process main subprocess (`subproc::main_heaps`, exported as mi_heap_new/mi_heap_main/mi_heap_delete/mi_heap_destroy/mi_heap_collect) and of child subprocesses (`types::heap_registry::lifecycle`). Process-main and child-subprocess mi_heap_theap have bounded source-built evidence. Heaps selected from one live exclusive parent have source-built allocation, delete, destroy, and failure traces in both subprocesses. A deleted process-main Heap's remote final free matches pinned C in both owner-exit orders; mi_heap_set_numa_affinity and broader failure and cross-thread lifetime coverage remain unproved or absent."
+        "Non-main Heaps exist for threads of the process main subprocess (`subproc::main_heaps`, exported as mi_heap_new/mi_heap_main/mi_heap_delete/mi_heap_destroy/mi_heap_collect) and of child subprocesses (`types::heap_registry::lifecycle`). Process-main and child-subprocess mi_heap_theap have bounded source-built evidence. Heaps selected from one live exclusive parent have source-built allocation, delete, destroy, and failure traces in both subprocesses. A deleted process-main Heap's remote final free matches pinned C in both owner-exit orders. Deleting a worker-created Heap after that owner exits now matches pinned C for regular and aligned singleton pages through page movement, remote final free, and collection; mi_heap_set_numa_affinity and concurrent detachment and failure coverage remain unproved or absent."
       ]
     },
     {
@@ -424,11 +429,12 @@
         "differential:arena-destroy",
         "differential:public-heap-lifecycle",
         "differential:deleted-heap-remote-exit",
+        "differential:heap-delete-after-owner-exit",
         "differential:subprocess-lifecycle",
         "fault:heap-lifecycle"
       ],
       "blocked_by": [
-        "A deleted process-main Heap's remote final free matches pinned C before and after its owner exits. The heap-destroy, arena-destroy, and subprocess-lifecycle differentials cover the main-Heap Theap-list pass, quiescent arena-group retirement, and quiescent root-child subprocess destruction; concurrent Theap detachment and broader public Heap cross-thread and failure-path differentials remain open."
+        "A deleted process-main Heap's remote final free matches pinned C before and after its owner exits. A worker-created Heap deleted after its owner exits matches pinned C through regular and singleton page movement, remote frees, and collection. The heap-destroy, arena-destroy, and subprocess-lifecycle differentials cover the main-Heap Theap-list pass, quiescent arena-group retirement, and quiescent root-child subprocess destruction; concurrent Theap detachment and broader failure-path differentials remain open."
       ]
     },
     {
