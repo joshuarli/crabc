@@ -279,6 +279,30 @@ def _dynamic_work(root: Path, receipt: Path, value: object) -> Path:
     return work
 
 
+def allocator_backend(root: Path, products: Mapping[str, Mapping[str, Path]]) -> str:
+    """Require every static and dynamic product to use one selected backend.
+
+    The product owners validate each manifest and materialization state. Their
+    source seals alone do not establish that the two product families selected
+    the same allocator, so the matrix binds that choice across all six inputs.
+    """
+    require(set(products) == set(PAIRS), 'POSIX matrix product pair roster differs')
+    selected = None
+    for label in PAIRS:
+        pair = products[label]
+        require(set(pair) == {'static', 'dynamic'}, f'POSIX matrix product pair differs: {label}')
+        static_manifest = read(physical(root, pair['static'] / 'share/crabc/manifest.json'))
+        dynamic_state = read(physical(root, pair['dynamic'] / 'share/crabc/dynamic-product-state.json'))
+        for kind, value in (('static', static_manifest), ('dynamic', dynamic_state)):
+            backend = value.get('allocator_backend') if isinstance(value, dict) else None
+            require(type(backend) is str and backend in static_products.ALLOCATOR_BACKENDS,
+                    f'POSIX matrix {kind} allocator backend is absent or unsupported: {label}')
+            if selected is None:
+                selected = backend
+            require(backend == selected, f'POSIX matrix allocator backend differs: {label}/{kind}')
+    return selected
+
+
 def _validated_input_products(root: Path, request: dict, evidence: object) -> _ValidatedInputProducts:
     """Recover a matrix's current product mapping after its full validation.
 
@@ -293,7 +317,8 @@ def _validated_input_products(root: Path, request: dict, evidence: object) -> _V
     paths = _request_paths(root, request)
     require(isinstance(evidence, dict) and set(evidence) == {
         'static_preparation', 'dynamic_qualification', 'source', 'static_products',
-        'dynamic_products', 'dynamic_work', 'oracle'}, 'POSIX matrix input evidence fields differ')
+        'dynamic_products', 'dynamic_work', 'oracle'},
+        'POSIX matrix input evidence fields differ')
     for name, path in paths.items():
         require(same_json(file_identity(root, path), evidence[name]),
                 f'POSIX matrix {name} receipt changed')
@@ -346,6 +371,7 @@ def input_products(root: Path, request: dict) -> tuple[dict, dict[str, dict[str,
     dynamic_work = _dynamic_work(root, paths['dynamic_qualification'], shared['work'])
     products = {label: {'static': static_paths[label], 'dynamic': dynamic_work / dynamic_label}
                 for label, dynamic_label in PAIRS.items()}
+    allocator_backend(root, products)
     evidence = {name: file_identity(root, path) for name, path in paths.items()}
     evidence['source'] = source
     evidence['static_products'] = {label: static['products'][label]['manifest'] for label in PAIRS}

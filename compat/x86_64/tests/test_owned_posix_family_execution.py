@@ -345,12 +345,15 @@ class ValidatedInputProductsTests(unittest.TestCase):
         static = execution.static_products.product_paths(self.static_work)
         for label, product in static.items():
             (product / 'share/crabc').mkdir(parents=True)
-            (product / 'share/crabc/manifest.json').write_text(json.dumps({'static': label}))
+            (product / 'share/crabc/manifest.json').write_text(json.dumps({
+                'static': label, 'allocator_backend': 'accepted-c'}))
         dynamic = {}
         for label in ('installed', 'second', 'extracted'):
             product = self.dynamic_work / label
             (product / 'share/crabc').mkdir(parents=True)
             (product / 'share/crabc/manifest.json').write_text(json.dumps({'dynamic': label}))
+            (product / 'share/crabc/dynamic-product-state.json').write_text(json.dumps({
+                'allocator_backend': 'accepted-c'}))
             dynamic[label] = product
         self.request = {
             'schema': execution.SCHEMA, 'source_mount': '/workspace',
@@ -418,6 +421,27 @@ class ValidatedInputProductsTests(unittest.TestCase):
             self.assertEqual(valid['dynamic_work'], self.evidence['dynamic_work'])
             with self.assertRaisesRegex(execution.ExecutionError, 'dynamic qualification receipt path differs'):
                 execution.input_products(self.root, request)
+
+    def test_mixed_allocator_backends_cannot_form_one_family_cohort(self):
+        import owned_dynamic_qualification as dynamic
+
+        static = {'source': self.source, 'products': {
+            label: {'manifest': record} for label, record in self.evidence['static_products'].items()
+        }}
+        qualified = {'work': self.evidence['dynamic_work'],
+                     'source_sha256': self.source['content_sha256'],
+                     'family_completion': False, 'public_support': False,
+                     'products': {dynamic_label: self.evidence['dynamic_products'][label]['manifest_sha256']
+                                  for label, dynamic_label in execution.PAIRS.items()}}
+        (self.dynamic_products['second'] / 'share/crabc/dynamic-product-state.json').write_text(json.dumps({
+            'allocator_backend': 'native-shadow'}))
+        with patch.object(dynamic, 'ROOT', self.root), \
+                patch.object(dynamic, 'validate_receipt', return_value=qualified), \
+                patch.object(dynamic, 'read', return_value={'oracle': self.evidence['oracle']}), \
+                patch.object(execution.static_products, 'validate_receipt', return_value=static), \
+                patch.object(execution.static_products, 'source_identity', return_value=self.source):
+            with self.assertRaisesRegex(execution.ExecutionError, 'allocator backend'):
+                execution.input_products(self.root, self.request)
 
 
 if __name__ == '__main__':
