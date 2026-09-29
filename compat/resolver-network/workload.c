@@ -329,6 +329,11 @@ static int resolver_cases(void)
     puts("resolver.malformed-wrong-id=accepted-valid");
 
     if (!install_nameservers(0) ||
+        !query_a("source-spoof.example.test", "198.51.100.53"))
+        return fail("resolver-source-spoof");
+    puts("resolver.source-spoof=accepted-valid-source");
+
+    if (!install_nameservers(0) ||
         !query_cname("alias.example.test", "target.example.test",
             "198.51.100.44"))
         return fail("resolver-cname");

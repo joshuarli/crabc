@@ -136,6 +136,9 @@ The stdout contract is fixed and is listed in `run.py` as
 * NXDOMAIN (`HOST_NOT_FOUND`) and NOERROR/NODATA (`NO_DATA`);
 * a malformed datagram followed by a valid answer with the wrong transaction
   ID, followed by the matching valid answer;
+* a matching-ID UDP answer sent from an unconfigured loopback address while
+  the first nameserver is queried, followed by its valid answer; the other
+  configured servers drop this name;
 * an alias with a CNAME RR and its target A RR; and
 * a UDP response with the TC bit, requiring a retry over TCP for the complete
   A answer;

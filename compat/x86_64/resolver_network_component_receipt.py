@@ -39,6 +39,7 @@ IMAGE_MANIFEST = "compat/x86_64/owned_resolver_network_image_inputs.json"
 RECEIPT_SCHEMA = "crabc.x86_64-resolver-network-physical/v3"
 SCOPE = ("libc.resolver",)
 EXECUTION_MODE = "two-arms-twelve-candidate-modes"
+ROLE_ADDRESSES = {"valid": "127.0.0.1", "drop": "127.0.0.2", "fallback": "127.0.0.3"}
 RUNNER = "crabc-resolver-network-native-x86"
 ARTIFACT_MODES = ("static-et-exec", "static-pie", "dynamic-pie", "dynamic-non-pie")
 ARMS = ("installed", "extracted")
@@ -68,6 +69,7 @@ EXPECTED_STDOUT = (
     b"resolver.nxdomain=HOST_NOT_FOUND\n"
     b"resolver.nodata=NO_DATA\n"
     b"resolver.malformed-wrong-id=accepted-valid\n"
+    b"resolver.source-spoof=accepted-valid-source\n"
     b"resolver.cname=target.example.test\n"
     b"resolver.tc-tcp=accepted-over-tcp\n"
     b"resolver.search=searchhost.search.test\n"
@@ -88,7 +90,7 @@ EXPECTED_STDOUT = (
 )
 REQUIRED_SERVER_NAMES = {
     "a.example.test.", "aaaa.example.test.", "nxdomain.example.test.",
-    "nodata.example.test.", "malformed.example.test.", "alias.example.test.",
+    "nodata.example.test.", "malformed.example.test.", "source-spoof.example.test.", "alias.example.test.",
     "tc.example.test.", "searchhost.search.test.", "fallback.example.test.",
 }
 SOURCE_PATHS = {
@@ -972,6 +974,14 @@ def recompute_event_contract(
     count = lambda predicate: sum(1 for event in events if predicate(event))
     name_counts = {name: count(lambda event, name=name: event.get("name") == name) for name in REQUIRED_SERVER_NAMES}
     malformed = count(lambda event: event.get("name") == "malformed.example.test." and event.get("action") == "malformed-sequence")
+    source_spoof = count(lambda event: event.get("name") == "source-spoof.example.test." and
+                         event.get("role") == "valid" and event.get("transport") == "udp" and
+                         event.get("action") == "source-spoof-sequence" and
+                         event.get("forged_source") == "127.0.0.4" and
+                         event.get("valid_source") == ROLE_ADDRESSES["valid"])
+    source_other = count(lambda event: event.get("name") == "source-spoof.example.test." and
+                         (event.get("role") != "valid" or event.get("transport") != "udp") and
+                         event.get("action") != "drop")
     valid_drop = count(lambda event: event.get("role") == "valid" and event.get("name") == "fallback.example.test." and event.get("action") == "drop")
     drop = count(lambda event: event.get("role") == "drop" and event.get("action") == "drop")
     fallback = count(lambda event: event.get("role") == "fallback" and
@@ -981,7 +991,8 @@ def recompute_event_contract(
     tc_udp = count(lambda event: event.get("name") == "tc.example.test." and event.get("transport") == "udp" and event.get("action") == "tc-sequence")
     tc_tcp = count(lambda event: event.get("name") == "tc.example.test." and event.get("transport") == "tcp" and event.get("action") == "answer")
     passed = (REQUIRED_SERVER_NAMES <= names and all(value >= executions for value in name_counts.values()) and
-              malformed >= executions and valid_drop >= executions and drop >= executions and fallback >= executions and
+              malformed >= executions and source_spoof >= executions and source_other == 0 and
+              valid_drop >= executions and drop >= executions and fallback >= executions and
               cname >= executions and tc_udp >= executions and tc_tcp >= executions)
     result = {
         "expected_execution_count": executions,
@@ -989,6 +1000,8 @@ def recompute_event_contract(
         "required_names_seen": sorted(REQUIRED_SERVER_NAMES & names),
         "required_names_missing": sorted(REQUIRED_SERVER_NAMES - names),
         "malformed_sequence_observations": malformed,
+        "source_spoof_observations": source_spoof,
+        "source_spoof_other_route_observations": source_other,
         "valid_fallback_drop_observations": valid_drop,
         "drop_endpoint_observations": drop,
         "fallback_query_observations": fallback,

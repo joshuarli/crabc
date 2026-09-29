@@ -112,7 +112,8 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
             self.assertEqual(set(record), {"hosts", "resolv_conf"})
 
     def test_event_contract_requires_every_resolver_transition(self) -> None:
-        events = [{"name": name, "action": "answer", "role": "valid"} for name in runner.REQUIRED_SERVER_NAMES]
+        events = [{"name": name, "action": "answer", "role": "valid"}
+                  for name in runner.REQUIRED_SERVER_NAMES if name != "source-spoof.example.test."]
         events.extend(
             [
                 {"name": "malformed.example.test.", "action": "malformed-sequence"},
@@ -124,6 +125,9 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
                 {"name": "fallback.example.test.", "role": "fallback", "transport": "udp", "action": "answer"},
                 {"name": "alias.example.test.", "action": "cname"},
                 {"name": "tc.example.test.", "transport": "udp", "action": "tc-sequence"},
+                {"name": "source-spoof.example.test.", "role": "valid", "transport": "udp",
+                 "action": "source-spoof-sequence", "forged_source": "127.0.0.4",
+                 "valid_source": "127.0.0.1"},
             ]
         )
         self.assertFalse(runner.event_contract(events)["passed"])
@@ -138,6 +142,27 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
         self.assertTrue(runner.event_contract(events * 2, executions=2)["passed"])
         swapped = {"reference": events * 2, "installed-static-et-exec": []}
         self.assertFalse(runner.event_contract(events * 2, executions=2, by_execution=swapped)["passed"])
+
+    def test_event_contract_requires_a_spoofed_source_before_the_valid_answer(self) -> None:
+        events = [{"name": name, "action": "answer", "role": "valid"}
+                  for name in runner.REQUIRED_SERVER_NAMES if name != "source-spoof.example.test."]
+        events.extend([
+            {"name": "malformed.example.test.", "action": "malformed-sequence"},
+            {"name": "fallback.example.test.", "role": "valid", "action": "drop"},
+            {"role": "drop", "action": "drop"},
+            {"name": "fallback.example.test.", "role": "fallback", "transport": "udp", "action": "answer"},
+            {"name": "alias.example.test.", "action": "cname"},
+            {"name": "tc.example.test.", "transport": "udp", "action": "tc-sequence"},
+            {"name": "tc.example.test.", "transport": "tcp", "action": "answer"},
+        ])
+        self.assertFalse(runner.event_contract(events)["passed"])
+        events.append({"name": "source-spoof.example.test.", "role": "valid", "transport": "udp",
+                       "action": "source-spoof-sequence", "forged_source": "127.0.0.4",
+                       "valid_source": "127.0.0.1"})
+        self.assertTrue(runner.event_contract(events)["passed"])
+        events.append({"name": "source-spoof.example.test.", "role": "fallback", "transport": "udp",
+                       "action": "answer"})
+        self.assertFalse(runner.event_contract(events)["passed"])
 
     def test_comparison_keeps_stream_records_raw(self) -> None:
         reference = runner.outcome(0, b"unchanged\n", b"")

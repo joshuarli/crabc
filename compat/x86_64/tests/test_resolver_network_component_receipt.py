@@ -85,7 +85,7 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
 
     def test_aggregate_events_cannot_substitute_for_a_missing_mode_stream(self) -> None:
         events = [{"name": name, "role": "valid", "transport": "udp", "action": "answer"}
-                  for name in self.reader.REQUIRED_SERVER_NAMES]
+                  for name in self.reader.REQUIRED_SERVER_NAMES if name != "source-spoof.example.test."]
         events.extend([
             {"name": "malformed.example.test.", "action": "malformed-sequence"},
             {"name": "fallback.example.test.", "role": "valid", "action": "drop"},
@@ -94,6 +94,9 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
             {"name": "alias.example.test.", "action": "cname"},
             {"name": "tc.example.test.", "transport": "udp", "action": "tc-sequence"},
             {"name": "tc.example.test.", "transport": "tcp", "action": "answer"},
+            {"name": "source-spoof.example.test.", "role": "valid", "transport": "udp",
+             "action": "source-spoof-sequence", "forged_source": "127.0.0.4",
+             "valid_source": "127.0.0.1"},
         ])
         aggregate = events * 2
         self.assertTrue(self.reader.recompute_event_contract(aggregate, executions=2)["passed"])

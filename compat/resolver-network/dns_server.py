@@ -34,6 +34,7 @@ from pathlib import Path
 
 PROTOCOL_VERSION = "resolver-network-dns-v1"
 DNS_PORT = 53
+SPOOF_ADDRESS = "127.0.0.4"
 ROLE_ADDRESSES = {
     "valid": "127.0.0.1",
     "drop": "127.0.0.2",
@@ -46,6 +47,7 @@ RECORDS: dict[tuple[str, int], tuple[str, bytes | None]] = {
         socket.inet_pton(socket.AF_INET6, "2001:db8::42"),
     ),
     ("malformed.example.test.", 1): ("malformed-sequence", socket.inet_aton("198.51.100.43")),
+    ("source-spoof.example.test.", 1): ("source-spoof-sequence", socket.inet_aton("198.51.100.53")),
     ("alias.example.test.", 1): ("cname", socket.inet_aton("198.51.100.44")),
     ("tc.example.test.", 1): ("tc-sequence", socket.inet_aton("198.51.100.45")),
     ("fallback.example.test.", 1): ("answer", socket.inet_aton("198.51.100.18")),
@@ -129,7 +131,7 @@ def canonical_name(name: str) -> str:
 
 def drops_query(role: str, name: str) -> bool:
     """Keep fallback observable even when a resolver chooses valid first."""
-    return role == "drop" or (
+    return (role != "valid" and name == "source-spoof.example.test.") or role == "drop" or (
         role == "valid" and name == "fallback.example.test."
     )
 
@@ -334,6 +336,7 @@ class LoopbackDnsServer:
         self.events: list[dict[str, object]] = []
         self.events_lock = threading.Lock()
         self.sockets: list[socket.socket] = []
+        self.spoof_socket: socket.socket | None = None
         self.endpoints: dict[str, dict[str, object]] = {}
         self.held_batch_a: dict[tuple[str, tuple[str, int]], tuple[bytes, int, str, int]] = {}
         self.batch_retries: dict[tuple[str, tuple[str, int], str, int], int] = {}
@@ -366,6 +369,9 @@ class LoopbackDnsServer:
     def start(self) -> None:
         for role in ("valid", "drop", "fallback"):
             self._bind_endpoint(role)
+        self.spoof_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.spoof_socket.bind((SPOOF_ADDRESS, DNS_PORT))
+        self.sockets.append(self.spoof_socket)
         ready = {
             "schema_version": 1,
             "protocol": PROTOCOL_VERSION,
@@ -483,6 +489,20 @@ class LoopbackDnsServer:
             self._record(event)
             return
         behavior, _ = RECORDS.get((name, qtype), ("nxdomain", None))
+        if behavior == "source-spoof-sequence" and role == "valid":
+            valid = encode_answer(packet, identifier, name, qtype)
+            forged = bytearray(valid)
+            forged[-4:] = socket.inet_aton("203.0.113.53")
+            try:
+                assert self.spoof_socket is not None
+                self.spoof_socket.sendto(forged, peer)
+                sock.sendto(valid, peer)
+            except OSError:
+                return
+            event.update({"action": behavior, "forged_source": SPOOF_ADDRESS,
+                          "valid_source": ROLE_ADDRESSES["valid"]})
+            self._record(event)
+            return
         event["action"] = behavior
         self._record(event)
         for response in self._response_packets(packet, name, qtype, identifier, "udp", role):
