@@ -345,6 +345,123 @@ static int check_error_progress_and_boundary(void)
     return 0;
 }
 
+/* Each retry starts at the first unconverted scalar. A fixed encoding name
+ * carries no partial input across calls, even after an incomplete UTF unit.
+ */
+static int check_streaming_retries(void)
+{
+    static const unsigned char utf8[] = {
+        'A', 0xe2, 0x82, 0xac, 0xf0, 0x9f, 0x98, 0x80, 'B',
+    };
+    static const unsigned char utf16le[] = {
+        'A', 0, 0xac, 0x20, 0x3d, 0xd8, 0x00, 0xde, 'B', 0,
+    };
+    static const unsigned char utf16be[] = {
+        0x00, 'A', 0xd8, 0x3d, 0xde, 0x00, 0x00, 'B',
+    };
+    static const unsigned char utf32le[] = {
+        'A', 0, 0, 0, 0x00, 0xf6, 0x01, 0, 'B', 0, 0, 0,
+    };
+    static const unsigned char ascii[] = { 'A', '*', 'B' };
+    unsigned char output[16] = { 0 };
+    char *input, *destination;
+    size_t input_left, output_left;
+    iconv_t descriptor;
+
+    descriptor = iconv_open("UTF-16LE", "UTF-8");
+    if (descriptor == (iconv_t)-1)
+        return 1;
+    input = (char *)(void *)utf8;
+    destination = (char *)(void *)output;
+    input_left = sizeof(utf8);
+    output_left = 2;
+    errno = 0;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) !=
+            (size_t)-1 || errno != E2BIG || input != (char *)(void *)(utf8 + 1) ||
+        input_left != sizeof(utf8) - 1 || destination != (char *)(void *)(output + 2) ||
+        output_left != 0 || !bytes_equal(output, utf16le, 2))
+        return 2;
+    /* The euro lead and first continuation are incomplete. No byte is kept. */
+    input_left = 2;
+    output_left = sizeof(output) - 2;
+    errno = 0;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) !=
+            (size_t)-1 || errno != EINVAL || input != (char *)(void *)(utf8 + 1) ||
+        input_left != 2 || destination != (char *)(void *)(output + 2) ||
+        output_left != sizeof(output) - 2)
+        return 3;
+    input_left = sizeof(utf8) - 1;
+    output_left = 2;
+    errno = 0;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) !=
+            (size_t)-1 || errno != E2BIG || input != (char *)(void *)(utf8 + 4) ||
+        input_left != sizeof(utf8) - 4 || destination != (char *)(void *)(output + 4) ||
+        output_left != 0 || !bytes_equal(output, utf16le, 4))
+        return 4;
+    output_left = sizeof(output) - 4;
+    errno = EINTR;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) != 0 ||
+        errno != EINTR || input_left != 0 ||
+        destination != (char *)(void *)(output + sizeof(utf16le)) ||
+        output_left != sizeof(output) - sizeof(utf16le) ||
+        !bytes_equal(output, utf16le, sizeof(utf16le)) ||
+        iconv_close(descriptor) != 0)
+        return 5;
+
+    descriptor = iconv_open("UTF-32LE", "UTF-16BE");
+    if (descriptor == (iconv_t)-1)
+        return 6;
+    input = (char *)(void *)utf16be;
+    destination = (char *)(void *)output;
+    input_left = sizeof(utf16be);
+    output_left = 4;
+    errno = 0;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) !=
+            (size_t)-1 || errno != E2BIG || input != (char *)(void *)(utf16be + 2) ||
+        input_left != sizeof(utf16be) - 2 ||
+        destination != (char *)(void *)(output + 4) || output_left != 0 ||
+        !bytes_equal(output, utf32le, 4))
+        return 7;
+    input_left = 2;
+    output_left = sizeof(output) - 4;
+    errno = 0;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) !=
+            (size_t)-1 || errno != EINVAL || input != (char *)(void *)(utf16be + 2) ||
+        input_left != 2 || destination != (char *)(void *)(output + 4) ||
+        output_left != sizeof(output) - 4)
+        return 8;
+    input_left = sizeof(utf16be) - 2;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) != 0 ||
+        input_left != 0 || destination != (char *)(void *)(output + sizeof(utf32le)) ||
+        !bytes_equal(output, utf32le, sizeof(utf32le)) ||
+        iconv_close(descriptor) != 0)
+        return 9;
+
+    descriptor = iconv_open("ASCII", "UTF-32LE");
+    if (descriptor == (iconv_t)-1)
+        return 10;
+    input = (char *)(void *)utf32le;
+    destination = (char *)(void *)output;
+    input_left = sizeof(utf32le);
+    output_left = 2;
+    errno = 0;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) !=
+            (size_t)-1 || errno != E2BIG ||
+        input != (char *)(void *)(utf32le + 8) || input_left != 4 ||
+        destination != (char *)(void *)(output + 2) || output_left != 0 ||
+        !bytes_equal(output, ascii, 2))
+        return 11;
+    output_left = sizeof(output) - 2;
+    errno = EINTR;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) != 0 ||
+        errno != EINTR || input_left != 0 ||
+        destination != (char *)(void *)(output + sizeof(ascii)) ||
+        !bytes_equal(output, ascii, sizeof(ascii)) ||
+        iconv_close(descriptor) != 0)
+        return 12;
+    return 0;
+}
+
 int crabc_x86_64_locale_wide_iconv_probe(void)
 {
     int status = check_named_locale_and_multibyte();
@@ -361,7 +478,10 @@ int crabc_x86_64_locale_wide_iconv_probe(void)
     if (status != 0)
         return 40 + status;
     status = check_error_progress_and_boundary();
-    return status == 0 ? 0 : 80 + status;
+    if (status != 0)
+        return 80 + status;
+    status = check_streaming_retries();
+    return status == 0 ? 0 : 120 + status;
 }
 
 #ifndef CRABC_LOCALE_WIDE_ICONV_FREESTANDING
