@@ -118,8 +118,12 @@ are not transferable passes for a different revision.
   pinned-image receipt passed independent physical validation and public
   publication. A later clean selected-C source cohort passes the same Rust
   std/LTO consumer, three byte-exact musl controls, and independent physical
-  receipt validation for primary and extracted products; native allocator
-  evidence remains separate. `consumer.source-build` passes on a development
+  receipt validation for primary and extracted products. A native-shadow
+  source cohort passes its development Rust std/LTO leaves, unwind and provider
+  regressions, with an independently reread product and receipt; public
+  validation correctly rejects that development receipt. Its full dynamic
+  qualification stops at `kernel-residual`, so native allocator evidence is
+  not qualifying. `consumer.source-build` passes on a development
   cohort and publishes its receipt; a clean `0bb16e482` Lua source-build admission makes the
   latter evidence condition met while 14 prerequisite families remain open.
   A sealed `libc.resolver` assessment admits all six components with no gaps;
