@@ -2495,7 +2495,7 @@ int main(void) {
   U("offsetof.mi_random_ctx_t.output", offsetof(mi_random_ctx_t, output));
   U("offsetof.mi_random_ctx_t.output_available", offsetof(mi_random_ctx_t, output_available));
   U("offsetof.mi_random_ctx_t.weak", offsetof(mi_random_ctx_t, weak));
-  // This selected M1 state vector deliberately records only values that are
+  // This state vector deliberately records only values that are
   // stable across independent C and Rust processes. Weak-key bytes and child
   // block output depend on the documented degraded-entropy substitution or an
   // address-derived nonce, so they are not a false equality claim.
@@ -2728,10 +2728,10 @@ int main(void) {
   U("MI_LARGE_MAX_OBJ_SIZE", MI_LARGE_MAX_OBJ_SIZE);
   U("MI_MAX_ARENAS", MI_MAX_ARENAS);
 
-  // M1 scalar vector: every operand is representable before rounding, so this
+  // Every scalar operand is representable before rounding, so this vector
   // proves the source calculation rather than C's unsigned-overflow behavior.
   // In particular, zero has its source-specific no-constraint meaning for
-  // `_mi_is_aligned`, while the two 24-byte records take internal.h's generic
+  // `_mi_is_aligned`, while the two 24-byte records take the generic
   // non-power-of-two division paths.
   U("m1.scalar.is_power_of_two.zero", _mi_is_power_of_two(0));
   U("m1.scalar.is_aligned.zero", _mi_is_aligned((const void*)(uintptr_t)0x12345678, 0));
