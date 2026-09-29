@@ -4,12 +4,13 @@
     .type _start,@function
     .extern crabc_x86_64_math_acosh_probe
     .extern crabc_x86_64_math_acosh_records
+    .extern crabc_x86_64_math_acosh_record_bytes
 _start:
     call crabc_x86_64_math_acosh_probe
     testl %eax, %eax
     jnz .Lcrabc_acosh_fail
     lea crabc_x86_64_math_acosh_records(%rip), %rsi
-    mov $8192, %edx
+    mov crabc_x86_64_math_acosh_record_bytes(%rip), %rdx
 .Lcrabc_acosh_write:
     mov $1, %eax
     mov $1, %edi
