@@ -96,7 +96,8 @@ assert_candidate_excludes_context_abi() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort; do
+for tool in ar awk cargo cmp cp diff grep mkdir mv nm objdump readelf rustup \
+    sha256sum sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -116,6 +117,9 @@ selected_symbols="$work_dir/selected-c-abi-symbols"; expected_symbols="$work_dir
 symbols="$work_dir/candidate-symbols"; headers="$work_dir/candidate-program-headers"
 dynamic="$work_dir/candidate-dynamic"; relocs="$work_dir/candidate-relocations"
 disassembly="$work_dir/candidate-disassembly"; qsort_disassembly="$work_dir/qsort-disassembly"
+receipt="$work_dir/receipt"
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-qsort"
+mkdir "$receipt"
 cd "$ROOT_DIR"
 
 "$ORACLE_CC" -std=c11 -I "$ROOT_DIR/include" -E -H \
@@ -128,7 +132,14 @@ done
 "$ORACLE_CC" -std=c11 -static -fno-pie -no-pie -fno-builtin \
     -fno-stack-protector \
     -I "$ROOT_DIR/include" compat/x86_64/libc_qsort_probe.c -o "$reference"
-"$reference" || fail "pinned-musl qsort fixture failed"
+if "$reference" >"$receipt/musl.stdout" 2>"$receipt/musl.stderr"; then
+    reference_status=0
+else
+    reference_status=$?
+fi
+printf '%s\n' "$reference_status" >"$receipt/musl.status"
+[ "$reference_status" -eq 0 ] ||
+    fail "pinned-musl qsort fixture failed with status $reference_status"
 
 build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -145,6 +156,36 @@ grep -Eq '[[:space:]][TW][[:space:]]qsort$' "$archive_symbols" ||
 assert_static_closure "$candidate"
 grep -Eq '[[:space:]]qsort$' "$symbols" || fail "candidate lacks qsort"
 assert_candidate_excludes_context_abi
-"$candidate" || fail "freestanding qsort fixture failed"
+if "$candidate" >"$receipt/crabc.stdout" 2>"$receipt/crabc.stderr"; then
+    candidate_status=0
+else
+    candidate_status=$?
+fi
+printf '%s\n' "$candidate_status" >"$receipt/crabc.status"
+[ "$candidate_status" -eq 0 ] ||
+    fail "freestanding qsort fixture failed with status $candidate_status"
+cmp "$receipt/musl.status" "$receipt/crabc.status" ||
+    fail "qsort exit statuses differ"
+cmp "$receipt/musl.stdout" "$receipt/crabc.stdout" ||
+    fail "qsort stdout differs"
+cmp "$receipt/musl.stderr" "$receipt/crabc.stderr" ||
+    fail "qsort stderr differs"
 
-printf 'x86 static libc qsort: PASS\n'
+cp "$reference" "$receipt/musl.elf"
+cp "$candidate" "$receipt/crabc.elf"
+cp "$archive.source-runtime.json" "$receipt/source-runtime.json"
+cp compat/x86_64/libc_qsort_probe.c "$receipt/probe.c"
+cp compat/x86_64/libc_qsort_start.S "$receipt/start.S"
+cp compat/x86_64/run_libc_qsort.sh "$receipt/runner.sh"
+cp libc/src/c_abi/x86_64/qsort.rs "$receipt/qsort.rs"
+(
+    cd "$receipt"
+    sha256sum musl.elf crabc.elf musl.stdout musl.stderr musl.status \
+        crabc.stdout crabc.stderr crabc.status source-runtime.json \
+        probe.c start.S runner.sh qsort.rs >sha256sums.txt
+)
+mkdir -p "$(dirname "$report_dir")"
+rm -rf -- "$report_dir"
+mv "$receipt" "$report_dir"
+
+printf 'x86 static libc qsort: PASS (receipt: %s)\n' "$report_dir"
