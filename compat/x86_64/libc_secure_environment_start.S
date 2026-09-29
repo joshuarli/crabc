@@ -3,7 +3,7 @@
  * The normal fixture preserves the real Linux entry stack for the selected
  * TLS/bootstrap startup path. Synthetic modes preserve that real stack only
  * for TLS, then pass a bounded fake argv/envp/auxv sequence to prove startup's
- * cached musl rule for raw AT_SECURE and credential-mismatch secure execution.
+ * cached musl rule for last AT_SECURE and credential mismatch.
  */
 
 /* AT_UID=11, AT_EUID=12, AT_GID=13, AT_EGID=14, AT_SECURE=23. */
@@ -34,12 +34,21 @@ crabc_x86_64_secure_environment_vectors:
     .quad 13
     .quad 1000
     .quad 14
+#ifdef CRABC_SECURE_ENVIRONMENT_SYNTHETIC_GID_MISMATCH
+    .quad 1001
+#else
     .quad 1000
+#endif
     .quad 23
     .quad 0
-#ifdef CRABC_SECURE_ENVIRONMENT_SYNTHETIC_AT_SECURE
+#if defined(CRABC_SECURE_ENVIRONMENT_SYNTHETIC_AT_SECURE) || \
+    defined(CRABC_SECURE_ENVIRONMENT_SYNTHETIC_AT_SECURE_CLEARED)
     .quad 23
     .quad 1
+#endif
+#ifdef CRABC_SECURE_ENVIRONMENT_SYNTHETIC_AT_SECURE_CLEARED
+    .quad 23
+    .quad 0
 #endif
     .quad 0
     .quad 0

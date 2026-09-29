@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Native Linux/x86-64 static GNU secure_getenv evidence.
 #
-# A pinned-musl normal-start reference establishes GNU secure_getenv behavior.
-# The static candidate then proves the normal case and two synthetic validated
-# auxv cases: a final AT_SECURE=1 and a UID/EUID mismatch. Raw __getauxval and
-# weak getauxval remain the separately qualified auxv-observation artifact.
+# A pinned-musl normal-start reference establishes GNU secure_getenv and
+# environment ownership/error behavior. The static candidate proves that
+# sequence and synthetic validated auxv decisions without changing credentials.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -54,8 +53,16 @@ build_candidate() {
         compat/x86_64/libc_secure_environment_start.S "$archive" -o "$output"
 }
 
+run_case() {
+    local label="$1" binary="$2" status=0
+    env -i OPEN=visible "$binary" >"$report_dir/$label.stdout" \
+        2>"$report_dir/$label.stderr" || status=$?
+    printf '%s\n' "$status" >"$report_dir/$label.status"
+    [ "$status" -eq 0 ] || fail "$label exited with $status; raw output: $report_dir"
+}
+
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort; do
+for tool in ar awk cargo chmod cmp cp diff grep mkdir mktemp nm objdump readelf rustup sha256sum sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -65,7 +72,10 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 # linkage evidence; direct raw auxv linkage remains a sibling artifact.
 bash "$ROOT_DIR/compat/x86_64/run_stdlib_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-secure-environment.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp" "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-secure-environment.XXXXXX")"
+report_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-secure-environment.XXXXXX")"
+chmod 755 "$report_dir"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
@@ -73,6 +83,8 @@ reference="$work_dir/musl-secure-environment-reference"
 candidate="$work_dir/crabc-static-secure-environment-candidate"
 synthetic_at_secure="$work_dir/crabc-static-secure-environment-at-secure"
 synthetic_uid_mismatch="$work_dir/crabc-static-secure-environment-uid-mismatch"
+synthetic_gid_mismatch="$work_dir/crabc-static-secure-environment-gid-mismatch"
+synthetic_at_secure_cleared="$work_dir/crabc-static-secure-environment-at-secure-cleared"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
@@ -84,7 +96,7 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_secure_environment_probe.c \
     -o "$reference"
-env -i OPEN=visible "$reference" || fail "pinned-musl secure-environment fixture failed"
+run_case oracle "$reference"
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -107,6 +119,12 @@ build_candidate "$synthetic_at_secure" \
 build_candidate "$synthetic_uid_mismatch" \
     -DCRABC_SECURE_ENVIRONMENT_SYNTHETIC \
     -DCRABC_SECURE_ENVIRONMENT_SYNTHETIC_UID_MISMATCH
+build_candidate "$synthetic_gid_mismatch" \
+    -DCRABC_SECURE_ENVIRONMENT_SYNTHETIC \
+    -DCRABC_SECURE_ENVIRONMENT_SYNTHETIC_GID_MISMATCH
+build_candidate "$synthetic_at_secure_cleared" \
+    -DCRABC_SECURE_ENVIRONMENT_SYNTHETIC \
+    -DCRABC_SECURE_ENVIRONMENT_SYNTHETIC_AT_SECURE_CLEARED
 
 readelf --symbols --wide "$candidate" >"$work_dir/candidate-symbols"
 readelf --program-headers --wide "$candidate" >"$work_dir/candidate-program-headers"
@@ -149,8 +167,36 @@ startup_call_line="$(grep -nE 'call.*<__libc_start_main>' "$work_dir/candidate-d
 [ "$bootstrap_call_line" -lt "$startup_call_line" ] ||
     fail "TLS bootstrap does not precede secure-environment startup"
 
-env -i OPEN=visible "$candidate" || fail "normal secure-environment candidate failed"
-"$synthetic_at_secure" || fail "synthetic final-AT_SECURE candidate failed"
-"$synthetic_uid_mismatch" || fail "synthetic UID/EUID-mismatch candidate failed"
+run_case candidate "$candidate"
+run_case synthetic-at-secure "$synthetic_at_secure"
+run_case synthetic-uid-mismatch "$synthetic_uid_mismatch"
+run_case synthetic-gid-mismatch "$synthetic_gid_mismatch"
+run_case synthetic-at-secure-cleared "$synthetic_at_secure_cleared"
+for extension in stdout stderr status; do
+    cmp "$report_dir/oracle.$extension" "$report_dir/candidate.$extension" ||
+        fail "normal candidate differs from pinned musl: $extension"
+    cmp "$report_dir/oracle.$extension" "$report_dir/synthetic-at-secure-cleared.$extension" ||
+        fail "last AT_SECURE=0 differs from pinned musl: $extension"
+    cmp "$report_dir/synthetic-at-secure.$extension" "$report_dir/synthetic-uid-mismatch.$extension" ||
+        fail "secure startup decisions differ: $extension"
+    cmp "$report_dir/synthetic-at-secure.$extension" "$report_dir/synthetic-gid-mismatch.$extension" ||
+        fail "secure startup decisions differ: $extension"
+done
+cp "$reference" "$report_dir/oracle.elf"
+cp "$candidate" "$report_dir/candidate.elf"
+cp "$synthetic_at_secure" "$report_dir/synthetic-at-secure.elf"
+cp "$synthetic_uid_mismatch" "$report_dir/synthetic-uid-mismatch.elf"
+cp "$synthetic_gid_mismatch" "$report_dir/synthetic-gid-mismatch.elf"
+cp "$synthetic_at_secure_cleared" "$report_dir/synthetic-at-secure-cleared.elf"
+(
+    cd "$report_dir"
+    sha256sum ./*.elf
+) >"$report_dir/sha256sums"
+sha256sum "$archive" compat/x86_64/libc_secure_environment_probe.c \
+    compat/x86_64/libc_secure_environment_start.S >>"$report_dir/sha256sums"
+cp "$work_dir/header-trace" "$work_dir/candidate-symbols" \
+    "$work_dir/candidate-program-headers" "$work_dir/candidate-dynamic" \
+    "$work_dir/candidate-relocations" "$work_dir/secure-getenv-disassembly" \
+    "$report_dir/"
 
-printf 'x86 static crabc-libc secure environment: PASS\n'
+printf 'x86 static crabc-libc secure environment: PASS (%s)\n' "$report_dir"
