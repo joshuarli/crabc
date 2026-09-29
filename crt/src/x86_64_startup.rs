@@ -203,9 +203,11 @@ unsafe fn invoke_linker_entry(entry: LinkerArrayEntry) {
 #[inline(never)]
 fn startup_reject() -> ! {
     unsafe {
+        // A finalizer boundary can be rejected after application workers
+        // exist. End the whole process, not just the thread running exit.
         core::arch::asm!(
             "syscall",
-            in("rax") 60usize,
+            in("rax") 231usize,
             in("rdi") 127usize,
             options(noreturn, nostack),
         );
