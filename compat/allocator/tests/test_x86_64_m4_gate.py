@@ -159,6 +159,26 @@ class M4GateContractTests(unittest.TestCase):
         self.assertEqual(bound, ["python3", "x.py", "--report", "/scratch/run/r.json"])
         self.assertEqual(gate.evidence_command(["python3", "x.py"], Path("/s")), ["python3", "x.py"])
 
+    def test_upstream_test_api_inline_diagnostic_keeps_next_check_separate(self) -> None:
+        raw = ("test: malloc-aligned5...  malloc_aligned5: usable size: 8192.  ok.\n"
+               "test: malloc-aligned7...  ok.\n"
+               "succeeded: 2\nfailed   : 0\n")
+        self.assertEqual(gate.TEST_API_CHECK.findall(raw),
+                         [("malloc-aligned5", "ok."), ("malloc-aligned7", "ok.")])
+        self.assertEqual(gate.parse_upstream_test_api_checks(raw),
+                         {"malloc-aligned5": True, "malloc-aligned7": True})
+
+    def test_upstream_test_api_reader_rejects_missing_duplicate_and_malformed_outcomes(self) -> None:
+        valid = "test: first...  ok.\ntest: second...  ok.\nsucceeded: 2\nfailed   : 0\n"
+        for raw in (
+            valid.replace("test: second...  ok.\n", "test: second...  no result\n"),
+            valid.replace("test: second...  ok.\n", "test: first...  ok.\n"),
+            valid.replace("test: second...  ok.\n", ""),
+            valid.replace("test: second...  ok.\n", "test: second...  ok. trailing\n"),
+        ):
+            with self.subTest(raw=raw), self.assertRaises(harness.HarnessError):
+                gate.parse_upstream_test_api_checks(raw)
+
 
 if __name__ == "__main__":
     unittest.main()

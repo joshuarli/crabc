@@ -510,7 +510,30 @@ def run_operations_differential(offline: bool, scenario: str) -> dict[str, Any]:
 # upstream:test-api
 # ---------------------------------------------------------------------------
 
-TEST_API_CHECK = re.compile(r"test: (.+?)\.\.\.  (ok\.|\n  FAILED: [^\n]*)", re.DOTALL)
+TEST_API_CHECK = re.compile(
+    r"^test: ([A-Za-z0-9_-]+)\.\.\.  (?:[^\n]*?  )?(ok\.|FAILED: [^\n]+)$", re.MULTILINE,
+)
+
+
+def parse_upstream_test_api_checks(output: str) -> dict[str, bool]:
+    """Require one distinct terminal outcome for every printed test line."""
+
+    test_lines = [line for line in output.splitlines() if line.startswith("test:")]
+    if not test_lines:
+        raise harness.HarnessError("upstream test-api printed no test lines")
+    checks: dict[str, bool] = {}
+    for line in test_lines:
+        match = TEST_API_CHECK.fullmatch(line)
+        if match is None:
+            raise harness.HarnessError(f"upstream test-api has a malformed test line: {line}")
+        name, verdict = match.groups()
+        if name in checks:
+            raise harness.HarnessError(f"upstream test-api repeated test: {name}")
+        checks[name] = verdict == "ok."
+    summary = harness.parse_upstream_api_test_summary(output)
+    if len(checks) != summary["succeeded"] or not all(checks.values()):
+        raise harness.HarnessError("upstream test-api outcomes differ from its summary")
+    return checks
 
 
 def run_upstream_test_api(offline: bool) -> dict[str, Any]:
@@ -540,15 +563,14 @@ def run_upstream_test_api(offline: bool) -> dict[str, Any]:
         harness.require_success(link, "upstream test-api link against the native adapter")
         execution = harness.command_record((str(binary),), cwd=temporary, env={}, timeout_seconds=600)
     output = str(execution["stderr"])
-    checks = [(name, verdict == "ok.") for name, verdict in TEST_API_CHECK.findall(output)]
-    failed = [name for name, passed in checks if not passed]
-    report = {"checks": dict(checks), "status": "passed"}
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     (ARTIFACTS / "test-api.log").write_text(str(execution["stdout"]) + output)
-    if execution["status"] != 0 or not checks or failed or f"failed   : 0\n" not in output:
+    if execution["status"] != 0:
         raise harness.HarnessError(
-            f"upstream test-api failed (status {execution['status']}): {failed or output[-400:]}"
+            f"upstream test-api failed (status {execution['status']}): {output[-400:]}"
         )
+    checks = parse_upstream_test_api_checks(output)
+    report = {"checks": checks, "status": "passed"}
     harness.write_json(ARTIFACTS / "test-api.json", report)
     return report
 
