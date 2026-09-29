@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 proof for the private __udivmodti4 helper ABI.
+# Native Linux/x86-64 proof for the unsigned 128-bit compiler-helper ABI.
 #
 # A pinned-musl C reference uses ordinary unsigned division and remainder. The
-# candidate is a fresh Rust-only archive linked to an otherwise freestanding C
-# object that directly calls __udivmodti4 and receives its remainder through an
-# unsigned __int128 pointer. The archive-free link must fail; the archive-backed
-# image must be static, closed, retain and transfer control to the helper, and
-# execute the same nonzero-divisor cases.
+# candidate is a fresh Rust-only archive linked to a freestanding C object that
+# directly calls __udivti3, __umodti3, and __udivmodti4. The archive-free link
+# must fail; the archive-backed image must be static, closed, and execute the
+# same nonzero-divisor cases as the pinned compiler reference.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -36,7 +35,7 @@ case "$(uname -m)" in
     *) fail "refuses emulation on $(uname -m)" ;;
 esac
 
-for tool in grep mktemp nm objdump python3 readelf; do
+for tool in cmp grep mktemp nm objdump python3 readelf sha256sum wc; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned x86 musl compiler wrapper"
@@ -46,8 +45,11 @@ done
 
 bash "${ROOT_DIR}/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-udivmodti4.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+report_root="${ROOT_DIR}/.work/x86_64/builtins-udivmodti4"
+mkdir -p "$report_root"
+work_dir="$(mktemp -d "${report_root}/run.XXXXXX")"
+chmod 755 "$work_dir"
+printf 'raw unsigned compiler-helper evidence: %s\n' "$work_dir"
 archive="${work_dir}/libcrabc-builtins.a"
 provenance="${work_dir}/libcrabc-builtins.a.provenance.json"
 object="${work_dir}/udivmodti4.o"
@@ -57,6 +59,10 @@ without_archive_log="${work_dir}/without-builtins.log"
 candidate="${work_dir}/with-builtins"
 candidate_link_log="${work_dir}/with-builtins-link.log"
 reference="${work_dir}/pinned-musl-reference"
+reference_object="${work_dir}/reference.o"
+reference_link_log="${work_dir}/reference-link.log"
+candidate_output="${work_dir}/candidate-results.bin"
+reference_output="${work_dir}/reference-results.bin"
 symbols="${work_dir}/object-undefined.txt"
 candidate_symbols="${work_dir}/candidate-defined-symbols.txt"
 candidate_undefined="${work_dir}/candidate-undefined-symbols.txt"
@@ -64,6 +70,8 @@ disassembly="${work_dir}/candidate-disassembly.txt"
 header="${work_dir}/candidate-header.txt"
 program_headers="${work_dir}/candidate-program-headers.txt"
 dynamic="${work_dir}/candidate-dynamic.txt"
+relocations="${work_dir}/candidate-relocations.txt"
+link_map="${work_dir}/candidate-link.map"
 
 python3 "$BUILDER" --output "$archive" --provenance "$provenance" --verify-reproducible >/dev/null
 python3 - "$provenance" <<'PY'
@@ -80,8 +88,8 @@ if not isinstance(archive, dict):
     raise SystemExit("archive provenance is missing archive metadata")
 if archive.get("members") != ["crabc-builtins.o"]:
     raise SystemExit("archive membership drifted")
-if "__udivmodti4" not in set(archive.get("defined_symbols", [])):
-    raise SystemExit("archive lacks __udivmodti4")
+if not {"__udivti3", "__umodti3", "__udivmodti4"} <= set(archive.get("defined_symbols", [])):
+    raise SystemExit("archive lacks an unsigned division helper")
 if record.get("reproducible") is not True:
     raise SystemExit("archive reproducibility proof did not pass")
 PY
@@ -95,10 +103,12 @@ oracle_cc \
 oracle_cc -c "$START" -o "$start_object"
 
 nm --undefined-only "$object" >"$symbols"
-grep -Eq '[[:space:]]__udivmodti4$' "$symbols" || {
-    fail "native C object did not require __udivmodti4"
-}
-if grep -Evq '[[:space:]]__udivmodti4$' "$symbols"; then
+for symbol in __udivti3 __umodti3 __udivmodti4; do
+    grep -Eq "[[:space:]]${symbol}$" "$symbols" || {
+        fail "native C object did not require ${symbol}"
+    }
+done
+if grep -Evq '[[:space:]](__udivti3|__umodti3|__udivmodti4)$' "$symbols"; then
     fail "native C object admitted an unexpected helper boundary"
 fi
 
@@ -108,13 +118,18 @@ if oracle_cc \
     "$start_object" "$object" -o "$without_archive" >"$without_archive_log" 2>&1; then
     fail "freestanding udivmodti4 link unexpectedly succeeded without the bounded archive"
 fi
-grep -Fq '__udivmodti4' "$without_archive_log" || {
-    fail "archive-free link failure did not name __udivmodti4"
-}
+for symbol in __udivti3 __umodti3 __udivmodti4; do
+    grep -Fq "$symbol" "$without_archive_log" || {
+        fail "archive-free link failure did not name ${symbol}"
+    }
+done
 
 oracle_cc \
     -nostdlib -static -no-pie \
     -Wl,--build-id=none -Wl,--no-undefined -Wl,-e,_start -Wl,-t \
+    -Wl,-Map,"$link_map" \
+    -Wl,--trace-symbol=__udivti3 -Wl,--trace-symbol=__umodti3 \
+    -Wl,--trace-symbol=__udivmodti4 \
     "$start_object" "$object" "$archive" -o "$candidate" >"$candidate_link_log" 2>&1
 if grep -Eq 'libgcc|compiler-rt|libc\.a|/crt[^[:space:]]*\.o' "$candidate_link_log"; then
     fail "candidate link admitted an ambient CRT or compiler runtime"
@@ -128,8 +143,11 @@ grep -Fq 'Machine:                           Advanced Micro Devices X86-64' "$he
     fail "candidate is not x86-64 ELF"
 }
 readelf --program-headers --wide "$candidate" >"$program_headers"
-if grep -Eq 'INTERP| TLS ' "$program_headers"; then
-    fail "candidate unexpectedly needs an interpreter or TLS runtime state"
+if grep -Eq 'INTERP|DYNAMIC| TLS ' "$program_headers"; then
+    fail "candidate unexpectedly needs an interpreter or dynamic runtime state"
+fi
+if grep -Eq 'GNU_STACK.*RWE' "$program_headers"; then
+    fail "candidate has an executable stack"
 fi
 readelf --dynamic --wide "$candidate" >"$dynamic"
 if grep -Eq '\((NEEDED|JMPREL|PLTGOT)\)' "$dynamic"; then
@@ -139,19 +157,58 @@ nm --undefined-only "$candidate" >"$candidate_undefined"
 if grep -q . "$candidate_undefined"; then
     fail "candidate retains unresolved symbols"
 fi
+readelf --relocs --wide "$candidate" >"$relocations"
+if grep -q 'R_X86_64_' "$relocations"; then
+    fail "candidate has runtime relocations"
+fi
 nm --defined-only "$candidate" >"$candidate_symbols"
-grep -Eq '[[:space:]]__udivmodti4$' "$candidate_symbols" || {
-    fail "candidate did not retain __udivmodti4"
-}
 objdump --disassemble "$candidate" >"$disassembly"
-grep -Eq '(call[a-z]*|jmp[a-z]*)[[:space:]].*<__udivmodti4>' "$disassembly" || {
-    fail "candidate code does not transfer control to __udivmodti4"
+for symbol in __udivti3 __umodti3 __udivmodti4; do
+    grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" || {
+        fail "candidate did not retain ${symbol}"
+    }
+    grep -Eq "(call[a-z]*|jmp[a-z]*)[[:space:]].*<${symbol}>" "$disassembly" || {
+        fail "candidate code does not transfer control to ${symbol}"
+    }
+    grep -Fq "$archive" "$candidate_link_log" || {
+        fail "candidate link did not trace the owned archive"
+    }
+    grep -Fq "$object: reference to $symbol" "$candidate_link_log" || {
+        fail "candidate link did not trace the ${symbol} reference"
+    }
+    grep -Fq "$archive(crabc-builtins.o): definition of $symbol" "$candidate_link_log" || {
+        fail "candidate link did not attribute ${symbol} to the owned archive member"
+    }
+    grep -Fq " .text.${symbol}" "$link_map" || {
+        fail "candidate map did not retain the ${symbol} text section"
+    }
+done
+
+libgcc="$(oracle_cc -print-libgcc-file-name)"
+[ -f "$libgcc" ] || fail "pinned compiler cannot identify its reference arithmetic archive"
+oracle_cc --version >"${work_dir}/oracle-compiler-version.txt"
+oracle_cc \
+    -std=c11 -O2 -fno-builtin -fno-stack-protector \
+    -fno-asynchronous-unwind-tables -fno-unwind-tables \
+    -ffreestanding -fno-pic -fno-pie \
+    -DCRABC_BUILTINS_FREESTANDING -DCRABC_BUILTINS_REFERENCE \
+    -c "$PROBE" -o "$reference_object"
+oracle_cc -nostdlib -static -no-pie \
+    -Wl,--build-id=none -Wl,--no-undefined -Wl,-e,_start -Wl,-t \
+    "$start_object" "$reference_object" -lgcc -o "$reference" >"$reference_link_log" 2>&1
+
+"$reference" >"$reference_output" || fail "pinned compiler reference failed"
+"$candidate" >"$candidate_output" || fail "owned compiler-helper candidate failed"
+if ! cmp -s "$reference_output" "$candidate_output"; then
+    cmp "$reference_output" "$candidate_output" >&2 || true
+    fail "unsigned compiler-helper differential differs"
+fi
+case_count=$((14 * 13 + 128 * 4 + 256))
+expected_bytes=$((case_count * 4 * 16))
+[ "$(wc -c <"$candidate_output")" -eq "$expected_bytes" ] || {
+    fail "result stream length differs from the selected case matrix"
 }
-
-oracle_cc -std=c11 -O2 -fno-stack-protector -fno-pie -no-pie \
-    -DCRABC_BUILTINS_REFERENCE \
-    "$PROBE" -o "$reference"
-"$reference"
-"$candidate"
-
-printf 'private x86 __udivmodti4 compiler-helper ABI: PASS\n'
+sha256sum "$ORACLE_CC" "${ROOT_DIR}/builtins/src/lib.rs" "$PROBE" "$START" \
+    "$archive" "$candidate" "$reference" \
+    "$candidate_output" "$reference_output" "$libgcc" >"${work_dir}/sha256sums.txt"
+printf 'private x86 unsigned 128-bit compiler-helper ABI: PASS (%s cases)\n' "$case_count"
