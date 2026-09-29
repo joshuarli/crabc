@@ -100,6 +100,50 @@ class ObservationsTests(unittest.TestCase):
         with self.assertRaisesRegex(observations.ObservationError, 'raw observation differs'):
             observations.collect('spawn', self.leaf, static_required=True)
 
+    def test_complete_credentials_environment_and_signal_scenarios_bind_every_cell(self):
+        cases = {
+            'credentials-profile': ('direct', 'aliases', 'transitions', 'threads', 'divergence', 'fork'),
+            'environment-lifecycle': ('normal', 'allocation-failure', 'putenv-inheritance', 'mutation-lifetime'),
+            'signal-full': ('sets', 'initial-handler-mask', 'threaded-handler-mask', 'actions-masks',
+                            'queue-delivery', 'suspend-delivery', 'sigpause-cancellation',
+                            'sigsuspend-cancellation', 'interrupt-bookkeeping', 'alternate-stack',
+                            'alternate-minimum', 'signalfd', 'waits'),
+            'signal-helpers': ('actions', 'fork-action-mask', 'interrupt', 'failed-interrupt',
+                               'restart', 'partial-action', 'pause-query-failure', 'pause-threaded',
+                               'cancellation', 'reporting', 'partial-reporting'),
+        }
+        for case, scenarios in cases.items():
+            for static in (True, False):
+                with self.subTest(case=case, static=static):
+                    leaf = self.leaf / (case + str(static))
+                    leaf.mkdir()
+                    layout = observations.LAYOUTS[case]
+                    modes = observations.MODES if static else observations.MODES[2:]
+                    status_bytes = (b'{"returncode": 0, "timed_out": false}\n'
+                                    if case == 'signal-full' else b'0\n')
+                    for scenario in scenarios:
+                        for mode in ('oracle', *modes):
+                            stem = observations._stem(case, layout, mode, scenario, oracle=mode == 'oracle')
+                            for suffix, raw in (('.stdout', scenario.encode() + b'\n'),
+                                                (layout.stderr_suffix, b''), (layout.status_suffix, status_bytes)):
+                                (leaf / (stem + suffix)).write_bytes(raw)
+                    with patch.object(observations, '_credentials_helper'):
+                        result = observations.collect(case, leaf, static_required=static)
+                        self.assertEqual(tuple(result['scenarios']), scenarios)
+                        for scenario in scenarios:
+                            stem = observations._stem(case, layout, 'pie-direct', scenario)
+                            stream = leaf / (stem + '.stdout')
+                            original = stream.read_bytes()
+                            stream.write_bytes(b'changed\n')
+                            with self.assertRaisesRegex(observations.ObservationError, 'raw observation differs'):
+                                observations.collect(case, leaf, static_required=static)
+                            stream.write_bytes(original)
+                            status = leaf / (stem + layout.status_suffix)
+                            status.unlink()
+                            with self.assertRaises(observations.ObservationError):
+                                observations.collect(case, leaf, static_required=static)
+                            status.write_bytes(status_bytes)
+
     def test_omitted_required_scenario_is_rejected(self):
         self.fixture('signal-helpers')
         for path in self.leaf.glob('*-partial-reporting.*'):
@@ -202,12 +246,29 @@ class ObservationsTests(unittest.TestCase):
                 with self.assertRaises(observations.ObservationError):
                     observations._fork_survivor(self.leaf, path.name.removesuffix('.raw.stdout'), {'stdout': projection}, expected)
 
-    def test_timer_unit_filter_must_execute_the_named_test(self):
+    def test_timer_unit_filter_cannot_omit_live_runtime_object_reset(self):
         name = 'x86_64_initial_graph::x86_64_runtime_tls_view::timer_reset_tests::timer_reset_restores_initial_and_runtime_images_without_replacing_tcb_or_dtv'
         valid = ('\nrunning 1 test\ntest ' + name + ' ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 51 filtered out; finished in 0.00s\n\n').encode()
-        observations._timer_unit_transcript(observations.ROOT, 'tls-reset-tests', {'stdout': valid, 'stderr': b''})
+        with self.assertRaises(observations.ObservationError):
+            observations._timer_unit_transcript(observations.ROOT, 'tls-reset-tests', {'stdout': valid, 'stderr': b''})
         for invalid in (valid.replace(b'running 1 test', b'running 0 tests'),
                         valid.replace(b'1 passed', b'0 passed'), valid.replace(name.encode(), b'unrelated_test')):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(observations.ObservationError):
+                    observations._timer_unit_transcript(observations.ROOT, 'tls-reset-tests', {'stdout': invalid, 'stderr': b''})
+
+    def test_timer_unit_transcript_observes_live_object_and_neighbor_reset(self):
+        prefix = 'x86_64_initial_graph::x86_64_runtime_tls_view::timer_reset_tests::'
+        names = (prefix + 'timer_reset_keeps_one_live_runtime_tls_object_and_resets_its_neighbors',
+                 prefix + 'timer_reset_restores_initial_and_runtime_images_without_replacing_tcb_or_dtv')
+        rows = ''.join('test ' + name + ' ... ok\n' for name in names)
+        valid = ('\nrunning 2 tests\n' + rows + '\ntest result: ok. 2 passed; 0 failed; '
+                 '0 ignored; 0 measured; 117 filtered out; finished in 0.00s\n\n').encode()
+        observations._timer_unit_transcript(observations.ROOT, 'tls-reset-tests', {'stdout': valid, 'stderr': b''})
+        for invalid in (valid.replace(names[0].encode(), b'unrelated_test'),
+                        valid.replace(names[0].encode(), names[1].encode()),
+                        valid.replace(b'running 2 tests', b'running 3 tests'),
+                        valid.replace(b'2 passed', b'1 passed')):
             with self.subTest(invalid=invalid):
                 with self.assertRaises(observations.ObservationError):
                     observations._timer_unit_transcript(observations.ROOT, 'tls-reset-tests', {'stdout': invalid, 'stderr': b''})
@@ -287,7 +348,7 @@ class ObservationsTests(unittest.TestCase):
                 (self.leaf / (stem + '.stdout')).write_text(text)
         result = observations.collect('credentials-profile', self.leaf, static_required=True)
         self.assertEqual({row['kind'] for row in result['scenarios'].values()}, {'differential'})
-        self.assertEqual(set(result['scenarios']), {'direct', 'aliases', 'transitions', 'threads'})
+        self.assertEqual(set(result['scenarios']), {'direct', 'aliases', 'transitions', 'threads', 'divergence', 'fork'})
         path = self.leaf / 'static-aliases.stdout'
         path.write_text(path.read_text().replace('status=0 errno=0', 'status=-1 errno=95'))
         with self.assertRaisesRegex(observations.ObservationError, 'raw observation differs'):

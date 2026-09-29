@@ -45,9 +45,9 @@ LAYOUTS = {
     # The runner's full `cases` roster, in its order.
     'legacy-filesystem': Layout('posix_filesystem', ('aliases', 'directory', 'traversal', 'temporary', 'handles', 'comparators', 'directory-edges', 'directory-threads', 'traversal-flags', 'traversal-descriptor', 'traversal-permissions', 'legacy-edges', 'handle-edges', 'alias-edges', 'namespace-boundaries'), 'static-{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}'),
     'control-residual': Layout('process_control'),
-    'credentials-profile': Layout('credentials_profile', ('direct', 'aliases', 'transitions', 'threads'), '{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}', status_suffix='.stdout.status'),
-    'environment-lifecycle': Layout('environment_lifecycle', ('normal', 'allocation-failure'), '{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}', '.stdout.stderr', '.stdout.status'),
-    'signal-full': Layout('posix_signals', ('sets', 'actions-masks', 'queue-delivery', 'suspend-delivery', 'sigpause-cancellation', 'sigsuspend-cancellation', 'interrupt-bookkeeping', 'alternate-stack', 'alternate-minimum', 'signalfd', 'waits'), '{mode}-{scenario}', '{mode}-{scenario}', 'oracle-{scenario}', status_suffix='.status.json'),
+    'credentials-profile': Layout('credentials_profile', ('direct', 'aliases', 'transitions', 'threads', 'divergence', 'fork'), '{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}', status_suffix='.stdout.status'),
+    'environment-lifecycle': Layout('environment_lifecycle', ('normal', 'allocation-failure', 'putenv-inheritance', 'mutation-lifetime'), '{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}', '.stdout.stderr', '.stdout.status'),
+    'signal-full': Layout('posix_signals', ('sets', 'initial-handler-mask', 'threaded-handler-mask', 'actions-masks', 'queue-delivery', 'suspend-delivery', 'sigpause-cancellation', 'sigsuspend-cancellation', 'interrupt-bookkeeping', 'alternate-stack', 'alternate-minimum', 'signalfd', 'waits'), '{mode}-{scenario}', '{mode}-{scenario}', 'oracle-{scenario}', status_suffix='.status.json'),
     'kernel-residual': Layout('kernel_residual', ('cpucount', 'configuration', 'sysconf-signal-stack', 'sysconf-table', 'hostid-membarrier', 'membarrier-expedited', 'personality', 'prctl', 'scheduler', 'syscall', 'ulimit', 'uts-namespace', 'uts-seccomp', 'all'), 'static-{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}'),
     'global-state-composition': Layout('posix_composition'),
     'linux-control': Layout('linux_control', stderr_suffix='.stdout.stderr', status_suffix='.stdout.status', dynamic='dynamic-{mode}'),
@@ -55,7 +55,7 @@ LAYOUTS = {
     'system-cancellation': Layout('system_cancellation', ('normal', 'failure', 'timeout'), 'static-{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}'),
     'spawn': Layout('dynamic_spawn'),
     'process-trio': Layout('process_trio', ('ordinary', 'errors', 'redirect'), 'static-{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}'),
-    'signal-helpers': Layout('signal_helpers', ('actions', 'interrupt', 'failed-interrupt', 'restart', 'partial-action', 'cancellation', 'reporting', 'partial-reporting'), '{mode}-{scenario}', '{mode}-{scenario}', 'oracle-{scenario}'),
+    'signal-helpers': Layout('signal_helpers', ('actions', 'fork-action-mask', 'interrupt', 'failed-interrupt', 'restart', 'partial-action', 'pause-query-failure', 'pause-threaded', 'cancellation', 'reporting', 'partial-reporting'), '{mode}-{scenario}', '{mode}-{scenario}', 'oracle-{scenario}'),
     'pthread-signal': Layout('pthread_signal'),
     'io-cancellation': Layout('dynamic_io_cancellation', IO_SCENARIOS, '{scenario}-{mode}', '{scenario}-{mode}', '{scenario}-oracle'),
     'posix-timers': Layout('posix_timers', ('ordinary',), '{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}', '.stdout.stderr', '.stdout.status'),
@@ -220,21 +220,28 @@ def _roster(leaf, expected, case):
 
 
 def _timer_unit_transcript(root, stem, raw):
-    """A successful Rust test process must actually execute its named check."""
-    source, name = {
+    """A successful Rust test process must execute every required observer."""
+    source, names = {
         'tls-reset-tests': ('ldso/src/x86_64_runtime_tls_view.rs',
-            'x86_64_initial_graph::x86_64_runtime_tls_view::timer_reset_tests::timer_reset_restores_initial_and_runtime_images_without_replacing_tcb_or_dtv'),
+            ('x86_64_initial_graph::x86_64_runtime_tls_view::timer_reset_tests::timer_reset_keeps_one_live_runtime_tls_object_and_resets_its_neighbors',
+             'x86_64_initial_graph::x86_64_runtime_tls_view::timer_reset_tests::timer_reset_restores_initial_and_runtime_images_without_replacing_tcb_or_dtv')),
         'tls-import-tests': ('ldso/src/x86_64_general_relocation_tests.rs',
-            'x86_64_initial_graph::x86_64_general_relocation::tests::installed_runtime_function_imports_validate_shape_before_any_graph_write'),
+            ('x86_64_initial_graph::x86_64_general_relocation::tests::installed_runtime_function_imports_validate_shape_before_any_graph_write',)),
     }[stem]
-    function = name.rsplit('::', 1)[1]
-    if ('fn ' + function + '(').encode() not in _file(root / source, root)[0]:
+    source_bytes = _file(root / source, root)[0]
+    if any(('fn ' + name.rsplit('::', 1)[1] + '(').encode() not in source_bytes for name in names):
         raise ObservationError('timer named unit-test source changed')
-    pattern = (rb'\nrunning 1 test\ntest ' + re.escape(name.encode()) +
-               rb' \.\.\. ok\n\ntest result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; '
+    pattern = (rb'\nrunning ([0-9]+) tests?\n((?:test [A-Za-z0-9_:]+ \.\.\. ok\n)+)'
+               rb'\ntest result: ok\. ([0-9]+) passed; 0 failed; 0 ignored; 0 measured; '
                rb'[0-9]+ filtered out; finished in [0-9]+\.[0-9]+s\n\n')
-    if raw['stderr'] or re.fullmatch(pattern, raw['stdout']) is None:
-        raise ObservationError('timer unit transcript did not execute exactly the required test')
+    match = re.fullmatch(pattern, raw['stdout'])
+    if raw['stderr'] or match is None:
+        raise ObservationError('timer unit transcript did not execute the required observers')
+    observed = re.findall(rb'test ([A-Za-z0-9_:]+) \.\.\. ok\n', match[2])
+    if (set(observed) != {name.encode() for name in names}
+            or len(observed) != len(set(observed))
+            or int(match[1]) != len(observed) or int(match[3]) != len(observed)):
+        raise ObservationError('timer unit transcript did not execute the required observers')
 
 
 def _timer_race_witness(path: Path, leaf: Path) -> dict:
