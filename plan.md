@@ -72,9 +72,11 @@ are not transferable passes for a different revision.
   modes and shared libc, discharging that ordinary-import reason through the
   final-call attachment. A source-sealed owned AIO receipt now binds the
   retained `aio_suspend` archive calls through GOT/register forms to one owned
-  provider in ET_EXEC, static PIE, and shared libc; the selector falls from
-  707 to 706 blockers after independent report validation. Broader ABI
-  closure stays open.
+  provider in ET_EXEC, static PIE, and shared libc. A later same-source receipt
+  accounts for all ten `aio_cancel` archive importers and twenty relocations,
+  binds its retained static and shared-libc calls to the owned provider, and
+  preserves the `aio_suspend` join. Independent validation shows the selector
+  fall from 707 to 705 blockers; broader ABI closure stays open.
   `libc.c-abi-compat` now runs a physical
   same-cohort text/math/locale/stdio family admission; its current assessment admits seven
   of ten components and retains three allocator components at the selected C
@@ -107,8 +109,11 @@ are not transferable passes for a different revision.
   `consumer.rust-std-lto` passes its
   Rust, native-facade, LTO, and unwind leaves on clean `d6733f516`; its
   pinned-image receipt passed independent physical validation and public
-  publication. `consumer.source-build` passes on a development cohort and
-  publishes its receipt; a clean `0bb16e482` Lua source-build admission makes the
+  publication. A later clean selected-C source cohort passes the same Rust
+  std/LTO consumer, three byte-exact musl controls, and independent physical
+  receipt validation for primary and extracted products; native allocator
+  evidence remains separate. `consumer.source-build` passes on a development
+  cohort and publishes its receipt; a clean `0bb16e482` Lua source-build admission makes the
   latter evidence condition met while 14 prerequisite families remain open.
   A sealed `libc.resolver` assessment admits all six components with no gaps;
   its receipt passed independent physical validation, while final-candidate
