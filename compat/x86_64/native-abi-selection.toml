@@ -892,18 +892,17 @@ reason = "Source-faithful musl weak_alias(__stack_chk_fail, __stack_chk_fail_loc
 static_metadata_rule = "explicit"
 
 # Implementation-private symbols of the owned Rust libc. The installed static
-# archive has one member per Rust module, so cross-module helpers (mangled Rust
-# items, compiler `anon.*` constants, private `__crabc_*` entries) appear as
-# hidden archive symbols. This is a structural rule, not a name class: an
-# identity is owned here only when every candidate row satisfies it (see
-# `attach_module_private_symbols`); any public or musl-shared exposure keeps
-# its ordinary unresolved blocker.
+# Archive module boundaries expose internal functions with HIDDEN or DEFAULT
+# visibility. The hidden-definition account stays narrow. DEFAULT functions
+# additionally require complete source-built ET_EXEC/static-PIE extraction and
+# final-call evidence before acquiring module ownership. Shared public or
+# pinned-musl public definitions and other candidate roles keep their owners.
 [module_private_symbols]
 id = "owned-rust-module-private"
 owner = "owned-rust-libc-module"
 family = "libc.c-abi-compat"
-sources = ["compat/x86_64/native_abi_selection.py", "compat/x86_64/owned_mimalloc_producer_metadata.py", "scripts/build_x86_64_owned_sysroot.py"]
-reason = "Hidden cross-module definition inside one authenticated Rust member of the owned static archive, local in libc.so and absent from every dynamic symbol table and every pinned-musl public definition."
+sources = ["compat/x86_64/native_abi_selection.py", "compat/x86_64/native_abi_provider_links.py", "compat/x86_64/owned_mimalloc_producer_metadata.py", "scripts/build_x86_64_owned_sysroot.py"]
+reason = "Cross-module definition inside one authenticated Rust member of the owned static archive, absent from every dynamic symbol table and pinned-musl public definition. DEFAULT archive functions require retained complete-function ET_EXEC/static-PIE provider and call proofs; any shared occurrence remains local."
 
 # These three public process-exit functions have one selected definition in
 # the owned static archive. Sibling Rust members may import their ordinary

@@ -93,8 +93,9 @@ SELECTION_COMPANIONS = (
     "public_data_declaration_runtime_report",
     "loader_structural_owner_receipt_report",
     "fchdir_ordinary_import_work",
+    "provider_link_work",
 )
-DIRECTORY_COMPANIONS = {"fchdir_ordinary_import_work"}
+DIRECTORY_COMPANIONS = {"fchdir_ordinary_import_work", "provider_link_work"}
 # The one companion that is checked-in generated source rather than `.work`
 # evidence; the source seal already binds its bytes.
 SOURCE_COMPANIONS = {
@@ -597,6 +598,12 @@ PRODUCERS = (
                           "--loader-debug-report", str(r["loader_debug_report"]),
                           "--loader-runtime-registry-report", str(r["loader_runtime_registry_report"])], {}),
         _in, requires=("loader_debug_report", "loader_runtime_registry_report")),
+    CompanionProducer(
+        "provider_link_work",
+        lambda c, r, o: (["python3", "-B", "compat/x86_64/native_abi_provider_links.py", "collect",
+                          "--static-product", str(c.static_product), "--elf-facts", str(c.native_abi_elf_facts),
+                          "--output", str(o)], {}),
+        lambda output: output),
     CompanionProducer(
         "fchdir_ordinary_import_work",
         lambda c, r, o: (["python3", "-B", "compat/x86_64/native_abi_fchdir_import_receipt.py", "collect",

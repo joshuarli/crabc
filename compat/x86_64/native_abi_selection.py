@@ -2609,6 +2609,98 @@ def attach_module_private_symbols(accounting: Mapping[str, Any], rule: Mapping[s
     return sorted(joins, key=lambda row: json.dumps(row['identity'], sort_keys=True))
 
 
+def provider_link_adapter(work: Path | None, *, paths: Mapping[str, Path],
+                          accounting: Mapping[str, Any], facts: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Keep the complete-function physical reader inside the selected cohort."""
+    if work is None:
+        return None
+    try:
+        reader = importlib.import_module('native_abi_provider_links')
+        return reader.project(physical_work_path(work, directory=True, own=True),
+                              paths['static_product'], accounting, facts['facts'])
+    except (ValueError, OSError, RuntimeError) as error:
+        raise SelectionError(f'complete provider links rejected: {error}') from error
+
+
+def attach_provider_links(accounting: Mapping[str, Any], proof: Mapping[str, Any] | None,
+                          rule: Mapping[str, Any], rust_members: Sequence[str]) -> list[dict[str, Any]]:
+    """Join complete owned function links without inferring ownership from names.
+
+    DEFAULT archive visibility permits normal static linking. A previously
+    unowned cross-module function acquires private ownership only after the
+    physical reader has bound all its imports to its unique final provider in
+    both static modes, all source rows belong to authenticated Rust members,
+    and every shared row is local. Public exports and other product roles
+    remain under their explicit owners.
+    """
+    if proof is None:
+        return []
+    records, placements, occurrences = _accounting_indexes(accounting, description='complete provider links')
+    members = set(strings(list(rust_members), 'provider Rust members', empty=False))
+    joins = []
+    for observed in proof['identities']:
+        key = identity_key(observed['identity'])
+        record = records.get(key)
+        if (record is None or observed.get('static_modes') != ['static', 'static-pie']
+                or observed.get('physical_provider_and_calls') is not True):
+            continue
+        rows = [row for row in occurrences.values() if row.get('role') != 'unnamed'
+                and identity_key(row_identity(row['row'])) == key]
+        candidate = [row for row in rows if not row['artifact_key'].startswith('reference-')]
+        static = [row for row in candidate if row['artifact_key'] == 'candidate-static']
+        imports = [row for row in candidate if row['role'] == 'import']
+        definitions = [row for row in static if row['role'] == 'definition']
+        if (len(definitions) != 1 or definitions[0]['index'] != observed['definition_index']
+                or sorted(row['index'] for row in imports) != observed['import_indices']
+                or any(row['artifact_key'] != 'candidate-static'
+                    or row['table'] != '.symtab' or row['member_occurrence'] != 0
+                    or row['row']['binding'] != 'GLOBAL'
+                    or row['row']['visibility'] not in {'DEFAULT', 'HIDDEN'} for row in imports)):
+            continue
+        disposition = record['selection']['disposition']
+        owned = disposition == 'unresolved' and record['selection'].get('owner') is None
+        if owned:
+            shared = [row for row in candidate if row['artifact_key'] == 'candidate-shared']
+            if (not set(record['unresolved']) <= set(MODULE_PRIVATE_REASONS)
+                    or any(row['artifact_key'] not in {'candidate-static', 'candidate-shared'} for row in candidate)
+                    or any(row['member_name'] not in members or row['member_occurrence'] != 0
+                           or row['table'] != '.symtab' or row['row']['visibility'] not in {'DEFAULT', 'HIDDEN'}
+                           or row['row']['binding'] not in {'GLOBAL', 'WEAK'} for row in static)
+                    or any(row['table'] != '.symtab' or row['role'] != 'local-definition' for row in shared)
+                    or any(row['artifact_key'].startswith('reference-')
+                           and row['row']['section_index'] != 'UND'
+                           and row['row']['visibility'] == 'DEFAULT'
+                           and row['row']['binding'] != 'LOCAL' for row in rows)):
+                continue
+            record['selection'] = {'disposition': 'private-provider', 'owner': rule['owner'],
+                'group': MODULE_PRIVATE_GROUP, 'family': rule['family'], 'reason': rule['reason']}
+            discharged = list(record['unresolved'])
+            for row in static:
+                row['accounting'] = {'disposition': 'private-provider', 'owner': rule['owner'],
+                                     'scope': 'candidate-static'}
+        elif disposition in {'public-provider', 'private-provider'}:
+            placement = placements.get((key, 'candidate-static'))
+            if (placement is None or placement.get('placement_observed') is not True
+                    or placement.get('definition_count') != 1
+                    or definitions[0]['index'] not in placement.get('occurrence_indices', [])
+                    or not imports or ORDINARY_IMPORT_REASON not in record['unresolved']):
+                continue
+            discharged = [ORDINARY_IMPORT_REASON]
+        else:
+            continue
+        for reason in discharged:
+            record['unresolved'].remove(reason)
+        accounting['blockers'][:] = [row for row in accounting['blockers']
+            if not (row.get('code') == 'identity-unresolved' and identity_key(row.get('identity', {})) == key
+                    and row.get('reason') in discharged)]
+        joins.append({'identity': copy.deepcopy(record['identity']),
+                      'owner': record['selection']['owner'], 'discharged_reasons': sorted(discharged),
+                      'definition_index': observed['definition_index'],
+                      'reference_indices': observed['import_indices'],
+                      'physical_final_links': copy.deepcopy(observed.get('links', {}))})
+    return joins
+
+
 def attach_process_exit_static_imports(accounting: Mapping[str, Any], rule: Mapping[str, Any],
                                        rust_members: Sequence[str]) -> list[dict[str, Any]]:
     """Bind selected public exit imports to their one owned static provider.
@@ -12387,6 +12479,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   prepared_worker_tls_report: Path | None = None,
                   errno_storage_lifecycle_report: Path | None = None,
                   native_c_allocator_boundary_report: Path | None = None,
+                  provider_link_work: Path | None = None,
                   strlen_ordinary_import_work: Path | None = None,
                   memmove_ordinary_import_work: Path | None = None,
                   memcmp_ordinary_import_work: Path | None = None,
@@ -12736,6 +12829,13 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             accounting, native_c_allocator_boundary_companion, 'close',
             projection_override=owned_syslog_close_import_companion['projection']))
     ordinary_static_import_joins.extend(owned_syslog_close_joins)
+    provider_link_proof = _admit(
+        rejected, 'provider_link_work',
+        lambda: provider_link_adapter(provider_link_work, paths=paths, accounting=accounting, facts=facts))
+    provider_link_joins, _ = _attach(
+        rejected, 'provider_link_resolution', accounting, provider_link_proof,
+        lambda: attach_provider_links(accounting, provider_link_proof,
+                                      contract['module_private_symbols'], archive_map['static_rust_members']))
     rust_allocation_handler_joins, _ = _attach(
         rejected, 'rust_allocation_handler_provenance', accounting, native_c_allocator_boundary_companion,
         lambda: attach_rust_allocation_handlers(
@@ -12894,6 +12994,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'fixed_c_producer_metadata_companion': fixed_c_producer_metadata_companion,
             'fixed_c_producer_metadata_joins': fixed_c_producer_metadata_joins,
             'module_private_joins': module_private_joins,
+            'provider_link_proof': provider_link_proof, 'provider_link_joins': provider_link_joins,
             'process_exit_static_import_joins': process_exit_static_import_joins,
             'private_complex_mul_joins': private_complex_mul_joins,
             'private_float_scanner_joins': private_float_scanner_joins,
@@ -12976,6 +13077,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  prepared_worker_tls_report: Path | None = None,
                  errno_storage_lifecycle_report: Path | None = None,
                  native_c_allocator_boundary_report: Path | None = None,
+                  provider_link_work: Path | None = None,
                  strlen_ordinary_import_work: Path | None = None,
                  memmove_ordinary_import_work: Path | None = None,
                   memcmp_ordinary_import_work: Path | None = None,
@@ -13012,6 +13114,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            prepared_worker_tls_report=prepared_worker_tls_report,
                            errno_storage_lifecycle_report=errno_storage_lifecycle_report,
                            native_c_allocator_boundary_report=native_c_allocator_boundary_report,
+                           provider_link_work=provider_link_work,
                            strlen_ordinary_import_work=strlen_ordinary_import_work,
                            memmove_ordinary_import_work=memmove_ordinary_import_work,
                            memcmp_ordinary_import_work=memcmp_ordinary_import_work,
@@ -13048,6 +13151,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     prepared_worker_tls_report: Path | None = None,
                     errno_storage_lifecycle_report: Path | None = None,
                     native_c_allocator_boundary_report: Path | None = None,
+                  provider_link_work: Path | None = None,
                     strlen_ordinary_import_work: Path | None = None,
                     memmove_ordinary_import_work: Path | None = None,
                   memcmp_ordinary_import_work: Path | None = None,
@@ -13086,6 +13190,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              prepared_worker_tls_report=prepared_worker_tls_report,
                              errno_storage_lifecycle_report=errno_storage_lifecycle_report,
                              native_c_allocator_boundary_report=native_c_allocator_boundary_report,
+                           provider_link_work=provider_link_work,
                              strlen_ordinary_import_work=strlen_ordinary_import_work,
                              memmove_ordinary_import_work=memmove_ordinary_import_work,
                            memcmp_ordinary_import_work=memcmp_ordinary_import_work,
@@ -13130,6 +13235,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--prepared-worker-tls-report', type=Path)
     parser.add_argument('--errno-storage-lifecycle-report', type=Path)
     parser.add_argument('--native-c-allocator-boundary-report', type=Path)
+    parser.add_argument('--provider-link-work', type=Path)
     parser.add_argument('--strlen-ordinary-import-work', type=Path)
     parser.add_argument('--memmove-ordinary-import-work', type=Path)
     parser.add_argument('--memcmp-ordinary-import-work', type=Path)
@@ -13179,7 +13285,7 @@ def main(argv: Sequence[str]) -> int:
                                                 'loader_debug_abi_report', 'compiler_helper_aggregate_report',
                                                 'ordinary_declaration_abi_report', 'loader_runtime_registry_report',
                                                 'pthread_alias_contract_report', 'prepared_worker_tls_report',
-                                                'errno_storage_lifecycle_report', 'native_c_allocator_boundary_report',
+                                                'errno_storage_lifecycle_report', 'native_c_allocator_boundary_report', 'provider_link_work',
                                                 'strlen_ordinary_import_work', 'memmove_ordinary_import_work', 'memcmp_ordinary_import_work',
                                                 'fchdir_ordinary_import_work', 'btowc_ordinary_import_work',
                                                 'wctomb_ordinary_import_work',

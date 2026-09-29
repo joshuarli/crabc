@@ -232,6 +232,20 @@ class AbiDifferentialEvidenceTests(unittest.TestCase):
         self.assertEqual(entry["sha256"], evidence._companion_sha256("fchdir_ordinary_import_work", work))
         validate.assert_called_with(work, static_product=self.work / "static", dynamic_product=self.work / "dynamic")
 
+    def test_provider_links_directory_is_forwarded_and_sealed_as_one_cohort(self) -> None:
+        work = self.work / "provider-links"
+        work.mkdir()
+        (work / "report.json").write_text("receipt")
+        (work / "providers.o").write_bytes(b"object")
+        self.record["selection_companions"]["provider_link_work"] = {
+            "path": work.relative_to(evidence.ROOT).as_posix(),
+            "sha256": evidence._companion_sha256("provider_link_work", work),
+        }
+        self.assertEqual(evidence.load(self.write()).selection_arguments()["provider_link_work"], work)
+        (work / "providers.o").write_bytes(b"changed")
+        with self.assertRaisesRegex(evidence.EvidenceError, "changed after assembly"):
+            evidence.load(self.write())
+
     def test_source_companion_must_be_its_fixed_source_report(self) -> None:
         name = "headers_layouts_aggregate_report"
         self.record["selection_companions"][name] = {
