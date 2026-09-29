@@ -10,7 +10,11 @@
 
 #include <errno.h>
 #include <float.h>
+#include <inttypes.h>
+#include <limits.h>
 #include <locale.h>
+#include <math.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -60,6 +64,7 @@ static int numeric_locale(void)
 {
     char *end;
     wchar_t *wide_end;
+    double signed_zero;
     locale_t c_locale;
     locale_t utf8_locale;
     locale_t previous;
@@ -104,6 +109,95 @@ static int numeric_locale(void)
     errno = EINTR;
     if (wcstold(L"-0x1.8p+2z", &wide_end) != -6.0L || *wide_end != L'z' || errno != EINTR)
         return 12;
+    errno = EDOM;
+    signed_zero = strtod("-0x0p0!", &end);
+    if (signed_zero != 0.0 || !signbit(signed_zero) || *end != '!' || errno != EDOM)
+        return 13;
+    errno = 0;
+    if (strtod("0x1p-1074?", &end) != 0x1p-1074 || *end != '?' || errno != 0)
+        return 14;
+    errno = 0;
+    if (strtod("0x1p-1075?", &end) != 0.0 || *end != '?' || errno != ERANGE)
+        return 15;
+    return 0;
+}
+
+static int integer_boundaries(void)
+{
+    char *end;
+    const char *partial = "  -0xz";
+    const char *empty = "  +q";
+    const char *invalid_base = "19";
+
+    errno = EDOM;
+    if (strtol("9223372036854775807!", &end, 10) != LONG_MAX ||
+        *end != '!' || errno != EDOM)
+        return 40;
+    errno = 0;
+    if (strtol("9223372036854775808!", &end, 10) != LONG_MAX ||
+        *end != '!' || errno != ERANGE)
+        return 41;
+    errno = EDOM;
+    if (strtoll("-9223372036854775808!", &end, 10) != LLONG_MIN ||
+        *end != '!' || errno != EDOM)
+        return 42;
+    errno = 0;
+    if (strtoll("-9223372036854775809!", &end, 10) != LLONG_MIN ||
+        *end != '!' || errno != ERANGE)
+        return 43;
+    errno = EDOM;
+    if (strtoumax("-1!", &end, 10) != UINTMAX_MAX || *end != '!' || errno != EDOM)
+        return 44;
+    errno = 0;
+    if (strtoull("18446744073709551616!", &end, 10) != ULLONG_MAX ||
+        *end != '!' || errno != ERANGE)
+        return 45;
+    errno = EDOM;
+    if (strtol(partial, &end, 0) != 0 || end != partial + 4 || errno != EDOM)
+        return 46;
+    errno = EDOM;
+    if (strtol(empty, &end, 10) != 0 || end != empty || errno != EINVAL)
+        return 47;
+    errno = EDOM;
+    if (strtol(invalid_base, &end, 1) != 0 || end != invalid_base || errno != EINVAL)
+        return 48;
+    errno = EDOM;
+    if (strtoimax("0X7fffffffffffffff!", &end, 0) != INTMAX_MAX ||
+        *end != '!' || errno != EDOM)
+        return 49;
+    return 0;
+}
+
+static void *thread_numeric_state(void *argument)
+{
+    char *end;
+    locale_t local = newlocale(LC_ALL_MASK, "C", (locale_t)0);
+    locale_t previous;
+    int *other_errno = argument;
+
+    if (local == (locale_t)0 || (previous = uselocale(local)) == (locale_t)0 ||
+        other_errno == &errno)
+        return (void *)1;
+    errno = 0;
+    if (strtol("9223372036854775808x", &end, 10) != LONG_MAX ||
+        *end != 'x' || errno != ERANGE || uselocale((locale_t)0) != local)
+        return (void *)2;
+    uselocale(previous);
+    freelocale(local);
+    return (void *)0;
+}
+
+static int threaded_numeric_state(void)
+{
+    pthread_t thread;
+    void *result;
+    int *main_errno = &errno;
+
+    errno = EDOM;
+    if (pthread_create(&thread, NULL, thread_numeric_state, main_errno) != 0)
+        return 50;
+    if (pthread_join(thread, &result) != 0 || result != (void *)0 || errno != EDOM)
+        return 51;
     return 0;
 }
 
@@ -130,6 +224,9 @@ static int clocks(void)
         clock_gettime(CLOCK_REALTIME, &realtime_after) != 0 ||
         !valid_timespec(&realtime_after))
         return 22;
+    errno = EDOM;
+    if (clock_gettime((clockid_t)-1, &realtime_after) != -1 || errno != EINVAL)
+        return 23;
     /* Realtime is externally adjustable.  These calls prove only normalized
      * records; they never establish an ordering or exact wall-clock transcript. */
     return 0;
@@ -188,6 +285,43 @@ static int calendar(void)
         strftime(text, sizeof(text), "%F %T %z %Z", &local) != 29 ||
         !equal_text(text, summer_text))
         return 36;
+    {
+        static const struct {
+            time_t epoch;
+            int hour;
+            int daylight;
+            long offset;
+            const char *name;
+        } edges[] = {
+            { 1615705199, 1, 0, -18000, "EST" },
+            { 1615705200, 3, 1, -14400, "EDT" },
+            { 1636264799, 1, 1, -14400, "EDT" },
+            { 1636264800, 1, 0, -18000, "EST" },
+        };
+        unsigned int i;
+        for (i = 0; i < sizeof(edges) / sizeof(edges[0]); ++i) {
+            time_t epoch = edges[i].epoch;
+            struct tm inverse;
+            errno = EDOM;
+            if (localtime_r(&epoch, &local) != &local || errno != EDOM ||
+                local.tm_hour != edges[i].hour || local.tm_isdst != edges[i].daylight ||
+                local.tm_gmtoff != edges[i].offset ||
+                !equal_text(local.tm_zone, edges[i].name))
+                return 37;
+            inverse = local;
+            errno = EDOM;
+            if (mktime(&inverse) != epoch || errno != EDOM || !same_civil(&inverse, &local))
+                return 38;
+        }
+    }
+    if (setenv("TZ", "UTC0", 1) != 0)
+        return 39;
+    tzset();
+    errno = EDOM;
+    if (localtime_r(&summer_time, &local) != &local || errno != EDOM ||
+        local.tm_hour != 16 || local.tm_isdst != 0 || local.tm_gmtoff != 0 ||
+        !equal_text(local.tm_zone, "UTC"))
+        return 52;
     return 0;
 }
 
@@ -196,6 +330,12 @@ int main(void)
     int status;
 
     status = numeric_locale();
+    if (status != 0)
+        return status;
+    status = integer_boundaries();
+    if (status != 0)
+        return status;
+    status = threaded_numeric_state();
     if (status != 0)
         return status;
     status = clocks();

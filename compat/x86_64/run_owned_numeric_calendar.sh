@@ -240,7 +240,7 @@ mapfile -t HOSTED_TRANSLATION < <(python3 -B "$ROOT/compat/x86_64/installed_comp
 readonly COMPILER="$(resolve_compiler)"
 capture header-trace "$COMPILER" -nostdinc -isystem "$DYNAMIC_PRODUCT/usr/include" \
     "${HOSTED_TRANSLATION[@]}" -std=c11 -fPIE -E -H "$PROBE"
-for header in errno.h float.h locale.h stdio.h stdlib.h time.h wchar.h features.h bits/alltypes.h; do
+for header in errno.h float.h inttypes.h limits.h locale.h math.h pthread.h stdio.h stdlib.h time.h wchar.h features.h bits/alltypes.h; do
     grep -Fq "$DYNAMIC_PRODUCT/usr/include/$header" "$WORK/header-trace.stderr" ||
         fail "installed header trace omitted $header"
 done
@@ -338,7 +338,7 @@ record = {
     'source_mount': '/workspace',
     'execution_mode': ('full-six-mode' if str(static_text) != '.' else
                        'dynamic-only-four-cell-development'),
-    'scope': ['numeric.parse-float-locale', 'time.clock-calendar'],
+    'scope': ['numeric.parse-integer', 'numeric.parse-float-locale', 'time.clock-calendar'],
     'sources': json.loads((work / 'source-product-before.json').read_text(encoding='utf-8'))['sources'],
     'workload': identity(work / 'workload.o'),
     'products': {'dynamic': dynamic.relative_to(root).as_posix()},

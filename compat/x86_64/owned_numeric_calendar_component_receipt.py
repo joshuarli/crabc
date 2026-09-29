@@ -36,9 +36,10 @@ import owned_dynamic_qualification as qualification
 
 SCHEMA = "crabc.x86_64-owned-numeric-calendar-products/v2"
 SOURCE_MOUNT = "/workspace"
-SCOPE = ("numeric.parse-float-locale", "time.clock-calendar")
+SCOPE = ("numeric.parse-integer", "numeric.parse-float-locale", "time.clock-calendar")
 HEADERS = (
-    "errno.h", "float.h", "locale.h", "stdio.h", "stdlib.h", "time.h", "wchar.h",
+    "errno.h", "float.h", "inttypes.h", "limits.h", "locale.h", "math.h",
+    "pthread.h", "stdio.h", "stdlib.h", "time.h", "wchar.h",
     "features.h", "bits/alltypes.h",
 )
 ORACLE_STDOUT = b"owned-numeric-calendar-products-ok\n"
