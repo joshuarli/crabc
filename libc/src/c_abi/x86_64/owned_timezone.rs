@@ -181,9 +181,8 @@ unsafe fn map_file(path: *const u8) -> Option<(*const u8, usize)> {
 unsafe fn parse_mapping(base: *const u8, size: usize) -> Option<ZoneFile> {
     unsafe {
         if size < 44 || core::slice::from_raw_parts(base, 4) != b"TZif" { return None; }
-        // Intentional pinned-musl correction: RFC 9636 §3.1 specifies NUL,
-        // not ASCII '1', for a v1 header. Newer files contain a second block.
-        // https://www.rfc-editor.org/rfc/rfc9636.html#section-3.1
+        // A version-one header uses NUL, not ASCII '1'. Newer files contain
+        // a second data block. Pinned musl rejects the NUL version byte.
         let version = *base.add(4);
         if !matches!(version, 0 | b'2' | b'3' | b'4') { return None; }
         let (header, stride) = if version != 0 {
@@ -295,10 +294,9 @@ unsafe fn configure() {
                         __tzname[slot] = map.base.add(map.abbreviations + *map.base.add(p+5) as usize).cast_mut().cast();
                         if dst { DAYLIGHT_OFFSET = (read32(map.base.add(p)) as i32).wrapping_neg(); __daylight = 1; }
                         else {
-                            // RFC 9636 §3.2 utoff is signed; POSIX timezone is
-                            // UTC minus local standard time. Cast before
-                            // negation, correcting musl's unsigned wrap to long.
-                            // https://pubs.opengroup.org/onlinepubs/9699919799/functions/tzset.html
+                            // The offset is signed; the POSIX timezone global
+                            // is UTC minus local standard time. Cast before
+                            // negation to avoid musl's unsigned wrap to long.
                             __timezone = -(read32(map.base.add(p)) as i32 as c_long);
                         }
                     }
@@ -343,12 +341,12 @@ unsafe fn transition_type(map: ZoneFile, index: usize) -> usize {
 unsafe fn scan_transitions(map: ZoneFile, seconds: i64, local: bool) -> Option<(usize, usize)> {
     unsafe {
         let count = (map.indices - map.transitions) / map.stride;
-        // RFC 9636 §3.2: a nonempty footer governs a zero-transition file;
-        // otherwise use type 0. This corrects musl's unconditional type 0.
+        // A nonempty footer governs a zero-transition file; otherwise use
+        // type 0. Pinned musl uses type 0 even with a rule-bearing footer.
         if count == 0 { return if map.posix_tail { None } else { Some((0, 0)) }; }
         // The first type governs pre-transition time, including a one-entry
-        // table. Musl's lowest-non-DST guess and early last-entry return are
-        // intentional differences fixed here against RFC 9636 §3.2.
+        // table. Pinned musl guesses the lowest non-DST type and returns
+        // early at the last entry.
         let first_offset = if local { type_offset(map, 0) } else { 0 };
         if seconds.wrapping_sub(first_offset) < transition(map, 0) {
             return Some((0, transition_type(map, 0)));
@@ -361,7 +359,8 @@ unsafe fn scan_transitions(map: ZoneFile, seconds: i64, local: bool) -> Option<(
             if seconds.wrapping_sub(off) < transition(map, middle) { n /= 2; }
             else { a = middle; n -= n/2; }
         }
-        if a == count-1 { return None; }
+        // Without a footer rule, the last transition's type remains in force.
+        if a == count-1 && map.posix_tail { return None; }
         let current = transition_type(map, a);
         let alternate = if a != 0 && type_dst(map, transition_type(map, a-1)) != type_dst(map, current) {
             transition_type(map, a-1)

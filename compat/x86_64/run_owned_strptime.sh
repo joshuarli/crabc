@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One installed-header object, ordinary parsing and a bounded unknown-zone read.
+# One installed-header object, calendar parsing and timezone state changes.
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -48,6 +48,9 @@ compare() {
     [ ! -s "$work/$label-zone-delimiters.stderr" ]
     observe "$label-zone-guard" 0 "$@" zone-guard
     [ ! -s "$work/$label-zone-guard.stdout" ] && [ ! -s "$work/$label-zone-guard.stderr" ]
+    observe "$label-tzif-last" 0 "$@" tzif-last check
+    cmp "$work/candidate-tzif-last.expected" "$work/$label-tzif-last.stdout"
+    [ ! -s "$work/$label-tzif-last.stderr" ]
 }
 /usr/local/bin/crabc-x86_64-musl-gcc -static -fno-pie -no-pie "$work/workload.o" -o "$work/root/oracle"
 observe oracle 0 /oracle
@@ -60,6 +63,13 @@ cmp "$work/oracle-zone-delimiters.expected" "$work/oracle-zone-delimiters.stdout
 # signed-character loop admits NUL after unknown names when both TZ names are
 # nonempty. Candidate acceptance is the explicit bounded-read assertion.
 observe oracle-zone-guard 139 /oracle zone-guard
+observe oracle-tzif-last 0 /oracle tzif-last observe
+# The pinned oracle treats an empty TZif footer as an empty rule; the owned
+# runtime keeps the final transition type in force and reuses it after TZ changes.
+printf 'tzif-last 0 offset=0 timezone=0 dst=0 name= parse=0/0\ntzif-last 1 offset=14400 timezone=-10800 dst=1 name=DEF parse=3/0\ntzif-last 2 offset=0 timezone=0 dst=0 name= parse=0/0\n' >"$work/oracle-tzif-last.expected"
+printf 'tzif-last 0 offset=3600 timezone=-3600 dst=0 name=TWO parse=3/0\ntzif-last 1 offset=14400 timezone=-10800 dst=1 name=DEF parse=3/0\ntzif-last 2 offset=3600 timezone=-3600 dst=0 name=TWO parse=3/0\n' >"$work/candidate-tzif-last.expected"
+cmp "$work/oracle-tzif-last.expected" "$work/oracle-tzif-last.stdout"
+[ ! -s "$work/oracle-tzif-last.stderr" ]
 if [ -z "$provided_dynamic" ]; then
     for mode in static static-pie; do
         "$work/static-sysroot/bin/crabc-cc" "-$mode" "$work/workload.o" -o "$work/root/$mode"
@@ -75,4 +85,4 @@ for mode in pie non-pie; do
     compare "$mode-direct" /lib/ld-crabc-x86_64.so.1 "/dynamic-$mode"
 done
 sha256sum -c "$work/input.sha256" >"$work/input-verified.txt"
-printf 'owned strptime: PASS (same-object calendar parsing and bounded unknown-zone read); evidence: %s\n' "$work"
+printf 'owned strptime: PASS (calendar parsing, bounded zone read, TZif state changes); evidence: %s\n' "$work"

@@ -44,8 +44,64 @@ static const struct { const char *input; const char *format; } cases[] = {
     { "tail", "" }, { "", "%Y" }, { "2024-13-05", "%F" },
 };
 
+static void put32(unsigned char *p, unsigned value)
+{
+    p[0] = value >> 24; p[1] = value >> 16;
+    p[2] = value >> 8; p[3] = value;
+}
+
+/* A final TZif type remains active without a rule-bearing footer. Repeated
+ * tzset, a POSIX rule, and return to the same file exercise cache replacement
+ * while %Z observes the published standard name. */
+static int tzif_last(const char *mode)
+{
+    const char *path = "/strptime-last.tzif";
+    unsigned char bytes[64 + 44 + 8 + 1 + 12 + 8 + 2] = {0};
+    memcpy(bytes, "TZif", 4);
+    bytes[4] = '2';
+    put32(bytes + 36, 2); put32(bytes + 40, 8);
+    put32(bytes + 44, 7200); bytes[48] = 1;
+    put32(bytes + 50, 3600); bytes[55] = 4;
+    memcpy(bytes + 56, "ONE\0TWO\0", 8);
+    unsigned char *block = bytes + 64;
+    memcpy(block, "TZif", 4); block[4] = '2';
+    put32(block + 32, 1);
+    put32(block + 36, 2);
+    put32(block + 40, 8);
+    put32(block + 48, 86400);
+    block[52] = 1;
+    put32(block + 53, 7200); block[57] = 1;
+    put32(block + 59, 3600); block[64] = 4;
+    memcpy(block + 65, "ONE\0TWO\0", 8);
+    block[73] = '\n'; block[74] = '\n';
+    FILE *file = fopen(path, "wb");
+    if (!file || fwrite(bytes, 1, sizeof bytes, file) != sizeof bytes || fclose(file)) return 10;
+    for (int i = 0; i < 3; i++) {
+        if (i == 1 && setenv("TZ", "ABC-3DEF-4", 1)) return 11;
+        if (i != 1 && setenv("TZ", path, 1)) return 12;
+        tzset();
+        if (i == 0) tzset();
+        time_t instant = 172800;
+        struct tm value;
+        if (!localtime_r(&instant, &value)) return 13;
+        struct tm parsed = { .tm_isdst = -1 };
+        const char *input = i == 1 ? "ABCtail" : "TWOtail";
+        char *end = strptime(input, "%Z", &parsed);
+        printf("tzif-last %d offset=%ld timezone=%ld dst=%d name=%s parse=%ld/%d\n",
+            i, value.tm_gmtoff, timezone, value.tm_isdst, value.tm_zone,
+            end ? (long)(end - input) : -1L, parsed.tm_isdst);
+        if (!strcmp(mode, "check") && (end != input + 3 || parsed.tm_isdst != 0 ||
+            (i == 1 && (value.tm_gmtoff != 14400 || timezone != -10800 ||
+                value.tm_isdst != 1 || strcmp(value.tm_zone, "DEF"))) ||
+            (i != 1 && (value.tm_gmtoff != 3600 || timezone != -3600 ||
+                value.tm_isdst != 0 || strcmp(value.tm_zone, "TWO"))))) return 14;
+    }
+    return unlink(path) != 0;
+}
+
 int main(int argc, char **argv)
 {
+    if (argc == 3 && !strcmp(argv[1], "tzif-last")) return tzif_last(argv[2]);
     static const char zone[] = "untouched";
     if (!setlocale(LC_ALL, "C") || setenv("TZ", "UTC0", 1)) return 1;
     tzset();
