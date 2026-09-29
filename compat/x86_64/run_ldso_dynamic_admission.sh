@@ -123,9 +123,60 @@ replay_graph() {
     (cd "$dir" && env -i PATH=/usr/bin:/bin CRABC_EXECUTION_MODE=native "$dir/main-crabc") >"$report_dir/$name.crabc.replay.log" 2>&1
 }
 
+require_unreadable_phdr_rejection() {
+    local dir="$1" image status
+    image="$dir/libmid.so"
+    cp "$image" "$dir/libmid-readable.so"
+    python3 - "$image" <<'PY'
+import struct
+import sys
+
+image = sys.argv[1]
+data = bytearray(open(image, "rb").read())
+if data[:6] != b"\x7fELF\x02\x01":
+    raise SystemExit("mid fixture is not little-endian ELF64")
+phoff = struct.unpack_from("<Q", data, 32)[0]
+phentsize, phnum = struct.unpack_from("<HH", data, 54)
+if phentsize != 56 or phoff + phentsize * phnum > len(data):
+    raise SystemExit("mid fixture has no complete program-header table")
+matches = []
+for index in range(phnum):
+    offset = phoff + index * phentsize
+    kind, flags = struct.unpack_from("<II", data, offset)
+    file_offset, file_size = struct.unpack_from("<QQ", data, offset + 8)[0], struct.unpack_from("<Q", data, offset + 32)[0]
+    if kind == 1 and file_offset <= phoff and phoff + phentsize * phnum <= file_offset + file_size:
+        matches.append((offset, flags))
+if len(matches) != 1 or matches[0][1] & 4 == 0:
+    raise SystemExit("mid fixture lacks one readable PHDR-bearing PT_LOAD")
+offset, flags = matches[0]
+struct.pack_into("<I", data, offset + 4, flags & ~4)
+with open(image, "wb") as output:
+    output.write(data)
+PY
+    cp "$image" "$report_dir/initial-graph.unreadable-phdr.libmid.so"
+    readelf -hW -lW -dW -rW "$image" >"$report_dir/initial-graph.unreadable-phdr.elf.txt"
+    if (cd "$dir" && ulimit -c 0 && env -i PATH=/usr/bin:/bin CRABC_EXECUTION_MODE=native "$dir/main-crabc") \
+        >"$report_dir/initial-graph.unreadable-phdr.launch.log" 2>&1; then
+        status=0
+    else
+        status=$?
+    fi
+    cp "$dir/libmid-readable.so" "$image"
+    rm "$dir/libmid-readable.so"
+    printf 'candidate unreadable PHDR launch status: %s\n' "$status" \
+        >>"$report_dir/initial-graph.unreadable-phdr.launch.log"
+    if [ "$status" -ne 127 ] || ! grep -Fq midmap "$report_dir/initial-graph.unreadable-phdr.launch.log"; then
+        printf 'ERROR: unreadable PHDR-bearing PT_LOAD did not fail as a loader error (status %s); raw: %s\n' \
+            "$status" "$report_dir/initial-graph.unreadable-phdr.launch.log" >&2
+        cat "$report_dir/initial-graph.unreadable-phdr.launch.log" >&2
+        exit 1
+    fi
+}
+
 run_fixture graph run_ldso_initial_graph.sh CRABC_LDSO_INITIAL_GRAPH_KEEP_WORK=1
 graph_dir="$(retained_graph_dir graph initial-graph)"
 replay_graph initial-graph "$graph_dir" libmid.so libleaf.so absent
+require_unreadable_phdr_rejection "$graph_dir"
 
 run_fixture tls run_ldso_initial_tls.sh CRABC_LDSO_INITIAL_TLS_KEEP_WORK=1
 tls_dir="$(retained_graph_dir tls initial-TLS)"

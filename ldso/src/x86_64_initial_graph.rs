@@ -2502,6 +2502,30 @@ unsafe fn map_elf_with_status(
     // so a later overlapping load still has the same overwrite semantics.
     let (phdr_vaddr, phdr_file_offset) = phdr_load.ok_or(ENOEXEC)?;
     let virtual_address = phdr_vaddr.checked_add(phoff_u64 - phdr_file_offset).ok_or(ENOEXEC)?;
+    // A later PT_LOAD can replace pages containing the retained program
+    // headers. Check their final mapping permissions before parse_mapped reads
+    // through that pointer; an unreadable page must be an ELF error, not a
+    // process fault. The table is bounded by MAX_PHDRS, so this scans at most
+    // two pages on the native target.
+    let first_phdr_page = align_down(virtual_address);
+    let last_phdr_page = align_down(virtual_address.checked_add(ph_table_len as u64 - 1).ok_or(ENOEXEC)?);
+    let mut page = first_phdr_page;
+    loop {
+        let mut readable = false;
+        for index in 0..phnum {
+            let p = phdr.add(index * 56);
+            if read_u32(p) != PT_LOAD { continue; }
+            let vaddr = read_u64(p.add(16));
+            let filesz = read_u64(p.add(32));
+            let mapped_end = align_up(vaddr.checked_add(filesz).ok_or(ENOEXEC)?);
+            if filesz != 0 && page >= align_down(vaddr) && page < mapped_end {
+                readable = read_u32(p.add(4)) & PF_R != 0;
+            }
+        }
+        if !readable { return Err(ENOEXEC); }
+        if page == last_phdr_page { break; }
+        page = page.checked_add(PAGE).ok_or(ENOEXEC)?;
+    }
     let runtime_phdr = runtime_address(base, virtual_address).ok_or(ENOEXEC)? as *const u8;
     let entry = base.checked_add(read_u64(header.add(24))).ok_or(ENOEXEC)?;
     drop(phdr_mapping);
