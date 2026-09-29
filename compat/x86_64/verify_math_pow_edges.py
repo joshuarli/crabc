@@ -6,11 +6,28 @@ from collections import Counter
 from pathlib import Path
 
 
+huge = len(sys.argv) == 4 and sys.argv[3] == "--huge"
+if len(sys.argv) not in (3, 4) or (len(sys.argv) == 4 and not huge):
+    raise SystemExit("usage: verify_math_pow_edges.py oracle candidate [--huge]")
 oracle = Path(sys.argv[1]).read_bytes()
 candidate = Path(sys.argv[2]).read_bytes()
 record_size = struct.calcsize("<5Q")
 if len(oracle) != len(candidate) or not oracle or len(oracle) % record_size:
     raise SystemExit(f"pow edge record size differs: {len(oracle)}, {len(candidate)}")
+
+huge_exponents = {
+    64: {0x432ffffffffffffe, 0x432fffffffffffff, 0x4330000000000000,
+         0x4330000000000001, 0x433fffffffffffff, 0x4340000000000000,
+         0xc32ffffffffffffe, 0xc32fffffffffffff, 0xc330000000000000,
+         0xc330000000000001, 0xc340000000000000},
+    32: {0x4afffffe, 0x4affffff, 0x4b000000, 0x4b000001,
+         0x4b7fffff, 0x4b800000, 0xcafffffe, 0xcaffffff,
+         0xcb000000, 0xcb000001, 0xcb800000},
+}
+nonintegral_huge_exponents = {
+    64: {0x432fffffffffffff, 0xc32fffffffffffff},
+    32: {0x4affffff, 0xcaffffff},
+}
 
 coverage = Counter()
 mode_rows = Counter()
@@ -19,7 +36,10 @@ for index, (old, new) in enumerate(zip(struct.iter_unpack("<5Q", oracle),
                                        struct.iter_unpack("<5Q", candidate))):
     if old[:2] != new[:2] or old[3] != new[3]:
         raise SystemExit(f"pow edge input or rounding changed at {index}: {old} / {new}")
-    base, exponent, result, modes, flags = new
+    base, exponent, result, modes, packed_status = new
+    flags = packed_status & 0xffffffff
+    if old[4] >> 32 != 0x5a5 or packed_status >> 32 != 0x5a5:
+        raise SystemExit(f"pow changed caller errno at record {index}: {old} / {new}")
     precision = "powf" if base >> 32 == 1 else "pow"
     bits = 32 if precision == "powf" else 64
     sign = 1 << (bits - 1)
@@ -59,6 +79,8 @@ for index, (old, new) in enumerate(zip(struct.iter_unpack("<5Q", oracle),
     coverage[precision, requested, "negative base, negative even exponent"] += bool(base & sign) and exponent == negative_even
     coverage[precision, requested, "negative zero"] += magnitude == 0 and bool(result & sign)
     coverage[precision, requested, "subnormal result"] += 0 < magnitude < fraction_mask + 1
+    coverage[precision, requested, "negative base, huge exponent"] += bool(base & sign) and exponent in huge_exponents[bits]
+    coverage[precision, requested, "huge nonintegral exponent"] += exponent in nonintegral_huge_exponents[bits]
     for name, bit in (("invalid", 1), ("divide by zero", 4),
                       ("overflow", 8), ("underflow", 16), ("inexact", 32)):
         coverage[precision, requested, name] += bool(flags & bit)
@@ -81,6 +103,12 @@ expected_coverage = {
     "negative zero", "subnormal result", "invalid", "divide by zero",
     "overflow", "underflow", "inexact",
 }
+if huge:
+    expected_coverage -= {
+        "exponent subnormal", "signaling NaN input", "quiet NaN exponent",
+        "signaling NaN exponent",
+    }
+    expected_coverage |= {"negative base, huge exponent", "huge nonintegral exponent"}
 for precision in ("pow", "powf"):
     rows = {mode: count for (kind, mode), count in mode_rows.items() if kind == precision}
     if set(rows) != expected_modes or len(set(rows.values())) != 1:
@@ -90,10 +118,11 @@ for precision in ("pow", "powf"):
                      if kind == precision and tested_mode == mode and count > 0}
         if exercised != expected_coverage:
             raise SystemExit(f"{precision} edge coverage changed in mode {mode:#x}: "
-                             f"missing {expected_coverage - exercised}")
+                             f"missing {expected_coverage - exercised}; "
+                             f"unexpected {exercised - expected_coverage}")
 if corrected["records"] == 0:
     raise SystemExit("powf finite identity correction was not exercised")
-print(f"pow edge corpus: {len(oracle) // record_size} records; "
+print(f"pow {'huge-exponent' if huge else 'edge'} corpus: {len(oracle) // record_size} records; "
       f"{corrected['records']} explicit finite powf(x,1) differences "
       f"({corrected['results']} results, {corrected['flags']} flags); "
-      "all rounding modes, values, and IEEE flag classes verified")
+      "all rounding modes, values, caller errno, and IEEE flag classes verified")

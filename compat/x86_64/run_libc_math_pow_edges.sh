@@ -18,21 +18,33 @@ rustup run "$(python3 "$root/scripts/rust_toolchain.py")" rustc --edition=2021 \
 flags=(-std=c11 -I"$root/include" -nostdlib -static -fno-pie -no-pie -ffreestanding
     -fno-builtin -frounding-math -fno-stack-protector -Wl,-e,_start
     -Wl,--no-undefined -Wl,--gc-sections)
-for arm in oracle candidate; do
-    library=/opt/musl-1.2.6/lib/libc.a
-    if [ "$arm" = candidate ]; then library="$work/boundary.o"; fi
-    "$cc" "${flags[@]}" compat/x86_64/libc_math_pow_edges_probe.c \
-        compat/x86_64/libc_math_pow_edges_start.S "$library" -o "$work/$arm"
-    "$work/$arm" >"$work/$arm.records"
+for corpus in edge huge; do
+    corpus_flags=()
+    verify_flags=()
+    if [ "$corpus" = huge ]; then
+        corpus_flags=(-DCRABC_MATH_POW_HUGE)
+        verify_flags=(--huge)
+    fi
+    for arm in oracle candidate; do
+        library=/opt/musl-1.2.6/lib/libc.a
+        if [ "$arm" = candidate ]; then library="$work/boundary.o"; fi
+        "$cc" "${flags[@]}" "${corpus_flags[@]}" \
+            compat/x86_64/libc_math_pow_edges_probe.c \
+            compat/x86_64/libc_math_pow_edges_start.S "$library" \
+            -o "$work/$corpus.$arm"
+        "$work/$corpus.$arm" >"$work/$corpus.$arm.records"
+    done
+    readelf -W -s "$work/$corpus.candidate" >"$work/$corpus.candidate.symbols"
+    readelf -W -l "$work/$corpus.candidate" >"$work/$corpus.candidate.segments"
+    readelf -W -d "$work/$corpus.candidate" >"$work/$corpus.candidate.dynamic"
+    for symbol in pow powf; do
+        grep -Eq "FUNC[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]+$symbol$" \
+            "$work/$corpus.candidate.symbols"
+    done
+    if grep -Eq 'INTERP|TLS|NEEDED' "$work/$corpus.candidate.segments" \
+        "$work/$corpus.candidate.dynamic"; then exit 1; fi
+    if awk '$7 == "UND" && NF >= 8 { print }' "$work/$corpus.candidate.symbols" | grep . >/dev/null; then exit 1; fi
+    python3 compat/x86_64/verify_math_pow_edges.py \
+        "$work/$corpus.oracle.records" "$work/$corpus.candidate.records" \
+        "${verify_flags[@]}" | tee "$work/$corpus.summary.txt"
 done
-readelf -W -s "$work/candidate" >"$work/candidate.symbols"
-readelf -W -l "$work/candidate" >"$work/candidate.segments"
-readelf -W -d "$work/candidate" >"$work/candidate.dynamic"
-for symbol in pow powf; do
-    grep -Eq "FUNC[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]+$symbol$" \
-        "$work/candidate.symbols"
-done
-if grep -Eq 'INTERP|TLS|NEEDED' "$work/candidate.segments" "$work/candidate.dynamic"; then exit 1; fi
-if awk '$7 == "UND" && NF >= 8 { print }' "$work/candidate.symbols" | grep . >/dev/null; then exit 1; fi
-python3 compat/x86_64/verify_math_pow_edges.py \
-    "$work/oracle.records" "$work/candidate.records" | tee "$work/summary.txt"
