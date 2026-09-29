@@ -86,6 +86,85 @@ static void expect_no_match(const char *name, const char *pattern, int cflags,
     printf("nomatch %s\n", name);
 }
 
+static void expect_match_eflags(const char *name, const char *pattern,
+    int cflags, const char *text, int eflags, regmatch_t expected)
+{
+    regex_t compiled;
+    regmatch_t actual = {-7, -70};
+
+    CHECK(public_regcomp(&compiled, pattern, cflags) == REG_OK);
+    CHECK(public_regexec(&compiled, text, 1, &actual, eflags) == REG_OK);
+    CHECK(actual.rm_so == expected.rm_so && actual.rm_eo == expected.rm_eo);
+    printf("match-eflags %s so=%ld eo=%ld\n", name,
+        (long)actual.rm_so, (long)actual.rm_eo);
+    public_regfree(&compiled);
+}
+
+static void check_selected_boundaries(void)
+{
+    static const regmatch_t bre_backreference[] = {{0, 4}, {0, 2}};
+    static const regmatch_t unset_capture[] = {{0, 1}, {-1, -1}};
+    static const regmatch_t whole_range[] = {{0, 3}};
+    static const regmatch_t newline_middle[] = {{2, 3}};
+    static const regmatch_t newline_byte[] = {{0, 1}};
+    static const struct {
+        const char *name;
+        const char *pattern;
+        int flags;
+        int error;
+    } errors[] = {
+        {"unclosed-bracket", "[", REG_EXTENDED, REG_EBRACK},
+        {"unclosed-group", "(", REG_EXTENDED, REG_EPAREN},
+        {"trailing-escape", "\\", REG_EXTENDED, REG_EESCAPE},
+        {"unknown-backreference", "\\(a\\)\\2", 0, REG_ESUBREG},
+        {"unknown-class", "[[:foo:]]", REG_EXTENDED, REG_ECTYPE},
+        {"descending-range", "[z-a]", REG_EXTENDED, REG_ERANGE},
+        {"descending-repeat", "a{3,2}", REG_EXTENDED, REG_BADBR},
+        {"leading-repeat", "*a", REG_EXTENDED, REG_BADRPT},
+    };
+    size_t index;
+    regex_t compiled;
+    regmatch_t actual;
+
+    expect_match("bre-anchored-backreference", "^\\(ab\\)\\1$", 0,
+        "abab", 2, bre_backreference, 1);
+    expect_match("ere-unmatched-optional-capture", "^(a)?b$",
+        REG_EXTENDED, "b", 2, unset_capture, 1);
+    expect_match("ere-icase-range", "^[a-c]+$",
+        REG_EXTENDED | REG_ICASE, "ABC", 1, whole_range, 0);
+    expect_match("ere-newline-inner-anchor", "^b$",
+        REG_EXTENDED | REG_NEWLINE, "a\nb\nc", 1, newline_middle, 0);
+    expect_match_eflags("ere-newline-inner-anchor-notbol-noteol", "^b$",
+        REG_EXTENDED | REG_NEWLINE, "a\nb\nc", REG_NOTBOL | REG_NOTEOL,
+        newline_middle[0]);
+    expect_match("ere-dot-matches-newline", ".", REG_EXTENDED, "\n", 1,
+        newline_byte, 0);
+    expect_match("ere-negated-bracket-matches-newline", "[^a]",
+        REG_EXTENDED, "\n", 1, newline_byte, 0);
+    expect_no_match("ere-newline-dot", ".", REG_EXTENDED | REG_NEWLINE,
+        "\n", 0);
+    expect_no_match("ere-newline-negated-bracket", "[^a]",
+        REG_EXTENDED | REG_NEWLINE, "\n", 0);
+    expect_no_match("ere-outside-range", "^[a-c]$", REG_EXTENDED, "d", 0);
+
+    for (index = 0; index != sizeof errors / sizeof *errors; ++index) {
+        int status = public_regcomp(&compiled, errors[index].pattern,
+            errors[index].flags);
+        CHECK(status == errors[index].error);
+        printf("compile-error %s status=%d\n", errors[index].name, status);
+    }
+
+    /* A failed compilation releases its partial graph. The caller may use
+     * the same regex_t storage for a later successful compilation. */
+    CHECK(public_regcomp(&compiled, "[", REG_EXTENDED) == REG_EBRACK);
+    CHECK(public_regcomp(&compiled, "^(a)$", REG_EXTENDED) == REG_OK);
+    CHECK(compiled.re_nsub == 1);
+    CHECK(public_regexec(&compiled, "a", 1, &actual, 0) == REG_OK);
+    CHECK(actual.rm_so == 0 && actual.rm_eo == 1);
+    public_regfree(&compiled);
+    puts("failed-compile-reuse-and-free");
+}
+
 static void check_nosub(void)
 {
     regex_t compiled;
@@ -985,6 +1064,7 @@ int main(int argc, char **argv)
         "xa", 1, escaped_icase, 0);
     expect_no_match("notbol", "^a", REG_EXTENDED, "a", REG_NOTBOL);
     expect_no_match("noteol", "a$", REG_EXTENDED, "a", REG_NOTEOL);
+    check_selected_boundaries();
     check_nosub();
     check_compile_and_free();
     check_errors();
