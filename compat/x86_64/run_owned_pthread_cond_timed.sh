@@ -56,7 +56,7 @@ compile_and_check_companions() {
 }
 compile_and_check_companions oracle "" "$oracle_cc" -pthread -I"$ROOT/include"
 "$oracle_cc" -std=c11 -pthread -I"$ROOT/include" "$probe" -o "$work/oracle"
-for scenario in realtime monotonic attributes pending-validation c11 robust-timeout robust-cancel robust-unrecoverable private-shared-mutex; do
+for scenario in realtime monotonic attributes pending-validation c11 robust-timeout robust-cancel robust-unrecoverable pi-robust-cancel private-shared-mutex; do
     timeout 20 python3 -B "$ROOT/compat/x86_64/run_pthread_wait_witness.py" "" "$work/oracle" "$scenario" >"$work/oracle-$scenario.stdout"
 done
 if [ "$check_static" -eq 1 ]; then
@@ -68,7 +68,7 @@ if [ "$check_static" -eq 1 ]; then
     for mode in static static-pie; do
         compile_and_check_companions "$mode" "" "$static_sysroot/bin/crabc-cc" "-$mode"
         "$static_sysroot/bin/crabc-cc" "-$mode" -std=c11 -DCRABC_OWNED_WITNESS "$probe" -o "$work/$mode"
-        for scenario in realtime monotonic attributes pending-validation c11 robust-timeout robust-cancel robust-unrecoverable private-shared-mutex; do
+        for scenario in realtime monotonic attributes pending-validation c11 robust-timeout robust-cancel robust-unrecoverable pi-robust-cancel private-shared-mutex; do
             timeout 20 python3 -B "$ROOT/compat/x86_64/run_pthread_wait_witness.py" "" "$work/$mode" "$scenario" >"$work/$mode-$scenario.stdout"
             cmp "$work/oracle-$scenario.stdout" "$work/$mode-$scenario.stdout"
         done
@@ -83,7 +83,7 @@ for mode in pie non-pie; do
     compile_and_check_companions "dynamic-$mode" "$work/execution-root" "$provided_dynamic_sysroot/bin/crabc-cc-dynamic" "--dynamic-$mode"
     "$provided_dynamic_sysroot/bin/crabc-cc-dynamic" "--dynamic-$mode" -std=c11 -DCRABC_OWNED_WITNESS "$probe" -o "$work/dynamic-$mode"
     cp "$work/dynamic-$mode" "$work/execution-root/consumer-$mode"
-    for scenario in realtime monotonic attributes pending-validation c11 robust-timeout robust-cancel robust-unrecoverable private-shared-mutex; do
+    for scenario in realtime monotonic attributes pending-validation c11 robust-timeout robust-cancel robust-unrecoverable pi-robust-cancel private-shared-mutex; do
         timeout 20 python3 -B "$ROOT/compat/x86_64/run_pthread_wait_witness.py" "$work/execution-root" "/consumer-$mode" "$scenario" >"$work/dynamic-$mode-$scenario.stdout"
         cmp "$work/oracle-$scenario.stdout" "$work/dynamic-$mode-$scenario.stdout"
         timeout 20 python3 -B "$ROOT/compat/x86_64/run_pthread_wait_witness.py" "$work/execution-root" /lib/ld-crabc-x86_64.so.1 "/consumer-$mode" "$scenario" >"$work/direct-$mode-$scenario.stdout"

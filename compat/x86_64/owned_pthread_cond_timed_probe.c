@@ -12,11 +12,14 @@
 #include <time.h>
 #include "pthread_futex_wait_witness.h"
 
+/* PI relock sleeps in the kernel's private FUTEX_LOCK_PI operation. */
+enum { FUTEX_LOCK_PI_PRIVATE = 6 | 128 };
+
 static pthread_mutex_t mutex;
 static pthread_cond_t condition;
 static pthread_t waiter;
 static atomic_int ready, waiter_tid, observed_result, cleaned;
-static int cancel_during_relock, unrecoverable;
+static int cancel_during_relock, unrecoverable, pi_robust;
 
 static struct timespec deadline(clockid_t clock, long milliseconds)
 {
@@ -151,7 +154,8 @@ static void *robust_owner(void *unused)
     if (cancel_during_relock && pthread_cancel(waiter)) _Exit(22);
     /* For expiration and cancellation alike, retain ownership until the
      * waiter has left its condition futex and blocked on this exact mutex. */
-    witness_pthread_futex_wait_at(atomic_load(&waiter_tid), 128,
+    witness_pthread_futex_wait_at(atomic_load(&waiter_tid),
+        pi_robust ? FUTEX_LOCK_PI_PRIVATE : 128,
         (unsigned long)(uintptr_t)((char *)&mutex + 4));
     return 0;
 }
@@ -159,6 +163,7 @@ static int robust_relock(void)
 {
     pthread_mutexattr_t attr;
     if (pthread_mutexattr_init(&attr) || pthread_mutexattr_setrobust(&attr, PTHREAD_MUTEX_ROBUST) ||
+        (pi_robust && pthread_mutexattr_setprotocol(&attr, PTHREAD_PRIO_INHERIT)) ||
         pthread_mutex_init(&mutex, &attr) || pthread_mutexattr_destroy(&attr)) return 23;
     init_condition(CLOCK_MONOTONIC);
     /* Owner validation precedes timespec validation for non-normal mutexes. */
@@ -247,6 +252,7 @@ int main(int argc, char **argv)
     if (!strcmp(argv[1], "c11")) return c11_timeout();
     if (!strcmp(argv[1], "private-shared-mutex")) return private_condition_shared_mutex();
     unrecoverable = !strcmp(argv[1], "robust-unrecoverable");
-    cancel_during_relock = unrecoverable || !strcmp(argv[1], "robust-cancel");
+    pi_robust = !strcmp(argv[1], "pi-robust-cancel");
+    cancel_during_relock = unrecoverable || pi_robust || !strcmp(argv[1], "robust-cancel");
     return robust_relock();
 }
