@@ -590,6 +590,9 @@ are not transferable passes for a different revision.
   Foreign destruction of a child-subprocess Heap after its owner exits now
   follows the retained subprocess owner; its fork differential matches all
   fifteen pinned-C observations. The M6 aggregate remains blocked.
+  Quiescent visitation of a child-subprocess abandoned Heap now traverses its
+  owning arena registry; the pre-fix mismatch and five matched C/Rust rows are
+  retained. Child main-Heap and concurrent visitation remain open.
   A two-worker mixed page population and release trace after both owners exit
   now matches fourteen pinned-C keys and is registered in the visitation and
   destruction-lifetime gates.
