@@ -37,7 +37,7 @@ OBJECT_ROLES = (
     ("fenv-sensitive-aggregate", "compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_probe.c", None),
     ("fenv-rounding", "compat/x86_64/libc_fenv_rounding_probe.c", "CRABC_FENV_ROUNDING_FREESTANDING"),
     ("fdim", "compat/x86_64/libc_fdim_probe.c", "CRABC_FDIM_FREESTANDING"),
-    ("exp10", "compat/x86_64/libc_math_exp10_probe.c", "CRABC_MATH_EXP10_FREESTANDING"),
+    ("exp10", "compat/x86_64/libc_math_exp10_probe.c", "CRABC_MATH_EXP10_COMPOSED"),
     ("exp10f", "compat/x86_64/libc_math_exp10f_probe.c", "CRABC_MATH_EXP10F_FREESTANDING"),
     ("long-double-completion", "compat/x86_64/libc_math_long_double_completion_probe.c", "CRABC_MATH_LONG_DOUBLE_COMPLETION_FREESTANDING"),
     ("special", "compat/x86_64/libc_math_special_probe.c", "CRABC_MATH_SPECIAL_FREESTANDING"),

@@ -16,12 +16,12 @@ STAGES = (
     (1, "fenv-sensitive-aggregate", 0),
     (2, "fenv-rounding", 0),
     (3, "fdim", 0),
-    (4, "exp10", 32 * 2 * 4 * 4 * 8),
-    (5, "exp10f", 32 * 2 * 4 * 4 * 8),
+    (4, "exp10", 3408 * 40),
+    (5, "exp10f", 1320 * 32),
     (6, "long-double-completion", 247 * 42),
     (7, "elementary-long-double", 2764 * 40),
     (8, "special", 5544 * 32),
-    (9, "complex", 5712 * 64),
+    (9, "complex", 7604 * 64),
     (10, "abi-boundary", 58984 * 64),
 )
 EXPECTED_SIZE = sum(2 * FRAME.size + body for _, _, body in STAGES)

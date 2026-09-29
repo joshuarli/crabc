@@ -22,7 +22,11 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
-#ifndef CRABC_MATH_EXP10_FREESTANDING
+#if defined(CRABC_MATH_EXP10_FREESTANDING) && defined(CRABC_MATH_EXP10_COMPOSED)
+#error "the standalone and composed exp10 probe roles are exclusive"
+#endif
+
+#if !defined(CRABC_MATH_EXP10_FREESTANDING) && !defined(CRABC_MATH_EXP10_COMPOSED)
 #include <unistd.h>
 #endif
 
@@ -53,6 +57,8 @@ uint64_t crabc_x86_64_math_exp10_records[EXP10_RECORD_STORAGE_WORDS];
 const size_t crabc_x86_64_math_exp10_record_bytes =
 	sizeof(crabc_x86_64_math_exp10_records);
 
+/* The standalone archive probe has no libc errno provider. A composed
+ * installed-product probe uses the linked libc's thread-local errno. */
 #ifdef CRABC_MATH_EXP10_FREESTANDING
 static int local_errno;
 int *__errno_location(void) { return &local_errno; }
@@ -196,7 +202,7 @@ int crabc_x86_64_math_exp10_probe(void)
 	return status;
 }
 
-#ifndef CRABC_MATH_EXP10_FREESTANDING
+#if !defined(CRABC_MATH_EXP10_FREESTANDING) && !defined(CRABC_MATH_EXP10_COMPOSED)
 static int write_all(const void *buffer, size_t length)
 {
 	const unsigned char *cursor = buffer;

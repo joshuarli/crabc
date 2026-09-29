@@ -105,7 +105,7 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
                 ("fenv-sensitive-aggregate", "compat/x86_64/libc_math_elementary_fenv_sensitive_aggregate_probe.c", None),
                 ("fenv-rounding", "compat/x86_64/libc_fenv_rounding_probe.c", "CRABC_FENV_ROUNDING_FREESTANDING"),
                 ("fdim", "compat/x86_64/libc_fdim_probe.c", "CRABC_FDIM_FREESTANDING"),
-                ("exp10", "compat/x86_64/libc_math_exp10_probe.c", "CRABC_MATH_EXP10_FREESTANDING"),
+                ("exp10", "compat/x86_64/libc_math_exp10_probe.c", "CRABC_MATH_EXP10_COMPOSED"),
                 ("exp10f", "compat/x86_64/libc_math_exp10f_probe.c", "CRABC_MATH_EXP10F_FREESTANDING"),
                 ("long-double-completion", "compat/x86_64/libc_math_long_double_completion_probe.c", "CRABC_MATH_LONG_DOUBLE_COMPLETION_FREESTANDING"),
                 ("special", "compat/x86_64/libc_math_special_probe.c", "CRABC_MATH_SPECIAL_FREESTANDING"),
@@ -152,8 +152,15 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
             self.assertIn(f"emit_record_data_from_accessor({accessor})", source)
 
     def test_stream_validator_requires_the_fixed_stage_order_and_size(self) -> None:
+        # Each body uses the byte extent emitted by its independent probe
+        # workload. Keep the fixture independent of the validator's table so
+        # a stale body extent cannot validate its own synthetic stream.
+        body_sizes = (
+            0, 0, 0, 3408 * 40, 1320 * 32, 247 * 42,
+            2764 * 40, 5544 * 32, 7604 * 64, 58984 * 64,
+        )
         pieces = []
-        for stage, _, body_size in stream.STAGES:
+        for (stage, _, _), body_size in zip(stream.STAGES, body_sizes, strict=True):
             pieces.append(stream.FRAME.pack(
                 stream.MAGIC, stage, 1, 0,
                 stream.CALLER_ROUNDING, stream.CALLER_EXCEPTIONS,
@@ -181,7 +188,7 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
         # its specified FE_UPWARD + DIVBYZERO|INEXACT caller boundary.
         coherent_wrong_environment = bytearray(records)
         offset = 0
-        for _, _, body_size in stream.STAGES:
+        for body_size in body_sizes:
             for frame_offset in (offset, offset + stream.FRAME.size + body_size):
                 stream.FRAME.pack_into(
                     coherent_wrong_environment, frame_offset, stream.MAGIC,
@@ -293,7 +300,7 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
         (work / "header-driver.stderr").write_text(trace, encoding="utf-8")
         path = work / "compile-exp10.argv.json"
         command = json.loads(path.read_text(encoding="utf-8"))
-        command.remove("-DCRABC_MATH_EXP10_FREESTANDING")
+        command.remove("-DCRABC_MATH_EXP10_COMPOSED")
         path.write_text(json.dumps(command), encoding="utf-8")
         with self.assertRaises(evidence.EvidenceError):
             evidence.validate_invocations(ROOT, work, dynamic, compiler)

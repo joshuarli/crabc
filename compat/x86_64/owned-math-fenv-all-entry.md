@@ -23,6 +23,11 @@ raises a flag in the other unit, or writes errno differs from pinned musl
 even when its result matches. The two decimal producers own their
 record pointers and byte extents; `owned_math_fenv_all_entry_driver.c` calls an
 accessor, retains its returned extent, and then emits that exact byte range.
+The binary64 decimal probe uses its composed role here: it omits its standalone
+entry point and private errno definition, so both the pinned musl oracle and
+installed products supply the ordinary libc errno location. Its standalone
+freestanding archive check still uses the private errno storage needed without
+a linked libc.
 Before every probe,
 the driver sets FE_UPWARD with exactly FE_DIVBYZERO and FE_INEXACT; each ordered
 stage records a zero status and that caller environment both before and after
