@@ -541,6 +541,12 @@ M2_X86_64_ARENA_CHECKS = (
     },
     {
         "expected_passed_test_count": 1,
+        "id": "arena-startup-huge-failure-warning-c-rust-differential",
+        "kind": "c-rust-arena-startup-huge-failure-differential",
+        "target": "compat/allocator/m2_startup_huge_failure_x86_64.py",
+    },
+    {
+        "expected_passed_test_count": 1,
         "id": "arena-delayed-purge-decommit-failure-c-rust-differential",
         "kind": "c-rust-arena-delayed-purge-failure-differential",
         "target": "compat/allocator/m2_delayed_purge_failure_x86_64.py",
@@ -571,6 +577,16 @@ M2_X86_64_ARENA_CHECKS = (
     },
 )
 M2_X86_64_ARENA_DIRECT_RECEIVERS = {
+    "arena-startup-huge-failure-warning-c-rust-differential": {
+        "artifact": "m2-startup-huge-failure",
+        "kind": "c-rust-arena-startup-huge-failure-differential",
+        "target": "compat/allocator/m2_startup_huge_failure_x86_64.py",
+        "fixture": "compat/allocator/m2_startup_huge_failure_x86_64.c",
+        "rust_test": "arena::owned::huge::tests::failed_startup_huge_reservation_reports_the_source_failure_warning",
+        "trace_prefix": "m2.startup_huge_failure.",
+        "trace": {"warning_count": 1},
+        "scope": "pinned-c-rust-empty-huge-reservation-startup-final-warning-after-primitive-failure",
+    },
     "arena-delayed-purge-decommit-failure-c-rust-differential": {
         "artifact": "m2-delayed-purge-failure",
         "kind": "c-rust-arena-delayed-purge-failure-differential",
@@ -14381,6 +14397,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-second-arena-reset-advice-matrix",
                     "c-rust-process-arena-purge-differential",
                     "c-rust-arena-delayed-purge-failure-differential",
+                    "c-rust-arena-startup-huge-failure-differential",
                     "c-rust-arena-lifecycle-differential",
                     "c-rust-arena-destruction-differential",
                     "c-rust-reservation-warnings-differential",

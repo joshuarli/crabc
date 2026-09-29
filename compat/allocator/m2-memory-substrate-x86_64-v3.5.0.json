@@ -270,6 +270,12 @@
         },
         {
           "expected_passed_test_count": 1,
+          "id": "arena-startup-huge-failure-warning-c-rust-differential",
+          "kind": "c-rust-arena-startup-huge-failure-differential",
+          "target": "compat/allocator/m2_startup_huge_failure_x86_64.py"
+        },
+        {
+          "expected_passed_test_count": 1,
           "id": "arena-delayed-purge-decommit-failure-c-rust-differential",
           "kind": "c-rust-arena-delayed-purge-failure-differential",
           "target": "compat/allocator/m2_delayed_purge_failure_x86_64.py"

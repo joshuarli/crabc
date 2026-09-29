@@ -23,7 +23,7 @@ use super::ProcessArenaBacking;
 use crate::arena::{ArenaId, ManageArenaError};
 use crate::meta::{MetaAllocation, MetaAllocator, MetaError, MetaRelease, MetaReleaseFailure};
 #[cfg(target_arch = "x86_64")]
-use crate::diagnostic_output::MbindWarningRoute;
+use crate::diagnostic_output::{MbindWarningRoute, SourceFormattedMessage};
 use crate::os::{HugeOsAllocation, HugeOsAllocationOutcome, HugeOsAllocationStop,
     HugeOsRawReleaseRetry, HugeOsRejectedPrimitive, HugeOsReleaseFailure, MemoryConfig, VmProcess};
 use crate::random::TheapRandomImage;
@@ -274,8 +274,14 @@ impl ProcessArenaBacking {
             let node = process.policy().reserve_huge_os_pages_at().clamp(-1, i32::MAX as i64) as i32;
             let timeout = pages * 500;
             let result = if node != -1 {
-                unsafe { self.reserve_huge_at_with_mbind_warning(process, config, metadata, pages, node,
-                    timeout, false, random.as_deref_mut(), warning) }.map(|_| ())
+                let result = unsafe { self.reserve_huge_at_with_mbind_warning(process, config, metadata, pages, node,
+                    timeout, false, random.as_deref_mut(), warning) };
+                if matches!(result, Err(HugeArenaReserveError::Unavailable(_))) {
+                    // The source startup calls the public reservation entry,
+                    // which reports an empty primitive result after its own warning.
+                    unsafe { warning.huge_warning(SourceFormattedMessage::huge_reservation_failure(pages)) };
+                }
+                result.map(|_| ())
             } else {
                 unsafe { self.reserve_huge_interleaved_with_mbind_warning(process, config, metadata, pages, 0,
                     timeout, random.as_deref_mut(), warning) }
@@ -444,8 +450,12 @@ impl ProcessArenaBacking {
         if pages == 0 { return Ok(()); }
         reserve_huge_interleaved_with(pages, numa_nodes, process.policy().numa_node_count(),
             timeout_milliseconds, |pages, node, timeout| unsafe {
-                self.reserve_huge_at_with_mbind_warning(process, config, metadata, pages, node,
-                    timeout, false, random.as_deref_mut(), warning).map(|_| ())
+                let result = self.reserve_huge_at_with_mbind_warning(process, config, metadata, pages, node,
+                    timeout, false, random.as_deref_mut(), warning);
+                if matches!(result, Err(HugeArenaReserveError::Unavailable(_))) {
+                    warning.huge_warning(SourceFormattedMessage::huge_reservation_failure(pages));
+                }
+                result.map(|_| ())
             })
     }
 }
@@ -472,10 +482,13 @@ fn reserve_huge_interleaved_with<E>(pages: usize, numa_nodes: usize, detected_no
 mod tests {
     extern crate std;
     use super::*;
-    use crate::config::{GIB, MAX_ARENAS, VmOption, VmOptionEnvironment, VmOptions};
+    use crate::config::{GIB, MAX_ARENAS, SourceOption, VmOption, VmOptionEnvironment, VmOptions};
+    use crate::diagnostic_output::{OutputCallback, OutputOwner};
     use crate::os::{fault, PageSize};
     use crate::process_init::ProcessMainInitializationStorage;
     use crate::process_page_map::ProcessPageMapStorage;
+    use core::ffi::{c_char, c_void, CStr};
+    use core::sync::atomic::AtomicUsize;
 
     fn fixture() -> (MemoryConfig, VmProcess<'static>, Pin<&'static MetaAllocator>) {
         let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 1 << 20, true, false);
@@ -490,6 +503,49 @@ mod tests {
         let binding = unsafe { storage.test_prepare_vm_process_backing_binding(config, options, subprocess, map) }.unwrap();
         metadata.bind_process_backing(binding).unwrap();
         (config, binding.process(), metadata)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn failed_startup_huge_reservation_reports_the_source_failure_warning() {
+        unsafe fn empty_environment() -> *const *const c_char {
+            static END: usize = 0;
+            (&END as *const usize).cast()
+        }
+        unsafe extern "C" fn unused_output(_: *const c_char) {}
+        unsafe extern "C" fn capture(message: *const c_char, argument: *mut c_void) {
+            let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
+            if bytes == b"failed to reserve 1 GiB huge pages\n" {
+                let count = unsafe { &*(argument.cast::<AtomicUsize>()) };
+                count.fetch_add(1, Ordering::AcqRel);
+            }
+        }
+
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 1 << 20, true, false);
+        let metadata = MetaAllocator::test_static_owner();
+        let subprocess = metadata.test_default_subprocess();
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        options.set(VmOption::ReserveHugeOsPages, 1);
+        options.set(VmOption::ReserveHugeOsPagesAt, 0);
+        let storage = ProcessMainInitializationStorage::test_static_owner();
+        let map = ProcessPageMapStorage::test_static_owner();
+        let binding = unsafe { storage.test_prepare_vm_process_backing_binding(config, options, subprocess, map) }.unwrap();
+        metadata.bind_process_backing(binding).unwrap();
+        let output = OutputOwner::new(unused_output);
+        unsafe { output.initialize_source_options(empty_environment) };
+        unsafe { output.option_set(SourceOption::ShowErrors, 1) }.unwrap();
+        unsafe { output.option_set(SourceOption::MaxWarnings, 100) }.unwrap();
+        let warnings = AtomicUsize::new(0);
+        unsafe { output.register_output(Some(capture as OutputCallback),
+            (&warnings as *const AtomicUsize).cast_mut().cast()) };
+        fault.set(fault::Plan::at(fault::Point::HugeMap, 1, Errno::NOMEM));
+        let result = unsafe { subprocess.arena_backing().reserve_startup_options_with_mbind_warning(
+            binding.process(), config, metadata, None, MbindWarningRoute::new(&output)) };
+        assert_eq!(result.huge, Some(Err(Errno::NOMEM)));
+        std::println!("m2.startup_huge_failure.warning_count={}", warnings.load(Ordering::Acquire));
+        assert_eq!(warnings.load(Ordering::Acquire), 1);
     }
 
     fn fill_registry(backing: &ProcessArenaBacking) -> usize {
