@@ -53,16 +53,21 @@ assert_pure_fixed_utc_code() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff env grep nm objdump readelf rustup sort; do require_tool "$tool"; done
+for tool in ar cargo cmp cp diff env grep nm objdump readelf rustup sha256sum sort; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_time_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-timegm.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-timegm.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-timegm-reference"
+oracle_emitter="$work_dir/musl-timegm-oracle-emitter"
+oracle_results="$work_dir/timegm_oracle_results.h"
+reference_records="$work_dir/musl-timegm-records.bin"
+candidate_records="$work_dir/crabc-timegm-records.bin"
 candidate="$work_dir/crabc-static-timegm-candidate"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
@@ -80,9 +85,20 @@ for header in errno.h limits.h stdint.h time.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use project $header"
 done
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
-    -I"$ROOT_DIR/include" compat/x86_64/libc_timegm_probe.c -o "$reference"
-"$reference" || fail "pinned-musl timegm fixture failed"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_TIMEGM_ORACLE_EMIT \
+    -fno-builtin -fno-stack-protector -I"$ROOT_DIR/include" \
+    compat/x86_64/libc_timegm_probe.c -o "$oracle_emitter"
+"$oracle_emitter" >"$oracle_results" || fail "pinned-musl timegm oracle failed"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_TIMEGM_EXPECTED \
+    -DCRABC_TIMEGM_RECORD \
+    -fno-builtin -fno-stack-protector -I"$ROOT_DIR/include" -I"$work_dir" \
+    compat/x86_64/libc_timegm_probe.c -o "$reference"
+if "$reference" >"$reference_records"; then
+    reference_status=0
+else
+    reference_status=$?
+    fail "pinned-musl timegm differential replay failed (exit $reference_status)"
+fi
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit x86 static libc archive"
@@ -107,7 +123,9 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
 fi
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_TIMEGM_FREESTANDING \
-    -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
+    -DCRABC_TIMEGM_EXPECTED -DCRABC_TIMEGM_RECORD \
+    -I"$ROOT_DIR/include" -I"$work_dir" \
+    -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
     compat/x86_64/libc_timegm_probe.c compat/x86_64/libc_timegm_start.S \
     "$archive" -o "$candidate"
@@ -136,5 +154,30 @@ objdump -d --disassemble=__errno_location "$candidate" >"$work_dir/errno-disasse
 grep -Eq '%fs:0x0|%fs:-' "$work_dir/errno-disassembly" ||
     fail "candidate errno lacks direct fs initial TLS"
 assert_pure_fixed_utc_code
-env -i "$candidate" || fail "freestanding fixed-UTC timegm fixture failed"
+if env -i "$candidate" >"$candidate_records"; then
+    candidate_status=0
+else
+    candidate_status=$?
+    fail "freestanding fixed-UTC timegm differential fixture failed (exit $candidate_status)"
+fi
+if cmp -s "$reference_records" "$candidate_records"; then
+    record_comparison_status=0
+else
+    record_comparison_status=$?
+    fail "pinned-musl and freestanding timegm record streams differ (cmp exit $record_comparison_status)"
+fi
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-timegm"
+mkdir -p "$report_dir"
+cp "$reference" "$report_dir/musl-reference.elf"
+cp "$candidate" "$report_dir/crabc-candidate.elf"
+cp "$oracle_results" "$report_dir/oracle-results.h"
+cp "$reference_records" "$report_dir/musl-records.bin"
+cp "$candidate_records" "$report_dir/crabc-records.bin"
+printf 'musl_reference_exit=%s\ncrabc_candidate_exit=%s\nrecord_comparison_exit=%s\n' \
+    "$reference_status" "$candidate_status" "$record_comparison_status" \
+    >"$report_dir/status.txt"
+( cd "$report_dir"; sha256sum musl-reference.elf crabc-candidate.elf \
+    oracle-results.h musl-records.bin crabc-records.bin status.txt ) \
+    >"$report_dir/hashes.sha256"
 printf 'x86 static crabc-libc fixed-UTC timegm: PASS\n'
+printf 'raw receipt: %s\n' "$report_dir"
