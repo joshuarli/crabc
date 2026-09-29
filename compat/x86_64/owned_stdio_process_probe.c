@@ -53,6 +53,36 @@ static void *worker(void *unused) {
     return 0;
 }
 
+/* Closing the older process stream removes its child-close action. Its former
+   descriptor may become an ordinary file while another process stream stays
+   live; a later spawn must preserve the ordinary file and close only the
+   survivor’s inherited pipe endpoint. */
+static int recycled_process_descriptor(const char *path) {
+    FILE *first = popen("printf first; exit 17", "r");
+    FILE *survivor = popen("printf second; exit 29", "r");
+    CHECK(first && survivor);
+    int recycled = fileno(first), inherited = fileno(survivor);
+    char command[256], bytes[16] = {0};
+    CHECK(fread(bytes, 1, sizeof bytes, first) == 5 && !memcmp(bytes, "first", 5));
+    int status = pclose(first);
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 17);
+    int ordinary = open(path, O_RDONLY);
+    CHECK(ordinary == recycled);
+    CHECK(snprintf(command, sizeof command,
+        "test -e /proc/self/fd/%d && test ! -e /proc/self/fd/%d && printf third",
+        ordinary, inherited) > 0);
+    FILE *third = popen(command, "r");
+    CHECK(third);
+    CHECK(fread(bytes, 1, sizeof bytes, survivor) == 6 && !memcmp(bytes, "second", 6));
+    status = pclose(survivor);
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 29);
+    memset(bytes, 0, sizeof bytes);
+    CHECK(fread(bytes, 1, sizeof bytes, third) == 5 && !memcmp(bytes, "third", 5));
+    CHECK(pclose(third) == 0);
+    CHECK(fcntl(ordinary, F_GETFD) >= 0 && !close(ordinary));
+    return 0;
+}
+
 /* A popen writer remains on the FILE list across fork. The child inherits
    pending bytes and ordinary exit flushes its copy; immediate termination
    closes its descriptor without writing them. The parent then pclose's its
@@ -154,6 +184,7 @@ int main(int argc, char **argv) {
     first = fopen(argv[1], "r");
     CHECK(first && fread(bytes, 1, sizeof bytes, first) == 15 && !memcmp(bytes, "buffered-child\n", 15));
     CHECK(!fclose(first));
+    CHECK(!recycled_process_descriptor(argv[1]));
     /* dup2(fd,fd) must clear CLOEXEC, including when stdin began closed. */
     int saved_input = dup(STDIN_FILENO);
     CHECK(saved_input >= 0 && !close(STDIN_FILENO));
