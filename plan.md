@@ -542,8 +542,13 @@ are not transferable passes for a different revision.
   after its owner exits: a retained Theap now prevents dereferencing the stale
   Heap address. Both free/exit orders match twelve pinned-C trace keys and
   retain the OS page after collection; shared M6 registration remains open.
+  Destroying a Heap used by a second worker after its creator exits now
+  releases abandoned regular OS pages with their multi-block geometry intact;
+  the committed two-worker C/Rust trace matches all five observations.
+  The M6 contract check lists 105 interface items, ten blocked gates, and
+  nine missing evidence entries; a full M6 aggregate pass is not claimed.
   All ten required gates
-  remain blocked by 10 named missing API and lifetime evidence entries;
+  remain blocked by named missing API and lifetime evidence;
   accumulated mixed-workload main-Heap page-population parity remains unproved.
   Integrated products are
   compared against an evidence-only pinned v3.5.0 C product (the selected C
@@ -816,8 +821,15 @@ are not transferable passes for a different revision.
      `7fbcc1b5d`). The combined product's package-corpus reader now validates
      its embedded static/dynamic placement maps, rejects executable top-level
      manifests, and passes a focused physical
-     34-workload replay; a full combined rerun remains open after identical
+     34-workload replay; an earlier full combined rerun stopped after identical
      oracle/candidate sqlite timeouts under host contention. The combined
+     product later passed both static suites and all 219 dynamic cases on one
+     older source seal, with independent physical receipt validation. Its
+     archived receipt lacks 222 external leaf evidence roots after the lane
+     worktree was removed, so that archive cannot be revalidated and does not
+     qualify the moving candidate. A fresh complete retained cohort remains
+     required.
+     The combined
      archive extractor also checks exact member modes, safe aliases,
      and every embedded component's claim before staging; retained archives
      passed its earlier read-only validation. Newly source-sealed static
