@@ -374,11 +374,12 @@ are not transferable passes for a different revision.
   fails, the second succeeds, both schedules are consumed, and the arena
   remains mapped. A third deterministic receiver matches 28 fields just
   before, at, and after delayed-purge expiry, including exact advice and
-  retained ownership. These latter two shared-gate registrations remain open.
+  retained ownership. Both are registered in a clean 99-check M2 run, where
+  their C/Rust traces match and the four partial components remain named.
   A separate source-built fresh-arena
   receiver matches 46 C/Rust fields when metadata commit and cleanup unmap
   both fail, leaving a raw escaped map while a later healthy arena claim
-  succeeds and releases; its shared-gate registration remains open.
+  succeeds and releases; it also matches in that shared 99-check run.
   A failed second-arena committed-slice claim and same-slice retry match 24
   C/Rust fields after the regular mapping uses the warning-preserving commit
   path; two additional pinned-C fields bind the attempted `mprotect` range.
