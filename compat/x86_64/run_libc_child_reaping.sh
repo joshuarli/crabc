@@ -44,12 +44,13 @@ assert_named_syscall() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar cargo cmp diff grep nm objdump readelf rustup sort; do require_tool "$tool"; done
+for tool in ar cargo cmp diff grep nm objdump readelf rustup sha256sum sort; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-child-reaping.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-child-reaping.XXXXXX")"
+chmod a+rx "$work_dir"
 target_dir="$work_dir/cargo-target"; archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-child-reaping-reference"; candidate="$work_dir/crabc-static-child-reaping-candidate"
 trace="$work_dir/header-trace"; archive_symbols="$work_dir/archive-symbols"
@@ -66,7 +67,13 @@ for header in errno.h signal.h bits/signal.h sys/types.h sys/wait.h sys/syscall.
 done
 "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_child_reaping_probe.c -o "$reference"
-"$reference" || fail "pinned-musl child-reaping fixture failed"
+if "$reference" >"$work_dir/musl.stdout" 2>"$work_dir/musl.stderr"; then
+    reference_status=0
+else
+    reference_status=$?
+fi
+printf '%s\n' "$reference_status" >"$work_dir/musl.status"
+[ "$reference_status" -eq 0 ] || fail "pinned-musl child-reaping fixture failed (status $reference_status; evidence $work_dir)"
 # The instruction judge below requires inlining the raw syscall adapter into
 # each selected wrapper. One codegen unit makes that boundary deterministic.
 build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a" -- \
@@ -122,5 +129,18 @@ for register in '%r10' '%r8'; do
     grep -Fq "$register" "$waitid_disassembly" \
         || fail "waitid lacks the x86 ${register} argument path"
 done
-"$candidate" || fail "freestanding child-reaping fixture failed"
-printf 'x86 static libc child reaping: PASS\n'
+if "$candidate" >"$work_dir/crabc.stdout" 2>"$work_dir/crabc.stderr"; then
+    candidate_status=0
+else
+    candidate_status=$?
+fi
+printf '%s\n' "$candidate_status" >"$work_dir/crabc.status"
+sha256sum "$reference" "$candidate" "$work_dir/musl.stdout" \
+    "$work_dir/crabc.stdout" "$work_dir/musl.stderr" "$work_dir/crabc.stderr" \
+    >"$work_dir/sha256sum.txt"
+[ "$candidate_status" -eq "$reference_status" ] || fail "child-reaping status differs from pinned musl (evidence $work_dir)"
+cmp "$work_dir/musl.stdout" "$work_dir/crabc.stdout" \
+    || fail "child-reaping stdout differs from pinned musl (evidence $work_dir)"
+cmp "$work_dir/musl.stderr" "$work_dir/crabc.stderr" \
+    || fail "child-reaping stderr differs from pinned musl (evidence $work_dir)"
+printf 'x86 static libc child reaping: PASS (evidence %s)\n' "$work_dir"

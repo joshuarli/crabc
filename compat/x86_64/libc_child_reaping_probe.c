@@ -34,7 +34,7 @@ _Static_assert(__builtin_offsetof(siginfo_t, si_signo) == 0 &&
     __builtin_offsetof(siginfo_t, si_status) == 24,
     "x86 child siginfo fields");
 _Static_assert(SYS_read == 0 && SYS_write == 1 && SYS_close == 3 &&
-    SYS_pipe == 22 && SYS_clone == 56 && SYS_exit == 60 &&
+    SYS_pipe == 22 && SYS_clone == 56 && SYS_exit == 60 && SYS_kill == 62 &&
     SYS_wait4 == 61 && SYS_waitid == 247,
     "x86 child-reaping syscall numbers");
 _Static_assert(P_PID == 1 && WNOHANG == 1 && WEXITED == 4 &&
@@ -56,6 +56,18 @@ static long raw_syscall1(long number, long argument1)
         "syscall"
         : "=a"(result)
         : "a"(number), "D"(argument1)
+        : "rcx", "r11", "memory");
+    return result;
+}
+
+static long raw_syscall2(long number, long argument1, long argument2)
+{
+    long result;
+
+    __asm__ volatile(
+        "syscall"
+        : "=a"(result)
+        : "a"(number), "D"(argument1), "S"(argument2)
         : "rcx", "r11", "memory");
     return result;
 }
@@ -125,6 +137,18 @@ static int raw_pipe(int descriptors[2])
 {
     return (int)raw_syscall1(SYS_pipe, (long)descriptors);
 }
+
+static int raw_kill(pid_t child, int signal)
+{
+    return (int)raw_syscall2(SYS_kill, child, signal);
+}
+
+static int emit_record(const char *record, unsigned long length)
+{
+    return raw_syscall3(SYS_write, 1, (long)record, length) == (long)length;
+}
+
+#define EMIT_RECORD(record) emit_record(record, sizeof(record) - 1)
 
 static int raw_read_byte(int descriptor, char *byte)
 {
@@ -238,8 +262,10 @@ static void cleanup_child(struct child_control *control)
         (void)raw_close(control->child_to_parent[0]);
     if (control->child_to_parent[1] >= 0)
         (void)raw_close(control->child_to_parent[1]);
-    if (control->child > 0 && !control->reaped)
+    if (control->child > 0 && !control->reaped) {
+        (void)raw_kill(control->child, SIGCONT);
         (void)raw_wait4_cleanup(control->child, &status);
+    }
 }
 
 static int check_waitid_report(const siginfo_t *info, pid_t child)
@@ -359,6 +385,114 @@ static int check_invalid_waitid_selector(void)
         ? 0 : 1;
 }
 
+static int check_stop_continue_exit(void)
+{
+    struct child_control control;
+    siginfo_t info;
+    int status = 0;
+    int result = 1;
+
+    initialize_control(&control);
+    if (spawn_blocked_child(&control) != 0)
+        goto cleanup;
+
+    if (raw_kill(control.child, SIGSTOP) != 0)
+        goto cleanup;
+    clear_siginfo(&info);
+    errno = 0;
+    if (waitid(P_PID, (id_t)control.child, &info,
+            WSTOPPED | WNOWAIT) != 0 ||
+        info.si_signo != SIGCHLD || info.si_errno != 0 ||
+        info.si_code != CLD_STOPPED || info.si_pid != control.child ||
+        info.si_status != SIGSTOP || errno != 0)
+        goto cleanup;
+    if (!EMIT_RECORD("stop:observed\n"))
+        goto cleanup;
+
+    status = 0x5a5a5a5a;
+    errno = 0;
+    if (waitpid(control.child, &status, WUNTRACED | WNOHANG) != control.child ||
+        !WIFSTOPPED(status) || WSTOPSIG(status) != SIGSTOP || errno != 0)
+        goto cleanup;
+    if (!EMIT_RECORD("stop:consumed\n"))
+        goto cleanup;
+    status = 0x5a5a5a5a;
+    errno = 0;
+    if (waitpid(control.child, &status, WUNTRACED | WNOHANG) != 0 ||
+        status != 0x5a5a5a5a || errno != 0)
+        goto cleanup;
+    clear_siginfo(&info);
+    errno = 0;
+    if (waitid(P_PID, (id_t)control.child, &info,
+            WSTOPPED | WNOHANG) != 0 ||
+        info.si_signo != 0 || info.si_pid != 0 || errno != 0)
+        goto cleanup;
+    if (!EMIT_RECORD("stop:absent\n"))
+        goto cleanup;
+
+    if (raw_kill(control.child, SIGCONT) != 0)
+        goto cleanup;
+    clear_siginfo(&info);
+    errno = 0;
+    if (waitid(P_PID, (id_t)control.child, &info,
+            WCONTINUED | WNOWAIT) != 0 ||
+        info.si_signo != SIGCHLD || info.si_errno != 0 ||
+        info.si_code != CLD_CONTINUED || info.si_pid != control.child ||
+        info.si_status != SIGCONT || errno != 0)
+        goto cleanup;
+    if (!EMIT_RECORD("continue:observed\n"))
+        goto cleanup;
+
+    status = 0x5a5a5a5a;
+    errno = 0;
+    if (waitpid(control.child, &status, WCONTINUED | WNOHANG) != control.child ||
+        !WIFCONTINUED(status) || errno != 0)
+        goto cleanup;
+    if (!EMIT_RECORD("continue:consumed\n"))
+        goto cleanup;
+    status = 0x5a5a5a5a;
+    errno = 0;
+    if (waitpid(control.child, &status, WCONTINUED | WNOHANG) != 0 ||
+        status != 0x5a5a5a5a || errno != 0)
+        goto cleanup;
+    clear_siginfo(&info);
+    errno = 0;
+    if (waitid(P_PID, (id_t)control.child, &info,
+            WCONTINUED | WNOHANG) != 0 ||
+        info.si_signo != 0 || info.si_pid != 0 || errno != 0)
+        goto cleanup;
+    if (!EMIT_RECORD("continue:absent\n"))
+        goto cleanup;
+
+    if (!release_child(&control))
+        goto cleanup;
+    clear_siginfo(&info);
+    errno = 0;
+    if (waitid(P_PID, (id_t)control.child, &info, WEXITED | WNOWAIT) != 0 ||
+        !check_waitid_report(&info, control.child) || errno != 0)
+        goto cleanup;
+    if (!EMIT_RECORD("exit:observed\n"))
+        goto cleanup;
+    status = 0x5a5a5a5a;
+    errno = 0;
+    if (waitpid(control.child, &status, 0) != control.child ||
+        !WIFEXITED(status) || WEXITSTATUS(status) != 42 || errno != 0)
+        goto cleanup;
+    control.reaped = 1;
+    if (!EMIT_RECORD("exit:consumed\n"))
+        goto cleanup;
+    errno = 0;
+    if (waitpid(control.child, &status, WNOHANG) != -1 || errno != ECHILD)
+        goto cleanup;
+    if (!EMIT_RECORD("exit:absent\n"))
+        goto cleanup;
+    result = 0;
+
+cleanup:
+    cleanup_child(&control);
+    return result;
+}
+
 int crabc_x86_64_child_reaping_probe(void)
 {
     int status = check_waitpid_nohang_and_waitid_nowait();
@@ -372,7 +506,10 @@ int crabc_x86_64_child_reaping_probe(void)
     if (status != 0)
         return 30 + status;
     status = check_invalid_waitid_selector();
-    return status == 0 ? 0 : 40 + status;
+    if (status != 0)
+        return 40 + status;
+    status = check_stop_continue_exit();
+    return status == 0 ? 0 : 50 + status;
 }
 
 #ifndef CRABC_CHILD_REAPING_FREESTANDING
