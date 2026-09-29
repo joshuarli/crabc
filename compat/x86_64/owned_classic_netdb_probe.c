@@ -169,7 +169,11 @@ static void dns_record_prefix(void) {
           short_answer[0]==answer[0]&&short_answer[1]==0xa5);
     CHECK(res_send(query,query_length,short_answer,16)==full_length&&
           !memcmp(short_answer,answer,16)&&short_answer[16]==0xa5);
+    h_errno=97;
     CHECK(res_query("prefix-a.example.test",C_IN,T_A,answer,sizeof answer)>12&&answer[6]==0&&answer[7]==3);
+    CHECK(h_errno==97);
+    CHECK(res_query("prefix-a.example.test",256,T_A,answer,sizeof answer)==-1);
+    CHECK(h_errno==97);
     error=97;
     CHECK(!gethostbyname2_r("prefix-aaaa.example.test",AF_INET6,&h,b,sizeof b,&r,&error)&&r==&h&&error==97);
     CHECK(!strcmp(h.h_name,"early.example.test"));address(&h,0,AF_INET6,"2001:db8::47");CHECK(!h.h_addr_list[1]);
@@ -352,6 +356,8 @@ static void socket_error(void) {
     CHECK(!gethostbyname_r("127.1",&h,b,sizeof b,&r,&error)&&r==&h);
     unsigned char ip[]={192,0,2,99};error=97;
     CHECK(!gethostbyaddr_r(ip,4,AF_INET,&h,b,sizeof b,&r,&error)&&r==&h&&error==97&&!strcmp(h.h_name,"192.0.2.99"));
+    unsigned char answer[512];h_errno=96;
+    CHECK(res_query("a.example.test",C_IN,T_A,answer,sizeof answer)==-1&&h_errno==TRY_AGAIN);
 }
 static void empty_and_reporting(void) {
     errno=EDOM;h_errno=96;

@@ -961,17 +961,19 @@ unsafe fn query_response(
         )
     };
     if length < 0 {
-        unsafe { set_h_errno(NO_RECOVERY) };
+        // Query construction reports through its return value and leaves the
+        // calling thread's previous resolver status intact.
         return -1;
     }
     let received = unsafe { __res_send(query.as_ptr(), length, answer, answer_length) };
     if received < 12 {
+        unsafe { set_h_errno(TRY_AGAIN) };
         return -1;
     }
     let response = unsafe { core::slice::from_raw_parts(answer, received as usize) };
     match response[3] & 0x0f {
         0 if response[6] != 0 || response[7] != 0 => {
-            unsafe { set_h_errno(0) };
+            // A positive answer leaves the caller's previous h_errno intact.
             received
         }
         0 => {
