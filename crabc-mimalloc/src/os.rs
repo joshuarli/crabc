@@ -14750,6 +14750,218 @@ mod tests {
             "the failed process-owned unprotect must emit one source warning");
     }
 
+    #[cfg(target_arch = "x86_64")]
+    static REGISTERED_TERMINAL_UNMAP_ENVIRONMENT: AtomicPtr<*const c_char> =
+        AtomicPtr::new(core::ptr::null_mut());
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe fn registered_terminal_unmap_environment() -> *const *const c_char {
+        REGISTERED_TERMINAL_UNMAP_ENVIRONMENT.load(Ordering::Acquire)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    struct RegisteredTerminalUnmapWarning {
+        active: AtomicBool,
+        calls: AtomicUsize,
+        exact: AtomicBool,
+        before_accounting: AtomicBool,
+        subprocess: AtomicPtr<crate::subproc::SubprocessIdentity>,
+        reserved_before: AtomicI64,
+        committed_before: AtomicI64,
+        expected: std::sync::OnceLock<std::vec::Vec<u8>>,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn registered_terminal_unmap_warning(
+        message: *const c_char,
+        argument: *mut c_void,
+    ) {
+        if message.is_null() || argument.is_null() { return; }
+        // SAFETY: the process owner retains this capture through its serial
+        // terminal release, and delivery supplies a terminated source body.
+        let capture = unsafe { &*(argument as *const RegisteredTerminalUnmapWarning) };
+        if !capture.active.load(Ordering::Acquire) { return; }
+        let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
+        if !bytes.starts_with(b"unable to free OS memory") { return; }
+        capture.calls.fetch_add(1, Ordering::AcqRel);
+        capture.exact.store(capture.expected.get().is_some_and(|expected|
+            bytes == expected.as_slice()), Ordering::Release);
+        let subprocess = capture.subprocess.load(Ordering::Acquire);
+        if subprocess.is_null() { return; }
+        // SAFETY: the isolated subprocess and its statistics outlive the
+        // synchronous warning callback and the release that triggered it.
+        let stats = unsafe { &*subprocess }.vm_statistics().snapshot();
+        capture.before_accounting.store(
+            stats.reserved_current == capture.reserved_before.load(Ordering::Acquire)
+                && stats.committed_current == capture.committed_before.load(Ordering::Acquire),
+            Ordering::Release,
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_registered_arena_terminal_unmap_fault_c_rust_trace() {
+        use crate::arena::ArenaSearch;
+        use crate::config::ARENA_MIN_SIZE;
+        use crate::process_init::ProcessMainInitializationStorage;
+        use crate::process_page_map::ProcessPageMapStorage;
+        use crate::subproc::MainSubprocess;
+
+        let mut entries = std::boxed::Box::new([
+            b"mimalloc_allow_large_os_pages=0\0".as_ptr().cast(),
+            b"mimalloc_allow_thp=0\0".as_ptr().cast(),
+            b"mimalloc_arena_is_numa_local=0\0".as_ptr().cast(),
+            b"mimalloc_purge_delay=100000\0".as_ptr().cast(),
+            b"mimalloc_show_errors=1\0".as_ptr().cast(),
+            b"mimalloc_max_warnings=100\0".as_ptr().cast(),
+            core::ptr::null(),
+        ]);
+        REGISTERED_TERMINAL_UNMAP_ENVIRONMENT.store(entries.as_mut_ptr(), Ordering::Release);
+        let _entries = std::boxed::Box::leak(entries);
+        let capture = std::boxed::Box::leak(std::boxed::Box::new(RegisteredTerminalUnmapWarning {
+            active: AtomicBool::new(false), calls: AtomicUsize::new(0),
+            exact: AtomicBool::new(false), before_accounting: AtomicBool::new(false),
+            subprocess: AtomicPtr::new(core::ptr::null_mut()),
+            reserved_before: AtomicI64::new(0), committed_before: AtomicI64::new(0),
+            expected: std::sync::OnceLock::new(),
+        }));
+        let output = std::boxed::Box::leak(std::boxed::Box::new(OutputOwner::new(
+            registered_terminal_unmap_default_output,
+        )));
+        // SAFETY: source options, output, callback capture, subprocess, and
+        // PageMap remain live through this isolated terminal operation.
+        unsafe {
+            output.initialize_source_options(registered_terminal_unmap_environment);
+            output.register_output(Some(registered_terminal_unmap_warning as OutputCallback),
+                capture as *mut RegisteredTerminalUnmapWarning as *mut c_void);
+        }
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 1024 * 1024, true, false,
+        );
+        // SAFETY: this process owns both arena mappings and excludes all
+        // other publisher and terminal teardown activity.
+        let binding = unsafe { ProcessMainInitializationStorage::test_static_owner()
+            .test_prepare_vm_process_backing_binding_with_source_output(
+                config, output, MainSubprocess::test_static_owner(),
+                ProcessPageMapStorage::test_static_owner(),
+            ) }.expect("explicit arena process initializes");
+        let process = binding.process();
+        process.policy().finish_preloading();
+        let backing = process.subprocess().arena_backing();
+        let page_map_ready = binding.page_map().page_map().is_ok_and(|map| {
+            // SAFETY: the isolated process performs no registration of the
+            // null slice while this PageMap observation executes.
+            unsafe { map.checked_lookup(core::ptr::null()).is_null() }
+        });
+        // SAFETY: both reservations are selected by the same process and
+        // retain disjoint published mappings through quiescent destruction.
+        let first_id = unsafe { backing.reserve_os_memory_for_process(
+            process, config, ARENA_MIN_SIZE, MapAccess::Reserved, false, false, None,
+        ) }.expect("first explicit arena reserves without eager commit");
+        let second_id = unsafe { backing.reserve_os_memory_for_process(
+            process, config, ARENA_MIN_SIZE, MapAccess::Committed, false, false, None,
+        ) }.expect("second explicit arena reserves committed");
+        // SAFETY: both registry slots are published, and no concurrent
+        // publisher or destroyer can remove them in this isolated test.
+        let first = unsafe { backing.registry().arena_at(0) }.unwrap();
+        let second = unsafe { backing.registry().arena_at(1) }.unwrap();
+        let first_base = first.start;
+        let second_base = second.start;
+        let arena_size = first.memid.os_memory().unwrap().size;
+        let setup = backing.registry().count() == 2
+            && first_id.as_ptr() == core::ptr::from_ref(first).cast_mut()
+            && second_id.as_ptr() == core::ptr::from_ref(second).cast_mut()
+            && arena_size == ARENA_MIN_SIZE
+            && second.memid.os_memory().is_some_and(|memory| memory.size == arena_size)
+            && !first.memid.initially_committed() && second.memid.initially_committed();
+        let search = ArenaSearch {
+            heap_sequence: 0, heap_count: 1, thread_sequence: 0,
+            numa_node: -1, requested: first_id, allow_pinned: false,
+        };
+        // SAFETY: the requested first arena is published and its claim is
+        // returned before either registry entry is destroyed.
+        let claim = unsafe { backing.try_allocate_slices(
+            process, config, search, 1, ARENA_SLICE_SIZE, true,
+        ) }.expect("first reserved arena supplies a committed slice");
+        let claim_first = claim.memory_id().arena_memory().is_some_and(|memory|
+            memory.arena == core::ptr::from_ref(first).cast_mut());
+        assert!(claim.release(), "the first arena claim returns before teardown");
+        let mut residence = 0u8;
+        // SAFETY: both published arena mappings remain live until destroy_all.
+        let before_mapped = unsafe { crabc_core::mm::mincore_raw(first_base, 4096, &mut residence) }.is_ok()
+            && unsafe { crabc_core::mm::mincore_raw(second_base, 4096, &mut residence) }.is_ok();
+        let before = process.subprocess().vm_statistics().snapshot();
+        capture.subprocess.store(core::ptr::from_ref(process.subprocess()).cast_mut(), Ordering::Release);
+        let address = first_base.addr();
+        let width = if address <= u32::MAX as usize { 8 }
+            else if address >> 16 <= u32::MAX as usize { 12 } else { 16 };
+        let expected = std::format!(
+            "unable to free OS memory (error: 5 (0x05), size: 0x{arena_size:X} bytes, address: 0x{address:0width$X})\n",
+        );
+        capture.expected.set(expected.into_bytes()).expect("one expected source warning");
+        capture.reserved_before.store(before.reserved_current, Ordering::Release);
+        capture.committed_before.store(before.committed_current, Ordering::Release);
+        capture.active.store(true, Ordering::Release);
+        fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::from_raw(5).unwrap()));
+        let ranges = fault.capture_unmap_ranges();
+        // SAFETY: every claim has returned and all arena readers are quiescent;
+        // the retained failed owner is kept for explicit raw retry.
+        let mut destroyed = unsafe { backing.destroy_all(&mut []) }
+            .expect("published arena registry retires after failed first unmap");
+        capture.active.store(false, Ordering::Release);
+        let unmap_calls = fault.observed();
+        let failed_range_exact = ranges.ranges().is_some_and(|all|
+            all[0] == (first_base.addr(), arena_size));
+        let second_range_exact = ranges.ranges().is_some_and(|all|
+            all[1] == (second_base.addr(), arena_size));
+        drop(ranges);
+        // SAFETY: the failed first range is retained by `destroyed`; the
+        // second range was released, and these checks create no references.
+        let failed_live = unsafe { crabc_core::mm::mincore_raw(first_base, 4096, &mut residence) }.is_ok();
+        let other_gone = unsafe { crabc_core::mm::mincore_raw(second_base, 4096, &mut residence) }.is_err();
+        let page_map_still_ready = binding.page_map().page_map().is_ok_and(|map| {
+            // SAFETY: terminal arena release has ended, and no null-slice
+            // registration overlaps this remaining PageMap lookup.
+            unsafe { map.checked_lookup(core::ptr::null()).is_null() }
+        });
+        let registry_after = backing.registry().count();
+        let after = process.subprocess().vm_statistics().snapshot();
+        let reserved_delta = after.reserved_current - before.reserved_current;
+        let committed_delta = after.committed_current - before.committed_current;
+        let commit_calls_delta = after.commit_calls - before.commit_calls;
+        let retained_owner = !destroyed.is_released();
+        fault.set(fault::Plan::disabled());
+        destroyed.retry_raw().expect("the failed first range has one raw retry owner");
+        let raw_cleanup = retained_owner && destroyed.is_released();
+        // SAFETY: the retained owner has completed raw retry and the second
+        // arena was already released; no mapping references survive.
+        let terminal_unmapped = unsafe { crabc_core::mm::mincore_raw(first_base, 4096, &mut residence) }.is_err()
+            && unsafe { crabc_core::mm::mincore_raw(second_base, 4096, &mut residence) }.is_err();
+        for (field, value) in [
+            ("setup", i64::from(setup)), ("page_map_ready", i64::from(page_map_ready)),
+            ("claim_first", i64::from(claim_first)), ("before_mapped", i64::from(before_mapped)),
+            ("unmap_calls", unmap_calls as i64),
+            ("first_range_exact", i64::from(failed_range_exact)),
+            ("second_range_exact", i64::from(second_range_exact)),
+            ("warning_calls", capture.calls.load(Ordering::Acquire) as i64),
+            ("warning_exact", i64::from(capture.exact.load(Ordering::Acquire))),
+            ("warning_before_accounting", i64::from(capture.before_accounting.load(Ordering::Acquire))),
+            ("failed_live", i64::from(failed_live)), ("other_gone", i64::from(other_gone)),
+            ("page_map_still_ready", i64::from(page_map_still_ready)),
+            ("registry_after", registry_after as i64), ("reserved_delta", reserved_delta),
+            ("committed_delta", committed_delta), ("commit_calls_delta", commit_calls_delta),
+            ("raw_cleanup", i64::from(raw_cleanup)),
+            ("terminal_unmapped", i64::from(terminal_unmapped)),
+        ] {
+            std::println!("{field}={value}");
+        }
+        assert!(setup && claim_first && failed_live && other_gone && terminal_unmapped);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn registered_terminal_unmap_default_output(_: *const c_char) {}
+
     #[test]
     fn entropy_failure_is_direct_and_never_uses_a_secondary_source() {
         let fault = fault::install(fault::Plan::at(fault::Point::Entropy, 1, Errno::NOMEM));
