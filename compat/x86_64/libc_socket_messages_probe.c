@@ -4,10 +4,11 @@
  * through a freestanding executable linked solely with the selected crabc
  * `libc.a`. It extends the already selected socket-transport and vector-I/O
  * records only with socket options, padded send/receive message records,
- * bounded batched message calls, and SIOCATMARK. In particular, poisoned
- * public padding proves the musl-shaped adapter rather than a raw Linux
- * msghdr call. Fixture-local raw close/fcntl calls only clean up and inspect
- * received descriptors; they do not select generic descriptor, ioctl,
+ * bounded batched message calls, descriptor passing with close-on-exec and
+ * ancillary truncation, and SIOCATMARK. In particular, poisoned public
+ * padding proves the musl-shaped adapter rather than a raw Linux msghdr call.
+ * Fixture-local raw close/fcntl calls only clean up and inspect received
+ * descriptors; they do not select generic descriptor, ioctl,
  * cancellation, allocator, CRT, loader, sysroot, or public x86 support.
  */
 
@@ -285,6 +286,113 @@ finish:
     return status;
 }
 
+static int check_rights_flags_and_truncation(void)
+{
+    static const char payload = 'r';
+    char received = 0;
+    unsigned char send_control[CMSG_SPACE(2 * sizeof(int))] = { 0 };
+    unsigned char receive_control[CMSG_SPACE(2 * sizeof(int))] = { 0 };
+    struct iovec send_iov = { (void *)&payload, 1 };
+    struct iovec receive_iov = { &received, 1 };
+    struct msghdr send_message = { 0 };
+    struct msghdr receive_message = { 0 };
+    struct cmsghdr *sent_header = (struct cmsghdr *)(void *)send_control;
+    struct cmsghdr *received_header;
+    int pair[2] = { -1, -1 };
+    int passed[2] = { -1, -1 };
+    int status = 0;
+    int index;
+
+    if (socketpair(AF_UNIX, SOCK_DGRAM, 0, pair) != 0) {
+        status = 1;
+        goto finish;
+    }
+    sent_header->cmsg_len = CMSG_LEN(sizeof(pair));
+    sent_header->__pad1 = -1;
+    sent_header->cmsg_level = SOL_SOCKET;
+    sent_header->cmsg_type = SCM_RIGHTS;
+    copy_bytes(CMSG_DATA(sent_header), pair, sizeof(pair));
+    send_message.msg_iov = &send_iov;
+    send_message.msg_iovlen = 1;
+    send_message.__pad1 = -1;
+    send_message.msg_control = send_control;
+    send_message.msg_controllen = sizeof(send_control);
+    send_message.__pad2 = -1;
+    receive_message.msg_iov = &receive_iov;
+    receive_message.msg_iovlen = 1;
+    receive_message.__pad1 = -1;
+    receive_message.msg_control = receive_control;
+    receive_message.msg_controllen = sizeof(receive_control);
+    receive_message.__pad2 = -1;
+
+    if (sendmsg(pair[0], &send_message, 0) != 1) {
+        status = 21;
+        goto finish;
+    }
+    if (recvmsg(pair[1], &receive_message, MSG_CMSG_CLOEXEC) != 1) {
+        status = 22;
+        goto finish;
+    }
+    if (received != payload) {
+        status = 23;
+        goto finish;
+    }
+    if (receive_message.msg_flags & MSG_CTRUNC) {
+        status = 24;
+        goto finish;
+    }
+    if (receive_message.msg_controllen != CMSG_LEN(sizeof(pair))) {
+        status = 25;
+        goto finish;
+    }
+    received_header = CMSG_FIRSTHDR(&receive_message);
+    if (!received_header || received_header->cmsg_level != SOL_SOCKET ||
+        received_header->cmsg_type != SCM_RIGHTS ||
+        received_header->cmsg_len != CMSG_LEN(sizeof(pair))) {
+        status = 3;
+        goto finish;
+    }
+    copy_bytes(passed, CMSG_DATA(received_header), sizeof(passed));
+    for (index = 0; index < 2; ++index) {
+        if (passed[index] < 0 || raw_getfd(passed[index]) != FD_CLOEXEC) {
+            status = 4;
+            goto finish;
+        }
+    }
+    raw_close(passed[0]);
+    raw_close(passed[1]);
+    passed[0] = passed[1] = -1;
+
+    /* One descriptor fits; Linux reports that the second was discarded. */
+    receive_message.msg_controllen = CMSG_LEN(sizeof(int));
+    receive_message.msg_flags = 0;
+    received = 0;
+    if (sendmsg(pair[0], &send_message, 0) != 1 ||
+        recvmsg(pair[1], &receive_message, MSG_CMSG_CLOEXEC) != 1 ||
+        received != payload || !(receive_message.msg_flags & MSG_CTRUNC) ||
+        receive_message.msg_controllen != CMSG_LEN(sizeof(int))) {
+        status = 5;
+        goto finish;
+    }
+    received_header = CMSG_FIRSTHDR(&receive_message);
+    if (!received_header || received_header->cmsg_level != SOL_SOCKET ||
+        received_header->cmsg_type != SCM_RIGHTS ||
+        received_header->cmsg_len != CMSG_LEN(sizeof(int))) {
+        status = 6;
+        goto finish;
+    }
+    copy_bytes(&passed[0], CMSG_DATA(received_header), sizeof(passed[0]));
+    if (passed[0] < 0 || raw_getfd(passed[0]) != FD_CLOEXEC)
+        status = 7;
+
+finish:
+    raw_close(passed[1]);
+    raw_close(passed[0]);
+    raw_close(pair[1]);
+    raw_close(pair[0]);
+    return status;
+}
+
 static int check_mmsg(void)
 {
     static const char first[] = "one";
@@ -394,6 +502,9 @@ int crabc_x86_64_socket_messages_probe(void)
     result = check_sendmsg_recvmsg();
     if (result != 0)
         return 30 + result;
+    result = check_rights_flags_and_truncation();
+    if (result != 0)
+        return 40 + result;
     result = check_mmsg();
     if (result != 0)
         return 50 + result;
