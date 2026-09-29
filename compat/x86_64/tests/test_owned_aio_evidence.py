@@ -167,6 +167,18 @@ class OwnedAioBehaviorObservationTests(unittest.TestCase):
             with self.assertRaises(self.evidence.EvidenceError):
                 self.evidence.assert_oracle_fd_reuse(self.root, fd)
 
+    def test_fresh_signal_source_observation_keeps_deadline_distinct(self) -> None:
+        completed = self._record("fresh-completed", b"fresh-signal-handler-close-pending=not-observed\n")
+        pending = self._record("fresh-pending", b"fresh-signal-handler-close-pending=observed attempt=0 events=STAHC child-signal=9 timeout=1\n", status=b"1\n")
+        deadline = self._record("fresh-deadline", b"", status=b"124\n")
+        invalid = self._record("fresh-invalid", b"fresh-signal-handler-close-pending=invalid attempt=0 result=-15 events=STA child-signal=9 timeout=1\n", status=b"3\n")
+        with unittest.mock.patch.object(self.evidence, "SOURCE_MOUNT", str(self.root)):
+            self.evidence.assert_oracle_fresh_signal(self.root, completed)
+            self.evidence.assert_oracle_fresh_signal(self.root, pending)
+            for command in (deadline, invalid):
+                with self.assertRaises(self.evidence.EvidenceError):
+                    self.evidence.assert_oracle_fresh_signal(self.root, command)
+
     def test_public_replay_rejects_rehashed_success_output_for_source_cancel_timeout(self) -> None:
         class ReachedSubmit(RuntimeError):
             pass

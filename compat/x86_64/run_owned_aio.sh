@@ -155,15 +155,24 @@ prepare_root() {
 }
 
 run_capture() {
-	local output="$1" label status=0
+	local output="$1" label status=0 deadline=30
 	shift
 	label="$(basename "${output%.stdout}")"
+	# These two workloads contain many finite fork/thread waits. Keep their
+	# outer budget above loaded-host scheduling delay; their internal outcomes
+	# and complete transcripts still decide whether behavior passed.
+	case "$label" in
+		*behavior|*fresh-signal) deadline=180 ;;
+	esac
 	env -i LC_ALL=C PATH=/usr/bin:/bin SOURCE_DATE_EPOCH=1 TZ=UTC TMPDIR="$WORK" \
-		/usr/bin/timeout 30 "$@" >"$output" 2>"${output%.stdout}.stderr" || status=$?
+		/usr/bin/timeout "$deadline" "$@" >"$output" 2>"${output%.stdout}.stderr" || status=$?
 	printf '%s\n' "$status" >"${output%.stdout}.status"
 	python3 -B "$EVIDENCE" record-command --root "$ROOT" --work "$WORK" --label "$label" \
 		--cwd "$ROOT" --stdout "$output" --stderr "${output%.stdout}.stderr" --status "${output%.stdout}.status" -- \
-		/usr/bin/timeout 30 "$@" >/dev/null
+		/usr/bin/timeout "$deadline" "$@" >/dev/null
+	if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+		fail "host watchdog deadline ${deadline}s reached for $label (status $status); raw receipt retained in $WORK"
+	fi
 	[ "$status" -eq 0 ] || fail "expected success, got ${status}: $*"
 }
 
@@ -212,6 +221,30 @@ run_fresh_signal_owned() {
 	run_capture "$output" "$@"
 	grep -Fxq 'fresh-signal-handler-close-pending=not-observed' "$output" ||
 		fail "owned fresh-queue signal handler close remained pending"
+}
+
+# The same installed-header object is also linked with pinned musl. Its fresh
+# queue race is scheduling dependent: retain a complete run or the exact
+# handler-close-pending observation, but never promote an invalid setup/join
+# watchdog or outer host deadline to an oracle result.
+run_fresh_signal_source_observation() {
+	local output="$1" label status=0
+	shift
+	label="$(basename "${output%.stdout}")"
+	env -i LC_ALL=C PATH=/usr/bin:/bin SOURCE_DATE_EPOCH=1 TZ=UTC TMPDIR="$WORK" \
+		/usr/bin/timeout 180 "$@" >"$output" 2>"${output%.stdout}.stderr" || status=$?
+	printf '%s\n' "$status" >"${output%.stdout}.status"
+	python3 -B "$EVIDENCE" record-command --root "$ROOT" --work "$WORK" --label "$label" \
+		--cwd "$ROOT" --stdout "$output" --stderr "${output%.stdout}.stderr" --status "${output%.stdout}.status" -- \
+		/usr/bin/timeout 180 "$@" >/dev/null
+	case "$status" in
+		0) grep -Fxq 'fresh-signal-handler-close-pending=not-observed' "$output" ||
+			fail "pinned musl fresh-signal success transcript differs" ;;
+		1) grep -Eq '^fresh-signal-handler-close-pending=observed attempt=(0|[1-9][0-9]?|1[01][0-9]|12[0-7]) events=STA[HCRVJ]*HC child-signal=9 timeout=1$' "$output" ||
+			fail "pinned musl fresh-signal pending-close observation differs" ;;
+		124|137) fail "host watchdog deadline 180s reached for $label (status $status); raw receipt retained in $WORK" ;;
+		*) fail "pinned musl fresh-signal invalid observation (status $status); raw receipt retained in $WORK" ;;
+	esac
 }
 
 # `aio_suspend` may return after one of a list has completed. This observer
@@ -388,6 +421,9 @@ grep -Fxq 'aio-one-write=ok' "$WORK/oracle-one-write.stdout" || fail "pinned mus
 run_oracle_link source-link-behavior "$WORK/behavior-workload.o" "$WORK/oracle-behavior"
 cp "$WORK/oracle-behavior" "$WORK/oracle-root/behavior"
 run_capture "$WORK/oracle-behavior.stdout" /usr/sbin/chroot "$WORK/oracle-root" /behavior
+run_oracle_link source-link-fresh-signal "$WORK/fresh-signal-workload.o" "$WORK/oracle-fresh-signal"
+cp "$WORK/oracle-fresh-signal" "$WORK/oracle-root/fresh-signal"
+run_fresh_signal_source_observation "$WORK/oracle-fresh-signal.stdout" /usr/sbin/chroot "$WORK/oracle-root" /fresh-signal
 run_oracle_link source-link-fd-reuse "$WORK/fd-reuse-workload.o" "$WORK/oracle-fd-reuse"
 cp "$WORK/oracle-fd-reuse" "$WORK/oracle-root/fd-reuse"
 run_fd_reuse_source_observation "$WORK/oracle-fd-reuse.stdout" /usr/sbin/chroot "$WORK/oracle-root" /fd-reuse "$FD_REUSE_ATTEMPTS"

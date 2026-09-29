@@ -64,7 +64,7 @@ CONSUMERS = {
     "submit-cancel": "submit-cancel", "fresh-signal": "fresh-signal",
 }
 ORACLE_CASES = ("workload", "one-write", "behavior", "fd-reuse", "lio-create-failure", "suspend-wake", "suspend-lifetime", "lifecycle-boundary",
-                PREPARED_OS_TEST_AIO_SUSPEND)
+                PREPARED_OS_TEST_AIO_SUSPEND, "fresh-signal")
 STATIC_MODES = (("static", "static"), ("static-pie", "static-pie"))
 DYNAMIC_MODES = (("dynamic-pie", "pie"), ("dynamic-non-pie", "non-pie"))
 ROUTES = ("kernel", "direct")
@@ -81,6 +81,10 @@ STANDARD_TRANSCRIPTS = {
 FD_REUSE_SUCCESS = b"fd-reuse-regular-to-pipe=ok\n"
 SUSPEND_LIFETIME = re.compile(
     rb"aio-suspend-lifetime source-shape-completed=[12] controlled-second-live=1 drained=2\n\Z"
+)
+FRESH_SIGNAL_OBSERVED = re.compile(
+    rb"fresh-signal-handler-close-pending=observed attempt=(?P<attempt>0|[1-9][0-9]*) "
+    rb"events=(?P<events>STA[HCRVJ]*HC) child-signal=9 timeout=1\n\Z"
 )
 FD_REUSE_ATTEMPTS = 512
 # The receipt models the x86 target ABI, whose C int is signed 32-bit.  In
@@ -573,6 +577,22 @@ def assert_suspend_lifetime_observation(root: Path, command: Mapping[str, Any], 
     if SUSPEND_LIFETIME.fullmatch(stdout) is None or stderr != b"":
         fail(f"{description} lifetime observation differs")
 
+def assert_oracle_fresh_signal(root: Path, command: Mapping[str, Any]) -> None:
+    """Retain either finite source outcome, rejecting setup and host deadlines."""
+    status = _status_text(root, command)
+    stdout, stderr = _streams(root, command, "pinned musl fresh signal")
+    if stderr:
+        fail("pinned musl fresh signal stderr differs")
+    if status == b"0\n":
+        if stdout != b"fresh-signal-handler-close-pending=not-observed\n":
+            fail("pinned musl fresh signal success differs")
+    elif status == b"1\n":
+        match = FRESH_SIGNAL_OBSERVED.fullmatch(stdout)
+        if match is None or int(match["attempt"]) >= 128:
+            fail("pinned musl fresh signal pending-close observation differs")
+    else:
+        fail("pinned musl fresh signal status differs")
+
 def _candidate_expected(consumer: str, arguments: str) -> bytes:
     if consumer in STANDARD_TRANSCRIPTS:
         return STANDARD_TRANSCRIPTS[consumer]
@@ -683,7 +703,8 @@ def _mode_claims(static: Path | None) -> list[str]:
 def _execution_argv(root: Path, work: Path, rootmode: str, consumer: str, route: str, arguments: str) -> list[str]:
     execution = work / f"{rootmode}-root"
     mounted = _mounted(root, execution); program = "/" + CONSUMERS[consumer]
-    argv = ["/usr/bin/timeout", "30", "/usr/sbin/chroot", mounted]
+    deadline = "180" if consumer in {"behavior", "fresh-signal"} else "30"
+    argv = ["/usr/bin/timeout", deadline, "/usr/sbin/chroot", mounted]
     if rootmode.startswith("dynamic-") and route == "direct":
         argv += ["/lib/ld-crabc-x86_64.so.1", program]
     else: argv.append(program)
@@ -714,6 +735,7 @@ def validate_report(root: Path, report_path: Path, expected: object, *, live: bo
         ("source-link-workload", work / OBJECTS["workload"], work / "oracle"),
         ("source-link-one-write", work / OBJECTS["one-write"], work / "oracle-one-write"),
         ("source-link-behavior", work / OBJECTS["behavior"], work / "oracle-behavior"),
+        ("source-link-fresh-signal", work / OBJECTS["fresh-signal"], work / "oracle-fresh-signal"),
         ("source-link-fd-reuse", work / OBJECTS["fd-reuse"], work / "oracle-fd-reuse"),
         ("source-link-lio-create-failure", work / OBJECTS["lio-create-failure"], work / "oracle-lio-create-failure"),
         ("source-link-suspend-wake", work / OBJECTS["suspend-wake"], work / "oracle-suspend-wake"),
@@ -737,12 +759,15 @@ def validate_report(root: Path, report_path: Path, expected: object, *, live: bo
     oracle_commands: dict[str, Any] = {}
     for key in ORACLE_CASES:
         binary = work / ("oracle" if key == "workload" else f"oracle-{key}")
-        argv = ["/usr/bin/timeout", "30", "/usr/sbin/chroot", _mounted(root, work / "oracle-root"), "/" + CONSUMERS[key]]
+        deadline = "180" if key in {"behavior", "fresh-signal"} else "30"
+        argv = ["/usr/bin/timeout", deadline, "/usr/sbin/chroot", _mounted(root, work / "oracle-root"), "/" + CONSUMERS[key]]
         if key == "fd-reuse": argv.append("512")
-        statuses = {b"0\n", b"1\n"} if key == "fd-reuse" else {b"0\n"}
+        statuses = {b"0\n", b"1\n"} if key in {"fd-reuse", "fresh-signal"} else {b"0\n"}
         oracle_commands[key] = _command(root, work, f"oracle-{key}" if key != "workload" else "oracle", argv, statuses)
         if key == "fd-reuse":
             assert_oracle_fd_reuse(root, oracle_commands[key])
+        elif key == "fresh-signal":
+            assert_oracle_fresh_signal(root, oracle_commands[key])
         elif key == "suspend-lifetime":
             assert_suspend_lifetime_observation(root, oracle_commands[key], "pinned musl suspend lifetime")
         else:
@@ -784,7 +809,7 @@ def validate_report(root: Path, report_path: Path, expected: object, *, live: bo
                        *{label for label, _, _ in source_links}, "oracle-queued-cancel-target",
                        "oracle-queued-cancel-all", "oracle-submit-cancel", "oracle", "oracle-one-write", "oracle-behavior",
                        "oracle-fd-reuse", "oracle-lio-create-failure", "oracle-suspend-wake", "oracle-suspend-lifetime", "oracle-lifecycle-boundary",
-                       "oracle-os-test-aio-suspend"}
+                       "oracle-os-test-aio-suspend", "oracle-fresh-signal"}
     if static is not None:
         expected_labels |= {f"link-{mode}-{key}" for mode, _ in STATIC_MODES for key in CONSUMERS}
     expected_labels |= {f"link-{mode}-{key}" for mode, _ in DYNAMIC_MODES for key in CONSUMERS}
