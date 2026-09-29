@@ -46,6 +46,11 @@ class OwnedDynamicPackageTests(unittest.TestCase):
                 path.write_bytes(relative.encode())
                 path.chmod(0o755 if relative in package.EXECUTABLE_PAYLOADS else 0o644)
                 files[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+            provenance_path = source / "share/crabc/libc-shared.provenance.json"
+            provenance_path.write_text(json.dumps({"allocator_backend": "accepted-c"}), encoding="utf-8")
+            files["share/crabc/libc-shared.provenance.json"] = hashlib.sha256(
+                provenance_path.read_bytes()
+            ).hexdigest()
             state_path = source / "share/crabc/dynamic-product-state.json"
             state = {
                 "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
