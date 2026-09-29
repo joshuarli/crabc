@@ -74,7 +74,8 @@ def workload_rows(path: Path) -> dict[str, Any]:
     return rows
 
 
-def loader_occurrence(dynamic_product: Path) -> dict[str, Any]:
+def loader_occurrence(dynamic_product: Path, name: str = "memcmp") -> dict[str, Any]:
+    require(name in {"memcmp", "bcmp"}, "comparison loader symbol differs")
     loader = regular(dynamic_product / "lib/ld-crabc-x86_64.so.1", "memcmp loader")
     symbols = subprocess.run(("/usr/bin/readelf", "--dyn-syms", "-W", str(loader)),
                              capture_output=True, text=True, check=False)
@@ -83,12 +84,12 @@ def loader_occurrence(dynamic_product: Path) -> dict[str, Any]:
     require(symbols.returncode == relocations.returncode == 0,
             "memcmp loader ELF is unreadable")
     rows = [line.split() for line in symbols.stdout.splitlines()
-            if line.endswith(" memcmp") and line.split()[0].endswith(":" )]
+            if line.endswith(" " + name) and line.split()[0].endswith(":" )]
     require(len(rows) == 1 and rows[0][3:6] == ["FUNC", "GLOBAL", "DEFAULT"]
             and rows[0][6].isdigit() and int(rows[0][1], 16) > 0
             and int(rows[0][2]) > 0
-            and not re.search(r"\bmemcmp\b", relocations.stdout),
-            "memcmp loader occurrence differs")
+            and not re.search(rf"\b{re.escape(name)}\b", relocations.stdout),
+            f"{name} loader occurrence differs")
     return {"loader_sha256": digest(loader), "address": int(rows[0][1], 16),
             "size_bytes": int(rows[0][2]), "section_index": rows[0][6]}
 
@@ -173,6 +174,7 @@ def collect(static_product: Path, dynamic_product: Path, output: Path) -> dict[s
               "static_driver_sha256": digest(static_product / "bin/crabc-cc"),
               "workload_sha256": digest(output / "workload.o"),
               "workload_rows": rows, "loader_occurrence": loader_occurrence(dynamic_product),
+              "bcmp_loader_occurrence": loader_occurrence(dynamic_product, "bcmp"),
               "shared_bcmp_direct_call": shared_bcmp_direct_call(dynamic_product),
               "commands": commands,
               "links": {mode: product_evidence.validate_link(
@@ -194,7 +196,7 @@ def validate_report(report_path: Path, *, static_product: Path, dynamic_product:
     require(type(report) is dict and set(report) == {
         "schema", "source_sha256", "source", "static_product", "dynamic_product",
         "dynamic_driver_sha256", "static_driver_sha256", "workload_sha256",
-        "workload_rows", "loader_occurrence", "shared_bcmp_direct_call",
+        "workload_rows", "loader_occurrence", "bcmp_loader_occurrence", "shared_bcmp_direct_call",
         "commands", "links"}, "memcmp report shape differs")
     require(report["schema"] == SCHEMA and report["source_sha256"] == digest(SOURCE)
             and report["source"] == inventory.collector_source_seal()
@@ -205,6 +207,7 @@ def validate_report(report_path: Path, *, static_product: Path, dynamic_product:
             and report["workload_sha256"] == digest(work / "workload.o")
             and report["workload_rows"] == workload_rows(work / "workload.o")
             and report["loader_occurrence"] == loader_occurrence(dynamic_product)
+            and report["bcmp_loader_occurrence"] == loader_occurrence(dynamic_product, "bcmp")
             and report["shared_bcmp_direct_call"] == shared_bcmp_direct_call(dynamic_product),
             "memcmp source, products, or workload changed")
     require(set(report["commands"]) == {"compile", *MODES}

@@ -2185,12 +2185,22 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
                 imported[0]["source_calls"], shared_address, name,
                 inlined_owner_leaves=shared_inlined_owner_leaves)
             source_functions = {call["function"] for call in inlined_calls}
-        final_shared_calls = _ordinary_shared_provider_calls(
-            shared_image, symbol_text=shared_symbols.stdout,
-            relocations=shared_relocations.stdout, provider_address=shared_address,
-            source_functions=source_functions,
-            all_defined_callers=(shared_inlined_owner_leaves is not None or bulk_memory
-                                 or all_defined_shared_callers))
+        if mixed_memcmp_call_forms:
+            require(source_functions == {"bcmp"},
+                    "ordinary memcmp direct shared caller differs")
+            require(all(struct.unpack("<Q", _public_weak_virtual_bytes(
+                shared_image, int(match.group(1), 16), 8, 3, executable=False))[0]
+                != shared_address for match in re.finditer(
+                    r"^\s*([0-9a-f]+)\s+\.got\b", shared_relocations.stdout, re.MULTILINE)),
+                    "ordinary memcmp shared provider has an unaccounted GOT slot")
+            final_shared_calls = []
+        else:
+            final_shared_calls = _ordinary_shared_provider_calls(
+                shared_image, symbol_text=shared_symbols.stdout,
+                relocations=shared_relocations.stdout, provider_address=shared_address,
+                source_functions=source_functions,
+                all_defined_callers=(shared_inlined_owner_leaves is not None or bulk_memory
+                                     or all_defined_shared_callers))
         if inlined_calls:
             owners = {call["function"]: call["source_function"] for call in inlined_calls}
             require({(call["function"], call["call_address"], call["got_slot"],

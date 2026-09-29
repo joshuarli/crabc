@@ -9020,10 +9020,10 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
     """
     scan_call_count = {'mbrtowc': 1, 'mbsinit': 1, 'fmodl': 2}.get(name)
     scan_caller = scan_call_count is not None
-    bulk_memory = name in (*native_c_allocator_boundary.OWNED_MEMORY_IMPORTS, 'strlen', 'memmove', 'memcmp')
-    independent = name in {'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp'}
+    bulk_memory = name in (*native_c_allocator_boundary.OWNED_MEMORY_IMPORTS, 'strlen', 'memmove', 'memcmp', 'bcmp')
+    independent = name in {'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp'}
     require(name in {'__errno_location', 'abort', 'fputs', 'getenv', 'getrusage',
-                     'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp',
+                     'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp',
                      *native_c_allocator_boundary.OWNED_MEMORY_IMPORTS}
             and (projection_override is not None) == independent,
             'ordinary import identity differs')
@@ -9039,7 +9039,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
         'static_provider_member', 'static_provider', 'shared_dynsym_provider',
         'shared_symtab_provider', 'importers', 'static_final_links',
         'shared_final', 'dynamic_final_import_absent',
-        *({'dynamic_final_owned_imports'} if name in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp'} else set()),
+        *({'dynamic_final_owned_imports'} if name in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp'} else set()),
     }, 'ordinary import resolution')
     runtime = companion['account']['c_runtime_imports']
     claim = next((row for row in runtime['imports']
@@ -9049,12 +9049,12 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
              and same(projection['static_provider'], claim['static_rust_provider'])
              and same(projection['shared_dynsym_provider'], claim['shared_dynsym_provider'])
              and same(projection['shared_symtab_provider'], claim['shared_symtab_provider']))
-            and projection['dynamic_final_import_absent'] is (name not in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp'})
+            and projection['dynamic_final_import_absent'] is (name not in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp'})
             and (not independent or all(projection[field]['name'] == name for field in (
                 'static_provider', 'shared_dynsym_provider', 'shared_symtab_provider'))),
             'ordinary import provider account differs')
     importers = projection['importers']
-    require(type(importers) is list and (len(importers) == 1 if scan_caller or name in {'getrusage', 'close'}
+    require(type(importers) is list and (len(importers) == 1 if scan_caller or name in {'getrusage', 'close', 'memcmp'}
                                        else len(importers) == 2 if name == 'aio_suspend'
                                        else len(importers) >= 1 if name == 'aio_cancel'
                                        else len(importers) >= 2),
@@ -9119,7 +9119,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                         and row.get('row', {}).get('name') == name
                         for row in occurrences.values()),
                 'strlen has an unexpected candidate loader placement')
-    if name in {'memmove', 'memcmp'}:
+    if name in {'memmove', 'memcmp', 'bcmp'}:
         loader_rows = [row for row in occurrences.values()
                        if row.get('artifact_key') == 'candidate-loader'
                        and row.get('row', {}).get('name') == name]
@@ -9198,7 +9198,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                 'owned scanf shared call roster differs')
     if name in {'aio_cancel', 'close'} or bulk_memory:
         all_calls = [call for item in shared['importers'] for call in item['calls']]
-        require(type(shared['provider_calls']) is list and shared['provider_calls']
+        require(type(shared['provider_calls']) is list and (shared['provider_calls'] or name == 'memcmp')
                 and (same(all_calls, shared['provider_calls']) if name == 'aio_cancel'
                      else all(call in shared['provider_calls'] for call in all_calls))
                 and all(call.get('target_address') == shared['provider_address']
@@ -9235,7 +9235,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                         == importers[0]['shared_caller_functions'][0]
                     and all_calls[0]['function'] != all_calls[0]['source_function'],
                     'ordinary inlined source call ownership differs')
-    if name in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp'}:
+    if name in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp'}:
         require(projection['dynamic_final_owned_imports'] == [
             {'mode': mode, 'import_rows': 2,
              'shared_provider_address': shared['provider_address']}
@@ -9299,7 +9299,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
              'import_occurrence_indices': sorted(row['index'] for row in static_imports),
              'import_members': [item['member']['member'] for item in importers],
              'static_final_modes': ['static', 'static-pie'],
-             **({'loader_occurrence_index': loader_rows[0]['index']} if name in {'memmove', 'memcmp'} else {}),
+             **({'loader_occurrence_index': loader_rows[0]['index']} if name in {'memmove', 'memcmp', 'bcmp'} else {}),
              'shared_fs_tls_address': tls_claim,
              'discharged_reason': ORDINARY_IMPORT_REASON}]
 
@@ -9435,6 +9435,13 @@ def memcmp_ordinary_import_adapter(
             independent_retained_work=work,
             shared_call_inventory=True, all_defined_shared_callers=True,
             mixed_memcmp_call_forms=True)
+        bcmp_projection = native_c_allocator_boundary.ordinary_import_resolution(
+            boundary, report_path=boundary_report_path,
+            static_product=paths['static_product'],
+            dynamic_product=paths['dynamic_product'],
+            elf_facts_report=paths['elf_report'], name='bcmp',
+            independent_retained_work=work,
+            shared_call_inventory=True, all_defined_shared_callers=True)
     except (KeyError, TypeError, ValueError, OSError,
             memcmp_import_receipt.MemcmpImportError,
             product_evidence.ProductEvidenceError,
@@ -9443,7 +9450,9 @@ def memcmp_ordinary_import_adapter(
     require(receipt['source']['revision'] == selection_source()['revision'],
             'memcmp import selects another source revision')
     return {'report': file_identity(receipt_path), 'projection': projection,
+            'bcmp_projection': bcmp_projection,
             'loader_occurrence': receipt['loader_occurrence'],
+            'bcmp_loader_occurrence': receipt['bcmp_loader_occurrence'],
             'shared_direct_call': receipt['shared_bcmp_direct_call']}
 
 
@@ -12441,6 +12450,15 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             loader_occurrence=memcmp_ordinary_import_companion['loader_occurrence'],
             shared_direct_call=memcmp_ordinary_import_companion['shared_direct_call']))
     ordinary_static_import_joins.extend(memcmp_import_joins)
+    bcmp_import_joins, _ = _attach(
+        rejected, 'bcmp_ordinary_import_resolution', accounting,
+        memcmp_ordinary_import_companion,
+        lambda: [] if memcmp_ordinary_import_companion is None else
+        _attach_ordinary_static_import(
+            accounting, native_c_allocator_boundary_companion, 'bcmp',
+            projection_override=memcmp_ordinary_import_companion['bcmp_projection'],
+            loader_occurrence=memcmp_ordinary_import_companion['bcmp_loader_occurrence']))
+    ordinary_static_import_joins.extend(bcmp_import_joins)
     for scan_import, caller, call_count in (
             ('mbrtowc', 'crabc_owned_scan_vfscanf', 1),
             ('mbsinit', 'crabc_owned_scan_vfscanf', 1),

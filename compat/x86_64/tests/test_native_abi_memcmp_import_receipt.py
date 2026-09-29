@@ -47,6 +47,12 @@ class MemcmpImportReceiptTests(unittest.TestCase):
                     completed(symbol), completed("R_X86_64_JUMP_SLOT memcmp\n"))):
             with self.assertRaisesRegex(receipt.MemcmpImportError, "loader occurrence differs"):
                 receipt.loader_occurrence(product)
+        bcmp = "  4: 00000000000153a4 28 FUNC GLOBAL DEFAULT 6 bcmp\n"
+        with mock.patch.object(receipt, "regular", return_value=Path("loader")), \
+                mock.patch.object(receipt, "digest", return_value="a" * 64), \
+                mock.patch.object(receipt.subprocess, "run", side_effect=(
+                    completed(bcmp), completed(""))):
+            self.assertEqual(receipt.loader_occurrence(product, "bcmp")["address"], 0x153a4)
 
     def test_shared_bcmp_tail_branch_targets_the_shared_provider(self):
         symbols = "\n".join(
