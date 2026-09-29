@@ -117,6 +117,10 @@
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-level-one-differential"],
       "scope": "Pinned C MI_STAT=1 and the Rust native adapter allocate a binned block, compare its process count and printed section, merge through mi_stats_reset, then free and compare retained total and zero current."
     },
+    "differential:statistics-two-owner": {
+      "command": ["python3", "compat/allocator/x86_64_m7_statistics_two_owner.py", "--offline"],
+      "scope": "Pinned C MI_STAT=1 and Rust run one public driver with two real worker Theaps. Each worker keeps a different regular-page block live through thread exit; exact local binned rows and public normal/page/thread/Theap counts are compared before either exit, after each owner merge, and after each main-thread free."
+    },
     "differential:statistics-level-one-output-merge": {
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-level-one-output-merge-differential"],
       "scope": "Pinned C MI_STAT=1 and Rust merge separate synthetic normal/huge source images into one process image, reset each source, and compare exact empty, live, combined-peak, and freed final malloc rows. Production huge allocation remains outside this fixture."
@@ -381,6 +385,7 @@
       "evidence": [
         "differential:statistics",
         "differential:statistics-level-one",
+        "differential:statistics-two-owner",
         "differential:statistics-level-one-output-merge",
         "differential:statistics-level-two-requested",
         "differential:statistics-level-two-bins",
