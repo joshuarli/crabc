@@ -940,6 +940,27 @@ def static_lifecycle_command(root: Path, static_product: Path, roster_entry: dic
             _mounted(root, static_product, source_mount), "--retain"]
 
 
+def _pinned_target_linker(root: Path) -> Path:
+    from generate_qualification_manifest import EXECUTION_CONTRACT, TARGET
+
+    with (root / "rust-toolchain.toml").open("rb") as source:
+        toolchain = tomllib.load(source)["toolchain"]["channel"]
+    require(isinstance(toolchain, str) and toolchain.startswith("nightly-")
+            and all(character.isascii() and (character.isalnum() or character in "-._")
+                    for character in toolchain), "static lifecycle Rust toolchain differs")
+    target = TARGET["triple"]
+    return (Path(EXECUTION_CONTRACT["rustup_home"]) / "toolchains" /
+            f"{toolchain}-{target}" / "lib/rustlib" / target / "bin/gcc-ld/ld.lld")
+
+
+def _static_lifecycle_environment(root: Path, step: Path, source_mount: str) -> dict[str, str]:
+    """Expose only the pinned target linker to the lifecycle runner's tool lookup."""
+
+    environment = family.case_environment(root, step, source_mount)
+    environment["PATH"] = f"{_pinned_target_linker(root).parent}:{environment['PATH']}"
+    return environment
+
+
 def _require_lifecycle_tree(path: Path, directories: set[str], files: set[str], description: str) -> None:
     require(path.is_dir() and not path.is_symlink(), f"{description} is not a physical directory")
     require({child.name for child in path.iterdir()} == directories | files,
@@ -973,8 +994,8 @@ def _lifecycle_tool_roster(root: Path, value: object, static_product: Path,
     }, "static lifecycle driver differs from the supplied product")
     require(result["oracle"]["path"] == "/usr/local/bin/crabc-x86_64-musl-gcc"
             and Path(result["compiler"]["path"]).name == "gcc"
-            and Path(result["linker"]["path"]).name == "ld.lld",
-            "static lifecycle native tool selection differs")
+            and result["linker"]["path"] == str(_pinned_target_linker(root)),
+            "static lifecycle pinned target linker or native tool selection differs")
     return result
 
 
@@ -1090,7 +1111,7 @@ def static_lifecycle_cells(root: Path, work: Path, phase: _ValidatedPthreadInput
         static_product = products[pair]["static"]
         step = work / "lifecycle-runs" / pair
         command = static_lifecycle_command(root, static_product, roster_entry, source_mount)
-        environment = family.case_environment(root, step, source_mount)
+        environment = _static_lifecycle_environment(root, step, source_mount)
         step_artifacts = family.check_step(root, step, command, environment, source_mount=source_mount)
         require((step / "stderr").read_bytes() == b"", "static lifecycle runner emitted stderr")
         leaf = family.leaf_directory(root, step, source_mount)
@@ -1194,13 +1215,17 @@ def execute(root: Path, family_execution: Path, output: Path, jobs: int) -> Path
     errors: list[BaseException] = []
 
     def run_pair(pair: str) -> None:
-        steps = [(work / "runs" / pair, composition_command(root, products[pair], composition, source_mount))]
+        composition_step = work / "runs" / pair
+        steps = [(composition_step, composition_command(root, products[pair], composition, source_mount),
+                  family.case_environment(root, composition_step, source_mount))]
         if lifecycle is not None:
-            steps.append((work / "lifecycle-runs" / pair,
-                          static_lifecycle_command(root, products[pair]["static"], lifecycle, source_mount)))
-        for step, command in steps:
+            lifecycle_step = work / "lifecycle-runs" / pair
+            steps.append((lifecycle_step,
+                          static_lifecycle_command(root, products[pair]["static"], lifecycle, source_mount),
+                          _static_lifecycle_environment(root, lifecycle_step, source_mount)))
+        for step, command, environment in steps:
             try:
-                family.run_step(root, step, command, family.case_environment(root, step, source_mount))
+                family.run_step(root, step, command, environment)
             finally:
                 if step.exists():
                     family.static_products.make_retained_evidence_readable(step)

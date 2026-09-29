@@ -277,7 +277,18 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
             "--static-sysroot", "/workspace/.work/products/primary-static", "--retain",
         ])
 
+    def test_static_lifecycle_environment_selects_the_pinned_target_linker(self) -> None:
+        step = ROOT / ".work/x86_64/test-owned-pthread-family/lifecycle-step"
+        environment = family._static_lifecycle_environment(ROOT, step, "/workspace")
+        self.assertEqual(environment["PATH"].split(":", 1)[0],
+                         "/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl"
+                         "/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld")
+        self.assertEqual(environment["TMPDIR"],
+                         "/workspace/.work/x86_64/test-owned-pthread-family/lifecycle-step/tmp")
+
     def _static_lifecycle_fixture(self) -> tuple[Path, Path, dict[str, object]]:
+        (self.root / "rust-toolchain.toml").write_text((ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"),
+                                                         encoding="utf-8")
         product = self.root / ".work/products/primary-static"
         driver = product / "bin/crabc-cc"
         manifest = product / "share/crabc/manifest.json"
@@ -307,7 +318,9 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
                 "sha256": family.family.digest(driver), "size": driver.stat().st_size,
             },
             "compiler": tool_identity("/opt/rust/bin/gcc", "d" * 64),
-            "linker": tool_identity("/opt/rust/lib/gcc-ld/ld.lld", "e" * 64),
+            "linker": tool_identity(
+                "/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl"
+                "/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld", "e" * 64),
         }
         (leaf / "tools-before.json").write_text(json.dumps(tools), encoding="utf-8")
         (leaf / "tools-after.json").write_text(json.dumps(tools), encoding="utf-8")
@@ -338,6 +351,7 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
 
     def test_static_lifecycle_reader_binds_both_linkages_to_the_supplied_product(self) -> None:
         leaf, product, oracle = self._static_lifecycle_fixture()
+        tools_path = family.family.read(leaf / "tools-before.json")["linker"]["path"]
 
         def retained_link(root, source_mount, selected, workload, executable, receipt, linkage, linker):
             self.assertEqual(selected, product)
@@ -346,7 +360,7 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
             self.assertEqual(executable.name, "candidate")
             self.assertEqual(receipt.name, "link.receipt.json")
             self.assertEqual(linkage, "static" if "et-exec" in executable.parent.name else "static-pie")
-            self.assertEqual(linker["path"], "/opt/rust/lib/gcc-ld/ld.lld")
+            self.assertEqual(linker["path"], tools_path)
             return {"linkage": linkage, "product": str(selected), "executable_sha256": family.family.digest(executable)}
 
         with patch.object(product_evidence, "retained_elf_facts", return_value={
@@ -357,6 +371,26 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
             record = family._static_lifecycle_report(self.root, leaf, product, "/workspace", oracle)
         self.assertEqual(set(record["modes"]), {"static-et-exec", "static-pie"})
         self.assertEqual([call.args[6] for call in validate.call_args_list], ["static", "static-pie"])
+
+    def test_static_lifecycle_reader_rejects_a_resealed_host_linker(self) -> None:
+        leaf, product, oracle = self._static_lifecycle_fixture()
+        for name in ("tools-before.json", "tools-after.json"):
+            path = leaf / name
+            tools = json.loads(path.read_text(encoding="utf-8"))
+            tools["linker"]["path"] = "/usr/bin/ld.lld"
+            path.write_text(json.dumps(tools), encoding="utf-8")
+        for name in ("installed-et-exec", "installed-static-pie"):
+            path = leaf / name / "link.receipt.json"
+            receipt = json.loads(path.read_text(encoding="utf-8"))
+            receipt["resolved_linker"]["path"] = "/usr/bin/ld.lld"
+            path.write_text(json.dumps(receipt), encoding="utf-8")
+        with patch.object(product_evidence, "retained_elf_facts", return_value={
+                "type": 3, "dynamic": True,
+                "interpreters": ["/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"],
+                "needed": ["libc.so"],
+        }), patch.object(product_evidence, "validate_retained_link", return_value={"linkage": "ok"}):
+            with self.assertRaisesRegex(family.PthreadFamilyError, "pinned target linker"):
+                family._static_lifecycle_report(self.root, leaf, product, "/workspace", oracle)
 
     def test_static_lifecycle_reader_rejects_a_foreign_product_and_link_mutation(self) -> None:
         leaf, product, oracle = self._static_lifecycle_fixture()
