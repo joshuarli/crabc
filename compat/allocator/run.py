@@ -13501,6 +13501,48 @@ M2_X86_64_REGISTERED_ARENA_TERMINAL_RECEIVERS = {
         "scope": "pinned-c-rust-explicit-reserved-arena-failed-terminal-unmap-warning-before-accounting-retained-raw-owner-independent-release",
     },
 }
+M2_X86_64_OS_PAGE_TERMINAL_RECEIVERS = {
+    "os-page-terminal-unmap-fault-c-rust-differential": {
+        "artifact": "m2-os-page-terminal-unmap-fault",
+        "target": "compat/allocator/m2_os_page_terminal_unmap_fault_x86_64.py",
+        "kind": "c-rust-process-os-page-terminal-unmap-fault-differential",
+        "cases": (),
+        "fields": {
+            "first_published", "first_size", "first_page_map_clear", "unmap_calls",
+            "failed_range_exact", "warning_calls", "warning_exact", "warning_before_stats",
+            "first_escaped", "first_reserved_delta", "first_committed_delta",
+            "first_commit_calls_delta", "first_mmap_calls_delta", "second_published",
+            "second_size", "second_live_reserved", "second_live_committed",
+            "second_range_exact", "second_unmapped", "first_still_escaped",
+            "second_reserved_delta", "second_committed_delta", "raw_cleanup",
+            "terminal_unmapped", "raw_reserved_delta", "raw_committed_delta",
+        },
+        "commit_fields": set(),
+        "rust_command_receipt": "unit-run",
+        "required_values": {
+            "first_published": 1, "first_page_map_clear": 1,
+            "failed_range_exact": 1, "warning_calls": 1, "warning_exact": 1,
+            "warning_before_stats": 1, "first_escaped": 1,
+            "second_published": 1, "second_range_exact": 1,
+            "second_unmapped": 1, "first_still_escaped": 1,
+            "raw_cleanup": 1, "terminal_unmapped": 1, "unmap_calls": 2,
+        },
+        "same_trace_fields": (("first_size", "second_size"),),
+        "node_growth": {
+            "size": "second_size",
+            "live_reserved": "second_live_reserved",
+            "live_committed": "second_live_committed",
+            "delta_fields": (
+                "second_reserved_delta", "second_committed_delta",
+                "raw_reserved_delta", "raw_committed_delta",
+            ),
+            "receipt": "second_page_map_node_bytes",
+            "possible_bytes": (0, 65536),
+            "committed_gap_bytes": 65536,
+        },
+        "scope": "pinned-c-rust-published-os-page-failed-terminal-unmap-warning-before-statistics-retained-raw-owner-independent-later-page-release",
+    },
+}
 M2_X86_64_PROCESS_PROTECTION_RECEIVERS = {
     "process-owned-protect-fault-c-rust-differential": {
         "artifact": "m2-process-owned-protect-fault",
@@ -13557,6 +13599,7 @@ M2_X86_64_VM_PROCESS_RECEIVERS = {
     **M2_X86_64_EXPLICIT_ARENA_METADATA_FAULT_RECEIVERS,
     **M2_X86_64_REGISTERED_ARENA_PAGE_MAP_RECEIVERS,
     **M2_X86_64_REGISTERED_ARENA_TERMINAL_RECEIVERS,
+    **M2_X86_64_OS_PAGE_TERMINAL_RECEIVERS,
     **M2_X86_64_PROCESS_PROTECTION_RECEIVERS,
 }
 
@@ -14115,6 +14158,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-explicit-arena-metadata-fault-differential",
                     "c-rust-registered-arena-page-map-fault-differential",
                     "c-rust-registered-arena-terminal-unmap-fault-differential",
+                    "c-rust-process-os-page-terminal-unmap-fault-differential",
                     "c-rust-process-owned-protection-fault-differential",
                     "c-rust-second-arena-reset-advice-matrix",
                     "c-rust-process-arena-purge-differential",
@@ -14304,6 +14348,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                 "c-rust-explicit-arena-metadata-fault-differential",
                 "c-rust-registered-arena-page-map-fault-differential",
                 "c-rust-registered-arena-terminal-unmap-fault-differential",
+                "c-rust-process-os-page-terminal-unmap-fault-differential",
                 "c-rust-process-owned-protection-fault-differential",
             }:
                 receiver = M2_X86_64_VM_PROCESS_RECEIVERS.get(raw_check["id"])
@@ -15423,6 +15468,7 @@ def _m2_x86_64_vm_check_records(
         def matching_integer_traces(
             c_trace: object, rust_trace: object, fields: set[str],
             stable_fields: tuple[str, ...] = (),
+            varying_fields: set[str] | frozenset[str] = frozenset(),
         ) -> bool:
             if (
                 not isinstance(c_trace, Mapping)
@@ -15430,9 +15476,11 @@ def _m2_x86_64_vm_check_records(
                 or set(c_trace) != set(rust_trace) or set(c_trace) != fields
                 or not all(type(value) is int for value in (*c_trace.values(), *rust_trace.values()))
                 or not set(stable_fields) <= fields
+                or not varying_fields <= fields
             ):
                 return False
-            if not all(c_trace[field] == rust_trace[field] for field in fields - set(stable_fields)):
+            if not all(c_trace[field] == rust_trace[field]
+                       for field in fields - set(stable_fields) - varying_fields):
                 return False
             return not stable_fields or all(
                 trace[stable_fields[0]] > 0
@@ -15453,6 +15501,28 @@ def _m2_x86_64_vm_check_records(
                 expected_keys |= {"commit_c", "commit_rust", "commit_c_commands", "commit_rust_commands"}
             stable_fields = receiver.get("stable_fields", ())
             stable_receipt = receiver.get("stable_receipt")
+            node_growth = receiver.get("node_growth")
+            varying_fields: set[str] = set()
+            if node_growth is not None:
+                if (
+                    receiver["cases"] or stable_fields
+                    or not isinstance(node_growth, Mapping)
+                    or set(node_growth) != {
+                        "size", "live_reserved", "live_committed", "delta_fields",
+                        "receipt", "possible_bytes", "committed_gap_bytes",
+                    }
+                    or not isinstance(node_growth["receipt"], str)
+                    or not node_growth["receipt"]
+                ):
+                    raise HarnessError("native x86 M2 process VM node-growth definition is invalid")
+                varying_fields = {
+                    node_growth["live_reserved"], node_growth["live_committed"],
+                    *node_growth["delta_fields"],
+                }
+                if (not varying_fields <= receiver["fields"]
+                        or node_growth["size"] not in receiver["fields"]):
+                    raise HarnessError("native x86 M2 process VM node-growth fields are invalid")
+                expected_keys.add(node_growth["receipt"])
             if stable_fields:
                 if (
                     receiver["cases"]
@@ -15498,9 +15568,41 @@ def _m2_x86_64_vm_check_records(
                         **{case: {"run_status": 0, "stderr": ""} for case in cases},
                     }
             else:
-                if not matching_integer_traces(c_trace, rust_trace, receiver["fields"], stable_fields):
+                if not matching_integer_traces(
+                    c_trace, rust_trace, receiver["fields"], stable_fields, varying_fields
+                ):
                     raise HarnessError("native x86 M2 process VM flat traces are invalid")
                 expected_commands = {"build_status": 0, "run_status": 0, "stderr": ""}
+            required_values = receiver.get("required_values", {})
+            same_trace_fields = receiver.get("same_trace_fields", ())
+            if (not isinstance(required_values, Mapping)
+                    or not set(required_values) <= receiver["fields"]
+                    or any(type(value) is not int for value in required_values.values())
+                    or any(len(pair) != 2 or not set(pair) <= receiver["fields"]
+                           for pair in same_trace_fields)):
+                raise HarnessError("native x86 M2 process VM field relation is invalid")
+            if not cases and any(
+                any(trace[field] != value for field, value in required_values.items())
+                or any(trace[left] != trace[right] for left, right in same_trace_fields)
+                for trace in (c_trace, rust_trace)
+            ):
+                raise HarnessError("native x86 M2 process VM owner relation is invalid")
+            if node_growth is not None:
+                node_bytes = {
+                    label: trace[node_growth["live_reserved"]] - trace[node_growth["size"]]
+                    for label, trace in (("c", c_trace), ("rust", rust_trace))
+                }
+                if (observed[node_growth["receipt"]] != node_bytes
+                        or any(
+                            growth not in node_growth["possible_bytes"]
+                            or trace[node_growth["live_committed"]] != (
+                                trace[node_growth["size"]] - node_growth["committed_gap_bytes"] + growth
+                            )
+                            or any(trace[field] != growth for field in node_growth["delta_fields"])
+                            for label, trace in (("c", c_trace), ("rust", rust_trace))
+                            for growth in (node_bytes[label],)
+                        )):
+                    raise HarnessError("native x86 M2 process VM node-growth relation is invalid")
             if stable_fields and observed[stable_receipt] != {
                 "c": {field: c_trace[field] for field in stable_fields},
                 "rust": {field: rust_trace[field] for field in stable_fields},

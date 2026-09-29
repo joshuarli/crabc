@@ -29,6 +29,7 @@ EXPECTED_VM_CHECK_IDS = (
     "legacy-os-page-suffix-trim-and-raw-release",
     "process-os-page-suffix-trim-and-terminal-release",
     "process-os-page-block-commit-rollback-c-rust-differential",
+    "os-page-terminal-unmap-fault-c-rust-differential",
     "process-policy-first-arena-clean-primary-fallback",
     "process-policy-first-arena-trim-leak",
     "explicit-arena-prefix-trim-c-rust-differential",
@@ -777,24 +778,34 @@ class NativeVmAssemblyTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         producer.load_fragment(source)
 
-    def test_registered_arena_terminal_unmap_keeps_destroy_and_release_source_anchors(self):
+    def test_terminal_unmap_receivers_keep_owner_and_release_source_anchors(self):
         producer = RUNNER._m2_x86_64_vm_producer()
         original = RUNNER.read_json(RUNNER.M2_X86_64_VM_FRAGMENT)
-        bindings = (
-            ("bounded_source_definitions", "os-free-and-full-memory-id-release"),
-            ("bounded_source_definitions", "arena-policy-regular-map-and-manage"),
-            ("bounded_source_definitions", "arena-terminal-destroy-and-os-release"),
-            ("branch_matrix", "os-free-and-statistics-events"),
-        )
-        for section, row_id in bindings:
-            with self.subTest(section=section, row_id=row_id):
-                changed = copy.deepcopy(original)
-                row = next(item for item in changed["component"][section] if item["id"] == row_id)
-                row["evidence_check_ids"].remove(producer.REGISTERED_ARENA_TERMINAL_UNMAP_CHECK_ID)
-                source = mock.Mock()
-                source.read_text.return_value = json.dumps(changed)
-                with self.assertRaises(ValueError):
-                    producer.load_fragment(source)
+        bindings = {
+            producer.REGISTERED_ARENA_TERMINAL_UNMAP_CHECK_ID: (
+                ("bounded_source_definitions", "os-free-and-full-memory-id-release"),
+                ("bounded_source_definitions", "arena-policy-regular-map-and-manage"),
+                ("bounded_source_definitions", "arena-terminal-destroy-and-os-release"),
+                ("branch_matrix", "os-free-and-statistics-events"),
+            ),
+            producer.OS_PAGE_TERMINAL_UNMAP_CHECK_ID: (
+                ("bounded_source_definitions", "arena-on-demand-page-first-prefix"),
+                ("bounded_source_definitions", "os-free-and-full-memory-id-release"),
+                ("bounded_source_definitions", "unix-fixed-free-primitive"),
+                ("branch_matrix", "os-free-and-statistics-events"),
+                ("branch_matrix", "unix-free-primitive"),
+            ),
+        }
+        for check_id, rows in bindings.items():
+            for section, row_id in rows:
+                with self.subTest(check_id=check_id, section=section, row_id=row_id):
+                    changed = copy.deepcopy(original)
+                    row = next(item for item in changed["component"][section] if item["id"] == row_id)
+                    row["evidence_check_ids"].remove(check_id)
+                    source = mock.Mock()
+                    source.read_text.return_value = json.dumps(changed)
+                    with self.assertRaises(ValueError):
+                        producer.load_fragment(source)
 
     def test_vm_producer_receipt_rejects_missing_comparison_anchors_and_nonclaims(self):
         summary = self.summary()
@@ -938,6 +949,19 @@ class NativeVmAssemblyTests(unittest.TestCase):
                     "c": {field: observed["c"][field] for field in receiver["stable_fields"]},
                     "rust": {field: observed["rust"][field] for field in receiver["stable_fields"]},
                 }
+            if receiver.get("node_growth"):
+                node = receiver["node_growth"]
+                for side, growth in (("c", 0), ("rust", 65536)):
+                    values = observed[side]
+                    values.update(receiver["required_values"])
+                    values["first_size"] = values["second_size"] = 589824
+                    values[node["live_reserved"]] = values[node["size"]] + growth
+                    values[node["live_committed"]] = (
+                        values[node["size"]] - node["committed_gap_bytes"] + growth
+                    )
+                    for field in node["delta_fields"]:
+                        values[field] = growth
+                observed[node["receipt"]] = {"c": 0, "rust": 65536}
             if receiver["commit_fields"]:
                 commit = {field: 1 for field in receiver["commit_fields"]}
                 observed.update({
@@ -1019,6 +1043,28 @@ class NativeVmAssemblyTests(unittest.TestCase):
                             row[receiver["stable_receipt"]]["rust"][receiver["stable_fields"][0]] += 1
                         else:
                             row["rust"][receiver["stable_fields"][1]] += 1
+                        with self.assertRaises(RUNNER.HarnessError):
+                            RUNNER._m2_x86_64_vm_check_records(
+                                summary, self.vm_evidence(summary), process_vm_evidence=changed
+                            )
+            if receiver.get("node_growth"):
+                node = receiver["node_growth"]
+                for name in ("missing_growth", "stale_growth", "invalid_growth", "broken_counter", "warning_lost", "owner_size"):
+                    with self.subTest(check_id=check_id, mutation=name):
+                        changed = copy.deepcopy(evidence)
+                        row = changed[check_id]
+                        if name == "missing_growth":
+                            row.pop(node["receipt"])
+                        elif name == "stale_growth":
+                            row[node["receipt"]]["rust"] = 0
+                        elif name == "invalid_growth":
+                            row["rust"][node["live_reserved"]] += 4096
+                        elif name == "broken_counter":
+                            row["rust"][node["delta_fields"][0]] += 1
+                        elif name == "warning_lost":
+                            row["rust"]["warning_before_stats"] = 0
+                        else:
+                            row["rust"]["first_size"] += 1
                         with self.assertRaises(RUNNER.HarnessError):
                             RUNNER._m2_x86_64_vm_check_records(
                                 summary, self.vm_evidence(summary), process_vm_evidence=changed
@@ -1446,6 +1492,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "registered-arena-page-map-fault-c-rust-differential",
                 "registered-arena-page-map-double-fault-c-rust-differential",
                 "registered-arena-terminal-unmap-fault-c-rust-differential",
+                "os-page-terminal-unmap-fault-c-rust-differential",
                 "process-owned-protect-fault-c-rust-differential",
                 "process-owned-unprotect-fault-c-rust-differential",
             },

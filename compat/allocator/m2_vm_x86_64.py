@@ -147,6 +147,11 @@ CHECKS = (
         PROCESS_OS_PAGE_BLOCK_COMMIT_READER,
     ),
     (
+        "os-page-terminal-unmap-fault-c-rust-differential",
+        "c-rust-process-os-page-terminal-unmap-fault-differential",
+        "compat/allocator/m2_os_page_terminal_unmap_fault_x86_64.py",
+    ),
+    (
         "process-policy-first-arena-clean-primary-fallback",
         "rust-unit",
         "process_arena::tests::process_default_os_arena_retries_the_source_smaller_policy_arena_after_clean_primary_failure",
@@ -359,6 +364,7 @@ EXPLICIT_ARENA_SOURCE_CHECK_IDS = (
     "registered-arena-page-map-double-fault-c-rust-differential",
 )
 REGISTERED_ARENA_TERMINAL_UNMAP_CHECK_ID = "registered-arena-terminal-unmap-fault-c-rust-differential"
+OS_PAGE_TERMINAL_UNMAP_CHECK_ID = "os-page-terminal-unmap-fault-c-rust-differential"
 PROCESS_PROTECTION_SOURCE_CHECK_IDS = (
     "process-owned-protect-fault-c-rust-differential",
     "process-owned-unprotect-fault-c-rust-differential",
@@ -898,21 +904,39 @@ def load_fragment(path: Path) -> dict[str, Any]:
         ):
             raise _error("explicit arena receiver lost its aligned map or release branch")
 
-    for definition_id in (
-        "os-free-and-full-memory-id-release",
-        "arena-policy-regular-map-and-manage",
-        "arena-terminal-destroy-and-os-release",
-    ):
-        definition = next((item for item in definitions if item["id"] == definition_id), None)
-        if definition is None or REGISTERED_ARENA_TERMINAL_UNMAP_CHECK_ID not in definition["evidence_check_ids"]:
-            raise _error("registered arena terminal unmap lost its release source boundary")
-    release_branch = next((item for item in branches if item["id"] == "os-free-and-statistics-events"), None)
-    if (
-        release_branch is None
-        or release_branch["disposition"] != "partial-fixed-profile"
-        or REGISTERED_ARENA_TERMINAL_UNMAP_CHECK_ID not in release_branch["evidence_check_ids"]
-    ):
-        raise _error("registered arena terminal unmap lost its open release branch")
+    terminal_release_bindings = (
+        (
+            REGISTERED_ARENA_TERMINAL_UNMAP_CHECK_ID,
+            (
+                "os-free-and-full-memory-id-release",
+                "arena-policy-regular-map-and-manage",
+                "arena-terminal-destroy-and-os-release",
+            ),
+            (("os-free-and-statistics-events", "partial-fixed-profile"),),
+        ),
+        (
+            OS_PAGE_TERMINAL_UNMAP_CHECK_ID,
+            (
+                "arena-on-demand-page-first-prefix",
+                "os-free-and-full-memory-id-release",
+                "unix-fixed-free-primitive",
+            ),
+            (
+                ("os-free-and-statistics-events", "partial-fixed-profile"),
+                ("unix-free-primitive", "qualified-fixed-profile"),
+            ),
+        ),
+    )
+    for check_id, definition_ids, branch_ids in terminal_release_bindings:
+        for definition_id in definition_ids:
+            definition = next((item for item in definitions if item["id"] == definition_id), None)
+            if definition is None or check_id not in definition["evidence_check_ids"]:
+                raise _error("terminal release receiver lost its source boundary")
+        for branch_id, disposition in branch_ids:
+            branch = next((item for item in branches if item["id"] == branch_id), None)
+            if (branch is None or branch["disposition"] != disposition
+                    or check_id not in branch["evidence_check_ids"]):
+                raise _error("terminal release receiver lost its release branch")
 
     unqualified = component.get("unqualified_failure_matrix")
     if not isinstance(unqualified, list) or not unqualified:

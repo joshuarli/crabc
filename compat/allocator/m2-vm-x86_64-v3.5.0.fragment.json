@@ -242,7 +242,8 @@
           "registered-arena-page-map-double-fault-c-rust-differential",
           "process-owned-protect-fault-c-rust-differential",
           "process-owned-unprotect-fault-c-rust-differential",
-          "registered-arena-terminal-unmap-fault-c-rust-differential"
+          "registered-arena-terminal-unmap-fault-c-rust-differential",
+          "os-page-terminal-unmap-fault-c-rust-differential"
         ]
       },
       {
@@ -357,7 +358,8 @@
         ],
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
-          "normal-os-offset-full-provenance-and-release-retry"
+          "normal-os-offset-full-provenance-and-release-retry",
+          "os-page-terminal-unmap-fault-c-rust-differential"
         ]
       },
       {
@@ -514,7 +516,8 @@
           "native-vm-fixed-lifecycle-differential",
           "normal-page-extension-direct-commit-failure-and-retry",
           "registered-arena-page-map-fault-c-rust-differential",
-          "registered-arena-page-map-double-fault-c-rust-differential"
+          "registered-arena-page-map-double-fault-c-rust-differential",
+          "os-page-terminal-unmap-fault-c-rust-differential"
         ]
       },
       {
@@ -603,7 +606,7 @@
       {
         "id": "os-free-and-statistics-events",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/os.c:240-294 regular OS free, full MemoryId base adjustment, huge dispatch, warnings, and unconditional subprocess committed/reserved counter events; the bounded records inject one normal-offset _mi_os_free_ex primitive failure/retry and, separately, release every selected aligned-overmap returned MemoryId after direct/prefix/suffix cleanup outcomes. The pinned C fixture records its actual void-free counter timing even when a physical cleanup range escaped before that returned-MemoryId release. Two selected explicit OS arena reservations also compare failed prefix or suffix trim, warning-time counters, published registry ownership, terminal arena destroy, and escaped raw-only cleanup. A separate fresh-process receiver compares metadata-protection failure before arena publication, clean or failed cleanup, successful retry, terminal release, and retained raw-only cleanup. Another compares a second metadata-protection failure while the first arena remains registered, then a writable claim and terminal release of that retained arena. Two further process receivers compare registered arenas across ordinary page allocation whose PageMap top commit faults once or twice in the same allocation call, warning-time counters, successful retry, and terminal release. A direct explicit reserved-arena terminal-destroy receiver faults the first unmap, checks its warning before accounting changes, retains that raw mapping after registry retirement, releases the second arena, and cleans the escaped first mapping through a raw call.",
+        "source_scope": "src/os.c:240-294 regular OS free, full MemoryId base adjustment, huge dispatch, warnings, and unconditional subprocess committed/reserved counter events; the bounded records inject one normal-offset _mi_os_free_ex primitive failure/retry and, separately, release every selected aligned-overmap returned MemoryId after direct/prefix/suffix cleanup outcomes. The pinned C fixture records its actual void-free counter timing even when a physical cleanup range escaped before that returned-MemoryId release. Two selected explicit OS arena reservations also compare failed prefix or suffix trim, warning-time counters, published registry ownership, terminal arena destroy, and escaped raw-only cleanup. A separate fresh-process receiver compares metadata-protection failure before arena publication, clean or failed cleanup, successful retry, terminal release, and retained raw-only cleanup. Another compares a second metadata-protection failure while the first arena remains registered, then a writable claim and terminal release of that retained arena. Two further process receivers compare registered arenas across ordinary page allocation whose PageMap top commit faults once or twice in the same allocation call, warning-time counters, successful retry, and terminal release. A direct explicit reserved-arena terminal-destroy receiver faults the first unmap, checks its warning before accounting changes, retains that raw mapping after registry retirement, releases the second arena, and cleans the escaped first mapping through a raw call. A direct published OS-page terminal-unmap fault receiver compares exact first release, warning before statistics, cleared PageMap registration, retained raw mapping, and independent later OS-page allocation and release.",
         "source_anchors": [
           {
             "member": "src/os.c",
@@ -628,7 +631,8 @@
           "registered-arena-page-map-double-fault-c-rust-differential",
           "process-owned-protect-fault-c-rust-differential",
           "process-owned-unprotect-fault-c-rust-differential",
-          "registered-arena-terminal-unmap-fault-c-rust-differential"
+          "registered-arena-terminal-unmap-fault-c-rust-differential",
+          "os-page-terminal-unmap-fault-c-rust-differential"
         ],
         "missing_conditions": [
           "The selected normal-offset _mi_os_free_ex failure/retry, finite aligned-overmap source rows, and normal aligned allocation prefix/suffix trim-failure receivers compare full-MemoryId base/size, current/total counter timing, escaped ranges, source warning delivery, and raw-only release cleanup. Warning/error reporting beyond those receivers, huge MemoryId dispatch, unselected allocation transitions, and every other counter/caller route remain unqualified."
@@ -855,7 +859,7 @@
       {
         "id": "unix-free-primitive",
         "disposition": "qualified-fixed-profile",
-        "source_scope": "src/prim/unix/prim.c:283-304 regular munmap free primitive and errno return.",
+        "source_scope": "src/prim/unix/prim.c:283-304 regular munmap free primitive and errno return. The selected published OS-page terminal fault observes one failed primitive unmap and a successful independent later unmap.",
         "source_anchors": [
           {
             "member": "src/prim/unix/prim.c",
@@ -866,7 +870,8 @@
         ],
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
-          "normal-os-offset-full-provenance-and-release-retry"
+          "normal-os-offset-full-provenance-and-release-retry",
+          "os-page-terminal-unmap-fault-c-rust-differential"
         ],
         "missing_conditions": []
       },
@@ -1074,6 +1079,12 @@
         "id": "process-os-page-block-commit-rollback-c-rust-differential",
         "kind": "c-rust-process-os-page-block-commit-receiver",
         "target": "compat/allocator/m2_process_os_page_block_commit_x86_64.py",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "os-page-terminal-unmap-fault-c-rust-differential",
+        "kind": "c-rust-process-os-page-terminal-unmap-fault-differential",
+        "target": "compat/allocator/m2_os_page_terminal_unmap_fault_x86_64.py",
         "expected_passed_test_count": 1
       },
       {
