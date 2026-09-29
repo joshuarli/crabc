@@ -138,6 +138,19 @@ int main(int argc, char **argv)
         "1e99999!", "-1e-99999!", "1.17549435082228750796873653722224568e-38!",
         "4.94065645841246544176568792868221372e-324!", "3.36210314311209350626267781732175260e-4932!"};
     const char *float_formats[] = {"%f%n", "%lf%n", "%Lf%n", "%4lf%n", "%*f%n"};
+    /* The final three payload bytes identify the decimal input, conversion
+     * format, and rounding mode in every compared binary record. */
+    const char *decimal_inputs[] = {
+        "-0e+tail", "-0.000e999999x", "1e+9tail", "1.2345e-6tail",
+        "9.999e99999!", "-9.999e-99999!", "3.4028235677973366e38!",
+        "1.1754943508222875e-38!", "1.401298464324817e-45!",
+        "1.7976931348623157e308!", "2.2250738585072014e-308!",
+        "4.9406564584124654e-324!"
+    };
+    const char *decimal_formats[] = {
+        "%f%n", "%lf%n", "%Lf%n", "%1f%n", "%3f%n", "%8lf%n",
+        "%16Lf%n", "%*5lf%n"
+    };
     const int modes[] = {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO};
     for (stream_mode = 0; stream_mode < 2; ++stream_mode) {
         for (size_t i=0; i<sizeof integers/sizeof *integers; ++i)
@@ -173,6 +186,21 @@ int main(int argc, char **argv)
             data.bytes, data.bytes+2, data.bytes+8, data.bytes+16, data.bytes+24, data.bytes+32);
         memset(data.bytes, 0, 64);
         check("abc!", "%*nabc%n", data.bytes, data.bytes+32);
+        for (size_t m=0; m<4; ++m) {
+            if (fesetround(modes[m])) return 83;
+            for (size_t i=0; i<sizeof decimal_inputs/sizeof *decimal_inputs; ++i)
+                for (size_t j=0; j<sizeof decimal_formats/sizeof *decimal_formats; ++j) {
+                    memset(data.bytes, 0, 64);
+                    data.bytes[61] = (unsigned char)(m + 1);
+                    data.bytes[62] = (unsigned char)(j + 1);
+                    data.bytes[63] = (unsigned char)(i + 1);
+                    if (j==7) check(decimal_inputs[i], decimal_formats[j], data.bytes,
+                        data.bytes+32);
+                    else check(decimal_inputs[i], decimal_formats[j], data.bytes,
+                        data.bytes, data.bytes+32);
+                }
+        }
+        if (fesetround(FE_TONEAREST)) return 84;
     }
     return allocations();
 }

@@ -264,9 +264,12 @@ hex binary64/binary80 output, errno, floating exceptions, and all four rounding
 modes with pinned musl. It covers spilled/positional arguments and FILE,
 descriptor, allocated, and caller-buffer destinations with private scratch.
 Each formatting job also runs a separately receipted
-`owned_static_scanf_probe.c` binary: 940 fixed records compare byte grammar,
+`owned_static_scanf_probe.c` binary: 1,708 fixed records compare byte grammar,
 scansets, widths, suppression, positional arguments, integer and binary32/64/80
-conversion, errno, fenv, and stream lookahead/EOF/error state. Allocation checks
+conversion, errno, fenv, and stream lookahead/EOF/error state. The decimal
+records identify their input, conversion format, and rounding mode in their
+payload and cover signed zero, malformed exponents, subnormal and overflow
+boundaries, and field widths in string and FILE scans. Allocation checks
 exercise `%m` growth, cleanup, partial failure, and ENOMEM; each process owns
 its scratch and restores its resource limit. `owned_wide_format_probe.c`
 compares byte/wide conversions and wide printf/scanf grammar, including

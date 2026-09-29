@@ -709,12 +709,25 @@ import sys
 data = Path(sys.argv[1]).read_bytes()
 label = sys.argv[2]
 record_size = 6 * 4 + 64
-if len(data) != 940 * record_size:
-    raise SystemExit(f"{label} scanf matrix must contain exactly 940 complete records")
+base_per_stream = 70 + 360 + 36 + 4
+decimal_per_stream = 4 * 12 * 8
+records_per_stream = base_per_stream + decimal_per_stream
+if len(data) != 2 * records_per_stream * record_size:
+    raise SystemExit(f"{label} scanf matrix must contain exactly {2 * records_per_stream} complete records")
 for offset in range(0, len(data), record_size):
     count, _, _, next_byte, eof, error = struct.unpack_from("=6i", data, offset)
     if count < -1 or count > 6 or not -1 <= next_byte <= 255 or eof not in (0, 1) or error not in (0, 1):
         raise SystemExit(f"{label} scanf record has invalid status fields at byte {offset}")
+for stream_mode in range(2):
+    first_decimal = stream_mode * records_per_stream + base_per_stream
+    for rounding_mode in range(4):
+        for input_case in range(12):
+            for conversion in range(8):
+                index = first_decimal + (rounding_mode * 12 + input_case) * 8 + conversion
+                payload = data[index * record_size + 6 * 4:(index + 1) * record_size]
+                expected = bytes((rounding_mode + 1, conversion + 1, input_case + 1))
+                if payload[61:64] != expected:
+                    raise SystemExit(f"{label} scanf decimal record {index} has the wrong case identity")
 PY
 }
 
