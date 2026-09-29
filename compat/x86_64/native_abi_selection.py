@@ -9024,9 +9024,9 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
     scan_call_count = {'mbrtowc': 1, 'mbsinit': 1, 'fmodl': 2}.get(name)
     scan_caller = scan_call_count is not None
     bulk_memory = name in (*native_c_allocator_boundary.OWNED_MEMORY_IMPORTS, 'strlen', 'memmove', 'memcmp', 'bcmp')
-    independent = name in {'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp', 'fchdir', 'btowc'}
+    independent = name in {'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp', 'fchdir', 'btowc', 'wctomb'}
     require(name in {'__errno_location', 'abort', 'fputs', 'getenv', 'getrusage',
-                     'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp', 'fchdir', 'btowc',
+                     'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp', 'fchdir', 'btowc', 'wctomb',
                      *native_c_allocator_boundary.OWNED_MEMORY_IMPORTS}
             and (projection_override is not None) == independent,
             'ordinary import identity differs')
@@ -9042,7 +9042,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
         'static_provider_member', 'static_provider', 'shared_dynsym_provider',
         'shared_symtab_provider', 'importers', 'static_final_links',
         'shared_final', 'dynamic_final_import_absent',
-        *({'dynamic_final_owned_imports'} if name in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp', 'fchdir', 'btowc'} else set()),
+        *({'dynamic_final_owned_imports'} if name in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp', 'fchdir', 'btowc', 'wctomb'} else set()),
     }, 'ordinary import resolution')
     runtime = companion['account']['c_runtime_imports']
     claim = next((row for row in runtime['imports']
@@ -9052,12 +9052,12 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
              and same(projection['static_provider'], claim['static_rust_provider'])
              and same(projection['shared_dynsym_provider'], claim['shared_dynsym_provider'])
              and same(projection['shared_symtab_provider'], claim['shared_symtab_provider']))
-            and projection['dynamic_final_import_absent'] is (name not in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp', 'fchdir', 'btowc'})
+            and projection['dynamic_final_import_absent'] is (name not in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp', 'fchdir', 'btowc', 'wctomb'})
             and (not independent or all(projection[field]['name'] == name for field in (
                 'static_provider', 'shared_dynsym_provider', 'shared_symtab_provider'))),
             'ordinary import provider account differs')
     importers = projection['importers']
-    require(type(importers) is list and (len(importers) == 1 if scan_caller or name in {'getrusage', 'close', 'memcmp', 'btowc'}
+    require(type(importers) is list and (len(importers) == 1 if scan_caller or name in {'getrusage', 'close', 'memcmp', 'btowc', 'wctomb'}
                                        else len(importers) == 2 if name == 'aio_suspend'
                                        else len(importers) == 1 if name == 'fchdir'
                                        else len(importers) >= 1 if name == 'aio_cancel'
@@ -9079,8 +9079,8 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                 and item['shared_caller_functions'],
                 'ordinary archive importer evidence differs')
         if name in {'abort', 'fputs', 'getenv', 'getrusage', 'mbrtowc', 'mbsinit', 'fmodl',
-                    'aio_suspend', 'aio_cancel', 'close', 'fchdir', 'btowc'} or bulk_memory:
-            kind = ('R_X86_64_PLT32' if scan_caller or name == 'btowc' or member['member_index'] == c_member['member_index']
+                    'aio_suspend', 'aio_cancel', 'close', 'fchdir', 'btowc', 'wctomb'} or bulk_memory:
+            kind = ('R_X86_64_PLT32' if scan_caller or name in {'btowc', 'wctomb'} or member['member_index'] == c_member['member_index']
                     else 'R_X86_64_GOTPCREL')
             require(all(type(call) is dict and set(call) == {'section', 'offset', 'kind'}
                         and call['kind'] in ({'R_X86_64_PLT32', 'R_X86_64_GOTPCREL'}
@@ -9100,6 +9100,11 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                         and item['shared_caller_functions'] ==
                         ['crabc_owned_wprint_wprintf_core'],
                         'btowc wide printer source call differs')
+            if name == 'wctomb':
+                require(len(item['source_calls']) == 1
+                        and item['source_calls'][0]['section'] == '.text.crabc_owned_vfwscanf'
+                        and item['shared_caller_functions'] == ['crabc_owned_vfwscanf'],
+                        'wctomb wide scanner source call differs')
             if scan_caller:
                 caller = ('crabc_owned_scan_decfloat' if name == 'fmodl'
                           else 'crabc_owned_scan_vfscanf')
@@ -9272,7 +9277,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                         == importers[0]['shared_caller_functions'][0]
                     and all_calls[0]['function'] != all_calls[0]['source_function'],
                     'ordinary inlined source call ownership differs')
-    if name in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp', 'fchdir', 'btowc'}:
+    if name in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove', 'memcmp', 'bcmp', 'fchdir', 'btowc', 'wctomb'}:
         require(projection['dynamic_final_owned_imports'] == [
             {'mode': mode, 'import_rows': 2,
              'shared_provider_address': shared['provider_address']}
@@ -9318,7 +9323,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                         and len({call['call_address'] for call in calls}) == scan_call_count,
                         f'owned scanf {mode} call roster differs')
             if name in {'abort', 'fputs', 'getenv', 'getrusage', 'mbrtowc', 'mbsinit', 'fmodl',
-                        'aio_suspend', 'aio_cancel', 'close', 'fchdir', 'btowc'} or bulk_memory:
+                        'aio_suspend', 'aio_cancel', 'close', 'fchdir', 'btowc', 'wctomb'} or bulk_memory:
                 kinds = {(call['section'], call['offset']): call['kind']
                          for call in source_item['source_calls']}
                 require(all((type(call.get('got_slot')) is int and call['got_slot'] > 0)
