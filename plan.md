@@ -275,9 +275,11 @@ are not transferable passes for a different revision.
   registering two PageMap top-commit faults and same-call recovery; 61 C/Rust
   fields match and five source-layout-dependent counts stay stable per side
   through four warnings. The same four partial components remain open.
-  Separate direct process-owned protect and unprotect failure receivers each
-  match 44 C/Rust fields, including warning timing, same-range retry, live
-  mapping accounting, and terminal release; shared VM registration is pending.
+  Separate process-owned protect and unprotect failure receivers each match
+  44 C/Rust fields, including warning timing, same-range retry, live mapping
+  accounting, and terminal release. Both are registered in the clean M2 VM
+  gate, which executes all 93 runnable checks, including 54 VM checks; the
+  same four components remain partial.
   A failed second-arena committed-slice claim and same-slice retry match 24
   C/Rust fields after the regular mapping uses the warning-preserving commit
   path; two additional pinned-C fields bind the attempted `mprotect` range.
