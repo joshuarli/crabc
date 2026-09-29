@@ -108,6 +108,17 @@ errors, source no-ops, reentrant workers, pending cancellation plus the
 post-join descriptor count, usershell reset/fallback/EOF/comments/no-final
 newline, and effective-UID `cuserid` bounds and storage.
 
+The same installed-header object also composes the separately selected
+`getpw*` and `getgr*` providers over private `/etc/passwd` and `/etc/group`
+fixtures. It checks malformed-line skipping, duplicate first matches,
+unsigned identifier wrap, member splitting, unterminated final records,
+reentrant `ERANGE` without caller-buffer writes, independent caller-owned
+stream results, and enumeration progress across shared-record lookups. Two
+synchronized workers retain caller-buffered passwd and group results while
+the main thread repeatedly replaces the corresponding shared records; their
+results must remain valid after those replacements. This composition receipt
+adds no new provider selection or account lookup mechanism.
+
 The original absent-provider red check used the same installed-header C
 object, ran it against pinned musl, then showed all thirteen unresolved owned
 providers in static, static-PIE, dynamic PIE, and dynamic non-PIE links. Its

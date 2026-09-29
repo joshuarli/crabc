@@ -17,7 +17,7 @@ readonly HEADER_CXX="$ROOT/compat/x86_64/owned_account_files_header_abi_probe.cp
 readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 readonly -a SCENARIOS=(
     symbols fields early tcb tcb-denied global stream read-error workers
-    cancellation noops usershell cuserid
+    cancellation noops usershell cuserid identity-fields identity-lifetime
 )
 readonly -a ACCOUNT_SYMBOLS=(
     cuserid getusershell setusershell endusershell

@@ -8,9 +8,12 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <pthread.h>
+#include <pwd.h>
 #include <shadow.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -541,6 +544,164 @@ static void cuserid_case(void)
     CHECK(cuserid(NULL) == NULL);
 }
 
+static void setup_identity_files(void)
+{
+    static const char passwd_records[] =
+        "broken\n"
+        "bad:x:-1:2:Bad:/bad:/bin/no\n"
+        "alice:x:4294967297:2:Alice:/home/alice:/bin/sh\n"
+        "alice:x:1:2:Later:/later:/bin/no\n"
+        "bob:x:2:4294967298:Bob:/home/bob:/bin/ksh\n"
+        "tail:x:3:3:Tail:/tail:/bin/z";
+    static const char group_records[] =
+        "broken\n"
+        "bad:x:+1:nobody\n"
+        "team:x:4294967297:alice,bob\n"
+        "team:x:1:later\n"
+        "lab:x:2:bob,,alice,\n"
+        "tail:x:3:last";
+    write_file("/etc/passwd", passwd_records, sizeof passwd_records - 1);
+    write_file("/etc/group", group_records, sizeof group_records - 1);
+}
+
+static void check_identity_fields(void)
+{
+    struct passwd passwd_record;
+    struct passwd *passwd_result = (void *)1;
+    struct group group_record;
+    struct group *group_result = (void *)1;
+    char passwd_buffer[512];
+    char group_buffer[512];
+
+    setup_identity_files();
+    memset(passwd_buffer, 0x5a, sizeof passwd_buffer);
+    memset(group_buffer, 0x5a, sizeof group_buffer);
+    CHECK(getpwnam_r("alice", &passwd_record, passwd_buffer, 8,
+        &passwd_result) == ERANGE);
+    CHECK(passwd_result == NULL && passwd_buffer[0] == 0x5a);
+    CHECK(getgrnam_r("team", &group_record, group_buffer, 8,
+        &group_result) == ERANGE);
+    CHECK(group_result == NULL && group_buffer[0] == 0x5a);
+
+    CHECK(getpwnam_r("alice", &passwd_record, passwd_buffer,
+        sizeof passwd_buffer, &passwd_result) == 0);
+    CHECK(passwd_result == &passwd_record && passwd_record.pw_uid == 1);
+    CHECK(passwd_record.pw_gid == 2);
+    CHECK(!strcmp(passwd_record.pw_gecos, "Alice"));
+    CHECK(!strcmp(passwd_record.pw_dir, "/home/alice"));
+    CHECK(!strcmp(passwd_record.pw_shell, "/bin/sh"));
+    CHECK(getpwuid_r(2, &passwd_record, passwd_buffer, sizeof passwd_buffer,
+        &passwd_result) == 0);
+    CHECK(passwd_result == &passwd_record && !strcmp(passwd_record.pw_name, "bob"));
+    CHECK(passwd_record.pw_gid == 2);
+    CHECK(getpwnam_r("tail", &passwd_record, passwd_buffer,
+        sizeof passwd_buffer, &passwd_result) == 0);
+    CHECK(passwd_result == &passwd_record && !strcmp(passwd_record.pw_shell, "/bin/"));
+
+    CHECK(getgrnam_r("team", &group_record, group_buffer,
+        sizeof group_buffer, &group_result) == 0);
+    CHECK(group_result == &group_record && group_record.gr_gid == 1);
+    CHECK(!strcmp(group_record.gr_mem[0], "alice"));
+    CHECK(!strcmp(group_record.gr_mem[1], "bob") && group_record.gr_mem[2] == NULL);
+    CHECK(getgrgid_r(2, &group_record, group_buffer,
+        sizeof group_buffer, &group_result) == 0);
+    CHECK(group_result == &group_record && !strcmp(group_record.gr_name, "lab"));
+    CHECK(!strcmp(group_record.gr_mem[0], "bob"));
+    CHECK(!strcmp(group_record.gr_mem[1], ",alice"));
+    CHECK(!strcmp(group_record.gr_mem[2], "") && group_record.gr_mem[3] == NULL);
+    CHECK(getgrnam_r("tail", &group_record, group_buffer,
+        sizeof group_buffer, &group_result) == 0);
+    CHECK(group_result == &group_record && !strcmp(group_record.gr_mem[0], "las"));
+}
+
+static pthread_barrier_t identity_ready;
+static pthread_barrier_t identity_release;
+
+static void wait_identity_barrier(pthread_barrier_t *barrier)
+{
+    int result = pthread_barrier_wait(barrier);
+    CHECK(result == 0 || result == PTHREAD_BARRIER_SERIAL_THREAD);
+}
+
+static void *identity_worker(void *argument)
+{
+    const char *name = argument;
+    struct passwd passwd_record;
+    struct passwd *passwd_result = (void *)1;
+    struct group group_record;
+    struct group *group_result = (void *)1;
+    char passwd_buffer[512];
+    char group_buffer[512];
+    const char *group_name = !strcmp(name, "alice") ? "team" : "lab";
+
+    CHECK(getpwnam_r(name, &passwd_record, passwd_buffer,
+        sizeof passwd_buffer, &passwd_result) == 0);
+    CHECK(getgrnam_r(group_name, &group_record, group_buffer,
+        sizeof group_buffer, &group_result) == 0);
+    CHECK(passwd_result == &passwd_record && group_result == &group_record);
+    CHECK((uintptr_t)passwd_record.pw_name >= (uintptr_t)passwd_buffer);
+    CHECK((uintptr_t)passwd_record.pw_name < (uintptr_t)(passwd_buffer + sizeof passwd_buffer));
+    CHECK((uintptr_t)group_record.gr_mem >= (uintptr_t)group_buffer);
+    CHECK((uintptr_t)group_record.gr_mem < (uintptr_t)(group_buffer + sizeof group_buffer));
+    wait_identity_barrier(&identity_ready);
+    wait_identity_barrier(&identity_release);
+    CHECK(!strcmp(passwd_record.pw_name, name));
+    CHECK(!strcmp(group_record.gr_name, group_name));
+    CHECK(!strcmp(group_record.gr_mem[0], !strcmp(name, "alice") ? "alice" : "bob"));
+    return NULL;
+}
+
+static void check_identity_lifetime(void)
+{
+    pthread_t first, second;
+    struct passwd *shared_passwd;
+    struct group *shared_group;
+    FILE *passwd_stream;
+    FILE *group_stream;
+    int iteration;
+
+    setup_identity_files();
+    setpwent();
+    setgrent();
+    shared_passwd = getpwent();
+    shared_group = getgrent();
+    CHECK(shared_passwd != NULL && !strcmp(shared_passwd->pw_name, "alice"));
+    CHECK(shared_group != NULL && !strcmp(shared_group->gr_name, "team"));
+    CHECK(getpwnam("bob") == shared_passwd);
+    CHECK(getgrnam("lab") == shared_group);
+    CHECK(!strcmp(getpwent()->pw_gecos, "Later"));
+    CHECK(!strcmp(getgrent()->gr_mem[0], "later"));
+    CHECK(!strcmp(getpwent()->pw_name, "bob"));
+    CHECK(!strcmp(getgrent()->gr_name, "lab"));
+
+    passwd_stream = fopen("/etc/passwd", "r");
+    group_stream = fopen("/etc/group", "r");
+    CHECK(passwd_stream != NULL && group_stream != NULL);
+    CHECK(fgetpwent(passwd_stream) != shared_passwd);
+    CHECK(fgetgrent(group_stream) != shared_group);
+    CHECK(!strcmp(getpwent()->pw_name, "tail"));
+    CHECK(!strcmp(getgrent()->gr_name, "tail"));
+    CHECK(fclose(passwd_stream) == 0 && fclose(group_stream) == 0);
+    endpwent();
+    endgrent();
+
+    CHECK(pthread_barrier_init(&identity_ready, NULL, 3) == 0);
+    CHECK(pthread_barrier_init(&identity_release, NULL, 3) == 0);
+    CHECK(pthread_create(&first, NULL, identity_worker, "alice") == 0);
+    CHECK(pthread_create(&second, NULL, identity_worker, "bob") == 0);
+    wait_identity_barrier(&identity_ready);
+    for (iteration = 0; iteration < 32; iteration++) {
+        CHECK(!strcmp(getpwnam(iteration & 1 ? "alice" : "bob")->pw_name,
+            iteration & 1 ? "alice" : "bob"));
+        CHECK(!strcmp(getgrnam(iteration & 1 ? "team" : "lab")->gr_name,
+            iteration & 1 ? "team" : "lab"));
+    }
+    wait_identity_barrier(&identity_release);
+    CHECK(pthread_join(first, NULL) == 0 && pthread_join(second, NULL) == 0);
+    CHECK(pthread_barrier_destroy(&identity_ready) == 0);
+    CHECK(pthread_barrier_destroy(&identity_release) == 0);
+}
+
 int main(int argc, char **argv)
 {
     CHECK(argc == 2);
@@ -558,6 +719,8 @@ int main(int argc, char **argv)
     else if (!strcmp(argv[1], "noops")) source_noops();
     else if (!strcmp(argv[1], "usershell")) usershell();
     else if (!strcmp(argv[1], "cuserid")) cuserid_case();
+    else if (!strcmp(argv[1], "identity-fields")) check_identity_fields();
+    else if (!strcmp(argv[1], "identity-lifetime")) check_identity_lifetime();
     else CHECK(!"unknown account-file scenario");
     puts("owned account files scenario passed");
     return 0;
