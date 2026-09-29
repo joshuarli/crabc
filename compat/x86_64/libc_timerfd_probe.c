@@ -209,25 +209,106 @@ cleanup:
     return result;
 }
 
-static int test_realtime_cancel_on_set_flag(void)
+static int test_realtime_cancel_on_set_lifecycle(void)
 {
+    /* A past absolute deadline proves readiness without changing realtime. */
     struct itimerspec past_absolute = {
         .it_value = { .tv_sec = 1, .tv_nsec = 0 },
     };
     struct itimerspec zero = {0};
+    struct itimerspec old_value = {0};
+    struct itimerspec current = {0};
+    struct pollfd ready;
+    uint64_t expirations = 0;
     int descriptor;
+    int result = 1;
 
-    descriptor = timerfd_create(CLOCK_REALTIME, TFD_CLOEXEC);
+    descriptor = timerfd_create(CLOCK_REALTIME, TFD_NONBLOCK | TFD_CLOEXEC);
     if (descriptor < 0)
-        return 1;
+        return result;
+    ready.fd = descriptor;
+    ready.events = POLLIN;
+    ready.revents = 0;
+
+    errno = ERANGE;
     if (timerfd_settime(descriptor,
-            TFD_TIMER_ABSTIME | TFD_TIMER_CANCEL_ON_SET, &past_absolute, 0) != 0) {
-        (void)close(descriptor);
-        return 2;
+            TFD_TIMER_ABSTIME | TFD_TIMER_CANCEL_ON_SET, &past_absolute, 0) != 0 ||
+        errno != ERANGE) {
+        result = 2;
+        goto cleanup;
     }
-    if (timerfd_settime(descriptor, 0, &zero, 0) != 0 || close(descriptor) != 0)
-        return 3;
-    return 0;
+    if (poll(&ready, 1, 1000) != 1 || (ready.revents & POLLIN) == 0) {
+        result = 3;
+        goto cleanup;
+    }
+
+    /* A rejected flag must leave the pending expiration readable. */
+    errno = 0;
+    if (timerfd_settime(descriptor,
+            TFD_TIMER_ABSTIME | TFD_TIMER_CANCEL_ON_SET | 4, &zero, 0) != -1 ||
+        errno != EINVAL) {
+        result = 4;
+        goto cleanup;
+    }
+    ready.revents = 0;
+    if (poll(&ready, 1, 0) != 1 || (ready.revents & POLLIN) == 0) {
+        result = 5;
+        goto cleanup;
+    }
+
+    if (timerfd_settime(descriptor, 0, &zero, &old_value) != 0 ||
+        !spec_is_zero(&old_value) ||
+        timerfd_gettime(descriptor, &current) != 0 || !spec_is_zero(&current)) {
+        result = 6;
+        goto cleanup;
+    }
+    ready.revents = 0;
+    if (poll(&ready, 1, 0) != 0 || ready.revents != 0) {
+        result = 7;
+        goto cleanup;
+    }
+    errno = 0;
+    if (read(descriptor, &expirations, sizeof(expirations)) != -1 ||
+        errno != EAGAIN) {
+        result = 8;
+        goto cleanup;
+    }
+
+    if (timerfd_settime(descriptor,
+            TFD_TIMER_ABSTIME | TFD_TIMER_CANCEL_ON_SET,
+            &past_absolute, &old_value) != 0 || !spec_is_zero(&old_value)) {
+        result = 9;
+        goto cleanup;
+    }
+    ready.revents = 0;
+    if (poll(&ready, 1, 1000) != 1 || (ready.revents & POLLIN) == 0) {
+        result = 10;
+        goto cleanup;
+    }
+    errno = E2BIG;
+    if (read(descriptor, &expirations, sizeof(expirations)) !=
+            (ssize_t)sizeof(expirations) ||
+        expirations != 1 || errno != E2BIG) {
+        result = 11;
+        goto cleanup;
+    }
+    ready.revents = 0;
+    if (poll(&ready, 1, 0) != 0 || ready.revents != 0) {
+        result = 12;
+        goto cleanup;
+    }
+    errno = 0;
+    if (read(descriptor, &expirations, sizeof(expirations)) != -1 ||
+        errno != EAGAIN) {
+        result = 13;
+        goto cleanup;
+    }
+    result = 0;
+
+cleanup:
+    if (close(descriptor) != 0 && result == 0)
+        result = 14;
+    return result;
 }
 
 static int test_absolute_overrun_shared_descriptor(void)
@@ -339,7 +420,7 @@ int crabc_x86_64_timerfd_probe(void)
 
     if (result != 0)
         return result;
-    result = test_realtime_cancel_on_set_flag();
+    result = test_realtime_cancel_on_set_lifecycle();
     if (result != 0)
         return 32 + result;
     result = test_absolute_overrun_shared_descriptor();

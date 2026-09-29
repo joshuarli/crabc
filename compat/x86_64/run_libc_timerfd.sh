@@ -74,7 +74,8 @@ for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort time
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_timerfd_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-timerfd.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/libc-timerfd.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
@@ -120,6 +121,7 @@ fi
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_TIMERFD_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -Wl,--gc-sections \
     compat/x86_64/libc_timerfd_probe.c compat/x86_64/libc_timerfd_start.S \
     "$archive" -o "$candidate"
 
