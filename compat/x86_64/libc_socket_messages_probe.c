@@ -5,9 +5,9 @@
  * `libc.a`. It extends the already selected socket-transport and vector-I/O
  * records only with socket options, padded send/receive message records,
  * bounded batched message calls, repeated descriptor peeks, the 253-rights
- * limit, close-on-exec, ancillary and payload truncation, and SIOCATMARK.
- * In particular, poisoned public
- * padding proves the musl-shaped adapter rather than a raw Linux msghdr call.
+ * limit, close-on-exec, credentials, zero-length records, error precedence,
+ * ancillary and payload truncation, and SIOCATMARK. Poisoned public padding
+ * proves the musl-shaped adapter rather than a raw Linux msghdr call.
  * Fixture-local raw close/fcntl calls only clean up and inspect received
  * descriptors; they do not select generic descriptor, ioctl,
  * cancellation, allocator, CRT, loader, sysroot, or public x86 support.
@@ -67,7 +67,8 @@ _Static_assert(SYS_close == 3 && SYS_fcntl == 72 && SYS_ioctl == 16 &&
     SYS_getsockopt == 55 && SYS_recvmmsg == 299 && SYS_sendmmsg == 307,
     "x86 socket-message syscall numbers");
 _Static_assert(SOL_SOCKET == 1 && SO_TYPE == 3 && SO_SNDBUF == 7 &&
-    SCM_RIGHTS == 1 && SIOCATMARK == 0x8905,
+    SCM_RIGHTS == 1 && SCM_CREDENTIALS == 2 && SO_PASSCRED == 16 &&
+    SIOCATMARK == 0x8905,
     "selected socket-message values");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&setsockopt),
     int (*)(int, int, int, const void *, socklen_t)), "setsockopt declaration");
@@ -744,6 +745,197 @@ static int check_mmsg(void)
         receive_messages[1].msg_hdr.__pad1 != 0 ||
         receive_messages[1].msg_hdr.__pad2 != 0 || errno != ERANGE) {
         status = 5;
+        goto finish;
+    }
+
+    /* A later preflight failure preserves the first datagram and its length. */
+    send_messages[0].msg_len = 0;
+    send_messages[1].msg_len = 77;
+    send_messages[1].msg_hdr.msg_control = (void *)(uintptr_t)1;
+    send_messages[1].msg_hdr.msg_controllen = 1057;
+    errno = 0;
+    if (sendmmsg(pair[0], send_messages, 2, 0) != 1 || errno != ENOMEM ||
+        send_messages[0].msg_len != sizeof(first) - 1 ||
+        send_messages[1].msg_len != 77) {
+        status = 6;
+        goto finish;
+    }
+    receive_messages[0].msg_hdr.msg_controllen = 0;
+    receive_messages[0].msg_hdr.msg_flags = 0;
+    if (recvmsg(pair[1], &receive_messages[0].msg_hdr, MSG_DONTWAIT) !=
+            sizeof(first) - 1 ||
+        !bytes_equal(received_first, first, sizeof(received_first))) {
+        status = 7;
+        goto finish;
+    }
+    errno = 0;
+    if (recvmsg(pair[1], &receive_messages[0].msg_hdr, MSG_DONTWAIT) != -1 ||
+        errno != EAGAIN) {
+        status = 8;
+    }
+
+finish:
+    raw_close(pair[1]);
+    raw_close(pair[0]);
+    return status;
+}
+
+static int check_zero_length_and_error_precedence(void)
+{
+    static const char payload[] = "zero";
+    struct iovec send_iov = { (void *)payload, sizeof(payload) - 1 };
+    struct msghdr empty = { 0 };
+    struct msghdr receive = { 0 };
+    struct msghdr oversized = { 0 };
+    int pair[2] = { -1, -1 };
+    int status = 0;
+
+    if (socketpair(AF_UNIX, SOCK_DGRAM, 0, pair) != 0) {
+        status = 1;
+        goto finish;
+    }
+    empty.msg_iov = (struct iovec *)(uintptr_t)1;
+    empty.__pad1 = -1;
+    empty.__pad2 = -1;
+    errno = ERANGE;
+    if (sendmsg(pair[0], &empty, 0) != 0 || errno != ERANGE) {
+        status = 2;
+        goto finish;
+    }
+    receive.msg_iov = (struct iovec *)(uintptr_t)1;
+    receive.__pad1 = -1;
+    receive.__pad2 = -1;
+    errno = EINTR;
+    if (recvmsg(pair[1], &receive, MSG_TRUNC) != 0 ||
+        receive.msg_flags != 0 || receive.__pad1 != 0 ||
+        receive.__pad2 != 0 || errno != EINTR) {
+        status = 3;
+        goto finish;
+    }
+    empty.msg_iov = &send_iov;
+    empty.msg_iovlen = 1;
+    if (sendmsg(pair[0], &empty, 0) != sizeof(payload) - 1) {
+        status = 4;
+        goto finish;
+    }
+    receive.__pad1 = -1;
+    receive.__pad2 = -1;
+    if (recvmsg(pair[1], &receive, MSG_TRUNC) != sizeof(payload) - 1 ||
+        receive.msg_flags != MSG_TRUNC || receive.__pad1 != 0 ||
+        receive.__pad2 != 0) {
+        status = 5;
+        goto finish;
+    }
+
+    /* The bounded outgoing control copy rejects length before entering Linux. */
+    oversized.msg_control = (void *)(uintptr_t)1;
+    oversized.msg_controllen = 1057;
+    errno = 0;
+    if (sendmsg(-1, &oversized, 0) != -1 || errno != ENOMEM) {
+        status = 6;
+        goto finish;
+    }
+    errno = 0;
+    if (sendmsg(-1, 0, 0) != -1 || errno != EBADF) {
+        status = 7;
+        goto finish;
+    }
+    receive.msg_iov = (struct iovec *)(uintptr_t)1;
+    receive.msg_iovlen = 1;
+    errno = 0;
+    if (recvmsg(-1, &receive, 0) != -1 || errno != EBADF) {
+        status = 8;
+        goto finish;
+    }
+    errno = 0;
+    if (sendmsg(-1, &empty, MSG_OOB) != -1 || errno != EBADF) {
+        status = 9;
+        goto finish;
+    }
+    errno = 0;
+    if (sendmsg(pair[0], &empty, MSG_OOB) != -1 ||
+        errno != EOPNOTSUPP) {
+        status = 10;
+        goto finish;
+    }
+
+finish:
+    raw_close(pair[1]);
+    raw_close(pair[0]);
+    return status;
+}
+
+static int check_credentials(void)
+{
+    static const char payload = 'c';
+    char received = 0;
+    unsigned char control[CMSG_SPACE(sizeof(struct ucred))] = { 0 };
+    struct iovec send_iov = { (void *)&payload, 1 };
+    struct iovec receive_iov = { &received, 1 };
+    struct msghdr send_message = { 0 };
+    struct msghdr receive_message = { 0 };
+    struct cmsghdr *header;
+    struct ucred credentials;
+    int pair[2] = { -1, -1 };
+    int passcred = 1;
+    int status = 0;
+
+    if (socketpair(AF_UNIX, SOCK_DGRAM, 0, pair) != 0) {
+        status = 1;
+        goto finish;
+    }
+    if (setsockopt(pair[1], SOL_SOCKET, SO_PASSCRED, &passcred,
+            sizeof(passcred)) != 0) {
+        status = 2;
+        goto finish;
+    }
+    send_message.msg_iov = &send_iov;
+    send_message.msg_iovlen = 1;
+    send_message.__pad1 = -1;
+    send_message.__pad2 = -1;
+    receive_message.msg_iov = &receive_iov;
+    receive_message.msg_iovlen = 1;
+    receive_message.__pad1 = -1;
+    receive_message.msg_control = control;
+    receive_message.msg_controllen = sizeof(control);
+    receive_message.__pad2 = -1;
+    errno = ERANGE;
+    if (sendmsg(pair[0], &send_message, 0) != 1) {
+        status = 3;
+        goto finish;
+    }
+    if (recvmsg(pair[1], &receive_message, 0) != 1) {
+        status = 6;
+        goto finish;
+    }
+    if (received != payload || errno != ERANGE) {
+        status = 7;
+        goto finish;
+    }
+    if (receive_message.msg_flags != 0) {
+        status = 8;
+        goto finish;
+    }
+    if (receive_message.msg_controllen != CMSG_SPACE(sizeof(struct ucred))) {
+        status = 9;
+        goto finish;
+    }
+    if (receive_message.__pad1 != 0 || receive_message.__pad2 != 0) {
+        status = 10;
+        goto finish;
+    }
+    header = CMSG_FIRSTHDR(&receive_message);
+    if (!header || header->cmsg_level != SOL_SOCKET ||
+        header->cmsg_type != SCM_CREDENTIALS ||
+        header->cmsg_len != CMSG_LEN(sizeof(struct ucred))) {
+        status = 4;
+        goto finish;
+    }
+    copy_bytes(&credentials, CMSG_DATA(header), sizeof(credentials));
+    if (credentials.pid != raw1(SYS_getpid, 0) ||
+        credentials.uid != raw1(SYS_getuid, 0) ||
+        credentials.gid != raw1(SYS_getgid, 0)) {
+        status = 5;
     }
 
 finish:
@@ -799,6 +991,12 @@ int crabc_x86_64_socket_messages_probe(void)
     result = check_mmsg();
     if (result != 0)
         return 50 + result;
+    result = check_zero_length_and_error_precedence();
+    if (result != 0)
+        return 140 + result;
+    result = check_credentials();
+    if (result != 0)
+        return 150 + result;
     result = check_sockatmark();
     if (result != 0)
         return 70 + result;
