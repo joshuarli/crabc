@@ -382,6 +382,20 @@ the implementation. Exact archive occurrence accounting rejects another
 importer, a changed provider binding, or a duplicate definition before this
 ordinary-import reason is removed.
 
+The ordinary `aio_suspend` import belongs to two owned Rust archive members.
+The existing AIO receipt authenticates the installed products and retains both
+static link maps and traces. The ordinary call reader checks all three source
+`GOTPCREL` relocations: `list_wait_thread` and `lio_listio` remain in ET_EXEC
+and static PIE, while `lio_wait` is discarded in both. Each retained source
+GOT load and its later register call must survive in the final instruction
+stream, and the GOT slot must resolve to the unique owned provider through the
+applicable static or relative relocation. Shared libc must contain the matching
+caller functions, their GOT calls, and two strong provider symbol rows. The
+dynamic AIO workloads import `aio_suspend` from that libc; this public workload
+import is kept distinct from the libc's own ordinary archive imports. A foreign
+or duplicate archive caller, provider, final target, or workload import blocks
+this attachment.
+
 The owned scanf archive member imports `mbrtowc` once from
 `crabc_owned_scan_vfscanf`. A static-only `fscanf` branch in the existing
 installed-header workload retains that C section in ET_EXEC and static PIE.

@@ -24,6 +24,42 @@ SPEC.loader.exec_module(BOUNDARY)
 
 
 class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
+    def test_ordinary_got_register_call_rejects_missing_or_foreign_target(self) -> None:
+        image = bytearray(0x400)
+        image[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<H", image, 16, 2)
+        struct.pack_into("<Q", image, 32, 64)
+        struct.pack_into("<HH", image, 54, 56, 2)
+        struct.pack_into("<IIQQQQQQ", image, 64, 1, 5, 0x100, 0x1000, 0, 0x100, 0x100, 0x1000)
+        struct.pack_into("<IIQQQQQQ", image, 120, 1, 6, 0x300, 0x2000, 0, 0x100, 0x100, 0x1000)
+        section = bytearray(b"\x90" * 0x30)
+        section[:3] = b"\x48\x8b\x2d"
+        section[0x18:0x1a] = b"\xff\xd5"
+        image[0x110:0x140] = section
+        struct.pack_into("<i", image, 0x113, 0x2000 - 0x1017)
+        struct.pack_into("<Q", image, 0x300, 0x3000)
+        kwargs = {
+            "archive_member": "/workspace/current/libc.a(caller.o)",
+            "source_calls": [{"section": ".text.caller", "offset": 3,
+                              "kind": "R_X86_64_GOTPCREL"}],
+            "map_text": "1010 1010 30 16 /workspace/current/libc.a(caller.o):(.text.caller)",
+            "relocation_text": "", "provider_address": 0x3000, "elf_type": 2,
+            "name": "aio_suspend", "source_sections": {".text.caller": bytes(section)},
+        }
+        joined = BOUNDARY._ordinary_final_member_calls(bytes(image), **kwargs)
+        self.assertEqual(joined["resolved_calls"][0]["target_address"], 0x3000)
+        for mutation in ("foreign-got", "missing-call", "changed-register"):
+            with self.subTest(mutation=mutation):
+                forged = bytearray(image)
+                if mutation == "foreign-got":
+                    struct.pack_into("<Q", forged, 0x300, 0x3001)
+                elif mutation == "missing-call":
+                    forged[0x128:0x12a] = b"\x90\x90"
+                else:
+                    forged[0x129] = 0xd0
+                with self.assertRaises(BOUNDARY.AllocatorBoundaryError):
+                    BOUNDARY._ordinary_final_member_calls(bytes(forged), **kwargs)
+
     def test_ordinary_import_relocations_keep_direct_and_got_calls_separate(self) -> None:
         transcript = (
             "Relocation section '.rela.text.unlikely.failure' at offset 0x100 contains 1 entry:\n"
