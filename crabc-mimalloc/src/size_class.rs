@@ -146,10 +146,17 @@ pub(crate) const fn good_size(size: usize, os_page_size: usize) -> Option<usize>
     Some(size)
 }
 
-/// The client request bound before `mi_find_page` receives its padded size.
+/// The aligned caller bound before its generic path adds padding.
 #[inline]
 pub(crate) const fn request_size_is_valid(size: usize) -> bool {
     size <= MAX_ALLOC_SIZE - PADDING_SIZE
+}
+
+/// Ordinary page lookup compares the logical request after subtracting its
+/// padding, including the base request of an overallocated aligned block.
+#[inline]
+pub(crate) const fn ordinary_request_size_is_valid(size: usize) -> bool {
+    size <= MAX_ALLOC_SIZE
 }
 
 /// Port of the selected-profile size branches in `_mi_arenas_page_alloc`.
@@ -387,16 +394,16 @@ mod tests {
 
     #[test]
     fn request_limit_and_regular_page_kind_transitions_match_arena_selection() {
-        for size in [
-            0,
-            1,
-            MAX_ALLOC_SIZE.saturating_sub(1),
-            MAX_ALLOC_SIZE,
-        ] {
+        for size in [0, 1, MAX_ALLOC_SIZE - PADDING_SIZE - 1, MAX_ALLOC_SIZE - PADDING_SIZE] {
             assert!(request_size_is_valid(size));
         }
         assert!(!request_size_is_valid(MAX_ALLOC_SIZE - PADDING_SIZE + 1));
         assert!(!request_size_is_valid(usize::MAX));
+        for size in [0, 1, MAX_ALLOC_SIZE - 1, MAX_ALLOC_SIZE] {
+            assert!(ordinary_request_size_is_valid(size));
+        }
+        assert!(!ordinary_request_size_is_valid(MAX_ALLOC_SIZE + 1));
+        assert!(!ordinary_request_size_is_valid(usize::MAX));
 
         for (boundary, expected) in [
             (SMALL_MAX_OBJ_SIZE, PageKind::Small),

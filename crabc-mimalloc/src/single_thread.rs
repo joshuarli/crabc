@@ -37821,7 +37821,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // small requests retain their exact size for requested-byte accounting;
         // the bin selector independently provides the minimum block geometry.
         let request = if request == 0 && PADDING_SIZE != 0 { WORD_SIZE } else { request };
-        if !size_class::request_size_is_valid(request) {
+        if !size_class::ordinary_request_size_is_valid(request) {
             return None;
         }
 
@@ -37848,7 +37848,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return DeferredFreeAllocationPhase::Complete(None);
         }
         let request = if request == 0 && PADDING_SIZE != 0 { WORD_SIZE } else { request };
-        if !size_class::request_size_is_valid(request) {
+        if !size_class::ordinary_request_size_is_valid(request) {
             // An oversized request is never below `MI_SMALL_MAX_OBJ_SIZE`, so
             // `_mi_malloc_generic` enters its fallback without a search.
             return self.begin_deferred_free_generic_allocation(

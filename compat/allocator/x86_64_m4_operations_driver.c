@@ -744,6 +744,19 @@ static void section_aligned_preservation(void) {
 
 /* Observe public allocation contracts without depending on page placement or
    free-list encoding. The same calls apply to statistics and padding modes. */
+struct allocation_error_counts {
+  size_t overflow;
+  size_t memory;
+  size_t invalid;
+};
+
+static void count_allocation_errors(int error, void* argument) {
+  struct allocation_error_counts* counts = (struct allocation_error_counts*)argument;
+  if (error == EOVERFLOW) { counts->overflow++; }
+  if (error == ENOMEM) { counts->memory++; }
+  if (error == EINVAL) { counts->invalid++; }
+}
+
 static void section_api_modes(void) {
   static const size_t sizes[] = { 0, 1, 7, 8, 9, 17, 33, 64, 129, 1024, 1025, 4096, 65537, 524288, 524289 };
   static const size_t alignments[] = { 1, 8, 16, 64, 4096, 131072 };
@@ -795,6 +808,22 @@ static void section_api_modes(void) {
   }
   mi_theap_set_default(previous);
   mi_heap_delete(auxiliary_heap);
+  const size_t limit_requests[] = {
+    (size_t)PTRDIFF_MAX - 8, (size_t)PTRDIFF_MAX - 7,
+    (size_t)PTRDIFF_MAX - 1, (size_t)PTRDIFF_MAX, (size_t)PTRDIFF_MAX + 1,
+  };
+  for (size_t r = 0; r < sizeof limit_requests / sizeof limit_requests[0]; r++) {
+    struct allocation_error_counts counts = { 0 };
+    mi_register_error(count_allocation_errors, &counts);
+    void* p = mi_malloc(limit_requests[r]);
+    key_name(key, sizeof key, "api_modes.limit_ordinary", r, 0);
+    line(key, "%d,%zu,%zu,%zu", p == NULL, counts.overflow, counts.memory, counts.invalid);
+    counts = (struct allocation_error_counts){ 0 };
+    p = mi_malloc_aligned_at(limit_requests[r], 8, 1);
+    key_name(key, sizeof key, "api_modes.limit_aligned", r, 0);
+    line(key, "%d,%zu,%zu,%zu", p == NULL, counts.overflow, counts.memory, counts.invalid);
+    mi_register_error(NULL, NULL);
+  }
   for (size_t s = 0; s < sizeof sizes / sizeof sizes[0]; s++) {
     void* p = mi_calloc(1, sizes[s]);
     const size_t usable = mi_usable_size(p);

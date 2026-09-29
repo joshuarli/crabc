@@ -78,7 +78,7 @@ pub(crate) const fn allocation_plan(
         Some(request) => request,
         None => return None,
     };
-    if !size_class::request_size_is_valid(request) {
+    if !size_class::ordinary_request_size_is_valid(request) {
         return None;
     }
     Some(AlignedAllocationPlan::Overallocate { request })
