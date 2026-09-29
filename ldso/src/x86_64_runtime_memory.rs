@@ -313,6 +313,9 @@ mod pool_tests {
         unsafe { release(recycled, 1, 1); release(neighbor, 1, 1); }
     }
 
+    // The process-isolated probe uses the installed runtime's fork lock. The
+    // initial-only source root has its own pool lock and no runtime lock.
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     #[test]
     fn zero_length_with_large_alignment_releases_its_mapping() {
         use super::super::x86_64_runtime_lock::{isolated_mapping_probe, RuntimeGuard};
