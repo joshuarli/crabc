@@ -266,10 +266,6 @@ are not transferable passes for a different revision.
   registering two PageMap top-commit faults and same-call recovery; 61 C/Rust
   fields match and five source-layout-dependent counts stay stable per side
   through four warnings. The same four partial components remain open.
-  Direct registered-arena PageMap receivers now match a first lazy commit
-  fault and a two-fault same-call recovery. The latter retains 61 exact
-  C/Rust fields plus five raw header-dependent PageMap counts, each unchanged
-  through four source-ordered warnings; shared gate registration is pending.
   Separate direct process-owned protect and unprotect failure receivers each
   match 44 C/Rust fields, including warning timing, same-range retry, live
   mapping accounting, and terminal release; shared VM registration is pending.
