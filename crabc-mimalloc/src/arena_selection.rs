@@ -85,7 +85,7 @@ impl ArenaReservationPlan {
         };
         // The option byte value is aligned with unsigned source arithmetic
         // before the minimum and maximum arena clamps. A valid large KiB
-        // option can therefore wrap to zero and still select a minimum arena.
+        // option can therefore wrap to zero and still select a bounded arena.
         let mut reserve = reserve.wrapping_add(ARENA_SLICE_SIZE - 1)
             & !(ARENA_SLICE_SIZE - 1);
         if (1..=128).contains(&arena_count) {
@@ -289,8 +289,10 @@ mod tests {
     fn reservation_size_option_alignment_wraps_before_source_minimum_clamp() {
         let reserve_bytes = (usize::MAX / 1024) * 1024;
         let plan = ArenaReservationPlan::new(config(true), 0, ARENA_SLICE_SIZE,
-            reserve_bytes, 0, false).expect("wrapped reserve still permits a minimum arena");
-        assert_eq!(plan.primary_size, ARENA_MIN_SIZE);
+            reserve_bytes, 0, false).expect("wrapped reserve still accommodates a slice");
+        // One requested slice plus a complete metadata chunk rounds to two
+        // chunks before the arena bounds are applied.
+        assert_eq!(plan.primary_size, 2 * ARENA_MIN_SIZE);
         assert_eq!(plan.fallback_size, None);
     }
 
