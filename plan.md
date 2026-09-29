@@ -411,6 +411,9 @@ are not transferable passes for a different revision.
   An escaped OS-page and second metadata-commit fault receiver matches 32
   pinned-C/Rust fields and raises the shared M2 run to 102 runnable checks,
   including 58 VM checks; those four partial components remain open.
+  Failed startup huge reservations on explicit and interleaved NUMA nodes now
+  emit the pinned warning exactly once; both C/Rust receiver fields pass. A
+  fresh full M2 gate remains pending after the initialization build was stopped.
   A separate source-built fresh-arena
   receiver matches 46 C/Rust fields when metadata commit and cleanup unmap
   both fail, leaving a raw escaped map while a later healthy arena claim
