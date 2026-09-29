@@ -3037,22 +3037,22 @@ class ContractTests(unittest.TestCase):
         )
 
     @staticmethod
-    def _m2_page_map_trace(*, rust: bool) -> dict[str, int]:
+    def _m2_page_map_trace(*, rust: bool, max_vabits: int = 48) -> dict[str, int]:
         trace = {key: 1 for key in RUNNER.M2_PAGE_MAP_TRACE_KEYS}
         trace.update(
             {
                 "m2.page_map.control.page_size": 4096,
-                "m2.page_map.control.max_vabits": 48,
-                "m2.page_map.layout.header_bytes": 56 if rust else 88,
-                "m2.page_map.layout.lock_bytes": 4 if rust else 40,
-                "m2.page_map.init.reserve_count": 524288,
-                "m2.page_map.init.reserved_count": 524794 if rust else 524790,
-                "m2.page_map.init.committed_count": 16890 if rust else 16886,
-                "m2.page_map.extend.map_index": 16891 if rust else 16887,
+                "m2.page_map.control.max_vabits": max_vabits,
+                "m2.page_map.layout.header_bytes": 88,
+                "m2.page_map.layout.lock_bytes": 40,
+                "m2.page_map.init.reserve_count": 1 << (max_vabits - 29),
+                "m2.page_map.init.reserved_count": (1 << (max_vabits - 29)) + 502,
+                "m2.page_map.init.committed_count": 16886,
+                "m2.page_map.extend.map_index": 16887,
                 "m2.page_map.extend.start_sub_index": 8191,
                 "m2.page_map.extend.slice_count": 2,
-                "m2.page_map.extend.committed_before": 16890 if rust else 16886,
-                "m2.page_map.extend.committed_after": 24570 if rust else 24566,
+                "m2.page_map.extend.committed_before": 16886,
+                "m2.page_map.extend.committed_after": 24566,
                 "m2.page_map.destroy.root_unpublished_before": 1 if rust else 0,
             }
         )
@@ -3071,9 +3071,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(comparison["status"], "matched")
         self.assertEqual(
             comparison["compared_value_count"],
-            len(RUNNER.M2_PAGE_MAP_TRACE_KEYS)
-            - len(RUNNER.M2_PAGE_MAP_HEADER_DEPENDENT_KEYS)
-            - 1,
+            len(RUNNER.M2_PAGE_MAP_TRACE_KEYS) - 1,
         )
         self.assertEqual(comparison["root_ownership_difference"]["pinned_c"], 0)
         self.assertEqual(comparison["root_ownership_difference"]["rust"], 1)
@@ -3086,11 +3084,8 @@ class ContractTests(unittest.TestCase):
             RUNNER.compare_m2_page_map_trace(c_trace, rust_trace)
 
     def test_x86_m2_page_map_trace_uses_the_native_47_bit_geometry(self) -> None:
-        c_trace = self._m2_page_map_trace(rust=False)
-        rust_trace = self._m2_page_map_trace(rust=True)
-        for trace in (c_trace, rust_trace):
-            trace["m2.page_map.control.max_vabits"] = 47
-            trace["m2.page_map.init.reserve_count"] = 262144
+        c_trace = self._m2_page_map_trace(rust=False, max_vabits=47)
+        rust_trace = self._m2_page_map_trace(rust=True, max_vabits=47)
         RUNNER.validate_m2_page_map_trace(
             c_trace, source="pinned C", expected_max_vabits=47
         )
@@ -3100,6 +3095,49 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(comparison["status"], "matched")
         with self.assertRaisesRegex(RUNNER.HarnessError, "48 virtual-address bits"):
             RUNNER.validate_m2_page_map_trace(c_trace, source="pinned C")
+
+    def test_m2_page_map_trace_rejects_undersized_mapped_header_and_lock_slot(self) -> None:
+        for field, value in (("m2.page_map.layout.header_bytes", 56),
+                             ("m2.page_map.layout.lock_bytes", 4)):
+            with self.subTest(field=field):
+                trace = self._m2_page_map_trace(rust=True)
+                trace[field] = value
+                with self.assertRaises(RUNNER.HarnessError):
+                    RUNNER.validate_m2_page_map_trace(trace, source="Rust")
+
+    def test_m2_page_map_trace_rejects_coherent_header_dependent_count_drift(self) -> None:
+        for vabits in (47, 48):
+            for source, rust in (("pinned C", False), ("Rust", True)):
+                with self.subTest(vabits=vabits, source=source):
+                    trace = self._m2_page_map_trace(rust=rust, max_vabits=vabits)
+                    for field in ("m2.page_map.init.reserved_count",
+                                  "m2.page_map.init.committed_count",
+                                  "m2.page_map.extend.map_index",
+                                  "m2.page_map.extend.committed_before",
+                                  "m2.page_map.extend.committed_after"):
+                        trace[field] += 4
+                    with self.assertRaises(RUNNER.HarnessError):
+                        RUNNER.validate_m2_page_map_trace(trace, source=source, expected_max_vabits=vabits)
+
+    def test_m2_page_map_trace_rejects_each_corrupt_raw_layout_or_count(self) -> None:
+        fields = (*RUNNER.M2_PAGE_MAP_HEADER_DEPENDENT_KEYS, "m2.page_map.init.reserve_count")
+        for vabits in (47, 48):
+            for field in fields:
+                with self.subTest(vabits=vabits, field=field):
+                    c_trace = self._m2_page_map_trace(rust=False, max_vabits=vabits)
+                    rust_trace = self._m2_page_map_trace(rust=True, max_vabits=vabits)
+                    rust_trace[field] += 1
+                    with self.assertRaises(RUNNER.HarnessError):
+                        RUNNER.compare_m2_page_map_trace(c_trace, rust_trace, expected_max_vabits=vabits)
+
+    def test_m2_page_map_trace_keeps_only_the_explicit_root_ownership_difference(self) -> None:
+        c_trace = self._m2_page_map_trace(rust=False)
+        rust_trace = self._m2_page_map_trace(rust=True)
+        comparison = RUNNER.compare_m2_page_map_trace(c_trace, rust_trace)
+        self.assertEqual(comparison["header_dependent"]["pinned_c"], comparison["header_dependent"]["rust"])
+        rust_trace[RUNNER.M2_PAGE_MAP_ROOT_OWNERSHIP_DIFFERENCE_KEY] = 0
+        with self.assertRaisesRegex(RUNNER.HarnessError, "unpublished before typed destruction"):
+            RUNNER.compare_m2_page_map_trace(c_trace, rust_trace)
 
     @staticmethod
     def _m2_page_map_lazy_commit_failure_trace() -> dict[str, int]:

@@ -954,12 +954,10 @@ M2_PAGE_MAP_TRACE_KEYS = (
     "m2.page_map.destroy.root_unpublished_before",
     "m2.page_map.destroy.root_absent_after",
 )
-# The source formula deliberately incorporates the concrete mapped header.
-# Pinned C carries a musl `pthread_mutex_t`; the no_std port uses its mapped
-# private futex lock.  Their header-size-dependent entry counts can therefore
-# differ without changing the selected source-relative state transitions.
-# Keep each value in the record and report both sides; never silently compare
-# or normalize it as an exact-equality field.
+# These raw fields derive from the concrete mapped header and lock slot.
+# The private Rust lock preserves the source-sized mapped footprint, so every
+# field must compare exactly. Retain the existing raw projection for readers;
+# it is an observation group, not an exception to equality.
 M2_PAGE_MAP_HEADER_DEPENDENT_KEYS = (
     "m2.page_map.layout.header_bytes",
     "m2.page_map.layout.lock_bytes",
@@ -9552,9 +9550,10 @@ def run_m2_page_map_differential(
             "controlled pinned-C src/os.c, src/page-map.c, and src/init.c source-order "
             "producer compared with the Rust PageMap success lifecycle: initial partial "
             "commitment, two-submap lazy extension, lookup/unregister, natural final-boundary "
-            "rollback, and an absent post-destroy root. Header-dependent raw counts and the "
-            "C-global versus Rust-owner root-unpublication order remain explicit recorded "
-            "differences; the cold static-empty-root/once failure difference is excluded."
+            "rollback, and an absent post-destroy root. Mapped header/lock footprint and "
+            "all raw counts compare exactly. The C-global versus Rust-owner root-unpublication "
+            "order remains an explicit recorded difference; the cold static-empty-root/once "
+            "failure difference is excluded."
         ),
         "status": comparison["status"],
     }
@@ -21627,8 +21626,8 @@ def validate_m2_page_map_trace(
     expected_reserve_count = {47: 262144, 48: 524288}[expected_max_vabits]
     if trace["m2.page_map.init.reserve_count"] != expected_reserve_count:
         raise HarnessError(f"{source} M2 PageMap reserve count changed from the frozen two-level geometry")
-    if trace["m2.page_map.layout.header_bytes"] <= 0 or trace["m2.page_map.layout.lock_bytes"] <= 0:
-        raise HarnessError(f"{source} M2 PageMap trace has an empty mapped-header representation")
+    if (trace["m2.page_map.layout.header_bytes"], trace["m2.page_map.layout.lock_bytes"]) != (88, 40):
+        raise HarnessError(f"{source} M2 PageMap trace does not preserve the 88-byte header and 40-byte mapped lock slot")
     if trace["m2.page_map.init.reserved_count"] < trace["m2.page_map.init.reserve_count"]:
         raise HarnessError(f"{source} M2 PageMap reserved count is below its source reserve count")
     if trace["m2.page_map.init.committed_count"] <= 0:
@@ -21651,6 +21650,35 @@ def validate_m2_page_map_trace(
         != 7680
     ):
         raise HarnessError(f"{source} M2 PageMap extension no longer reaches the selected source commit boundary")
+    # The mapped header includes its first eight-byte submap entry. Reserve
+    # and initial commitment round to OS pages; later commitment rounds to
+    # arena slices using the required entry's index, exactly as the producer.
+    header_bytes = 88
+    submap_bytes = 8
+    os_page_size = 4096
+    slice_size = 65536
+    reserve_size = ((header_bytes + (expected_reserve_count - 1) * submap_bytes
+                     + os_page_size - 1) // os_page_size) * os_page_size
+    min_commit_count = 1 << (43 - 13 - 16)
+    min_commit_size = ((header_bytes + (min_commit_count - 1) * submap_bytes
+                        + os_page_size - 1) // os_page_size) * os_page_size
+    committed_count = 1 + (min_commit_size - header_bytes) // submap_bytes
+    map_index = committed_count + 1
+    extend_commit_size = ((header_bytes + map_index * submap_bytes
+                          + slice_size - 1) // slice_size) * slice_size
+    expected_counts = {
+        "m2.page_map.init.reserved_count": 1 + (reserve_size - header_bytes) // submap_bytes,
+        "m2.page_map.init.committed_count": committed_count,
+        "m2.page_map.extend.map_index": map_index,
+        "m2.page_map.extend.committed_before": committed_count,
+        "m2.page_map.extend.committed_after": 1 + (extend_commit_size - header_bytes) // submap_bytes,
+    }
+    for key, expected in expected_counts.items():
+        if trace[key] != expected:
+            raise HarnessError(
+                f"{source} M2 PageMap mapped-header-derived count changed: {key} "
+                f"(expected={expected}, observed={trace[key]})"
+            )
     root_unpublished_before = trace[M2_PAGE_MAP_ROOT_OWNERSHIP_DIFFERENCE_KEY]
     if root_unpublished_before not in {0, 1}:
         raise HarnessError(f"{source} M2 PageMap root ownership observation is not boolean")
@@ -21663,7 +21691,7 @@ def validate_m2_page_map_trace(
 def compare_m2_page_map_trace(
     c_trace: Mapping[str, int], rust_trace: Mapping[str, int], *, expected_max_vabits: int = 48
 ) -> dict[str, Any]:
-    """Compare stable transitions while recording intentional representation differences."""
+    """Compare raw layout and counts while retaining the root ownership distinction."""
 
     validate_m2_page_map_trace(
         c_trace, source="pinned C", expected_max_vabits=expected_max_vabits
@@ -21674,8 +21702,7 @@ def compare_m2_page_map_trace(
     exact_keys = tuple(
         key
         for key in M2_PAGE_MAP_TRACE_KEYS
-        if key not in M2_PAGE_MAP_HEADER_DEPENDENT_KEYS
-        and key != M2_PAGE_MAP_ROOT_OWNERSHIP_DIFFERENCE_KEY
+        if key != M2_PAGE_MAP_ROOT_OWNERSHIP_DIFFERENCE_KEY
     )
     mismatches = [
         f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
@@ -21691,9 +21718,8 @@ def compare_m2_page_map_trace(
         "compared_value_count": len(exact_keys),
         "header_dependent": {
             "classification": (
-                "the C header embeds musl pthread state while the no_std Rust header "
-                "embeds a private futex lock; raw entry counts remain explicit evidence "
-                "and are checked by per-trace source-relative invariants"
+                "C and Rust preserve the same 88-byte mapped header and 40-byte lock "
+                "slot; every raw layout and header-derived count is compared exactly"
             ),
             "fields": list(M2_PAGE_MAP_HEADER_DEPENDENT_KEYS),
             "pinned_c": {
