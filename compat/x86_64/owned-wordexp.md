@@ -175,10 +175,12 @@ After validating the report, the runner prints its retained directory with the
 catalog's `evidence:` marker, followed by the report path on the final line.
 
 The version-5 receipt uses one finite case registry in
-`compat/x86_64/owned_wordexp_evidence.py`: 26 cases in each product mode,
+`compat/x86_64/owned_wordexp_evidence.py`: 27 cases in each product mode,
 including the fresh BADCHAR record and twenty-input upstream-policy selectors.
-That yields 156 cells with both products or 104 with only the supplied
-dynamic product. It requires the candidate's exact
+The quote matrix also checks fixed literal, parameter, arithmetic, and command
+expansions together with fresh caller storage, append ownership, and repeated
+`wordfree` on one offset record. That yields 162 cells with both products or
+108 with only the supplied dynamic product. It requires the candidate's exact
 positive status and transcript in each declared cell, separately checks the
 fixed oracle observation below, and rejects unexpected diagnostic bytes.
 The same policy validates the focused static component runner. Each actual

@@ -40,6 +40,7 @@ PROBE = "compat/x86_64/owned_wordexp_probe.c"
 POSIX_PROBE = "compat/x86_64/owned_wordexp_posix_probe.c"
 ENGINE_PROBE = "compat/x86_64/owned_wordexp_engine_probe.c"
 SOURCE_POLICY_PROBE = "compat/x86_64/owned_wordexp_source_policy_probe.c"
+QUOTE_MATRIX_PROBE = "compat/x86_64/owned_wordexp_quote_matrix_probe.c"
 MODULE = "libc/src/c_abi/x86_64/owned_wordexp.rs"
 ENGINE = "libc/src/c_abi/x86_64/owned_wordexp_engine.rs"
 PROCESS = "libc/src/c_abi/x86_64/owned_wordexp_process.rs"
@@ -50,7 +51,7 @@ RUNNER = "compat/x86_64/run_owned_wordexp.sh"
 LEGACY_RUNNER = "compat/x86_64/run_libc_owned_wordexp.sh"
 HEADERS = ("errno.h", "wordexp.h", "stdio.h", "stdlib.h", "string.h", "unistd.h", "features.h",
            "bits/alltypes.h", "fcntl.h", "signal.h", "stddef.h", "sys/stat.h", "sys/types.h", "sys/wait.h")
-SOURCES = (PROBE, POSIX_PROBE, ENGINE_PROBE, SOURCE_POLICY_PROBE, MODULE, ENGINE, PROCESS, PATHS, RESULTS, DOC, RUNNER, LEGACY_RUNNER,
+SOURCES = (PROBE, POSIX_PROBE, ENGINE_PROBE, SOURCE_POLICY_PROBE, QUOTE_MATRIX_PROBE, MODULE, ENGINE, PROCESS, PATHS, RESULTS, DOC, RUNNER, LEGACY_RUNNER,
            "libc/src/c_abi/x86_64/static_c_abi.rs", "libc/build.rs",
            "libc/src/c_abi/x86_64/owned_pattern.rs", "libc/src/c_abi/x86_64/owned_fnmatch.rs",
            "libc/src/c_abi/x86_64/owned_glob.rs",
@@ -73,7 +74,6 @@ NULL_FIXTURE_MODE = 0o666
 # Exact twenty-row policies from the same installed-header object. These
 # contain successful word bytes, captured diagnostics, command effects, and
 # parent-environment effects; process status zero means fixture completion.
-# See owned-wordexp-upstream-policy.md for the per-input standards basis.
 SOURCE_POLICY_CANDIDATE_TRACE = b"""owned-wordexp-source-policy: case=01 status=0 count=0 wordhex=- stderrhex=- effect=0 env=0
 owned-wordexp-source-policy: case=02 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
 owned-wordexp-source-policy: case=03 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
@@ -149,6 +149,7 @@ WORD_EXP_CASES = {
     "engine-invalid-multibyte-pattern": ("normal", ("--engine-invalid-multibyte-pattern",), b"owned-wordexp-engine-invalid-multibyte-pattern: PASS\n", "source-match"),
     "badchar-record": ("normal", ("--badchar-record",), b"owned-wordexp-badchar-record: PASS\n", "badchar-record-source-red"),
     "source-policy": ("normal", ("--source-policy",), SOURCE_POLICY_CANDIDATE_TRACE, "upstream-source-policy"),
+    "quote-matrix": ("normal", ("--quote-matrix",), b"owned-wordexp-quote-matrix: PASS\n", "source-match"),
 }
 # Exact source transcripts for the new direct C boundary cases. A source RED
 # never permits the selected candidate to fail, even with the same transcript.

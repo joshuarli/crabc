@@ -347,6 +347,7 @@ static int source_nocmd_case(void)
 #include "owned_wordexp_posix_probe.c"
 #include "owned_wordexp_engine_probe.c"
 #include "owned_wordexp_source_policy_probe.c"
+#include "owned_wordexp_quote_matrix_probe.c"
 
 int main(int argc, char *argv[])
 {
@@ -354,6 +355,14 @@ int main(int argc, char *argv[])
 
     if (argc == 2 && strcmp(argv[1], "--source-policy") == 0)
         return wordexp_source_policy_run();
+
+    if (argc == 2 && strcmp(argv[1], "--quote-matrix") == 0) {
+        result = wordexp_quote_matrix_case();
+        if (result != 0)
+            return result;
+        puts("owned-wordexp-quote-matrix: PASS");
+        return 0;
+    }
 
     if (argc == 2 && strncmp(argv[1], "--engine-", 9) == 0)
         return wordexp_engine_run_selector(argv[1]);
