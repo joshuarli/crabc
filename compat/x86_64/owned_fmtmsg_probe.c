@@ -27,6 +27,11 @@ static int first_free(void) {
     }
     CHECK(0); return -1;
 }
+static void report_result(const char *case_name, int actual, int expected) {
+    int saved_errno = errno;
+    CHECK(actual == expected);
+    dprintf(1, "%s status=%d errno=%d\n", case_name, actual, saved_errno);
+}
 static void ordinary(void) {
     int saved = dup(2);
     int output = open("/state/output", O_RDWR | O_CREAT | O_TRUNC, 0600);
@@ -60,6 +65,16 @@ static void ordinary(void) {
     CHECK(fmtmsg(MM_HARD | MM_SOFT | MM_APPL | MM_UTIL | MM_OPSYS | MM_RECOVER | MM_NRECOV,
         "app", MM_ERROR, "message", "repair", "TAG") == MM_OK);
     expect_file(output, "");
+    errno = EDOM;
+    report_result("no-route", fmtmsg(MM_NULLMC, "app", MM_ERROR, "message", "repair", "TAG"), MM_OK);
+    errno = EDOM;
+    report_result("ignored-classification", fmtmsg(MM_FIRM | MM_HARD | MM_APPL | MM_RECOVER,
+        "app", MM_ERROR, "message", "repair", "TAG"), MM_OK);
+    expect_file(output, "");
+    errno = EDOM;
+    report_result("print-success", fmtmsg(MM_PRINT | MM_FIRM, "app", MM_ERROR,
+        "message", "repair", "TAG"), MM_OK);
+    expect_file(output, full);
     int previous, restored;
     CHECK(pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previous) == 0);
     CHECK(fmtmsg(0, 0, 0, 0, 0, 0) == MM_OK);
@@ -74,25 +89,59 @@ static void console_and_errors(void) {
     int console = open("/dev/console", O_RDWR | O_CREAT | O_TRUNC, 0600);
     CHECK(console >= 0 && setenv("MSGVERB", "text", 1) == 0);
     int available = first_free();
-    CHECK(fmtmsg(MM_PRINT | MM_CONSOLE, "app", MM_ERROR, "message", "repair", "TAG") == MM_OK);
+    errno = EDOM;
+    report_result("both-success", fmtmsg(MM_PRINT | MM_CONSOLE, "app", MM_ERROR,
+        "message", "repair", "TAG"), MM_OK);
     CHECK(first_free() == available);
     expect_file(console, full);
     expect_file(output, "message\n");
     CHECK(close(console) == 0 && unlink("/dev/console") == 0);
-    CHECK(fmtmsg(MM_CONSOLE, 0, 0, "missing", 0, 0) == MM_NOCON);
+    errno = EDOM;
+    report_result("console-missing", fmtmsg(MM_CONSOLE, 0, 0, "missing", 0, 0), MM_NOCON);
     CHECK(close(2) == 0);
-    CHECK(fmtmsg(MM_PRINT, 0, 0, "closed", 0, 0) == MM_NOMSG);
-    CHECK(fmtmsg(MM_PRINT | MM_CONSOLE, 0, 0, "closed", 0, 0) == MM_NOTOK);
+    errno = EDOM;
+    report_result("stderr-closed", fmtmsg(MM_PRINT, 0, 0, "closed", 0, 0), MM_NOMSG);
+    errno = EDOM;
+    report_result("both-unavailable", fmtmsg(MM_PRINT | MM_CONSOLE, 0, 0, "closed", 0, 0), MM_NOTOK);
     CHECK(dup2(output, 2) == 2);
     CHECK(symlink("/dev/full", "/dev/console") == 0);
     available = first_free();
     for (int i = 0; i < 8; i++) {
-        CHECK(fmtmsg(MM_CONSOLE, 0, 0, "full", 0, 0) == MM_NOCON);
+        errno = EDOM;
+        report_result("console-full", fmtmsg(MM_CONSOLE, 0, 0, "full", 0, 0), MM_NOCON);
         CHECK(first_free() == available);
     }
     CHECK(dup2(saved, 2) == 2 && close(saved) == 0 && close(output) == 0);
     CHECK(unlink("/dev/console") == 0);
     puts("owned-fmtmsg-console-errors-ok");
+}
+
+static void *thread_lifetime_worker(void *unused) {
+    (void)unused;
+    int previous, restored;
+    CHECK(pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &previous) == 0);
+    CHECK(previous == PTHREAD_CANCEL_ENABLE);
+    errno = EDOM;
+    CHECK(fmtmsg(MM_NULLMC, "unused", MM_ERROR, "unused", 0, 0) == MM_OK);
+    CHECK(errno == EDOM);
+    CHECK(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &restored) == 0);
+    CHECK(restored == PTHREAD_CANCEL_DISABLE);
+    errno = EDOM;
+    CHECK(fmtmsg(MM_NULLMC, 0, MM_NOSEV, 0, 0, 0) == MM_OK);
+    CHECK(errno == EDOM);
+    CHECK(pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &restored) == 0);
+    CHECK(restored == PTHREAD_CANCEL_ENABLE);
+    CHECK(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, 0) == 0);
+    return (void *)1;
+}
+static void thread_lifetime(void) {
+    for (int i = 0; i < 64; i++) {
+        pthread_t worker;
+        void *result;
+        CHECK(pthread_create(&worker, 0, thread_lifetime_worker, 0) == 0);
+        CHECK(pthread_join(worker, &result) == 0 && result == (void *)1);
+    }
+    puts("owned-fmtmsg-thread-lifetime-ok");
 }
 
 static atomic_int cleanup_called, cleanup_closed, fmtmsg_returned, console_descriptor;
@@ -153,6 +202,7 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[1], "ordinary")) ordinary();
     else if (!strcmp(argv[1], "console-errors")) console_and_errors();
     else if (!strcmp(argv[1], "cancellation")) cancellation();
+    else if (!strcmp(argv[1], "thread-lifetime")) thread_lifetime();
     else CHECK(0);
     return 0;
 }

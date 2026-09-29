@@ -2,7 +2,7 @@
 # Installed fmtmsg behavior against pinned musl 1.2.6.
 #
 # One C object compiled through the installed dynamic driver is linked by the
-# pinned musl oracle and every selected owned product mode. The three probe
+# pinned musl oracle and every selected owned product mode. The four probe
 # scenarios retain raw stdout, stderr, and process status before their existing
 # exact stream comparison is accepted.
 set -euo pipefail
@@ -320,7 +320,7 @@ record = {
 PY
 "$oracle_cc" -static -fno-pie -no-pie -pthread "$work/workload.o" -o "$work/oracle"
 prepare_root "$work/oracle-root"
-for scenario in ordinary console-errors cancellation; do
+for scenario in ordinary console-errors cancellation thread-lifetime; do
     cp "$work/oracle" "$work/oracle-root/consumer"
     run_capture "$work/oracle-$scenario.stdout" \
         chroot "$work/oracle-root" /consumer "$scenario"
@@ -352,7 +352,7 @@ if [ -n "$static_product" ]; then
         root="$work/static-$mode-root"
         prepare_root "$root"
         cp "$candidate" "$root/consumer"
-        for scenario in ordinary console-errors cancellation; do
+        for scenario in ordinary console-errors cancellation thread-lifetime; do
             run_capture "$work/static-$mode-$scenario.stdout" \
                 chroot "$root" /consumer "$scenario"
             compare_oracle "static-$mode" "$scenario"
@@ -371,7 +371,7 @@ for mode in pie non-pie; do
     cp -a "$installed/." "$root/"
     prepare_root "$root"
     cp "$candidate" "$root/consumer"
-    for scenario in ordinary console-errors cancellation; do
+    for scenario in ordinary console-errors cancellation thread-lifetime; do
         run_capture "$work/dynamic-$mode-kernel-$scenario.stdout" \
             chroot "$root" /consumer "$scenario"
         compare_oracle "dynamic-$mode-kernel" "$scenario"
@@ -395,5 +395,5 @@ elif [ "$dynamic_was_supplied" -eq 1 ]; then
 else
     matrix='disposable static/static-PIE plus dynamic PIE/non-PIE kernel/direct'
 fi
-printf 'owned fmtmsg: PASS (one installed object through pinned musl; %s; MSGVERB, component formatting, console/error routes, cancellation and descriptor cleanup; raw status/stdout/stderr and sealed link identities retained); evidence: %s\n' \
+printf 'owned fmtmsg: PASS (one installed object through pinned musl; %s; MSGVERB, component formatting, route status/errno, cancellation and thread lifetime; raw status/stdout/stderr and sealed link identities retained); evidence: %s\n' \
     "$matrix" "$work"
