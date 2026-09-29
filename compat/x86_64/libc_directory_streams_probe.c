@@ -46,7 +46,7 @@ _Static_assert(sizeof(struct dirent) == 280 && _Alignof(struct dirent) == 8 &&
     "x86 dirent ABI");
 _Static_assert(SYS_fstat == 5 && SYS_lseek == 8 && SYS_mmap == 9 &&
     SYS_munmap == 11 && SYS_fcntl == 72 && SYS_getdents64 == 217 &&
-    SYS_openat == 257,
+    SYS_openat == 257 && SYS_prctl == 157 && SYS_close == 3,
     "x86 selected directory syscall numbers");
 _Static_assert(O_DIRECTORY == 0x00010000 && O_CLOEXEC == 0x00080000 &&
     O_PATH == 0x00200000 && F_GETFD == 1 && FD_CLOEXEC == 1,
@@ -438,6 +438,65 @@ static int check_versionsort(void)
     return 1;
 }
 
+/* Linux close can consume a descriptor despite reporting EINTR. A filter
+ * gives both libraries the same deterministic return value without a signal
+ * race; the filtered descriptor remains open until this process exits. */
+static int check_closedir_interrupted_close(void)
+{
+    enum {
+        PR_SET_SECCOMP = 22,
+        PR_SET_NO_NEW_PRIVS = 38,
+        SECCOMP_MODE_FILTER = 2,
+        SECCOMP_RET_ERRNO = 0x00050000,
+        SECCOMP_RET_ALLOW = 0x7fff0000,
+        BPF_LD_W_ABS = 0x20,
+        BPF_JMP_JEQ_K = 0x15,
+        BPF_RET_K = 0x06,
+    };
+    struct filter_instruction {
+        uint16_t code;
+        uint8_t true_jump;
+        uint8_t false_jump;
+        uint32_t value;
+    } instructions[] = {
+        { BPF_LD_W_ABS, 0, 0, 0 },
+        { BPF_JMP_JEQ_K, 0, 3, SYS_close },
+        { BPF_LD_W_ABS, 0, 0, 16 },
+        { BPF_JMP_JEQ_K, 0, 1, 0 },
+        { BPF_RET_K, 0, 0, SECCOMP_RET_ERRNO | EINTR },
+        { BPF_RET_K, 0, 0, SECCOMP_RET_ALLOW },
+    };
+    struct filter_program {
+        uint16_t length;
+        struct filter_instruction *instructions;
+    } program = { sizeof(instructions) / sizeof(instructions[0]), instructions };
+    _Static_assert(sizeof(struct filter_instruction) == 8 &&
+        sizeof(struct filter_program) == 16 &&
+        offsetof(struct filter_program, instructions) == 8,
+        "Linux seccomp filter ABI");
+    DIR *directory = opendir("directory");
+    long result;
+    register long arg4 __asm__("r10") = 0;
+    register long arg5 __asm__("r8") = 0;
+
+    if (directory == NULL) return 1;
+    instructions[3].value = (uint32_t)dirfd(directory);
+    __asm__ volatile("syscall" : "=a"(result)
+        : "a"((long)SYS_prctl), "D"((long)PR_SET_NO_NEW_PRIVS),
+          "S"(1L), "d"(0L), "r"(arg4), "r"(arg5)
+        : "rcx", "r11", "memory");
+    if (result != 0) return 2;
+    __asm__ volatile("syscall" : "=a"(result)
+        : "a"((long)SYS_prctl), "D"((long)PR_SET_SECCOMP),
+          "S"((long)SECCOMP_MODE_FILTER), "d"((long)&program),
+          "r"(arg4), "r"(arg5)
+        : "rcx", "r11", "memory");
+    if (result != 0) return 3;
+    errno = E2BIG;
+    if (closedir(directory) != 0 || errno != E2BIG) return 4;
+    return 0;
+}
+
 int crabc_x86_64_directory_streams_probe(void)
 {
     char long_name[CRABC_DIRECTORY_NAME_MAX + 1];
@@ -477,6 +536,10 @@ int crabc_x86_64_directory_streams_probe(void)
     }
     if (!check_versionsort()) {
         status = 52;
+        goto cleanup;
+    }
+    if ((status = check_closedir_interrupted_close()) != 0) {
+        status += 70;
         goto cleanup;
     }
 

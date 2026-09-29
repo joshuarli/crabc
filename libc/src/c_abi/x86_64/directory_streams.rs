@@ -34,9 +34,12 @@
 //! reusable allocator. As in musl, `opendir` relies on `O_DIRECTORY` and
 //! makes only `open`'s close-on-exec fix-up after the descriptor, while
 //! `fdopendir` alone validates a caller descriptor. The
-//! selected direct syscall paths omit musl cancellation-point machinery. The
-//! standalone `x86-scandir` feature preserves that boundary, and the owned
-//! static aggregate deliberately does not add an entry checkpoint: pinned musl
+//! selected standalone direct syscall paths omit musl cancellation-point
+//! machinery. The owned runtime composes its close provider for `closedir`
+//! so descriptor coordination and cancellation retain their public behavior.
+//! The standalone `x86-scandir` feature preserves its direct syscall boundary,
+//! and the owned static aggregate deliberately does not add an entry checkpoint:
+//! pinned musl
 //! 1.2.6 `src/dirent/scandir.c` has no cancellation-state wrapper around its
 //! stream, allocation, selector, or comparator work. The project supports
 //! only `C`, `POSIX`, and `C.UTF-8` locale profiles, whose selected `alphasort`
@@ -79,6 +82,8 @@ const LINUX_ERRNO_MAX: i64 = 4_095;
 
 const EBADF: c_int = 9;
 const EIO: c_int = 5;
+#[cfg(not(crabc_x86_owned_runtime))]
+const EINTR: c_int = 4;
 const ENOENT: c_int = 2;
 // The frozen archive's private stream mapping only.
 #[cfg(not(crabc_x86_owned_runtime))]
@@ -523,13 +528,37 @@ static_archive_member! { closedir_source {
             return -1;
         }
         let file_descriptor = unsafe { (*stream).file_descriptor };
+        #[cfg(crabc_x86_owned_runtime)]
+        let close_result = {
+            unsafe extern "C" {
+                fn close(file_descriptor: c_int) -> c_int;
+            }
+            // SAFETY: this live stream owns its scalar descriptor. The owned
+            // close provider coordinates AIO and the cancellation transition
+            // before stream state is released.
+            unsafe { close(file_descriptor) }
+        };
+        #[cfg(not(crabc_x86_owned_runtime))]
         let close_result = unsafe {
             raw_syscall::syscall1(raw_syscall::SYS_CLOSE, i64::from(file_descriptor))
         };
         // SAFETY: `stream` is the caller's live exclusive stream; it is not used
         // after release.
         unsafe { release_stream(stream) };
-        c_status(close_result)
+        #[cfg(crabc_x86_owned_runtime)]
+        {
+            close_result
+        }
+        #[cfg(not(crabc_x86_owned_runtime))]
+        {
+            // Linux may have consumed the descriptor even when close reports
+            // EINTR. Musl returns success and never retries that number.
+            if close_result == -i64::from(EINTR) {
+                0
+            } else {
+                c_status(close_result)
+            }
+        }
     }
 }}
 
