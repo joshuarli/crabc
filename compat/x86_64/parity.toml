@@ -696,6 +696,8 @@ source_owners = [
   "compat/x86_64/x86_shm_reference_probe.c",
   "compat/x86_64/run_x86_inotify_reference.sh",
   "compat/x86_64/x86_inotify_reference_probe.c",
+  "compat/x86_64/x86_inotify_c_boundary_probe.c",
+  "libc/src/c_abi/x86_64/event_descriptors.rs",
   "compat/x86_64/run_x86_calendar_time_reference.sh",
   "compat/x86_64/x86_calendar_time_reference_probe.c",
   "compat/x86_64/run_x86_advanced_time_reference.sh",
@@ -1383,7 +1385,7 @@ x86_abi_prerequisites = [
   "IN_NONBLOCK=0x00000800 and IN_CLOEXEC=0x00080000 request the direct descriptor flags; observed masks retain unknown bits, and Linux remains the authority for watch-mask validation.",
 ]
 x86_header_prerequisites = ["The Rust facade owns private x86 inotify descriptor and event records; pinned-musl sys/inotify.h calls and layouts are behavior/layout oracle only. This Rust slice selects no Rust C wrapper or errno/TLS, and legacy inotify_init remains outside the Rust facade. The separate static-c-event-descriptors artifact owns bounded C sys/inotify.h ABI/header and legacy-init evidence without broadening this Rust facade or public x86 support."]
-native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh inotify-reference", scope = "Pinned-musl/raw x86 inotify ABI and behavior proof plus focused Rust regressions and no-std static linkage: init1/add-watch/remove-watch syscalls, 16-byte event header and caller-buffered variable framing, CLOEXEC/nonblocking, empty-read EAGAIN, byte-name CREATE and IGNORED-after-removal behavior, direct invalid-flags/missing/overlong/bad-fd/bad-watch errors, and malformed-record rejection. This Rust-only gate excludes a Rust C wrapper and errno TLS, legacy inotify_init, fanotify, recursive/background watcher policy, global registries, namespaces/capability mutation, and public x86 support; the separate static-c-event-descriptors artifact owns the bounded C ABI evidence." }]
+native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh inotify-reference", scope = "Pinned-musl/raw x86 inotify ABI and behavior proof plus focused Rust regressions and no-std static linkage: init1/add-watch/remove-watch syscalls, 16-byte event header and caller-buffered variable framing, CLOEXEC/nonblocking, empty-read EAGAIN, byte-name CREATE and IGNORED-after-removal behavior, direct invalid-flags/missing/overlong/bad-fd/bad-watch errors, and malformed-record rejection. The same gate compares a source-built freestanding C ABI candidate with pinned musl for watch-mask replacement/addition, byte names, rename cookies, watch and descriptor lifetime, and error precedence. It excludes a Rust C wrapper, fanotify, recursive/background watcher policy, global registries, namespaces/capability mutation, and public x86 support; the separate static-c-event-descriptors artifact owns complete bounded C ABI/header evidence." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "sys/inotify.h wrapper, constant, and layout behavior oracle for this Rust slice; the separate static-c-event-descriptors artifact maps the selected C wrappers." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "Direct inotify syscall, descriptor, and variable event-record contract." }]
 capabilities = ["system.inotify"]
 
