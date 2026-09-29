@@ -773,6 +773,98 @@ static void check_locale_edges(void)
     freelocale(utf8);
 }
 
+/* regexec consumes a NUL-terminated subject.  Keep bytes after the first NUL
+ * in each array so capture offsets, backreferences, and decoding reveal any
+ * accidental scan into the rest of the backing storage. */
+static void observe_nul_boundary(const char *name, const char *pattern,
+    int cflags, const char *subject, size_t nmatch, int expected_status,
+    const regmatch_t *expected)
+{
+    regex_t compiled;
+    regmatch_t matches[3] = {{-7, -70}, {-8, -80}, {-9, -90}};
+    size_t index;
+    int status;
+
+    CHECK(nmatch <= sizeof matches / sizeof *matches);
+    CHECK(public_regcomp(&compiled, pattern, cflags) == REG_OK);
+    status = public_regexec(&compiled, subject, nmatch, matches, 0);
+    CHECK(status == expected_status);
+    for (index = 0; index != nmatch; ++index) {
+        if (status == REG_OK) {
+            CHECK(matches[index].rm_so == expected[index].rm_so);
+            CHECK(matches[index].rm_eo == expected[index].rm_eo);
+        } else {
+            CHECK(matches[index].rm_so == -(regoff_t)(index + 7));
+            CHECK(matches[index].rm_eo == -(regoff_t)(10 * (index + 7)));
+        }
+    }
+    printf("nul-boundary %s status=%d", name, status);
+    for (index = 0; index != nmatch; ++index)
+        printf(" %ld,%ld", (long)matches[index].rm_so,
+            (long)matches[index].rm_eo);
+    putchar('\n');
+    public_regfree(&compiled);
+}
+
+static void check_nul_boundaries(void)
+{
+    static const char embedded[] = {'x', '\0', 'a', 'b', '\0'};
+    static const char backref[] = {'a', '\0', 'a', '\0'};
+    static const char utf8[] = {'z', (char)0xc3, (char)0xa9, '\0',
+        (char)0xc3, (char)0xa9, '\0'};
+    static const char incomplete_utf8[] = {(char)0xc3, '\0',
+        (char)0xa9, '\0'};
+    static const char embedded_pattern[] = {'x', '\0', '[', '\0'};
+    static const char invalid_utf8_pattern[] = {(char)0xc3, '\0'};
+    static const regmatch_t x_captures[] = {{0, 1}, {0, 1}, {1, 1}};
+    static const regmatch_t utf8_captures[] = {{1, 3}, {1, 3}};
+    static const regmatch_t byte_capture[] = {{0, 1}};
+    static const regmatch_t guarded_capture[] = {{0, 1}, {0, 1}};
+    regex_t compiled;
+    char *mapping;
+    char *guarded;
+    long page;
+
+    CHECK(setlocale(LC_ALL, "C") != NULL);
+    observe_nul_boundary("c-captures", "(x)(a?)", REG_EXTENDED,
+        embedded, 3, REG_OK, x_captures);
+    observe_nul_boundary("c-after-nul", "a", REG_EXTENDED,
+        embedded, 2, REG_NOMATCH, NULL);
+    observe_nul_boundary("c-backreference", "\\(a\\)\\1", 0,
+        backref, 2, REG_NOMATCH, NULL);
+    observe_nul_boundary("c-pattern-nul", embedded_pattern, REG_EXTENDED,
+        embedded, 1, REG_OK, byte_capture);
+    observe_nul_boundary("c-incomplete-utf8-byte", ".", REG_EXTENDED,
+        incomplete_utf8, 1, REG_OK, byte_capture);
+
+    CHECK(setlocale(LC_ALL, "C.UTF-8") != NULL);
+    observe_nul_boundary("utf8-captures", "(\303\251)+", REG_EXTENDED,
+        utf8, 2, REG_OK, utf8_captures);
+    observe_nul_boundary("utf8-after-nul", "\303\251", REG_EXTENDED,
+        embedded, 1, REG_NOMATCH, NULL);
+    observe_nul_boundary("utf8-incomplete-sequence", ".", REG_EXTENDED,
+        incomplete_utf8, 1, REG_NOMATCH, NULL);
+    CHECK(public_regcomp(&compiled, invalid_utf8_pattern, REG_EXTENDED)
+        == REG_BADPAT);
+    puts("nul-boundary utf8-invalid-pattern status=2");
+
+    page = sysconf(_SC_PAGESIZE);
+    CHECK(page > 0);
+    mapping = mmap(0, 2 * (size_t)page, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(mapping != MAP_FAILED);
+    CHECK(mprotect(mapping + page, (size_t)page, PROT_NONE) == 0);
+    guarded = mapping + page - 2;
+    guarded[0] = 'x';
+    guarded[1] = '\0';
+    observe_nul_boundary("utf8-guarded-terminator", "(x)$", REG_EXTENDED,
+        guarded, 2, REG_OK, guarded_capture);
+    guarded[0] = (char)0xc3;
+    observe_nul_boundary("utf8-guarded-incomplete", ".", REG_EXTENDED,
+        guarded, 1, REG_NOMATCH, NULL);
+    CHECK(munmap(mapping, 2 * (size_t)page) == 0);
+}
+
 /*
  * `--bounded-backreference`: a backreference range that leaves the subject.
  *
@@ -898,6 +990,7 @@ int main(int argc, char **argv)
     check_errors();
     check_regerror_table();
     check_locale_edges();
+    check_nul_boundaries();
     /* `--corpus-trace` prints one running digest per compilation;
      * `--corpus-trace-subjects` adds every execution observation. */
     if (argc == 2 && !strcmp(argv[1], "--corpus-trace"))
