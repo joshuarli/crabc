@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 static crabc-libc iopl/ioperm negative-path evidence.
+# Native Linux/x86-64 static crabc-libc iopl/ioperm physical differential.
 #
 # The same project-header body first executes against pinned musl 1.2.6 and
-# then a true `-nostdlib -static` candidate. It calls only invalid iopl/ioperm
-# arguments that cannot make a valid permission change. It records Linux's
-# EINVAL-versus-EPERM check ordering, so this gate never enables I/O
-# permissions and never executes port I/O. The opt-in archive closure may add
-# exactly iopl and ioperm to the frozen default C ABI.
+# then a true `-nostdlib -static` candidate. Invalid requests compare each
+# wrapper against a raw syscall with repeated errno sentinels. A process-local
+# seccomp filter forces deterministic permission errors on those same invalid
+# requests. The gate never enables I/O permissions and never executes port I/O.
+# The opt-in archive closure may add exactly iopl and ioperm to the default ABI.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -143,11 +143,45 @@ capture_invalid_probe_status() {
     local executable="$1" label="$2" status
 
     set +e
-    env -i timeout "$EXECUTION_TIMEOUT" "$executable"
+    env -i timeout "$EXECUTION_TIMEOUT" "$executable" \
+        >"$work_dir/$label.stdout" 2>"$work_dir/$label.stderr"
     status=$?
     set -e
-    (( status <= 85 )) || fail "$label invalid-call fingerprint exited $status"
+    printf '%s\n' "$status" >"$work_dir/$label.status"
+    (( status == 0 )) || fail "$label differential exited $status (evidence: $work_dir)"
     printf '%s' "$status"
+}
+
+assert_probe_stream() {
+    local stream="$1" expected_natural=(
+        'natural:iopl:-1='
+        'natural:ioperm:past-end='
+        'natural:iopl:4='
+        'natural:ioperm:long-range='
+        'natural:iopl:-2='
+        'natural:ioperm:cross-end='
+        'natural:iopl:5='
+        'natural:ioperm:past-end-enable='
+        'natural:ioperm:long-range-enable='
+    )
+    local index=0 line
+
+    while IFS= read -r line; do
+        if (( index < ${#expected_natural[@]} )); then
+            case "$line" in
+                "${expected_natural[$index]}"I|"${expected_natural[$index]}"P) ;;
+                *) fail "unexpected natural observation at line $((index + 1)): $line" ;;
+            esac
+        else
+            case "$index:$line" in
+                '9:filtered:iopl=EPERM'|'10:filtered:ioperm=EACCES'|\
+                '11:filtered:interleaved=EPERM,EACCES') ;;
+                *) fail "unexpected filtered observation at line $((index + 1)): $line" ;;
+            esac
+        fi
+        index=$((index + 1))
+    done <"$stream"
+    (( index == 12 )) || fail "probe emitted $index observations, expected 12"
 }
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
@@ -155,7 +189,7 @@ case "$(uname -m)" in
     x86_64|amd64) ;;
     *) fail "requires native x86-64" ;;
 esac
-for tool in ar awk cargo cat cmp comm diff grep mkdir nm objdump readelf realpath rustup sort timeout; do
+for tool in ar awk cargo cat chmod cmp comm diff grep mkdir nm objdump readelf realpath rustup sha256sum sort timeout; do
     require_tool "$tool"
 done
 [ -n "${TMPDIR:-}" ] || fail "TMPDIR must name checkout-local .work scratch"
@@ -172,7 +206,7 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_sys_io_header_abi.sh" >/dev/null
 
 work_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-libc-io-permissions.XXXXXX")"
-trap 'rm -rf -- "$work_dir"' EXIT
+chmod 755 "$work_dir"
 baseline_target="$work_dir/cargo-baseline"
 featured_target="$work_dir/cargo-featured"
 baseline_archive="$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
@@ -207,6 +241,7 @@ done
     -fno-stack-protector -I "$ROOT_DIR/include" \
     compat/x86_64/libc_io_permissions_probe.c -o "$reference"
 reference_status="$(capture_invalid_probe_status "$reference" "pinned-musl")"
+assert_probe_stream "$work_dir/pinned-musl.stdout"
 
 build_source_runtime_libc "$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$baseline_archive" ] || fail "cargo did not emit the baseline x86 static libc archive"
@@ -284,6 +319,19 @@ grep -Eq 'call.*__crabc_x86_static_tls_bootstrap' \
 assert_io_permissions_boundary "$candidate" "$work_dir/candidate-io-permissions-disassembly" "candidate"
 
 candidate_status="$(capture_invalid_probe_status "$candidate" "candidate")"
+assert_probe_stream "$work_dir/candidate.stdout"
 [ "$candidate_status" = "$reference_status" ] ||
-    fail "candidate invalid-call errno fingerprint differs from pinned musl ($candidate_status != $reference_status)"
-printf 'x86 static crabc-libc iopl/ioperm negative-path: PASS (no port-I/O execution)\n'
+    fail "candidate errno fingerprint differs from pinned musl ($candidate_status != $reference_status)"
+cmp "$work_dir/pinned-musl.stdout" "$work_dir/candidate.stdout" ||
+    fail "candidate errno fingerprint differs from pinned musl"
+cmp "$work_dir/pinned-musl.stderr" "$work_dir/candidate.stderr" ||
+    fail "candidate stderr differs from pinned musl"
+(
+    cd "$work_dir"
+    sha256sum musl-io-permissions-reference crabc-io-permissions-candidate \
+        pinned-musl.stdout pinned-musl.stderr pinned-musl.status \
+        candidate.stdout candidate.stderr candidate.status >sha256sum
+)
+rm -rf -- "$baseline_target" "$featured_target" "$work_dir/baseline-members" \
+    "$work_dir/featured-members" "$work_dir/featured_archive-provider-objects"
+printf 'x86 static crabc-libc iopl/ioperm physical differential: PASS (no port-I/O execution; evidence: %s)\n' "$work_dir"
