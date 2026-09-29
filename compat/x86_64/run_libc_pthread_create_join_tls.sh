@@ -256,13 +256,16 @@ grep -Eq '0x8\(%rsp\),%r10' "$clone_disassembly" \
 grep -Eq '\$0x3c,%al|\$0x000000000000003c,%rax|\$0x3c,%rax' "$clone_disassembly" \
     || fail "pthread clone boundary lacks child exit syscall number 60"
 # Apart from delegating a last-thread exit to the separately qualified
-# process `exit`, pthread_exit validates the worker identity with gettid=186
-# and ends only the thread with exit=60, never exit_group. pthread_join waits
-# on the worker's futex word and releases its mapping, and does nothing else.
+# process `exit`, pthread_exit uses the current thread pointer and live
+# child-TID word to select the worker whose result is published. The fixture's
+# concurrent explicit exits check distinct result ownership. This path does
+# not need gettid=186 and ends only the task with exit=60, never exit_group.
+# pthread_join waits on the worker's futex word and releases its mapping.
 python3 "$ELF_CALL_CLOSURE" check "$candidate" \
     --label 'x86 static libc pthread create/exit/join TLS' --root pthread_exit --exclude exit \
-    --syscall 'nr=186' --syscall 'nr=60' --no-syscall 'nr=231' ||
-    fail "pthread_exit no longer validates its identity and exits only the thread"
+    --instruction '%fs:0x0' --syscall 'nr=60' \
+    --no-syscall 'nr=186' --no-syscall 'nr=231' ||
+    fail "pthread_exit lost its thread pointer or task-only exit boundary"
 python3 "$ELF_CALL_CLOSURE" check "$candidate" \
     --label 'x86 static libc pthread create/exit/join TLS' --root pthread_join \
     --syscall 'nr=202' --syscall 'nr=11' --syscalls-only 202,11 ||
