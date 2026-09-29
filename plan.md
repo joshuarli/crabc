@@ -136,7 +136,10 @@ are not transferable passes for a different revision.
   pinned-image receipt passed independent physical validation and public
   publication. A later clean selected-C source cohort passes the same Rust
   std/LTO consumer, three byte-exact musl controls, and independent physical
-  receipt validation for primary and extracted products. A native-shadow
+  receipt validation for primary and extracted products. A newer clean
+  `1dd3eeed3` selected-C cohort passes all 219 dynamic qualification cases
+  and the qualifying Rust std/LTO consumer with 147 retained files physically
+  reread; it makes no native allocator or public x86 promotion claim. A native-shadow
   source cohort passes its development Rust std/LTO leaves, unwind and provider
   regressions, with an independently reread product and receipt; public
   validation correctly rejects that development receipt. Its full dynamic
