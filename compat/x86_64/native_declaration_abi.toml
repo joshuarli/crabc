@@ -26,6 +26,20 @@ record_layout_projection_only = true
 runtime_family_completion = false
 tool_inputs_authenticated = true
 
+[reviewed_cpp_linkage_boundary]
+header = "sys/membarrier.h"
+name = "membarrier"
+profiles = ["cxx17-gnu", "cxx17-strict"]
+qual_type = "int (int, int)"
+candidate_symbol = "membarrier"
+reference_symbol = "_Z10membarrierii"
+candidate_linkage_specifier_languages = ["C"]
+reference_linkage_specifier_languages = []
+disposition = "oracle-declared-no-provider"
+control_profiles = ["c11-gnu", "c11-strict", "cxx17-gnu", "cxx17-strict"]
+candidate_linkages = ["static", "static-pie", "pie", "non-pie"]
+reference_linkages = ["static", "shared"]
+
 [[record_layout]]
 header = "arpa/nameser.h"
 object_names = ["_ns_flagdata"]

@@ -22,6 +22,7 @@ import re
 import shutil
 import signal
 import stat
+import struct
 import subprocess
 import sys
 import tomllib
@@ -41,6 +42,7 @@ import header_declaration_inventory as declaration_inventory
 import feature_archive_roster as feature_archive_roster
 import native_abi_inventory as abi_inventory
 import native_callable_declarations as callable_declarations
+import owned_posix_product_evidence as product_evidence
 
 
 SCHEMA = "crabc.x86_64-native-declaration-abi/v1"
@@ -107,6 +109,13 @@ POLICY = {
     "record_layout_projection_only": True,
     "runtime_family_completion": False,
     "tool_inputs_authenticated": True,
+}
+REVIEWED_CPP_LINKAGE_BOUNDARY = {
+    **callable_declarations.REVIEWED_CPP_LINKAGE_DIFFERENCE,
+    "disposition": "oracle-declared-no-provider",
+    "control_profiles": ["c11-gnu", "c11-strict", "cxx17-gnu", "cxx17-strict"],
+    "candidate_linkages": ["static", "static-pie", "pie", "non-pie"],
+    "reference_linkages": ["static", "shared"],
 }
 
 
@@ -235,6 +244,7 @@ def load_contract(path: Path = CONTRACT_PATH) -> dict[str, Any]:
         "policy",
         "record_layout",
         "limits",
+        "reviewed_cpp_linkage_boundary",
     }
     require(set(raw) == expected, "declaration ABI contract fields differ")
     require(raw["schema"] == SCHEMA, "declaration ABI contract schema differs")
@@ -266,6 +276,8 @@ def load_contract(path: Path = CONTRACT_PATH) -> dict[str, Any]:
                 f"declaration ABI layout fact {index} differs")
         facts.append({"header": header, "object_names": list(objects), "profiles": list(profiles), "record": record})
     require(isinstance(raw["limits"], Mapping) and dict(raw["limits"]) == LIMITS, "declaration ABI limits differ")
+    require(strict_equal(raw["reviewed_cpp_linkage_boundary"], REVIEWED_CPP_LINKAGE_BOUNDARY),
+            "reviewed C++ linkage boundary differs")
     return {
         "schema": SCHEMA,
         "target": TARGET,
@@ -277,6 +289,7 @@ def load_contract(path: Path = CONTRACT_PATH) -> dict[str, Any]:
         "policy": dict(POLICY),
         "record_layout": facts,
         "limits": dict(LIMITS),
+        "reviewed_cpp_linkage_boundary": copy.deepcopy(REVIEWED_CPP_LINKAGE_BOUNDARY),
     }
 
 
@@ -462,7 +475,7 @@ def linkage_jobs_from_callable_account(account: Mapping[str, Any]) -> list[dict[
     return result
 
 
-def generated_source(plan: Mapping[str, Any]) -> str:
+def generated_source(plan: Mapping[str, Any], *, executable_probe: bool = False) -> str:
     """Render one address-taking source file without declaring a callable."""
     require(isinstance(plan, Mapping), "linkage source plan is invalid")
     header = _safe_relative(plan.get("header"), "linkage source header")
@@ -485,6 +498,9 @@ def generated_source(plan: Mapping[str, Any]) -> str:
             f"__attribute__((used)) = &{name};"
         )
     rendered.append("")
+    if executable_probe:
+        require(names == [REVIEWED_CPP_LINKAGE_BOUNDARY["name"]], "executable declaration probe scope differs")
+        rendered.extend(["int main(void) { return crabc_native_declaration_abi_reference_0 == 0; }", ""])
     return "\n".join(rendered)
 
 
@@ -1547,6 +1563,8 @@ def _compile_argv(
     linux_uapi_include: Path,
     source: Path,
     object_path: Path,
+    *,
+    executable_probe: bool = False,
 ) -> list[str]:
     command = [str(compiler), "-x", "c" if profile.language == "c" else "c++", f"-std={profile.standard}"]
     if profile.language == "cxx":
@@ -1558,6 +1576,8 @@ def _compile_argv(
         "-isystem", str(linux_uapi_include),
     ])
     command.extend(f"-D{item}" for item in profile.defines)
+    if executable_probe:
+        command.extend(["-fPIC", "-fno-stack-protector"])
     # Direct address references are retained at O0.  These flags do not create
     # a prototype, select a provider, or turn an inline definition into an
     # undefined import; the post-compile classifier records either outcome.
@@ -1596,6 +1616,7 @@ def _collect_one_object_job(
     profiles: Mapping[str, callable_inventory.Profile],
     resource_include: Path,
     timeout_seconds: float,
+    executable_probe: bool = False,
 ) -> dict[str, Any]:
     """Compile one already authenticated direct-header source and inspect it."""
     require(type(ordinal) is int and ordinal >= 0, "linkage job ordinal is invalid")
@@ -1610,7 +1631,7 @@ def _collect_one_object_job(
     _physical_path(linux_uapi_include, "pinned Linux UAPI include root", directory=True)
     source = directory / ("source.cpp" if profile.language == "cxx" else "source.c")
     object_path = directory / "ordinary.o"
-    _write_new_text(source, generated_source(plan))
+    _write_new_text(source, generated_source(plan, executable_probe=executable_probe))
     source_record = _artifact_identity(output, source, "linkage source")
     temporary = directory / "tmp"
     temporary.mkdir()
@@ -1633,6 +1654,7 @@ def _collect_one_object_job(
             linux_uapi_include,
             source,
             object_path,
+            executable_probe=executable_probe,
         ),
         cwd=ROOT,
         environment=environment,
@@ -1709,6 +1731,351 @@ def _summary(jobs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "reference_category_counts": dict(sorted(categories.items())),
         "reference_count": len(references),
     }
+
+
+def _cpp_boundary_plans(plans: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    reviewed = REVIEWED_CPP_LINKAGE_BOUNDARY
+    selected = [copy.deepcopy(dict(plan)) for plan in plans
+                if plan.get("header") == reviewed["header"] and plan.get("profile") in reviewed["control_profiles"]]
+    expected = [(tree, profile) for tree in ("candidate", "reference") for profile in reviewed["control_profiles"]]
+    require([(plan["tree"], plan["profile"]) for plan in selected] == expected,
+            "reviewed C++ linkage control roster differs")
+    for plan in selected:
+        require(plan["names"] == [reviewed["name"]] and len(plan["references"]) == 1
+                and plan["references"][0]["category"] == "reference-backed"
+                and plan["references"][0]["expected_observation"] == "ordinary-undefined-reference",
+                "reviewed C++ linkage declaration scope differs")
+    return selected
+
+
+def reviewed_cpp_linkage_boundary(
+    plans: Sequence[Mapping[str, Any]], jobs: Sequence[Mapping[str, Any]],
+    providers: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> dict[str, Any]:
+    """Account the exact unusable oracle C++ declaration without remapping it.
+
+    The C declaration and the candidate C bridge still require ordinary links.
+    The mangled reference remains an observed mismatch; the bounded disposition
+    requires its absence from both complete pinned provider inventories.
+    """
+    selected = _cpp_boundary_plans(plans)
+    require(len(jobs) == len(selected), "reviewed C++ linkage object roster differs")
+    reference_indices = []
+    reviewed = REVIEWED_CPP_LINKAGE_BOUNDARY
+    for index, (plan, job) in enumerate(zip(selected, jobs, strict=True)):
+        require(all(strict_equal(job.get(key), plan[key]) for key in plan),
+                "reviewed C++ linkage object does not join its declaration")
+        observation = job.get("observations")
+        require(isinstance(observation, list) and len(observation) == 1,
+                "reviewed C++ linkage reference observation roster differs")
+        if plan["tree"] == "reference" and plan["profile"] in reviewed["profiles"]:
+            expected = {
+                "category": "reference-backed", "expected_symbol": reviewed["name"],
+                "holder": plan["references"][0]["holder"], "observed_symbol": reviewed["reference_symbol"],
+                "relocation_type": "R_X86_64_64", "status": "ordinary-linkage-identity-mismatch",
+            }
+            reference_indices.append(index)
+        else:
+            expected = {"category": "reference-backed", "name": reviewed["name"],
+                        "status": "ordinary-undefined-reference", "symbol": reviewed["candidate_symbol"]}
+        require(strict_equal(observation, [expected]), "reviewed C++ linkage reference spelling differs")
+    require(set(providers) == set(reviewed["reference_linkages"]), "reviewed oracle provider inventory roster differs")
+    c_providers = {}
+    for form, rows in providers.items():
+        require(isinstance(rows, Sequence) and not isinstance(rows, (str, bytes)) and bool(rows),
+                "reviewed oracle provider inventory is absent")
+        require(not any(row.get("name") == reviewed["reference_symbol"] and row.get("section_index") != "UND"
+                        for row in rows), "reviewed oracle C++ declaration unexpectedly has a provider")
+        c_rows = [dict(row) for row in rows if row.get("name") == reviewed["candidate_symbol"]
+                  and row.get("section_index") != "UND"]
+        require(len(c_rows) == 1 and c_rows[0].get("binding") in {"GLOBAL", "WEAK"}
+                and c_rows[0].get("visibility") == "DEFAULT" and c_rows[0].get("type") == "FUNC",
+                "reviewed oracle C provider differs")
+        c_providers[form] = c_rows[0]
+    return {**copy.deepcopy(reviewed), "reference_job_indices": reference_indices, "c_providers": c_providers}
+
+
+def physical_reference_join(path: Path, symbol_text: str, section_text: str, *, static: bool) -> dict[str, Any]:
+    """Join the probe holder to a provider address or its physical dynamic relocation."""
+    tables = abi_inventory.parse_elf_symbol_tables(symbol_text)
+    symtabs = [table for table in tables if table["name"] == ".symtab"]
+    require(len(symtabs) == 1, "linked declaration probe symbol table differs")
+    holders = [row for row in symtabs[0]["rows"] if row["name"] == "crabc_native_declaration_abi_reference_0"]
+    require(len(holders) == 1 and holders[0]["type"] == "OBJECT" and holders[0]["binding"] == "LOCAL"
+            and holders[0]["visibility"] == "DEFAULT" and holders[0]["size_bytes"] == 8,
+            "linked declaration probe holder differs")
+    holder = holders[0]
+    sections = abi_inventory.parse_elf_sections(section_text)["sections"]
+    selected = [row for row in sections if str(row["index"]) == holder["section_index"]]
+    require(len(selected) == 1 and selected[0]["type"] == "PROGBITS", "linked probe holder section differs")
+    data = _physical_path(path, "linked declaration probe", directory=False).read_bytes()
+    require(data[:7] == b"\x7fELF\x02\x01\x01" and len(data) >= 64 and struct.unpack_from("<H", data, 18)[0] == 62,
+            "linked declaration probe ELF differs")
+    address = int(holder["value"], 16)
+    section = selected[0]
+    displacement = address - int(section["address"], 16)
+    require(0 <= displacement <= int(section["size"], 16) - 8, "linked probe holder escapes its section")
+    offset = int(section["offset"], 16) + displacement
+    require(0 <= offset <= len(data) - 8, "linked probe holder escapes physical bytes")
+    pointer = struct.unpack_from("<Q", data, offset)[0]
+    relocations = []
+    for row in sections:
+        if row["type"] != "RELA":
+            continue
+        start, size = int(row["offset"], 16), int(row["size"], 16)
+        require(int(row["entry_size"], 16) == 24 and size % 24 == 0 and 0 <= start <= len(data) - size,
+                "linked probe relocation section differs")
+        for position in range(start, start + size, 24):
+            target, info, addend = struct.unpack_from("<QQq", data, position)
+            if target == address:
+                relocations.append({"type": info & 0xffffffff, "symbol_index": info >> 32,
+                                    "addend": addend, "symbol_table": row["link"]})
+    name = REVIEWED_CPP_LINKAGE_BOUNDARY["candidate_symbol"]
+    if static:
+        providers = [row for row in symtabs[0]["rows"] if row["name"] == name and row["section_index"] != "UND"]
+        require(len(providers) == 1 and providers[0]["type"] == "FUNC" and providers[0]["size_bytes"] > 0
+                and providers[0]["binding"] in {"GLOBAL", "WEAK"}, "linked static C provider differs")
+        provider = int(providers[0]["value"], 16)
+        if relocations:
+            require(relocations == [{"type": 8, "symbol_index": 0, "addend": provider,
+                                     "symbol_table": relocations[0]["symbol_table"]}],
+                    "linked static PIE pointer does not join its provider")
+            require(pointer in {0, provider}, "linked static PIE pointer bytes differ")
+        else:
+            require(pointer == provider, "linked static pointer does not join its provider")
+        return {"holder_address": address, "symbol": name, "provider_address": provider,
+                "kind": "static-provider-address", "relocations": relocations}
+    require(len(relocations) == 1 and relocations[0]["type"] == 1 and relocations[0]["addend"] == 0,
+            "linked dynamic pointer relocation differs")
+    relocation = relocations[0]
+    dynsections = [row for row in sections if row["index"] == relocation["symbol_table"]]
+    dynsym = [table for table in tables if table["name"] == ".dynsym"]
+    require(len(dynsections) == len(dynsym) == 1 and dynsections[0]["type"] == "DYNSYM",
+            "linked dynamic pointer symbol table differs")
+    imported = [row for row in dynsym[0]["rows"] if row["row_index"] == relocation["symbol_index"]]
+    require(len(imported) == 1 and imported[0]["name"] == name and imported[0]["section_index"] == "UND"
+            and imported[0]["binding"] == "GLOBAL" and imported[0]["visibility"] == "DEFAULT",
+            "linked dynamic pointer does not join its exact import")
+    return {"holder_address": address, "symbol": name, "kind": "dynamic-provider-reference",
+            "relocations": relocations}
+
+
+def _cpp_linkage_evidence(
+    output: Path, plans: Sequence[Mapping[str, Any]], *, tools: Mapping[str, Any],
+    resource_include: str, static_product: Path, dynamic_product: Path,
+    timeout_seconds: float, retained: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Collect or replay the same finite oracle controls and owned bridge links.
+
+    Replay never executes a driver or inspector. It rehashes the exact supplied
+    products, uses the existing owned-link receipt reader, and reconstructs
+    each final pointer join from retained physical ELF bytes.
+    """
+    replay = retained is not None
+    boundary_output = output / "reviewed-cpp-linkage"
+    if not replay:
+        boundary_output.mkdir()
+    _physical_path(boundary_output, "reviewed linkage evidence", directory=True)
+    recorded_output = Path(_collector_output_path(boundary_output))
+    selected = _cpp_boundary_plans(plans)
+    expected_fields = {"classification", "jobs", "links", "oracle_inputs", "products", "raw", "tools"}
+    if replay:
+        retained = _exact_keys(retained, expected_fields, "reviewed linkage evidence")
+    profiles = _profile_records()
+    products = {}
+    for kind, path in (("static", static_product), ("dynamic", dynamic_product)):
+        path = _physical_path(path, f"reviewed {kind} product", directory=True)
+        require(path.is_relative_to(ROOT / ".work"), "reviewed product escapes checkout work root")
+        manifest = path / "share/crabc/manifest.json"
+        products[kind] = {"root": str(SOURCE_MOUNT / path.relative_to(ROOT)),
+                          "manifest": _external_identity(manifest, f"reviewed {kind} product manifest")}
+        products[kind]["manifest"]["path"] = str(SOURCE_MOUNT / manifest.relative_to(ROOT))
+        require(declaration_inventory.abi_matrix.header_tree_digest(path / "usr/include")
+                == declaration_inventory.abi_matrix.header_tree_digest(ROOT / "include"),
+                f"reviewed {kind} installed header tree differs")
+    if replay:
+        require(strict_equal(retained["products"], products), "reviewed supplied product identity differs")
+
+    def command(directory: Path, label: str, argv: list[str], previous: object = None) -> dict[str, Any]:
+        relative = directory.relative_to(boundary_output)
+        recorded_directory = recorded_output / relative
+        environment = {"LANG": "C", "LC_ALL": "C", "PATH": "/usr/bin:/bin",
+                       "TMPDIR": str(recorded_directory), "TZ": "UTC"}
+        if replay:
+            result = _validate_command_record(boundary_output, previous, expected_argv=argv,
+                                             expected_cwd=str(recorded_directory),
+                                             expected_environment=environment, label=label)
+            _require_command_artifact_paths(result, relative, label)
+            return result
+        return _capture_command(boundary_output, directory, label, argv, cwd=directory,
+                                environment=environment, timeout_seconds=timeout_seconds)
+
+    tool_directory = boundary_output / "tools"
+    if not replay:
+        tool_directory.mkdir()
+    extra_tools = {}
+    for requested in ("ar", "ld"):
+        if replay:
+            item = _exact_keys(retained["tools"].get(requested), {"identity", "version"}, f"reviewed {requested} tool")
+            identity = _validate_tool_identity(item["identity"], f"reviewed {requested} identity", retained=True)
+            descriptor = _validate_artifact_descriptor(boundary_output, identity["retained"], f"reviewed {requested} bytes")
+            require(descriptor["path"] == f"tools/{requested}" and all(identity[key] == descriptor[key]
+                    for key in ("mode", "sha256", "size")), "reviewed tool byte seal differs")
+        else:
+            executable = shutil.which(requested, path="/usr/bin:/bin")
+            require(executable is not None, f"reviewed {requested} tool is unavailable")
+            identity = _retain_tool_identity(boundary_output, Path(executable).resolve(), tool_directory / requested,
+                                             f"reviewed {requested} tool")
+        version = command(tool_directory, requested + "-version", [identity["path"], "--version"],
+                          retained["tools"][requested]["version"] if replay else None)
+        require(version["returncode"] == 0, "reviewed linker tool version query failed")
+        extra_tools[requested] = {"identity": identity, "version": version}
+
+    oracle_inputs = {}
+    input_directory = boundary_output / "inputs"
+    if not replay:
+        input_directory.mkdir()
+    for key, source in (("static", "/opt/musl-1.2.6/lib/libc.a"),
+                        ("shared", "/opt/musl-1.2.6/lib/libc.so"),
+                        ("marker", "/opt/musl-1.2.6/.crabc-oracle")):
+        destination = input_directory / key
+        if replay:
+            item = _exact_keys(retained["oracle_inputs"].get(key), {"source", "retained"}, "reviewed oracle input")
+            require(item["source"] == source, "reviewed oracle input source differs")
+            descriptor = _validate_artifact_descriptor(boundary_output, item["retained"], "reviewed oracle bytes")
+            require(descriptor["path"] == f"inputs/{key}", "reviewed oracle retained path differs")
+        else:
+            _physical_path(Path(source), "pinned oracle input", directory=False)
+            shutil.copy2(source, destination, follow_symlinks=False)
+            descriptor = _artifact_identity(boundary_output, destination, "reviewed oracle bytes")
+        oracle_inputs[key] = {"source": source, "retained": descriptor}
+    callable_inventory.require_pinned_musl_marker_text(_decode_raw_text(input_directory / "marker", "reviewed oracle marker"))
+    readelf = tools["readelf"]["identity"]["path"]
+    raw = {}
+    inventory_commands = {
+        "archive-members": [extra_tools["ar"]["identity"]["path"], "t", str(recorded_output / "inputs/static")],
+        "archive-symbols": [readelf, "-sW", str(recorded_output / "inputs/static")],
+        "shared-symbols": [readelf, "--dyn-syms", "--wide", str(recorded_output / "inputs/shared")],
+        "candidate-shared-symbols": [readelf, "--dyn-syms", "--wide", products["dynamic"]["root"] + "/usr/lib/libc.so"],
+    }
+    for label, argv in inventory_commands.items():
+        raw[label] = command(input_directory, label, argv, retained["raw"].get(label) if replay else None)
+        require(raw[label]["returncode"] == 0, "reviewed oracle provider inspection failed")
+    def stdout(record: Mapping[str, Any]) -> str:
+        return _decode_raw_text(boundary_output / record["stdout"]["path"], "reviewed raw output")
+    members = abi_inventory.parse_archive_members(stdout(raw["archive-members"]))
+    blocks = abi_inventory._archive_fact_blocks(stdout(raw["archive-symbols"]), members, str(recorded_output / "inputs/static"))
+    providers = {"static": [row for block in blocks for table in abi_inventory.parse_elf_symbol_tables(block)
+                            for row in table["rows"]],
+                 "shared": abi_inventory.parse_dynamic_symbol_rows(stdout(raw["shared-symbols"]))}
+    if replay:
+        require(isinstance(retained["jobs"], list) and len(retained["jobs"]) == len(selected),
+                "reviewed linkage probe job roster differs")
+        jobs = [_validate_job(boundary_output, recorded_output, item, plan, index, tools=tools,
+                              profiles=profiles, resource_include=resource_include, executable_probe=True)
+                for index, (item, plan) in enumerate(zip(retained["jobs"], selected, strict=True))]
+    else:
+        jobs = [_collect_one_object_job(boundary_output, index, plan, tools=tools, profiles=profiles,
+                                        resource_include=Path(resource_include), timeout_seconds=timeout_seconds,
+                                        executable_probe=True) for index, plan in enumerate(selected)]
+    classification = reviewed_cpp_linkage_boundary(selected, jobs, providers)
+    candidate_providers = [row for row in abi_inventory.parse_dynamic_symbol_rows(stdout(raw["candidate-shared-symbols"]))
+                           if row["name"] == classification["candidate_symbol"] and row["section_index"] != "UND"]
+    require(len(candidate_providers) == 1 and candidate_providers[0]["type"] == "FUNC"
+            and candidate_providers[0]["binding"] in {"GLOBAL", "WEAK"}
+            and candidate_providers[0]["visibility"] == "DEFAULT" and candidate_providers[0]["size_bytes"] > 0,
+            "reviewed owned shared C bridge provider differs")
+    classification["candidate_shared_provider"] = candidate_providers[0]
+    if replay:
+        require(strict_equal(retained["classification"], classification), "reviewed oracle disposition differs")
+    links = []
+    previous_links = iter(retained["links"] if replay else [])
+    lld_identity = None
+    for index, (plan, job) in enumerate(zip(selected, jobs, strict=True)):
+        candidate = plan["tree"] == "candidate"
+        forms = REVIEWED_CPP_LINKAGE_BOUNDARY["candidate_linkages" if candidate else "reference_linkages"]
+        for form in forms:
+            directory = boundary_output / "links" / plan["tree"] / plan["profile"] / form
+            if not replay:
+                directory.mkdir(parents=True)
+            recorded_directory = recorded_output / directory.relative_to(boundary_output)
+            executable = directory / "probe"
+            object_path = boundary_output / job["object"]["path"]
+            recorded_object = str(recorded_output / job["object"]["path"])
+            recorded_executable = str(recorded_directory / "probe")
+            negative = not candidate and plan["profile"] in REVIEWED_CPP_LINKAGE_BOUNDARY["profiles"]
+            previous = next(previous_links, None) if replay else None
+            if replay:
+                previous = _exact_keys(previous, {"job_index", "linkage", "command", "output", "receipt", "join", "inspection"},
+                                       "reviewed linkage control")
+                require(previous["job_index"] == index and previous["linkage"] == form,
+                        "reviewed linkage control identity differs")
+            if candidate:
+                product = static_product if form.startswith("static") else dynamic_product
+                product = _physical_path(product, "reviewed link product", directory=True)
+                driver = product / "bin" / ("crabc-cc" if form.startswith("static") else "crabc-cc-dynamic")
+                argv = [str(SOURCE_MOUNT / driver.relative_to(ROOT)), ("-" if form.startswith("static") else "--") + form]
+                if form.startswith("static"):
+                    argv.extend(["--link-receipt", "probe.receipt.json"])
+                argv.extend([recorded_object, "-o", recorded_executable])
+                receipt = directory / ("probe.receipt.json" if form.startswith("static") else "probe.crabc-link.json")
+            else:
+                argv = [extra_tools["ld"]["identity"]["path"], "--no-demangle", "--no-undefined", "-e", "main"]
+                if form == "static":
+                    argv.append("-static")
+                argv.extend([recorded_object, str(recorded_output / "inputs" / form), "-o", recorded_executable])
+            linked = command(directory, "link", argv, previous["command"] if replay else None)
+            record = {"job_index": index, "linkage": form, "command": linked,
+                      "output": None, "receipt": None, "join": None, "inspection": None}
+            if negative:
+                diagnostic = _decode_raw_text(boundary_output / linked["stderr"]["path"], "reviewed negative link diagnostic")
+                targets = re.findall(r"undefined reference to [`']([^']+)'", diagnostic)
+                require(linked["returncode"] == 1 and targets and set(targets) == {classification["reference_symbol"]}
+                        and not executable.exists(), "reviewed oracle C++ negative link did not fail for its exact missing provider")
+            else:
+                require(linked["returncode"] == 0, "reviewed C bridge ordinary link failed")
+                record["output"] = (_validate_artifact_descriptor(boundary_output, previous["output"], "reviewed linked output")
+                                    if replay else _artifact_identity(boundary_output, executable, "reviewed linked output"))
+                require(record["output"]["path"] == executable.relative_to(boundary_output).as_posix(),
+                        "reviewed linked output path differs")
+                inspection = {}
+                for label, flags in (("symbols", ["-sW"]), ("sections", ["-SW"])):
+                    inspection[label] = command(directory, label, [readelf, *flags, recorded_executable],
+                                                 previous["inspection"][label] if replay else None)
+                    require(inspection[label]["returncode"] == 0, "reviewed linked output inspection failed")
+                record["inspection"] = inspection
+                record["join"] = physical_reference_join(executable, stdout(inspection["symbols"]),
+                                                          stdout(inspection["sections"]), static=form.startswith("static"))
+                if candidate:
+                    receipt_record = read_json_object(receipt, "reviewed owned link receipt")
+                    resolved_linker = receipt_record["resolved_linker"]
+                    if lld_identity is None:
+                        if replay:
+                            lld_identity = _validate_tool_identity(retained["tools"]["lld"], "reviewed owned linker", retained=True)
+                            sealed = _validate_artifact_descriptor(boundary_output, lld_identity["retained"], "reviewed owned linker bytes")
+                            require(sealed["path"] == "tools/lld" and all(lld_identity[key] == sealed[key]
+                                    for key in ("mode", "sha256", "size")), "reviewed owned linker byte seal differs")
+                        else:
+                            lld_identity = _retain_tool_identity(boundary_output, Path(resolved_linker["path"]),
+                                                               tool_directory / "lld", "reviewed owned linker")
+                    linker_seal = {key: lld_identity[key] for key in ("path", "sha256")}
+                    require(resolved_linker == linker_seal, "reviewed owned linker changed between links")
+                    if not replay:
+                        product_evidence.validate_link(product, object_path, executable, receipt, form)
+                    joined_receipt = product_evidence.validate_retained_link(ROOT, str(SOURCE_MOUNT), product, object_path,
+                                                                             executable, receipt, form, linker_seal)
+                    joined_receipt["product"] = products["static" if form.startswith("static") else "dynamic"]["root"]
+                    record["receipt"] = joined_receipt
+            if replay:
+                require(strict_equal(record, previous), "reviewed physical linkage control differs")
+            links.append(record)
+    if replay:
+        require(next(previous_links, None) is None, "reviewed linkage control roster has extra rows")
+        require(set(retained["tools"]) == {"ar", "ld", "lld"} and set(retained["raw"]) == set(raw)
+                and set(retained["oracle_inputs"]) == set(oracle_inputs), "reviewed linkage input roster differs")
+    extra_tools["lld"] = lld_identity
+    return {"classification": classification, "jobs": jobs, "links": links, "oracle_inputs": oracle_inputs,
+            "products": products, "raw": raw, "tools": extra_tools}
 
 
 def _report_status() -> dict[str, bool]:
@@ -2018,6 +2385,7 @@ def build_report(
     plans: Sequence[Mapping[str, Any]],
     record_layout_projection: Mapping[str, Any],
     jobs: Sequence[Mapping[str, Any]],
+    reviewed_cpp_linkage_boundary: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     require(len(plans) == len(jobs) and bool(plans), "ordinary declaration plan/job roster differs")
     for ordinal, (plan, job) in enumerate(zip(plans, jobs, strict=True)):
@@ -2038,6 +2406,7 @@ def build_report(
         "jobs": copy.deepcopy(list(jobs)),
         "oracle": ORACLE,
         "record_layout_projection": copy.deepcopy(dict(record_layout_projection)),
+        "reviewed_cpp_linkage_boundary": copy.deepcopy(reviewed_cpp_linkage_boundary),
         "schema": SCHEMA,
         "status": _report_status(),
         "summary": summary,
@@ -2051,6 +2420,8 @@ def collect_report(
     header_report: Path,
     workers: int = DEFAULT_WORKERS,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    static_product: Path | None = None,
+    dynamic_product: Path | None = None,
 ) -> dict[str, Any]:
     """Collect one fresh finite object/linkage report in the pinned image."""
     output = _physical_new_output(output)
@@ -2067,6 +2438,12 @@ def collect_report(
         _account, plans, callable_plan_source, header_tools = derive_callable_plan(header_report)
         layout = _record_layout_projection()
         tools, resource_include = _collection_tools(output, timeout_seconds, header_tools=header_tools)
+        require((static_product is None) == (dynamic_product is None), "both reviewed owned products must be supplied together")
+        reviewed_boundary = None
+        if static_product is not None and dynamic_product is not None:
+            reviewed_boundary = _cpp_linkage_evidence(output, plans, tools=tools, resource_include=str(resource_include),
+                                                       static_product=static_product, dynamic_product=dynamic_product,
+                                                       timeout_seconds=timeout_seconds)
         jobs = _collect_jobs(
             output,
             plans,
@@ -2088,6 +2465,7 @@ def collect_report(
             plans=plans,
             record_layout_projection=layout,
             jobs=jobs,
+            reviewed_cpp_linkage_boundary=reviewed_boundary,
         )
         _write_new_json(output / "report.json", report)
         return report
@@ -2106,6 +2484,7 @@ def _validate_job(
     tools: Mapping[str, Any],
     profiles: Mapping[str, callable_inventory.Profile],
     resource_include: str,
+    executable_probe: bool = False,
 ) -> dict[str, Any]:
     raw = _exact_keys(
         value,
@@ -2132,7 +2511,7 @@ def _validate_job(
     )
     require(source_record["path"] == (Path("raw") / tree / header / profile_name / source_name).as_posix(),
             f"retained ordinary declaration job {ordinal} source path differs")
-    require(_decode_raw_text(output / source_record["path"], f"retained ordinary declaration source {ordinal}") == generated_source(plan),
+    require(_decode_raw_text(output / source_record["path"], f"retained ordinary declaration source {ordinal}") == generated_source(plan, executable_probe=executable_probe),
             f"retained ordinary declaration job {ordinal} source bytes differ")
     object_actual = _validate_artifact_descriptor(output, raw["object"], f"retained ordinary declaration object {ordinal}")
     object_path = object_actual["path"]
@@ -2154,6 +2533,7 @@ def _validate_job(
         Path("/opt/linux-5.10-uapi/include"),
         source_expected,
         object_expected,
+        executable_probe=executable_probe,
     )
     compile = _validate_command_record(
         output,
@@ -2207,6 +2587,8 @@ def validate_report(
     *,
     header_report: Path,
     header_envelope: Mapping[str, Any] | None = None,
+    static_product: Path | None = None,
+    dynamic_product: Path | None = None,
 ) -> dict[str, Any]:
     """Replay a declaration ABI report without invoking a native tool.
 
@@ -2224,6 +2606,7 @@ def validate_report(
     expected_keys = {
         "callable_plan", "callable_plan_source", "execution", "header_declaration_report", "inputs", "jobs",
         "oracle", "record_layout_projection", "schema", "status", "summary", "target",
+        "reviewed_cpp_linkage_boundary",
     }
     require(set(report) == expected_keys, "native declaration ABI report fields differ")
     require(report["schema"] == SCHEMA and report["target"] == TARGET and report["oracle"] == ORACLE,
@@ -2248,6 +2631,15 @@ def validate_report(
     require(isinstance(raw_jobs, list) and len(raw_jobs) == len(plans), "retained ordinary declaration job roster differs")
     profiles = _profile_records()
     resource_path = tools["clang"]["resource_include"]["path"]
+    require((static_product is None) == (dynamic_product is None), "both reviewed owned products must be supplied together")
+    boundary = report["reviewed_cpp_linkage_boundary"]
+    if boundary is not None:
+        require(static_product is not None and dynamic_product is not None,
+                "reviewed linkage replay requires both exact supplied owned products")
+        rebuilt_boundary = _cpp_linkage_evidence(output, plans, tools=tools, resource_include=resource_path,
+                                                 static_product=static_product, dynamic_product=dynamic_product,
+                                                 timeout_seconds=execution["timeout_seconds"], retained=boundary)
+        require(strict_equal(boundary, rebuilt_boundary), "retained reviewed linkage boundary differs")
     jobs = [
         _validate_job(
             output,
@@ -2291,7 +2683,7 @@ def validation_result(report_path: Path, replayed: Mapping[str, Any]) -> dict[st
 
 def _parse_cli(arguments: Sequence[str] | None) -> argparse.Namespace:
     raw_arguments = list(sys.argv[1:] if arguments is None else arguments)
-    for option in ("--header-report", "--output", "--workers", "--timeout-seconds"):
+    for option in ("--header-report", "--output", "--workers", "--timeout-seconds", "--static-product", "--dynamic-product"):
         appearances = sum(argument == option or argument.startswith(option + "=") for argument in raw_arguments)
         require(appearances <= 1, f"{option} is repeated")
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
@@ -2302,7 +2694,11 @@ def _parse_cli(arguments: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--output", type=Path, help="fresh output below .work/x86_64/native-declaration-abi")
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help=f"bounded compiler workers (1 through {MAX_WORKERS})")
     parser.add_argument("--timeout-seconds", type=float, default=DEFAULT_TIMEOUT_SECONDS, help="finite per-command timeout")
+    parser.add_argument("--static-product", type=Path, help="exact owned static product for reviewed C/C++ bridge controls")
+    parser.add_argument("--dynamic-product", type=Path, help="exact owned dynamic product for reviewed C/C++ bridge controls")
     parsed = parser.parse_args(raw_arguments)
+    require((parsed.static_product is None) == (parsed.dynamic_product is None),
+            "both reviewed owned products must be supplied together")
     if parsed.collect:
         require(parsed.output is not None, "--collect requires --output")
     else:
@@ -2320,10 +2716,13 @@ def main(arguments: Sequence[str] | None = None) -> int:
             header_report=parsed.header_report,
             workers=parsed.workers,
             timeout_seconds=parsed.timeout_seconds,
+            static_product=parsed.static_product,
+            dynamic_product=parsed.dynamic_product,
         )
         sys.stdout.write(json.dumps({"report": _artifact_identity(Path(parsed.output), Path(parsed.output) / "report.json", "native declaration ABI report")}, sort_keys=True) + "\n")
         return 0
-    replayed = validate_report(parsed.validate_report, header_report=parsed.header_report)
+    replayed = validate_report(parsed.validate_report, header_report=parsed.header_report,
+                              static_product=parsed.static_product, dynamic_product=parsed.dynamic_product)
     sys.stdout.write(json.dumps(validation_result(parsed.validate_report, replayed), sort_keys=True) + "\n")
     return 0
 

@@ -8,6 +8,7 @@ import importlib.util
 import json
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -60,6 +61,115 @@ def group(
 
 
 class NativeDeclarationAbiTests(unittest.TestCase):
+    def test_physical_c_bridge_links_and_pinned_cpp_reference_fails_without_a_provider(self):
+        compiler, linker, readelf, archiver = (shutil.which(name) for name in ("clang", "ld", "readelf", "ar"))
+        if any(tool is None for tool in (compiler, linker, readelf, archiver)):
+            self.skipTest("native compiler, linker, archive and ELF readers are required")
+        scratch = ROOT / ".work" / "x86_64" / "native-declaration-abi-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            reference_headers = work / "reference" / "sys"
+            reference_headers.mkdir(parents=True)
+            (reference_headers / "membarrier.h").write_text("int membarrier(int, int);\n", encoding="ascii")
+            provider = work / "provider.o"
+            subprocess.run([compiler, "-x", "c", "-fPIC", "-c", "-o", str(provider), "-"],
+                           input="int membarrier(int command, int flags) { return command + flags; }\n",
+                           text=True, capture_output=True, check=True)
+            archive = work / "libc.a"
+            shared = work / "libc.so"
+            subprocess.run([archiver, "rcs", str(archive), str(provider)], capture_output=True, check=True)
+            subprocess.run([linker, "-shared", str(provider), "-o", str(shared)], capture_output=True, check=True)
+            for tree in ("candidate", "reference"):
+                for profile in ("c11-gnu", "c11-strict", "cxx17-gnu", "cxx17-strict"):
+                    with self.subTest(tree=tree, profile=profile):
+                        item = group(name="membarrier", profile=profile)
+                        item["input_header"] = "sys/membarrier.h"
+                        plan = next(row for row in ABI.linkage_jobs_from_callable_account({"groups": [item]})
+                                    if row["tree"] == tree)
+                        source = work / (tree + "-" + profile + ".c")
+                        source.write_text(ABI.generated_source(plan, executable_probe=True), encoding="ascii")
+                        probe = source.with_suffix(".o")
+                        cpp = profile.startswith("cxx")
+                        include = ROOT / "include" if tree == "candidate" else work / "reference"
+                        subprocess.run([compiler, "-x", "c++" if cpp else "c", "-std=c++17" if cpp else "-std=c11",
+                                        "-nostdinc", "-I", str(include), "-fPIC", "-fdata-sections", "-c",
+                                        str(source), "-o", str(probe)], capture_output=True, check=True)
+                        symbols = subprocess.run([readelf, "-sW", str(probe)], capture_output=True, text=True, check=True).stdout
+                        relocations = subprocess.run([readelf, "-rW", str(probe)], capture_output=True, text=True, check=True).stdout
+                        observed = ABI.evaluate_object_linkage(plan, ABI.parse_symbol_table(symbols), ABI.parse_relocations(relocations))[0]
+                        negative = tree == "reference" and cpp
+                        self.assertEqual(observed["status"], "ordinary-linkage-identity-mismatch" if negative else "ordinary-undefined-reference")
+                        for form in ("static", "static-pie", "pie", "non-pie"):
+                            output = work / (tree + "-" + profile + "-" + form)
+                            static = form.startswith("static")
+                            command = [linker, "--no-demangle", "--no-undefined", "-e", "main"]
+                            if form in ("static-pie", "pie"):
+                                command.append("-pie")
+                            if static:
+                                command.append("--no-dynamic-linker")
+                            command.extend([str(probe), str(archive if static else shared), "-o", str(output)])
+                            linked = subprocess.run(command, capture_output=True, text=True, check=False)
+                            if negative:
+                                self.assertNotEqual(linked.returncode, 0)
+                                self.assertIn("_Z10membarrierii", linked.stderr)
+                                continue
+                            self.assertEqual(linked.returncode, 0, linked.stderr)
+                            symbols = subprocess.run([readelf, "-sW", str(output)], capture_output=True, text=True, check=True).stdout
+                            sections = subprocess.run([readelf, "-SW", str(output)], capture_output=True, text=True, check=True).stdout
+                            joined = ABI.physical_reference_join(output, symbols, sections, static=static)
+                            self.assertEqual(joined["symbol"], "membarrier")
+                            self.assertEqual(joined["kind"], "static-provider-address" if static else "dynamic-provider-reference")
+                            if form == "static":
+                                table = ABI.abi_inventory.parse_elf_symbol_tables(symbols)[0]
+                                holder = next(row for row in table["rows"] if row["name"] == "crabc_native_declaration_abi_reference_0")
+                                section = next(row for row in ABI.abi_inventory.parse_elf_sections(sections)["sections"]
+                                               if str(row["index"]) == holder["section_index"])
+                                position = int(section["offset"], 16) + int(holder["value"], 16) - int(section["address"], 16)
+                                altered = bytearray(output.read_bytes())
+                                struct.pack_into("<Q", altered, position, joined["provider_address"] + 1)
+                                output.write_bytes(altered)
+                                with self.assertRaisesRegex(ABI.NativeDeclarationAbiError, "pointer"):
+                                    ABI.physical_reference_join(output, symbols, sections, static=True)
+
+    def test_reviewed_cpp_boundary_keeps_the_reference_symbol_and_requires_no_provider(self):
+        reviewed = ABI.callable_declarations.REVIEWED_CPP_LINKAGE_DIFFERENCE
+        plans = []
+        jobs = []
+        for tree in ("candidate", "reference"):
+            for profile in ("c11-gnu", "c11-strict", "cxx17-gnu", "cxx17-strict"):
+                cpp_reference = tree == "reference" and profile.startswith("cxx")
+                item = group(name="membarrier", profile=profile)
+                item["input_header"] = reviewed["header"]
+                plan = next(row for row in ABI.linkage_jobs_from_callable_account({"groups": [item]})
+                            if row["tree"] == tree)
+                plans.append(plan)
+                observed = ({"category": "reference-backed", "expected_symbol": "membarrier",
+                             "holder": plan["references"][0]["holder"],
+                             "observed_symbol": "_Z10membarrierii", "relocation_type": "R_X86_64_64",
+                             "status": "ordinary-linkage-identity-mismatch"} if cpp_reference else
+                            {"category": "reference-backed", "name": "membarrier",
+                             "status": "ordinary-undefined-reference", "symbol": "membarrier"})
+                jobs.append({**plan, "observations": [observed]})
+        providers = {form: [{"name": "membarrier", "type": "FUNC", "binding": "GLOBAL",
+                             "visibility": "DEFAULT", "section_index": "1"}]
+                     for form in ("static", "shared")}
+        boundary = ABI.reviewed_cpp_linkage_boundary(plans, jobs, providers)
+        self.assertEqual(boundary["disposition"], "oracle-declared-no-provider")
+        self.assertEqual(boundary["reference_symbol"], "_Z10membarrierii")
+        self.assertEqual(boundary["reference_job_indices"], [6, 7])
+        self.assertEqual(jobs[6]["observations"][0]["status"], "ordinary-linkage-identity-mismatch")
+        for form in providers:
+            with self.subTest(form=form):
+                changed = copy.deepcopy(providers)
+                changed[form].append({**changed[form][0], "name": "_Z10membarrierii"})
+                with self.assertRaisesRegex(ABI.NativeDeclarationAbiError, "provider"):
+                    ABI.reviewed_cpp_linkage_boundary(plans, jobs, changed)
+        changed = copy.deepcopy(jobs)
+        changed[6]["observations"][0]["observed_symbol"] = "_Z10membarrieriii"
+        with self.assertRaisesRegex(ABI.NativeDeclarationAbiError, "reference"):
+            ABI.reviewed_cpp_linkage_boundary(plans, changed, providers)
+
     def test_x86_membarrier_c_and_cpp_profiles_emit_the_c_abi_symbol(self):
         clang = shutil.which("clang")
         nm = shutil.which("nm")
