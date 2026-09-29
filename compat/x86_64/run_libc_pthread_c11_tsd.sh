@@ -4,8 +4,9 @@
 # The same project-header fixture first runs against pinned musl 1.2.6, then
 # as a true `-nostdlib -static` executable linked only with the selected crabc
 # archive. It proves a deliberately private 128-key lifecycle: selected main
-# and worker values, deletion clearing, and four clear-before-callback passes
-# on normal, pthread_exit, C11 return, and thrd_exit worker paths. It is not
+# and worker values, deletion clearing, four clear-before-callback passes
+# on normal, pthread_exit, C11 return, and thrd_exit worker paths, plus
+# same-pass and next-pass rearming across mixed pthread/C11 keys. It is not
 # cancellation, foreign threads, main-process-exit destruction, fork/atfork,
 # dynamic or loader TLS, a general pthread/C11 runtime, family completion,
 # CRT, loader, sysroot, or public x86 support.

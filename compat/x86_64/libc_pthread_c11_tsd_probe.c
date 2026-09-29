@@ -4,9 +4,11 @@
  * then through a `-nostdlib -static` candidate linked only with the selected
  * crabc archive. It specifies only a bounded TSD lifecycle: 128-key capacity,
  * current main/selected-worker values, selected worker isolation, deletion
- * clearing, and normal/pthread_exit/thrd-return/thrd_exit four-pass
- * clear-before-rearm destructors. It is not cancellation, main-process-exit
- * destruction, foreign-thread TSD, fork/atfork, dynamic TLS, loader TLS, a
+ * clearing, normal/pthread_exit/thrd-return/thrd_exit four-pass
+ * clear-before-rearm destructors, and a mixed pthread/C11 cross-key chain
+ * that distinguishes current-pass from next-pass rearming. It is not
+ * cancellation, main-process-exit destruction, foreign-thread TSD,
+ * fork/atfork, dynamic TLS, loader TLS, a
  * full pthread/C11 runtime, family completion, or public x86 support.
  */
 
@@ -73,6 +75,55 @@ static volatile int deletion_release;
 static volatile int deleted_key_dtor_calls;
 static volatile int replacement_key_dtor_calls;
 static volatile int deletion_dtor_failure;
+static pthread_key_t cross_posix_key;
+static tss_t cross_c11_key;
+static pthread_key_t cross_low_key;
+static pthread_key_t cross_high_key;
+static int cross_low_is_c11;
+static volatile int cross_dtor_calls;
+static volatile int cross_dtor_failure;
+
+static void *cross_get(pthread_key_t key, int is_c11)
+{
+    return is_c11 ? tss_get((tss_t)key) : pthread_getspecific(key);
+}
+
+static int cross_set(pthread_key_t key, int is_c11, uintptr_t value)
+{
+    if (is_c11)
+        return tss_set((tss_t)key, (void *)value) == thrd_success;
+    return pthread_setspecific(key, (void *)value) == 0;
+}
+
+/* The lower slot rearms the higher slot during the current scan. The higher
+ * slot rearms the lower slot for the next scan. Both public APIs share one
+ * key table, so numeric slot order determines the exact callback sequence. */
+static void cross_destructor(void *value, int is_low)
+{
+    int call = __atomic_fetch_add(&cross_dtor_calls, 1, __ATOMIC_RELAXED);
+    pthread_key_t current = is_low ? cross_low_key : cross_high_key;
+    int current_is_c11 = is_low ? cross_low_is_c11 : !cross_low_is_c11;
+    pthread_key_t next = is_low ? cross_high_key : cross_low_key;
+    int next_is_c11 = !current_is_c11;
+
+    if ((call & 1) != (is_low ? 0 : 1) ||
+        (uintptr_t)value != (uintptr_t)(call + 1) ||
+        cross_get(current, current_is_c11) != 0 || errno != EACCES)
+        __atomic_store_n(&cross_dtor_failure, 1, __ATOMIC_RELAXED);
+    if (!cross_set(next, next_is_c11, (uintptr_t)(call + 2)) ||
+        errno != EACCES)
+        __atomic_store_n(&cross_dtor_failure, 2, __ATOMIC_RELAXED);
+}
+
+static void cross_posix_destructor(void *value)
+{
+    cross_destructor(value, cross_posix_key == cross_low_key);
+}
+
+static void cross_c11_destructor(void *value)
+{
+    cross_destructor(value, cross_c11_key == cross_low_key);
+}
 
 static void reset_pthread_dtor_observation(void)
 {
@@ -197,6 +248,22 @@ static void *deletion_worker(void *opaque)
         return (void *)(uintptr_t)2;
     if (pthread_setspecific(replacement_key,
         (void *)(uintptr_t)WORKER_VALUE) != 0)
+        return (void *)(uintptr_t)3;
+    if (errno != EACCES)
+        return (void *)(uintptr_t)4;
+    return 0;
+}
+
+static void *cross_worker(void *opaque)
+{
+    (void)opaque;
+    if (errno != 0)
+        return (void *)(uintptr_t)1;
+    errno = EACCES;
+    if (cross_get(cross_low_key, cross_low_is_c11) != 0 ||
+        cross_get(cross_high_key, !cross_low_is_c11) != 0)
+        return (void *)(uintptr_t)2;
+    if (!cross_set(cross_low_key, cross_low_is_c11, 1))
         return (void *)(uintptr_t)3;
     if (errno != EACCES)
         return (void *)(uintptr_t)4;
@@ -392,6 +459,45 @@ static int run_capacity_round(void)
     return 0;
 }
 
+static int run_cross_key_round(void)
+{
+    pthread_t worker;
+    void *result;
+    int round;
+
+    errno = E2BIG;
+    if (pthread_key_create(&cross_posix_key, cross_posix_destructor) != 0)
+        return 1;
+    if (tss_create(&cross_c11_key, cross_c11_destructor) != thrd_success)
+        return 2;
+    cross_low_is_c11 = cross_c11_key < cross_posix_key;
+    cross_low_key = cross_low_is_c11 ? cross_c11_key : cross_posix_key;
+    cross_high_key = cross_low_is_c11 ? cross_posix_key : cross_c11_key;
+    for (round = 0; round != 2; ++round) {
+        __atomic_store_n(&cross_dtor_calls, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&cross_dtor_failure, 0, __ATOMIC_RELAXED);
+        result = (void *)(uintptr_t)9;
+        if (pthread_create(&worker, 0, cross_worker, 0) != 0)
+            return 3;
+        if (pthread_join(worker, &result) != 0)
+            return 4;
+        if (result != 0 ||
+            __atomic_load_n(&cross_dtor_calls, __ATOMIC_RELAXED) !=
+                2 * PTHREAD_DESTRUCTOR_ITERATIONS ||
+            __atomic_load_n(&cross_dtor_failure, __ATOMIC_RELAXED) != 0)
+            return 5;
+        if (cross_get(cross_low_key, cross_low_is_c11) != 0 ||
+            cross_get(cross_high_key, !cross_low_is_c11) != 0)
+            return 6;
+    }
+    if (pthread_key_delete(cross_posix_key) != 0)
+        return 7;
+    tss_delete(cross_c11_key);
+    if (errno != E2BIG)
+        return 8;
+    return 0;
+}
+
 static int run_pthread_c11_tsd(void)
 {
     int status;
@@ -423,6 +529,8 @@ static int run_pthread_c11_tsd(void)
         return 96 + status;
     if ((status = run_capacity_round()) != 0)
         return 112 + status;
+    if ((status = run_cross_key_round()) != 0)
+        return 128 + status;
     if (errno != E2BIG)
         return 127;
     return 0;
