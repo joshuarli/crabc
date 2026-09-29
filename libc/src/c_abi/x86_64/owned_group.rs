@@ -1,9 +1,9 @@
 //! Conventional local `/etc/group` C ABI for the owned Linux/x86-64 runtime.
 //!
 //! Source map and provenance: pinned musl 1.2.6 release commit
-//! `9fa28ece75d8a2191de7c5bb53bed224c5947417` (MIT; `COPYRIGHT` and
-//! `compat/upstreams.toml`) maps `src/passwd/{getgrent_a,getgr_a,getgr_r,
-//! getgrent,fgetgrent,getgrouplist,putgrent}.c` and
+//! `9fa28ece75d8a2191de7c5bb53bed224c5947417` (MIT) maps
+//! `src/passwd/{getgrent_a,getgr_a,getgr_r,getgrent,fgetgrent,
+//! getgrouplist,putgrent}.c` and
 //! `src/misc/initgroups.c` to this module. `getgrent_a` supplies the byte
 //! parser, getline allocation, cancellation interval, member-vector layout,
 //! and shared-result lifetime. `getgr_a` and `getgrouplist` contain musl's
@@ -253,7 +253,12 @@ unsafe fn next_record(
                     scan = scan.add(1);
                     index += 1;
                     *(*members).add(index) = scan;
-                    continue;
+                    // The source loop also advances after recording a member.
+                    // Adjacent commas therefore leave the second comma in the
+                    // member text and may use fewer slots than were reserved.
+                    if *scan == 0 {
+                        break;
+                    }
                 }
                 scan = scan.add(1);
             }
@@ -367,11 +372,13 @@ unsafe fn lookup_reentrant(
             (*record).gr_mem = member_output;
             (*record).gr_name = line_output.add((*record).gr_name.offset_from(line) as usize);
             (*record).gr_passwd = line_output.add((*record).gr_passwd.offset_from(line) as usize);
-            for index in 0..member_count {
+            let mut index = 0;
+            while !(*members.add(index)).is_null() {
                 *member_output.add(index) =
                     line_output.add((*members.add(index)).offset_from(line) as usize);
+                index += 1;
             }
-            *member_output.add(member_count) = ptr::null_mut();
+            *member_output.add(index) = ptr::null_mut();
         }
 
         free(members.cast());

@@ -37,7 +37,7 @@ chmod a+rx "$work"
 printf 'owned group evidence: %s\n' "$work"
 
 readonly cases=(
-    lookup ranges enumeration stream output memberships memberships-missing
+    lookup duplicate-cursor ranges enumeration stream output memberships memberships-missing
     memberships-not-directory initgroups missing directory not-directory
     read-error open-error local-only
     threads fork cancellation allocation

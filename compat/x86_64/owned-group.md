@@ -43,8 +43,11 @@ fields become zero; unsigned decimal gid accumulation wraps at 32 bits; signs
 and spaces stop numeric parsing. No UTF-8 validation, comment convention,
 delimiter escaping, or whole-file snapshot policy is added. The source removes
 the final byte returned by `getline`, so an unterminated final record loses its
-last byte; CRLF leaves the carriage return in the final member. Member vectors
-preserve empty members and source order.
+last byte; CRLF leaves the carriage return in the final member. Its member
+split loop advances once after each comma: adjacent commas leave the second
+comma in the following member, while a trailing comma yields an empty member.
+The allocation and reentrant buffer size still count every comma, including
+those that the split loop skips.
 
 The reentrant lookups own their FILE, line, and member-vector allocation state.
 They preserve musl's ERANGE calculation: the caller needs the whole current
@@ -89,7 +92,8 @@ synthetic writable `/etc/group`; it never reads host account data. The optional
 product argument supports the `group` dynamic-qualification case for each
 installed product.
 
-The matrix checks byte parsing, duplicate first-match lookup, raw bytes, CRLF,
+The matrix checks byte parsing, duplicate first-match lookup by name and gid,
+adjacent-comma member splitting, raw bytes, CRLF,
 unterminated records, exact ERANGE capacity, static record/weak-alias identity,
 cursor reset and close-on-exec, caller-owned FILE EOF/read errors, literal
 `putgrent` output, group-list ordering and capacity, the source-defined

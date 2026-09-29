@@ -95,6 +95,58 @@ static void lookup(void)
     CHECK(!getgrgid(9999));
 }
 
+static void duplicate_cursor(void)
+{
+    static const char rows[] =
+        "broken:x:bad:member\n"
+        "first:*:20:alpha,,omega\n"
+        "same:x:21:one\n"
+        "same:y:22:two\n"
+        "other:z:20:three\n"
+        "zero:x::empty\n"
+        "signed:x:+23:skip\n"
+        "spaced:x: 24:skip\n"
+        "last:x:25:final";
+    struct group group;
+    struct group *result;
+    struct group *shared;
+    char buffer[512];
+    FILE *stream;
+
+    write_records(rows, sizeof(rows) - 1);
+    CHECK((shared = getgrent()) && !strcmp(shared->gr_name, "first"));
+    CHECK(shared->gr_gid == 20 && !strcmp(shared->gr_mem[0], "alpha"));
+    CHECK(!strcmp(shared->gr_mem[1], ",omega") && !shared->gr_mem[2]);
+
+    errno = EDOM;
+    CHECK(getgrnam_r("same", &group, buffer, sizeof(buffer), &result) == 0);
+    CHECK(result == &group && group.gr_gid == 21 && !strcmp(group.gr_mem[0], "one"));
+    group_in_buffer(&group, buffer, sizeof(buffer));
+    CHECK(errno == EDOM && !strcmp(shared->gr_name, "first"));
+    CHECK(getgrgid_r(20, &group, buffer, sizeof(buffer), &result) == 0);
+    CHECK(result == &group && !strcmp(group.gr_name, "first"));
+    CHECK(!strcmp(group.gr_mem[1], ",omega") && !group.gr_mem[2]);
+    CHECK(getgrgid_r(0, &group, buffer, sizeof(buffer), &result) == 0);
+    CHECK(result == &group && !strcmp(group.gr_name, "zero"));
+    CHECK(getgrent() == shared && !strcmp(shared->gr_name, "same") && shared->gr_gid == 21);
+
+    CHECK(getgrnam("same") == shared && shared->gr_gid == 21);
+    CHECK(getgrent() == shared && !strcmp(shared->gr_name, "same") && shared->gr_gid == 22);
+    CHECK(getgrnam("missing") == 0);
+    CHECK(getgrent() == shared && !strcmp(shared->gr_name, "other") && shared->gr_gid == 20);
+    CHECK(getgrent() == shared && !strcmp(shared->gr_name, "zero") && shared->gr_gid == 0);
+    CHECK(getgrent() == shared && !strcmp(shared->gr_name, "last") && shared->gr_gid == 25);
+    CHECK(!strcmp(shared->gr_mem[0], "fina"));
+    CHECK(!getgrent());
+    endgrent();
+
+    stream = fopen("/etc/group", "r");
+    CHECK(stream);
+    CHECK((shared = fgetgrent(stream)) && !strcmp(shared->gr_name, "first"));
+    CHECK((shared = fgetgrent(stream)) && !strcmp(shared->gr_name, "same"));
+    CHECK(fclose(stream) == 0);
+}
+
 static void ranges(void)
 {
     FILE *stream;
@@ -445,9 +497,16 @@ static void *thread_lookup(void *argument)
     char buffer[4096];
 
     for (unsigned iteration = 0; iteration < 100; iteration++) {
+        errno = EDOM;
         CHECK(getgrnam_r(name, &group, buffer, sizeof(buffer), &result) == 0);
-        CHECK(result && group.gr_gid == expected);
+        CHECK(result == &group && group.gr_gid == expected && errno == EDOM);
         group_in_buffer(&group, buffer, sizeof(buffer));
+        CHECK(getgrgid_r(expected, &group, buffer, sizeof(buffer), &result) == 0);
+        CHECK(result == &group && group.gr_gid == expected && errno == EDOM);
+        memset(buffer, 0x5a, sizeof(buffer));
+        result = (void *)1;
+        CHECK(getgrnam_r("absent", &group, buffer, sizeof(buffer), &result) == 0);
+        CHECK(!result && errno == EDOM && buffer[0] == 0x5a && buffer[sizeof(buffer) - 1] == 0x5a);
     }
     return 0;
 }
@@ -456,11 +515,16 @@ static void threads(void)
 {
     pthread_t first;
     pthread_t second;
+    pthread_t third;
+    pthread_t fourth;
 
     setup();
     CHECK(!pthread_create(&first, 0, thread_lookup, "team"));
     CHECK(!pthread_create(&second, 0, thread_lookup, "empty"));
+    CHECK(!pthread_create(&third, 0, thread_lookup, "empty"));
+    CHECK(!pthread_create(&fourth, 0, thread_lookup, "team"));
     CHECK(!pthread_join(first, 0) && !pthread_join(second, 0));
+    CHECK(!pthread_join(third, 0) && !pthread_join(fourth, 0));
 }
 
 static void fork_cursor(void)
@@ -552,6 +616,8 @@ int main(int argc, char **argv)
     CHECK(argc == 3);
     if (!strcmp(argv[1], "lookup")) {
         lookup();
+    } else if (!strcmp(argv[1], "duplicate-cursor")) {
+        duplicate_cursor();
     } else if (!strcmp(argv[1], "ranges")) {
         ranges();
     } else if (!strcmp(argv[1], "enumeration")) {
