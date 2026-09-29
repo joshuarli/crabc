@@ -1,12 +1,9 @@
 /* Static crabc-libc x86-64 legacy IPv4 textual-network fixture.
  *
- * The same project-header C body first runs against pinned musl 1.2.6, then
- * through a freestanding executable that starts with the directly extracted
- * inet_network object and reaches the existing selected inet_addr parser only
- * through the normal demand-driven crabc archive. The cases retain musl's
- * numeric IPv4 grammar, including abbreviated and base-zero forms, but this
- * leaf is not resolver, DNS, hosts/resolv.conf, netdb, interface, socket, or
- * byte-order-helper behavior.
+ * The same project-header C body runs against pinned musl 1.2.6 and a
+ * freestanding static crabc executable. Each run writes the parsed word and
+ * errno for the same input table. The runner retains and compares both
+ * observations. This leaf selects numeric parsing only.
  */
 
 #ifndef _GNU_SOURCE
@@ -39,28 +36,69 @@ _Static_assert(sizeof(in_addr_t) == 4 && _Alignof(in_addr_t) == 4 &&
 _Static_assert(CRABC_TYPE_IS(__typeof__(&inet_network), inet_network_signature),
     "inet_network declaration");
 
-static int check_network(const char *text, in_addr_t expected)
+static const char *const inputs[] = {
+    "0", "1", "127", "255", "256", "65535", "65536", "16777215",
+    "16777216", "4294967295", "4294967296", "0.0.0.0",
+    "127.18.52.86", "128.18.52.86", "191.171.205.239",
+    "192.18.52.86", "255.255.255.255", "256.0.0.1",
+    "1.2", "1.65535", "1.65536", "1.16777215", "1.16777216",
+    "127.1", "1.2.3", "1.2.65535", "1.2.65536", "1.2.3.4",
+    "1.2.3.255", "1.2.3.256", "1.2.3.4.5", "1..2", ".1",
+    "1.", "1.2.", "1.2.3.", "", " ", " 1", "1 ", "+1", "-1",
+    "0x7f.1", "0177.1", "08.1", "0Xff.0377.0.1",
+    "0x", "0x1g", "01.002.003.004", "0000000000000001",
+    "18446744073709551615", "18446744073709551616",
+    "0.18446744073709551616", "0.0.0.18446744073709551616",
+    "not-an-address", "1x", "1\t", "1\n", "1/2", "1:2",
+    "\200", "1.\200", "1.0x10", "1.010", "1.0",
+};
+
+_Static_assert(sizeof(inputs) / sizeof(inputs[0]) <= 256,
+    "observation index fits two hexadecimal digits");
+
+static char hex_digit(unsigned int value)
 {
-    return inet_network(text) != expected;
+    return "0123456789abcdef"[value & 15U];
+}
+
+static void hex_word(char *out, uint32_t value)
+{
+    unsigned int position;
+    for (position = 0; position < 8; ++position)
+        out[position] = hex_digit(value >> (28 - position * 4));
+}
+
+static int write_record(unsigned int index, in_addr_t value, int error)
+{
+    char record[21];
+    long written;
+
+    record[0] = hex_digit(index >> 4);
+    record[1] = hex_digit(index);
+    record[2] = ' ';
+    hex_word(record + 3, value);
+    record[11] = ' ';
+    hex_word(record + 12, (uint32_t)error);
+    record[20] = '\n';
+    __asm__ volatile("syscall" : "=a"(written)
+        : "a"(1L), "D"(1L), "S"(record), "d"(sizeof(record))
+        : "rcx", "r11", "memory");
+    return written == (long)sizeof(record) ? 0 : 1;
 }
 
 int crabc_x86_64_inet_network_probe(void)
 {
-    if (check_network("0.0.0.0", 0x00000000U)) return 1;
-    if (check_network("127.18.52.86", 0x7f123456U)) return 2;
-    if (check_network("128.18.52.86", 0x80123456U)) return 3;
-    if (check_network("191.171.205.239", 0xbfabcdefU)) return 4;
-    if (check_network("192.18.52.86", 0xc0123456U)) return 5;
-    if (check_network("127.1", 0x7f000001U)) return 6;
-    if (check_network("0177.1", 0x7f000001U)) return 7;
-    if (check_network("255.255.255.255", 0xffffffffU)) return 8;
-    if (check_network("256.0.0.1", 0xffffffffU)) return 9;
-    errno = E2BIG;
-    if (inet_network("18446744073709551616") != 0xffffffffU || errno != ERANGE)
-        return 10;
-    errno = E2BIG;
-    if (inet_network("not-an-address") != 0xffffffffU || errno != EINVAL)
-        return 11;
+    unsigned int index;
+
+    for (index = 0; index < sizeof(inputs) / sizeof(inputs[0]); ++index) {
+        in_addr_t value;
+        int error;
+
+        errno = E2BIG;
+        value = inet_network(inputs[index]);
+        error = errno;
+        if (write_record(index, value, error)) return 1;
+    }
     return 0;
 }
 

@@ -107,8 +107,14 @@ done
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-inet-network.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-inet-network.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-inet-network"
+mkdir -p "$report_dir"
+reference_results="$report_dir/musl-results.txt"
+candidate_results="$report_dir/crabc-results.txt"
+rm -f -- "$reference_results" "$candidate_results"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-inet-network-reference"
 candidate="$work_dir/crabc-static-inet-network-candidate"
@@ -156,7 +162,7 @@ fi
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_inet_network_probe.c \
     -o "$reference"
-if env -i LC_ALL=C TZ=UTC "$reference"; then
+if env -i LC_ALL=C TZ=UTC "$reference" >"$reference_results"; then
     :
 else
     status=$?
@@ -240,11 +246,15 @@ if grep -Eq 'crabc_core|mimalloc|sha_crypt' \
     fail "candidate selects an unowned runtime dependency"
 fi
 
-if env -i LC_ALL=C TZ=UTC "$candidate"; then
+if env -i LC_ALL=C TZ=UTC "$candidate" >"$candidate_results"; then
     :
 else
     status=$?
     fail "freestanding inet_network fixture exited ${status}"
 fi
+if ! cmp -s "$reference_results" "$candidate_results"; then
+    diff -u "$reference_results" "$candidate_results" >&2 || true
+    fail "inet_network return/errno observations differ from pinned musl"
+fi
 
-printf 'x86 static crabc-libc inet_network: PASS\n'
+printf 'x86 static crabc-libc inet_network: PASS (%s)\n' "$report_dir"
