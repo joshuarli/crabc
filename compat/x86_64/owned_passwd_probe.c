@@ -110,6 +110,41 @@ static void *thread_lookup(void *arg) {
     return 0;
 }
 static void threads(void) {setup();pthread_t a,b;CHECK(!pthread_create(&a,0,thread_lookup,(void*)1001));CHECK(!pthread_create(&b,0,thread_lookup,(void*)1002));CHECK(!pthread_join(a,0)&&!pthread_join(b,0));}
+static void database_contract(void) {
+    static const char first[]="same:x:42:7:First:/first:/bin/sh\n";
+    static const char second[]="same:y:43:8:Second:/second:/bin/bash\n";
+    static const char third[]="other:z:42:9:Third:/third:/bin/ash\n";
+    static const char target[]="target:x:99:10:Target:/target:/bin/sh\n";
+    char data[10000]; size_t used=0;
+    memcpy(data+used,first,sizeof first-1);used+=sizeof first-1;
+    memcpy(data+used,second,sizeof second-1);used+=sizeof second-1;
+    memcpy(data+used,third,sizeof third-1);used+=sizeof third-1;
+    memset(data+used,'q',8192);used+=8192;data[used++]='\n';
+    memcpy(data+used,target,sizeof target-1);used+=sizeof target-1;
+    write_records(data,used);
+
+    struct passwd p,*r; char first_storage[256], second_storage[256], long_storage[16384];
+    CHECK(!getpwnam_r("same",&p,first_storage,sizeof first_storage,&r) && r==&p);
+    CHECK(p.pw_uid==42 && !strcmp(p.pw_dir,"/first"));in_buffer(&p,first_storage,sizeof first_storage);
+    const char *first_directory=p.pw_dir;
+    CHECK(!getpwuid_r(43,&p,second_storage,sizeof second_storage,&r) && r==&p);
+    CHECK(!strcmp(p.pw_name,"same") && !strcmp(p.pw_dir,"/second"));
+    CHECK(!strcmp(first_directory,"/first") && !strcmp(first_storage,"same"));
+    CHECK(!getpwuid_r(42,&p,second_storage,sizeof second_storage,&r) && r==&p);
+    CHECK(!strcmp(p.pw_name,"same") && !strcmp(p.pw_gecos,"First"));
+    CHECK(!getpwnam_r("target",&p,long_storage,sizeof long_storage,&r) && r==&p);
+    CHECK(!strcmp(p.pw_dir,"/target"));in_buffer(&p,long_storage,sizeof long_storage);
+    memset(first_storage,0x5a,sizeof first_storage);r=(void*)1;
+    CHECK(getpwnam_r("target",&p,first_storage,sizeof first_storage,&r)==ERANGE && !r);
+    for(size_t i=0;i<sizeof first_storage;i++)CHECK(first_storage[i]==0x5a);
+
+    struct passwd *shared=getpwent();CHECK(shared && !strcmp(shared->pw_name,"same"));
+    CHECK(getpwent()==shared && shared->pw_uid==43);
+    CHECK(getpwnam("target")==shared && shared->pw_uid==99);
+    CHECK(getpwent()==shared && !strcmp(shared->pw_name,"other"));
+    setpwent();CHECK(getpwent()==shared && !strcmp(shared->pw_dir,"/first"));
+    endpwent();
+}
 static void fork_cursor(void) {
     setup();CHECK(getpwent()->pw_uid==1001);pid_t child=fork();CHECK(child>=0);
     if(!child) {CHECK(getpwent()->pw_uid==1002);setpwent();CHECK(getpwent()->pw_uid==1001);endpwent();_exit(0);}
@@ -133,6 +168,6 @@ static void allocation(void) {
 int main(int argc,char **argv) {
     CHECK(argc==3); const char *s=argv[1];
     if(!strcmp(s,"lookup"))lookup();else if(!strcmp(s,"ranges"))ranges();else if(!strcmp(s,"enumeration"))enumeration();else if(!strcmp(s,"stream")){setup();stream();}else if(!strcmp(s,"output")){setup();output();}
-    else if(!strcmp(s,"local-only"))local_only(!strcmp(argv[2],"oracle"));else if(!strcmp(s,"threads"))threads();else if(!strcmp(s,"fork"))fork_cursor();else if(!strcmp(s,"cancellation"))cancellation();else if(!strcmp(s,"allocation"))allocation();else errors(s);
+    else if(!strcmp(s,"local-only"))local_only(!strcmp(argv[2],"oracle"));else if(!strcmp(s,"threads"))threads();else if(!strcmp(s,"database-contract"))database_contract();else if(!strcmp(s,"fork"))fork_cursor();else if(!strcmp(s,"cancellation"))cancellation();else if(!strcmp(s,"allocation"))allocation();else errors(s);
     puts("owned passwd scenario passed");return 0;
 }

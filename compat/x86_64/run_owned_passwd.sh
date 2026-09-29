@@ -22,7 +22,7 @@ chmod a+rx "$work"
 printf 'passwd evidence: %s\n' "$work"
 readonly probe="$ROOT/compat/x86_64/owned_passwd_probe.c"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly cases=(lookup ranges enumeration stream output missing directory not-directory read-error open-error local-only threads fork cancellation allocation)
+readonly cases=(lookup ranges enumeration stream output missing directory not-directory read-error open-error local-only threads database-contract fork cancellation allocation)
 mkdir -p "$work/execution-root/etc"
 # Preserve the complete installed provider roster and musl's weak cursor alias.
 assert_passwd_symbols() {
