@@ -6,11 +6,12 @@
  * order, parent/child callbacks in forward order, a child-only ordinary-exit
  * callback after its atfork callbacks, successful child reaping, a forced raw
  * fork error through the parent callback route, and candidate-only fixed-
- * capacity rejection plus a live-selected-worker transaction, child reaping,
+ * capacity rejection plus a live-worker transaction, child reaping,
+ * caller-owned TSD after fork, worker TSD isolation and destructor lifetime,
  * and post-join admission recovery.
  * It does not select recursive callbacks, callback-driven worker creation,
- * foreign or concurrent threads, concurrent selected-worker lifecycle,
- * signal safety, allocator/TSD, cancellation, synchronization, dynamic TLS, a
+ * foreign threads, concurrent selected-worker lifecycle,
+ * signal safety, allocator, cancellation, synchronization, dynamic TLS, a
  * general fork/runtime exit protocol, CRT, loader, sysroot, or public x86
  * support.
  */
@@ -152,6 +153,13 @@ static int check_aio_hook_override(void)
 static volatile unsigned int callback_phase;
 static volatile int callback_failure;
 static int child_report_write = -1;
+static pthread_key_t main_tsd_key;
+static pthread_key_t worker_tsd_key;
+static _Atomic int selected_tsd_armed;
+static _Atomic int worker_destructor_calls;
+static _Atomic int worker_destructor_failure;
+
+enum { MAIN_TSD_VALUE = 0x4d, WORKER_TSD_VALUE = 0x57 };
 
 static long raw_syscall1(long number, long argument1)
 {
@@ -236,6 +244,11 @@ static void record_callback(unsigned int marker)
 
     if (callback_phase >= sizeof(expected) / sizeof(expected[0]) ||
         expected[callback_phase] != marker)
+        callback_failure = 1;
+    if (atomic_load_explicit(&selected_tsd_armed, memory_order_relaxed) != 0 &&
+        (pthread_getspecific(main_tsd_key) !=
+             (void *)(uintptr_t)MAIN_TSD_VALUE ||
+         pthread_getspecific(worker_tsd_key) != NULL))
         callback_failure = 1;
     callback_phase++;
 }
@@ -396,12 +409,25 @@ static int check_raw_fork_error_parent_order(void)
     return 0;
 }
 
-#ifdef CRABC_ATFORK_FREESTANDING
 static _Atomic int selected_worker_ready;
 static _Atomic int selected_worker_release;
 
+static void worker_tsd_destructor(void *value)
+{
+    if (value != (void *)(uintptr_t)WORKER_TSD_VALUE ||
+        pthread_getspecific(worker_tsd_key) != NULL)
+        atomic_store_explicit(&worker_destructor_failure, 1, memory_order_release);
+    atomic_fetch_add_explicit(&worker_destructor_calls, 1, memory_order_release);
+}
+
 static void *selected_live_worker(void *argument)
 {
+    if (pthread_getspecific(main_tsd_key) != NULL ||
+        pthread_setspecific(worker_tsd_key,
+            (void *)(uintptr_t)WORKER_TSD_VALUE) != 0 ||
+        pthread_getspecific(worker_tsd_key) !=
+            (void *)(uintptr_t)WORKER_TSD_VALUE)
+        return NULL;
     atomic_store_explicit(&selected_worker_ready, 1, memory_order_release);
     while (atomic_load_explicit(&selected_worker_release, memory_order_acquire) == 0)
         ;
@@ -422,6 +448,8 @@ static int wait_for_selected_worker(void)
 static int check_live_selected_worker_fork(void)
 {
     static const char expected_child_events[] = { '4', '5', '6' };
+    static const char trace[] =
+        "atfork-tsd callbacks=321456 caller=retained worker=isolated destructor=once\n";
     pthread_t worker;
     void *result = 0;
     int report[2] = { -1, -1 };
@@ -430,29 +458,44 @@ static int check_live_selected_worker_fork(void)
     int failure = 0;
     unsigned int index;
 
+    atomic_store_explicit(&worker_destructor_calls, 0, memory_order_relaxed);
+    atomic_store_explicit(&worker_destructor_failure, 0, memory_order_relaxed);
     atomic_store_explicit(&selected_worker_ready, 0, memory_order_relaxed);
     atomic_store_explicit(&selected_worker_release, 0, memory_order_relaxed);
+    if (pthread_key_create(&main_tsd_key, NULL) != 0)
+        return 1;
+    if (pthread_key_create(&worker_tsd_key, worker_tsd_destructor) != 0)
+        return 2;
+    if (pthread_setspecific(main_tsd_key,
+            (void *)(uintptr_t)MAIN_TSD_VALUE) != 0)
+        return 3;
     if (pthread_create(&worker, NULL, selected_live_worker,
                        (void *)(uintptr_t)0x5a) != 0)
-        return 1;
+        return 4;
     if (!wait_for_selected_worker())
-        failure = 2;
+        failure = 5;
     if (raw_pipe(report) != 0)
-        failure = failure == 0 ? 3 : failure;
+        failure = failure == 0 ? 6 : failure;
 
     if (failure == 0) {
         child_report_write = report[1];
         callback_phase = 0;
         callback_failure = 0;
+        atomic_store_explicit(&selected_tsd_armed, 1, memory_order_relaxed);
         errno = E2BIG;
         child = fork();
         if (child == 0) {
             if (callback_failure != 0 || callback_phase != 6 || errno != E2BIG)
                 raw_exit(124);
+            if (pthread_getspecific(main_tsd_key) !=
+                    (void *)(uintptr_t)MAIN_TSD_VALUE ||
+                pthread_getspecific(worker_tsd_key) != NULL)
+                raw_exit(126);
             if (raw_close(report[0]) != 0)
                 raw_exit(125);
             raw_exit(0);
         }
+        atomic_store_explicit(&selected_tsd_armed, 0, memory_order_relaxed);
         if (child < 0) {
             failure = 4;
             (void)raw_close(report[0]);
@@ -463,6 +506,10 @@ static int check_live_selected_worker_fork(void)
             child_report_write = -1;
             if (callback_failure != 0 || callback_phase != 6 || errno != E2BIG)
                 failure = failure == 0 ? 6 : failure;
+            if (pthread_getspecific(main_tsd_key) !=
+                    (void *)(uintptr_t)MAIN_TSD_VALUE ||
+                pthread_getspecific(worker_tsd_key) != NULL)
+                failure = failure == 0 ? 14 : failure;
             do {
                 status = -1;
             } while (waitpid(child, &status, 0) < 0 && errno == EINTR);
@@ -492,15 +539,30 @@ static int check_live_selected_worker_fork(void)
     atomic_store_explicit(&selected_worker_release, 1, memory_order_release);
     if (pthread_join(worker, &result) != 0 || result != (void *)(uintptr_t)0x5a)
         failure = failure == 0 ? 13 : failure;
+    if (atomic_load_explicit(&worker_destructor_calls, memory_order_acquire) != 1 ||
+        atomic_load_explicit(&worker_destructor_failure, memory_order_acquire) != 0)
+        failure = failure == 0 ? 15 : failure;
+    if (pthread_getspecific(main_tsd_key) !=
+            (void *)(uintptr_t)MAIN_TSD_VALUE ||
+        pthread_getspecific(worker_tsd_key) != NULL)
+        failure = failure == 0 ? 16 : failure;
+    if (pthread_key_delete(worker_tsd_key) != 0 ||
+        pthread_key_delete(main_tsd_key) != 0)
+        failure = failure == 0 ? 17 : failure;
     if (failure == 0) {
         int recovery = check_parent_child_and_exit_order();
 
         if (recovery != 0)
             failure = 20 + recovery;
     }
+    if (failure == 0 &&
+        raw_syscall3(SYS_write, 1, (long)trace, sizeof(trace) - 1) !=
+            (long)(sizeof(trace) - 1))
+        failure = 18;
     return failure;
 }
 
+#ifdef CRABC_ATFORK_FREESTANDING
 static int check_fixed_capacity_rejection(void)
 {
     unsigned int index;
@@ -541,10 +603,10 @@ static int run_probe(void)
     result = check_fixed_capacity_rejection();
     if (result != 0)
         return 30 + result;
+#endif
     result = check_live_selected_worker_fork();
     if (result != 0)
         return 40 + result;
-#endif
     result = check_raw_fork_error_parent_order();
     if (result != 0)
         return 80 + result;

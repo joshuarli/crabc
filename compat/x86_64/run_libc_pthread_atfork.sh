@@ -3,9 +3,8 @@
 #
 # The same project-header C body runs first against pinned musl 1.2.6 and then
 # against a true dependency-free `-nostdlib -static` selected crabc archive.
-# It admits one single-threaded hook registry and a child-only ordinary-exit
-# callback composition; it does not establish a general process or pthread
-# runtime.
+# It admits hook ordering, a child-only ordinary-exit callback, and caller TSD
+# retention while another selected worker remains live through fork.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -77,8 +76,9 @@ done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-pthread-atfork.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-pthread-atfork.XXXXXX")"
+chmod 755 "$work_dir"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-pthread-atfork-reference"
 candidate="$work_dir/crabc-static-pthread-atfork-candidate"
@@ -110,7 +110,8 @@ for header in errno.h pthread.h stdatomic.h stdint.h stdlib.h sys/prctl.h sys/sy
 done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_pthread_atfork_probe.c -o "$reference"
-if timeout "$EXECUTION_TIMEOUT" "$reference"; then
+if timeout "$EXECUTION_TIMEOUT" "$reference" \
+    >"$work_dir/musl.stdout" 2>"$work_dir/musl.stderr"; then
     :
 else
     reference_status=$?
@@ -123,7 +124,9 @@ readelf --symbols --wide "$archive" >"$archive_elf_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" "$expected_c_abi_symbols"
 assert_fork_weak_aio_atfork_owner "$archive"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap __fork_handler \
-    pthread_atfork fork atexit exit __funcs_on_exit pthread_create pthread_join waitpid; do
+    pthread_atfork fork atexit exit __funcs_on_exit pthread_create pthread_join \
+    pthread_key_create pthread_key_delete pthread_getspecific \
+    pthread_setspecific waitpid; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
@@ -174,7 +177,8 @@ readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap __fork_handler \
     pthread_atfork fork atexit exit __funcs_on_exit pthread_create pthread_join \
-    waitpid; do
+    pthread_key_create pthread_key_delete pthread_getspecific \
+    pthread_setspecific waitpid; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
@@ -243,22 +247,36 @@ objdump -d --disassemble=exit "$candidate" >"$exit_disassembly"
 grep -Eq 'call.*__funcs_on_exit' "$exit_disassembly" ||
     fail "exit does not route through the bounded ordinary-exit dispatcher"
 
-if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
+if timeout "$EXECUTION_TIMEOUT" "$candidate" \
+    >"$work_dir/crabc.stdout" 2>"$work_dir/crabc.stderr"; then
     :
 else
     candidate_status=$?
     fail "static candidate exited ${candidate_status}"
 fi
-if timeout "$EXECUTION_TIMEOUT" "$candidate_loader_hook"; then
+cmp -s "$work_dir/musl.stdout" "$work_dir/crabc.stdout" ||
+    fail "musl/crabc pthread_atfork and TSD streams differ"
+cmp -s "$work_dir/musl.stderr" "$work_dir/crabc.stderr" ||
+    fail "musl/crabc pthread_atfork stderr streams differ"
+grep -Fxq 'atfork-tsd callbacks=321456 caller=retained worker=isolated destructor=once' \
+    "$work_dir/musl.stdout" || fail "threaded TSD trace missing"
+if timeout "$EXECUTION_TIMEOUT" "$candidate_loader_hook" \
+    >"$work_dir/crabc-loader-hook.stdout" 2>"$work_dir/crabc-loader-hook.stderr"; then
     :
 else
     candidate_status=$?
     fail "static loader-hook override candidate exited ${candidate_status}"
 fi
-if timeout "$EXECUTION_TIMEOUT" "$candidate_aio_hook"; then
+if timeout "$EXECUTION_TIMEOUT" "$candidate_aio_hook" \
+    >"$work_dir/crabc-aio-hook.stdout" 2>"$work_dir/crabc-aio-hook.stderr"; then
     :
 else
     candidate_status=$?
     fail "static AIO-atfork override candidate exited ${candidate_status}"
 fi
+cmp -s "$work_dir/musl.stdout" "$work_dir/crabc-aio-hook.stdout" ||
+    fail "AIO-hook override changed the threaded atfork/TSD stream"
+cmp -s "$work_dir/musl.stderr" "$work_dir/crabc-aio-hook.stderr" ||
+    fail "AIO-hook override changed the threaded atfork/TSD stderr stream"
 printf 'x86 static crabc-libc pthread_atfork/fork/exit hooks: PASS\n'
+printf 'evidence: %s\n' "$work_dir"
