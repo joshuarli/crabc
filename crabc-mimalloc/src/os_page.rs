@@ -2891,6 +2891,229 @@ mod tests {
         )
     }
 
+    /// A terminally retained OS map does not block the same process from
+    /// publishing and releasing a later independent page.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_os_page_terminal_unmap_fault_c_rust_trace() {
+        use crate::bootstrap::ExclusiveTheapBootstrap;
+        use crate::diagnostic_output::{OutputCallback, OutputOwner};
+        use crate::page_map::PageMap;
+
+        fn source_pointer(value: usize) -> std::string::String {
+            let width = if value <= u32::MAX as usize { 8 }
+                else if value >> 16 <= u32::MAX as usize { 12 } else { 16 };
+            std::format!("0x{value:0width$X}")
+        }
+
+        let environment = std::boxed::Box::leak(std::boxed::Box::new([
+            b"mimalloc_allow_large_os_pages=0\0".as_ptr().cast(),
+            b"mimalloc_allow_thp=0\0".as_ptr().cast(),
+            b"mimalloc_purge_delay=-1\0".as_ptr().cast(),
+            b"mimalloc_show_errors=1\0".as_ptr().cast(),
+            b"mimalloc_max_warnings=100\0".as_ptr().cast(),
+            core::ptr::null(),
+        ]));
+        FRESH_OS_CLEANUP_ENVIRONMENT.store(environment.as_mut_ptr(), Ordering::Release);
+        let output = std::boxed::Box::leak(std::boxed::Box::new(
+            OutputOwner::new(fresh_os_cleanup_default_output),
+        ));
+        // SAFETY: the leaked option image and output remain live for all
+        // source policy reads and the registered synchronous callback.
+        unsafe { output.initialize_source_options(fresh_os_cleanup_environment) };
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let warnings = FreshOsCleanupWarnings {
+            fragments: std::sync::Mutex::new(std::vec::Vec::new()),
+            subprocess: subprocess.identity(),
+            reserved_at_commit_warning: AtomicI64::new(i64::MIN),
+            reserved_at_free_warning: AtomicI64::new(i64::MIN),
+            committed_at_free_warning: AtomicI64::new(i64::MIN),
+            reserved_at_allocation_warning: AtomicI64::new(i64::MIN),
+            committed_at_allocation_warning: AtomicI64::new(i64::MIN),
+            mmap_at_allocation_warning: AtomicI64::new(i64::MIN),
+        };
+        // SAFETY: callback delivery is synchronous, and registration is
+        // removed before the stack-backed capture can expire.
+        unsafe { output.register_output(Some(capture_fresh_os_cleanup_warning as OutputCallback),
+            &warnings as *const FreshOsCleanupWarnings as *mut c_void) };
+        let policy = std::boxed::Box::leak(std::boxed::Box::new(
+            unsafe { crate::os::VmPolicy::from_process_options(output) }));
+        policy.finish_preloading();
+        let process = VmProcess::new(policy, subprocess);
+        let memory_config = config(4 * KIB);
+        let mut map = PageMap::initialize_for_process(memory_config, 0, true, process).unwrap();
+        let mut bootstrap = std::boxed::Box::pin(ExclusiveTheapBootstrap::new());
+        let mut session = bootstrap.as_mut().activate_detached_for_main_subprocess(
+            process.main_subprocess().expect("fixture uses process main"),
+        ).unwrap();
+        let fault = fault::install(fault::Plan::disabled());
+
+        // SAFETY: the exclusive session retains its source random image until
+        // the first mapping call completes, before Page metadata is published.
+        let mut first_random = unsafe { crate::os::CurrentTheapRandom::new(
+            NonNull::from(session.theap())) };
+        let first_claim = OsAlignedPageClaim::allocate_for_process_with_random(process,
+            memory_config, 16 * KIB, 1, crate::arena::ArenaId::none(),
+            Some(&mut first_random)).unwrap_or_else(|_| panic!("first committed OS page allocates"));
+        let first_layout = first_claim.layout();
+        let first_memory = first_claim.memory_id().unwrap();
+        let first_base = first_claim.base().unwrap();
+        let first_start = first_claim.slice_start().unwrap();
+        // SAFETY: the committed metadata prefix belongs exclusively to this
+        // claim and the detached session publishes exactly one primary page.
+        let mut first_primary = unsafe { session.publish_fresh_page(first_claim.metadata().unwrap(),
+            first_layout.block_size(), first_layout.page_offset(), first_layout.reserved(), 0,
+            first_memory.initially_zero(), first_memory) }.unwrap();
+        assert!(unsafe { first_claim.publish_secondary_metadata(first_primary) });
+        unsafe { map.register_range(first_start.as_ptr(), first_layout.page_map_size(), first_primary) }.unwrap();
+        let first_published = first_memory.is_os() && first_memory.initially_committed()
+            && unsafe { first_primary.as_ref().slice_pcommitted() } == 0
+            && unsafe { map.checked_lookup(first_start.as_ptr()) } == first_primary.as_ptr();
+        first_claim.into_published().unwrap();
+        // SAFETY: the copied MemoryId and live primary still name the unique
+        // published mapping; no concurrent page reader overlaps this fixture.
+        let first_owner = unsafe { PublishedOsAlignedPage::from_page_for_process(
+            process, memory_config, first_primary) }.unwrap();
+        unsafe { map.unregister_range(first_start.as_ptr(), first_layout.page_map_size()) }.unwrap();
+        assert!(unsafe { first_owner.clear_secondary_metadata() });
+        assert!(session.retire_page(unsafe { first_primary.as_mut() }).is_some());
+        let first_page_map_clear = unsafe { map.checked_lookup(first_start.as_ptr()) }.is_null();
+        warnings.fragments.lock().unwrap().clear();
+        let before_first_release = process.subprocess().vm_statistics().snapshot();
+        fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::from_raw(5).unwrap()));
+        let unmaps = fault.capture_unmap_ranges();
+        // SAFETY: PageMap and aliases are clear, the primary has retired, and
+        // this token holds the sole terminal unmap right.
+        let failure = unsafe { first_owner.reclaim() }.err().expect("first terminal unmap fails");
+        assert_eq!(failure.error().operation(), Errno::from_raw(5).unwrap());
+        let OsAlignedPageOwner::Published(first_retry) = failure.into_owner() else {
+            panic!("failed published release retains one raw owner")
+        };
+        let after_first_release = process.subprocess().vm_statistics().snapshot();
+        let mut residence = 0u8;
+        // SAFETY: the failed syscall leaves the exact first mapping live; the
+        // kernel query does not create references into its retired page data.
+        let first_escaped = unsafe { crabc_core::mm::mincore_raw(
+            first_base, 4096, &mut residence) }.is_ok();
+        let warning_fragments = warnings.fragments.lock().unwrap();
+        let expected_body = std::format!(
+            "unable to free OS memory (error: 5 (0x05), size: 0x{:X} bytes, address: {})\n",
+            first_layout.mapping_length(), source_pointer(first_base.addr()),
+        );
+        let warning_calls = warning_fragments.iter()
+            .filter(|fragment| fragment.starts_with(b"unable to free OS memory")).count();
+        let warning_exact = warning_fragments.len() == 2
+            && warning_fragments[0].starts_with(b"mimalloc: warning: thread 0x")
+            && warning_fragments[1] == expected_body.as_bytes();
+        drop(warning_fragments);
+        let warning_before_stats = warnings.reserved_at_free_warning.load(Ordering::Acquire)
+                == before_first_release.reserved_current
+            && warnings.committed_at_free_warning.load(Ordering::Acquire)
+                == before_first_release.committed_current;
+        let first_reserved_delta = after_first_release.reserved_current - before_first_release.reserved_current;
+        let first_committed_delta = after_first_release.committed_current - before_first_release.committed_current;
+        let first_commit_calls_delta = after_first_release.commit_calls - before_first_release.commit_calls;
+        let first_mmap_calls_delta = after_first_release.mmap_calls - before_first_release.mmap_calls;
+
+        let before_second = process.subprocess().vm_statistics().snapshot();
+        // SAFETY: the same detached Theap retains its random image; the first
+        // page's only surviving capability is a terminal raw cleanup token.
+        let mut second_random = unsafe { crate::os::CurrentTheapRandom::new(
+            NonNull::from(session.theap())) };
+        let second_claim = OsAlignedPageClaim::allocate_for_process_with_random(process,
+            memory_config, 16 * KIB, 1, crate::arena::ArenaId::none(),
+            Some(&mut second_random)).unwrap_or_else(|_| panic!("second committed OS page allocates"));
+        let second_layout = second_claim.layout();
+        let second_memory = second_claim.memory_id().unwrap();
+        let second_base = second_claim.base().unwrap();
+        let second_start = second_claim.slice_start().unwrap();
+        // SAFETY: the second claim owns a disjoint committed metadata prefix
+        // and publishes one new primary in the same live detached session.
+        let mut second_primary = unsafe { session.publish_fresh_page(second_claim.metadata().unwrap(),
+            second_layout.block_size(), second_layout.page_offset(), second_layout.reserved(), 0,
+            second_memory.initially_zero(), second_memory) }.unwrap();
+        assert!(unsafe { second_claim.publish_secondary_metadata(second_primary) });
+        unsafe { map.register_range(second_start.as_ptr(), second_layout.page_map_size(), second_primary) }.unwrap();
+        let second_live = process.subprocess().vm_statistics().snapshot();
+        let second_live_reserved = second_live.reserved_current - before_second.reserved_current;
+        let second_live_committed = second_live.committed_current - before_second.committed_current;
+        let second_published = second_memory.is_os() && second_memory.initially_committed()
+            && unsafe { second_primary.as_ref().slice_pcommitted() } == 0
+            && unsafe { map.checked_lookup(second_start.as_ptr()) } == second_primary.as_ptr()
+            && second_base != first_base;
+        second_claim.into_published().unwrap();
+        // SAFETY: the second primary is live, uniquely owned, and has exact
+        // copied OS provenance for its distinct mapping.
+        let second_owner = unsafe { PublishedOsAlignedPage::from_page_for_process(
+            process, memory_config, second_primary) }.unwrap();
+        unsafe { map.unregister_range(second_start.as_ptr(), second_layout.page_map_size()) }.unwrap();
+        assert!(unsafe { second_owner.clear_secondary_metadata() });
+        assert!(session.retire_page(unsafe { second_primary.as_mut() }).is_some());
+        fault.set(fault::Plan::disabled());
+        // SAFETY: the second page has no remaining PageMap entry, alias,
+        // primary, or reader; this exact token owns its terminal mapping.
+        assert!(unsafe { second_owner.reclaim() }.is_ok());
+        let after_second = process.subprocess().vm_statistics().snapshot();
+        // SAFETY: only the first retained owner still names a live mapping;
+        // the second was just released and both queries are read-only.
+        let second_unmapped = unsafe { crabc_core::mm::mincore_raw(
+            second_base, 4096, &mut residence) }.is_err();
+        let first_still_escaped = unsafe { crabc_core::mm::mincore_raw(
+            first_base, 4096, &mut residence) }.is_ok();
+        let (ranges, unmap_calls) = unmaps.all().expect("two source releases fit capture");
+        let failed_range_exact = ranges[0] == (first_base.addr(), first_layout.mapping_length());
+        let second_range_exact = ranges[1] == (second_base.addr(), second_layout.mapping_length());
+        drop(unmaps);
+        // SAFETY: no page metadata or lookup owner survives; the first retry
+        // token retains the only unmap authority for its still-live mapping.
+        let raw_cleanup = unsafe { first_retry.retry_reclaim() }.is_ok();
+        let after_raw = process.subprocess().vm_statistics().snapshot();
+        // SAFETY: both terminal releases have completed and neither mapping
+        // has a surviving reference or PageMap entry.
+        let terminal_unmapped = unsafe { crabc_core::mm::mincore_raw(
+            first_base, 4096, &mut residence) }.is_err()
+            && unsafe { crabc_core::mm::mincore_raw(
+                second_base, 4096, &mut residence) }.is_err();
+        for (field, value) in [
+            ("first_published", i64::from(first_published)),
+            ("first_size", first_layout.mapping_length() as i64),
+            ("first_page_map_clear", i64::from(first_page_map_clear)),
+            ("unmap_calls", unmap_calls as i64),
+            ("failed_range_exact", i64::from(failed_range_exact)),
+            ("warning_calls", warning_calls as i64),
+            ("warning_exact", i64::from(warning_exact)),
+            ("warning_before_stats", i64::from(warning_before_stats)),
+            ("first_escaped", i64::from(first_escaped)),
+            ("first_reserved_delta", first_reserved_delta),
+            ("first_committed_delta", first_committed_delta),
+            ("first_commit_calls_delta", first_commit_calls_delta),
+            ("first_mmap_calls_delta", first_mmap_calls_delta),
+            ("second_published", i64::from(second_published)),
+            ("second_size", second_layout.mapping_length() as i64),
+            ("second_live_reserved", second_live_reserved),
+            ("second_live_committed", second_live_committed),
+            ("second_range_exact", i64::from(second_range_exact)),
+            ("second_unmapped", i64::from(second_unmapped)),
+            ("first_still_escaped", i64::from(first_still_escaped)),
+            ("second_reserved_delta", after_second.reserved_current - before_second.reserved_current),
+            ("second_committed_delta", after_second.committed_current - before_second.committed_current),
+            ("raw_cleanup", i64::from(raw_cleanup)),
+            ("terminal_unmapped", i64::from(terminal_unmapped)),
+            ("raw_reserved_delta", after_raw.reserved_current - before_second.reserved_current),
+            ("raw_committed_delta", after_raw.committed_current - before_second.committed_current),
+        ] {
+            std::println!("{field}={value}");
+        }
+        assert!(first_published && first_page_map_clear && first_escaped
+            && second_published && second_unmapped && first_still_escaped
+            && raw_cleanup && terminal_unmapped);
+        drop(fault);
+        // SAFETY: neither OS page retains a PageMap entry or mapping owner.
+        unsafe { map.destroy() }.unwrap();
+        // SAFETY: callback output no longer has a stack-backed capture.
+        unsafe { output.register_output(None, core::ptr::null_mut()) };
+    }
+
     #[test]
     fn layout_rejects_arena_alignments_and_the_source_metadata_limit() {
         let config = config(4 * KIB);
