@@ -712,6 +712,8 @@ def read_m8_receipt(name: str, entry: Mapping[str, Any], output: str) -> dict[st
     if name in {"product:native-worker-lifecycle", "product:native-allocator-fork",
                 "product:native-allocator-stress"}:
         return m8.read_threads_fork_receipt(name, command, output)
+    if name == "product:native-worker-transfer":
+        return m8.worker_transfer.read_receipt(output)
     if name == "product:allocator-override":
         return m8.read_allocator_override_receipt(command, output)
     if name == "product:mimalloc-startup-errno":

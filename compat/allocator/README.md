@@ -193,6 +193,10 @@ that the product-consuming rows receive through `{static_sysroot}` and
 `{dynamic_sysroot}`. Because each row starts its own container, the gate runs
 on the native host; logs and `report.json` are under
 `.work/allocator-x86_64/reports/allocator/x86_64/m8-gate/`.
+The `owned-native-allocator-worker-transfer` row builds one C fixture against
+musl, the selected C backend, and native shadow. Its physical receipt checks
+the source-built products and the exact worker-exit, `reallocarray`, and free
+transcript after `pthread_join`.
 
 This directory owns the reproducible source, inventory, C-oracle, and later
 Rust/C evidence for the fixed mimalloc v3.5.0 semantic port. Native

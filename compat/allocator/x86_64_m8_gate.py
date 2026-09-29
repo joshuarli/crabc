@@ -47,6 +47,7 @@ import owned_native_allocator_policy_receipt as policy_reader
 import owned_native_allocator_dso_receipt as dso_reader
 import owned_loader_synthetic_receipt as synthetic_reader
 import owned_loader_libc_identity_receipt as identity_reader
+import x86_64_m8_worker_transfer as worker_transfer
 
 
 CONTRACT = harness.ALLOCATOR_ROOT / "m8-gate-x86_64-v3.5.0.json"
@@ -1159,6 +1160,13 @@ def run_evidence(
             except harness.HarnessError as error:
                 with log.open("a", encoding="utf-8") as stream:
                     stream.write(f"native-shadow runner receipt reader: {error}\n")
+                passed = False
+        if evidence_id == "product:native-worker-transfer" and passed:
+            try:
+                receipt = worker_transfer.read_receipt(str(record["stdout"]) + str(record["stderr"]))
+            except (ValueError, OSError, native_shadow_receipt.ReceiptError) as error:
+                with log.open("a", encoding="utf-8") as stream:
+                    stream.write(f"native worker transfer receipt reader: {error}\n")
                 passed = False
         if evidence_id == "product:allocator-override" and passed:
             try:
