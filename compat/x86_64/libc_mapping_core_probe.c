@@ -3,7 +3,8 @@
  * One project-header C body executes first with pinned musl 1.2.6 and then
  * with the dependency-free static crabc-libc archive. It proves only the
  * caller-owned mmap/munmap/mprotect/madvise/posix_madvise/mincore/msync lifecycle,
- * including zero-fill, partial release, fixed replacement, and live neighbors;
+ * including regular-file offset mapping, sync/readback, zero-fill, partial
+ * release, fixed replacement, and live neighbors;
  * it is not evidence for the broader <sys/mman.h> family, allocator, CRT,
  * loader, pthread/TLS lifecycle, sysroot, or public x86 support.
  */
@@ -19,6 +20,7 @@
 #endif
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
@@ -37,8 +39,10 @@ _Static_assert(SYS_mincore == 27, "x86 mincore syscall");
 _Static_assert(SYS_madvise == 28, "x86 madvise syscall");
 _Static_assert(SYS_msync == 26, "x86 msync syscall");
 _Static_assert(SYS_write == 1 && SYS_memfd_create == 319 && SYS_ftruncate == 77 &&
-    SYS_dup == 32 && SYS_close == 3 && SYS_pread64 == 17,
+    SYS_dup == 32 && SYS_close == 3 && SYS_pread64 == 17 && SYS_pwrite64 == 18,
     "x86 descriptor syscalls for the file mapping control");
+_Static_assert(SYS_openat == 257 && SYS_unlinkat == 263,
+    "x86 regular-file lifecycle syscalls");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&mmap), CRABC_MMAP_TYPE),
     "mmap declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&munmap),
@@ -238,6 +242,111 @@ static int file_mapping_survives_descriptor_close(void)
     return 0;
 }
 
+static int file_mapping_offset_lifetime(void)
+{
+    const char name[] = "crabc-mapping-offset.dat";
+    unsigned char seed[2] = {0x31, 0x42};
+    unsigned char readback = 0;
+    volatile unsigned char *shared;
+    volatile unsigned char *private_copy;
+    volatile unsigned char *reopened;
+    long descriptor = raw_descriptor_call(SYS_openat, AT_FDCWD,
+        (long)name, O_RDWR | O_CREAT | O_EXCL, 0600);
+
+    if (descriptor < 0 || raw_descriptor_call(SYS_ftruncate, descriptor,
+            CRABC_PAGE_SIZE * 3, 0, 0) != 0 ||
+            raw_descriptor_call(SYS_pwrite64, descriptor, (long)&seed[0],
+                1, CRABC_PAGE_SIZE) != 1 ||
+            raw_descriptor_call(SYS_pwrite64, descriptor, (long)&seed[1],
+                1, CRABC_PAGE_SIZE * 2) != 1)
+        return 70;
+
+    errno = ERANGE;
+    if (mmap(0, CRABC_PAGE_SIZE, PROT_READ, MAP_SHARED,
+            (int)descriptor, CRABC_PAGE_SIZE + 1) != MAP_FAILED ||
+            errno != EINVAL)
+        return 71;
+    errno = ERANGE;
+    if (mmap(0, CRABC_PAGE_SIZE, PROT_READ, MAP_SHARED, -1,
+            CRABC_PAGE_SIZE) != MAP_FAILED || errno != EBADF)
+        return 72;
+    shared = mmap(0, CRABC_PAGE_SIZE * 2, PROT_READ | PROT_WRITE,
+        MAP_SHARED, (int)descriptor, CRABC_PAGE_SIZE);
+    private_copy = mmap(0, CRABC_PAGE_SIZE, PROT_READ | PROT_WRITE,
+        MAP_PRIVATE, (int)descriptor, CRABC_PAGE_SIZE);
+    if (shared == MAP_FAILED || private_copy == MAP_FAILED ||
+            shared[0] != seed[0] || shared[CRABC_PAGE_SIZE] != seed[1] ||
+            private_copy[0] != seed[0])
+        return 73;
+    RECORD("file-offset-alignment-and-descriptor errno=EINVAL,EBADF", 74);
+
+    private_copy[0] = 0x59;
+    shared[0] = 0x64;
+    shared[CRABC_PAGE_SIZE] = 0x75;
+    errno = ERANGE;
+    if (msync((void *)(shared + 1), CRABC_PAGE_SIZE, MS_SYNC) != -1 ||
+            errno != EINVAL || shared[0] != 0x64 ||
+            shared[CRABC_PAGE_SIZE] != 0x75)
+        return 75;
+    errno = ERANGE;
+    if (msync((void *)shared, CRABC_PAGE_SIZE * 2,
+            MS_SYNC | MS_ASYNC) != -1 || errno != EINVAL ||
+            private_copy[0] != 0x59)
+        return 76;
+    errno = ERANGE;
+    if (mprotect((void *)(shared + CRABC_PAGE_SIZE + 1),
+            CRABC_PAGE_SIZE - 1, PROT_READ) != 0 || errno != ERANGE ||
+            msync((void *)shared, CRABC_PAGE_SIZE * 2, MS_SYNC) != 0 ||
+            errno != ERANGE)
+        return 77;
+    if (raw_descriptor_call(SYS_pread64, descriptor, (long)&readback,
+            1, CRABC_PAGE_SIZE) != 1 || readback != 0x64 ||
+            raw_descriptor_call(SYS_pread64, descriptor, (long)&readback,
+                1, CRABC_PAGE_SIZE * 2) != 1 || readback != 0x75 ||
+            private_copy[0] != 0x59)
+        return 78;
+    RECORD("shared-offset-sync-readback private-copy-isolated errno=ERANGE", 79);
+
+    errno = ERANGE;
+    if (munmap((void *)shared, CRABC_PAGE_SIZE) != 0 || errno != ERANGE ||
+            shared[CRABC_PAGE_SIZE] != 0x75)
+        return 80;
+    errno = ERANGE;
+    if (mprotect((void *)shared, CRABC_PAGE_SIZE * 2, PROT_READ) != -1 ||
+            errno != ENOMEM || shared[CRABC_PAGE_SIZE] != 0x75)
+        return 81;
+    reopened = mmap((void *)shared, CRABC_PAGE_SIZE, PROT_READ | PROT_WRITE,
+        MAP_SHARED | MAP_FIXED_NOREPLACE, (int)descriptor, CRABC_PAGE_SIZE);
+    if (reopened != shared || reopened[0] != 0x64 ||
+            shared[CRABC_PAGE_SIZE] != 0x75 || private_copy[0] != 0x59)
+        return 82;
+    RECORD("file-hole-remap-preserved-offset-bytes-and-live-neighbor", 83);
+
+    if (munmap((void *)private_copy, CRABC_PAGE_SIZE) != 0 ||
+            munmap((void *)shared, CRABC_PAGE_SIZE * 2) != 0)
+        return 84;
+    reopened = mmap(0, CRABC_PAGE_SIZE * 2, PROT_READ,
+        MAP_SHARED, (int)descriptor, CRABC_PAGE_SIZE);
+    if (reopened == MAP_FAILED || reopened[0] != 0x64 ||
+            reopened[CRABC_PAGE_SIZE] != 0x75 ||
+            raw_descriptor_call(SYS_close, descriptor, 0, 0, 0) != 0 ||
+            reopened[0] != 0x64 || reopened[CRABC_PAGE_SIZE] != 0x75 ||
+            munmap((void *)reopened, CRABC_PAGE_SIZE * 2) != 0)
+        return 85;
+    descriptor = raw_descriptor_call(SYS_openat, AT_FDCWD,
+        (long)name, O_RDONLY, 0);
+    if (descriptor < 0 ||
+            raw_descriptor_call(SYS_pread64, descriptor, (long)&readback,
+                1, CRABC_PAGE_SIZE) != 1 || readback != 0x64 ||
+            raw_descriptor_call(SYS_pread64, descriptor, (long)&readback,
+                1, CRABC_PAGE_SIZE * 2) != 1 || readback != 0x75 ||
+            raw_descriptor_call(SYS_close, descriptor, 0, 0, 0) != 0 ||
+            raw_descriptor_call(SYS_unlinkat, AT_FDCWD, (long)name, 0, 0) != 0)
+        return 86;
+    RECORD("regular-file-remap-and-reopen-retained-offset-bytes", 87);
+    return 0;
+}
+
 int crabc_x86_64_mapping_core_probe(void)
 {
     volatile unsigned char *bytes;
@@ -319,6 +428,11 @@ int crabc_x86_64_mapping_core_probe(void)
             return result;
     }
     RECORD("shared-private-file-aliases-survive-descriptor-close", 46);
+    {
+        int result = file_mapping_offset_lifetime();
+        if (result != 0)
+            return result;
+    }
     return anonymous_mapping_lifetime();
 }
 

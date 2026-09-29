@@ -6,9 +6,10 @@
 # selected crabc archive. It proves the coherent caller-owned mapping
 # lifecycle: mmap/munmap, musl-rounded mprotect, madvise, musl's POSIX
 # DONTNEED no-op/direct-positive-error convention, mincore residency, and
-# shared file mapping readback after the original descriptor closes, anonymous
-# zero-fill, partial unmap and remap lifetime, and byte-identical execution
-# records retained with both ELFs in a physical receipt.
+# shared file mapping readback after the original descriptor closes, regular
+# file offset mapping, sync/readback, partial unmap, remap, close/reopen
+# persistence, anonymous zero-fill, and byte-identical execution records
+# retained with both ELFs in a physical receipt.
 # It is deliberately not the complete <sys/mman.h> family, musl's process-wide
 # __vm_wait contract, owned msync cancellation behavior, mremap, mlock*, shared
 # memory, allocator, CRT, loader, sysroot, or public x86 support.
@@ -168,7 +169,7 @@ candidate_records="$report_dir/crabc.records"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_mapping_core_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h stdint.h features.h sys/mman.h sys/syscall.h bits/alltypes.h bits/mman.h \
+for header in errno.h fcntl.h stdint.h features.h sys/mman.h sys/syscall.h bits/alltypes.h bits/mman.h \
     bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use the project $header header"
@@ -176,7 +177,7 @@ done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_mapping_core_probe.c -o "$reference"
-if "$reference" >"$reference_records"; then
+if (cd "$work_dir" && "$reference" >"$reference_records"); then
     :
 else
     status=$?
@@ -260,7 +261,7 @@ cp compat/x86_64/libc_mapping_core_probe.c "$report_dir/libc_mapping_core_probe.
 cp compat/x86_64/libc_mapping_core_start.S "$report_dir/libc_mapping_core_start.S"
 cp compat/x86_64/run_libc_mapping_core.sh "$report_dir/run_libc_mapping_core.sh"
 
-if "$candidate" >"$candidate_records"; then
+if (cd "$work_dir" && "$candidate" >"$candidate_records"); then
     :
 else
     status=$?
