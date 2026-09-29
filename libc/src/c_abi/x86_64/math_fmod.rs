@@ -23,21 +23,46 @@
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 math fmod leaf requires little-endian Linux/x86-64");
 
-const F64_EXPONENT_MASK: u64 = 0x7ff0_0000_0000_0000;
-const F64_FRACTION_MASK: u64 = 0x000f_ffff_ffff_ffff;
-const F32_EXPONENT_MASK: u32 = 0x7f80_0000;
-const F32_FRACTION_MASK: u32 = 0x007f_ffff;
+const F64_INFINITY_BITS: u64 = 0x7ff0_0000_0000_0000;
+const F32_INFINITY_BITS: u32 = 0x7f80_0000;
 
 /// Matches musl's non-signaling raw binary64 `isnan` classification.
 #[inline]
 fn is_nan_f64(bits: u64) -> bool {
-    bits & F64_EXPONENT_MASK == F64_EXPONENT_MASK && bits & F64_FRACTION_MASK != 0
+    let magnitude = bits & 0x7fff_ffff_ffff_ffff;
+    let classified: u8;
+    // SAFETY: Integer comparison touches no memory. A floating-point NaN
+    // comparison would raise x86's denormal-operand flag for a subnormal y.
+    unsafe {
+        core::arch::asm!(
+            "cmp {magnitude}, {infinity}",
+            "seta {classified}",
+            magnitude = in(reg) magnitude,
+            infinity = in(reg) F64_INFINITY_BITS,
+            classified = lateout(reg_byte) classified,
+            options(nomem, nostack),
+        );
+    }
+    classified != 0
 }
 
 /// Matches musl's non-signaling raw binary32 `isnan` classification.
 #[inline]
 fn is_nan_f32(bits: u32) -> bool {
-    bits & F32_EXPONENT_MASK == F32_EXPONENT_MASK && bits & F32_FRACTION_MASK != 0
+    let magnitude = bits & 0x7fff_ffff;
+    let classified: u8;
+    // SAFETY: Integer comparison touches no memory or floating-point state.
+    unsafe {
+        core::arch::asm!(
+            "cmp {magnitude:e}, {infinity:e}",
+            "seta {classified}",
+            magnitude = in(reg) magnitude,
+            infinity = in(reg) F32_INFINITY_BITS,
+            classified = lateout(reg_byte) classified,
+            options(nomem, nostack),
+        );
+    }
+    classified != 0
 }
 
 // Musl's `src/math/fmod.c` object.
