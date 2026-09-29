@@ -44,6 +44,7 @@ _Static_assert(_PC_LINK_MAX == 0 && _PC_2_SYMLINKS == 20 &&
     "pathconf selector range");
 _Static_assert(SYS_statfs == 137 && SYS_fstatfs == 138,
     "x86 statfs syscall namespace remains header-only here");
+_Static_assert(SYS_write == 1, "x86 raw observation output syscall");
 _Static_assert(SYS_prlimit64 == 302, "x86 getdtablesize syscall number");
 _Static_assert(CRABC_TYPE_IS(&sysconf, long (*)(int)), "sysconf declaration");
 _Static_assert(CRABC_TYPE_IS(&confstr, size_t (*)(int, char *, size_t)),
@@ -72,7 +73,7 @@ static int check_common_contract(void)
     if (sysconf(_SC_PAGE_SIZE) != 4096 || errno != stale_errno)
         return 2;
     errno = 0;
-    if (sysconf(-1) != -1 || errno != EINVAL)
+    if (sysconf(INT_MAX) != -1 || errno != EINVAL)
         return 3;
 
     errno = stale_errno;
@@ -111,6 +112,93 @@ static int check_common_contract(void)
     if (confstr(1152, path, sizeof path) != 0 || errno != EINVAL)
         return 48;
 
+    return 0;
+}
+
+/* Each initialized record is written directly so the freestanding candidate
+ * and pinned-musl reference expose physical return, errno, and output bytes.
+ * A raw Linux write is fixture plumbing; it selects no libc stdio or CRT.
+ * Variants: 1 sysconf; 10/11 pathconf with null/absent path; 12/13 fpathconf
+ * with -1/9999 descriptor; 20..23 confstr with 0/1/4/16 output bytes.
+ */
+struct observation {
+    long result;
+    long error;
+    long selector;
+    long variant;
+    unsigned char output[16];
+};
+
+_Static_assert(sizeof(struct observation) == 48, "fixed observation layout");
+
+static int emit(const struct observation *record)
+{
+    long written;
+    register long call_number __asm__("rax") = SYS_write;
+    register long descriptor __asm__("rdi") = 1;
+    register const void *source __asm__("rsi") = record;
+    register size_t length __asm__("rdx") = sizeof *record;
+
+    __asm__ volatile("syscall" : "=a"(written)
+        : "0"(call_number), "D"(descriptor), "S"(source), "d"(length)
+        : "rcx", "r11", "memory");
+    return written == (long)sizeof *record ? 0 : 1;
+}
+
+static int emit_configuration_observations(void)
+{
+    static const int sysconf_names[] = { _SC_CLK_TCK, _SC_PAGE_SIZE, INT_MAX };
+    static const int invalid_path_names[] = { 21, INT_MAX };
+    static const int confstr_names[] = {
+        _CS_PATH, _CS_POSIX_V6_WIDTH_RESTRICTED_ENVS,
+        _CS_POSIX_V7_WIDTH_RESTRICTED_ENVS,
+        _CS_POSIX_V6_ILP32_OFF32_CFLAGS, _CS_POSIX_V7_THREADS_LDFLAGS,
+        -1, 2, 1152, INT_MAX,
+    };
+    static const size_t confstr_lengths[] = { 0, 1, 4, 16 };
+    static const char absent_path[] = "/crabc-configuration-absent";
+    struct observation record;
+    unsigned int i, variant;
+
+    for (i = 0; i < sizeof sysconf_names / sizeof sysconf_names[0]; ++i) {
+        record = (struct observation){ 0 };
+        record.selector = sysconf_names[i];
+        record.variant = 1;
+        errno = E2BIG;
+        record.result = sysconf(sysconf_names[i]);
+        record.error = errno;
+        if (emit(&record)) return 1;
+    }
+    for (i = 0; i < 21 + sizeof invalid_path_names / sizeof invalid_path_names[0]; ++i) {
+        int name = i < 21 ? (int)i : invalid_path_names[i - 21];
+        for (variant = 0; variant < 4; ++variant) {
+            record = (struct observation){ 0 };
+            record.selector = name;
+            record.variant = 10 + variant;
+            errno = E2BIG;
+            if (variant < 2)
+                record.result = pathconf(variant ? absent_path : NULL, name);
+            else
+                record.result = fpathconf(variant == 2 ? -1 : 9999, name);
+            record.error = errno;
+            if (emit(&record)) return 2;
+        }
+    }
+    for (i = 0; i < sizeof confstr_names / sizeof confstr_names[0]; ++i) {
+        for (variant = 0; variant < sizeof confstr_lengths / sizeof confstr_lengths[0]; ++variant) {
+            unsigned int byte;
+            record = (struct observation){ 0 };
+            record.selector = confstr_names[i];
+            record.variant = 20 + variant;
+            for (byte = 0; byte < sizeof record.output; ++byte)
+                record.output[byte] = 0xa5;
+            errno = E2BIG;
+            record.result = (long)confstr(confstr_names[i],
+                (char *)record.output, confstr_lengths[variant]);
+            record.error = errno;
+            if (emit(&record)) return 3;
+        }
+    }
     return 0;
 }
 
@@ -168,7 +256,10 @@ int crabc_x86_64_system_configuration_probe(void)
     if (status != 0)
         return 100 + status;
     status = check_pagesize_and_dtable_contract();
-    return status == 0 ? 0 : 200 + status;
+    if (status != 0)
+        return 200 + status;
+    status = emit_configuration_observations();
+    return status == 0 ? 0 : 210 + status;
 }
 
 #ifndef CRABC_SYSTEM_CONFIGURATION_FREESTANDING

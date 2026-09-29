@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 selected static crabc-libc system-configuration evidence.
+# Native Linux/x86-64 (kernel 5.10+) selected static configuration evidence.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -12,6 +12,12 @@ fail() { printf 'ERROR: x86 static libc system-configuration: %s\n' "$*" >&2; ex
 require_native_linux_x86_64() {
     [ "$(uname -s)" = Linux ] || fail "requires native Linux"
     case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
+    local release major minor
+    release="$(uname -r)"
+    [[ "$release" =~ ^([0-9]+)\.([0-9]+) ]] || fail "cannot parse Linux release $release"
+    major="${BASH_REMATCH[1]}"
+    minor="${BASH_REMATCH[2]}"
+    (( major > 5 || (major == 5 && minor >= 10) )) || fail "requires Linux 5.10 or newer"
 }
 require_tool() { command -v "$1" >/dev/null 2>&1 || fail "requires $1"; }
 
@@ -48,13 +54,16 @@ assert_path_configuration_is_table_only() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff grep nm objdump readelf rustup sort; do require_tool "$tool"; done
+for tool in ar cargo cmp diff grep nm objdump od readelf rustup sort; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_unistd_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_resource_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-system-configuration.XXXXXX)"
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-system-configuration"
+mkdir -p "$report_dir"
+uname -smr >"$report_dir/kernel.txt"
+work_dir="$(mktemp -d "$report_dir/build.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
@@ -67,7 +76,7 @@ for header in errno.h limits.h sys/resource.h sys/syscall.h bits/alltypes.h bits
     grep -Fq "$ROOT_DIR/include/$header" "$work_dir/header-trace" || fail "fixture did not use project $header"
 done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector -I"$ROOT_DIR/include" compat/x86_64/libc_system_configuration_probe.c -o "$reference"
-"$reference" || fail "pinned-musl system-configuration fixture failed"
+"$reference" >"$report_dir/musl.records" || fail "pinned-musl system-configuration fixture failed"
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit x86 static libc archive"
@@ -104,5 +113,11 @@ objdump -d --disassemble=__errno_location "$candidate" >"$work_dir/errno-disasse
 grep -Eq '%fs:0x0|%fs:-' "$work_dir/errno-disassembly" || fail "candidate errno lacks direct fs initial TLS"
 assert_getdtablesize_syscall
 assert_path_configuration_is_table_only
-"$candidate" || fail "freestanding system-configuration fixture failed"
-printf 'x86 static crabc-libc system-configuration: PASS\n'
+"$candidate" >"$report_dir/crabc.records" || fail "freestanding system-configuration fixture failed"
+od -An -td8 -w48 "$report_dir/musl.records" >"$report_dir/musl.decimal"
+od -An -td8 -w48 "$report_dir/crabc.records" >"$report_dir/crabc.decimal"
+cmp -s "$report_dir/musl.records" "$report_dir/crabc.records" || {
+    diff -u "$report_dir/musl.decimal" "$report_dir/crabc.decimal" >&2 || true
+    fail "pinned-musl and candidate configuration records differ; raw streams: $report_dir"
+}
+printf 'x86 static crabc-libc system-configuration: PASS; raw streams: %s\n' "$report_dir"
