@@ -2,14 +2,16 @@
 //!
 //! Pinned musl 1.2.6 `src/process/{execl,execle,execlp}.c` creates a VLA after
 //! counting the caller-supplied null terminator. Rust has no equivalent VLA,
-//! so this private sibling clones the ABI `VaList` to count it, maps an exactly
-//! sized anonymous pointer vector, then refills that vector from the original
-//! list. Arithmetic overflow and kernel mapping failure report their normal
-//! `E2BIG` or kernel errno; there is no artificial argv-entry cap. The mapping
-//! is released only when image replacement fails and returns.
+//! so this private sibling clones the ABI `VaList` to count it, uses inline
+//! pointer storage for short lists, and maps an exactly sized anonymous vector
+//! for longer lists. It then refills the vector from the original list.
+//! Arithmetic overflow and kernel mapping failure report their normal `E2BIG`
+//! or kernel errno; there is no artificial argv-entry cap. A mapping is
+//! released only when image replacement fails and returns.
 //! This preserves ordinary valid finite C-varargs construction, but deliberately
 //! does not claim musl's VLA stack-exhaustion or extreme resource-failure
-//! behavior: anonymous-mapping admission is a distinct private boundary.
+//! behavior for longer vectors: anonymous-mapping admission remains a distinct
+//! private boundary there.
 //!
 //! This helper has no public C entry and is deliberately separate from direct,
 //! environment-forwarding, and PATH-search exec archive members.
@@ -34,24 +36,30 @@ const PROT_READ: i64 = 0x1;
 const PROT_WRITE: i64 = 0x2;
 const MAP_PRIVATE: i64 = 0x2;
 const MAP_ANONYMOUS: i64 = 0x20;
+const INLINE_ARGV_SLOTS: usize = 16;
 
-/// An exactly sized temporary argv vector for a C-variadic exec wrapper.
+/// Temporary argv storage for a C-variadic exec wrapper.
 ///
-/// This owns a successful private anonymous mapping even if Linux happens to
-/// place it at address zero. Raw `munmap` intentionally does not translate
-/// errors, so releasing a valid vector cannot overwrite the `exec*` errno.
+/// A short vector stays in the wrapper's stack frame, so normal small calls
+/// retain musl's no-mapping behavior. A longer vector owns a successful
+/// private anonymous mapping even if Linux places it at address zero.
+/// Raw `munmap` does not translate errors, preserving a returning exec errno.
 pub(super) struct ArgumentVector {
-    pointers: *mut *const c_char,
-    bytes: usize,
+    storage: ArgumentStorage,
+}
+
+enum ArgumentStorage {
+    Inline([*const c_char; INLINE_ARGV_SLOTS]),
+    Mapped { pointers: *mut *const c_char, bytes: usize },
 }
 
 impl ArgumentVector {
-    /// Map space for every argv pointer plus the terminating null pointer.
+    /// Reserve space for every argv pointer plus the terminating null pointer.
     ///
     /// # Safety
     ///
     /// The caller must initialize the returned slots before passing the
-    /// vector to a Linux exec syscall. The mapping is private to this leaf.
+    /// vector to a Linux exec syscall. Any mapping is private to this leaf.
     unsafe fn allocate(argument_count: usize) -> Result<Self, ()> {
         let Some(slot_count) = argument_count.checked_add(1) else {
             // SAFETY: an unrepresentable argv-vector size cannot reach the
@@ -64,6 +72,12 @@ impl ArgumentVector {
             unsafe { errno::set_errno(E2BIG) };
             return Err(());
         };
+
+        if slot_count <= INLINE_ARGV_SLOTS {
+            return Ok(Self {
+                storage: ArgumentStorage::Inline([ptr::null(); INLINE_ARGV_SLOTS]),
+            });
+        }
 
         // SAFETY: Linux/x86-64 mmap receives an anonymous private mapping
         // request with scalar flags, no file descriptor, and zero offset.
@@ -85,29 +99,43 @@ impl ArgumentVector {
         }
 
         Ok(Self {
-            pointers: result as usize as *mut *const c_char,
-            bytes,
+            storage: ArgumentStorage::Mapped {
+                pointers: result as usize as *mut *const c_char,
+                bytes,
+            },
         })
     }
 
     #[inline]
     pub(super) fn as_argv(&self) -> *const *const c_char {
-        self.pointers.cast_const()
+        match &self.storage {
+            ArgumentStorage::Inline(pointers) => pointers.as_ptr(),
+            ArgumentStorage::Mapped { pointers, .. } => pointers.cast_const(),
+        }
+    }
+
+    #[inline]
+    fn as_mut_argv(&mut self) -> *mut *const c_char {
+        match &mut self.storage {
+            ArgumentStorage::Inline(pointers) => pointers.as_mut_ptr(),
+            ArgumentStorage::Mapped { pointers, .. } => *pointers,
+        }
     }
 }
 
 impl Drop for ArgumentVector {
     fn drop(&mut self) {
-        // SAFETY: a live `ArgumentVector` owns exactly this successful mmap
-        // range. The raw result is intentionally ignored so a returning exec
-        // failure retains its already-published errno.
-        let _ = unsafe {
-            raw_syscall::syscall2(
-                raw_syscall::SYS_MUNMAP,
-                self.pointers as usize as i64,
-                self.bytes as i64,
-            )
-        };
+        if let ArgumentStorage::Mapped { pointers, bytes } = &self.storage {
+            // SAFETY: this variant owns exactly the successful mmap range.
+            // The raw result is ignored to retain a returning exec errno.
+            let _ = unsafe {
+                raw_syscall::syscall2(
+                    raw_syscall::SYS_MUNMAP,
+                    *pointers as usize as i64,
+                    *bytes as i64,
+                )
+            };
+        }
     }
 }
 
@@ -141,20 +169,21 @@ pub(super) unsafe fn variadic_argv(
     args: &mut VaList<'_>,
 ) -> Result<ArgumentVector, ()> {
     let count = unsafe { variadic_argument_count(args) }?;
-    let argv = unsafe { ArgumentVector::allocate(count) }?;
+    let mut argv = unsafe { ArgumentVector::allocate(count) }?;
+    let pointers = argv.as_mut_argv();
 
     // SAFETY: `allocate` reserved `count + 1` pointer slots. The first C
     // fixed argument occupies slot zero; the loop fills exactly through the
     // count-th trailing null that the cloned scan already observed.
-    unsafe { ptr::write(argv.pointers, first) };
+    unsafe { ptr::write(pointers, first) };
     let mut index = 1usize;
     loop {
         // SAFETY: the caller's terminal-null contract was used to count this
         // same original list without consuming it.
         let argument: *const c_char = unsafe { args.next_arg() };
         // SAFETY: `index` reaches at most `count`, which is inside the
-        // `count + 1` mapping established above.
-        unsafe { ptr::write(argv.pointers.add(index), argument) };
+        // `count + 1` storage established above.
+        unsafe { ptr::write(pointers.add(index), argument) };
         if argument.is_null() {
             debug_assert_eq!(index, count);
             return Ok(argv);

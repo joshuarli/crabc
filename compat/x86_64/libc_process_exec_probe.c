@@ -79,7 +79,7 @@ enum {
 _Static_assert(sizeof(long) == 8 && sizeof(void *) == 8,
     "x86-64 LP64 words");
 _Static_assert(SYS_execve == 59 && SYS_execveat == 322 && SYS_fork == 57 &&
-    SYS_wait4 == 61 && SYS_exit == 60 && SYS_openat == 257 &&
+    SYS_wait4 == 61 && SYS_exit == 60 && SYS_mmap == 9 && SYS_openat == 257 &&
     SYS_prctl == 157 && SYS_seccomp == 317,
     "Linux x86-64 process-exec and fixture syscall numbers");
 _Static_assert(E2BIG == FIXTURE_E2BIG && ENOENT == FIXTURE_ENOENT &&
@@ -384,12 +384,12 @@ static int check_exec_child(int argc, char **argv)
     return 0;
 }
 
-static int install_execveat_enosys_filter(void)
+static int install_syscall_enosys_filter(long syscall_number)
 {
     struct crabc_bpf_instruction filter[] = {
         CRABC_BPF_STATEMENT(CRABC_BPF_LD | CRABC_BPF_W | CRABC_BPF_ABS, 0),
         CRABC_BPF_JUMP(CRABC_BPF_JMP | CRABC_BPF_JEQ | CRABC_BPF_K,
-            SYS_execveat, 0, 1),
+            syscall_number, 0, 1),
         CRABC_BPF_STATEMENT(CRABC_BPF_RET | CRABC_BPF_K,
             CRABC_SECCOMP_RET_ERRNO | FIXTURE_ENOSYS),
         CRABC_BPF_STATEMENT(CRABC_BPF_RET | CRABC_BPF_K,
@@ -406,6 +406,11 @@ static int install_execveat_enosys_filter(void)
             (long)(uintptr_t)&program) != 0)
         return -1;
     return 0;
+}
+
+static int install_execveat_enosys_filter(void)
+{
+    return install_syscall_enosys_filter(SYS_execveat);
 }
 
 static int open_helper(void)
@@ -641,6 +646,37 @@ static int check_path_name_bounds_and_slash_bypass(const char *self)
     return 0;
 }
 
+/* A short execlp argument list must reach PATH search even when anonymous
+ * mappings are unavailable. Musl builds this vector on the caller's stack. */
+static int check_execlp_without_mmap(const char *self)
+{
+    (void)self;
+    environ = slash_bypass_environment;
+    if (install_syscall_enosys_filter(SYS_mmap) != 0)
+        return 1;
+    errno = FIXTURE_ERRNO_SENTINEL;
+    if (execlp("process-exec-mmap-filter-missing", "missing", "stack-word-one",
+            "stack-word-two", "stack-word-three", "stack-word-four",
+            (char *)0) != -1 || errno != FIXTURE_ENOENT)
+        return 2;
+    return 0;
+}
+
+/* A larger finite variadic list still reaches the same PATH result. */
+static int check_execlp_large_argv(const char *self)
+{
+    (void)self;
+    environ = slash_bypass_environment;
+    errno = FIXTURE_ERRNO_SENTINEL;
+    if (execlp("process-exec-large-argv-missing", "missing",
+            "one", "two", "three", "four", "five", "six", "seven",
+            "eight", "nine", "ten", "eleven", "twelve", "thirteen",
+            "fourteen", "fifteen", "sixteen", (char *)0) != -1 ||
+        errno != FIXTURE_ENOENT)
+        return 1;
+    return 0;
+}
+
 static int check_direct_failure_errno(const char *self)
 {
     char *argv[] = {
@@ -752,6 +788,8 @@ static int run_parent(const char *self)
         check_eacces_precedence,
         check_enoexec_after_eacces_is_terminal,
         check_path_name_bounds_and_slash_bypass,
+        check_execlp_without_mmap,
+        check_execlp_large_argv,
         check_fexecve_success,
         check_fexecve_enosys,
     };
