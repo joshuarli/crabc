@@ -725,4 +725,118 @@ mod tests {
             },
         );
     }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-stat-2"))]
+    #[test]
+    fn failed_os_page_release_preserves_source_statistics() {
+        crate::test_process::run_in_fresh_process(
+            "page::tests::failed_os_page_release_preserves_source_statistics",
+            || {
+                use core::ffi::{c_char, c_int, c_void};
+                use core::sync::atomic::{AtomicUsize, Ordering};
+                use crate::config::SourceOption;
+                use crate::diagnostic_output::RuntimeStderrOutput;
+                use crate::os::fault;
+                use crate::runtime_lifecycle::{self, NativePageAllocationResult};
+                use crate::statistics::{FinalStatisticsSnapshot, HeapTheapStatistics};
+
+                unsafe extern "C" {
+                    static mut stderr: *mut c_void;
+                    fn fputs(message: *const c_char, stream: *mut c_void) -> c_int;
+                }
+
+                static WARNINGS: AtomicUsize = AtomicUsize::new(0);
+
+                unsafe extern "C" fn source_stderr(message: *const c_char) {
+                    // SAFETY: the process-lifetime FILE is a valid destination
+                    // for the NUL-terminated output fragment.
+                    unsafe { let _ = fputs(message, stderr); }
+                }
+
+                unsafe extern "C" fn capture_warning(message: *const c_char, _: *mut c_void) {
+                    // SAFETY: the registered output callback receives a live
+                    // NUL-terminated fragment for the duration of this call.
+                    let bytes = unsafe { std::ffi::CStr::from_ptr(message) }.to_bytes();
+                    if bytes.windows(b"unable to free OS memory".len())
+                        .any(|window| window == b"unable to free OS memory")
+                    {
+                        WARNINGS.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+
+                fn stats() -> (FinalStatisticsSnapshot, crate::statistics::HeapTheapStatisticsSnapshot) {
+                    let mut image = HeapTheapStatistics::new();
+                    // SAFETY: the local image has the source header and is
+                    // exclusively mutable during this snapshot.
+                    assert!(unsafe { runtime_lifecycle::native_stats_get(core::ptr::from_mut(&mut image).cast()) });
+                    (image.final_output_snapshot(), image.snapshot())
+                }
+
+                fn show(stage: &str, before: (FinalStatisticsSnapshot, crate::statistics::HeapTheapStatisticsSnapshot), failures: usize) {
+                    let (now, bins) = stats();
+                    let old = before.0;
+                    std::println!("{stage}.pages={},{},{}", now.pages.total - old.pages.total,
+                        now.pages.peak - old.pages.peak, now.pages.current - old.pages.current);
+                    std::println!("{stage}.reserved={},{},{}", now.reserved.total - old.reserved.total,
+                        now.reserved.peak - old.reserved.peak, now.reserved.current - old.reserved.current);
+                    std::println!("{stage}.committed={},{},{}", now.committed.total - old.committed.total,
+                        now.committed.peak - old.committed.peak, now.committed.current - old.committed.current);
+                    std::println!("{stage}.normal={},{},{}", now.malloc_normal.total - old.malloc_normal.total,
+                        now.malloc_normal.peak - old.malloc_normal.peak, now.malloc_normal.current - old.malloc_normal.current);
+                    for (index, (current, previous)) in bins.page_bin_total.iter()
+                        .zip(before.1.page_bin_total.iter()).enumerate()
+                    {
+                        if current > previous {
+                            std::println!("{stage}.page_bin={index}:{},{}", current - previous,
+                                bins.page_bin_current[index] - before.1.page_bin_current[index]);
+                        }
+                    }
+                    std::println!("{stage}.warnings={}", WARNINGS.load(Ordering::Relaxed));
+                    std::println!("{stage}.failures={failures}");
+                }
+
+                // SAFETY: the callback remains valid through process exit.
+                assert!(runtime_lifecycle::test_initialize_process_from_host_environment(
+                    4096, unsafe { RuntimeStderrOutput::new(source_stderr) },
+                ));
+                crate::source_options_api::option_set(SourceOption::DisallowArenaAlloc as c_int, 1);
+                crate::source_options_api::option_set(SourceOption::ShowErrors as c_int, 1);
+                // SAFETY: the static callback and null context remain valid
+                // until this fresh process exits.
+                unsafe { crate::source_options_api::register_output(Some(capture_warning), core::ptr::null_mut()) };
+                let warm = match runtime_lifecycle::native_allocate(100000, false) {
+                    NativePageAllocationResult::Allocated(pointer) => pointer,
+                    _ => panic!("OS-backed warm allocation failed"),
+                };
+                // SAFETY: the warmed allocation remains live and local.
+                assert_eq!(unsafe { runtime_lifecycle::native_free(warm) }, runtime_lifecycle::NativePageFreeResult::Freed);
+                runtime_lifecycle::native_collect(true);
+                let before = stats();
+                let block = match runtime_lifecycle::native_allocate(100000, false) {
+                    NativePageAllocationResult::Allocated(pointer) => pointer,
+                    _ => panic!("OS-backed large allocation failed"),
+                };
+                std::println!("CRABC_MI_M7_PAGE_FAILURE_STATS_TRACE_BEGIN");
+                std::println!("profile.level=2");
+                std::println!("profile.disallow_arena={}",
+                    crate::source_options_api::option_get(SourceOption::DisallowArenaAlloc as c_int));
+                show("allocated", before, 0);
+                // SAFETY: this exact live local allocation is consumed once;
+                // collection later releases its retired page.
+                let free_result = unsafe { runtime_lifecycle::native_free(block) };
+                show("freed", before, 0);
+                let fault = fault::install(fault::Plan::at(fault::Point::Unmap, 1, crabc_core::Errno::NOMEM));
+                let unmaps = fault.capture_unmap_ranges();
+                runtime_lifecycle::native_collect(true);
+                assert_eq!(fault.observed(), 1, "the page release reached the raw unmap");
+                let (ranges, count) = unmaps.all().expect("bounded raw unmap capture");
+                assert!(count > 0 && ranges[0].0 <= block.as_ptr().addr()
+                    && block.as_ptr().addr() - ranges[0].0 < ranges[0].1,
+                    "the failed unmap must contain the released page");
+                show("failed_release", before, 1);
+                std::println!("CRABC_MI_M7_PAGE_FAILURE_STATS_TRACE_END");
+                std::println!("release.retained={}", usize::from(free_result == runtime_lifecycle::NativePageFreeResult::Retained));
+            },
+        );
+    }
 }
