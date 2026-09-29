@@ -114,8 +114,11 @@ are not transferable passes for a different revision.
   workload remains unchanged. A later native-shadow source cohort passes
   `signal-handler-fork` and all three allocator C ABI leaves but stops at
   `kernel-residual`: a forked child does not get the expected `-EPERM` from
-  private expedited `membarrier`. Registration timing is under focused
-  investigation; the native 219-case receipt remains unavailable.
+  private expedited `membarrier`. A same-object pinned-musl/accepted-C/native
+  probe shows the native allocator registers for private expedited barriers
+  before executable preinit and retains registration after fork, while both
+  controls remain unregistered until an explicit child request. The native
+  219-case receipt remains unavailable pending the allocator entry-fence fix.
   `consumer.rust-std-lto` passes its
   Rust, native-facade, LTO, and unwind leaves on clean `d6733f516`; its
   pinned-image receipt passed independent physical validation and public
@@ -332,7 +335,11 @@ are not transferable passes for a different revision.
   including all 56 VM checks; the same four components remain partial. A direct
   regular-arena delayed-purge failure receiver matches 32 C/Rust fields,
   including consumed schedule, warning timing, and surviving claims; its
-  shared-gate registration remains open. A separate source-built fresh-arena
+  shared-gate registration remains open. A second direct receiver matches 24
+  fields when two delayed slices flank a live neighbor: the first decommit
+  fails, the second succeeds, both schedules are consumed, and the arena
+  remains mapped. Its shared-gate registration is also open. A separate
+  source-built fresh-arena
   receiver matches 46 C/Rust fields when metadata commit and cleanup unmap
   both fail, leaving a raw escaped map while a later healthy arena claim
   succeeds and releases; its shared-gate registration remains open.
