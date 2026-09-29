@@ -12,6 +12,7 @@
 #endif
 
 #define MIB ((size_t)1024 * 1024)
+#define SPLIT_BOUNDARY ((size_t)16 * 1024 * MIB)
 
 typedef struct {
   mi_arena_id_t reserved;
@@ -118,6 +119,26 @@ static void* child_external_second(void* argument) {
   mi_heap_destroy(heap);
   mi_collect(true);
   state->second_done = true;
+  return NULL;
+}
+
+typedef struct {
+  mi_arena_id_t arena;
+  void* area;
+  size_t size;
+} split_external_t;
+
+static void* split_observer(void* argument) {
+  split_external_t* state = (split_external_t*)argument;
+  size_t observed_size = 0;
+  void* observed_area = mi_arena_area(state->arena, &observed_size);
+  unsigned char* second = (unsigned char*)state->area + SPLIT_BOUNDARY;
+  printf("arena.split_worker=%d,%d,%d,%d,%d,%d\n",
+         mi_subproc_current()._mi_subproc_id == mi_subproc_main()._mi_subproc_id,
+         observed_area == state->area, observed_size == state->size,
+         mi_arena_contains(state->arena, second),
+         mi_arena_contains(state->arena, second + MIB),
+         !mi_arena_contains(state->arena, (unsigned char*)state->area + state->size));
   return NULL;
 }
 
@@ -308,6 +329,66 @@ int main(void) {
          child_external.second_done,
          mincore(child_external.area, 4096, &residency) == 0);
   if (munmap(child_external.area, minimum) != 0) return 26;
+
+  // A public parent ID covers every child arena formed from one large mapping.
+  size_t split_size = SPLIT_BOUNDARY + minimum;
+  void* split_raw = mmap(NULL, split_size + alignment, PROT_NONE,
+                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+  if (split_raw == MAP_FAILED) return 27;
+  uintptr_t split_base = (uintptr_t)split_raw;
+  uintptr_t split_aligned = (split_base + alignment - 1) & ~(uintptr_t)(alignment - 1);
+  size_t split_prefix = split_aligned - split_base;
+  size_t split_suffix = alignment - split_prefix;
+  if (split_prefix != 0 && munmap(split_raw, split_prefix) != 0) return 28;
+  if (split_suffix != 0 && munmap((void*)(split_aligned + split_size), split_suffix) != 0) return 29;
+  split_external_t split = {NULL, (void*)split_aligned, split_size};
+  errno = 0;
+  bool split_managed = mi_manage_os_memory_ex(split.area, split.size,
+      false, false, true, -1, true, &split.arena);
+  size_t split_observed_size = 0;
+  void* split_observed = mi_arena_area(split.arena, &split_observed_size);
+  printf("arena.split_manage=%d,%d,%d,%d,%d\n", split_managed,
+         split.arena != NULL, split_observed == split.area,
+         split_observed_size == split.size, errno == 0);
+  if (!split_managed || split.arena == NULL) return 30;
+#ifdef CRABC_M6_SOURCE_INTERNAL
+  mi_subproc_t* split_subprocess = (mi_subproc_t*)mi_subproc_main()._mi_subproc_id;
+  mi_arena_t* split_parent = (mi_arena_t*)split.arena;
+  mi_arena_t* split_child = NULL;
+  for (size_t i = 0; i < split_subprocess->arena_count; i++) {
+    mi_arena_t* candidate = mi_atomic_load_ptr_acquire(mi_arena_t, &split_subprocess->arenas[i]);
+    if (candidate != NULL && candidate->parent == split_parent) split_child = candidate;
+  }
+  fprintf(stderr, "source.split_arena=%d,%d,%d\n",
+          split_parent->total_size == split.size,
+          split_child != NULL,
+          split_child != NULL && (uintptr_t)split_child->start == split_aligned + SPLIT_BOUNDARY);
+#endif
+  unsigned char* second = (unsigned char*)split.area + SPLIT_BOUNDARY;
+  printf("arena.split_contains=%d,%d,%d,%d,%d\n",
+         mi_arena_contains(split.arena, split.area),
+         mi_arena_contains(split.arena, second),
+         mi_arena_contains(split.arena, second + minimum - 1),
+         !mi_arena_contains(split.arena, second + minimum),
+         !mi_arena_contains(split.arena, NULL));
+  pthread_t split_worker;
+  if (pthread_create(&split_worker, NULL, split_observer, &split) != 0) return 31;
+  if (pthread_join(split_worker, NULL) != 0) return 32;
+  mi_heap_t* split_heap = mi_heap_new_in_arena(split.arena);
+  if (split_heap == NULL) return 33;
+  void* split_block = mi_heap_malloc(split_heap, 96);
+  printf("arena.split_selected=%d,%d,%d\n", split_block != NULL,
+         in_area(split_block, split.area, split.size),
+         mi_arena_contains(split.arena, split_block));
+  if (split_block == NULL) return 34;
+  mi_free(split_block);
+  mi_heap_destroy(split_heap);
+  mi_collect(true);
+  printf("arena.split_terminal=%d,%d\n",
+         mi_arena_area(split.arena, NULL) == split.area,
+         mincore(split.area, 4096, &residency) == 0);
+  // The process-main arena registry still owns metadata inside this mapping,
+  // so the caller keeps it mapped until process exit.
   puts("CRABC_MI_M6_PUBLIC_ARENA_END");
   return 0;
 }

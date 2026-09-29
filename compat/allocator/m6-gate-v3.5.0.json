@@ -99,8 +99,8 @@
       "scope": "Source-built pinned-C/native-adapter traces of mi_theap_get_default, mi_theap_set_default, mi_heap_theap, mi_theap_malloc, mi_theap_zalloc, and default-root mi_malloc across the process main thread, one worker, and a fork child: initialized candidate and null refusal, exact previous/default pointers, main and auxiliary Heap ownership, shared TLD, zeroing, restoration, and parent root preservation."
     },
     "differential:public-arena": {
-      "runner": null,
-      "scope": "Pinned-C/Rust reservation, managed-memory, exclusive-arena, and arena query traces."
+      "runner": "compat/allocator/x86_64_m6_public_arena.py",
+      "scope": "Source-built pinned-C/native-adapter public arena reservation, caller-owned committed and reserved memory in main and child subprocesses, exclusive Heap selection, arena area and containment queries across workers, caller-retained backing and purge, and a 17 GiB external mapping split into parent and child arenas while one parent ID covers the full range."
     },
     "differential:managed-os-lifecycle": {
       "runner": "compat/allocator/x86_64_m6_manage_os_memory_alias.py",
@@ -386,7 +386,7 @@
         "unit:arena"
       ],
       "blocked_by": [
-        "Main and child public aligned OS map failures match the source return, null arena output, primitive errno, and ordered direct-map, fallback, and over-allocation warnings. Public managed OS memory has main and child selected-allocation, short-region warning/errno, child destruction, and caller-held unmap evidence. Main and child callback-managed memory match selected commit/purge geometry, failed metadata commit warning with retry, and a failed purge that leaves its span committed for reuse; main short-region refusal also matches. Other OS failure branches, managed-memory cleanup, callback reentrancy and broader child lifetime cases, huge-page reservation, and arena queries remain open."
+        "Main and child public aligned OS map failures match the source return, null arena output, primitive errno, and ordered direct-map, fallback, and over-allocation warnings. Public managed OS memory has main and child selected-allocation, short-region warning/errno, child destruction, and caller-held unmap evidence. Main and child callback-managed memory match selected commit/purge geometry, failed metadata commit warning with retry, and a failed purge that leaves its span committed for reuse; main short-region refusal also matches. Public arena queries now match across reserved, managed, child, and 17 GiB split-parent backing. Other OS failure branches, managed-memory cleanup, callback reentrancy and broader child lifetime cases, huge-page reservation, and wider arena query combinations remain open."
       ]
     },
     {
