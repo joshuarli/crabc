@@ -27,8 +27,14 @@
 
 #pragma STDC FENV_ACCESS ON
 
-#define ATANH_F64_CASES 32
-#define ATANH_F32_CASES 32
+#define ATANH_BASE_CASES 32
+#define ATANH_BOUNDARY_CASES 7
+#define ATANH_BOUNDARY_RADIUS 8
+#define ATANH_NAN_CASES 8
+#define ATANH_NEIGHBOR_CASES \
+	(ATANH_BOUNDARY_CASES * (2 * ATANH_BOUNDARY_RADIUS + 1) * 2)
+#define ATANH_F64_CASES (ATANH_BASE_CASES + ATANH_NEIGHBOR_CASES + ATANH_NAN_CASES)
+#define ATANH_F32_CASES (ATANH_BASE_CASES + ATANH_NEIGHBOR_CASES + ATANH_NAN_CASES)
 #define ATANH_ROUNDING_CASES 4
 #define ATANH_RECORD_WORDS 4
 #define ATANH_RECORD_COUNT ((ATANH_F64_CASES + ATANH_F32_CASES) * ATANH_ROUNDING_CASES)
@@ -41,10 +47,12 @@ typedef float (*float_unary_function)(float);
 static double_unary_function volatile direct_atanh = (atanh);
 static float_unary_function volatile direct_atanhf = (atanhf);
 
-/* The freestanding start object writes these exact 8,192 bytes with syscall. */
+/* The freestanding start object writes the complete fixed-size record stream. */
 uint64_t crabc_x86_64_math_atanh_records[ATANH_RECORD_STORAGE_WORDS];
+const uint64_t crabc_x86_64_math_atanh_record_bytes =
+	sizeof(crabc_x86_64_math_atanh_records);
 
-static const uint64_t binary64_inputs[ATANH_F64_CASES] = {
+static const uint64_t binary64_inputs[ATANH_BASE_CASES] = {
 	UINT64_C(0x0000000000000000), UINT64_C(0x8000000000000000),
 	UINT64_C(0x0000000000000001), UINT64_C(0x000fffffffffffff),
 	UINT64_C(0x0010000000000000), UINT64_C(0x3de0000000000000),
@@ -63,7 +71,7 @@ static const uint64_t binary64_inputs[ATANH_F64_CASES] = {
 	UINT64_C(0x7fefffffffffffff), UINT64_C(0xffefffffffffffff),
 };
 
-static const uint32_t binary32_inputs[ATANH_F32_CASES] = {
+static const uint32_t binary32_inputs[ATANH_BASE_CASES] = {
 	UINT32_C(0x00000000), UINT32_C(0x80000000), UINT32_C(0x00000001),
 	UINT32_C(0x007fffff), UINT32_C(0x00800000), UINT32_C(0x2f000000),
 	UINT32_C(0x2f800000), UINT32_C(0x2f800001), UINT32_C(0x3e800000),
@@ -75,6 +83,35 @@ static const uint32_t binary32_inputs[ATANH_F32_CASES] = {
 	UINT32_C(0xbf7fffff), UINT32_C(0xbf800000), UINT32_C(0xbf800001),
 	UINT32_C(0xff800000), UINT32_C(0xffc00041), UINT32_C(0xff800042),
 	UINT32_C(0x7f7fffff), UINT32_C(0xff7fffff),
+};
+
+/* Magnitudes straddle subnormal, tiny, quarter, half, and pole branches. */
+static const uint64_t binary64_boundaries[ATANH_BOUNDARY_CASES] = {
+	UINT64_C(0x0000000000000009), UINT64_C(0x000ffffffffffff8),
+	UINT64_C(0x3de0000000000000), UINT64_C(0x3df0000000000000),
+	UINT64_C(0x3fd0000000000000), UINT64_C(0x3fe0000000000000),
+	UINT64_C(0x3ff0000000000000),
+};
+
+static const uint32_t binary32_boundaries[ATANH_BOUNDARY_CASES] = {
+	UINT32_C(0x00000009), UINT32_C(0x007ffff8),
+	UINT32_C(0x2f000000), UINT32_C(0x2f800000),
+	UINT32_C(0x3e800000), UINT32_C(0x3f000000),
+	UINT32_C(0x3f800000),
+};
+
+static const uint64_t binary64_nan_inputs[ATANH_NAN_CASES] = {
+	UINT64_C(0x7ff8000000000001), UINT64_C(0xfff8000000000001),
+	UINT64_C(0x7fffffffffffffff), UINT64_C(0xffffffffffffffff),
+	UINT64_C(0x7ff0000000000001), UINT64_C(0xfff0000000000001),
+	UINT64_C(0x7ff7ffffffffffff), UINT64_C(0xfff7ffffffffffff),
+};
+
+static const uint32_t binary32_nan_inputs[ATANH_NAN_CASES] = {
+	UINT32_C(0x7fc00001), UINT32_C(0xffc00001),
+	UINT32_C(0x7fffffff), UINT32_C(0xffffffff),
+	UINT32_C(0x7f800001), UINT32_C(0xff800001),
+	UINT32_C(0x7fbfffff), UINT32_C(0xffbfffff),
 };
 
 static const int rounding_modes[ATANH_ROUNDING_CASES] = {
@@ -150,20 +187,56 @@ int crabc_x86_64_math_atanh_probe(void)
 	size_t cursor = 0;
 	size_t input_index;
 	size_t mode_index;
+	size_t boundary_index;
+	int offset;
 	int status = 0;
 
 	if (fegetenv(&original) != 0 || fesetenv(FE_DFL_ENV) != 0)
 		return 1;
 	for (mode_index = 0; mode_index < ATANH_ROUNDING_CASES && status == 0;
 		mode_index++) {
-		for (input_index = 0; input_index < ATANH_F64_CASES && status == 0;
+		for (input_index = 0; input_index < ATANH_BASE_CASES && status == 0;
 			input_index++)
 			status = record_binary64(&cursor, rounding_modes[mode_index],
 				binary64_inputs[input_index]);
-		for (input_index = 0; input_index < ATANH_F32_CASES && status == 0;
+		for (boundary_index = 0; boundary_index < ATANH_BOUNDARY_CASES &&
+			status == 0; boundary_index++) {
+			for (offset = -ATANH_BOUNDARY_RADIUS;
+				offset <= ATANH_BOUNDARY_RADIUS && status == 0; offset++) {
+				uint64_t magnitude = binary64_boundaries[boundary_index] + offset;
+				status = record_binary64(&cursor, rounding_modes[mode_index],
+					magnitude);
+				if (status == 0)
+					status = record_binary64(&cursor,
+						rounding_modes[mode_index],
+						magnitude | UINT64_C(0x8000000000000000));
+			}
+		}
+		for (input_index = 0; input_index < ATANH_NAN_CASES && status == 0;
+			input_index++)
+			status = record_binary64(&cursor, rounding_modes[mode_index],
+				binary64_nan_inputs[input_index]);
+		for (input_index = 0; input_index < ATANH_BASE_CASES && status == 0;
 			input_index++)
 			status = record_binary32(&cursor, rounding_modes[mode_index],
 				binary32_inputs[input_index]);
+		for (boundary_index = 0; boundary_index < ATANH_BOUNDARY_CASES &&
+			status == 0; boundary_index++) {
+			for (offset = -ATANH_BOUNDARY_RADIUS;
+				offset <= ATANH_BOUNDARY_RADIUS && status == 0; offset++) {
+				uint32_t magnitude = binary32_boundaries[boundary_index] + offset;
+				status = record_binary32(&cursor, rounding_modes[mode_index],
+					magnitude);
+				if (status == 0)
+					status = record_binary32(&cursor,
+						rounding_modes[mode_index],
+						magnitude | UINT32_C(0x80000000));
+			}
+		}
+		for (input_index = 0; input_index < ATANH_NAN_CASES && status == 0;
+			input_index++)
+			status = record_binary32(&cursor, rounding_modes[mode_index],
+				binary32_nan_inputs[input_index]);
 	}
 	if (cursor != ATANH_RECORD_STORAGE_WORDS && status == 0)
 		status = 3;
