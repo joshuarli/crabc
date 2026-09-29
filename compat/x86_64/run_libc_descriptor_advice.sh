@@ -4,7 +4,9 @@
 # This fixture uses raw Linux setup and inspection helpers over one unlinked
 # regular file, so the candidate surface is only `posix_fadvise` and
 # `readahead`. It proves fixed POSIX advice values and the two distinct C
-# error conventions while preserving file position; it does not claim cache
+# error conventions while preserving file position. It retains a byte-exact
+# pinned-musl/candidate observation stream and both executable products under
+# the checkout's ignored report directory; it does not claim cache
 # effect, filesystem policy, pathname, CRT, pthread/TLS lifecycle, loader,
 # sysroot, or public x86-64 C ABI support.
 set -euo pipefail
@@ -97,7 +99,7 @@ assert_readahead_syscall_path() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cat cmp diff grep mapfile mkdir nm objdump readelf rustup sort wc; do
+for tool in ar awk cargo cat cmp cp diff grep mapfile mkdir nm objdump od readelf rustup sort uname wc; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -106,7 +108,10 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_descriptor_advice_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_x86_fs_advice_reference.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-descriptor-advice.XXXXXX)"
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-descriptor-advice"
+mkdir -p "$report_dir"
+uname -smr >"$report_dir/kernel.txt"
+work_dir="$(mktemp -d "$report_dir/build.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
@@ -120,6 +125,8 @@ candidate_symbols="$work_dir/candidate-symbols"
 candidate_program_headers="$work_dir/candidate-program-headers"
 candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
+oracle_records="$report_dir/musl.records"
+candidate_records="$report_dir/crabc.records"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
@@ -131,7 +138,7 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_descriptor_advice_probe.c \
     -o "$work_dir/oracle"
-"$work_dir/oracle"
+"$work_dir/oracle" >"$oracle_records" || fail "pinned-musl descriptor-advice probe failed"
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit libc.a"
@@ -188,5 +195,25 @@ assert_fixture_tls_capacity
 assert_posix_fadvise_syscall_path
 assert_readahead_syscall_path
 
-"$candidate"
-printf 'x86 static crabc-libc descriptor advice: PASS\n'
+"$candidate" >"$candidate_records" || fail "crabc descriptor-advice probe failed"
+[ "$(wc -c <"$oracle_records")" -eq 768 ] ||
+    fail "pinned-musl probe did not emit 24 fixed observations"
+[ "$(wc -c <"$candidate_records")" -eq 768 ] ||
+    fail "crabc probe did not emit 24 fixed observations"
+od -An -td8 -w32 "$oracle_records" >"$report_dir/musl.decimal"
+od -An -td8 -w32 "$candidate_records" >"$report_dir/crabc.decimal"
+if ! cmp -s "$oracle_records" "$candidate_records"; then
+    diff -u "$report_dir/musl.decimal" "$report_dir/crabc.decimal" >&2 || true
+    fail "pinned-musl/crabc descriptor-advice observations differ; raw streams: $report_dir"
+fi
+cp "$work_dir/oracle" "$report_dir/musl.elf"
+cp "$candidate" "$report_dir/crabc.elf"
+cp "$archive.source-runtime.json" "$report_dir/source-runtime.json"
+cp "$candidate_program_headers" "$report_dir/crabc-program-headers.txt"
+cp "$selected_symbols" "$report_dir/selected-c-abi-symbols.txt"
+cp "$work_dir/posix-fadvise-disassembly" "$report_dir/posix-fadvise-disassembly.txt"
+cp "$work_dir/readahead-disassembly" "$report_dir/readahead-disassembly.txt"
+cp "$ROOT_DIR/compat/x86_64/libc_descriptor_advice_probe.c" "$report_dir/libc_descriptor_advice_probe.c"
+cp "$ROOT_DIR/compat/x86_64/libc_descriptor_advice_start.S" "$report_dir/libc_descriptor_advice_start.S"
+cp "$ROOT_DIR/compat/x86_64/run_libc_descriptor_advice.sh" "$report_dir/run_libc_descriptor_advice.sh"
+printf 'x86 static crabc-libc descriptor advice: PASS; raw streams: %s\n' "$report_dir"

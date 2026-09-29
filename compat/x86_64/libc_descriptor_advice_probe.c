@@ -7,7 +7,9 @@
  * candidate C entry points used for the subject behavior. It proves the six
  * fixed POSIX advice values, position preservation, direct POSIX error
  * returns without errno publication, and ordinary `-1`/errno readahead
- * results. It is not a cache-effect, filesystem policy, pathname, CRT,
+ * results. A fixed binary record stream compares signed range and invalid
+ * descriptor results against the pinned-musl executable byte for byte.
+ * It is not a cache-effect, filesystem policy, pathname, CRT,
  * pthread/TLS lifecycle, loader, sysroot, or public x86-64 support test.
  */
 
@@ -36,7 +38,7 @@ enum {
 
 _Static_assert(SYS_open == 2 && SYS_close == 3 && SYS_lseek == 8 &&
     SYS_ftruncate == 77 && SYS_getpid == 39 && SYS_unlink == 87 &&
-    SYS_readahead == 187 && SYS_fadvise64 == 221,
+    SYS_readahead == 187 && SYS_fadvise64 == 221 && SYS_write == 1,
     "x86 selected descriptor-advice fixture syscall numbers");
 _Static_assert(sizeof(off_t) == sizeof(int64_t) && sizeof(off_t) == sizeof(long) &&
     (off_t)-1 < 0, "x86 signed 64-bit off_t");
@@ -138,6 +140,62 @@ static int file_state_is_expected(int descriptor)
         position_is(descriptor, (off_t)POSITION);
 }
 
+struct observation {
+    int64_t case_id;
+    int64_t result;
+    int64_t errno_value;
+    int64_t position;
+};
+
+_Static_assert(sizeof(struct observation) == 32,
+    "fixed descriptor-advice observation layout");
+
+static void observe_fadvise(struct observation *record, int64_t case_id,
+    int descriptor, off_t offset, off_t length, int advice)
+{
+    int status;
+    int saved_errno;
+
+    errno = ERANGE;
+    status = posix_fadvise(descriptor, offset, length, advice);
+    saved_errno = errno;
+    record->case_id = case_id;
+    record->result = status;
+    record->errno_value = saved_errno;
+    record->position = raw3(SYS_lseek, descriptor, 0, SEEK_CUR);
+}
+
+static void observe_readahead(struct observation *record, int64_t case_id,
+    int descriptor, off_t offset, size_t count)
+{
+    ssize_t status;
+    int saved_errno;
+
+    errno = ERANGE;
+    status = readahead(descriptor, offset, count);
+    saved_errno = errno;
+    record->case_id = case_id;
+    record->result = status;
+    record->errno_value = saved_errno;
+    record->position = raw3(SYS_lseek, descriptor, 0, SEEK_CUR);
+}
+
+static int emit_observations(const struct observation *records, size_t count)
+{
+    const char *cursor = (const char *)records;
+    size_t remaining = count * sizeof(*records);
+
+    while (remaining != 0) {
+        long written = raw3(SYS_write, 1, (long)(const void *)cursor,
+            (long)remaining);
+        if (written <= 0)
+            return -1;
+        cursor += written;
+        remaining -= (size_t)written;
+    }
+    return 0;
+}
+
 int crabc_x86_64_descriptor_advice_probe(void)
 {
     static const int policies[] = {
@@ -148,6 +206,7 @@ int crabc_x86_64_descriptor_advice_probe(void)
         POSIX_FADV_DONTNEED,
         POSIX_FADV_NOREUSE,
     };
+    struct observation records[24];
     char file_path[96] = { 0 };
     int descriptor = -1;
     int closed_descriptor = -1;
@@ -173,6 +232,39 @@ int crabc_x86_64_descriptor_advice_probe(void)
         raw3(SYS_lseek, descriptor, POSITION, SEEK_SET) != POSITION ||
         !file_state_is_expected(descriptor)) {
         result = 13;
+        goto cleanup;
+    }
+
+    observe_fadvise(&records[0], 1, descriptor, 0, 0, POSIX_FADV_NORMAL);
+    observe_fadvise(&records[1], 2, descriptor, 1, 1, POSIX_FADV_RANDOM);
+    observe_fadvise(&records[2], 3, descriptor, FILE_SIZE - 1, 1,
+        POSIX_FADV_SEQUENTIAL);
+    observe_fadvise(&records[3], 4, descriptor, FILE_SIZE, 0,
+        POSIX_FADV_WILLNEED);
+    observe_fadvise(&records[4], 5, descriptor, FILE_SIZE + 1, 1,
+        POSIX_FADV_DONTNEED);
+    observe_fadvise(&records[5], 6, descriptor, 4096, 4096,
+        POSIX_FADV_NOREUSE);
+    observe_fadvise(&records[6], 7, descriptor, -1, 0, POSIX_FADV_NORMAL);
+    observe_fadvise(&records[7], 8, descriptor, 0, -1, POSIX_FADV_NORMAL);
+    observe_fadvise(&records[8], 9, descriptor, INT64_MAX, 1,
+        POSIX_FADV_NORMAL);
+    observe_fadvise(&records[9], 10, descriptor, INT64_MAX, 0,
+        POSIX_FADV_NORMAL);
+    observe_fadvise(&records[10], 11, descriptor, 0, 1, 6);
+    observe_fadvise(&records[11], 12, -1, 0, 0, POSIX_FADV_NORMAL);
+    observe_fadvise(&records[12], 13, -1, -1, -1, 6);
+    observe_readahead(&records[13], 14, descriptor, 0, 0);
+    observe_readahead(&records[14], 15, descriptor, 1, 1);
+    observe_readahead(&records[15], 16, descriptor, FILE_SIZE - 1, 2);
+    observe_readahead(&records[16], 17, descriptor, FILE_SIZE, 0);
+    observe_readahead(&records[17], 18, descriptor, FILE_SIZE + 1, 1);
+    observe_readahead(&records[18], 19, descriptor, -1, 0);
+    observe_readahead(&records[19], 20, descriptor, 0, (size_t)-1);
+    observe_readahead(&records[20], 21, -1, 0, 0);
+    observe_readahead(&records[21], 22, -1, -1, (size_t)-1);
+    if (!file_state_is_expected(descriptor)) {
+        result = 22;
         goto cleanup;
     }
 
@@ -230,6 +322,11 @@ int crabc_x86_64_descriptor_advice_probe(void)
         result = 21;
         goto cleanup;
     }
+    observe_fadvise(&records[22], 23, closed_descriptor, 0, 0,
+        POSIX_FADV_NORMAL);
+    observe_readahead(&records[23], 24, closed_descriptor, 0, 0);
+    if (emit_observations(records, sizeof(records) / sizeof(records[0])) != 0)
+        result = 23;
 
 cleanup:
     if (descriptor >= 0 && close_fd(descriptor) != 0 && result == 0)
