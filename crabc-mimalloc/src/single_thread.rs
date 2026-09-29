@@ -2112,6 +2112,28 @@ fn push_claimed_child_regular_page<Session: TheapPageSession>(
     Ok(())
 }
 
+/// Publishes a queue-detached reclaimed page to its selected mapped record
+/// after the owner has completed false collection and page-count removal.
+///
+/// # Safety
+/// The caller owns the detached page's low owner bit and retains the exact
+/// selected arena record for that page's Heap and bin through publication.
+#[inline(never)]
+unsafe fn publish_static_main_reabandoned_page(
+    page: NonNull<Page>,
+    map: &MainArenaMappedAbandonedPage<'_>,
+    theap: &Theap,
+) -> Result<AbandonResult, AbandonError> {
+    // SAFETY: the caller owns this detached page's low owner bit and the map
+    // is the exact selected arena record for the page's Heap and bin.
+    unsafe {
+        abandoned::abandon_after_collect_with_before_unown(page, Some(map), || {
+            theap.record_page_abandoned();
+            Ok(())
+        })
+    }
+}
+
 /// Consumes a coherent PageMap pointer observation through the source
 /// post-owner-exit publication and lower process-facts continuation.
 ///
@@ -39075,12 +39097,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // abandoned identity/map publication and low-bit unown. `map` binds
         // this selected static-main arena's exact bitmap/count pair formed
         // under the short static-Heap lock before the A-to-B claim.
-        match unsafe {
-            abandoned::abandon_after_collect_with_before_unown(page, Some(map), || {
-                self.session.theap().record_page_abandoned();
-                Ok(())
-            })
-        } {
+        match unsafe { publish_static_main_reabandoned_page(page, map, self.session.theap()) } {
             Ok(AbandonResult::UnownedMapped) => {
                 Ok(ReabandonReclaimedRegularOutcome::Reabandoned)
             }
