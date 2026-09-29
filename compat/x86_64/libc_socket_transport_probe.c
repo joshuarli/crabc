@@ -5,10 +5,11 @@
  * `libc.a`. It selects only the closed socket lifecycle and byte-transport
  * surface below. AF_UNIX abstract names exercise stream/datagram address
  * lengths and descriptor lifetime without filesystem cleanup; socketpair and
- * AF_INET loopback traffic cover the remaining local paths. Fixture-local
- * raw close, getpid, write, and fcntl calls only manage and observe the probe;
- * they do not select C
- * fcntl/open/path APIs, socket options, ioctl/interface support, message or
+ * AF_INET loopback traffic cover the remaining local paths. A separate TCP
+ * fixture exercises nonblocking readiness, error state, and peer closure.
+ * Fixture-local raw close, getpid, write, fcntl, poll, and getsockopt calls
+ * only manage and observe the probe; they do not select C
+ * fcntl/open/path APIs, socket-option wrappers, ioctl/interface support, message or
  * vector I/O, resolver/netdb, pthread cancellation, libc.so, CRT, or loader.
  */
 
@@ -728,6 +729,8 @@ finish:
     return status;
 }
 
+int crabc_x86_64_socket_tcp_probe(void);
+
 int crabc_x86_64_socket_transport_probe(void)
 {
     int status;
@@ -747,6 +750,9 @@ int crabc_x86_64_socket_transport_probe(void)
     status = check_loopback_stream();
     if (status != 0)
         return 50 + status;
+    status = crabc_x86_64_socket_tcp_probe();
+    if (status != 0)
+        return 160 + status;
     status = check_error_translation();
     if (status != 0)
         return 70 + status;

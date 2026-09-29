@@ -4,10 +4,11 @@
 # The same project-header C fixture first runs against pinned musl, then as a
 # `-nostdlib -static` executable linked solely through the selected crabc
 # archive. It selects local AF_UNIX named stream/datagram and pair traffic, plus
-# AF_INET loopback UDP and TCP lifecycle calls. It also observes Linux 5.10's atomic
+# AF_INET loopback UDP and TCP lifecycle calls, including nonblocking TCP
+# readiness, SO_ERROR, shutdown, and peer closure. It observes Linux 5.10's atomic
 # SOCK_CLOEXEC | SOCK_NONBLOCK success for socket, socketpair, and accept4,
 # plus musl's zero-flag accept4 dispatch through accept under a syscall filter.
-# Raw close/fcntl are fixture plumbing only; this is not socket options,
+# Raw close/fcntl/poll/getsockopt are fixture observers only; this is not socket options,
 # ioctl/interface, message/vector I/O,
 # resolver/netdb, pathname/fcntl APIs, pthread cancellation, libc.so, CRT,
 # loader, or sysroot.
@@ -83,9 +84,10 @@ done
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-socket-transport.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
 report_dir="$ROOT_DIR/.work/x86_64/reports/libc-socket-transport"
+mkdir -p "$report_dir"
+work_dir="$(mktemp -d "$report_dir/run.XXXXXX")"
+trap 'result=$?; if [ "$result" -eq 0 ]; then rm -rf -- "$work_dir"; else printf "socket transport raw run retained: %s\n" "$work_dir" >&2; fi' EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-socket-transport-reference"
 candidate="$work_dir/crabc-static-socket-transport-candidate"
@@ -105,8 +107,10 @@ errno_disassembly="$work_dir/errno-disassembly"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_socket_transport_probe.c >/dev/null 2>"$header_trace"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
+    compat/x86_64/libc_socket_tcp_probe.c >/dev/null 2>>"$header_trace"
 for header in errno.h fcntl.h netinet/in.h sys/socket.h sys/un.h sys/types.h \
-    sys/syscall.h bits/fcntl.h bits/syscall.h; do
+    sys/syscall.h poll.h bits/fcntl.h bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" \
         || fail "fixture did not use the project $header header"
 done
@@ -116,8 +120,9 @@ fi
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_socket_transport_probe.c \
+    compat/x86_64/libc_socket_tcp_probe.c \
     -o "$reference"
-if "$reference" >"$work_dir/musl-unix.trace"; then
+if "$reference" >"$work_dir/musl-transport.trace"; then
     :
 else
     status=$?
@@ -158,6 +163,7 @@ fi
     -I"$ROOT_DIR/include" -nostdlib -static -Wl,--gc-sections -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
     -Wl,--no-undefined compat/x86_64/libc_socket_transport_probe.c \
+    compat/x86_64/libc_socket_tcp_probe.c \
     compat/x86_64/libc_socket_transport_start.S "$archive" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
@@ -229,18 +235,18 @@ assert_named_syscall getpeername 34
 assert_named_syscall socketpair 35
 assert_named_syscall accept4 120
 
-if "$candidate" >"$work_dir/crabc-unix.trace"; then
+if "$candidate" >"$work_dir/crabc-transport.trace"; then
     :
 else
     status=$?
     fail "freestanding socket transport fixture exited ${status}"
 fi
-if ! cmp -s "$work_dir/musl-unix.trace" "$work_dir/crabc-unix.trace"; then
-    diff -u "$work_dir/musl-unix.trace" "$work_dir/crabc-unix.trace" >&2 || true
-    fail "pinned-musl and freestanding candidate AF_UNIX observations differ"
+if ! cmp -s "$work_dir/musl-transport.trace" "$work_dir/crabc-transport.trace"; then
+    diff -u "$work_dir/musl-transport.trace" "$work_dir/crabc-transport.trace" >&2 || true
+    fail "pinned-musl and freestanding candidate socket observations differ"
 fi
 mkdir -p "$report_dir"
-cp "$work_dir/musl-unix.trace" "$report_dir/musl-unix.trace"
-cp "$work_dir/crabc-unix.trace" "$report_dir/crabc-unix.trace"
+cp "$work_dir/musl-transport.trace" "$report_dir/musl-transport.trace"
+cp "$work_dir/crabc-transport.trace" "$report_dir/crabc-transport.trace"
 
 printf 'x86 static crabc-libc socket transport: PASS\n'
