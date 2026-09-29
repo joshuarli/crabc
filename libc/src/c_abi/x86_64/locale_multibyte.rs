@@ -942,8 +942,9 @@ static_archive_member! { mbsrtowcs_source {
     /// `state` must be null or point to initialized writable x86 `mbstate_t`
     /// storage.
     /// Initial-state source/destination/count behavior and a caller-owned,
-    /// noninitial UTF-8 resume with positive output capacity are selected. A
-    /// caller-owned noninitial `mbsrtowcs` state with zero output capacity is
+    /// noninitial UTF-8 resume with positive output capacity are selected,
+    /// including a one-byte source rewind on a malformed resumed continuation.
+    /// A caller-owned noninitial `mbsrtowcs` state with zero output capacity is
     /// deliberately outside this artifact; ordinary null-state conversions use no
     /// hidden state, as in musl's `mbsrtowcs`.
     #[no_mangle]
@@ -1043,12 +1044,20 @@ static_archive_member! { mbsrtowcs_source {
 
             let outcome = unsafe { decode_mbrtowc(pending, cursor.cast(), 4, true) };
             if outcome.error || outcome.result == MB_RET_INCOMPLETE {
-                // SAFETY: mbsrtowcs returns the start of the invalid sequence for
-                // ordinary input. Pending-state pointer details are unselected;
-                // the caller still receives EILSEQ and a valid source pointer.
+                let error_source = if pending != 0 {
+                    // The initial pending byte was consumed by a prior call.
+                    // Musl backs up one byte from this call's starting source
+                    // regardless of which continuation failed. Forming a raw
+                    // address without dereferencing permits a disjoint tail.
+                    cursor.wrapping_sub(1).cast()
+                } else {
+                    cursor.cast()
+                };
+                // SAFETY: malformed input belongs to this C thread, and source
+                // points to the caller's writable pointer object.
                 unsafe {
                     errno::set_errno(EILSEQ);
-                    core::ptr::write(source, cursor.cast());
+                    core::ptr::write(source, error_source);
                 }
                 return MB_RET_ILSEQ;
             }
