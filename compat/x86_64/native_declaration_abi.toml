@@ -26,6 +26,9 @@ record_layout_projection_only = true
 runtime_family_completion = false
 tool_inputs_authenticated = true
 
+# Pinned musl's C++ declaration emits a symbol absent from both of its libc
+# products. Preserve that reference and require real negative links; the
+# candidate's C bridge instead requires ordinary links to its owned products.
 [reviewed_cpp_linkage_boundary]
 header = "sys/membarrier.h"
 name = "membarrier"

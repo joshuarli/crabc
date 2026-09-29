@@ -62,8 +62,8 @@ def group(
 
 class NativeDeclarationAbiTests(unittest.TestCase):
     def test_physical_c_bridge_links_and_pinned_cpp_reference_fails_without_a_provider(self):
-        compiler, linker, readelf, archiver = (shutil.which(name) for name in ("clang", "ld", "readelf", "ar"))
-        if any(tool is None for tool in (compiler, linker, readelf, archiver)):
+        compiler, linker, readelf, archiver, objcopy = (shutil.which(name) for name in ("clang", "ld", "readelf", "ar", "objcopy"))
+        if any(tool is None for tool in (compiler, linker, readelf, archiver, objcopy)):
             self.skipTest("native compiler, linker, archive and ELF readers are required")
         scratch = ROOT / ".work" / "x86_64" / "native-declaration-abi-tests"
         scratch.mkdir(parents=True, exist_ok=True)
@@ -79,6 +79,20 @@ class NativeDeclarationAbiTests(unittest.TestCase):
             archive = work / "libc.a"
             shared = work / "libc.so"
             subprocess.run([archiver, "rcs", str(archive), str(provider)], capture_output=True, check=True)
+            empty = work / "empty.o"
+            subprocess.run([compiler, "-x", "assembler", "-c", "-o", str(empty), "-"],
+                           input="", text=True, capture_output=True, check=True)
+            subprocess.run([objcopy, "--strip-all", str(empty)], capture_output=True, check=True)
+            subprocess.run([archiver, "r", str(archive), str(empty)], capture_output=True, check=True)
+            members = ABI.abi_inventory.parse_archive_members(subprocess.run([archiver, "t", str(archive)],
+                                                               capture_output=True, text=True, check=True).stdout)
+            facts = [subprocess.run([readelf, flag, str(archive)], capture_output=True, text=True, check=True).stdout
+                     for flag in ("-hW", "-SW", "-sW")]
+            provider_rows = ABI.oracle_static_provider_rows(members, *facts, str(archive))
+            self.assertTrue(any(row["name"] == "membarrier" and row["section_index"] != "UND" for row in provider_rows))
+            omitted_symbols = "".join(f"File: {archive}({member})\n\n" for member in members)
+            with self.assertRaisesRegex(ABI.abi_inventory.InventoryError, "symbol/section table counts"):
+                ABI.oracle_static_provider_rows(members, facts[0], facts[1], omitted_symbols, str(archive))
             subprocess.run([linker, "-shared", str(provider), "-o", str(shared)], capture_output=True, check=True)
             for tree in ("candidate", "reference"):
                 for profile in ("c11-gnu", "c11-strict", "cxx17-gnu", "cxx17-strict"):

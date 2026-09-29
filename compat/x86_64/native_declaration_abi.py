@@ -1795,6 +1795,14 @@ def reviewed_cpp_linkage_boundary(
     return {**copy.deepcopy(reviewed), "reference_job_indices": reference_indices, "c_providers": c_providers}
 
 
+def oracle_static_provider_rows(members: Sequence[str], header_text: str, section_text: str,
+                                symbol_text: str, archive: str) -> list[dict[str, Any]]:
+    """Keep every archive member, including physically symbol-free ELF objects."""
+    facts = abi_inventory.parse_archive_elf_facts(header_text, section_text, symbol_text, members,
+                                                 expected_archive=archive)
+    return [row for member in facts for table in member["symbol_tables"] for row in table["rows"]]
+
+
 def physical_reference_join(path: Path, symbol_text: str, section_text: str, *, static: bool) -> dict[str, Any]:
     """Join the probe holder to a provider address or its physical dynamic relocation."""
     tables = abi_inventory.parse_elf_symbol_tables(symbol_text)
@@ -1955,6 +1963,8 @@ def _cpp_linkage_evidence(
     inventory_commands = {
         "archive-members": [extra_tools["ar"]["identity"]["path"], "t", str(recorded_output / "inputs/static")],
         "archive-symbols": [readelf, "-sW", str(recorded_output / "inputs/static")],
+        "archive-headers": [readelf, "-hW", str(recorded_output / "inputs/static")],
+        "archive-sections": [readelf, "-SW", str(recorded_output / "inputs/static")],
         "shared-symbols": [readelf, "--dyn-syms", "--wide", str(recorded_output / "inputs/shared")],
         "candidate-shared-symbols": [readelf, "--dyn-syms", "--wide", products["dynamic"]["root"] + "/usr/lib/libc.so"],
     }
@@ -1964,9 +1974,9 @@ def _cpp_linkage_evidence(
     def stdout(record: Mapping[str, Any]) -> str:
         return _decode_raw_text(boundary_output / record["stdout"]["path"], "reviewed raw output")
     members = abi_inventory.parse_archive_members(stdout(raw["archive-members"]))
-    blocks = abi_inventory._archive_fact_blocks(stdout(raw["archive-symbols"]), members, str(recorded_output / "inputs/static"))
-    providers = {"static": [row for block in blocks for table in abi_inventory.parse_elf_symbol_tables(block)
-                            for row in table["rows"]],
+    providers = {"static": oracle_static_provider_rows(members, stdout(raw["archive-headers"]), stdout(raw["archive-sections"]),
+                                                       stdout(raw["archive-symbols"]),
+                                                       str(recorded_output / "inputs/static")),
                  "shared": abi_inventory.parse_dynamic_symbol_rows(stdout(raw["shared-symbols"]))}
     if replay:
         require(isinstance(retained["jobs"], list) and len(retained["jobs"]) == len(selected),
@@ -2014,7 +2024,7 @@ def _cpp_linkage_evidence(
                 product = static_product if form.startswith("static") else dynamic_product
                 product = _physical_path(product, "reviewed link product", directory=True)
                 driver = product / "bin" / ("crabc-cc" if form.startswith("static") else "crabc-cc-dynamic")
-                argv = [str(SOURCE_MOUNT / driver.relative_to(ROOT)), ("-" if form.startswith("static") else "--") + form]
+                argv = [str(SOURCE_MOUNT / driver.relative_to(ROOT)), ("-" if form.startswith("static") else "--dynamic-") + form]
                 if form.startswith("static"):
                     argv.extend(["--link-receipt", "probe.receipt.json"])
                 argv.extend([recorded_object, "-o", recorded_executable])
