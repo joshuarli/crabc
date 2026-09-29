@@ -4,7 +4,7 @@
 # One project-header fixture first runs against pinned musl 1.2.6, then links
 # as a true `-nostdlib -static` candidate through the selected crabc archive.
 # It proves one regular-file `r`/`w+` pathname slot, caller-buffered full I/O,
-# logical positioning, fpos_t, rewind, close, and slot reuse. It is not
+# logical positioning, fpos_t, rewind, and slot reuse across open/close errors. It is not
 # fdopen/freopen, append/general mode parsing, stream allocation/registry,
 # line/unbuffered buffering, general stdio, dynamic runtime, or public x86.
 set -euo pipefail
@@ -89,7 +89,12 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_stdio_path_stream_probe.c \
     -o "$reference"
-timeout "$EXECUTION_TIMEOUT" "$reference" || fail "pinned-musl pathname-stream fixture failed"
+reference_status=0
+timeout "$EXECUTION_TIMEOUT" "$reference" \
+    >"$work_dir/fixed-reference.stdout" 2>"$work_dir/fixed-reference.stderr" ||
+    reference_status=$?
+printf '%s\n' "$reference_status" >"$work_dir/fixed-reference.status"
+[ "$reference_status" -eq 0 ] || fail "pinned-musl pathname-stream fixture exited $reference_status"
 
 build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -130,7 +135,7 @@ for path in map(Path, sys.argv[2:]):
         if not same_definition(public, internal):
             raise SystemExit(f'{path}: {name} must alias its hidden positioning body')
 PY
-for symbol in __errno_location __crabc_x86_static_tls_bootstrap fclose fopen \
+for symbol in __errno_location __crabc_x86_static_tls_bootstrap close fclose fopen \
     fgetpos fseek fseeko fsetpos ftell ftello rewind setvbuf; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
@@ -155,7 +160,7 @@ readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in fclose fopen fgetpos fseek fseeko fsetpos ftell ftello rewind setvbuf \
+for symbol in close fclose fopen fgetpos fseek fseeko fsetpos ftell ftello rewind setvbuf \
     fread fwrite fgetc fputc fflush fileno lseek; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate lacks ${symbol}"
@@ -186,7 +191,15 @@ for syscall_name in SYS_OPEN SYS_CLOSE SYS_LSEEK; do
         "$ROOT_DIR/libc/src/c_abi/x86_64/stdio_standard.rs" ||
         fail "pathname stream implementation omits raw ${syscall_name} ownership"
 done
-timeout "$EXECUTION_TIMEOUT" "$candidate" || fail "freestanding pathname-stream fixture failed"
+candidate_status=0
+timeout "$EXECUTION_TIMEOUT" "$candidate" \
+    >"$work_dir/fixed-candidate.stdout" 2>"$work_dir/fixed-candidate.stderr" ||
+    candidate_status=$?
+printf '%s\n' "$candidate_status" >"$work_dir/fixed-candidate.status"
+for suffix in stdout stderr status; do
+    cmp "$work_dir/fixed-reference.$suffix" "$work_dir/fixed-candidate.$suffix" ||
+        fail "fixed pathname-stream $suffix differs from pinned musl"
+done
 
 # The default archive above deliberately has only one fixed path slot. Build
 # the separately selected owned runtime for a same-object musl comparison of

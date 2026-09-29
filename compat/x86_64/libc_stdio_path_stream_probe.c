@@ -4,7 +4,7 @@
  * then against one `-nostdlib -static` crabc archive. It proves a bounded
  * regular-file route only: one `fopen("w+")` slot, caller-buffered full I/O,
  * byte/block transfer, logical positions across output and read-ahead,
- * fpos_t save/restore, rewind, close, and slot reuse through `fopen("r")`.
+ * fpos_t save/restore, rewind, and slot reuse after failed open and close.
  * It is not a general FILE/stdio, stream allocator, fdopen/freopen, append,
  * line/unbuffered buffering, formatter/scanner, or public x86 proof.
  */
@@ -28,6 +28,7 @@ _Static_assert(sizeof(long) == 8 && sizeof(off_t) == 8,
     "x86-64 LP64 logical-position scalar widths");
 
 typedef int (*fclose_fn)(FILE *);
+typedef int (*close_fn)(int);
 typedef int (*fflush_fn)(FILE *);
 typedef int (*fileno_fn)(FILE *);
 typedef FILE *(*fopen_fn)(const char *, const char *);
@@ -47,6 +48,7 @@ typedef int (*setvbuf_fn)(FILE *, char *, int, size_t);
 typedef int (*unlink_fn)(const char *);
 
 static fclose_fn volatile fclose_entry = fclose;
+static close_fn volatile close_entry = close;
 static fflush_fn volatile fflush_entry = fflush;
 static fileno_fn volatile fileno_entry = fileno;
 static fopen_fn volatile fopen_entry = fopen;
@@ -86,9 +88,13 @@ static int check_fixed_path_stream(void)
     fpos_t saved;
     unsigned char *saved_bytes = (unsigned char *)&saved;
     size_t index;
+    int descriptor;
     int status = 0;
 
     (void)unlink_entry(path);
+    errno = 0;
+    if (fopen_entry(path, "r") != NULL || errno != ENOENT)
+        return 18;
     stream = fopen_entry(path, "w+");
     if (stream == NULL)
         return 1;
@@ -182,11 +188,17 @@ static int check_fixed_path_stream(void)
     }
 
 close_stream:
+    descriptor = fileno_entry(stream);
     if (fclose_entry(stream) != 0 && status == 0)
         status = 14;
     stream = NULL;
     if (status != 0)
         goto cleanup;
+    errno = 0;
+    if (lseek_entry(descriptor, 0, SEEK_CUR) != -1 || errno != EBADF) {
+        status = 19;
+        goto cleanup;
+    }
 
 #ifdef CRABC_STDIO_PATH_STREAM_FREESTANDING
     errno = 0;
@@ -198,13 +210,52 @@ close_stream:
 #endif
     /* A successful close returns the one static slot to the selected `r` path. */
     stream = fopen_entry(path, "r");
-    if (stream == NULL || fgetc_entry(stream) != 'a') {
+    if (stream == NULL) {
         status = 15;
+        goto cleanup;
+    }
+    if (fgetc_entry(stream) != 'a') {
+        status = 15;
+        goto close_stream;
+    }
+    while (fgetc_entry(stream) != EOF) {}
+    if (!feof(stream) || ferror(stream)) {
+        status = 24;
         goto close_stream;
     }
     if (fclose_entry(stream) != 0) {
         stream = NULL;
         status = 16;
+        goto cleanup;
+    }
+    stream = NULL;
+    stream = fopen_entry(path, "r");
+    if (stream == NULL || feof(stream) || ferror(stream) ||
+        ftello_entry(stream) != 0 || fgetc_entry(stream) != 'a') {
+        status = 25;
+        goto cleanup;
+    }
+    descriptor = fileno_entry(stream);
+    if (close_entry(descriptor) != 0) {
+        status = 26;
+        goto cleanup;
+    }
+    errno = 0;
+    if (fclose_entry(stream) != EOF || errno != EBADF) {
+        stream = NULL;
+        status = 27;
+        goto cleanup;
+    }
+    stream = NULL;
+    stream = fopen_entry(path, "r");
+    if (stream == NULL || feof(stream) || ferror(stream) ||
+        ftello_entry(stream) != 0 || fgetc_entry(stream) != 'a') {
+        status = 28;
+        goto cleanup;
+    }
+    if (fclose_entry(stream) != 0) {
+        stream = NULL;
+        status = 29;
         goto cleanup;
     }
     stream = NULL;
