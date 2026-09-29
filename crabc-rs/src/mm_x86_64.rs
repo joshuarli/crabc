@@ -159,7 +159,8 @@ pub enum Advice {
     Sequential = 2,
     /// `MADV_WILLNEED`.
     WillNeed = 3,
-    /// `MADV_DONTNEED`: discard private anonymous pages on next access.
+    /// `MADV_DONTNEED`: discard resident contents. Private anonymous pages
+    /// become zero-filled; private file pages reload their backing contents.
     LinuxDontNeed = 4,
 }
 
@@ -205,8 +206,12 @@ fn checked_mremap_flags(flags: MremapFlags) -> Result<u32> {
 /// be page-aligned, and `fd` must name a file Linux can map for the duration
 /// of this call. The caller owns the returned mapping's lifetime and must not
 /// create Rust references that outlive an unmap or incompatible protection
-/// change. The backing file must remain large enough for every accessed byte:
-/// truncation can make a later access raise `SIGBUS`.
+/// change. Closing `fd` after the call does not invalidate the mapping.
+/// Accesses through shared backing aliases must be synchronized, and any Rust
+/// references must satisfy Rust's aliasing rules across all such aliases.
+/// The backing file must remain large enough for every accessed byte, including
+/// when another descriptor or process can truncate it: truncation can make a
+/// later access raise `SIGBUS`.
 #[inline]
 pub unsafe fn mmap<Fd: AsFd>(
     ptr: *mut c_void,

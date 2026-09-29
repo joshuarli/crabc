@@ -340,7 +340,9 @@ fn x86_64_mremap_fixed_replaces_destination_and_invalidates_both_inputs() {
     let mut destination = Mapping::anonymous();
     // SAFETY: Each owner holds one writable page until the fixed remap.
     unsafe {
-        source.pointer.cast::<u8>().write(0x5a);
+        for index in 0..source.length {
+            source.pointer.cast::<u8>().add(index).write((index % 251) as u8);
+        }
         destination.pointer.cast::<u8>().write(0xa5);
     }
     let source_pointer = source.pointer;
@@ -365,7 +367,9 @@ fn x86_64_mremap_fixed_replaces_destination_and_invalidates_both_inputs() {
 
     assert_eq!(successor, destination_pointer);
     // SAFETY: The returned destination owns the source's former contents.
-    assert_eq!(unsafe { successor.cast::<u8>().read() }, 0x5a);
+    for index in 0..destination.length {
+        assert_eq!(unsafe { successor.cast::<u8>().add(index).read() }, (index % 251) as u8);
+    }
 }
 
 #[test]
@@ -511,4 +515,135 @@ fn x86_64_mapping_rejects_unadmitted_flag_bits_before_the_kernel_boundary() {
         Err(crabc_rs::Errno::INVAL),
         "exactly one mapping sharing mode is required",
     );
+}
+
+
+#[test]
+fn x86_64_file_mapping_cow_shared_visibility_and_closed_descriptor_lifetime() {
+    let file = anonymous_file();
+    assert_eq!(io::pwrite(&file, b"backing", SPARSE_OFFSET).unwrap(), 7);
+    let map = |flags| {
+        // SAFETY: This uniquely owned file covers the full aligned page and
+        // cannot be truncated externally. Each result receives its own owner.
+        let pointer = unsafe {
+            mm::mmap(core::ptr::null_mut(), PAGE_SIZE,
+                mm::ProtFlags::READ | mm::ProtFlags::WRITE, flags,
+                &file, SPARSE_OFFSET)
+        }.expect("map controlled file page");
+        Mapping { pointer, length: PAGE_SIZE }
+    };
+    let private = map(mm::MapFlags::PRIVATE);
+    let shared = map(mm::MapFlags::SHARED);
+    let observer = map(mm::MapFlags::SHARED);
+    // SAFETY: The file cannot be truncated by another owner. Accesses are
+    // sequential volatile byte operations; no aliased Rust references are formed.
+    unsafe {
+        private.pointer.cast::<u8>().write_volatile(b'P');
+        assert_eq!(shared.pointer.cast::<u8>().read_volatile(), b'b');
+        shared.pointer.cast::<u8>().add(1).write_volatile(b'S');
+        assert_eq!(observer.pointer.cast::<u8>().add(1).read_volatile(), b'S');
+        assert_eq!(private.pointer.cast::<u8>().add(1).read_volatile(), b'a');
+    }
+    let mut backing = [0; 2];
+    assert_eq!(io::pread(&file, &mut backing, SPARSE_OFFSET).unwrap(), 2);
+    assert_eq!(&backing, b"bS");
+    // Closing the descriptor releases its ownership, while each mapping keeps
+    // the backing object alive. No descriptor remains able to truncate it.
+    drop(file);
+    // SAFETY: The mappings retain the backing object. No references or typed
+    // contents survive discard, and subsequent accesses are volatile bytes.
+    unsafe {
+        mm::madvise(private.pointer, private.length, mm::Advice::LinuxDontNeed)
+            .expect("discard private file COW page");
+        assert_eq!(private.pointer.cast::<u8>().read_volatile(), b'b');
+        assert_eq!(private.pointer.cast::<u8>().add(1).read_volatile(), b'S');
+        shared.pointer.cast::<u8>().add(2).write_volatile(b'C');
+        assert_eq!(observer.pointer.cast::<u8>().add(2).read_volatile(), b'C');
+    }
+}
+
+#[test]
+fn x86_64_mremap_retains_complete_prefix_across_growth_and_shrink() {
+    let mut mapping = Mapping::anonymous();
+    mapping.resize(3 * PAGE_SIZE, mm::MremapFlags::MAYMOVE);
+    // SAFETY: Initialize every byte of the uniquely owned writable mapping.
+    unsafe {
+        for index in 0..mapping.length {
+            mapping.pointer.cast::<u8>().add(index).write((index % 251) as u8);
+        }
+    }
+    mapping.resize(5 * PAGE_SIZE, mm::MremapFlags::MAYMOVE);
+    // SAFETY: Only the returned successor is accessed within its new extent.
+    unsafe {
+        for index in 0..3 * PAGE_SIZE {
+            assert_eq!(mapping.pointer.cast::<u8>().add(index).read(), (index % 251) as u8);
+        }
+        for index in 3 * PAGE_SIZE..5 * PAGE_SIZE {
+            assert_eq!(mapping.pointer.cast::<u8>().add(index).read(), 0);
+        }
+    }
+    mapping.resize(2 * PAGE_SIZE, mm::MremapFlags::empty());
+    // SAFETY: Only the returned successor's retained prefix is accessed.
+    unsafe {
+        for index in 0..mapping.length {
+            assert_eq!(mapping.pointer.cast::<u8>().add(index).read(), (index % 251) as u8);
+        }
+    }
+}
+
+#[test]
+fn x86_64_failed_fixed_remap_without_maymove_preserves_both_owners() {
+    let source = Mapping::anonymous();
+    let destination = Mapping::anonymous();
+    // SAFETY: Disjoint owned mappings have no live references. Omitting
+    // MAYMOVE is a kernel-rejected flag combination, not an invalid pointer.
+    unsafe {
+        source.pointer.cast::<u8>().write(0x31);
+        destination.pointer.cast::<u8>().write(0x72);
+        assert_eq!(mm::mremap_fixed(source.pointer, source.length,
+            destination.length, mm::MremapFlags::empty(), destination.pointer),
+            Err(crabc_rs::Errno::INVAL));
+        assert_eq!(source.pointer.cast::<u8>().read(), 0x31);
+        assert_eq!(destination.pointer.cast::<u8>().read(), 0x72);
+        source.pointer.cast::<u8>().write(0x32);
+        destination.pointer.cast::<u8>().write(0x73);
+    }
+}
+
+#[test]
+fn x86_64_madvise_rounds_length_and_discards_only_selected_pages() {
+    let mut mapping = Mapping::anonymous();
+    mapping.resize(3 * PAGE_SIZE, mm::MremapFlags::MAYMOVE);
+    // SAFETY: Raw accesses stay within the owned writable mapping, and no
+    // references or typed values survive the destructive advice operation.
+    unsafe {
+        for index in 0..mapping.length {
+            mapping.pointer.cast::<u8>().add(index).write(0x6b);
+        }
+        mm::madvise(mapping.pointer.cast::<u8>().add(PAGE_SIZE).cast(), 1,
+            mm::Advice::LinuxDontNeed).expect("discard one rounded middle page");
+        for index in 0..mapping.length {
+            let expected = if (PAGE_SIZE..2 * PAGE_SIZE).contains(&index) { 0 } else { 0x6b };
+            assert_eq!(mapping.pointer.cast::<u8>().add(index).read(), expected);
+        }
+    }
+}
+
+#[test]
+fn x86_64_occupied_address_hint_never_replaces_existing_mapping() {
+    let occupied = Mapping::anonymous();
+    // SAFETY: A non-fixed address is a hint. The existing owner retains its
+    // mapping; the new mapping has distinct ownership and no shared references.
+    unsafe { occupied.pointer.cast::<u8>().write(0x47) };
+    let pointer = unsafe {
+        mm::mmap_anonymous(occupied.pointer, PAGE_SIZE,
+            mm::ProtFlags::READ | mm::ProtFlags::WRITE, mm::MapFlags::PRIVATE)
+    }.expect("map with occupied non-fixed hint");
+    let hinted = Mapping { pointer, length: PAGE_SIZE };
+    assert_ne!(hinted.pointer, occupied.pointer);
+    // SAFETY: Both owners still hold distinct writable pages.
+    unsafe {
+        hinted.pointer.cast::<u8>().write(0x81);
+        assert_eq!(occupied.pointer.cast::<u8>().read(), 0x47);
+    }
 }
