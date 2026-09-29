@@ -3,8 +3,9 @@
 #
 # One project-header fixture first runs against pinned musl 1.2.6, then as a
 # true `-nostdlib -static` candidate linked only with the selected crabc
-# archive. It proves a bounded CWD/pathname/mode lifecycle, direct x86 syscall
-# forms, and fchmod's O_PATH procfs fallback. It does not prove general
+# archive. It proves a bounded CWD/pathname/mode lifecycle, descriptor-relative
+# namespace transitions, direct x86 syscall forms, and fchmod's O_PATH procfs
+# fallback. It does not prove general
 # filesystem policy, allocation, libc.so, CRT, loader, sysroot, family
 # completion, promotion, or public x86 support.
 set -euo pipefail
@@ -92,8 +93,20 @@ assert_fchmod_fallback_path() {
         fail "fchmod lacks its Linux syscall instruction"
 }
 
+assert_renameat2_paths() {
+    local disassembly="$work_dir/renameat2-disassembly"
+
+    objdump -d --disassemble=renameat2 "$candidate" >"$disassembly"
+    grep -Eq '\$0x108(,|[[:space:]]|\$)' "$disassembly" ||
+        fail "renameat2 lacks zero-flag Linux renameat=264"
+    grep -Eq '\$0x13c(,|[[:space:]]|\$)' "$disassembly" ||
+        fail "renameat2 lacks flagged Linux renameat2=316"
+    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
+        fail "renameat2 lacks its Linux syscall instruction"
+}
+
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort timeout; do
+for tool in ar awk cargo chmod cmp cp diff grep mkdir nm objdump readelf rustup sha256sum sort timeout; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -101,7 +114,8 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_pathname_lifecycle_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-pathname-lifecycle.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp" "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-pathname-lifecycle.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-pathname-lifecycle-reference"
@@ -136,12 +150,15 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_pathname_lifecycle_probe.c \
     -o "$reference"
-if (cd "$reference_work" && timeout "$EXECUTION_TIMEOUT" "$reference"); then
-    :
+if (cd "$reference_work" && timeout "$EXECUTION_TIMEOUT" "$reference") \
+    >"$work_dir/musl.stdout" 2>"$work_dir/musl.stderr"; then
+    reference_status=0
 else
     reference_status=$?
-    fail "pinned-musl reference execution exited $reference_status"
 fi
+printf '%s\n' "$reference_status" >"$work_dir/musl.status"
+[ "$reference_status" -eq 0 ] ||
+    fail "pinned-musl reference execution exited $reference_status"
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -151,7 +168,8 @@ readelf --symbols --wide "$archive" >"$archive_elf_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap chdir getcwd mkdir \
-    unlink rmdir remove rename link symlink readlink chmod fchmod truncate; do
+    unlink rmdir remove rename link symlink readlink chmod fchmod truncate \
+    openat linkat readlinkat renameat2 unlinkat; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define $symbol"
 done
@@ -186,13 +204,11 @@ readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap chdir getcwd mkdir \
-    unlink rmdir remove rename link symlink readlink chmod fchmod truncate; do
+    unlink rmdir remove rename link symlink readlink chmod fchmod truncate \
+    openat linkat readlinkat renameat2 unlinkat; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define $symbol"
 done
-if grep -Eq "[[:space:]]renameat2$" "$candidate_symbols"; then
-    fail "candidate unexpectedly pulls independently selected renameat2"
-fi
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2
@@ -236,12 +252,47 @@ assert_named_syscall readlink 59
 assert_named_syscall chmod 5a
 assert_fchmod_fallback_path
 assert_named_syscall truncate 4c
+assert_named_syscall openat 101
+assert_named_syscall linkat 109
+assert_named_syscall readlinkat 10b
+assert_named_syscall unlinkat 107
+assert_renameat2_paths
 
-if (cd "$candidate_work" && timeout "$EXECUTION_TIMEOUT" "$candidate"); then
-    :
+if (cd "$candidate_work" && timeout "$EXECUTION_TIMEOUT" "$candidate") \
+    >"$work_dir/crabc.stdout" 2>"$work_dir/crabc.stderr"; then
+    candidate_status=0
 else
     candidate_status=$?
-    fail "candidate execution exited $candidate_status"
 fi
+printf '%s\n' "$candidate_status" >"$work_dir/crabc.status"
+[ "$candidate_status" -eq 0 ] ||
+    fail "candidate execution exited $candidate_status"
+cmp "$work_dir/musl.stdout" "$work_dir/crabc.stdout" ||
+    fail "pinned-musl and candidate stdout differ"
+cmp "$work_dir/musl.stderr" "$work_dir/crabc.stderr" ||
+    fail "pinned-musl and candidate stderr differ"
 
+report_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-pathname-lifecycle.XXXXXX")"
+chmod 755 "$report_dir"
+cp "$reference" "$report_dir/musl-reference.elf"
+cp "$candidate" "$report_dir/crabc-candidate.elf"
+cp "$header_trace" "$report_dir/project-header-trace.txt"
+cp "$selected_c_abi_symbols" "$report_dir/selected-c-abi-symbols.txt"
+cp "$candidate_symbols" "$report_dir/crabc-symbols.txt"
+cp "$candidate_program_headers" "$report_dir/crabc-program-headers.txt"
+cp "$work_dir"/{musl,crabc}.{stdout,stderr,status} "$report_dir/"
+cp "$ROOT_DIR/compat/x86_64/libc_pathname_lifecycle_probe.c" \
+    "$report_dir/libc_pathname_lifecycle_probe.c"
+cp "$ROOT_DIR/compat/x86_64/run_libc_pathname_lifecycle.sh" \
+    "$report_dir/run_libc_pathname_lifecycle.sh"
+(
+    cd "$report_dir"
+    sha256sum musl-reference.elf crabc-candidate.elf project-header-trace.txt \
+        selected-c-abi-symbols.txt crabc-symbols.txt crabc-program-headers.txt \
+        libc_pathname_lifecycle_probe.c run_libc_pathname_lifecycle.sh \
+        musl.stdout musl.stderr musl.status crabc.stdout crabc.stderr \
+        crabc.status >sha256sums.txt
+)
+
+printf 'pathname lifecycle physical receipt: %s\n' "$report_dir"
 printf 'x86 static crabc-libc pathname lifecycle: PASS\n'

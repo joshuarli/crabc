@@ -3,9 +3,10 @@
  * One project-header C body runs first through pinned musl 1.2.6 and then
  * through the selected freestanding crabc archive. It exercises the bounded
  * pathname mutation/lifecycle leaf only: CWD, caller-buffer getcwd, directory
- * creation/removal, links, mode changes, O_PATH fchmod fallback, truncation,
- * and remove's EISDIR retry. It is deliberately not a general filesystem,
- * allocator, CRT, loader, sysroot, or public x86 support claim.
+ * creation/removal, links, descriptor-relative rename/unlink, mode changes,
+ * O_PATH fchmod fallback, truncation, and remove's EISDIR retry. It is
+ * deliberately not a general filesystem, allocator, CRT, loader, sysroot,
+ * or public x86 support claim.
  */
 
 #ifndef _GNU_SOURCE
@@ -39,6 +40,11 @@ _Static_assert(SYS_truncate == 76 && SYS_getcwd == 79 && SYS_chdir == 80 &&
     SYS_unlink == 87 && SYS_symlink == 88 && SYS_readlink == 89 &&
     SYS_chmod == 90 && SYS_fchmod == 91 && SYS_fcntl == 72,
     "x86 pathname lifecycle syscall numbers");
+_Static_assert(SYS_openat == 257 && SYS_unlinkat == 263 &&
+    SYS_renameat == 264 && SYS_linkat == 265 && SYS_readlinkat == 267 &&
+    SYS_renameat2 == 316 && AT_REMOVEDIR == 0x200 &&
+    RENAME_NOREPLACE == 1,
+    "x86 descriptor-relative pathname constants");
 _Static_assert(F_GETFD == 1 && O_CLOEXEC == 02000000 && O_PATH == 010000000,
     "x86 selected fchmod fallback constants");
 _Static_assert(S_IFMT == 0170000 && S_IFDIR == 0040000 && S_IFREG == 0100000 &&
@@ -58,6 +64,13 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&chdir), int (*)(const char *)) &&
     CRABC_TYPE_IS(__typeof__(&fchmod), int (*)(int, mode_t)) &&
     CRABC_TYPE_IS(__typeof__(&truncate), int (*)(const char *, off_t)),
     "selected pathname lifecycle declarations");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&openat), int (*)(int, const char *, int, ...)) &&
+    CRABC_TYPE_IS(__typeof__(&linkat), int (*)(int, const char *, int, const char *, int)) &&
+    CRABC_TYPE_IS(__typeof__(&readlinkat), ssize_t (*)(int, const char *, char *, size_t)) &&
+    CRABC_TYPE_IS(__typeof__(&unlinkat), int (*)(int, const char *, int)) &&
+    CRABC_TYPE_IS(__typeof__(&renameat2),
+        int (*)(int, const char *, int, const char *, unsigned)),
+    "selected descriptor-relative pathname declarations");
 
 static int expect_error(int result, int error)
 {
@@ -96,6 +109,117 @@ static int check_getcwd_extension(void)
      * reference-only allocation. */
     return allocated != 0 && allocated[0] == '/' && errno == E2BIG;
 #endif
+}
+
+static int check_relative_namespace(void)
+{
+    struct stat observed;
+    char target[8] = { 0 };
+    char data[3] = { 0 };
+    int left = -1;
+    int right = -1;
+    int live = -1;
+    int occupied = -1;
+    int status = 0;
+
+    if (mkdir("left", 0700) != 0 || mkdir("right", 0700) != 0) {
+        status = 1;
+        goto finish;
+    }
+    left = open("left", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    right = open("right", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (left < 0 || right < 0) {
+        status = 2;
+        goto finish;
+    }
+    live = openat(left, "entry", O_CREAT | O_EXCL | O_RDWR | O_CLOEXEC, 0600);
+    if (live < 0 || write(live, "ok", 2) != 2 ||
+        !expect_error(open("entry", O_RDONLY), ENOENT)) {
+        status = 3;
+        goto finish;
+    }
+    if (symlink("entry", "left/symbolic-relative") != 0 ||
+        readlinkat(left, "symbolic-relative", target, sizeof(target)) != 5 ||
+        !bytes_equal(target, "entry", 5) || target[5] != 0) {
+        status = 4;
+        goto finish;
+    }
+    errno = E2BIG;
+    if (readlinkat(left, "symbolic-relative", 0, 0) != 0 || errno != E2BIG) {
+        status = 5;
+        goto finish;
+    }
+    occupied = openat(right, "occupied", O_CREAT | O_EXCL | O_WRONLY, 0600);
+    if (occupied < 0 || close(occupied) != 0) {
+        status = 6;
+        goto finish;
+    }
+    occupied = -1;
+    errno = 0;
+    if (!expect_error(renameat2(left, "entry", right, "occupied", RENAME_NOREPLACE),
+            EEXIST) ||
+        renameat2(left, "entry", right, "moved", 0) != 0 ||
+        !expect_error(openat(left, "symbolic-relative", O_RDONLY), ENOENT) ||
+        fstat(live, &observed) != 0 || observed.st_nlink != 1) {
+        status = 7;
+        goto finish;
+    }
+    if (linkat(right, "moved", left, "hard-relative", 0) != 0 ||
+        fstat(live, &observed) != 0 || observed.st_nlink != 2) {
+        status = 8;
+        goto finish;
+    }
+    errno = 0;
+    if (!expect_error(unlinkat(right, "moved", AT_REMOVEDIR), ENOTDIR) ||
+        !expect_error(unlinkat(-1, "moved", 0), EBADF) ||
+        unlinkat(right, "moved", 0) != 0 ||
+        fstat(live, &observed) != 0 || observed.st_nlink != 1) {
+        status = 9;
+        goto finish;
+    }
+    if (unlinkat(left, "hard-relative", 0) != 0 ||
+        fstat(live, &observed) != 0 || observed.st_nlink != 0 ||
+        lseek(live, 0, SEEK_SET) != 0 || read(live, data, 2) != 2 ||
+        !bytes_equal(data, "ok", 2)) {
+        status = 10;
+        goto finish;
+    }
+    if (mkdir("left/empty-relative", 0700) != 0) {
+        status = 11;
+        goto finish;
+    }
+    errno = 0;
+    if (!expect_error(unlinkat(left, "empty-relative", 0), EISDIR) ||
+        unlinkat(left, "empty-relative", AT_REMOVEDIR) != 0 ||
+        !expect_error(unlinkat(right, "missing", 0), ENOENT) ||
+        unlinkat(left, "symbolic-relative", 0) != 0 ||
+        unlinkat(right, "occupied", 0) != 0) {
+        status = 12;
+        goto finish;
+    }
+
+finish:
+    if (occupied >= 0)
+        (void)close(occupied);
+    if (live >= 0)
+        (void)close(live);
+    if (left >= 0) {
+        (void)unlinkat(left, "symbolic-relative", 0);
+        (void)unlinkat(left, "hard-relative", 0);
+        (void)unlinkat(left, "entry", 0);
+        (void)unlinkat(left, "empty-relative", AT_REMOVEDIR);
+        (void)close(left);
+    }
+    if (right >= 0) {
+        (void)unlinkat(right, "moved", 0);
+        (void)unlinkat(right, "occupied", 0);
+        (void)close(right);
+    }
+    if (rmdir("left") != 0)
+        status = status ? status : 13;
+    if (rmdir("right") != 0)
+        return status ? status : 13;
+    return status;
 }
 
 int crabc_x86_64_pathname_lifecycle_probe(void)
@@ -211,6 +335,11 @@ int crabc_x86_64_pathname_lifecycle_probe(void)
         !expect_error(chdir(missing), ENOENT) || !expect_error(rename(missing, file), ENOENT) ||
         !expect_error(chmod(missing, 0600), ENOENT) || !expect_error(fchmod(-1, 0600), EBADF)) {
         status = 18;
+        goto finish;
+    }
+    status = check_relative_namespace();
+    if (status != 0) {
+        status += 21;
         goto finish;
     }
     if (close(path_only) != 0) {
