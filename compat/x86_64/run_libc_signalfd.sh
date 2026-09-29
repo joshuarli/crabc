@@ -4,7 +4,8 @@
 # The project-header fixture first runs against pinned musl 1.2.6, then as a
 # true `-nostdlib -static` candidate linked only with the selected crabc
 # archive. It proves one direct signalfd4 wrapper, the one-word kernel signal
-# set argument, descriptor update, and event reads. It is not signal-mask or
+# set argument, queued standard and realtime delivery order, descriptor mask
+# updates, and record reads. It is not signal-mask or
 # disposition policy, a timer/readiness runtime, an event loop, cancellation,
 # libc.so, CRT, loader, sysroot, family completion, promotion, or public x86
 # support.
@@ -84,7 +85,8 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_signalfd_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-signalfd.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-signalfd.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
@@ -141,9 +143,14 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
 
+# read and close reach a cancellation helper whose archive object also defines
+# unused weak pthread_create.
+# Retain only referenced sections; the final ELF check below still rejects
+# a live pthread_create definition.
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_SIGNALFD_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -Wl,--gc-sections \
     compat/x86_64/libc_signalfd_probe.c compat/x86_64/libc_signalfd_start.S \
     "$archive" -o "$candidate"
 
