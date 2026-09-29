@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Narrow raw-errno contract for the owned resolver cancellation fixture."""
+"""Raw errno, lifecycle, and reply order for the resolver cancellation fixture."""
 from __future__ import annotations
 
 import errno
 import inspect
+import subprocess
+import tempfile
 from pathlib import Path
 import sys
 import unittest
@@ -72,14 +74,6 @@ class ResolverCancellationObservationContractTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'stderr differs'):
             self.compare(stderr=b'unexpected diagnostic\n')
 
-    def test_probe_limits_the_original_cell_and_preserves_its_reply_order(self) -> None:
-        source = PROBE.read_text(encoding='utf-8')
-        self.assertIn('dual_mixed_later_errno_case=(!strcmp(scenario,"masked-dual-mixed-tcp") || !strcmp(scenario,"masked-udp-to-tcp")) && !strcmp(api,"modern-dual");', source)
-        self.assertIn('CHECK(result_errno==ECANCELED || result_errno==EAGAIN);', source)
-        paired_reply = source.index('if(!post_tcp_later_eagain_case) {')
-        accept = source.index('accepted=accept(tcp,0,0)')
-        self.assertLess(paired_reply, accept)
-
     def test_dynamic_execution_labels_match_the_public_receipt_matrix(self) -> None:
         """The producer's retained raw names must be replayable by its reader."""
 
@@ -90,6 +84,59 @@ class ResolverCancellationObservationContractTests(unittest.TestCase):
             'dynamic-pie-kernel', 'dynamic-pie-direct',
             'dynamic-non-pie-kernel', 'dynamic-non-pie-direct',
         ))
+
+
+@unittest.skipUnless(Path('/usr/local/bin/crabc-x86_64-musl-gcc').is_file(),
+                     'requires the pinned native musl oracle image')
+class ResolverCancellationReplyOrderTests(unittest.TestCase):
+    def test_original_masked_dual_cells_send_the_paired_udp_reply_before_tcp_accept(self) -> None:
+        cancellation.fixture_module().require_native_loopback_container()
+        scratch = ROOT / '.work'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            wrapper = work / 'server-order.c'
+            wrapper.write_text(r'''#define _GNU_SOURCE
+#include <stdio.h>
+#include <sys/socket.h>
+ssize_t __real_sendto(int,const void *,size_t,int,const struct sockaddr *,socklen_t);
+int __real_accept(int,struct sockaddr *,socklen_t *);
+ssize_t __wrap_sendto(int fd,const void *data,size_t n,int flags,const struct sockaddr *peer,socklen_t size) {
+    const unsigned char *packet=data;
+    ssize_t result=__real_sendto(fd,data,n,flags,peer,size);
+    if(result==(ssize_t)n && n>=12 && (packet[2]&0x80))
+        dprintf(2,"udp-%s\n",(packet[2]&2)?"truncated":"answer");
+    return result;
+}
+int __wrap_accept(int fd,struct sockaddr *peer,socklen_t *size) {
+    dprintf(2,"tcp-accept\n");
+    return __real_accept(fd,peer,size);
+}
+''', encoding='ascii')
+            execution = work / 'execution-root'
+            (execution / 'etc').mkdir(parents=True)
+            command = ['/usr/local/bin/crabc-x86_64-musl-gcc', '-std=c11', '-fno-builtin', '-static',
+                       '-fno-pie', '-no-pie', '-pthread', str(PROBE), str(wrapper),
+                       '-Wl,--wrap=sendto,--wrap=accept', '-o', str(execution / 'oracle')]
+            built = subprocess.run(command, capture_output=True, timeout=30)
+            self.assertEqual(built.returncode, 0, built.stderr.decode(errors='replace'))
+            for scenario in ('masked-dual-mixed-tcp', 'masked-udp-to-tcp',
+                             cancellation.POST_TCP_LATER_EAGAIN_CASE[1]):
+                with self.subTest(scenario=scenario):
+                    result = subprocess.run([
+                        sys.executable, '-B', str(ROOT / 'compat/x86_64/run_pthread_wait_witness.py'),
+                        str(execution), '/oracle', scenario, 'modern-dual',
+                    ], capture_output=True, timeout=10)
+                    self.assertEqual(result.returncode, 0, result.stderr.decode(errors='replace'))
+                    dedicated = scenario == cancellation.POST_TCP_LATER_EAGAIN_CASE[1]
+                    expected_order = ['udp-truncated', 'tcp-accept'] if dedicated else [
+                        'udp-truncated', 'udp-answer', 'tcp-accept',
+                    ]
+                    self.assertEqual(result.stderr.decode('ascii').splitlines(), expected_order)
+                    expected = {**BASE_OBSERVATION,
+                                'errno': errno.EAGAIN if dedicated else errno.ECANCELED}
+                    cancellation.compare_observation('modern-dual', scenario, expected, b'',
+                                                     cancellation.observation(result.stdout), b'')
 
 
 if __name__ == '__main__':

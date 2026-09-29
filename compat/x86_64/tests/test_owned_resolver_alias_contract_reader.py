@@ -49,6 +49,10 @@ from owned_resolver_alias_contract_reader import (  # noqa: E402
 )
 
 
+def setUpModule() -> None:
+    (ROOT / '.work').mkdir(exist_ok=True)
+
+
 class ResolverAliasReceiptContractTests(unittest.TestCase):
     def test_projection_is_json_safe_and_has_the_exact_five_identity_scope(self) -> None:
         projection = component_projection()
@@ -220,7 +224,7 @@ class ResolverAliasOccurrenceTests(unittest.TestCase):
 
 class ResolverAliasProductAnchorTests(unittest.TestCase):
     def test_loader_debug_dynamic_artifacts_use_the_producer_relative_paths(self) -> None:
-        with tempfile.TemporaryDirectory(dir=ROOT / '.work' / 'x86_64' / 'test-tmp') as temporary:
+        with tempfile.TemporaryDirectory(dir=ROOT / '.work') as temporary:
             root = Path(temporary)
             static = root / '.work' / 'static-product'
             dynamic = root / '.work' / 'loader-component' / 'dynamic-product'
@@ -327,7 +331,7 @@ class ResolverAliasRunnerRuntimeModeTests(unittest.TestCase):
         setup = runner[runner.index('prepare_fixture()'):runner.index('# Header ABI is a source check')]
         self.assertIn('chmod 00755 "$fixture" "$fixture/etc"', setup)
         self.assertIn('chmod 00755 "$root" "$root/lib" "$root/usr" "$root/usr/lib" "$root/fixture"', setup)
-        with tempfile.TemporaryDirectory(dir=ROOT / '.work' / 'x86_64' / 'test-tmp') as temporary:
+        with tempfile.TemporaryDirectory(dir=ROOT / '.work') as temporary:
             root = Path(temporary)
             parent = root / 'setgid-parent'
             parent.mkdir()
@@ -422,8 +426,7 @@ class ResolverAliasRunnerInterfaceTests(unittest.TestCase):
 
 class ResolverAliasReceiptFilesystemTests(unittest.TestCase):
     def test_recomputed_object_identity_does_not_admit_transplanted_probe(self) -> None:
-        scratch = ROOT / '.work' / 'x86_64' / 'test-tmp'
-        scratch.mkdir(parents=True, exist_ok=True)
+        scratch = ROOT / '.work'
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             work = Path(temporary)
             source = work / 'probe.c'
@@ -447,8 +450,7 @@ class ResolverAliasReceiptFilesystemTests(unittest.TestCase):
                                                     argv, 'public probe')
 
     def test_recomputed_executable_identity_does_not_admit_transplanted_link(self) -> None:
-        scratch = ROOT / '.work' / 'x86_64' / 'test-tmp'
-        scratch.mkdir(parents=True, exist_ok=True)
+        scratch = ROOT / '.work'
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             work = Path(temporary)
             linker = work / 'linker'
@@ -744,7 +746,7 @@ class ResolverAliasPreExecutionCaptureTests(unittest.TestCase):
 
 class ResolverAliasCollectionLifecycleTests(unittest.TestCase):
     def test_begin_collection_writes_and_reads_the_explicit_capture_schema(self) -> None:
-        with tempfile.TemporaryDirectory(dir=ROOT / '.work' / 'x86_64' / 'test-tmp') as temporary:
+        with tempfile.TemporaryDirectory(dir=ROOT / '.work') as temporary:
             work = Path(temporary) / 'receipt'
             work.mkdir()
             paths = {}
