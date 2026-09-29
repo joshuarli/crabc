@@ -150,7 +150,9 @@ are not transferable passes for a different revision.
   latter evidence condition met while 14 prerequisite families remain open.
   A sealed `libc.resolver` assessment admits all six components with no gaps;
   its receipt passed independent physical validation, while final-candidate
-  replay and public promotion remain separate. Two source-built pinned-musl
+  replay and public promotion remain separate. A later clean `4e7b185b` replay
+  again admits all six components after a 219-case dynamic qualification;
+  its pinned-image physical reader passes, with promotion still separate. Two source-built pinned-musl
   differentials match the owned resolver's search/UDP-truncation/TCP-CNAME
   recovery route and its bounded short-TCP-frame failure route; these focused
   observations do not replace final-candidate family replay. A source-sealed
