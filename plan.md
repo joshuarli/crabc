@@ -554,6 +554,11 @@ are not transferable passes for a different revision.
   Destroying a Heap used by a second worker after its creator exits now
   releases abandoned regular OS pages with their multi-block geometry intact;
   the committed two-worker C/Rust trace matches all five observations.
+  Concurrent Heap destroy and worker exit now unlink auxiliary Theaps under
+  the finishing TLD lock and continue worker cleanup when destroy has already
+  taken ownership. Two clean 32-process runs match pinned C across 2,048
+  race rounds per side, and the attached-worker destroy/delete traces each
+  match five observations.
   The M6 contract check lists 105 interface items, ten blocked gates, and
   nine missing evidence entries; a full M6 aggregate pass is not claimed.
   All ten required gates
