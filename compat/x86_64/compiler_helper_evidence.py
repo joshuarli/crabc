@@ -49,7 +49,8 @@ BUILTINS_DOCUMENTATION = Path("builtins/README.md")
 MATERIALIZED_DYNAMIC_DOCUMENTATION = Path("compat/x86_64/materialized-dynamic-sysroot.md")
 SELECTION_DOCUMENTATION = Path("compat/x86_64/native-abi-selection.md")
 ELF_READER = Path("compat/x86_64/loader_debug_abi_evidence.py")
-SOURCE_FILES = (CONTRACT, SOURCE, BUILDER, DYNAMIC_BUILDER, DYNAMIC_QUALIFICATION, AGGREGATE_PROBE, AGGREGATE_START, AGGREGATE_RUNNER,
+CAST_PROBE = Path("builtins/fixtures/x86_64_int128_casts_probe.c")
+SOURCE_FILES = (CAST_PROBE, CONTRACT, SOURCE, BUILDER, DYNAMIC_BUILDER, DYNAMIC_QUALIFICATION, AGGREGATE_PROBE, AGGREGATE_START, AGGREGATE_RUNNER,
                 SHARED_PLACEMENT_RUNNER, *SHARED_PLACEMENT_FIXTURES, READER, SELECTION, DOCUMENTATION,
                 BUILTINS_DOCUMENTATION, MATERIALIZED_DYNAMIC_DOCUMENTATION, SELECTION_DOCUMENTATION, ELF_READER)
 SCHEMA = "crabc.x86_64-compiler-helper-owner/v1"
@@ -71,6 +72,7 @@ SHARED_LIBC_METADATA = {
     "dynsym": False,
 }
 HELPER_ABIS = {
+    "u128-to-binary64", "binary64-to-u128",
     "complex-double", "u128-binary", "u128-bit-count", "u128-byte-swap",
     "u128-divmod-slot", "u128-overflow-slot", "u128-shift", "u32-byte-swap",
     "u64-bit-count", "u64-byte-swap",
@@ -142,7 +144,7 @@ def _helper_metadata(value: object) -> dict[str, Any]:
     return dict(HELPER_METADATA)
 
 
-def validate_contract(value: object) -> dict[str, Any]:
+def validate_contract(value: object, *, root: Path = ROOT) -> dict[str, Any]:
     """Validate exact finite source ownership, never infer a prefix roster."""
 
     require(type(value) is dict and set(value) == {
@@ -161,7 +163,7 @@ def validate_contract(value: object) -> dict[str, Any]:
     require(same(value["shared_libc"], SHARED_LIBC_METADATA),
             "compiler-helper shared-libc placement differs")
     helpers = value["helpers"]
-    require(type(helpers) is list and len(helpers) == 23, "compiler-helper helper roster differs")
+    require(type(helpers) is list and bool(helpers), "compiler-helper helper roster differs")
     result: list[dict[str, Any]] = []
     names: list[str] = []
     for row in helpers:
@@ -177,7 +179,7 @@ def validate_contract(value: object) -> dict[str, Any]:
         result.append({"name": name, "rust_signature": signature, "c_abi": c_abi,
                        "caller_obligation": obligation, "metadata": _helper_metadata(row["metadata"])})
         names.append(name)
-    require(names == sorted(names) and len(names) == len(set(names)), "compiler-helper helper roster differs")
+    require(names == sorted(names) and len(names) == len(set(names)) and set(names) == set(source_definitions(root)), "compiler-helper helper roster differs")
     return {"schema": 1, "target": TARGET, "owner_group": value["owner_group"], "source": value["source"],
             "builder": value["builder"], "producer_scope": value["producer_scope"], "archive": dict(archive),
             "shared_libc": dict(SHARED_LIBC_METADATA), "helpers": result}
@@ -189,7 +191,7 @@ def load_contract(root: Path = ROOT) -> dict[str, Any]:
     require(type(helpers) is list and all(type(row) is dict and type(row.get("metadata")) is dict
             and row["metadata"].get("version") == "unversioned" for row in helpers),
             "compiler-helper producer contract must spell unversioned metadata")
-    return validate_contract(raw)
+    return validate_contract(raw, root=root)
 
 
 def helper_names(contract: Mapping[str, Any]) -> tuple[str, ...]:
@@ -215,7 +217,7 @@ def source_definitions(root: Path = ROOT) -> dict[str, str]:
 
 def source_binding(root: Path, contract: Mapping[str, Any] | None = None) -> dict[str, Any]:
     root = Path(root).absolute()
-    contract = load_contract(root) if contract is None else validate_contract(dict(contract))
+    contract = load_contract(root) if contract is None else validate_contract(dict(contract), root=root)
     expected = {row["name"]: row["rust_signature"] for row in contract["helpers"]}
     require(source_definitions(root) == expected, "compiler-helper source definitions differ from contract")
     files = [file_identity(root, path) for path in SOURCE_FILES]
@@ -531,7 +533,8 @@ def _elf_section_name(elf: Elf, index: int) -> str:
     return elf.data[start:end].decode("ascii")
 
 
-def _direct_source_calls(object_bytes: bytes, name: str, work: Path) -> list[dict[str, Any]]:
+def _direct_source_calls(object_bytes: bytes, name: str, work: Path, *,
+                         allow_tail_calls: bool = False) -> list[dict[str, Any]]:
     """Read every direct call relocation from the authenticated C object."""
 
     scratch = work / ".work/x86_64/tmp"
@@ -558,12 +561,13 @@ def _direct_source_calls(object_bytes: bytes, name: str, work: Path) -> list[dic
                 continue
             require(symbol["section"] == 0 and symbol["binding"] == "GLOBAL"
                     and info & 0xffffffff == 4 and addend == -4
-                    and section.startswith(".text.") and target[1] == 1
+                    and (section.startswith(".text.") or (allow_tail_calls and section == ".text")) and target[1] == 1
                     and 1 <= destination and destination + 4 <= target[5]
                     and target[4] + destination + 4 <= len(elf.data)
-                    and elf.data[target[4] + destination - 1] == 0xe8,
+                    and elf.data[target[4] + destination - 1] in ({0xe8, 0xe9} if allow_tail_calls else {0xe8}),
                     "ordinary import source is not a direct C call")
-            calls.append({"section": section, "offset": destination})
+            calls.append({"section": section, "offset": destination,
+                          **({"opcode": elf.data[target[4] + destination - 1]} if allow_tail_calls else {})})
     require(calls and len({(row["section"], row["offset"]) for row in calls}) == len(calls),
             "ordinary import source call roster differs")
     return calls
@@ -597,7 +601,7 @@ def _final_direct_calls(elf: Elf, source_calls: Sequence[Mapping[str, Any]],
                 "ordinary import final source section differs")
         call_address = start + offset - 1
         instruction = _virtual_instruction(elf, call_address)
-        require(instruction[0] == 0xe8, "ordinary import final direct-call opcode differs")
+        require(instruction[0] == source.get("opcode", 0xe8), "ordinary import final direct-call opcode differs")
         target = call_address + 5 + struct.unpack_from("<i", instruction, 1)[0]
         require(target == provider_address, "ordinary import final call resolves to a foreign provider")
         resolved.append({"section": section, "offset": offset,
@@ -621,6 +625,102 @@ def _final_symbol(elf: Elf, name: str, binding: str) -> dict[str, Any]:
             require(elf.symbol_row(relocations[6], info >> 32)["name"] != name,
                     "ordinary import final ELF retains a named relocation")
     return symbol
+
+
+INT128_CAST_NAMES = ("__fixdfti", "__fixunsdfti", "__floattidf", "__floatuntidf")
+
+
+def _integer128_cast_transfers(*, root: Path, archive: Path, workload: Path,
+                               executable: Path, map_path: Path, trace_path: Path,
+                               source_mount: str = "/workspace") -> dict[str, Any]:
+    """Join emitted object relocations to the exact owned archive and final code."""
+
+    root = Path(root).absolute()
+    archive, workload, executable, map_path, trace_path = map(Path, (archive, workload, executable, map_path, trace_path))
+    require(all(path.is_absolute() and path.is_relative_to(root) and path.is_file() and not path.is_symlink()
+                for path in (archive, workload, executable, map_path, trace_path)),
+            "integer128 cast retained inputs escape the physical checkout")
+    recorded_archive = source_mount + "/" + archive.relative_to(root).as_posix()
+    recorded_workload = source_mount + "/" + workload.relative_to(root).as_posix()
+    map_lines = map_path.read_text(encoding="utf-8").splitlines()
+    trace_lines = trace_path.read_text(encoding="utf-8").splitlines()
+    require(trace_lines.count(f"{recorded_archive}({ARCHIVE_MEMBER})") == 1,
+            "integer128 cast trace does not extract the exact owned member")
+    require(trace_lines.count(recorded_workload) == 1,
+            "integer128 cast trace does not name the retained compiler object")
+    require(re.search(r"libgcc|compiler-rt", "\n".join(trace_lines)) is None,
+            "integer128 cast trace admits an ambient compiler runtime")
+    source = Elf(workload)
+    final = Elf(executable)
+    require(source.elf_type == 1 and final.elf_type in {2, 3}, "integer128 cast ELF kinds differ")
+    archive_bytes = _archive_object_bytes(archive, ARCHIVE_MEMBER)
+    scratch = root / ".work/x86_64/tmp"
+    scratch.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+        member_path = Path(temporary) / ARCHIVE_MEMBER
+        member_path.write_bytes(archive_bytes)
+        member = Elf(member_path)
+        result = {}
+        for name in INT128_CAST_NAMES:
+            imports = [source.symbol_row(index, number)
+                       for index, table in enumerate(source.sections) if table[1] == 2
+                       for number in range(table[5] // 24)
+                       if source.symbol_row(index, number)["name"] == name]
+            require(len(imports) == 1 and imports[0]["section"] == 0 and imports[0]["binding"] == "GLOBAL",
+                    "integer128 cast compiler object import differs")
+            provider = _final_symbol(final, name, "GLOBAL")
+            original = member.symbol(name, dynamic=False)
+            require(original["type"] == "FUNC" and original["binding"] == "GLOBAL"
+                    and original["visibility"] == "DEFAULT" and original["size"] == provider["size"]
+                    and original["section"] > 0,
+                    "integer128 cast owned archive provider metadata differs")
+            section = _elf_section_name(member, original["section"])
+            require(section == ".text." + name, "integer128 cast archive source section differs")
+            provider_rows = [line for line in map_lines if line.rstrip().endswith(":(" + section + ")")]
+            require(len(provider_rows) == 1
+                    and provider_rows[0].rstrip().endswith(f"{recorded_archive}({ARCHIVE_MEMBER}):({section})")
+                    and int(provider_rows[0].split()[0], 16) + original["value"] == provider["value"]
+                    and int(provider_rows[0].split()[2], 16) == member.sections[original["section"]][5],
+                    "integer128 cast final provider does not originate in the owned archive")
+            original_section = member.sections[original["section"]]
+            require(not any(row[1] in {4, 9} and row[7] == original["section"] and row[5]
+                            for row in member.sections),
+                    "integer128 cast source provider contains an unaccounted relocation")
+            source_start = original_section[4] + original["value"]
+            final_section = final.sections[provider["section"]]
+            final_start = final_section[4] + provider["value"] - final_section[3]
+            require(final_section[2] & 4 and 0 <= provider["value"] - final_section[3]
+                    and provider["value"] - final_section[3] + provider["size"] <= final_section[5]
+                    and member.data[source_start:source_start + original["size"]]
+                    == final.data[final_start:final_start + provider["size"]],
+                    "integer128 cast final provider bytes differ from the owned archive")
+            calls = _direct_source_calls(workload.read_bytes(), name, root, allow_tail_calls=True)
+            addresses = {}
+            for source_section in {row["section"] for row in calls}:
+                rows = [line for line in map_lines if line.rstrip().endswith(f"{recorded_workload}:({source_section})")]
+                require(len(rows) == 1, "integer128 cast compiler contribution is missing or ambiguous")
+                fields = rows[0].split()
+                addresses[source_section] = (int(fields[0], 16), int(fields[2], 16))
+            result[name] = {"provider_address": provider["value"], "source_section": section,
+                            **_final_direct_calls(final, calls, addresses, provider["value"])}
+    return {"archive_sha256": digest(archive), "workload_sha256": digest(workload),
+            "executable_sha256": digest(executable), "transfers": result}
+
+
+def retained_integer128_cast_link(*, root: Path, product: Path, workload: Path,
+                                  executable: Path, receipt: Path, linkage: str,
+                                  linker: Mapping[str, str]) -> dict[str, Any]:
+    """Authenticate an installed link before admitting its cast origin joins."""
+
+    import owned_posix_product_evidence as products
+    identity = products.validate_retained_link(root, "/workspace", product, workload,
+                                              executable, receipt, linkage, dict(linker))
+    record = _read_json(receipt, "integer128 cast link receipt")
+    observations = _integer128_cast_transfers(
+        root=root, archive=product / "usr/lib/libcrabc-builtins.a", workload=workload,
+        executable=executable, map_path=receipt.parent / record["map"]["path"],
+        trace_path=receipt.parent / record["trace"]["path"])
+    return {"link": identity, **observations}
 
 
 def _popcount_import_from_facts(facts_report: Mapping[str, Any], placements: Mapping[str, Any]) -> dict[str, Any]:

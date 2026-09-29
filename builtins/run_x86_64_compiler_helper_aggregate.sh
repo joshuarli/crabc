@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Bounded native x86-64 archive proof for the exact compiler-helper roster.
 #
-# The candidate has one C object with explicit imports of all 23 helpers and
+# The candidate has one C object with explicit and compiler-emitted imports and
 # links it only with a fresh Rust-owned archive. The separate pinned-musl C
 # reference compiles the same fixed cases through arithmetic/overflow/bit-loop
 # alternatives. It is an oracle object, not the candidate object.

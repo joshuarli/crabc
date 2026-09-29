@@ -104,6 +104,34 @@ caller_obligation = "two-word Uint128 C ABI carrier; zero returns zero"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
+name = "__fixdfti"
+rust_signature = 'pub extern "C" fn __fixdfti(value: f64) -> Uint128'
+c_abi = "binary64-to-u128"
+caller_obligation = "finite input whose truncation fits signed128; total source saturation/NaN branches do not define invalid C casts"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__fixunsdfti"
+rust_signature = 'pub extern "C" fn __fixunsdfti(value: f64) -> Uint128'
+c_abi = "binary64-to-u128"
+caller_obligation = "finite input whose truncation fits unsigned128; total source saturation/NaN branches do not define invalid C casts"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__floattidf"
+rust_signature = 'pub extern "C" fn __floattidf(value: Uint128) -> f64'
+c_abi = "u128-to-binary64"
+caller_obligation = "signed128 two-word carrier; source rounds to nearest with ties to even"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__floatuntidf"
+rust_signature = 'pub extern "C" fn __floatuntidf(value: Uint128) -> f64'
+c_abi = "u128-to-binary64"
+caller_obligation = "unsigned128 two-word carrier; source rounds to nearest with ties to even"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
 name = "__lshrti3"
 rust_signature = 'pub extern "C" fn __lshrti3(value: Uint128, shift: i32) -> Uint128'
 c_abi = "u128-shift"

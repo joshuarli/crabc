@@ -577,6 +577,72 @@ pub unsafe extern "C" fn __muloti4(left: Uint128, right: Uint128, overflow: *mut
     result
 }
 
+// Binary64 conversions use the compiler-builtins integer conversion branches.
+// Two-word shifts preserve their integer bit operations without recursively
+// requesting these same compiler helpers. Rounded mantissas can carry into
+// the exponent; addition of the fields is therefore intentional.
+#[cfg(target_arch = "x86_64")]
+fn uint128_to_binary64_bits(value: Uint128) -> u64 {
+    let leading = __clzti2(value) as u32;
+    let normalized = value.shl(leading);
+    let base = normalized.shr(75).lo;
+    let dropped = normalized.shr(11).lo | (normalized.lo & 0xffff_ffff);
+    let adjustment = dropped.wrapping_sub((dropped >> 63) & !base) >> 63;
+    let exponent = if value.is_zero() { 0 } else { 1149 - leading as u64 };
+    (exponent << 52) + base + adjustment
+}
+
+// The source conversion truncates finite in-range values, saturates infinities
+// and overflow, and maps NaNs to zero. Unsigned conversion keeps the sign bit
+// in its range comparison, making every negative input return zero. These
+// total source branches do not make out-of-range C casts defined.
+#[cfg(target_arch = "x86_64")]
+fn binary64_to_uint128(value: f64, signed: bool) -> Uint128 {
+    let original = value.to_bits();
+    let negative = original >> 63 != 0;
+    let bits = if signed { original & 0x7fff_ffff_ffff_ffff } else { original };
+    let limit = if signed { 1150_u64 } else { 1151_u64 };
+    if bits < 0x3ff0_0000_0000_0000 {
+        Uint128::ZERO
+    } else if bits < limit << 52 {
+        let mantissa = Uint128 { lo: bits, hi: 0 }.shl(75);
+        let mantissa = Uint128 { lo: mantissa.lo, hi: mantissa.hi | (1 << 63) };
+        let magnitude = mantissa.shr((1150 - (bits >> 52)) as u32);
+        if signed && negative { magnitude.negate() } else { magnitude }
+    } else if bits <= 0x7ff0_0000_0000_0000 {
+        if !signed { Uint128 { lo: u64::MAX, hi: u64::MAX } }
+        else if negative { Uint128 { lo: 0, hi: 1 << 63 } }
+        else { Uint128 { lo: u64::MAX, hi: (1 << 63) - 1 } }
+    } else {
+        Uint128::ZERO
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[unsafe(no_mangle)]
+pub extern "C" fn __floatuntidf(value: Uint128) -> f64 {
+    f64::from_bits(uint128_to_binary64_bits(value))
+}
+
+#[cfg(target_arch = "x86_64")]
+#[unsafe(no_mangle)]
+pub extern "C" fn __floattidf(value: Uint128) -> f64 {
+    let magnitude = if value.negative() { value.negate() } else { value };
+    f64::from_bits(uint128_to_binary64_bits(magnitude) | (value.hi & (1 << 63)))
+}
+
+#[cfg(target_arch = "x86_64")]
+#[unsafe(no_mangle)]
+pub extern "C" fn __fixdfti(value: f64) -> Uint128 {
+    binary64_to_uint128(value, true)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[unsafe(no_mangle)]
+pub extern "C" fn __fixunsdfti(value: f64) -> Uint128 {
+    binary64_to_uint128(value, false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -611,6 +677,29 @@ mod tests {
                 assert_eq!(super::__popcountdi2(input), expected);
             }
         }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn binary64_casts_preserve_total_source_range_and_nan_branches() {
+        let unsigned_max = Uint128 { lo: u64::MAX, hi: u64::MAX };
+        let signed_max = Uint128 { lo: u64::MAX, hi: (1 << 63) - 1 };
+        let signed_min = Uint128 { lo: 0, hi: 1 << 63 };
+        for input in [f64::NAN, f64::from_bits(0xfff0_0000_0000_0001)] {
+            assert_eq!(super::__fixdfti(input), Uint128::ZERO);
+            assert_eq!(super::__fixunsdfti(input), Uint128::ZERO);
+        }
+        for input in [f64::INFINITY, f64::from_bits(0x47e0_0000_0000_0000)] {
+            assert_eq!(super::__fixdfti(input), signed_max);
+        }
+        for input in [f64::NEG_INFINITY, -f64::from_bits(0x47e0_0000_0000_0000)] {
+            assert_eq!(super::__fixdfti(input), signed_min);
+            assert_eq!(super::__fixunsdfti(input), Uint128::ZERO);
+        }
+        assert_eq!(super::__fixunsdfti(f64::INFINITY), unsigned_max);
+        assert_eq!(super::__fixunsdfti(f64::from_bits(0x47f0_0000_0000_0000)), unsigned_max);
+        assert_eq!(super::__floatuntidf(unsigned_max).to_bits(), 0x47f0_0000_0000_0000);
+        assert_eq!(super::__floattidf(signed_min).to_bits(), 0xc7e0_0000_0000_0000);
     }
 
     #[test]

@@ -1,7 +1,8 @@
 /*
  * Finite native x86-64 compiler-helper aggregate ABI probe.
  *
- * The candidate object names every reviewed helper directly.  The reference
+ * The candidate uses explicit arithmetic helpers and compiler-emitted casts.
+ * The reference
  * object uses ordinary C arithmetic, checked-overflow builtins, and defined
  * unsigned loops instead; it is a distinct compiler/musl oracle object, never
  * a same-object claim.  The two-word `unsigned __int128` carrier crosses the
@@ -98,6 +99,8 @@ static int equal_complex(complex_double value, double real, double imaginary) {
     return __real__ value == real && __imag__ value == imaginary;
 }
 
+#include "x86_64_int128_casts_probe.c"
+
 int crabc_x86_64_compiler_helper_aggregate_probe(void) {
     const u128 one = 1;
     const u128 word = one << 64;
@@ -127,7 +130,7 @@ int crabc_x86_64_compiler_helper_aggregate_probe(void) {
     if (CALL_ADDOTI4(maximum, 1, &overflow) != minimum || overflow != 1) return 16;
     if (CALL_SUBOTI4(minimum, 1, &overflow) != maximum || overflow != 1) return 17;
     if (CALL_MULOTI4(maximum, 2, &overflow) != -2 || overflow != 1) return 18;
-    return 0;
+    return crabc_x86_64_int128_casts_probe();
 }
 
 #ifndef CRABC_BUILTINS_FREESTANDING

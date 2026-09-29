@@ -92,9 +92,9 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
         events.write_text(EVIDENCE.canonical_json(records), encoding="utf-8")
         return events
 
-    def test_contract_has_exact_23_unversioned_global_default_functions(self) -> None:
+    def test_contract_binds_source_unversioned_global_default_functions(self) -> None:
         contract = EVIDENCE.load_contract(ROOT)
-        self.assertEqual(len(contract["helpers"]), 23)
+        self.assertEqual(set(EVIDENCE.helper_names(contract)), set(EVIDENCE.source_definitions(ROOT)))
         self.assertEqual(EVIDENCE.helper_names(contract), tuple(sorted(EVIDENCE.helper_names(contract))))
         self.assertEqual(contract["archive"]["placements"], ["static-builtins", "dynamic-builtins"])
         self.assertEqual(contract["shared_libc"], EVIDENCE.SHARED_LIBC_METADATA)

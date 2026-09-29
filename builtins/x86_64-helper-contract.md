@@ -2,7 +2,7 @@
 
 [`x86_64-helper-contract.toml`](x86_64-helper-contract.toml) is the finite
 producer contract for the one-member Rust archive `libcrabc-builtins.a`. It
-selects exactly 23 unversioned `FUNC GLOBAL DEFAULT` C entries in each distinct
+selects the unversioned `FUNC GLOBAL DEFAULT` C entries in each distinct
 installed archive placement: `static-builtins` and `dynamic-builtins`. Equal
 archive bytes do not merge those placements.
 
@@ -10,7 +10,7 @@ The owned dynamic builder also passes that exact archive to the one `libc.so`
 link because selected Rust libc leaves can need compiler-generated operations.
 `scripts/build_x86_64_owned_dynamic_sysroot.py` uses
 `--exclude-libs=libcrabc-builtins.a` only for that shared link. Consequently,
-the same 23 definitions remain `FUNC LOCAL DEFAULT` in libc's full `.symtab`
+the same definitions remain `FUNC LOCAL DEFAULT` in libc's full `.symtab`
 and are absent from libc's `.dynsym`; they are not a shared-libc API. The
 archive builder rejects every extra external definition, so this archive-name
 rule cannot localize another owner. It does not change either installed archive
@@ -35,7 +35,7 @@ CRABC_COMPILER_HELPER_WORK_DIR=/workspace/.work/x86_64/compiler-helper-aggregate
 ```
 
 The runner builds the candidate archive twice, compiles one freestanding C
-object that directly imports every selected helper, and requires an
+object that imports every selected helper through explicit calls or emitted casts, and requires an
 archive-free link to fail at those exact imports. Its archive-backed ET_EXEC
 must have no interpreter, TLS, dynamic dependency, unresolved symbol, ambient
 CRT, or foreign compiler-runtime input. It compares the fixed transcript with
@@ -53,7 +53,7 @@ archive and candidate ELF on the host, rather than trusting command text for
 their roster or ET_EXEC facts. Its
 source-only writer/reader fixture is a schema control, not product evidence.
 
-This component does not select the 23 same-named `candidate-shared` rows,
+This component does not select the same-named `candidate-shared` rows,
 complete a compiler-helper family, qualify a runtime, or promote native public
 support. The private shared placement is source-owned separately from public
 selection and needs a fresh installed-product proof. The single observed static
@@ -90,7 +90,7 @@ CRABC_COMPILER_HELPER_SHARED_WORK_DIR=/workspace/.work/x86_64/compiler-helper-sh
 
 It builds one private materialized product, validates its installed manifest
 before and after execution, validates the installed archive and producer/link
-provenance, then checks all 23 libc `.symtab` rows and `.dynsym` absence. The
+provenance, then checks all selected libc `.symtab` rows and `.dynsym` absence. The
 fixture executable and application DSO are copied only to a separate private
 execution root, so the observed installed product remains unchanged. A direct
 executable and a helper-using application DSO must each
@@ -113,3 +113,30 @@ full clean product-source identity and retained archive SHA-256/size to match
 both distinct installed archive paths. Without that join, placement extraction
 is explicitly partial and makes no aggregate C-ABI claim for either installed
 role.
+
+The binary64/integer128 cast entries use the pinned compiler-builtins conversion
+branches named in `UPSTREAM.md`. `__floattidf` and `__floatuntidf` return binary64
+in XMM0 and receive low/high words in RDI/RSI. `__fixdfti` and `__fixunsdfti`
+receive binary64 in XMM0 and return low/high words in RAX/RDX. Integer-to-float
+conversion rounds to nearest with ties to even; float-to-integer conversion
+truncates toward zero. Source overflow/infinity saturation and NaN-to-zero
+branches keep the helpers total, but out-of-range C casts remain undefined.
+Division tests continue to exclude zero divisors and signed minimum divided by
+minus one; no defined division-error result is added.
+
+`fixtures/x86_64_int128_casts_probe.c` uses volatile operands and ordinary C casts
+so the compiler emits all four imports. The aggregate and installed direct/DSO
+consumers include those cases. The freestanding assembly entry additionally
+checks the actual argument/return registers, stack restoration, and all six
+callee-saved integer registers. Powers of two across both words, midpoint and
+sticky-bit rounding, representable range edges, fractions, and tiny values
+exercise the source conversion boundaries. The physical regression runs the
+same compiled importer through owned ET_EXEC and static-PIE links.
+
+`retained_integer128_cast_link` authenticates an existing installed-driver
+receipt with the retained-product reader before reading the object, installed
+archive, LLD map/trace, and executable. It requires each emitted call or tail
+jump to land at the unique archive provider, and the final helper body to match
+its relocation-free owned source bytes. Missing extraction, a foreign map
+provider, altered final helper bytes, and redirected transfers fail. The
+physical static/PIE regression exercises these controls with real ELF inputs.
