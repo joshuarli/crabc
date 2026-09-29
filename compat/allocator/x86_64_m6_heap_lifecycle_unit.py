@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 
 import run as harness
+import subprocess_lifecycle
 import x86_64_m6_child_heap_in_arena_two_worker as oracle
 
 
@@ -60,6 +61,7 @@ def main() -> None:
     rust_trace = trace(str(rust["stdout"]), "unit")
     if c_trace != rust_trace:
         raise harness.HarnessError(f"child Heap owner transitions differ: C={c_trace} Rust={rust_trace}")
+    subprocess_lifecycle.main()
     print(f"child Heap lifecycle unit: {len(c_trace)} pinned-C/private-Rust ownership transitions match; {ARTIFACTS}")
 
 

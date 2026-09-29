@@ -1506,7 +1506,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
         }
         let theap = self.local_theap_pointer()?;
         if !matches!(dynamic_backing_peek(), Some(backing) if is_empty_dynamic_backing(backing))
-            || fast_slot_peek().map(NonNull::cast::<Theap>) != Some(theap)
+            || fast_slot_peek().is_some_and(|fast| fast.cast::<Theap>() != theap)
             || !self.default_root_matches_local_owner(theap, true)
             || !core::ptr::eq(cached_theap().as_ptr(), empty_default_theap_ptr())
         {
@@ -1661,7 +1661,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
         }
         let fast_matches = if expect_fast_owner {
             fast_slot_peek()
-                .is_some_and(|fast| fast.as_ptr().cast::<Theap>() == theap_pointer)
+                .is_none_or(|fast| fast.as_ptr().cast::<Theap>() == theap_pointer)
         } else {
             fast_slot_peek().is_none()
         };

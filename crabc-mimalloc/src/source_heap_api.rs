@@ -453,7 +453,10 @@ pub unsafe fn theap_malloc(theap: *mut c_void, size: usize, zero: bool) -> Sourc
     {
         return Sourced { value: None, errno: SourceErrno::Unchanged };
     }
-    if crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<Theap>()) == Some(theap) {
+    // Child destruction may clear the fast root while the original main
+    // Theap remains live. Direct allocation follows that retained Theap's
+    // Heap identity independently of the current default selection.
+    if unsafe { Theap::heap_at(theap) }.cast::<c_void>() == heap_main() {
         return crate::source_api::malloc_zero_native(size, zero);
     }
     // SAFETY: the current thread retains this non-main Theap and its Heap.
@@ -471,9 +474,12 @@ pub unsafe fn theap_malloc(theap: *mut c_void, size: usize, zero: bool) -> Sourc
 /// The default Theap's allocation route when it differs from this thread's
 /// main-Heap Theap; `None` keeps the existing main-owner fast path.
 pub(crate) fn default_theap_allocate(size: usize, zero: bool) -> Option<Sourced<Block>> {
-    let main = crate::compiler_tls::fast_slot_peek()?.cast::<Theap>();
     let selected = crate::compiler_tls::default_theap();
-    if selected == main { return None; }
+    // The default remains initialized after child destruction clears the
+    // fast root. An auxiliary default still selects its own Heap.
+    // SAFETY: the calling thread retains its default Theap through routing.
+    let heap = unsafe { Theap::heap_at(selected) };
+    if heap.is_null() || heap.cast::<c_void>() == heap_main() { return None; }
     // SAFETY: only the calling thread changes its default, which must stay
     // live through every allocation until it is restored.
     Some(unsafe { theap_malloc(selected.as_ptr().cast(), size, zero) })
@@ -2057,13 +2063,7 @@ pub unsafe fn subproc_destroy(id: *mut c_void) -> bool {
         return false;
     };
     // SAFETY: forwarded live-id contract.
-    if unsafe { crate::subproc::lifecycle::native_subproc_destroy(NativeSubprocessId::from_ptr(pointer)) }.is_err() {
-        return false;
-    }
-    // Source releases the destroying thread's regular TLS table while
-    // destroying the child's main Heap. Keep the whole public operation
-    // admitted so terminal shutdown cannot pass between these two steps.
-    main_heaps::release_current_thread_locals_after_child_destroy()
+    unsafe { crate::subproc::lifecycle::native_subproc_destroy(NativeSubprocessId::from_ptr(pointer)) }.is_ok()
 }
 
 /// The source warning of a thread that already belongs to another

@@ -165,23 +165,33 @@ fn current_main_thread() -> Option<MainThread> {
     if crate::subproc::lifecycle::current_thread_is_child_member() {
         return None;
     }
-    let theap = fast_slot_peek()?.cast::<Theap>();
-    // SAFETY: the fixed main-Heap slot names this thread's live Theap.
-    let tld = NonNull::new(unsafe { Theap::tld_at(theap) })?;
     let main = MainSubprocess::global();
-    // SAFETY: an initialized default Theap keeps its TLD live.
-    let tld_ref = unsafe { tld.as_ref() };
-    let thread = LiveThreadId::new(tld_ref.thread_id())?;
+    let selected = default_theap();
+    // SAFETY: the default root retains this thread's attached TLD, even
+    // after child destruction clears the independently selected fast slot.
+    let tld = NonNull::new(unsafe { Theap::tld_at(selected) })?;
+    let theap = match fast_slot_peek() {
+        Some(fast) => fast.cast::<Theap>(),
+        // SAFETY: the initialized default retains this thread's TLD and
+        // every source-linked Theap; no same-thread teardown can run here.
+        None => unsafe {
+            ThreadLocalData::linked_theap_for_heap_at(tld, main.ready_main_heap_pointer())
+        }.ok()??,
+    };
+    // SAFETY: the initialized default retains this thread's TLD; its
+    // identity and NUMA fields stay stable independently of list unlinking.
+    let (thread, sequence, numa_node) = unsafe {
+        ThreadLocalData::attached_thread_identity_at(tld, main.identity())
+    }?;
     if crate::compiler_tls::current_thread_identity() != Some(thread)
         // SAFETY: the fixed slot must still belong to this subprocess main Heap.
         || unsafe { Theap::heap_at(theap) } != main.ready_main_heap_pointer()
         // SAFETY: a switched default must share this thread's TLD.
         || unsafe { Theap::tld_at(default_theap()) } != tld.as_ptr()
-        || !tld_ref.matches_subprocess_attached_lifecycle(thread, tld_ref.thread_sequence(), main.identity())
     {
         return None;
     }
-    Some(MainThread { theap, tld, thread, sequence: tld_ref.thread_sequence(), numa_node: tld_ref.numa_node() })
+    Some(MainThread { theap, tld, thread, sequence, numa_node })
 }
 
 fn binding() -> Option<ProcessMainBackingBinding> {
@@ -270,9 +280,10 @@ fn thread_local_count() -> i64 {
 
 /// `_mi_thread_locals_thread_done` on the thread calling
 /// `mi_subproc_destroy`: release its regular slot table while leaving its
-/// live Heap/Theap list and cached Theap reference intact. A pre-release
+/// live Heap/Theap list, default root, and cached Theap reference intact.
+/// The fast slot is cleared after the regular table is released. A pre-release
 /// metadata failure keeps the table available for the next operation.
-pub(crate) fn release_current_thread_locals_after_child_destroy() -> bool {
+pub(crate) fn release_current_thread_locals_for_child_destroy() -> bool {
     // SAFETY: this thread owns its regular TLS table, and the public child
     // destroy entry keeps native admission open through this transition.
     let state = unsafe { thread_heaps() };
@@ -287,6 +298,9 @@ pub(crate) fn release_current_thread_locals_after_child_destroy() -> bool {
         state.backing = dynamic_backing_peek().filter(|backing| !is_empty_dynamic_backing(*backing));
     }
     install_empty_dynamic_backing();
+    if released {
+        crate::compiler_tls::set_fast_slot(None);
+    }
     released
 }
 
@@ -1441,7 +1455,22 @@ pub(crate) mod tests {
                 assert!(slots_before);
                 let child = crate::source_heap_api::subproc_new();
                 assert!(!child.is_null());
+                let default_before = crate::compiler_tls::default_theap();
+                let cached_before = cached_theap();
+                assert!(crate::compiler_tls::fast_slot_peek().is_some());
                 assert!(unsafe { crate::source_heap_api::subproc_destroy(child) });
+                let fast_cleared = crate::compiler_tls::fast_slot_peek().is_none();
+                let default_preserved = crate::compiler_tls::default_theap() == default_before;
+                let cached_preserved = cached_theap() == cached_before;
+                assert!(fast_cleared, "child destruction clears the destroying thread fast slot");
+                assert!(default_preserved);
+                assert!(cached_preserved);
+                let default_block = crate::source_api::malloc(48).value.expect("the live default still allocates");
+                let default_allocates = unsafe { heap_of_block(default_block) }
+                    .is_some_and(|heap| heap.as_ptr() == MainSubprocess::global().ready_main_heap_pointer());
+                let fast_stays_empty = crate::compiler_tls::fast_slot_peek().is_none();
+                assert!(default_allocates && fast_stays_empty);
+                assert_eq!(unsafe { native_free(default_block) }, NativePageFreeResult::Freed);
                 let slots_released = thread_local_count() == 0;
                 assert!(slots_released);
                 let old_block_live = unsafe { heap_of_block(block) } == Some(heap);
@@ -1450,10 +1479,27 @@ pub(crate) mod tests {
                     .expect("the Heap allocates after child destruction");
                 let next_allocation = thread_local_count() > 0;
                 assert!(next_allocation);
+                let selected = unsafe { native_heap_theap(heap) }.expect("the retained Heap Theap");
+                assert_eq!(unsafe { crate::source_heap_api::theap_set_default(selected.as_ptr().cast()) }, default_before.as_ptr().cast());
+                let switched_block = crate::source_api::malloc(48).value.expect("the selected default allocates");
+                let switched_allocates = unsafe { heap_of_block(switched_block) } == Some(heap);
+                assert!(switched_allocates, "an empty fast root does not replace the selected default Heap");
+                let direct = unsafe { crate::source_heap_api::theap_malloc(default_before.as_ptr().cast(), 24, false) }
+                    .value.expect("the retained main Theap allocates directly");
+                let direct_main = unsafe { heap_of_block(direct) }
+                    .is_some_and(|heap| heap.as_ptr() == MainSubprocess::global().ready_main_heap_pointer());
+                let selected_preserved = crate::compiler_tls::default_theap() == selected;
+                assert!(direct_main && selected_preserved);
+                assert_eq!(unsafe { crate::source_heap_api::theap_set_default(default_before.as_ptr().cast()) }, selected.as_ptr().cast());
+                assert_eq!(unsafe { native_free(direct) }, NativePageFreeResult::Freed);
+                assert_eq!(unsafe { native_free(switched_block) }, NativePageFreeResult::Freed);
                 assert_eq!(unsafe { native_free(next) }, NativePageFreeResult::Freed);
                 assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
                 assert_eq!(unsafe { native_heap_release(heap, true) }, Ok(HeapReleaseOutcome::Released));
-                for (index, value) in [slots_before, slots_released, old_block_live, next_allocation].iter().enumerate() {
+                for (index, value) in [slots_before, slots_released, old_block_live, next_allocation,
+                    fast_cleared, default_preserved, cached_preserved,
+                    default_allocates, fast_stays_empty,
+                    switched_allocates, direct_main, selected_preserved].iter().enumerate() {
                     std::println!("m6.subproc.destroy_slots.{index}={}", i32::from(*value));
                 }
             },

@@ -284,6 +284,8 @@ pub(crate) enum ChildSubprocessDestroyError {
     Attachment(MainHeapThreadAttachmentError),
     /// Registry unlink or the metadata-page drain that must precede it.
     Registry(ChildMetadataPageEngineError),
+    /// The destroying thread's regular TLS table could not be released.
+    ThreadLocalsRelease,
     MetadataTheapDetach(ChildMetadataTheapError),
     MetadataTheapRelease(ChildMainHeapReleaseError),
     HeapUnlink(SourceHeapRegistryError),
@@ -384,6 +386,7 @@ unsafe fn destroy_child_with<'heap, 'tracking>(
     // Process destruction, and `mi_subproc_destroy` of a child that threads
     // still belong to, destroy the child under those threads.
     let terminal = under_threads || matches!(release, ChildHeapRelease::Terminal);
+    let release_thread_locals = matches!(release, ChildHeapRelease::Native);
     let mut release = Some(release);
     loop {
         let step = match child.stage() {
@@ -396,6 +399,11 @@ unsafe fn destroy_child_with<'heap, 'tracking>(
             // SAFETY: forwarded quiescence and exact-registry obligations.
             ChildMainHeapStage::HeapReady if terminal => unsafe {
                 destroy_non_main_heaps(&mut child, binding).and_then(|()| {
+                    // Regular slots and the fast root leave the destroying
+                    // thread before the child's main Heap is detached.
+                    if release_thread_locals
+                        && !crate::subproc::main_heaps::release_current_thread_locals_for_child_destroy()
+                    { return Err(ChildSubprocessDestroyError::ThreadLocalsRelease); }
                     child
                         .unlink_registry_and_detach_pages_terminal(registry, binding)
                         .map_err(ChildSubprocessDestroyError::Registry)
@@ -407,6 +415,11 @@ unsafe fn destroy_child_with<'heap, 'tracking>(
                     Err(ChildSubprocessDestroyError::Registry(ChildMetadataPageEngineError::LiveThreads))
                 } else {
                     destroy_non_main_heaps(&mut child, binding).and_then(|()| {
+                        // The source keeps default and cached Theaps live
+                        // while releasing regular slots and the fast root.
+                        if release_thread_locals
+                            && !crate::subproc::main_heaps::release_current_thread_locals_for_child_destroy()
+                        { return Err(ChildSubprocessDestroyError::ThreadLocalsRelease); }
                         child
                             .unlink_registry_and_finish_metadata_pages(registry, binding)
                             .map_err(ChildSubprocessDestroyError::Registry)

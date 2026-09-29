@@ -2188,6 +2188,69 @@ impl ThreadLocalData {
         Ok(found)
     }
 
+    /// Finds the retained Theap for a Heap on the calling thread's TLD.
+    /// Child subprocess destruction can clear the fast root while keeping
+    /// the default Theap and this source list alive.
+    ///
+    /// # Safety
+    /// `pointer` is this thread's retained attached TLD. Every linked Theap
+    /// remains live through the locked observation; its Heap publication may
+    /// be read atomically. The caller keeps the returned Theap alive after
+    /// the list lock is released and excludes this thread's teardown.
+    pub(crate) unsafe fn linked_theap_for_heap_at(
+        pointer: NonNull<Self>,
+        heap: *mut Heap,
+    ) -> Result<Option<NonNull<Theap>>, ThreadLocalTheapListError> {
+        // SAFETY: only the independently synchronized lock is borrowed.
+        let lock = unsafe { &*core::ptr::addr_of!((*pointer.as_ptr()).theaps_lock) };
+        let guard = lock.lock().map_err(ThreadLocalTheapListError::Lock)?;
+        // SAFETY: the lock protects the head and every inspected link.
+        let mut current = unsafe { core::ptr::addr_of!((*pointer.as_ptr()).theaps).read() };
+        let mut previous = null_mut();
+        let mut found = None;
+        while !current.is_null() {
+            // SAFETY: linked images remain live under the held list lock.
+            if unsafe { core::ptr::addr_of!((*current).tprev).read() != previous
+                || core::ptr::addr_of!((*current).tld).read() != pointer.as_ptr() }
+            {
+                guard.unlock().map_err(ThreadLocalTheapListError::Lock)?;
+                return Err(ThreadLocalTheapListError::Membership);
+            }
+            if unsafe { Theap::heap_at(NonNull::new_unchecked(current)) } == heap {
+                found = NonNull::new(current);
+            }
+            previous = current;
+            current = unsafe { core::ptr::addr_of!((*current).tnext).read() };
+        }
+        guard.unlock().map_err(ThreadLocalTheapListError::Lock)?;
+        Ok(found)
+    }
+
+    /// Projects the attached calling thread's stable identity and NUMA node.
+    /// Source list mutation remains independent of these scalar fields.
+    ///
+    /// # Safety
+    /// `pointer` retains initialized TLD metadata through the call. Its
+    /// identity and NUMA fields are stable, and the caller exclusively
+    /// controls its recurse marker.
+    pub(crate) unsafe fn attached_thread_identity_at(
+        pointer: NonNull<Self>,
+        subprocess: &SubprocessIdentity,
+    ) -> Option<(LiveThreadId, ThreadSequence, i32)> {
+        // SAFETY: these short projections do not borrow mutable list links.
+        unsafe {
+            if core::ptr::addr_of!((*pointer.as_ptr()).subprocess).read() != subprocess.as_ptr()
+                || core::ptr::addr_of!((*pointer.as_ptr()).is_in_threadpool).read()
+                || core::ptr::addr_of!((*pointer.as_ptr()).recurse).read()
+            { return None; }
+            Some((
+                LiveThreadId::new(core::ptr::addr_of!((*pointer.as_ptr()).thread_id).read())?,
+                ThreadSequence::from_previous_total_count(core::ptr::addr_of!((*pointer.as_ptr()).thread_seq).read()),
+                core::ptr::addr_of!((*pointer.as_ptr()).numa_node).read(),
+            ))
+        }
+    }
+
     /// Validates retained attached-owner identity and reads its metadata
     /// provenance without borrowing independently mutable list fields.
     ///
