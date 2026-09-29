@@ -56,11 +56,8 @@ def workload_rows(path: Path) -> dict[str, Any]:
     symbols = subprocess.run(("/usr/bin/readelf", "-Ws", str(path)), capture_output=True, text=True, check=False)
     relocations = subprocess.run(("/usr/bin/readelf", "-rW", str(path)), capture_output=True, text=True, check=False)
     require(symbols.returncode == relocations.returncode == 0, "wctomb workload ELF is unreadable")
-    require(not any(line.endswith(" wctomb") for line in symbols.stdout.splitlines())
-            and not re.search(r"\bwctomb\b", relocations.stdout),
-            "wctomb workload imports the provider directly")
     rows = {}
-    for name in ("fwscanf",):
+    for name in ("fwscanf", "wctomb"):
         selected = [line.split() for line in symbols.stdout.splitlines()
                     if line.endswith(" " + name) and line.split()[0].endswith(":")]
         require(len(selected) == 1 and selected[0][3:7] == ["NOTYPE", "GLOBAL", "DEFAULT", "UND"],
