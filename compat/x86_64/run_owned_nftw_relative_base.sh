@@ -48,8 +48,16 @@ prepare_root() {
     local root="$1"
     mkdir -p "$root/work/ftw"
     : >"$root/work/ftw/nftw"
+    mkdir -p "$root/cases/tree/branch/denied"
+    : >"$root/cases/tree/branch/file"
+    ln -s file "$root/cases/tree/branch/file-link"
+    ln -s absent "$root/cases/tree/branch/dangling"
+    ln -s . "$root/cases/tree/branch/loop"
     chmod 755 "$root" "$root/work" "$root/work/ftw"
+    chmod 755 "$root/cases" "$root/cases/tree" "$root/cases/tree/branch"
+    chmod 000 "$root/cases/tree/branch/denied"
     chmod 644 "$root/work/ftw/nftw"
+    chmod 644 "$root/cases/tree/branch/file"
 }
 
 run_in_root() {
@@ -127,7 +135,14 @@ for mode in pie non-pie; do
         cmp "$work/oracle.stdout" "$output"
         cmp "$work/oracle.stderr" "${output%.stdout}.stderr"
         cmp "$work/oracle.status" "${output%.stdout}.status"
+        if [ "$entry" = direct ]; then
+            run_in_root "$root" "$work/dynamic-$mode-$entry-chdir.stdout" \
+                "$INTERPRETER" /consumer --chdir
+        else
+            run_in_root "$root" "$work/dynamic-$mode-$entry-chdir.stdout" /consumer --chdir
+        fi
+        require_success "dynamic-$mode-$entry-chdir" "$work/dynamic-$mode-$entry-chdir.stdout"
     done
 done
 
-printf 'owned nftw relative base: PASS (same installed object, pinned musl, exact nftw(".") callback paths, dynamic PIE/non-PIE kernel/direct entries); evidence: %s\n' "$work"
+printf 'owned nftw relative base: PASS (same installed object, pinned musl callback matrix, owned FTW_CHDIR, dynamic PIE/non-PIE kernel/direct entries); evidence: %s\n' "$work"

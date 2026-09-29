@@ -703,11 +703,13 @@ static_archive_member! { nftw_source {
     ///
     /// # Safety
     ///
-    /// `path` must designate a readable NUL-terminated pathname for the call.
-    /// `callback` must be non-null and follow the C `nftw` callback ABI. It may
-    /// inspect only the supplied `struct stat`/`struct FTW` during the callback and
-    /// must return normally: C++ exceptions and C `longjmp` must not cross this
-    /// Rust frame. `FTW_CHDIR` changes process-global CWD during callbacks and
+    /// With a positive `fd_limit`, `path` must designate a readable
+    /// NUL-terminated pathname and `callback` must be non-null and follow the
+    /// C `nftw` callback ABI. The callback may inspect the supplied `struct stat`
+    /// and `struct FTW` only during its invocation and must return normally:
+    /// C++ exceptions and C `longjmp` must not cross this Rust frame. With a
+    /// nonpositive `fd_limit`, neither pointer is read. `FTW_CHDIR` changes
+    /// process-global CWD during callbacks and
     /// restores the entry CWD before return; callers retain external serialization
     /// of every CWD-sensitive operation. In the owned static aggregate, pinned
     /// musl's disable/walk/restore cancellation-state interval includes every
@@ -719,11 +721,11 @@ static_archive_member! { nftw_source {
         fd_limit: c_int,
         flags: c_int,
     ) -> c_int {
-        if path.is_null() || callback.is_none() {
-            return unsafe { fail(EINVAL) };
-        }
         if fd_limit <= 0 {
             return 0;
+        }
+        if path.is_null() || callback.is_none() {
+            return unsafe { fail(EINVAL) };
         }
         let path_length = unsafe { c_string_length(path) };
         if path_length > PATH_MAX {
@@ -793,9 +795,11 @@ static_archive_member! { ftw_source {
     ///
     /// # Safety
     ///
-    /// `path` must designate a readable NUL-terminated pathname for the call.
-    /// `callback` must be non-null, follow the C `ftw` callback ABI, and return
-    /// normally; C++ exceptions and C `longjmp` must not cross this Rust frame.
+    /// With a positive `fd_limit`, `path` must designate a readable
+    /// NUL-terminated pathname and `callback` must be non-null, follow the C
+    /// `ftw` callback ABI, and return normally; C++ exceptions and C `longjmp`
+    /// must not cross this Rust frame. With a nonpositive `fd_limit`, neither
+    /// pointer is read.
     /// Callback pointers and stat records are borrowed only for each synchronous
     /// call. The owned static aggregate applies the same pinned-musl
     /// disable/walk/restore cancellation-state interval as `nftw`; this standalone
@@ -806,11 +810,11 @@ static_archive_member! { ftw_source {
         callback: Option<FtwCallback>,
         fd_limit: c_int,
     ) -> c_int {
-        if path.is_null() || callback.is_none() {
-            return unsafe { fail(EINVAL) };
-        }
         if fd_limit <= 0 {
             return 0;
+        }
+        if path.is_null() || callback.is_none() {
+            return unsafe { fail(EINVAL) };
         }
         let path_length = unsafe { c_string_length(path) };
         if path_length > PATH_MAX {
