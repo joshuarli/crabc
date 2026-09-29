@@ -112,6 +112,17 @@ fi
         ])
         self.assertIn(f"{self.boundary / 'target'}:/workspace/target".encode(), args)
 
+    def test_m3_queue_reorder_mode_reaches_its_existing_receiver(self):
+        result = self.launch("allocator-m3", "--queue-reorder-only")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = self.capture.read_bytes().split(b"\0")
+        self.assertEqual(args[-4:-1], [
+            b"python3", b"compat/allocator/m3_x86_64.py", b"--queue-reorder-only",
+        ])
+
+        rejected = self.launch("allocator-m3", "--queue-reorder-only", "--miri-only")
+        self.assertEqual(rejected.returncode, 2)
+
     def test_destruction_differential_commands_are_closed_and_run_their_pinned_differential(self):
         for command, runner in (
             ("allocator-heap-destroy", b"compat/allocator/heap_destroy.py"),

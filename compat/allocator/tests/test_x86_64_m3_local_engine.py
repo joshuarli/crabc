@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -75,6 +76,85 @@ class LocalPrimitiveTraceTests(unittest.TestCase):
         checks["prerequisites"] = {"milestones": {}, "unmet": []}
         with self.assertRaisesRegex(gate.GateError, "required checks.*miri"):
             gate.evaluate_gate(contract, checks)
+
+
+class MiriWorkspaceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        scratch = ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(prefix="miri-storage-", dir=scratch)
+        self.addCleanup(self.temporary.cleanup)
+        self.fixture = Path(self.temporary.name)
+        self.boundary = self.fixture / "checkout/.work/allocator-x86_64/tmp"
+        self.boundary.mkdir(parents=True)
+        self.external = self.fixture / "image-cache"
+        self.capture = self.fixture / "storage-paths"
+        binary = self.fixture / "bin"
+        binary.mkdir()
+        cargo = binary / "cargo"
+        cargo.write_text('''#!/usr/bin/env python3
+import os
+import sys
+from pathlib import Path
+
+arguments = sys.argv[1:]
+if arguments == ["miri", "--version"]:
+    print("miri fixture")
+    sys.exit(0)
+
+def storage(value):
+    if value == "/tmp" or value.startswith("/tmp/"):
+        return Path(os.environ["MIRI_TEST_TMP_MOUNT"]) / value.removeprefix("/tmp").lstrip("/")
+    if value in ("/image-cache", "/image-sysroot"):
+        return Path(os.environ["MIRI_TEST_IMAGE_STORAGE"]) / value.lstrip("/")
+    raise RuntimeError("unexpected simulated container storage path")
+
+cache = storage(os.environ.get("MIRI_CACHE_DIR", "/image-cache"))
+sysroot = storage(os.environ["MIRI_SYSROOT"]) if "MIRI_SYSROOT" in os.environ else cache / "miri"
+for directory, marker in ((cache, "cache-write"), (sysroot, "sysroot-write")):
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / marker).write_text("initialized")
+    with Path(os.environ["MIRI_TEST_CAPTURE"]).open("a") as output:
+        output.write(str(directory / marker) + "\\n")
+if "--list" in arguments:
+    print("fixture::allocation: test")
+else:
+    print("running 1 test")
+    print("test fixture::allocation ... ok")
+    print("test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out")
+''')
+        cargo.chmod(0o755)
+        self.environment = {
+            "PATH": f"{binary}:{os.environ['PATH']}",
+            "MIRI_TEST_TMP_MOUNT": str(self.boundary),
+            "MIRI_TEST_IMAGE_STORAGE": str(self.external),
+            "MIRI_TEST_CAPTURE": str(self.capture),
+            "MIRI_CACHE_DIR": "/image-cache",
+        }
+        self.contract = {"miri": {
+            "target": "x86_64-unknown-linux-gnu",
+            "miriflags": ["-Zmiri-strict-provenance"],
+            "module_prefixes": ["fixture::"],
+            "required_tests": ["fixture::allocation"],
+        }}
+
+    def execute(self, *, inherited_sysroot: bool) -> None:
+        environment = dict(self.environment)
+        if inherited_sysroot:
+            environment["MIRI_CACHE_DIR"] = "/tmp/inherited-cache"
+            environment["MIRI_SYSROOT"] = "/image-sysroot"
+        with mock.patch.dict(os.environ, environment):
+            with mock.patch.object(gate, "ARTIFACT_ROOT", self.boundary / "artifacts"):
+                result = gate.run_miri(self.contract)
+        self.assertEqual(result["status"], "passed", result)
+        for path in self.capture.read_text().splitlines():
+            self.assertTrue(Path(path).resolve().is_relative_to(self.boundary), path)
+
+    def test_miri_cache_and_built_sysroot_use_the_checkout_tmp_mount(self) -> None:
+        self.execute(inherited_sysroot=False)
+
+    def test_an_inherited_sysroot_cannot_bypass_the_checkout_storage_boundary(self) -> None:
+        self.execute(inherited_sysroot=True)
 
 
 if __name__ == "__main__":

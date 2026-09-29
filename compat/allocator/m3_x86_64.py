@@ -1445,7 +1445,9 @@ def run_miri(contract: Mapping[str, Any]) -> dict[str, Any]:
     # `/tmp` onto the same checkout-local work directory, so this path keeps
     # both the temporary package and the cached sysroot inside that boundary.
     environment["TMPDIR"] = "/tmp"
-    environment["XDG_CACHE_HOME"] = "/tmp/crabc-m3-miri-cache"
+    environment["MIRI_CACHE_DIR"] = "/tmp/crabc-m3-miri-cache"
+    # An explicit inherited sysroot would bypass the checkout-local cache.
+    environment.pop("MIRI_SYSROOT", None)
     listing = run.command_record(
         (*base, "--list", "--format", "terse"), cwd=ROOT, env=environment, timeout_seconds=7200
     )
