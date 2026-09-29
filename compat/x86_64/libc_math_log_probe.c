@@ -2,10 +2,10 @@
  * Static Linux/x86-64 log/logf C ABI differential regression.
  *
  * This raw-bit corpus runs through pinned musl 1.2.6 and one freestanding
- * crabc archive. It records result bits and IEEE exception flags under each
- * MXCSR rounding direction, including raw subnormal normalization, the
- * close-to-one directed-zero path, signed-zero divide-by-zero, negative-domain
- * invalid, infinite, quiet-NaN, and signaling-NaN inputs. It selects only
+ * crabc archive. It records result bits, IEEE exception flags, and errno under
+ * each MXCSR rounding direction, including subnormal normalization, table
+ * boundaries, the close-to-one path, signed-zero divide-by-zero,
+ * negative-domain invalid, infinities, quiet NaNs, and signaling NaNs. It selects only
  * the binary64/binary32 natural logarithm pair: `logl`, fenv policy/APIs,
  * special math, and general libm remain outside this leaf.
  */
@@ -17,6 +17,7 @@
 #endif
 
 #include <fenv.h>
+#include <errno.h>
 #include <float.h>
 #include <math.h>
 #include <stddef.h>
@@ -29,9 +30,25 @@
 
 #define LOG_F64_CASES 28
 #define LOG_F32_CASES 28
+#define LOG_F64_THRESHOLDS 5
+#define LOG_F32_THRESHOLDS 4
+#define LOG_THRESHOLD_RADIUS 16
+#define LOG_F64_TABLE_BOUNDARIES 128
+#define LOG_F32_TABLE_BOUNDARIES 16
+#define LOG_F64_SUBNORMAL_POWERS 52
+#define LOG_F32_SUBNORMAL_POWERS 23
+#define LOG_F64_NORMAL_POWERS 64
+#define LOG_F32_NORMAL_POWERS 32
 #define LOG_ROUNDING_CASES 4
-#define LOG_RECORD_WORDS 4
-#define LOG_RECORD_COUNT ((LOG_F64_CASES + LOG_F32_CASES) * LOG_ROUNDING_CASES)
+#define LOG_RECORD_WORDS 5
+#define LOG_RECORD_COUNT \
+	((LOG_F64_CASES + LOG_F32_CASES + \
+	  (LOG_F64_THRESHOLDS + LOG_F32_THRESHOLDS) * \
+	    (2 * LOG_THRESHOLD_RADIUS + 1) + \
+	  (LOG_F64_TABLE_BOUNDARIES + LOG_F32_TABLE_BOUNDARIES + \
+	   LOG_F64_SUBNORMAL_POWERS + LOG_F32_SUBNORMAL_POWERS + \
+	   LOG_F64_NORMAL_POWERS + LOG_F32_NORMAL_POWERS) * 3) * \
+	 LOG_ROUNDING_CASES)
 #define LOG_RECORD_STORAGE_WORDS (LOG_RECORD_COUNT * LOG_RECORD_WORDS)
 
 typedef double (*double_unary_function)(double);
@@ -41,8 +58,17 @@ typedef float (*float_unary_function)(float);
 static double_unary_function volatile direct_log = (log);
 static float_unary_function volatile direct_logf = (logf);
 
-/* The freestanding start object writes these exact 7,168 bytes with syscall. */
+/* The freestanding start object reads this byte length before writing. */
 uint64_t crabc_x86_64_math_log_records[LOG_RECORD_STORAGE_WORDS];
+const size_t crabc_x86_64_math_log_record_bytes =
+	sizeof(crabc_x86_64_math_log_records);
+
+/* The freestanding process has no libc startup or TLS. Its local errno cell
+ * checks that the selected math closure leaves the caller's value intact. */
+#ifdef CRABC_MATH_LOG_FREESTANDING
+static int local_errno;
+int *__errno_location(void) { return &local_errno; }
+#endif
 
 static const uint64_t binary64_inputs[LOG_F64_CASES] = {
 	UINT64_C(0x0000000000000000), UINT64_C(0x8000000000000000),
@@ -72,6 +98,17 @@ static const uint32_t binary32_inputs[LOG_F32_CASES] = {
 	UINT32_C(0x80800000), UINT32_C(0xbf000000), UINT32_C(0xbf400000),
 	UINT32_C(0xbf7fffff), UINT32_C(0xbf800000), UINT32_C(0xff7fffff),
 	UINT32_C(0xff800000),
+};
+
+/* Normalization, cancellation, and reduction crossovers in the source kernels. */
+static const uint64_t binary64_thresholds[LOG_F64_THRESHOLDS] = {
+	UINT64_C(0x000fffffffffffff), UINT64_C(0x0010000000000000),
+	UINT64_C(0x3fe6000000000000), UINT64_C(0x3fee000000000000),
+	UINT64_C(0x3ff1090000000000),
+};
+static const uint32_t binary32_thresholds[LOG_F32_THRESHOLDS] = {
+	UINT32_C(0x007fffff), UINT32_C(0x00800000),
+	UINT32_C(0x3f330000), UINT32_C(0x3f800000),
 };
 
 static const int rounding_modes[LOG_ROUNDING_CASES] = {
@@ -108,6 +145,7 @@ static int record_binary64(size_t *cursor, int rounding_mode, uint64_t input)
 
 	if (fesetround(rounding_mode) != 0 || feclearexcept(FE_ALL_EXCEPT) != 0)
 		return 1;
+	errno = 77;
 	result = direct_log(double_from_bits(input));
 	if (*cursor + LOG_RECORD_WORDS > LOG_RECORD_STORAGE_WORDS)
 		return 2;
@@ -118,6 +156,7 @@ static int record_binary64(size_t *cursor, int rounding_mode, uint64_t input)
 		(uint32_t)fegetround();
 	crabc_x86_64_math_log_records[(*cursor)++] =
 		(uint32_t)fetestexcept(FE_ALL_EXCEPT);
+	crabc_x86_64_math_log_records[(*cursor)++] = (uint32_t)errno;
 	return 0;
 }
 
@@ -127,6 +166,7 @@ static int record_binary32(size_t *cursor, int rounding_mode, uint32_t input)
 
 	if (fesetround(rounding_mode) != 0 || feclearexcept(FE_ALL_EXCEPT) != 0)
 		return 1;
+	errno = 77;
 	result = direct_logf(float_from_bits(input));
 	if (*cursor + LOG_RECORD_WORDS > LOG_RECORD_STORAGE_WORDS)
 		return 2;
@@ -138,6 +178,37 @@ static int record_binary32(size_t *cursor, int rounding_mode, uint32_t input)
 		(uint32_t)fegetround();
 	crabc_x86_64_math_log_records[(*cursor)++] =
 		(uint32_t)fetestexcept(FE_ALL_EXCEPT);
+	crabc_x86_64_math_log_records[(*cursor)++] = (uint32_t)errno;
+	return 0;
+}
+
+static int record_binary64_neighbors(size_t *cursor, int rounding_mode,
+	uint64_t center, unsigned radius)
+{
+	unsigned offset;
+	int status;
+
+	for (offset = 0; offset <= 2 * radius; offset++) {
+		status = record_binary64(cursor, rounding_mode,
+			center - radius + offset);
+		if (status != 0)
+			return status;
+	}
+	return 0;
+}
+
+static int record_binary32_neighbors(size_t *cursor, int rounding_mode,
+	uint32_t center, unsigned radius)
+{
+	unsigned offset;
+	int status;
+
+	for (offset = 0; offset <= 2 * radius; offset++) {
+		status = record_binary32(cursor, rounding_mode,
+			center - radius + offset);
+		if (status != 0)
+			return status;
+	}
 	return 0;
 }
 
@@ -161,6 +232,46 @@ int crabc_x86_64_math_log_probe(void)
 			input_index++)
 			status = record_binary32(&cursor, rounding_modes[mode_index],
 				binary32_inputs[input_index]);
+		for (input_index = 0; input_index < LOG_F64_THRESHOLDS && status == 0;
+			input_index++)
+			status = record_binary64_neighbors(&cursor,
+				rounding_modes[mode_index], binary64_thresholds[input_index],
+				LOG_THRESHOLD_RADIUS);
+		for (input_index = 0; input_index < LOG_F32_THRESHOLDS && status == 0;
+			input_index++)
+			status = record_binary32_neighbors(&cursor,
+				rounding_modes[mode_index], binary32_thresholds[input_index],
+				LOG_THRESHOLD_RADIUS);
+		for (input_index = 0; input_index < LOG_F64_TABLE_BOUNDARIES && status == 0;
+			input_index++)
+			status = record_binary64_neighbors(&cursor,
+				rounding_modes[mode_index],
+				UINT64_C(0x3fe6000000000000) +
+				((uint64_t)input_index << 45), 1);
+		for (input_index = 0; input_index < LOG_F32_TABLE_BOUNDARIES && status == 0;
+			input_index++)
+			status = record_binary32_neighbors(&cursor,
+				rounding_modes[mode_index],
+				UINT32_C(0x3f330000) +
+				((uint32_t)input_index << 19), 1);
+		for (input_index = 0; input_index < LOG_F64_SUBNORMAL_POWERS && status == 0;
+			input_index++)
+			status = record_binary64_neighbors(&cursor,
+				rounding_modes[mode_index], UINT64_C(1) << input_index, 1);
+		for (input_index = 0; input_index < LOG_F32_SUBNORMAL_POWERS && status == 0;
+			input_index++)
+			status = record_binary32_neighbors(&cursor,
+				rounding_modes[mode_index], UINT32_C(1) << input_index, 1);
+		for (input_index = 0; input_index < LOG_F64_NORMAL_POWERS && status == 0;
+			input_index++)
+			status = record_binary64_neighbors(&cursor,
+				rounding_modes[mode_index],
+				((uint64_t)(1 + 32 * input_index)) << 52, 1);
+		for (input_index = 0; input_index < LOG_F32_NORMAL_POWERS && status == 0;
+			input_index++)
+			status = record_binary32_neighbors(&cursor,
+				rounding_modes[mode_index],
+				((uint32_t)(1 + 8 * input_index)) << 23, 1);
 	}
 	if (cursor != LOG_RECORD_STORAGE_WORDS && status == 0)
 		status = 3;

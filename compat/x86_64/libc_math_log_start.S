@@ -4,12 +4,13 @@
     .type _start,@function
     .extern crabc_x86_64_math_log_probe
     .extern crabc_x86_64_math_log_records
+    .extern crabc_x86_64_math_log_record_bytes
 _start:
     call crabc_x86_64_math_log_probe
     testl %eax, %eax
     jnz .Lcrabc_log_fail
     lea crabc_x86_64_math_log_records(%rip), %rsi
-    mov $7168, %edx
+    mov crabc_x86_64_math_log_record_bytes(%rip), %rdx
 .Lcrabc_log_write:
     mov $1, %eax
     mov $1, %edi

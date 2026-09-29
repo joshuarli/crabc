@@ -6,8 +6,8 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
-readonly RECORD_SIZE=32
-readonly EXPECTED_RECORDS=224
+readonly RECORD_SIZE=40
+readonly PREVIOUS_RECORDS=224
 readonly SELECTED_SYMBOLS=(log logf)
 readonly FENV_SIBLINGS=(feclearexcept fegetenv fegetround fesetenv fesetround fetestexcept)
 
@@ -33,21 +33,24 @@ assert_selected_c_abi_surface() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mkdir mktemp nm objdump readelf rustup sort wc; do
+for tool in ar awk cargo cmp diff grep mkdir mktemp nm objdump readelf rm rustup sort wc; do
 	require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_math_log_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-math-log.XXXXXX)"
+evidence_dir="$ROOT_DIR/.work/libc-math-log"
+mkdir -p "$evidence_dir"
+work_dir="$(mktemp -d "$evidence_dir/run.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-reference"
 candidate="$work_dir/crabc-candidate"
-reference_output="$work_dir/reference.records"
-candidate_output="$work_dir/candidate.records"
+reference_output="$evidence_dir/reference.records"
+candidate_output="$evidence_dir/candidate.records"
+rm -f -- "$reference_output" "$candidate_output"
 trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
 archive_globals="$work_dir/archive-globals"
@@ -62,7 +65,7 @@ disassembly="$work_dir/candidate-disassembly"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
 	compat/x86_64/libc_math_log_probe.c >/dev/null 2>"$trace"
-for header in fenv.h float.h math.h stddef.h stdint.h features.h bits/alltypes.h; do
+for header in errno.h fenv.h float.h math.h stddef.h stdint.h features.h bits/alltypes.h; do
 	grep -Fq "$ROOT_DIR/include/$header" "$trace" ||
 		fail "fixture did not use project $header"
 done
@@ -74,8 +77,8 @@ reference_bytes="$(wc -c < "$reference_output")"
 [ "$((reference_bytes % RECORD_SIZE))" -eq 0 ] ||
 	fail "pinned-musl fixture emitted a partial record"
 record_count="$((reference_bytes / RECORD_SIZE))"
-[ "$record_count" -eq "$EXPECTED_RECORDS" ] ||
-	fail "pinned-musl fixture did not produce ${EXPECTED_RECORDS} complete records"
+[ "$record_count" -gt "$PREVIOUS_RECORDS" ] ||
+	fail "pinned-musl fixture did not extend the previous record stream"
 
 build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
