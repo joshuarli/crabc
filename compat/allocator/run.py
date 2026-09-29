@@ -534,13 +534,44 @@ M2_X86_64_ARENA_CHECKS = (
         "id": "arena-destruction-c-rust-differential",
         "kind": "c-rust-arena-destruction-differential",
         "target": "arena::owned::tests::destroy_all_retires_regular_external_and_huge_owners_with_exact_retries",
-    },    {
+    },
+    {
         "expected_passed_test_count": 1,
         "id": "arena-reservation-warnings-c-rust-differential",
         "kind": "c-rust-reservation-warnings-differential",
         "target": "arena::owned::tests::emit_m2_reservation_warnings_c_rust_trace",
     },
+    {
+        "expected_passed_test_count": 1,
+        "id": "arena-delayed-purge-decommit-failure-c-rust-differential",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_delayed_purge_failure_x86_64.py",
+    },
 )
+M2_X86_64_ARENA_DIRECT_RECEIVERS = {
+    "arena-delayed-purge-decommit-failure-c-rust-differential": {
+        "artifact": "m2-delayed-purge-failure",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_delayed_purge_failure_x86_64.py",
+        "fixture": "compat/allocator/m2_delayed_purge_failure_x86_64.c",
+        "rust_test": "arena::tests::emit_m2_delayed_purge_failure_c_rust_trace",
+        "trace_prefix": "m2.delayed_purge_failure.",
+        "trace": {
+            "setup": 1, "pending": 1, "pending_purge": 1,
+            "pending_committed": 1, "pending_free": 1, "pending_survivor": 1,
+            "pending_expiry": 1, "pending_no_advice": 1, "consumed": 1,
+            "first_calls": 1, "first_exact": 1, "first_warnings": 1,
+            "warning_after_stats": 1, "first_purges": 1, "first_bytes": 65536,
+            "first_visits": 1, "first_committed": 0, "no_retry": 1,
+            "later_disjoint": 1, "later_pending": 1, "owner_live": 1,
+            "terminal": 1, "released_slice": 9, "survivor_slice": 10,
+            "later_slice": 11, "registry": 1, "reserved": 0,
+            "purge_calls": 1, "purged_bytes": 65536,
+            "arena_purges": 1, "advice_calls": 1, "warnings": 1,
+        },
+        "scope": "pinned-c-rust-regular-arena-delayed-purge-decommit-error-consumption-warning-after-statistics-independent-later-owner",
+    },
+}
 M2_X86_64_RECURSION_CHECKS = (
     {
         "expected_passed_test_count": 1,
@@ -14162,6 +14193,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-process-owned-protection-fault-differential",
                     "c-rust-second-arena-reset-advice-matrix",
                     "c-rust-process-arena-purge-differential",
+                    "c-rust-arena-delayed-purge-failure-differential",
                     "c-rust-arena-lifecycle-differential",
                     "c-rust-arena-destruction-differential",
                     "c-rust-reservation-warnings-differential",
@@ -14253,6 +14285,16 @@ def validate_x86_64_m2_memory_substrate_contract(
                     or "fn emit_native_owned_arena_purge_trace()" not in source.read_text(encoding="utf-8")
                 ):
                     raise HarnessError("native x86 M2 process-arena evidence target is absent")
+            elif raw_check.get("id") in M2_X86_64_ARENA_DIRECT_RECEIVERS:
+                receiver = M2_X86_64_ARENA_DIRECT_RECEIVERS[raw_check["id"]]
+                if (
+                    component_id != "arenas"
+                    or raw_check.get("kind") != receiver["kind"]
+                    or raw_check.get("target") != receiver["target"]
+                    or not (ROOT / receiver["target"]).is_file()
+                    or not (ROOT / receiver["fixture"]).is_file()
+                ):
+                    raise HarnessError("native x86 M2 direct arena receiver is absent")
             elif raw_check.get("kind") == "c-rust-arena-lifecycle-differential":
                 if component_id != "arenas" or raw_check.get("target") != (
                     _m2_x86_64_arena_lifecycle_producer().TARGET
@@ -15723,6 +15765,85 @@ def _m2_x86_64_process_arena_collect_check_records(
     }]
 
 
+def _run_m2_x86_64_arena_direct_evidence(*, offline: bool) -> dict[str, dict[str, Any]]:
+    """Execute source-built arena receivers and retain their raw transcripts."""
+
+    results: dict[str, dict[str, Any]] = {}
+    for check_id, receiver in M2_X86_64_ARENA_DIRECT_RECEIVERS.items():
+        command = ["python3", receiver["target"], *(["--offline"] if offline else [])]
+        execution = command_record(command, cwd=ROOT, timeout_seconds=900)
+        require_success(execution, "direct arena C/Rust receiver")
+        artifacts = ARTIFACT_ROOT / "x86_64" / receiver["artifact"]
+        evidence = read_json(artifacts / "evidence.json")
+        results[check_id] = {
+            **evidence,
+            "command": command,
+            "c_stdout": (artifacts / "pinned-c.stdout").read_text(encoding="utf-8"),
+            "c_stderr": (artifacts / "pinned-c.stderr").read_text(encoding="utf-8"),
+            "rust_stdout": (artifacts / "rust.stdout").read_text(encoding="utf-8"),
+            "rust_stderr": (artifacts / "rust.stderr").read_text(encoding="utf-8"),
+        }
+    return results
+
+
+def _m2_x86_64_arena_direct_check_records(
+    summary: Mapping[str, Any], pin: Mapping[str, str], evidence: object,
+) -> list[dict[str, Any]]:
+    """Bind direct arena receipts to their source files and physical traces."""
+
+    if not isinstance(evidence, Mapping) or set(evidence) != set(M2_X86_64_ARENA_DIRECT_RECEIVERS):
+        raise HarnessError("native x86 M2 direct arena receipt inventory is invalid")
+    component = next(item for item in summary["components"] if item["id"] == "arenas")
+    records: list[dict[str, Any]] = []
+    for check_id, receiver in M2_X86_64_ARENA_DIRECT_RECEIVERS.items():
+        check = next((item for item in component["checks"] if item["id"] == check_id), None)
+        observed = evidence[check_id]
+        artifacts = ARTIFACT_ROOT / "x86_64" / receiver["artifact"]
+        expected_command = ["python3", receiver["target"]]
+        if (
+            check is None or check.get("kind") != receiver["kind"]
+            or check.get("target") != receiver["target"]
+            or check.get("expected_passed_test_count") != 1
+            or not isinstance(observed, Mapping)
+            or set(observed) != {
+                "status", "pinned_revision", "fixture", "c_executable", "rust_test",
+                "trace", "command", "c_stdout", "c_stderr", "rust_stdout", "rust_stderr",
+            }
+            or observed.get("status") != "passed"
+            or observed.get("pinned_revision") != pin["revision"]
+            or observed.get("rust_test") != receiver["rust_test"]
+            or observed.get("trace") != receiver["trace"]
+            or observed.get("fixture") != artifact_record(ROOT / receiver["fixture"])
+            or observed.get("c_executable") != artifact_record(artifacts / "pinned-c-oracle")
+            or observed.get("command") not in (expected_command, expected_command + ["--offline"])
+            or observed.get("c_stderr") != ""
+            or observed.get("rust_stderr") != ""
+        ):
+            raise HarnessError("native x86 M2 direct arena receipt is invalid")
+        for side in ("c", "rust"):
+            values: dict[str, int] = {}
+            for line in observed[f"{side}_stdout"].splitlines():
+                candidate = line.rsplit(" ... ", 1)[-1]
+                if not candidate.startswith(receiver["trace_prefix"]):
+                    continue
+                match = re.fullmatch(r"([a-z_]+)=(-?[0-9]+)", candidate[len(receiver["trace_prefix"]):])
+                if match is None or match.group(1) in values:
+                    raise HarnessError("native x86 M2 direct arena transcript is invalid")
+                values[match.group(1)] = int(match.group(2))
+            if values != receiver["trace"]:
+                raise HarnessError("native x86 M2 direct arena trace differs from its receipt")
+        records.append({
+            "comparison_status": "matched",
+            "component": "arenas",
+            "command": list(observed["command"]),
+            "evidence_scope": receiver["scope"],
+            "id": check_id,
+            "passed_test_count": 1,
+            "target": receiver["target"],
+        })
+    return records
+
+
 def _m2_x86_64_metadata_check_records(
     summary: Mapping[str, Any], evidence: object, ownership_evidence: Mapping[str, Any]
 ) -> list[dict[str, Any]]:
@@ -16487,6 +16608,9 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
             ),
         )
     )
+    arena_owned_checks.extend(_m2_x86_64_arena_direct_check_records(
+        summary, pin, _run_m2_x86_64_arena_direct_evidence(offline=offline)
+    ))
     initialization_checks = _m2_x86_64_initialization_check_records(
         summary, initialization_evidence, initialization_teardown_evidence,
         exclusive_arena_theap_evidence,

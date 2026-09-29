@@ -71,6 +71,78 @@ EXPECTED_VM_CHECK_IDS = (
 )
 
 class NativeVmAssemblyTests(unittest.TestCase):
+    def test_delayed_purge_failure_is_a_partial_arena_receiver(self):
+        arenas = next(component for component in self.summary()["components"]
+                      if component["id"] == "arenas")
+        self.assertEqual(arenas["native_status"], "partial")
+        self.assertIn({
+            "expected_passed_test_count": 1,
+            "id": "arena-delayed-purge-decommit-failure-c-rust-differential",
+            "kind": "c-rust-arena-delayed-purge-failure-differential",
+            "target": "compat/allocator/m2_delayed_purge_failure_x86_64.py",
+        }, arenas["checks"])
+
+    def test_direct_arena_receipt_requires_both_physical_traces_and_source_identity(self):
+        summary = self.summary()
+        pin = {"revision": "pinned-revision"}
+        check_id, receiver = next(iter(RUNNER.M2_X86_64_ARENA_DIRECT_RECEIVERS.items()))
+        transcript = "".join(
+            f"{receiver['trace_prefix']}{field}={value}\n"
+            for field, value in receiver["trace"].items()
+        )
+        artifact = {"path": "source-bound", "bytes": 1, "sha256": "a" * 64}
+        evidence = {check_id: {
+            "status": "passed", "pinned_revision": pin["revision"],
+            "fixture": artifact, "c_executable": artifact,
+            "rust_test": receiver["rust_test"], "trace": dict(receiver["trace"]),
+            "command": ["python3", receiver["target"], "--offline"],
+            "c_stdout": transcript, "c_stderr": "",
+            "rust_stdout": transcript, "rust_stderr": "",
+        }}
+        with mock.patch.object(RUNNER, "artifact_record", return_value=artifact):
+            records = RUNNER._m2_x86_64_arena_direct_check_records(summary, pin, evidence)
+            self.assertEqual([record["id"] for record in records], [check_id])
+            for field in ("status", "pinned_revision", "fixture", "c_executable",
+                          "rust_test", "trace", "command", "c_stdout", "rust_stdout",
+                          "c_stderr", "rust_stderr"):
+                with self.subTest(field=field):
+                    changed = copy.deepcopy(evidence)
+                    if field in ("c_stdout", "rust_stdout"):
+                        changed[check_id][field] = changed[check_id][field].replace(
+                            "warning_after_stats=1", "warning_after_stats=0"
+                        )
+                    elif field in ("c_stderr", "rust_stderr"):
+                        changed[check_id][field] = "unexpected diagnostic"
+                    elif field == "trace":
+                        changed[check_id][field]["no_retry"] = 0
+                    else:
+                        changed[check_id][field] = "stale"
+                    with self.assertRaises(RUNNER.HarnessError):
+                        RUNNER._m2_x86_64_arena_direct_check_records(summary, pin, changed)
+            missing = copy.deepcopy(evidence)
+            missing[check_id]["c_stdout"] = transcript.replace(
+                "warning_after_stats=1\n", ""
+            )
+            with self.assertRaises(RUNNER.HarnessError):
+                RUNNER._m2_x86_64_arena_direct_check_records(summary, pin, missing)
+
+    def test_direct_arena_receiver_binds_offline_and_normal_commands(self):
+        receiver = next(iter(RUNNER.M2_X86_64_ARENA_DIRECT_RECEIVERS.values()))
+        for offline in (False, True):
+            with self.subTest(offline=offline), mock.patch.object(
+                RUNNER, "command_record", return_value={"status": 0}
+            ) as execute, mock.patch.object(
+                RUNNER, "require_success"
+            ), mock.patch.object(
+                RUNNER, "read_json", return_value={"status": "passed"}
+            ), mock.patch(
+                "pathlib.Path.read_text", return_value=""
+            ):
+                evidence = RUNNER._run_m2_x86_64_arena_direct_evidence(offline=offline)
+            command = ["python3", receiver["target"], *(["--offline"] if offline else [])]
+            execute.assert_called_once_with(command, cwd=RUNNER.ROOT, timeout_seconds=900)
+            self.assertEqual(next(iter(evidence.values()))["command"], command)
+
     def test_runtime_thp_configuration_producer_registers_its_dataclass_module_before_execution(self):
         """The aggregate loader must make the real lifecycle module importable to dataclasses."""
 
@@ -1317,6 +1389,10 @@ class NativeVmAssemblyTests(unittest.TestCase):
         arena_lifecycle_producer = mock.Mock(return_value={})
         vm_check_records_producer = mock.Mock(return_value=vm_records)
         arena_records_producer = mock.Mock(return_value=arena_records)
+        direct_arena_record = {
+            "id": "arena-delayed-purge-decommit-failure-c-rust-differential",
+            "component": "arenas",
+        }
         metadata_records_producer = mock.Mock(return_value=metadata_records)
         metadata_lifecycle_producer = mock.Mock(return_value={})
         thp_process_producer = mock.Mock(return_value={})
@@ -1370,6 +1446,10 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 _run_m2_x86_64_process_vm_evidence=process_vm_producer,
                 _m2_x86_64_vm_check_records=vm_check_records_producer,
                 _m2_x86_64_process_arena_collect_check_records=arena_records_producer,
+                _run_m2_x86_64_arena_direct_evidence=mock.Mock(return_value={}),
+                _m2_x86_64_arena_direct_check_records=mock.Mock(
+                    return_value=[direct_arena_record]
+                ),
                 _run_m2_x86_64_arena_lifecycle_evidence=arena_lifecycle_producer,
                 _m2_x86_64_arena_lifecycle_check_record=mock.Mock(
                     return_value=arena_lifecycle_record
@@ -1449,6 +1529,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
         )
         self.assertTrue({record["id"] for record in fault_records}.issubset(observed["ids"]))
         self.assertTrue({record["id"] for record in arena_records}.issubset(observed["ids"]))
+        self.assertIn(direct_arena_record["id"], observed["ids"])
         self.assertTrue({record["id"] for record in metadata_records}.issubset(observed["ids"]))
         owner_check = next(
             check
