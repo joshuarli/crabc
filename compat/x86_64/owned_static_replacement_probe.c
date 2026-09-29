@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/random.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
@@ -244,8 +245,7 @@ static int run_allocation_clients(void)
     /*
      * Libc's own aligned entries are not exercised with a replaced `malloc`
      * alone: a static musl program then receives mallocng storage that its
-     * `free` cannot own, while crabc refuses (compat/allocator/
-     * known-differences.md).
+     * `free` cannot own, while crabc refuses that incompatible allocation.
      */
     mark = arena_mark();
     text = aligned_alloc(64, 64);
@@ -500,7 +500,7 @@ static int run_string_clients(void)
     || defined(CRABC_REPLACE_MATH) || defined(CRABC_REPLACE_WIDE) || defined(CRABC_REPLACE_SYSTEM) \
     || defined(CRABC_REPLACE_FILES) || defined(CRABC_REPLACE_NETWORK) || defined(CRABC_REPLACE_ACCOUNTS) \
     || defined(CRABC_REPLACE_THREADS) || defined(CRABC_REPLACE_PROCESS) || defined(CRABC_REPLACE_PUSHBACK) \
-    || defined(CRABC_REPLACE_MAPPING)
+    || defined(CRABC_REPLACE_MAPPING) || defined(CRABC_REPLACE_ENTROPY)
 static unsigned long replacement_calls;
 
 static void report_replacement(const char *operation, unsigned long mark)
@@ -1662,6 +1662,48 @@ static int run_mapping_clients(void)
 }
 #endif
 
+#ifdef CRABC_REPLACE_ENTROPY
+/* getentropy must fill through an application's strong getrandom definition. */
+static int entropy_interrupt_once;
+
+ssize_t getrandom(void *buffer, size_t length, unsigned flags)
+{
+    size_t index;
+    unsigned char *bytes = buffer;
+
+    replacement_calls++;
+    if (flags) return -1;
+    if (entropy_interrupt_once) {
+        entropy_interrupt_once = 0;
+        errno = EINTR;
+        return -1;
+    }
+    if (length > 7) length = 7;
+    for (index = 0; index < length; index++) bytes[index] = 0x5a;
+    return (ssize_t)length;
+}
+
+static int run_entropy_clients(void)
+{
+    unsigned char bytes[17] = {0};
+    unsigned long mark = replacement_calls;
+    size_t index;
+    int filled = 1;
+
+    entropy_interrupt_once = 1;
+    emit_flag("getentropy", "status", getentropy(bytes, sizeof bytes) == 0);
+    report_replacement("getentropy", mark);
+    emit_flag("getentropy", "retries", replacement_calls - mark == 4);
+    for (index = 0; index < sizeof bytes; index++) filled &= bytes[index] == 0x5a;
+    emit_flag("getentropy", "bytes", filled);
+
+    mark = replacement_calls;
+    emit_flag("getrandom", "status", getrandom(bytes, 1, 0) == 1);
+    report_replacement("getrandom", mark);
+    return 0;
+}
+#endif
+
 int main(void)
 {
 #ifdef CRABC_REPLACE_MALLOC
@@ -1726,6 +1768,10 @@ int main(void)
 #endif
 #ifdef CRABC_REPLACE_MAPPING
     int status = run_mapping_clients();
+    if (status) return status;
+#endif
+#ifdef CRABC_REPLACE_ENTROPY
+    int status = run_entropy_clients();
     if (status) return status;
 #endif
     emit("owned-static-replacement-ok\n");

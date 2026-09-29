@@ -39,6 +39,9 @@ static_archive_member! { getrandom_source {
     /// bytes for the syscall's duration. A null buffer is valid only with zero
     /// length. The kernel validates `flags`; owned pthread cancellation is checked
     /// before the kernel observes the buffer, length, or flags.
+    // getentropy calls this public symbol so a static application's strong
+    // getrandom definition supplies its bytes, as in pinned musl.
+    #[inline(never)]
     #[no_mangle]
     pub unsafe extern "C" fn getrandom(
         buffer: *mut c_void,

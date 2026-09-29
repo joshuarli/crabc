@@ -22,7 +22,7 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly probe="$ROOT/compat/x86_64/owned_static_replacement_probe.c"
-readonly roles=(MALLOC_TRIO MALLOC_FULL STRINGS PRINTF VSNPRINTF SCANF MATH WIDE SYSTEM FILES NETWORK ACCOUNTS THREADS STDIO_BLOCK FPUTS FFLUSH GETDELIM SETVBUF WIDE_STREAM FCLOSE BYTE PROCESS EXIT PUSHBACK MAPPING)
+readonly roles=(MALLOC_TRIO MALLOC_FULL STRINGS PRINTF VSNPRINTF SCANF MATH WIDE SYSTEM FILES NETWORK ACCOUNTS THREADS STDIO_BLOCK FPUTS FFLUSH GETDELIM SETVBUF WIDE_STREAM FCLOSE BYTE PROCESS EXIT PUSHBACK MAPPING ENTROPY)
 readonly roster="$ROOT/compat/x86_64/owned-static-replacement-roster.txt"
 
 [ "$#" -le 1 ] || {
@@ -94,6 +94,13 @@ for role in "${roles[@]}"; do
     # The oracle must itself pass; a matching failure cannot qualify a role.
     [ "$(cat "$work/oracle-$name.status")" = 0 ]
     grep -qx owned-static-replacement-ok "$work/oracle-$name.stdout"
+    if [ "$role" = ENTROPY ]; then
+        for record in 'getentropy status=1' 'getentropy replacement=1' \
+            'getentropy retries=1' 'getentropy bytes=1' \
+            'getrandom status=1' 'getrandom replacement=1'; do
+            grep -qx "$record" "$work/oracle-$name.stdout"
+        done
+    fi
 
     for mode in static static-pie; do
         label="$mode-$name"
@@ -114,6 +121,13 @@ for role in "${roles[@]}"; do
         cmp "$work/oracle-$name.status" "$work/$label.status"
         cmp "$work/oracle-$name.stdout" "$work/$label.stdout"
         cmp "$work/oracle-$name.stderr" "$work/$label.stderr"
+        if [ "$role" = ENTROPY ]; then
+            step="elf-$label"
+            python3 -B "$ROOT/compat/x86_64/owned_static_replacement_entropy_elf.py" \
+                --archive "$product/usr/lib/libc.a" --application "$object" \
+                --binary "$work/$label" --map "$work/$label.receipt.map" \
+                --mode "$mode" --report "$work/$label.elf.json"
+        fi
     done
     printf 'owned static replacement %s: PASS\n' "$name"
 done
