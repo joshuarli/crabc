@@ -6,6 +6,8 @@
 # archive. It covers four-byte zero/static flags, normal exactly-once
 # initialization, acquire publication, private-futex contention/wake, and
 # retry after cancellation of an initializer with waiters for both APIs.
+# Distinct POSIX/C11 controls also initialize concurrently, publish separate
+# payloads, and reject alternate callbacks on repeated worker calls.
 # Child observers also check recursive entry, an active control inherited
 # across fork, and publication visible to a child forked after completion.
 set -euo pipefail
@@ -111,7 +113,7 @@ assert_private_once_futex_path() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sed sort timeout; do
+for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sed sha256sum sort timeout; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -271,4 +273,9 @@ cmp "$work_dir/oracle.stdout" "$work_dir/candidate.stdout" ||
     fail "candidate stdout differs from pinned musl"
 cmp "$work_dir/oracle.stderr" "$work_dir/candidate.stderr" ||
     fail "candidate stderr differs from pinned musl"
+printf 'oracle=0\ncandidate=0\n' >"$work_dir/execution-status"
+sha256sum "$reference" "$candidate" "$archive" \
+    "$work_dir/oracle.stdout" "$work_dir/oracle.stderr" \
+    "$work_dir/candidate.stdout" "$work_dir/candidate.stderr" \
+    >"$work_dir/artifact-sha256"
 printf 'x86 static crabc-libc pthread/C11 once: PASS; evidence: %s\n' "$work_dir"

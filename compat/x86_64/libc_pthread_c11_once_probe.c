@@ -106,6 +106,30 @@ static volatile int static_pthread_effect;
 static volatile int static_c11_effect;
 static struct cancelled_once_round *active_cancelled_once;
 
+/* Two independent controls must both enter their callbacks before either can
+ * complete. The per-control payload is relaxed so only that control's once
+ * return publishes its initializer's effects to its callers. */
+struct independent_once_round {
+    pthread_once_t pthread_control;
+    once_flag c11_control;
+    volatile int entered;
+    volatile int release;
+    volatile int pthread_calls;
+    volatile int c11_calls;
+    volatile int unexpected_calls;
+    volatile int pthread_effect;
+    volatile int c11_effect;
+};
+
+struct independent_once_worker {
+    struct independent_once_round *round;
+    int c11;
+    int observed_effect;
+    int status;
+};
+
+static struct independent_once_round *active_independent_round;
+
 enum {
     ONCE_SYS_READ = 0,
     ONCE_SYS_WRITE = 1,
@@ -375,6 +399,129 @@ static void static_c11_initializer(void)
 {
     __atomic_fetch_add(&static_c11_calls, 1, __ATOMIC_RELAXED);
     __atomic_store_n(&static_c11_effect, C11_EFFECT, __ATOMIC_RELAXED);
+}
+
+static void independent_pthread_initializer(void)
+{
+    struct independent_once_round *round = active_independent_round;
+
+    __atomic_fetch_add(&round->entered, 1, __ATOMIC_RELEASE);
+    while (__atomic_load_n(&round->release, __ATOMIC_ACQUIRE) == 0)
+        (void)once_syscall0(ONCE_SYS_SCHED_YIELD);
+    __atomic_fetch_add(&round->pthread_calls, 1, __ATOMIC_RELAXED);
+    __atomic_store_n(&round->pthread_effect, PTHREAD_EFFECT, __ATOMIC_RELAXED);
+}
+
+static void independent_c11_initializer(void)
+{
+    struct independent_once_round *round = active_independent_round;
+
+    __atomic_fetch_add(&round->entered, 1, __ATOMIC_RELEASE);
+    while (__atomic_load_n(&round->release, __ATOMIC_ACQUIRE) == 0)
+        (void)once_syscall0(ONCE_SYS_SCHED_YIELD);
+    __atomic_fetch_add(&round->c11_calls, 1, __ATOMIC_RELAXED);
+    __atomic_store_n(&round->c11_effect, C11_EFFECT, __ATOMIC_RELAXED);
+}
+
+static void unexpected_independent_initializer(void)
+{
+    __atomic_fetch_add(&active_independent_round->unexpected_calls, 1,
+        __ATOMIC_RELAXED);
+}
+
+static void *independent_once_worker_main(void *opaque)
+{
+    struct independent_once_worker *worker = opaque;
+    struct independent_once_round *round = worker->round;
+
+    if (worker->c11) {
+        call_once(&round->c11_control, independent_c11_initializer);
+        worker->observed_effect = __atomic_load_n(&round->c11_effect,
+            __ATOMIC_RELAXED);
+        call_once(&round->c11_control, unexpected_independent_initializer);
+        call_once(&round->c11_control, unexpected_independent_initializer);
+    } else {
+        worker->status = pthread_once(&round->pthread_control,
+            independent_pthread_initializer);
+        worker->observed_effect = __atomic_load_n(&round->pthread_effect,
+            __ATOMIC_RELAXED);
+        if (pthread_once(&round->pthread_control,
+                unexpected_independent_initializer) != 0)
+            worker->status = 1;
+        if (pthread_once(&round->pthread_control,
+                unexpected_independent_initializer) != 0)
+            worker->status = 1;
+    }
+    return worker;
+}
+
+static int run_independent_controls_round(void)
+{
+    struct independent_once_round round = {
+        .pthread_control = PTHREAD_ONCE_INIT,
+        .c11_control = ONCE_FLAG_INIT,
+    };
+    struct independent_once_worker workers[4] = {
+        { .round = &round }, { .round = &round, .c11 = 1 },
+        { .round = &round }, { .round = &round, .c11 = 1 },
+    };
+    pthread_t threads[4];
+    void *results[4] = { 0 };
+    int created = 0;
+    int status = 0;
+    int index;
+
+    active_independent_round = &round;
+    for (index = 0; index != 2; ++index) {
+        if (pthread_create(&threads[created], 0, independent_once_worker_main,
+                &workers[index]) != 0) {
+            status = 1 + index;
+            goto done;
+        }
+        ++created;
+    }
+    while (__atomic_load_n(&round.entered, __ATOMIC_ACQUIRE) != 2)
+        ;
+    if (__atomic_load_n(&round.pthread_control, __ATOMIC_ACQUIRE) != 1 ||
+        __atomic_load_n((const int *)&round.c11_control, __ATOMIC_ACQUIRE) != 1) {
+        status = 3;
+        goto done;
+    }
+    for (index = 2; index != 4; ++index) {
+        if (pthread_create(&threads[created], 0, independent_once_worker_main,
+                &workers[index]) != 0) {
+            status = 2 + index;
+            goto done;
+        }
+        ++created;
+    }
+    while (__atomic_load_n(&round.pthread_control, __ATOMIC_ACQUIRE) !=
+        ONCE_WAITERS ||
+        __atomic_load_n((const int *)&round.c11_control, __ATOMIC_ACQUIRE) !=
+        ONCE_WAITERS)
+        ;
+done:
+    __atomic_store_n(&round.release, 1, __ATOMIC_RELEASE);
+    for (index = 0; index != created; ++index) {
+        if (pthread_join(threads[index], &results[index]) != 0)
+            return 6 + index;
+    }
+    active_independent_round = 0;
+    if (status != 0)
+        return status;
+    if (__atomic_load_n(&round.pthread_control, __ATOMIC_ACQUIRE) != ONCE_COMPLETE ||
+        __atomic_load_n((const int *)&round.c11_control, __ATOMIC_ACQUIRE) != ONCE_COMPLETE ||
+        __atomic_load_n(&round.pthread_calls, __ATOMIC_RELAXED) != 1 ||
+        __atomic_load_n(&round.c11_calls, __ATOMIC_RELAXED) != 1 ||
+        __atomic_load_n(&round.unexpected_calls, __ATOMIC_RELAXED) != 0)
+        return 10;
+    for (index = 0; index != 4; ++index) {
+        if (results[index] != &workers[index] || workers[index].status != 0 ||
+            workers[index].observed_effect !=
+                (workers[index].c11 ? C11_EFFECT : PTHREAD_EFFECT))
+            return 11 + index;
+    }
+    return 0;
 }
 
 static void cancellable_once_initializer(void)
@@ -752,6 +899,8 @@ static int run_pthread_c11_once(void)
         return 32 + status;
     if ((status = run_c11_contention_round()) != 0)
         return 64 + status;
+    if ((status = run_independent_controls_round()) != 0)
+        return 160 + status;
     if ((status = run_cancelled_once_round(0)) != 0)
         return 96 + status;
     if ((status = run_cancelled_once_round(1)) != 0)
