@@ -917,6 +917,9 @@ pub(crate) unsafe fn native_free_local(theap: NonNull<Theap>, block: NonNull<u8>
 ///
 /// # Safety
 /// `page` is the page of a live block.
+// Expose the common main-Heap identity check to pointer-first free callers;
+// the linked-list validation remains required for a non-main Heap address.
+#[inline]
 pub(crate) unsafe fn heap_of_page(page: NonNull<crate::types::Page>) -> Option<NonNull<Heap>> {
     // SAFETY: forwarded; the page's raw Heap identity is stable for this
     // observation, but its old image may already have been freed.
