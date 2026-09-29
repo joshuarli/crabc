@@ -12641,24 +12641,37 @@ fn native_free_pointer_first_local(
 fn native_free_pointer_first_nonlocal(
     allocation: LiveAllocationPointer,
 ) -> NativePageFreeResult {
-    // A page of a non-main Heap of the process main subprocess takes the
-    // Heap-owned route with the process registry.
-    // SAFETY: the exact live allocation holds the page. This lookup compares
-    // the raw Heap identity with linked registry entries before using it.
-    if let Some(heap) = unsafe { crate::subproc::main_heaps::heap_of_page(allocation.page()) } {
-        // SAFETY: forwarded exact-live-allocation contract.
-        return unsafe { crate::subproc::main_heaps::native_free_nonlocal(heap, allocation) };
-    }
-    // A deleted process-main Heap can leave an OS page carrying its freed
-    // Heap address. Its retained Theap proves the process-main owner without
-    // following that stale address in the child-Heap classification below.
-    let deleted_main_os_page = match unsafe {
-        crate::subproc::main_heaps::retained_deleted_heap_os_page(allocation.page())
-    } {
-        Some(matched) => matched,
-        None => {
-            RUNTIME_PROCESS.retain_page_owner();
-            return NativePageFreeResult::Retained;
+    // The process-main Heap is never deleted while a native allocation is
+    // live. Its exact page identity needs neither the linked Heap registry
+    // nor the retained deleted-Heap and child-subprocess classifications.
+    // A null process-main pointer cannot classify an unowned page as main.
+    let main_heap = crate::subproc::MainSubprocess::global().ready_main_heap_pointer();
+    // SAFETY: the held exact-live allocation keeps its page metadata alive;
+    // this reads only the raw, immutable Heap identity.
+    let process_main_page = !main_heap.is_null()
+        && unsafe { allocation.page().as_ref().heap() } == main_heap;
+    let deleted_main_os_page = if process_main_page {
+        false
+    } else {
+        // A page of a non-main Heap of the process main subprocess takes the
+        // Heap-owned route with the process registry.
+        // SAFETY: the exact live allocation holds the page. This lookup compares
+        // the raw Heap identity with linked registry entries before using it.
+        if let Some(heap) = unsafe { crate::subproc::main_heaps::heap_of_page(allocation.page()) } {
+            // SAFETY: forwarded exact-live-allocation contract.
+            return unsafe { crate::subproc::main_heaps::native_free_nonlocal(heap, allocation) };
+        }
+        // A deleted process-main Heap can leave an OS page carrying its freed
+        // Heap address. Its retained Theap proves the process-main owner without
+        // following that stale address in the child-Heap classification below.
+        match unsafe {
+            crate::subproc::main_heaps::retained_deleted_heap_os_page(allocation.page())
+        } {
+            Some(matched) => matched,
+            None => {
+                RUNTIME_PROCESS.retain_page_owner();
+                return NativePageFreeResult::Retained;
+            }
         }
     };
     // A page of a child subprocess takes that child's own `mi_free_block_mt`
