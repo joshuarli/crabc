@@ -2209,6 +2209,140 @@ mod tests {
         }
     }
 
+    #[test]
+    fn queue_retirement_and_reuse_preserve_owner_state() {
+        fn queue_names(queue: &PageQueue, pages: &[*mut Page; 3]) -> std::string::String {
+            let mut result = std::string::String::new();
+            let mut previous = null_mut();
+            let mut current = queue.first;
+            while !current.is_null() {
+                assert!(result.len() < pages.len(), "queue must terminate within three pages");
+                // SAFETY: the fixture owns all three pinned pages and every
+                // link while this bounded walk observes the queue.
+                assert_eq!(unsafe { (*current).prev }, previous);
+                let index = pages.iter().position(|&page| page == current).unwrap();
+                result.push((b'A' + index as u8) as char);
+                previous = current;
+                current = unsafe { (*current).next };
+            }
+            assert_eq!(result.len(), queue.count);
+            assert_eq!(previous, queue.last);
+            result
+        }
+
+        fn line(step: &str, theap: &Theap, pages: &[*mut Page; 3]) -> std::string::String {
+            let regular_queue = theap.queue(4).unwrap();
+            let full_queue = theap.queue(BIN_FULL).unwrap();
+            let regular = queue_names(regular_queue, pages);
+            let full = queue_names(full_queue, pages);
+            let mut state = std::string::String::new();
+            let mut full_bytes = 0;
+            for (index, &pointer) in pages.iter().enumerate() {
+                // SAFETY: the three page images remain pinned and exclusively
+                // owned until the complete transition sequence finishes.
+                let page = unsafe { &*pointer };
+                assert_eq!(page.theap(), theap as *const Theap as *mut Theap);
+                let name = (b'A' + index as u8) as char;
+                let in_regular = regular.contains(name);
+                let in_full = full.contains(name);
+                assert!(!(in_regular && in_full));
+                assert_eq!(page_is_in_full(page), in_full);
+                if !in_regular && !in_full {
+                    assert!(page.prev.is_null() && page.next.is_null());
+                }
+                if in_full {
+                    full_bytes += usize::from(page.capacity()) * page.block_size();
+                }
+                state.push(if in_full { 'F' } else if in_regular { 'R' } else { 'D' });
+            }
+            assert_eq!(theap.pages_full_size(), full_bytes);
+            assert_eq!(theap.page_count(), regular.len() + full.len());
+            let direct = theap.direct_page(3).unwrap();
+            assert_eq!(theap.direct_page(4), Some(direct));
+            assert_eq!(direct, if regular_queue.first.is_null() {
+                EMPTY_PAGE.as_ptr()
+            } else {
+                regular_queue.first
+            });
+            let direct_name = if direct == EMPTY_PAGE.as_ptr() {
+                '-'
+            } else {
+                (b'A' + pages.iter().position(|&page| page == direct).unwrap() as u8) as char
+            };
+            std::format!(
+                "M3R {step} regular={regular} full={full} direct={direct_name} state={state} bytes={full_bytes} pages={}",
+                theap.page_count()
+            )
+        }
+
+        let mut theap = Theap::empty();
+        assert_eq!(theap.queue(4).unwrap().block_size(), 32);
+        let mut a = page(32);
+        let mut b = page(32);
+        let mut c = page(32);
+        assert!(a.set_capacity_reserved(4, 4));
+        assert!(b.set_capacity_reserved(6, 6));
+        assert!(c.set_capacity_reserved(8, 8));
+        a.abandoned_test_set_theap(&mut theap);
+        b.abandoned_test_set_theap(&mut theap);
+        c.abandoned_test_set_theap(&mut theap);
+        let pages = [&mut a as *mut Page, &mut b as *mut Page, &mut c as *mut Page];
+
+        // SAFETY: the fixture owns every queue, link, page, and Theap local
+        // field for the complete source-ordered transition sequence.
+        unsafe {
+            for &pointer in &pages {
+                page_queue_push_at_end_metadata(theap.queue_mut(4).unwrap(), pointer);
+                assert!(theap_collect_abandon_update_direct_cache(&mut theap, 4));
+                theap.note_page_added();
+            }
+            std::println!("{}", line("start", &theap, &pages));
+
+            assert!(theap_collect_abandon_detach_page(
+                &mut theap, 4, NonNull::new(pages[0]).unwrap()
+            ).is_ok());
+            std::println!("{}", line("retire-head", &theap, &pages));
+
+            page_queue_push_at_end_metadata(theap.queue_mut(4).unwrap(), pages[0]);
+            assert!(theap_collect_abandon_update_direct_cache(&mut theap, 4));
+            theap.note_page_added();
+            std::println!("{}", line("reuse-tail", &theap, &pages));
+
+            page_queue_move_to_front_metadata(theap.queue_mut(4).unwrap(), pages[2]);
+            assert!(theap_collect_abandon_update_direct_cache(&mut theap, 4));
+            std::println!("{}", line("move-head", &theap, &pages));
+
+            let regular = theap.queue_mut(4).unwrap() as *mut PageQueue;
+            let full = theap.queue_mut(BIN_FULL).unwrap() as *mut PageQueue;
+            page_queue_enqueue_from_metadata(&mut *full, &mut *regular, pages[2]);
+            assert!(theap_collect_abandon_update_direct_cache(&mut theap, 4));
+            std::println!("{}", line("full-head", &theap, &pages));
+
+            page_queue_enqueue_from_metadata(&mut *full, &mut *regular, pages[1]);
+            assert!(theap_collect_abandon_update_direct_cache(&mut theap, 4));
+            std::println!("{}", line("full-next", &theap, &pages));
+
+            assert!(theap_collect_abandon_detach_page(
+                &mut theap, 4, NonNull::new(pages[0]).unwrap()
+            ).is_ok());
+            std::println!("{}", line("retire-last-regular", &theap, &pages));
+
+            page_queue_enqueue_from_full_metadata(&mut *regular, &mut *full, pages[2]);
+            assert!(theap_collect_abandon_update_direct_cache(&mut theap, 4));
+            std::println!("{}", line("reuse-from-full", &theap, &pages));
+
+            assert!(theap_collect_abandon_detach_page(
+                &mut theap, BIN_FULL, NonNull::new(pages[1]).unwrap()
+            ).is_ok());
+            std::println!("{}", line("retire-full", &theap, &pages));
+
+            assert!(theap_collect_abandon_detach_page(
+                &mut theap, 4, NonNull::new(pages[2]).unwrap()
+            ).is_ok());
+            std::println!("{}", line("retire-final", &theap, &pages));
+        }
+    }
+
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum MixedCollectAbandonEvent {
         DeferredFrees,

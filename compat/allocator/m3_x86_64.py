@@ -1025,6 +1025,71 @@ def run_queue_reorder_differential(
     }
 
 
+def run_queue_retirement_differential(contract: Mapping[str, Any]) -> dict[str, Any]:
+    fixture = contract["queue_retirement_differential"]
+    paths: dict[str, Path] = {}
+    for key in ("c_fixture", "runner"):
+        value = fixture[key]
+        if not isinstance(value, str) or Path(value).is_absolute() or ".." in Path(value).parts:
+            raise GateError(f"queue retirement {key} must stay inside the checkout")
+        path = (ROOT / value).resolve()
+        if not path.is_relative_to(ROOT) or not path.is_file():
+            raise GateError(f"queue retirement {key} is missing from the checkout")
+        paths[key] = path
+    ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
+    receipt_path = ARTIFACT_ROOT / "queue-retirement-runtime.json"
+    trace_path = ARTIFACT_ROOT / "queue-retirement.trace"
+    driver_path = ARTIFACT_ROOT / "queue-retirement-driver.json"
+    c_trace_path = ARTIFACT_ROOT / "queue-retirement.c.trace"
+    rust_trace_path = ARTIFACT_ROOT / "queue-retirement.rust.trace"
+    for stale in (trace_path, driver_path, c_trace_path, rust_trace_path):
+        stale.unlink(missing_ok=True)
+    record = run.command_record(("python3", str(paths["runner"])), cwd=ROOT, timeout_seconds=1800)
+    trace_path.write_text(str(record["stdout"]), encoding="utf-8")
+    run.write_json(receipt_path, record)
+    expected = (
+        ("start", "ABC", "", "A", "RRR", 0, 3),
+        ("retire-head", "BC", "", "B", "DRR", 0, 2),
+        ("reuse-tail", "BCA", "", "B", "RRR", 0, 3),
+        ("move-head", "CBA", "", "C", "RRR", 0, 3),
+        ("full-head", "BA", "C", "B", "RRF", 256, 3),
+        ("full-next", "A", "CB", "A", "RFF", 448, 3),
+        ("retire-last-regular", "", "CB", "-", "DFF", 448, 2),
+        ("reuse-from-full", "C", "B", "C", "DFR", 192, 2),
+        ("retire-full", "C", "", "C", "DDR", 0, 1),
+        ("retire-final", "", "", "-", "DDD", 0, 0),
+    )
+    lines = str(record["stdout"]).splitlines()
+    parsed = []
+    for line in lines:
+        match = re.fullmatch(
+            r"M3R ([a-z-]+) regular=([ABC]*) full=([ABC]*) direct=([ABC-]) state=([RFD]{3}) bytes=(\d+) pages=(\d+)",
+            line,
+        )
+        if match is None:
+            break
+        step, regular, full, direct, state, byte_count, page_count = match.groups()
+        parsed.append((step, regular, full, direct, state, int(byte_count), int(page_count)))
+    unmet = []
+    if record["status"] != 0:
+        unmet.append(f"queue retirement differential exited {record['status']}")
+    if parsed != list(expected):
+        unmet.append("pinned C/Rust queue retirement transitions differ from the source sequence")
+    return {
+        "c_fixture_sha256": run.sha256_file(paths["c_fixture"]),
+        "c_trace_sha256": run.sha256_file(c_trace_path) if c_trace_path.is_file() else None,
+        "raw_driver_receipt": str(driver_path) if driver_path.is_file() else None,
+        "raw_runtime_receipt": str(receipt_path),
+        "runner_sha256": run.sha256_file(paths["runner"]),
+        "rust_source_sha256": run.sha256_file(ROOT / "crabc-mimalloc/src/page_queue.rs"),
+        "rust_test": fixture["rust_test"],
+        "rust_trace_sha256": run.sha256_file(rust_trace_path) if rust_trace_path.is_file() else None,
+        "trace_sha256": run.sha256_file(trace_path),
+        "status": "passed" if not unmet else "failed",
+        "unmet": unmet,
+    }
+
+
 def owner_rust_test_binary(contract: Mapping[str, Any]) -> Path:
     rust = contract["persistent_owner_profile"]["rust_driver"]
     command = [
@@ -1334,6 +1399,11 @@ def evaluate_gate(contract: Mapping[str, Any], checks: Mapping[str, Mapping[str,
         for component in contract["components"]
     ):
         raise GateError("page queues must require the C/Rust reorder differential")
+    if not any(
+        component["id"] == "page-queues" and "queue-retirement-differential" in component["checks"]
+        for component in contract["components"]
+    ):
+        raise GateError("page queues must require the C/Rust retirement differential")
     components: list[dict[str, Any]] = []
     for component in contract["components"]:
         unmet: list[str] = []
@@ -1433,11 +1503,13 @@ def main(arguments: Sequence[str] | None = None) -> int:
             return 0
         differential = run_differential(contract, offline=options.offline)
         if options.differential_only:
-            report = {"differential": differential, "provenance": provenance}
+            retirement = run_queue_retirement_differential(contract)
+            report = {"differential": differential, "queue_retirement_differential": retirement, "provenance": provenance}
             run.write_json(DIFFERENTIAL_REPORT_PATH, report)
             print(DIFFERENTIAL_REPORT_PATH)
-            if differential["status"] != "passed":
-                print("\n".join(["M3 local trace differential failed:", *(f"  - {item}" for item in differential["unmet"])]), file=sys.stderr)
+            if differential["status"] != "passed" or retirement["status"] != "passed":
+                unmet = [*differential["unmet"], *retirement["unmet"]]
+                print("\n".join(["M3 differential failed:", *(f"  - {item}" for item in unmet)]), file=sys.stderr)
                 return 1
             return 0
         rust_binary = rust_test_binary()
@@ -1447,6 +1519,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             "queue-reorder-differential": run_queue_reorder_differential(
                 contract, offline=options.offline, rust_binary=rust_binary
             ),
+            "queue-retirement-differential": run_queue_retirement_differential(contract),
             "persistent-owner-trace-differential": run_owner_differential(contract, offline=options.offline),
             "rust-unit-batch": run_unit_batch(contract, rust_binary),
             "miri": run_miri(contract),
