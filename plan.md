@@ -121,7 +121,13 @@ are not transferable passes for a different revision.
   probe shows the native allocator registers for private expedited barriers
   before executable preinit and retains registration after fork, while both
   controls remain unregistered until an explicit child request. The native
-  219-case receipt remains unavailable pending the allocator entry-fence fix.
+  allocator entry now uses the symmetric x86 entry fence without early private
+  expedited registration. Its source-sealed 13-cell differential probe and
+  focused static/dynamic `kernel-residual` controls pass; the earlier raw
+  failure remains red under the corrected reader. The full dynamic qualifier
+  passes `signal-handler-fork` and `kernel-residual` but stops at installed
+  AIO dynamic PIE with status 139 on two runs; the same-source accepted-C AIO
+  control passes. A native 219-case receipt remains unavailable.
   `consumer.rust-std-lto` passes its
   Rust, native-facade, LTO, and unwind leaves on clean `d6733f516`; its
   pinned-image receipt passed independent physical validation and public
@@ -131,8 +137,9 @@ are not transferable passes for a different revision.
   source cohort passes its development Rust std/LTO leaves, unwind and provider
   regressions, with an independently reread product and receipt; public
   validation correctly rejects that development receipt. Its full dynamic
-  qualification stops at `kernel-residual`, so native allocator evidence is
-  not qualifying. `consumer.source-build` passes on a development
+  qualification stopped at `kernel-residual` before the entry-fence fix; the
+  later full qualifier stops at installed AIO dynamic PIE, so native allocator
+  evidence is not qualifying. `consumer.source-build` passes on a development
   cohort and publishes its receipt; a clean `0bb16e482` Lua source-build admission makes the
   latter evidence condition met while 14 prerequisite families remain open.
   A sealed `libc.resolver` assessment admits all six components with no gaps;
