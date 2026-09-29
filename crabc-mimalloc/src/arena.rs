@@ -4833,4 +4833,268 @@ pub(crate) mod tests {
         assert_eq!(claim.slice_index(), slice_index);
         assert!(claim.release());
     }
+
+    /// A rejected fresh arena remains absent from the registry even when its
+    /// failed cleanup leaves raw VM mapped beside a later healthy claim.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_fresh_arena_dual_fault_c_rust_trace() {
+        use crate::diagnostic_output::{OutputCallback, OutputOwner};
+        use crate::os::{VmPolicy, VmProcess, fault};
+        use core::ffi::{c_char, c_void, CStr};
+        use core::sync::atomic::{AtomicPtr, Ordering};
+
+        static ENVIRONMENT: AtomicPtr<*const c_char> = AtomicPtr::new(core::ptr::null_mut());
+
+        unsafe fn environment() -> *const *const c_char {
+            ENVIRONMENT.load(Ordering::Acquire).cast_const()
+        }
+
+        unsafe extern "C" fn default_output(_message: *const c_char) {}
+
+        struct Warnings {
+            fragments: std::sync::Mutex<std::vec::Vec<(std::vec::Vec<u8>, i64, i64, i64)>>,
+            subprocess: *const crate::subproc::SubprocessIdentity,
+        }
+
+        unsafe extern "C" fn capture(message: *const c_char, argument: *mut c_void) {
+            // SAFETY: registration is synchronous and the stack capture and
+            // subprocess identity stay live until callback removal below.
+            let warnings = unsafe { &*(argument as *const Warnings) };
+            let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
+            if bytes.is_empty() { return; }
+            let snapshot = unsafe { &*warnings.subprocess }.vm_statistics().snapshot();
+            warnings.fragments.lock().unwrap().push((bytes.to_vec(),
+                snapshot.reserved_current, snapshot.committed_current, snapshot.commit_calls));
+        }
+
+        let entries = Box::leak(Box::new([
+            b"mimalloc_arena_reserve=32M\0".as_ptr().cast(),
+            b"mimalloc_arena_eager_commit=0\0".as_ptr().cast(),
+            b"mimalloc_arena_is_numa_local=0\0".as_ptr().cast(),
+            b"mimalloc_allow_large_os_pages=0\0".as_ptr().cast(),
+            b"mimalloc_allow_thp=0\0".as_ptr().cast(),
+            b"mimalloc_purge_delay=-1\0".as_ptr().cast(),
+            b"mimalloc_show_errors=1\0".as_ptr().cast(),
+            b"mimalloc_max_warnings=100\0".as_ptr().cast(),
+            core::ptr::null(),
+        ]));
+        ENVIRONMENT.store(entries.as_mut_ptr(), Ordering::Release);
+        let output = Box::leak(Box::new(OutputOwner::new(default_output)));
+        // SAFETY: the environment image and output live for the entire
+        // process policy and every synchronous diagnostic in this fixture.
+        unsafe { output.initialize_source_options(environment) };
+        let subprocess = MainSubprocess::test_static_owner();
+        let warnings = Warnings {
+            fragments: std::sync::Mutex::new(std::vec::Vec::new()),
+            subprocess: subprocess.identity(),
+        };
+        // SAFETY: the callback is removed before the stack capture expires.
+        unsafe { output.register_output(Some(capture as OutputCallback),
+            &warnings as *const Warnings as *mut c_void) };
+        let policy = Box::leak(Box::new(
+            unsafe { VmPolicy::from_process_options(output) }));
+        policy.finish_preloading();
+        let process = VmProcess::new(policy, subprocess);
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 1 << 20, true, false,
+        );
+        let backing = subprocess.arena_backing();
+        let search = ArenaSearch { heap_sequence: 0, heap_count: 1,
+            thread_sequence: 0, numa_node: -1, requested: ArenaId::none(),
+            allow_pinned: true };
+        let before_vm = subprocess.vm_statistics().snapshot();
+        let before_arena = subprocess.arena_statistics().snapshot();
+        let registry_before = backing.registry().count();
+        warnings.fragments.lock().unwrap().clear();
+        let fault = fault::install(fault::Plan::at_pair(
+            fault::Point::Commit, 1, fault::Point::Unmap, 1, crabc_core::Errno::NOMEM,
+        ));
+        let protection = fault.capture_protection_ranges();
+        let unmaps = fault.capture_unmap_ranges();
+        // SAFETY: this isolated subprocess owns its sole arena backing and
+        // no concurrent claim, metadata reader, or destroy operation runs.
+        let rejected = unsafe { backing.try_allocate_slices(
+            process, config, search, 1, ARENA_SLICE_SIZE, true,
+        ) };
+        let refused = rejected.is_none() && fault.observed() == 1
+            && fault.secondary_observed() == 1;
+        let cleanup_calls = fault.secondary_observed();
+        let no_memory_id = rejected.is_none();
+        let (protect_attempts, protect_count) = protection.attempts().expect("bounded metadata commit");
+        let (protected_address, metadata_size, protection_flags) = protect_attempts[0];
+        drop(protection);
+        let (unmap_attempts, unmap_count) = unmaps.all().expect("bounded aligned reservation cleanup");
+        let (escaped_address, escaped_size) = unmap_attempts[unmap_count - 1];
+        drop(unmaps);
+        let metadata_exact = protected_address == escaped_address && protection_flags == 3;
+        let failed_registry = backing.registry().count();
+        let after_failed_vm = subprocess.vm_statistics().snapshot();
+        let after_failed_arena = subprocess.arena_statistics().snapshot();
+        let mut residency = 0u8;
+        // SAFETY: the selected failed unmap leaves its exact page-aligned
+        // mapping live; mincore writes only the supplied residency byte.
+        let escaped_live = unsafe { crabc_core::mm::mincore_raw(
+            escaped_address as *mut u8, 4096, &mut residency,
+        ) }.is_ok();
+        fault.set(fault::Plan::disabled());
+
+        // SAFETY: the same isolated arena backing and process pair remain
+        // live; the failed map has no published registry or bitmap owner.
+        let claim = unsafe { backing.try_allocate_slices(
+            process, config, search, 1, ARENA_SLICE_SIZE, true,
+        ) }.expect("later fresh arena supplies one committed slice");
+        let memory = claim.memory_id();
+        let arena_memory = memory.arena_memory().unwrap();
+        // SAFETY: the new claim pins its newly published arena while this
+        // test inspects the source bitmap and MemoryId fields.
+        let view = unsafe { ArenaView::from_ptr(arena_memory.arena) }.unwrap();
+        let arena = view.arena();
+        let recovery_memory = memory.kind() == MemoryKind::Arena
+            && arena.memid.kind() == MemoryKind::Os
+            && arena.memid.os_base().map(|base| base.value()) == Some(arena.start as usize)
+            && arena.memid.size() == Some(escaped_size)
+            && !arena.memid.initially_committed();
+        let recovery_registry = backing.registry().count();
+        let index = claim.slice_index();
+        let free = unsafe { view.slices_free() }.unwrap();
+        let committed = unsafe { view.slices_committed() }.unwrap();
+        let recovery_bitmap_claimed = free.is_clear_range(index, 1) == Some(true)
+            && committed.is_set_range(index, 1) == Some(true);
+        // SAFETY: the prior map is escaped, still live, and has no arena or
+        // claim capability; the healthy claim owns a disjoint arena span.
+        let prior_live_during_recovery = unsafe { crabc_core::mm::mincore_raw(
+            escaped_address as *mut u8, 4096, &mut residency,
+        ) }.is_ok();
+        let recovery_vm = subprocess.vm_statistics().snapshot();
+        let recovery_arena = subprocess.arena_statistics().snapshot();
+        let warnings_before_release = warnings.fragments.lock().unwrap().len();
+        let claim_released = claim.release()
+            && free.is_set_range(index, 1) == Some(true)
+            && backing.registry().count() == recovery_registry;
+        // SAFETY: release returns only the slice. The registered arena and
+        // earlier escaped mapping remain mapped and independently owned.
+        let recovery_mapping_live = unsafe { crabc_core::mm::mincore_raw(
+            arena.start, 4096, &mut residency,
+        ) }.is_ok();
+        let prior_live_after_release = unsafe { crabc_core::mm::mincore_raw(
+            escaped_address as *mut u8, 4096, &mut residency,
+        ) }.is_ok();
+        let release_warnings = warnings.fragments.lock().unwrap().len() - warnings_before_release;
+        let before_raw_vm = subprocess.vm_statistics().snapshot();
+        // SAFETY: the escaped failed reservation has no registry, bitmap, or
+        // claim owner; this is its exact retained raw mapping range.
+        let raw_cleanup = unsafe { crabc_core::mm::munmap_raw(
+            escaped_address as *mut u8, escaped_size,
+        ) }.is_ok();
+        // SAFETY: raw cleanup completed; no reference into this abandoned
+        // range survives and mincore is a read-only kernel query.
+        let raw_gone = unsafe { crabc_core::mm::mincore_raw(
+            escaped_address as *mut u8, 4096, &mut residency,
+        ) }.is_err();
+        let raw_no_stats = subprocess.vm_statistics().snapshot() == before_raw_vm;
+
+        let fragments = warnings.fragments.lock().unwrap();
+        let mut warning_fragments = 0usize;
+        let mut warning_bodies = 0usize;
+        let mut warning_order = 0usize;
+        let mut fallback_warning_before_stats = true;
+        let mut warning_commit_before_stats = false;
+        let mut warning_meta_before_stats = false;
+        let mut warning_free_before_stats = false;
+        for (bytes, reserved, committed_bytes, commit_calls) in fragments.iter() {
+            if bytes.starts_with(b"mimalloc: warning: thread 0x") {
+                warning_fragments += 1;
+                continue;
+            }
+            warning_bodies += 1;
+            let category = if bytes.starts_with(b"cannot commit OS memory") { 1 }
+                else if bytes.starts_with(b"unable to commit meta-data for OS memory") { 2 }
+                else if bytes.starts_with(b"unable to free OS memory") { 3 }
+                else if bytes.starts_with(b"unable to allocate aligned OS memory directly") { 4 }
+                else { 0 };
+            warning_order = warning_order * 10 + category;
+            if category == 4 {
+                fallback_warning_before_stats = *reserved == before_vm.reserved_current + escaped_size as i64
+                    && *committed_bytes == before_vm.committed_current
+                    && *commit_calls == before_vm.commit_calls;
+            }
+            if category == 1 {
+                warning_commit_before_stats = *reserved == before_vm.reserved_current + escaped_size as i64
+                    && *committed_bytes == before_vm.committed_current
+                    && *commit_calls == before_vm.commit_calls + 1;
+            }
+            if category == 2 {
+                warning_meta_before_stats = *reserved == before_vm.reserved_current + escaped_size as i64
+                    && *committed_bytes == before_vm.committed_current
+                    && *commit_calls == before_vm.commit_calls + 1;
+            }
+            if category == 3 {
+                warning_free_before_stats = *reserved == before_vm.reserved_current + escaped_size as i64
+                    && *committed_bytes == before_vm.committed_current
+                    && *commit_calls == before_vm.commit_calls + 1;
+            }
+        }
+        drop(fragments);
+        for (field, value) in [
+            ("refused", i64::from(refused)),
+            ("no_memory_id", i64::from(no_memory_id)),
+            ("registry_before", registry_before as i64),
+            ("failed_registry", failed_registry as i64),
+            ("metadata_calls", protect_count as i64),
+            ("metadata_size", metadata_size as i64),
+            ("metadata_exact", i64::from(metadata_exact)),
+            ("cleanup_calls", cleanup_calls as i64),
+            ("escaped_size", escaped_size as i64),
+            ("escaped_aligned", i64::from(escaped_address % ARENA_ALIGNMENT == 0)),
+            ("escaped_live", i64::from(escaped_live)),
+            ("warning_fragments", warning_fragments as i64),
+            ("warning_bodies", warning_bodies as i64),
+            ("warning_order", warning_order as i64),
+            ("fallback_warning_before_stats", i64::from(fallback_warning_before_stats)),
+            ("warning_commit_before_stats", i64::from(warning_commit_before_stats)),
+            ("warning_meta_before_stats", i64::from(warning_meta_before_stats)),
+            ("warning_free_before_stats", i64::from(warning_free_before_stats)),
+            ("reserved_after_failure", after_failed_vm.reserved_current - before_vm.reserved_current),
+            ("committed_after_failure", after_failed_vm.committed_current - before_vm.committed_current),
+            ("mmap_after_failure", after_failed_vm.mmap_calls - before_vm.mmap_calls),
+            ("commit_after_failure", after_failed_vm.commit_calls - before_vm.commit_calls),
+            ("arena_after_failure", after_failed_arena.arena_count - before_arena.arena_count),
+            ("recovery_memory", i64::from(recovery_memory)),
+            ("recovery_slice_index", index as i64),
+            ("recovery_slice_count", arena_memory.slice_count as i64),
+            ("recovery_initially_committed", i64::from(memory.initially_committed())),
+            ("recovery_initially_zero", i64::from(memory.initially_zero())),
+            ("recovery_is_pinned", i64::from(memory.is_pinned())),
+            ("recovery_arena_info_slices", arena.info_slices as i64),
+            ("recovery_arena_size", arena.memid.size().unwrap() as i64),
+            ("recovery_registry", recovery_registry as i64),
+            ("recovery_bitmap_claimed", i64::from(recovery_bitmap_claimed)),
+            ("prior_live_during_recovery", i64::from(prior_live_during_recovery)),
+            ("recovery_reserved_delta", recovery_vm.reserved_current - before_vm.reserved_current),
+            ("recovery_committed_delta", recovery_vm.committed_current - before_vm.committed_current),
+            ("recovery_mmap_delta", recovery_vm.mmap_calls - before_vm.mmap_calls),
+            ("recovery_commit_delta", recovery_vm.commit_calls - before_vm.commit_calls),
+            ("recovery_arena_delta", recovery_arena.arena_count - before_arena.arena_count),
+            ("claim_released", i64::from(claim_released)),
+            ("recovery_mapping_live", i64::from(recovery_mapping_live)),
+            ("prior_live_after_release", i64::from(prior_live_after_release)),
+            ("release_warnings", release_warnings as i64),
+            ("raw_cleanup", i64::from(raw_cleanup)),
+            ("raw_gone", i64::from(raw_gone)),
+            ("raw_no_stats", i64::from(raw_no_stats)),
+        ] {
+            std::println!("{field}={value}");
+        }
+        assert!(refused && no_memory_id && metadata_exact && escaped_live
+            && warning_commit_before_stats && warning_meta_before_stats
+            && warning_free_before_stats
+            && recovery_memory && recovery_bitmap_claimed && prior_live_during_recovery
+            && claim_released && recovery_mapping_live && prior_live_after_release
+            && raw_cleanup && raw_gone && raw_no_stats);
+        drop(fault);
+        // SAFETY: no stack-backed warning capture remains available after
+        // callback removal; the healthy arena remains process-lived.
+        unsafe { output.register_output(None, core::ptr::null_mut()) };
+    }
 }
