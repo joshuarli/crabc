@@ -728,6 +728,141 @@ mod tests {
 
     #[cfg(all(target_arch = "x86_64", feature = "mi-stat-2"))]
     #[test]
+    fn failed_initial_regular_page_commit_recovers_source_statistics() {
+        crate::test_process::run_in_fresh_process(
+            "page::tests::failed_initial_regular_page_commit_recovers_source_statistics",
+            || {
+                use core::ffi::{c_char, c_int, c_void};
+                use core::sync::atomic::{AtomicUsize, Ordering};
+                use crate::config::SourceOption;
+                use crate::diagnostic_output::RuntimeStderrOutput;
+                use crate::os::fault;
+                use crate::runtime_lifecycle::{self, NativePageAllocationResult, NativePageFreeResult};
+                use crate::statistics::{FinalStatisticsSnapshot, HeapTheapStatistics, HeapTheapStatisticsSnapshot};
+
+                unsafe extern "C" {
+                    static mut stderr: *mut c_void;
+                    fn fputs(message: *const c_char, stream: *mut c_void) -> c_int;
+                }
+
+                static WARNINGS: AtomicUsize = AtomicUsize::new(0);
+
+                unsafe extern "C" fn source_stderr(message: *const c_char) {
+                    // SAFETY: the process-lifetime FILE accepts this NUL-terminated fragment.
+                    unsafe { let _ = fputs(message, stderr); }
+                }
+
+                unsafe extern "C" fn capture_warning(message: *const c_char, _: *mut c_void) {
+                    // SAFETY: the callback receives a live NUL-terminated fragment.
+                    let bytes = unsafe { std::ffi::CStr::from_ptr(message) }.to_bytes();
+                    if bytes.windows(b"cannot commit OS memory".len())
+                        .any(|window| window == b"cannot commit OS memory")
+                    {
+                        WARNINGS.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+
+                fn stats() -> (FinalStatisticsSnapshot, HeapTheapStatisticsSnapshot) {
+                    let mut image = HeapTheapStatistics::new();
+                    // SAFETY: this local source-layout image is exclusively mutable until copied.
+                    assert!(unsafe { runtime_lifecycle::native_stats_get(core::ptr::from_mut(&mut image).cast()) });
+                    (image.final_output_snapshot(), image.snapshot())
+                }
+
+                fn show(stage: &str, before: (FinalStatisticsSnapshot, HeapTheapStatisticsSnapshot), failures: usize) {
+                    let (now, bins) = stats();
+                    let old = before.0;
+                    for (name, value, prior) in [
+                        ("pages", now.pages, old.pages),
+                        ("page_committed", now.page_committed, old.page_committed),
+                        ("reserved", now.reserved, old.reserved),
+                        ("committed", now.committed, old.committed),
+                        ("requested", now.malloc_requested, old.malloc_requested),
+                        ("normal", now.malloc_normal, old.malloc_normal),
+                    ] {
+                        std::println!("{stage}.{name}={},{},{}",
+                            value.total - prior.total, value.peak - prior.peak,
+                            value.current - prior.current);
+                    }
+                    for (index, (current, previous)) in now.malloc_bins.iter()
+                        .zip(old.malloc_bins.iter()).enumerate()
+                    {
+                        if current.total > previous.total {
+                            std::println!("{stage}.bin={index}:{},{},{}",
+                                current.total - previous.total,
+                                current.peak - previous.peak,
+                                current.current - previous.current);
+                        }
+                    }
+                    for (index, (current, previous)) in bins.page_bin_total.iter()
+                        .zip(before.1.page_bin_total.iter()).enumerate()
+                    {
+                        if current > previous {
+                            std::println!("{stage}.page_bin={index}:{},{}",
+                                current - previous,
+                                bins.page_bin_current[index] - before.1.page_bin_current[index]);
+                        }
+                    }
+                    std::println!("{stage}.commit_calls={}", now.commit_calls - old.commit_calls);
+                    std::println!("{stage}.warnings={}", WARNINGS.load(Ordering::Relaxed));
+                    std::println!("{stage}.failures={failures}");
+                }
+
+                // SAFETY: the FILE callback remains valid for this fresh process.
+                assert!(runtime_lifecycle::test_initialize_process_from_host_environment(
+                    4096, unsafe { RuntimeStderrOutput::new(source_stderr) },
+                ));
+                crate::source_options_api::option_set(SourceOption::PageCommitOnDemand as c_int, 1);
+                crate::source_options_api::option_set(SourceOption::ArenaEagerCommit as c_int, 0);
+                crate::source_options_api::option_set(SourceOption::ShowErrors as c_int, 1);
+                // SAFETY: the static callback and null context remain valid until process exit.
+                unsafe { crate::source_options_api::register_output(Some(capture_warning), core::ptr::null_mut()) };
+                let warm = match runtime_lifecycle::native_allocate(64, false) {
+                    NativePageAllocationResult::Allocated(pointer) => pointer,
+                    _ => panic!("arena warmup allocation failed"),
+                };
+                // SAFETY: the warmed allocation is live and locally owned.
+                assert_eq!(unsafe { runtime_lifecycle::native_free(warm) }, NativePageFreeResult::Freed);
+                let before = stats();
+                std::println!("CRABC_MI_M7_INITIAL_PAGE_COMMIT_FAULT_TRACE_BEGIN");
+                std::println!("profile.level=2");
+                std::println!("profile.on_demand={}",
+                    crate::source_options_api::option_get(SourceOption::PageCommitOnDemand as c_int));
+                std::println!("profile.eager_arena={}",
+                    crate::source_options_api::option_get(SourceOption::ArenaEagerCommit as c_int));
+                std::println!("profile.show_errors={}",
+                    crate::source_options_api::option_get(SourceOption::ShowErrors as c_int));
+                show("before", before, 0);
+                let fault = fault::install(fault::Plan::at(fault::Point::Commit, 1, crabc_core::Errno::NOMEM));
+                let protections = fault.capture_protection_ranges();
+                let block = match runtime_lifecycle::native_allocate(100000, false) {
+                    NativePageAllocationResult::Allocated(pointer) => Some(pointer),
+                    _ => None,
+                };
+                std::println!("fault.nonnull={}", usize::from(block.is_some()));
+                let (ranges, count) = protections.attempts().expect("bounded raw protect capture");
+                assert!(count >= 2, "the failed initial commit must have a successful retry");
+                std::println!("fault.commit_size={}", ranges[0].1);
+                assert!(fault.observed() >= 2, "the failed first commit must be retried");
+                show("fault", before, 1);
+                let recovered = match runtime_lifecycle::native_allocate(100000, false) {
+                    NativePageAllocationResult::Allocated(pointer) => Some(pointer),
+                    _ => None,
+                };
+                std::println!("recovery.nonnull={}", usize::from(recovered.is_some()));
+                show("recovery", before, 1);
+                for pointer in [block, recovered].into_iter().flatten() {
+                    // SAFETY: each distinct allocation remains live and locally owned.
+                    assert_eq!(unsafe { runtime_lifecycle::native_free(pointer) }, NativePageFreeResult::Freed);
+                }
+                show("freed", before, 1);
+                std::println!("CRABC_MI_M7_INITIAL_PAGE_COMMIT_FAULT_TRACE_END");
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-stat-2"))]
+    #[test]
     fn failed_os_page_release_preserves_source_statistics() {
         crate::test_process::run_in_fresh_process(
             "page::tests::failed_os_page_release_preserves_source_statistics",

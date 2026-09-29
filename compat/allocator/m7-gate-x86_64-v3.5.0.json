@@ -161,6 +161,10 @@
       "command": ["python3", "compat/allocator/x86_64_m7_statistics_page_extension_fault.py", "--offline"],
       "scope": "Pinned C and Rust MI_STAT=2 use on-demand regular-page commitment. A one-shot primitive commit failure after 128 live 64-byte blocks leaves the original page at its first 8 KiB free-list extension, reports one warning, and sends that allocation to a fallback page. After freeing and collecting the fallback, the next allocation retries the original page. Exact public requested, normal, size-bin, page-bin, page, extension, commit-call, warning, and failure stages match through terminal frees. The C source is built from the pinned archive with a renamed mprotect test seam; Rust uses its test-only OS fault seam in a fresh process."
     },
+    "differential:statistics-initial-page-commit-fault": {
+      "command": ["python3", "compat/allocator/x86_64_m7_statistics_initial_page_commit_fault.py", "--offline"],
+      "scope": "Pinned C and Rust MI_STAT=2 reject one initial regular-page write-enable after arena warmup, then compare the fault allocation, next successful allocation, terminal frees, raw VM images, page and size bins, commit calls, and warning transitions. The C test seam renames mprotect and the Rust test uses its primitive OS fault hook."
+    },
     "differential:statistics-page-release-fault": {
       "command": ["python3", "compat/allocator/x86_64_m7_page_failure_stats.py", "--offline"],
       "scope": "Pinned C MI_STAT=2 and Rust each warm, then allocate one OS-backed 100000-byte large page and reject its raw unmap during forced collection, checking that the failed range contains the target block. Exact public page, page-bin, normal, warning, and fault counts and exact reserved/committed free and failed-release transitions are compared. Raw VM images retain placement-dependent PageMap charges in the source-sealed receipt with unnormalized stdout, stderr, and command records."
@@ -423,6 +427,7 @@
         "differential:statistics-json",
         "differential:statistics-page-extend",
         "differential:statistics-page-extension-fault",
+        "differential:statistics-initial-page-commit-fault",
         "differential:statistics-page-release-fault",
         "differential:statistics-page-second-extension",
         "differential:statistics-huge",
