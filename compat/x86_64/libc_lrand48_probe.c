@@ -1,4 +1,4 @@
-/* Pinned-musl/x86 static legacy rand48 differential fixture. */
+/* Exact selected rand48 transitions against pinned musl's public C ABI. */
 #if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__)
 #error "requires native Linux/x86-64 LP64"
 #endif
@@ -8,34 +8,130 @@
 #include <lrand48.h>
 #include <stdint.h>
 
-typedef long (*long0)(void); typedef long (*long1)(unsigned short *);
-typedef double (*double0)(void); typedef double (*double1)(unsigned short *);
-typedef void (*void1s)(unsigned short *); typedef void (*void1l)(long);
+typedef long (*long0)(void);
+typedef long (*long1)(unsigned short *);
+typedef double (*double0)(void);
+typedef double (*double1)(unsigned short *);
+typedef void (*void1s)(unsigned short *);
+typedef void (*void1l)(long);
+typedef unsigned short *(*seed1)(unsigned short *);
 _Static_assert(__builtin_types_compatible_p(__typeof__(&lrand48), long0), "lrand48 ABI");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&nrand48), long1), "nrand48 ABI");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&drand48), double0), "drand48 ABI");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&erand48), double1), "erand48 ABI");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&seed48), seed1), "seed48 ABI");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&srand48), void1l), "srand48 ABI");
 _Static_assert(sizeof(long) == 8, "LP64 long");
-static uint64_t next(unsigned short x[3], const unsigned short p[4]) { uint64_t v=x[0]|((uint64_t)x[1]<<16)|((uint64_t)x[2]<<32); uint64_t a=p[0]|((uint64_t)p[1]<<16)|((uint64_t)p[2]<<32); v=a*v+p[3]; x[0]=v; x[1]=v>>16; x[2]=v>>32; return v&0xffffffffffffULL; }
-static int same3(const unsigned short a[3], const unsigned short b[3]) { return a[0]==b[0]&&a[1]==b[1]&&a[2]==b[2]; }
+
+static uint64_t trace[96];
+static unsigned trace_len;
+static void record(uint64_t value) { trace[trace_len++] = value; }
+static uint64_t words(const unsigned short x[3]) {
+ return x[0] | ((uint64_t)x[1] << 16) | ((uint64_t)x[2] << 32);
+}
+static uint64_t next(unsigned short x[3], const unsigned short p[4]) {
+ uint64_t v = words(x);
+ uint64_t a = words(p);
+ v = a * v + p[3];
+ x[0] = v; x[1] = v >> 16; x[2] = v >> 32;
+ return v & 0xffffffffffffULL;
+}
+static uint64_t bits(double value) {
+ union { double d; uint64_t u; } repr = { .d = value };
+ return repr.u;
+}
+static uint64_t fraction(uint64_t value) {
+ union { double d; uint64_t u; } repr = { .u = 0x3ff0000000000000ULL | (value << 4) };
+ return bits(repr.d - 1.0);
+}
+static int same3(const unsigned short a[3], const unsigned short b[3]) {
+ return a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
+}
+static int emit_trace(void) {
+ const unsigned char *data = (const unsigned char *)trace;
+ unsigned long count = trace_len * sizeof(trace[0]);
+ long written;
+ /* This fixture's direct write is independent of either libc's output API. */
+ __asm__ volatile("syscall" : "=a"(written) : "a"(1L), "D"(1L), "S"(data), "d"(count) : "rcx", "r11", "memory");
+ return written == (long)count ? 0 : 90;
+}
+#define CHECK_LONG(api, expected, code) do { \
+ long got = (api); record((uint64_t)got); \
+ if (got != (expected)) return (code); \
+} while (0)
+#define CHECK_DOUBLE(api, expected, code) do { \
+ uint64_t got = bits(api); record(got); \
+ if (got != (expected)) return (code); \
+} while (0)
+#define CHECK_STATE(actual, expected, code) do { \
+ record(words(actual)); if (!same3((actual), (expected))) return (code); \
+} while (0)
+
 int crabc_x86_64_lrand48_probe(void) {
- unsigned short model[7]={0,0,0,0xe66d,0xdeec,5,0xb}, caller[3]={0,0,0}, caller_model[3]={0,0,0}, custom[7]={7,8,9,3,0,0,1}, fresh[3]={0x1234,0x5678,0x9abc}, second[3]={4,5,6}, before[3]; uint64_t v; unsigned short *old, *again;
+ unsigned short model[7] = {0, 0, 0, 0xe66d, 0xdeec, 5, 0xb};
+ unsigned short caller[3] = {0, 0, 0}, caller_model[3] = {0, 0, 0};
+ unsigned short fresh[3] = {0x1234, 0x5678, 0x9abc};
+ unsigned short fresh_expected[3] = {0x1234, 0x5678, 0x9abc};
+ unsigned short second[3] = {4, 5, 6}, second_expected[3] = {4, 5, 6}, before[3];
+ unsigned short custom[7] = {7, 8, 9, 3, 0, 0, 1};
+ unsigned short *old, *again;
+ uint64_t value;
 #ifndef CRABC_LRAND48_FREESTANDING
- errno=E2BIG;
+ errno = E2BIG;
 #endif
- srand48(1); model[0]=0x330e; model[1]=1; model[2]=0;
- v=next(model,model+3); if(lrand48()!=(long)(v>>17)) return 1;
- v=next(model,model+3); if(mrand48()!=(long)(int32_t)(v>>16)) return 2;
- v=next(model,model+3); if(drand48()!=((union {uint64_t u; double d;}){.u=0x3ff0000000000000ULL|(v<<4)}).d-1.0) return 3;
- v=next(caller_model,model+3); if(nrand48(caller)!=(long)(v>>17) || !same3(caller,caller_model)) return 4;
- v=next(caller_model,model+3); if(jrand48(caller)!=(long)(int32_t)(v>>16) || !same3(caller,caller_model)) return 5;
- v=next(caller_model,model+3); if(erand48(caller)!=((union {uint64_t u; double d;}){.u=0x3ff0000000000000ULL|(v<<4)}).d-1.0 || !same3(caller,caller_model)) return 6;
- before[0]=model[0]; before[1]=model[1]; before[2]=model[2]; old=seed48(fresh); if(!same3(old,before)) return 7; model[0]=fresh[0];model[1]=fresh[1];model[2]=fresh[2];
- again=seed48(second); if(again!=old || !same3(again,fresh)) return 8; model[0]=4;model[1]=5;model[2]=6;
- lcong48(custom); for(int i=0;i<7;i++) model[i]=custom[i]; v=next(model,model+3); if(lrand48()!=(long)(v>>17)) return 9;
- srand48(-1); model[0]=0x330e;model[1]=0xffff;model[2]=0xffff; v=next(model,model+3); if(lrand48()!=(long)(v>>17)) return 10;
+ /* Default state, then a seed reset and interleaved caller-owned state. */
+ value = next(model, model + 3);
+ CHECK_LONG(lrand48(), (long)(value >> 17), 1);
+ value = next(model, model + 3);
+ CHECK_DOUBLE(drand48(), fraction(value), 2);
+ srand48(1); model[0] = 0x330e; model[1] = 1; model[2] = 0;
+ value = next(model, model + 3);
+ CHECK_LONG(lrand48(), (long)(value >> 17), 3);
+ value = next(caller_model, model + 3);
+ CHECK_LONG(nrand48(caller), (long)(value >> 17), 4);
+ CHECK_STATE(caller, caller_model, 5);
+ value = next(caller_model, model + 3);
+ CHECK_DOUBLE(erand48(caller), fraction(value), 6);
+ CHECK_STATE(caller, caller_model, 7);
+ value = next(model, model + 3);
+ CHECK_DOUBLE(drand48(), fraction(value), 8);
+ value = next(model, model + 3);
+ CHECK_LONG(mrand48(), (long)(int32_t)(value >> 16), 9);
+ value = next(caller_model, model + 3);
+ CHECK_LONG(jrand48(caller), (long)(int32_t)(value >> 16), 10);
+ CHECK_STATE(caller, caller_model, 11);
+ /* seed48 returns the old global seed in a reused buffer; caller words stay owned. */
+ for (int i = 0; i < 3; i++) before[i] = model[i];
+ old = seed48(fresh);
+ CHECK_STATE(old, before, 12);
+ old[0] ^= 0xffff;
+ CHECK_STATE(fresh, fresh_expected, 13);
+ for (int i = 0; i < 3; i++) model[i] = fresh[i];
+ value = next(model, model + 3);
+ CHECK_LONG(lrand48(), (long)(value >> 17), 14);
+ again = seed48(second);
+ if (again != old) return 15;
+ CHECK_STATE(again, model, 16);
+ CHECK_STATE(second, second_expected, 24);
+ for (int i = 0; i < 3; i++) model[i] = second[i];
+ value = next(model, model + 3);
+ CHECK_DOUBLE(drand48(), fraction(value), 17);
+ /* Changed parameters affect caller state too; seed setters preserve them. */
+ lcong48(custom);
+ for (int i = 0; i < 7; i++) model[i] = custom[i];
+ value = next(caller_model, model + 3);
+ CHECK_LONG(nrand48(caller), (long)(value >> 17), 18);
+ CHECK_STATE(caller, caller_model, 19);
+ srand48(-1); model[0] = 0x330e; model[1] = 0xffff; model[2] = 0xffff;
+ value = next(model, model + 3);
+ CHECK_LONG(lrand48(), (long)(value >> 17), 20);
+ value = next(caller_model, model + 3);
+ CHECK_DOUBLE(erand48(caller), fraction(value), 21);
+ CHECK_STATE(caller, caller_model, 22);
 #ifndef CRABC_LRAND48_FREESTANDING
- if(errno!=E2BIG) return 11;
+ if (errno != E2BIG) return 23;
 #endif
- return 0;
+ return emit_trace();
 }
 #ifndef CRABC_LRAND48_FREESTANDING
 int main(void) { return crabc_x86_64_lrand48_probe(); }

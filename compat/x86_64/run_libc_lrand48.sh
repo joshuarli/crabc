@@ -6,8 +6,11 @@ export LC_ALL=C
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"; oracle=/usr/local/bin/crabc-x86_64-musl-gcc
 fail(){ printf 'ERROR: x86 lrand48: %s\n' "$*" >&2; exit 1; }
 [ "$(uname -m)" = x86_64 ] || fail "requires native x86_64"; [ -x "$oracle" ] || fail "missing pinned musl compiler"
-for x in ar awk cargo comm grep nm objcopy objdump readelf sort; do command -v "$x" >/dev/null || fail "missing $x"; done
-work="$(mktemp -d /tmp/crabc-x86-lrand48.XXXXXX)"; trap 'rm -rf -- "$work"' EXIT
+for x in ar awk cargo cmp comm grep nm objcopy objdump readelf sha256sum sort; do command -v "$x" >/dev/null || fail "missing $x"; done
+mkdir -p "$root/.work/x86_64/reports/libc-lrand48"
+work="$(mktemp -d "$root/.work/x86_64/reports/libc-lrand48/run.XXXXXX")"
+chmod 755 "$work"
+printf 'x86 lrand48 evidence: %s\n' "$work"
 # The standalone header is unconditional; the shared stdlib matrix separately
 # keeps its X/Open/GNU/BSD gate. Compare project and exact pinned-musl headers
 # in C and C++: every C++ undefined reference must keep the unmangled C name.
@@ -27,7 +30,8 @@ for header_root in "$root/include" /opt/musl-1.2.6/include; do
   nm -u "$object" | grep -E '[[:space:]]_Z' >/dev/null && fail "$label C++ linkage is mangled"
  done
 done
-"$oracle" -std=c11 -I"$root/include" "$root/compat/x86_64/libc_lrand48_probe.c" -o "$work/reference"; "$work/reference" || { status=$?; fail "pinned-musl differential failed at probe $status"; }
+"$oracle" -std=c11 -static -fno-pie -no-pie -I"$root/include" "$root/compat/x86_64/libc_lrand48_probe.c" -o "$work/reference"
+"$work/reference" >"$work/reference.stream" || { status=$?; fail "pinned-musl differential failed at probe $status; evidence: $work"; }
 target="$work/target"; build_source_runtime_libc "$target/x86_64-unknown-linux-musl/debug/libc.a"
 archive="$target/x86_64-unknown-linux-musl/debug/libc.a"; [ -f "$archive" ] || fail "missing archive"
 for s in "${symbols[@]}"; do grep -Fqx "$s" "$root/compat/x86_64/static_c_abi_exports.txt" || fail "export list omits $s"; done
@@ -40,6 +44,15 @@ unexpected_exports="$(comm -23 <(nm -g --defined-only "$work/o/provider.o" | awk
 undefined="$(nm -u "$work/o/provider.o")"; [ -z "$undefined" ] || fail "provider has undefined dependency: $undefined"
 objdump -d "$work/o/provider.o" >"$work/dis"; grep -Eq '[[:space:]]syscall([[:space:]]|$)|__errno_location|memcpy|memmove|memset' "$work/dis" && fail "provider widened into runtime helper"
 "$oracle" -std=c11 -DCRABC_LRAND48_FREESTANDING -I"$root/include" -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined "$root/compat/x86_64/libc_lrand48_probe.c" "$root/compat/x86_64/libc_lrand48_start.S" "$work/provider.a" -o "$work/candidate"
-readelf -l "$work/candidate" | grep -E '[[:space:]]TLS[[:space:]]' >/dev/null && fail "candidate has TLS"; readelf -d "$work/candidate" 2>/dev/null | grep -E 'NEEDED|INTERP' >/dev/null && fail "candidate has dynamic dependency" || true
-"$work/candidate" || fail "static differential failed"
-printf 'x86 static libc lrand48: PASS\n'
+for executable in "$work/reference" "$work/candidate"; do
+ readelf -l "$executable" | grep -E '[[:space:]]TLS[[:space:]]|[[:space:]]INTERP[[:space:]]' >/dev/null && fail "$(basename "$executable") has TLS or interpreter"
+ if readelf -d "$executable" 2>/dev/null | grep -E 'NEEDED|INTERP' >/dev/null; then fail "$(basename "$executable") has dynamic dependency"; fi
+done
+"$work/candidate" >"$work/candidate.stream" || { status=$?; fail "static differential failed at probe $status; evidence: $work"; }
+[ -s "$work/reference.stream" ] || fail "pinned musl produced no transition stream"
+cmp "$work/reference.stream" "$work/candidate.stream" || fail "physical output differs from pinned musl; evidence: $work"
+(cd "$work" && sha256sum reference candidate provider.a reference.stream candidate.stream >sha256.txt)
+readelf -l "$work/reference" >"$work/reference.program-headers.txt"
+readelf -l "$work/candidate" >"$work/candidate.program-headers.txt"
+nm -g --defined-only "$work/o/provider.o" >"$work/provider.defined-symbols.txt"
+printf 'x86 static libc lrand48: PASS (%s)\n' "$work"
