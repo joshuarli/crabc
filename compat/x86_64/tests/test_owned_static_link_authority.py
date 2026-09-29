@@ -9,9 +9,12 @@ negative cases alter copies of those physical ELF bytes.
 from __future__ import annotations
 
 import os
+import hashlib
+import json
 from pathlib import Path
 import re
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -29,7 +32,177 @@ from owned_static_link_authority import (
     StaticLinkAuthorityError,
     elf_bytes,
     require_static_functions,
+    static_undefined_bindings,
 )
+
+
+@unittest.skipUnless(Path('/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl/bin/rustc').is_file(),
+                     'requires the pinned native compiler and LLVM linker')
+class StaticUndefinedBindingTests(unittest.TestCase):
+    """Real TLS relaxation keeps metadata without a final symbol operand."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.work = SOURCE_DIR.parents[1] / '.work/x86_64/static-undefined-bindings'
+        cls.work.mkdir(parents=True, exist_ok=True)
+        cls.commands = []
+        sysroot = Path(subprocess.check_output(['rustc', '--print', 'sysroot'], text=True).strip())
+        cls.linker = sysroot / 'lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld'
+        (cls.work / 'tls.c').write_text('__thread int fixture_value = 1;\n'
+                                       'int fixture_tls_value(void) { return fixture_value; }\n')
+        (cls.work / 'start.S').write_text('''.section .text.start,"ax",@progbits
+.globl _start
+.type _start,@function
+_start: lea fixture_tls_value(%rip),%rax
+mov $60,%eax
+xor %edi,%edi
+syscall
+.size _start,.-_start
+.section .text.dead,"ax",@progbits
+.globl discarded_call
+.type discarded_call,@function
+discarded_call: call ordinary_unprovided
+ret
+.size discarded_call,.-discarded_call
+.section .note.GNU-stack,"",@progbits
+''')
+        cls.run_command(['gcc', '-fPIC', '-ffunction-sections', '-fdata-sections', '-c',
+                         str(cls.work / 'tls.c'), '-o', str(cls.work / 'tls.o')], 'compile-tls')
+        cls.run_command(['gcc', '-c', str(cls.work / 'start.S'), '-o', str(cls.work / 'start.o')], 'compile-start')
+        for mode in ('static', 'static-pie'):
+            cls.run_command(cls.link_command(mode, ['start.o', 'tls.o']), 'link-' + mode)
+            cls.run_command([str(cls.work / mode)], 'run-' + mode)
+            for name in ('start.o', 'tls.o', mode):
+                for option, label in (('-sW', 'symbols'), ('-rW', 'relocations'), ('-SW', 'sections'),
+                                      ('-dW', 'dynamic'), ('-lW', 'programs')):
+                    cls.run_command(['readelf', option, str(cls.work / name)], name + '-' + label)
+        (cls.work / 'weak.S').write_text('''.text
+.globl _start
+.type _start,@function
+.weak optional_unprovided
+_start: call optional_unprovided
+ret
+.size _start,.-_start
+.section .note.GNU-stack,"",@progbits
+''')
+        cls.run_command(['gcc', '-c', str(cls.work / 'weak.S'), '-o', str(cls.work / 'weak.o')], 'compile-weak')
+        cls.run_command(cls.link_command('referenced-weak', ['weak.o']) + ['--emit-relocs'], 'link-weak')
+        export_source = (cls.work / 'start.S').read_text().split('.section .text.dead')[0]
+        (cls.work / 'export-start.S').write_text(export_source + '.section .note.GNU-stack,"",@progbits\n')
+        cls.run_command(['gcc', '-c', str(cls.work / 'export-start.S'), '-o', str(cls.work / 'export-start.o')],
+                        'compile-export-start')
+        command = cls.link_command('static-pie', ['export-start.o', 'tls.o'])
+        command = [item.replace(str(cls.work / 'static-pie'), str(cls.work / 'exported-pie')) for item in command]
+        cls.run_command(command + ['--export-dynamic'], 'link-exported-pie')
+        inputs = {name: hashlib.sha256((cls.work / name).read_bytes()).hexdigest()
+                  for name in ('start.S', 'start.o', 'tls.c', 'tls.o', 'weak.S', 'weak.o',
+                               'export-start.S', 'export-start.o')}
+        (cls.work / 'inputs.json').write_text(json.dumps(inputs, indent=2, sort_keys=True) + '\n')
+
+    @classmethod
+    def link_command(cls, mode, inputs):
+        return [str(cls.linker), '-static', *(['-pie'] if mode == 'static-pie' else []),
+                '--no-dynamic-linker', '--no-undefined', '--gc-sections', '-e', '_start', '--trace',
+                '-Map=' + str(cls.work / (mode + '.map')),
+                *[str(cls.work / name) for name in inputs], '-o', str(cls.work / mode)]
+
+    @classmethod
+    def run_command(cls, command, label):
+        result = subprocess.run(command, capture_output=True, text=True)
+        cls.commands.append({'argv': command, 'status': result.returncode,
+                             'stdout': result.stdout, 'stderr': result.stderr})
+        (cls.work / 'commands.json').write_text(json.dumps(cls.commands, indent=2) + '\n')
+        if result.returncode:
+            raise AssertionError(result.stderr)
+
+    def test_relaxed_tls_rows_are_inert_in_both_static_modes(self):
+        source = Elf(self.work / 'tls.o')
+        source_calls = []
+        for table in source.sections:
+            if table[1] != 4: continue
+            for offset in range(0, table[5], 24):
+                _, info, _ = source.unpack('<QQq', table[4] + offset)
+                row = source.symbol_row(table[6], info >> 32)
+                if row['name'] == '__tls_get_addr': source_calls.append(info & 0xffffffff)
+        self.assertEqual(source_calls, [4])
+        for mode in ('static', 'static-pie'):
+            with self.subTest(mode=mode):
+                proof = static_undefined_bindings(self.work / mode)
+                self.assertEqual(proof['required_bindings'], [])
+                self.assertEqual([row['symbol']['name'] for row in proof['inert_symtab_rows']], ['__tls_get_addr'])
+                self.assertEqual(proof['relocation_sections'], [])
+                self.assertEqual(proof['dynamic_section'] is None, mode == 'static')
+                self.assertEqual((self.work / (mode + '.map')).read_text().count('.text.dead'), 0)
+                linked = next(row for row in self.commands if row['argv'] == self.link_command(mode, ['start.o', 'tls.o']))
+                self.assertEqual(linked['stdout'].splitlines(), [str(self.work / name) for name in ('start.o', 'tls.o')])
+                (self.work / (mode + '.bindings.json')).write_text(json.dumps(proof, indent=2, sort_keys=True) + '\n')
+
+    def test_any_retained_undefined_relocation_requires_binding(self):
+        proof = static_undefined_bindings(self.work / 'referenced-weak')
+        self.assertEqual([row['symbol']['name'] for row in proof['required_bindings']], ['optional_unprovided'])
+        self.assertEqual(proof['inert_symtab_rows'], [])
+        self.assertTrue(proof['relocation_sections'])
+
+    def test_strict_link_refuses_a_live_strong_undefined_call(self):
+        source = (self.work / 'weak.S').read_text().replace('.weak optional_unprovided', '.globl optional_unprovided')
+        (self.work / 'strong.S').write_text(source)
+        self.run_command(['gcc', '-c', str(self.work / 'strong.S'), '-o', str(self.work / 'strong.o')], 'compile-strong')
+        for mode in ('live-static', 'static-pie'):
+            command = self.link_command(mode, ['strong.o'])
+            command[command.index('-o') + 1] = str(self.work / ('rejected-' + mode))
+            command = [('-Map=' + str(self.work / ('rejected-' + mode + '.map'))) if item.startswith('-Map=')
+                       else item for item in command]
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.commands.append({'argv': command, 'status': result.returncode,
+                                  'stdout': result.stdout, 'stderr': result.stderr})
+            (self.work / 'commands.json').write_text(json.dumps(self.commands, indent=2) + '\n')
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('undefined symbol: optional_unprovided', result.stderr)
+
+    def test_undefined_dynamic_exposure_requires_binding_without_a_relocation(self):
+        image = Elf(self.work / 'exported-pie')
+        index, table = next((index, table) for index, table in enumerate(image.sections) if table[1] == 11)
+        number = next(number for number in range(table[5] // 24)
+                      if image.symbol_row(index, number)['name'] == '_start')
+        changed = bytearray(image.data)
+        offset = table[4] + number * 24
+        struct.pack_into('<HQQ', changed, offset + 6, 0, 0, 0)
+        output = self.work / 'undefined-dynamic-exposure'
+        output.write_bytes(changed)
+        proof = static_undefined_bindings(output)
+        self.assertIn('_start', [row['symbol']['name'] for row in proof['required_bindings']])
+        self.assertFalse(any(row['symbol']['name'] == '_start' for row in proof['inert_symtab_rows']))
+
+    def test_missing_or_malformed_sections_never_prove_absence(self):
+        for case in ('no sections', 'no names', 'truncated section', 'bad relocation link',
+                     'bad relocation size', 'hidden relocation', 'missing dynamic section', 'wrong dynamic segment'):
+            with self.subTest(case=case):
+                path = self.work / ('referenced-weak' if 'relocation' in case else
+                                    'static-pie' if 'dynamic' in case else 'static')
+                image = Elf(path)
+                changed = bytearray(image.data)
+                section_offset = struct.unpack_from('<Q', changed, 40)[0]
+                if case == 'no sections': struct.pack_into('<H', changed, 60, 0)
+                elif case == 'no names': struct.pack_into('<H', changed, 62, len(image.sections))
+                elif case == 'truncated section':
+                    struct.pack_into('<Q', changed, section_offset + 64 + 32, len(changed) + 1)
+                elif 'relocation' in case:
+                    index, row = next((index, row) for index, row in enumerate(image.sections) if row[1] == 4)
+                    offset = section_offset + index * 64
+                    if case == 'bad relocation link': struct.pack_into('<I', changed, offset + 40, len(image.sections))
+                    elif case == 'bad relocation size': struct.pack_into('<Q', changed, offset + 32, row[5] + 1)
+                    else: struct.pack_into('<I', changed, offset + 4, 1)
+                elif case == 'missing dynamic section':
+                    index = next(index for index, row in enumerate(image.sections) if row[1] == 6)
+                    struct.pack_into('<I', changed, section_offset + index * 64 + 4, 1)
+                else:
+                    index = next(index for index, row in enumerate(image.programs) if row[0] == 2)
+                    offset = struct.unpack_from('<Q', changed, 32)[0] + index * 56
+                    struct.pack_into('<Q', changed, offset + 8, image.programs[index][2] + 8)
+                output = self.work / ('malformed-' + case.replace(' ', '-'))
+                output.write_bytes(changed)
+                with self.assertRaises(StaticLinkAuthorityError):
+                    static_undefined_bindings(output)
 
 
 class OwnedStaticLinkAuthorityTlsFreeTests(unittest.TestCase):

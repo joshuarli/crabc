@@ -12,10 +12,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 import re
 
-from loader_debug_abi_evidence import Elf
+from loader_debug_abi_evidence import Elf, EvidenceError
+import owned_dynamic_elf
 
 
 WEAK_UNDEFINED_ZERO_GOT_DESCRIPTOR = '__crabc_x86_64_loader_tls_runtime_v1'
@@ -75,6 +77,183 @@ def section_name(elf, section):
     end = elf.data.find(b'\0', start, strings[4] + strings[5])
     require(strings[4] <= start <= end < len(elf.data), 'invalid ELF section name')
     return elf.data[start:end].decode()
+
+
+def static_undefined_bindings(executable):
+    """Distinguish regular symbol residue from final ELF binding requirements.
+
+    TLS relaxation can leave an undefined regular symbol after removing its
+    source call. A regular symbol table is not a loader lookup table. Only a
+    zero-valued, zero-sized undefined row with no relocation operand and no
+    dynamic symbol exposure is classified as inert here. Every relocation
+    section is inspected, including non-allocated retained linker metadata.
+
+    This proves a final-file relation, not valid machine-code execution or
+    source reference closure. Callers must independently authenticate the
+    owned linker recipe, its refusal of unresolved strong live references, and inputs
+    before using this classification to admit an ordinary static link.
+    """
+    try:
+        return _static_undefined_bindings(physical(executable))
+    except (EvidenceError, owned_dynamic_elf.InspectionError, UnicodeError, IndexError) as error:
+        raise StaticLinkAuthorityError(f'static undefined binding metadata differs: {error}') from error
+
+
+def _static_undefined_bindings(executable):
+    final = Elf(executable)
+    require(final.elf_type in (2, 3) and final.unpack('<I', 20)[0] == 1
+            and final.unpack('<H', 52)[0] == 64 and final.programs,
+            'static binding inspection requires an executable ELF')
+    require(final.sections[0] == (0,) * 10, 'static binding null section differs')
+    names_index = final.unpack('<H', 62)[0]
+    require(0 < names_index < len(final.sections) and final.sections[names_index][1] == 3,
+            'static binding section names are missing')
+    for section in final.sections:
+        require(section[1] == 8 or section[4] + section[5] <= len(final.data),
+                'static binding section leaves the file')
+    names = [section_name(final, row) for row in final.sections]
+    tables, table_rows, undefined = [], {}, []
+    for index, table in enumerate(final.sections):
+        if names[index] in ('.symtab', '.dynsym'):
+            require(table[1] == (2 if names[index] == '.symtab' else 11),
+                    'static binding named symbol table type differs')
+        if table[1] not in (2, 11):
+            continue
+        name = '.symtab' if table[1] == 2 else '.dynsym'
+        require(names[index] == name and not any(row['name'] == name for row in tables)
+                and table[9] == 24 and table[5] >= 24 and table[5] % 24 == 0
+                and 0 < table[6] < len(final.sections) and final.sections[table[6]][1] == 3
+                and bool(table[2] & 2) == (table[1] == 11),
+                'static binding symbol table differs')
+        require(final.data[table[4]:table[4] + 24] == bytes(24),
+                'static binding null symbol differs')
+        rows = [final.symbol_row(index, number) for number in range(table[5] // 24)]
+        require(1 <= table[7] <= len(rows)
+                and all(row['binding'] == 'LOCAL' for row in rows[:table[7]])
+                and all(row['binding'] != 'LOCAL' for row in rows[table[7]:]),
+                'static binding local symbol partition differs')
+        require(all(row['section'] in (0, 0xfff1, 0xfff2) or 0 < row['section'] < len(final.sections)
+                    for row in rows), 'static binding symbol section index is invalid')
+        table_rows[index] = rows
+        tables.append({'index': index, 'name': name, 'row_count': len(rows)})
+        for number, row in enumerate(rows[1:], 1):
+            if row['section'] == 0:
+                require(row['name'] and row['binding'] in ('GLOBAL', 'WEAK')
+                        and row['value'] == row['size'] == 0, 'static undefined symbol metadata differs')
+                undefined.append({'table_index': index, 'table': name, 'symbol_index': number, 'symbol': row})
+    require(any(row['name'] == '.symtab' for row in tables), 'static binding regular symbol table is missing')
+    references, relocations = set(), []
+    for index, table in enumerate(final.sections):
+        kind = table[1]
+        if names[index].startswith(('.rel.', '.rela.', '.relr.')):
+            require(kind in (4, 9, 19), 'static binding named relocation section type differs')
+        if kind not in (4, 9, 19):
+            continue
+        width = {4: 24, 9: 16, 19: 8}[kind]
+        require(table[9] == width and table[5] % width == 0,
+                'static binding relocation section is malformed')
+        record = {'index': index, 'name': names[index], 'type': kind,
+                  'row_count': table[5] // width, 'symbol_table_index': table[6]}
+        if kind == 19:
+            require(table[6] == table[7] == 0, 'static binding RELR section has a symbol table')
+            cursor = None
+            for number in range(table[5] // width):
+                entry = final.unpack('<Q', table[4] + number * width)[0]
+                if not entry & 1:
+                    require(entry % 8 == 0, 'static binding RELR address is unaligned')
+                    addresses, cursor = [entry], entry + 8
+                else:
+                    require(cursor is not None, 'static binding RELR bitmap has no base')
+                    addresses = [cursor + 8 * bit for bit in range(63) if entry & (2 << bit)]
+                    cursor += 63 * 8
+                require(cursor <= (1 << 64)
+                        and all(any(program[0] == 1 and program[3] <= address
+                                    and address + 8 <= program[3] + program[6]
+                                    for program in final.programs) for address in addresses),
+                        'static binding RELR target leaves loaded memory')
+        else:
+            require(table[6] in table_rows and 0 <= table[7] < len(final.sections),
+                    'static binding relocation symbol or target table is missing')
+            record['references'] = []
+            for number in range(table[5] // width):
+                offset, info = final.unpack('<QQ', table[4] + number * width)
+                symbol_index = info >> 32
+                require(symbol_index < len(table_rows[table[6]]),
+                        'static binding relocation symbol index is invalid')
+                references.add((table[6], symbol_index))
+                operand = {'offset': offset, 'symbol_index': symbol_index, 'kind': info & 0xffffffff}
+                if kind == 4:
+                    operand['addend'] = final.unpack('<q', table[4] + number * width + 16)[0]
+                record['references'].append(operand)
+        relocations.append(record)
+    dynamic_sections = [(index, row) for index, row in enumerate(final.sections) if row[1] == 6]
+    dynamics = [row for row in final.programs if row[0] == 2]
+    require(not any(row[0] == 3 for row in final.programs), 'static binding ELF has an interpreter')
+    for program in final.programs:
+        require(program[2] + program[5] <= len(final.data)
+                and (program[0] != 1 or program[5] <= program[6]),
+                'static binding program leaves the file')
+    dynamic = None
+    if final.elf_type == 2:
+        require(not dynamic_sections and not dynamics and not any(row[1] == 11 for row in final.sections)
+                and not any(row['row_count'] and final.sections[row['index']][2] & 2 for row in relocations),
+                'static executable has dynamic binding metadata')
+    else:
+        require(len(dynamic_sections) == len(dynamics) == 1,
+                'static PIE dynamic section or segment is missing or duplicated')
+        index, section = dynamic_sections[0]
+        program = dynamics[0]
+        require(names[index] == '.dynamic' and section[9] == 16 and section[5] % 16 == 0
+                and (section[4], section[3], section[5]) == (program[2], program[3], program[5]),
+                'static PIE dynamic section and segment differ')
+        facts = owned_dynamic_elf.inspect(executable)
+        require(facts['flags_1_pie'] and facts['interpreter'] is None and facts['needed'] == [],
+                'static PIE requires an external runtime')
+        tags = []
+        for position in range(section[5] // 16):
+            tag, value = final.unpack('<qQ', section[4] + position * 16)
+            tags.append({'tag': tag, 'value': value})
+            if tag == 0:
+                require(not any(final.data[section[4] + (position + 1) * 16:section[4] + section[5]]),
+                        'static PIE has tags after its dynamic terminator')
+                break
+        by_tag = {row['tag']: row['value'] for row in tags}
+        require(len(by_tag) == len(tags), 'static PIE has duplicate dynamic tags')
+        dyn_tables = [row for row in tables if row['name'] == '.dynsym']
+        require(len(dyn_tables) == 1, 'static PIE dynamic symbol section is missing')
+        symbols = final.sections[dyn_tables[0]['index']]
+        strings = final.sections[symbols[6]]
+        require(by_tag.get(6) == symbols[3] and by_tag.get(11) == 24
+                and by_tag.get(5) == strings[3] and by_tag.get(10) == strings[5],
+                'static PIE dynamic symbol/string tags and sections differ')
+        covered = set()
+        for address_tag, size_tag, entry_tag, kind, width in ((7, 8, 9, 4, 24), (23, 2, None, 4, 24),
+                                                             (36, 35, 37, 19, 8)):
+            if address_tag not in by_tag and size_tag not in by_tag:
+                continue
+            require(address_tag in by_tag and size_tag in by_tag
+                    and (entry_tag is None or by_tag.get(entry_tag) == width),
+                    'static PIE relocation tags are incomplete')
+            matching = [row for row in relocations if row['type'] == kind
+                        and final.sections[row['index']][3] == by_tag[address_tag]
+                        and final.sections[row['index']][5] == by_tag[size_tag]
+                        and final.sections[row['index']][2] & 2]
+            require(len(matching) == 1, 'static PIE relocation tags lack an exact section')
+            covered.add(matching[0]['index'])
+        require(all(not final.sections[row['index']][2] & 2 or not row['row_count'] or row['index'] in covered
+                    for row in relocations), 'static PIE allocated relocation section lacks dynamic tags')
+        dynamic = {'index': index, 'name': names[index], 'entry_count': section[5] // 16, 'tags': tags}
+    dynamic_names = {row['name'] for index, rows in table_rows.items() if final.sections[index][1] == 11
+                     for row in rows[1:]}
+    required, inert = [], []
+    for row in undefined:
+        target = required if (row['table'] == '.dynsym' or row['symbol']['name'] in dynamic_names
+                              or (row['table_index'], row['symbol_index']) in references) else inert
+        target.append(row)
+    require(final.data == executable.read_bytes(), 'static binding executable changed during inspection')
+    return {'elf_type': final.elf_type, 'image_sha256': hashlib.sha256(final.data).hexdigest(),
+            'symbol_tables': tables, 'relocation_sections': relocations, 'dynamic_section': dynamic,
+            'inert_symtab_rows': inert, 'required_bindings': required}
 
 
 def _require_static_functions(map_path, executable, admitted, functions):
