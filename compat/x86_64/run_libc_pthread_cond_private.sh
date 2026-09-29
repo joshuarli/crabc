@@ -6,8 +6,9 @@
 # as a true `-nostdlib -static` executable linked only with the selected crabc
 # archive. It proves only all-zero/NULL-attribute process-private cond init,
 # destroy, wait, signal, and broadcast paired with the selected normal mutex:
-# one deterministic signal, two-waiter broadcast, four 64-handoff ping-pong
-# rounds, no-waiter signal, stale errno preservation, and quiescent destroy.
+# one deterministic signal, two-waiter broadcast, eight reused two-waiter
+# signal/broadcast rounds, four 64-handoff ping-pong rounds, no-waiter signal,
+# stale errno preservation, and quiescent destroy.
 # It is not condition attributes, process-shared/timed/C11/cancellation
 # behavior, allocator/dynamic-TLS integration, general pthread completion,
 # CRT, loader, sysroot, or public x86 support.
@@ -74,7 +75,7 @@ closure_check() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf realpath rustup sort timeout; do
+for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf realpath rustup sha256sum sort timeout; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -90,10 +91,53 @@ case "$tmpdir_physical" in
     *) fail "TMPDIR physically escapes checkout .work" ;;
 esac
 work_dir="$(mktemp -d "$tmpdir_physical/crabc-x86-64-libc-pthread-cond-private.XXXXXX")"
-trap 'rm -rf -- "$work_dir"' EXIT
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-pthread-cond-private"
+mkdir -p "$report_dir"
+reference="$report_dir/musl-pthread-cond-private-reference"
+candidate="$report_dir/crabc-static-pthread-cond-private-candidate"
+reference_stdout="$report_dir/musl.stdout"
+reference_stderr="$report_dir/musl.stderr"
+candidate_stdout="$report_dir/crabc.stdout"
+candidate_stderr="$report_dir/crabc.stderr"
+rm -f "$reference" "$candidate" "$report_dir/SHA256SUMS"
+finish() {
+    local status=$?
+    local artifact
+
+    (
+        cd "$ROOT_DIR"
+        : >"$report_dir/SHA256SUMS"
+        for artifact in \
+            compat/x86_64/libc_pthread_cond_private_probe.c \
+            compat/x86_64/libc_pthread_cond_private_start.S \
+            .work/x86_64/reports/libc-pthread-cond-private/musl-pthread-cond-private-reference \
+            .work/x86_64/reports/libc-pthread-cond-private/crabc-static-pthread-cond-private-candidate \
+            .work/x86_64/reports/libc-pthread-cond-private/musl.stdout \
+            .work/x86_64/reports/libc-pthread-cond-private/musl.stderr \
+            .work/x86_64/reports/libc-pthread-cond-private/crabc.stdout \
+            .work/x86_64/reports/libc-pthread-cond-private/crabc.stderr; do
+            if [ -f "$artifact" ]; then
+                sha256sum "$artifact" >>"$report_dir/SHA256SUMS"
+            fi
+        done
+    )
+    rm -rf -- "$work_dir"
+    return "$status"
+}
+trap finish EXIT
+: >"$reference_stdout"
+: >"$reference_stderr"
+: >"$candidate_stdout"
+: >"$candidate_stderr"
+expected_stdout="$work_dir/expected.stdout"
+printf '%s\n' \
+    'cond-static-initializer: pass' \
+    'cond-one-waiter-signal: pass' \
+    'cond-two-waiter-broadcast: pass' \
+    'cond-no-waiter-signal: pass' \
+    'cond-reused-signal-broadcast-8: pass' \
+    'cond-ping-pong-4x64: pass' >"$expected_stdout"
 cargo_target="$work_dir/cargo-target"
-reference="$work_dir/musl-pthread-cond-private-reference"
-candidate="$work_dir/crabc-static-pthread-cond-private-candidate"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
@@ -120,12 +164,16 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_pthread_cond_private_probe.c \
     -o "$reference"
-if timeout "$EXECUTION_TIMEOUT" "$reference"; then
+if timeout "$EXECUTION_TIMEOUT" "$reference" \
+    >"$reference_stdout" 2>"$reference_stderr"; then
     :
 else
     reference_status=$?
     fail "pinned-musl reference execution exited ${reference_status}"
 fi
+cmp -s "$expected_stdout" "$reference_stdout" ||
+    fail "pinned-musl phase stream differed"
+[ ! -s "$reference_stderr" ] || fail "pinned-musl reference emitted stderr"
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -224,11 +272,16 @@ for public_symbol in pthread_cond_signal pthread_cond_broadcast; do
         fail "${public_symbol} lacks its private futex wake path"
 done
 
-if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
+if timeout "$EXECUTION_TIMEOUT" "$candidate" \
+    >"$candidate_stdout" 2>"$candidate_stderr"; then
     :
 else
     candidate_status=$?
     fail "candidate execution exited ${candidate_status}"
 fi
+cmp -s "$reference_stdout" "$candidate_stdout" ||
+    fail "candidate phase stream differed from pinned musl"
+cmp -s "$reference_stderr" "$candidate_stderr" ||
+    fail "candidate stderr differed from pinned musl"
 
 printf 'x86 static crabc-libc private pthread condition: PASS\n'

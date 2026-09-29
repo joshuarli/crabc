@@ -4,11 +4,11 @@
  * against a `-nostdlib -static` executable linked only through the selected
  * crabc archive. It specifies one deliberately bounded process-private
  * condition-variable block paired with the selected normal mutex: all-zero
- * static or NULL-attribute initialization, wait, signal, broadcast, and
- * quiescent destruction. It is not a claim for condition attributes,
- * process-shared or timed waits, cancellation, C11 conditions, allocator
- * integration, dynamic TLS, a general pthread runtime, CRT, loader, or
- * public x86 support.
+ * static or NULL-attribute initialization, wait, signal, broadcast, reused
+ * two-waiter handoff, and quiescent destruction. It is not a claim for
+ * condition attributes, process-shared or timed waits, cancellation, C11
+ * conditions, allocator integration, dynamic TLS, a general pthread runtime,
+ * CRT, loader, or public x86 support.
  */
 
 #if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
@@ -37,11 +37,28 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&pthread_cond_signal),
     int (*)(pthread_cond_t *)), "pthread_cond_signal declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&pthread_cond_broadcast),
     int (*)(pthread_cond_t *)), "pthread_cond_broadcast declaration");
+_Static_assert(EACCES == 13 && E2BIG == 7 && ENOTSUP == 95,
+    "Linux x86 condition fixture errno values");
+
+/* The reference and freestanding candidate use the same direct Linux write
+ * for a deterministic phase stream, without requiring a stdio runtime. */
+static int report_phase(const char *message, unsigned long length)
+{
+    long result;
+
+    __asm__ volatile("syscall" : "=a"(result)
+        : "a"(1L), "D"(1L), "S"(message), "d"(length)
+        : "rcx", "r11", "memory");
+    return result == (long)length ? 0 : 1;
+}
+
+#define REPORT_PHASE(message) report_phase(message, sizeof(message) - 1)
 
 enum {
     BROADCAST_WAITER_COUNT = 2,
     PING_PONG_HANDOFFS = 64,
     PING_PONG_ROUNDS = 4,
+    REUSE_ROUNDS = 8,
 };
 
 /* The predicate remains protected by `mutex`. The three atomic counters are
@@ -281,6 +298,159 @@ static int run_no_waiter_signal_round(void)
     return status;
 }
 
+struct reuse_round {
+    pthread_cond_t condition;
+    pthread_mutex_t mutex;
+    volatile int entered;
+    volatile int completed;
+    int permits;
+};
+
+struct reuse_waiter {
+    struct reuse_round *round;
+    int status;
+    int final_errno;
+    uintptr_t marker;
+};
+
+/* Each permit is consumed with the mutex held. A spurious wake can only retry
+ * the predicate; it cannot finish a worker or consume the next permit. */
+static void *reuse_waiter_main(void *opaque)
+{
+    struct reuse_waiter *waiter = opaque;
+    struct reuse_round *round = waiter->round;
+    int result;
+
+    errno = EACCES;
+    waiter->status = 0;
+    result = pthread_mutex_lock(&round->mutex);
+    if (result != 0) {
+        waiter->status = 1;
+    } else {
+        __atomic_fetch_add(&round->entered, 1, __ATOMIC_RELEASE);
+        while (round->permits == 0) {
+            result = pthread_cond_wait(&round->condition, &round->mutex);
+            if (result != 0) {
+                waiter->status = 2;
+                break;
+            }
+        }
+        if (waiter->status == 0) {
+            --round->permits;
+            __atomic_fetch_add(&round->completed, 1, __ATOMIC_RELEASE);
+        }
+        if (pthread_mutex_unlock(&round->mutex) != 0 && waiter->status == 0)
+            waiter->status = 3;
+    }
+    waiter->final_errno = errno;
+    return (void *)waiter->marker;
+}
+
+/* One signal admits exactly one permit, then a broadcast admits the other.
+ * Reuse the same initialized condition after both workers have joined, with
+ * every object quiescent before its final destruction. */
+static int run_reuse_round(void)
+{
+    struct reuse_round round = { 0 };
+    int epoch;
+    int status = 0;
+
+    errno = E2BIG;
+    if (pthread_mutex_init(&round.mutex, 0) != 0)
+        return 1;
+    if (pthread_cond_init(&round.condition, 0) != 0) {
+        (void)pthread_mutex_destroy(&round.mutex);
+        return 2;
+    }
+    for (epoch = 0; epoch != REUSE_ROUNDS && status == 0; ++epoch) {
+        struct reuse_waiter waiters[BROADCAST_WAITER_COUNT] = {
+            { .round = &round, .status = -1, .final_errno = -1,
+              .marker = (uintptr_t)0x1020304050607080ULL },
+            { .round = &round, .status = -1, .final_errno = -1,
+              .marker = (uintptr_t)0x8070605040302010ULL },
+        };
+        pthread_t threads[BROADCAST_WAITER_COUNT];
+        void *results[BROADCAST_WAITER_COUNT] = { 0, 0 };
+        int created = 0;
+        int index;
+
+        __atomic_store_n(&round.entered, 0, __ATOMIC_RELEASE);
+        __atomic_store_n(&round.completed, 0, __ATOMIC_RELEASE);
+        round.permits = 0;
+        for (index = 0; index != BROADCAST_WAITER_COUNT; ++index) {
+            if (pthread_create(&threads[index], 0, reuse_waiter_main,
+                    &waiters[index]) != 0) {
+                status = 3;
+                break;
+            }
+            ++created;
+        }
+        if (status == 0) {
+            while (__atomic_load_n(&round.entered, __ATOMIC_ACQUIRE) !=
+                BROADCAST_WAITER_COUNT)
+                ;
+            /* Both workers entered while holding the mutex. Acquiring it
+             * now observes their atomic wait enrollment and unlock. */
+            if (pthread_mutex_lock(&round.mutex) != 0) {
+                status = 4;
+            } else {
+                round.permits = 1;
+                if (pthread_cond_signal(&round.condition) != 0)
+                    status = 5;
+                if (pthread_mutex_unlock(&round.mutex) != 0 && status == 0)
+                    status = 6;
+            }
+        }
+        if (status == 0) {
+            while (__atomic_load_n(&round.completed, __ATOMIC_ACQUIRE) < 1)
+                ;
+            if (pthread_mutex_lock(&round.mutex) != 0) {
+                status = 7;
+            } else {
+                if (__atomic_load_n(&round.completed, __ATOMIC_ACQUIRE) != 1 ||
+                    round.permits != 0)
+                    status = 8;
+                round.permits = 1;
+                if (pthread_cond_broadcast(&round.condition) != 0 && status == 0)
+                    status = 9;
+                if (pthread_mutex_unlock(&round.mutex) != 0 && status == 0)
+                    status = 10;
+            }
+        }
+        if (status != 0 && created != 0) {
+            if (pthread_mutex_lock(&round.mutex) == 0) {
+                round.permits = created;
+                (void)pthread_cond_broadcast(&round.condition);
+                (void)pthread_mutex_unlock(&round.mutex);
+            }
+        }
+        for (index = 0; index != created; ++index) {
+            if (pthread_join(threads[index], &results[index]) != 0 &&
+                status == 0)
+                status = 11;
+        }
+        if (status == 0) {
+            for (index = 0; index != BROADCAST_WAITER_COUNT; ++index) {
+                if (results[index] != (void *)waiters[index].marker ||
+                    waiters[index].status != 0 ||
+                    waiters[index].final_errno != EACCES)
+                    status = 12;
+            }
+            if (__atomic_load_n(&round.entered, __ATOMIC_ACQUIRE) != 2 ||
+                __atomic_load_n(&round.completed, __ATOMIC_ACQUIRE) != 2 ||
+                round.permits != 0)
+                status = 13;
+        }
+    }
+    if (pthread_cond_destroy(&round.condition) != 0 && status == 0)
+        status = 14;
+    if (pthread_mutex_destroy(&round.mutex) != 0 && status == 0)
+        status = 15;
+    if (errno != E2BIG && status == 0)
+        status = 16;
+    return status;
+}
+
 /* This is deliberately candidate-only boundary evidence, not a pinned-musl
  * comparison: musl accepts a valid condition attribute while this selected
  * static x86 slice rejects every non-NULL attribute without reading it. */
@@ -478,15 +648,28 @@ int crabc_x86_64_pthread_cond_private_probe(void)
     status = run_static_initializer_round();
     if (status != 0)
         return status;
+    if (REPORT_PHASE("cond-static-initializer: pass\n") != 0)
+        return 230;
     status = run_initialized_waiter_round(1, 0);
     if (status != 0)
         return 32 + status;
+    if (REPORT_PHASE("cond-one-waiter-signal: pass\n") != 0)
+        return 231;
     status = run_initialized_waiter_round(BROADCAST_WAITER_COUNT, 1);
     if (status != 0)
         return 64 + status;
+    if (REPORT_PHASE("cond-two-waiter-broadcast: pass\n") != 0)
+        return 232;
     status = run_no_waiter_signal_round();
     if (status != 0)
         return 96 + status;
+    if (REPORT_PHASE("cond-no-waiter-signal: pass\n") != 0)
+        return 233;
+    status = run_reuse_round();
+    if (status != 0)
+        return 208 + status;
+    if (REPORT_PHASE("cond-reused-signal-broadcast-8: pass\n") != 0)
+        return 234;
 #if defined(CRABC_PTHREAD_COND_PRIVATE_FREESTANDING)
     status = run_candidate_only_attribute_rejection();
     if (status != 0)
@@ -497,6 +680,8 @@ int crabc_x86_64_pthread_cond_private_probe(void)
         if (status != 0)
             return 128 + (round_index * 20) + status;
     }
+    if (REPORT_PHASE("cond-ping-pong-4x64: pass\n") != 0)
+        return 235;
     return 0;
 }
 
