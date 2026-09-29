@@ -14406,6 +14406,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-initialization-tld-source-matrix",
                     "c-rust-initialization-tld-fault-retry-differential",
                     "c-rust-init-recursion-lifecycle",
+                    "c-rust-process-init-once-boundaries",
                     "c-rust-fault-seam-inventory",
                     "c-oracle-teardown-receipt",
                     "rust-teardown-owner",
@@ -14414,9 +14415,10 @@ def validate_x86_64_m2_memory_substrate_contract(
                 or type(raw_check.get("expected_passed_test_count")) is not int
                 or raw_check.get("expected_passed_test_count") != (
                     42 if component_id == "bitmaps" else (
+                        2 if raw_check.get("kind") == "c-rust-process-init-once-boundaries" else (
                         7 if raw_check.get("kind") == "c-rust-initialization-tld-source-matrix" else (
                             3 if raw_check.get("kind") == "c-rust-second-arena-reset-advice-matrix" else 1
-                        )
+                        ))
                     )
                 )
             ):
@@ -14439,8 +14441,12 @@ def validate_x86_64_m2_memory_substrate_contract(
             elif raw_check.get("kind") in {
                 "c-rust-initialization-tld-source-matrix",
                 "c-rust-init-recursion-lifecycle",
+                "c-rust-process-init-once-boundaries",
             }:
                 expected_initialization_targets = {
+                    "initialization-process-once-body-and-loader-tail": (
+                        "x86_64_m2_concurrent_init::process_body_and_loader_tail"
+                    ),
                     "initialization-tld-direct-source-matrix": (
                         "x86_64_initialization_tld_evidence::seven_fixed_direct_tld_and_ordinary_later_main_branches"
                     ),
@@ -16239,6 +16245,15 @@ def _m2_x86_64_initialization_check_records(
             "id": worker["id"],
             "passed_test_count": worker["expected_passed_test_count"],
             "target": worker["target"],
+        },
+        {
+            "comparison_status": "matched",
+            "component": "initialization",
+            "command": ["python3", "compat/allocator/x86_64_m2_concurrent_init.py", "--offline"],
+            "evidence_scope": "pinned-c-rust-process-body-held-once-and-loader-tail-released-once",
+            "id": checks["initialization-process-once-body-and-loader-tail"]["id"],
+            "passed_test_count": checks["initialization-process-once-body-and-loader-tail"]["expected_passed_test_count"],
+            "target": checks["initialization-process-once-body-and-loader-tail"]["target"],
         },
         *_m2_x86_64_initialization_teardown_check_records(checks, teardown_evidence),
         _m2_x86_64_exclusive_arena_theap_check_record(
