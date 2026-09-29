@@ -7,7 +7,7 @@ readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly RECORD_SIZE=32
-readonly EXPECTED_RECORDS=256
+readonly EXPECTED_RECORDS=1320
 readonly SELECTED_SYMBOLS=(exp10f pow10f)
 readonly FENV_SIBLINGS=(feclearexcept fegetenv fegetround fesetenv fesetround fetestexcept)
 readonly PRIVATE_PROVIDERS=(
@@ -47,20 +47,22 @@ assert_selected_c_abi_surface() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mktemp nm objdump readelf rustup sort wc; do
+for tool in ar awk cargo cmp diff grep mktemp nm objdump python3 readelf rustup sort wc; do
 	require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-math-exp10f.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp" "$ROOT_DIR/.work/x86_64/libc-math-exp10f"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-math-exp10f.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-reference"
 candidate="$work_dir/crabc-candidate"
-reference_output="$work_dir/reference.records"
-candidate_output="$work_dir/candidate.records"
+reference_output="$ROOT_DIR/.work/x86_64/libc-math-exp10f/reference.records"
+candidate_output="$ROOT_DIR/.work/x86_64/libc-math-exp10f/candidate.records"
+rm -f -- "$reference_output" "$candidate_output"
 header_cxx_reference="$work_dir/musl-math-exp10f-header.o"
 header_cxx_candidate="$work_dir/project-math-exp10f-header.o"
 header_trace="$work_dir/header-trace"
@@ -213,7 +215,27 @@ fi
 
 "$candidate" >"$candidate_output" || fail "freestanding exp10f/pow10f fixture failed"
 if ! cmp -s "$reference_output" "$candidate_output"; then
-	cmp -l "$reference_output" "$candidate_output" | sed -n '1,120p' >&2 || true
+	python3 - "$reference_output" "$candidate_output" <<'PY' >&2
+import struct
+import sys
+
+reference = list(struct.iter_unpack('<QQQQ', open(sys.argv[1], 'rb').read()))
+candidate = list(struct.iter_unpack('<QQQQ', open(sys.argv[2], 'rb').read()))
+shown = 0
+for index, (expected, actual) in enumerate(zip(reference, candidate)):
+    if expected != actual:
+        alias, input_bits = expected[0] >> 32, expected[0] & 0xffffffff
+        mode = expected[2] >> 32
+        print(f'record {index}: alias={alias} input=0x{input_bits:08x} mode={mode} '
+              f'expected=(0x{expected[1]:08x}, {expected[2] & 0xffffffff}, '
+              f'{expected[3]}) actual=(0x{actual[1]:08x}, '
+              f'{actual[2] & 0xffffffff}, {actual[3]})')
+        shown += 1
+        if shown == 16:
+            break
+if len(reference) != len(candidate):
+    print(f'record counts: expected={len(reference)} actual={len(candidate)}')
+PY
 	fail "candidate exp10f/pow10f record stream differs from pinned musl"
 fi
 

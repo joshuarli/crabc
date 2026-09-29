@@ -31,7 +31,7 @@
 #error "the raw binary32 fixture requires SSE evaluation"
 #endif
 
-#define EXP10F_F32_CASES 32
+#define EXP10F_F32_CASES 165
 #define EXP10F_ALIASES 2
 #define EXP10F_ROUNDING_CASES 4
 #define EXP10F_RECORD_WORDS 4
@@ -44,7 +44,7 @@ typedef float (*float_unary_function)(float);
 static float_unary_function volatile direct_exp10f = (exp10f);
 static float_unary_function volatile direct_pow10f = (pow10f);
 
-/* The freestanding start object writes these exact 8,192 bytes with syscall. */
+/* The freestanding start object writes these exact 42,240 bytes with syscall. */
 uint64_t crabc_x86_64_math_exp10f_records[EXP10F_RECORD_STORAGE_WORDS];
 
 /* Keep the record extent with the producer; composed probes do not guess it. */
@@ -54,6 +54,9 @@ const uint64_t *crabc_x86_64_math_exp10f_record_data(size_t *length)
 		*length = sizeof(crabc_x86_64_math_exp10f_records);
 	return crabc_x86_64_math_exp10f_records;
 }
+
+/* Adjacent encodings isolate both sides of musl's table and exp2 paths. */
+#define AROUND(bits) (UINT32_C(bits) - 1), UINT32_C(bits), (UINT32_C(bits) + 1)
 
 static const uint32_t binary32_inputs[EXP10F_F32_CASES] = {
 	UINT32_C(0x00000000), UINT32_C(0x80000000), UINT32_C(0x00000001),
@@ -67,7 +70,31 @@ static const uint32_t binary32_inputs[EXP10F_F32_CASES] = {
 	UINT32_C(0xc2300000), UINT32_C(0xc2340000), UINT32_C(0x7f7fffff),
 	UINT32_C(0xff7fffff), UINT32_C(0x7f800000), UINT32_C(0xff800000),
 	UINT32_C(0x7fc00041), UINT32_C(0x7f800042),
+	/* Every integral decimal-table entry and its binary32 neighbors. */
+	AROUND(0xc0e00000), AROUND(0xc0c00000), AROUND(0xc0a00000),
+	AROUND(0xc0800000), AROUND(0xc0400000), AROUND(0xc0000000),
+	AROUND(0xbf800000), AROUND(0x3f800000), AROUND(0x40000000),
+	AROUND(0x40400000), AROUND(0x40800000), AROUND(0x40a00000),
+	AROUND(0x40c00000), AROUND(0x40e00000),
+	/* Integer fallback, normal/subnormal outputs, and overflow/zero tails. */
+	AROUND(0xc2340000), AROUND(0xc2300000), AROUND(0xc21c0000),
+	AROUND(0xc2180000), AROUND(0xc2140000), AROUND(0xc1f00000),
+	AROUND(0xc1a00000), AROUND(0xc1800000), AROUND(0xc1000000),
+	AROUND(0x41000000), AROUND(0x41800000), AROUND(0x41a00000),
+	AROUND(0x41f00000), AROUND(0x42140000), AROUND(0x42180000),
+	AROUND(0x421c0000),
+	/* Fractional reduction and the binary32 range-transition neighborhoods. */
+	AROUND(0xc2349e35), AROUND(0xc23369f4), AROUND(0xc2320000),
+	AROUND(0xc21e0000), AROUND(0xc21a1eb8), AROUND(0xc217b818),
+	AROUND(0xc217999a), AROUND(0x4217999a), AROUND(0x421a0000),
+	AROUND(0x421a209b), AROUND(0x421a6666), AROUND(0x3e9a209b),
+	AROUND(0xbe9a209b),
+	/* Both signs and both NaN classes retain their payloads in the stream. */
+	UINT32_C(0xffc00041), UINT32_C(0xff800042),
+	UINT32_C(0x7fffffff), UINT32_C(0xffffffff),
 };
+
+#undef AROUND
 
 static const int rounding_modes[EXP10F_ROUNDING_CASES] = {
 	FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO,
