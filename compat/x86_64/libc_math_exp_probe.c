@@ -22,6 +22,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #ifndef CRABC_MATH_EXP_FREESTANDING
+#include <errno.h>
 #include <unistd.h>
 #endif
 
@@ -31,9 +32,14 @@
 
 #define EXP_F64_CASES 27
 #define EXP_F32_CASES 27
+#define EXP_F64_EDGE_SEEDS 8
+#define EXP_F32_EDGE_SEEDS 8
+#define EXP_EDGE_RADIUS 2
+#define EXP_EDGE_NEIGHBORS (2 * EXP_EDGE_RADIUS + 1)
 #define EXP_ROUNDING_CASES 4
 #define EXP_RECORD_WORDS 4
-#define EXP_RECORD_COUNT ((EXP_F64_CASES + EXP_F32_CASES) * EXP_ROUNDING_CASES)
+#define EXP_RECORD_COUNT ((EXP_F64_CASES + EXP_F32_CASES + \
+	(EXP_F64_EDGE_SEEDS + EXP_F32_EDGE_SEEDS) * EXP_EDGE_NEIGHBORS) * EXP_ROUNDING_CASES)
 #define EXP_RECORD_STORAGE_WORDS (EXP_RECORD_COUNT * EXP_RECORD_WORDS)
 
 typedef double (*double_unary_function)(double);
@@ -43,8 +49,9 @@ typedef float (*float_unary_function)(float);
 static double_unary_function volatile direct_exp = (exp);
 static float_unary_function volatile direct_expf = (expf);
 
-/* The freestanding start object writes these exact 6,912 bytes with syscall. */
+/* The freestanding start object writes this entire fixed record array. */
 uint64_t crabc_x86_64_math_exp_records[EXP_RECORD_STORAGE_WORDS];
+const uint64_t crabc_x86_64_math_exp_record_bytes = sizeof(crabc_x86_64_math_exp_records);
 
 static const uint64_t binary64_inputs[EXP_F64_CASES] = {
 	UINT64_C(0x8000000000000000), UINT64_C(0x0000000000000000),
@@ -73,6 +80,29 @@ static const uint32_t binary32_inputs[EXP_F32_CASES] = {
 	UINT32_C(0x42b20000), UINT32_C(0xc2ce0000), UINT32_C(0xc2d00000),
 	UINT32_C(0x7f7fffff), UINT32_C(0x7f800000), UINT32_C(0xff800000),
 	UINT32_C(0x7fc00041), UINT32_C(0x7f800042), UINT32_C(0x41200000),
+};
+
+/* Walk the representable inputs on both sides of each numerical transition. */
+static const uint64_t binary64_edge_seeds[EXP_F64_EDGE_SEEDS] = {
+	UINT64_C(0x40862e42fefa39ef), /* last finite result / overflow */
+	UINT64_C(0xc086232bdd7abcd2), /* minimum normal result */
+	UINT64_C(0xc0874385446d71c3), /* minimum subnormal result */
+	UINT64_C(0xc0874910d52d3052), /* half minimum subnormal result */
+	UINT64_C(0x3f762e42fefa39ef), /* positive table reduction */
+	UINT64_C(0xbf762e42fefa39ef), /* negative table reduction */
+	UINT64_C(0x3c90000000000000), /* tiny positive input */
+	UINT64_C(0xbc90000000000000), /* tiny negative input */
+};
+
+static const uint32_t binary32_edge_seeds[EXP_F32_EDGE_SEEDS] = {
+	UINT32_C(0x42b17218), /* last finite result / overflow */
+	UINT32_C(0xc2aeac50), /* minimum normal result */
+	UINT32_C(0xc2ce8ed0), /* minimum subnormal result */
+	UINT32_C(0xc2cff1b4), /* half minimum subnormal result */
+	UINT32_C(0x3c317218), /* positive table reduction */
+	UINT32_C(0xbc317218), /* negative table reduction */
+	UINT32_C(0x33800000), /* tiny positive input */
+	UINT32_C(0xb3800000), /* tiny negative input */
 };
 
 static const int rounding_modes[EXP_ROUNDING_CASES] = {
@@ -109,7 +139,14 @@ static int record_binary64(size_t *cursor, int rounding_mode, uint64_t input)
 
 	if (fesetround(rounding_mode) != 0 || feclearexcept(FE_ALL_EXCEPT) != 0)
 		return 1;
+#ifndef CRABC_MATH_EXP_FREESTANDING
+	errno = EDOM;
+#endif
 	result = direct_exp(double_from_bits(input));
+#ifndef CRABC_MATH_EXP_FREESTANDING
+	if (errno != EDOM)
+		return 5;
+#endif
 	if (*cursor + EXP_RECORD_WORDS > EXP_RECORD_STORAGE_WORDS)
 		return 2;
 	crabc_x86_64_math_exp_records[(*cursor)++] = input;
@@ -128,7 +165,14 @@ static int record_binary32(size_t *cursor, int rounding_mode, uint32_t input)
 
 	if (fesetround(rounding_mode) != 0 || feclearexcept(FE_ALL_EXCEPT) != 0)
 		return 1;
+#ifndef CRABC_MATH_EXP_FREESTANDING
+	errno = EDOM;
+#endif
 	result = direct_expf(float_from_bits(input));
+#ifndef CRABC_MATH_EXP_FREESTANDING
+	if (errno != EDOM)
+		return 5;
+#endif
 	if (*cursor + EXP_RECORD_WORDS > EXP_RECORD_STORAGE_WORDS)
 		return 2;
 	crabc_x86_64_math_exp_records[(*cursor)++] =
@@ -162,6 +206,22 @@ int crabc_x86_64_math_exp_probe(void)
 			input_index++)
 			status = record_binary32(&cursor, rounding_modes[mode_index],
 				binary32_inputs[input_index]);
+		for (input_index = 0; input_index < EXP_F64_EDGE_SEEDS && status == 0;
+			input_index++) {
+			int neighbor;
+			for (neighbor = -EXP_EDGE_RADIUS;
+				neighbor <= EXP_EDGE_RADIUS && status == 0; neighbor++)
+				status = record_binary64(&cursor, rounding_modes[mode_index],
+					binary64_edge_seeds[input_index] + neighbor);
+		}
+		for (input_index = 0; input_index < EXP_F32_EDGE_SEEDS && status == 0;
+			input_index++) {
+			int neighbor;
+			for (neighbor = -EXP_EDGE_RADIUS;
+				neighbor <= EXP_EDGE_RADIUS && status == 0; neighbor++)
+				status = record_binary32(&cursor, rounding_modes[mode_index],
+					binary32_edge_seeds[input_index] + neighbor);
+		}
 	}
 	if (cursor != EXP_RECORD_STORAGE_WORDS && status == 0)
 		status = 3;

@@ -34,8 +34,9 @@ for tool in ar awk cargo cmp diff grep mktemp nm objdump readelf rustup sort; do
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-math-exp.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-math-exp.XXXXXX")"
+chmod 755 "$work_dir"
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-math-exp-reference"
@@ -183,4 +184,4 @@ if ! cmp -s "$reference_records" "$candidate_records"; then
 	fail "pinned-musl and freestanding exp differential records differ"
 fi
 
-printf 'x86 static libc math exp: PASS\n'
+printf 'x86 static libc math exp: PASS (raw: %s)\n' "$work_dir"
