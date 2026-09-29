@@ -909,6 +909,10 @@ pub unsafe fn recalloc(block: *mut u8, count: usize, size: usize) -> Sourced<Blo
 ///
 /// The obligations of [`realloc`].
 pub unsafe fn urealloc(block: *mut u8, new_size: usize) -> Sourced<(Block, Option<usize>, Option<usize>)> {
+    #[cfg(feature = "mi-debug-1")]
+    if let Some(errno) = pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::Realloc) {
+        return Sourced::with((None, Some(0), Some(0)), errno);
+    }
     let before = match NonNull::new(block) {
         None => 0,
         // SAFETY: forwarded exact-live-client contract.
@@ -1658,6 +1662,9 @@ mod tests {
                 let refused = unsafe { super::rezalloc(original.as_ptr(), 200) };
                 assert_eq!(refused.errno.apply(0), Errno::INVAL.raw());
                 assert!(refused.value.is_none());
+                let refused_sizes = unsafe { super::urealloc(original.as_ptr(), 200) };
+                assert_eq!(refused_sizes.errno.apply(0), Errno::INVAL.raw());
+                assert_eq!(refused_sizes.value, (None, Some(0), Some(0)));
                 let base = crate::source_heap_api::theap_get_default();
                 let refused = unsafe { super::theap_realloc(base, original.as_ptr(), 200, true) };
                 assert_eq!(refused.errno.apply(0), Errno::INVAL.raw());
