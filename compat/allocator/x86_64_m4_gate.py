@@ -190,7 +190,8 @@ def validate_contract(
     ):
         raise harness.HarnessError("M4 allocator gate must use the pinned API applicability inventory")
     selected = selected_inventory(inventory, api)
-    # A sibling-owned item is not M4's; an excluded one names its owner.
+    # Sibling operations have separate owners; every excluded operation must
+    # carry a nonempty reason in this component's inventory.
     selected -= set(sibling_items)
     excluded = inventory.get("excluded_items")
     if not isinstance(excluded, Mapping) or not all(
@@ -654,8 +655,8 @@ def run_adapter_boundary(offline: bool) -> dict[str, Any]:
         harness.require_success(execution, "M4 adapter probe execution")
     defined = defined_global_symbols(str(symbols["stdout"]))
     exported = sorted(name for name in defined if name.startswith("mi_"))
-    # The adapter is shared with the M6 and M7 gates: it must export every M4
-    # function and nothing outside the pinned header's external functions.
+    # The adapter is shared across allocator checks: it must export every
+    # selected operation and nothing outside the pinned external API.
     missing = sorted(set(functions) - set(exported))
     unpinned = sorted(set(exported) - pinned_external_functions(api))
     if missing or unpinned:

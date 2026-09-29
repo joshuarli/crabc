@@ -701,7 +701,8 @@ def validate_source_state(state: object) -> None:
 # Automatic thread/process teardown and fork repair: pinned-C source routes
 # run by their own C-oracle producers, then the Rust owners that the libc
 # thread-exit, process-destroy, and fork hooks drive. `run.py` executes both
-# halves in the M2 gate; installed-product composition stays a runtime gate.
+# halves in one initialization evidence pass; installed-product composition
+# remains a separate runtime check.
 AUTOMATIC_TEARDOWN_C_ORACLE_KIND = "c-oracle-teardown-receipt"
 AUTOMATIC_TEARDOWN_RUST_KIND = "rust-teardown-owner"
 AUTOMATIC_TEARDOWN_CHECKS = (
