@@ -326,7 +326,7 @@ static int check_candidate_nonself_rejection(void)
 
     fill_bytes(output, sizeof(output), (char)0x33);
     errno = preserved_errno;
-    if (pthread_getname_np(foreign, output, 1) != ESRCH)
+    if (pthread_getname_np(foreign, output, sizeof(output)) != ESRCH)
         return 3;
     if (errno != preserved_errno)
         return 4;

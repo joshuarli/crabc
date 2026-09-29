@@ -201,9 +201,14 @@ assert_pthread_name_path
 
 candidate_status=0
 "$candidate" >"$work_dir/crabc.stdout" 2>"$work_dir/crabc.stderr" || candidate_status=$?
-sha256sum "$reference" "$candidate" "$work_dir/musl.stdout" \
-    "$work_dir/musl.stderr" "$work_dir/crabc.stdout" "$work_dir/crabc.stderr" \
-    >"$work_dir/hashes.sha256"
+printf 'musl_exit=%s\ncrabc_exit=%s\n' "$reference_status" "$candidate_status" \
+    >"$work_dir/exit-status"
+(
+    cd "$work_dir"
+    sha256sum musl-pthread-name-reference crabc-static-pthread-name-candidate \
+        musl.stdout musl.stderr crabc.stdout crabc.stderr exit-status \
+        >hashes.sha256
+)
 [ "$candidate_status" -eq 0 ] || fail "freestanding pthread task-name fixture exited ${candidate_status}"
 cmp "$work_dir/musl.stdout" "$work_dir/crabc.stdout" ||
     fail "musl/crabc task-name observation streams differ"
