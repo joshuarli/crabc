@@ -1096,6 +1096,12 @@
         "expected_passed_test_count": 1
       },
       {
+        "id": "os-page-escaped-map-metadata-fault-c-rust-differential",
+        "kind": "c-rust-process-os-page-terminal-unmap-fault-differential",
+        "target": "compat/allocator/m2_os_page_escaped_map_fault_x86_64.py",
+        "expected_passed_test_count": 1
+      },
+      {
         "id": "process-policy-first-arena-clean-primary-fallback",
         "kind": "rust-unit",
         "target": "process_arena::tests::process_default_os_arena_retries_the_source_smaller_policy_arena_after_clean_primary_failure",
