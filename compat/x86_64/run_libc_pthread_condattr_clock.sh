@@ -3,12 +3,13 @@
 #
 # The same project-header fixture first runs against pinned musl 1.2.6, then
 # as a true `-nostdlib -static` executable linked only with the selected crabc
-# archive. It proves exactly pthread_condattr_setclock/getclock's four-byte
-# record behavior: accepted clocks replace only low bits 0..30 while retaining
-# bit 31; negative and CPU-clock inputs preserve the complete word.
-# It does not select attribute lifecycle, process-sharing selection,
-# initialization or operation, timed waiting, clock observation, thread, TLS,
-# synchronization, cancellation, CRT, loader, sysroot, or public x86 support.
+# archive. It compares the exact phase output for init, set/get, rejected
+# clocks, destroy, and reinit, alongside the raw four-byte record behavior.
+# A separate pinned-musl sibling observes realtime/monotonic timed waiting;
+# the selected static archive has no pthread_cond_timedwait entry.
+# It does not select process-sharing selection, condition initialization or
+# operation, timed waiting, thread, TLS, synchronization, cancellation, CRT,
+# loader, sysroot, or public x86 support.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -62,8 +63,7 @@ assert_no_unselected_condattr_exports() {
     local symbols_path="$1"
     local unselected
 
-    for unselected in pthread_condattr_init pthread_condattr_destroy \
-        pthread_condattr_setpshared pthread_condattr_getpshared \
+    for unselected in pthread_condattr_setpshared pthread_condattr_getpshared \
         pthread_cond_init pthread_cond_destroy pthread_cond_wait \
         pthread_cond_signal pthread_cond_broadcast; do
         [ "$symbols_path" = "$candidate_symbols" ] ||
@@ -96,11 +96,24 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_pthread_c11_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-pthread-condattr-clock.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/reports/libc-pthread-condattr-clock"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/crabc-pthread-condattr-clock.XXXXXX")"
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-pthread-condattr-clock"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
-reference="$work_dir/musl-pthread-condattr-clock-reference"
-candidate="$work_dir/crabc-static-pthread-condattr-clock-candidate"
+reference="$report_dir/musl-pthread-condattr-clock-reference"
+candidate="$report_dir/crabc-static-pthread-condattr-clock-candidate"
+reference_stdout="$report_dir/musl.stdout"
+candidate_stdout="$report_dir/crabc.stdout"
+expected_stdout="$work_dir/expected.stdout"
+printf '%s\n' \
+    'clock-record-shared-monotonic: pass' \
+    'clock-record-raw-bits: pass' \
+    'clock-record-invalid-preserved: pass' \
+    'clock-attribute-default-realtime: pass' \
+    'clock-attribute-monotonic-realtime: pass' \
+    'clock-attribute-invalid-preserved: pass' \
+    'clock-attribute-destroy-reinit: pass' >"$expected_stdout"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
@@ -126,12 +139,13 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_pthread_condattr_clock_probe.c \
     -o "$reference"
-if timeout "$EXECUTION_TIMEOUT" "$reference"; then
+if timeout "$EXECUTION_TIMEOUT" "$reference" >"$reference_stdout"; then
     :
 else
     status=$?
     fail "pinned-musl condattr clock fixture exited ${status}"
 fi
+cmp "$expected_stdout" "$reference_stdout" || fail "pinned-musl lifecycle output differs"
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -139,7 +153,8 @@ build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 nm -A --defined-only "$archive" >"$archive_symbols"
 readelf --symbols --wide "$archive" >"$archive_elf_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
-for symbol in pthread_condattr_setclock pthread_condattr_getclock; do
+for symbol in pthread_condattr_init pthread_condattr_destroy \
+    pthread_condattr_setclock pthread_condattr_getclock; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
@@ -165,7 +180,8 @@ readelf --program-headers --wide "$candidate" >"$candidate_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in pthread_condattr_setclock pthread_condattr_getclock; do
+for symbol in pthread_condattr_init pthread_condattr_destroy \
+    pthread_condattr_setclock pthread_condattr_getclock; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
@@ -198,11 +214,14 @@ fi
 
 assert_direct_record_path
 
-if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
+if timeout "$EXECUTION_TIMEOUT" "$candidate" >"$candidate_stdout"; then
     :
 else
     status=$?
     fail "freestanding condattr clock fixture exited ${status}"
 fi
+cmp "$reference_stdout" "$candidate_stdout" || fail "candidate lifecycle output differs from pinned musl"
+
+bash "$ROOT_DIR/compat/x86_64/run_libc_pthread_condattr_clock_timed_oracle.sh"
 
 printf 'x86 static crabc-libc pthread condattr clock: PASS\n'

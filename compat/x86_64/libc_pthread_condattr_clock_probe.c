@@ -2,15 +2,15 @@
  *
  * The same project-header body first executes against pinned musl 1.2.6, then
  * as a dependency-free -nostdlib -static candidate linked only with the
- * selected crabc archive. It proves only pthread_condattr_setclock and
- * pthread_condattr_getclock over the public four-byte attribute word: accepted
- * clock IDs replace exactly the low thirty-one bits while retaining bit 31;
- * negative and CPU-clock IDs leave the complete word unchanged.
+ * selected crabc archive. It proves pthread_condattr_init/destroy and
+ * setclock/getclock over the public four-byte attribute word: initialization
+ * resets the word, accepted clock IDs replace the low thirty-one bits while
+ * retaining bit 31, invalid IDs preserve it, and destroy leaves it intact.
  *
- * This fixture deliberately constructs caller-owned raw record words and does
- * not call the separate init/destroy pair, set process sharing, or call
- * pthread_cond_init. It does not select condition operation, timed waiting,
- * clock observation, threads, TCB/TLS ownership, lifecycle, synchronization,
+ * Raw record cases exercise the accepted musl bit-level representation. The
+ * lifecycle cases use a valid initialized attribute. This does not set process
+ * sharing or call pthread_cond_init. It does not select timed waiting,
+ * clock observation, threads, TCB/TLS ownership, condition lifecycle, synchronization,
  * cancellation, CRT, loader, sysroot, or public x86 support.
  */
 
@@ -39,11 +39,27 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&pthread_condattr_setcloc
     int (*)(pthread_condattr_t *, clockid_t)), "pthread_condattr_setclock declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&pthread_condattr_getclock),
     int (*)(const pthread_condattr_t *, clockid_t *)), "pthread_condattr_getclock declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&pthread_condattr_init),
+    int (*)(pthread_condattr_t *)), "pthread_condattr_init declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&pthread_condattr_destroy),
+    int (*)(pthread_condattr_t *)), "pthread_condattr_destroy declaration");
 
 #define CRABC_SHARED_MONOTONIC_WORD 0x80000001U
 #define CRABC_PRIVATE_RAW_CLOCK_WORD 0x12345678U
 #define CRABC_SHARED_RAW_CLOCK_WORD 0x92345678U
 #define CRABC_MUTATED_COND_ATTRIBUTE_WORD 0xa5a50083U
+
+static int report_phase(const char *message, unsigned long length)
+{
+    long result;
+
+    __asm__ volatile("syscall" : "=a"(result)
+        : "a"(1L), "D"(1L), "S"(message), "d"(length)
+        : "rcx", "r11", "memory");
+    return result == (long)length ? 0 : 1;
+}
+
+#define REPORT_PHASE(message) report_phase(message, sizeof(message) - 1)
 
 static int expect_clock(const pthread_condattr_t *attr, clockid_t expected)
 {
@@ -66,6 +82,8 @@ int crabc_x86_64_pthread_condattr_clock_probe(void)
         return 2;
     if (expect_clock(&attr, CLOCK_MONOTONIC) != 0)
         return 3;
+    if (REPORT_PHASE("clock-record-shared-monotonic: pass\n"))
+        return 14;
 
     attr.__attr = 0U;
     if (pthread_condattr_setclock(&attr, (clockid_t)CRABC_PRIVATE_RAW_CLOCK_WORD) != 0)
@@ -79,6 +97,8 @@ int crabc_x86_64_pthread_condattr_clock_probe(void)
     attr.__attr = CRABC_SHARED_RAW_CLOCK_WORD;
     if (expect_clock(&attr, (clockid_t)CRABC_PRIVATE_RAW_CLOCK_WORD) != 0)
         return 7;
+    if (REPORT_PHASE("clock-record-raw-bits: pass\n"))
+        return 15;
 
     attr.__attr = CRABC_MUTATED_COND_ATTRIBUTE_WORD;
     preserved = attr.__attr;
@@ -94,6 +114,48 @@ int crabc_x86_64_pthread_condattr_clock_probe(void)
         return 12;
     if (attr.__attr != preserved)
         return 13;
+    if (REPORT_PHASE("clock-record-invalid-preserved: pass\n"))
+        return 16;
+
+    attr.__attr = CRABC_MUTATED_COND_ATTRIBUTE_WORD;
+    if (pthread_condattr_init(&attr) != 0 || attr.__attr != 0U)
+        return 17;
+    if (expect_clock(&attr, CLOCK_REALTIME) != 0)
+        return 18;
+    if (REPORT_PHASE("clock-attribute-default-realtime: pass\n"))
+        return 19;
+
+    if (pthread_condattr_setclock(&attr, CLOCK_MONOTONIC) != 0 ||
+        attr.__attr != (unsigned)CLOCK_MONOTONIC ||
+        expect_clock(&attr, CLOCK_MONOTONIC) != 0)
+        return 20;
+    if (pthread_condattr_setclock(&attr, CLOCK_REALTIME) != 0 ||
+        attr.__attr != (unsigned)CLOCK_REALTIME ||
+        expect_clock(&attr, CLOCK_REALTIME) != 0)
+        return 21;
+    if (REPORT_PHASE("clock-attribute-monotonic-realtime: pass\n"))
+        return 22;
+
+    if (pthread_condattr_setclock(&attr, CLOCK_MONOTONIC) != 0)
+        return 23;
+    preserved = attr.__attr;
+    if (pthread_condattr_setclock(&attr, -1) != EINVAL ||
+        pthread_condattr_setclock(&attr, CLOCK_PROCESS_CPUTIME_ID) != EINVAL ||
+        pthread_condattr_setclock(&attr, CLOCK_THREAD_CPUTIME_ID) != EINVAL ||
+        attr.__attr != preserved || expect_clock(&attr, CLOCK_MONOTONIC) != 0)
+        return 24;
+    if (REPORT_PHASE("clock-attribute-invalid-preserved: pass\n"))
+        return 25;
+
+    if (pthread_condattr_destroy(&attr) != 0 || attr.__attr != preserved)
+        return 26;
+    if (pthread_condattr_init(&attr) != 0 || attr.__attr != 0U ||
+        expect_clock(&attr, CLOCK_REALTIME) != 0)
+        return 27;
+    if (pthread_condattr_destroy(&attr) != 0 || attr.__attr != 0U)
+        return 28;
+    if (REPORT_PHASE("clock-attribute-destroy-reinit: pass\n"))
+        return 29;
     return 0;
 }
 
