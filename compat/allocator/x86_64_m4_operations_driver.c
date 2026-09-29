@@ -1,4 +1,4 @@
-/* Shared C driver for the allocator M4 operations differential.
+/* Shared C driver for public allocator operations.
 
    The same unmodified source is linked twice: once against the pinned
    mimalloc v3.5.0 release sources (`src/static.c`) and once against the
@@ -18,8 +18,7 @@
    Only the public `mimalloc.h` declarations are used. The one argument
    selects a scenario, each run in a fresh process: `operations`,
    `page-kinds`, `collection`, `oom`, `threads`, or a process-terminating
-   `abort:<name>` that the runner observes through the exit status. Driven by
-   `compat/allocator/x86_64_m4_gate.py --operations-differential`. */
+   `abort:<name>` that the runner observes through the exit status. */
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic ignored "-Walloc-size-larger-than="
 #endif
@@ -756,6 +755,64 @@ static void section_conveniences(void) {
   note_errno("realpath.absent");
 }
 
+/* Offset aligned clients can have an odd usable extent even when their
+   canonical block size is word aligned. Exercise both sides of the aligned
+   ceil-half reuse boundary and compare every byte after each replacement. */
+static void section_offset_rezalloc_boundaries(void) {
+  static const size_t sizes[] = { 33, 70000, 600000 };
+  static const size_t alignments[] = { 256, 4096 };
+  static const size_t offsets[] = { 1, 7 };
+  char key[96];
+  char base[80];
+  for (size_t s = 0; s < sizeof sizes / sizeof sizes[0]; s++) {
+    for (size_t a = 0; a < sizeof alignments / sizeof alignments[0]; a++) {
+      for (size_t o = 0; o < sizeof offsets / sizeof offsets[0]; o++) {
+        snprintf(base, sizeof base, "offset_rezalloc.%zu.%zu.%zu", s, a, o);
+        void* p = mi_malloc_aligned_at(sizes[s], alignments[a], offsets[o]);
+        if (p == NULL) {
+          snprintf(key, sizeof key, "%s.initial", base);
+          line(key, "initial_null");
+          continue;
+        }
+        const size_t initial_usable = mi_usable_size(p);
+        fill(p, initial_usable, 0x36);
+        void* grown = mi_rezalloc_aligned_at(p, initial_usable + 17, alignments[a], offsets[o]);
+        snprintf(key, sizeof key, "%s.grow", base);
+        line(key, "grow:%d,copy:%d,tail:%d,odd:%d,old_usable:%zu,new_usable:%zu",
+             grown != NULL && grown != p,
+             grown != NULL && has_fill(grown, initial_usable, 0x36),
+             grown != NULL && is_zero((char*)grown + initial_usable,
+                                      mi_usable_size(grown) - initial_usable),
+             (int)(initial_usable & 1), initial_usable,
+             grown == NULL ? 0 : mi_usable_size(grown));
+        if (grown == NULL) { mi_free(p); continue; }
+        const size_t grown_usable = mi_usable_size(grown);
+        const size_t reuse_size = grown_usable - grown_usable / 2;
+        fill(grown, grown_usable, 0x59);
+        void* reused = mi_rezalloc_aligned_at(grown, reuse_size, alignments[a], offsets[o]);
+        snprintf(key, sizeof key, "%s.reuse", base);
+        line(key, "reuse:%d,copy:%d",
+             reused == grown,
+             reused != NULL && has_fill(reused, grown_usable, 0x59));
+        if (reused == NULL) { mi_free(grown); continue; }
+        const size_t replacement_size = reuse_size - 1;
+        void* replaced = mi_rezalloc_aligned_at(reused, replacement_size,
+                                               alignments[a], offsets[o]);
+        snprintf(key, sizeof key, "%s.replace", base);
+        line(key, "replace:%d,copy:%d,tail:%d,aligned:%d,new_usable:%zu",
+             replaced != NULL && replaced != reused,
+             replaced != NULL && has_fill(replaced, replacement_size, 0x59),
+             replaced != NULL && is_zero((char*)replaced + replacement_size,
+                                         mi_usable_size(replaced) - replacement_size),
+             replaced != NULL &&
+               (((uintptr_t)replaced + offsets[o]) & (alignments[a] - 1)) == 0,
+             replaced == NULL ? 0 : mi_usable_size(replaced));
+        mi_free(replaced == NULL ? reused : replaced);
+      }
+    }
+  }
+}
+
 /* Every page kind at its class edges: enough blocks to fill two pages of
    the kind (a full page leaves its queue and is abandoned), then frees in an
    interleaved order and a second allocation round that shows which blocks,
@@ -973,6 +1030,7 @@ int main(int argc, char** argv) {
     sections[3] = section_realloc;
     sections[4] = section_aligned;
     sections[5] = section_conveniences;
+    sections[6] = section_offset_rezalloc_boundaries;
   }
   else if (strcmp(scenario, "page-kinds") == 0) { sections[0] = section_page_kinds; }
   else if (strcmp(scenario, "collection") == 0) { sections[0] = section_collection; }
