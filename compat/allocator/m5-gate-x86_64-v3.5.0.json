@@ -153,6 +153,16 @@
       ],
       "scope": "Three foreign producers publish distinct small-page blocks while the original owner repeatedly collects. Pinned C and native Rust agree after the final drain on used count, owned-empty head, and the exact collected block count. A separately selected Loom race composes small-page partial collection with owner exit and an arena reader."
     },
+    "differential:post-exit-parallel-reclaim": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m5_post_exit_parallel_reclaim_evidence.py",
+        "--offline",
+        "--report",
+        "{scratch}/post-exit-parallel-reclaim.json"
+      ],
+      "scope": "Two attached foreign workers begin distinct medium-page frees together after their original owner exits. Pinned C and native Rust retain the final live client's PageMap registration across both publication and worker-exit boundaries, then clear the span only after the final client is freed and the surviving owner collects."
+    },
     "differential:exit-callback-survivor": {
       "command": [
         "python3",
@@ -335,6 +345,7 @@
       "evidence": [
         "native:remote-publication",
         "differential:live-owner-small-remote-collect-race",
+        "differential:post-exit-parallel-reclaim",
         "lifecycle:bounded-laboratory"
       ],
       "blocked_by": []
@@ -370,7 +381,8 @@
       "acceptance": "Abandoned pages are reclaimed on allocation and on free as pinned mimalloc decides, released only after source state proves no client or producer remains, and a failed release retains exactly one terminal owner.",
       "evidence": [
         "native:abandon-reclaim-release",
-        "differential:reclaim-on-free"
+        "differential:reclaim-on-free",
+        "differential:post-exit-parallel-reclaim"
       ],
       "blocked_by": []
     },
