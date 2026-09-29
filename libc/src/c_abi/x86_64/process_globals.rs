@@ -124,7 +124,7 @@ pub(super) unsafe fn install(argc: c_int, argv: *const *const c_char) {
 
 #[cfg(test)]
 mod tests {
-    use super::select_program_names;
+    use super::{select_program_names, EMPTY_PROGRAM_NAME};
     use core::ffi::c_char;
 
     #[test]
