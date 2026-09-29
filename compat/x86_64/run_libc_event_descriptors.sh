@@ -154,7 +154,7 @@ else
     printf '%s\n' "$reference_status" >"$report_dir/musl.status"
     fail "pinned-musl reference execution exited $reference_status; receipt: $report_dir"
 fi
-[ "$(wc -c <"$report_dir/musl.records")" -eq 128 ] ||
+[ "$(wc -c <"$report_dir/musl.records")" -eq 208 ] ||
     fail "pinned-musl reference emitted an unexpected receipt length; receipt: $report_dir"
 
 # Pin one codegen unit for the instruction-level syscall ABI judge below.
@@ -273,7 +273,7 @@ cmp -s "$report_dir/musl.records" "$report_dir/crabc.records" ||
     fail "candidate observations differ from pinned musl; receipt: $report_dir"
 cmp -s "$report_dir/musl.stderr" "$report_dir/crabc.stderr" ||
     fail "candidate diagnostics differ from pinned musl; receipt: $report_dir"
-od -An -tx8 -w8 "$report_dir/musl.records" | awk '{ print $1 }' \
+od -v -An -tx8 -w8 "$report_dir/musl.records" | awk '{ print $1 }' \
     >"$report_dir/observations.txt"
 cat >"$report_dir/expected-observations.txt" <<'EOF'
 0000000000000001
@@ -292,6 +292,16 @@ fedcba9876543210
 0000000000000001
 0000000000008000
 0000000000000016
+0000000000000001
+0000000000000001
+0000000000000040
+0000000000000080
+0000000000000001
+0000000000000200
+0000000000008000
+0000000000000001
+0000000000000001
+0000000000000100
 EOF
 cmp -s "$report_dir/expected-observations.txt" "$report_dir/observations.txt" ||
     fail "pinned-musl observations differ from the event-descriptor contract; receipt: $report_dir"

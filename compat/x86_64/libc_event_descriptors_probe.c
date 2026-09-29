@@ -590,6 +590,28 @@ static int read_ignored_event(int fd, int watch)
     return event.wd == watch && (event.mask & IN_IGNORED) != 0 && event.len == 0;
 }
 
+/* A read can contain multiple variable records. Consume each complete record
+ * before checking the next name, so the second rename event is not mistaken
+ * for padding in the first event's name storage. */
+static int consume_named_event(const unsigned char *bytes, ssize_t length,
+    size_t *offset, int watch, uint32_t mask, const char *name,
+    size_t name_size, uint32_t *cookie)
+{
+    struct inotify_event event;
+
+    if (*offset > (size_t)length ||
+        (size_t)length - *offset < sizeof(event)) return 0;
+    __builtin_memcpy(&event, bytes + *offset, sizeof(event));
+    if (event.wd != watch || event.mask != mask ||
+        (event.len & 3) != 0 || event.len < name_size ||
+        event.len > (size_t)length - *offset - sizeof(event) ||
+        __builtin_memcmp(bytes + *offset + sizeof(event), name,
+            name_size) != 0) return 0;
+    *offset += sizeof(event) + event.len;
+    if (cookie != 0) *cookie = event.cookie;
+    return 1;
+}
+
 static int check_inotify(void)
 {
     int legacy = -1;
@@ -784,6 +806,156 @@ cleanup:
     return status;
 }
 
+static int check_inotify_rename_and_readd(void)
+{
+    struct inotify_rename_receipt {
+        uint64_t same_watch;
+        uint64_t rename_ready;
+        uint64_t from_mask;
+        uint64_t to_mask;
+        uint64_t matching_cookie;
+        uint64_t delete_mask;
+        uint64_t ignored_mask;
+        uint64_t new_watch;
+        uint64_t create_ready;
+        uint64_t readd_create_mask;
+    } receipt = { 0 };
+    const char from[] = "rename-from";
+    const char to[] = "rename-to";
+    const char readded[] = "readded";
+    unsigned char bytes[128] = { 0 };
+    struct epoll_event interest = { 0 };
+    struct epoll_event observed = { 0 };
+    struct inotify_event ignored;
+    uint32_t from_cookie = 0;
+    uint32_t to_cookie = 0;
+    ssize_t length;
+    size_t offset;
+    int descriptor = -1;
+    int epoll = -1;
+    int file = -1;
+    int watch = -1;
+    int new_watch = -1;
+    int status = 0;
+
+    file = open(from, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (file < 0 || close(file) != 0) return 1;
+    file = -1;
+    descriptor = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+    epoll = epoll_create1(EPOLL_CLOEXEC);
+    if (descriptor < 0 || epoll < 0) {
+        status = 2;
+        goto cleanup;
+    }
+    watch = inotify_add_watch(descriptor, ".", IN_MOVED_FROM | IN_MOVED_TO);
+    if (watch < 0 || inotify_add_watch(descriptor, ".",
+            IN_MASK_ADD | IN_DELETE) != watch) {
+        status = 3;
+        goto cleanup;
+    }
+    receipt.same_watch = 1;
+    interest.events = EPOLLIN;
+    interest.data.u64 = UINT64_C(0x4f5e6d7c8b9a1023);
+    if (epoll_ctl(epoll, EPOLL_CTL_ADD, descriptor, &interest) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 0) {
+        status = 4;
+        goto cleanup;
+    }
+    if (raw_syscall3(SYS_rename, (long)(uintptr_t)from,
+            (long)(uintptr_t)to, 0) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLIN ||
+        observed.data.u64 != interest.data.u64) {
+        status = 5;
+        goto cleanup;
+    }
+    receipt.rename_ready = observed.events;
+    length = read(descriptor, bytes, sizeof(bytes));
+    offset = 0;
+    if (length <= 0 ||
+        !consume_named_event(bytes, length, &offset, watch, IN_MOVED_FROM,
+            from, sizeof(from), &from_cookie) ||
+        !consume_named_event(bytes, length, &offset, watch, IN_MOVED_TO,
+            to, sizeof(to), &to_cookie) ||
+        offset != (size_t)length || from_cookie == 0 ||
+        from_cookie != to_cookie ||
+        epoll_wait(epoll, &observed, 1, 0) != 0) {
+        status = 6;
+        goto cleanup;
+    }
+    receipt.from_mask = IN_MOVED_FROM;
+    receipt.to_mask = IN_MOVED_TO;
+    receipt.matching_cookie = 1;
+    if (raw_syscall3(SYS_unlink, (long)(uintptr_t)to, 0, 0) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLIN) {
+        status = 7;
+        goto cleanup;
+    }
+    length = read(descriptor, bytes, sizeof(bytes));
+    offset = 0;
+    if (length <= 0 ||
+        !consume_named_event(bytes, length, &offset, watch, IN_DELETE,
+            to, sizeof(to), 0) || offset != (size_t)length) {
+        status = 8;
+        goto cleanup;
+    }
+    receipt.delete_mask = IN_DELETE;
+    if (inotify_rm_watch(descriptor, watch) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLIN) {
+        status = 9;
+        goto cleanup;
+    }
+    length = read(descriptor, bytes, sizeof(bytes));
+    if (length != (ssize_t)sizeof(ignored)) {
+        status = 10;
+        goto cleanup;
+    }
+    __builtin_memcpy(&ignored, bytes, sizeof(ignored));
+    if (ignored.wd != watch || ignored.mask != IN_IGNORED ||
+        ignored.cookie != 0 || ignored.len != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 0) {
+        status = 11;
+        goto cleanup;
+    }
+    receipt.ignored_mask = ignored.mask;
+    new_watch = inotify_add_watch(descriptor, ".", IN_CREATE);
+    if (new_watch < 0 || new_watch == watch ||
+        !expect_error(inotify_rm_watch(descriptor, watch), EINVAL)) {
+        status = 12;
+        goto cleanup;
+    }
+    receipt.new_watch = 1;
+    file = open(readded, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (file < 0 || close(file) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLIN) {
+        status = 13;
+        goto cleanup;
+    }
+    file = -1;
+    receipt.create_ready = observed.events;
+    length = read(descriptor, bytes, sizeof(bytes));
+    offset = 0;
+    if (length <= 0 ||
+        !consume_named_event(bytes, length, &offset, new_watch, IN_CREATE,
+            readded, sizeof(readded), 0) || offset != (size_t)length ||
+        epoll_wait(epoll, &observed, 1, 0) != 0) {
+        status = 14;
+        goto cleanup;
+    }
+    receipt.readd_create_mask = IN_CREATE;
+    if (write(STDOUT_FILENO, &receipt, sizeof(receipt)) !=
+        (ssize_t)sizeof(receipt)) status = 15;
+
+cleanup:
+    if (file >= 0 && close(file) != 0 && status == 0) status = 16;
+    if (descriptor >= 0 && close(descriptor) != 0 && status == 0) status = 17;
+    if (epoll >= 0 && close(epoll) != 0 && status == 0) status = 18;
+    return status;
+}
+
 int crabc_x86_64_event_descriptors_probe(void)
 {
     int status = check_eventfd();
@@ -797,6 +969,8 @@ int crabc_x86_64_event_descriptors_probe(void)
     if (status != 0) return 200 + status;
     status = check_inotify_epoll_lifecycle();
     if (status != 0) return 400 + status;
+    status = check_inotify_rename_and_readd();
+    if (status != 0) return 600 + status;
     /* The epoll argument filter is permanent for this process. */
     status = check_epoll();
     if (status != 0) return 100 + status;
