@@ -2419,6 +2419,22 @@ impl Mapping {
         #[cfg(target_arch = "x86_64")] warning: Option<HugePageWarningRoute<'_>>,
     ) -> Result<Self> {
         fault_before(FaultPoint::HugeMap)?;
+        #[cfg(test)]
+        if fault::take_one_synthetic_huge_map(hint) {
+            // SAFETY: the serial test owns this unique high hint, and the
+            // kernel either creates the entire virtual range there or fails.
+            // This ordinary map stands in for one successful huge primitive;
+            // its sole owner moves into `HugeOsAllocation` below.
+            let address = unsafe { crabc_core::mm::mmap_raw(
+                hint as *mut u8, HUGE_PAGE_SIZE, PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE,
+                -1, 0,
+            ) }?;
+            debug_assert_eq!(address.addr(), hint);
+            return Ok(Self { address, length: HUGE_PAGE_SIZE,
+                page_size: config.page_size(), initially_committed: true,
+                initially_zero: true, is_large: true, is_mapped: true });
+        }
         Self::map_unix_policy(
             policy,
             config,
@@ -5399,6 +5415,10 @@ pub(crate) mod fault {
     // dropped on a different test thread.
     static NEXT_EPOCH: AtomicUsize = AtomicUsize::new(1);
     static ACTIVE_EPOCH: AtomicUsize = AtomicUsize::new(0);
+    // One serial test may replace exactly one source huge primitive success
+    // with a virtual map; production builds cannot observe this state.
+    static SYNTHETIC_HUGE_ONCE: AtomicBool = AtomicBool::new(false);
+    static SYNTHETIC_HUGE_HINT: AtomicUsize = AtomicUsize::new(0);
     #[thread_local]
     static mut CURRENT_EPOCH: usize = 0;
     static SELECTED_POINT: AtomicUsize = AtomicUsize::new(ANY_POINT);
@@ -5871,6 +5891,14 @@ pub(crate) mod fault {
     }
 
     impl Guard {
+        pub(crate) fn enable_one_synthetic_huge_map(&self) {
+            SYNTHETIC_HUGE_HINT.store(0, Ordering::Release);
+            SYNTHETIC_HUGE_ONCE.store(true, Ordering::Release);
+        }
+
+        pub(crate) fn synthetic_huge_hint(&self) -> usize {
+            SYNTHETIC_HUGE_HINT.load(Ordering::Acquire)
+        }
         pub(crate) fn initial_reset_advice(&self) -> ResetAdviceScope<'_> {
             let previous = super::RESET_ADVICE.swap(super::MADV_FREE as usize, Ordering::AcqRel);
             ResetAdviceScope { previous, _guard: core::marker::PhantomData }
@@ -6201,6 +6229,8 @@ pub(crate) mod fault {
 
     impl Drop for Guard {
         fn drop(&mut self) {
+            SYNTHETIC_HUGE_ONCE.store(false, Ordering::Release);
+            SYNTHETIC_HUGE_HINT.store(0, Ordering::Release);
             ACTIVE_EPOCH.store(0, Ordering::Release);
             UNMAP_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
             ADVICE_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
@@ -6242,6 +6272,14 @@ pub(crate) mod fault {
     fn authorized() -> bool {
         let active = ACTIVE_EPOCH.load(Ordering::Acquire);
         active != 0 && current_epoch() == active
+    }
+
+    pub(crate) fn take_one_synthetic_huge_map(hint: usize) -> bool {
+        if !authorized() || !SYNTHETIC_HUGE_ONCE.swap(false, Ordering::AcqRel) {
+            return false;
+        }
+        SYNTHETIC_HUGE_HINT.store(hint, Ordering::Release);
+        true
     }
 
     #[inline]
@@ -10388,6 +10426,175 @@ mod tests {
             "unable to allocate huge OS page (error: 12 (0x0C), address: 0x{hint:012X}, size: 40000000 bytes)\n"
         ).as_bytes());
         true
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn emit_m2_huge_reservation_progress_c_rust_trace() {
+        struct ProgressWarnings {
+            subprocess: *const crate::subproc::MainSubprocess,
+            reserved_before: i64,
+            committed_before: i64,
+            fragments: AtomicUsize,
+            order: AtomicUsize,
+            after_first: AtomicUsize,
+        }
+
+        unsafe extern "C" fn capture(message: *const c_char, argument: *mut c_void) {
+            if message.is_null() || argument.is_null() { return; }
+            // SAFETY: the callback and its process owner remain live for the
+            // entire synchronous selected allocation and warning sequence.
+            let state = unsafe { &*(argument as *const ProgressWarnings) };
+            // SAFETY: the output owner supplies a NUL-terminated message
+            // valid until this synchronous callback returns.
+            let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
+            state.fragments.fetch_add(1, Ordering::AcqRel);
+            let retry = b"unable to allocate huge (1GiB) page, trying large (2MiB) pages instead (errno: 12)\n";
+            let terminal = b"unable to allocate huge OS page (error: 12 (0x0C), address: 0x200040000000, size: 40000000 bytes)\n";
+            let category = if bytes == retry { 1 } else if bytes == terminal { 2 } else { 0 };
+            if category != 0 {
+                state.order.fetch_update(Ordering::AcqRel, Ordering::Acquire,
+                    |old| Some(old * 10 + category)).unwrap();
+                // SAFETY: this callback only snapshots the retained process
+                // statistics; no allocation owner changes during delivery.
+                let stats = unsafe { &*state.subprocess }.vm_statistics().snapshot();
+                if stats.reserved_current - state.reserved_before == HUGE_PAGE_SIZE as i64
+                    && stats.committed_current - state.committed_before == HUGE_PAGE_SIZE as i64 {
+                    state.after_first.fetch_add(1, Ordering::AcqRel);
+                }
+            }
+        }
+
+        let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK.lock().unwrap();
+        let _environment_reset = VmPolicySourceEnvironmentReset;
+        let show_errors = b"mimalloc_show_errors=1\0";
+        let verbose = b"mimalloc_verbose=0\0";
+        let max_warnings = b"mimalloc_max_warnings=100\0";
+        let mut environment = [show_errors.as_ptr().cast(), verbose.as_ptr().cast(),
+            max_warnings.as_ptr().cast(), core::ptr::null()];
+        VM_POLICY_SOURCE_ENVIRONMENT.store(environment.as_mut_ptr(), Ordering::Release);
+        let mut output = OutputOwner::new(unexpected_default_diagnostic_output);
+        // SAFETY: these environment bytes and the callback state outlive the
+        // selected synchronous process-owned primitive and its diagnostics.
+        unsafe { output.initialize_source_options(vm_policy_source_environment_for_test) };
+        let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 0, true, false);
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let before = subprocess.vm_statistics().snapshot();
+        let warnings = ProgressWarnings {
+            subprocess, reserved_before: before.reserved_current,
+            committed_before: before.committed_current,
+            fragments: AtomicUsize::new(0), order: AtomicUsize::new(0),
+            after_first: AtomicUsize::new(0),
+        };
+        // SAFETY: the stack capture and its retained subprocess remain live
+        // until the synchronous selected allocation has finished delivery.
+        unsafe { output.register_output(Some(capture as OutputCallback),
+            &warnings as *const ProgressWarnings as *mut c_void) };
+        // Registration may replay one earlier process diagnostic. The source
+        // control counts only the selected huge allocation's callbacks.
+        warnings.fragments.store(0, Ordering::Release);
+        warnings.order.store(0, Ordering::Release);
+        warnings.after_first.store(0, Ordering::Release);
+        let fault = fault::install(fault::Plan::at_pair(
+            fault::Point::LargeMap, 1, fault::Point::LargeMap, 1, Errno::NOMEM));
+        fault.enable_one_synthetic_huge_map();
+        let mmap_capture = fault.capture_policy_mmaps();
+        let arena_before = subprocess.arena_statistics().snapshot().arena_count;
+        let outcome = HugeOsAllocation::allocate_for_process_with_source_warnings(
+            process, config, 3, -1, 0, None, HugePageWarningRoute::new(&output));
+        let failed_attempts = fault.observed();
+        let fallback_attempts = fault.secondary_observed();
+        let (attempts, attempt_count) = mmap_capture.attempts()
+            .expect("both failed huge attempts fit the bounded capture");
+        drop(mmap_capture);
+        let allocation = match outcome {
+            HugeOsAllocationOutcome::Allocated(owner) => owner,
+            _ => panic!("one mapped huge prefix must remain owned"),
+        };
+        let base = allocation.base().as_ptr();
+        let allocation_pages = allocation.page_count();
+        let allocation_size = allocation.size();
+        let memory = allocation.memory_id();
+        let stop = allocation.stop();
+        let after = subprocess.vm_statistics().snapshot();
+        let hint = fault.synthetic_huge_hint();
+        let mut residence = 0u8;
+        // SAFETY: the first page is in the live prefix allocation, while the
+        // following selected page was never mapped by the failed primitive.
+        let first_live = unsafe { crabc_core::mm::mincore_raw(base, 4096, &mut residence) }.is_ok();
+        let second_absent = unsafe {
+            crabc_core::mm::mincore_raw(base.wrapping_add(HUGE_PAGE_SIZE), 4096, &mut residence)
+        }.is_err();
+        fault.set(fault::Plan::disabled());
+        let ordinary_owner = NormalOsAllocation::allocate_aligned_base_for_process(
+            process, config, 4096, 4096, MapAccess::Committed, false, None)
+            .expect("independent ordinary source map");
+        let ordinary_memory = ordinary_owner.memory_id().unwrap();
+        let (mut ordinary, _) = ordinary_owner.into_mapping_and_memory();
+        let ordinary_base = ordinary.base().unwrap();
+        // SAFETY: the ordinary mapping remains live through this one-page
+        // residency query and has no surviving reference into it.
+        let ordinary_live = unsafe {
+            crabc_core::mm::mincore_raw(ordinary_base, 4096, &mut residence)
+        }.is_ok();
+        let with_ordinary = subprocess.vm_statistics().snapshot();
+        ordinary.unmap_for_process(process, 4096, false).expect("ordinary release");
+        // SAFETY: this checks the formerly owned address after its exact
+        // terminal unmap; it does not access or create a reference to memory.
+        let ordinary_gone = unsafe {
+            crabc_core::mm::mincore_raw(ordinary_base, 4096, &mut residence)
+        }.is_err();
+        assert!(allocation.release_for_process(&mut [0usize; 1]).is_ok(),
+            "huge prefix release");
+        // SAFETY: the huge owner has completed its sole exact page release;
+        // the prior address is queried without dereferencing it.
+        let huge_gone = unsafe {
+            crabc_core::mm::mincore_raw(base, 4096, &mut residence)
+        }.is_err();
+        let terminal = subprocess.vm_statistics().snapshot();
+        let values = [
+            ("pages", allocation_pages as i64), ("size_gib", allocation_size as i64 / HUGE_PAGE_SIZE as i64),
+            ("base_exact", (base.addr() == 32usize << 40) as i64),
+            ("memory_huge", (memory.kind() == crate::types::MemoryKind::OsHuge) as i64),
+            ("memory_pinned", memory.is_pinned() as i64),
+            ("memory_committed", memory.initially_committed() as i64),
+            ("memory_zero", memory.initially_zero() as i64),
+            ("huge_calls", (1 + attempt_count) as i64),
+            ("huge_1g_calls", (1 + attempts[..attempt_count].iter()
+                .filter(|attempt| attempt.flags & MAP_HUGE_1GB == MAP_HUGE_1GB).count()) as i64),
+            ("huge_2m_calls", attempts[..attempt_count].iter()
+                .filter(|attempt| attempt.flags & MAP_HUGE_2MB == MAP_HUGE_2MB).count() as i64),
+            ("exact_hints", ((hint == base.addr()) as usize + attempts[..attempt_count].iter()
+                .filter(|attempt| attempt.hint == Some(base.addr() + HUGE_PAGE_SIZE)
+                    && attempt.length == HUGE_PAGE_SIZE
+                    && attempt.protection == (PROT_READ | PROT_WRITE)).count()) as i64),
+            ("warning_fragments", warnings.fragments.load(Ordering::Acquire) as i64),
+            ("warning_order", warnings.order.load(Ordering::Acquire) as i64),
+            ("warning_after_first", warnings.after_first.load(Ordering::Acquire) as i64),
+            ("first_live", first_live as i64), ("second_absent", second_absent as i64),
+            ("reserved_after", (after.reserved_current - before.reserved_current) / HUGE_PAGE_SIZE as i64),
+            ("committed_after", (after.committed_current - before.committed_current) / HUGE_PAGE_SIZE as i64),
+            ("mmap_after", after.mmap_calls - before.mmap_calls),
+            ("arena_after", subprocess.arena_statistics().snapshot().arena_count - arena_before),
+            ("ordinary_live", ordinary_live as i64),
+            ("ordinary_memory", (ordinary_memory.kind() == crate::types::MemoryKind::Os) as i64),
+            ("reserved_with_ordinary", (with_ordinary.reserved_current - before.reserved_current == HUGE_PAGE_SIZE as i64 + 4096) as i64),
+            ("committed_with_ordinary", (with_ordinary.committed_current - before.committed_current == HUGE_PAGE_SIZE as i64 + 4096) as i64),
+            ("ordinary_gone", ordinary_gone as i64), ("huge_gone", huge_gone as i64),
+            ("reserved_terminal", terminal.reserved_current - before.reserved_current),
+            ("committed_terminal", terminal.committed_current - before.committed_current),
+            ("mmap_terminal", terminal.mmap_calls - before.mmap_calls),
+            ("arena_terminal", subprocess.arena_statistics().snapshot().arena_count - arena_before),
+        ];
+        for (field, value) in values {
+            std::println!("m2.huge_reservation_progress.{field}={value}");
+        }
+        assert_eq!(hint, base.addr());
+        assert_eq!(stop, HugeOsAllocationStop::PrimitiveMapFailed(Errno::NOMEM));
+        assert_eq!(failed_attempts, 2);
+        assert_eq!(fallback_attempts, 1);
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
