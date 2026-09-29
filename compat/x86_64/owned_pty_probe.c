@@ -345,18 +345,40 @@ static void forkpty_case(const char *which) {
     CHECK(pthread_atfork(prepare, parent, child) == 0);
     int baseline = descriptor_count(), m = -101;
     char name[32]; memset(name, 'X', sizeof name);
-    int expected = 0;
-    if (!strcmp(which, "pipe-failure")) { deny_syscall(SYS_pipe2, ENFILE); expected = ENFILE; }
+    struct winsize window = {23, 83, 720, 480}, observed;
+    struct termios settings, actual;
+    int setup_master, setup_slave;
+    CHECK(openpty(&setup_master, &setup_slave, 0, 0, 0) == 0);
+    CHECK(tcgetattr(setup_slave, &settings) == 0);
+    cfmakeraw(&settings);
+    settings.c_cc[VMIN] = 1;
+    settings.c_cc[VTIME] = 0;
+    CHECK(close(setup_master) == 0 && close(setup_slave) == 0);
+    int expected = 0, expected_prepare = 1, expected_name = 1;
+    if (!strcmp(which, "forkpty-master-failure")) {
+        deny_syscall(SYS_open, ENOSPC); deny_syscall(SYS_openat, ENOSPC);
+        expected = ENOSPC; expected_prepare = 0; expected_name = 0;
+    } else if (!strcmp(which, "forkpty-unlock-failure")) {
+        deny_argument(SYS_ioctl, 1, TIOCSPTLCK, EACCES);
+        expected = EACCES; expected_prepare = 0; expected_name = 0;
+    } else if (!strcmp(which, "forkpty-number-failure")) {
+        deny_argument(SYS_ioctl, 1, TIOCGPTN, EIO);
+        expected = EIO; expected_prepare = 0; expected_name = 0;
+    }
+    if (!strcmp(which, "pipe-failure")) { deny_syscall(SYS_pipe2, ENFILE); expected = ENFILE; expected_prepare = 0; }
     else if (!strcmp(which, "fork-failure")) { deny_syscall(SYS_fork, EAGAIN); deny_syscall(SYS_clone, EAGAIN); expected = EAGAIN; }
     else if (!strcmp(which, "child-login-failure")) { deny_argument(SYS_ioctl, 1, TIOCSCTTY, EACCES); expected = EACCES; }
-    struct winsize window = {23, 83, 720, 480}, observed;
-    pid_t pid = forkpty(&m, name, 0, &window);
+    pid_t pid = forkpty(&m, name, &settings, &window);
     if (!pid) {
         CHECK(m == -101 && prepare_calls == 1 && parent_calls == 0 && child_calls == 1);
         require_initial_mask(); require_cancel_state(PTHREAD_CANCEL_ENABLE);
         CHECK(getsid(0) == getpid() && tcgetsid(0) == getpid() && tcgetpgrp(0) == getpid());
         CHECK(same_descriptor(0, 1) && same_descriptor(1, 2) && !strcmp(ttyname(0), name));
         CHECK(ioctl(0, TIOCGWINSZ, &observed) == 0 && !memcmp(&window, &observed, sizeof window));
+        CHECK(tcgetattr(0, &actual) == 0);
+        CHECK(actual.c_iflag == settings.c_iflag && actual.c_oflag == settings.c_oflag &&
+              actual.c_cflag == settings.c_cflag && actual.c_lflag == settings.c_lflag &&
+              !memcmp(actual.c_cc, settings.c_cc, 19));
         CHECK(write(1, "child", 5) == 5); _exit(23);
     }
     if (expected) {
@@ -367,10 +389,16 @@ static void forkpty_case(const char *which) {
         CHECK(pid > 0 && m >= 0 && fcntl(m, F_GETFD) == 0);
         char data[5]; size_t offset = 0;
         while (offset < sizeof data) { ssize_t n = read(m, data + offset, sizeof data - offset); CHECK(n > 0); offset += n; }
-        CHECK(!memcmp(data, "child", sizeof data)); require_child(pid, 23); CHECK(close(m) == 0);
+        CHECK(!memcmp(data, "child", sizeof data)); require_child(pid, 23);
+        int reopened = open(name, O_RDWR | O_NOCTTY);
+        CHECK(reopened >= 0 && ioctl(reopened, TIOCGWINSZ, &observed) == 0 &&
+              !memcmp(&window, &observed, sizeof window));
+        CHECK(tcgetattr(reopened, &actual) == 0 && actual.c_lflag == settings.c_lflag);
+        CHECK(close(reopened) == 0 && close(m) == 0 && descriptor_count() == baseline);
     }
-    CHECK(!strncmp(name, "/dev/pts/", 9));
-    CHECK(prepare_calls == (expected == ENFILE ? 0 : 1) && parent_calls == prepare_calls && child_calls == 0);
+    if (expected_name) CHECK(!strncmp(name, "/dev/pts/", 9));
+    else CHECK(name[0] == 'X');
+    CHECK(prepare_calls == expected_prepare && parent_calls == prepare_calls && child_calls == 0);
     require_initial_mask(); require_cancel_state(PTHREAD_CANCEL_ENABLE);
     CHECK(pthread_sigmask(SIG_SETMASK, &saved, 0) == 0);
 }
@@ -449,7 +477,9 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[1], "login-failures")) login_failures_case();
     else if (!strcmp(argv[1], "session-conflict")) session_conflict_case();
     else if (!strcmp(argv[1], "forkpty") || !strcmp(argv[1], "pipe-failure") ||
-             !strcmp(argv[1], "fork-failure") || !strcmp(argv[1], "child-login-failure")) forkpty_case(argv[1]);
+             !strcmp(argv[1], "fork-failure") || !strcmp(argv[1], "child-login-failure") ||
+             !strcmp(argv[1], "forkpty-master-failure") || !strcmp(argv[1], "forkpty-unlock-failure") ||
+             !strcmp(argv[1], "forkpty-number-failure")) forkpty_case(argv[1]);
     else if (!strcmp(argv[1], "cancellation")) cancellation_case();
     else CHECK(0);
     puts("owned pty: PASS"); return 0;
