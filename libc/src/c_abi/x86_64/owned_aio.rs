@@ -474,30 +474,74 @@ unsafe fn queue_unlink_node(queue: *mut AioQueue, node: *mut AioListNode) {
     }
 }
 
-/// Advance a cancel cursor across its immediate successor under the queue lock.
+/// Advance a cancel cursor across the next worker under the queue lock.
 ///
-/// The successor stays linked and preserves real-worker order; only the
-/// cursor moves one step toward the tail. New requests are always prepended,
-/// so they remain before the cursor and cannot enter this call's finite set.
+/// Other cancelers' cursors can be interleaved ahead of that worker. Crossing
+/// only a cursor lets two concurrent cancelers swap indefinitely without
+/// processing a request. Skip those boundaries and move this cursor only when
+/// it crosses a real worker. New submissions prepend before every cursor, so
+/// they cannot enter this call's finite initial set. A null result means that
+/// this cursor has reached the end of that set.
 #[inline(always)]
-unsafe fn advance_cancel_cursor(queue: *mut AioQueue, cursor: *mut AioListNode) {
-    let node = unsafe { (*cursor).next };
-    debug_assert!(!node.is_null());
-    let before = unsafe { (*cursor).previous };
+unsafe fn advance_cancel_cursor(queue: *mut AioQueue, cursor: *mut AioListNode) -> *mut AioListNode {
+    let mut node = unsafe { (*cursor).next };
+    while !node.is_null() && unsafe { (*node).kind } == AIO_LIST_CANCEL_CURSOR {
+        node = unsafe { (*node).next };
+    }
+    if node.is_null() {
+        return null_mut();
+    }
+    debug_assert!(unsafe { (*node).kind } == AIO_LIST_WORKER);
     let after = unsafe { (*node).next };
     unsafe {
-        if !before.is_null() {
-            (*before).next = node;
-        } else {
-            (*queue).head = node;
-        }
-        (*node).previous = before;
+        queue_unlink_node(queue, cursor);
         (*node).next = cursor;
         (*cursor).previous = node;
         (*cursor).next = after;
         if !after.is_null() {
             (*after).previous = cursor;
         }
+    }
+    node
+}
+
+#[cfg(test)]
+mod cancel_cursor_tests {
+    use super::*;
+
+    #[test]
+    fn concurrent_cursors_each_cross_a_visible_worker() {
+        let mut queue = AioQueue {
+            descriptor: 0,
+            seekable: 0,
+            append: 0,
+            references: 0,
+            initialized: 0,
+            lock: PublicPthreadMutex { words: [0; 10] },
+            condition: PublicPthreadCond { words: [0; 12] },
+            head: null_mut(),
+        };
+        let mut worker = AioListNode::worker();
+        let mut older = AioCancelCursor { link: AioListNode::cancel_cursor() };
+        let mut newer = AioCancelCursor { link: AioListNode::cancel_cursor() };
+        let queue_ptr = ptr::addr_of_mut!(queue);
+        let worker_ptr = ptr::addr_of_mut!(worker);
+        let older_ptr = ptr::addr_of_mut!(older.link);
+        let newer_ptr = ptr::addr_of_mut!(newer.link);
+        unsafe {
+            queue_link_head(queue_ptr, worker_ptr);
+            queue_link_head(queue_ptr, older_ptr);
+            queue_link_head(queue_ptr, newer_ptr);
+            advance_cancel_cursor(queue_ptr, newer_ptr);
+            advance_cancel_cursor(queue_ptr, older_ptr);
+        }
+        assert_eq!(queue.head, worker_ptr, "each cancellation must cross the initial worker");
+        unsafe {
+            queue_unlink_node(queue_ptr, newer_ptr);
+            queue_unlink_node(queue_ptr, older_ptr);
+            queue_unlink_node(queue_ptr, worker_ptr);
+        }
+        assert!(queue.head.is_null());
     }
 }
 
@@ -1438,7 +1482,7 @@ static_archive_member! { aio_source {
             unsafe { queue_link_head(queue, cursor_link) };
 
             loop {
-                let node = unsafe { (*cursor_link).next };
+                let node = unsafe { advance_cancel_cursor(queue, cursor_link) };
                 if node.is_null() {
                     unsafe {
                         queue_unlink_node(queue, cursor_link);
@@ -1447,18 +1491,10 @@ static_archive_member! { aio_source {
                     break;
                 }
 
-                if unsafe { (*node).kind } == AIO_LIST_CANCEL_CURSOR {
-                    // Concurrent cancelers publish their own finite boundaries.
-                    // Advancing across one never crosses a real worker backward.
-                    unsafe { advance_cancel_cursor(queue, cursor_link) };
-                    continue;
-                }
-
                 debug_assert!(unsafe { (*node).kind } == AIO_LIST_WORKER);
                 let worker = unsafe { worker_from_link(node) };
                 let matches = control.is_null() || control == unsafe { (*worker).control };
                 if !matches {
-                    unsafe { advance_cancel_cursor(queue, cursor_link) };
                     continue;
                 }
 
@@ -1467,7 +1503,6 @@ static_archive_member! { aio_source {
                 // completion edge. A completed zero is already all-done and is
                 // only crossed by the bounded cursor.
                 let (pinned, request_cancellation) = unsafe { pin_worker_cancellation(worker) };
-                unsafe { advance_cancel_cursor(queue, cursor_link) };
                 if !pinned {
                     continue;
                 }
