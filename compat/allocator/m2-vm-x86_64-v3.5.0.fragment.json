@@ -239,7 +239,9 @@
           "explicit-arena-metadata-fault-c-rust-differential",
           "registered-arena-metadata-fault-c-rust-differential",
           "registered-arena-page-map-fault-c-rust-differential",
-          "registered-arena-page-map-double-fault-c-rust-differential"
+          "registered-arena-page-map-double-fault-c-rust-differential",
+          "process-owned-protect-fault-c-rust-differential",
+          "process-owned-unprotect-fault-c-rust-differential"
         ]
       },
       {
@@ -271,7 +273,9 @@
           "explicit-arena-metadata-fault-c-rust-differential",
           "registered-arena-metadata-fault-c-rust-differential",
           "registered-arena-page-map-fault-c-rust-differential",
-          "registered-arena-page-map-double-fault-c-rust-differential"
+          "registered-arena-page-map-double-fault-c-rust-differential",
+          "process-owned-protect-fault-c-rust-differential",
+          "process-owned-unprotect-fault-c-rust-differential"
         ]
       },
       {
@@ -300,7 +304,9 @@
           "explicit-arena-metadata-fault-c-rust-differential",
           "registered-arena-metadata-fault-c-rust-differential",
           "registered-arena-page-map-fault-c-rust-differential",
-          "registered-arena-page-map-double-fault-c-rust-differential"
+          "registered-arena-page-map-double-fault-c-rust-differential",
+          "process-owned-protect-fault-c-rust-differential",
+          "process-owned-unprotect-fault-c-rust-differential"
         ]
       },
       {
@@ -332,7 +338,9 @@
           "external-os-no-advice-policy-c-rust-differential",
           "external-os-reset-retry-c-rust-differential",
           "linux-os-reuse-contained-range-noop",
-          "native-protection-owner-and-retry"
+          "native-protection-owner-and-retry",
+          "process-owned-protect-fault-c-rust-differential",
+          "process-owned-unprotect-fault-c-rust-differential"
         ]
       },
       {
@@ -378,7 +386,9 @@
           "external-os-no-advice-policy-c-rust-differential",
           "external-os-reset-retry-c-rust-differential",
           "linux-os-reuse-contained-range-noop",
-          "native-protection-owner-and-retry"
+          "native-protection-owner-and-retry",
+          "process-owned-protect-fault-c-rust-differential",
+          "process-owned-unprotect-fault-c-rust-differential"
         ]
       },
       {
@@ -596,7 +606,9 @@
           "explicit-arena-metadata-fault-c-rust-differential",
           "registered-arena-metadata-fault-c-rust-differential",
           "registered-arena-page-map-fault-c-rust-differential",
-          "registered-arena-page-map-double-fault-c-rust-differential"
+          "registered-arena-page-map-double-fault-c-rust-differential",
+          "process-owned-protect-fault-c-rust-differential",
+          "process-owned-unprotect-fault-c-rust-differential"
         ],
         "missing_conditions": [
           "The selected normal-offset _mi_os_free_ex failure/retry, finite aligned-overmap source rows, and normal aligned allocation prefix/suffix trim-failure receivers compare full-MemoryId base/size, current/total counter timing, escaped ranges, source warning delivery, and raw-only release cleanup. Warning/error reporting beyond those receivers, huge MemoryId dispatch, unselected allocation transitions, and every other counter/caller route remain unqualified."
@@ -664,7 +676,9 @@
           "explicit-arena-metadata-fault-c-rust-differential",
           "registered-arena-metadata-fault-c-rust-differential",
           "registered-arena-page-map-fault-c-rust-differential",
-          "registered-arena-page-map-double-fault-c-rust-differential"
+          "registered-arena-page-map-double-fault-c-rust-differential",
+          "process-owned-protect-fault-c-rust-differential",
+          "process-owned-unprotect-fault-c-rust-differential"
         ],
         "missing_conditions": [
           "The selected normal process receiver proves one offset-prefix decommit success and one consumed advisory failure with the full owner retained, but option-driven large-page/hint policy across all regular and arena callers, general offset geometry, and source statistics/error behavior remain unqualified."
@@ -673,7 +687,7 @@
       {
         "id": "os-range-transition-policy-and-failure-owners",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/os.c:534-712 page alignment plus commit/decommit/reset/reuse/purge/protect/unprotect policy, custom commit callbacks, purge options, statistics, warning/error disposition, and retry ownership; src/arena.c:951-1125 initial on-demand page-prefix callback commitment and 1676-1884,2257-2282 external-memory initialization, callback-bearing arena commit, and committed-bitmap purge disposition; and src/page.c:630-705 direct on-demand page extension before free-list/capacity publication. The finite non-test Rust receiver index is: src/os.c:534-680 -> `Mapping::{commit_for_process,decommit_for_process,reset_for_process,purge_for_process}`; src/os.c:502-527 -> `NormalOsAllocation::allocate_aligned_at_offset_for_process` -> `Mapping::decommit_for_process`; src/arena.c:1676-1884 -> `process_owned_mapping_commit` -> `Mapping::{commit,decommit}`; src/page.c:630-705 -> `ProcessPageArenaLease::commit_page_area` -> `ProcessSharedArenaLease::commit_page_area` -> `Mapping::commit`; src/arena.c:951-1125 -> `OsAlignedPage::{allocate_for_process,allocate_on_demand_for_process,commit_initial_page_prefix}` -> `Mapping::commit_for_process`; and src/arena.c:2254-2282 -> `decommit_arena_range`. `OsAlignedPage::allocate` is the legacy unpaired singleton route, while `Mapping::{protect,unprotect,reuse}` and `VmProcess::commit_direct_page_area` have no non-test receiver in this configured process-paired tree. The selected native record drives `Mapping::reset_for_process` and the distinct `Mapping::purge_for_process` no-callback reset arm through the complete normal-release reset state sequence: EAGAIN retry before success, EAGAIN then MADV_FREE/EINVAL, one MADV_DONTNEED fallback success, isolated fallback EAGAIN error, and the persistent global DONTNEED state consumed by purge while the mapping and source counters remain retained. It also drives one process-paired regular mapping through every normal no-callback Linux purge decision/range cell: preloading, negative/zero/positive purge delay, purge_decommits, allow_reset, and empty/conservatively normalized/contained ranges. Separately it drives one source mi_manage_memory external range through metadata callback preparation, a commit=true zero result, and mi_arena_purge callback results true, false, and mixed-commit false over raw spans, then reaches an actual exclusive-heap on-demand page and executes the unchanged direct `mi_page_extend_free` fault/retry receiver. Three separate source-built process-owned external-span receivers compare contained MADV_DONTNEED purge success/EIO plus a mixed successful commit, failed mixed mprotect commit with exact warning-before-charge and retry, and contained MADV_FREE reset success/EIO with purge/reset statistics and warning timing; the external mapping remains caller-owned through terminal raw munmap.",
+        "source_scope": "src/os.c:534-712 page alignment plus commit/decommit/reset/reuse/purge/protect/unprotect policy, custom commit callbacks, purge options, statistics, warning/error disposition, and retry ownership; src/arena.c:951-1125 initial on-demand page-prefix callback commitment and 1676-1884,2257-2282 external-memory initialization, callback-bearing arena commit, and committed-bitmap purge disposition; and src/page.c:630-705 direct on-demand page extension before free-list/capacity publication. The finite non-test Rust receiver index is: src/os.c:534-680 -> `Mapping::{commit_for_process,decommit_for_process,reset_for_process,purge_for_process}`; src/os.c:502-527 -> `NormalOsAllocation::allocate_aligned_at_offset_for_process` -> `Mapping::decommit_for_process`; src/arena.c:1676-1884 -> `process_owned_mapping_commit` -> `Mapping::{commit,decommit}`; src/page.c:630-705 -> `ProcessPageArenaLease::commit_page_area` -> `ProcessSharedArenaLease::commit_page_area` -> `Mapping::commit`; src/arena.c:951-1125 -> `OsAlignedPage::{allocate_for_process,allocate_on_demand_for_process,commit_initial_page_prefix}` -> `Mapping::commit_for_process`; and src/arena.c:2254-2282 -> `decommit_arena_range`. `OsAlignedPage::allocate` is the legacy unpaired singleton route, while `Mapping::{protect,unprotect,reuse}` and `VmProcess::commit_direct_page_area` have no non-test receiver in this configured process-paired tree. The selected native record drives `Mapping::reset_for_process` and the distinct `Mapping::purge_for_process` no-callback reset arm through the complete normal-release reset state sequence: EAGAIN retry before success, EAGAIN then MADV_FREE/EINVAL, one MADV_DONTNEED fallback success, isolated fallback EAGAIN error, and the persistent global DONTNEED state consumed by purge while the mapping and source counters remain retained. It also drives one process-paired regular mapping through every normal no-callback Linux purge decision/range cell: preloading, negative/zero/positive purge delay, purge_decommits, allow_reset, and empty/conservatively normalized/contained ranges. Separately it drives one source mi_manage_memory external range through metadata callback preparation, a commit=true zero result, and mi_arena_purge callback results true, false, and mixed-commit false over raw spans, then reaches an actual exclusive-heap on-demand page and executes the unchanged direct `mi_page_extend_free` fault/retry receiver. Three separate source-built process-owned external-span receivers compare contained MADV_DONTNEED purge success/EIO plus a mixed successful commit, failed mixed mprotect commit with exact warning-before-charge and retry, and contained MADV_FREE reset success/EIO with purge/reset statistics and warning timing; the external mapping remains caller-owned through terminal raw munmap. Two direct source-built process-owned protection receivers compare a selected failed `mprotect` protect or unprotect operation, exact warning-time accounting, unchanged mapping ownership, same-range retry, and terminal release; they do not establish a non-test release-profile caller.",
         "source_anchors": [
           {
             "member": "src/os.c",
@@ -725,7 +739,9 @@
           "external-os-reset-retry-c-rust-differential",
           "linux-os-reuse-contained-range-noop",
           "native-protection-owner-and-retry",
-          "normal-page-extension-direct-commit-failure-and-retry"
+          "normal-page-extension-direct-commit-failure-and-retry",
+          "process-owned-protect-fault-c-rust-differential",
+          "process-owned-unprotect-fault-c-rust-differential"
         ],
         "missing_conditions": [
           "All dependency-ready ordinary VM recipients in the indexed normal-release set are already bounded by this record: the regular process Mapping transitions, offset-prefix decommit, selected external commit callback, and direct page-area commit. Within that permitted receiver set, `Mapping::purge_for_process` is the only non-test caller of `Mapping::reset_for_process`; there is no additional reset receiver to generalize across.",
@@ -837,7 +853,7 @@
       {
         "id": "unix-commit-decommit-reset-reuse-and-protect",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/prim/unix/prim.c:521-605 mprotect commit/protect, Linux decommit profile, reset EAGAIN loop/global MADV_FREE-to-MADV_DONTNEED fallback, and reuse semantics. Its source-indexed normal-release Rust receivers are `Mapping::{commit,decommit,reset_for_process,purge_for_process,protect,unprotect,reuse}`, the offset-prefix `NormalOsAllocation::allocate_aligned_at_offset_for_process`, `process_owned_mapping_commit`, and `ProcessPageArenaLease::commit_page_area`/`ProcessSharedArenaLease::commit_page_area`; `Mapping::{commit,decommit,reset_for_process,purge_for_process}` have the indexed non-test transition uses, while the selected external callback/page-area routes own their distinct direct uses. The selected native record faults unchanged imported mprotect/madvise calls around one regular process-owned mapping, its direct reset receiver, its distinct no-callback purge receiver, an offset-prefix advice receiver, and the direct source `mi_page_extend_free` external-page commit receiver. Its reset record proves EAGAIN-before-success, EAGAIN then FREE/EINVAL, exactly one DONTNEED fallback, fallback EAGAIN failure, and persistent DONTNEED across the two actual reset/purge receivers. Separate direct external-span C/Rust receivers compare contained MADV_DONTNEED and MADV_FREE success/EIO advice, a mixed successful commit, and failed mixed mprotect commit with explicit retry; each retains caller ownership until terminal raw unmap and records exact warning/statistics order. A separate source-built regular-arena matrix isolates EIO, EAGAIN, and EINVAL in separate processes and compares the exact same-slice advice sequence, range, counters, committed/purge/free bitmap state, and warning order across two purges. These records leave the mappings live.",
+        "source_scope": "src/prim/unix/prim.c:521-605 mprotect commit/protect, Linux decommit profile, reset EAGAIN loop/global MADV_FREE-to-MADV_DONTNEED fallback, and reuse semantics. Its source-indexed normal-release Rust receivers are `Mapping::{commit,decommit,reset_for_process,purge_for_process,protect,unprotect,reuse}`, the offset-prefix `NormalOsAllocation::allocate_aligned_at_offset_for_process`, `process_owned_mapping_commit`, and `ProcessPageArenaLease::commit_page_area`/`ProcessSharedArenaLease::commit_page_area`; `Mapping::{commit,decommit,reset_for_process,purge_for_process}` have the indexed non-test transition uses, while the selected external callback/page-area routes own their distinct direct uses. The selected native record faults unchanged imported mprotect/madvise calls around one regular process-owned mapping, its direct reset receiver, its distinct no-callback purge receiver, an offset-prefix advice receiver, and the direct source `mi_page_extend_free` external-page commit receiver. Its reset record proves EAGAIN-before-success, EAGAIN then FREE/EINVAL, exactly one DONTNEED fallback, fallback EAGAIN failure, and persistent DONTNEED across the two actual reset/purge receivers. Separate direct external-span C/Rust receivers compare contained MADV_DONTNEED and MADV_FREE success/EIO advice, a mixed successful commit, and failed mixed mprotect commit with explicit retry; each retains caller ownership until terminal raw unmap and records exact warning/statistics order. A separate source-built regular-arena matrix isolates EIO, EAGAIN, and EINVAL in separate processes and compares the exact same-slice advice sequence, range, counters, committed/purge/free bitmap state, and warning order across two purges. These records leave the mappings live. Two direct source-built process-owned protection receivers compare a selected failed `mprotect` protect or unprotect operation, exact warning-time accounting, unchanged mapping ownership, same-range retry, and terminal release; they do not establish a non-test release-profile caller.",
         "source_anchors": [
           {
             "member": "src/prim/unix/prim.c",
@@ -860,7 +876,9 @@
           "external-os-reset-retry-c-rust-differential",
           "linux-os-reuse-contained-range-noop",
           "native-protection-owner-and-retry",
-          "normal-page-extension-direct-commit-failure-and-retry"
+          "normal-page-extension-direct-commit-failure-and-retry",
+          "process-owned-protect-fault-c-rust-differential",
+          "process-owned-unprotect-fault-c-rust-differential"
         ],
         "missing_conditions": [
           "The normal-release reset state machine is complete for its only permitted receivers: direct `Mapping::reset_for_process` and the distinct `Mapping::purge_for_process` reset arm. `Mapping::{protect,unprotect,reuse}` have no non-test receiving caller in this configured tree; their existing direct primitive checks do not claim an absent higher owner.",
@@ -1243,6 +1261,18 @@
         "expected_passed_test_count": 1
       },
       {
+        "id": "process-owned-protect-fault-c-rust-differential",
+        "kind": "c-rust-process-owned-protection-fault-differential",
+        "target": "compat/allocator/m2_process_owned_protect_fault_x86_64.py",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "process-owned-unprotect-fault-c-rust-differential",
+        "kind": "c-rust-process-owned-protection-fault-differential",
+        "target": "compat/allocator/m2_process_owned_unprotect_fault_x86_64.py",
+        "expected_passed_test_count": 1
+      },
+      {
         "id": "normal-page-extension-direct-commit-failure-and-retry",
         "kind": "rust-unit",
         "target": "main_heap_page::tests::ordinary_reserved_medium_on_demand_commit_before_reuse",
@@ -1250,7 +1280,7 @@
       }
     ],
     "remaining_conditions": [
-      "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, unmap, and reuse callers and policy beyond the selected fixed regular mapping lifecycle, finite normal no-callback purge decision/range matrix, selected ordinary/external direct page-extension receivers and external-span commit/purge/reset fault receivers, normal-offset prefix-decommit and full-MemoryId release failure/retry, child-isolated THP transactions, one child-isolated 128-MiB first-arena large-page fallback, and the arena-reservation lifecycle differential's process-owned arena callers (a failed claim commit that reserves a fresh arena and recommits in the first, immediate-purge decommit failure/success/mixed commitment, reset EAGAIN retry/warning-only error/not-fully-committed skip/EINVAL fallback, a failed delayed-purge decommit that consumes its schedule without retry, and a fresh arena whose metadata commit and cleanup `_mi_os_free_ex` unmap both fail, which leaks the mapping while later reservations proceed), the fresh OS page caller beyond the separately qualified on-demand metadata/first-prefix, external callback-refusal, direct failed-metadata-commit successful/failed-cleanup, failed block-commit with failed rollback unmap, successful publication/terminal-free, selected failed lazy PageMap registration after both commits, and selected published terminal-unmap-failure subsets (unselected metadata/PageMap publication failures and other terminal-release callers, each requiring exact accounting and ownership evidence), and the arena-destruction differential's failed parent and huge-kind releases in `_mi_arenas_unsafe_destroy_all`, including pinned-C failure ownership and retry evidence for every source branch. Protect/unprotect have no caller in the selected release profile (only MI_SECURE>=5 guard pages and MI_GUARDED blocks call them); those callers belong to the M7 secure and guarded profiles.",
+      "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, unmap, and reuse callers and policy beyond the selected fixed regular mapping lifecycle, finite normal no-callback purge decision/range matrix, selected ordinary/external direct page-extension receivers and external-span commit/purge/reset fault receivers, normal-offset prefix-decommit and full-MemoryId release failure/retry, child-isolated THP transactions, one child-isolated 128-MiB first-arena large-page fallback, and the arena-reservation lifecycle differential's process-owned arena callers (a failed claim commit that reserves a fresh arena and recommits in the first, immediate-purge decommit failure/success/mixed commitment, reset EAGAIN retry/warning-only error/not-fully-committed skip/EINVAL fallback, a failed delayed-purge decommit that consumes its schedule without retry, and a fresh arena whose metadata commit and cleanup `_mi_os_free_ex` unmap both fail, which leaks the mapping while later reservations proceed), the fresh OS page caller beyond the separately qualified on-demand metadata/first-prefix, external callback-refusal, direct failed-metadata-commit successful/failed-cleanup, failed block-commit with failed rollback unmap, successful publication/terminal-free, selected failed lazy PageMap registration after both commits, and selected published terminal-unmap-failure subsets (unselected metadata/PageMap publication failures and other terminal-release callers, each requiring exact accounting and ownership evidence), and the arena-destruction differential's failed parent and huge-kind releases in `_mi_arenas_unsafe_destroy_all`, including pinned-C failure ownership and retry evidence for every source branch. The direct process-owned protect and unprotect failure/retry receivers cover only selected source transitions. Protect/unprotect still have no non-test caller in the selected release profile (only MI_SECURE>=5 guard pages and MI_GUARDED blocks call them); those callers belong to the M7 secure and guarded profiles.",
       "Complete the aligned-overmap substrate beyond the selected native direct map, direct-map fallback, prefix-zero/suffix-only geometry, and direct/prefix/suffix success and Reserved/Committed cleanup-failure matrix, now an equality C/Rust differential of the source `mi_os_prim_free` leak-and-continue rule (fault plan: both sides force a direct candidate, prefix, and suffix release, C through MAP_FIXED_NOREPLACE targets and Rust through its full-trim test geometry, and fail the chosen release ordinal 1, 2, or 3), plus a normal aligned allocation receiver under failed prefix/suffix trim and final free with MemoryId, escaped range, warning order/timing, counters, and raw-only cleanup. The legacy processless OS-page claim now has one source-differentiated failed-suffix and terminal raw-retry receiver with exact mapping, MemoryId, statistics, and warning timing. Other process OS-page cases, metadata backing, and unselected explicit or policy-first arena reservations still need pinned-C caller differentials under trim failure, as do broader callback/counter paths.",
       "Complete aligned-hint policy beyond the finite normal-release cursor, virtual-address eligibility, strict threshold, one controlled CAS schedule, and selected pinned-C debug/secure source profiles plus one admitted wrapped direct caller: actual secure/debug runtime configuration, ambient source options/attachments, source warning/error reporting, every caller, and broader contention remain required. Also complete Linux THP failed-prctl and production-caller behavior beyond the selected direct process-owned MADV_HUGEPAGE success, EIO, successful disable-policy, and inherited-disable advice receivers, MAP_HUGETLB success, physical huge-page residency, and their native differential evidence.",
       "Complete huge-page reservation/free/progress/timeout behavior, high-address hints, mbind and NUMA option/arena-placement policy, plus all associated failure ownership and diagnostics.",

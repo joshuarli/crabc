@@ -13483,12 +13483,62 @@ M2_X86_64_REGISTERED_ARENA_PAGE_MAP_RECEIVERS = {
         "scope": "pinned-c-rust-two-consecutive-registered-arena-page-map-top-commit-faults-warning-order-retry-and-terminal-destroy",
     },
 }
+M2_X86_64_PROCESS_PROTECTION_RECEIVERS = {
+    "process-owned-protect-fault-c-rust-differential": {
+        "artifact": "m2-process-owned-protect-fault",
+        "target": "compat/allocator/m2_process_owned_protect_fault_x86_64.py",
+        "kind": "c-rust-process-owned-protection-fault-differential",
+        "cases": (),
+        "fields": {
+            "allocated", "memid_os", "page_size", "mapping_size", "request_offset",
+            "request_size", "failed_protect", "writable_after_failure", "retry_protect",
+            "mapped_while_protected", "unprotected", "writable_after_unprotect",
+            "protection_calls", "protect1_offset", "protect1_length", "protect1_flags",
+            "protect2_offset", "protect2_length", "protect2_flags", "unprotect_offset",
+            "unprotect_length", "unprotect_flags", "warning_order", "warning_count",
+            "warning_errno", "warning_text_exact", "warning_offset", "warning_size",
+            "warning_protection_calls", "reserved_at_map", "committed_at_map",
+            "commits_at_map", "mmaps_at_map", "warning_reserved", "warning_committed",
+            "warning_commit_calls", "warning_mmap_calls", "reserved_after_protection",
+            "committed_after_protection", "commits_after_protection",
+            "mmaps_after_protection", "terminal_reserved", "terminal_committed",
+            "terminal_unmapped",
+        },
+        "commit_fields": set(),
+        "scope": "pinned-c-rust-direct-process-owned-protect-fault-same-range-retry-warning-time-accounting-and-terminal-release",
+    },
+    "process-owned-unprotect-fault-c-rust-differential": {
+        "artifact": "m2-process-owned-unprotect-fault",
+        "target": "compat/allocator/m2_process_owned_unprotect_fault_x86_64.py",
+        "kind": "c-rust-process-owned-protection-fault-differential",
+        "cases": (),
+        "fields": {
+            "allocated", "memid_os", "page_size", "mapping_size", "request_offset",
+            "request_size", "initially_protected", "mapped_while_protected",
+            "failed_unprotect", "mapped_after_failure", "retry_unprotect",
+            "writable_after_retry", "protection_calls", "protect_offset", "protect_length",
+            "protect_flags", "unprotect1_offset", "unprotect1_length", "unprotect1_flags",
+            "unprotect2_offset", "unprotect2_length", "unprotect2_flags",
+            "warning_order", "warning_count", "warning_errno", "warning_text_exact",
+            "warning_offset", "warning_size", "warning_protection_calls",
+            "reserved_at_map", "committed_at_map", "commits_at_map", "mmaps_at_map",
+            "warning_reserved", "warning_committed", "warning_commit_calls",
+            "warning_mmap_calls", "reserved_after_protection",
+            "committed_after_protection", "commits_after_protection",
+            "mmaps_after_protection", "terminal_reserved", "terminal_committed",
+            "terminal_unmapped",
+        },
+        "commit_fields": set(),
+        "scope": "pinned-c-rust-direct-process-owned-unprotect-fault-same-range-retry-warning-time-accounting-and-terminal-release",
+    },
+}
 M2_X86_64_VM_PROCESS_RECEIVERS = {
     **{check_id: {**receiver, "kind": "c-rust-process-external-os-differential"}
        for check_id, receiver in M2_X86_64_EXTERNAL_OS_RECEIVERS.items()},
     **M2_X86_64_EXPLICIT_ARENA_TRIM_RECEIVERS,
     **M2_X86_64_EXPLICIT_ARENA_METADATA_FAULT_RECEIVERS,
     **M2_X86_64_REGISTERED_ARENA_PAGE_MAP_RECEIVERS,
+    **M2_X86_64_PROCESS_PROTECTION_RECEIVERS,
 }
 
 
@@ -14045,6 +14095,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-explicit-arena-trim-differential",
                     "c-rust-explicit-arena-metadata-fault-differential",
                     "c-rust-registered-arena-page-map-fault-differential",
+                    "c-rust-process-owned-protection-fault-differential",
                     "c-rust-second-arena-reset-advice-matrix",
                     "c-rust-process-arena-purge-differential",
                     "c-rust-arena-lifecycle-differential",
@@ -14232,6 +14283,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                 "c-rust-explicit-arena-trim-differential",
                 "c-rust-explicit-arena-metadata-fault-differential",
                 "c-rust-registered-arena-page-map-fault-differential",
+                "c-rust-process-owned-protection-fault-differential",
             }:
                 receiver = M2_X86_64_VM_PROCESS_RECEIVERS.get(raw_check["id"])
                 if (

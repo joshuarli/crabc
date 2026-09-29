@@ -317,6 +317,16 @@ CHECKS = (
         "os::tests::native_protection_failures_preserve_mapping_owner_and_retry",
     ),
     (
+        "process-owned-protect-fault-c-rust-differential",
+        "c-rust-process-owned-protection-fault-differential",
+        "compat/allocator/m2_process_owned_protect_fault_x86_64.py",
+    ),
+    (
+        "process-owned-unprotect-fault-c-rust-differential",
+        "c-rust-process-owned-protection-fault-differential",
+        "compat/allocator/m2_process_owned_unprotect_fault_x86_64.py",
+    ),
+    (
         "normal-page-extension-direct-commit-failure-and-retry",
         "rust-unit",
         "main_heap_page::tests::ordinary_reserved_medium_on_demand_commit_before_reuse",
@@ -342,6 +352,10 @@ EXPLICIT_ARENA_SOURCE_CHECK_IDS = (
     "registered-arena-metadata-fault-c-rust-differential",
     "registered-arena-page-map-fault-c-rust-differential",
     "registered-arena-page-map-double-fault-c-rust-differential",
+)
+PROCESS_PROTECTION_SOURCE_CHECK_IDS = (
+    "process-owned-protect-fault-c-rust-differential",
+    "process-owned-unprotect-fault-c-rust-differential",
 )
 THP_PROCESS_CHECK_IDS = (
     "process-thp-madvise-success-c-rust-differential",
@@ -826,6 +840,32 @@ def load_fragment(path: Path) -> dict[str, Any]:
             check_id not in branch["evidence_check_ids"] for check_id in EXTERNAL_OS_CHECK_IDS
         ):
             raise _error("external OS transition lost its policy branch or open frontier")
+
+    for definition_id in (
+        "os-free-and-full-memory-id-release",
+        "os-regular-and-aligned-map-owners",
+        "os-normal-aligned-and-offset-owners",
+        "os-fixed-range-transitions",
+        "unix-fixed-transition-primitives",
+    ):
+        definition = next((item for item in definitions if item["id"] == definition_id), None)
+        if definition is None or any(
+            check_id not in definition["evidence_check_ids"]
+            for check_id in PROCESS_PROTECTION_SOURCE_CHECK_IDS
+        ):
+            raise _error("process-owned protection receiver lost its allocation, transition, or release source boundary")
+    for branch_id in (
+        "os-free-and-statistics-events",
+        "os-normal-aligned-and-offset-allocation",
+        "os-range-transition-policy-and-failure-owners",
+        "unix-commit-decommit-reset-reuse-and-protect",
+    ):
+        branch = next((item for item in branches if item["id"] == branch_id), None)
+        if branch is None or branch["disposition"] != "partial-fixed-profile" or any(
+            check_id not in branch["evidence_check_ids"]
+            for check_id in PROCESS_PROTECTION_SOURCE_CHECK_IDS
+        ):
+            raise _error("process-owned protection receiver lost its source branch or open frontier")
 
     for definition_id in (
         "os-free-and-full-memory-id-release",

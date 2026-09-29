@@ -63,6 +63,8 @@ EXPECTED_VM_CHECK_IDS = (
     "linux-os-reuse-contained-range-noop",
     "fixed-no-option-numa-cache-and-current-node-normalization",
     "native-protection-owner-and-retry",
+    "process-owned-protect-fault-c-rust-differential",
+    "process-owned-unprotect-fault-c-rust-differential",
     "normal-page-extension-direct-commit-failure-and-retry",
 )
 
@@ -716,6 +718,31 @@ class NativeVmAssemblyTests(unittest.TestCase):
         )
         for section, row_id in bindings:
             for check_id in producer.EXTERNAL_OS_CHECK_IDS:
+                with self.subTest(section=section, row_id=row_id, check_id=check_id):
+                    changed = copy.deepcopy(original)
+                    row = next(item for item in changed["component"][section] if item["id"] == row_id)
+                    row["evidence_check_ids"].remove(check_id)
+                    source = mock.Mock()
+                    source.read_text.return_value = json.dumps(changed)
+                    with self.assertRaises(ValueError):
+                        producer.load_fragment(source)
+
+    def test_process_protection_checks_keep_transition_and_owner_source_anchors(self):
+        producer = RUNNER._m2_x86_64_vm_producer()
+        original = RUNNER.read_json(RUNNER.M2_X86_64_VM_FRAGMENT)
+        bindings = (
+            ("bounded_source_definitions", "os-free-and-full-memory-id-release"),
+            ("bounded_source_definitions", "os-regular-and-aligned-map-owners"),
+            ("bounded_source_definitions", "os-normal-aligned-and-offset-owners"),
+            ("bounded_source_definitions", "os-fixed-range-transitions"),
+            ("bounded_source_definitions", "unix-fixed-transition-primitives"),
+            ("branch_matrix", "os-free-and-statistics-events"),
+            ("branch_matrix", "os-normal-aligned-and-offset-allocation"),
+            ("branch_matrix", "os-range-transition-policy-and-failure-owners"),
+            ("branch_matrix", "unix-commit-decommit-reset-reuse-and-protect"),
+        )
+        for section, row_id in bindings:
+            for check_id in producer.PROCESS_PROTECTION_SOURCE_CHECK_IDS:
                 with self.subTest(section=section, row_id=row_id, check_id=check_id):
                     changed = copy.deepcopy(original)
                     row = next(item for item in changed["component"][section] if item["id"] == row_id)
@@ -1386,6 +1413,8 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "registered-arena-metadata-fault-c-rust-differential",
                 "registered-arena-page-map-fault-c-rust-differential",
                 "registered-arena-page-map-double-fault-c-rust-differential",
+                "process-owned-protect-fault-c-rust-differential",
+                "process-owned-unprotect-fault-c-rust-differential",
             },
             {record["id"] for record in vm_records},
         )
