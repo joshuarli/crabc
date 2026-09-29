@@ -576,7 +576,8 @@ PRODUCERS = (
     CompanionProducer(
         "locale_alias_contract_report",
         lambda c, r, o: (["python3", "-B", "compat/x86_64/locale_alias_contract_receipt.py", "collect",
-                          "--output", str(o)], {}),
+                          "--output", str(o), "--static-product", str(c.static_product),
+                          "--dynamic-product", str(c.dynamic_product)], {}),
         _in),
     CompanionProducer(
         "bsd_random_receipt_report",

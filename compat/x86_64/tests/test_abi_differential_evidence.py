@@ -110,6 +110,13 @@ class AbiDifferentialEvidenceTests(unittest.TestCase):
         self.assertNotIn("--static-preparation", argv)
         self.assertEqual(environment, {})
 
+    def test_locale_producer_runs_against_the_selected_product_pair(self) -> None:
+        producer = next(row for row in evidence.PRODUCERS if row.keyword == "locale_alias_contract_report")
+        argv, environment = producer.command(self.cohort(), {}, self.work / "locale")
+        self.assertEqual(argv[argv.index("--static-product") + 1], str(self.work / "static"))
+        self.assertEqual(argv[argv.index("--dynamic-product") + 1], str(self.work / "dynamic"))
+        self.assertEqual(environment, {})
+
     def producer(self, keyword: str, *, fails: bool = False, requires: tuple[str, ...] = ()) -> "evidence.CompanionProducer":
         def command(_cohort, reports, output):
             for name in requires:
