@@ -897,6 +897,60 @@ class M7ErrorSitesTraceTests(unittest.TestCase):
 
 
 class M7OptionEffectsTraceTests(unittest.TestCase):
+    def commitment_trace(self) -> dict[str, str]:
+        return {
+            "profile.control.overcommit": "0",
+            "profile.startup.messages": "",
+            "profile.initial.max_vabits": "44,2,44",
+            "profile.initial.pagemap_commit": "0,2,0",
+            "profile.initial.mapping_count": "1",
+            "profile.initial.mapping": "331776,0,34",
+            "profile.initial.page_map": "266240,16890,33274",
+            "profile.initial.commit_calls": "2",
+            "profile.initial.protection.0": "0,135168,3",
+            "profile.initial.protection.1": "266240,65536,3",
+            "profile.late_environment.pagemap_commit": "0,2,0",
+            "profile.late_environment.max_vabits": "44,2,44",
+            "profile.late_environment.page_map": "266240,16890,33274",
+            "profile.late_environment.mapping_count": "1",
+            "profile.late_environment.commit_calls": "2",
+            "profile.late_set.pagemap_commit": "1,2,1",
+            "profile.late_set.max_vabits": "43,2,43",
+            "profile.late_set.mapping_count": "1",
+            "profile.late_set.commit_calls": "2",
+            "profile.late_set.page_map": "266240,16890,33274",
+            "profile.root_stable": "1",
+        }
+
+    def test_pagemap_commitment_trace_requires_actual_mapping_and_late_reads(self) -> None:
+        trace = self.commitment_trace()
+        gate.require_complete_option_profile_trace(trace, "trace")
+        for missing in ("profile.initial.mapping", "profile.initial.protection.1",
+                        "profile.late_environment.pagemap_commit", "profile.root_stable"):
+            incomplete = dict(trace)
+            del incomplete[missing]
+            with self.assertRaises(harness.HarnessError):
+                gate.require_complete_option_profile_trace(incomplete, "trace")
+
+    def test_pagemap_commitment_trace_rejects_wrong_decisions_and_late_remapping(self) -> None:
+        trace = self.commitment_trace()
+        for key, value in (
+            ("profile.initial.mapping", "331776,3,34"),
+            ("profile.initial.protection.0", "0,135168,0"),
+            ("profile.initial.protection.1", "266240,65536,0"),
+            ("profile.late_environment.pagemap_commit", "1,2,1"),
+            ("profile.late_environment.max_vabits", "43,2,43"),
+            ("profile.late_environment.mapping_count", "2"),
+            ("profile.late_environment.commit_calls", "3"),
+            ("profile.late_environment.page_map", "266240,33274,33274"),
+            ("profile.late_set.mapping_count", "2"),
+            ("profile.late_set.commit_calls", "3"),
+            ("profile.late_set.page_map", "266240,33274,33274"),
+            ("profile.root_stable", "0"),
+        ):
+            with self.subTest(key=key), self.assertRaises(harness.HarnessError):
+                gate.require_complete_option_profile_trace({**trace, key: value}, "trace")
+
     def trace(self, *, drop: str | None = None) -> str:
         lines = [gate.OPTION_EFFECTS_TRACE_BEGIN]
         lines += [f"{family}.0=1" for family in gate.OPTION_EFFECT_FAMILIES if family != drop]

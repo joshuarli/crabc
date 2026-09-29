@@ -5405,6 +5405,131 @@ mod tests {
         std::println!("CRABC_MI_M7_OPTIONS_TRACE_END");
     }
 
+    #[cfg(feature = "native-runtime-test-audit")]
+    #[test]
+    fn source_pagemap_option_profile_trace_for_pinned_c_comparison() {
+        crate::test_process::run_in_fresh_process(
+            "diagnostic_output::tests::source_pagemap_option_profile_trace_for_pinned_c_comparison",
+            || {
+                use crate::os::{MemoryConfig, PageSize, StartupInput};
+                use crate::process_init::ProcessMainInitializationStorage;
+                let _environment_guard = DIAGNOSTIC_ENVIRONMENT_TEST_LOCK.lock().unwrap();
+                let _output_guard = default_stderr_test_guard();
+                reset_default_stderr_capture();
+                let mut entries = std::vec::Vec::new();
+                for (control, option) in [
+                    ("CRABC_MI_OPTION_MAX_VABITS", "mimalloc_max_vabits"),
+                    ("CRABC_MI_OPTION_PAGEMAP_COMMIT", "mimalloc_pagemap_commit"),
+                    ("CRABC_MI_OPTION_SHOW_ERRORS", "mimalloc_show_errors"),
+                ] {
+                    if let Ok(value) = std::env::var(control) {
+                        if value != "absent" {
+                            entries.push(std::format!("{option}={value}\0").into_bytes());
+                        }
+                    }
+                }
+                // The source reader can retry an unavailable value after
+                // startup, so every foreign entry remains process-live.
+                let entries = std::boxed::Box::leak(std::boxed::Box::new(entries));
+                install_option_trace_environment(entries);
+                let overcommit = std::env::var("CRABC_MI_OPTION_CAP_OVERCOMMIT")
+                    .map_or(false, |value| value == "1");
+                let page_size = PageSize::new(
+                    crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ).unwrap(),
+                ).unwrap();
+                let observed = MemoryConfig::detect(StartupInput::new(page_size));
+                let config = MemoryConfig::from_observations(
+                    page_size, observed.physical_memory_in_kib(), overcommit,
+                    observed.has_transparent_huge_pages(),
+                );
+                let fault = crate::os::fault::install(crate::os::fault::Plan::at(
+                    crate::os::fault::Point::Commit, usize::MAX, crabc_core::Errno::NOMEM,
+                ));
+                let maps = fault.capture_policy_mmaps();
+                let protections = fault.capture_protection_ranges();
+                // SAFETY: this exact child owns startup; the leaked foreign
+                // environment and serialized FILE capture outlive the owner.
+                let inputs = unsafe { super::ProcessDiagnosticInputs::new(
+                    option_trace_environment_reader, test_default_stderr_output,
+                ) };
+                let storage = ProcessMainInitializationStorage::global();
+                // SAFETY: no other native source process has started in this
+                // fresh child, and the returned owner is retained to teardown.
+                let mut owner = unsafe { storage.initialize_from_source_environment(config, inputs) }
+                    .expect("controlled PageMap capability reaches source readiness");
+                let root = owner.ready().unwrap().page_map().unwrap().root().unwrap();
+                let output = crate::process_init::process_output_owner().unwrap();
+                let show = |stage: &str, option: SourceOption| {
+                    let raw = option.index() as i32;
+                    let value = crate::source_options_api::option_get(raw);
+                    let size = crate::source_options_api::option_get_size(raw);
+                    let (_, state) = output.source_option_image_for_test(option);
+                    std::println!("profile.{stage}.{}={value},{},{size}",
+                        option_name(option), option_state_code(state));
+                };
+                let show_page_map = |stage: &str| {
+                    // The isolated child retains this one process map and
+                    // performs no entry operations during the observation.
+                    let map = owner.ready().unwrap().page_map().unwrap().page_map().unwrap();
+                    std::println!("profile.{stage}.page_map={},{},{}",
+                        map.reserved_size().unwrap(), map.committed_count().unwrap(), map.reserved_count());
+                };
+                std::println!("CRABC_MI_M7_OPTION_PROFILES_TRACE_BEGIN");
+                std::println!("profile.control.overcommit={}", u8::from(overcommit));
+                std::println!("profile.startup.messages={}", normalized_capture(&DEFAULT_STDERR_CAPTURE));
+                show("initial", SourceOption::MaxVabits);
+                show("initial", SourceOption::PagemapCommit);
+                show_page_map("initial");
+                let (attempts, count) = maps.attempts().expect("bounded PageMap startup capture");
+                assert_eq!(count, 1, "source startup maps one PageMap reservation");
+                std::println!("profile.initial.mapping_count={count}");
+                std::println!("profile.initial.mapping={},{},{}",
+                    attempts[0].length, attempts[0].protection, attempts[0].flags);
+                std::println!("profile.initial.commit_calls={}", fault.observed());
+                let (ranges, range_count) = protections.attempts().expect("bounded PageMap commitments");
+                assert_eq!(range_count, fault.observed());
+                for (index, (address, length, protection)) in ranges[..range_count].iter().enumerate() {
+                    std::println!("profile.initial.protection.{index}={},{length},{protection}",
+                        address.checked_sub(root.as_ptr() as usize).unwrap());
+                }
+                let initial = crate::source_options_api::option_get(SourceOption::PagemapCommit.index() as i32);
+                let initial_bits = crate::source_options_api::option_get(SourceOption::MaxVabits.index() as i32);
+                let replacement = std::format!("mimalloc_pagemap_commit={}\0", i32::from(initial == 0));
+                let replacement_bits = std::format!("mimalloc_max_vabits={}\0",
+                    if initial_bits == 43 { 47 } else { 43 });
+                let mut later = entries.clone();
+                later.retain(|entry| !entry.starts_with(b"mimalloc_pagemap_commit=")
+                    && !entry.starts_with(b"mimalloc_max_vabits="));
+                later.push(replacement.into_bytes());
+                later.push(replacement_bits.into_bytes());
+                let later = std::boxed::Box::leak(std::boxed::Box::new(later));
+                install_option_trace_environment(later);
+                show("late_environment", SourceOption::PagemapCommit);
+                show("late_environment", SourceOption::MaxVabits);
+                show_page_map("late_environment");
+                std::println!("profile.late_environment.mapping_count={}", maps.attempts().unwrap().1);
+                std::println!("profile.late_environment.commit_calls={}", fault.observed());
+                let current = crate::source_options_api::option_get(SourceOption::PagemapCommit.index() as i32);
+                crate::source_options_api::option_set(SourceOption::PagemapCommit.index() as i32,
+                    i64::from(current == 0));
+                let current_bits = crate::source_options_api::option_get(SourceOption::MaxVabits.index() as i32);
+                crate::source_options_api::option_set(SourceOption::MaxVabits.index() as i32,
+                    if current_bits == 43 { 47 } else { 43 });
+                show("late_set", SourceOption::PagemapCommit);
+                show("late_set", SourceOption::MaxVabits);
+                show_page_map("late_set");
+                std::println!("profile.late_set.mapping_count={}", maps.attempts().unwrap().1);
+                std::println!("profile.late_set.commit_calls={}", fault.observed());
+                std::println!("profile.root_stable={}", u8::from(
+                    root == owner.ready().unwrap().page_map().unwrap().root().unwrap()));
+                std::println!("CRABC_MI_M7_OPTION_PROFILES_TRACE_END");
+                drop(maps);
+                drop(protections);
+                owner.teardown().expect("empty source owner tears down");
+            },
+        );
+    }
+
     /// One process descriptor table initialized from an empty environment,
     /// leaked for the `'static` borrow the x86 process `VmPolicy` retains,
     /// and that policy. The caller holds DIAGNOSTIC_ENVIRONMENT_TEST_LOCK.

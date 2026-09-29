@@ -99,6 +99,7 @@ OPTIONAL_ISA_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_optional_isa_oracle.c"
 OPTIONAL_ISA_TRACE_BEGIN = "CRABC_MI_M7_OPTIONAL_ISA_TRACE_BEGIN"
 OPTIONAL_ISA_TRACE_END = "CRABC_MI_M7_OPTIONAL_ISA_TRACE_END"
 OPTION_PROFILES_RUST_TEST = "native_option_profiles"
+OPTION_COMMITMENT_RUST_TEST = "diagnostic_output::tests::source_pagemap_option_profile_trace_for_pinned_c_comparison"
 OPTION_PROFILES_TRACE_BEGIN = "CRABC_MI_M7_OPTION_PROFILES_TRACE_BEGIN"
 OPTION_PROFILES_TRACE_END = "CRABC_MI_M7_OPTION_PROFILES_TRACE_END"
 # Environment images for descriptors read at process start or on a page
@@ -127,6 +128,29 @@ OPTION_PROFILES = {
     "pagemap_commit": {"mimalloc_pagemap_commit": "1"},
 }
 OPTION_PROFILE_CASES = ("small", "medium", "large", "huge")
+# Both capability observations execute actual mmap and mprotect operations.
+# The controls survive libtest's fresh-child environment sanitization; the
+# matching mimalloc entries are what the C startup reader consumes.
+OPTION_COMMITMENT_PROFILES = {}
+for _overcommit in ("0", "1"):
+    for _bits, _commit in (
+        *((bits, commit) for bits in ("-1", "0", "28", "32", "42", "43", "44", "45", "46", "47", "48")
+          for commit in ("0", "1", "-1")),
+        *(("44", commit) for commit in ("absent", "off", "TRUE", "bogus", "", "0" * 65)),
+        *((bits, "0") for bits in ("absent", "off", "TRUE", "bogus", "", "0" * 65)),
+        ("bogus", "bogus"),
+    ):
+        _environment = {"CRABC_MI_OPTION_CAP_OVERCOMMIT": _overcommit,
+                        "CRABC_MI_OPTION_MAX_VABITS": _bits,
+                        "CRABC_MI_OPTION_PAGEMAP_COMMIT": _commit,
+                        "CRABC_MI_OPTION_SHOW_ERRORS": "1", "mimalloc_show_errors": "1"}
+        if _bits != "absent":
+            _environment["mimalloc_max_vabits"] = _bits
+        if _commit != "absent":
+            _environment["mimalloc_pagemap_commit"] = _commit
+        _label = "unavailable" if len(_commit) > 64 else (_commit or "empty")
+        _bits_label = "unavailable" if len(_bits) > 64 else (_bits or "empty")
+        OPTION_COMMITMENT_PROFILES[f"pagemap-overcommit-{_overcommit}-bits-{_bits_label}-commit-{_label}"] = _environment
 OPTION_EFFECTS_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_option_effects_oracle.c"
 OPTION_EFFECTS_RUST_TEST = "diagnostic_output::tests::source_option_effects_trace_for_pinned_c_comparison"
 OPTION_EFFECTS_TRACE_BEGIN = "CRABC_MI_M7_OPTION_EFFECTS_TRACE_BEGIN"
@@ -782,7 +806,80 @@ def require_complete_error_sites_trace(trace: Mapping[str, str], description: st
 
 
 def require_complete_option_profile_trace(trace: Mapping[str, str], description: str) -> None:
-    """Reject a profile trace that omits a request record or the first arena."""
+    """Require startup mappings and descriptor reads, or allocation records."""
+
+    if "profile.control.overcommit" in trace:
+        required = ("profile.startup.messages", "profile.initial.max_vabits", "profile.initial.pagemap_commit",
+                    "profile.initial.mapping_count", "profile.initial.mapping",
+                    "profile.initial.page_map",
+                    "profile.initial.commit_calls", "profile.late_environment.pagemap_commit",
+                    "profile.late_environment.max_vabits",
+                    "profile.late_environment.page_map", "profile.late_environment.mapping_count",
+                    "profile.late_environment.commit_calls",
+                    "profile.late_set.pagemap_commit", "profile.late_set.max_vabits",
+                    "profile.late_set.mapping_count", "profile.late_set.commit_calls",
+                    "profile.late_set.page_map", "profile.root_stable")
+        for key in required:
+            if key not in trace:
+                raise harness.HarnessError(f"{description} lacks {key}")
+        try:
+            overcommit = int(trace["profile.control.overcommit"])
+            bits, bits_state, bits_size = (int(word) for word in trace["profile.initial.max_vabits"].split(","))
+            commit, commit_state, commit_size = (
+                int(word) for word in trace["profile.initial.pagemap_commit"].split(","))
+            mapped_reserve, committed_count, reserved_count = (
+                int(word) for word in trace["profile.initial.page_map"].split(","))
+        except ValueError as failure:
+            raise harness.HarnessError(f"{description} has malformed startup descriptors") from failure
+        if (overcommit not in (0, 1) or bits_state not in (0, 1, 2) or commit_state not in (0, 1, 2)
+                or bits_size != max(bits, 0) or commit_size != max(commit, 0)):
+            raise harness.HarnessError(f"{description} has invalid startup descriptor states or sizes")
+        virtual_bits = min(47, max(43, bits)) if bits > 0 else 47
+        # A nonempty header adds one page to the aligned pointer array. The
+        # source then reserves its zero submap and rounds the raw OS mapping.
+        reserve = (1 << (virtual_bits - 26)) + 4096
+        requested = reserve + 65536
+        alignment = 4096 if requested < 512 * 1024 else (65536 if requested < 2 * 1024 * 1024 else 262144)
+        length = ((requested + alignment - 1) // alignment) * alignment
+        full = virtual_bits == 43 or commit != 0 or overcommit != 0
+        virtual_count = 1 << (virtual_bits - 29)
+        expected_committed_count = reserved_count if full else reserved_count - (reserve - 135168) // 8
+        if (mapped_reserve != reserve or not virtual_count < reserved_count < virtual_count + 512
+                or committed_count != expected_committed_count):
+            raise harness.HarnessError(f"{description} has invalid PageMap reservation/commitment fields")
+        calls = 0 if full else 2
+        late_environment = trace["profile.initial.pagemap_commit"] if commit_state != 0 else f"{int(commit == 0)},2,{int(commit == 0)}"
+        current = commit if commit_state != 0 else int(commit == 0)
+        replacement_bits = 47 if bits == 43 else 43
+        late_environment_bits = trace["profile.initial.max_vabits"] if bits_state != 0 else f"{replacement_bits},2,{replacement_bits}"
+        current_bits = bits if bits_state != 0 else replacement_bits
+        late_bits = 47 if current_bits == 43 else 43
+        expected = {
+            "profile.control.overcommit": str(overcommit),
+            "profile.initial.mapping_count": "1",
+            "profile.initial.mapping": f"{length},{3 if full else 0},{34 + (16384 if overcommit else 0)}",
+            "profile.initial.commit_calls": str(calls),
+            "profile.initial.page_map": trace["profile.initial.page_map"],
+            "profile.late_environment.pagemap_commit": late_environment,
+            "profile.late_environment.max_vabits": late_environment_bits,
+            "profile.late_environment.page_map": trace["profile.initial.page_map"],
+            "profile.late_environment.mapping_count": "1", "profile.late_environment.commit_calls": str(calls),
+            "profile.late_set.pagemap_commit": f"{int(current == 0)},2,{int(current == 0)}",
+            "profile.late_set.max_vabits": f"{late_bits},2,{late_bits}",
+            "profile.late_set.mapping_count": "1", "profile.late_set.commit_calls": str(calls),
+            "profile.late_set.page_map": trace["profile.initial.page_map"],
+            "profile.root_stable": "1",
+        }
+        if not full:
+            expected["profile.initial.protection.0"] = "0,135168,3"
+            expected["profile.initial.protection.1"] = f"{reserve},65536,3"
+        for key, value in expected.items():
+            if trace.get(key) != value:
+                raise harness.HarnessError(f"{description} has invalid {key}: expected {value}, observed {trace.get(key)}")
+        allowed = set(expected) | {"profile.startup.messages", "profile.initial.max_vabits", "profile.initial.pagemap_commit"}
+        if set(trace) != allowed:
+            raise harness.HarnessError(f"{description} changed its startup/readpoint trace shape")
+        return
 
     for key in ("profile.first_arena", "profile.page_map", "profile.arena_count", "profile.thp_enabled"):
         if key not in trace:
@@ -809,7 +906,7 @@ def compare_options_traces(c_trace: Mapping[str, str], rust_trace: Mapping[str, 
 
 def c_oracle_trace(
     oracle: Path, subject: str, source: Path, temporary: Path, environment: Mapping[str, str] | None = None,
-    compile_defines: Sequence[str] = (),
+    compile_defines: Sequence[str] = (), retain_products: bool = False,
 ) -> dict[str, Any]:
     """Build and run one pinned-C probe against the release configuration."""
 
@@ -827,16 +924,25 @@ def c_oracle_trace(
     header = harness.command_record((harness.require_tool("readelf"), "-h", str(binary)), cwd=source)
     harness.require_success(header, f"M7 {subject} C ELF identity")
     harness.parse_elf_identity(str(header["stdout"]), "x86_64")
+    if retain_products:
+        product = ARTIFACTS / "option-profile-products" / binary.name
+        product.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(binary, product)
+        binary = product
     # An empty environment makes the load-time `_mi_options_init` observe only
     # defaults, which each probe snapshots as its per-scenario reset image.
     execution = harness.command_record((str(binary),), cwd=source, env=dict(environment or {}))
     harness.require_success(execution, f"M7 {subject} C execution")
+    if retain_products:
+        execution["product"] = engine.file_record(binary)
+        execution["build"] = build
+        execution["elf_identity"] = header
     return execution
 
 
 def rust_trace(
     test: str, subject: str, *, integration_test: bool = False, environment: Mapping[str, str] | None = None,
-    rust_features: Sequence[str] = (),
+    rust_features: Sequence[str] = (), retain_products: bool = False,
 ) -> dict[str, Any]:
     """Run one exact Rust trace test in the launcher's Cargo environment.
 
@@ -855,6 +961,38 @@ def rust_trace(
         *selection, "--nocapture", "--test-threads=1",
     ]
     ambient = {key: value for key, value in os.environ.items() if not key.lower().startswith("mimalloc_")}
+    build = None
+    if retain_products:
+        if integration_test:
+            raise harness.HarnessError("retained trace products require one exact library test")
+        import x86_64_huge_numa_qualification as qualification
+
+        build = harness.command_record(
+            [harness.require_tool("cargo"), "test", "--locked", "--release", "--target", RUST_TARGET,
+             "-p", "crabc-mimalloc", "--no-default-features", "--lib", "--no-run", "--message-format=json",
+             *(["--features", ",".join(rust_features)] if rust_features else [])],
+            cwd=harness.ROOT, env=ambient, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
+        )
+        harness.require_success(build, f"{subject} release library trace build")
+        binary = qualification.cargo_test_executable(str(build["stdout"]))
+        images = [json.loads(line) for line in str(build["stdout"]).splitlines()]
+        image = next(record for record in images if record.get("reason") == "compiler-artifact"
+                     and record.get("executable") == str(binary))
+        if image.get("profile") != {**BASELINE_RELEASE_PROFILE, "test": True}:
+            raise harness.HarnessError("retained library trace changed its release compiler profile")
+        if image.get("features") != sorted(rust_features):
+            raise harness.HarnessError("retained library trace changed its selected allocator features")
+        digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+        product = ARTIFACTS / "option-profile-products" / f"rust-{digest}"
+        product.parent.mkdir(parents=True, exist_ok=True)
+        if not product.exists():
+            shutil.copy2(binary, product)
+        if hashlib.sha256(product.read_bytes()).hexdigest() != digest:
+            raise harness.HarnessError("retained library trace image changed")
+        header = harness.command_record((harness.require_tool("readelf"), "-h", str(product)), cwd=harness.ROOT)
+        harness.require_success(header, f"{subject} retained Rust ELF identity")
+        harness.parse_elf_identity(str(header["stdout"]), "x86_64")
+        command = [str(product), test, "--exact", "--nocapture", "--test-threads=1"]
     execution = harness.command_record(
         command, cwd=harness.ROOT, env={**ambient, **(environment or {})},
         timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
@@ -862,6 +1000,10 @@ def rust_trace(
     harness.require_success(execution, f"M7 {subject} Rust trace")
     if harness.parse_rust_test_count(str(execution["stdout"]) + "\n" + str(execution["stderr"])) != 1:
         raise harness.HarnessError(f"M7 {subject} Rust trace did not execute exactly one test")
+    if retain_products:
+        execution["product"] = engine.file_record(product)
+        execution["build"] = build
+        execution["elf_identity"] = header
     return execution
 
 
@@ -869,7 +1011,7 @@ def run_trace_differential(
     offline: bool, *, subject: str, oracle: Path, test: str, begin: str, end: str,
     require_complete: Any, report_name: str, integration_test: bool = False,
     environment: Mapping[str, str] | None = None, c_stderr_record: tuple[str, Any] | None = None,
-    compile_defines: Sequence[str] = (), rust_features: Sequence[str] = (),
+    compile_defines: Sequence[str] = (), rust_features: Sequence[str] = (), retain_products: bool = False,
 ) -> dict[str, Any]:
     harness.require_native_x86_64()
     pin = harness.load_pin()
@@ -877,11 +1019,22 @@ def run_trace_differential(
     with harness.temporary_directory(f"crabc-mimalloc-x86_64-m7-{subject}-") as name:
         temporary = Path(name)
         source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
-        c_execution = c_oracle_trace(oracle, subject, source, temporary, environment, compile_defines)
+        c_execution = c_oracle_trace(oracle, subject, source, temporary, environment, compile_defines, retain_products)
     rust_execution = rust_trace(
         test, subject, integration_test=integration_test, environment=environment,
         rust_features=rust_features,
+        retain_products=retain_products,
     )
+    retained = {}
+    if retain_products:
+        retained = {"executions": {"c": c_execution, "rust": rust_execution},
+                    "provenance": {"pin": pin, "seal": integrated.source_seal(),
+                                   "git": engine.git_provenance(), "oracle": engine.file_record(oracle),
+                                   "gate": engine.file_record(Path(__file__))}}
+        ARTIFACTS.mkdir(parents=True, exist_ok=True)
+        # Preserve both complete raw executions even if comparison rejects
+        # their shape or a source decision below.
+        harness.write_json(ARTIFACTS / report_name, retained)
     c_trace = parse_options_trace(str(c_execution["stdout"]), f"pinned C {subject} trace", begin, end)
     if c_stderr_record is not None:
         key, derive = c_stderr_record
@@ -899,6 +1052,7 @@ def run_trace_differential(
         "rust_command": rust_execution["command"],
         "status": "passed",
         "trace": dict(sorted(c_trace.items())),
+        **retained,
     }
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     harness.write_json(ARTIFACTS / report_name, report)
@@ -2205,6 +2359,18 @@ def run_option_profiles_differential(offline: bool) -> dict[str, Any]:
         )
         compared += report["compared_key_count"]
         profiles[profile] = {"environment": environment, "trace": report["trace"]}
+    for profile, environment in OPTION_COMMITMENT_PROFILES.items():
+        report = run_trace_differential(
+            offline, subject=f"option-profile-{profile}", oracle=OPTION_PROFILES_ORACLE,
+            test=OPTION_COMMITMENT_RUST_TEST, begin=OPTION_PROFILES_TRACE_BEGIN, end=OPTION_PROFILES_TRACE_END,
+            require_complete=require_complete_option_profile_trace,
+            report_name=f"option-profile-{profile}.json", environment=environment, retain_products=True,
+            c_stderr_record=("profile.startup.messages", startup_record_from_stderr),
+            rust_features=("native-runtime-test-audit",),
+        )
+        compared += report["compared_key_count"]
+        profiles[profile] = {"environment": environment, "trace": report["trace"],
+                             "executions": report["executions"], "provenance": report["provenance"]}
     summary = {"compared_key_count": compared, "profiles": profiles, "status": "passed"}
     harness.write_json(ARTIFACTS / "option-profiles.json", summary)
     return summary
