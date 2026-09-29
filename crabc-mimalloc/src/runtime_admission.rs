@@ -110,22 +110,30 @@ fn take_fork_test_fault(fault: NativeAllocatorForkTestFault) -> bool {
 /// loads the epoch, while a closing writer stores the epoch and then loads
 /// every `entered`. Each side needs StoreLoad ordering. A symmetric SeqCst
 /// store is a locked `xchg` on every allocation and free; pinned mimalloc's
-/// local path takes no atomic read-modify-write on owner-local state. Once
-/// the process is registered for `MEMBARRIER_CMD_PRIVATE_EXPEDITED`, the
-/// rare writer instead supplies the full barrier on every running thread of
+/// local path takes no atomic read-modify-write on owner-local state. On
+/// targets that select it, once the process is registered for
+/// `MEMBARRIER_CMD_PRIVATE_EXPEDITED`, the rare writer instead supplies the
+/// full barrier on every running thread of
 /// the process ([`asymmetric_writer_fence`]), so entry needs only a compiler
 /// fence between its store and load. This is decided once, during
 /// single-threaded startup in [`register_initial_descriptor`] before any
 /// descriptor is registered, and stays fixed; the registration survives
-/// `fork`. If the kernel or a seccomp policy refuses registration, entry
-/// keeps the symmetric SeqCst store.
+/// `fork`. Native x86 keeps the symmetric SeqCst store: registering the
+/// process here changes the observable membarrier state before executable
+/// preinit and in forked children. Other targets retain the asymmetric
+/// selection and its symmetric fallback if registration is refused.
 static ASYMMETRIC_ENTRY_FENCE: AtomicBool = AtomicBool::new(false);
 
-/// Registers the asymmetric entry fence once, before the initial descriptor
-/// is published. A refusal leaves the symmetric entry protocol selected.
+/// Selects the entry fence once, before the initial descriptor is published.
+/// Native x86 must leave process-private expedited membarrier unregistered
+/// until an application explicitly registers it; the symmetric entry store
+/// supplies the StoreLoad ordering needed by the closing writer.
 fn select_asymmetric_entry_fence() {
-    if crabc_core::thread::membarrier(crabc_core::thread::MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED).is_ok() {
-        ASYMMETRIC_ENTRY_FENCE.store(true, Ordering::Release);
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        if crabc_core::thread::membarrier(crabc_core::thread::MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED).is_ok() {
+            ASYMMETRIC_ENTRY_FENCE.store(true, Ordering::Release);
+        }
     }
 }
 
@@ -1406,13 +1414,17 @@ mod tests {
     }
 
     #[test]
-    fn compiler_fenced_entry_never_overlaps_a_completed_writer_drain() {
-        // The asymmetric protocol replaces the entry-side locked store with a
-        // compiler fence; the writer's expedited barrier must still make its
-        // scan see every entry that did not observe the closed epoch. Each
-        // round releases one entry and one terminal writer together, the
-        // store-buffering race that a missing barrier loses.
+    fn entry_never_overlaps_a_completed_writer_drain() {
+        // Entry and writer need a StoreLoad handshake. The symmetric protocol
+        // uses a SeqCst entry store; the asymmetric protocol uses a compiler
+        // fence and an expedited writer barrier. Each round releases one
+        // entry and one terminal writer together, the store-buffering race
+        // that a missing barrier loses.
         select_asymmetric_entry_fence();
+        #[cfg(target_arch = "x86_64")]
+        assert!(!ASYMMETRIC_ENTRY_FENCE.load(Ordering::Acquire),
+            "native x86 leaves private expedited membarrier unregistered");
+        #[cfg(not(target_arch = "x86_64"))]
         assert!(ASYMMETRIC_ENTRY_FENCE.load(Ordering::Acquire),
             "the native test image permits private expedited membarrier");
         const ROUNDS: usize = 20_000;
