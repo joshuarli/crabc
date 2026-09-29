@@ -104,8 +104,13 @@ are not transferable passes for a different revision.
   the 100 `ECHILD` waits in both backends when the final signal-handler fork
   occurs after the testcase's child check; the waits execute in the child,
   with default `SIGCHLD` and no child-reaping defect shown. Its guarded 52-case
-  matrix passes, but one separate intermittent native PIE-direct precreate
-  timeout remains unclassified. The native 219-case receipt remains unavailable.
+  matrix passes, but one separate intermittent native PIE-direct timeout
+  leaves the parent in `wait4` while 99 children remain runnable; their
+  stalled user-space path is still unclassified. A later native-shadow source cohort passes
+  `signal-handler-fork` and all three allocator C ABI leaves but stops at
+  `kernel-residual`: a forked child does not get the expected `-EPERM` from
+  private expedited `membarrier`. Registration timing is under focused
+  investigation; the native 219-case receipt remains unavailable.
   `consumer.rust-std-lto` passes its
   Rust, native-facade, LTO, and unwind leaves on clean `d6733f516`; its
   pinned-image receipt passed independent physical validation and public
