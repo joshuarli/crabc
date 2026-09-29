@@ -99,11 +99,12 @@ Main lifecycle ownership follows pinned musl 1.2.6 `ldso/dynlink.c`, whose
 `__libc_start_init` runs `do_init_fini(main_ctor_queue)` and whose
 `__libc_exit_fini` walks one reverse finalizer list:
 
-1. `init` (`__crabc_x86_64_dynamic_executable_init`) runs the executable
-   `DT_PREINIT_ARRAY`, then the record's initial-constructor callback. The
-   loader constructs each initial dependency in postorder and finally the main
-   image (`DT_INIT`, then `DT_INIT_ARRAY`). Every object joins the finalizer
-   list when its construction starts, before its constructors run.
+1. `init` (`__crabc_x86_64_dynamic_executable_init`) calls the record's
+   initial-constructor callback without dispatching the executable's
+   `DT_PREINIT_ARRAY`. The loader constructs each initial dependency in
+   postorder and finally the main image (`DT_INIT`, then `DT_INIT_ARRAY`).
+   Every object joins the finalizer list when its construction starts, before
+   its constructors run.
 2. `exit` and return from `main` run `atexit` handlers, then `fini` (empty in
    this mode), then `rtld_fini`. The loader finalizes in reverse
    construction-start order: an object loaded by `dlopen` from `main` or a main
@@ -117,9 +118,12 @@ The legacy private routes (`--general-dynamic-lifecycle`,
 CRT-owned `_init`/init-array and fini-array/`_fini` walk; their loaders keep the
 main image outside the callback plan.
 
-Musl never dispatches a dynamic executable's `DT_PREINIT_ARRAY`. The owned CRT
-does, as the ELF gABI requires; that single leading `P` is the only admitted
-difference in the evidence transcripts.
+Pinned musl 1.2.6 never dispatches a dynamic executable's
+`DT_PREINIT_ARRAY`. The installed owned CRT follows that behavior, including
+when a dependency constructor exits before main initialization. The private
+freestanding callback route still exercises its executable preinit array.
+`crt/x86_64_owned_dynamic_startup.py` requires exact owned and musl lifecycle
+transcripts for both installed entry modes.
 
 ## One crt1.o
 

@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Owned x86-64 dynamic CRT startup evidence through one installed product.
 
-This is the executing gate for the `crt.dynamic-startup` family obligation:
-installed dynamic-PIE `Scrt1.o` and dynamic non-PIE `crt1.o` entry, the
-libc `__libc_start_main` handoff, main-image preinit/init/fini lifecycle and
+This exercises installed dynamic-PIE `Scrt1.o` and dynamic non-PIE `crt1.o`
+entry, the libc `__libc_start_main` handoff, main-image init/fini lifecycle and
 process finalization, the compiler-helper archive, and the deterministic link
 interface of the installed driver. A separate wide graph (43 initial images
 with more than 32 initial TLS modules, more than twenty DT_NEEDED edges per
@@ -14,9 +13,9 @@ supplied materialized product and never builds, repairs, or substitutes a
 runtime.
 
 Pinned musl 1.2.6 is the behavior oracle. The same fixture sources are built
-by the oracle compiler profile and executed as separate processes. The only
-admitted transcript difference is the owned CRT's leading executable preinit
-marker `P`: musl's dynamic linker never dispatches a main DT_PREINIT_ARRAY.
+by the oracle compiler profile and executed as separate processes. The
+transcripts must match exactly, including the absence of executable preinit
+dispatch in dynamic startup.
 
 Run it in the pinned native image as
 ``python3 -B crt/x86_64_owned_dynamic_startup.py PRODUCT`` with TMPDIR below
@@ -88,8 +87,6 @@ SCENARIOS = {
     "dlopen-in-main-constructor": ("DAILMalFZdmf", 7),
     "dlopen-in-dependency-constructor": ("DLAIMaFZldmf", 7),
 }
-OWNED_PREINIT = "P"
-
 # The wide graph (see WIDE_SOURCE) has no admitted difference and no preinit.
 # Its executable names the hub plus one group of leaves, the hub another group
 # and the runtime plugin a third, so the initial graph holds 43 images.
@@ -810,7 +807,7 @@ def execute(recorder: Recorder, product: Path, work: Path) -> list[dict[str, obj
                 require(reference.returncode == status and oracle_transcript == expected,
                         f"{label}: pinned musl oracle observed {oracle_transcript!r} status {reference.returncode}")
                 require(observed.stderr == b"" and reference.stderr == b"", f"{label}: unexpected diagnostics")
-                require(observed.returncode == status and transcript == OWNED_PREINIT + oracle_transcript,
+                require(observed.returncode == status and transcript == oracle_transcript,
                         f"{label}: owned {transcript!r} status {observed.returncode}; "
                         f"musl {oracle_transcript!r} status {reference.returncode}")
                 cells.append({"mode": mode, "entry": entry, "scenario": scenario, "status": status,
@@ -837,7 +834,7 @@ def main(arguments: list[str]) -> int:
         report = {"schema": SCHEMA, "product_manifest_sha256": before,
                   "fixtures": {path.name: sha256(path)
                                for path in (MAIN_SOURCE, DEPENDENCY_SOURCE, PLUGIN_SOURCE, WIDE_SOURCE, NAMES_SOURCE)},
-                  "admitted_difference": "owned executable DT_PREINIT_ARRAY dispatch (leading P)"}
+                  "admitted_difference": None}
         report.update(build(recorder, product, work))
         report["wide"] = build_wide(recorder, product, work)
         report["names"] = build_names(recorder, product, work)

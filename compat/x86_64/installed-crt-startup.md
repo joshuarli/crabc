@@ -40,10 +40,13 @@ execution claim is made. The lifecycle probe verifies initialized TLS and
 TBSS, errno, environment,
 and the masked AT_RANDOM guard before application initialization. It retains
 preinit, legacy init, init-array, main, atexit, reverse fini-array and legacy
-fini observations. Musl omits main preinit; the owned-only P prefix stays an
-explicit difference. At main, `dl_iterate_phdr` observes exact weak OBJECT
-GLOB_DAT slots: owned handoff non-null/conventional slot null, conventional
-snapshot non-null/no owned handoff, default CRT weak-null, oracle neither.
+fini observations. The installed owned static entry emits `P` for its preinit
+array. Installed dynamic entry skips main preinit, matching pinned musl's
+dynamic lifecycle; `expected_stdout` in `installed_crt_startup_evidence.py`
+checks that absence for both PIE and non-PIE, normal and empty arrays. At main,
+`dl_iterate_phdr` observes exact weak OBJECT GLOB_DAT slots: owned handoff
+non-null/conventional slot null, conventional snapshot non-null/no owned
+handoff, default CRT weak-null, oracle neither.
 The borrowed record is read but private callbacks are not called by the probe.
 The 32-byte owned carrier and separate 88-byte conventional snapshot preserve
 source-defined roles. Schema v3 added a separate private descriptor-handoff

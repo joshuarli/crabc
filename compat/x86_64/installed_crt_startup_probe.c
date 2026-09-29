@@ -9,8 +9,8 @@
 #include <sys/auxv.h>
 #include <unistd.h>
 
-/* The same installed-header object is linked in every mode. Musl's omission
- * of main preinit is observed separately; it is not normalized away. */
+/* The same installed-header object is linked in every mode. Dynamic entry
+ * leaves main preinit uncalled; owned static entry still dispatches it. */
 static __thread int initial __attribute__((tls_model("initial-exec"))) = 17;
 static __thread int zero __attribute__((tls_model("initial-exec")));
 static int phase, preinitialized;

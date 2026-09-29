@@ -364,8 +364,8 @@ def descriptor_runtime_source_order(sources):
 
 
 def expected_stdout(cell):
-    mode=cell['mode']; owned=mode in MODES[:4]; empty=cell['variant']=='empty'
-    prefix=('P' if owned and not empty else '')+'I'+('' if empty else 'C')
+    mode=cell['mode']; empty=cell['variant']=='empty'
+    prefix=('P' if mode in ('static','static-pie') and not empty else '')+'I'+('' if empty else 'C')
     wire='S' if 'static' in mode else 'O' if mode.startswith('owned') else 'V' if mode.startswith('conventional') else 'N' if mode=='default-pie' else 'R'
     return (prefix+wire+'MA'+('' if empty else 'F')+'L\n').encode()
 

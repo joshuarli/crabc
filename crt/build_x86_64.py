@@ -107,11 +107,11 @@ STATIC_PIE_LIBC_BOUNDARIES = STATIC_PIE_BOUNDARIES + (
     "__crabc_x86_static_tls_bootstrap",
 )
 
-# The installed owned dynamic entries dispatch only the executable preinit
-# array; the owned loader constructs and finalizes the main image through its
-# DT_INIT/DT_INIT_ARRAY/DT_FINI_ARRAY/DT_FINI tags, as pinned musl does. The
-# shared array-boundary bridges still name the init/fini arrays, but no
-# `_init`/`_fini` call remains in these objects.
+# The installed owned dynamic entries leave main-image lifecycle dispatch to
+# the loader, which follows pinned musl's DT_INIT/DT_INIT_ARRAY and
+# DT_FINI_ARRAY/DT_FINI walk without calling DT_PREINIT_ARRAY. The shared
+# array-boundary assembly still names all six array endpoints in these objects,
+# although this mode does not call the bridges or `_init`/`_fini`.
 OWNED_DYNAMIC_RUNTIME_BOUNDARIES = tuple(
     name for name in STATIC_PIE_BOUNDARIES if name not in {"_init", "_fini"}
 ) + (X86_64_OWNED_CRT_HANDOFF_BOUNDARY, X86_64_DYNAMIC_MAIN_THREAD_RUNTIME_V1_ATTACH_BOUNDARY)

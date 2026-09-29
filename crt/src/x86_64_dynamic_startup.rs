@@ -17,9 +17,9 @@
 //!
 //! The installed owned product (`crabc_owned_dynamic_runtime`) divides main
 //! lifecycle ownership as pinned musl 1.2.6 `ldso/dynlink.c` does: this CRT
-//! runs only the executable preinit array and then the loader's initial
-//! constructor callback. The loader constructs every initial dependency and
-//! finally the main image (DT_INIT, then DT_INIT_ARRAY), linking each object
+//! runs the loader's initial constructor callback. The loader constructs
+//! every initial dependency and finally the main image (DT_INIT, then
+//! DT_INIT_ARRAY), linking each object
 //! into its reverse-construction finalizer list before its constructors run.
 //! Main finalizers therefore run from the loader's process finalizer at their
 //! musl position: after later runtime-loaded objects, before initial
@@ -232,6 +232,10 @@ pub unsafe extern "C" fn __crabc_x86_64_dynamic_start(
 #[no_mangle]
 pub unsafe extern "C" fn __crabc_x86_64_dynamic_executable_init() {
     unsafe {
+        // The installed interpreter owns the whole initial graph. Pinned
+        // musl's dynamic constructor walk begins with DT_INIT/DT_INIT_ARRAY;
+        // it does not dispatch the main executable's DT_PREINIT_ARRAY.
+        #[cfg(not(crabc_owned_dynamic_runtime))]
         invoke_linker_array(
             __crabc_preinit_array_start_address(),
             __crabc_preinit_array_end_address(),
