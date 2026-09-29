@@ -95,15 +95,20 @@ assert_process_global_aliases() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort; do
+for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sha256sum sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-process-globals-getopt.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/libc-process-globals-getopt" \
+    "$ROOT_DIR/.work/x86_64/reports/libc-process-globals-getopt"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-process-globals-getopt/run.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-process-globals-getopt"
+reference_trace="$report_dir/pinned-musl.trace"
+candidate_trace="$report_dir/crabc-static.trace"
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-process-globals-getopt-reference"
@@ -127,7 +132,7 @@ errno_disassembly="$work_dir/candidate-errno-disassembly"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_process_globals_getopt_probe.c >/dev/null 2>"$header_trace"
-for header in getopt.h locale.h stddef.h string.h sys/auxv.h elf.h unistd.h bits/alltypes.h \
+for header in errno.h getopt.h locale.h stddef.h string.h sys/auxv.h elf.h unistd.h bits/alltypes.h \
     features.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use project ${header}"
@@ -140,13 +145,14 @@ done
     compat/x86_64/libc_process_globals_empty_argv_launcher.c -o "$empty_argv_launcher"
 readelf --symbols --wide "$reference" >"$reference_symbols"
 assert_process_global_aliases "$reference_symbols" "pinned-musl static reference"
-if "$reference"; then
+if "$reference" >"$reference_trace" 2>"$report_dir/pinned-musl.stderr"; then
     :
 else
     status=$?
     fail "pinned-musl process-globals/getopt fixture exited ${status}"
 fi
-"$empty_argv_launcher" "$reference" ||
+"$empty_argv_launcher" "$reference" >"$report_dir/pinned-musl.empty-argv.trace" \
+    2>"$report_dir/pinned-musl.empty-argv.stderr" ||
     fail "pinned-musl empty-argv process-name fallback failed"
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
@@ -221,13 +227,42 @@ fi
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct x86 initial TLS"
 
-if "$candidate"; then
+if "$candidate" >"$candidate_trace" 2>"$report_dir/crabc-static.stderr"; then
     :
 else
     status=$?
     fail "freestanding process-globals/getopt fixture exited ${status}"
 fi
-"$empty_argv_launcher" "$candidate" ||
+"$empty_argv_launcher" "$candidate" >"$report_dir/crabc-static.empty-argv.trace" \
+    2>"$report_dir/crabc-static.empty-argv.stderr" ||
     fail "freestanding empty-argv process-name fallback failed"
 
-printf 'x86 static crabc-libc process globals/getopt: PASS\n'
+sha256sum compat/x86_64/libc_process_globals_getopt_probe.c "$reference" \
+    "$candidate" "$reference_trace" "$candidate_trace" \
+    "$report_dir/pinned-musl.stderr" "$report_dir/crabc-static.stderr" \
+    "$report_dir/pinned-musl.empty-argv.trace" \
+    "$report_dir/crabc-static.empty-argv.trace" \
+    "$report_dir/pinned-musl.empty-argv.stderr" \
+    "$report_dir/crabc-static.empty-argv.stderr" >"$report_dir/hashes.sha256"
+if ! cmp -s "$reference_trace" "$candidate_trace"; then
+    diff -u "$reference_trace" "$candidate_trace" >&2 || true
+    fail "pinned-musl and selected static getopt state traces differ; raw traces: $report_dir"
+fi
+if ! cmp -s "$report_dir/pinned-musl.stderr" "$report_dir/crabc-static.stderr"; then
+    diff -u "$report_dir/pinned-musl.stderr" "$report_dir/crabc-static.stderr" >&2 || true
+    fail "pinned-musl and selected static getopt diagnostics differ; raw stderr: $report_dir"
+fi
+if ! cmp -s "$report_dir/pinned-musl.empty-argv.trace" \
+    "$report_dir/crabc-static.empty-argv.trace"; then
+    diff -u "$report_dir/pinned-musl.empty-argv.trace" \
+        "$report_dir/crabc-static.empty-argv.trace" >&2 || true
+    fail "pinned-musl and selected static empty-argv getopt traces differ; raw traces: $report_dir"
+fi
+if ! cmp -s "$report_dir/pinned-musl.empty-argv.stderr" \
+    "$report_dir/crabc-static.empty-argv.stderr"; then
+    diff -u "$report_dir/pinned-musl.empty-argv.stderr" \
+        "$report_dir/crabc-static.empty-argv.stderr" >&2 || true
+    fail "pinned-musl and selected static empty-argv diagnostics differ; raw stderr: $report_dir"
+fi
+
+printf 'x86 static crabc-libc process globals/getopt: PASS (raw traces: %s)\n' "$report_dir"

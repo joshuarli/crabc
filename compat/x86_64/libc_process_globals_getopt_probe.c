@@ -18,6 +18,7 @@
 #error "this fixture requires native Linux/x86-64 little-endian LP64"
 #endif
 
+#include <errno.h>
 #include <getopt.h>
 #include <locale.h>
 #include <stddef.h>
@@ -295,6 +296,152 @@ static int check_long_options(void)
     return 0;
 }
 
+static char *trace_text(char *out, const char *text)
+{
+    if (text == NULL) text = "<null>";
+    while (*text != '\0') *out++ = *text++;
+    return out;
+}
+
+static char *trace_number(char *out, int value)
+{
+    static const char digits[] = "0123456789abcdef";
+    unsigned int bits = (unsigned int)value;
+    int shift;
+
+    for (shift = 28; shift >= 0; shift -= 4)
+        *out++ = digits[(bits >> shift) & 15];
+    return out;
+}
+
+static void trace_option(const char *case_name, int result, int index,
+    int argc, char **argv)
+{
+    char line[512];
+    char *out = line;
+    int i;
+
+    out = trace_text(out, case_name);
+    *out++ = '\t'; out = trace_number(out, result);
+    *out++ = '\t'; out = trace_number(out, optind);
+    *out++ = '\t'; out = trace_number(out, opterr);
+    *out++ = '\t'; out = trace_number(out, optopt);
+    *out++ = '\t'; out = trace_number(out, __optpos);
+    *out++ = '\t'; out = trace_number(out, __optreset);
+    *out++ = '\t'; out = trace_number(out, errno);
+    *out++ = '\t'; out = trace_number(out, index);
+    *out++ = '\t'; out = trace_text(out, optarg);
+    for (i = 1; i < argc; ++i) {
+        *out++ = '\t';
+        out = trace_text(out, argv[i]);
+    }
+    *out++ = '\n';
+    {
+        size_t size = (size_t)(out - line);
+        size_t written = 0;
+
+        while (written < size) {
+            ssize_t count = write(STDOUT_FILENO, line + written, size - written);
+            if (count <= 0) _exit(90);
+            written += (size_t)count;
+        }
+    }
+}
+
+/* Every row records the returned value, selected parser globals, and argv
+ * order. The runner compares actual rows from the pinned musl and selected
+ * static libc processes, including state that persists between calls. */
+static void trace_option_sequences(void)
+{
+    struct option options[] = {
+        { "alpha", no_argument, NULL, 'a' },
+        { "alpine", no_argument, NULL, 'p' },
+        { "beta", required_argument, NULL, 'b' },
+        { "color", optional_argument, NULL, 'c' },
+        { NULL, 0, NULL, 0 },
+    };
+    int index;
+    int result;
+    int step;
+
+    errno = 70;
+    {
+        char *argv[] = { "tool", "left", "-a", "middle", "--beta",
+            "path", "right", "--color=blue", "--", "tail", NULL };
+        optind = 0; opterr = 0; optopt = 777; optarg = (char *)"stale";
+        for (step = 0; step < 8; ++step) {
+            index = -7;
+            result = getopt_long(10, argv, "ab:", options, &index);
+            trace_option("permute", result, index, 10, argv);
+            if (result == -1) break;
+        }
+    }
+    {
+        char *argv[] = { "tool", "left", "-a", NULL };
+        optind = 0; optopt = 778; optarg = (char *)"stale";
+        result = getopt_long(3, argv, "+a", options, NULL);
+        trace_option("ordered-plus", result, -1, 3, argv);
+    }
+    {
+        char *argv[] = { "tool", "left", "-a", "tail", NULL };
+        optind = 0; optopt = 779; optarg = (char *)"stale";
+        for (step = 0; step < 6; ++step) {
+            result = getopt_long(4, argv, "-a", options, NULL);
+            trace_option("ordered-minus", result, -1, 4, argv);
+            if (result == -1) break;
+        }
+    }
+    {
+        char *argv[] = { "tool", "-ab", "next", "-c", NULL };
+        optind = 0; optopt = 780; optarg = (char *)"stale";
+        for (step = 0; step < 6; ++step) {
+            result = getopt(4, argv, "ab::c:");
+            trace_option("short-args", result, -1, 4, argv);
+            if (result == -1) break;
+        }
+    }
+    {
+        char *argv[] = { "tool", "--alpha=bad", "--al", "--beta", NULL };
+        optind = 0; optopt = 781; optarg = (char *)"stale";
+        for (step = 0; step < 6; ++step) {
+            index = -7;
+            result = getopt_long(4, argv, "ab:", options, &index);
+            trace_option("long-errors", result, index, 4, argv);
+            if (result == -1) break;
+        }
+    }
+    {
+        char *argv[] = { "tool", "-abc", NULL };
+        optind = 0; optopt = 782; optarg = (char *)"stale";
+        result = getopt(2, argv, "abc");
+        trace_option("reset-before", result, -1, 2, argv);
+        optreset = 1;
+        result = getopt(2, argv, "abc");
+        trace_option("reset-after", result, -1, 2, argv);
+    }
+    {
+        char *argv[] = { "tool", "-za", "-b", NULL };
+        optind = 0; opterr = 1; optopt = 783; optarg = (char *)"stale";
+        errno = 73;
+        for (step = 0; step < 6; ++step) {
+            result = getopt(3, argv, "ab:");
+            trace_option("short-diagnostics", result, -1, 3, argv);
+            if (result == -1) break;
+        }
+    }
+    {
+        char *argv[] = { "tool", "--alpha=bad", "--al", "--beta", NULL };
+        optind = 0; opterr = 1; optopt = 784; optarg = (char *)"stale";
+        errno = 74;
+        for (step = 0; step < 6; ++step) {
+            index = -7;
+            result = getopt_long(4, argv, "ab:", options, &index);
+            trace_option("long-diagnostics", result, index, 4, argv);
+            if (result == -1) break;
+        }
+    }
+}
+
 int main(int argc, char **argv)
 {
     int result = check_program_names(argc, argv);
@@ -307,5 +454,6 @@ int main(int argc, char **argv)
     if (result != 0) return 50 + result;
     result = check_long_options();
     if (result != 0) return 70 + result;
+    trace_option_sequences();
     return 0;
 }
