@@ -12,8 +12,8 @@
 
 /* Keep the pinned raise-race topology: one worker receives 100 fork signals,
  * raises 1000 other real-time signals, and waits for the handler's children.
- * The guarded mode checks whether the final fork reached a child after the
- * original child check and before its wait loop. */
+ * The guarded mode rechecks child identity while waiting for fork signals:
+ * a handler fork can copy an unfinished counter after the earlier check. */
 enum { FORKS = 100, RAISES = 1000 };
 static _Atomic int fork_signals;
 static volatile sig_atomic_t raised_signals;
@@ -26,6 +26,17 @@ static int fork_errors[FORKS];
 static int worker_tid;
 static int wait_in_main;
 static int guarded_child_exit;
+static int race_window_mode;
+static int trace_enabled;
+
+/* Fixed writes expose progress even when a timed-out process cannot flush
+ * stdio. They are enabled only for the isolated diagnostic replay. */
+#define TRACE_STAGE(message) do { \
+    if (trace_enabled) { \
+        static const char line[] = "stage=" message "\n"; \
+        (void)write(STDERR_FILENO, line, sizeof(line) - 1); \
+    } \
+} while (0)
 
 static void prepare_one(void) { if (callback_step != 1) callback_error = 1; callback_step = 2; }
 static void prepare_two(void) { if (callback_step != 0) callback_error = 1; callback_step = 1; }
@@ -74,6 +85,7 @@ static int receive_children(void)
     int seen[FORKS] = {0};
     int reaped = 0, echild = 0, other_error = 0, unexpected = 0, bad_status = 0;
     print_disposition("before-wait");
+    TRACE_STAGE("before-wait-loop");
     for (int i = 0; i < FORKS; ++i) {
         int status = -1;
         errno = 0;
@@ -111,6 +123,7 @@ static int receive_children(void)
            worker_tid, syscall(SYS_gettid), is_child, atomic_load(&fork_signals), raised_signals,
            reaped, echild, other_error, unexpected, bad_status, missing);
     fflush(stdout);
+    TRACE_STAGE("after-wait-loop");
     return reaped != FORKS || echild || other_error || unexpected || bad_status || missing;
 }
 
@@ -118,22 +131,40 @@ static void *worker(void *argument)
 {
     (void)argument;
     worker_tid = (int)syscall(SYS_gettid);
+    if (!is_child) TRACE_STAGE("worker-start");
     for (int i = 0; i < RAISES; ++i)
         if (raise(SIGRTMIN)) _exit(91);
     if (raised_signals != RAISES) _exit(92);
+    if (!is_child) TRACE_STAGE("worker-raised-all");
     if (is_child) _exit(0);
-    while (atomic_load_explicit(&fork_signals, memory_order_relaxed) < FORKS) { }
+    /* This diagnostic fork is issued after the original child check. Its
+     * child copies fewer than 100 fork signals and must exit inside the loop. */
+    if (race_window_mode) {
+        TRACE_STAGE("worker-race-window");
+        if (raise(SIGRTMIN + 1)) _exit(93);
+    }
+    while (atomic_load_explicit(&fork_signals, memory_order_relaxed) < FORKS) {
+        if (guarded_child_exit && is_child) _exit(0);
+    }
+    if (!is_child) TRACE_STAGE("worker-fork-signals-all");
     if (guarded_child_exit && is_child) _exit(0);
-    if (wait_in_main) return 0;
+    if (wait_in_main) {
+        if (!is_child) TRACE_STAGE("worker-return-main");
+        return 0;
+    }
     return (void *)(long)receive_children();
 }
 
 int main(int argc, char **argv)
 {
     if (argc != 2 || (strcmp(argv[1], "worker-wait") && strcmp(argv[1], "main-wait") &&
-                      strcmp(argv[1], "worker-wait-guarded") && strcmp(argv[1], "main-wait-guarded"))) return 2;
+                      strcmp(argv[1], "worker-wait-guarded") && strcmp(argv[1], "main-wait-guarded") &&
+                      strcmp(argv[1], "main-wait-race-window") &&
+                      strcmp(argv[1], "main-wait-guarded-race-window"))) return 2;
     wait_in_main = !strncmp(argv[1], "main-wait", 9);
     guarded_child_exit = strstr(argv[1], "-guarded") != 0;
+    race_window_mode = strstr(argv[1], "-race-window") != 0;
+    trace_enabled = getenv("CRABC_SIGNAL_FORK_TRACE") != 0;
     if (pthread_atfork(prepare_one, parent_one, child_one) ||
         pthread_atfork(prepare_two, parent_two, child_two)) return 3;
     struct sigaction action = {0};
@@ -142,12 +173,24 @@ int main(int argc, char **argv)
     action.sa_handler = fork_in_handler;
     if (sigaction(SIGRTMIN + 1, &action, 0)) return 5;
     print_disposition("before-create");
+    TRACE_STAGE("main-before-create");
     pthread_t thread;
     if (pthread_create(&thread, 0, worker, 0)) return 6;
-    for (int i = 0; i < FORKS; ++i)
+    TRACE_STAGE("main-after-create");
+    int first_signals = race_window_mode ? FORKS / 2 : FORKS;
+    for (int i = 0; i < first_signals; ++i)
         if (pthread_kill(thread, SIGRTMIN + 1)) return 7;
+    if (race_window_mode) {
+        while (atomic_load_explicit(&fork_signals, memory_order_relaxed) <= first_signals) { }
+        TRACE_STAGE("main-race-fork-seen");
+        for (int i = first_signals + 1; i < FORKS; ++i)
+            if (pthread_kill(thread, SIGRTMIN + 1)) return 7;
+    }
+    TRACE_STAGE("main-sent-fork-signals");
     void *worker_result = 0;
+    TRACE_STAGE("main-before-join");
     if (pthread_join(thread, &worker_result)) return 8;
+    TRACE_STAGE("main-after-join");
     if (wait_in_main) return receive_children();
     return (int)(long)worker_result;
 }
