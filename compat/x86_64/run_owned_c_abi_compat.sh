@@ -374,9 +374,17 @@ step='compile workloads'
     -c "$interposition_probe" -o "$work/interposition.o"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
     -c "$gettext_interposition_probe" -o "$work/gettext-interposition.o"
+"$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
+    -DCRABC_GETTEXT_DSO_PROVIDER -c "$gettext_interposition_probe" \
+    -o "$work/gettext-provider.o"
+"$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
+    -DCRABC_GETTEXT_DSO_CONSUMER -c "$gettext_interposition_probe" \
+    -o "$work/gettext-consumer.o"
 audit_installed_compile "$installed" "$probe" "$work/workload.o" workload
 audit_installed_compile "$installed" "$interposition_probe" "$work/interposition.o" interposition
 audit_installed_compile "$installed" "$gettext_interposition_probe" "$work/gettext-interposition.o" gettext-interposition
+audit_installed_compile "$installed" "$gettext_interposition_probe" "$work/gettext-provider.o" gettext-provider
+audit_installed_compile "$installed" "$gettext_interposition_probe" "$work/gettext-consumer.o" gettext-consumer
 
 bash "$ROOT/compat/x86_64/run_musl_oracle.sh" >/dev/null
 step='link static musl oracle'
@@ -498,6 +506,48 @@ for mode in pie non-pie; do
     done
 done
 
+# A preceding DSO supplies the application's direct dgettext/dngettext
+# lookups. The same consumer also observes gettext/ngettext inside libc.so.
+for mode in pie non-pie; do
+    if [ "$mode" = pie ]; then
+        oracle_flags=(-fPIE -pie)
+    else
+        oracle_flags=(-fno-pie -no-pie)
+    fi
+    oracle_root="$work/gettext-dso-oracle-$mode-root"
+    candidate_root="$work/gettext-dso-candidate-$mode-root"
+    mkdir -p "$oracle_root/lib" "$oracle_root/usr/lib" "$candidate_root"
+    cp /opt/musl-1.2.6/lib/libc.so "$oracle_root$musl_interpreter"
+    ln -s ld-musl-x86_64.so.1 "$oracle_root/lib/libc.so"
+    oracle_provider="$oracle_root/usr/lib/libgettext-override.so"
+    candidate_provider="$work/libgettext-override-$mode.so"
+    step="link pinned-musl gettext DSO $mode"
+    "$oracle_cc" -shared -fPIC "$work/gettext-provider.o" \
+        -Wl,-soname,libgettext-override.so -o "$oracle_provider"
+    "$oracle_cc" "${oracle_flags[@]}" "$work/gettext-consumer.o" \
+        -Wl,--dynamic-linker,"$musl_interpreter",-rpath,/usr/lib,--no-as-needed \
+        "$oracle_provider" -o "$oracle_root/consumer"
+    step="link owned gettext DSO $mode"
+    "$installed/bin/crabc-cc-dynamic" --dynamic-shared-object \
+        "$work/gettext-provider.o" -o "$candidate_provider"
+    "$installed/bin/crabc-cc-dynamic" "--dynamic-$mode" \
+        "$work/gettext-consumer.o" --application-dso "$candidate_provider" \
+        -o "$work/gettext-dso-candidate-$mode"
+    cp -a "$installed/." "$candidate_root/"
+    cp "$candidate_provider" "$candidate_root/usr/lib/"
+    cp "$work/gettext-dso-candidate-$mode" "$candidate_root/consumer"
+    run_capture "$work/gettext-dso-oracle-$mode.stdout" \
+        chroot "$oracle_root" /consumer
+    for entry in kernel direct; do
+        command=(/consumer)
+        [ "$entry" = kernel ] || command=("$interpreter" /consumer)
+        run_capture "$work/gettext-dso-candidate-$mode-$entry.stdout" \
+            chroot "$candidate_root" "${command[@]}"
+        compare_oracle "$work/gettext-dso-oracle-$mode" \
+            "$work/gettext-dso-candidate-$mode-$entry"
+    done
+done
+
 # Structural closure follows execution so a provider defect never hides a
 # behavior difference that the same run would also have reported.
 audit_shared_closure "$installed"
@@ -511,5 +561,5 @@ else
     matrix='dynamic PIE/non-PIE kernel/direct'
 fi
 trap - ERR
-printf 'owned C ABI compatibility: PASS (installed objects through pinned musl; %s; frozen six-capability provider closure, search/queue/hash, qsort helper, gettext, diagnostics, function identity, err/perror/errno reporting, exit/quick-exit/immediate-exit/_Fork/err/assert termination, allocation policy, documented DES/catalog profile, and dynamic public-allocator interposition traces); evidence: %s\n' \
+printf 'owned C ABI compatibility: PASS (installed objects through pinned musl; %s; frozen six-capability provider closure, search/queue/hash, qsort helper, gettext static delegation and dynamic DSO binding, diagnostics, function identity, err/perror/errno reporting, exit/quick-exit/immediate-exit/_Fork/err/assert termination, allocation policy, documented DES/catalog profile, and dynamic public-allocator interposition traces); evidence: %s\n' \
     "$matrix" "$work"
