@@ -119,6 +119,19 @@ static long raw_syscall3(long number, long argument1, long argument2,
     return result;
 }
 
+static long raw_syscall5(long number, long argument1, long argument2,
+    long argument3, long argument4, long argument5)
+{
+    long result;
+    register long r10 __asm__("r10") = argument4;
+    register long r8 __asm__("r8") = argument5;
+
+    __asm__ volatile("syscall" : "=a"(result)
+        : "a"(number), "D"(argument1), "S"(argument2), "d"(argument3),
+          "r"(r10), "r"(r8) : "rcx", "r11", "memory");
+    return result;
+}
+
 static void raw_close(int file_descriptor)
 {
     if (file_descriptor >= 0)
@@ -378,6 +391,61 @@ static int check_error_translation(void)
     return 0;
 }
 
+static int check_accept4_zero_flags_dispatch(void)
+{
+    /* Only accept4 is denied; accept remains available on Linux 5.10+. */
+    struct socket_filter_instruction {
+        unsigned short code;
+        unsigned char true_jump;
+        unsigned char false_jump;
+        unsigned int value;
+    } filter[] = {
+        { 0x20, 0, 0, 0 },
+        { 0x15, 0, 1, SYS_accept4 },
+        { 0x06, 0, 0, 0x00050000U | ENOSYS },
+        { 0x06, 0, 0, 0x7fff0000U },
+    };
+    struct socket_filter_program {
+        unsigned short length;
+        struct socket_filter_instruction *instructions;
+    } program = { 4, filter };
+    struct sockaddr_in address = loopback_address();
+    socklen_t address_length = sizeof(address);
+    int listener = -1;
+    int client = -1;
+    int peer = -1;
+    int status = 0;
+
+    listener = socket(AF_INET, SOCK_STREAM, 0);
+    client = socket(AF_INET, SOCK_STREAM, 0);
+    if (listener < 0 || client < 0 ||
+        bind(listener, (const struct sockaddr *)&address, sizeof(address)) != 0 ||
+        getsockname(listener, (struct sockaddr *)&address, &address_length) != 0 ||
+        listen(listener, 1) != 0 ||
+        connect(client, (const struct sockaddr *)&address, sizeof(address)) != 0) {
+        status = 1;
+        goto finish;
+    }
+    if (raw_syscall5(SYS_prctl, 38, 1, 0, 0, 0) != 0 ||
+        raw_syscall3(SYS_seccomp, 1, 0, (long)&program) != 0) {
+        status = 2;
+        goto finish;
+    }
+    if (raw_syscall5(SYS_accept4, -1, 0, 0, 0, 0) != -ENOSYS) {
+        status = 3;
+        goto finish;
+    }
+    peer = accept4(listener, NULL, NULL, 0);
+    if (peer < 0)
+        status = 4;
+
+finish:
+    raw_close(peer);
+    raw_close(client);
+    raw_close(listener);
+    return status;
+}
+
 int crabc_x86_64_socket_transport_probe(void)
 {
     int status;
@@ -394,6 +462,9 @@ int crabc_x86_64_socket_transport_probe(void)
     status = check_error_translation();
     if (status != 0)
         return 70 + status;
+    status = check_accept4_zero_flags_dispatch();
+    if (status != 0)
+        return 90 + status;
     return 0;
 }
 

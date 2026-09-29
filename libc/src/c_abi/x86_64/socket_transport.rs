@@ -28,7 +28,9 @@
 //! for kernels that lack atomic descriptor flags. Linux 5.10 supplies
 //! `SOCK_CLOEXEC`, `SOCK_NONBLOCK`, and `accept4`, so this target-specific
 //! leaf calls their direct syscalls and deliberately carries no pre-baseline
-//! fcntl fallback. Musl also routes accept, connect, sendto, and recvfrom
+//! fcntl fallback. Musl routes zero-flag `accept4` through `accept`, which
+//! remains observable when a syscall filter treats the two calls differently.
+//! Musl also routes accept, connect, sendto, and recvfrom
 //! through pthread cancellation-point machinery. The owned runtime preserves
 //! those cancellation points; standalone archive selections retain direct
 //! syscalls. Linux 5.10 makes the source's older-kernel fallbacks unnecessary.
@@ -190,9 +192,9 @@ static_archive_member! { accept4_source {
     /// # Safety
     ///
     /// The optional address output has the same obligations as [`accept`].
-    /// `flags` passes directly to Linux; this leaf deliberately has no legacy
-    /// `accept` plus fcntl fallback. The caller owns descriptor lifetime and any
-    /// blocking/cancellation policy.
+    /// Zero flags use [`accept`] as in musl; nonzero flags pass directly to Linux.
+    /// This leaf has no legacy `accept` plus fcntl fallback. The caller owns
+    /// descriptor lifetime and any blocking/cancellation policy.
     #[no_mangle]
     pub unsafe extern "C" fn accept4(
         file_descriptor: c_int,
@@ -200,6 +202,11 @@ static_archive_member! { accept4_source {
         address_length: *mut c_uint,
         flags: c_int,
     ) -> c_int {
+        if flags == 0 {
+            // SAFETY: the caller supplies the same optional sockaddr output
+            // contract as accept; the public zero-flag form selects that call.
+            return unsafe { accept(file_descriptor, address, address_length) };
+        }
         // SAFETY: the caller supplies Linux's optional paired sockaddr output
         // contract; x86's fourth syscall argument is r10.
         let result = unsafe {

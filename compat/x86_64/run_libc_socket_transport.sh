@@ -5,7 +5,8 @@
 # `-nostdlib -static` executable linked solely through the selected crabc
 # archive. It selects only local AF_UNIX pair traffic and AF_INET loopback UDP
 # and TCP lifecycle calls. It also observes Linux 5.10's atomic
-# SOCK_CLOEXEC | SOCK_NONBLOCK success for socket, socketpair, and accept4.
+# SOCK_CLOEXEC | SOCK_NONBLOCK success for socket, socketpair, and accept4,
+# plus musl's zero-flag accept4 dispatch through accept under a syscall filter.
 # Raw close/fcntl are fixture plumbing only; this is not socket options,
 # ioctl/interface, message/vector I/O,
 # resolver/netdb, pathname/fcntl APIs, pthread cancellation, libc.so, CRT,
