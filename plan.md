@@ -318,7 +318,10 @@ are not transferable passes for a different revision.
   accounting, and terminal release. Both are registered in the clean M2 VM
   gate. Registering the explicit-arena terminal-unmap fault raises the clean
   run to 94 runnable checks, including all 55 VM checks; the
-  same four components remain partial.
+  same four components remain partial. A separate source-built fresh-arena
+  receiver matches 46 C/Rust fields when metadata commit and cleanup unmap
+  both fail, leaving a raw escaped map while a later healthy arena claim
+  succeeds and releases; its shared-gate registration remains open.
   A failed second-arena committed-slice claim and same-slice retry match 24
   C/Rust fields after the regular mapping uses the warning-preserving commit
   path; two additional pinned-C fields bind the attempted `mprotect` range.
