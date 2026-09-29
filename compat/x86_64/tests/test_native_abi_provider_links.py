@@ -79,6 +79,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
     def test_link_commands_reserve_owned_driver_relative_sidecars(self):
         import crabc_cc_static as driver
         import native_abi_provider_links as links
+        import owned_posix_product_evidence as products
         scratch = ROOT / '.work/x86_64/provider-links-object-tests'
         scratch.mkdir(parents=True, exist_ok=True)
         previous = Path.cwd()
@@ -86,12 +87,16 @@ class ProviderFixtureObjectTests(unittest.TestCase):
             os.chdir(ROOT)
             with tempfile.TemporaryDirectory(dir=scratch) as temporary:
                 work = Path(temporary)
+                os.chdir(work)
                 installed = scratch / 'installed'
                 for mode in links.MODES:
                     argv = links.command(installed, work, mode)
                     receipt = Path(argv[argv.index('--link-receipt') + 1])
                     paths = driver.receipt_sidecars(installed, receipt)
                     self.assertEqual(paths[0].absolute(), work / (mode + '.receipt.json'))
+                    paths[1].write_text('retained map')
+                    self.assertEqual(products._recorded_file(str(paths[1]), paths[0].absolute(), 'map'),
+                                     work / (mode + '.receipt.map'))
         finally:
             os.chdir(previous)
 

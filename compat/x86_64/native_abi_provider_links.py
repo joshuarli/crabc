@@ -66,13 +66,13 @@ def command(static: Path, work: Path, label: str) -> list[str]:
                 '-fno-stack-protector', '-c', str(work / 'providers.c'), '-o', str(work / 'providers.o')]
     if label in MODES:
         return [str(static / 'bin/crabc-cc'), '-' + label, '--link-receipt',
-                str((work / (label + '.receipt.json')).relative_to(ROOT)),
+                label + '.receipt.json',
                 str(work / 'providers.o'), '-o', str(work / label)]
     return [str(work / label.removesuffix('-run'))]
 
 
 def capture(argv: list[str], work: Path, label: str) -> dict[str, Any]:
-    result = subprocess.run(argv, cwd=ROOT, capture_output=True, check=False, timeout=120)
+    result = subprocess.run(argv, cwd=work, capture_output=True, check=False, timeout=120)
     for suffix, content in (('stdout', result.stdout), ('stderr', result.stderr),
                             ('status', f'{result.returncode}\n'.encode())):
         (work / (label + '.' + suffix)).write_bytes(content)
@@ -141,6 +141,9 @@ def collect(static: Path, elf_report: Path, output: Path) -> dict[str, Any]:
               'fixture': identity(output / 'providers.c'), 'object': identity(output / 'providers.o'),
               'commands': commands, 'links': links, 'object_references': object_references, 'linker': linker}
     (output / 'report.json').write_bytes(inventory._stable_json(report))
+    output.chmod(0o755)
+    for path in output.iterdir():
+        path.chmod(path.stat().st_mode | 0o444)
     return report
 
 
