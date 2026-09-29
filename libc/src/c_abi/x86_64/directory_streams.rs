@@ -320,14 +320,10 @@ unsafe fn adopt_directory_descriptor(file_descriptor: c_int) -> *mut DirectorySt
             0,
         )
     };
-    if is_linux_error(status_flags) {
-        // SAFETY: the result was checked as Linux's errno encoding.
-        unsafe { set_linux_error(status_flags) };
-        return ptr::null_mut();
-    }
-    if status_flags as c_int & O_PATH != 0 {
-        // SAFETY: selected `fdopendir` rejects O_PATH descriptors before it
-        // assumes ownership, matching musl's EBADF boundary.
+    if is_linux_error(status_flags) || status_flags as c_int & O_PATH != 0 {
+        // Musl tests the fcntl wrapper's -1 result against O_PATH, so both a
+        // failed flag lookup and an O_PATH descriptor report EBADF. Neither
+        // failure transfers ownership of the caller's descriptor.
         return unsafe { directory_failure(EBADF) };
     }
     if mode & S_IFMT != S_IFDIR {

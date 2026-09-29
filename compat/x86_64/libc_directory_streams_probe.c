@@ -497,6 +497,68 @@ static int check_closedir_interrupted_close(void)
     return 0;
 }
 
+/* A failed F_GETFL still leaves fdopendir's descriptor with its caller.
+ * Musl's O_PATH test maps the failed flag lookup to EBADF. */
+static int check_fdopendir_flag_lookup_failure(void)
+{
+    enum {
+        PR_SET_SECCOMP = 22,
+        PR_SET_NO_NEW_PRIVS = 38,
+        SECCOMP_MODE_FILTER = 2,
+        SECCOMP_RET_ERRNO = 0x00050000,
+        SECCOMP_RET_ALLOW = 0x7fff0000,
+        BPF_LD_W_ABS = 0x20,
+        BPF_JMP_JEQ_K = 0x15,
+        BPF_RET_K = 0x06,
+    };
+    struct filter_instruction {
+        uint16_t code;
+        uint8_t true_jump;
+        uint8_t false_jump;
+        uint32_t value;
+    } instructions[] = {
+        { BPF_LD_W_ABS, 0, 0, 0 },
+        { BPF_JMP_JEQ_K, 0, 5, SYS_fcntl },
+        { BPF_LD_W_ABS, 0, 0, 16 },
+        { BPF_JMP_JEQ_K, 0, 3, 0 },
+        { BPF_LD_W_ABS, 0, 0, 24 },
+        { BPF_JMP_JEQ_K, 0, 1, F_GETFL },
+        { BPF_RET_K, 0, 0, SECCOMP_RET_ERRNO | EIO },
+        { BPF_RET_K, 0, 0, SECCOMP_RET_ALLOW },
+    };
+    struct filter_program {
+        uint16_t length;
+        struct filter_instruction *instructions;
+    } program = { sizeof(instructions) / sizeof(instructions[0]), instructions };
+    DIR *directory;
+    int descriptor = open("directory", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    long result;
+    register long arg4 __asm__("r10") = 0;
+    register long arg5 __asm__("r8") = 0;
+
+    if (descriptor < 0) return 1;
+    instructions[3].value = (uint32_t)descriptor;
+    __asm__ volatile("syscall" : "=a"(result)
+        : "a"((long)SYS_prctl), "D"((long)PR_SET_NO_NEW_PRIVS),
+          "S"(1L), "d"(0L), "r"(arg4), "r"(arg5)
+        : "rcx", "r11", "memory");
+    if (result != 0) return 2;
+    __asm__ volatile("syscall" : "=a"(result)
+        : "a"((long)SYS_prctl), "D"((long)PR_SET_SECCOMP),
+          "S"((long)SECCOMP_MODE_FILTER), "d"((long)&program),
+          "r"(arg4), "r"(arg5)
+        : "rcx", "r11", "memory");
+    if (result != 0) return 3;
+    errno = 0;
+    directory = fdopendir(descriptor);
+    if (directory != NULL) {
+        closedir(directory);
+        return 4;
+    }
+    if (errno != EBADF) return 5;
+    return close(descriptor) == 0 ? 0 : 6;
+}
+
 int crabc_x86_64_directory_streams_probe(void)
 {
     char long_name[CRABC_DIRECTORY_NAME_MAX + 1];
@@ -540,6 +602,10 @@ int crabc_x86_64_directory_streams_probe(void)
     }
     if ((status = check_closedir_interrupted_close()) != 0) {
         status += 70;
+        goto cleanup;
+    }
+    if ((status = check_fdopendir_flag_lookup_failure()) != 0) {
+        status += 80;
         goto cleanup;
     }
 
