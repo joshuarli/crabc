@@ -34,8 +34,8 @@
 use core::ptr::NonNull;
 
 use crate::config::{
-    BIN_HUGE, MEDIUM_MAX_OBJ_SIZE, PAGE_MAX_START_BLOCK_ALIGN2, PAGE_OSPAGE_BLOCK_ALIGN2,
-    PAGES_DIRECT, SMALL_MAX_OBJ_SIZE, SMALL_SIZE_MAX, WORD_SIZE,
+    BIN_HUGE, MAX_ALIGN_SIZE, MEDIUM_MAX_OBJ_SIZE, PAGE_MAX_START_BLOCK_ALIGN2,
+    PAGE_OSPAGE_BLOCK_ALIGN2, PAGES_DIRECT, SMALL_MAX_OBJ_SIZE, SMALL_SIZE_MAX, WORD_SIZE,
 };
 #[cfg(feature = "mi-stat-1")]
 use crate::config::LARGE_MAX_OBJ_SIZE;
@@ -135,6 +135,8 @@ fn is_naturally_aligned_small(size: usize, alignment: usize) -> Option<bool> {
 /// (`mi_theap_malloc_zero_aligned_at`). Both take the source order: the
 /// direct page's immediate head (`_mi_page_malloc_zero`, which leaves
 /// `retire_expire` alone), when aligned entries find it suitably aligned;
+/// an eight-byte request with 16-byte alignment first uses the source's
+/// 31-byte overallocated base through that base class's direct or queue head;
 /// otherwise, for an ordinary or naturally aligned small request,
 /// `_mi_malloc_generic`'s counter step and its queue-head
 /// `mi_page_free_quick_collect`, which clears `retire_expire` before the
@@ -159,9 +161,15 @@ pub(crate) unsafe fn allocate(
     alignment: Option<usize>,
     zero: bool,
 ) -> Option<NonNull<u8>> {
-    if size < WORD_SIZE
-        || alignment.is_some_and(|alignment| !alignment.is_power_of_two() || alignment > size)
-    {
+    if size < WORD_SIZE || alignment.is_some_and(|alignment| !alignment.is_power_of_two()) {
+        return None;
+    }
+    if size == WORD_SIZE && alignment == Some(MAX_ALIGN_SIZE) {
+        // SAFETY: forwarded exclusive owner contract. This aligned request
+        // takes the source's overallocated ordinary allocation branch.
+        return unsafe { allocate_eight_byte_overalloc_head(theap, zero) };
+    }
+    if alignment.is_some_and(|alignment| alignment > size) {
         return None;
     }
     let direct_small = size <= SMALL_SIZE_MAX;
@@ -277,6 +285,88 @@ pub(crate) unsafe fn allocate(
     );
     debug_assert!(alignment.is_none_or(|alignment| block.as_ptr().addr() & (alignment - 1) == 0));
     Some(block)
+}
+
+/// The eight-byte, 16-aligned case of
+/// `mi_theap_malloc_zero_aligned_at_overalloc`.
+/// Its base request uses the source's minimum size before alignment padding.
+/// An empty direct head may still use the ordinary queue head after its quick
+/// local collection; page search and extension stay on the full path.
+///
+/// # Safety
+///
+/// `theap` is the published exclusive owner for this operation.
+#[inline(never)]
+unsafe fn allocate_eight_byte_overalloc_head(theap: NonNull<Theap>, zero: bool) -> Option<NonNull<u8>> {
+    let request = MAX_ALIGN_SIZE + MAX_ALIGN_SIZE - 1;
+    let alignment = MAX_ALIGN_SIZE;
+    let direct_index = invariants::word_count(request)?;
+    if direct_index >= PAGES_DIRECT {
+        return None;
+    }
+    // SAFETY: the published owner keeps each direct slot initialized to a
+    // live page or the immutable empty-page sentinel.
+    let theap_ref = unsafe { theap.as_ref() };
+    let page = unsafe { NonNull::new_unchecked(theap_ref.direct_page(direct_index)?) };
+    let head = unsafe { page.as_ref() }.free_list_head();
+    let (page, base) = if !head.is_null() {
+        // SAFETY: a non-null head excludes the sentinel. This owner controls
+        // the ordinary list, and the source allocates this base first.
+        (page, unsafe { pop_selected_head(page, head, zero) })
+    } else {
+        let bin = size_class::bin(request)?;
+        let first = NonNull::new(theap_ref.queue(bin)?.first())?;
+        // SAFETY: the queue head is a live owner page. The direct head's
+        // empty observation remains valid while this owner runs.
+        let (immediate_available, local_head) = unsafe {
+            let state = Page::local_free_list_state_at(first);
+            let immediate_available = first.as_ptr() != page.as_ptr()
+                && !(*state.free.as_ptr()).is_null();
+            let local_head = if immediate_available {
+                core::ptr::null_mut()
+            } else {
+                *state.local_free.as_ptr()
+            };
+            (immediate_available, local_head)
+        };
+        if !immediate_available && local_head.is_null() {
+            return None;
+        }
+        // SAFETY: the published owner exclusively controls this counter.
+        if !unsafe { Theap::advance_generic_count_below_administration_at(theap) } {
+            return None;
+        }
+        // SAFETY: the selected owner head remains stable through the source
+        // quick collect, countdown clear, and ordinary block pop.
+        let base = unsafe {
+            quick_collect_before_pop(first, local_head);
+            Page::set_retire_expire_at(first, 0);
+            let selected_head = if local_head.is_null() {
+                *Page::local_free_list_state_at(first).free.as_ptr()
+            } else {
+                local_head
+            };
+            pop_selected_head(first, selected_head, zero)
+        };
+        (first, base)
+    };
+    let misalignment = base.as_ptr().addr() & (alignment - 1);
+    let adjustment = if misalignment == 0 { 0 } else { alignment - misalignment };
+    if adjustment != 0 {
+        // The interior flag shares the source atomic owner word. Its relaxed
+        // update leaves the same owner and full-page bits intact.
+        unsafe { page.as_ref() }.set_has_interior_pointers(true);
+    }
+    #[cfg(feature = "mi-stat-1")]
+    theap_ref.record_malloc_normal_allocated(unsafe { page.as_ref() }.block_size());
+    #[cfg(feature = "mi-stat-2")]
+    theap_ref.record_malloc_normal_level_two_allocated(
+        request,
+        size_class::bin_for_regular_page_block_size(unsafe { page.as_ref() }.block_size()),
+    );
+    // The padded request leaves at least `alignment - 1` bytes beyond the
+    // minimum base size, so this adjusted client stays inside the block.
+    Some(unsafe { NonNull::new_unchecked(base.as_ptr().add(adjustment)) })
 }
 
 /// The ordinary eight-word allocation when its direct page or regular queue
