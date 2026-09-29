@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 static pthread-attribute metadata evidence.
+# Native Linux/x86-64 static pthread-attribute record and worker evidence.
 #
 # The same project-header fixture first runs with pinned musl 1.2.6, then as a
 # true -nostdlib -static candidate linked only with the selected crabc archive.
-# It proves the 56-byte pthread_attr_t record operations only; it does not
-# pass attributes to pthread_create or select a general pthread runtime.
+# It proves the 56-byte record operations and bounded attribute consumption
+# through the selected static pthread worker seam.
 set -euo pipefail
+ulimit -c 0
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -67,7 +68,7 @@ assert_direct_record_paths() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mkdir mktemp nm objdump python3 readelf rustup sort timeout; do
+for tool in ar awk cargo chmod cmp cp diff grep mkdir mktemp nm objdump python3 readelf rustup sha256sum sort timeout; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -75,8 +76,8 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_pthread_c11_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-pthread-attr.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+work_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-pthread-attr.XXXXXX")"
+printf 'pthread attribute evidence: %s\n' "$work_dir"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-pthread-attr-reference"
 candidate="$work_dir/crabc-static-pthread-attr-candidate"
@@ -114,7 +115,8 @@ for header in errno.h limits.h pthread.h sched.h bits/alltypes.h; do
         fail "fixture did not use project $header"
 done
 
-"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector \
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -static -no-pie \
+    -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_pthread_attr_probe.c -o "$reference"
 if timeout "$EXECUTION_TIMEOUT" "$reference"; then
     :
@@ -205,4 +207,66 @@ else
     fail "freestanding pthread-attribute fixture exited ${status}"
 fi
 
-printf 'x86 static crabc-libc pthread attributes: PASS\n'
+# Consume the same initialized attribute scenarios under pinned musl and the
+# selected static archive. Keep both final ELFs and their raw process streams.
+worker_source="$ROOT_DIR/compat/x86_64/libc_pthread_attr_create_probe.c"
+worker_start="$ROOT_DIR/compat/x86_64/libc_pthread_attr_create_start.S"
+worker_reference="$work_dir/musl-pthread-attr-create-reference"
+worker_candidate="$work_dir/crabc-static-pthread-attr-create-candidate"
+cp "$worker_source" "$work_dir/worker-probe.c"
+cp "$worker_start" "$work_dir/worker-start.S"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -static -no-pie \
+    -fno-builtin -fno-stack-protector \
+    -I"$ROOT_DIR/include" "$worker_source" -o "$worker_reference"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_PTHREAD_ATTR_CREATE_FREESTANDING \
+    -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
+    -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    "$worker_source" "$worker_start" "$archive" -o "$worker_candidate"
+readelf --file-header --program-headers --wide "$worker_reference" >"$work_dir/worker-musl-elf.txt"
+readelf --file-header --program-headers --wide "$worker_candidate" >"$work_dir/worker-crabc-elf.txt"
+readelf --symbols --wide "$worker_candidate" >"$work_dir/worker-crabc-symbols.txt"
+readelf --dynamic --wide "$worker_candidate" >"$work_dir/worker-crabc-dynamic.txt" || true
+if grep -Eq 'Requesting program interpreter|INTERP' "$work_dir/worker-crabc-elf.txt" ||
+    grep -Eq 'NEEDED' "$work_dir/worker-crabc-dynamic.txt"; then
+    fail "attribute worker candidate selected an ambient dynamic runtime"
+fi
+if grep -Eq 'Requesting program interpreter|INTERP' "$work_dir/worker-musl-elf.txt"; then
+    fail "pinned musl worker control was not statically linked"
+fi
+for symbol in pthread_attr_init pthread_attr_setstack pthread_attr_setguardsize \
+    pthread_attr_setdetachstate pthread_attr_setschedpolicy \
+    pthread_attr_setschedparam pthread_create pthread_join \
+    __crabc_x86_static_tls_bootstrap; do
+    grep -Eq "[[:space:]]${symbol}$" "$work_dir/worker-crabc-symbols.txt" ||
+        fail "attribute worker candidate does not define $symbol"
+done
+if timeout "$EXECUTION_TIMEOUT" "$worker_reference" \
+    >"$work_dir/worker-musl.stdout" 2>"$work_dir/worker-musl.stderr"; then
+    printf '0\n' >"$work_dir/worker-musl.status"
+else
+    printf '%s\n' "$?" >"$work_dir/worker-musl.status"
+fi
+if timeout "$EXECUTION_TIMEOUT" "$worker_candidate" \
+    >"$work_dir/worker-crabc.stdout" 2>"$work_dir/worker-crabc.stderr"; then
+    printf '0\n' >"$work_dir/worker-crabc.status"
+else
+    printf '%s\n' "$?" >"$work_dir/worker-crabc.status"
+fi
+(
+    cd "$work_dir"
+    sha256sum musl-pthread-attr-create-reference \
+        crabc-static-pthread-attr-create-candidate cargo-target/x86_64-unknown-linux-musl/debug/libc.a \
+        worker-probe.c worker-start.S worker-*.stdout \
+        worker-*.stderr worker-*.status >worker-receipt.sha256
+)
+chmod -R a+rX "$work_dir"
+cmp "$work_dir/worker-musl.status" "$work_dir/worker-crabc.status" ||
+    fail "pthread attribute worker statuses differ"
+cmp "$work_dir/worker-musl.stdout" "$work_dir/worker-crabc.stdout" ||
+    fail "pthread attribute worker stdout differs"
+cmp "$work_dir/worker-musl.stderr" "$work_dir/worker-crabc.stderr" ||
+    fail "pthread attribute worker stderr differs"
+[ "$(cat "$work_dir/worker-crabc.status")" = 0 ] ||
+    fail "pthread attribute worker returned nonzero"
+
+printf 'x86 static crabc-libc pthread attributes and worker consumption: PASS\n'
