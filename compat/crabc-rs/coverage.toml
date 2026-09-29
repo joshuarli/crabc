@@ -2861,10 +2861,10 @@ classification = "native-safe"
 status = "verified"
 rust_api = ["ipc::{MessageQueue, QueueAttributes, MessagePriority, OpenFlags, CreateFlags}::{open, create, unlink, attributes, set_nonblocking, send, receive, send_until, receive_until}"]
 shared_impl = ["crabc_core::ipc fixed-arity Linux/AArch64 mq_open/mq_unlink/mq_getsetattr/mq_timedsend/mq_timedreceive", "crabc_rs::ipc::MessageQueue over OwnedFd close/drop"]
-native_boundary = "typed POSIX named message queues with caller-borrowed send/receive buffers, validated priorities and attributes, explicit nonblocking flags, and absolute CLOCK_REALTIME deadlines; no variadic C ABI or global state"
+native_boundary = "typed POSIX named message queues with caller-borrowed send/receive buffers, validated priorities and attributes, explicit nonblocking flags, and absolute CLOCK_REALTIME deadlines; x86 accepts a slash plus every 255 valid component bytes without allocation; no variadic C ABI or global state"
 uses_public_c_abi = false
 uses_errno_tls = false
-evidence = ["crabc-core/src/ipc.rs", "crabc-rs/src/ipc.rs", "crabc-rs/tests/ipc.rs", "crabc-rs/examples/ipc_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
+evidence = ["crabc-core/src/ipc.rs", "crabc-rs/src/ipc.rs", "crabc-rs/tests/ipc.rs", "crabc-rs/tests/x86_64_ipc.rs", "crabc-rs/examples/ipc_direct_probe.rs", "compat/crabc-rs/verify_kernel_probes.py"]
 rationale = "The first IPC slice is the owned POSIX named-message-queue mechanism only: open/create, unlink, descriptor ownership, attributes, priority ordering, caller buffers, nonblocking errors, and absolute realtime deadlines. mq_notify, SysV IPC, named semaphores, AIO, and aggregate framework abstractions remain outside scope."
 
 [[capability]]

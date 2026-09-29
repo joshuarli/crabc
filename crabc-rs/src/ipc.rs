@@ -15,10 +15,19 @@
 use bitflags::bitflags;
 use core::ffi::CStr;
 
+#[cfg(all(target_arch = "x86_64", feature = "alloc"))]
+use alloc::ffi::CString;
+#[cfg(all(target_arch = "x86_64", feature = "alloc"))]
+use alloc::string::String;
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+use std::ffi::{OsStr, OsString};
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+use std::os::unix::ffi::OsStrExt;
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+use std::path::{Path, PathBuf};
+
 #[cfg(target_arch = "aarch64")]
 use crate::path::Arg as QueueNameArg;
-#[cfg(target_arch = "x86_64")]
-use crate::fs::PathArg as QueueNameArg;
 use crate::{AsFd, BorrowedFd, Errno, OwnedFd, Result};
 
 pub use crate::fs::{Mode, Timespec};
@@ -28,6 +37,102 @@ pub const MAX_MESSAGE_PRIORITY: u32 = 32_767;
 
 const MQ_O_CREAT: u32 = 0x0000_0040;
 const MQ_O_NONBLOCK: u32 = 0x0000_0800;
+
+/// A POSIX queue name whose slash and 255-byte component fit without a heap.
+///
+/// This domain boundary has one more byte than the generic fixed pathname
+/// buffer: the slash is removed before Linux sees the component. Byte inputs
+/// reject interior NULs, and the callback borrows its temporary C string only
+/// for the direct queue syscall.
+#[cfg(target_arch = "x86_64")]
+pub trait QueueNameArg {
+    /// Runs `callback` with this name as a NUL-terminated C string.
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        Self: Sized,
+        F: FnOnce(&CStr) -> Result<T>;
+}
+
+#[cfg(target_arch = "x86_64")]
+fn with_queue_bytes<T, F>(bytes: &[u8], callback: F) -> Result<T>
+where
+    F: FnOnce(&CStr) -> Result<T>,
+{
+    if bytes.contains(&0) {
+        return Err(Errno::INVAL);
+    }
+    if bytes.len() > 256 {
+        return Err(Errno::NAMETOOLONG);
+    }
+    let mut storage = [0_u8; 257];
+    storage[..bytes.len()].copy_from_slice(bytes);
+    // SAFETY: The checked input has no NUL and fits before the initialized
+    // terminator; the callback cannot retain the temporary C string.
+    let name = unsafe { CStr::from_bytes_with_nul_unchecked(&storage[..=bytes.len()]) };
+    callback(name)
+}
+
+#[cfg(target_arch = "x86_64")]
+impl QueueNameArg for &CStr {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        callback(self)
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+macro_rules! impl_queue_name_arg {
+    ($type:ty, $value:ident, $bytes:expr) => {
+        impl QueueNameArg for $type {
+            #[inline]
+            fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+            where
+                F: FnOnce(&CStr) -> Result<T>,
+            {
+                let $value = self;
+                with_queue_bytes($bytes, callback)
+            }
+        }
+    };
+}
+
+#[cfg(target_arch = "x86_64")]
+impl_queue_name_arg!(&[u8], value, value);
+#[cfg(target_arch = "x86_64")]
+impl<const LENGTH: usize> QueueNameArg for &[u8; LENGTH] {
+    #[inline]
+    fn into_with_c_str<T, F>(self, callback: F) -> Result<T>
+    where
+        F: FnOnce(&CStr) -> Result<T>,
+    {
+        with_queue_bytes(self, callback)
+    }
+}
+#[cfg(target_arch = "x86_64")]
+impl_queue_name_arg!(&str, value, value.as_bytes());
+#[cfg(all(target_arch = "x86_64", feature = "alloc"))]
+impl_queue_name_arg!(CString, value, value.as_bytes());
+#[cfg(all(target_arch = "x86_64", feature = "alloc"))]
+impl_queue_name_arg!(&CString, value, value.as_bytes());
+#[cfg(all(target_arch = "x86_64", feature = "alloc"))]
+impl_queue_name_arg!(String, value, value.as_bytes());
+#[cfg(all(target_arch = "x86_64", feature = "alloc"))]
+impl_queue_name_arg!(&String, value, value.as_bytes());
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+impl_queue_name_arg!(&OsStr, value, value.as_bytes());
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+impl_queue_name_arg!(&OsString, value, value.as_os_str().as_bytes());
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+impl_queue_name_arg!(OsString, value, value.as_os_str().as_bytes());
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+impl_queue_name_arg!(&Path, value, value.as_os_str().as_bytes());
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+impl_queue_name_arg!(&PathBuf, value, value.as_os_str().as_bytes());
+#[cfg(all(target_arch = "x86_64", feature = "std"))]
+impl_queue_name_arg!(PathBuf, value, value.as_os_str().as_bytes());
 
 bitflags! {
     /// Access and status flags accepted when opening a message queue.

@@ -177,11 +177,36 @@ fn x86_64_ipc_rejects_invalid_names_attributes_and_noalloc_paths() {
 
     #[cfg(not(feature = "alloc"))]
     {
-        let mut overlong = [b'x'; crabc_rs::fs::SMALL_PATH_BUFFER_SIZE];
+        let mut overlong = [b'x'; 257];
         overlong[0] = b'/';
         assert!(matches!(
             ipc::open(&overlong, OpenFlags::RDWR),
             Err(Errno::NAMETOOLONG)
         ));
     }
+}
+
+#[test]
+fn x86_64_ipc_accepts_every_valid_queue_name_byte_without_allocation() {
+    let mut name = [b'q'; 256];
+    name[0] = b'/';
+    let suffix = std::process::id().to_string();
+    name[256 - suffix.len()..].copy_from_slice(suffix.as_bytes());
+    let name = std::str::from_utf8(&name).expect("ASCII queue name");
+    let _ = ipc::unlink(name);
+
+    let attributes = QueueAttributes::new(1, 8).expect("valid queue capacity");
+    let queue = ipc::create(
+        name,
+        OpenFlags::RDWR,
+        CreateFlags::EXCLUSIVE,
+        Mode::RUSR | Mode::WUSR,
+        attributes,
+    )
+    .expect("POSIX queue name with 255 bytes after the slash is valid");
+    let second = ipc::open(name.as_bytes(), OpenFlags::RDWR)
+        .expect("byte input opens the same exact-limit queue");
+    ipc::unlink(name).expect("unlink exact-limit queue");
+    second.close().expect("close second queue descriptor");
+    queue.close().expect("close queue descriptor");
 }
