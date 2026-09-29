@@ -14,6 +14,9 @@ readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 
 fail() {
     printf 'ERROR: x86 static libc bsearch: %s\n' "$*" >&2
+    if [ -n "${work_dir:-}" ]; then
+        printf 'evidence: %s\n' "$work_dir" >&2
+    fi
     exit 1
 }
 
@@ -89,16 +92,18 @@ assert_candidate_excludes_sorting() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort; do
+for tool in ar awk cargo chmod cmp diff grep mkdir mktemp nm objdump readelf rustup sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
-bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
-bash "$ROOT_DIR/compat/x86_64/run_bsearch_header_abi.sh" >/dev/null
-
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-bsearch.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-bsearch.XXXXXX")"
+chmod 755 "$work_dir"
+bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" \
+    >"$work_dir/musl-oracle.stdout" 2>"$work_dir/musl-oracle.stderr"
+bash "$ROOT_DIR/compat/x86_64/run_bsearch_header_abi.sh" \
+    >"$work_dir/header-abi.stdout" 2>"$work_dir/header-abi.stderr"
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-bsearch-reference"
@@ -116,9 +121,11 @@ for header in stddef.h stdlib.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$trace" ||
         fail "fixture did not use project $header"
 done
-"$ORACLE_CC" -std=c11 -fno-builtin -fno-stack-protector \
+"$ORACLE_CC" -std=c11 -static -fno-pie -no-pie -fno-builtin -fno-stack-protector \
     -I "$ROOT_DIR/include" compat/x86_64/libc_bsearch_probe.c -o "$reference"
-"$reference" || fail "pinned-musl bsearch fixture failed"
+( cd "$work_dir" && "$reference" ) \
+    >"$work_dir/reference.stdout" 2>"$work_dir/reference.stderr" ||
+    fail "pinned-musl bsearch fixture failed"
 
 build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -135,6 +142,8 @@ grep -Eq '[[:space:]][TW][[:space:]]bsearch$' "$archive_symbols" ||
 assert_static_closure "$candidate"
 grep -Eq '[[:space:]]bsearch$' "$symbols" || fail "candidate lacks bsearch"
 assert_candidate_excludes_sorting
-"$candidate" || fail "freestanding bsearch fixture failed"
+( cd "$work_dir" && "$candidate" ) \
+    >"$work_dir/candidate.stdout" 2>"$work_dir/candidate.stderr" ||
+    fail "freestanding bsearch fixture failed"
 
-printf 'x86 static libc bsearch: PASS\n'
+printf 'x86 static libc bsearch: PASS; evidence: %s\n' "$work_dir"
