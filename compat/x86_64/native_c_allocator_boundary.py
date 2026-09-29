@@ -2409,13 +2409,15 @@ def _startup_observations(work: Path, output: Path, static_product: Path, dynami
     oracle_artifacts = {name: identity(work / filename, logical_path=(work / filename).relative_to(output).as_posix())
                        for name, filename in (("dynamic", "oracle-dynamic"), ("static", "oracle-static"))}
     workload = _startup_workload(work)
+    dynamic_workload = physical_file(work / "workload-dynamic.o", "dynamic startup workload")
     workload_artifacts = {name: identity(work / filename, logical_path=(work / filename).relative_to(output).as_posix())
                           for name, filename in (("object", "workload.o"), ("header", "workload.header"),
-                                                 ("relocations", "workload.relocations"))}
+                                                 ("relocations", "workload.relocations"),
+                                                 ("dynamic_object", "workload-dynamic.o"))}
     links: dict[str, object] = {}
     if validate_links:
         links = {mode: _link(work, output, static_product, workload, f"static-{mode}", f"static-{mode}.crabc-link.json", mode) for mode in STATIC_MODES}
-        links.update({"dynamic-" + mode: _link(work, output, dynamic_product, workload, f"dynamic-{mode}", f"dynamic-{mode}.crabc-link.json", mode) for mode in DYNAMIC_MODES})
+        links.update({"dynamic-" + mode: _link(work, output, dynamic_product, dynamic_workload, f"dynamic-{mode}", f"dynamic-{mode}.crabc-link.json", mode) for mode in DYNAMIC_MODES})
     symbols = physical_file(work / "dynamic-symbols.txt", "startup lifecycle symbols").read_text(encoding="utf-8")
     for name in ("__crabc_x86_owned_mimalloc_process_initializer", "__crabc_x86_owned_mimalloc_process_finalizer"):
         require(len(re.findall(rf"^\S+\s+d\s+{re.escape(name)}$", symbols, re.MULTILINE)) == 1,
@@ -2439,12 +2441,13 @@ def _replay_startup_observations(work: Path, output: Path, static_product: Path,
             and same(record["c_runtime_static_links"], current["c_runtime_static_links"]),
             "startup raw observations drifted")
     workload = _startup_workload(work)
+    dynamic_workload = physical_file(work / "workload-dynamic.o", "dynamic startup workload")
     links = exact(record["links"], {*STATIC_MODES, *(f"dynamic-{mode}" for mode in DYNAMIC_MODES)}, "startup link roster")
     for mode in STATIC_MODES:
         _replay_link(work, output, static_product, workload, f"static-{mode}", f"static-{mode}.crabc-link.json", mode,
                      links[mode], export_dynamic=False)
     for mode in DYNAMIC_MODES:
-        _replay_link(work, output, dynamic_product, workload, f"dynamic-{mode}", f"dynamic-{mode}.crabc-link.json", mode,
+        _replay_link(work, output, dynamic_product, dynamic_workload, f"dynamic-{mode}", f"dynamic-{mode}.crabc-link.json", mode,
                      links[f"dynamic-{mode}"], export_dynamic=False)
     return record
 
