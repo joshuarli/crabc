@@ -4603,6 +4603,8 @@ impl RuntimeProcessStorage {
                 // The page-map mapping failed and was reported at its source
                 // site; C's `mi_process_init_once` continues. Its loader tail
                 // flushes that report when this is the runtime's startup.
+                self.state.store(PROCESS_PAGE_MAP_UNAVAILABLE, Ordering::Release);
+                let _ = completion.complete();
                 if entry == ProcessStartEntry::RuntimeStartup {
                     // SAFETY: the startup call runs on the initial thread
                     // before other threads exist; no projection is live.
@@ -4610,8 +4612,6 @@ impl RuntimeProcessStorage {
                         ProcessMainInitializationStorage::global().complete_runtime_startup_without_page_map()
                     };
                 }
-                self.state.store(PROCESS_PAGE_MAP_UNAVAILABLE, Ordering::Release);
-                let _ = completion.complete();
                 return true;
             }
             Err(_) => {
@@ -4620,12 +4620,17 @@ impl RuntimeProcessStorage {
             }
         };
         if !self.publish_prepared_owner(owner) { return false; }
-        // No owner/Theap projection survives publication. Reservation and
-        // output callbacks can now allocate through the ordinary initial
-        // owner, while the linear startup continuation alone completes once.
-        if startup.complete().is_err()
-            || self.state.load(Ordering::Acquire) != PROCESS_ALLOCATABLE
-        {
+        // No owner/Theap projection survives publication. Reservation
+        // callbacks can allocate through the ordinary initial owner; the
+        // source once body completes before loader output callbacks run.
+        let tail = match startup.complete_once_body() {
+            Ok(tail) => tail,
+            Err(_) => {
+                self.retain();
+                return false;
+            }
+        };
+        if self.state.load(Ordering::Acquire) != PROCESS_ALLOCATABLE {
             self.retain();
             return false;
         }
@@ -4634,6 +4639,10 @@ impl RuntimeProcessStorage {
         // the source once release. A futex wake error cannot revoke either
         // atomic publication or the completed startup result.
         let _ = completion.complete();
+        // Delayed diagnostic output belongs to the loader continuation:
+        // callbacks and waiting initialization callers observe the completed
+        // process before output delivery or the final loader reseed begins.
+        tail.complete();
         true
     }
 
@@ -19360,6 +19369,80 @@ mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
     use std::thread;
+
+    #[cfg(target_arch = "x86_64")]
+    struct RuntimeLoaderTailObservation {
+        runtime: &'static RuntimeProcessStorage,
+        facts: NativeProcessStartupFacts,
+        entered: mpsc::Sender<()>,
+        returned: mpsc::Receiver<bool>,
+        observed: core::cell::Cell<Option<(bool, bool, bool)>>,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    std::thread_local! {
+        static RUNTIME_LOADER_TAIL_OBSERVATION: core::cell::Cell<*const RuntimeLoaderTailObservation> =
+            const { core::cell::Cell::new(core::ptr::null()) };
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn observe_runtime_loader_tail(_: *const core::ffi::c_char) {
+        RUNTIME_LOADER_TAIL_OBSERVATION.with(|slot| {
+            // SAFETY: the initializer retains its observation across this
+            // synchronous primitive callback and clears the pointer afterward.
+            let Some(observation) = (unsafe { slot.get().as_ref() }) else { return };
+            if observation.observed.get().is_some() { return; }
+            let active = observation.runtime.is_active();
+            let recursive = observation.runtime.initialize(observation.facts, ProcessStartEntry::FirstAllocation);
+            let _ = observation.entered.send(());
+            let contender = observation.returned.recv_timeout(std::time::Duration::from_secs(2)).unwrap_or(false);
+            observation.observed.set(Some((active, recursive, contender)));
+        });
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn runtime_loader_tail_releases_once_before_delayed_output() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::runtime_loader_tail_releases_once_before_delayed_output",
+            || {
+                unsafe fn verbose_environment() -> *const *const core::ffi::c_char {
+                    static mut ENVIRONMENT: [*const core::ffi::c_char; 2] = [
+                        c"MIMALLOC_VERBOSE=1".as_ptr(), core::ptr::null(),
+                    ];
+                    core::ptr::addr_of!(ENVIRONMENT).cast()
+                }
+                let runtime: &'static RuntimeProcessStorage = std::boxed::Box::leak(
+                    std::boxed::Box::new(RuntimeProcessStorage::new()));
+                // SAFETY: the immutable environment and synchronous output
+                // provider satisfy the startup facts for this fresh process.
+                let facts = unsafe { NativeProcessStartupFacts::new(
+                    4096, verbose_environment, RuntimeStderrOutput::new(observe_runtime_loader_tail),
+                ) }.unwrap();
+                let (entered_tx, entered_rx) = mpsc::channel();
+                let (returned_tx, returned_rx) = mpsc::channel();
+                let contender = thread::spawn(move || {
+                    entered_rx.recv_timeout(std::time::Duration::from_secs(5)).expect("startup output begins");
+                    let completed = runtime.initialize(facts, ProcessStartEntry::FirstAllocation);
+                    let _ = returned_tx.send(completed);
+                    completed
+                });
+                let observation = RuntimeLoaderTailObservation {
+                    runtime, facts, entered: entered_tx, returned: returned_rx,
+                    observed: core::cell::Cell::new(None),
+                };
+                RUNTIME_LOADER_TAIL_OBSERVATION.with(|slot| slot.set(&observation));
+                let completed = runtime.initialize(facts, ProcessStartEntry::RuntimeStartup);
+                RUNTIME_LOADER_TAIL_OBSERVATION.with(|slot| slot.set(core::ptr::null()));
+                assert!(completed);
+                assert!(contender.join().unwrap());
+                assert_eq!(observation.observed.get(), Some((true, true, true)),
+                    "delayed startup output sees final authority and releases recursive and concurrent initialization");
+                assert_eq!(crate::subproc::MainSubprocess::global().total_thread_count(), 1);
+                assert_eq!(crate::subproc::MainSubprocess::global().live_thread_count(), 1);
+            },
+        );
+    }
 
     #[cfg(target_arch = "x86_64")]
     #[test]
