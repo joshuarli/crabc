@@ -20,8 +20,9 @@
 //!
 //! Every `xthread_free` transition executes this crate's implementation
 //! through the private `ThreadFreeHead` boundary: `publish_to_head_with_owner`
-//! (the `mi_free_block_mt` CAS loop, here always `allow_collect=true` as in
-//! `mi_free`), `detach_from_head` (`mi_page_thread_free_collect`),
+//! (the `mi_free_block_mt` CAS loop with both ordinary claiming publication
+//! and subprocess-safe owner-bit preservation), `detach_from_head`
+//! (`mi_page_thread_free_collect`),
 //! `claim_abandoned_owner_with` (`mi_page_claim_ownership`),
 //! `try_unown_abandoned_head_with` (`mi_abandoned_page_unown`), and
 //! `try_unown_abandoned_expected_head_with`
@@ -48,7 +49,8 @@
 //!
 //! The scenarios compose generic source roles on one page: foreign
 //! `mi_free`, live-owner local free and collection, owner exit
-//! (`_mi_page_abandon`), and an arena reader claiming a mapped abandoned page.
+//! (`_mi_page_abandon`), subprocess-safe free without collection, and an arena
+//! reader claiming a mapped abandoned page.
 //! No scenario selects a Rust geometry route, owner registry, client ledger,
 //! PageMap lease, or publication counter. Block size and `reserved` only
 //! select the source's own branches: `MI_SMALL_SIZE_MAX` partial collection,
@@ -75,7 +77,7 @@
 use super::{
     AbandonedExpectedHeadTransition, AbandonedOwnerClaim, AbandonedOwnerHeadTransition,
     THREAD_FREE_OWNED, ThreadFree, ThreadFreeHead, claim_abandoned_owner_with, detach_from_head,
-    is_owned, publish_to_head_with_owner, thread_free_block_address,
+    is_owned, publish_to_aligned_head_with_owner, publish_to_head_with_owner, thread_free_block_address,
     try_unown_abandoned_expected_head_with, try_unown_abandoned_head_with,
 };
 use crate::config::SMALL_SIZE_MAX;
@@ -309,6 +311,22 @@ impl<H: ModelHead> ModelPage<H> {
     fn remote_free(&self, block: usize) {
         let block_size = self.read_live_client(block);
         self.publish_remote_block(block, block_size);
+    }
+
+    /// `_mi_free_subproc_safe` uses the same source CAS but preserves the
+    /// observed owner bit and leaves collection to a later page owner.
+    fn remote_free_without_collect(&self, block: usize) {
+        self.read_live_client(block);
+        publish_to_aligned_head_with_owner(
+            &self.xthread_free,
+            block_address(block),
+            is_owned,
+            true,
+            |previous_block| {
+                self.block_next[block].with_mut(|next| unsafe { *next = previous_block });
+            },
+        )
+        .expect("model blocks keep the low owner bit clear");
     }
 
     /// The publication after a producer completed its PageMap and block
@@ -1007,6 +1025,24 @@ fn loom_owner_exit_remote_frees_and_arena_reader_compose_to_one_release() {
         for producer in producers {
             producer.join().expect("remote free completes");
         }
+        reader.join().expect("arena reader completes");
+        page.assert_quiescent(&[0, 1], 0);
+    });
+    // A subprocess-safe free leaves an unowned mapped head in place. The next
+    // ordinary free and an arena reader race to collect both published blocks.
+    model(|| {
+        let page = Arc::new(SourcePage::new(PageImage::abandoned_mapped(REGULAR_BLOCK_SIZE, 4, 2)));
+        page.remote_free_without_collect(0);
+        assert!(!is_owned(page.xthread_free.load_relaxed()));
+        let producer = spawn_remote_free(&page, 1);
+        let reader_page = Arc::clone(&page);
+        let reader = thread::spawn(move || {
+            if reader_page.arena_try_find_and_claim() {
+                reader_page.arena_reclaim(READER_THREAD_ID);
+                reader_page.owner_collect_until_all_free_then_free();
+            }
+        });
+        producer.join().expect("ordinary remote free completes");
         reader.join().expect("arena reader completes");
         page.assert_quiescent(&[0, 1], 0);
     });

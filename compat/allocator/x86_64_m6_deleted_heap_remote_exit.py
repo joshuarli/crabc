@@ -59,7 +59,7 @@ def check_event_order(stdout: str, mode: str, label: str) -> None:
         raise harness.HarnessError(f"{label} event order changed: {events}")
 
 
-def run_differential(source_only: bool, mode: str) -> int:
+def run_differential(source_only: bool, modes: tuple[str, ...]) -> dict[str, int]:
     harness.require_native_x86_64()
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, True)
@@ -78,16 +78,22 @@ def run_differential(source_only: bool, mode: str) -> int:
         )
         (ARTIFACTS / "c-build.log").write_text(str(c_build["stdout"]) + str(c_build["stderr"]))
         harness.require_success(c_build, "Deleted Heap remote-exit C build")
-        c_run = harness.command_record([str(c_driver), mode], cwd=temporary, env={}, timeout_seconds=60)
-        (ARTIFACTS / f"c-{mode}.log").write_text(str(c_run["stdout"]) + str(c_run["stderr"]))
-        harness.require_success(c_run, "Deleted Heap remote-exit C run")
-        c_trace = m7.parse_options_trace(str(c_run["stdout"]), "C deleted Heap remote exit", BEGIN, END)
-        check_event_order(str(c_run["stdout"]), mode, "pinned C")
-        if c_trace != EXPECTED[mode]:
-            raise harness.HarnessError(f"pinned deleted Heap remote-exit trace changed: {c_trace}")
+        c_runs = {}
+        c_traces = {}
+        for mode in modes:
+            c_run = harness.command_record([str(c_driver), mode], cwd=temporary, env={}, timeout_seconds=60)
+            (ARTIFACTS / f"c-{mode}.log").write_text(str(c_run["stdout"]) + str(c_run["stderr"]))
+            harness.require_success(c_run, f"Deleted Heap remote-exit C run ({mode})")
+            c_trace = m7.parse_options_trace(str(c_run["stdout"]), f"C deleted Heap remote exit ({mode})", BEGIN, END)
+            check_event_order(str(c_run["stdout"]), mode, "pinned C")
+            if c_trace != EXPECTED[mode]:
+                raise harness.HarnessError(f"pinned deleted Heap remote-exit trace changed ({mode}): {c_trace}")
+            c_runs[mode] = c_run
+            c_traces[mode] = c_trace
         if source_only:
-            print(c_trace)
-            return len(c_trace)
+            for mode in modes:
+                print(c_traces[mode])
+            return {mode: len(c_traces[mode]) for mode in modes}
         library = m4.build_adapter_library(temporary)
         rust_driver = temporary / "deleted-heap-remote-exit-rust"
         link = harness.command_record(
@@ -96,20 +102,24 @@ def run_differential(source_only: bool, mode: str) -> int:
         )
         (ARTIFACTS / "rust-link.log").write_text(str(link["stdout"]) + str(link["stderr"]))
         harness.require_success(link, "Deleted Heap remote-exit Rust link")
-        rust_run = harness.command_record([str(rust_driver), mode], cwd=temporary, env={}, timeout_seconds=60)
-        (ARTIFACTS / f"rust-{mode}.log").write_text(str(rust_run["stdout"]) + str(rust_run["stderr"]))
-        harness.require_success(rust_run, "Deleted Heap remote-exit Rust run")
-        rust_trace = m7.parse_options_trace(str(rust_run["stdout"]), "Rust deleted Heap remote exit", BEGIN, END)
-        check_event_order(str(rust_run["stdout"]), mode, "Rust")
-        m7.compare_options_traces(c_trace, rust_trace)
-        if str(c_run["stderr"]) != str(rust_run["stderr"]):
-            raise harness.HarnessError("deleted Heap remote-exit diagnostics differ")
-        return len(c_trace)
+        for mode in modes:
+            rust_run = harness.command_record([str(rust_driver), mode], cwd=temporary, env={}, timeout_seconds=60)
+            (ARTIFACTS / f"rust-{mode}.log").write_text(str(rust_run["stdout"]) + str(rust_run["stderr"]))
+            harness.require_success(rust_run, f"Deleted Heap remote-exit Rust run ({mode})")
+            rust_trace = m7.parse_options_trace(str(rust_run["stdout"]), f"Rust deleted Heap remote exit ({mode})", BEGIN, END)
+            check_event_order(str(rust_run["stdout"]), mode, "Rust")
+            m7.compare_options_traces(c_traces[mode], rust_trace)
+            if str(c_runs[mode]["stderr"]) != str(rust_run["stderr"]):
+                raise harness.HarnessError(f"deleted Heap remote-exit diagnostics differ ({mode})")
+        return {mode: len(c_traces[mode]) for mode in modes}
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-only", action="store_true")
-    parser.add_argument("--mode", choices=("before", "after"), default="before")
+    parser.add_argument("--mode", choices=("before", "after", "both"), default="both")
     arguments = parser.parse_args()
-    print(f"Deleted Heap remote exit ({arguments.mode}): {run_differential(arguments.source_only, arguments.mode)} keys")
+    modes = ("before", "after") if arguments.mode == "both" else (arguments.mode,)
+    counts = run_differential(arguments.source_only, modes)
+    for mode in modes:
+        print(f"Deleted Heap remote exit ({mode}): {counts[mode]} keys")

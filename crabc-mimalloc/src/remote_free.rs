@@ -639,26 +639,26 @@ pub(crate) unsafe fn push_live_allocation_without_collect(
     if page_state == LiveAllocationPageState::Detached {
         return Err(RemoteFreeError::NotOwnerAssociated);
     }
-    if block.as_ptr().addr() & THREAD_FREE_OWNED != 0 {
-        return Err(RemoteFreeError::UnalignedBlock);
-    }
-    // `free.c:81-87` with `allow_collect=false`: the new head keeps the old
-    // owner bit, so, unlike the owner-retaining publisher above, an unowned
-    // abandoned head is published to without being claimed.
-    // SAFETY: `producer` names the initialized `xthread_free` atomic field.
+    // `free.c:81-87` with `allow_collect=false` preserves the old owner bit.
+    // An abandoned unowned head therefore stays unowned until a later normal
+    // free or arena reader claims it. Use the same source CAS transition as
+    // normal remote publication, including its retry link rewrite.
+    // SAFETY: the checked allocation keeps this exact page and canonical
+    // block live through publication, including an unowned abandoned head.
     let word = unsafe { producer.xthread_free.as_ref() };
     let block = block.cast::<Block>();
     let block_address = block.as_ptr().expose_provenance();
-    let mut previous = word.load_relaxed();
-    loop {
-        // SAFETY: the caller exclusively owns `block` until this publication.
-        unsafe { block_set_next(block, thread_free_block(thread_free_block_address(previous))) };
-        let replacement = thread_free_create_address(block_address, is_owned(previous))
-            .expect("the checked block alignment preserves the low owner bit");
-        if word.cas_weak_acq_rel(&mut previous, replacement) {
-            break;
-        }
-    }
+    publish_to_aligned_head_with_owner(
+        word,
+        block_address,
+        is_owned,
+        true,
+        |previous_block| {
+            // SAFETY: this exact block remains producer-owned until the CAS
+            // publishes its first word into the source remote list.
+            unsafe { block_set_next(block, thread_free_block(previous_block)) };
+        },
+    )?;
     // The still-counted block kept the page registered and unreleased
     // through the publication.
     drop(allocation);
@@ -834,7 +834,7 @@ unsafe fn push_source_block_mt<const CANONICAL_ALIGNED: bool>(
     };
     if CANONICAL_ALIGNED {
         // The checked current allocation supplies an aligned canonical block.
-        publish_to_aligned_head_with_owner(word, block_address, owner_after_publication, set_next)
+        publish_to_aligned_head_with_owner(word, block_address, owner_after_publication, false, set_next)
     } else {
         publish_to_head_with_owner(word, block_address, owner_after_publication, set_next)
     }
@@ -1406,15 +1406,18 @@ where
     if block & THREAD_FREE_OWNED != 0 {
         return Err(RemoteFreeError::UnalignedBlock);
     }
-    publish_to_aligned_head_with_owner(head, block, owner_after_publication, set_next)
+    publish_to_aligned_head_with_owner(head, block, owner_after_publication, false, set_next)
 }
 
 /// The source head loop after a checked current allocation or raw validation
-/// established the free-list block's low-bit alignment.
+/// established the free-list block's low-bit alignment. An unowned head is
+/// permitted only for subprocess-safe publication: its replacement preserves
+/// the old low bit and leaves collection to the next source owner.
 fn publish_to_aligned_head_with_owner<H, O, F>(
     head: &H,
     block: ThreadFree,
     owner_after_publication: O,
+    permit_unowned_head: bool,
     mut set_next: F,
 ) -> Result<bool, RemoteFreeError>
 where
@@ -1426,7 +1429,7 @@ where
 
     let mut previous = head.load_relaxed();
     loop {
-        if !is_owned(previous) {
+        if !is_owned(previous) && !permit_unowned_head {
             // A normal associated-page publisher must retain an owner, but
             // an abandoned `allow_collect` publisher is intentionally allowed
             // to take it. The policy sees the exact source old word.
@@ -1614,6 +1617,7 @@ unsafe fn block_set_next(block: NonNull<Block>, next: *mut Block) {
 
 #[cfg(test)]
 mod tests {
+    use core::cell::Cell;
     extern crate std;
 
     use super::*;
@@ -1621,6 +1625,7 @@ mod tests {
     use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
     use std::sync::Barrier;
     use std::thread;
+    use std::vec::Vec;
 
     #[repr(align(16))]
     struct TestBlock([u8; 16]);
@@ -1629,6 +1634,54 @@ mod tests {
         fn pointer(&mut self) -> NonNull<u8> {
             NonNull::from(&mut self.0).cast()
         }
+    }
+
+    struct OneSpuriousPublicationCas {
+        head: Cell<ThreadFree>,
+        fail_once: Cell<bool>,
+    }
+
+    impl ThreadFreeHead for OneSpuriousPublicationCas {
+        fn load_relaxed(&self) -> ThreadFree { self.head.get() }
+
+        fn cas_weak_acq_rel(&self, expected: &mut ThreadFree, replacement: ThreadFree) -> bool {
+            if self.fail_once.replace(false) {
+                return false;
+            }
+            if self.head.get() != *expected {
+                *expected = self.head.get();
+                return false;
+            }
+            self.head.set(replacement);
+            true
+        }
+
+        fn fetch_or_acq_rel(&self, value: ThreadFree) -> ThreadFree {
+            let old = self.head.get();
+            self.head.set(old | value);
+            old
+        }
+    }
+
+    #[test]
+    fn subprocess_safe_publication_retries_without_claiming_an_abandoned_head() {
+        let head = OneSpuriousPublicationCas {
+            head: Cell::new(0), fail_once: Cell::new(true),
+        };
+        let mut links = Vec::new();
+        assert_eq!(
+            publish_to_aligned_head_with_owner(&head, 0x10, is_owned, true, |next| links.push(next)),
+            Ok(false)
+        );
+        assert_eq!(links, [0, 0]);
+        assert_eq!(head.load_relaxed(), 0x10);
+
+        assert_eq!(
+            publish_to_head_with_owner(&head, 0x20, |_| true, |next| links.push(next)),
+            Ok(false)
+        );
+        assert_eq!(links, [0, 0, 0x10]);
+        assert_eq!(head.load_relaxed(), 0x21);
     }
 
     #[test]
