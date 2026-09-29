@@ -78,4 +78,4 @@ for mode in pie non-pie; do
     done
 done
 sha256sum -c "$work/input.sha256" >"$work/input-verified.txt"
-printf 'owned mount-table: PASS (same object; parsing, escapes, bounded storage, EOF, shared growth, append, errors); evidence: %s\n' "$work"
+printf 'owned mount-table: PASS (same object; parsing, escapes, bounded and shared growth, borrowed storage, EOF, append, errors); evidence: %s\n' "$work"
