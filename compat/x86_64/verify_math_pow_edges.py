@@ -1,54 +1,99 @@
 #!/usr/bin/env python3
-"""Compare exact pow edge records and the finite powf identity correction."""
+"""Compare pow/powf result bits and fenv against pinned musl in every mode."""
 import struct
 import sys
 from collections import Counter
 from pathlib import Path
 
+
 oracle = Path(sys.argv[1]).read_bytes()
 candidate = Path(sys.argv[2]).read_bytes()
-expected_bytes = 2 * 20 * 20 * 4 * 5 * 8
-if len(oracle) != expected_bytes or len(candidate) != expected_bytes:
-    raise SystemExit(f"pow edge record size drifted: {len(oracle)}, {len(candidate)}")
+record_size = struct.calcsize("<5Q")
+if len(oracle) != len(candidate) or not oracle or len(oracle) % record_size:
+    raise SystemExit(f"pow edge record size differs: {len(oracle)}, {len(candidate)}")
 
-corrected = 0
-result_differences = 0
-flag_differences = 0
-rounding_modes = Counter()
-outcomes = Counter()
-for index, (old, new) in enumerate(zip(struct.iter_unpack('<5Q', oracle),
-                                       struct.iter_unpack('<5Q', candidate))):
+coverage = Counter()
+mode_rows = Counter()
+corrected = Counter()
+for index, (old, new) in enumerate(zip(struct.iter_unpack("<5Q", oracle),
+                                       struct.iter_unpack("<5Q", candidate))):
     if old[:2] != new[:2] or old[3] != new[3]:
         raise SystemExit(f"pow edge input or rounding changed at {index}: {old} / {new}")
-    base, exponent, result, _, flags = new
-    rounding_modes[new[3] & 0xffffffff] += 1
+    base, exponent, result, modes, flags = new
+    precision = "powf" if base >> 32 == 1 else "pow"
+    bits = 32 if precision == "powf" else 64
+    sign = 1 << (bits - 1)
+    exponent_mask = 0x7f800000 if bits == 32 else 0x7ff0000000000000
+    fraction_mask = 0x007fffff if bits == 32 else 0x000fffffffffffff
+    quiet_bit = fraction_mask ^ (fraction_mask >> 1)
+    positive_odd, negative_odd, positive_even, negative_even = (
+        (0x4008000000000000, 0xc008000000000000,
+         0x4000000000000000, 0xc000000000000000) if bits == 64 else
+        (0x40400000, 0xc0400000, 0x40000000, 0xc0000000)
+    )
+    base &= (1 << bits) - 1
+    magnitude = result & (sign - 1)
+    requested, observed = modes >> 32, modes & 0xffffffff
+    if requested != observed:
+        raise SystemExit(f"pow changed rounding mode at record {index}")
+    mode_rows[precision, requested] += 1
+    coverage[precision, requested, "base subnormal"] += 0 < (base & (sign - 1)) < fraction_mask + 1
+    coverage[precision, requested, "exponent subnormal"] += 0 < (exponent & (sign - 1)) < fraction_mask + 1
+    coverage[precision, requested, "quiet NaN input"] += (
+        (base & exponent_mask) == exponent_mask and bool(base & quiet_bit)
+    )
+    coverage[precision, requested, "signaling NaN input"] += (
+        (base & exponent_mask) == exponent_mask and bool(base & fraction_mask)
+        and not bool(base & quiet_bit)
+    )
+    coverage[precision, requested, "quiet NaN exponent"] += (
+        (exponent & exponent_mask) == exponent_mask and bool(exponent & quiet_bit)
+    )
+    coverage[precision, requested, "signaling NaN exponent"] += (
+        (exponent & exponent_mask) == exponent_mask and bool(exponent & fraction_mask)
+        and not bool(exponent & quiet_bit)
+    )
+    coverage[precision, requested, "negative base, positive odd exponent"] += bool(base & sign) and exponent == positive_odd
+    coverage[precision, requested, "negative base, negative odd exponent"] += bool(base & sign) and exponent == negative_odd
+    coverage[precision, requested, "negative base, positive even exponent"] += bool(base & sign) and exponent == positive_even
+    coverage[precision, requested, "negative base, negative even exponent"] += bool(base & sign) and exponent == negative_even
+    coverage[precision, requested, "negative zero"] += magnitude == 0 and bool(result & sign)
+    coverage[precision, requested, "subnormal result"] += 0 < magnitude < fraction_mask + 1
     for name, bit in (("invalid", 1), ("divide by zero", 4),
                       ("overflow", 8), ("underflow", 16), ("inexact", 32)):
-        outcomes[name] += bool(flags & bit)
-    magnitude = result & (0x7fffffff if base >> 32 == 1 else 0x7fffffffffffffff)
-    outcomes["negative zero"] += magnitude == 0 and bool(
-        result & (0x80000000 if base >> 32 == 1 else 0x8000000000000000))
-    outcomes["subnormal result"] += (0 < magnitude <
-        (0x00800000 if base >> 32 == 1 else 0x0010000000000000))
-    if (base >> 32 == 1 and exponent == 0x3f800000
+        coverage[precision, requested, name] += bool(flags & bit)
+    if (precision == "powf" and exponent == 0x3f800000
             and base & 0x7fffffff < 0x7f800000):
-        if result != base & 0xffffffff or flags:
+        if result != base or flags:
             raise SystemExit(f"powf finite identity failed at {index}: {old} / {new}")
-        corrected += old != new
-        result_differences += old[2] != new[2]
-        flag_differences += old[4] != new[4]
+        corrected["records"] += old != new
+        corrected["results"] += old[2] != new[2]
+        corrected["flags"] += old[4] != new[4]
     elif old != new:
         raise SystemExit(f"pow edge mismatch at {index}: {old} / {new}")
-if rounding_modes != {0: 800, 0x400: 800, 0x800: 800, 0xc00: 800}:
-    raise SystemExit(f"pow edge rounding coverage changed: {rounding_modes}")
-if any(count == 0 for count in outcomes.values()) or len(outcomes) != 7:
-    raise SystemExit(f"pow edge outcome coverage changed: {outcomes}")
-if (corrected, result_differences, flag_differences) != (36, 12, 36):
-    raise SystemExit("powf finite identity difference count changed: "
-                     f"{corrected} records, {result_differences} results, "
-                     f"{flag_differences} flags")
-print(f"pow edge corpus: {expected_bytes // 40} records; "
-      f"{expected_bytes // 40 - corrected} raw matches; "
-      f"{corrected} explicit finite powf(x,1) differences "
-      f"({result_differences} results, {flag_differences} flags); "
-      "candidate identity and outcome coverage verified")
+
+expected_modes = {0, 0x400, 0x800, 0xc00}
+expected_coverage = {
+    "base subnormal", "exponent subnormal", "quiet NaN input",
+    "signaling NaN input", "quiet NaN exponent", "signaling NaN exponent",
+    "negative base, positive odd exponent", "negative base, negative odd exponent",
+    "negative base, positive even exponent", "negative base, negative even exponent",
+    "negative zero", "subnormal result", "invalid", "divide by zero",
+    "overflow", "underflow", "inexact",
+}
+for precision in ("pow", "powf"):
+    rows = {mode: count for (kind, mode), count in mode_rows.items() if kind == precision}
+    if set(rows) != expected_modes or len(set(rows.values())) != 1:
+        raise SystemExit(f"{precision} rounding coverage changed: {rows}")
+    for mode in expected_modes:
+        exercised = {name for (kind, tested_mode, name), count in coverage.items()
+                     if kind == precision and tested_mode == mode and count > 0}
+        if exercised != expected_coverage:
+            raise SystemExit(f"{precision} edge coverage changed in mode {mode:#x}: "
+                             f"missing {expected_coverage - exercised}")
+if corrected["records"] == 0:
+    raise SystemExit("powf finite identity correction was not exercised")
+print(f"pow edge corpus: {len(oracle) // record_size} records; "
+      f"{corrected['records']} explicit finite powf(x,1) differences "
+      f"({corrected['results']} results, {corrected['flags']} flags); "
+      "all rounding modes, values, and IEEE flag classes verified")

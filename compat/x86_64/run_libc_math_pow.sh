@@ -48,15 +48,18 @@ assert_selected_c_abi_surface() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mkdir mktemp nm objdump readelf rustup sort wc python3; do
+for tool in ar awk cargo cmp diff grep mkdir mktemp nm objdump readelf realpath rustup sort wc python3; do
 	require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_math_pow_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-math-pow.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+[ -n "${TMPDIR:-}" ] || fail "requires a checkout-local TMPDIR"
+case "$(realpath -e "$TMPDIR")" in "$ROOT_DIR"/.work/*) ;; *) fail "TMPDIR escapes the checkout" ;; esac
+work_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-libc-math-pow.XXXXXX")"
+chmod a+rx "$work_dir"
+printf 'Retained pow archive evidence: %s\n' "$work_dir"
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-reference"
@@ -183,3 +186,4 @@ fi
 python3 "$ROOT_DIR/compat/x86_64/verify_math_pow_records.py" "$reference_output" "$candidate_output"
 
 printf 'x86 static libc pow/powf: PASS (%s records)\n' "$record_count"
+bash "$ROOT_DIR/compat/x86_64/run_libc_math_pow_edges.sh"
