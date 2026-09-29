@@ -42,6 +42,7 @@ _Static_assert(PTHREAD_PROCESS_PRIVATE == 0 && PTHREAD_PROCESS_SHARED == 1,
 _Static_assert(PTHREAD_BARRIER_SERIAL_THREAD == -1,
     "musl serial barrier result");
 _Static_assert(EINVAL == 22, "Linux x86 EINVAL");
+_Static_assert(SYS_kill == 62, "x86 barrier fixture process cleanup syscall");
 _Static_assert(SYS_write == 1 && SYS_mmap == 9 && SYS_munmap == 11 && SYS_fork == 57 &&
     SYS_exit == 60 && SYS_wait4 == 61 && SYS_clock_gettime == 228 &&
     SYS_getpid == 39 && SYS_gettid == 186 && SYS_tgkill == 234,
@@ -285,6 +286,9 @@ static int run_attribute_and_count_probe(void)
     if (pthread_barrier_init(&barrier, 0, INVALID_BARRIER_COUNT) != EINVAL ||
         !barrier_words_match(&barrier, 0x5a5a5a5a))
         return 7;
+    if (pthread_barrier_init(&barrier, 0, UINT32_MAX) != EINVAL ||
+        !barrier_words_match(&barrier, 0x5a5a5a5a))
+        return 13;
     if (pthread_barrier_init(0, 0, 0) != EINVAL ||
         pthread_barrier_init(0, 0, INVALID_BARRIER_COUNT) != EINVAL ||
         pthread_barrierattr_setpshared(0, -1) != EINVAL ||
@@ -301,6 +305,11 @@ static int run_attribute_and_count_probe(void)
         pthread_barrier_wait(&barrier) != PTHREAD_BARRIER_SERIAL_THREAD ||
         pthread_barrier_destroy(&barrier) != 0)
         return 12;
+    fill_barrier_words(&barrier, 0x5a5a5a5a);
+    if (pthread_barrier_init(&barrier, 0, 0x7fffffffU) != 0 ||
+        barrier.__u.__i[2] != 0x7ffffffe ||
+        pthread_barrier_destroy(&barrier) != 0)
+        return 14;
     return errno == E2BIG ? 0 : 10;
 }
 
@@ -587,12 +596,25 @@ static int run_process_shared_barrier_probe(void)
     if (wait_for_int(&round->child_entered, 1) != 0)
         status = 5;
     for (generation = 0; generation != SHARED_BARRIER_ROUNDS; ++generation) {
+        /* The shared count proves the child entered this generation before
+         * the parent becomes its last arrival. No timing assumption is needed.
+         */
+        if (wait_for_int(&round->barrier.__u.__i[3], 1) != 0) {
+            status = 14;
+            break;
+        }
         __atomic_store_n(&round->parent_arrived[generation], 1, __ATOMIC_RELEASE);
         parent_result = pthread_barrier_wait(&round->barrier);
         parent_results[generation] = parent_result;
         if (__atomic_load_n(&round->child_arrived[generation],
                 __ATOMIC_ACQUIRE) != 1 && status == 0)
             status = 11;
+    }
+    if (status == 14) {
+        (void)raw_syscall2(SYS_kill, child, SIGKILL);
+        (void)wait_for_child(child, &child_status);
+        (void)raw_syscall2(SYS_munmap, mapped, SHARED_MAPPING_BYTES);
+        return status;
     }
     if (pthread_barrier_destroy(&round->barrier) != 0 && status == 0)
         status = 8;
@@ -603,9 +625,9 @@ static int run_process_shared_barrier_probe(void)
         __atomic_load_n(&round->child_errno, __ATOMIC_ACQUIRE) != EACCES))
         status = 7;
     for (generation = 0; generation != SHARED_BARRIER_ROUNDS; ++generation)
-        if (!exactly_one_serial(parent_results[generation],
+        if ((parent_results[generation] != PTHREAD_BARRIER_SERIAL_THREAD ||
                 __atomic_load_n(&round->child_result[generation],
-                    __ATOMIC_ACQUIRE)) && status == 0)
+                    __ATOMIC_ACQUIRE) != 0) && status == 0)
             status = 12;
     if (pthread_barrierattr_init(&attribute) != 0 ||
         pthread_barrierattr_setpshared(&attribute, PTHREAD_PROCESS_SHARED) != 0 ||

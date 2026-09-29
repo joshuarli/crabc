@@ -60,7 +60,7 @@ assert_selected_c_abi_surface() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mkdir mktemp nm objdump readelf rustup sort timeout; do
+for tool in ar awk cargo cmp diff grep mkdir mktemp nm objdump readelf rustup sha256sum sort timeout; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -72,12 +72,39 @@ bash "$ROOT_DIR/compat/x86_64/run_pthread_c11_header_abi.sh" >/dev/null
 mkdir -p "$ROOT_DIR/.work/x86_64/tmp" \
     "$ROOT_DIR/.work/x86_64/reports/libc-pthread-barrier"
 work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/crabc-x86-64-libc-pthread-barrier.XXXXXX")"
-trap 'rm -rf -- "$work_dir"' EXIT
 report_dir="$ROOT_DIR/.work/x86_64/reports/libc-pthread-barrier"
 reference_stdout="$report_dir/musl.stdout"
 reference_stderr="$report_dir/musl.stderr"
 candidate_stdout="$report_dir/crabc.stdout"
 candidate_stderr="$report_dir/crabc.stderr"
+reference="$report_dir/musl-pthread-barrier-reference"
+candidate="$report_dir/crabc-static-pthread-barrier-candidate"
+rm -f "$reference" "$candidate" "$report_dir/SHA256SUMS"
+finish() {
+    local status=$?
+    local artifact
+
+    (
+        cd "$ROOT_DIR"
+        : >"$report_dir/SHA256SUMS"
+        for artifact in \
+            compat/x86_64/libc_pthread_barrier_probe.c \
+            compat/x86_64/libc_pthread_barrier_start.S \
+            .work/x86_64/reports/libc-pthread-barrier/musl-pthread-barrier-reference \
+            .work/x86_64/reports/libc-pthread-barrier/crabc-static-pthread-barrier-candidate \
+            .work/x86_64/reports/libc-pthread-barrier/musl.stdout \
+            .work/x86_64/reports/libc-pthread-barrier/musl.stderr \
+            .work/x86_64/reports/libc-pthread-barrier/crabc.stdout \
+            .work/x86_64/reports/libc-pthread-barrier/crabc.stderr; do
+            if [ -f "$artifact" ]; then
+                sha256sum "$artifact" >>"$report_dir/SHA256SUMS"
+            fi
+        done
+    )
+    rm -rf -- "$work_dir"
+    return "$status"
+}
+trap finish EXIT
 : >"$reference_stdout"
 : >"$reference_stderr"
 : >"$candidate_stdout"
@@ -90,8 +117,6 @@ printf '%s\n' \
     'barrier-signal-contention: pass' \
     'barrier-shared-generations-32: pass' >"$expected_stdout"
 cargo_target="$work_dir/cargo-target"
-reference="$work_dir/musl-pthread-barrier-reference"
-candidate="$work_dir/crabc-static-pthread-barrier-candidate"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
