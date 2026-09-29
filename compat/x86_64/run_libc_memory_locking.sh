@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 selected static crabc-libc per-range memory-locking gate.
+# Native Linux/x86-64 selected static crabc-libc memory-locking differential.
 #
 # The same project-header C fixture executes through pinned musl 1.2.6 before
 # a true -nostdlib -static candidate linked only with the selected archive.
-# It is intentionally limited to mlock, munlock, and GNU
-# mlock2(MLOCK_ONFAULT); lock availability is environment-dependent, while
-# invalid flags and overflowing ranges have fixed Linux results. It does not
-# select mlockall/munlockall, msync, mremap, mapping policy, allocator, CRT,
-# loader, sysroot, or public x86 support.
+# It selects mlock, munlock, GNU mlock2(MLOCK_ONFAULT), mlockall, and
+# munlockall. Lock availability is environment-dependent; invalid flags and
+# overflowing ranges have fixed Linux results. The two physical executables
+# must emit the same checked transcript. Their raw images and streams remain
+# in the checkout's ignored evidence directory.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -88,17 +88,20 @@ assert_named_syscall() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mapfile mkdir nm objdump readelf rustup sort; do
+for tool in ar awk cargo chmod cmp diff grep mapfile mkdir nm objdump readelf rustup sha256sum sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_memory_locking_header_abi.sh" >/dev/null
+bash "$ROOT_DIR/compat/x86_64/run_mlockall_header_abi.sh" >/dev/null
+bash "$ROOT_DIR/compat/x86_64/run_munlockall_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_x86_mlock_reference.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-memory-locking.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-memory-locking.XXXXXX")"
+chmod 755 "$work_dir"
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-memory-locking-reference"
@@ -127,14 +130,16 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_memory_locking_probe.c \
     -o "$reference"
-"$reference"
+if ! "$reference" >"$work_dir/musl.stdout" 2>"$work_dir/musl.stderr"; then
+    fail "pinned-musl fixture failed; raw streams: $work_dir"
+fi
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
-for symbol in __errno_location mlock mlock2 munlock; do
+for symbol in __errno_location mlock mlock2 munlock mlockall munlockall; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
@@ -157,11 +162,11 @@ readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in __errno_location mlock mlock2 munlock; do
+for symbol in __errno_location mlock mlock2 munlock mlockall munlockall; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
-for unrelated in mlockall munlockall msync mremap mmap mprotect munmap madvise \
+for unrelated in msync mremap mmap mprotect munmap madvise \
     mincore shm_open shm_unlink memfd_create malloc free calloc realloc \
     pthread_create pthread_exit pthread_join; do
     if grep -Eq "[[:space:]]${unrelated}$" "$candidate_symbols"; then
@@ -191,7 +196,28 @@ grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
 assert_named_syscall mlock 95
 assert_named_syscall munlock 96
 assert_named_syscall mlock2 145
+assert_named_syscall mlockall 97
+assert_named_syscall munlockall 98
 
-"$candidate"
+if ! "$candidate" >"$work_dir/crabc.stdout" 2>"$work_dir/crabc.stderr"; then
+    fail "crabc fixture failed; raw streams: $work_dir"
+fi
+cmp "$work_dir/musl.stdout" "$work_dir/crabc.stdout" ||
+    fail "musl/crabc stdout differs; raw streams: $work_dir"
+cmp "$work_dir/musl.stderr" "$work_dir/crabc.stderr" ||
+    fail "musl/crabc stderr differs; raw streams: $work_dir"
+printf '%s\n' 'initial-unlock=ok' 'range-page=ok' 'range-onfault=ok' \
+    'range-errors=ok' 'process-errors=ok' 'process-current=ok' \
+    'process-future=ok' 'mapping-lifetime=ok' 'memory-locking=ok' \
+    >"$work_dir/expected.stdout"
+cmp "$work_dir/expected.stdout" "$work_dir/crabc.stdout" ||
+    fail "fixture transcript incomplete; raw streams: $work_dir"
 
-printf 'x86 static crabc-libc memory locking: PASS\n'
+(
+    cd "$work_dir"
+    sha256sum musl-memory-locking-reference crabc-static-memory-locking-candidate \
+        musl.stdout musl.stderr crabc.stdout crabc.stderr >sha256sums
+    printf 'musl_exit=0\ncrabc_exit=0\nstdout_equal=yes\nstderr_equal=yes\n' >receipt
+)
+
+printf 'x86 static crabc-libc memory locking: PASS (receipt: %s)\n' "$work_dir"
