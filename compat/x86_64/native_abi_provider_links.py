@@ -2,8 +2,10 @@
 """Retain complete owned address links and replay physical archive references.
 
 The fixture only takes addresses. Runtime semantics remain the owning family's
-obligation. Every admitted import requires its own complete source relocation
-roster and final targets in both static modes; unsupported forms stay open.
+obligation. Every admitted operand retains its complete source relocation
+roster and final targets in both static modes. Symbol-only imports require an
+exact source symbol and complete absence of relocation operands; unsupported
+forms stay open.
 """
 from __future__ import annotations
 
@@ -283,9 +285,33 @@ def import_relocations(transcript: str, name: str, *, image: bytes) -> list[dict
                 and row.group(4) == '-' and row.group(5) == '4',
                 f'provider import {name} relocation is not a supported reference')
         references.append({'section': section, 'offset': int(row.group(1), 16), 'kind': row.group(2)})
-    require(references and len({(row['section'], row['offset']) for row in references}) == len(references),
+    require(len({(row['section'], row['offset']) for row in references}) == len(references),
             f'provider import {name} relocation roster differs')
     return references
+
+
+def symbol_only_import(tables: list[dict[str, Any]], imported: Mapping[str, Any], transcript: str) -> bool:
+    """Prove one strong undefined symbol has no relocation operand anywhere.
+
+    A linker can extract an archive provider for a strong undefined symbol
+    even when the importer emits no operand referring to it. The exact source
+    symbol row and complete relocation tables distinguish that class from an
+    unsupported or discarded reference. It proves no machine-code call.
+    """
+    require(len(tables) == 1 and tables[0]['name'] == '.symtab'
+            and imported in tables[0]['rows'] and imported['section_index'] == 'UND'
+            and imported['binding'] == 'GLOBAL' and imported['visibility'] in {'DEFAULT', 'HIDDEN'}
+            and imported['type'] in {'NOTYPE', 'FUNC', 'OBJECT'}
+            and imported['size_bytes'] == 0 and int(imported['value'], 16) == 0,
+            'provider symbol-only import source symbol differs')
+    normalized = declaration.NO_RELOCATIONS + '\n' if transcript.strip() == declaration.NO_RELOCATIONS else transcript
+    try:
+        relocations = declaration.parse_relocations(normalized)
+    except declaration.NativeDeclarationAbiError as error:
+        raise ValueError(f'provider symbol-only import relocation tables differ: {error}') from error
+    require(not any(row['symbol_index'] == imported['row_index'] for row in relocations),
+            'provider symbol-only import has an actual source relocation')
+    return True
 
 
 def final_member_references(image: bytes, *, archive_member: str, source_calls: list[dict[str, Any]],
@@ -402,9 +428,14 @@ def project(work: Path, static: Path, accounting: Mapping[str, Any], facts: Mapp
                         path = Path(temporary) / 'member.o'
                         path.write_bytes(result.stdout)
                         relocations = read_tool('readelf', '-rW', path)
-                    source_members[member] = (result.stdout, relocations)
-                image, relocations = source_members[member]
+                        symbols = inventory.parse_elf_symbol_tables(read_tool('readelf', '-Ws', path))
+                    source_members[member] = (result.stdout, relocations, symbols)
+                image, relocations, symbols = source_members[member]
+                require(len(symbols) == 1 and symbols[0]['name'] == '.symtab'
+                        and row['row'] in symbols[0]['rows'], 'provider source import symbol changed')
                 source_calls = import_relocations(relocations, name, image=image)
+                if not source_calls:
+                    symbol_only_import(symbols, row['row'], relocations)
                 source_imports.append((row, source_calls, calls._ordinary_source_sections(
                     image, {item['section'] for item in source_calls})))
             for mode, view in final.items():
@@ -430,10 +461,11 @@ def project(work: Path, static: Path, accounting: Mapping[str, Any], facts: Mapp
                     result = final_member_references(view['image'], archive_member=member,
                         source_calls=source_calls, map_text=map_text, relocation_text=relocation_text,
                         provider_address=address, elf_type=view['type'], name=name, source_sections=sections)
-                    require(result['resolved_calls'] and not result['discarded_calls'],
+                    require((result['resolved_calls'] or not source_calls) and not result['discarded_calls'],
                             'provider witness does not retain every source call')
                     linked.append({'occurrence_index': imported['index'], 'member_sha256':
-                                   hashlib.sha256(source_members[imported['member_name']][0]).hexdigest(), **result})
+                                   hashlib.sha256(source_members[imported['member_name']][0]).hexdigest(), **result,
+                                   **({'symbol_only_reference': True} if not source_calls else {})})
                 proof['links'][mode] = {'provider_address': address, 'importers': linked}
             admitted.append(proof)
         except (ValueError, KeyError, calls.AllocatorBoundaryError) as error:

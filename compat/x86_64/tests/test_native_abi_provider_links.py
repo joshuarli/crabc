@@ -199,6 +199,63 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                         links.final_member_references(output.read_bytes(), **{
                             **arguments, 'source_calls': [reference], 'provider_address': address + 1})
 
+    def test_strong_symbol_only_import_extracts_provider_without_claiming_a_call(self):
+        import native_abi_provider_links as links
+        compiler, linker = shutil.which('clang') or shutil.which('gcc'), shutil.which('ld.lld')
+        if compiler is None or linker is None:
+            self.skipTest('native compiler and linker are required')
+        scratch = ROOT / '.work/x86_64/provider-links-object-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            (work / 'importer.S').write_text('.text\n.globl importer\n.type importer,@function\n'
+                'importer: ret\n.size importer,.-importer\n.globl domain_body\n'
+                '.section .note.GNU-stack,"",@progbits\n')
+            (work / 'provider.S').write_text('.text\n.globl domain_body\n.type domain_body,@function\n'
+                'domain_body: ret\n.size domain_body,.-domain_body\n.section .note.GNU-stack,"",@progbits\n')
+            for name in ('importer', 'provider'):
+                subprocess.run([compiler, '-c', str(work / (name + '.S')), '-o', str(work / (name + '.o'))],
+                               check=True, capture_output=True)
+            subprocess.run(['ar', 'rcs', str(work / 'libdomain.a'), str(work / 'importer.o'), str(work / 'provider.o')],
+                           check=True, capture_output=True)
+            image = (work / 'importer.o').read_bytes()
+            relocations = links.read_tool('readelf', '-rW', work / 'importer.o')
+            tables = links.inventory.parse_elf_symbol_tables(links.read_tool('readelf', '-Ws', work / 'importer.o'))
+            imported = next(row for row in tables[0]['rows'] if row['name'] == 'domain_body')
+            self.assertEqual(links.import_relocations(relocations, 'domain_body', image=image), [])
+            self.assertTrue(links.symbol_only_import(tables, imported, relocations))
+            for malformed in (relocations + 'unparsed relocation\n', '', 'relocation table truncated\n'):
+                with self.subTest(malformed=malformed):
+                    with self.assertRaisesRegex(ValueError, 'symbol-only import relocation tables differ'):
+                        links.symbol_only_import(tables, imported, malformed)
+            for mutation in ('wrong name', 'wrong ordinal', 'weak import', 'missing table'):
+                with self.subTest(mutation=mutation):
+                    changed, changed_tables = copy.deepcopy(imported), copy.deepcopy(tables)
+                    if mutation == 'wrong name': changed['name'] = 'another_body'
+                    elif mutation == 'wrong ordinal': changed['row_index'] += 1
+                    elif mutation == 'weak import': changed['binding'] = 'WEAK'
+                    else: changed_tables = []
+                    with self.assertRaisesRegex(ValueError, 'symbol-only import'):
+                        links.symbol_only_import(changed_tables, changed, relocations)
+            (work / 'pointer.S').write_text('.data\n.quad domain_body\n.section .note.GNU-stack,"",@progbits\n')
+            subprocess.run([compiler, '-c', str(work / 'pointer.S'), '-o', str(work / 'pointer.o')],
+                           check=True, capture_output=True)
+            pointer_tables = links.inventory.parse_elf_symbol_tables(links.read_tool('readelf', '-Ws', work / 'pointer.o'))
+            pointer_import = next(row for row in pointer_tables[0]['rows'] if row['name'] == 'domain_body')
+            with self.assertRaisesRegex(ValueError, 'symbol-only import.*relocation'):
+                links.symbol_only_import(pointer_tables, pointer_import, links.read_tool('readelf', '-rW', work / 'pointer.o'))
+            for mode, flag in [('static', '-static'), ('static-pie', '-pie')]:
+                result = subprocess.run([linker, flag, '-e', 'importer', '--trace', '--undefined=importer',
+                    '-Map=' + str(work / (mode + '.map')), str(work / 'libdomain.a'), '-o', str(work / mode)],
+                    check=True, capture_output=True, text=True)
+                self.assertEqual(result.stdout.splitlines(), [str(work / 'libdomain.a') + '(importer.o)',
+                                                              str(work / 'libdomain.a') + '(provider.o)'])
+                final = links.inventory.parse_elf_symbol_tables(links.read_tool('readelf', '-Ws', work / mode))
+                provider = next(row for table in final if table['name'] == '.symtab'
+                                for row in table['rows'] if row['name'] == 'domain_body')
+                self.assertEqual((provider['type'], provider['binding'], provider['size_bytes']), ('FUNC', 'GLOBAL', 1))
+                self.assertNotEqual(provider['section_index'], 'UND')
+
     def test_link_commands_reserve_owned_driver_relative_sidecars(self):
         import crabc_cc_static as driver
         import native_abi_provider_links as links
