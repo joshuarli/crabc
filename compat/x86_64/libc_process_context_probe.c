@@ -4,7 +4,8 @@
  * and then through a freestanding executable linked solely with the selected
  * crabc `libc.a`. It selects the scalar identity, process-group/session, and
  * umask C boundary. Fixture-local raw fork/wait/exit calls contain the three
- * state-changing group/session checks in children; they do not select C fork,
+ * state-changing group/session checks in children and verify inherited and
+ * parent state around each child; they do not select C fork,
  * wait, exec, a process supervisor, CRT, pthreads, loader, or sysroot.
  */
 
@@ -185,59 +186,136 @@ static int check_umask_exchange(void)
     return observed == 0027 ? 0 : 1;
 }
 
-static int child_setpgrp_case(void)
+struct parent_context {
+    pid_t pid;
+    pid_t group;
+    pid_t session;
+    mode_t mask;
+};
+
+static int check_child_inheritance(const struct parent_context *parent)
+{
+    if (getppid() != parent->pid)
+        return 1;
+    if (getpgrp() != parent->group || getpgid(0) != parent->group ||
+        getsid(0) != parent->session)
+        return 2;
+    if (getpgid(parent->pid) != parent->group ||
+        getsid(parent->pid) != parent->session)
+        return 3;
+    if (umask(0137) != parent->mask)
+        return 4;
+    return 0;
+}
+
+static int child_setpgrp_case(const struct parent_context *parent)
 {
     pid_t self = getpid();
+    int inherited = check_child_inheritance(parent);
+
+    if (inherited != 0)
+        return inherited;
 
     if (setpgrp() != 0)
-        return 1;
+        return 5;
     if (getpgrp() != self || getpgid(0) != self)
-        return 2;
+        return 6;
+    if (getsid(0) != parent->session ||
+        getpgid(parent->pid) != parent->group ||
+        getsid(parent->pid) != parent->session)
+        return 7;
     errno = 0;
     if (setsid() != -1 || errno != EPERM)
-        return 3;
+        return 8;
     return 0;
 }
 
-static int child_setpgid_case(void)
+static int child_setpgid_case(const struct parent_context *parent)
 {
     pid_t self = getpid();
+    int inherited = check_child_inheritance(parent);
+
+    if (inherited != 0)
+        return inherited;
 
     if (setpgid(0, 0) != 0)
-        return 1;
+        return 5;
     if (getpgrp() != self || getpgid(0) != self)
-        return 2;
+        return 6;
+    if (getsid(0) != parent->session ||
+        getpgid(parent->pid) != parent->group ||
+        getsid(parent->pid) != parent->session)
+        return 7;
+    errno = 0;
+    if (setsid() != -1 || errno != EPERM)
+        return 8;
     return 0;
 }
 
-static int child_setsid_case(void)
+static int child_setsid_case(const struct parent_context *parent)
 {
     pid_t self = getpid();
+    int inherited = check_child_inheritance(parent);
+
+    if (inherited != 0)
+        return inherited;
 
     if (setsid() != self)
-        return 1;
+        return 5;
     if (getsid(0) != self || getpgrp() != self || getpgid(0) != self)
-        return 2;
+        return 6;
+    if (getpgid(parent->pid) != parent->group ||
+        getsid(parent->pid) != parent->session)
+        return 7;
+    errno = 0;
+    if (setpgid(0, 0) != -1 || errno != EPERM)
+        return 8;
+    errno = 0;
+    if (setsid() != -1 || errno != EPERM)
+        return 9;
     return 0;
 }
 
-static int run_child_case(int (*child_case)(void))
+static int run_child_case(int (*child_case)(const struct parent_context *))
 {
-    long child = raw_syscall0(SYS_fork);
+    struct parent_context parent;
+    int parent_errno = E2BIG;
+    long child;
     int status = -1;
     long waited;
 
-    if (child == 0)
-        raw_exit(child_case());
-    if (child < 0)
+    parent.pid = getpid();
+    parent.group = getpgrp();
+    parent.session = getsid(0);
+    parent.mask = umask(0027);
+    (void)umask(parent.mask);
+    if (parent.pid <= 0 || parent.group <= 0 || parent.session <= 0)
         return 1;
+    errno = parent_errno;
+    child = raw_syscall0(SYS_fork);
+
+    if (child == 0)
+        raw_exit(child_case(&parent));
+    if (child < 0)
+        return 2;
 
     do {
         waited = raw_syscall4(SYS_wait4, child, (long)&status, 0, 0);
     } while (waited == -EINTR);
     if (waited != child)
-        return 2;
-    return status == 0 ? 0 : 3;
+        return 3;
+    if ((status & 0x7f) != 0)
+        return 4;
+    if ((status >> 8) != 0)
+        return 10 + (status >> 8);
+    if (getpid() != parent.pid || getpgrp() != parent.group ||
+        getpgid(0) != parent.group || getsid(0) != parent.session)
+        return 5;
+    if (umask(0027) != parent.mask)
+        return 6;
+    if (umask(parent.mask) != 0027 || errno != parent_errno)
+        return 7;
+    return 0;
 }
 
 int crabc_x86_64_process_context_probe(void)
@@ -261,10 +339,10 @@ int crabc_x86_64_process_context_probe(void)
         return 50 + status;
     status = run_child_case(child_setpgid_case);
     if (status != 0)
-        return 60 + status;
+        return 80 + status;
     status = run_child_case(child_setsid_case);
     if (status != 0)
-        return 70 + status;
+        return 110 + status;
     return 0;
 }
 

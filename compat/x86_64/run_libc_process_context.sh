@@ -4,9 +4,10 @@
 # The same project-header C fixture first runs against pinned musl, then as a
 # true `-nostdlib -static` executable linked solely through the selected
 # crabc archive. It proves only scalar identity, process-group/session, and
-# umask behavior plus initial-TLS errno translation. Fixture-local raw child
-# control does not select a C process lifecycle API, CRT, pthread/TLS, loader,
-# allocator, sysroot, libc.so, or public x86 support.
+# umask behavior, child-only state changes, parent isolation, and initial-TLS
+# errno translation. Fixture-local raw child control does not select a C
+# process lifecycle API, CRT, pthread/TLS, loader, allocator, sysroot,
+# libc.so, or public x86 support.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -61,15 +62,19 @@ assert_selected_c_abi_surface() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff nm objdump python3 readelf rustup; do
+for tool in ar cargo cmp diff nm objdump python3 readelf readlink rustup sha256sum; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-process-context.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp" "$ROOT_DIR/.work/x86_64/reports/libc-process-context"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-process-context.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-process-context"
+[ "$(readlink -f "$report_dir")" = "$report_dir" ] ||
+    fail "report path escapes the worktree"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-process-context-reference"
 candidate="$work_dir/crabc-static-process-context-candidate"
@@ -109,7 +114,13 @@ done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_process_context_probe.c -o "$reference"
-"$reference"
+if "$reference" >"$report_dir/musl.stdout" 2>"$report_dir/musl.stderr"; then
+    printf '0\n' >"$report_dir/musl.exit"
+else
+    result=$?
+    printf '%s\n' "$result" >"$report_dir/musl.exit"
+    fail "pinned-musl fixture failed with status $result; raw output: $report_dir"
+fi
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -194,6 +205,25 @@ assert_named_syscall getpgrp 0x79 a1=0
 # The legacy alias is setpgid(0, 0).
 assert_named_syscall setpgrp 0x6d a1=0,a2=0
 
-"$candidate"
+if "$candidate" >"$report_dir/crabc.stdout" 2>"$report_dir/crabc.stderr"; then
+    printf '0\n' >"$report_dir/crabc.exit"
+else
+    result=$?
+    printf '%s\n' "$result" >"$report_dir/crabc.exit"
+    fail "crabc fixture failed with status $result; raw output: $report_dir"
+fi
+cmp -s "$report_dir/musl.stdout" "$report_dir/crabc.stdout" ||
+    fail "pinned-musl and crabc fixture stdout differs; raw output: $report_dir"
+cmp -s "$report_dir/musl.stderr" "$report_dir/crabc.stderr" ||
+    fail "pinned-musl and crabc fixture stderr differs; raw output: $report_dir"
+cp "$reference" "$report_dir/musl.elf"
+cp "$candidate" "$report_dir/crabc.elf"
+cp "$archive.source-runtime.json" "$report_dir/source-runtime.json"
+(
+    cd "$report_dir"
+    sha256sum musl.elf crabc.elf musl.stdout crabc.stdout \
+        musl.stderr crabc.stderr musl.exit crabc.exit source-runtime.json \
+        >physical.sha256
+)
 
-printf 'x86 static crabc-libc process context: PASS\n'
+printf 'x86 static crabc-libc process context: PASS (raw evidence: %s)\n' "$report_dir"
