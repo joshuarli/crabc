@@ -1272,17 +1272,24 @@ unsafe fn heap_allocate(heap: *mut c_void, size: usize, request: Request, zero: 
 /// too-large request before and after its forced collection, then the
 /// generic fallback reports out of memory.
 fn report_failure(size: usize, request: Request) -> SourceErrno {
+    let size = match request {
+        Request::Plain => size,
+        Request::Aligned { alignment, offset } => {
+            let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
+                .ready_child_subprocess_inputs() else { return SourceErrno::Unchanged };
+            let Ok(config) = binding.page_map().memory_config() else { return SourceErrno::Unchanged };
+            crate::aligned::allocation_failure_request(size, alignment, offset, config.page_size().bytes())
+        }
+    };
     let mut errno = SourceErrno::Unchanged;
-    if matches!(request, Request::Plain) && size > crate::config::MAX_ALLOC_SIZE {
+    if size > crate::config::MAX_ALLOC_SIZE {
         for _ in 0..2 {
             let report = SourceErrorReport::AllocationTooLarge { size };
-            let _ = crate::process_init::process_error_message(report);
-            errno = errno.then(SourceErrno::error_message(report.error()));
+            errno = errno.then(crate::source_api::source_error_errno(report));
         }
     }
     let report = SourceErrorReport::OutOfMemory { size };
-    let _ = crate::process_init::process_error_message(report);
-    errno.then(SourceErrno::error_message(Errno::NOMEM))
+    errno.then(crate::source_api::source_error_errno(report))
 }
 
 /// `mi_heap_malloc`.

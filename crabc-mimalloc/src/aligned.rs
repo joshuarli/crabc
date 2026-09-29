@@ -84,6 +84,29 @@ pub(crate) const fn allocation_plan(
     Some(AlignedAllocationPlan::Overallocate { request })
 }
 
+/// The logical request reported by the generic allocator after an aligned
+/// fallback fails. Alignment and caller-size refusals have already returned;
+/// the base request can still exceed the ordinary page-lookup limit.
+pub(crate) const fn allocation_failure_request(
+    size: usize,
+    alignment: usize,
+    offset: usize,
+    os_page_size: usize,
+) -> usize {
+    match allocation_plan(size, alignment, offset, os_page_size) {
+        Some(AlignedAllocationPlan::Natural) => size,
+        Some(AlignedAllocationPlan::Overallocate { request })
+            | Some(AlignedAllocationPlan::HugeSingleton { request, .. }) => request,
+        None if alignment > PAGE_MAX_OVERALLOC_ALIGN => {
+            if size <= SMALL_SIZE_MAX { SMALL_SIZE_MAX + 1 } else { size }
+        }
+        None => {
+            let base = if size < MAX_ALIGN_SIZE { MAX_ALIGN_SIZE } else { size };
+            base.saturating_add(alignment - 1)
+        }
+    }
+}
+
 pub(crate) const fn pointer_adjustment(
     address: usize,
     alignment: usize,
