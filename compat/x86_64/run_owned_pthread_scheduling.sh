@@ -10,6 +10,10 @@ readonly probe="$ROOT/compat/x86_64/owned_pthread_scheduling_probe.c"
 # pthread family supplies its sealed static product with --static-sysroot.
 . "$ROOT/compat/x86_64/owned_pthread_product_arguments.sh"
 owned_pthread_product_arguments pthread-scheduling "$@"
+# The probe lowers RLIMIT_AS to 256 MiB after starting a worker. A default
+# 1 GiB allocator arena would leave no room for the thread setup whose
+# scheduler error is under test. Keep this workload's arena below that bound.
+export mimalloc_arena_reserve=32M
 work="$(mktemp -d "$TMPDIR/owned-pthread-scheduling.XXXXXX")"
 readonly work
 printf 'pthread-scheduling evidence: %s\n' "$work"

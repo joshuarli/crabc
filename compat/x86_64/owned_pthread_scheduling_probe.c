@@ -188,6 +188,20 @@ int main(int argc, char **argv) {
      * process-local address-space bound. No /proc mount is needed in chroot. */
     struct rlimit memory_limit={256UL*1024*1024,256UL*1024*1024};
     CHECK(setrlimit(RLIMIT_AS,&memory_limit)==0);
+    /* Keep the mappings in a child so the parent can test failed creations.
+     * Exhausting the limit before 512 requests proves that retaining one
+     * mapping per failed request would make the scheduling check fail. */
+    pid_t leak_child=fork(); CHECK(leak_child>=0);
+    if (!leak_child) {
+        for (int i=0;i<512;i++) {
+            void *stack=mmap(NULL,1024*1024,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+            if (stack==MAP_FAILED) _Exit(errno==ENOMEM ? 0 : 1);
+        }
+        _Exit(2);
+    }
+    int leak_status;
+    CHECK(waitpid(leak_child,&leak_status,0)==leak_child &&
+          WIFEXITED(leak_status) && WEXITSTATUS(leak_status)==0);
     CHECK(pthread_attr_setstacksize(&a,1024*1024)==0);
     CHECK(pthread_attr_setschedpolicy(&a,-1)==0);
     for(int i=0;i<512;i++) { t=(pthread_t)(uintptr_t)0x1234; errno=77;

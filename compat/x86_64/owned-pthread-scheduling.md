@@ -83,7 +83,10 @@ failed explicit setup, default validation/maxima/caps, live stack/guard sizes,
 and C11 defaults/mask semantics.
 
 Each failed request allocates a 1 MiB stack under a process-local 256 MiB
-address-space bound, so retained failed-child mappings exhaust the bound and
+address-space bound. The runner selects a 32 MiB initial allocator arena so
+native allocator reservation leaves room for thread setup before the bound is
+applied. A forked negative control keeps 1 MiB mappings live and must exhaust
+the same bound before 512 requests; retained failed-child mappings would then
 turn the expected scheduler error into a failing `EAGAIN`. Permission failure
 uses a process-local seccomp filter; the test does not acquire realtime
 scheduling, change host policy, or require elevated scheduling privilege.
