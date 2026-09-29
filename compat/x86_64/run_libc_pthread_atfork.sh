@@ -3,8 +3,9 @@
 #
 # The same project-header C body runs first against pinned musl 1.2.6 and then
 # against a true dependency-free `-nostdlib -static` selected crabc archive.
-# It admits hook ordering, a child-only ordinary-exit callback, and caller TSD
-# retention while another selected worker remains live through fork.
+# It admits hook ordering, nested child registration/fork, a child-only
+# ordinary-exit callback, mutex/TSD reuse, and caller TSD retention while
+# another selected worker remains live through fork.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -126,7 +127,7 @@ assert_fork_weak_aio_atfork_owner "$archive"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap __fork_handler \
     pthread_atfork fork atexit exit __funcs_on_exit pthread_create pthread_join \
     pthread_key_create pthread_key_delete pthread_getspecific \
-    pthread_setspecific waitpid; do
+    pthread_setspecific pthread_mutex_lock pthread_mutex_unlock waitpid; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
@@ -178,7 +179,7 @@ objdump -d "$candidate" >"$candidate_disassembly"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap __fork_handler \
     pthread_atfork fork atexit exit __funcs_on_exit pthread_create pthread_join \
     pthread_key_create pthread_key_delete pthread_getspecific \
-    pthread_setspecific waitpid; do
+    pthread_setspecific pthread_mutex_lock pthread_mutex_unlock waitpid; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
@@ -260,6 +261,8 @@ cmp -s "$work_dir/musl.stderr" "$work_dir/crabc.stderr" ||
     fail "musl/crabc pthread_atfork stderr streams differ"
 grep -Fxq 'atfork-tsd callbacks=321456 caller=retained worker=isolated destructor=once' \
     "$work_dir/musl.stdout" || fail "threaded TSD trace missing"
+grep -Fxq 'atfork-nested callbacks=73214568/10732145689 child=mutex-tsd parent=isolated errno=preserved' \
+    "$work_dir/musl.stdout" || fail "nested fork and child reuse trace missing"
 if timeout "$EXECUTION_TIMEOUT" "$candidate_loader_hook" \
     >"$work_dir/crabc-loader-hook.stdout" 2>"$work_dir/crabc-loader-hook.stderr"; then
     :

@@ -8,10 +8,13 @@
  * fork error through the parent callback route, and candidate-only fixed-
  * capacity rejection plus a live-worker transaction, child reaping,
  * caller-owned TSD after fork, worker TSD isolation and destructor lifetime,
- * and post-join admission recovery.
+ * post-join admission recovery, and registration in a forked child before a
+ * nested fork. The nested child reuses an unlocked mutex and inherited TSD;
+ * the original parent retains its own handler set and TSD.
  * It does not select recursive callbacks, callback-driven worker creation,
  * foreign threads, concurrent selected-worker lifecycle,
- * signal safety, allocator, cancellation, synchronization, dynamic TLS, a
+ * signal safety, allocator, cancellation, contended or inherited-locked
+ * synchronization, dynamic TLS, a
  * general fork/runtime exit protocol, CRT, loader, sysroot, or public x86
  * support.
  */
@@ -158,8 +161,13 @@ static pthread_key_t worker_tsd_key;
 static _Atomic int selected_tsd_armed;
 static _Atomic int worker_destructor_calls;
 static _Atomic int worker_destructor_failure;
+static pthread_key_t nested_tsd_key;
+static pthread_mutex_t nested_mutex = PTHREAD_MUTEX_INITIALIZER;
+static volatile unsigned int registration_depth;
+static volatile int fork_error_expected;
 
-enum { MAIN_TSD_VALUE = 0x4d, WORKER_TSD_VALUE = 0x57 };
+enum { MAIN_TSD_VALUE = 0x4d, WORKER_TSD_VALUE = 0x57,
+       NESTED_TSD_VALUE = 0x6e };
 
 static long raw_syscall1(long number, long argument1)
 {
@@ -240,10 +248,25 @@ static int emit_child_event(char event)
 
 static void record_callback(unsigned int marker)
 {
-    static const unsigned int expected[] = { 3, 2, 1, 4, 5, 6 };
+    static const unsigned int expected_initial[] = { 3, 2, 1, 4, 5, 6 };
+    static const unsigned int expected_outer[] = { 7, 3, 2, 1, 4, 5, 6, 8 };
+    static const unsigned int expected_nested[] = { 10, 7, 3, 2, 1,
+                                                     4, 5, 6, 8, 9 };
+    const unsigned int *expected = expected_initial;
+    unsigned int count = sizeof(expected_initial) / sizeof(expected_initial[0]);
 
-    if (callback_phase >= sizeof(expected) / sizeof(expected[0]) ||
+    if (registration_depth == 1) {
+        expected = expected_outer;
+        count = sizeof(expected_outer) / sizeof(expected_outer[0]);
+    } else if (registration_depth == 2) {
+        expected = expected_nested;
+        count = sizeof(expected_nested) / sizeof(expected_nested[0]);
+    }
+
+    if (callback_phase >= count ||
         expected[callback_phase] != marker)
+        callback_failure = 1;
+    if (errno != (fork_error_expected && callback_phase >= 4 ? EPERM : E2BIG))
         callback_failure = 1;
     if (atomic_load_explicit(&selected_tsd_armed, memory_order_relaxed) != 0 &&
         (pthread_getspecific(main_tsd_key) !=
@@ -278,6 +301,30 @@ static void child_c(void)
     record_callback(6);
     if (!emit_child_event('6'))
         raw_exit(122);
+}
+
+static void prepare_d(void) { record_callback(7); }
+static void parent_d(void)
+{
+    record_callback(8);
+    /* The final parent hook may change errno; fork restores its raw error. */
+    if (fork_error_expected)
+        errno = EALREADY;
+}
+static void child_d(void)
+{
+    record_callback(8);
+    if (!emit_child_event('8'))
+        raw_exit(127);
+}
+
+static void prepare_e(void) { record_callback(10); }
+static void parent_e(void) { record_callback(9); }
+static void child_e(void)
+{
+    record_callback(9);
+    if (!emit_child_event('9'))
+        raw_exit(128);
 }
 
 static void child_exit_callback(void)
@@ -398,13 +445,14 @@ static int check_raw_fork_error_parent_order(void)
         return 1;
     callback_phase = 0;
     callback_failure = 0;
+    fork_error_expected = 1;
     errno = E2BIG;
     child = fork();
     if (child != -1)
         return 2;
     if (errno != EPERM)
         return 3;
-    if (callback_failure != 0 || callback_phase != 6)
+    if (callback_failure != 0 || callback_phase != 8)
         return 4;
     return 0;
 }
@@ -562,14 +610,178 @@ static int check_live_selected_worker_fork(void)
     return failure;
 }
 
+static int check_child_mutex_and_tsd(void)
+{
+    if (pthread_getspecific(nested_tsd_key) !=
+            (void *)(uintptr_t)NESTED_TSD_VALUE)
+        return 1;
+    if (pthread_mutex_lock(&nested_mutex) != 0)
+        return 2;
+    if (pthread_mutex_unlock(&nested_mutex) != 0)
+        return 3;
+    if (pthread_setspecific(nested_tsd_key,
+            (void *)(uintptr_t)(NESTED_TSD_VALUE + 1)) != 0)
+        return 4;
+    if (pthread_getspecific(nested_tsd_key) !=
+            (void *)(uintptr_t)(NESTED_TSD_VALUE + 1))
+        return 5;
+    if (pthread_setspecific(nested_tsd_key,
+            (void *)(uintptr_t)NESTED_TSD_VALUE) != 0)
+        return 6;
+    return errno == E2BIG ? 0 : 7;
+}
+
+static int read_nested_events(int descriptor, const char *expected,
+                              unsigned int length)
+{
+    unsigned int index;
+
+    for (index = 0; index < length; ++index) {
+        char event = 0;
+
+        if (!raw_read_event(descriptor, &event) || event != expected[index])
+            return (int)index + 1;
+    }
+    return 0;
+}
+
+static int check_nested_registration_and_child_reuse(void)
+{
+    static const char expected_outer[] = "4568";
+    static const char expected_nested[] = "45689NP";
+    static const char expected_parent[] = "4568Q";
+    static const char trace[] =
+        "atfork-nested callbacks=73214568/10732145689 child=mutex-tsd parent=isolated errno=preserved\n";
+    int report[2] = { -1, -1 };
+    int status = -1;
+    pid_t child;
+    int result;
+
+    if (pthread_key_create(&nested_tsd_key, NULL) != 0)
+        return 1;
+    if (pthread_setspecific(nested_tsd_key,
+            (void *)(uintptr_t)NESTED_TSD_VALUE) != 0)
+        return 2;
+    if (pthread_atfork(prepare_d, parent_d, child_d) != 0)
+        return 3;
+    registration_depth = 1;
+    if (raw_pipe(report) != 0)
+        return 4;
+    child_report_write = report[1];
+    callback_phase = 0;
+    callback_failure = 0;
+    errno = E2BIG;
+    child = fork();
+    if (child < 0)
+        return 5;
+    if (child == 0) {
+        pid_t nested;
+
+        if (callback_failure != 0 || callback_phase != 8 || errno != E2BIG)
+            raw_exit(130);
+        if (raw_close(report[0]) != 0 || check_child_mutex_and_tsd() != 0)
+            raw_exit(131);
+        if (pthread_atfork(prepare_e, parent_e, child_e) != 0 ||
+            errno != E2BIG)
+            raw_exit(132);
+        registration_depth = 2;
+        callback_phase = 0;
+        callback_failure = 0;
+        errno = E2BIG;
+        nested = fork();
+        if (nested < 0)
+            raw_exit(133);
+        if (callback_failure != 0 || callback_phase != 10 || errno != E2BIG ||
+            check_child_mutex_and_tsd() != 0)
+            raw_exit(134);
+        if (nested == 0) {
+            if (!emit_child_event('N'))
+                raw_exit(135);
+            raw_exit(0);
+        }
+        if (waitpid(nested, &status, 0) != nested ||
+            !WIFEXITED(status) || WEXITSTATUS(status) != 0 ||
+            !emit_child_event('P'))
+            raw_exit(136);
+        raw_exit(0);
+    }
+    if (callback_failure != 0 || callback_phase != 8 || errno != E2BIG ||
+        pthread_getspecific(nested_tsd_key) !=
+            (void *)(uintptr_t)NESTED_TSD_VALUE)
+        return 6;
+    if (waitpid(child, &status, 0) != child ||
+        !WIFEXITED(status) || WEXITSTATUS(status) != 0)
+        return 7;
+    if (raw_close(report[1]) != 0)
+        return 8;
+    child_report_write = -1;
+    result = read_nested_events(report[0], expected_outer,
+                                sizeof(expected_outer) - 1);
+    if (result != 0)
+        return 8 + result;
+    result = read_nested_events(report[0], expected_nested,
+                                sizeof(expected_nested) - 1);
+    if (result != 0)
+        return 13 + result;
+    {
+        char extra = 0;
+
+        if (raw_read_event(report[0], &extra) || raw_close(report[0]) != 0)
+            return 21;
+    }
+    if (raw_pipe(report) != 0)
+        return 22;
+    child_report_write = report[1];
+
+    callback_phase = 0;
+    callback_failure = 0;
+    errno = E2BIG;
+    child = fork();
+    if (child < 0)
+        return 22;
+    if (child == 0) {
+        if (callback_failure != 0 || callback_phase != 8 || errno != E2BIG ||
+            check_child_mutex_and_tsd() != 0 || !emit_child_event('Q'))
+            raw_exit(137);
+        raw_exit(0);
+    }
+    if (callback_failure != 0 || callback_phase != 8 || errno != E2BIG)
+        return 23;
+    if (waitpid(child, &status, 0) != child ||
+        !WIFEXITED(status) || WEXITSTATUS(status) != 0)
+        return 24;
+    if (raw_close(report[1]) != 0)
+        return 30;
+    child_report_write = -1;
+    result = read_nested_events(report[0], expected_parent,
+                                sizeof(expected_parent) - 1);
+    if (result != 0)
+        return 24 + result;
+    {
+        char extra = 0;
+
+        if (raw_read_event(report[0], &extra))
+            return 31;
+    }
+    if (raw_close(report[0]) != 0 ||
+        pthread_getspecific(nested_tsd_key) !=
+            (void *)(uintptr_t)NESTED_TSD_VALUE ||
+        pthread_key_delete(nested_tsd_key) != 0)
+        return 32;
+    if (raw_syscall3(SYS_write, 1, (long)trace, sizeof(trace) - 1) !=
+        (long)(sizeof(trace) - 1))
+        return 33;
+    return 0;
+}
+
 #ifdef CRABC_ATFORK_FREESTANDING
 static int check_fixed_capacity_rejection(void)
 {
     unsigned int index;
 
-    /* Three real triples plus one empty triple preceded this candidate-only
+    /* Four real triples plus one empty triple preceded this candidate-only
      * closure check. Fill the fixed 32-record private registry exactly. */
-    for (index = 0; index < 28; index++) {
+    for (index = 0; index < 27; index++) {
         errno = E2BIG;
         if (pthread_atfork(NULL, NULL, NULL) != 0 || errno != E2BIG)
             return 1;
@@ -599,14 +811,17 @@ static int run_probe(void)
     result = check_parent_child_and_exit_order();
     if (result != 0)
         return 10 + result;
+    result = check_live_selected_worker_fork();
+    if (result != 0)
+        return 40 + result;
+    result = check_nested_registration_and_child_reuse();
+    if (result != 0)
+        return 100 + result;
 #ifdef CRABC_ATFORK_FREESTANDING
     result = check_fixed_capacity_rejection();
     if (result != 0)
         return 30 + result;
 #endif
-    result = check_live_selected_worker_fork();
-    if (result != 0)
-        return 40 + result;
     result = check_raw_fork_error_parent_order();
     if (result != 0)
         return 80 + result;

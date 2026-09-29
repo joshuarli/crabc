@@ -8,7 +8,7 @@
 //! reverse registration order before the internal signal/list transaction;
 //! parent and child hooks run forward after that transaction has restored a
 //! callable state. A failed fork follows musl's parent path, so it still runs
-//! parent hooks before publishing the raw Linux error through selected TLS.
+//! parent hooks with the raw Linux error already visible through selected TLS.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
@@ -391,6 +391,7 @@ static_archive_member! { fork_source {
         let loader_callback_lock = pthread_create_join::fork_has_other_runtime_tasks();
         #[cfg(crabc_x86_dynamic_runtime)]
         let Some(loader_fork) = (unsafe { static_tls::prepare_fork(loader_callback_lock) }) else {
+            let _ = c_status(-EAGAIN);
             unsafe {
                 signal_execution::restore_application_signals(&saved_signal_mask);
                 __fork_handler(0);
@@ -425,6 +426,9 @@ static_archive_member! { fork_source {
         let result = unsafe { fork_without_handlers(prepared_image) };
         #[cfg(not(crabc_x86_owned_runtime))]
         let result = unsafe { raw_selected_fork() };
+        // Parent hooks observe the kernel error, even though the raw syscall
+        // does not set C errno. The return path restores it if a hook changed it.
+        let _ = c_status(result);
         if result == 0 {
             #[cfg(not(crabc_x86_owned_runtime))]
             let child_tid = unsafe { pthread_create_join::register_fork_child_kernel_tid() };
