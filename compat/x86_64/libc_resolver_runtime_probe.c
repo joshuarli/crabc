@@ -302,6 +302,9 @@ static int check_resolver_runtime(void)
     unsigned char compressed[sizeof(compressed_name)];
     struct __res_state *state;
     int query_length, result;
+#ifdef CRABC_RESOLVER_RUNTIME_FREESTANDING
+    int status_after_addrinfo;
+#endif
     errno = E2BIG;
     h_errno = NO_RECOVERY;
     if (res_init() != 0) return 4;
@@ -312,10 +315,12 @@ static int check_resolver_runtime(void)
      * opt-in crabc package instead makes the C-owned record an observable
      * configuration boundary, so inspect it only on that arm. */
     state = __res_state();
+    /* res_init loads configuration without publishing a lookup result. */
     if (state == 0 || state->nscount != 1 || state->retrans != 1 ||
         state->retry != 1 || state->ndots != 1 || state->dnsrch[0] == 0 ||
-        !text_equal(state->dnsrch[0], "fixture.test") || h_errno != 0 ||
-        state->res_h_errno != 0 || __h_errno_location() != &h_errno ||
+        !text_equal(state->dnsrch[0], "fixture.test") ||
+        h_errno != NO_RECOVERY || state->res_h_errno != NO_RECOVERY ||
+        __h_errno_location() != &h_errno ||
         errno != E2BIG)
         return 5;
 #else
@@ -343,17 +348,32 @@ static int check_resolver_runtime(void)
         return 10 + result;
     if ((result = check_addrinfo("dns", dns_address, "canonical.fixture.test")) != 0)
         return 20 + result;
+#ifdef CRABC_RESOLVER_RUNTIME_FREESTANDING
+    /* The installed C resolver retains the prior status on a successful
+     * getaddrinfo; the focused Rust resolver clears it. Successful res_query
+     * calls must preserve the status each backend receives. */
+#ifdef CRABC_RESOLVER_RUNTIME_INSTALLED
+    status_after_addrinfo = NO_RECOVERY;
+#else
+    status_after_addrinfo = 0;
+#endif
+    if (h_errno != status_after_addrinfo ||
+        state->res_h_errno != status_after_addrinfo)
+        return 29;
+#endif
     if (res_query("dns.fixture.test", C_IN, T_A, answer, sizeof(answer)) < 12)
         return 30;
 #ifdef CRABC_RESOLVER_RUNTIME_FREESTANDING
-    if (h_errno != 0 || state->res_h_errno != 0)
+    if (h_errno != status_after_addrinfo ||
+        state->res_h_errno != status_after_addrinfo)
         return 31;
 #endif
     if (res_querydomain("dns", "fixture.test", C_IN, T_A, answer,
             sizeof(answer)) < 12)
         return 40;
 #ifdef CRABC_RESOLVER_RUNTIME_FREESTANDING
-    if (h_errno != 0 || state->res_h_errno != 0)
+    if (h_errno != status_after_addrinfo ||
+        state->res_h_errno != status_after_addrinfo)
         return 41;
 #endif
     if (res_query("missing.fixture.test", C_IN, T_A, answer, sizeof(answer)) != -1)
