@@ -128,9 +128,9 @@ impl StatCount {
 
     /// Adds one selected source record in `mi_stats_add` order.
     ///
-    /// The pinned source first adds `total`, then samples and adds
-    /// source current, and finally samples source peak to raise the
-    /// destination peak from that prior destination current plus source peak.
+    /// The pinned source first adds `total`, then samples source peak and
+    /// current in that order, and finally adds current before raising the
+    /// destination peak from its prior current plus source peak.
     /// These are deliberately relaxed, non-transactional observations: a
     /// concurrent source update may appear in only part of this aggregation,
     /// exactly as it may in the C implementation.
@@ -140,9 +140,9 @@ impl StatCount {
             return;
         }
         i64_add_from_relaxed(&self.total, &source.total);
+        let source_peak = i64_load_relaxed(&source.peak);
         let source_current = i64_load_relaxed(&source.current);
         let destination_current = i64_add_relaxed(&self.current, source_current);
-        let source_peak = i64_load_relaxed(&source.peak);
         i64_max_relaxed(
             &self.peak,
             destination_current.wrapping_add(source_peak),
@@ -784,7 +784,7 @@ impl HeapTheapStatistics {
     }
 
     /// `mi_stats_add` without the reset: declared fields, optional malloc
-    /// bins, then page bins. The reserved extensions and chunk bins are not
+    /// bins, page bins, then chunk bins. The reserved extensions are not
     /// part of the source merge, although `mi_stats_init` clears them later.
     fn add_from(&self, source: &Self) {
         if core::ptr::eq(self, source) {
@@ -835,6 +835,9 @@ impl HeapTheapStatistics {
         }
         for index in 0..self.page_bins.len() {
             self.page_bins[index].add_from(&source.page_bins[index]);
+        }
+        for index in 0..self.chunk_bins.len() {
+            self.chunk_bins[index].add_from(&source.chunk_bins[index]);
         }
     }
 
@@ -1691,6 +1694,7 @@ impl HeapTheapStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::println;
 
     #[cfg(feature = "mi-stat-1")]
     #[test]
@@ -1823,24 +1827,62 @@ mod tests {
     }
 
     #[test]
-    fn stats_merge_skips_extension_and_chunk_bins_but_resets_the_source_image() {
+    fn stats_merge_skips_extensions_but_merges_all_chunk_bins_and_resets_source() {
         let destination = HeapTheapStatistics::new();
         let source = HeapTheapStatistics::new();
         source.stat_reserved[0].update(5);
         source.stat_counter_reserved[0].increase(4);
         source.chunk_bins[0].update(3);
+        source.chunk_bins[STAT_CHUNK_BIN_COUNT - 1].update(7);
         source.page_bins[0].update(2);
 
         destination.merge_from_and_reset(&source);
 
         assert_eq!(i64_load_relaxed(&destination.stat_reserved[0].total), 0);
         assert_eq!(i64_load_relaxed(&destination.stat_counter_reserved[0].total), 0);
-        assert_eq!(i64_load_relaxed(&destination.chunk_bins[0].total), 0);
+        assert_eq!(i64_load_relaxed(&destination.chunk_bins[0].total), 3);
+        assert_eq!(i64_load_relaxed(&destination.chunk_bins[STAT_CHUNK_BIN_COUNT - 1].total), 7);
         assert_eq!(i64_load_relaxed(&destination.page_bins[0].total), 2);
         assert_eq!(i64_load_relaxed(&source.stat_reserved[0].total), 0);
         assert_eq!(i64_load_relaxed(&source.stat_counter_reserved[0].total), 0);
         assert_eq!(i64_load_relaxed(&source.chunk_bins[0].total), 0);
+        assert_eq!(i64_load_relaxed(&source.chunk_bins[STAT_CHUNK_BIN_COUNT - 1].total), 0);
         assert_eq!(i64_load_relaxed(&source.page_bins[0].total), 0);
+    }
+
+    #[test]
+    fn chunk_bin_owner_merge_trace_for_pinned_c_comparison() {
+        fn show(stage: &str, stats: &HeapTheapStatistics) {
+            for (index, count) in stats.chunk_bins.iter().enumerate() {
+                println!(
+                    "{stage}.bin{index}={},{},{}",
+                    i64_load_relaxed(&count.peak),
+                    i64_load_relaxed(&count.total),
+                    i64_load_relaxed(&count.current),
+                );
+            }
+        }
+
+        let process = HeapTheapStatistics::new();
+        let first = HeapTheapStatistics::new();
+        let second = HeapTheapStatistics::new();
+        first.chunk_bins[0].update(3);
+        first.chunk_bins[4].update(2);
+        first.chunk_bins[5].update(7);
+        second.chunk_bins[0].update(5);
+        second.chunk_bins[0].update(-2);
+        second.chunk_bins[4].update(-1);
+        second.chunk_bins[5].update(-2);
+
+        println!("CRABC_MI_M7_STATISTICS_CHUNK_BIN_MERGE_TRACE_BEGIN");
+        show("empty", &process);
+        process.merge_from_and_reset(&first);
+        show("first.process", &process);
+        show("first.source_reset", &first);
+        process.merge_from_and_reset(&second);
+        show("second.process", &process);
+        show("second.source_reset", &second);
+        println!("CRABC_MI_M7_STATISTICS_CHUNK_BIN_MERGE_TRACE_END");
     }
 
     #[test]
@@ -1885,10 +1927,8 @@ mod tests {
         let snapshot = destination.bitmap().snapshot();
         assert_eq!(snapshot.chunk_bins[0].total, 1);
         assert_eq!(snapshot.chunk_bins[0].current, 0);
-        // The heap merge resets its local chunk bins without adding them to
-        // the subprocess image; bitmap transitions already update that image.
-        assert_eq!(snapshot.chunk_bins[4].total, 1);
-        assert_eq!(snapshot.chunk_bins[4].current, 1);
+        assert_eq!(snapshot.chunk_bins[4].total, 3);
+        assert_eq!(snapshot.chunk_bins[4].current, 3);
         assert_eq!(snapshot.chunk_bins[STAT_CHUNK_BIN_COUNT - 1].total, 0);
         assert_eq!(snapshot.pages_unabandon_busy_wait, 4);
         assert_eq!(i64_load_relaxed(&source.chunk_bins[4].total), 0);

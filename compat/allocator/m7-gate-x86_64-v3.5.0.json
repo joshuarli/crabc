@@ -137,6 +137,10 @@
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-level-two-bins-differential"],
       "scope": "Pinned C MI_STAT=2 and Rust merge two synthetic owner bin records, reset each source, and compare nonzero rows, order, size units, peak/current arithmetic, empty-bin suppression, and freed presentation. Production bin producers remain outside this fixture."
     },
+    "differential:statistics-chunk-bin-merge": {
+      "command": ["python3", "compat/allocator/x86_64_m7_statistics_chunk_bin_merge.py", "--offline"],
+      "scope": "Pinned C MI_STAT=2 and Rust merge two synthetic owner statistics images into a subprocess image, comparing all six chunk-bin peak, total, and current records after each merge and verifying that both source images reset."
+    },
     "differential:statistics-level-two-page-huge": {
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-level-two-page-huge-differential"],
       "scope": "Pinned C MI_STAT=2 and Rust merge synthetic huge and page owner records, reset sources, and compare independent section guards, final row order, size units, peak/current arithmetic, and freed presentation. Production huge and page producers remain outside this fixture."
@@ -406,6 +410,7 @@
         "differential:statistics-level-one-output-merge",
         "differential:statistics-level-two-requested",
         "differential:statistics-level-two-bins",
+        "differential:statistics-chunk-bin-merge",
         "differential:statistics-level-two-page-huge",
         "differential:statistics-json",
         "differential:statistics-page-extend",
