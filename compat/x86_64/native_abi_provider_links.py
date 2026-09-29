@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Retain complete-function owned links and replay physical archive call targets.
+"""Retain complete owned address links and replay physical archive references.
 
-The fixture only takes addresses. Function semantics remain the owning family's
+The fixture only takes addresses. Runtime semantics remain the owning family's
 obligation. Every admitted import requires its own complete source relocation
 roster and final targets in both static modes; unsupported forms stay open.
 """
@@ -43,18 +43,28 @@ def identity(path: Path) -> dict[str, Any]:
 def roster(facts: Mapping[str, Any]) -> list[str]:
     return sorted({row['name'] for member in facts['candidate-static']
                    for table in member['symbol_tables'] for row in table['rows']
-                   if row['section_index'] != 'UND' and row['type'] == 'FUNC'
+                   if row['section_index'] != 'UND' and row['type'] in {'FUNC', 'OBJECT'}
                    and row['binding'] in {'GLOBAL', 'WEAK'} and row['size_bytes'] > 0})
 
 
-def source(names: list[str]) -> str:
-    require(names and names == sorted(set(names)), 'provider function roster differs')
+def object_roster(facts: Mapping[str, Any]) -> list[str]:
+    return sorted({row['name'] for member in facts['candidate-static']
+                   for table in member['symbol_tables'] for row in table['rows']
+                   if row['section_index'] != 'UND' and row['type'] == 'OBJECT'
+                   and row['binding'] in {'GLOBAL', 'WEAK'} and row['size_bytes'] > 0})
+
+
+def source(names: list[str], *, object_names: list[str] | None = None) -> str:
+    require(names and names == sorted(set(names)), 'provider address roster differs')
+    objects = set(object_names or [])
+    require(objects <= set(names), 'provider object roster leaves the address roster')
     require(all(name and all(character.isalnum() or character in '_.$' for character in name)
                 for name in names), 'provider name cannot be emitted as a linker label')
-    return (''.join(f'extern void provider_{index}(void) __asm__("{name}");\n'
+    return (''.join((f'extern unsigned char provider_{index}[] __asm__("{name}");\n' if name in objects
+                     else f'extern void provider_{index}(void) __asm__("{name}");\n')
                     for index, name in enumerate(names))
-            + 'static void (*volatile providers[])(void) = {\n'
-            + ''.join(f'provider_{index},\n' for index in range(len(names)))
+            + 'static const void *volatile providers[] = {\n'
+            + ''.join(f'(const void *)provider_{index},\n' for index in range(len(names)))
             + '};\nint main(void) {\n'
             + ' for (unsigned long i = 0; i < sizeof providers / sizeof providers[0]; ++i)\n'
             + '  if (!providers[i]) return 1;\n return 0;\n}\n')
@@ -82,7 +92,7 @@ def capture(argv: list[str], work: Path, label: str) -> dict[str, Any]:
 
 
 def fixture_object(path: Path, names: list[str]) -> dict[str, Any]:
-    """Require every forced pointer to name its exact undefined function row."""
+    """Require every forced pointer to name its exact undefined symbol row."""
     tables = inventory.parse_elf_symbol_tables(read_tool('readelf', '-Ws', path))
     require(len(tables) == 1 and tables[0]['name'] == '.symtab', 'provider fixture symbol tables differ')
     rows = tables[0]['rows']
@@ -118,7 +128,7 @@ def collect(static: Path, elf_report: Path, output: Path) -> dict[str, Any]:
     facts = inventory.read_json(elf_report, 'provider ELF facts')['facts']
     names = roster(facts)
     output.mkdir(mode=0o700)
-    (output / 'providers.c').write_text(source(names), encoding='ascii')
+    (output / 'providers.c').write_text(source(names, object_names=object_roster(facts)), encoding='ascii')
     commands = {'compile': capture(command(static, output, 'compile'), output, 'compile')}
     object_references = fixture_object(output / 'providers.o', names)
     links = {}
@@ -159,8 +169,8 @@ def validate(work: Path, static: Path, facts: Mapping[str, Any]) -> dict[str, An
                         ('archive', static / 'usr/lib/libc.a'), ('driver', static / 'bin/crabc-cc'),
                         ('fixture', work / 'providers.c'), ('object', work / 'providers.o')):
         require(report[field] == identity(path), f'provider {field} changed')
-    require((work / 'providers.c').read_text(encoding='ascii') == source(roster(facts)),
-            'provider fixture no longer represents the complete physical function roster')
+    require((work / 'providers.c').read_text(encoding='ascii') == source(roster(facts), object_names=object_roster(facts)),
+            'provider fixture no longer represents the complete physical address roster')
     require(report['object_references'] == fixture_object(work / 'providers.o', roster(facts)),
             'provider forcing object references changed')
     labels = ('compile', *MODES, *(mode + '-run' for mode in MODES))
@@ -248,11 +258,11 @@ def _call_transcripts(view: Mapping[str, Any], member: str,
 
 
 def import_relocations(transcript: str, name: str, *, image: bytes) -> list[dict[str, Any]]:
-    """Retain the complete executable relocation roster for a function import.
+    """Retain the complete executable relocation roster for a symbol import.
 
     A function reference may load its address without calling it at that site.
     Only the exact PC-relative instruction forms decoded below are accepted;
-    data pointers and unsupported addends remain outside this proof.
+    non-executable relocations and unsupported addends remain outside this proof.
     """
     sections = calls._ordinary_relocation_sections(image)
     section, references = None, []
@@ -283,8 +293,9 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                             elf_type: int, name: str, source_sections: Mapping[str, bytes]) -> dict[str, Any]:
     """Bind exact source instruction operands to their final provider address.
 
-    Register address loads prove address binding only. They do not assert a
-    later indirect call, register lifetime, reachability or function semantics.
+    Register address loads and GOT comparisons prove address binding only.
+    They do not assert a later call, register lifetime, comparison outcome,
+    reachability or runtime semantics.
     Direct calls retain the existing branch proof and all sites must survive.
     """
     resolved, discarded = [], []
@@ -301,12 +312,15 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                 and offset + 4 <= len(source) and offset + 4 <= int(parts[2], 16),
                 f'provider {name} reference leaves selected section')
         prefix = source[offset - 3:offset] if offset >= 3 else b''
+        address_compare = (len(prefix) == 3 and kind == 'R_X86_64_GOTPCREL'
+                           and prefix[0] in {0x48, 0x4c} and prefix[1] == 0x3b
+                           and prefix[2] & 0xc7 == 0x05)
         address_load = (len(prefix) == 3 and prefix[0] in {0x48, 0x4c} and prefix[2] & 0xc7 == 0x05
                         and ((kind == 'R_X86_64_GOTPCREL' and prefix[1] == 0x8b)
                              or (kind == 'R_X86_64_PC32' and prefix[1] == 0x8d)))
         conditional = (kind == 'R_X86_64_PLT32' and offset >= 2
                        and source[offset - 2] == 0x0f and 0x80 <= source[offset - 1] <= 0x8f)
-        if not address_load and not conditional:
+        if not address_load and not address_compare and not conditional:
             prefix_size = 1 if kind == 'R_X86_64_PLT32' else 2
             prefix = source[offset - prefix_size:offset]
             require((kind == 'R_X86_64_PLT32' and prefix in {b'\xe8', b'\xe9'})
@@ -321,7 +335,7 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
             resolved.extend(result['resolved_calls'])
             discarded.extend(result['discarded_calls'])
             continue
-        prefix_size = 3 if address_load else 2
+        prefix_size = 3 if address_load or address_compare else 2
         call_address = int(parts[0], 16) + offset - prefix_size
         opcode = calls._public_weak_virtual_bytes(image, call_address, prefix_size + 4, elf_type, executable=True)
         require(opcode[:prefix_size] == source[offset - prefix_size:offset],
@@ -340,7 +354,7 @@ def final_member_references(image: bytes, *, archive_member: str, source_calls: 
                                            and target == 0 and relocations == ['R_X86_64_RELATIVE'] and not relr)
                                           or (len(relr) == 1 and target == provider_address and not relocations))),
                     f'provider {name} GOT resolves to a foreign provider')
-            record.update(got_slot=slot, branch_kind='got-address-load')
+            record.update(got_slot=slot, branch_kind='got-address-compare' if address_compare else 'got-address-load')
         else:
             require(target == provider_address, f'provider {name} reference resolves to a foreign provider')
             record['branch_kind'] = 'rip-relative-address' if address_load else 'conditional-jump'
@@ -369,7 +383,7 @@ def project(work: Path, static: Path, accounting: Mapping[str, Any], facts: Mapp
         rows = by_name.get(name, [])
         definitions = [row for row in rows if row['role'] == 'definition']
         imports = [row for row in rows if row['role'] == 'import']
-        if (len(definitions) != 1 or definitions[0]['row']['type'] != 'FUNC'
+        if (len(definitions) != 1 or definitions[0]['row']['type'] not in {'FUNC', 'OBJECT'}
                 or definitions[0]['row']['size_bytes'] <= 0):
             continue
         definition = definitions[0]
@@ -395,7 +409,7 @@ def project(work: Path, static: Path, accounting: Mapping[str, Any], facts: Mapp
                     image, {item['section'] for item in source_calls})))
             for mode, view in final.items():
                 symbol_rows = view['symbol_rows'].get(name, [])
-                require(all(row[3] == 'FUNC' and row[6] != 'UND' for row in symbol_rows),
+                require(all(row[3] == definition['row']['type'] and row[6] != 'UND' for row in symbol_rows),
                         'provider final symbol metadata differs')
                 symbols = [(int(row[1], 16), int(row[2])) for row in symbol_rows]
                 require(len(symbols) == 1 and symbols[0][1] == definition['row']['size_bytes'],

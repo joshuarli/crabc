@@ -137,6 +137,65 @@ class ProviderFixtureObjectTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'opcode differs'):
                     links.final_member_references(bytes(changed), **arguments)
 
+    def test_real_object_addresses_cover_complete_data_roster_and_got_comparison_operands(self):
+        import native_abi_provider_links as links
+        compiler, linker = shutil.which('clang') or shutil.which('gcc'), shutil.which('ld.lld')
+        if compiler is None or linker is None:
+            self.skipTest('native compiler and linker are required')
+        facts = {'candidate-static': [{'symbol_tables': [{'rows': [
+            {'name': name, 'type': kind, 'binding': 'GLOBAL', 'section_index': '3', 'size_bytes': size}
+            for name, kind, size in [('domain_data', 'OBJECT', 4), ('domain_body', 'FUNC', 1),
+                                     ('tls_data', 'TLS', 4), ('empty_data', 'OBJECT', 0)]
+        ]}]}]}
+        self.assertEqual(links.roster(facts), ['domain_body', 'domain_data'])
+        scratch = ROOT / '.work/x86_64/provider-links-object-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            (work / 'forcing.c').write_text(links.source(links.roster(facts), object_names=['domain_data']))
+            subprocess.run([compiler, '-fPIE', '-c', str(work / 'forcing.c'), '-o', str(work / 'forcing.o')],
+                           check=True, capture_output=True)
+            forcing = links.fixture_object(work / 'forcing.o', links.roster(facts))
+            self.assertEqual([row['symbol'] for row in forcing['references']], ['domain_body', 'domain_data'])
+            source = ['.section .text.caller,"ax",@progbits', '.globl caller', '.type caller,@function', 'caller:']
+            for register in range(16):
+                source += [f'.byte {0x48 if register < 8 else 0x4c}, 0x3b, {0x05 + ((register % 8) << 3)}',
+                           '.long 0', '.reloc .-4, R_X86_64_GOTPCREL, domain_data-4']
+            source += ['.byte 0x48, 0x8b, 0x05', '.long 0',
+                       '.reloc .-4, R_X86_64_GOTPCREL, domain_data-4', 'ret', '.size caller,.-caller',
+                       '.section .data.provider,"aw",@progbits', '.globl domain_data', '.type domain_data,@object',
+                       'domain_data:', '.long 42', '.size domain_data,.-domain_data',
+                       '.section .note.GNU-stack,"",@progbits']
+            (work / 'caller.S').write_text('\n'.join(source) + '\n')
+            subprocess.run([compiler, '-c', str(work / 'caller.S'), '-o', str(work / 'caller.o')],
+                           check=True, capture_output=True)
+            subprocess.run(['ar', 'rcs', str(work / 'libdomain.a'), str(work / 'caller.o')],
+                           check=True, capture_output=True)
+            image = (work / 'caller.o').read_bytes()
+            references = links.import_relocations(links.read_tool('readelf', '-rW', work / 'caller.o'),
+                                                  'domain_data', image=image)
+            self.assertEqual(len(references), 17)
+            sections = links.calls._ordinary_source_sections(image, {row['section'] for row in references})
+            for mode, elf_type, flag in [('static', 2, '-static'), ('static-pie', 3, '-pie')]:
+                output, map_path = work / mode, work / (mode + '.map')
+                subprocess.run([linker, flag, '--no-relax', '-e', 'caller', '--undefined=caller',
+                                '-Map=' + str(map_path), str(work / 'libdomain.a'), '-o', str(output)],
+                               check=True, capture_output=True)
+                address = int(next(row.split()[1] for row in links.read_tool('readelf', '-sW', output).splitlines()
+                                   if row.split() and row.split()[-1] == 'domain_data'), 16)
+                arguments = dict(archive_member=str(work / 'libdomain.a') + '(caller.o)', source_calls=references,
+                                 map_text=map_path.read_text(), relocation_text=links.read_tool('readelf', '-rW', output),
+                                 provider_address=address, elf_type=elf_type, name='domain_data', source_sections=sections)
+                proof = links.final_member_references(output.read_bytes(), **arguments)
+                self.assertEqual(len(proof['resolved_calls']), 17)
+                self.assertEqual(proof['discarded_calls'], [])
+                self.assertEqual({row['branch_kind'] for row in proof['resolved_calls']},
+                                 {'got-address-compare', 'got-address-load'})
+                for reference in references:
+                    with self.assertRaisesRegex((ValueError, links.calls.AllocatorBoundaryError), 'foreign provider'):
+                        links.final_member_references(output.read_bytes(), **{
+                            **arguments, 'source_calls': [reference], 'provider_address': address + 1})
+
     def test_link_commands_reserve_owned_driver_relative_sidecars(self):
         import crabc_cc_static as driver
         import native_abi_provider_links as links
