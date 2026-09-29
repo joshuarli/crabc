@@ -453,6 +453,113 @@ static int check_resize_failure_rollback(void)
     return 0;
 }
 
+static int check_colliding_full_table_lifecycle(void)
+{
+    char keys[7][3] = {
+        "a0", "b1", "c2", "d3", "e4", "f5", "g6"
+    };
+    char duplicate_key[] = "c2";
+    char missing_key[] = "h7";
+    int values[7] = { 61, 62, 63, 64, 65, 66, 67 };
+    int replacement = 99;
+    ENTRY *result = NULL;
+    ENTRY *duplicate_entry = NULL;
+    int observations[11];
+    unsigned index;
+
+    /* These distinct strings share the minimum table's low three hash bits. */
+    if (hcreate(0) != 1) return 1;
+    for (index = 0; index < 6; ++index) {
+        ENTRY item = { keys[index], &values[index] };
+
+        result = hsearch(item, ENTER);
+        if (result == NULL || result->key != keys[index] ||
+            result->data != &values[index])
+            return 2;
+    }
+    {
+        ENTRY duplicate = { duplicate_key, &replacement };
+        ENTRY missing = { missing_key, NULL };
+
+        duplicate_entry = hsearch(duplicate, ENTER);
+        if (duplicate_entry == NULL || duplicate_entry->key != keys[2] ||
+            duplicate_entry->data != &values[2])
+            return 3;
+        observations[0] = duplicate_entry->key != duplicate_key;
+        errno = EDOM;
+        result = hsearch(missing, FIND);
+        if (result != NULL || errno != EDOM)
+            return 4;
+        observations[1] = result == NULL;
+    }
+
+    if (!begin_allocation_failure()) return 5;
+    errno = 0;
+    {
+        ENTRY seventh = { keys[6], &values[6] };
+
+        result = hsearch(seventh, ENTER);
+        observations[2] = result != NULL;
+        observations[3] = errno;
+        observations[4] = result == NULL;
+        if (observations[2] || observations[3] != ENOMEM || !observations[4])
+            return 6;
+    }
+    if (!end_allocation_failure()) return 7;
+
+    for (index = 0; index < 6; ++index) {
+        ENTRY lookup = { keys[index], NULL };
+
+        result = hsearch(lookup, FIND);
+        if (result == NULL || result->key != keys[index] ||
+            result->data != &values[index])
+            return 8;
+    }
+    {
+        ENTRY seventh = { keys[6], &values[6] };
+
+        result = hsearch(seventh, FIND);
+        if (result != NULL) return 9;
+        observations[5] = result == NULL;
+        result = hsearch(seventh, ENTER);
+        if (result == NULL || result->key != keys[6] ||
+            result->data != &values[6])
+            return 10;
+        observations[6] = result->data == &values[6];
+    }
+    {
+        ENTRY duplicate = { duplicate_key, &replacement };
+
+        result = hsearch(duplicate, ENTER);
+        if (result == NULL || result->key != keys[2] ||
+            result->data != &values[2])
+            return 11;
+        observations[7] = result->data != &replacement;
+    }
+
+    hdestroy();
+    observations[8] = keys[2][0] == 'c' && values[2] == 63;
+    if (!observations[8] || hcreate(0) != 1) return 12;
+    {
+        ENTRY old = { duplicate_key, NULL };
+
+        result = hsearch(old, FIND);
+        if (result != NULL) return 13;
+        observations[9] = result == NULL;
+        old.key = keys[2];
+        old.data = &values[2];
+        result = hsearch(old, ENTER);
+        if (result == NULL || result->key != keys[2] ||
+            result->data != &values[2])
+            return 14;
+        observations[10] = result->data == &values[2];
+    }
+    hdestroy();
+    if (!trace_observations("colliding-full-lifecycle", observations, 11))
+        return 15;
+    return 0;
+}
+
 static int check_unsigned_hash_bytes(void)
 {
     struct hsearch_data table = { 0 };
@@ -581,6 +688,8 @@ int crabc_x86_64_search_hash_table_probe(void)
     if (result != 0) return 150 + result;
     result = check_resize_failure_rollback();
     if (result != 0) return 50 + result;
+    result = check_colliding_full_table_lifecycle();
+    if (result != 0) return 170 + result;
     result = check_unsigned_hash_bytes();
     if (result != 0) return 70 + result;
     result = check_overflow_and_repeated_create();
