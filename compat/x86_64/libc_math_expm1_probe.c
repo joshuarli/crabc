@@ -28,10 +28,16 @@
 
 #define EXPM1_F64_CASES 32
 #define EXPM1_F32_CASES 30
+#define EXPM1_F64_BOUNDARIES 16
+#define EXPM1_F32_BOUNDARIES 16
+#define EXPM1_BOUNDARY_RADIUS 4
+#define EXPM1_BOUNDARY_WIDTH (2 * EXPM1_BOUNDARY_RADIUS + 1)
 #define EXPM1_ROUNDING_CASES 4
 #define EXPM1_RECORD_WORDS 4
 #define EXPM1_RECORD_COUNT \
-	((EXPM1_F64_CASES + EXPM1_F32_CASES) * EXPM1_ROUNDING_CASES)
+	((EXPM1_F64_CASES + EXPM1_F32_CASES + \
+	2 * (EXPM1_F64_BOUNDARIES + EXPM1_F32_BOUNDARIES) * \
+	EXPM1_BOUNDARY_WIDTH) * EXPM1_ROUNDING_CASES)
 #define EXPM1_RECORD_STORAGE_WORDS (EXPM1_RECORD_COUNT * EXPM1_RECORD_WORDS)
 
 typedef double (*double_unary_function)(double);
@@ -41,8 +47,10 @@ typedef float (*float_unary_function)(float);
 static double_unary_function volatile direct_expm1 = (expm1);
 static float_unary_function volatile direct_expm1f = (expm1f);
 
-/* The freestanding start object writes these exact 7,936 bytes with syscall. */
+/* The freestanding start object reads this length before writing the stream. */
 uint64_t crabc_x86_64_math_expm1_records[EXPM1_RECORD_STORAGE_WORDS];
+const uint64_t crabc_x86_64_math_expm1_record_bytes =
+	sizeof(crabc_x86_64_math_expm1_records);
 
 static const uint64_t binary64_inputs[EXPM1_F64_CASES] = {
 	UINT64_C(0x0000000000000000), UINT64_C(0x8000000000000000),
@@ -74,6 +82,31 @@ static const uint32_t binary32_inputs[EXPM1_F32_CASES] = {
 	UINT32_C(0x3f800000), UINT32_C(0xbf800000), UINT32_C(0x41200000),
 	UINT32_C(0xc1200000), UINT32_C(0x7f7fffff), UINT32_C(0x7f800000),
 	UINT32_C(0xff800000), UINT32_C(0x7fc00041), UINT32_C(0x7f800042),
+};
+
+/* Magnitude bits bracket source branches and IEEE representation changes.
+ * Both signs and the four adjacent bit patterns on each side are evaluated.
+ */
+static const uint64_t binary64_boundaries[EXPM1_F64_BOUNDARIES] = {
+	UINT64_C(0x0000000000000001), UINT64_C(0x000fffffffffffff),
+	UINT64_C(0x0010000000000000), UINT64_C(0x3c7fffffffffffff),
+	UINT64_C(0x3c80000000000000), UINT64_C(0x3c90000000000000),
+	UINT64_C(0x3ca0000000000000), UINT64_C(0x3fd62e4200000000),
+	UINT64_C(0x3fd62e42fefa39ef), UINT64_C(0x3fe62e42fefa39ef),
+	UINT64_C(0x3ff0000000000000), UINT64_C(0x40436879ffffffff),
+	UINT64_C(0x4043687a00000000), UINT64_C(0x40862e42fefa39ee),
+	UINT64_C(0x40862e42fefa39f0), UINT64_C(0x7fefffffffffffff),
+};
+
+static const uint32_t binary32_boundaries[EXPM1_F32_BOUNDARIES] = {
+	UINT32_C(0x00000001), UINT32_C(0x007fffff),
+	UINT32_C(0x00800000), UINT32_C(0x327fffff),
+	UINT32_C(0x32800000), UINT32_C(0x33000000),
+	UINT32_C(0x33800000), UINT32_C(0x3eb17217),
+	UINT32_C(0x3eb17218), UINT32_C(0x3f317218),
+	UINT32_C(0x3f800000), UINT32_C(0x4195b843),
+	UINT32_C(0x4195b844), UINT32_C(0x42b17217),
+	UINT32_C(0x42b17218), UINT32_C(0x7f7fffff),
 };
 
 static const int rounding_modes[EXPM1_ROUNDING_CASES] = {
@@ -149,6 +182,8 @@ int crabc_x86_64_math_expm1_probe(void)
 	size_t cursor = 0;
 	size_t input_index;
 	size_t mode_index;
+	size_t sign_index;
+	int offset;
 	int status = 0;
 
 	if (fegetenv(&original) != 0 || fesetenv(FE_DFL_ENV) != 0)
@@ -163,6 +198,34 @@ int crabc_x86_64_math_expm1_probe(void)
 			input_index++)
 			status = record_binary32(&cursor, rounding_modes[mode_index],
 				binary32_inputs[input_index]);
+		for (input_index = 0; input_index < EXPM1_F64_BOUNDARIES && status == 0;
+			input_index++)
+			for (sign_index = 0; sign_index < 2 && status == 0; sign_index++)
+				for (offset = -EXPM1_BOUNDARY_RADIUS;
+					offset <= EXPM1_BOUNDARY_RADIUS && status == 0; offset++) {
+					uint64_t magnitude = binary64_boundaries[input_index];
+
+					if (offset < 0 && magnitude < (uint64_t)-offset)
+						magnitude = 0;
+					else
+						magnitude += offset;
+					status = record_binary64(&cursor, rounding_modes[mode_index],
+						magnitude | ((uint64_t)sign_index << 63));
+				}
+		for (input_index = 0; input_index < EXPM1_F32_BOUNDARIES && status == 0;
+			input_index++)
+			for (sign_index = 0; sign_index < 2 && status == 0; sign_index++)
+				for (offset = -EXPM1_BOUNDARY_RADIUS;
+					offset <= EXPM1_BOUNDARY_RADIUS && status == 0; offset++) {
+					uint32_t magnitude = binary32_boundaries[input_index];
+
+					if (offset < 0 && magnitude < (uint32_t)-offset)
+						magnitude = 0;
+					else
+						magnitude += offset;
+					status = record_binary32(&cursor, rounding_modes[mode_index],
+						magnitude | ((uint32_t)sign_index << 31));
+				}
 	}
 	if (cursor != EXPM1_RECORD_STORAGE_WORDS && status == 0)
 		status = 3;

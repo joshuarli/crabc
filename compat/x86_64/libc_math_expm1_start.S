@@ -4,12 +4,13 @@
     .type _start,@function
     .extern crabc_x86_64_math_expm1_probe
     .extern crabc_x86_64_math_expm1_records
+    .extern crabc_x86_64_math_expm1_record_bytes
 _start:
     call crabc_x86_64_math_expm1_probe
     testl %eax, %eax
     jnz .Lcrabc_expm1_fail
     lea crabc_x86_64_math_expm1_records(%rip), %rsi
-    mov $7936, %edx
+    mov crabc_x86_64_math_expm1_record_bytes(%rip), %rdx
 .Lcrabc_expm1_write:
     mov $1, %eax
     mov $1, %edi
