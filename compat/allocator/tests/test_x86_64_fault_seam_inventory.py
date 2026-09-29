@@ -220,7 +220,14 @@ def _valid_report(runner: object, profile: dict[str, object]) -> dict[str, objec
         ),
     }
     state = _clean_source_state()
-    decommit = INVENTORY._decommit_receiver()
+    commit = INVENTORY._process_owned_transition_receiver("commit")
+    commit_values = commit.expected_values()
+    commit_trace = lambda language: "\n".join((
+        f"CRABC_M2_PROCESS_OWNED_COMMIT_FAULT_{language}_TRACE_BEGIN",
+        *(f"{field}={commit_values[field]}" for field in commit.FIELDS),
+        f"CRABC_M2_PROCESS_OWNED_COMMIT_FAULT_{language}_TRACE_END", "",
+    ))
+    decommit = INVENTORY._process_owned_transition_receiver("decommit")
     decommit_values = decommit.expected_values()
     decommit_trace = lambda language: "\n".join((
         f"CRABC_M2_PROCESS_OWNED_DECOMMIT_FAULT_{language}_TRACE_BEGIN",
@@ -235,6 +242,28 @@ def _valid_report(runner: object, profile: dict[str, object]) -> dict[str, objec
         "format": INVENTORY.FORMAT,
         "os_publication_receipt": _valid_os_publication_report(),
         "metadata_publication_receipt": _valid_metadata_publication_report(),
+        "commit_receipt": {
+            "status": "matched", "c": commit_values, "rust": dict(commit_values),
+            "mismatches": [], "scope": "process-owned commit fault and retry",
+            "source_seal": {
+                "revision": runner.load_pin()["revision"],
+                "archive_sha256": runner.load_pin()["sha256"],
+                "fixture_sha256": hashlib.sha256(commit.FIXTURE.read_bytes()).hexdigest(),
+            },
+            "c_commands": {
+                "build": {"command": ["musl-gcc", "-DMI_LIBC_MUSL=1", str(commit.FIXTURE),
+                    "-Wl,--wrap=mprotect", "-o", "/evidence/commit-fault"],
+                    "status": 0, "stdout": "", "stderr": ""},
+                "run": {"command": ["/evidence/commit-fault"], "status": 0,
+                    "stdout": commit_trace("C"), "stderr": ""},
+            },
+            "rust_commands": {"run": {
+                "command": ["python3", "compat/allocator/run_unit_x86_64.py", INVENTORY.COMMIT_TARGET],
+                "status": 0, "stdout": commit_trace("RUST")
+                    + "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
+                "stderr": "",
+            }},
+        },
         "decommit_receipt": {
             "status": "matched", "c": decommit_values, "rust": dict(decommit_values),
             "mismatches": [], "scope": "process-owned decommit fault and retry",
@@ -698,6 +727,11 @@ class FaultInventoryShapeTests(unittest.TestCase):
                 "target": INVENTORY.METADATA_PUBLICATION_TARGET,
                 "expected_passed_test_count": 1,
             }, {
+                "id": INVENTORY.COMMIT_CHECK_ID,
+                "kind": "c-rust-fault-seam-inventory",
+                "target": INVENTORY.COMMIT_TARGET,
+                "expected_passed_test_count": 1,
+            }, {
                 "id": INVENTORY.DECOMMIT_CHECK_ID,
                 "kind": "c-rust-fault-seam-inventory",
                 "target": INVENTORY.DECOMMIT_TARGET,
@@ -777,6 +811,14 @@ class FaultInventoryShapeTests(unittest.TestCase):
             run = report["decommit_receipt"]["c_commands"]["run"]
             run["stdout"] = run["stdout"].replace("warning_after_attempt=1", "warning_after_attempt=0")
             with self.assertRaisesRegex(ValueError, "decommit relation"):
+                INVENTORY.validate_report(report)
+
+    def test_report_rejects_a_rewritten_process_owned_commit_stream(self) -> None:
+        with _retained_profile_contract() as (runner, profile):
+            report = _valid_report(runner, profile)
+            run = report["commit_receipt"]["c_commands"]["run"]
+            run["stdout"] = run["stdout"].replace("warning_after_attempt=1", "warning_after_attempt=0")
+            with self.assertRaisesRegex(ValueError, "commit relation"):
                 INVENTORY.validate_report(report)
 
     def test_report_requires_its_current_fragment_projection(self) -> None:

@@ -28,9 +28,9 @@ from typing import Any, Mapping, Sequence
 
 
 SCHEMA = "crabc-mimalloc-x86_64-fault-seam-inventory-evidence"
-# Format 5 retains the process-owned decommit fault's raw C/Rust streams beside
+# Format 6 retains both process-owned range-transition fault streams beside
 # the existing source diagnostic, OS publication, and metadata receivers.
-FORMAT = 5
+FORMAT = 6
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "compat/allocator/m2_vm_x86_64.c"
 REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/fault-seam-inventory.json"
@@ -40,6 +40,8 @@ OS_PUBLICATION_CHECK_ID = "os-aligned-page-publication-fault-receiver"
 OS_PUBLICATION_TARGET = "os_page::tests::emit_os_publication_fault_receiver_trace"
 DECOMMIT_CHECK_ID = "process-owned-decommit-fault-receiver"
 DECOMMIT_TARGET = "os::tests::emit_m2_process_owned_decommit_fault_c_rust_trace"
+COMMIT_CHECK_ID = "process-owned-commit-fault-receiver"
+COMMIT_TARGET = "os::tests::emit_m2_process_owned_commit_fault_c_rust_trace"
 OS_PUBLICATION_BEGIN = "CRABC_MI_M2_OS_PUBLICATION_TRACE_BEGIN"
 OS_PUBLICATION_END = "CRABC_MI_M2_OS_PUBLICATION_TRACE_END"
 OS_ON_DEMAND_VALUES_BEGIN = "CRABC_MI_M2_OS_ON_DEMAND_VALUES_BEGIN"
@@ -557,6 +559,7 @@ SOURCE_ROW_CHECK_IDS = {
     "metadata-page-publication": (METADATA_PUBLICATION_CHECK_ID, METADATA_RECOVERY_CHECK_ID),
 }
 BRANCH_ROW_CHECK_IDS = {
+    "commit-failure-owner-retry": (FAULT_COMPONENT_CHECK_ID, COMMIT_CHECK_ID),
     "decommit-failure-owner-retry": (FAULT_COMPONENT_CHECK_ID, DECOMMIT_CHECK_ID),
 }
 
@@ -853,6 +856,11 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
         "target": METADATA_PUBLICATION_TARGET,
         "expected_passed_test_count": 1,
     }, {
+        "id": COMMIT_CHECK_ID,
+        "kind": "c-rust-fault-seam-inventory",
+        "target": COMMIT_TARGET,
+        "expected_passed_test_count": 1,
+    }, {
         "id": DECOMMIT_CHECK_ID,
         "kind": "c-rust-fault-seam-inventory",
         "target": DECOMMIT_TARGET,
@@ -1122,9 +1130,11 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("fault inventory metadata publication receipt is missing")
     if "decommit_receipt" not in report:
         raise ValueError("fault inventory process-owned decommit receipt is missing")
+    if "commit_receipt" not in report:
+        raise ValueError("fault inventory process-owned commit receipt is missing")
     expected_keys = {
         "architecture", "branch_records", "diagnostic_owner_boundary", "format", "os_publication_receipt",
-        "metadata_publication_receipt", "decommit_receipt",
+        "metadata_publication_receipt", "commit_receipt", "decommit_receipt",
         "fault_component_fragment", "huge_branch_receipt", "inventory", "nonclaims", "schema", "status",
         "stopped_receivers", "source_state_after", "source_state_before", "upstream",
         "unqualified_branches", "vm_receipt",
@@ -1156,43 +1166,57 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
     huge_receipt = _validate_huge_branch_receipt(report.get("huge_branch_receipt"), runner)
     os_receipt = validate_os_publication_report(report["os_publication_receipt"])
     metadata_receipt = validate_metadata_publication_report(report["metadata_publication_receipt"])
-    decommit = _decommit_receiver()
-    decommit_receipt = report["decommit_receipt"]
-    if not isinstance(decommit_receipt, Mapping) or set(decommit_receipt) != {
-        "status", "c", "rust", "mismatches", "c_commands", "rust_commands", "scope",
-    } or decommit_receipt["status"] != "matched" or decommit_receipt["mismatches"] != []:
-        raise ValueError("fault inventory process-owned decommit receipt changed")
-    c_commands = decommit_receipt["c_commands"]
-    rust_commands = decommit_receipt["rust_commands"]
-    if (not isinstance(c_commands, Mapping) or set(c_commands) != {"build", "run"}
-            or not isinstance(rust_commands, Mapping) or set(rust_commands) != {"run"}):
-        raise ValueError("fault inventory process-owned decommit commands changed")
-    c_build = c_commands["build"]
-    c_run = c_commands["run"]
-    rust_run = rust_commands["run"]
-    if (not all(isinstance(item, Mapping) for item in (c_build, c_run, rust_run))
-            or any(item.get("status") != 0 for item in (c_build, c_run, rust_run))
-            or c_run.get("stderr") or rust_run.get("stderr")
-            or not isinstance(c_build.get("command"), list)
-            or not c_build["command"]
-            or Path(c_build["command"][0]).name != "musl-gcc"
-            or "-DMI_LIBC_MUSL=1" not in c_build["command"]
-            or str(decommit.FIXTURE) not in c_build["command"]
-            or "-Wl,--wrap=madvise" not in c_build["command"]
-            or c_build["command"][-2] != "-o"
-            or c_run.get("command") != [c_build["command"][-1]]
-            or rust_run.get("command") != ["python3", "compat/allocator/run_unit_x86_64.py", DECOMMIT_TARGET]
-            or "test result: ok. 1 passed; 0 failed" not in str(rust_run.get("stdout"))):
-        raise ValueError("fault inventory process-owned decommit execution changed")
-    try:
-        c_values = decommit.trace(c_run["stdout"], "C")
-        rust_values = decommit.trace(rust_run["stdout"], "RUST")
-    except (TypeError, KeyError, decommit.harness.HarnessError) as error:
-        raise ValueError("fault inventory process-owned decommit raw stream changed") from error
-    if (c_values != decommit.expected_values() or rust_values != c_values
-            or decommit_receipt["c"] != c_values or decommit_receipt["rust"] != rust_values):
-        raise ValueError("fault inventory process-owned decommit relation changed")
     pin = runner.load_pin()
+    for transition, target, wrapper in (
+        ("commit", COMMIT_TARGET, "-Wl,--wrap=mprotect"),
+        ("decommit", DECOMMIT_TARGET, "-Wl,--wrap=madvise"),
+    ):
+        receiver = _process_owned_transition_receiver(transition)
+        receipt = report[f"{transition}_receipt"]
+        expected_fields = {
+            "status", "c", "rust", "mismatches", "c_commands", "rust_commands", "scope",
+        }
+        if transition == "commit":
+            expected_fields.add("source_seal")
+        if (not isinstance(receipt, Mapping) or set(receipt) != expected_fields
+                or receipt["status"] != "matched" or receipt["mismatches"] != []):
+            raise ValueError(f"fault inventory process-owned {transition} receipt changed")
+        c_commands = receipt["c_commands"]
+        rust_commands = receipt["rust_commands"]
+        if (not isinstance(c_commands, Mapping) or set(c_commands) != {"build", "run"}
+                or not isinstance(rust_commands, Mapping) or set(rust_commands) != {"run"}):
+            raise ValueError(f"fault inventory process-owned {transition} commands changed")
+        c_build = c_commands["build"]
+        c_run = c_commands["run"]
+        rust_run = rust_commands["run"]
+        if (not all(isinstance(item, Mapping) for item in (c_build, c_run, rust_run))
+                or any(item.get("status") != 0 for item in (c_build, c_run, rust_run))
+                or c_run.get("stderr") or rust_run.get("stderr")
+                or not isinstance(c_build.get("command"), list)
+                or not c_build["command"]
+                or Path(c_build["command"][0]).name != "musl-gcc"
+                or "-DMI_LIBC_MUSL=1" not in c_build["command"]
+                or str(receiver.FIXTURE) not in c_build["command"]
+                or wrapper not in c_build["command"]
+                or c_build["command"][-2] != "-o"
+                or c_run.get("command") != [c_build["command"][-1]]
+                or rust_run.get("command") != ["python3", "compat/allocator/run_unit_x86_64.py", target]
+                or "test result: ok. 1 passed; 0 failed" not in str(rust_run.get("stdout"))):
+            raise ValueError(f"fault inventory process-owned {transition} execution changed")
+        try:
+            c_values = receiver.trace(c_run["stdout"], "C")
+            rust_values = receiver.trace(rust_run["stdout"], "RUST")
+        except (TypeError, KeyError, receiver.harness.HarnessError) as error:
+            raise ValueError(f"fault inventory process-owned {transition} raw stream changed") from error
+        if (c_values != receiver.expected_values() or rust_values != c_values
+                or receipt["c"] != c_values or receipt["rust"] != rust_values):
+            raise ValueError(f"fault inventory process-owned {transition} relation changed")
+        if transition == "commit" and receipt["source_seal"] != {
+            "revision": pin["revision"],
+            "archive_sha256": pin["sha256"],
+            "fixture_sha256": hashlib.sha256(receiver.FIXTURE.read_bytes()).hexdigest(),
+        }:
+            raise ValueError("fault inventory process-owned commit source seal changed")
     if report.get("upstream") != {
         "archive_sha256": pin["sha256"], "revision": pin["revision"],
     }:
@@ -1233,7 +1257,8 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         "huge_branch_receipt": huge_receipt,
         "os_publication_receipt": os_receipt,
         "metadata_publication_receipt": metadata_receipt,
-        "decommit_receipt": dict(decommit_receipt),
+        "commit_receipt": dict(report["commit_receipt"]),
+        "decommit_receipt": dict(report["decommit_receipt"]),
         "inventory": inventory,
         "nonclaims": nonclaims,
         "stopped_receivers": stopped,
@@ -1247,11 +1272,15 @@ class EvidenceError(RuntimeError):
     """A fixed fault-inventory source or receipt boundary changed."""
 
 
-def _decommit_receiver() -> Any:
-    path = ROOT / "compat/allocator/m2_process_owned_decommit_fault_x86_64.py"
-    spec = importlib.util.spec_from_file_location("crabc_m2_process_owned_decommit_fault", path)
+def _process_owned_transition_receiver(transition: str) -> Any:
+    if transition not in ("commit", "decommit"):
+        raise EvidenceError("unknown process-owned range transition")
+    path = ROOT / f"compat/allocator/m2_process_owned_{transition}_fault_x86_64.py"
+    spec = importlib.util.spec_from_file_location(
+        f"crabc_m2_process_owned_{transition}_fault", path,
+    )
     if spec is None or spec.loader is None:
-        raise EvidenceError("process-owned decommit receiver is absent")
+        raise EvidenceError(f"process-owned {transition} receiver is absent")
     receiver = importlib.util.module_from_spec(spec)
     sys.path.insert(0, str(path.parent))
     try:
@@ -2806,7 +2835,10 @@ def run_evidence(
 
     os_receipt = run_os_publication_receiver(offline=offline, test_program=test_program)
     metadata_receipt = run_metadata_publication_receiver(offline=offline, test_program=test_program)
-    decommit_receipt = _decommit_receiver().run(offline=offline, c_only=False)
+    commit_receipt = _process_owned_transition_receiver("commit").run(offline=offline, c_only=False)
+    if commit_receipt["status"] != "matched":
+        raise EvidenceError("process-owned commit fault relation changed")
+    decommit_receipt = _process_owned_transition_receiver("decommit").run(offline=offline, c_only=False)
     if decommit_receipt["status"] != "matched":
         raise EvidenceError("process-owned decommit fault relation changed")
     artifacts.mkdir(parents=True, exist_ok=True)
@@ -2868,6 +2900,7 @@ def run_evidence(
         "architecture": "x86_64",
         "os_publication_receipt": os_receipt,
         "metadata_publication_receipt": metadata_receipt,
+        "commit_receipt": commit_receipt,
         "decommit_receipt": decommit_receipt,
         "branch_records": _branch_records(),
         "format": FORMAT,

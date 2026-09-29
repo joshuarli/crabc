@@ -277,7 +277,8 @@
           }
         ],
         "evidence_check_ids": [
-          "source-indexed-fault-seam-inventory"
+          "source-indexed-fault-seam-inventory",
+          "process-owned-commit-fault-receiver"
         ],
         "missing_conditions": [
           "The named source relation is bounded; it does not promote an unselected receiver."
@@ -720,6 +721,12 @@
         "id": "metadata-publication-recovery",
         "kind": "c-rust-fault-seam-inventory",
         "target": "meta::tests::emit_metadata_publication_fault_receiver_trace",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "process-owned-commit-fault-receiver",
+        "kind": "c-rust-fault-seam-inventory",
+        "target": "os::tests::emit_m2_process_owned_commit_fault_c_rust_trace",
         "expected_passed_test_count": 1
       },
       {
