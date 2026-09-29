@@ -3,6 +3,7 @@
  * The same project-header body executes through pinned musl and the selected
  * true static archive. It proves the legacy wide-substring alias's first
  * suffix, empty-needle, no-match, signed-unit, and no-mutation behavior.
+ * Matching compares wchar_t units independently of locale and UTF-8 bytes.
  */
 
 #if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
@@ -61,6 +62,55 @@ static int check_first_match_and_miss(void)
     return wcswcs(haystack, too_long) == 0 ? 0 : 4;
 }
 
+static int check_overlapping_prefixes(void)
+{
+    wchar_t haystack[] = {
+        L'a', L'a', L'a', L'a', L'b',
+        L'a', L'a', L'a', L'a', L'c', 0,
+    };
+    wchar_t early[] = { L'a', L'a', L'a', L'b', 0 };
+    wchar_t terminal[] = { L'a', L'a', L'a', L'a', L'c', 0 };
+    wchar_t absent[] = { L'a', L'a', L'a', L'a', L'd', 0 };
+
+    if (wcswcs(haystack, early) != haystack + 1)
+        return 1;
+    if (wcswcs(haystack, terminal) != haystack + 5)
+        return 2;
+    return wcswcs(haystack, absent) == 0 ? 0 : 3;
+}
+
+static int check_long_periodic_haystack(void)
+{
+    enum { HAYSTACK_UNITS = 1024, NEEDLE_UNITS = 127 };
+    const wchar_t period[] = { L'a', L'b', L'a' };
+    wchar_t haystack[HAYSTACK_UNITS + 1];
+    wchar_t needle[NEEDLE_UNITS + 1];
+    wchar_t absent[NEEDLE_UNITS + 1];
+    wchar_t empty[] = { 0 };
+    size_t index;
+
+    for (index = 0; index < HAYSTACK_UNITS; ++index)
+        haystack[index] = period[index % 3];
+    haystack[HAYSTACK_UNITS - 1] = L'x';
+    haystack[HAYSTACK_UNITS] = 0;
+
+    for (index = 0; index < NEEDLE_UNITS - 1; ++index) {
+        needle[index] = period[index % 3];
+        absent[index] = needle[index];
+    }
+    needle[NEEDLE_UNITS - 1] = L'x';
+    absent[NEEDLE_UNITS - 1] = L'y';
+    needle[NEEDLE_UNITS] = 0;
+    absent[NEEDLE_UNITS] = 0;
+
+    if (wcswcs(haystack, needle) != haystack + HAYSTACK_UNITS - NEEDLE_UNITS)
+        return 1;
+    if (wcswcs(haystack, absent) != 0)
+        return 2;
+    return wcswcs(haystack + HAYSTACK_UNITS, empty) ==
+        haystack + HAYSTACK_UNITS ? 0 : 3;
+}
+
 static int check_empty_haystack_and_no_mutation(void)
 {
     wchar_t empty[] = { 0 };
@@ -108,7 +158,13 @@ int crabc_x86_64_wcswcs_probe(void)
     if (result != 0)
         return 20 + result;
     result = check_full_wchar_domain_units();
-    return result == 0 ? 0 : 30 + result;
+    if (result != 0)
+        return 30 + result;
+    result = check_overlapping_prefixes();
+    if (result != 0)
+        return 40 + result;
+    result = check_long_periodic_haystack();
+    return result == 0 ? 0 : 50 + result;
 }
 
 #ifndef CRABC_WCSWCS_FREESTANDING
