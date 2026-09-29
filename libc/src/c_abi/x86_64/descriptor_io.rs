@@ -204,7 +204,8 @@ static_archive_member! { write_source {
     /// If Linux examines the buffer, `buffer` must designate `count` readable
     /// bytes for the syscall's duration. The caller owns descriptor lifetime,
     /// shared-offset synchronization, and SIGPIPE policy. The owned runtime uses
-    /// musl's cancellation-point syscall; the older private fixture remains raw.
+    /// musl's cancellation-point syscall; the older private fixture checks
+    /// pending deferred cancellation before entering its raw syscall.
     #[no_mangle]
     pub unsafe extern "C" fn write(
         file_descriptor: c_int,
@@ -217,13 +218,19 @@ static_archive_member! { write_source {
         let result = unsafe { crate::x86_64_static_c_abi::pthread_cancel::syscall_cp(raw_syscall::SYS_WRITE,
             file_descriptor as i64, buffer as i64, count as i64, 0, 0, 0) };
         #[cfg(not(crabc_x86_owned_runtime))]
-        let result = unsafe {
-            raw_syscall::syscall3(
-                raw_syscall::SYS_WRITE,
-                i64::from(file_descriptor),
-                buffer as usize as i64,
-                count as i64,
-            )
+        let result = {
+            // A pending enabled request takes priority over even an immediate
+            // descriptor error at this selected deferred cancellation point.
+            crate::x86_64_static_c_abi::pthread_cancel::test_current_selected_pthread_cancellation();
+            // SAFETY: the caller supplies the complete raw Linux write buffer contract.
+            unsafe {
+                raw_syscall::syscall3(
+                    raw_syscall::SYS_WRITE,
+                    i64::from(file_descriptor),
+                    buffer as usize as i64,
+                    count as i64,
+                )
+            }
         };
         c_ssize_status(result)
     }

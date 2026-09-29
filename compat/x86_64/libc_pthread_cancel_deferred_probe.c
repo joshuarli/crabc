@@ -5,8 +5,8 @@
  * crabc archive.  It selects one deliberately bounded route: a default
  * joinable pointer-returning worker keeps one request pending through DISABLE
  * and MASKED states, where explicit pthread_testcancel calls return.  After
- * ENABLE it reaches either explicit pthread_testcancel or read on an invalid
- * descriptor.  Both cancellation points must deliver before returning.  Exit runs
+ * ENABLE it reaches explicit pthread_testcancel, read, or write on an invalid
+ * descriptor. All three cancellation points must deliver before returning. Exit runs
  * cleanup handlers LIFO with cancellation disabled, then the selected TSD
  * destructor, publishes PTHREAD_CANCELED, and uses the existing clear-tid
  * join seam.
@@ -15,7 +15,7 @@
  * ENOTSUP and no output mutation.  The reference arm records musl's distinct
  * successful async-then-deferred round with no pending request; this is an
  * intentional, directly checked candidate boundary.  Neither arm selects a
- * signal, syscall interruption, implicit or blocking cancellation point,
+ * signal, syscall interruption, blocking cancellation point,
  * detached/main/foreign/C11 thread cancellation, or general pthread
  * cancellation semantics.
  */
@@ -62,6 +62,8 @@ _Static_assert(CRABC_TYPE_IS(__typeof__(&pthread_key_delete),
     int (*)(pthread_key_t)), "pthread_key_delete declaration");
 _Static_assert(CRABC_TYPE_IS(__typeof__(&read),
     ssize_t (*)(int, void *, size_t)), "read declaration");
+_Static_assert(CRABC_TYPE_IS(__typeof__(&write),
+    ssize_t (*)(int, const void *, size_t)), "write declaration");
 _Static_assert(PTHREAD_CANCEL_ENABLE == 0 && PTHREAD_CANCEL_DISABLE == 1 &&
     PTHREAD_CANCEL_MASKED == 2, "cancellation state values");
 _Static_assert(PTHREAD_CANCEL_DEFERRED == 0 && PTHREAD_CANCEL_ASYNCHRONOUS == 1,
@@ -87,6 +89,7 @@ enum cancellation_order {
 enum cancellation_point {
     CANCELLATION_POINT_EXPLICIT,
     CANCELLATION_POINT_READ,
+    CANCELLATION_POINT_WRITE,
 };
 
 struct cancellation_round {
@@ -304,6 +307,12 @@ static void *deferred_cancellation_worker(void *opaque)
                              * request must be delivered before read reports
                              * EBADF, independent of scheduling or timing. */
                             (void)read(-1, &byte, 1);
+                        } else if (round->point == CANCELLATION_POINT_WRITE) {
+                            const char byte = 0;
+
+                            /* The queued request must take priority over an
+                             * immediate EBADF at this write cancellation point. */
+                            (void)write(-1, &byte, 1);
                         } else {
                             pthread_testcancel();
                         }
@@ -414,6 +423,10 @@ int crabc_x86_64_pthread_cancel_deferred_probe(void)
     if (result != 0)
         return result;
     result = run_cancellation_round(CANCELLATION_POINT_READ,
+        main_errno_location);
+    if (result != 0)
+        return result;
+    result = run_cancellation_round(CANCELLATION_POINT_WRITE,
         main_errno_location);
     if (result != 0)
         return result;

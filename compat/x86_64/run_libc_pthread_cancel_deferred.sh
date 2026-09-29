@@ -4,7 +4,7 @@
 # The same project-header fixture first runs against pinned musl 1.2.6, then
 # as a `-nostdlib -static` executable linked only with the selected crabc
 # archive. It selects disabled/masked workers whose queued requests reach
-# explicit testcancel and invalid-descriptor read cancellation points, plus
+# explicit testcancel and invalid-descriptor read/write cancellation points, plus
 # cleanup-LIFO-before-selected-TSD exit order. It does not select
 # async or blocking cancellation, signal policy, a general pthread runtime,
 # CRT, loader, sysroot, or public x86 support.
@@ -130,7 +130,7 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
     pthread_setcancelstate pthread_setcanceltype pthread_testcancel \
     _pthread_cleanup_push _pthread_cleanup_pop \
     pthread_key_create pthread_key_delete pthread_getspecific pthread_setspecific \
-    read; do
+    read write; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
@@ -163,7 +163,7 @@ for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
     pthread_create pthread_exit pthread_join pthread_cancel \
     pthread_setcancelstate pthread_setcanceltype pthread_testcancel \
     _pthread_cleanup_push _pthread_cleanup_pop \
-    pthread_key_create pthread_key_delete pthread_getspecific pthread_setspecific read \
+    pthread_key_create pthread_key_delete pthread_getspecific pthread_setspecific read write \
     __crabc_x86_pthread_clone; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
