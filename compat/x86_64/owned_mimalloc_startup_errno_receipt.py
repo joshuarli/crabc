@@ -27,6 +27,7 @@ MODES = (
 )
 INPUT_PRODUCTS = {
     "input-startup-source", "input-success-source", "input-startup-object",
+    "input-startup-dynamic-object",
     "input-success-object", "input-success-cases", "input-passwd", "input-group",
     "input-hosts", "input-data", "input-static-manifest",
     "input-dynamic-manifest", "input-static-libc-provenance",
@@ -86,6 +87,9 @@ def read_startup_errno_receipt(root: Path) -> native_shadow_receipt.Receipt:
     read = native_shadow_receipt.read_receipt(root, RUNNER)
     _require(dict(read.parameters) == PARAMETERS, "receipt has non-canonical product parameters")
     _require(set(read.products) == PRODUCTS, "receipt is missing executed products or input identities")
+    _require(read.products["input-startup-object"]["sha256"]
+             != read.products["input-startup-dynamic-object"]["sha256"],
+             "static and dynamic startup modes share one application object")
     by_id = {case["id"]: case for case in read.cases}
     _require(set(by_id) == CASES, "receipt is missing startup or successful-call cases")
     retained = read.path.parent

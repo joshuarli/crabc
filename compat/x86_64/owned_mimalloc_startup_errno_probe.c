@@ -1,10 +1,8 @@
 /* Constructor errno preservation around the native owned mimalloc lifecycle.
  *
- * The first allocation occurs in the executable preinit callback, before
- * libc's same-image automatic allocator callback. The user constructor and
- * main make ordinary allocations after that callback. The sentinel is set
- * only after the first allocation so optional allocator filesystem probes
- * cannot turn this into an assertion about their private errno values.
+ * Static entry first allocates in executable preinit. Dynamic entry skips
+ * executable preinit and first allocates in the user constructor. Both
+ * entries check errno after the user constructor and in main.
  */
 
 #include <errno.h>
@@ -33,6 +31,9 @@ static void startup_preinit(void)
 
 static void startup_constructor(void)
 {
+#if defined(CRABC_MIMALLOC_STARTUP_ERRNO_DYNAMIC)
+    errno = startup_errno_sentinel;
+#endif
     allocate_or_exit();
     constructor_errno = errno;
 }
@@ -51,13 +52,19 @@ static void startup_constructor_entry(void)
 int main(void)
 {
 #if defined(CRABC_MIMALLOC_STARTUP_ERRNO_ORACLE)
-    /* Pinned musl's ordinary dynamic entry does not dispatch this fixture's
-     * preinit array. Exercise the identical application callbacks explicitly
-     * there; the candidate uses its owned CRT/loader ordering above. */
+    /* Exercise the matching application callbacks explicitly for the oracle. */
+#if !defined(CRABC_MIMALLOC_STARTUP_ERRNO_DYNAMIC)
     startup_preinit();
+#endif
     startup_constructor();
 #endif
     allocate_or_exit();
-    return preinit_errno == startup_errno_sentinel &&
+    return preinit_errno == (
+#if defined(CRABC_MIMALLOC_STARTUP_ERRNO_DYNAMIC)
+        -1
+#else
+        startup_errno_sentinel
+#endif
+        ) &&
         constructor_errno == startup_errno_sentinel && errno == startup_errno_sentinel ? 0 : 1;
 }

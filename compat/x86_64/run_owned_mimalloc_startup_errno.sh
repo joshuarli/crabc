@@ -90,7 +90,7 @@ publish_receipt() {
         fi
     fi
     if [ "$status" -eq 0 ]; then
-        printf 'owned mimalloc startup errno: PASS (musl reference; preinit allocation and sentinel; user constructor and main allocations; supplied static ET_EXEC/static-PIE when present; dynamic PIE/non-PIE through kernel and direct loader entry in isolated chroots; retained stdout/stderr/status evidence; errno after successful libc calls, first and warmed, matches the musl transcript in every mode and entry); evidence: %s\n' "$work"
+        printf 'owned mimalloc startup errno: PASS (musl reference; static preinit and dynamic constructor first allocations; constructor and main errno; supplied static ET_EXEC/static-PIE when present; dynamic PIE/non-PIE through kernel and direct loader entry in isolated chroots; retained stdout/stderr/status evidence; errno after successful libc calls, first and warmed, matches the musl transcript in every mode and entry); evidence: %s\n' "$work"
     fi
     exit "$status"
 }
@@ -209,7 +209,7 @@ run_dynamic_mode() {
     local product="$1" mode="$2" candidate="$work/dynamic-$mode" entry root
 
     (cd "$work" && "$product/bin/crabc-cc-dynamic" "--dynamic-$mode" \
-        "$work/workload.o" -o "$candidate")
+        "$work/workload-dynamic.o" -o "$candidate")
     for entry in kernel direct; do
         root="$work/dynamic-$mode-$entry-root"
         mkdir -p "$root/lib" "$root/usr/lib" "$root/work"
@@ -241,7 +241,8 @@ run_dynamic_mode() {
     done
 }
 
-"$ORACLE_CC" -DCRABC_MIMALLOC_STARTUP_ERRNO_ORACLE "$PROBE" -o "$work/oracle-dynamic"
+"$ORACLE_CC" -DCRABC_MIMALLOC_STARTUP_ERRNO_ORACLE \
+    -DCRABC_MIMALLOC_STARTUP_ERRNO_DYNAMIC "$PROBE" -o "$work/oracle-dynamic"
 "$ORACLE_CC" -static -fno-pie -no-pie -DCRABC_MIMALLOC_STARTUP_ERRNO_ORACLE "$PROBE" \
     -o "$work/oracle-static"
 run_captured oracle-dynamic "$work/oracle-dynamic"
@@ -273,11 +274,12 @@ if [ -z "$provided_dynamic" ]; then
     provided_static="$work/static-product"
 fi
 
-# The sealed product drivers link caller-owned ELF objects. Compile one
-# installed-header object through the supplied dynamic driver, then retain
-# that same object across both static and dynamic lifecycle link modes.
+# The sealed product driver compiles each startup mode through installed
+# headers, retaining the static preinit and dynamic constructor contracts.
 "$provided_dynamic/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
     -c "$PROBE" -o "$work/workload.o"
+"$provided_dynamic/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
+    -DCRABC_MIMALLOC_STARTUP_ERRNO_DYNAMIC -c "$PROBE" -o "$work/workload-dynamic.o"
 "$provided_dynamic/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
     -c "$SUCCESS_PROBE" -o "$work/success-workload.o"
 readelf -hW "$work/workload.o" >"$work/workload.header"
@@ -307,6 +309,7 @@ receipt_products+=(
     "input-startup-source=$PROBE"
     "input-success-source=$SUCCESS_PROBE"
     "input-startup-object=$work/workload.o"
+    "input-startup-dynamic-object=$work/workload-dynamic.o"
     "input-success-object=$work/success-workload.o"
     "input-success-cases=$work/success-cases"
     "input-passwd=$work/success-oracle-static-root/etc/passwd"

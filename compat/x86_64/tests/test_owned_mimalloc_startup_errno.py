@@ -26,6 +26,7 @@ MODES = (
 )
 PRODUCTS = (
     "input-startup-source", "input-success-source", "input-startup-object",
+    "input-startup-dynamic-object",
     "input-success-object", "input-success-cases", "input-passwd", "input-group",
     "input-hosts", "input-data", "input-static-manifest",
     "input-dynamic-manifest", "input-static-libc-provenance",
@@ -54,7 +55,8 @@ class StartupErrnoReceiptTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def publish(self, *, missing_case: str = "", differing_mode: str = "",
-                static_dlopen: bool = False, mismatched_link: bool = False) -> Path:
+                static_dlopen: bool = False, mismatched_link: bool = False,
+                shared_startup_object: bool = False) -> Path:
         products = {}
         for name in (*PRODUCTS, *(f"program-startup-{mode}" for mode in MODES),
                      *(f"program-success-{mode}" for mode in MODES)):
@@ -64,7 +66,10 @@ class StartupErrnoReceiptTests(unittest.TestCase):
             elif name == "input-success-cases":
                 path.write_text("malloc\ndlopen-libc\n" if static_dlopen else "malloc\n")
             else:
-                path.write_bytes(name.removesuffix("-kernel").removesuffix("-direct").encode())
+                contents = ("input-startup-object" if shared_startup_object
+                            and name == "input-startup-dynamic-object" else
+                            name.removesuffix("-kernel").removesuffix("-direct"))
+                path.write_bytes(contents.encode())
             products[name] = path
         def digest(name: str) -> str:
             return hashlib.sha256(products[name].read_bytes()).hexdigest()
@@ -128,6 +133,11 @@ class StartupErrnoReceiptTests(unittest.TestCase):
     def test_complete_receipt_is_rereadable(self) -> None:
         self.publish()
         self.assertEqual(len(read_startup_errno_receipt(self.root).cases), 16)
+
+    def test_static_and_dynamic_startup_require_distinct_application_objects(self) -> None:
+        self.publish(shared_startup_object=True)
+        with self.assertRaisesRegex(receipt.ReceiptError, "share one application object"):
+            read_startup_errno_receipt(self.root)
 
     def test_pinned_static_dlopen_failure_is_retained_and_compared(self) -> None:
         self.publish(static_dlopen=True)
