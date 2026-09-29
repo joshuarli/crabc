@@ -399,6 +399,27 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "hash-format tags"):
             evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)
 
+    def test_loader_reader_rejects_resealed_candidate_sysv_without_hash_tag(self) -> None:
+        report = self._loader_report()
+        value = json.loads(report.read_text(encoding="utf-8"))
+        case = value["cases"]["hash-formats"]
+        case["dynamic"]["candidate-sysv"] = "(GNU_HASH)"
+        raw = report.parent / "cases/hash-formats/raw"
+        target = evidence.recorded_path(
+            ROOT, "/workspace", report.parent / "cases/hash-formats/candidate-root/usr/lib/libhash_sysv.so"
+        )
+        records = [path for path in raw.glob("*.json")
+                   if json.loads(path.read_text(encoding="utf-8"))["argv"] == ["readelf", "-dW", target]]
+        self.assertEqual(len(records), 1)
+        record_path = records[0]
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        record["stdout_hex"] = b"(GNU_HASH)".hex()
+        record_path.write_text(json.dumps(record), encoding="utf-8")
+        record_path.with_suffix(".stdout").write_bytes(b"(GNU_HASH)")
+        self._rewrite_loader_case(report, value, "hash-formats")
+        with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "hash-format tags"):
+            evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)
+
     def test_loader_reader_rejects_missing_x86_relocation_type(self) -> None:
         report = self._loader_report()
         value = json.loads(report.read_text(encoding="utf-8"))

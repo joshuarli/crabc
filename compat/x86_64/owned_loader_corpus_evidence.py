@@ -1080,7 +1080,8 @@ def _validate_loader_behavior(name: str, case: Mapping[str, Any], raw_records: _
     if name == "hash-formats":
         _require(set(case["dynamic"]) == {"oracle-gnu", "oracle-sysv", "candidate-gnu", "candidate-sysv"}
                  and "(GNU_HASH)" in case["dynamic"]["oracle-gnu"] and "(HASH)" in case["dynamic"]["oracle-sysv"]
-                 and "(GNU_HASH)" in case["dynamic"]["candidate-gnu"], "loader hash-format tags differ")
+                 and "(GNU_HASH)" in case["dynamic"]["candidate-gnu"]
+                 and "(HASH)" in case["dynamic"]["candidate-sysv"], "loader hash-format tags differ")
         oracle = recorded_path(root, source_mount, work / "oracle-root" / "usr/lib")
         candidate = recorded_path(root, source_mount, work / "candidate-root" / "usr/lib")
         # The v2 finite link plan consumes the direct oracle link records.
