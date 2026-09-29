@@ -576,12 +576,12 @@ def validate_source_contract(root: Path) -> dict[str, object]:
     }
 
 
-def _runner_plan(output_relative: str) -> list[tuple[str, list[str]]]:
+def _runner_plan(output_relative: str, supplied: Mapping[str, str] | None = None) -> list[tuple[str, list[str]]]:
     """Reconstruct every runner ``capture`` argv in its fixed execution order."""
 
     work = _mount(f"{output_relative}/{RUNNER_DIRECTORY}")
-    static = _mount(f"{output_relative}/{STATIC_PRODUCT_DIRECTORY}")
-    dynamic = _mount(f"{output_relative}/{DYNAMIC_PRODUCT_DIRECTORY}")
+    static = _mount(supplied["static"] if supplied else f"{output_relative}/{STATIC_PRODUCT_DIRECTORY}")
+    dynamic = _mount(supplied["dynamic"] if supplied else f"{output_relative}/{DYNAMIC_PRODUCT_DIRECTORY}")
     probe = _mount(PROBE_PATH)
     contract = _mount(CONTRACT_PATH)
     symbol_reader = _mount(SYMBOL_READER_PATH)
@@ -679,7 +679,7 @@ def _raw_runner_records(root: Path, output_relative: str) -> list[dict[str, obje
             "stdin_stream": _identity(root, raw / f"{stem}.stdin"),
             "launcher_stream": _identity(root, raw / f"{stem}.launcher.json"),
         })
-    for record, (role, argv) in zip(records, _runner_plan(output_relative)):
+    for record, (role, argv) in zip(records, _runner_plan(output_relative, _supplied_product_paths(root, output_relative))):
         validate_command_record(root, record, role=role, cwd=SOURCE_MOUNT, argv=argv, environment=COMMAND_ENVIRONMENT, launcher=RUNNER_LAUNCHER)
     return records
 
@@ -698,13 +698,16 @@ def _snapshot(root: Path, output_relative: str, name: str) -> dict[str, object]:
         lines = path.read_text(encoding="ascii").splitlines()
     except (OSError, UnicodeDecodeError) as error:
         raise LocaleAliasReceiptError(f"runner {name} snapshot is invalid") from error
+    supplied = _supplied_product_paths(root, output_relative)
+    static = supplied["static"] if supplied else f"{output_relative}/{STATIC_PRODUCT_DIRECTORY}"
+    dynamic = supplied["dynamic"] if supplied else f"{output_relative}/{DYNAMIC_PRODUCT_DIRECTORY}"
     expected_paths = (
         (_mount(PROBE_PATH), PROBE_PATH),
         (_mount(CONTRACT_PATH), CONTRACT_PATH),
         (_mount(SYMBOL_READER_PATH), SYMBOL_READER_PATH),
-        (_mount(f"{output_relative}/{STATIC_PRODUCT_DIRECTORY}/usr/lib/libc.a"),
+        (_mount(f"{static}/usr/lib/libc.a"),
          f"{STATIC_PRODUCT_DIRECTORY}/usr/lib/libc.a"),
-        (_mount(f"{output_relative}/{DYNAMIC_PRODUCT_DIRECTORY}/usr/lib/libc.so"),
+        (_mount(f"{dynamic}/usr/lib/libc.so"),
          f"{DYNAMIC_PRODUCT_DIRECTORY}/usr/lib/libc.so"),
     )
     if len(lines) != len(expected_paths):
@@ -793,6 +796,33 @@ def _validate_dynamic_executable_link_sidecars(
     import owned_posix_product_evidence as product_evidence
 
     observed: dict[str, dict[str, str]] = {}
+    output_relative = root.relative_to(checkout_root).as_posix()
+    supplied = _supplied_product_paths(root, output_relative)
+    if supplied:
+        # Link receipts keep original producer paths. Recreate that namespace
+        # from sealed copies so replay needs neither the original products nor
+        # path rewriting inside their link commands and input observations.
+        scratch = checkout_root / ".work/x86_64/locale-alias-contract-replay"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".dynamic-links.", dir=scratch) as temporary:
+            materialized = Path(temporary)
+            replay_dynamic = materialized / supplied["dynamic"]
+            shutil.copytree(dynamic, replay_dynamic, symlinks=True)
+            replay_raw = materialized / output_relative / RUNNER_DIRECTORY
+            replay_raw.mkdir(parents=True)
+            for name in ("probe.o", *(name for executable, sidecar, _linkage in DYNAMIC_EXECUTABLE_LINK_SIDECARS
+                                     for name in (executable, sidecar))):
+                _copy_regular(raw / name, replay_raw / name)
+            for executable, sidecar, linkage in DYNAMIC_EXECUTABLE_LINK_SIDECARS:
+                try:
+                    result = product_evidence.validate_retained_link(
+                        materialized, SOURCE_MOUNT, replay_dynamic, replay_raw / "probe.o",
+                        replay_raw / executable, replay_raw / sidecar, linkage, linker, export_dynamic=True,
+                    )
+                except (product_evidence.ProductEvidenceError, OSError, ValueError) as error:
+                    raise LocaleAliasReceiptError(f"retained {executable} link receipt differs: {error}") from error
+                observed[executable] = {**result, "product": str(dynamic)}
+        return observed
     for executable, sidecar, linkage in DYNAMIC_EXECUTABLE_LINK_SIDECARS:
         try:
             result = product_evidence.validate_retained_link(
@@ -938,7 +968,10 @@ def _validate_static_preparation(
         output_relative = receipt_root.relative_to(checkout_root).as_posix()
     except ValueError as error:
         raise LocaleAliasReceiptError("retained static preparation escaped the checkout") from error
-    if preparation.get("work") != f"{output_relative}/{STATIC_PREPARATION_DIRECTORY}":
+    supplied = _supplied_product_paths(receipt_root, output_relative)
+    preparation_relative = (str(Path(supplied["static"]).parents[1]) if supplied
+                            else f"{output_relative}/{STATIC_PREPARATION_DIRECTORY}")
+    if preparation.get("work") != preparation_relative:
         _fail("retained static preparation work path changed")
 
     revision = source_state.get("revision")
@@ -1383,24 +1416,63 @@ def _validate_current_tracked_source(revision: str, digest: str, files: Mapping[
         _fail("current tracked source digest differs from retained authority")
 
 
-def _expected_collector_commands(output_relative: str) -> list[tuple[str, list[str]]]:
+def _supplied_product_paths(root: Path, output_relative: str) -> dict[str, str] | None:
+    """Derive supplied producer roots from the retained copy commands.
+
+    The command roster distinguishes product retention from construction. Its
+    source arguments remain the authority for the runner's original paths;
+    the copied trees provide the physical bytes used by process-free replay.
+    """
+
+    marker = root / "collector/retain-static-preparation.argv.json"
+    if not marker.exists() and not marker.is_symlink():
+        return None
+    paths = {}
+    for role, directory in (("retain-static-preparation", STATIC_PREPARATION_DIRECTORY),
+                            ("retain-dynamic", DYNAMIC_PRODUCT_DIRECTORY)):
+        argv = _strict_json(root / f"collector/{role}.argv.json", f"supplied {role} argv")
+        if (not isinstance(argv, list) or len(argv) != 4 or argv[:2] != ["/bin/cp", "-a"]
+                or not isinstance(argv[2], str) or not argv[2].startswith(SOURCE_MOUNT + "/")
+                or argv[3] != _mount(f"{output_relative}/{directory}")):
+            _fail("supplied product retention command changed")
+        relative = argv[2][len(SOURCE_MOUNT) + 1:]
+        if (not relative.startswith(".work/x86_64/") or Path(relative).as_posix() != relative
+                or ".." in Path(relative).parts or relative == output_relative
+                or relative.startswith(output_relative + "/")):
+            _fail("supplied product path escapes its physical checkout boundary")
+        paths[role] = relative
+    return {"static": paths["retain-static-preparation"] + "/products/primary",
+            "dynamic": paths["retain-dynamic"]}
+
+
+def _expected_collector_commands(output_relative: str, supplied: Mapping[str, str] | None = None) -> list[tuple[str, list[str]]]:
     preparation = _mount(f"{output_relative}/{STATIC_PREPARATION_DIRECTORY}")
     static = _mount(f"{output_relative}/{STATIC_PRODUCT_DIRECTORY}")
     dynamic = _mount(f"{output_relative}/{DYNAMIC_PRODUCT_DIRECTORY}")
     runner = _mount(RUNNER_PATH)
     raw = _mount(f"{output_relative}/{RUNNER_DIRECTORY}")
+    runner_command = ("locale-alias-runner", [runner, "--receipt-dir", raw, "--static-sysroot",
+                      _mount(supplied["static"]) if supplied else static,
+                      _mount(supplied["dynamic"]) if supplied else dynamic])
+    if supplied:
+        return [
+            ("retain-static-preparation", ["/bin/cp", "-a", _mount(str(Path(supplied["static"]).parents[1])), preparation]),
+            ("retain-dynamic", ["/bin/cp", "-a", _mount(supplied["dynamic"]), dynamic]),
+            runner_command,
+        ]
     return [
         ("prepare-static", ["/usr/bin/python3", "-B", _mount(STATIC_PREPARATION_OWNER_PATH), "prepare", preparation]),
         ("build-dynamic", ["/usr/bin/python3", "-B", _mount(DYNAMIC_BUILDER_PATH), "--output", dynamic]),
-        ("locale-alias-runner", [runner, "--receipt-dir", raw, "--static-sysroot", static, dynamic]),
+        runner_command,
     ]
 
 
 def _raw_collector_commands(root: Path, output_relative: str) -> list[dict[str, object]]:
     collector = _relative_directory(root, "collector", "collector raw")
+    plan = _expected_collector_commands(output_relative, _supplied_product_paths(root, output_relative))
     expected_names = {
         f"{role}.{suffix}"
-        for role, _argv in _expected_collector_commands(output_relative)
+        for role, _argv in plan
         for suffix in ("argv.json", "cwd", "environment.json", "stdin", "launcher.json", "stdout", "stderr", "status")
     }
     actual_names = {path.name for path in collector.iterdir()}
@@ -1409,7 +1481,7 @@ def _raw_collector_commands(root: Path, output_relative: str) -> list[dict[str, 
     environment = _collector_environment(output_relative)
     launcher = _collector_launcher(output_relative)
     records: list[dict[str, object]] = []
-    for role, argv in _expected_collector_commands(output_relative):
+    for role, argv in plan:
         argv_path = collector / f"{role}.argv.json"
         received_argv = _strict_json(argv_path, f"collector argv {role}")
         cwd_path = collector / f"{role}.cwd"
@@ -1428,7 +1500,7 @@ def _raw_collector_commands(root: Path, output_relative: str) -> list[dict[str, 
             "stdin_stream": _identity(root, collector / f"{role}.stdin"),
             "launcher_stream": _identity(root, collector / f"{role}.launcher.json"),
         })
-    for record, (role, argv) in zip(records, _expected_collector_commands(output_relative)):
+    for record, (role, argv) in zip(records, plan):
         validate_command_record(root, record, role=role, cwd=SOURCE_MOUNT, argv=argv, environment=environment, launcher=launcher)
     return records
 
@@ -1456,8 +1528,9 @@ def _validate_execution_tools(
     source_entries = {item["path"]: item for item in source["paths"]}
     image_files = image["files"]
     assert isinstance(image_files, Mapping)
+    supplied = _supplied_product_paths(root, output_relative)
     product_prefixes = {
-        name: _mount(f"{output_relative}/{directory}") + "/"
+        name: _mount(supplied[name] if supplied else f"{output_relative}/{directory}") + "/"
         for name, directory in (("static", STATIC_PRODUCT_DIRECTORY), ("dynamic", DYNAMIC_PRODUCT_DIRECTORY))
     }
 
@@ -1717,12 +1790,67 @@ def _final_transaction_recheck(
     _validate_dynamic_executable_link_sidecars(root, receipt_root, image)
 
 
-def collect(root: Path, output: Path) -> dict[str, object]:
-    """Build current products and run the retained locale alias matrix once."""
+def _admit_supplied_products(root: Path, output: Path, static: Path, dynamic: Path,
+                             source: Mapping[str, object]) -> dict[str, str]:
+    """Admit one existing preparation primary and its current dynamic peer."""
+
+    paths = {}
+    for name, product in (("static", static), ("dynamic", dynamic)):
+        product = product.absolute()
+        if product.resolve() != product or not product.is_dir() or product.is_symlink():
+            _fail(f"supplied {name} product must be a physical directory")
+        relative = _output_relative(root, product)
+        if product == output or product.is_relative_to(output) or output.is_relative_to(product):
+            _fail("supplied products overlap the receipt output")
+        paths[name] = relative
+    if (static.absolute().is_relative_to(dynamic.absolute())
+            or dynamic.absolute().is_relative_to(static.absolute())):
+        _fail("supplied static and dynamic product roots overlap")
+    preparation = static.absolute().parents[1]
+    if static.absolute() != preparation / "products/primary":
+        _fail("supplied static product must be the preparation primary")
+    import owned_posix_static_products as static_products
+    import owned_posix_product_evidence as products
+    try:
+        admitted = static_products.validate_receipt(root, preparation / "preparation.json")
+        products._validate_static_product(static)
+        products._validate_dynamic_product(dynamic)
+    except (RuntimeError, ValueError, OSError) as error:
+        raise LocaleAliasReceiptError(f"supplied product admission failed: {error}") from error
+    if admitted.get("source") != {key: source[key] for key in ("revision", "content_sha256")}:
+        _fail("supplied static preparation source differs from receipt source")
+    state = _strict_json(dynamic / "share/crabc/dynamic-product-state.json", "supplied dynamic state")
+    if not isinstance(state, Mapping) or state.get("source_sha256") != source["content_sha256"]:
+        _fail("supplied dynamic product source differs from receipt source")
+    return paths
+
+
+def _recheck_supplied_products(root: Path, output: Path, supplied: Mapping[str, str]) -> None:
+    """Reopen producer bytes and modes after retention and after execution."""
+
+    for name, directory in (("static", STATIC_PRODUCT_DIRECTORY), ("dynamic", DYNAMIC_PRODUCT_DIRECTORY)):
+        original = root / supplied[name]
+        retained = output / directory
+        if original.resolve() != original:
+            _fail(f"supplied {name} product lost its physical root")
+        original_tree = _tree_records(original, ".")
+        retained_tree = _tree_records(retained, ".")
+        if original_tree != retained_tree or _product_root_mode(original, ".") != _product_root_mode(retained, "."):
+            _fail(f"supplied {name} product changed during locale alias collection")
+    original_preparation = root / str(Path(supplied["static"]).parents[1])
+    if _tree_records(original_preparation, ".") != _tree_records(output / STATIC_PREPARATION_DIRECTORY, "."):
+        _fail("supplied static preparation changed during locale alias collection")
+
+
+def collect(root: Path, output: Path, *, static_product: Path | None = None,
+            dynamic_product: Path | None = None) -> dict[str, object]:
+    """Run the matrix with an exact supplied pair or fresh standalone products."""
 
     root = root.resolve()
     output = output.absolute()
     output_relative = _require_native_collection(root, output)
+    if (static_product is None) != (dynamic_product is None):
+        _fail("supplied static and dynamic products must be provided together")
     output.mkdir(parents=True)
     # The dynamic builder leaves directory modes to inheritance. Clear an
     # inherited setgid (a setgid checkout `.work`) so the products built here
@@ -1731,6 +1859,8 @@ def collect(root: Path, output: Path) -> dict[str, object]:
     try:
         before = _capture_source_phase(root, output, "inputs/source", selected_sources=CURRENT_SELECTED_SOURCES)
         source_state = _source_state(before)
+        supplied = (_admit_supplied_products(root, output, static_product, dynamic_product, source_state)
+                    if static_product is not None and dynamic_product is not None else None)
         image_inputs = _copy_image_inputs(root, output)
         env = {
             "PATH": COMMAND_PATH,
@@ -1738,16 +1868,17 @@ def collect(root: Path, output: Path) -> dict[str, object]:
             **COLLECTOR_GIT_SAFE_DIRECTORY,
         }
         (output / "tmp").mkdir(mode=0o700)
+        if supplied:
+            (output / "products").mkdir()
         collector_commands = []
-        if _live_source_state(root) != source_state:
-            _fail("source changed before static product construction")
-        collector_commands.append(_run(root, output, "prepare-static", _expected_collector_commands(output_relative)[0][1], env=env))
-        if _live_source_state(root) != source_state:
-            _fail("source changed during static product construction")
-        collector_commands.append(_run(root, output, "build-dynamic", _expected_collector_commands(output_relative)[1][1], env=env))
-        if _live_source_state(root) != source_state:
-            _fail("source changed during dynamic product construction")
-        collector_commands.append(_run(root, output, "locale-alias-runner", _expected_collector_commands(output_relative)[2][1], env=env))
+        for role, argv in _expected_collector_commands(output_relative, supplied):
+            if _live_source_state(root) != source_state:
+                _fail("source changed before product retention or execution")
+            if supplied and role == "locale-alias-runner":
+                _recheck_supplied_products(root, output, supplied)
+            collector_commands.append(_run(root, output, role, argv, env=env))
+        if supplied:
+            _recheck_supplied_products(root, output, supplied)
         after = _capture_source_phase(root, output, "source-after/inputs/source", source_state, CURRENT_SELECTED_SOURCES)
         if before != after:
             _fail("source changed during locale alias collection")
@@ -1800,6 +1931,8 @@ def collect(root: Path, output: Path) -> dict[str, object]:
         report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         validate_report(root, report_path)
         _final_transaction_recheck(root, output, before, image_inputs, product_records, collector_commands, raw_commands, output_relative)
+        if supplied:
+            _recheck_supplied_products(root, output, supplied)
         return report
     except Exception:
         # The fresh root deliberately remains available with raw command output
@@ -1813,6 +1946,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     subcommands.add_parser("image-input-manifest")
     collect_parser = subcommands.add_parser("collect")
     collect_parser.add_argument("--output", type=Path, required=True)
+    collect_parser.add_argument("--static-product", type=Path)
+    collect_parser.add_argument("--dynamic-product", type=Path)
     validate_parser = subcommands.add_parser("validate-report")
     validate_parser.add_argument("report", type=Path)
     arguments = parser.parse_args(argv)
@@ -1820,7 +1955,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if arguments.action == "image-input-manifest":
             result = current_image_input_manifest()
         elif arguments.action == "collect":
-            result = collect(ROOT, arguments.output)
+            result = collect(ROOT, arguments.output, static_product=arguments.static_product,
+                             dynamic_product=arguments.dynamic_product)
         else:
             result = validate_report(ROOT, arguments.report)
     except LocaleAliasReceiptError as error:

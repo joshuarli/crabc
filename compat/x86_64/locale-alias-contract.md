@@ -113,6 +113,26 @@ product root, so receipt schema v3 records the physical static and dynamic
 root modes separately. This preserves a dynamic setgid root such as `02755`
 without inventing a root mode from descendants.
 
+Collection accepts `collect --output DIR --static-product STATIC_ROOT
+--dynamic-product DYNAMIC_ROOT` for an existing product pair. Both roots are
+required together. The static root must be the existing preparation's
+`products/primary`; its complete `preparation.json` transaction is replayed
+against the current clean source before admission. The dynamic state must
+identify that same source. The collector retains both supplied trees and the
+unchanged static preparation, then runs the normal consumer against the
+original supplied roots. It reopens the original trees, root modes and
+preparation after copying, execution, and report construction. Omitting both
+roots retains standalone construction of fresh products.
+
+Supplied collection uses the existing command records to retain exact copy
+source paths and runner arguments. Replay derives those original paths from
+the closed retention-command roster and compares the retained snapshot paths
+and all consumer commands against them. Static preparation and dynamic link
+readers materialize their original path namespaces from retained bytes in
+disposable checkout scratch. Neither original supplied root is needed for
+later process-free replay; the link commands and preparation record remain
+unchanged.
+
 The retained snapshot stream keeps the runner's exact mounted producer paths:
 source inputs are rooted at `/workspace`, while supplied products are rooted
 at the checkout-relative output directory. Its reconstructed records use the

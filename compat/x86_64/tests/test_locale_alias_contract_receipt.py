@@ -212,6 +212,140 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
         self.assertEqual(plan[0][1][-2:], ["-o", "/workspace/.work/x86_64/locale-alias-contract-receipt/tmp/runner/probe.o"])
         self.assertNotIn("wcsftime_l", "\n".join(argument for _role, argv in plan for argument in argv))
 
+    def test_supplied_products_retain_the_existing_preparation_and_run_exact_pair(self) -> None:
+        output = ".work/x86_64/locale-supplied"
+        supplied = {
+            "static": ".work/x86_64/cohort/static-preparation/products/primary",
+            "dynamic": ".work/x86_64/cohort/dynamic",
+        }
+        plan = receipt._expected_collector_commands(output, supplied)
+        self.assertEqual([role for role, _argv in plan],
+                         ["retain-static-preparation", "retain-dynamic", "locale-alias-runner"])
+        self.assertEqual(plan[0][1], ["/bin/cp", "-a",
+                         "/workspace/.work/x86_64/cohort/static-preparation",
+                         "/workspace/.work/x86_64/locale-supplied/static-preparation"])
+        self.assertEqual(plan[-1][1][-3:], ["--static-sysroot",
+                         receipt._mount(supplied["static"]), receipt._mount(supplied["dynamic"])])
+        self.assertEqual(receipt._runner_plan(output, supplied)[0][1][0],
+                         receipt._mount(supplied["dynamic"]) + "/bin/crabc-cc-dynamic")
+        self.assertEqual(receipt._runner_plan(output, supplied)[2][1][0],
+                         receipt._mount(supplied["static"]) + "/bin/crabc-cc")
+
+    def test_supplied_pair_admission_rejects_wrong_source_and_nonprimary_product(self) -> None:
+        static = self.root / ".work/x86_64/cohort/static-preparation/products/primary"
+        dynamic = self.root / ".work/x86_64/cohort/dynamic"
+        static.mkdir(parents=True)
+        state = dynamic / "share/crabc/dynamic-product-state.json"
+        state.parent.mkdir(parents=True)
+        source = {"revision": "a" * 40, "content_sha256": "b" * 64}
+        state.write_text(json.dumps({"source_sha256": source["content_sha256"]}), encoding="utf-8")
+        output = self.root / ".work/x86_64/supplied-receipt"
+        with mock.patch("owned_posix_static_products.validate_receipt", return_value={"source": source}) as owner, \
+             mock.patch("owned_posix_product_evidence._validate_static_product"), \
+             mock.patch("owned_posix_product_evidence._validate_dynamic_product"):
+            paths = receipt._admit_supplied_products(self.root, output, static, dynamic, source)
+            self.assertEqual(paths, {"static": static.relative_to(self.root).as_posix(),
+                                     "dynamic": dynamic.relative_to(self.root).as_posix()})
+            owner.assert_called_once_with(self.root, static.parents[1] / "preparation.json")
+            owner.return_value = {"source": {**source, "revision": "c" * 40}}
+            with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "static preparation source differs"):
+                receipt._admit_supplied_products(self.root, output, static, dynamic, source)
+            owner.return_value = {"source": source}
+            state.write_text(json.dumps({"source_sha256": "d" * 64}), encoding="utf-8")
+            with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "dynamic product source differs"):
+                receipt._admit_supplied_products(self.root, output, static, dynamic, source)
+            other = static.with_name("reproduction")
+            other.mkdir()
+            with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "preparation primary"):
+                receipt._admit_supplied_products(self.root, output, other, dynamic, source)
+
+    def test_supplied_paths_reconstruct_original_snapshot_and_refuse_command_substitution(self) -> None:
+        output = ".work/x86_64/supplied-receipt"
+        supplied = {"static": ".work/x86_64/cohort/static-preparation/products/primary",
+                    "dynamic": ".work/x86_64/cohort/dynamic"}
+        raw = self.root / "collector"
+        raw.mkdir()
+        plan = receipt._expected_collector_commands(output, supplied)
+        for role, argv in plan[:2]:
+            (raw / f"{role}.argv.json").write_text(json.dumps(argv), encoding="utf-8")
+        self.assertEqual(receipt._supplied_product_paths(self.root, output), supplied)
+        runner = self.root / receipt.RUNNER_DIRECTORY
+        runner.mkdir(parents=True)
+        paths = [receipt._mount(path) for path in (receipt.PROBE_PATH, receipt.CONTRACT_PATH, receipt.SYMBOL_READER_PATH)]
+        paths.extend([receipt._mount(supplied["static"] + "/usr/lib/libc.a"),
+                      receipt._mount(supplied["dynamic"] + "/usr/lib/libc.so")])
+        (runner / "before.sha256").write_text("".join(f"{'a' * 64}  {path}\n" for path in paths), encoding="ascii")
+        snapshot = receipt._snapshot(self.root, output, "before")
+        self.assertEqual(snapshot["records"][-1]["path"], receipt.DYNAMIC_PRODUCT_DIRECTORY + "/usr/lib/libc.so")
+        for bad in ("/outside/product", "/workspace/.work/x86_64/../product",
+                    receipt._mount(output + "/forged")):
+            with self.subTest(path=bad):
+                argv = list(plan[1][1])
+                argv[2] = bad
+                (raw / "retain-dynamic.argv.json").write_text(json.dumps(argv), encoding="utf-8")
+                with self.assertRaises(receipt.LocaleAliasReceiptError):
+                    receipt._supplied_product_paths(self.root, output)
+
+    def test_supplied_product_recheck_detects_byte_mode_and_preparation_changes(self) -> None:
+        supplied = {"static": ".work/x86_64/cohort/static-preparation/products/primary",
+                    "dynamic": ".work/x86_64/cohort/dynamic"}
+        static = self.root / supplied["static"]
+        dynamic = self.root / supplied["dynamic"]
+        static.mkdir(parents=True)
+        dynamic.mkdir(parents=True)
+        (static / "library").write_bytes(b"static")
+        (dynamic / "library").write_bytes(b"dynamic")
+        (dynamic / "link").symlink_to("library")
+        (static.parents[1] / "preparation.json").write_bytes(b"preparation")
+        output = self.root / ".work/x86_64/retained"
+        shutil.copytree(static.parents[1], output / receipt.STATIC_PREPARATION_DIRECTORY)
+        shutil.copytree(dynamic, output / receipt.DYNAMIC_PRODUCT_DIRECTORY, symlinks=True)
+        receipt._recheck_supplied_products(self.root, output, supplied)
+        (dynamic / "library").write_bytes(b"changed")
+        with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "dynamic product changed"):
+            receipt._recheck_supplied_products(self.root, output, supplied)
+        (dynamic / "library").write_bytes(b"dynamic")
+        original_mode = receipt._product_root_mode(dynamic, ".")
+        dynamic.chmod(original_mode ^ 0o2000)
+        with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "dynamic product changed"):
+            receipt._recheck_supplied_products(self.root, output, supplied)
+        dynamic.chmod(original_mode)
+        (static.parents[1] / "preparation.json").write_bytes(b"changed")
+        with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "static preparation changed"):
+            receipt._recheck_supplied_products(self.root, output, supplied)
+
+    def test_partial_supplied_pair_is_refused_before_product_work(self) -> None:
+        with mock.patch.object(receipt, "_require_native_collection", return_value=".work/x86_64/fresh"), \
+             mock.patch.object(receipt, "_capture_source_phase") as source:
+            for pair in ((Path("static"), None), (None, Path("dynamic"))):
+                with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "provided together"):
+                    receipt.collect(self.root, self.root / ".work/x86_64/fresh",
+                                    static_product=pair[0], dynamic_product=pair[1])
+            source.assert_not_called()
+
+    def test_supplied_collector_raw_roster_refuses_a_different_runner_pair(self) -> None:
+        output = ".work/x86_64/supplied-receipt"
+        supplied = {"static": ".work/x86_64/cohort/static-preparation/products/primary",
+                    "dynamic": ".work/x86_64/cohort/dynamic"}
+        raw = self.root / "collector"
+        raw.mkdir()
+        plan = receipt._expected_collector_commands(output, supplied)
+        for role, argv in plan:
+            for suffix, contents in (
+                ("argv.json", json.dumps(argv)), ("cwd", "/workspace\n"),
+                ("environment.json", json.dumps(receipt._collector_environment(output))),
+                ("stdin", "/dev/null\n"), ("launcher.json", json.dumps(receipt._collector_launcher(output))),
+                ("stdout", ""), ("stderr", ""), ("status", "0\n"),
+            ):
+                (raw / f"{role}.{suffix}").write_text(contents, encoding="utf-8")
+        observed = receipt._raw_collector_commands(self.root, output)
+        self.assertEqual([record["argv"] for record in observed], [argv for _role, argv in plan])
+        argv = list(plan[-1][1])
+        argv[-1] = "/workspace/.work/x86_64/other/dynamic"
+        (raw / "locale-alias-runner.argv.json").write_text(json.dumps(argv), encoding="utf-8")
+        with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "argv"):
+            receipt._raw_collector_commands(self.root, output)
+
     def test_runner_snapshot_keeps_producer_paths_and_receipt_relative_identities(self) -> None:
         """The runner hashes supplied products at their mounted producer paths."""
 
