@@ -434,6 +434,15 @@ selector joins each exact archive occurrence and both placements, rejecting
 foreign or duplicate callers and providers; the scanf caller remains distinct
 from the fixed C allocator import roster.
 
+The same owned scanf archive member imports `fmodl` through two `PLT32` calls
+in `crabc_owned_scan_decfloat`. The ordinary call reader requires both source
+relocations in that section, both retained calls to the unique strong provider
+in ET_EXEC and static PIE, and both direct calls to that provider in shared
+libc. A missing, discarded, duplicate, or foreign final call leaves the
+ordinary import unresolved. The existing installed-header scanf workload
+selects the static source section; dynamic executables do not import the
+implementation.
+
 `--utmpx-receipt-report REPORT` is independently optional. Its owning
 process-free reader reconstructs the retained eight selected aliases and
 sixteen provider spellings, static executable function proof, dynamic import

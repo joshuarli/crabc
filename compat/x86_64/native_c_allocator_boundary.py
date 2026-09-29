@@ -1817,6 +1817,7 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
                                static_product: Path, dynamic_product: Path,
                                elf_facts_report: Path, name: str,
                                required_importer_section: str | None = None,
+                               required_source_call_count: int = 1,
                                independent_retained_work: Path | None = None,
                                expected_importers: int | None = None,
                                shared_call_inventory: bool = False,
@@ -1838,7 +1839,8 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
                             if required_importer_section is not None else False)
         cohort_selected = (independent_retained_work is not None
                            and (expected_importers is None or expected_importers > 0))
-        require(claim is None and (section_selected or cohort_selected),
+        require(claim is None and (section_selected or cohort_selected)
+                and type(required_source_call_count) is int and required_source_call_count > 0,
                 f"ordinary {name} independent caller boundary differs")
         provider_member, provider_row = _static_definition(
             {"facts": facts}, name, "ordinary import provider")
@@ -1912,8 +1914,8 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
         expected_kind = "R_X86_64_PLT32" if is_c or required_importer_section else "R_X86_64_GOTPCREL"
         require(all(call["kind"] == expected_kind for call in calls)
                 and (required_importer_section is None
-                     or (not is_c and len(calls) == 1
-                         and calls[0]["section"] == required_importer_section)),
+                     or (not is_c and len(calls) == required_source_call_count
+                         and all(call["section"] == required_importer_section for call in calls))),
                 f"ordinary {name} importer call form differs")
         imported.append({
             "member": _member_identity(member),
@@ -1989,6 +1991,10 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
                     f"ordinary {name} {mode} unselected importer has a final call")
             require(final_calls["resolved_calls"] or shared_call_inventory,
                     f"ordinary {name} {mode} importer has no selected final call")
+            if required_importer_section is not None:
+                require(len(final_calls["resolved_calls"]) == required_source_call_count
+                        and not final_calls["discarded_calls"],
+                        f"ordinary {name} {mode} source calls are not all retained")
             linked.append({
                 "member": dict(item["member"]),
                 **final_calls,
@@ -2070,6 +2076,10 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
                 item["source_calls"], shared_address, name,
                 discarded_functions if independent_retained_work is not None else None,
                 absent)
+            if required_importer_section is not None:
+                require(len(calls) == required_source_call_count
+                        and len({call["call_address"] for call in calls}) == len(calls),
+                        f"ordinary {name} shared source calls differ")
             shared_calls.append({"member": dict(item["member"]), "calls": calls,
                                  **({"absent_functions": absent} if absent is not None else {})})
     dynamic_imports = []

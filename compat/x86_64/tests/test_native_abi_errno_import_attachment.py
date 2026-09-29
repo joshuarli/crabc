@@ -682,6 +682,83 @@ class OwnedScanMbsinitImportAttachmentTests(unittest.TestCase):
                         accounting, companion, "mbsinit", projection_override=projection)
 
 
+def owned_scan_two_call_fixture() -> tuple[dict, dict, dict]:
+    accounting, companion, projection = owned_scan_mbrtowc_fixture("fmodl")
+    importer = projection["importers"][0]
+    first = importer["source_calls"][0]
+    first["section"] = ".text.crabc_owned_scan_decfloat"
+    second = deepcopy(first)
+    second["offset"] += 16
+    importer["source_calls"].append(second)
+    importer["shared_caller_functions"] = ["crabc_owned_scan_decfloat"]
+    for link in projection["static_final_links"].values():
+        first_call = link["importers"][0]["resolved_calls"][0]
+        first_call["section"] = first["section"]
+        second_call = deepcopy(first_call)
+        second_call["offset"] = second["offset"]
+        second_call["call_address"] += 16
+        link["importers"][0]["resolved_calls"].append(second_call)
+    shared_calls = projection["shared_final"]["importers"][0]["calls"]
+    shared_calls[0]["function"] = "crabc_owned_scan_decfloat"
+    shared_calls[0]["source_function"] = "crabc_owned_scan_decfloat"
+    second_shared = deepcopy(shared_calls[0])
+    second_shared["call_address"] += 16
+    shared_calls.append(second_shared)
+    return accounting, companion, projection
+
+
+class OwnedScanTwoCallImportAttachmentTests(unittest.TestCase):
+    def test_both_retained_calls_bind_one_owned_provider(self) -> None:
+        accounting, companion, projection = owned_scan_two_call_fixture()
+        joins = selection._attach_ordinary_static_import(
+            accounting, companion, "fmodl", projection_override=projection)
+        self.assertEqual([join["identity"]["name"] for join in joins], ["fmodl"])
+        self.assertEqual(accounting["blockers"], [])
+
+    def test_missing_discarded_duplicate_or_foreign_call_rejects(self) -> None:
+        for mutation in ("missing-static", "discarded-static", "duplicate-static",
+                         "foreign-static", "missing-shared", "duplicate-shared",
+                         "foreign-shared", "foreign-importer", "duplicate-importer",
+                         "weak-provider", "duplicate-provider"):
+            with self.subTest(mutation=mutation):
+                accounting, companion, projection = owned_scan_two_call_fixture()
+                static = projection["static_final_links"]["static-pie"]["importers"][0]
+                shared = projection["shared_final"]["importers"][0]["calls"]
+                if mutation == "missing-static":
+                    static["resolved_calls"].pop()
+                elif mutation == "discarded-static":
+                    static["discarded_calls"].append(static["resolved_calls"].pop())
+                elif mutation == "duplicate-static":
+                    static["resolved_calls"][1]["call_address"] = static["resolved_calls"][0]["call_address"]
+                elif mutation == "foreign-static":
+                    static["resolved_calls"][1]["target_address"] += 1
+                elif mutation == "missing-shared":
+                    shared.pop()
+                elif mutation == "duplicate-shared":
+                    shared[1]["call_address"] = shared[0]["call_address"]
+                elif mutation == "foreign-shared":
+                    shared[1]["target_address"] += 1
+                elif mutation == "foreign-importer":
+                    next(row for row in accounting["occurrences"] if row["role"] == "import")[
+                        "member_name"] = "foreign.o"
+                elif mutation == "duplicate-importer":
+                    extra = deepcopy(next(row for row in accounting["occurrences"]
+                                      if row["role"] == "import"))
+                    extra["index"] = 103
+                    accounting["occurrences"].append(extra)
+                elif mutation == "weak-provider":
+                    next(row for row in accounting["occurrences"] if row["role"] == "definition")[
+                        "row"]["binding"] = "WEAK"
+                else:
+                    extra = deepcopy(next(row for row in accounting["occurrences"]
+                                      if row["role"] == "definition"))
+                    extra["index"] = 103
+                    accounting["occurrences"].append(extra)
+                with self.assertRaises(selection.SelectionError):
+                    selection._attach_ordinary_static_import(
+                        accounting, companion, "fmodl", projection_override=projection)
+
+
 def owned_syslog_close_fixture() -> tuple[dict, dict, dict]:
     accounting, companion, projection = owned_scan_mbrtowc_fixture()
     name = "close"

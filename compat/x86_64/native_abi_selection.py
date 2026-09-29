@@ -9005,10 +9005,11 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
     component reader. The errno accessor additionally retains its FS/TLS
     address proof; other ordinary functions have no such storage claim.
     """
-    scan_caller = name in {'mbrtowc', 'mbsinit'}
-    independent = name in {'mbrtowc', 'mbsinit', 'aio_suspend', 'aio_cancel', 'close'}
+    scan_call_count = {'mbrtowc': 1, 'mbsinit': 1, 'fmodl': 2}.get(name)
+    scan_caller = scan_call_count is not None
+    independent = name in {'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close'}
     require(name in {'__errno_location', 'abort', 'fputs', 'getenv', 'getrusage',
-                     'mbrtowc', 'mbsinit', 'aio_suspend', 'aio_cancel', 'close'}
+                     'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close'}
             and (projection_override is not None) == independent,
             'ordinary import identity differs')
     companion = exact(companion, {
@@ -9058,7 +9059,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                 and type(item['shared_caller_functions']) is list
                 and item['shared_caller_functions'],
                 'ordinary archive importer evidence differs')
-        if name in {'abort', 'fputs', 'getenv', 'getrusage', 'mbrtowc', 'mbsinit',
+        if name in {'abort', 'fputs', 'getenv', 'getrusage', 'mbrtowc', 'mbsinit', 'fmodl',
                     'aio_suspend', 'aio_cancel', 'close'}:
             kind = ('R_X86_64_PLT32' if scan_caller or member['member_index'] == c_member['member_index']
                     else 'R_X86_64_GOTPCREL')
@@ -9066,9 +9067,13 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                         and call['kind'] == kind for call in item['source_calls']),
                     'ordinary import source call form differs')
             if scan_caller:
-                require(len(item['source_calls']) == 1
-                        and item['source_calls'][0]['section'] == '.text.crabc_owned_scan_vfscanf'
-                        and item['shared_caller_functions'] == ['crabc_owned_scan_vfscanf'],
+                caller = ('crabc_owned_scan_decfloat' if name == 'fmodl'
+                          else 'crabc_owned_scan_vfscanf')
+                require(len(item['source_calls']) == scan_call_count
+                        and len({call['offset'] for call in item['source_calls']}) == scan_call_count
+                        and all(call['section'] == '.text.' + caller
+                                for call in item['source_calls'])
+                        and item['shared_caller_functions'] == [caller],
                         'owned scanf import caller differs')
         member_indices.append(member['member_index'])
     require(len(set(member_indices)) == len(importers)
@@ -9147,6 +9152,13 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                             for call in item['calls'])
                     for item in shared['importers']),
             'ordinary shared calls or TLS address differ')
+    if name == 'fmodl':
+        require(all(len(item['calls']) == scan_call_count
+                    and len({call['call_address'] for call in item['calls']}) == scan_call_count
+                    and all(call.get('source_function') == source['shared_caller_functions'][0]
+                            for call in item['calls'])
+                    for item, source in zip(shared['importers'], importers)),
+                'owned scanf shared call roster differs')
     if name in {'aio_cancel', 'close'}:
         all_calls = [call for item in shared['importers'] for call in item['calls']]
         require(type(shared['provider_calls']) is list and shared['provider_calls']
@@ -9213,7 +9225,11 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                                calls + linked['discarded_calls']) ==
                         sorted((call['section'], call['offset']) for call in source_item['source_calls']),
                     f'ordinary {mode} importer final calls differ')
-            if name in {'abort', 'fputs', 'getenv', 'getrusage', 'mbrtowc', 'mbsinit',
+            if name == 'fmodl':
+                require(len(calls) == scan_call_count and not linked['discarded_calls']
+                        and len({call['call_address'] for call in calls}) == scan_call_count,
+                        f'owned scanf {mode} call roster differs')
+            if name in {'abort', 'fputs', 'getenv', 'getrusage', 'mbrtowc', 'mbsinit', 'fmodl',
                         'aio_suspend', 'aio_cancel', 'close'}:
                 kinds = {(call['section'], call['offset']): call['kind']
                          for call in source_item['source_calls']}
@@ -9252,7 +9268,7 @@ def attach_ordinary_static_imports(accounting: Mapping[str, Any],
 def attach_ordinary_import_from_retained_links(
         accounting: Mapping[str, Any], companion: Mapping[str, Any] | None,
         *, report_path: Path | None, paths: Mapping[str, Path],
-        name: str, caller_section: str) -> list[dict[str, Any]]:
+        name: str, caller_section: str, source_call_count: int = 1) -> list[dict[str, Any]]:
     """Bind an owned archive caller through the already replayed installed links."""
     if companion is None:
         return []
@@ -9263,6 +9279,7 @@ def attach_ordinary_import_from_retained_links(
             report, report_path=report_path, static_product=paths['static_product'],
             dynamic_product=paths['dynamic_product'], elf_facts_report=paths['elf_report'],
             name=name, required_importer_section=caller_section,
+            required_source_call_count=source_call_count,
         )
     except (KeyError, TypeError, ValueError, OSError,
             native_c_allocator_boundary.AllocatorBoundaryError) as error:
@@ -12219,15 +12236,19 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         rejected, 'native_c_allocator_ordinary_import_resolution', accounting,
         native_c_allocator_boundary_companion,
         lambda: attach_ordinary_static_imports(accounting, native_c_allocator_boundary_companion))
-    for scan_import in ('mbrtowc', 'mbsinit'):
+    for scan_import, caller, call_count in (
+            ('mbrtowc', 'crabc_owned_scan_vfscanf', 1),
+            ('mbsinit', 'crabc_owned_scan_vfscanf', 1),
+            ('fmodl', 'crabc_owned_scan_decfloat', 2)):
         owned_scan_joins, _ = _attach(
             rejected, ('owned_scan_ordinary_import_resolution' if scan_import == 'mbrtowc'
-                       else 'owned_scan_mbsinit_ordinary_import_resolution'), accounting,
+                       else f'owned_scan_{scan_import}_ordinary_import_resolution'), accounting,
             native_c_allocator_boundary_companion,
-            lambda name=scan_import: attach_ordinary_import_from_retained_links(
+            lambda name=scan_import, section=caller, count=call_count: attach_ordinary_import_from_retained_links(
                 accounting, native_c_allocator_boundary_companion,
                 report_path=native_c_allocator_boundary_report, paths=paths,
-                name=name, caller_section='.text.crabc_owned_scan_vfscanf'))
+                name=name, caller_section='.text.' + section,
+                source_call_count=count))
         ordinary_static_import_joins.extend(owned_scan_joins)
     (owned_aio_joins, _), _ = _attach(
         rejected, 'owned_aio_ordinary_import_resolution', accounting,
