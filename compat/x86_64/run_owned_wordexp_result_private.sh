@@ -54,17 +54,21 @@ environment.update({
     ]),
     "CC_SHELL_ESCAPED_FLAGS": "1",
 })
+# Weak static fallbacks and their strong registry definitions need separate
+# archive members; fat LTO combines them and rejects conflicting bindings.
 subprocess.run([
     str(builder.pinned_rustup()), "run", builder.PINNED_TOOLCHAIN,
     "cargo", "rustc", "--locked", "--offline", "-p", "crabc-libc", "--lib",
-    "--release", "--features", "x86-owned-static-runtime", "--target", builder.TARGET,
-    "--target-dir", str(work / "cargo"), "--",
+    "--release", "--no-default-features", "--features", "x86-owned-static-runtime",
+    "--target", builder.TARGET,
+    "--target-dir", str(work / "cargo"), *builder.STATIC_ARCHIVE_PROFILE, "--",
     "--cfg", "crabc_owned_static_sysroot",
     "--cfg", builder.MIMALLOC_LIFECYCLE_RUST_CFG,
     "--cfg", "crabc_owned_wordexp_result_private_test",
     "--check-cfg", "cfg(crabc_owned_wordexp_result_private_test)",
     "-C", "relocation-model=pic", "-C", "code-model=small", "-C", "panic=abort",
-    "-Ztls-model=initial-exec", "--remap-path-prefix", f"{root}=/crabc",
+    "-Ztls-model=initial-exec", "-Zmerge-functions=disabled",
+    "--remap-path-prefix", f"{root}=/crabc",
 ], cwd=root, env=environment, stdin=subprocess.DEVNULL, check=True)
 PY
 
