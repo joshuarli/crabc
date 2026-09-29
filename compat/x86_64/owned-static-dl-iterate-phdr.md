@@ -56,11 +56,18 @@ selects pinned musl `rcrt1.o`, since its GCC specs do not select that entry for
 `-static-pie`. ELF checks require the expected type and no interpreter.
 
 `owned_static_dl_iterate_phdr_probe.c` verifies main-image header coordinates,
-load bias, code containment, name, counters, callback ABI size and results
-`0`, `73`, and `-29`, errno at entry/after callback, and initialized/zero TLS
-bounds plus independent main/worker TLS. `owned_static_dl_iterate_phdr_override.c`
-proves a strong application definition still overrides the weak archive
-provider; the ordinary consumer also requires a defined `WEAK FUNC` symbol.
+the auxv program-header entry size, load bias, code containment, name,
+counters, callback ABI size and results `0`, `73`, and `-29`, errno at
+entry/after callback, and initialized/zero TLS bounds plus independent
+main/worker TLS. Each outer callback recursively enumerates the image once;
+the inner callback checks the same program headers and calling thread's TLS,
+returns `41`, and changes errno before the outer callback returns its own
+result. `owned_static_dl_iterate_phdr_override.c` proves a strong application
+definition overrides the weak archive provider in both pinned-musl and owned
+ET_EXEC/static-PIE links. The runner compares their output, checks the final
+ELF symbol binding, and requires the ordinary owned consumer's defined
+`WEAK FUNC` symbol. The evidence directory retains the source objects, final
+ELF inspections, execution output, and a locally verifiable `SHA256SUMS`.
 The real libc has TLS, so this consumer does not exercise an executable with
 no `PT_TLS`.
 

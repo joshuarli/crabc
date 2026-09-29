@@ -12,7 +12,19 @@
 static _Thread_local unsigned long initialized_tls = 0x31415926UL;
 static _Thread_local unsigned long zero_tls;
 extern const ElfW(Dyn) _DYNAMIC[] __attribute__((weak, visibility("hidden")));
-struct observation { unsigned calls; int result; uintptr_t tls_base; };
+struct observation { unsigned calls; unsigned nested_calls; int result; uintptr_t tls_base; };
+
+static int observe_nested(struct dl_phdr_info *info, size_t size, void *opaque)
+{
+    struct observation *seen = opaque;
+    CHECK(errno == EDOM);
+    CHECK(size == sizeof(*info) && ++seen->nested_calls == 1);
+    CHECK((uintptr_t)info->dlpi_phdr == getauxval(AT_PHDR));
+    CHECK(info->dlpi_phnum == getauxval(AT_PHNUM));
+    CHECK(info->dlpi_tls_modid == 1 && (uintptr_t)info->dlpi_tls_data == seen->tls_base);
+    errno = E2BIG;
+    return 41;
+}
 
 static int observe(struct dl_phdr_info *info, size_t size, void *opaque)
 {
@@ -22,6 +34,7 @@ static int observe(struct dl_phdr_info *info, size_t size, void *opaque)
     CHECK(strcmp(info->dlpi_name, "/proc/self/exe") == 0);
     CHECK((uintptr_t)info->dlpi_phdr == getauxval(AT_PHDR));
     CHECK(info->dlpi_phnum == getauxval(AT_PHNUM));
+    CHECK(getauxval(AT_PHENT) == sizeof(ElfW(Phdr)));
     CHECK(info->dlpi_adds == 0 && info->dlpi_subs == 0);
     uintptr_t base = 0;
     const ElfW(Phdr) *tls = 0;
@@ -47,6 +60,8 @@ static int observe(struct dl_phdr_info *info, size_t size, void *opaque)
     CHECK((uintptr_t)&zero_tls >= seen->tls_base);
     CHECK((uintptr_t)&zero_tls + sizeof(zero_tls) <= seen->tls_base + tls->p_memsz);
     CHECK(initialized_tls == 0x31415926UL && zero_tls == 0);
+    CHECK(dl_iterate_phdr(observe_nested, seen) == 41);
+    CHECK(seen->nested_calls == 1 && errno == E2BIG);
     errno = ERANGE;
     return seen->result;
 }
@@ -56,7 +71,7 @@ static void *worker(void *opaque)
     struct observation *seen = opaque;
     errno = EDOM;
     CHECK(dl_iterate_phdr(observe, seen) == seen->result);
-    CHECK(seen->calls == 1 && errno == ERANGE);
+    CHECK(seen->calls == 1 && seen->nested_calls == 1 && errno == ERANGE);
     initialized_tls = 99;
     zero_tls = 101;
     return opaque;
@@ -64,7 +79,7 @@ static void *worker(void *opaque)
 
 int main(void)
 {
-    struct observation main_zero = {0, 0, 0}, main_stop = {0, 73, 0}, thread_stop = {0, -29, 0};
+    struct observation main_zero = {0, 0, 0, 0}, main_stop = {0, 0, 73, 0}, thread_stop = {0, 0, -29, 0};
     worker(&main_zero);
     initialized_tls = 0x31415926UL;
     zero_tls = 0;
@@ -78,6 +93,6 @@ int main(void)
     CHECK(pthread_join(thread, &result) == 0 && result == &thread_stop);
     CHECK(thread_stop.tls_base != main_zero.tls_base);
     CHECK(initialized_tls == 0x31415926UL && zero_tls == 0);
-    puts("static dl_iterate_phdr: main metadata, callback results, errno, main/worker TLS passed");
+    puts("static dl_iterate_phdr: main metadata, nested callbacks, errno, main/worker TLS passed");
     return 0;
 }

@@ -30,7 +30,7 @@ for mode in static static-pie; do
             "$work/$mode.o" /opt/musl-1.2.6/lib/libc.a \
             /opt/musl-1.2.6/lib/crtn.o -o "$work/oracle-$mode"
     fi
-    readelf -h -l "$work/oracle-$mode" >"$work/oracle-$mode.elf"
+    readelf -h -l -s "$work/oracle-$mode" >"$work/oracle-$mode.elf"
     timeout 20 "$work/oracle-$mode" >"$work/oracle-$mode.stdout"
 done
 product="${1:-}"
@@ -58,7 +58,45 @@ if len(symbols) != 1 or symbols[0][3:5] != ['FUNC', 'WEAK'] or symbols[0][6] == 
 VERIFY
     "$oracle_cc" -std=c11 -fPIE -I"$ROOT/include" -c \
         "$ROOT/compat/x86_64/owned_static_dl_iterate_phdr_override.c" -o "$work/override-$mode.o"
+    if [ "$mode" = static ]; then
+        "$oracle_cc" -static -no-pie "$work/override-$mode.o" -o "$work/oracle-override-$mode"
+    else
+        "$oracle_cc" -nostdlib -static-pie -Wl,--no-dynamic-linker \
+            /opt/musl-1.2.6/lib/rcrt1.o /opt/musl-1.2.6/lib/crti.o \
+            "$work/override-$mode.o" /opt/musl-1.2.6/lib/libc.a \
+            /opt/musl-1.2.6/lib/crtn.o -o "$work/oracle-override-$mode"
+    fi
     "$product/bin/crabc-cc" "-$mode" "$work/override-$mode.o" -o "$work/override-$mode"
-    timeout 20 "$work/override-$mode" >"$work/override-$mode.stdout"
+    for image in "oracle-override-$mode" "override-$mode"; do
+        readelf -h -l -s "$work/$image" >"$work/$image.elf"
+        timeout 20 "$work/$image" >"$work/$image.stdout"
+    done
+    cmp "$work/oracle-override-$mode.stdout" "$work/override-$mode.stdout"
+    python3 -B - "$work/oracle-override-$mode.elf" "$work/override-$mode.elf" "$mode" <<'VERIFY'
+from pathlib import Path
+import sys
+expected = 'DYN' if sys.argv[3] == 'static-pie' else 'EXEC'
+for name in sys.argv[1:3]:
+    image = Path(name).read_text()
+    elf_type = next(line.split()[1] for line in image.splitlines() if line.strip().startswith('Type:'))
+    if elf_type != expected or 'INTERP' in image:
+        raise SystemExit(f'{name}: override fixture has the wrong ELF type or an interpreter')
+    symbols = [line.split() for line in image.splitlines() if line.split() and line.split()[-1] == 'dl_iterate_phdr']
+    if len(symbols) != 1 or symbols[0][3:5] != ['FUNC', 'GLOBAL'] or symbols[0][6] == 'UND':
+        raise SystemExit(f'{name}: strong application definition did not own dl_iterate_phdr')
+VERIFY
 done
-printf 'owned static dl_iterate_phdr: PASS (musl and installed ET_EXEC/static PIE, callback/errno/main/worker TLS); evidence: %s\n' "$work"
+cp "$probe" "$work/probe.c"
+cp "$ROOT/compat/x86_64/owned_static_dl_iterate_phdr_override.c" "$work/override.c"
+(
+    cd "$work"
+    sha256sum *.c *.o *.elf *.stdout oracle-static oracle-static-pie static static-pie \
+        oracle-override-static oracle-override-static-pie override-static override-static-pie >SHA256SUMS
+    sha256sum -c SHA256SUMS >/dev/null
+)
+chmod g+rx "$work"
+chmod g+r "$work"/*.c "$work"/*.o "$work"/*.elf "$work"/*.stdout "$work"/SHA256SUMS \
+    "$work"/oracle-static "$work"/oracle-static-pie "$work"/static "$work"/static-pie \
+    "$work"/oracle-override-static "$work"/oracle-override-static-pie \
+    "$work"/override-static "$work"/override-static-pie
+printf 'owned static dl_iterate_phdr: PASS (musl and installed ET_EXEC/static PIE, nested callbacks, override, TLS); evidence: %s\n' "$work"
