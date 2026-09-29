@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Native Linux/x86-64 bounded static crabc-libc pthread/C11 detach evidence.
 #
-# The project-header fixture first runs comparable standard detach routes with
-# pinned musl 1.2.6, then a true `-nostdlib -static` candidate.  The candidate
-# alone selects self-detach completion and 64-slot lazy detached reaping after
-# CLONE_CHILD_CLEARTID; join-after-detach is likewise candidate-only
-# diagnostic evidence, not general pthread/C11 lifecycle support.
+# The project-header fixture runs detach-before-exit and detach-after-kernel-exit
+# routes with pinned musl 1.2.6 and a true `-nostdlib -static` candidate. The
+# candidate also checks 64 detached stack mappings before and after a later
+# join reaps them. Repeated detach and join-after-detach are private diagnostics.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -55,7 +54,7 @@ assert_selected_c_abi_surface() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff grep mkdir nm objdump readelf rustup sed sort; do
+for tool in ar cargo chmod cmp diff grep mkdir nm objdump readelf rustup sed sha256sum sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -64,8 +63,10 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_types_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_pthread_c11_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-pthread-detach.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/libc-pthread-detach"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-pthread-detach/run.XXXXXX")"
+chmod 755 "$work_dir"
+printf 'x86 pthread/C11 detach evidence: %s\n' "$work_dir"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-pthread-detach-reference"
 candidate="$work_dir/crabc-static-pthread-detach-candidate"
@@ -87,6 +88,20 @@ clone_disassembly="$work_dir/pthread-clone-disassembly"
 detach_disassembly="$work_dir/pthread-detach-disassembly"
 thrd_detach_disassembly="$work_dir/thrd-detach-disassembly"
 
+run_and_record() {
+    local label="$1"
+    local binary="$2"
+    local result
+
+    if "$binary" >"$work_dir/$label.stdout" 2>"$work_dir/$label.stderr"; then
+        result=0
+    else
+        result=$?
+    fi
+    printf '%s\n' "$result" >"$work_dir/$label.status"
+    [ "$result" -eq 0 ] || fail "$label execution exited $result; raw streams: $work_dir"
+}
+
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_pthread_detach_probe.c >/dev/null 2>"$header_trace"
@@ -97,7 +112,7 @@ done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_pthread_detach_probe.c -o "$reference"
-"$reference"
+run_and_record musl "$reference"
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -203,11 +218,23 @@ objdump -d --disassemble=thrd_detach "$candidate" >"$thrd_detach_disassembly"
 if grep -Eq '\bsyscall\b' "$detach_disassembly" "$thrd_detach_disassembly"; then
     fail "detach must be a prompt state transition, not a wait or reaper"
 fi
-if "$candidate"; then
-    :
-else
-    candidate_status=$?
-    fail "candidate execution exited ${candidate_status}"
-fi
+(
+    cd "$work_dir"
+    sha256sum musl-pthread-detach-reference crabc-static-pthread-detach-candidate \
+        cargo-target/x86_64-unknown-linux-musl/debug/libc.a \
+        musl.stdout musl.stderr musl.status >binary-and-streams.sha256
+)
+run_and_record crabc "$candidate"
+for stream in stdout stderr status; do
+    cmp "$work_dir/musl.$stream" "$work_dir/crabc.$stream" ||
+        fail "pinned musl and crabc $stream differ; raw streams: $work_dir"
+done
+(
+    cd "$work_dir"
+    sha256sum musl-pthread-detach-reference crabc-static-pthread-detach-candidate \
+        cargo-target/x86_64-unknown-linux-musl/debug/libc.a \
+        musl.stdout musl.stderr musl.status crabc.stdout crabc.stderr crabc.status \
+        >binary-and-streams.sha256
+)
 
 printf 'x86 static crabc-libc pthread/C11 detach: PASS\n'

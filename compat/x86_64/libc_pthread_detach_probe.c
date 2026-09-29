@@ -4,10 +4,11 @@
  * The runner compiles this exact project-header body first against pinned musl
  * and then as a `-nostdlib -static` crabc archive candidate.  The comparable
  * routes are deliberately small: detach a held pthread or C11 worker before
- * or after it is released, for normal return and the selected explicit-exit
- * forms, and preserve the parent's errno.  A successful detach transfers
- * lifecycle ownership; comparable routes never reuse an opaque handle after
- * terminal join or detached completion. Candidate-only error-path diagnostics
+ * release or after the kernel reports its task exited, for normal return and
+ * the selected explicit-exit forms, and preserve the parent's errno.  A
+ * successful detach transfers lifecycle ownership; comparable routes never
+ * reuse an opaque handle after terminal join or detached completion.
+ * Candidate-only error-path diagnostics
  * make their one intentionally documented pre-completion handle query while
  * the detached worker remains held live. Musl's thrd_detach is a weak alias
  * of pthread_detach, so those unadmitted-handle diagnostics retain its raw
@@ -15,8 +16,8 @@
  *
  * The candidate additionally selects prompt state-only detach followed by
  * lazy reaping at a later selected lifecycle entry, after the kernel has
- * applied CLONE_CHILD_CLEARTID.  The fixed 64-worker route makes that boundary
- * observable without promoting a general pthread/C11 implementation.
+ * applied CLONE_CHILD_CLEARTID.  A fixed 64-worker route checks that the
+ * private stacks are unmapped at that boundary.
  */
 
 #if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
@@ -44,7 +45,42 @@ struct held_worker {
     volatile int completed;
     int initial_errno;
     int self_detach_result;
+    volatile int kernel_tid;
+    volatile unsigned long stack_page;
 };
+
+/* A callback-completion flag precedes pthread's final SYS_exit.  Raw tgkill
+ * observes the kernel task itself, so the after-exit route can keep the
+ * joinable handle live while proving that its task has actually retired.
+ * The program creates no other task between observing ESRCH and detaching. */
+static long raw_linux_syscall(long number, long first, long second, long third)
+{
+    long result;
+
+    __asm__ volatile("syscall" : "=a"(result)
+        : "a"(number), "D"(first), "S"(second), "d"(third)
+        : "rcx", "r11", "memory");
+    return result;
+}
+
+static int wait_for_kernel_exit(struct held_worker *worker)
+{
+    const long process = raw_linux_syscall(39, 0, 0, 0);
+    const int task = __atomic_load_n(&worker->kernel_tid, __ATOMIC_ACQUIRE);
+    unsigned long spins;
+
+    if (task <= 0)
+        return 1;
+    for (spins = 0; spins != 100000000UL; ++spins) {
+        long result = raw_linux_syscall(234, process, task, 0);
+        if (result == -ESRCH)
+            return 0;
+        if (result != 0)
+            return 1;
+        __asm__ volatile("pause" ::: "memory");
+    }
+    return 1;
+}
 
 static int wait_until_set(volatile int *value)
 {
@@ -60,9 +96,16 @@ static int wait_until_set(volatile int *value)
 
 static void wait_for_release(struct held_worker *worker)
 {
+    volatile char stack_marker = 0;
+
+    __atomic_store_n(&worker->stack_page,
+        (unsigned long)&stack_marker & ~4095UL, __ATOMIC_RELEASE);
+    __atomic_store_n(&worker->kernel_tid,
+        (int)raw_linux_syscall(186, 0, 0, 0), __ATOMIC_RELEASE);
     __atomic_store_n(&worker->entered, 1, __ATOMIC_RELEASE);
     while (__atomic_load_n(&worker->release, __ATOMIC_ACQUIRE) == 0)
         __asm__ volatile("pause" ::: "memory");
+    (void)stack_marker;
     __atomic_store_n(&worker->completed, 1, __ATOMIC_RELEASE);
 }
 
@@ -115,7 +158,7 @@ static int run_pthread_round(void *(*start)(void *), int release_before_detach)
         return 2;
     if (release_before_detach) {
         __atomic_store_n(&worker.release, 1, __ATOMIC_RELEASE);
-        if (wait_until_set(&worker.completed))
+        if (wait_until_set(&worker.completed) || wait_for_kernel_exit(&worker))
             return 3;
     }
     detach_result = pthread_detach(thread);
@@ -125,7 +168,7 @@ static int run_pthread_round(void *(*start)(void *), int release_before_detach)
         return 5;
     if (!release_before_detach) {
         __atomic_store_n(&worker.release, 1, __ATOMIC_RELEASE);
-        if (wait_until_set(&worker.completed))
+        if (wait_until_set(&worker.completed) || wait_for_kernel_exit(&worker))
             return 6;
     }
     return 0;
@@ -144,7 +187,7 @@ static int run_thrd_round(int (*start)(void *), int release_before_detach)
         return 21;
     if (release_before_detach) {
         __atomic_store_n(&worker.release, 1, __ATOMIC_RELEASE);
-        if (wait_until_set(&worker.completed))
+        if (wait_until_set(&worker.completed) || wait_for_kernel_exit(&worker))
             return 22;
     }
     detach_result = thrd_detach(thread);
@@ -154,7 +197,7 @@ static int run_thrd_round(int (*start)(void *), int release_before_detach)
         return 24;
     if (!release_before_detach) {
         __atomic_store_n(&worker.release, 1, __ATOMIC_RELEASE);
-        if (wait_until_set(&worker.completed))
+        if (wait_until_set(&worker.completed) || wait_for_kernel_exit(&worker))
             return 25;
     }
     return 0;
@@ -172,7 +215,7 @@ static int run_double_detach_round(void)
         return 41;
     if (pthread_detach(thread) != 0)
         return 42;
-    if (pthread_detach(thread) == 0)
+    if (pthread_detach(thread) != EINVAL)
         return 43;
     if (errno != parent_errno_sentinel)
         return 44;
@@ -397,7 +440,8 @@ static int run_candidate_join_after_detach_diagnostic(void)
     if (pthread_create(&pthread_thread, 0, pthread_normal_worker,
             &pthread_worker) != 0 || wait_until_set(&pthread_worker.entered))
         return 54;
-    if (pthread_detach(pthread_thread) != 0 || pthread_join(pthread_thread, 0) == 0 ||
+    if (pthread_detach(pthread_thread) != 0 ||
+        pthread_join(pthread_thread, 0) != EINVAL ||
         errno != parent_errno_sentinel)
         return 55;
     __atomic_store_n(&pthread_worker.release, 1, __ATOMIC_RELEASE);
@@ -409,7 +453,7 @@ static int run_candidate_join_after_detach_diagnostic(void)
         wait_until_set(&thrd_worker.entered))
         return 57;
     if (thrd_detach(thrd_thread) != thrd_success ||
-        thrd_join(thrd_thread, 0) == thrd_success ||
+        thrd_join(thrd_thread, 0) != thrd_error ||
         errno != parent_errno_sentinel)
         return 58;
     __atomic_store_n(&thrd_worker.release, 1, __ATOMIC_RELEASE);
@@ -420,19 +464,25 @@ static int run_candidate_join_after_detach_diagnostic(void)
 #endif
 
 #if defined(CRABC_PTHREAD_DETACH_SELECTED_WORKER_LIMIT)
-/* The held workers publish completion before their return.  A later selected
- * pthread_create must observe the following CLONE_CHILD_CLEARTID transition,
- * lazily withdraw one completed detached slot, and reuse it. */
+/* A later selected join must observe the kernel exit of every detached worker,
+ * withdraw those records, and unmap their private stacks.  Its joinable helper
+ * is created first, so no new stack mapping can reuse an observed address
+ * between the reaping boundary and the mapping check. */
 static int run_detached_completion_reuse_round(void)
 {
     struct held_worker workers[CRABC_PTHREAD_DETACH_SELECTED_WORKER_LIMIT] = {{0}};
     pthread_t threads[CRABC_PTHREAD_DETACH_SELECTED_WORKER_LIMIT] = {0};
+    struct held_worker helper = {0, 0, 0, -1};
+    pthread_t helper_thread = 0;
     struct held_worker reuse = {0, 0, 0, -1};
     pthread_t reuse_thread = 0;
     unsigned int index;
-    unsigned long retry;
+    unsigned char residency;
 
     errno = parent_errno_sentinel;
+    if (pthread_create(&helper_thread, 0, pthread_normal_worker, &helper) != 0 ||
+        wait_until_set(&helper.entered))
+        return 60;
     for (index = 0; index != CRABC_PTHREAD_DETACH_SELECTED_WORKER_LIMIT; ++index) {
         workers[index].initial_errno = -1;
         if (pthread_create(&threads[index], 0, pthread_normal_worker,
@@ -447,27 +497,35 @@ static int run_detached_completion_reuse_round(void)
         __atomic_store_n(&workers[index].release, 1, __ATOMIC_RELEASE);
     for (index = 0; index != CRABC_PTHREAD_DETACH_SELECTED_WORKER_LIMIT; ++index) {
         if (wait_until_set(&workers[index].completed) ||
+            wait_for_kernel_exit(&workers[index]) ||
             workers[index].initial_errno != 0)
             return 63;
     }
-
-    /* No handle from the detached set is used here or below.  Completion is
-     * published just before return, whereas CLONE_CHILD_CLEARTID follows in
-     * kernel exit.  Retry the later selected create entry until it can observe
-     * that clear and lazily reclaim a detached slot. */
-    for (retry = 0; retry != 100000000UL; ++retry) {
-        if (pthread_create(&reuse_thread, 0, pthread_normal_worker, &reuse) == 0)
-            break;
-        __asm__ volatile("pause" ::: "memory");
+    for (index = 0; index != CRABC_PTHREAD_DETACH_SELECTED_WORKER_LIMIT; ++index) {
+        unsigned long page = __atomic_load_n(&workers[index].stack_page,
+            __ATOMIC_ACQUIRE);
+        if (page == 0 || raw_linux_syscall(27, page, 4096,
+                (long)&residency) != 0)
+            return 64;
     }
-    if (retry == 100000000UL)
-        return 64;
-    if (wait_until_set(&reuse.entered))
+
+    __atomic_store_n(&helper.release, 1, __ATOMIC_RELEASE);
+    if (pthread_join(helper_thread, 0) != 0)
         return 65;
+    for (index = 0; index != CRABC_PTHREAD_DETACH_SELECTED_WORKER_LIMIT; ++index) {
+        unsigned long page = __atomic_load_n(&workers[index].stack_page,
+            __ATOMIC_ACQUIRE);
+        if (raw_linux_syscall(27, page, 4096, (long)&residency) != -ENOMEM)
+            return 66;
+    }
+    if (pthread_create(&reuse_thread, 0, pthread_normal_worker, &reuse) != 0)
+        return 67;
+    if (wait_until_set(&reuse.entered))
+        return 68;
     __atomic_store_n(&reuse.release, 1, __ATOMIC_RELEASE);
     if (pthread_join(reuse_thread, 0) != 0 || reuse.initial_errno != 0 ||
         errno != parent_errno_sentinel)
-        return 66;
+        return 69;
     return 0;
 }
 #endif
