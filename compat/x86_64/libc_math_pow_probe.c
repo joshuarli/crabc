@@ -26,6 +26,10 @@
 #include <unistd.h>
 #endif
 
+#if math_errhandling != MATH_ERREXCEPT
+#error "the selected x86 pow profile reports exceptions through fenv"
+#endif
+
 #pragma STDC FENV_ACCESS ON
 
 #define POW_F64_CASES 32

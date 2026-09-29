@@ -8,6 +8,7 @@ readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly RECORD_SIZE=40
 readonly EXPECTED_RECORDS=256
+readonly EXPECTED_EDGE_RECORDS=4800
 readonly SELECTED_SYMBOLS=(pow powf)
 readonly FENV_SIBLINGS=(feclearexcept fegetenv fegetround fesetenv fesetround fetestexcept)
 readonly PRIVATE_PROVIDERS=(
@@ -48,7 +49,7 @@ assert_selected_c_abi_surface() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mkdir mktemp nm objdump readelf realpath rustup sort wc python3; do
+for tool in ar awk cargo cmp diff grep mkdir mktemp nm objdump readelf realpath rustup sha256sum sort wc python3; do
 	require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -76,6 +77,10 @@ headers="$work_dir/candidate-program-headers"
 dynamic="$work_dir/candidate-dynamic"
 relocs="$work_dir/candidate-relocations"
 disassembly="$work_dir/candidate-disassembly"
+edge_reference="$work_dir/musl-edges-reference"
+edge_candidate="$work_dir/crabc-edges-candidate"
+edge_reference_output="$work_dir/musl-edges-reference.records"
+edge_candidate_output="$work_dir/crabc-edges-candidate.records"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
@@ -186,4 +191,43 @@ fi
 python3 "$ROOT_DIR/compat/x86_64/verify_math_pow_records.py" "$reference_output" "$candidate_output"
 
 printf 'x86 static libc pow/powf: PASS (%s records)\n' "$record_count"
+
+# Link the broad edge matrix against the same final archive used above. The
+# source-object differential alone cannot prove the archive's selected body.
+edge_flags=(-std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -nostdlib -static
+	-fno-pie -no-pie -ffreestanding -fno-builtin -frounding-math
+	-fno-stack-protector -Wl,-e,_start -Wl,--no-undefined -Wl,--gc-sections)
+"$ORACLE_CC" "${edge_flags[@]}" compat/x86_64/libc_math_pow_edges_probe.c \
+	compat/x86_64/libc_math_pow_edges_start.S /opt/musl-1.2.6/lib/libc.a \
+	-o "$edge_reference"
+"$ORACLE_CC" "${edge_flags[@]}" compat/x86_64/libc_math_pow_edges_probe.c \
+	compat/x86_64/libc_math_pow_edges_start.S "$archive" -o "$edge_candidate"
+readelf --symbols --wide "$edge_candidate" >"$work_dir/edge-candidate-symbols"
+readelf --program-headers --wide "$edge_candidate" >"$work_dir/edge-candidate-program-headers"
+readelf --dynamic --wide "$edge_candidate" >"$work_dir/edge-candidate-dynamic" || true
+readelf --relocs --wide "$edge_candidate" >"$work_dir/edge-candidate-relocations"
+for symbol in "${SELECTED_SYMBOLS[@]}"; do
+	grep -Eq "[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]${symbol}$" \
+		"$work_dir/edge-candidate-symbols" || fail "edge candidate lacks strong ${symbol}"
+done
+if awk '$7 == "UND" && NF >= 8 { print }' "$work_dir/edge-candidate-symbols" | grep . >/dev/null; then
+	fail "edge candidate has unresolved symbols"
+fi
+if grep -Eq 'Requesting program interpreter|INTERP|NEEDED|[[:space:]]TLS[[:space:]]' \
+	"$work_dir/edge-candidate-program-headers" "$work_dir/edge-candidate-dynamic"; then
+	fail "edge candidate is dynamic or retains TLS"
+fi
+"$edge_reference" >"$edge_reference_output" || fail "pinned-musl edge fixture failed"
+"$edge_candidate" >"$edge_candidate_output" || fail "freestanding archive edge fixture failed"
+for stream in "$edge_reference_output" "$edge_candidate_output"; do
+	[ "$(wc -c <"$stream")" -eq "$((EXPECTED_EDGE_RECORDS * RECORD_SIZE))" ] ||
+		fail "edge fixture did not produce ${EXPECTED_EDGE_RECORDS} complete records: $stream"
+done
+python3 "$ROOT_DIR/compat/x86_64/verify_math_pow_edges.py" \
+	"$edge_reference_output" "$edge_candidate_output" |
+	tee "$work_dir/edge-archive-summary.txt"
+sha256sum "$reference" "$candidate" "$reference_output" "$candidate_output" \
+	"$edge_reference" "$edge_candidate" "$edge_reference_output" \
+	"$edge_candidate_output" >"$work_dir/sha256sums.txt"
+
 bash "$ROOT_DIR/compat/x86_64/run_libc_math_pow_edges.sh"
