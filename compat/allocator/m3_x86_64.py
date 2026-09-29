@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-"""Run the fail-closed native x86-64 allocator M3 local-engine gate.
+"""Run the fail-closed native x86-64 allocator local-engine gate.
 
-M3 (``plan.md`` Milestones) requires Heap/Theap bootstrap, page queues, local
-allocation/free, retirement/reuse, the complete selected bin/page-class
-matrix, deterministic differential traces, and Miri-compatible execution.
-``m3-local-engine-x86_64-v3.5.0.json`` names each component, the evidence that
-proves it, and every condition still unmet. This runner executes that
-evidence and reports the milestone ``complete`` only when every prerequisite,
-check, and component passes; otherwise it names the unmet conditions and
-exits 3.
+The local engine requires Heap/Theap bootstrap, page queues, local
+allocation/free, retirement/reuse, the selected bin/page-class matrix,
+deterministic differential traces, and Miri-compatible execution. The gate
+executes each selected check and completes only after its prerequisites and
+every component pass; otherwise it names the unmet conditions and exits 3.
 
 The differential generates deterministic workloads (logical allocation IDs,
 seeded operation mixes, and a complete reachable-bin sweep), runs each one
@@ -16,16 +13,19 @@ through the pinned mimalloc v3.5.0 C default Theap and the Rust local engine
 in separate processes, and compares their normalized traces line by line.
 Both producers use the source non-abandoning local profile
 (``mi_option_page_full_retain == -1``) over one committed, pinned, zero
-in-place arena of the same size. The trace format is owned jointly by
-``m3_local_trace_x86_64.c`` and ``crabc-mimalloc/src/single_thread/local_trace.rs``.
+in-place arena of the same size. Both trace producers use one normalized
+line format.
 
 The persistent-owner differential drives the production default Theap
 through ``native_allocate_aligned(size, 16)``/``native_free`` on the initial
-owner and on one later owner, each in a fresh process
-(``crabc-mimalloc/tests/native_persistent_owner_local_trace.rs``), and
+owner and on one later owner, each in a fresh process, and
 compares it with the same C driver's ``initial``/``later`` modes over
 ``mi_malloc_aligned(size, 16)``/``mi_free``. Its workloads never fill a page,
 so the default abandoning Theap stays owner-local.
+
+The queue reorder differential builds the pinned C intrusive queue helpers
+and compares their six owner-local transitions with the Rust metadata queue.
+Its receipt retains both raw process outputs and the source-built C command.
 
 This is private native Linux/x86-64 allocator-engine evidence. It does not
 claim remote-free, abandonment, reclaim, thread-exit, aligned/zeroed/realloc,
@@ -72,11 +72,12 @@ REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-local-engine-latest.json"
 DIFFERENTIAL_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-local-trace-latest.json"
 OWNER_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-persistent-owner-trace-latest.json"
 MIRI_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-miri-latest.json"
+QUEUE_REORDER_REPORT_PATH = run.REPORT_ROOT / "x86_64/m3-queue-reorder-latest.json"
 ARTIFACT_ROOT = run.ARTIFACT_ROOT / "x86_64/m3-local-engine"
 
 
 class GateError(RuntimeError):
-    """The M3 runner could not execute or interpret its evidence."""
+    """The local-engine runner could not execute or interpret its evidence."""
 
 
 # ---------------------------------------------------------------------------
@@ -910,6 +911,120 @@ def run_differential(contract: Mapping[str, Any], *, offline: bool) -> dict[str,
     return report
 
 
+def run_queue_reorder_differential(
+    contract: Mapping[str, Any], *, offline: bool, rust_binary: Path
+) -> dict[str, Any]:
+    fixture = contract["queue_reorder_differential"]
+    paths: dict[str, Path] = {}
+    for key in ("c_fixture", "runner"):
+        value = fixture[key]
+        if not isinstance(value, str) or Path(value).is_absolute() or ".." in Path(value).parts:
+            raise GateError(f"queue reorder {key} must stay inside the checkout")
+        path = (ROOT / value).resolve()
+        if not path.is_relative_to(ROOT) or not path.is_file():
+            raise GateError(f"queue reorder {key} is missing from the checkout")
+        paths[key] = path
+    rust_test = fixture["rust_test"]
+    if not isinstance(rust_test, str) or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)+", rust_test) is None:
+        raise GateError("queue reorder Rust test is not a fully qualified test name")
+
+    ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
+    receipt_path = ARTIFACT_ROOT / "queue-reorder-runtime.json"
+    c_trace_path = ARTIFACT_ROOT / "queue-reorder.c.trace"
+    rust_log_path = ARTIFACT_ROOT / "queue-reorder.rust.log"
+    rust_trace_path = ARTIFACT_ROOT / "queue-reorder.rust.trace"
+    for stale in (c_trace_path, rust_log_path, rust_trace_path):
+        stale.unlink(missing_ok=True)
+    receipt: dict[str, Any] = {
+        "c_fixture_sha256": run.sha256_file(paths["c_fixture"]),
+        "runner_sha256": run.sha256_file(paths["runner"]),
+        "rust_test": rust_test,
+        "rust_source_sha256": run.sha256_file(ROOT / "crabc-mimalloc/src/page_queue.rs"),
+    }
+    unmet: list[str] = []
+    with run.temporary_directory(prefix="crabc-mimalloc-m3-queue-reorder-") as temporary_name:
+        work = Path(temporary_name)
+        pin = run.load_pin()
+        archive = run.fetch_archive(pin, offline)
+        source = run.safe_extract(archive, work / "source", pin["archive_root"])
+        receipt["archive_sha256"] = run.sha256_file(archive)
+        c_binary = work / "m3-queue-reorder-c"
+        build = run.command_record(
+            (
+                run.require_tool("musl-gcc"), "-std=c11", "-ffunction-sections",
+                "-fdata-sections", "-Wl,--gc-sections", "-DMI_SHARED_LIB",
+                "-DMI_SHARED_LIB_EXPORT", "-DMI_LIBC_MUSL=1",
+                *run.CONFIGURATION_PROFILES["release"],
+                "-I", str(source / "include"), "-I", str(source / "src"),
+                str(paths["c_fixture"]), "-o", str(c_binary),
+            ),
+            cwd=ROOT,
+            timeout_seconds=600,
+        )
+        receipt["c_build"] = build
+        if build["status"] != 0:
+            unmet.append(f"pinned C queue fixture build exited {build['status']}")
+        else:
+            c = run.command_record((str(c_binary),), cwd=ROOT, timeout_seconds=600)
+            rust = run.command_record(
+                (str(rust_binary), rust_test, "--exact", "--nocapture", "--test-threads=1"),
+                cwd=ROOT,
+                timeout_seconds=600,
+            )
+            receipt["c_runtime"] = c
+            receipt["rust_runtime"] = rust
+            c_trace_path.write_text(str(c["stdout"]), encoding="utf-8")
+            rust_log_path.write_text(str(rust["stdout"]) + "\n" + str(rust["stderr"]), encoding="utf-8")
+            c_lines = str(c["stdout"]).splitlines()
+            rust_lines = re.findall(r"M3Q [^\r\n]+", str(rust["stdout"]))
+            rust_trace_path.write_text("\n".join(rust_lines) + "\n", encoding="utf-8")
+            if c["status"] != 0:
+                unmet.append(f"pinned C queue fixture exited {c['status']}")
+            if rust["status"] != 0 or run.parse_rust_test_count(str(rust["stdout"]) + "\n" + str(rust["stderr"])) != 1:
+                unmet.append("Rust queue fixture did not complete exactly one passing test")
+            if c_lines != rust_lines:
+                unmet.append("pinned C and Rust queue traces differ")
+            expected = (
+                ("start", "ABC", ""),
+                ("first-full", "BC", "A"),
+                ("middle-full", "C", "AB"),
+                ("full-front", "C", "BA"),
+                ("second-position", "CB", "A"),
+                ("full-return", "CBA", ""),
+            )
+            if len(c_lines) != len(expected):
+                unmet.append("pinned C queue trace did not contain six transitions")
+            else:
+                for line, (step, regular, full) in zip(c_lines, expected):
+                    match = re.fullmatch(r"M3Q ([a-z-]+) regular=([ABC]*) full=([ABC]*) bytes=(\d+) pages=(\d+)", line)
+                    if match is None:
+                        unmet.append(f"malformed pinned C queue transition: {line}")
+                        continue
+                    observed_step, observed_regular, observed_full, bytes_text, pages_text = match.groups()
+                    full_bytes = sum({"A": 128, "B": 192, "C": 256}[page] for page in observed_full)
+                    if (
+                        (observed_step, observed_regular, observed_full) != (step, regular, full)
+                        or sorted(observed_regular + observed_full) != ["A", "B", "C"]
+                        or int(bytes_text) != full_bytes
+                        or int(pages_text) != 3
+                    ):
+                        unmet.append(f"unexpected pinned C queue transition: {line}")
+
+    run.write_json(receipt_path, receipt)
+    return {
+        "archive_sha256": receipt.get("archive_sha256"),
+        "c_fixture_sha256": receipt["c_fixture_sha256"],
+        "c_trace_sha256": run.sha256_file(c_trace_path) if c_trace_path.is_file() else None,
+        "raw_runtime_receipt": str(receipt_path),
+        "runner_sha256": receipt["runner_sha256"],
+        "rust_source_sha256": receipt["rust_source_sha256"],
+        "rust_test": rust_test,
+        "rust_trace_sha256": run.sha256_file(rust_trace_path) if rust_trace_path.is_file() else None,
+        "status": "passed" if not unmet else "failed",
+        "unmet": unmet,
+    }
+
+
 def owner_rust_test_binary(contract: Mapping[str, Any]) -> Path:
     rust = contract["persistent_owner_profile"]["rust_driver"]
     command = [
@@ -1214,6 +1329,11 @@ def prerequisite_status(contract: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def evaluate_gate(contract: Mapping[str, Any], checks: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    if not any(
+        component["id"] == "page-queues" and "queue-reorder-differential" in component["checks"]
+        for component in contract["components"]
+    ):
+        raise GateError("page queues must require the C/Rust reorder differential")
     components: list[dict[str, Any]] = []
     for component in contract["components"]:
         unmet: list[str] = []
@@ -1275,11 +1395,26 @@ def main(arguments: Sequence[str] | None = None) -> int:
         action="store_true",
         help="run only the Miri component (development; no gate report)",
     )
+    parser.add_argument(
+        "--queue-reorder-only",
+        action="store_true",
+        help="run only the pinned C/Rust page-queue reorder differential",
+    )
     options = parser.parse_args(arguments)
     try:
         contract = load_contract()
         provenance = run.require_native_x86_64()
         lockfile = run.sha256_file(LOCKFILE)
+        if options.queue_reorder_only:
+            queue = run_queue_reorder_differential(
+                contract, offline=options.offline, rust_binary=rust_test_binary()
+            )
+            run.write_json(QUEUE_REORDER_REPORT_PATH, {"queue_reorder_differential": queue, "provenance": provenance})
+            print(QUEUE_REORDER_REPORT_PATH)
+            if queue["status"] != "passed":
+                print("\n".join(["M3 queue reorder differential failed:", *(f"  - {item}" for item in queue["unmet"])]), file=sys.stderr)
+                return 1
+            return 0
         if options.miri_only:
             miri = run_miri(contract)
             run.write_json(MIRI_REPORT_PATH, {"miri": miri, "provenance": provenance})
@@ -1305,11 +1440,15 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 print("\n".join(["M3 local trace differential failed:", *(f"  - {item}" for item in differential["unmet"])]), file=sys.stderr)
                 return 1
             return 0
+        rust_binary = rust_test_binary()
         checks: dict[str, Any] = {
             "prerequisites": prerequisite_status(contract),
             "local-trace-differential": differential,
+            "queue-reorder-differential": run_queue_reorder_differential(
+                contract, offline=options.offline, rust_binary=rust_binary
+            ),
             "persistent-owner-trace-differential": run_owner_differential(contract, offline=options.offline),
-            "rust-unit-batch": run_unit_batch(contract, rust_test_binary()),
+            "rust-unit-batch": run_unit_batch(contract, rust_binary),
             "miri": run_miri(contract),
         }
         if run.sha256_file(LOCKFILE) != lockfile:
