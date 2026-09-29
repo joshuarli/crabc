@@ -16,7 +16,7 @@
 
 use core::{cell::Cell, ffi::{c_int, c_void}, marker::PhantomData, mem::MaybeUninit, ptr};
 use crabc_core::{Errno, resolver::{ExchangeConfig, ExchangeError, NameServer}};
-use super::{pthread_cancel, raw_syscall};
+use super::{errno, pthread_cancel, raw_syscall};
 
 const DISABLE: c_int = 1;
 const MASKED: c_int = 2;
@@ -119,8 +119,8 @@ impl BatchReceipt {
 pub(super) struct BatchOutcome {
     pub result: Result<BatchReceipt, ExchangeError>,
     /// Last raw or cancellation-point errno observed by the source scheduler.
-    /// Raw x86 syscalls do not publish C errno themselves, so selected C
-    /// callers restore the same observable residue after the batch returns.
+    /// Failed syscalls publish C errno immediately for cancellation cleanup;
+    /// normal callers use this residue after the batch returns as well.
     pub last_errno: Option<c_int>,
     pub masked_errno: Option<c_int>,
 }
@@ -262,6 +262,10 @@ impl Batch<'_> {
         if result < 0 {
             let error = Errno::from_raw((-result) as c_int).unwrap_or(Errno::IO);
             self.last_errno = Some(error);
+            // C syscall wrappers publish errno before the next cancellation
+            // point. A canceled TCP receive never returns to publish the
+            // preceding nonblocking connect's EINPROGRESS from BatchOutcome.
+            unsafe { errno::set_errno(error.raw()); }
             Err(error)
         } else { Ok(result as usize) }
     }

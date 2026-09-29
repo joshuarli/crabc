@@ -653,9 +653,13 @@ static_archive_member! { res_init_source {
 #[inline(never)]
 unsafe fn initialize_state() {
     unsafe {
+        // Resolver configuration does not publish a lookup result. Preserve
+        // the caller's status across the worker record reset, including when
+        // a later cancellation retires the first DNS wait.
+        let prior_h_errno = current_h_errno();
         reset_state();
         parse_resolv_conf();
-        set_h_errno(0);
+        set_h_errno(prior_h_errno);
     }
 }
 
@@ -893,7 +897,9 @@ static_archive_member! { res_send_source {
         let answer = unsafe { core::slice::from_raw_parts_mut(answer, answer_length as usize) };
         let query_id = u16::from_be_bytes([query[0], query[1]]);
         #[cfg(crabc_x86_owned_runtime)]
-        let (result, masked_errno) = {
+        let prior_errno = unsafe { errno::get_errno() };
+        #[cfg(crabc_x86_owned_runtime)]
+        let (result, observed_errno) = {
             // musl's `res_send` receives into 512 local bytes for a shorter caller
             // range, copies only that range, and still returns the full reply
             // length. The selected batch always sees its required answer capacity.
@@ -903,31 +909,39 @@ static_archive_member! { res_send_source {
             let batch_config = crate::x86_64_static_c_abi::owned_resolver_batch::CResolverBatchConfig::from_c_resolver(&config);
             let outcome = unsafe { crate::x86_64_static_c_abi::owned_resolver_batch::exchange(&batch_config, crate::x86_64_static_c_abi::owned_resolver_batch::BatchRequests::one(request)) };
             let result = outcome.result.and_then(|receipt| receipt.length(0).filter(|length| *length != 0)
-                .ok_or(resolver::ExchangeError::Transport(crabc_core::Errno::TIMEDOUT)))
-                .map_err(|error| match error {
-                    resolver::ExchangeError::Setup(errno) | resolver::ExchangeError::Transport(errno) => errno,
-                });
+                .ok_or(resolver::ExchangeError::Transport(crabc_core::Errno::TIMEDOUT)));
+            let observed_errno = outcome.last_errno.or_else(|| match &result {
+                Err(resolver::ExchangeError::Setup(error)) => Some(error.raw()),
+                _ => None,
+            });
+            let result = result.map_err(|error| match error {
+                resolver::ExchangeError::Setup(errno) | resolver::ExchangeError::Transport(errno) => errno,
+            });
             if let Ok(&length) = result.as_ref() {
                 if answer.len() < short_reply.len() {
                     let copied = answer.len().min(length);
                     answer[..copied].copy_from_slice(&short_reply[..copied]);
                 }
             }
-            (result, outcome.last_errno)
+            (result, observed_errno)
         };
         #[cfg(not(crabc_x86_owned_runtime))]
-        let (result, masked_errno) = (resolver::exchange(&config, query, query_id, answer), None::<c_int>);
+        let (result, observed_errno) = (resolver::exchange(&config, query, query_id, answer), None::<c_int>);
         let result = match result {
             Ok(length) => length as c_int,
             Err(error) => {
+                #[cfg(not(crabc_x86_owned_runtime))]
                 unsafe { resolver_error(error) };
+                #[cfg(crabc_x86_owned_runtime)]
+                let _ = error;
                 -1
             }
         };
-        // Raw source syscalls do not publish errno themselves at this Rust ABI
-        // boundary; preserve the batch's actual final syscall residue after any
-        // synthetic resolver status mapping.
-        if let Some(error) = masked_errno { unsafe { set_errno(error); } }
+        // The batch publishes failed syscall errno before cancellation can
+        // retire the caller. A silent timeout leaves the incoming errno and
+        // h_errno intact; res_query applies TRY_AGAIN to an absent reply.
+        #[cfg(crabc_x86_owned_runtime)]
+        unsafe { set_errno(observed_errno.unwrap_or(prior_errno)); }
         result
     }
 }}

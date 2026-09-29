@@ -135,8 +135,98 @@ static void witness_blocked_wait(void) {
     }
     CHECK(0);
 }
+
+static int network_success, network_errno, network_h_errno, network_cleanup_errno;
+static int network_cleanup_h_errno, network_returned, network_state, network_cleanup;
+static int network_baseline, network_extra_fd;
+static void network_cleanup_handler(void *unused) {
+    (void)unused;
+    network_cleanup++;
+    network_cleanup_errno=errno;
+    network_cleanup_h_errno=h_errno;
+    CHECK(descriptor_count()==network_baseline+network_extra_fd);
+}
+static void *network_worker(void *unused) {
+    (void)unused;
+    atomic_store(&worker_tid,(int)syscall(SYS_gettid));
+    pthread_cleanup_push(network_cleanup_handler,0);
+    errno=157;
+    h_errno=37;
+    query();
+    network_success=successful;
+    network_errno=errno;
+    network_h_errno=h_errno;
+    CHECK(!pthread_setcancelstate(PTHREAD_CANCEL_DISABLE,&network_state));
+    network_returned=1;
+    pthread_cleanup_pop(0);
+    return (void *)42;
+}
+static int network_server(unsigned char last) {
+    int fd=socket(AF_INET,SOCK_DGRAM,0);CHECK(fd>=0);
+    struct timeval timeout={.tv_sec=4};
+    CHECK(!setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof timeout));
+    struct sockaddr_in address={.sin_family=AF_INET,.sin_port=htons(53)};
+    unsigned char *bytes=(unsigned char *)&address.sin_addr;
+    bytes[0]=127;bytes[1]=0;bytes[2]=0;bytes[3]=last;
+    CHECK(!bind(fd,(void *)&address,sizeof address));
+    return fd;
+}
+static int network_main(const char *mode) {
+    CHECK(!strcmp(api,"query") || !strcmp(api,"send") || !strcmp(api,"classic"));
+    int config=open("/etc/resolv.conf",O_WRONLY|O_CREAT|O_TRUNC,0600);CHECK(config>=0);
+    const char *single="nameserver 127.0.0.1\noptions timeout:1 attempts:2\n";
+    const char *failover="nameserver 127.0.0.2\nnameserver 127.0.0.1\noptions timeout:1 attempts:1\n";
+    const char *setting=!strcmp(mode,"failover")?failover:single;
+    CHECK(write(config,setting,strlen(setting))==(ssize_t)strlen(setting));CHECK(!close(config));
+    int hosts=open("/etc/hosts",O_WRONLY|O_CREAT|O_TRUNC,0600);CHECK(hosts>=0);CHECK(!close(hosts));
+    int udp=network_server(1),first=-1,tcp=-1,accepted=-1;
+    if(!strcmp(mode,"failover")) first=network_server(2);
+    if(!strcmp(mode,"tcp-wait")) tcp=server(SOCK_STREAM);
+    network_baseline=descriptor_count();
+    int parent_h_errno=h_errno;
+    pthread_t thread;CHECK(!pthread_create(&thread,0,network_worker,0));
+    unsigned char packet[512];struct sockaddr_in peer;socklen_t size=sizeof peer;
+    ssize_t n=recvfrom(udp,packet,sizeof packet,0,(void *)&peer,&size);CHECK(n>=12);
+    if(!strcmp(mode,"udp-wait")) {
+        witness_blocked_wait();CHECK(!pthread_cancel(thread));
+    } else if(!strcmp(mode,"tcp-wait")) {
+        packet[2]|=0x82;packet[3]|=0x80;
+        CHECK(sendto(udp,packet,(size_t)n,0,(void *)&peer,size)==n);
+        accepted=accept(tcp,0,0);CHECK(accepted>=0);
+        network_extra_fd=1;
+        unsigned char length[2];read_exact(accepted,length,2);
+        unsigned amount=((unsigned)length[0]<<8)|length[1];CHECK(amount<=sizeof packet);
+        read_exact(accepted,packet,amount);
+        witness_blocked_wait();CHECK(!pthread_cancel(thread));
+    } else if(!strcmp(mode,"retry-timeout")) {
+        size=sizeof peer;n=recvfrom(udp,packet,sizeof packet,0,(void *)&peer,&size);CHECK(n>=12);
+    } else if(!strcmp(mode,"failover")) {
+        unsigned char dropped[512];struct sockaddr_in ignored;socklen_t ignored_size=sizeof ignored;
+        CHECK(recvfrom(first,dropped,sizeof dropped,0,(void *)&ignored,&ignored_size)>=12);
+        size_t length=dns_answer(packet,(size_t)n);
+        CHECK(sendto(udp,packet,length,0,(void *)&peer,size)==(ssize_t)length);
+    } else CHECK(0);
+    void *joined=0;CHECK(!pthread_join(thread,&joined));
+    int parent_h_errno_after=h_errno;
+    int leaked=descriptor_count()-network_baseline-network_extra_fd;
+    printf("canceled=%d returned=%d cleanup=%d leaked=%d success=%d state=%d errno=%d h_errno=%d cleanup_errno=%d cleanup_h_errno=%d parent_h_errno_same=%d\n",
+           joined==PTHREAD_CANCELED,network_returned,network_cleanup,leaked,network_success,
+           network_state,network_errno,network_h_errno,network_cleanup_errno,
+           network_cleanup_h_errno,parent_h_errno_after==parent_h_errno);
+    CHECK(!leaked && parent_h_errno_after==parent_h_errno);
+    if(!strcmp(mode,"udp-wait") || !strcmp(mode,"tcp-wait"))
+        CHECK(joined==PTHREAD_CANCELED && !network_returned && network_cleanup==1);
+    else CHECK(joined==(void *)42 && network_returned && !network_cleanup &&
+               network_success==!strcmp(mode,"failover"));
+    if(accepted>=0) CHECK(!close(accepted));
+    if(tcp>=0) CHECK(!close(tcp));
+    if(first>=0) CHECK(!close(first));
+    CHECK(!close(udp));
+    return 0;
+}
 int main(int argc,char **argv) {
     CHECK(argc==3);scenario=argv[1];api=argv[2];
+    if(!strncmp(scenario,"network-",8)) return network_main(scenario+8);
     uses_server=strstr(scenario,"udp")!=0 || strstr(scenario,"tcp")!=0;
     tcp_case=strstr(scenario,"tcp")!=0;
     normal_case=!strncmp(scenario,"normal-",7) || !strcmp(scenario,"retry-udp");
