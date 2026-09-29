@@ -43,6 +43,17 @@ static int same_text(const char *left, const char *right)
     }
 }
 
+/* Write the observed mutated bytes without selecting a libc I/O provider. */
+static int trace_bytes(const void *bytes, unsigned long count)
+{
+    long written;
+
+    __asm__ volatile("syscall" : "=a"(written)
+        : "0"(1L), "D"(1L), "S"(bytes), "d"(count)
+        : "rcx", "r11", "memory");
+    return written == (long)count;
+}
+
 static int check_dirname(dirname_signature function)
 {
     static const struct {
@@ -113,6 +124,9 @@ static int check_strtok_r(strtok_r_signature function)
     char whole[] = "whole";
     char high[] = { 'a', (char)0xff, 'b', '\0' };
     char separator[] = { (char)0xff, '\0' };
+    char empty[] = "";
+    char separators_only[] = ";;;";
+    char changing[] = "a,b:c";
     char *left_state = (char *)1;
     char *right_state = (char *)1;
     char *state = 0;
@@ -138,7 +152,34 @@ static int check_strtok_r(strtok_r_signature function)
     token = function(high, separator, &state);
     if (token != high || high[1] != 0 || state != high + 2)
         return 6;
-    return function(0, separator, &state) == high + 2 && state == 0 ? 0 : 7;
+    if (function(0, separator, &state) != high + 2 || state != 0 ||
+        function(0, separator, &state) != 0 || state != 0)
+        return 7;
+    state = (char *)1;
+    if (function(empty, ",", &state) != 0 || state != 0 ||
+        function(0, ",", &state) != 0 || state != 0)
+        return 9;
+    state = (char *)1;
+    if (function(separators_only, ";", &state) != 0 || state != 0 ||
+        function(0, ";", &state) != 0 || state != 0)
+        return 10;
+    token = function(changing, ",", &state);
+    if (token != changing || !same_text(token, "a") || state != changing + 2)
+        return 11;
+    token = function(0, ":", &state);
+    if (token != changing + 2 || !same_text(token, "b") || state != changing + 4)
+        return 12;
+    token = function(0, ",", &state);
+    if (token != changing + 4 || !same_text(token, "c") || state != 0 ||
+        function(0, ",", &state) != 0)
+        return 13;
+    if (!trace_bytes(left, sizeof(left)) || !trace_bytes(right, sizeof(right)) ||
+        !trace_bytes(whole, sizeof(whole)) || !trace_bytes(high, sizeof(high)) ||
+        !trace_bytes(empty, sizeof(empty)) ||
+        !trace_bytes(separators_only, sizeof(separators_only)) ||
+        !trace_bytes(changing, sizeof(changing)))
+        return 14;
+    return 0;
 }
 
 int crabc_x86_64_stateful_byte_strings_probe(void)

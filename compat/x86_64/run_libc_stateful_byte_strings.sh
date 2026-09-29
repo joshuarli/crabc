@@ -34,7 +34,7 @@ assert_selected_c_abi_surface() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mapfile mkdir nm objdump readelf rustup sort; do require_tool "$tool"; done
+for tool in ar awk cargo chmod cmp diff grep mapfile mkdir nm objdump readelf rustup sha256sum sort; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 [ -f "$AARCH64_STATIC_ABI" ] || fail "missing AArch64 musl static ABI oracle"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
@@ -43,12 +43,16 @@ grep -Fqx $'dirname\tdirname.lo\tT\tGLOBAL\t0\t98' "$AARCH64_STATIC_ABI" || fail
 grep -Fqx $'strcasestr\tstrcasestr.lo\tT\tGLOBAL\t0\t5c' "$AARCH64_STATIC_ABI" || fail "AArch64 musl ABI oracle lost strcasestr ownership"
 grep -Fqx $'strtok_r\tstrtok_r.lo\tT\tGLOBAL\t0\t80' "$AARCH64_STATIC_ABI" || fail "AArch64 musl ABI oracle lost strtok_r ownership"
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-stateful-byte-strings.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/evidence/libc-stateful-byte-strings"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/evidence/libc-stateful-byte-strings/run.XXXXXX")"
+chmod 755 "$work_dir"
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 selected_archive="$work_dir/libcrabc-stateful-byte-strings.a"
 reference="$work_dir/musl-stateful-byte-strings-reference"
+reference_map="$work_dir/reference.map"
+reference_headers="$work_dir/reference-program-headers"
+reference_dynamic="$work_dir/reference-dynamic"
 candidate="$work_dir/crabc-static-stateful-byte-strings"
 musl_archive="$("$ORACLE_CC" -print-file-name=libc.a)"
 header_trace="$work_dir/header-trace"
@@ -83,8 +87,12 @@ cmp -s <(printf '%s\n' strcspn strspn) "$work_dir/strtok-r-undefined" || fail "s
 
 "$ORACLE_CC" -std=c11 -fno-builtin -fno-stack-protector -I"$ROOT_DIR/include" -E -H "$ROOT_DIR/compat/x86_64/libc_stateful_byte_strings_probe.c" >/dev/null 2>"$header_trace"
 for header in libgen.h string.h features.h bits/alltypes.h errno.h; do grep -Fq "$ROOT_DIR/include/$header" "$header_trace" || fail "fixture did not use project <$header>"; done
-"$ORACLE_CC" -std=c11 -fno-builtin -fno-stack-protector -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/libc_stateful_byte_strings_probe.c" -o "$reference"
-"$reference" || fail "pinned-musl stateful byte-string fixture failed"
+"$ORACLE_CC" -std=c11 -static -fno-pie -no-pie -fno-builtin -fno-stack-protector -I"$ROOT_DIR/include" -Wl,-Map,"$reference_map" "$ROOT_DIR/compat/x86_64/libc_stateful_byte_strings_probe.c" -o "$reference"
+readelf --program-headers --wide "$reference" >"$reference_headers"
+readelf --dynamic --wide "$reference" >"$reference_dynamic" || true
+if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$reference_headers" "$reference_dynamic"; then fail "pinned-musl reference is not static"; fi
+for source_member in dirname.lo strcasestr.lo strtok_r.lo; do grep -Fq "$source_member" "$reference_map" || fail "pinned-musl reference did not link $source_member"; done
+"$reference" >"$work_dir/reference.stdout" 2>"$work_dir/reference.stderr" || fail "pinned-musl stateful byte-string fixture failed; evidence: $work_dir"
 
 cd "$ROOT_DIR"
 build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
@@ -123,5 +131,10 @@ if grep -Eq '[[:space:]]\.plt([[:space:]]|$)' "$candidate_sections"; then fail "
 if grep -Eq '(/opt/musl-|libc\.a\(|glibc|ld-linux|libc\.so\.6)' "$link_map" "$candidate_headers" "$candidate_dynamic"; then fail "candidate selected an ambient libc runtime"; fi
 for unselected in basename __xpg_basename strtok strsep strcasecmp strncasecmp strlen strspn strcspn malloc calloc realloc free memcpy memmove memset; do if grep -Eq "[[:space:]]$unselected$" "$candidate_symbols"; then fail "candidate accidentally selects $unselected"; fi; done
 if grep -Eq 'crabc_core|mimalloc|sha_crypt' "$candidate_symbols" "$candidate_disassembly"; then fail "candidate selects an unowned runtime dependency"; fi
-"$candidate" || fail "freestanding stateful byte-string fixture failed"
+"$candidate" >"$work_dir/candidate.stdout" 2>"$work_dir/candidate.stderr" || fail "freestanding stateful byte-string fixture failed; evidence: $work_dir"
+cmp -s "$work_dir/reference.stdout" "$work_dir/candidate.stdout" || fail "pinned-musl and crabc stdout differ; evidence: $work_dir"
+cmp -s "$work_dir/reference.stderr" "$work_dir/candidate.stderr" || fail "pinned-musl and crabc stderr differ; evidence: $work_dir"
+[ -s "$work_dir/reference.stdout" ] || fail "stateful byte-string mutation trace is empty"
+( cd "$work_dir"; sha256sum musl-stateful-byte-strings-reference crabc-static-stateful-byte-strings reference.stdout candidate.stdout reference.stderr candidate.stderr ) >"$work_dir/sha256sums"
+printf 'stateful byte-string evidence: %s\n' "$work_dir"
 printf 'x86 static libc stateful byte strings: PASS\n'
