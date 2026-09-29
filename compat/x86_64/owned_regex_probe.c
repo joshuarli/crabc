@@ -419,9 +419,8 @@ static void corpus_expression(struct corpus_state *state,
  * expression; unbounded (and especially nested) repetition then makes both
  * musl and the port exponential, which would measure the fixture timeout
  * instead of semantics.  A backreference names only an already closed group:
- * POSIX defines `\n` for a preceding subexpression, and musl's handling of a
- * reference into a still-open group is the documented intentional difference
- * in docs/evidence/x86-owned-regex.md. */
+ * POSIX defines `\n` for a preceding subexpression, while a reference into
+ * a still-open group can make musl compare outside the subject or loop. */
 static void corpus_piece(struct corpus_state *state,
     struct corpus_builder *builder, int depth)
 {
@@ -783,9 +782,8 @@ static void check_locale_edges(void)
  * and valid C.UTF-8 subject, a drifted `\1` range then extends past the
  * terminator; musl compares it, advances beyond the caller's string, and
  * faults when that string ends at an unmapped page.  The owned port keeps the
- * drift but treats a range outside the subject as a failed backreference
- * (the intentional difference in docs/evidence/x86-owned-regex.md), which
- * yields musl's own ordinary-memory answer here.  The runner requires the
+ * drift but treats a range outside the subject as a failed backreference,
+ * which yields musl's own ordinary-memory answer here.  The runner requires the
  * pinned musl child to fault and every owned entry to print that answer, so
  * this mode is kept out of the byte-compared transcript.
  */
@@ -849,6 +847,12 @@ int main(int argc, char **argv)
      * published match tags are the winner's, not the displaced path's. */
     static const regmatch_t final_winner[] = {{0, 2}, {0, 2}, {2, 2}};
     static const regmatch_t alternation_winner[] = {{0, 3}, {0, 2}, {2, 3}};
+    /* Repeated alternatives can end at the same byte while assigning a
+     * different last iteration to the inner capture. The outer capture and
+     * final match must retain the leftmost-longest tag ordering. */
+    static const regmatch_t repeated_alternation[] = {{0, 4}, {0, 3}, {2, 3}};
+    static const regmatch_t repeated_overlap[] = {{0, 4}, {0, 3}, {1, 3}};
+    static const regmatch_t repeated_utf8[] = {{0, 8}, {0, 6}, {2, 6}};
     /* An unknown escape reaches the ordinary literal parser, including its
      * REG_ICASE case pairing. */
     static const regmatch_t escaped_icase[] = {{1, 2}};
@@ -876,6 +880,13 @@ int main(int argc, char **argv)
         final_winner, 2);
     expect_match("ere-final-alternation-winner", "(x|xy)(z|yz)", REG_EXTENDED,
         "xyz", 3, alternation_winner, 2);
+    expect_match("ere-repeated-alternation-capture", "((a|ab)+)b", REG_EXTENDED,
+        "abab", 3, repeated_alternation, 2);
+    expect_match("ere-repeated-overlap-capture", "((a|aa)+)a", REG_EXTENDED,
+        "aaaa", 3, repeated_overlap, 2);
+    expect_match("ere-repeated-utf8-capture",
+        "((\303\251|\303\251\303\251)+)\303\251", REG_EXTENDED,
+        "\303\251\303\251\303\251\303\251", 3, repeated_utf8, 2);
     expect_match("bre-icase-escaped-literal", "\\A", REG_ICASE, "xa", 1,
         escaped_icase, 0);
     expect_match("ere-icase-escaped-literal", "\\A", REG_EXTENDED | REG_ICASE,
