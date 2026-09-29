@@ -194,13 +194,74 @@ static int robust_one_case(int kind, int shared)
     return 0;
 }
 
+static int robust_normal_recovery_case(int shared)
+{
+    struct timespec invalid = { .tv_sec = 0, .tv_nsec = -1 };
+    reset_state();
+    robust_kind = PTHREAD_MUTEX_NORMAL;
+    if (init_mutex(PTHREAD_MUTEX_NORMAL, 1, shared) ||
+        pthread_create(&worker, 0, dead_owner, 0) || pthread_join(worker, 0)) return 100;
+    errno = E2BIG;
+    if (pthread_mutex_trylock(&mutex) != EOWNERDEAD || errno != E2BIG ||
+        pthread_mutex_unlock(&mutex)) return 101;
+    if (pthread_mutex_trylock(&mutex) != ENOTRECOVERABLE ||
+        pthread_mutex_lock(&mutex) != ENOTRECOVERABLE ||
+        pthread_mutex_timedlock(&mutex, &invalid) != ENOTRECOVERABLE ||
+        errno != E2BIG || pthread_mutex_destroy(&mutex)) return 102;
+
+    if (init_mutex(PTHREAD_MUTEX_NORMAL, 1, shared) ||
+        pthread_create(&worker, 0, dead_owner, 0) || pthread_join(worker, 0)) return 103;
+    if (pthread_mutex_timedlock(&mutex, &invalid) != EOWNERDEAD ||
+        pthread_mutex_consistent(&mutex) || pthread_mutex_unlock(&mutex) ||
+        pthread_mutex_lock(&mutex) || pthread_mutex_unlock(&mutex) ||
+        errno != E2BIG || pthread_mutex_destroy(&mutex)) return 104;
+    return 0;
+}
+
+static int robust_shared_process_death_case(void)
+{
+    pthread_mutexattr_t attributes;
+    pthread_mutex_t *shared = mmap(0, sizeof(*shared), PROT_READ | PROT_WRITE,
+        MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    struct timespec invalid = { .tv_sec = 0, .tv_nsec = -1 };
+    if (shared == MAP_FAILED) return 105;
+    if (pthread_mutexattr_init(&attributes) ||
+        pthread_mutexattr_setrobust(&attributes, PTHREAD_MUTEX_ROBUST) ||
+        pthread_mutexattr_setpshared(&attributes, PTHREAD_PROCESS_SHARED) ||
+        pthread_mutex_init(shared, &attributes) ||
+        pthread_mutexattr_destroy(&attributes)) return 106;
+
+    for (int recovered = 0; recovered != 2; ++recovered) {
+        pid_t child = fork();
+        if (child < 0) return 107;
+        if (!child) _Exit(pthread_mutex_lock(shared) ? 108 : 0);
+        int status = 0;
+        if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
+            WEXITSTATUS(status)) return 109;
+        errno = E2BIG;
+        if (pthread_mutex_timedlock(shared, &invalid) != EOWNERDEAD ||
+            errno != E2BIG) return 110;
+        if (!recovered && pthread_mutex_consistent(shared)) return 111;
+        if (pthread_mutex_unlock(shared)) return 112;
+    }
+    if (pthread_mutex_trylock(shared) != ENOTRECOVERABLE ||
+        pthread_mutex_lock(shared) != ENOTRECOVERABLE ||
+        pthread_mutex_timedlock(shared, &invalid) != ENOTRECOVERABLE ||
+        errno != E2BIG || pthread_mutex_destroy(shared) ||
+        munmap(shared, sizeof(*shared))) return 113;
+    return 0;
+}
+
 static int robust_case(void)
 {
     if (robust_one_case(PTHREAD_MUTEX_RECURSIVE, 0) ||
         robust_one_case(PTHREAD_MUTEX_ERRORCHECK, 0) ||
         robust_one_case(PTHREAD_MUTEX_RECURSIVE, 1) ||
-        robust_one_case(PTHREAD_MUTEX_ERRORCHECK, 1)) return 47;
-    puts("pthread robust recursive/error-checking owner death and pre-consistent condition admission: PASS");
+        robust_one_case(PTHREAD_MUTEX_ERRORCHECK, 1) ||
+        robust_normal_recovery_case(0) ||
+        robust_normal_recovery_case(1) ||
+        robust_shared_process_death_case()) return 47;
+    puts("pthread robust normal/recursive/error-checking owner death, process sharing, recovery, and pre-consistent condition admission: PASS");
     return 0;
 }
 
