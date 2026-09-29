@@ -588,9 +588,11 @@ are not transferable passes for a different revision.
   and deterministic `MI_STAT=2` rows match pinned C; static teardown retains
   that count as pinned C does. Full raw output matched in one clean run; a
   later rerun differed only in elapsed and process system time.
-  A clean full M7 gate passes all 37 runnable rows, including 22 statistics
+  A clean full M7 gate passes all 38 runnable rows, including 23 statistics
   evidence rows, while eight required gates remain blocked by their named
-  missing profiles or producers. The focused differentials pass; the
+  missing profiles or producers. A failed regular-page extension commit,
+  fallback, same-page retry, and final frees match 48 pinned-C/Rust statistics
+  fields. The focused differentials pass; the
   source-built OS-large remote-free probe matches 35 statistics payload keys;
   its full 50-key stage trace now matches with source-accounted PageMap
   placement, including an opposite-placement control that charges the 64 KiB
