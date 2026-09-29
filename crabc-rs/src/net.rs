@@ -825,6 +825,15 @@ impl<'a> MsgIoSliceMut<'a> {
     }
 }
 
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy, Eq, PartialEq)]
+#[repr(u32)]
+enum MessagePayloadState {
+    Send = 0,
+    ReceiveCopied = 1,
+    ReceiveDiscarded = 2,
+}
+
 /// One private Linux LP64 `mmsghdr` record used by [`sendmmsg`] and
 /// [`recvmmsg`].
 ///
@@ -846,6 +855,12 @@ struct MMsgHeader {
     flags: u32,
     _flags_padding: u32,
     message_length: u32,
+    // Linux writes only the preceding 32-bit msg_len, leaving this final
+    // four-byte alignment slot untouched. Retain x86 send/receive direction and
+    // completed receive disposition here without changing the 64-byte kernel record stride or reported count.
+    #[cfg(target_arch = "x86_64")]
+    payload_state: MessagePayloadState,
+    #[cfg(target_arch = "aarch64")]
     _message_padding: u32,
 }
 
@@ -859,13 +874,18 @@ const _: () = assert!(core::mem::offset_of!(MMsgHeader, control) == 32);
 const _: () = assert!(core::mem::offset_of!(MMsgHeader, control_length) == 40);
 const _: () = assert!(core::mem::offset_of!(MMsgHeader, flags) == 48);
 const _: () = assert!(core::mem::offset_of!(MMsgHeader, message_length) == 56);
+#[cfg(target_arch = "x86_64")]
+const _: () = assert!(core::mem::offset_of!(MMsgHeader, payload_state) == 60);
 
 /// A borrowed Linux batched-message record.
 ///
 /// Construct records with [`Self::new_send`] or [`Self::new_recv`], then pass
 /// a mutable slice to [`sendmmsg`] or [`recvmmsg`]. The wrapper's lifetime
 /// marker keeps every nested iovec and byte buffer alive through the syscall;
-/// it does not expose the kernel record layout to callers.
+/// it does not expose the kernel record layout to callers. On x86, each
+/// constructor retains its direction privately: `sendmmsg` accepts only send
+/// records and `recvmmsg` accepts only receive records, rejecting the entire
+/// batch with [`crate::Errno::INVAL`] before kernel access on a mismatch.
 #[repr(transparent)]
 pub struct MMsgHdr<'a> {
     raw: MMsgHeader,
@@ -875,7 +895,8 @@ pub struct MMsgHdr<'a> {
 impl<'a> MMsgHdr<'a> {
     /// Builds one outgoing message with no destination address or ancillary
     /// data. `sendmmsg` preserves the kernel's per-record byte count, which is
-    /// available through [`Self::bytes`].
+    /// available through [`Self::bytes`]. On x86, passing this record to
+    /// `recvmmsg` returns [`crate::Errno::INVAL`] before any payload access.
     #[inline]
     pub fn new_send(iovecs: &'a [IoSlice<'a>]) -> Self {
         let pointer = if iovecs.is_empty() {
@@ -895,6 +916,9 @@ impl<'a> MMsgHdr<'a> {
                 flags: 0,
                 _flags_padding: 0,
                 message_length: 0,
+                #[cfg(target_arch = "x86_64")]
+                payload_state: MessagePayloadState::Send,
+                #[cfg(target_arch = "aarch64")]
                 _message_padding: 0,
             },
             _lifetime: PhantomData,
@@ -903,7 +927,8 @@ impl<'a> MMsgHdr<'a> {
 
     /// Builds one incoming message with no source-address or ancillary-data
     /// output. Only the prefixes described by [`Self::initialized_segments`]
-    /// become readable after a successful receive.
+    /// become readable after a successful receive. On x86, passing this
+    /// record to `sendmmsg` returns [`crate::Errno::INVAL`] before payload access.
     #[inline]
     pub fn new_recv(buffers: &'a mut [MsgIoSliceMut<'a>]) -> Self {
         let pointer = if buffers.is_empty() {
@@ -923,6 +948,9 @@ impl<'a> MMsgHdr<'a> {
                 flags: 0,
                 _flags_padding: 0,
                 message_length: 0,
+                #[cfg(target_arch = "x86_64")]
+                payload_state: MessagePayloadState::ReceiveCopied,
+                #[cfg(target_arch = "aarch64")]
                 _message_padding: 0,
             },
             _lifetime: PhantomData,
@@ -933,7 +961,8 @@ impl<'a> MMsgHdr<'a> {
     ///
     /// For an outgoing record this is the number sent. For an incoming
     /// datagram with `RecvFlags::TRUNC`, it may exceed the initialized buffer
-    /// capacity, matching Linux's `MSG_TRUNC` contract.
+    /// capacity, matching Linux's `MSG_TRUNC` contract. For a TCP discard
+    /// receive, the count may be positive while no payload bytes were written.
     #[inline]
     pub const fn bytes(&self) -> usize {
         self.raw.message_length as usize
@@ -955,7 +984,8 @@ impl<'a> MMsgHdr<'a> {
     /// retains the exclusive buffer borrow through the record lifetime, so
     /// reconstructing the slice from the private iovec pointer cannot alias a
     /// caller-visible mutable slice. A receive that reports `MSG_TRUNC` still
-    /// exposes no bytes beyond caller storage.
+    /// exposes no bytes beyond caller storage. On x86, a completed TCP
+    /// discard receive exposes empty prefixes while retaining its byte count.
     #[inline]
     pub unsafe fn initialized_segments<'buffers>(
         &'buffers mut self,
@@ -984,9 +1014,16 @@ impl<'a> MMsgHdr<'a> {
         for buffer in buffers.iter() {
             capacity = capacity.saturating_add(buffer.iovec.iov_len);
         }
+        let initialized = min(capacity, self.bytes());
+        #[cfg(target_arch = "x86_64")]
+        let initialized = if self.raw.payload_state == MessagePayloadState::ReceiveDiscarded {
+            0
+        } else {
+            initialized
+        };
         InitializedMsgSegments {
             buffers: buffers.iter_mut(),
-            remaining: min(capacity, self.bytes()),
+            remaining: initialized,
         }
     }
 }
@@ -997,6 +1034,7 @@ impl<'a> MMsgHdr<'a> {
 /// vectored capacity when [`RecvFlags::TRUNC`] is requested. The iterator from
 /// [`initialized_segments`](Self::initialized_segments) yields only the
 /// prefixes actually initialized in caller storage, in segment order.
+/// On x86, TCP `TRUNC` reports discarded bytes with empty initialized prefixes.
 pub struct RecvMsg<'a> {
     buffers: &'a mut [MsgIoSliceMut<'a>],
     /// Linux's message byte count before any datagram truncation.
@@ -1071,6 +1109,23 @@ fn checked_socket_flags(flags: SocketFlags) -> Result<u32> {
     SocketFlags::from_bits(flags.bits())
         .map(|flags| flags.bits())
         .ok_or(crate::Errno::INVAL)
+}
+
+// TCP's ordinary receive queue treats MSG_TRUNC as a discard request, while
+// datagrams and Unix streams copy bytes. The error queue is a separate copying
+// path. Query immutable socket identity only for a possible discard request;
+// ordinary receives retain their single receive syscall.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn receive_payload_discarded(fd: crate::BorrowedFd<'_>, flags: RecvFlags) -> Result<bool> {
+    const IPPROTO_TCP: u32 = 6;
+    if !flags.contains(RecvFlags::TRUNC) || flags.contains(RecvFlags::ERRQUEUE) {
+        return Ok(false);
+    }
+    if sockopt::socket_type(fd)? != SocketType::STREAM {
+        return Ok(false);
+    }
+    Ok(sockopt::socket_protocol(fd)?.is_some_and(|protocol| protocol.as_raw().get() == IPPROTO_TCP))
 }
 
 /// Direction to disable with [`shutdown`].
@@ -1585,8 +1640,15 @@ pub fn sendmsg<Fd: AsFd>(fd: Fd, buffers: &[IoSlice<'_>], flags: SendFlags) -> R
 /// an all-or-nothing status; every completed record's byte count remains
 /// available through [`MMsgHdr::bytes`]. Thus a short count is a successful
 /// partial batch and is never retried or converted through C `errno`.
+/// On x86, every record must come from [`MMsgHdr::new_send`]. A receive
+/// record anywhere in the batch returns [`crate::Errno::INVAL`] before the
+/// syscall, leaving all payloads and per-record outputs unchanged.
 #[inline]
 pub fn sendmmsg<Fd: AsFd>(fd: Fd, messages: &mut [MMsgHdr<'_>], flags: SendFlags) -> Result<usize> {
+    #[cfg(target_arch = "x86_64")]
+    if messages.iter().any(|message| message.raw.payload_state != MessagePayloadState::Send) {
+        return Err(crate::Errno::INVAL);
+    }
     let count = u32::try_from(messages.len()).map_err(|_| crate::Errno::OVERFLOW)?;
     let records = if messages.is_empty() {
         core::ptr::null_mut()
@@ -1632,7 +1694,10 @@ pub fn sendto<Fd: AsFd>(
 /// Receives bytes from a connected socket.
 ///
 /// The second result is the kernel byte count before any `MSG_TRUNC`
-/// truncation; its first result follows the initialized-buffer contract.
+/// truncation; its first result follows the initialized-buffer contract. On
+/// x86, TCP `TRUNC` discards data instead of copying it, so its initialized
+/// result is empty even when the count is positive. Datagram truncation keeps
+/// the copied prefix. Ordinary receives perform no socket-identity query.
 #[inline]
 #[allow(private_interfaces)]
 pub fn recv<Fd: AsFd, Buf: Buffer<u8>>(
@@ -1642,6 +1707,8 @@ pub fn recv<Fd: AsFd, Buf: Buffer<u8>>(
 ) -> Result<(Buf::Output, usize)> {
     let fd = fd.as_fd();
     let (pointer, length) = buffer.parts_mut();
+    #[cfg(target_arch = "x86_64")]
+    let discarded = receive_payload_discarded(fd, flags)?;
     // SAFETY: `Buffer` supplies writable storage for exactly `length` bytes;
     // null source-address pointers select the connected-socket form.
     let received = unsafe {
@@ -1654,9 +1721,12 @@ pub fn recv<Fd: AsFd, Buf: Buffer<u8>>(
             core::ptr::null_mut(),
         )?
     };
-    // SAFETY: At most `length` bytes were initialized even when `MSG_TRUNC`
-    // reports a longer datagram length.
-    unsafe { Ok((buffer.assume_init(min(length, received)), received)) }
+    let initialized = min(length, received);
+    #[cfg(target_arch = "x86_64")]
+    let initialized = if discarded { 0 } else { initialized };
+    // SAFETY: The prefix is bounded by storage and excludes TCP's discarded
+    // bytes, even when the kernel reports a positive or longer message count.
+    unsafe { Ok((buffer.assume_init(initialized), received)) }
 }
 
 /// Receives one ordinary vectored message through the direct Linux `recvmsg`
@@ -1669,7 +1739,8 @@ pub fn recv<Fd: AsFd, Buf: Buffer<u8>>(
 /// kernel actually initialized. No address or ancillary-control storage is
 /// supplied by this bounded form. `MSG_TRUNC` therefore preserves a full
 /// datagram count even when the returned initialized prefixes fill less than
-/// the message.
+/// the message. On x86, TCP `TRUNC` retains its discarded-byte count while
+/// exposing empty initialized segments; ordinary receives do no identity query.
 #[inline]
 pub fn recvmsg<'a, Fd: AsFd>(
     fd: Fd,
@@ -1677,6 +1748,8 @@ pub fn recvmsg<'a, Fd: AsFd>(
     flags: RecvFlags,
 ) -> Result<RecvMsg<'a>> {
     let fd = fd.as_fd();
+    #[cfg(target_arch = "x86_64")]
+    let discarded = receive_payload_discarded(fd, flags)?;
     let mut capacity = 0usize;
     for buffer in buffers.iter() {
         capacity = capacity
@@ -1694,10 +1767,13 @@ pub fn recvmsg<'a, Fd: AsFd>(
     let (bytes, message_flags) = unsafe {
         crabc_core::net::recvmsg_raw(fd.as_raw_fd(), iovecs, buffers.len(), flags.bits())?
     };
+    let initialized = min(capacity, bytes);
+    #[cfg(target_arch = "x86_64")]
+    let initialized = if discarded { 0 } else { initialized };
     Ok(RecvMsg {
         buffers,
         bytes,
-        initialized: min(capacity, bytes),
+        initialized,
         flags: RecvFlags::from_bits_retain(message_flags),
     })
 }
@@ -1710,6 +1786,12 @@ pub fn recvmsg<'a, Fd: AsFd>(
 /// completed record retains its full byte count and message flags through
 /// [`MMsgHdr::bytes`] and [`MMsgHdr::flags`]. Only initialized receive
 /// prefixes may be read with [`MMsgHdr::initialized_segments`].
+/// On x86, TCP `TRUNC` leaves those prefixes empty even for positive byte
+/// counts. Only completed records acquire the new receive disposition;
+/// incomplete records and failed calls retain their prior valid outputs.
+/// Every x86 record must come from [`MMsgHdr::new_recv`]. A send record
+/// anywhere in the batch returns [`crate::Errno::INVAL`] before socket queries
+/// or the receive syscall, leaving all payloads, outputs, and timeout unchanged.
 #[inline]
 pub fn recvmmsg<Fd: AsFd>(
     fd: Fd,
@@ -1717,6 +1799,13 @@ pub fn recvmmsg<Fd: AsFd>(
     flags: RecvFlags,
     timeout: Option<&mut crate::fs::Timespec>,
 ) -> Result<usize> {
+    #[cfg(target_arch = "x86_64")]
+    if messages.iter().any(|message| message.raw.payload_state == MessagePayloadState::Send) {
+        return Err(crate::Errno::INVAL);
+    }
+    let fd = fd.as_fd();
+    #[cfg(target_arch = "x86_64")]
+    let discarded = receive_payload_discarded(fd, flags)?;
     let count = u32::try_from(messages.len()).map_err(|_| crate::Errno::OVERFLOW)?;
     let records = if messages.is_empty() {
         core::ptr::null_mut()
@@ -1730,15 +1819,24 @@ pub fn recvmmsg<Fd: AsFd>(
     // iovec and exclusive destination borrows remain valid for this direct
     // syscall. The optional timeout is mutable storage for Linux's relative
     // timespec update and remains live for the call.
-    unsafe {
+    let received = unsafe {
         crabc_core::net::recvmmsg_raw(
-            fd.as_fd().as_raw_fd(),
+            fd.as_raw_fd(),
             records,
             count,
             flags.bits(),
             timeout,
-        )
+        )?
+    };
+    #[cfg(target_arch = "x86_64")]
+    for message in &mut messages[..received] {
+        message.raw.payload_state = if discarded {
+            MessagePayloadState::ReceiveDiscarded
+        } else {
+            MessagePayloadState::ReceiveCopied
+        };
     }
+    Ok(received)
 }
 
 /// Queries whether a stream socket's receive cursor is at its urgent-data
@@ -1771,7 +1869,10 @@ pub fn sockatmark<Fd: AsFd>(fd: Fd) -> Result<bool> {
 /// `MSG_TRUNC` shortening, while the [`Buffer`] output marks only the prefix
 /// actually initialized in caller storage. Source families outside
 /// [`SocketAddress`] return [`crate::Errno::AFNOSUPPORT`] instead of exposing
-/// an opaque or partially decoded address.
+/// an opaque or partially decoded address. A missing or truncated address
+/// returns [`crate::Errno::INVAL`]. TCP does not return a source address
+/// through this operation and therefore retains that refusal; use
+/// [`recv`] for its initialized-prefix and discarded-count result.
 #[inline]
 #[allow(private_interfaces)]
 pub fn recvfrom<Fd: AsFd, Buf: Buffer<u8>>(
@@ -1781,6 +1882,8 @@ pub fn recvfrom<Fd: AsFd, Buf: Buffer<u8>>(
 ) -> Result<(Buf::Output, usize, SocketAddress)> {
     let fd = fd.as_fd();
     let (pointer, length) = buffer.parts_mut();
+    #[cfg(target_arch = "x86_64")]
+    let discarded = receive_payload_discarded(fd, flags)?;
     let mut storage = SockaddrStorage { bytes: [0; 128] };
     let mut address_length = size_of::<SockaddrStorage>() as u32;
     // SAFETY: `Buffer` supplies writable storage for exactly `length` bytes;
@@ -1797,10 +1900,12 @@ pub fn recvfrom<Fd: AsFd, Buf: Buffer<u8>>(
         )?
     };
     let source = decode_socket_address(&storage, address_length)?;
-    // SAFETY: At most `length` bytes were initialized even when `MSG_TRUNC`
-    // reports a longer datagram length. Source decoding above cannot alter
-    // the received payload storage.
-    unsafe { Ok((buffer.assume_init(min(length, received)), received, source)) }
+    let initialized = min(length, received);
+    #[cfg(target_arch = "x86_64")]
+    let initialized = if discarded { 0 } else { initialized };
+    // SAFETY: The prefix is bounded by storage and excludes discarded bytes.
+    // Source decoding above cannot change payload initialization.
+    unsafe { Ok((buffer.assume_init(initialized), received, source)) }
 }
 
 fn parse_ipv4(value: &[u8]) -> Option<[u8; 4]> {

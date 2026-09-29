@@ -16,6 +16,292 @@ fn loopback_v6(port: u16) -> SocketAddress {
     )
 }
 
+fn tcp_loopback_pair() -> (crabc_rs::OwnedFd, crabc_rs::OwnedFd) {
+    let listener = net::socket(
+        net::AddressFamily::INET,
+        net::SocketType::STREAM,
+        net::SocketFlags::CLOEXEC,
+        None,
+    ).expect("create native TCP listener");
+    net::bind(&listener, loopback_v4(0)).expect("bind native TCP listener");
+    net::listen(&listener, 1).expect("listen on native TCP listener");
+    let sender = net::socket(
+        net::AddressFamily::INET,
+        net::SocketType::STREAM,
+        net::SocketFlags::CLOEXEC,
+        None,
+    ).expect("create native TCP sender");
+    net::connect(&sender, net::getsockname(&listener).unwrap())
+        .expect("connect native TCP sender");
+    let receiver = net::accept(&listener).expect("accept native TCP receiver");
+    (sender, receiver)
+}
+
+#[test]
+fn tcp_trunc_reports_discarded_count_without_initializing_the_receive_buffer() {
+    let (sender, receiver) = tcp_loopback_pair();
+    net::send(&sender, b"abcdefgh", net::SendFlags::empty()).unwrap();
+    let mut storage = [0xa5u8; 4];
+    let (initialized, count) = net::recv(
+        &receiver,
+        &mut storage,
+        net::RecvFlags::TRUNC | net::RecvFlags::PEEK,
+    ).expect("peek at TCP discard count");
+    assert_eq!(count, 4);
+    assert_eq!(storage, [0xa5; 4]);
+    assert_eq!(initialized, 0, "TCP MSG_TRUNC writes no payload bytes");
+
+    let flags = net::RecvFlags::TRUNC | net::RecvFlags::PEEK;
+    let mut uninitialized = [MaybeUninit::<u8>::uninit(); 4];
+    let ((prefix, suffix), count) = net::recv(&receiver, &mut uninitialized, flags).unwrap();
+    assert!(prefix.is_empty());
+    assert_eq!(suffix.len(), 4);
+    assert_eq!(count, 4);
+    let mut empty = [MaybeUninit::<u8>::uninit(); 0];
+    let ((prefix, suffix), count) = net::recv(&receiver, &mut empty, flags).unwrap();
+    assert!(prefix.is_empty() && suffix.is_empty());
+    assert_eq!(count, 0);
+    #[cfg(feature = "alloc")]
+    for existing in [0, 1] {
+        let mut bytes = Vec::with_capacity(4);
+        if existing == 1 { bytes.push(0xa5); }
+        assert_eq!(net::recv(
+            &receiver, crabc_rs::buffer::spare_capacity(&mut bytes), flags,
+        ), Ok((0, 4 - existing)));
+        assert_eq!(bytes, vec![0xa5; existing]);
+        assert_eq!(bytes.capacity(), 4);
+    }
+    assert_eq!(net::recvfrom(&receiver, &mut storage, flags), Err(crabc_rs::Errno::INVAL));
+    assert_eq!(storage, [0xa5; 4]);
+    assert_eq!(net::recv(&receiver, &mut storage, net::RecvFlags::PEEK), Ok((4, 4)));
+    assert_eq!(&storage, b"abcd");
+    assert_eq!(net::recv(&receiver, &mut storage, net::RecvFlags::TRUNC), Ok((0, 4)));
+    assert_eq!(&storage, b"abcd");
+    assert_eq!(net::recv(&receiver, &mut storage, net::RecvFlags::empty()), Ok((4, 4)));
+    assert_eq!(&storage, b"efgh");
+}
+
+#[test]
+fn tcp_trunc_recvmsg_preserves_count_with_empty_initialized_segments() {
+    let (sender, receiver) = tcp_loopback_pair();
+    net::send(&sender, b"abcdefgh", net::SendFlags::empty()).unwrap();
+    let mut first = [MaybeUninit::new(0xa5u8); 2];
+    let mut second = [MaybeUninit::new(0xa5u8); 2];
+    let mut buffers = [
+        net::MsgIoSliceMut::new_uninit(&mut first),
+        net::MsgIoSliceMut::new_uninit(&mut second),
+    ];
+    let mut message = net::recvmsg(
+        &receiver,
+        &mut buffers,
+        net::RecvFlags::TRUNC | net::RecvFlags::PEEK,
+    ).expect("peek at a vectored TCP discard count");
+    assert_eq!(message.bytes(), 4);
+    let lengths: Vec<_> = message.initialized_segments().map(|bytes| bytes.len()).collect();
+    assert_eq!(lengths, [0, 0]);
+}
+
+#[test]
+fn tcp_trunc_recvmmsg_keeps_completed_disposition_across_reuse_partial_and_error() {
+    let (sender, receiver) = tcp_loopback_pair();
+    net::send(&sender, b"abcdefghijklmnopqrst", net::SendFlags::empty()).unwrap();
+    let mut first = [MaybeUninit::new(0xa5u8); 4];
+    let mut second = [MaybeUninit::new(0xa5u8); 4];
+    let mut first_buffers = [net::MsgIoSliceMut::new_uninit(&mut first)];
+    let mut second_buffers = [net::MsgIoSliceMut::new_uninit(&mut second)];
+    let mut messages = [
+        net::MMsgHdr::new_recv(&mut first_buffers),
+        net::MMsgHdr::new_recv(&mut second_buffers),
+    ];
+    assert_eq!(net::recvmmsg(
+        &receiver, &mut messages, net::RecvFlags::TRUNC | net::RecvFlags::WAITFORONE, None,
+    ), Ok(2));
+    for message in &mut messages {
+        assert_eq!(message.bytes(), 4);
+        // SAFETY: this receive record completed successfully and retains its
+        // exclusive destination borrow through the initialized-prefix read.
+        assert!(unsafe { message.initialized_segments() }.all(|bytes| bytes.is_empty()));
+    }
+
+    assert_eq!(net::recvmmsg(
+        &receiver, &mut messages, net::RecvFlags::WAITFORONE, None,
+    ), Ok(2));
+    // SAFETY: both records completed this ordinary receive; their retained
+    // destination borrows make the returned prefixes disjoint and live.
+    assert_eq!(unsafe { messages[0].initialized_segments() }.next().unwrap(), b"ijkl");
+    assert_eq!(unsafe { messages[1].initialized_segments() }.next().unwrap(), b"mnop");
+
+    assert_eq!(net::recvmmsg(
+        &receiver, &mut messages, net::RecvFlags::TRUNC | net::RecvFlags::DONTWAIT, None,
+    ), Ok(1));
+    // SAFETY: the first record completed a discard receive; the second still
+    // owns its untouched initialized output from the prior successful call.
+    assert!(unsafe { messages[0].initialized_segments() }.all(|bytes| bytes.is_empty()));
+    assert_eq!(unsafe { messages[1].initialized_segments() }.next().unwrap(), b"mnop");
+
+    assert_eq!(net::recvmmsg(
+        &receiver, &mut messages, net::RecvFlags::TRUNC | net::RecvFlags::DONTWAIT, None,
+    ), Err(crabc_rs::Errno::AGAIN));
+    // SAFETY: a failed nonblocking call completed neither record, leaving the
+    // prior valid output disposition and exclusive borrows unchanged.
+    assert!(unsafe { messages[0].initialized_segments() }.all(|bytes| bytes.is_empty()));
+    assert_eq!(unsafe { messages[1].initialized_segments() }.next().unwrap(), b"mnop");
+}
+
+fn udp_loopback_pair() -> (crabc_rs::OwnedFd, crabc_rs::OwnedFd) {
+    let receiver = net::socket(net::AddressFamily::INET, net::SocketType::DGRAM,
+        net::SocketFlags::CLOEXEC, None).unwrap();
+    net::bind(&receiver, loopback_v4(0)).unwrap();
+    let sender = net::socket(net::AddressFamily::INET, net::SocketType::DGRAM,
+        net::SocketFlags::CLOEXEC, None).unwrap();
+    net::connect(&sender, net::getsockname(&receiver).unwrap()).unwrap();
+    (sender, receiver)
+}
+
+#[test]
+fn udp_trunc_preserves_full_datagram_count_and_copied_prefix_in_every_receive_form() {
+    let (sender, receiver) = udp_loopback_pair();
+    net::send(&sender, b"abcdefgh", net::SendFlags::empty()).unwrap();
+    let flags = net::RecvFlags::TRUNC | net::RecvFlags::PEEK;
+    let mut storage = [0xa5u8; 4];
+    assert_eq!(net::recv(&receiver, &mut storage, flags), Ok((4, 8)));
+    assert_eq!(&storage, b"abcd");
+    let (initialized, count, source) = net::recvfrom(&receiver, &mut storage, flags).unwrap();
+    assert_eq!((initialized, count), (4, 8));
+    assert_eq!(source.ip(), IpAddress::V4([127, 0, 0, 1]));
+    assert_ne!(source.port(), 0);
+    let mut uninitialized = [MaybeUninit::<u8>::uninit(); 4];
+    let ((prefix, suffix), count) = net::recv(&receiver, &mut uninitialized, flags).unwrap();
+    assert_eq!(prefix, b"abcd");
+    assert!(suffix.is_empty());
+    assert_eq!(count, 8);
+    #[cfg(feature = "alloc")]
+    {
+        let mut bytes = Vec::with_capacity(4);
+        bytes.push(0xa5);
+        assert_eq!(net::recv(&receiver, crabc_rs::buffer::spare_capacity(&mut bytes), flags), Ok((3, 8)));
+        assert_eq!(&bytes, &[0xa5, b'a', b'b', b'c']);
+        assert_eq!(bytes.capacity(), 4);
+    }
+    let mut first = [MaybeUninit::<u8>::uninit(); 2];
+    let mut second = [MaybeUninit::<u8>::uninit(); 2];
+    let mut buffers = [net::MsgIoSliceMut::new_uninit(&mut first), net::MsgIoSliceMut::new_uninit(&mut second)];
+    let mut message = net::recvmsg(&receiver, &mut buffers, flags).unwrap();
+    assert_eq!(message.bytes(), 8);
+    assert!(message.flags().contains(net::RecvFlags::TRUNC));
+    assert_eq!(message.initialized_segments().collect::<Vec<_>>(), [b"ab", b"cd"]);
+    let mut first = [MaybeUninit::<u8>::uninit(); 4];
+    let mut second = [MaybeUninit::<u8>::uninit(); 4];
+    let mut first_buffers = [net::MsgIoSliceMut::new_uninit(&mut first)];
+    let mut second_buffers = [net::MsgIoSliceMut::new_uninit(&mut second)];
+    let mut messages = [net::MMsgHdr::new_recv(&mut first_buffers), net::MMsgHdr::new_recv(&mut second_buffers)];
+    assert_eq!(net::recvmmsg(&receiver, &mut messages, flags | net::RecvFlags::DONTWAIT, None), Ok(2));
+    for message in &mut messages {
+        assert_eq!(message.bytes(), 8);
+        // SAFETY: each receive completed and retains its exclusive buffer borrow.
+        assert_eq!(unsafe { message.initialized_segments() }.next().unwrap(), b"abcd");
+    }
+    assert_eq!(net::recv(&receiver, &mut storage, net::RecvFlags::TRUNC), Ok((4, 8)));
+    assert_eq!(net::recv(&receiver, &mut storage, net::RecvFlags::DONTWAIT), Err(crabc_rs::Errno::AGAIN));
+}
+
+#[test]
+fn unix_stream_trunc_copies_payload_for_scalar_vectored_and_batched_receives() {
+    let (sender, receiver) = net::socketpair(net::AddressFamily::UNIX, net::SocketType::STREAM,
+        net::SocketFlags::CLOEXEC, None).unwrap();
+    net::send(&sender, b"abcdefgh", net::SendFlags::empty()).unwrap();
+    let flags = net::RecvFlags::TRUNC | net::RecvFlags::PEEK;
+    let mut storage = [MaybeUninit::<u8>::uninit(); 4];
+    let ((prefix, _), count) = net::recv(&receiver, &mut storage, flags).unwrap();
+    assert_eq!(prefix, b"abcd");
+    assert_eq!(count, 4);
+    let mut storage = [MaybeUninit::<u8>::uninit(); 4];
+    let mut buffers = [net::MsgIoSliceMut::new_uninit(&mut storage)];
+    let mut message = net::recvmsg(&receiver, &mut buffers, flags).unwrap();
+    assert_eq!(message.bytes(), 4);
+    assert_eq!(message.initialized_segments().next().unwrap(), b"abcd");
+    let mut storage = [MaybeUninit::<u8>::uninit(); 4];
+    let mut buffers = [net::MsgIoSliceMut::new_uninit(&mut storage)];
+    let mut messages = [net::MMsgHdr::new_recv(&mut buffers)];
+    assert_eq!(net::recvmmsg(&receiver, &mut messages, flags, None), Ok(1));
+    assert_eq!(messages[0].bytes(), 4);
+    // SAFETY: the record completed a receive into its exclusively borrowed buffer.
+    assert_eq!(unsafe { messages[0].initialized_segments() }.next().unwrap(), b"abcd");
+}
+
+#[test]
+fn sendmmsg_rejects_receive_records_before_reading_payload() {
+    let (sender, _receiver) = udp_loopback_pair();
+    // Initialized storage makes the pre-fix wrong-direction acceptance safe
+    // to observe without asking the kernel to read uninitialized bytes.
+    let mut storage = [MaybeUninit::new(b'a'); 4];
+    let mut buffers = [net::MsgIoSliceMut::new_uninit(&mut storage)];
+    let mut messages = [net::MMsgHdr::new_recv(&mut buffers)];
+    assert_eq!(net::sendmmsg(&sender, &mut messages, net::SendFlags::empty()), Err(crabc_rs::Errno::INVAL));
+    assert_eq!(messages[0].bytes(), 0);
+}
+
+#[test]
+fn recvmmsg_rejects_send_records_before_writing_payload() {
+    let (sender, receiver) = udp_loopback_pair();
+    net::send(&sender, b"queued", net::SendFlags::empty()).unwrap();
+    // No iovecs means the pre-fix acceptance cannot write through immutable
+    // payload borrows; the returned successful record still witnesses the bug.
+    let buffers = [];
+    let mut messages = [net::MMsgHdr::new_send(&buffers)];
+    assert_eq!(net::recvmmsg(&receiver, &mut messages, net::RecvFlags::DONTWAIT, None), Err(crabc_rs::Errno::INVAL));
+    assert_eq!(messages[0].bytes(), 0);
+}
+
+#[test]
+fn mixed_message_batches_reject_atomically_without_payload_or_timeout_changes() {
+    let (sender, receiver) = udp_loopback_pair();
+    let outgoing_buffers = [io::IoSlice::new(b"sent")];
+    let mut outgoing = [net::MMsgHdr::new_send(&outgoing_buffers)];
+    assert_eq!(net::sendmmsg(&sender, &mut outgoing, net::SendFlags::empty()), Ok(1));
+    assert_eq!(outgoing[0].bytes(), 4);
+    let mut received = [0u8; 8];
+    assert_eq!(net::recv(&receiver, &mut received, net::RecvFlags::DONTWAIT), Ok((4, 4)));
+    let mut uninitialized = [MaybeUninit::<u8>::uninit(); 4];
+    let mut receive_buffers = [net::MsgIoSliceMut::new_uninit(&mut uninitialized)];
+    let mut mixed = [outgoing.into_iter().next().unwrap(), net::MMsgHdr::new_recv(&mut receive_buffers)];
+    assert_eq!(net::sendmmsg(&sender, &mut mixed, net::SendFlags::empty()), Err(crabc_rs::Errno::INVAL));
+    assert_eq!([mixed[0].bytes(), mixed[1].bytes()], [4, 0]);
+    assert_eq!(net::recv(&receiver, &mut received, net::RecvFlags::DONTWAIT), Err(crabc_rs::Errno::AGAIN));
+
+    net::send(&sender, b"old!", net::SendFlags::empty()).unwrap();
+    let mut storage = [MaybeUninit::<u8>::uninit(); 4];
+    let mut buffers = [net::MsgIoSliceMut::new_uninit(&mut storage)];
+    let mut incoming = [net::MMsgHdr::new_recv(&mut buffers)];
+    assert_eq!(net::recvmmsg(&receiver, &mut incoming, net::RecvFlags::DONTWAIT, None), Ok(1));
+    let immutable_buffers = [io::IoSlice::new(b"immutable")];
+    let mut mixed = [incoming.into_iter().next().unwrap(), net::MMsgHdr::new_send(&immutable_buffers)];
+    net::send(&sender, b"next", net::SendFlags::empty()).unwrap();
+    let mut timeout = fs::Timespec { tv_sec: 1, tv_nsec: 234 };
+    assert_eq!(net::recvmmsg(&receiver, &mut mixed, net::RecvFlags::TRUNC | net::RecvFlags::DONTWAIT,
+        Some(&mut timeout)), Err(crabc_rs::Errno::INVAL));
+    assert_eq!((timeout.tv_sec, timeout.tv_nsec), (1, 234));
+    assert_eq!([mixed[0].bytes(), mixed[1].bytes()], [4, 0]);
+    // SAFETY: the receive record completed before the rejected batch, which
+    // touched neither its prior initialized output nor its exclusive borrow.
+    assert_eq!(unsafe { mixed[0].initialized_segments() }.next().unwrap(), b"old!");
+    assert_eq!(net::recv(&receiver, &mut received, net::RecvFlags::DONTWAIT), Ok((4, 4)));
+    assert_eq!(&received[..4], b"next");
+}
+
+#[test]
+fn empty_message_batches_preserve_the_queued_datagram() {
+    let (sender, receiver) = udp_loopback_pair();
+    net::send(&sender, b"queued", net::SendFlags::empty()).unwrap();
+    let mut messages = [];
+    assert_eq!(net::sendmmsg(&sender, &mut messages, net::SendFlags::empty()), Ok(0));
+    assert_eq!(net::recvmmsg(&receiver, &mut messages, net::RecvFlags::TRUNC | net::RecvFlags::DONTWAIT, None), Ok(0));
+    let mut storage = [0u8; 8];
+    assert_eq!(net::recv(&receiver, &mut storage, net::RecvFlags::DONTWAIT), Ok((6, 6)));
+    assert_eq!(&storage[..6], b"queued");
+    assert_eq!(net::recv(&receiver, &mut storage, net::RecvFlags::DONTWAIT), Err(crabc_rs::Errno::AGAIN));
+}
+
 #[test]
 fn socketpair_transports_vectored_bytes_and_shutdown_is_typed() {
     let (sender, receiver) = net::socketpair(
