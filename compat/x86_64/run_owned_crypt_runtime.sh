@@ -504,6 +504,8 @@ for mode in pie non-pie; do
 done
 compile_receipt verify
 
+python3 -B "$EXECUTION_EVIDENCE" edge-run --work "$work" --product "$installed"
+
 python3 -B "$PROFILE_EVIDENCE" extend --work "$work" --product "$installed"
 
 if [ -n "$static_product" ]; then

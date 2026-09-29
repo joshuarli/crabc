@@ -32,6 +32,18 @@ def load_evidence():
 
 
 class OwnedCryptRuntimeTests(unittest.TestCase):
+    def test_edge_observer_rejects_missing_reentrant_and_reordered_rows(self) -> None:
+        evidence = load_evidence()
+        rows = evidence.EDGE_ORACLE_ROWS
+        raw = "".join(f"{name} {entry} 2a\n" for name in rows for entry in ("crypt", "crypt_r")).encode()
+        self.assertEqual(evidence.edge_observations(raw, rows)["legacy-bcrypt"]["crypt_r"], "2a")
+        with self.assertRaisesRegex(evidence.CryptRuntimeEvidenceError, "row count"):
+            evidence.edge_observations(raw.rsplit(b"\n", 2)[0] + b"\n", rows)
+        with self.assertRaisesRegex(evidence.CryptRuntimeEvidenceError, "order drifted"):
+            evidence.edge_observations(raw.replace(b"sha256-default crypt_r", b"sha256-default crypt", 1), rows)
+        with self.assertRaisesRegex(evidence.CryptRuntimeEvidenceError, "invalid bytes"):
+            evidence.edge_observations(raw.replace(b"sha256-default crypt 2a", b"sha256-default crypt 2g", 1), rows)
+
     def assert_parser_usage(self, *arguments: str) -> None:
         scratch = ROOT / ".work" / "x86_64" / "tmp"
         scratch.mkdir(parents=True, exist_ok=True)
