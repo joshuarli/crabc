@@ -462,8 +462,222 @@ static int check_streaming_retries(void)
     return 0;
 }
 
+/* A failed scalar leaves no descriptor state: the caller may retry from the
+ * same input byte with more output, replace malformed input, or reset it.
+ * Completed scalars before an error remain committed exactly once.
+ */
+static int check_surrogate_error_recovery(void)
+{
+    static const unsigned char utf8[] = {
+        'A', 0xf0, 0x9f, 0x98, 0x80, 0xc0,
+    };
+    static const unsigned char valid_utf8[] = { 0xf0, 0x9f, 0x98, 0x80 };
+    static const unsigned char incomplete_utf8[] = { 0xf0, 0x9f, 0x98 };
+    static const unsigned char malformed_utf8[] = { 0xf0, 0x9f, 'A' };
+    static const unsigned char utf16le[] = {
+        'A', 0, 0x3d, 0xd8, 0x00, 0xde,
+    };
+    static const unsigned char utf16be_pair[] = { 0xd8, 0x3d, 0xde, 0x00 };
+    static const unsigned char utf16be_high[] = { 0xd8, 0x3d };
+    static const unsigned char utf16be_bad_pair[] = { 0xd8, 0x3d, 0x00, 'A' };
+    static const unsigned char utf16be_low[] = { 0xde, 0x00 };
+    unsigned char output[16] = { 0 };
+    char *input, *destination;
+    size_t input_left, output_left;
+    iconv_t descriptor;
+
+    descriptor = iconv_open("UTF-16LE", "UTF-8");
+    if (descriptor == (iconv_t)-1)
+        return 1;
+    input = (char *)(void *)utf8;
+    destination = (char *)(void *)output;
+    input_left = sizeof(utf8);
+    output_left = sizeof(output);
+    errno = 0;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) !=
+            (size_t)-1 || errno != EILSEQ ||
+        input != (char *)(void *)(utf8 + 5) || input_left != 1 ||
+        destination != (char *)(void *)(output + sizeof(utf16le)) ||
+        output_left != sizeof(output) - sizeof(utf16le) ||
+        !bytes_equal(output, utf16le, sizeof(utf16le)))
+        return 2;
+    input = (char *)(void *)incomplete_utf8;
+    input_left = sizeof(incomplete_utf8);
+    errno = 0;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) !=
+            (size_t)-1 || errno != EINVAL ||
+        input != (char *)(void *)incomplete_utf8 ||
+        input_left != sizeof(incomplete_utf8) ||
+        destination != (char *)(void *)(output + sizeof(utf16le)))
+        return 3;
+    input = (char *)(void *)malformed_utf8;
+    input_left = sizeof(malformed_utf8);
+    errno = 0;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) !=
+            (size_t)-1 || errno != EILSEQ ||
+        input != (char *)(void *)malformed_utf8 ||
+        input_left != sizeof(malformed_utf8) ||
+        destination != (char *)(void *)(output + sizeof(utf16le)))
+        return 4;
+    errno = EINTR;
+    if (iconv(descriptor, NULL, NULL, NULL, NULL) != 0 || errno != EINTR)
+        return 5;
+    input = (char *)(void *)valid_utf8;
+    input_left = sizeof(valid_utf8);
+    output_left = 3;
+    errno = 0;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) !=
+            (size_t)-1 || errno != E2BIG ||
+        input != (char *)(void *)valid_utf8 || input_left != sizeof(valid_utf8) ||
+        destination != (char *)(void *)(output + sizeof(utf16le)) ||
+        output_left != 3)
+        return 6;
+    output_left = sizeof(output) - sizeof(utf16le);
+    errno = EINTR;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) != 0 ||
+        errno != EINTR || input_left != 0 ||
+        destination != (char *)(void *)(output + sizeof(utf16le) + 4) ||
+        !bytes_equal(output + sizeof(utf16le), utf16le + 2, 4) ||
+        iconv_close(descriptor) != 0)
+        return 7;
+
+    descriptor = iconv_open("UTF-8", "UTF-16BE");
+    if (descriptor == (iconv_t)-1)
+        return 8;
+    input = (char *)(void *)utf16be_high;
+    destination = (char *)(void *)output;
+    input_left = sizeof(utf16be_high);
+    output_left = sizeof(output);
+    errno = 0;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) !=
+            (size_t)-1 || errno != EINVAL ||
+        input != (char *)(void *)utf16be_high ||
+        input_left != sizeof(utf16be_high) ||
+        destination != (char *)(void *)output || output_left != sizeof(output))
+        return 9;
+    input = (char *)(void *)utf16be_bad_pair;
+    input_left = sizeof(utf16be_bad_pair);
+    errno = 0;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) !=
+            (size_t)-1 || errno != EILSEQ ||
+        input != (char *)(void *)utf16be_bad_pair ||
+        input_left != sizeof(utf16be_bad_pair) ||
+        destination != (char *)(void *)output || output_left != sizeof(output))
+        return 10;
+    input = (char *)(void *)utf16be_pair;
+    input_left = sizeof(utf16be_pair);
+    output_left = 3;
+    errno = 0;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) !=
+            (size_t)-1 || errno != E2BIG ||
+        input != (char *)(void *)utf16be_pair ||
+        input_left != sizeof(utf16be_pair) ||
+        destination != (char *)(void *)output || output_left != 3)
+        return 11;
+    output_left = sizeof(output);
+    errno = EINTR;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) != 0 ||
+        errno != EINTR || input_left != 0 ||
+        destination != (char *)(void *)(output + sizeof(valid_utf8)) ||
+        output_left != sizeof(output) - sizeof(valid_utf8) ||
+        !bytes_equal(output, valid_utf8, sizeof(valid_utf8)))
+        return 12;
+    input = (char *)(void *)utf16be_low;
+    input_left = sizeof(utf16be_low);
+    errno = 0;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) !=
+            (size_t)-1 || errno != EILSEQ ||
+        input != (char *)(void *)utf16be_low ||
+        input_left != sizeof(utf16be_low) ||
+        destination != (char *)(void *)(output + sizeof(valid_utf8)))
+        return 13;
+    errno = EINTR;
+    if (iconv(descriptor, NULL, NULL, NULL, NULL) != 0 || errno != EINTR ||
+        iconv_close(descriptor) != 0)
+        return 14;
+    return 0;
+}
+
+static int check_surrogate_byte_order(const char *encoding,
+    const unsigned char *pair, const unsigned char *high,
+    const unsigned char *bad_pair)
+{
+    static const unsigned char utf8[] = { 0xf0, 0x9f, 0x98, 0x80 };
+    unsigned char output[8] = { 0 };
+    char *input, *destination;
+    size_t input_left, output_left;
+    iconv_t descriptor;
+
+    descriptor = iconv_open(encoding, "UTF-8");
+    if (descriptor == (iconv_t)-1)
+        return 1;
+    input = (char *)(void *)utf8;
+    destination = (char *)(void *)output;
+    input_left = sizeof(utf8);
+    output_left = 3;
+    errno = 0;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) !=
+            (size_t)-1 || errno != E2BIG ||
+        input != (char *)(void *)utf8 || input_left != sizeof(utf8) ||
+        destination != (char *)(void *)output || output_left != 3)
+        return 2;
+    output_left = sizeof(output);
+    errno = EINTR;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) != 0 ||
+        errno != EINTR || input_left != 0 ||
+        destination != (char *)(void *)(output + 4) ||
+        !bytes_equal(output, pair, 4) || iconv_close(descriptor) != 0)
+        return 3;
+
+    descriptor = iconv_open("UTF-8", encoding);
+    if (descriptor == (iconv_t)-1)
+        return 4;
+    input = (char *)(void *)high;
+    destination = (char *)(void *)output;
+    input_left = 2;
+    output_left = sizeof(output);
+    errno = 0;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) !=
+            (size_t)-1 || errno != EINVAL ||
+        input != (char *)(void *)high || input_left != 2 ||
+        destination != (char *)(void *)output || output_left != sizeof(output))
+        return 5;
+    input = (char *)(void *)bad_pair;
+    input_left = 4;
+    errno = 0;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) !=
+            (size_t)-1 || errno != EILSEQ ||
+        input != (char *)(void *)bad_pair || input_left != 4 ||
+        destination != (char *)(void *)output || output_left != sizeof(output))
+        return 6;
+    input = (char *)(void *)pair;
+    input_left = 4;
+    output_left = 3;
+    errno = 0;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) !=
+            (size_t)-1 || errno != E2BIG ||
+        input != (char *)(void *)pair || input_left != 4 ||
+        destination != (char *)(void *)output || output_left != 3)
+        return 7;
+    output_left = sizeof(output);
+    errno = EINTR;
+    if (iconv(descriptor, &input, &input_left, &destination, &output_left) != 0 ||
+        errno != EINTR || input_left != 0 ||
+        destination != (char *)(void *)(output + 4) ||
+        !bytes_equal(output, utf8, sizeof(utf8)) ||
+        iconv_close(descriptor) != 0)
+        return 8;
+    return 0;
+}
+
 int crabc_x86_64_locale_wide_iconv_probe(void)
 {
+    static const unsigned char le_pair[] = { 0x3d, 0xd8, 0x00, 0xde };
+    static const unsigned char le_high[] = { 0x3d, 0xd8 };
+    static const unsigned char le_bad_pair[] = { 0x3d, 0xd8, 'A', 0x00 };
+    static const unsigned char be_pair[] = { 0xd8, 0x3d, 0xde, 0x00 };
+    static const unsigned char be_high[] = { 0xd8, 0x3d };
+    static const unsigned char be_bad_pair[] = { 0xd8, 0x3d, 0x00, 'A' };
     int status = check_named_locale_and_multibyte();
 
     if (status != 0)
@@ -481,7 +695,18 @@ int crabc_x86_64_locale_wide_iconv_probe(void)
     if (status != 0)
         return 80 + status;
     status = check_streaming_retries();
-    return status == 0 ? 0 : 120 + status;
+    if (status != 0)
+        return 120 + status;
+    status = check_surrogate_error_recovery();
+    if (status != 0)
+        return 160 + status;
+    status = check_surrogate_byte_order("UTF-16LE", le_pair, le_high,
+        le_bad_pair);
+    if (status != 0)
+        return 180 + status;
+    status = check_surrogate_byte_order("UTF-16BE", be_pair, be_high,
+        be_bad_pair);
+    return status == 0 ? 0 : 190 + status;
 }
 
 #ifndef CRABC_LOCALE_WIDE_ICONV_FREESTANDING
