@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """Build and inventory the pinned mimalloc v3.5.0 C oracle.
 
-This Milestone 0 runner deliberately has no third-party Python dependencies
+This C-oracle runner deliberately has no third-party Python dependencies
 and never regards the workspace's `libmimalloc-sys` copy as an oracle.  Its
-only allocator source input is the SHA-256-verified upstream archive named in
-`compat/upstreams.toml`.  It records the existing v3.3.2 integration solely
-as migration provenance.
+only allocator source input is the SHA-256-verified pinned upstream archive.
+It records the existing v3.3.2 integration solely as migration provenance.
 
 The runner is a source/provenance and C-oracle instrument. Its `--full` mode
-also records the reviewed Milestone 5 lifecycle gate, distinguishing executed
+also records the reviewed allocator lifecycle check, distinguishing executed
 bounded evidence from acceptance work that remains blocked. It does not claim
 that a Rust allocator operation, adapter symbol, differential trace, or
-performance comparison exists before its owning implementation milestone.
-Its `--m2` mode records the deliberately partial native memory-substrate gate;
+performance comparison exists before the corresponding implementation exists.
+Its memory substrate mode records a deliberately partial native check;
 the selected PageMap records cover a success lifecycle, an explicit cold-root
 safety divergence, and one initialized lazy-commit failure/retry differential.
 They do not establish complete C/Rust PageMap fault or lifecycle parity.
@@ -179,13 +178,13 @@ M1_FOUNDATIONS_CARGO_TARGET = ARTIFACT_ROOT / "m1-foundations/cargo-target"
 M1_RAW_PRIMITIVE_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "m1-foundations/raw-primitive-trace"
 M1_COMPILER_TLS_TRACE_ARTIFACT_ROOT = ARTIFACT_ROOT / "m1-foundations/compiler-tls-trace"
 # This is the source-only C producer for the selected same-TLD terminal
-# trace. The standalone prototype command exposes its C half; the M1 gate
-# consumes the same producer together with its dedicated Rust comparison.
+# trace. The standalone prototype command exposes its C half; the foundations
+# check pairs the same producer with its dedicated Rust comparison.
 M1_COMPILER_TLS_SAME_TLD_TRACE_ARTIFACT_ROOT = (
     ARTIFACT_ROOT / "m1-foundations/compiler-tls-same-tld-trace"
 )
-# The native x86 M1 gate has a distinct contract and result path.  It may
-# reuse only the source-shaped check and layout inventories that are common to
+# The native x86 foundations check has a distinct contract and result path.
+# It may reuse only the source-shaped check and layout inventories common to
 # both 64-bit Linux profiles; it never consumes the archived AArch64 status or
 # report as target evidence.
 M1_X86_64_FOUNDATIONS_CONTRACT = ALLOCATOR_ROOT / "m1-foundations-x86_64-v3.5.0.json"
@@ -211,9 +210,9 @@ M1_X86_64_BITS_TRACE_ARTIFACT_ROOT = (
 M2_MEMORY_SUBSTRATE_CONTRACT = ALLOCATOR_ROOT / "m2-memory-substrate-v3.5.0.json"
 M2_MEMORY_SUBSTRATE_REPORT = REPORT_ROOT / "m2-memory-substrate-latest.json"
 M2_MEMORY_SUBSTRATE_CARGO_TARGET = ARTIFACT_ROOT / "m2-memory-substrate/cargo-target"
-# Native M2 is a separate current-commit record.  Its PageMap result is not a
-# translation of the paused AArch64 report: its source anchors, target, Rust
-# binary, C artifacts, and remaining conditions are all observed on x86-64.
+# The native memory substrate check is a separate current-commit record. Its
+# PageMap source anchors, target, Rust binary, C artifacts, and remaining
+# conditions are observed on x86-64, independently of the AArch64 report.
 M2_X86_64_MEMORY_SUBSTRATE_CONTRACT = (
     ALLOCATOR_ROOT / "m2-memory-substrate-x86_64-v3.5.0.json"
 )
@@ -281,7 +280,7 @@ M5_5D_EVIDENCE = (
     "canonical-upstream-stress:current-head-full-matrix",
 )
 
-# M1 is an intentionally finite foundations gate.  These are source-shaped
+# The foundations check is intentionally finite. These are source-shaped
 # components, not a claim that the four broad upstream units which contain
 # them are complete.  Keeping the inventory in the runner makes a manifest
 # reorder/removal an explicit reviewed contract change.
@@ -302,9 +301,8 @@ M1_FOUNDATIONS_GLOBAL_EVIDENCE = (
     "production-dependency-graph",
 )
 
-# M2 is an intentionally partial memory-substrate gate.  The eight categories
-# are the closure boundary from plan.md; a report may record focused
-# evidence for one category without silently promoting the other seven.
+# The memory substrate check tracks eight independent categories. A report may
+# record focused evidence for one without silently promoting the other seven.
 M2_MEMORY_SUBSTRATE_COMPONENT_IDS = (
     "vm-primitives",
     "metadata",
@@ -559,6 +557,12 @@ M2_X86_64_ARENA_CHECKS = (
         "kind": "c-rust-arena-delayed-purge-failure-differential",
         "target": "compat/allocator/m2_delayed_purge_expiry_x86_64.py",
     },
+    {
+        "expected_passed_test_count": 1,
+        "id": "arena-delayed-purge-expiry-decommit-failure-c-rust-differential",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/medium_pressure_delayed_purge_fault.py",
+    },
 )
 M2_X86_64_ARENA_DIRECT_RECEIVERS = {
     "arena-delayed-purge-decommit-failure-c-rust-differential": {
@@ -623,6 +627,28 @@ M2_X86_64_ARENA_DIRECT_RECEIVERS = {
             "arena_purges": 1, "warnings": 0,
         },
         "scope": "pinned-c-rust-delayed-purge-before-at-and-after-expiry-with-retained-arena-owner",
+    },
+    "arena-delayed-purge-expiry-decommit-failure-c-rust-differential": {
+        "artifact": "m2-medium-pressure-delayed-purge-fault",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/medium_pressure_delayed_purge_fault.py",
+        "fixture": "compat/allocator/medium_pressure_delayed_purge_fault.c",
+        "rust_test": "arena::owned::purge::tests::emit_m2_delayed_purge_fault_c_rust_trace",
+        "trace_prefix": "m2.delayed_purge_fault.",
+        "trace": {
+            "setup": 1, "scheduled": 1, "before_quiet": 1,
+            "before_pending": 1, "before_global": 19999,
+            "due_advice": 1, "due_exact": 1, "due_bits": 1,
+            "due_expiry": 0, "due_global": 20000,
+            "due_calls": 1, "due_bytes": 65536, "due_visits": 1,
+            "due_committed": 0, "after_no_retry": 1,
+            "after_global": 0, "later_same": 1, "later_pending": 1,
+            "survivor": 1, "terminal": 1, "released_slice": 9,
+            "neighbor_slice": 10, "registry": 1, "reserved_delta": 0,
+            "purge_calls": 1, "purged_bytes": 65536,
+            "arena_purges": 1, "warnings": 1,
+        },
+        "scope": "pinned-c-rust-scheduled-expiry-decommit-error-consumes-purge-with-committed-slice-and-later-reuse",
     },
 }
 M2_X86_64_RECURSION_CHECKS = (
@@ -1153,7 +1179,7 @@ M1_FOUNDATIONS_EXCLUSION_DISPOSITIONS = frozenset(
 )
 # This is the complete frozen normal-release configuration record emitted by
 # both `LAYOUT_PROBE` and `types::tests::emit_layout`. Keeping it explicit
-# means the M1 configuration component cannot quietly narrow itself back to a
+# means the configuration component cannot quietly narrow itself back to a
 # representative handful of values: every frozen source-derived configuration
 # result must remain directly C/Rust checked.
 M1_CONFIGURATION_LAYOUT_KEYS = (
@@ -1352,10 +1378,10 @@ M1_BOOTSTRAP_STATIC_IMAGE_PROBE_DEFINES = (
     "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
 )
 
-# `mi_atomic_do_once` is a macro, so its finite M1 accounting must name every
+# `mi_atomic_do_once` is a macro, so its bounded accounting must name every
 # pinned direct invocation rather than imply that a local once unit test has
-# covered each lifecycle route. M1 covers immutable static images plus the
-# generic once protocol and one bounded ProcessMain envelope; full
+# covered each lifecycle route. The selected checks cover immutable static
+# images, the generic once protocol, and one bounded ProcessMain envelope; full
 # process/page-map/TLS lifecycle routes remain explicitly deferred.
 M1_BOOTSTRAP_ATOMIC_ONCE_CALL_SITE_DISPOSITIONS = (
     {
@@ -1472,11 +1498,11 @@ M1_RAW_PRIMITIVE_DECLARATION_CLASSIFICATIONS = frozenset(
     {"m1-raw-boundary", "later-milestone-exclusion"}
 )
 
-# The native M1 record uses the target-local source-map ratchet as its source
+# The native foundations record uses the target-local source-map ratchet as its
 # predicate.  Unlike the paused AArch64 port-map statuses, these are not a
 # completion claim: `partial` is a reviewed bounded source anchor and
 # `implemented` is the one narrower scalar source scope the x86 ratchet has
-# explicitly promoted.  The finite M1 source records below name every such
+# explicitly promoted. The finite source records below name every such
 # anchor; they cannot be replaced by the target-wide map's overall state.
 M1_X86_64_SOURCE_MAP_REQUIRED_STATUSES = frozenset({"implemented", "partial"})
 M1_X86_64_SOURCE_MAP_REFERENCES = {
@@ -1684,8 +1710,8 @@ X86_64_INTERPRETER = "ld-musl-x86_64.so.1"
 X86_64_ORACLE_REPORT_ROOT = REPORT_ROOT / "x86_64"
 X86_64_ORACLE_ARTIFACT_ROOT = ARTIFACT_ROOT / "x86_64"
 
-# The reviewed source selection for the adapter remains in the AArch64 M4
-# contract.  The native x86-64 profile owns a separate target-local adapter
+# The reviewed source selection for the adapter remains in the AArch64 adapter
+# contract. The native x86-64 profile owns a separate target-local adapter
 # contract that binds only that reviewed source selection by digest; it does
 # not inherit the AArch64 target, dependency, or public-API claims.
 X86_64_TARGET_METADATA: Mapping[str, Any] = {
@@ -1795,7 +1821,7 @@ ORACLE_SOURCES = (
     "src/prim/prim-tls.c",
 )
 
-# The M1 raw fixture includes the pinned `src/os.c` into its own translation
+# The raw primitive fixture includes the pinned `src/os.c` into its own translation
 # unit so it can observe the source-private immutable configuration record.
 # The ordinary source list must omit that one file to keep every C definition
 # singular; `src/prim/prim.c` continues to own the Unix primitive inclusion.
@@ -1803,7 +1829,7 @@ M1_RAW_PRIMITIVE_ORACLE_SOURCES = tuple(
     item for item in ORACLE_SOURCES if item != "src/os.c"
 )
 
-# The native M2 VM fixture directly includes the pinned source OS, first-arena,
+# The native VM fixture directly includes the pinned source OS, first-arena,
 # process-preloading, page-extension, and Unix-primitive dispatch bodies.
 # Keep the ordinary raw source closure otherwise complete and singular: a
 # separately linked `os.c`, `arena.c`, `init.c`, `page.c`, or `prim/prim.c`
@@ -1881,7 +1907,7 @@ M2_LATER_MAIN_THEAP_METADATA_FAILURE_FIXTURE = (
     ALLOCATOR_ROOT / "m2_later_main_theap_metadata_failure_x86_64.c"
 )
 
-# The selected M2 PageMap producer directly includes the three source units
+# The selected PageMap producer directly includes the three source units
 # whose private state and source-order initialization are under test. Keep
 # those units out of the ordinary C source list so every definition remains
 # singular in the dedicated executable.
@@ -1891,12 +1917,12 @@ M2_PAGE_MAP_ORACLE_SOURCES = tuple(
     if item not in {"src/os.c", "src/page-map.c", "src/init.c"}
 )
 
-# The reviewed M4 and M5 adapters are intentionally partial adaptations, not a
+# The reviewed API and stress adapters are intentionally partial adaptations, not a
 # claim that every pinned upstream test now runs. Keep their exact source and
 # support input names here, beside the generated inventory, so an inventory
 # refresh cannot regress them back to the historical "adapter absent" state.
-# `adapted-tests-v3.5.0.json` remains the durable selection/omission contract
-# for the 33 selected `test-api.c` checks. The separate M5 stress contract
+# The selected API check inventory and omissions remain bound to the adapter
+# contract for the 33 selected `test-api.c` checks. The separate stress contract
 # preserves one constrained `test-stress.c` creating-thread route only.
 M4_ADAPTED_UPSTREAM_TEST_PATHS = frozenset(
     {
@@ -2796,7 +2822,7 @@ int main(void) {
 
 
 # This reader is deliberately separate from `LAYOUT_PROBE`.  It compiles only
-# the finite M1 static image through a pre-process-initialization configuration
+# the finite pre-init static image through a pre-process-initialization configuration
 # and cannot change the generic profile-layout artifact, runtime, or macro
 # evidence.  Its `MI_PRIM_HAS_PROCESS_ATTACH` define is passed only by
 # `build_m1_static_image_probe` below.
@@ -3340,7 +3366,7 @@ int main(void) {
 # selected Unix primitive calls.  `build_m1_raw_primitive_trace` omits the
 # standalone `src/os.c` object from `ORACLE_SOURCES` for this one executable.
 #
-# The record names only normal Linux/AArch64 success paths selected by M1:
+# The record names only selected normal Linux/AArch64 success paths:
 # immutable configuration, allocation-size/large-page predicates, one regular
 # no-hint/non-large mapping transition sequence, direct observations, and the
 # source's constant false threadpool result.  It intentionally has no raw
@@ -5928,7 +5954,7 @@ int main(void) {
 
 # The image reader directly includes `src/threadlocal.c` solely to observe
 # its private static root and direct-TLS declarations. It is compiled with
-# the same isolated constructor-suppression define as the M1 bootstrap reader;
+# the same isolated constructor-suppression define as the static bootstrap reader;
 # it never calls a process/thread initializer or exercises a normal artifact.
 M1_COMPILER_TLS_IMAGE_TRACE_PROBE = r"""
 #include <stdbool.h>
@@ -5985,7 +6011,7 @@ int main(void) {
 # first is the positive-count regular backing teardown in `threadlocal.c`; the
 # second is the source-local cached-root store/refcount pair. It deliberately
 # does not call `_mi_thread_done`, `mi_thread_theaps_done`, or any pthread/
-# process hook, so it cannot be mistaken for the composite M5 lifecycle.
+# process hook, so it cannot be mistaken for the full owner-exit lifecycle.
 M1_COMPILER_TLS_TRANSITION_TRACE_PROBE = r"""
 #include <stdbool.h>
 #include <stddef.h>
@@ -6069,9 +6095,9 @@ int main(void) {
 # D; the probe asserts both selected theaps are page-free before the source
 # terminal routine and records their post-collection state. The fixture then
 # calls the exact file-static body directly from the included pinned source.
-# The standalone C producer is only one half of the evidence; `--m1` consumes
-# it with the dedicated Rust record. Neither route makes a general claim about
-# outer `mi_thread_done`, pthread, or process teardown.
+# The standalone C producer is only one half of the evidence; the foundations
+# check consumes it with the dedicated Rust record. Neither route makes a
+# general claim about outer `mi_thread_done`, pthread, or process teardown.
 M1_COMPILER_TLS_SAME_TLD_TRACE_PROBE = r"""
 #include <stdbool.h>
 #include <stddef.h>
@@ -6512,7 +6538,7 @@ def fundamental_trace_schema(architecture: str) -> tuple[frozenset[str], int]:
     raise HarnessError(f"unsupported fundamental trace architecture: {architecture}")
 
 
-# This source-order-independent schema fixes the finite raw M1 witness.  A C
+# This source-order-independent schema fixes the finite raw primitive witness. A C
 # and Rust probe cannot jointly remove a case without this separate inventory
 # failing first.  The selected values are all source-relative facts; addresses,
 # random bytes, and timestamps are intentionally not evidence fields.
@@ -6628,7 +6654,7 @@ M1_RAW_PRIMITIVE_TRACE_EXPECTED_KEYS = frozenset(
 )
 M1_RAW_PRIMITIVE_TRACE_EXPECTED_COUNT = 47
 # This is a scalar width, not an address-bearing observation. Keep the one
-# exception explicit at the raw M1 boundary so the shared parser still rejects
+# exception explicit at the raw primitive boundary so the shared parser still rejects
 # address fields in every other trace.
 M1_RAW_PRIMITIVE_ADDRESS_LIKE_SCALAR_KEYS = frozenset(
     {"m1.raw.config.virtual_address_bits"}
@@ -6745,11 +6771,11 @@ class HarnessError(RuntimeError):
 
 
 class MilestoneUnavailable(HarnessError):
-    """A requested later milestone has no implementation yet."""
+    """A requested later feature has no implementation yet."""
 
 
 class CanonicalUpstreamStressRejected(HarnessError):
-    """A canonical upstream-stress report cannot be consumed as M5 evidence."""
+    """A canonical upstream-stress report cannot be consumed as allocator lifecycle evidence."""
 
 
 class RuntimeTicketZeroSoakRejected(HarnessError):
@@ -6846,7 +6872,7 @@ def load_pin(path: Path = UPSTREAMS) -> dict[str, str]:
 
 # The upstream-stress producer owns execution.  This runner only consumes its
 # one fixed, atomically-published full-matrix report.  Keep this validator here
-# rather than importing the producer: a full M5 run must not make a nested
+# rather than importing the producer: a full allocator check must not make a nested
 # upstream-stress invocation or silently acquire a second execution policy.
 CANONICAL_UPSTREAM_STRESS_ARTIFACT_IDS = (
     "contract",
@@ -7273,7 +7299,7 @@ def canonical_upstream_stress_expected_matrix_case(
 
 
 def canonical_upstream_stress_expected_matrix() -> list[dict[str, Any]]:
-    """Fix the producer's complete source schedule in this M5 consumer too."""
+    """Fix the producer's complete source schedule in this allocator lifecycle consumer too."""
 
     matrix: list[dict[str, Any]] = []
     for scale, iterations in ((1, 1), (2, 2)):
@@ -7326,7 +7352,7 @@ def canonical_upstream_stress_expected_large_object_mode() -> dict[str, Any]:
 def validate_canonical_upstream_stress_contract(
     contract: Mapping[str, Any], pin: Mapping[str, str]
 ) -> dict[str, Any]:
-    """Validate only the fixed producer boundary that M5 may consume."""
+    """Validate only the fixed producer boundary that allocator lifecycle may consume."""
 
     if not isinstance(contract, dict) or set(contract) != {
         "format",
@@ -8385,10 +8411,10 @@ def consume_canonical_upstream_stress_evidence(
 def validate_m5_gate_contract(
     contract: Mapping[str, Any], pin: Mapping[str, str]
 ) -> dict[str, Any]:
-    """Validate the reviewed M5 full-lane contract without claiming a pass.
+    """Validate the reviewed allocator lifecycle full-lane contract without claiming a pass.
 
     The current contract deliberately distinguishes passing bounded evidence
-    from the still-open Gate 5C--5E acceptance work.  Keeping that distinction
+    from the remaining lifecycle acceptance work.  Keeping that distinction
     checked-in prevents `allocator --full` from collapsing real lifecycle
     work into one permanent synthetic error message.
     """
@@ -8468,7 +8494,7 @@ def validate_m5_gate_contract(
 def _m1_foundations_port_map_record(
     port_map: Mapping[str, Any], reference: Mapping[str, Any]
 ) -> Mapping[str, Any]:
-    """Resolve one reviewed M1 source-map reference without widening its scope."""
+    """Resolve one reviewed foundations source-map reference without widening its scope."""
 
     kind = reference["kind"]
     upstream = reference["upstream"]
@@ -8486,7 +8512,7 @@ def _m1_foundations_port_map_record(
 
 
 def _m1_foundations_source_test_exists(target: str, check_id: str) -> None:
-    """Refuse a checked-in M1 filter once its current source witness is gone."""
+    """Refuse a checked-in foundations filter once its current source witness is gone."""
 
     target_parts = target.split("::")
     if len(target_parts) == 3 and target_parts[1] == "tests":
@@ -8516,7 +8542,7 @@ def _m1_foundations_source_test_exists(target: str, check_id: str) -> None:
 
 
 def _m2_memory_substrate_source_test_exists(target: str, check_id: str) -> None:
-    """Refuse the M2 filter if its current PageMap witness disappears."""
+    """Refuse the memory substrate filter if its current PageMap witness disappears."""
 
     target_parts = target.split("::")
     if len(target_parts) != 3 or target_parts[1] != "tests":
@@ -8541,7 +8567,7 @@ def _m2_memory_substrate_source_test_exists(target: str, check_id: str) -> None:
 def validate_m2_memory_substrate_contract(
     contract: Mapping[str, Any], pin: Mapping[str, str]
 ) -> dict[str, Any]:
-    """Validate the fixed, deliberately partial M2 memory-substrate contract."""
+    """Validate the fixed, deliberately partial memory substrate contract."""
 
     expected_keys = {
         "components",
@@ -8779,7 +8805,7 @@ def validate_m2_memory_substrate_contract(
 def m2_memory_substrate_contract_record(
     contract: Mapping[str, Any], pin: Mapping[str, str]
 ) -> dict[str, Any]:
-    """Bind an M2 report to the checked contract and pinned source."""
+    """Bind a memory substrate report to the checked contract and pinned source."""
 
     return {
         "format": contract["format"],
@@ -8797,7 +8823,7 @@ def m2_memory_substrate_contract_record(
 def m2_memory_substrate_check_command(
     execution: Mapping[str, Any], check: Mapping[str, Any]
 ) -> list[str]:
-    """Build one focused M2 Rust unit-test invocation."""
+    """Build one focused memory substrate Rust unit-test invocation."""
 
     command = ["cargo", "test", "-p", str(execution["package"])]
     if execution["features"]:
@@ -9742,7 +9768,7 @@ def run_m2_x86_64_metadata_lifecycle_differential(
 def run_m2_memory_substrate_checks(
     summary: Mapping[str, Any], pin: Mapping[str, str], *, offline: bool
 ) -> list[dict[str, Any]]:
-    """Run only the explicitly selected M2 checks in a private target directory."""
+    """Run only the explicitly selected memory substrate checks in a private target directory."""
 
     environment = os.environ.copy()
     environment["CARGO_TARGET_DIR"] = str(M2_MEMORY_SUBSTRATE_CARGO_TARGET)
@@ -10008,14 +10034,14 @@ def run_m2_memory_substrate_checks(
 
 
 def m2_memory_substrate_source_state() -> dict[str, Any]:
-    """Capture a clean current commit before or after the M2 gate."""
+    """Capture a clean current commit before or after the memory substrate gate."""
 
     state = runtime_ticket_zero_soak_source_state()
     return validate_runtime_ticket_zero_soak_source_state(state, "M2 memory-substrate source")
 
 
 def m2_memory_substrate_source_attestation(before: object, after: object) -> dict[str, Any]:
-    """Require the report to bind every M2 observation to one clean commit."""
+    """Require the report to bind every memory substrate observation to one clean commit."""
 
     source_before = validate_runtime_ticket_zero_soak_source_state(
         before, "M2 memory-substrate source before"
@@ -10043,7 +10069,7 @@ def m2_memory_substrate_report(
     source_attestation: Mapping[str, Any],
     focused_checks: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    """Render partial M2 evidence without promoting unproved categories."""
+    """Render partial memory substrate evidence without promoting unproved categories."""
 
     checks_by_component: dict[str, list[dict[str, Any]]] = {
         component["id"]: [] for component in summary["components"]
@@ -10097,7 +10123,7 @@ def m2_memory_substrate_report(
 
 
 def m2_memory_substrate_unmet_message(report: Mapping[str, Any]) -> str:
-    """Explain an intentional partial M2 result."""
+    """Explain an intentional partial memory substrate result."""
 
     milestone = report.get("milestone")
     if not isinstance(milestone, Mapping):
@@ -10113,7 +10139,7 @@ def m2_memory_substrate_unmet_message(report: Mapping[str, Any]) -> str:
 
 
 def run_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
-    """Execute the current partial M2 gate and bind it to one clean commit."""
+    """Execute the current partial memory substrate gate and bind it to one clean commit."""
 
     source_before = m2_memory_substrate_source_state()
     pin = load_pin()
@@ -10135,10 +10161,10 @@ def run_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
 def validate_m1_foundations_contract(
     contract: Mapping[str, Any], pin: Mapping[str, str], port_map: Mapping[str, Any]
 ) -> dict[str, Any]:
-    """Validate the finite M1 acceptance contract without promoting M1.
+    """Validate the finite foundations acceptance contract without promoting foundations.
 
-    M1 names only reviewable foundations.  In particular, a true item row in
-    ``port-map.toml`` is evidence for that source-shaped item, never an
+    The selected boundary names only reviewable source facts. A true item row
+    in the source map is evidence for that source-shaped item, never an
     implicit claim that the enclosing upstream header or translation unit is
     complete.  The contract therefore carries the selected references,
     focused source tests, and explicit deferred exclusions together.
@@ -10583,7 +10609,7 @@ def validate_m1_foundations_contract(
 
 
 def _m1_x86_64_neutral_inventory() -> list[dict[str, Any]]:
-    """Read target-neutral M1 boundary shapes from the preserved record.
+    """Read target-neutral foundations boundary shapes from the preserved record.
 
     The paused AArch64 record remains the canonical spelling of finite test,
     layout, upstream-boundary, once-call-site, and ``prim.h`` inventories.
@@ -10877,7 +10903,7 @@ def _x86_64_source_map_unit_statuses(*, gate_name: str) -> dict[str, str]:
 
 
 def _m1_x86_64_source_map_unit_statuses() -> dict[str, str]:
-    """Preserve M1's source-map predicate helper."""
+    """Preserve foundations check's source-map predicate helper."""
 
     return _x86_64_source_map_unit_statuses(gate_name="native x86 M1")
 
@@ -10885,10 +10911,10 @@ def _m1_x86_64_source_map_unit_statuses() -> dict[str, str]:
 def _m1_x86_64_bounded_source_definitions(
     component_id: str, raw_definitions: object, checks: Sequence[Mapping[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Validate native-only M1 source anchors outside broad source-map rows.
+    """Validate native-only foundations source anchors outside broad source-map rows.
 
     The target source map deliberately gives each upstream member one broad
-    ownership row.  Several finite M1 facts live outside those rows' selected
+    ownership row.  Several finite foundations facts live outside those rows' selected
     anchors (for example scalar helpers versus PageMap helpers in
     ``internal.h``).  These narrow, hash-pinned records retain that source
     fact without promoting any whole header or translation unit.
@@ -10999,7 +11025,7 @@ def _m1_x86_64_local_checks(component_id: str, raw_checks: object) -> list[dict[
 def _m1_x86_64_bounded_source_definition_evidence(
     summary: Mapping[str, Any], pin: Mapping[str, str], *, offline: bool
 ) -> dict[str, Any]:
-    """Re-read every bounded x86 M1 source anchor from the verified archive."""
+    """Re-read every bounded x86 foundations source anchor from the verified archive."""
 
     archive = fetch_archive(pin, offline)
     records: list[dict[str, Any]] = []
@@ -11126,7 +11152,7 @@ def _m1_inventory_digest(value: object) -> str:
 def validate_x86_64_m1_foundations_contract(
     contract: Mapping[str, Any], pin: Mapping[str, str]
 ) -> dict[str, Any]:
-    """Validate the native x86 M1 execution contract without importing closure.
+    """Validate the native x86 foundations execution contract without importing closure.
 
     This contract deliberately records a *ready* implementation boundary. A
     completion result is created only by `run_x86_64_m1_foundations` after its
@@ -11426,7 +11452,7 @@ def validate_x86_64_m1_foundations_contract(
 def m1_foundations_contract_record(
     contract: Mapping[str, Any], pin: Mapping[str, str], *, contract_path: Path = M1_FOUNDATIONS_CONTRACT
 ) -> dict[str, Any]:
-    """Render the checked contract identity retained in each M1 report."""
+    """Render the checked contract identity retained in each foundations report."""
 
     return {
         "format": contract["format"],
@@ -11444,7 +11470,7 @@ def m1_foundations_contract_record(
 def m1_foundations_check_command(
     execution: Mapping[str, Any], check: Mapping[str, Any]
 ) -> list[str]:
-    """Build one focused, source-filtered M1 Cargo invocation."""
+    """Build one focused, source-filtered foundations Cargo invocation."""
 
     command = ["cargo", "test", "-p", str(execution["package"])]
     if execution.get("no_default_features") is True:
@@ -11473,10 +11499,10 @@ def _x86_64_unit_test_program(
 ) -> dict[str, Any]:
     """Build one native gate's unit binary once in its private Cargo directory.
 
-    M1 names many small source-shaped assertions. Building Cargo separately
+    The foundations check names many small source-shaped assertions. Building Cargo separately
     for each would turn test accounting into a cache-timing accident.  The
     gate instead records one `--no-run` build, lists that exact binary, and
-    runs a closed batch after explicitly skipping every non-M1 test.
+    runs a closed batch after explicitly skipping every test outside the selected foundations set.
     """
 
     command = ["cargo", "test", "-p", str(execution["package"])]
@@ -11561,7 +11587,7 @@ def build_crabc_mimalloc_lib_tests(
 def _m1_foundations_test_program(
     execution: Mapping[str, Any], cargo_target: Path
 ) -> dict[str, Any]:
-    """Preserve the M1-facing wrapper for its native test binary builder."""
+    """Preserve the foundations-facing wrapper for its native test binary builder."""
 
     return _x86_64_unit_test_program(
         execution, cargo_target, gate_name="M1 foundations"
@@ -11592,7 +11618,7 @@ def _x86_64_unit_test_names(
 def _m1_foundations_test_names(
     test_program: Mapping[str, Any], *, timeout_seconds: int
 ) -> set[str]:
-    """Preserve M1's named unit-binary test inventory helper."""
+    """Preserve foundations check's named unit-binary test inventory helper."""
 
     return _x86_64_unit_test_names(
         test_program, timeout_seconds=timeout_seconds, gate_name="M1 foundations"
@@ -11624,7 +11650,7 @@ def _x86_64_program_check_command(
 def _m1_foundations_program_check_command(
     test_program: Mapping[str, Any], target: str, *, nocapture: bool
 ) -> list[str]:
-    """Preserve M1's named exact-test command helper."""
+    """Preserve foundations check's named exact-test command helper."""
 
     return _x86_64_program_check_command(
         test_program, target, nocapture=nocapture, gate_name="M1 foundations"
@@ -11668,7 +11694,7 @@ def _x86_64_run_exact_program_check(
 def _m1_foundations_run_exact_program_check(
     test_program: Mapping[str, Any], check: Mapping[str, Any], *, nocapture: bool
 ) -> tuple[dict[str, Any], str]:
-    """Preserve M1's named exact-test execution helper."""
+    """Preserve foundations check's named exact-test execution helper."""
 
     return _x86_64_run_exact_program_check(
         test_program, check, nocapture=nocapture, gate_name="M1 foundations"
@@ -11765,7 +11791,7 @@ def run_x86_64_m1_foundations_checks(
     *,
     already_executed_check_ids: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
-    """Run all remaining native x86 M1 checks in one closed unit-binary batch."""
+    """Run all remaining native x86 foundations checks in one closed unit-binary batch."""
 
     return _run_x86_64_focused_source_checks(
         summary,
@@ -11776,7 +11802,7 @@ def run_x86_64_m1_foundations_checks(
 
 
 def run_m1_foundations_checks(summary: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Run every paused AArch64 M1 check in its private Cargo target directory.
+    """Run every paused AArch64 foundations check in its private Cargo target directory.
 
     The native x86 path batches filters from one prepared unit binary.  The
     frozen AArch64 record deliberately retains the existing individual Cargo
@@ -11821,7 +11847,7 @@ def run_m1_foundations_checks(summary: Mapping[str, Any]) -> list[dict[str, Any]
 def _m1_foundations_run_aarch64_cargo_check(
     *, timeout_seconds: int, target: str, evidence_name: str
 ) -> tuple[dict[str, Any], str]:
-    """Run one frozen AArch64 M1 source witness through its original Cargo path."""
+    """Run one frozen AArch64 foundations source witness through its original Cargo path."""
 
     command = [
         "cargo",
@@ -11862,7 +11888,7 @@ def run_m1_raw_primitive_differential(
     test_program: Mapping[str, Any] | None = None,
     check: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Compare the finite raw M1 record against a freshly extracted C oracle.
+    """Compare the finite raw foundations record against a freshly extracted C oracle.
 
     The C and Rust executions are separate processes by design.  Their record
     compares only stable source-relative values, so no process address, random
@@ -12172,7 +12198,7 @@ def m1_foundations_layout_evidence(
     *,
     static_image_c_layout: Mapping[str, int],
 ) -> dict[str, dict[str, Any]]:
-    """Classify declared M1 keys against their exact C reader boundary."""
+    """Classify declared foundations keys against their exact C reader boundary."""
 
     evidence: dict[str, dict[str, Any]] = {}
     for component in components:
@@ -12210,14 +12236,14 @@ def m1_foundations_layout_evidence(
 
 
 def m1_foundations_source_state() -> dict[str, Any]:
-    """Capture a clean current commit before or after the finite M1 gate."""
+    """Capture a clean current commit before or after the finite foundations gate."""
 
     state = runtime_ticket_zero_soak_source_state()
     return validate_runtime_ticket_zero_soak_source_state(state, "M1 foundations source")
 
 
 def m1_foundations_source_attestation(before: object, after: object) -> dict[str, Any]:
-    """Require the report to bind every M1 observation to one clean commit."""
+    """Require the report to bind every foundations observation to one clean commit."""
 
     source_before = validate_runtime_ticket_zero_soak_source_state(
         before, "M1 foundations source before"
@@ -12255,7 +12281,7 @@ def m1_foundations_report(
     completion_ready_statuses: frozenset[str] = frozenset({"complete"}),
     dependency_graph_key: str = "production_dependency_graph",
 ) -> dict[str, Any]:
-    """Render a current-commit M1 evidence report without changing its status."""
+    """Render a current-commit foundations evidence report without changing its status."""
 
     c_oracle = shared_oracle.get("c_oracle")
     x86_64_contract = (
@@ -12567,7 +12593,7 @@ def m1_foundations_report(
 def _m1_foundations_check_by_id(
     summary: Mapping[str, Any], check_id: str
 ) -> tuple[str, Mapping[str, Any]]:
-    """Resolve one named M1 differential witness from the validated inventory."""
+    """Resolve one named foundations differential witness from the validated inventory."""
 
     matches = [
         (str(component["id"]), check)
@@ -12583,7 +12609,7 @@ def _m1_foundations_check_by_id(
 def _m1_foundations_differential_check_record(
     component_id: str, check: Mapping[str, Any], differential: Mapping[str, Any]
 ) -> dict[str, Any]:
-    """Retain a trace test as one exact focused M1 check without rerunning it."""
+    """Retain a trace test as one exact focused foundations check without rerunning it."""
 
     rust = differential.get("rust")
     if not isinstance(rust, Mapping):
@@ -12601,7 +12627,7 @@ def _m1_foundations_differential_check_record(
 
 
 def run_m1_foundations(*, offline: bool) -> dict[str, Any]:
-    """Execute and record the finite M1 gate, including a clean-commit binding."""
+    """Execute and record the finite foundations gate, including a clean-commit binding."""
 
     source_before = m1_foundations_source_state()
     pin = load_pin()
@@ -12665,8 +12691,8 @@ def _x86_64_source_contract_evidence(
     ):
         raise HarnessError(f"{gate_name} source-contract inventories did not pass")
     # The target-wide maps intentionally remain incomplete. Their successful
-    # validation proves exact source accounting, not M1 closure; the finite
-    # M1 source tests and native C/Rust records above carry that behavior proof.
+    # validation proves exact source accounting, not foundations completion;
+    # the finite source tests and native C/Rust records above carry that proof.
     if api_coverage.get("overall_status") != "incomplete" or source_map.get("overall_status") != "incomplete":
         raise HarnessError(f"{gate_name} source-contract inventory scope changed")
     return {
@@ -12694,7 +12720,7 @@ def _x86_64_source_contract_evidence(
 
 
 def _m1_x86_64_source_contract_evidence(shared_oracle: Mapping[str, Any]) -> dict[str, Any]:
-    """Preserve M1's named source-contract evidence helper."""
+    """Preserve foundations check's named source-contract evidence helper."""
 
     return _x86_64_source_contract_evidence(
         shared_oracle, gate_name="native x86 M1"
@@ -12707,7 +12733,7 @@ def _m1_x86_64_static_image_baseline(
     """Build the x86-only C static-image reader without re-running quick.
 
     The native quick oracle already supplies the ordinary release C artifact,
-    layout, traces, adapter, and direct Rust evidence. M1 adds this one
+    layout, traces, adapter, and direct Rust evidence. The foundations check adds this one
     constructor-suppressed reader because its pre-attach static image is a
     different C boundary, not because x86 inherits the AArch64 reader.
     """
@@ -12726,11 +12752,11 @@ def _m1_x86_64_static_image_baseline(
 
 
 def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
-    """Execute the native x86 M1 contract and write only x86 evidence.
+    """Execute the native x86 foundations contract and write only x86 evidence.
 
-    This path intentionally consumes the full native x86 M0 oracle rather
+    This path intentionally consumes the full native x86 C oracle rather
     than an AArch64 report or a source-only check. It therefore waits for the
-    private x86 adapter baseline as well as the exact M1 C/Rust witnesses.
+    private x86 adapter baseline as well as the exact foundations C/Rust witnesses.
     """
 
     require_native_x86_64()
@@ -14049,7 +14075,7 @@ def _m2_x86_64_vm_component(raw_component: Mapping[str, Any], pin: Mapping[str, 
 def validate_x86_64_m2_memory_substrate_contract(
     contract: Mapping[str, Any], pin: Mapping[str, str]
 ) -> dict[str, Any]:
-    """Validate the eight-component native M2 boundary without AArch64 status reuse."""
+    """Validate the eight-component native memory substrate boundary without AArch64 status reuse."""
 
     expected_keys = {
         "components",
@@ -14789,7 +14815,7 @@ def _run_m2_x86_64_arena_lifecycle_evidence(
 
 
 def _run_m2_x86_64_runtime_thp_configuration_evidence() -> dict[str, Any]:
-    """Run the one focused lifecycle producer required by its named M2 check."""
+    """Run the one focused lifecycle producer required by its named memory substrate check."""
 
     producer = _m2_x86_64_runtime_thp_configuration_producer()
     return producer.run_runtime_first_arena_policy_evidence(
@@ -14950,7 +14976,7 @@ def _m2_x86_64_vm_rust_build_command() -> list[str]:
 
 
 def _m2_x86_64_vm_rust_binary_path_is_bound(path: object) -> bool:
-    """Bind the retained executable to the M2 native Cargo target directory.
+    """Bind the retained executable to the memory substrate native Cargo target directory.
 
     Cargo reports the library test executable in one of two fixed profile
     layouts: the historical flat `debug/deps/crabc_mimalloc-HASH`, or the
@@ -15014,7 +15040,7 @@ def _m2_x86_64_vm_c_command_is_bound(
 ) -> bool:
     """Require one direct-source VM C oracle's complete positional command.
 
-    The M2 VM fixture directly includes pinned `src/os.c`, `src/arena.c`,
+    The native VM fixture directly includes pinned `src/os.c`, `src/arena.c`,
     `src/init.c`, `src/page.c`, and `src/prim/prim.c`, so its ordinary source
     input list must omit all five while retaining the complete raw primitive
     closure. The process-arena fixture instead includes pinned `src/static.c`,
@@ -16072,7 +16098,7 @@ def _m2_x86_64_initialization_check_records(
     summary: Mapping[str, Any], evidence: object, teardown_evidence: object = None,
     exclusive_arena_evidence: object = None,
 ) -> list[dict[str, Any]]:
-    """Bind the initialization M2 checks to their closed native receipts."""
+    """Bind the initialization checks in the memory substrate record to their closed native receipts."""
 
     component = next(item for item in summary["components"] if item["id"] == "initialization")
     checks = {check["id"]: check for check in component["checks"]}
@@ -16347,7 +16373,7 @@ def m2_x86_64_memory_substrate_report(
     initialization_teardown_evidence: Mapping[str, Any] | None = None,
     exclusive_arena_theap_evidence: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Render native M2 receipts while keeping every open component partial."""
+    """Render native memory substrate receipts while keeping every open component partial."""
 
     if (
         source_contract_evidence.get("status") != "passed"
@@ -16806,7 +16832,7 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
 
 
 def m2_x86_64_memory_substrate_unmet_message(report: Mapping[str, Any]) -> str:
-    """Explain the exact remaining native M2 components."""
+    """Explain the exact remaining native memory substrate components."""
 
     milestone = report.get("milestone")
     if not isinstance(milestone, Mapping):
@@ -16824,7 +16850,7 @@ def m2_x86_64_memory_substrate_unmet_message(report: Mapping[str, Any]) -> str:
 def m1_foundations_unmet_message(
     report: Mapping[str, Any], *, report_path: Path = M1_FOUNDATIONS_REPORT
 ) -> str:
-    """Explain an intentional M1 partial result without calling it a test failure."""
+    """Explain an intentional foundations partial result without calling it a test failure."""
 
     milestone = report.get("milestone")
     if not isinstance(milestone, Mapping):
@@ -17357,7 +17383,7 @@ def _m5_native_owner_exit_lifecycle_evidence_passed(report: Mapping[str, Any]) -
 
 
 def _m5_source_derived_stress_evidence_passed(report: Mapping[str, Any]) -> bool:
-    """Recognize preliminary M5 stress evidence without promoting Gate 5D."""
+    """Recognize preliminary allocator lifecycle stress evidence without promoting full stress."""
 
     fixture = _m5_report_mapping(report, "m5_source_derived_stress_adapter", "fixture")
     if fixture is None:
@@ -17416,7 +17442,7 @@ def m5_gate_report(contract: Mapping[str, Any], report: Mapping[str, Any]) -> di
 
     Operational failures never reach this function: they remain harness errors.
     A `blocked` result here instead means the bounded evidence passed but the
-    reviewed M5 acceptance contract has not yet been met.
+    reviewed allocator lifecycle acceptance contract has not yet been met.
     """
 
     summary = validate_m5_gate_contract(contract, load_pin())
@@ -17532,7 +17558,7 @@ def validate_adapted_test_contract(
     *,
     source_selection_only: bool = False,
 ) -> dict[str, int]:
-    """Validate the reviewed M4 patch, selection, and private ABI contract.
+    """Validate the reviewed API adapter patch, selection, and private ABI contract.
 
     The x86-64 adapter contract source-binds this review record only for its
     patch, header, symbol, and selected-check facts.  Its target-local build
@@ -17696,7 +17722,7 @@ def validate_adapted_test_contract(
 
 
 def adapted_test_source_selection_payload(contract: Mapping[str, Any]) -> dict[str, Any]:
-    """Extract the target-neutral M4 facts reused by the x86 adapter lane."""
+    """Extract the target-neutral API adapter facts reused by the x86 adapter lane."""
 
     return {
         "adapted_source": contract.get("adapted_source"),
@@ -17739,7 +17765,7 @@ def validate_x86_64_test_adapter_contract(
     pin: Mapping[str, str],
     adapter_header: str,
 ) -> dict[str, Any]:
-    """Validate the native x86-64 boundary around the reviewed M4 source set.
+    """Validate the native x86-64 boundary around the reviewed API adapter source set.
 
     The source-selection contract remains the authoritative review record for
     the patch, symbols, and selected checks.  This separate contract records
@@ -18361,7 +18387,7 @@ def apply_and_verify_adapted_test_patch(
 def apply_and_verify_adapted_stress_test_patch(
     source: Path, contract: Mapping[str, Any], patch_tool: str
 ) -> dict[str, Any]:
-    """Apply and inspect the narrow source-derived M5 stress fixture."""
+    """Apply and inspect the narrow source-derived allocator lifecycle stress fixture."""
 
     source_hashes = contract["source_hashes"]
     assert isinstance(source_hashes, dict)
@@ -18587,9 +18613,9 @@ def pinned_archive_tag_identity(pin: Mapping[str, str], archive: Path) -> dict[s
     """Admit the reviewed tag identity for an offline, digest-verified archive.
 
     Offline there is no upstream to probe. The source of truth is the reviewed
-    pin (`compat/upstreams.toml`, `crabc-mimalloc/UPSTREAM.md`), whose annotated
-    tag object and peeled commit were verified when its archive digest was
-    recorded. The caller must already have matched `archive` against that
+    archive pin, whose annotated tag object and peeled commit were verified
+    when its archive digest was recorded. The caller must already have matched
+    `archive` against that
     SHA-256; this check additionally requires those bytes to name the pinned
     peeled commit. The record carries `basis: pinned-archive` and is never
     written to the cached remote-observation path.
@@ -19661,7 +19687,7 @@ def check_contracts(contracts: Mapping[Path, Mapping[str, Any]]) -> None:
 # Every port-map row classifies its intentional difference. `algorithmic`
 # changes what the allocator computes, the data structures or order of its
 # state transitions, or a result observable to a valid program, on a path the
-# port implements; AGENTS.md requires differential and performance evidence
+# port implements; such a change requires differential and performance evidence
 # for it. `boundary` is a scope or bounded-ownership note, a representation or
 # platform mapping with preserved semantics, an integration owner, or a
 # fail-closed response where C asserts or has no valid state. `none` means the
@@ -20654,7 +20680,7 @@ def parse_fundamental_trace(output: str) -> dict[str, int]:
 
 
 def parse_m1_raw_primitive_trace(output: str) -> dict[str, int]:
-    """Parse the fixed, address-free pinned-C/Rust raw M1 record."""
+    """Parse the fixed, address-free pinned-C/Rust raw foundations record."""
 
     return parse_address_independent_trace(
         output,
@@ -22549,7 +22575,7 @@ def compare_fundamental_trace(
 
 
 def validate_m1_raw_primitive_trace_schema(trace: Mapping[str, int], *, source: str) -> None:
-    """Refuse a narrowed or widened raw M1 record from either implementation."""
+    """Refuse a narrowed or widened raw foundations record from either implementation."""
 
     if len(M1_RAW_PRIMITIVE_TRACE_EXPECTED_KEYS) != M1_RAW_PRIMITIVE_TRACE_EXPECTED_COUNT:
         raise HarnessError("internal M1 raw-primitive trace schema has an unexpected key count")
@@ -23025,7 +23051,7 @@ def validate_runtime_ticket_zero_adapter_contract(
     *,
     pin: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Validate the separate C witness without widening the M4 adapter."""
+    """Validate the separate C witness without widening the API adapter."""
 
     if (
         contract.get("format") != 1
@@ -23230,7 +23256,7 @@ def build_fundamental_trace(
     *,
     architecture: str = "aarch64",
 ) -> dict[str, Any]:
-    """Build the pinned-C baseline for the Milestone 4 public API slice."""
+    """Build the pinned-C baseline for the selected public API slice."""
 
     trace_source = profile_dir / "fundamental-trace-probe.c"
     trace_binary = profile_dir / "fundamental-trace-probe"
@@ -23273,7 +23299,7 @@ def build_m1_raw_primitive_trace(
     profile_dir: Path,
     profile_flags: Sequence[str],
 ) -> dict[str, Any]:
-    """Run the finite raw M1 slice against source-private pinned C state.
+    """Run the finite raw foundations slice against source-private pinned C state.
 
     `M1_RAW_PRIMITIVE_TRACE_PROBE` includes the archive's `src/os.c` so its
     static configuration record is observed directly.  The compilation list
@@ -24455,8 +24481,8 @@ def run_m1_compiler_tls_terminal_prototype(*, offline: bool) -> dict[str, Any]:
     """Build and run the isolated pinned-C half of the terminal trace.
 
     This intentionally has no report path: it is an explicit development
-    view of the C half only. `--m1` consumes the same C producer with the
-    dedicated Rust trace and remains the status-bearing evidence path.
+    view of the C half only. The foundations check consumes the same C producer
+    with the dedicated Rust trace and remains the status-bearing evidence path.
     """
 
     require_native_aarch64()
@@ -24501,7 +24527,7 @@ def build_m1_static_image_probe(
     profile_dir: Path,
     flags: Sequence[str],
 ) -> dict[str, Any]:
-    """Read only the M1 pre-process-initialization static image.
+    """Read only the foundations pre-process-initialization static image.
 
     This is intentionally not a `build_profile` layout variant. Its one
     constructor-suppression define is limited to the generated reader, so the
@@ -24509,8 +24535,8 @@ def build_m1_static_image_probe(
     traces retain the pinned ordinary automatic-attach configuration.
     """
 
-    # This helper is also used by the native x86 M1 gate with a target-private
-    # artifact root, rather than by `build_profile`, which normally creates
+    # This helper is also used by the native x86 foundations check with a
+    # target-private artifact root, rather than by `build_profile`, which creates
     # its profile directory first.
     profile_dir.mkdir(parents=True, exist_ok=True)
     probe_source = profile_dir / "m1-static-image-probe.c"
@@ -25704,8 +25730,8 @@ def run_adapted_stress_fixture(
 ) -> dict[str, Any]:
     """Run the one reviewed source-derived upstream stress route.
 
-    This is intentionally not folded into the M4 fixture result: its fixed
-    creating-thread scheduler is preliminary M5 evidence and must stay visibly
+    This is intentionally not folded into the API adapter fixture result: its fixed
+    creating-thread scheduler is preliminary allocator lifecycle evidence and must stay visibly
     distinct from a claimed multi-thread upstream stress acceptance.
     """
 
@@ -26234,7 +26260,7 @@ def runtime_ticket_zero_soak_fixture_evidence(
         "profiles",
         "source_files",
     }:
-        # The completed `run_milestone0` report has the complete C-oracle
+        # The completed source profile report has the complete C-oracle
         # profile inventory. Keep the stable report smaller by retaining only
         # its stable identity fields, but fail closed if that producer shape
         # is absent or stale.
@@ -26814,8 +26840,8 @@ def runtime_ticket_zero_soak_consumer_pinned_source_records(
     """Re-read every producer C-oracle member from the live pinned archive.
 
     The soak producer carries the compact `source_file_records` inventory from
-    `milestone0_report`.  Those member records are meaningful only when this
-    later reader independently verifies the same ordered `ORACLE_SOURCES`
+    the completed source profile report. Those member records are meaningful
+    only when this reader independently verifies the same ordered `ORACLE_SOURCES`
     bytes against the still-live archive that already matched the immutable
     pin.  Reading directly from the archive avoids accepting a relabelled
     extracted tree or a producer-shaped list of arbitrary strings.
@@ -27245,7 +27271,7 @@ def consume_runtime_ticket_zero_soak_evidence(
     """Classify the one durable private soak report without running its fixture.
 
     This is intentionally a top-level provenance reader.  It neither invokes
-    the opt-in soak producer nor supplies evidence to the M5 gate contract.
+    the opt-in soak producer nor supplies evidence to the allocator lifecycle gate contract.
     """
 
     raw_root = runtime_ticket_zero_soak_consumer_raw_path(root)
@@ -28003,7 +28029,7 @@ def main() -> int:
             )
             # This separate private-soak reader is intentionally only a
             # top-level provenance result.  Its checked-in nonclaims keep it
-            # out of the M5 acceptance model and prevent a full run from
+            # out of the allocator acceptance model and prevent a full run from
             # spawning the optional 1,024-cycle fixture again.
             report["runtime_ticket_zero_soak"] = (
                 consume_runtime_ticket_zero_soak_evidence()

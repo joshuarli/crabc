@@ -285,12 +285,18 @@
           "id": "arena-delayed-purge-expiry-c-rust-differential",
           "kind": "c-rust-arena-delayed-purge-failure-differential",
           "target": "compat/allocator/m2_delayed_purge_expiry_x86_64.py"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "arena-delayed-purge-expiry-decommit-failure-c-rust-differential",
+          "kind": "c-rust-arena-delayed-purge-failure-differential",
+          "target": "compat/allocator/medium_pressure_delayed_purge_fault.py"
         }
       ],
       "id": "arenas",
       "native_status": "partial",
       "remaining_conditions": [
-        "Qualify arena page abandonment, abandoned-page search/claim/unabandon, cross-thread reclamation, and arena purge beyond the process-purge differential's three-regular-arena delayed-purge and two-slice whole-range-claim-fallback relations and the selected delayed-purge decommit EIO consumption/reuse relation through native C/Rust lifecycle and failure evidence.",
+        "Qualify arena page abandonment, abandoned-page search/claim/unabandon, cross-thread reclamation, and arena purge beyond the process-purge differential's three-regular-arena delayed-purge and two-slice whole-range-claim-fallback relations and the selected delayed-purge decommit EIO consumption/reuse relations, including an error at scheduled expiry of a fully committed slice, through native C/Rust lifecycle and failure evidence.",
         "Qualify large/huge-page arena reservation against pinned C (see the VM huge-page/NUMA condition). Automatic reservation and count scaling, commit and eager-commit policy, disallow_os_alloc, requested and exclusive arenas including an exclusive sub-arena span, oversized requests, clean primary failure with and without the 128-MiB fallback, NUMA second-pass search, registry exhaustion, the interleaving-independent relations of eight-worker concurrent fresh reservation after exhausting the only arena, sub-arena publication and metadata-commit failure after a published parent, requested-arena `_mi_arenas_alloc(_aligned)` with its refusing OS fallback, and the `_mi_theap_alloc` exclusive-arena arm's disallow_arena_alloc gate and commit-failure NUMA second pass are covered by the arena-reservation lifecycle differential. The failed-reservation `show_errors` output (the `mi_os_prim_alloc_at` allocation warnings around the aligned over-allocation fallback for committed and uncommitted requests, and the `mi_manage_os_memory_ex2` not-large-enough warning) is covered by the reservation warning differential."
       ],
       "source_map_records": [
