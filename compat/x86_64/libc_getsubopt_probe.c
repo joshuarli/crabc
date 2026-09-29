@@ -38,6 +38,80 @@ static int same_text(const char *left, const char *right)
     return left[index] == right[index];
 }
 
+static int same_bytes(const char *left, const char *right, size_t count)
+{
+    size_t index;
+    for (index = 0; index < count; ++index) {
+        if (left[index] != right[index]) return 0;
+    }
+    return 1;
+}
+
+/* Every comma split and every returned pointer belongs to the supplied
+ * mutable array.  Keep the byte image explicit so a parser which returns the
+ * right token but mutates a later separator cannot satisfy this fixture.
+ */
+static int check_mutation_and_malformed_tokens(getsubopt_signature parse)
+{
+    char options[] = "key=left=right,=orphan,key =space,unknown=,key==x,";
+    char key[] = "key";
+    char key_with_space[] = "key ";
+    char *keys[] = { key, key_with_space, NULL };
+    char *cursor = options;
+    char *value = options;
+    char expected[] = "key=left=right\0=orphan\0key =space\0unknown=\0key==x\0";
+
+    if (parse(&cursor, keys, &value) != 0 ||
+        value != options + sizeof("key=") - 1 ||
+        !same_text(value, "left=right") ||
+        cursor != options + sizeof("key=left=right,") - 1)
+        return 1;
+    value = options;
+    if (parse(&cursor, keys, &value) != -1 || value != NULL ||
+        cursor != options + sizeof("key=left=right,=orphan,") - 1)
+        return 2;
+    value = options;
+    if (parse(&cursor, keys, &value) != 1 ||
+        value != options + sizeof("key=left=right,=orphan,key =") - 1 ||
+        !same_text(value, "space") ||
+        cursor != options + sizeof("key=left=right,=orphan,key =space,") - 1)
+        return 3;
+    value = options;
+    if (parse(&cursor, keys, &value) != -1 || value != NULL ||
+        cursor != options + sizeof("key=left=right,=orphan,key =space,unknown=,") - 1)
+        return 4;
+    value = options;
+    if (parse(&cursor, keys, &value) != 0 ||
+        value != options + sizeof("key=left=right,=orphan,key =space,unknown=,key=") - 1 ||
+        !same_text(value, "=x") ||
+        cursor != options + sizeof(options) - 1)
+        return 5;
+    value = options;
+    if (parse(&cursor, keys, &value) != -1 || value != NULL ||
+        cursor != options + sizeof(options) - 1)
+        return 6;
+    if (!same_bytes(options, expected, sizeof(options))) return 7;
+    if (!same_text(key, "key") || !same_text(key_with_space, "key ")) return 8;
+    return 0;
+}
+
+static int check_first_key_order(getsubopt_signature parse)
+{
+    char options[] = "a=one,a";
+    char first[] = "a";
+    char second[] = "a";
+    char *keys[] = { first, second, NULL };
+    char *cursor = options;
+    char *value = NULL;
+
+    if (parse(&cursor, keys, &value) != 0 || value != options + 2 ||
+        cursor != options + 6 || options[5] != '\0') return 1;
+    value = options;
+    if (parse(&cursor, keys, &value) != 0 || value != NULL ||
+        cursor != options + sizeof(options) - 1) return 2;
+    return 0;
+}
+
 static int check_primary_sequence(getsubopt_signature parse)
 {
     char options[] = "ro,size=42,size=,unknown=ignored,,mode";
@@ -153,9 +227,13 @@ int crabc_x86_64_getsubopt_probe(void)
     if (status != 0) return 40 + status;
     status = check_empty_key(parse);
     if (status != 0) return 50 + status;
+    status = check_mutation_and_malformed_tokens(parse);
+    if (status != 0) return 60 + status;
+    status = check_first_key_order(parse);
+    if (status != 0) return 80 + status;
 
 #ifndef CRABC_GETSUBOPT_FREESTANDING
-    if (errno != E2BIG) return 70;
+    if (errno != E2BIG) return 90;
 #endif
     return 0;
 }

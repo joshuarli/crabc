@@ -6,6 +6,7 @@
 # It selects exactly getsubopt's caller-owned in-place byte parser, not a
 # general parser, environment, locale, stdio, allocation, errno, or TLS owner.
 set -euo pipefail
+ulimit -c 0
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 export LC_ALL=C
 
@@ -60,7 +61,8 @@ for tool in ar cargo cmp diff grep nm objdump readelf rustup sort; do
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-getsubopt.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-getsubopt.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-getsubopt-reference"
@@ -98,8 +100,20 @@ for header in stdlib.h features.h bits/alltypes.h; do
         fail "fixture did not use the project $header header"
 done
 
-"$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -fno-builtin -fno-stack-protector \
+"$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -static -fno-pie -no-pie \
+    -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_getsubopt_probe.c -o "$reference"
+readelf --file-header "$reference" | grep -Eq 'Type:[[:space:]]+EXEC' ||
+    fail "pinned-musl reference is not a static ET_EXEC"
+if readelf --program-headers --wide "$reference" |
+    grep -Eq 'INTERP|Requesting program interpreter'; then
+    fail "pinned-musl reference unexpectedly requires an interpreter"
+fi
+if readelf --dynamic --wide "$reference" | grep -Eq 'NEEDED'; then
+    fail "pinned-musl reference unexpectedly requires a shared library"
+fi
+nm --defined-only "$reference" | grep -Eq '[[:space:]][TW][[:space:]]getsubopt$' ||
+    fail "pinned-musl static reference does not define getsubopt"
 env -i LC_ALL=C TZ=UTC "$reference" || fail "pinned-musl getsubopt fixture failed"
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
