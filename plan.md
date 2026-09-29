@@ -236,7 +236,10 @@ are not transferable passes for a different revision.
   distinct fully committed published OS page matches 26 more C/Rust fields
   across failed terminal unmap, retained raw cleanup, and independent later
   publication and release. Its on-demand prefix variant cannot publish in
-  pinned C on this source revision. A
+  pinned C on this source revision. A later direct receiver matches 32 C/Rust
+  fields when the escaped first mapping survives a failed second metadata
+  commit and a clean third page publishes, releases, and permits raw cleanup.
+  A
   separate second-arena EIO purge regression now matches all 19 fields,
   including the pinned decommit warning and its callback order.
   A failed second-arena MADV_FREE reset regression now matches all 23 fields,
@@ -296,7 +299,8 @@ are not transferable passes for a different revision.
   Separate process-owned protect and unprotect failure receivers each match
   44 C/Rust fields, including warning timing, same-range retry, live mapping
   accounting, and terminal release. Both are registered in the clean M2 VM
-  gate, which executes all 93 runnable checks, including 54 VM checks; the
+  gate. Registering the explicit-arena terminal-unmap fault raises the clean
+  run to 94 runnable checks, including all 55 VM checks; the
   same four components remain partial.
   A failed second-arena committed-slice claim and same-slice retry match 24
   C/Rust fields after the regular mapping uses the warning-preserving commit
