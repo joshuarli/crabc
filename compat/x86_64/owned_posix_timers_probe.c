@@ -169,6 +169,95 @@ static void thread_timer(void)
     }
     puts("thread normal/exit/cancel/self-delete: identity, errno, TLS, allocation, cleanup, TSD reset");
 }
+
+/* Two timer workers overlap while one retires and resets its TLS. The other
+   worker's live application and DSO TLS must survive that reset. */
+static atomic_int overlap_calls[2], overlap_completed[2], overlap_a_entered, overlap_b_first, overlap_b_second, overlap_a_released;
+static pthread_t overlap_workers[2];
+static void *overlap_app_address[2], *overlap_dso_address[2], *overlap_dtv[2];
+static void overlap_notify(union sigval value)
+{
+    int slot = value.sival_int;
+    CHECK(slot == 0 || slot == 1);
+    int ordinal = atomic_fetch_add(&overlap_calls[slot], 1);
+    CHECK(ordinal < 2 && initialized == 73 && zeroed == 0);
+    if (ordinal == 0) {
+        overlap_workers[slot] = pthread_self();
+        overlap_app_address[slot] = &initialized;
+    } else {
+        CHECK(pthread_equal(overlap_workers[slot], pthread_self()));
+        CHECK(overlap_app_address[slot] == &initialized);
+    }
+    void *plugin = NULL;
+    void (*exchange)(void **, void **, int *, int *, int) = NULL;
+    if (dynamic_tls) {
+        plugin = dlopen(plugin_path, RTLD_NOW | RTLD_LOCAL);
+        CHECK(plugin != NULL);
+        *(void **)(&exchange) = dlsym(plugin, "timer_tls_exchange");
+        CHECK(exchange != NULL);
+        void *address, *zero_address;
+        int first, second;
+        exchange(&address, &zero_address, &first, &second, 200 + slot * 10 + ordinal);
+        CHECK(first == 137 && second == 0 && address != NULL && zero_address != NULL);
+        if (ordinal == 0) {
+            overlap_dso_address[slot] = address;
+            overlap_dtv[slot] = current_dtv();
+        } else {
+            CHECK(overlap_dso_address[slot] == address);
+            CHECK(overlap_dtv[slot] == current_dtv());
+        }
+    }
+    initialized = 100 + slot * 10 + ordinal;
+    zeroed = initialized;
+    if (slot == 0 && ordinal == 0) {
+        atomic_store(&overlap_a_entered, 1);
+        wait_count(&overlap_b_second, 1);
+        CHECK(initialized == 100 && zeroed == 100);
+        if (dynamic_tls) {
+            void *address, *zero_address;
+            int first, second;
+            exchange(&address, &zero_address, &first, &second, 201);
+            CHECK(first == 200 && second == 200);
+            CHECK(address == overlap_dso_address[0] && zero_address != NULL);
+            CHECK(current_dtv() == overlap_dtv[0]);
+        }
+        atomic_store(&overlap_a_released, 1);
+    } else if (slot == 1 && ordinal == 0) {
+        atomic_store(&overlap_b_first, 1);
+    } else if (slot == 1) {
+        atomic_store(&overlap_b_second, 1);
+    }
+    if (dynamic_tls) CHECK(dlclose(plugin) == 0 && current_dtv() == overlap_dtv[slot]);
+    atomic_fetch_add(&overlap_completed[slot], 1);
+}
+static void overlapping_timer_workers(void)
+{
+    timer_t timers[2];
+    struct sigevent event = {.sigev_notify = SIGEV_THREAD, .sigev_notify_function = overlap_notify};
+    for (int slot = 0; slot < 2; ++slot) {
+        event.sigev_value.sival_int = slot;
+        CHECK(timer_create(CLOCK_MONOTONIC, &event, &timers[slot]) == 0);
+    }
+    struct itimerspec arm = {.it_value = {0, 1000000}};
+    CHECK(timer_settime(timers[0], 0, &arm, NULL) == 0);
+    wait_count(&overlap_a_entered, 1);
+    CHECK(timer_settime(timers[1], 0, &arm, NULL) == 0);
+    wait_count(&overlap_b_first, 1);
+    CHECK(overlap_app_address[0] != overlap_app_address[1]);
+    if (dynamic_tls) {
+        CHECK(overlap_dso_address[0] != overlap_dso_address[1]);
+        CHECK(overlap_dtv[0] != overlap_dtv[1]);
+    }
+    CHECK(timer_settime(timers[1], 0, &arm, NULL) == 0);
+    wait_count(&overlap_b_second, 1);
+    wait_count(&overlap_a_released, 1);
+    CHECK(timer_settime(timers[0], 0, &arm, NULL) == 0);
+    wait_count(&overlap_completed[0], 2);
+    wait_count(&overlap_completed[1], 2);
+    CHECK(atomic_load(&overlap_calls[1]) == 2);
+    CHECK(timer_delete(timers[0]) == 0 && timer_delete(timers[1]) == 0);
+    puts("overlapping timer workers: live TLS isolation and next-callback reset");
+}
 /*
  * SIGEV_THREAD notification-thread contract: the callback thread is detached
  * even when the caller's attributes ask for a joinable thread, it honors the
@@ -501,7 +590,7 @@ int main(int argc, char **argv)
     alarm(20);
     if (argc > 2) plugin_path = argv[2];
     creator_cancellation();
-    kernel_timer(); thread_timer(); thread_timer_contract(); pending_delete_contract();
+    kernel_timer(); thread_timer(); overlapping_timer_workers(); thread_timer_contract(); pending_delete_contract();
     pid_t child = fork(); CHECK(child >= 0);
     if (!child) { kernel_timer(); thread_timer(); _Exit(0); }
     int status; CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);

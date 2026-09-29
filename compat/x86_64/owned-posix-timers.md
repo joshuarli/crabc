@@ -42,6 +42,15 @@ while initialized TLS returns to 137 and TBSS returns to zero after every
 callback. These checks run through normal return, exit, cancellation, and
 self-deletion paths, including the fresh timer worker after fork.
 
+The same application object also overlaps two distinct `SIGEV_THREAD` workers.
+One callback holds its initialized and zero-fill application TLS and its
+callback-loaded DSO TLS while the other worker completes a callback, resets,
+and starts its next callback. The held worker then checks its live bytes and
+DTV, and its own next callback checks the restored templates. Each worker
+keeps its own application and DSO TLS addresses across callbacks; the two
+workers have distinct addresses and DTVs. This checks that callback reset is
+scoped to its current thread while another timer callback is live.
+
 The four executable links retain the shared
 `owned_posix_product_evidence.validate_link` identities: static, static PIE,
 dynamic PIE and dynamic non-PIE. Before publication,
