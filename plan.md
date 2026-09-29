@@ -150,7 +150,11 @@ are not transferable passes for a different revision.
   replay and public promotion remain separate. Two source-built pinned-musl
   differentials match the owned resolver's search/UDP-truncation/TCP-CNAME
   recovery route and its bounded short-TCP-frame failure route; these focused
-  observations do not replace final-candidate family replay. Two separate
+  observations do not replace final-candidate family replay. A source-sealed
+  `thread.pthread-c11` static lifecycle component now passes
+  all six ET_EXEC/static-PIE cells across primary, reproduction, and extracted
+  products within the 16-behavior installed receipt. Independent physical
+  validation passes; family completion and promotion remain separate. Two separate
   same-object loader fixtures match pinned musl, accepted-C and native across
   15 static/dynamic cells each: one retains a callback snapshot while another
   thread closes and reopens a DSO, and the other opens a DSO from inside an
