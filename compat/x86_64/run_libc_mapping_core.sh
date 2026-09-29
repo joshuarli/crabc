@@ -5,9 +5,10 @@
 # and then as a true -nostdlib -static candidate linked only through the
 # selected crabc archive. It proves the coherent caller-owned mapping
 # lifecycle: mmap/munmap, musl-rounded mprotect, madvise, musl's POSIX
-# DONTNEED no-op/direct-positive-error convention, and mincore residency.
+# DONTNEED no-op/direct-positive-error convention, mincore residency, and
+# shared file mapping readback after the original descriptor closes.
 # It is deliberately not the complete <sys/mman.h> family, musl's process-wide
-# __vm_wait contract, msync cancellation behavior, mremap, mlock*, shared
+# __vm_wait contract, owned msync cancellation behavior, mremap, mlock*, shared
 # memory, allocator, CRT, loader, sysroot, or public x86 support.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
@@ -181,7 +182,7 @@ build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
-for symbol in __errno_location __madvise __mmap __mprotect __munmap madvise mincore mmap mprotect munmap posix_madvise; do
+for symbol in __errno_location __madvise __mmap __mprotect __munmap madvise mincore mmap mprotect msync munmap posix_madvise; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
@@ -204,11 +205,11 @@ readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in __errno_location __madvise __mmap __mprotect __munmap madvise mincore mmap mprotect munmap posix_madvise; do
+for symbol in __errno_location __madvise __mmap __mprotect __munmap madvise mincore mmap mprotect msync munmap posix_madvise; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
-for unrelated in msync mremap mlock mlock2 munlock mlockall munlockall \
+for unrelated in mremap mlock mlock2 munlock mlockall munlockall \
     remap_file_pages shm_open shm_unlink memfd_create malloc free calloc realloc \
     pthread_create pthread_exit pthread_join; do
     if grep -Eq "[[:space:]]${unrelated}$" "$candidate_symbols"; then
@@ -241,6 +242,7 @@ assert_named_syscall __munmap b
 assert_named_syscall __madvise 1c
 assert_named_syscall posix_madvise 1c
 assert_named_syscall mincore 1b
+assert_named_syscall msync 1a
 
 if "$candidate"; then
     :

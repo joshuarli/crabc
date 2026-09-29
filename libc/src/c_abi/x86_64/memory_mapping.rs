@@ -31,8 +31,11 @@
 //! process-shared barrier and robust-mutex pending-node transitions, so no new
 //! global VM lock is introduced.
 //!
-//! A separate private direct `msync` artifact now owns only a no-cancellation
-//! Linux request path; musl's cancellation-point semantics remain deferred.
+//! The selected static mapping probe also exercises the separate direct
+//! `msync` leaf after a shared file mapping survives descriptor closure. That
+//! selection proves that the request succeeds on a shared file mapping and
+//! that both aliases remain readable after descriptor closure. It does not
+//! prove the owned runtime's cancellation point or storage durability.
 //! `mremap` (variadic fixed-address form plus VM wait), `mlock*`,
 //! `remap_file_pages`, `shm_*`, and `memfd_create` are likewise deliberately
 //! outside this mapping-core artifact.

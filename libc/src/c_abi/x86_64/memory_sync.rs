@@ -20,9 +20,10 @@
 //! Linux 5.10 validates unknown/conflicting flags and page alignment before
 //! its rounded zero-length success path; the paired fixture keeps those error
 //! ordering rules explicit without selecting any broader mapping policy.
-//! Its disposable mapping is private and anonymous, so it proves syscall
-//! routing and visible validation only—not file-backed shared-map writeback,
-//! invalidation effects, persistence, or durability.
+//! The selected static mapping probe also exercises `msync` on a file-backed
+//! shared map, reads the file after closing the original descriptor, and
+//! repeats synchronization after the last descriptor closes. It does not
+//! prove invalidation effects, persistence, or storage durability.
 
 use core::ffi::{c_int, c_void};
 
