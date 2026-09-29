@@ -997,6 +997,8 @@ def _validate_static_preparation(
         replay_preparation = materialized / str(preparation["work"])
         _copy_physical_tree(preparation_root, replay_preparation, "retained static preparation")
         original_source_identity = static_products.source_identity
+        package_contract = static_products.package.static_product_contract
+        original_package_source_digest = package_contract.source_digest
 
         def sealed_source_identity(candidate: Path) -> dict[str, object]:
             if candidate != materialized:
@@ -1005,22 +1007,24 @@ def _validate_static_preparation(
 
         try:
             static_products.source_identity = sealed_source_identity
+            # The package owner checks every installed manifest against its
+            # source digest too. That digest has already been authenticated
+            # from complete Git bytes and current tracked files, so replay
+            # must give both owner readpoints the same authority.
+            package_contract.source_digest = lambda: digest
             observed = static_products.validate_receipt(materialized, replay_preparation / "preparation.json")
+            if not isinstance(observed, Mapping):
+                _fail("static preparation owner produced no record")
+            primary = observed.get("products", {}).get("primary")
+            if not isinstance(primary, Mapping) or not isinstance(primary.get("tree"), Mapping):
+                _fail("static preparation has no primary product tree")
+            if primary["tree"] != static_products.tree_identity(receipt_root / STATIC_PRODUCT_DIRECTORY):
+                _fail("static preparation primary differs from retained static product")
         except (static_products.PreparationError, static_products.package.PackageError, OSError, ValueError) as error:
             raise LocaleAliasReceiptError(f"static preparation differs: {error}") from error
         finally:
             static_products.source_identity = original_source_identity
-    if not isinstance(observed, Mapping):
-        _fail("static preparation owner produced no record")
-    primary = observed.get("products", {}).get("primary")
-    if not isinstance(primary, Mapping) or not isinstance(primary.get("tree"), Mapping):
-        _fail("static preparation has no primary product tree")
-    product = receipt_root / STATIC_PRODUCT_DIRECTORY
-    try:
-        if primary["tree"] != static_products.tree_identity(product):
-            _fail("static preparation primary differs from retained static product")
-    except (static_products.PreparationError, static_products.package.PackageError, OSError, ValueError) as error:
-        raise LocaleAliasReceiptError(f"static preparation primary differs: {error}") from error
+            package_contract.source_digest = original_package_source_digest
     return {"directory": STATIC_PREPARATION_DIRECTORY, "tree": tree, "record": preparation_record}
 
 

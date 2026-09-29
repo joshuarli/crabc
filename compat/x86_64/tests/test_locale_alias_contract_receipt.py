@@ -346,6 +346,41 @@ class LocaleAliasContractReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(receipt.LocaleAliasReceiptError, "argv"):
             receipt._raw_collector_commands(self.root, output)
 
+    def test_static_preparation_package_source_check_uses_authenticated_tree_without_processes(self) -> None:
+        import owned_posix_static_products as owner
+        import owned_syscall_alias_authority as authority
+
+        source = {"revision": "a" * 40, "content_sha256": "b" * 64}
+        output_relative = ".work/x86_64/retained"
+        output = self.root / output_relative
+        preparation = output / receipt.STATIC_PREPARATION_DIRECTORY
+        product = output / receipt.STATIC_PRODUCT_DIRECTORY
+        product.mkdir(parents=True)
+        (product / "library").write_bytes(b"sealed static library")
+        record_path = preparation / "preparation.json"
+        record_path.write_text(json.dumps({"work": f"{output_relative}/{receipt.STATIC_PREPARATION_DIRECTORY}"}),
+                               encoding="utf-8")
+        record = {"directory": receipt.STATIC_PREPARATION_DIRECTORY,
+                  "tree": receipt._tree_records(output, receipt.STATIC_PREPARATION_DIRECTORY),
+                  "record": receipt._identity(output, record_path)}
+        original = owner.package.static_product_contract.source_digest
+
+        def validate(materialized: Path, _path: Path) -> dict[str, object]:
+            self.assertEqual(owner.source_identity(materialized), source)
+            self.assertEqual(owner.package.static_product_contract.source_digest(), source["content_sha256"])
+            return {"products": {"primary": {"tree": {}}}}
+
+        def tree_identity(_product: Path) -> dict[str, object]:
+            self.assertEqual(owner.package.static_product_contract.source_digest(), source["content_sha256"])
+            return {}
+
+        with mock.patch.object(authority, "source_tree", return_value=(source, {})), \
+             mock.patch.object(owner, "validate_receipt", side_effect=validate), \
+             mock.patch.object(owner, "tree_identity", side_effect=tree_identity), \
+             mock.patch("subprocess.Popen", side_effect=AssertionError("static replay started a process")):
+            self.assertEqual(receipt._validate_static_preparation(self.root, output, source, record), record)
+        self.assertIs(owner.package.static_product_contract.source_digest, original)
+
     def test_runner_snapshot_keeps_producer_paths_and_receipt_relative_identities(self) -> None:
         """The runner hashes supplied products at their mounted producer paths."""
 
