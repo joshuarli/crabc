@@ -2,8 +2,8 @@
  * Static Linux/x86-64 log10/log10f C ABI differential regression.
  *
  * This raw-bit corpus runs through pinned musl 1.2.6 and one freestanding
- * crabc archive. It records result bits and IEEE exception flags under each
- * MXCSR rounding direction, including adjacent representable values around
+ * crabc archive. It records result bits, IEEE exception flags, and errno
+ * under each MXCSR rounding direction, including adjacent values around
  * decimal powers and source reduction boundaries, raw subnormal scaling,
  * signed-zero divide-by-zero, negative-domain invalid, infinite, quiet-NaN,
  * and signaling-NaN inputs. It selects only the binary64/binary32 base-ten
@@ -17,6 +17,7 @@
 #error "this fixture requires native Linux/x86-64 little-endian LP64"
 #endif
 
+#include <errno.h>
 #include <fenv.h>
 #include <float.h>
 #include <math.h>
@@ -35,13 +36,22 @@
 #define LOG10_THRESHOLDS 4
 #define LOG10_POWER_RADIUS 1
 #define LOG10_THRESHOLD_RADIUS 16
+#define LOG10_F64_SUBNORMAL_POWERS 52
+#define LOG10_F32_SUBNORMAL_POWERS 23
+#define LOG10_F64_NORMAL_POWERS 64
+#define LOG10_F32_NORMAL_POWERS 32
+#define LOG10_F64_REDUCTION_CROSSOVERS 16
+#define LOG10_F32_REDUCTION_CROSSOVERS 16
 #define LOG10_ROUNDING_CASES 4
-#define LOG10_RECORD_WORDS 4
+#define LOG10_RECORD_WORDS 5
 #define LOG10_RECORD_COUNT \
 	((LOG10_F64_CASES + LOG10_F32_CASES + \
 	  (LOG10_F64_POWERS + LOG10_F32_POWERS) * \
 	    (2 * LOG10_POWER_RADIUS + 1) + \
-	  2 * LOG10_THRESHOLDS * (2 * LOG10_THRESHOLD_RADIUS + 1)) * \
+	  2 * LOG10_THRESHOLDS * (2 * LOG10_THRESHOLD_RADIUS + 1) + \
+	  (LOG10_F64_SUBNORMAL_POWERS + LOG10_F32_SUBNORMAL_POWERS + \
+	   LOG10_F64_NORMAL_POWERS + LOG10_F32_NORMAL_POWERS + \
+	   LOG10_F64_REDUCTION_CROSSOVERS + LOG10_F32_REDUCTION_CROSSOVERS) * 3) * \
 	 LOG10_ROUNDING_CASES)
 #define LOG10_RECORD_STORAGE_WORDS (LOG10_RECORD_COUNT * LOG10_RECORD_WORDS)
 
@@ -56,6 +66,13 @@ static float_unary_function volatile direct_log10f = (log10f);
 uint64_t crabc_x86_64_math_log10_records[LOG10_RECORD_STORAGE_WORDS];
 const size_t crabc_x86_64_math_log10_record_bytes =
 	sizeof(crabc_x86_64_math_log10_records);
+
+/* The freestanding process has no libc startup or TLS. This caller-owned cell
+ * records whether either logarithm changes errno on any input. */
+#ifdef CRABC_MATH_LOG10_FREESTANDING
+static int local_errno;
+int *__errno_location(void) { return &local_errno; }
+#endif
 
 static const uint64_t binary64_inputs[LOG10_F64_CASES] = {
 	UINT64_C(0x0000000000000000), UINT64_C(0x8000000000000000),
@@ -195,6 +212,7 @@ static int record_binary64(size_t *cursor, int rounding_mode, uint64_t input)
 
 	if (fesetround(rounding_mode) != 0 || feclearexcept(FE_ALL_EXCEPT) != 0)
 		return 1;
+	errno = 77;
 	result = direct_log10(double_from_bits(input));
 	if (*cursor + LOG10_RECORD_WORDS > LOG10_RECORD_STORAGE_WORDS)
 		return 2;
@@ -205,6 +223,7 @@ static int record_binary64(size_t *cursor, int rounding_mode, uint64_t input)
 		(uint32_t)fegetround();
 	crabc_x86_64_math_log10_records[(*cursor)++] =
 		(uint32_t)fetestexcept(FE_ALL_EXCEPT);
+	crabc_x86_64_math_log10_records[(*cursor)++] = (uint32_t)errno;
 	return 0;
 }
 
@@ -214,6 +233,7 @@ static int record_binary32(size_t *cursor, int rounding_mode, uint32_t input)
 
 	if (fesetround(rounding_mode) != 0 || feclearexcept(FE_ALL_EXCEPT) != 0)
 		return 1;
+	errno = 77;
 	result = direct_log10f(float_from_bits(input));
 	if (*cursor + LOG10_RECORD_WORDS > LOG10_RECORD_STORAGE_WORDS)
 		return 2;
@@ -225,6 +245,7 @@ static int record_binary32(size_t *cursor, int rounding_mode, uint32_t input)
 		(uint32_t)fegetround();
 	crabc_x86_64_math_log10_records[(*cursor)++] =
 		(uint32_t)fetestexcept(FE_ALL_EXCEPT);
+	crabc_x86_64_math_log10_records[(*cursor)++] = (uint32_t)errno;
 	return 0;
 }
 
@@ -296,6 +317,46 @@ int crabc_x86_64_math_log10_probe(void)
 			status = record_binary32_neighbors(&cursor,
 				rounding_modes[mode_index], binary32_thresholds[input_index],
 				LOG10_THRESHOLD_RADIUS);
+		/* Powers of two exercise every subnormal shift and the full
+		 * normal exponent range. Neighbors straddle exponent boundaries. */
+		for (input_index = 0;
+			input_index < LOG10_F64_SUBNORMAL_POWERS && status == 0;
+			input_index++)
+			status = record_binary64_neighbors(&cursor,
+				rounding_modes[mode_index], UINT64_C(1) << input_index, 1);
+		for (input_index = 0;
+			input_index < LOG10_F32_SUBNORMAL_POWERS && status == 0;
+			input_index++)
+			status = record_binary32_neighbors(&cursor,
+				rounding_modes[mode_index], UINT32_C(1) << input_index, 1);
+		for (input_index = 0;
+			input_index < LOG10_F64_NORMAL_POWERS && status == 0;
+			input_index++)
+			status = record_binary64_neighbors(&cursor,
+				rounding_modes[mode_index],
+				(UINT64_C(1) + input_index * 32) << 52, 1);
+		for (input_index = 0;
+			input_index < LOG10_F32_NORMAL_POWERS && status == 0;
+			input_index++)
+			status = record_binary32_neighbors(&cursor,
+				rounding_modes[mode_index],
+				(uint32_t)(UINT32_C(1) + input_index * 4) << 23, 1);
+		/* Keep musl's mantissa reduction crossover fixed while varying the
+		 * exponent, so reconstruction sees both sides across its range. */
+		for (input_index = 0;
+			input_index < LOG10_F64_REDUCTION_CROSSOVERS && status == 0;
+			input_index++)
+			status = record_binary64_neighbors(&cursor,
+				rounding_modes[mode_index],
+				(UINT64_C(1) + input_index * 128) << 52 |
+				UINT64_C(0x0006a09e00000000), 1);
+		for (input_index = 0;
+			input_index < LOG10_F32_REDUCTION_CROSSOVERS && status == 0;
+			input_index++)
+			status = record_binary32_neighbors(&cursor,
+				rounding_modes[mode_index],
+				(uint32_t)(UINT32_C(1) + input_index * 8) << 23 |
+				UINT32_C(0x003504f3), 1);
 	}
 	if (cursor != LOG10_RECORD_STORAGE_WORDS && status == 0)
 		status = 3;

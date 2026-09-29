@@ -6,8 +6,8 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
-readonly RECORD_SIZE=32
-readonly PREVIOUS_RECORDS=224
+readonly RECORD_SIZE=40
+readonly PREVIOUS_RECORDS=1952
 readonly SELECTED_SYMBOLS=(log10 log10f)
 readonly FENV_SIBLINGS=(feclearexcept fegetenv fegetround fesetenv fesetround fetestexcept)
 
@@ -65,7 +65,7 @@ disassembly="$work_dir/candidate-disassembly"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
 	compat/x86_64/libc_math_log10_probe.c >/dev/null 2>"$trace"
-for header in fenv.h float.h math.h stddef.h stdint.h features.h bits/alltypes.h; do
+for header in errno.h fenv.h float.h math.h stddef.h stdint.h features.h bits/alltypes.h; do
 	grep -Fq "$ROOT_DIR/include/$header" "$trace" ||
 		fail "fixture did not use project $header"
 done
