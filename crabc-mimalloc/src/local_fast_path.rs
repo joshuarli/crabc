@@ -152,7 +152,7 @@ fn is_naturally_aligned_small(size: usize, alignment: usize) -> Option<bool> {
 /// checked in this same native operation, so this thread exclusively owns the Theap's ordinary fields and
 /// every ordinary page field of its queued pages. An `alignment` that is not
 /// a power of two is declined.
-#[inline]
+#[inline(never)]
 pub(crate) unsafe fn allocate(
     theap: NonNull<Theap>,
     size: usize,
@@ -276,6 +276,73 @@ pub(crate) unsafe fn allocate(
         size, size_class::bin_for_regular_page_block_size(first_ref.block_size()),
     );
     debug_assert!(alignment.is_none_or(|alignment| block.as_ptr().addr() & (alignment - 1) == 0));
+    Some(block)
+}
+
+/// The ordinary eight-word allocation when its direct page or regular queue
+/// head already has a block. The caller continues through the complete owner
+/// path if neither head can supply one without administration.
+///
+/// # Safety
+///
+/// `theap` must be the current thread's published owner after the runtime
+/// admission and owner checks. This thread exclusively owns its ordinary
+/// queue and page fields for the duration of this operation.
+#[inline(always)]
+pub(crate) unsafe fn allocate_ordinary_eight_word(theap: NonNull<Theap>) -> Option<NonNull<u8>> {
+    // SAFETY: the caller holds the published live owner for this operation.
+    let theap_ref = unsafe { theap.as_ref() };
+    let direct = theap_ref.direct_page(8)?;
+    // SAFETY: an initialized direct slot names a live page or the sentinel.
+    let direct_page = unsafe { NonNull::new_unchecked(direct) };
+    let direct_head = unsafe { direct_page.as_ref() }.free_list_head();
+    if !direct_head.is_null() {
+        // SAFETY: a non-null head excludes the sentinel and belongs to this owner.
+        let block = unsafe { pop_selected_head(direct_page, direct_head, false) };
+        #[cfg(feature = "mi-stat-1")]
+        theap_ref.record_malloc_normal_allocated(unsafe { direct_page.as_ref() }.block_size());
+        #[cfg(feature = "mi-stat-2")]
+        theap_ref.record_malloc_normal_level_two_allocated(
+            8 * WORD_SIZE,
+            size_class::bin_for_regular_page_block_size(unsafe { direct_page.as_ref() }.block_size()),
+        );
+        return Some(block);
+    }
+    let first = NonNull::new(theap_ref.queue(8)?.first())?;
+    // SAFETY: the selected queue head is live and its ordinary fields belong
+    // to this thread. The direct head cannot change between these reads.
+    let (immediate_available, local_head) = unsafe {
+        let state = Page::local_free_list_state_at(first);
+        let immediate_available = first.as_ptr() != direct && !(*state.free.as_ptr()).is_null();
+        let local_head = if immediate_available { core::ptr::null_mut() } else { *state.local_free.as_ptr() };
+        (immediate_available, local_head)
+    };
+    if !immediate_available && local_head.is_null() {
+        return None;
+    }
+    // SAFETY: the caller owns this Theap's ordinary generic counter.
+    if !unsafe { Theap::advance_generic_count_below_administration_at(theap) } {
+        return None;
+    }
+    // SAFETY: exclusive ordinary-field ownership keeps the selected head
+    // stable through quick collection and pop.
+    let block = unsafe {
+        quick_collect_before_pop(first, local_head);
+        Page::set_retire_expire_at(first, 0);
+        let selected_head = if local_head.is_null() {
+            *Page::local_free_list_state_at(first).free.as_ptr()
+        } else {
+            local_head
+        };
+        pop_selected_head(first, selected_head, false)
+    };
+    #[cfg(feature = "mi-stat-1")]
+    theap_ref.record_malloc_normal_allocated(unsafe { first.as_ref() }.block_size());
+    #[cfg(feature = "mi-stat-2")]
+    theap_ref.record_malloc_normal_level_two_allocated(
+        8 * WORD_SIZE,
+        size_class::bin_for_regular_page_block_size(unsafe { first.as_ref() }.block_size()),
+    );
     Some(block)
 }
 

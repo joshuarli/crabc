@@ -10980,7 +10980,7 @@ pub fn native_allocate_aligned(
     alignment: usize,
     zero: bool,
 ) -> NativePageAllocationResult {
-    native_allocate_shaped(request, NativeAllocationShape::Aligned { alignment, offset: 0 }, zero)
+    native_allocate_shaped::<false>(request, NativeAllocationShape::Aligned { alignment, offset: 0 }, zero)
 }
 
 /// Allocates one source ordinary block, pinned `_mi_theap_malloc_zero` on
@@ -10990,7 +10990,7 @@ pub fn native_allocate_aligned(
 #[doc(hidden)]
 #[inline]
 pub fn native_allocate(request: usize, zero: bool) -> NativePageAllocationResult {
-    native_allocate_shaped(request, NativeAllocationShape::Ordinary, zero)
+    native_allocate_shaped::<true>(request, NativeAllocationShape::Ordinary, zero)
 }
 
 /// Allocates one block whose `pointer + offset` is aligned, pinned
@@ -11005,7 +11005,7 @@ pub fn native_allocate_aligned_at(
     offset: usize,
     zero: bool,
 ) -> NativePageAllocationResult {
-    native_allocate_shaped(request, NativeAllocationShape::Aligned { alignment, offset }, zero)
+    native_allocate_shaped::<false>(request, NativeAllocationShape::Aligned { alignment, offset }, zero)
 }
 
 /// Pinned `mi_stats_get` (`src/stats.c:640-653`) for a thread of the process
@@ -11335,9 +11335,11 @@ enum NativeAllocationShape {
 
 /// Inlines the selected request shape into its public allocation caller so
 /// fixed alignment and offset values need no runtime shape transfer. The
-/// complete fallback stays out of line after this local attempt.
+/// complete fallback stays out of line after this local attempt. Only the
+/// ordinary allocation entry expands the eight-word local head; replacement
+/// and aligned allocations use the common out-of-line local path.
 #[inline(always)]
-fn native_allocate_shaped(
+fn native_allocate_shaped<const ORDINARY_FAST_EIGHT_WORD: bool>(
     request: usize,
     shape: NativeAllocationShape,
     zero: bool,
@@ -11360,7 +11362,20 @@ fn native_allocate_shaped(
         if let Some(alignment) = alignment {
             // SAFETY: the gate holds for this admitted operation; the fast
             // path itself declines any alignment that is not a power of two.
-            if let Some(block) = unsafe { crate::local_fast_path::allocate(owner.theap, request, alignment, zero) } {
+            let block = if ORDINARY_FAST_EIGHT_WORD
+                && request == 8 * crate::config::WORD_SIZE
+                && alignment.is_none()
+                && !zero
+            {
+                // SAFETY: this is the ordinary eight-word shape after the
+                // same owner and admission checks as the general local path.
+                unsafe { crate::local_fast_path::allocate_ordinary_eight_word(owner.theap) }
+            } else {
+                // SAFETY: the gate holds for this admitted operation; the
+                // fast path declines unsupported alignment and size shapes.
+                unsafe { crate::local_fast_path::allocate(owner.theap, request, alignment, zero) }
+            };
+            if let Some(block) = block {
                 #[cfg(feature = "native-runtime-test-audit")]
                 note_local_fast_operation();
                 return NativePageAllocationResult::Allocated(block);
@@ -11597,7 +11612,7 @@ fn native_reallocate_pointer_first_local(
     // normal nested allocation, but it must never inherit an outer pointer
     // lifetime or an owner-local mutable projection.
     drop(allocation);
-    let replacement = match native_allocate_shaped(new_size, replacement_shape, false) {
+    let replacement = match native_allocate_shaped::<false>(new_size, replacement_shape, false) {
         NativePageAllocationResult::Allocated(replacement) => replacement,
         result @ (NativePageAllocationResult::Unavailable
         | NativePageAllocationResult::AllocationFailed
@@ -11788,7 +11803,7 @@ fn native_reallocate_pointer_first_nonlocal(
     // Preserve only scalar comparison inputs and reacquire the exact live
     // source after replacement allocation finishes its callback phase.
     drop(allocation);
-    let replacement = match native_allocate_shaped(new_size, replacement_shape, false) {
+    let replacement = match native_allocate_shaped::<false>(new_size, replacement_shape, false) {
         NativePageAllocationResult::Allocated(replacement) => replacement,
         result @ (NativePageAllocationResult::Unavailable
         | NativePageAllocationResult::AllocationFailed
@@ -12115,7 +12130,7 @@ unsafe fn native_reallocate_inner(
         }
     };
     let Some(block) = block else {
-        let result = native_allocate_shaped(new_size, replacement_shape, zero);
+        let result = native_allocate_shaped::<false>(new_size, replacement_shape, zero);
         return match result {
             NativePageAllocationResult::Allocated(replacement)
                 if source_kernel && new_size == 0 && !zero => {
