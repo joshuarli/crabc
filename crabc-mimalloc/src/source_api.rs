@@ -350,6 +350,10 @@ pub unsafe fn theap_realloc(
     zero: bool,
 ) -> Sourced<Block> {
     let Some(selected) = NonNull::new(theap.cast::<crate::types::Theap>()) else { return Sourced::quiet(None) };
+    #[cfg(feature = "mi-debug-1")]
+    if let Some(errno) = pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::Realloc) {
+        return Sourced::with(None, errno);
+    }
     let mut earlier = SourceErrno::Unchanged;
     let size = if let Some(live) = NonNull::new(block) {
         // SAFETY: the exact live allocation remains stable for the call.
@@ -494,7 +498,7 @@ pub enum FreeOutcome {
 }
 
 #[cfg(feature = "mi-debug-1")]
-fn pointer_validation_errno(pointer: *const u8, operation: crate::diagnostic_output::SourcePointerOperation) -> Option<SourceErrno> {
+pub(crate) fn pointer_validation_errno(pointer: *const u8, operation: crate::diagnostic_output::SourcePointerOperation) -> Option<SourceErrno> {
     if pointer.addr() & (crate::config::WORD_SIZE - 1) == 0
         || crate::source_options_api::option_is_enabled(crate::config::SourceOption::GuardedPrecise as c_int)
     {
@@ -807,14 +811,8 @@ unsafe fn realloc_zero(block: *mut u8, new_size: usize, zero: bool) -> Sourced<B
 /// Success consumes the old block; failure leaves it live and unchanged.
 pub(crate) unsafe fn realloc_zero_native(block: *mut u8, new_size: usize, zero: bool) -> Sourced<Block> {
     #[cfg(feature = "mi-debug-1")]
-    if let Some(earlier) = pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::UsableSize) {
-        let mut replacement = malloc_zero_native(new_size, zero).after(earlier);
-        if let Some(new_block) = replacement.value {
-            if new_size == 0 { unsafe { new_block.as_ptr().write(0) }; }
-            let freed = unsafe { free_sourced(block) };
-            replacement.errno = replacement.errno.then(freed.errno);
-        }
-        return replacement;
+    if let Some(errno) = pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::Realloc) {
+        return Sourced::with(None, errno);
     }
 
     // SAFETY: forwarded exact-live-client contract.
@@ -1645,7 +1643,20 @@ mod tests {
                 let rejected = unsafe { super::free_sourced(original.as_ptr()) };
                 assert_eq!(rejected.value, super::FreeOutcome::RejectedCorruption);
                 assert_eq!(rejected.errno.apply(0), Errno::INVAL.raw());
-                let replacement = unsafe { super::rezalloc(original.as_ptr(), 200) };
+                let refused = unsafe { super::rezalloc(original.as_ptr(), 200) };
+                assert_eq!(refused.errno.apply(0), Errno::INVAL.raw());
+                assert!(refused.value.is_none());
+                let base = crate::source_heap_api::theap_get_default();
+                let refused = unsafe { super::theap_realloc(base, original.as_ptr(), 200, true) };
+                assert_eq!(refused.errno.apply(0), Errno::INVAL.raw());
+                assert!(refused.value.is_none());
+                let heap = crate::source_heap_api::heap_new();
+                assert!(!heap.is_null());
+                let theap = unsafe { crate::source_heap_api::heap_theap(heap) };
+                let refused = unsafe { super::theap_realloc(theap, original.as_ptr(), 200, true) };
+                assert_eq!(refused.errno.apply(0), Errno::INVAL.raw());
+                assert!(refused.value.is_none());
+                let replacement = unsafe { super::rezalloc_aligned_at(original.as_ptr(), 200, 16, 0) };
                 assert_eq!(replacement.errno.apply(0), Errno::INVAL.raw());
                 let replacement = replacement.value.unwrap();
                 assert_ne!(replacement, original);
@@ -1655,6 +1666,7 @@ mod tests {
                 assert_eq!(unsafe { super::usable_size(original.as_ptr()) }, 70);
                 assert_eq!(unsafe { super::free(original.as_ptr()) }, super::FreeOutcome::Freed);
                 assert_eq!(unsafe { super::free(replacement.as_ptr()) }, super::FreeOutcome::Freed);
+                unsafe { crate::source_heap_api::heap_release(heap, true) };
             },
         );
     }

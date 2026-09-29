@@ -1122,6 +1122,7 @@ pub(crate) enum SourcePointerOperation {
     FreeSmall,
     UFree,
     UsableSize,
+    Realloc,
 }
 
 #[cfg(feature = "mi-debug-1")]
@@ -1132,6 +1133,7 @@ impl SourcePointerOperation {
             Self::FreeSmall => b"mi_free_small",
             Self::UFree => b"mi_ufree",
             Self::UsableSize => b"mi_usable_size",
+            Self::Realloc => b"mi_realloc",
         }
     }
 }
