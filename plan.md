@@ -76,7 +76,10 @@ are not transferable passes for a different revision.
   accounts for all ten `aio_cancel` archive importers and twenty relocations,
   binds its retained static and shared-libc calls to the owned provider, and
   preserves the `aio_suspend` join. Independent validation shows the selector
-  fall from 707 to 705 blockers; broader ABI closure stays open.
+  fall from 707 to 705 blockers. A further same-source selector binds the one
+  `close` archive importer through both static final calls and the inlined
+  syslog writer in shared libc; its whole-image reader resolves 19 owned calls
+  and reduces the selector to 704 blockers. Broader ABI closure stays open.
   `libc.c-abi-compat` now runs a physical
   same-cohort text/math/locale/stdio family admission; its current assessment admits seven
   of ten components and retains three allocator components at the selected C
@@ -324,7 +327,12 @@ are not transferable passes for a different revision.
   accounting, and terminal release. Both are registered in the clean M2 VM
   gate. Registering the explicit-arena terminal-unmap fault raises the clean
   run to 94 runnable checks, including all 55 VM checks; the
-  same four components remain partial. A separate source-built fresh-arena
+  same four components remain partial. A later clean run registers the
+  published OS-page terminal-unmap fault and passes all 95 runnable checks,
+  including all 56 VM checks; the same four components remain partial. A direct
+  regular-arena delayed-purge failure receiver matches 32 C/Rust fields,
+  including consumed schedule, warning timing, and surviving claims; its
+  shared-gate registration remains open. A separate source-built fresh-arena
   receiver matches 46 C/Rust fields when metadata commit and cleanup unmap
   both fail, leaving a raw escaped map while a later healthy arena claim
   succeeds and releases; its shared-gate registration remains open.
