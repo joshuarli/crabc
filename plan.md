@@ -92,8 +92,12 @@ are not transferable passes for a different revision.
   companion, and one semantic receipt open. A newer source-sealed cohort
   validates 5,151 identities and 41,168 occurrences. Its physical `strlen`
   receipt accounts for 48 archive importers and 112 source calls, and lowers
-  identical-product selection from 734 to 733 blockers. Full closure remains
-  open.
+  identical-product selection from 734 to 733 blockers. Another source-sealed
+  cohort validates 5,151 identities and 41,173 occurrences; its `memmove`
+  receipt binds the two archive importers through both static links and shared
+  libc, lowering identical-product selection from 734 to 733 blockers. The
+  loader's separate `memmove` definition remains unresolved, and full closure
+  remains open.
   Broader ABI closure stays open.
   `libc.c-abi-compat` now runs a physical
   same-cohort text/math/locale/stdio family admission; its current assessment admits seven
