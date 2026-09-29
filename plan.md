@@ -976,6 +976,18 @@ are not transferable passes for a different revision.
   with the same late-handler-fork `ECHILD` pattern as the candidate, so that
   report alone is not a runtime defect. Timing-limited leaves under host load
   need same-oracle comparison and source-bound reruns.
+- **Latest integrated evidence:** The clean detached `ed44dbd16` full M2 run
+  reports metadata, bitmaps, PageMap, and allocator recursion complete, while
+  VM primitives, arenas, initialization, and fault injection remain partial.
+  A later focused M2 differential matches repeated explicit process init;
+  the M5 remote-publication gate matches pinned C and a separate Loom race,
+  while M5 codegen and performance remain open. Integrated resolver cancellation
+  now matches 847 existing and 84 controlled-network musl cases after fixing
+  errno and h_errno lifetime. A failing musl regression led to the x86
+  `ftw`/`nftw` zero-descriptor-budget fix; its expanded installed differential
+  passes. FILE DSO ownership, regex, wordexp, robust mutex, VM, and descriptor
+  pipeline focused evidence also passes on its lane source. These receipts do
+  not replace merged-source family, allocator, or promotion gates.
 - **Housekeeping:** superseded branches are archived under
   `refs/archive/branches/`, old stashes under `refs/archive/stash/`, and
   pre-campaign evidence receipts in `.work/archive/*-receipts.tar.gz`. A fresh
