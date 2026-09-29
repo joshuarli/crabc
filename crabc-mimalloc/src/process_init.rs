@@ -3690,6 +3690,49 @@ mod tests {
         .expect("ready-process reuse test thread completes");
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_repeated_explicit_process_init_c_rust_trace() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
+            let mut owner = unsafe {
+                storage.initialize_with_test_components(
+                    config, main_static, subprocess, metadata, page_map_storage,
+                )
+            }.expect("the first explicit process initialization succeeds");
+            let first_default = default_theap();
+            let first_total = subprocess.total_thread_count();
+            let first_live = subprocess.live_thread_count();
+            let repeated = unsafe {
+                storage.initialize_with_test_components(
+                    config, main_static, subprocess, metadata, page_map_storage,
+                )
+            };
+            let second_default = default_theap();
+            // SAFETY: the live current-thread owner retains both observed TLS
+            // roots through this trace; repeated initialization cannot detach it.
+            let first_initialized = unsafe { first_default.as_ref().is_initialized() };
+            let second_initialized = unsafe { second_default.as_ref().is_initialized() };
+            let trace = [
+                ("first_default_initialized", first_initialized),
+                ("first_thread_counts_registered", first_total == 1 && first_live == 1),
+                ("repeated_call_keeps_initialized", matches!(repeated, Err(ProcessMainInitError::AlreadyInitialized))
+                    && second_initialized),
+                ("default_identity_preserved", first_default == second_default),
+                ("thread_counts_preserved", first_total == subprocess.total_thread_count()
+                    && first_live == subprocess.live_thread_count()),
+            ];
+            std::println!("CRABC_MI_PROCESS_INIT_IDEMPOTENCE_RUST_TRACE_BEGIN");
+            for (key, value) in trace {
+                std::println!("trace.process_init_idempotence.{key}={}", usize::from(value));
+                assert!(value, "repeated explicit process initialization changes {key}");
+            }
+            std::println!("CRABC_MI_PROCESS_INIT_IDEMPOTENCE_RUST_TRACE_END");
+            owner.teardown().expect("the original owner retains teardown");
+        }).join().expect("the process-init trace thread completes");
+    }
+
     #[test]
     fn process_main_owner_opens_the_ticket_zero_first_arena_page_owner() {
         thread::spawn(|| {

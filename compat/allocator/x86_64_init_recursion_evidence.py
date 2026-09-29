@@ -31,7 +31,12 @@ reservation-failure scalars.
 They deliberately do not compare callback timing, Rust's nested-borrow refusal,
 or Rust's later 71-byte canonical-owner release.
 
-The third record is the startup-entry relation. With the loader constructor
+The third record compares repeated explicit process initialization after a
+successful first attachment. Pinned C returns through its completed once
+state; Rust returns an explicit private AlreadyInitialized result. Both retain
+the initialized default owner, its identity, and total/live thread counts.
+
+The fourth record is the startup-entry relation. With the loader constructor
 suppressed, one C process makes its first ``mi_malloc`` while its two startup
 ``getrandom`` draws fail with EAGAIN at the source ``syscall`` seam, then
 calls ``_mi_auto_process_init``. The Rust half publishes raw startup facts,
@@ -71,6 +76,12 @@ RUST_TRACE_SOURCE = ROOT / "crabc-mimalloc/src/main_heap_thread.rs"
 TRACE_FILTER = "main_heap_thread::tests::emit_x86_64_init_recursion_teardown_c_rust_trace"
 TRACE_BEGIN = "CRABC_MI_INIT_RECURSION_TRACE_BEGIN"
 TRACE_END = "CRABC_MI_INIT_RECURSION_TRACE_END"
+PROCESS_IDEMPOTENCE_FILTER = "process_init::tests::emit_m2_repeated_explicit_process_init_c_rust_trace"
+PROCESS_IDEMPOTENCE_RUST_SOURCE = ROOT / "crabc-mimalloc/src/process_init.rs"
+PROCESS_IDEMPOTENCE_C_BEGIN = "CRABC_MI_PROCESS_INIT_IDEMPOTENCE_C_TRACE_BEGIN"
+PROCESS_IDEMPOTENCE_C_END = "CRABC_MI_PROCESS_INIT_IDEMPOTENCE_C_TRACE_END"
+PROCESS_IDEMPOTENCE_RUST_BEGIN = "CRABC_MI_PROCESS_INIT_IDEMPOTENCE_RUST_TRACE_BEGIN"
+PROCESS_IDEMPOTENCE_RUST_END = "CRABC_MI_PROCESS_INIT_IDEMPOTENCE_RUST_TRACE_END"
 STARTUP_CALLBACK_RUST_SOURCE = ROOT / "crabc-mimalloc/src/runtime_lifecycle.rs"
 STARTUP_CALLBACK_FILTER = (
     "runtime_lifecycle::tests::source_staged_delayed_output_recovers_allocation_and_later_owner_uses_same_registry"
@@ -174,6 +185,13 @@ EXPECTED_TRACE_VALUES = {
     "trace.init_recursion.recovery_default_initialized": 1,
     "trace.init_recursion.final_teardown_clears_default": 1,
     "trace.init_recursion.valid": 1,
+}
+EXPECTED_PROCESS_IDEMPOTENCE_TRACE_VALUES = {
+    "trace.process_init_idempotence.first_default_initialized": 1,
+    "trace.process_init_idempotence.first_thread_counts_registered": 1,
+    "trace.process_init_idempotence.repeated_call_keeps_initialized": 1,
+    "trace.process_init_idempotence.default_identity_preserved": 1,
+    "trace.process_init_idempotence.thread_counts_preserved": 1,
 }
 EXPECTED_STARTUP_CALLBACK_C_TRACE_VALUES = {
     "trace.startup_output.pre_default_delivery_ignored": 1,
@@ -363,6 +381,49 @@ done:
   printf("trace.init_recursion.final_teardown_clears_default=%d\n", trace.final_teardown_clears_default);
   printf("trace.init_recursion.valid=%d\n", valid);
   printf("CRABC_MI_INIT_RECURSION_TRACE_END\n");
+  return valid ? 0 : 2;
+}
+'''
+
+
+PROCESS_IDEMPOTENCE_C_PROBE = r'''
+#include "mimalloc/internal.h"
+#include "mimalloc/prim-tls.h"
+
+#include <stdbool.h>
+#include <stdio.h>
+
+#if !defined(__linux__) || !defined(__x86_64__)
+#error this private process-init fixture requires native Linux/x86_64
+#endif
+#if MI_BUILD_RELEASE != 1 || MI_DEBUG != 0 || MI_STAT != 0 || MI_SECURE != 0 || MI_GUARDED != 0
+#error this private process-init fixture requires the fixed release profile
+#endif
+
+int main(void) {
+  mi_process_init();
+  mi_theap_t* const first = _mi_theap_default();
+  mi_subproc_t* const subproc = _mi_subproc_main();
+  const size_t first_total = mi_atomic_load_relaxed(&subproc->thread_total_count);
+  const size_t first_live = mi_atomic_load_relaxed(&subproc->thread_count);
+  const bool first_initialized = mi_theap_is_initialized(first);
+
+  mi_process_init();
+  mi_theap_t* const repeated = _mi_theap_default();
+  const bool same_default = first == repeated;
+  const bool same_counts = first_total == mi_atomic_load_relaxed(&subproc->thread_total_count)
+      && first_live == mi_atomic_load_relaxed(&subproc->thread_count);
+  const bool first_counts_registered = first_total == 1 && first_live == 1;
+  const bool valid = first_initialized && first_counts_registered && mi_theap_is_initialized(repeated)
+      && same_default && same_counts;
+
+  printf("CRABC_MI_PROCESS_INIT_IDEMPOTENCE_C_TRACE_BEGIN\n");
+  printf("trace.process_init_idempotence.first_default_initialized=%d\n", first_initialized);
+  printf("trace.process_init_idempotence.first_thread_counts_registered=%d\n", first_counts_registered);
+  printf("trace.process_init_idempotence.repeated_call_keeps_initialized=%d\n", mi_theap_is_initialized(repeated));
+  printf("trace.process_init_idempotence.default_identity_preserved=%d\n", same_default);
+  printf("trace.process_init_idempotence.thread_counts_preserved=%d\n", same_counts);
+  printf("CRABC_MI_PROCESS_INIT_IDEMPOTENCE_C_TRACE_END\n");
   return valid ? 0 : 2;
 }
 '''
@@ -817,6 +878,19 @@ def compare_traces(c_trace: Mapping[str, int], rust_trace: Mapping[str, int]) ->
     return {"compared_value_count": len(EXPECTED_TRACE_VALUES), "status": "matched"}
 
 
+def compare_process_idempotence_traces(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int],
+) -> dict[str, Any]:
+    for description, trace in (("pinned C", c_trace), ("Rust", rust_trace)):
+        validate_startup_callback_trace(
+            trace, expected=EXPECTED_PROCESS_IDEMPOTENCE_TRACE_VALUES,
+            description=f"{description} process-init idempotence trace",
+        )
+    if dict(c_trace) != dict(rust_trace):
+        raise EvidenceError("C and Rust process-init idempotence traces differ")
+    return {"compared_value_count": len(EXPECTED_PROCESS_IDEMPOTENCE_TRACE_VALUES), "status": "matched"}
+
+
 def validate_startup_callback_trace(
     trace: Mapping[str, int], *, expected: Mapping[str, int], description: str,
 ) -> None:
@@ -955,6 +1029,40 @@ def build_c_trace(
     }
 
 
+def build_process_idempotence_c_trace(
+    compiler: str, readelf: str, source: Path, temporary: Path, schema: Mapping[str, Any],
+) -> dict[str, Any]:
+    probe_source = temporary / "process-init-idempotence.c"
+    binary = temporary / "process-init-idempotence-c"
+    probe_source.write_text(PROCESS_IDEMPOTENCE_C_PROBE, encoding="utf-8")
+    command = c_trace_command(compiler, source, probe_source, binary, schema)
+    validate_c_command(command, schema)
+    try:
+        run.require_success(run.command_record(command, cwd=source), "pinned C process-init idempotence fixture build")
+        header = run.command_record((readelf, "-h", str(binary)), cwd=source)
+        run.require_success(header, "pinned C process-init idempotence ELF identity")
+        elf = run.parse_elf_identity(str(header["stdout"]), "x86_64")
+        execution = run.command_record((str(binary),), cwd=source)
+        run.require_success(execution, "pinned C process-init idempotence fixture")
+    except run.HarnessError as error:
+        raise EvidenceError(str(error)) from error
+    trace = parse_marker_trace(
+        str(execution["stdout"]), begin=PROCESS_IDEMPOTENCE_C_BEGIN,
+        end=PROCESS_IDEMPOTENCE_C_END, description="pinned C process-init idempotence trace",
+    )
+    validate_startup_callback_trace(
+        trace, expected=EXPECTED_PROCESS_IDEMPOTENCE_TRACE_VALUES,
+        description="pinned C process-init idempotence trace",
+    )
+    return {
+        "build_command": normalize_command(command, temporary, source),
+        "elf": elf,
+        "run_command": [f"{NORMALIZED_EVIDENCE_ROOT}/process-init-idempotence-c"],
+        "source_sha256": sha256_bytes(PROCESS_IDEMPOTENCE_C_PROBE.encode("utf-8")),
+        "trace": trace,
+    }
+
+
 def build_startup_callback_c_trace(
     compiler: str, readelf: str, source: Path, temporary: Path, schema: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -1087,6 +1195,30 @@ def build_rust_trace(cargo: str, temporary: Path) -> dict[str, Any]:
     }
 
 
+def build_process_idempotence_rust_trace(cargo: str, temporary: Path) -> dict[str, Any]:
+    target_dir = temporary / "rust-target"
+    command, output = run_rust_test(cargo, target_dir, PROCESS_IDEMPOTENCE_FILTER)
+    trace = parse_marker_trace(
+        output, begin=PROCESS_IDEMPOTENCE_RUST_BEGIN, end=PROCESS_IDEMPOTENCE_RUST_END,
+        description="Rust process-init idempotence trace",
+    )
+    validate_startup_callback_trace(
+        trace, expected=EXPECTED_PROCESS_IDEMPOTENCE_TRACE_VALUES,
+        description="Rust process-init idempotence trace",
+    )
+    return {
+        "cargo_command": normalize_command(command, temporary, None),
+        "lockfile": {"path": relative(LOCKFILE), "sha256": sha256_file(LOCKFILE)},
+        "passed_test_count": 1,
+        "source": {"path": relative(PROCESS_IDEMPOTENCE_RUST_SOURCE), "sha256": sha256_file(PROCESS_IDEMPOTENCE_RUST_SOURCE)},
+        "target_dir": {
+            "isolated": True, "retained": False,
+            "value": f"{NORMALIZED_EVIDENCE_ROOT}/rust-target",
+        },
+        "trace": trace,
+    }
+
+
 def build_startup_callback_rust_trace(cargo: str, temporary: Path) -> dict[str, Any]:
     target_dir = temporary / "rust-startup-output-target"
     prebuild_rust_tests(cargo, target_dir)
@@ -1164,7 +1296,10 @@ def report_from_results(
     anchors: Sequence[Mapping[str, Any]], c_probe: Mapping[str, Any],
     rust_probe: Mapping[str, Any], startup_callback_c_probe: Mapping[str, Any],
     startup_callback_rust_probe: Mapping[str, Any], startup_entry_c_probe: Mapping[str, Any],
-    startup_entry_rust_probe: Mapping[str, Any], lifecycle_checks: Sequence[Mapping[str, Any]],
+    startup_entry_rust_probe: Mapping[str, Any],
+    process_idempotence_c_probe: Mapping[str, Any],
+    process_idempotence_rust_probe: Mapping[str, Any],
+    lifecycle_checks: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     c_trace = c_probe.get("trace")
     rust_trace = rust_probe.get("trace")
@@ -1178,6 +1313,10 @@ def report_from_results(
     entry_rust_trace = startup_entry_rust_probe.get("trace")
     if not isinstance(entry_c_trace, Mapping) or not isinstance(entry_rust_trace, Mapping):
         raise EvidenceError("startup-entry evidence inputs lack trace records")
+    idempotence_c_trace = process_idempotence_c_probe.get("trace")
+    idempotence_rust_trace = process_idempotence_rust_probe.get("trace")
+    if not isinstance(idempotence_c_trace, Mapping) or not isinstance(idempotence_rust_trace, Mapping):
+        raise EvidenceError("process-init idempotence evidence inputs lack trace records")
     report = {
         "c_probe": dict(c_probe),
         "comparison": compare_traces(c_trace, rust_trace),
@@ -1185,6 +1324,11 @@ def report_from_results(
         "kind": EVIDENCE_KIND,
         "lifecycle_checks": [dict(check) for check in lifecycle_checks],
         "profile": schema["profile"],
+        "process_idempotence": {
+            "c_probe": dict(process_idempotence_c_probe),
+            "comparison": compare_process_idempotence_traces(idempotence_c_trace, idempotence_rust_trace),
+            "rust_probe": dict(process_idempotence_rust_probe),
+        },
         "provenance": dict(provenance),
         "rust_probe": dict(rust_probe),
         "scope": schema["scope"],
@@ -1280,48 +1424,60 @@ def validate_startup_callback_report(record: object, schema: Mapping[str, Any]) 
         raise EvidenceError("startup-output callback comparison drifted")
 
 
-def validate_startup_entry_report(record: object, schema: Mapping[str, Any]) -> None:
+def validate_paired_trace_report(record: object, schema: Mapping[str, Any], *, kind: str) -> None:
+    if kind == "startup-entry":
+        probe_name, binary_name = "startup-entry.c", "startup-entry-c"
+        c_source, rust_source, rust_filter = STARTUP_ENTRY_C_PROBE, STARTUP_ENTRY_RUST_SOURCE, STARTUP_ENTRY_FILTER
+        compare = compare_startup_entry_traces
+    elif kind == "process-init idempotence":
+        probe_name, binary_name = "process-init-idempotence.c", "process-init-idempotence-c"
+        c_source, rust_source, rust_filter = (
+            PROCESS_IDEMPOTENCE_C_PROBE, PROCESS_IDEMPOTENCE_RUST_SOURCE, PROCESS_IDEMPOTENCE_FILTER,
+        )
+        compare = compare_process_idempotence_traces
+    else:
+        raise EvidenceError("unknown paired trace kind")
     if not isinstance(record, Mapping) or set(record) != {"c_probe", "comparison", "rust_probe"}:
-        raise EvidenceError("startup-entry report record drifted")
+        raise EvidenceError(f"{kind} report record drifted")
     c_probe = record["c_probe"]
     rust_probe = record["rust_probe"]
     if not isinstance(c_probe, Mapping) or set(c_probe) != {
         "build_command", "elf", "run_command", "source_sha256", "trace",
     }:
-        raise EvidenceError("startup-entry C probe record drifted")
+        raise EvidenceError(f"{kind} C probe record drifted")
     if not isinstance(rust_probe, Mapping) or set(rust_probe) != {
         "cargo_command", "lockfile", "passed_test_count", "source", "target_dir", "trace",
     }:
-        raise EvidenceError("startup-entry Rust probe record drifted")
+        raise EvidenceError(f"{kind} Rust probe record drifted")
     if (
         not exactly_matches(c_probe["elf"], EXPECTED_C_ELF)
-        or c_probe["run_command"] != [f"{NORMALIZED_EVIDENCE_ROOT}/startup-entry-c"]
-        or c_probe["source_sha256"] != sha256_bytes(STARTUP_ENTRY_C_PROBE.encode("utf-8"))
+        or c_probe["run_command"] != [f"{NORMALIZED_EVIDENCE_ROOT}/{binary_name}"]
+        or c_probe["source_sha256"] != sha256_bytes(c_source.encode("utf-8"))
     ):
-        raise EvidenceError("startup-entry C probe identity drifted")
+        raise EvidenceError(f"{kind} C probe identity drifted")
     validate_normalized_c_command_for(
-        c_probe["build_command"], schema, probe_name="startup-entry.c", binary_name="startup-entry-c",
+        c_probe["build_command"], schema, probe_name=probe_name, binary_name=binary_name,
     )
     if type(rust_probe["passed_test_count"]) is not int or rust_probe["passed_test_count"] != 1:
-        raise EvidenceError("startup-entry Rust trace selection drifted")
+        raise EvidenceError(f"{kind} Rust trace selection drifted")
     if not exactly_matches(rust_probe["lockfile"], {
         "path": relative(LOCKFILE), "sha256": sha256_file(LOCKFILE),
     }) or not exactly_matches(rust_probe["source"], {
-        "path": relative(STARTUP_ENTRY_RUST_SOURCE), "sha256": sha256_file(STARTUP_ENTRY_RUST_SOURCE),
+        "path": relative(rust_source), "sha256": sha256_file(rust_source),
     }) or not exactly_matches(rust_probe["target_dir"], {
         "isolated": True, "retained": False, "value": f"{NORMALIZED_EVIDENCE_ROOT}/rust-target",
     }):
-        raise EvidenceError("startup-entry Rust probe inputs drifted")
-    validate_rust_command(rust_probe["cargo_command"], "rust-target", STARTUP_ENTRY_FILTER)
-    expected_comparison = compare_startup_entry_traces(c_probe["trace"], rust_probe["trace"])
+        raise EvidenceError(f"{kind} Rust probe inputs drifted")
+    validate_rust_command(rust_probe["cargo_command"], "rust-target", rust_filter)
+    expected_comparison = compare(c_probe["trace"], rust_probe["trace"])
     if not exactly_matches(record["comparison"], expected_comparison):
-        raise EvidenceError("startup-entry comparison drifted")
+        raise EvidenceError(f"{kind} comparison drifted")
 
 
 def validate_report(report: Mapping[str, Any]) -> None:
     required = {
         "c_probe", "comparison", "format", "kind", "lifecycle_checks", "profile", "provenance",
-        "rust_probe", "scope", "source", "startup_callback", "startup_entry", "status", "target",
+        "process_idempotence", "rust_probe", "scope", "source", "startup_callback", "startup_entry", "status", "target",
         "trace", "upstream",
     }
     if not isinstance(report, dict) or set(report) != required:
@@ -1380,7 +1536,8 @@ def validate_report(report: Mapping[str, Any]) -> None:
     }):
         raise EvidenceError("init-recursion report comparison drifted")
     validate_startup_callback_report(report["startup_callback"], schema)
-    validate_startup_entry_report(report["startup_entry"], schema)
+    validate_paired_trace_report(report["startup_entry"], schema, kind="startup-entry")
+    validate_paired_trace_report(report["process_idempotence"], schema, kind="process-init idempotence")
     checks = report["lifecycle_checks"]
     if not isinstance(checks, list) or len(checks) != len(EXPECTED_LIFECYCLE_CHECKS):
         raise EvidenceError("init-recursion lifecycle batch drifted")
@@ -1442,6 +1599,10 @@ def run_evidence(*, offline: bool, report_path: Path) -> dict[str, Any]:
             compiler, readelf, source, temporary, schema,
         )
         startup_entry_rust_probe = build_startup_entry_rust_trace(cargo, temporary)
+        process_idempotence_c_probe = build_process_idempotence_c_trace(
+            compiler, readelf, source, temporary, schema,
+        )
+        process_idempotence_rust_probe = build_process_idempotence_rust_trace(cargo, temporary)
         lifecycle_checks = build_lifecycle_checks(cargo, temporary)
         report = report_from_results(
             schema=schema, provenance=provenance, archive_sha256=pin["sha256"], anchors=anchors,
@@ -1450,6 +1611,8 @@ def run_evidence(*, offline: bool, report_path: Path) -> dict[str, Any]:
             startup_callback_rust_probe=startup_callback_rust_probe,
             startup_entry_c_probe=startup_entry_c_probe,
             startup_entry_rust_probe=startup_entry_rust_probe,
+            process_idempotence_c_probe=process_idempotence_c_probe,
+            process_idempotence_rust_probe=process_idempotence_rust_probe,
             lifecycle_checks=lifecycle_checks,
         )
     run.write_json(report_path, report)
@@ -1471,6 +1634,7 @@ def main() -> int:
         f"({report['comparison']['compared_value_count']} worker values; "
         f"{report['startup_callback']['comparison']['compared_value_count']} startup callback values; "
         f"{report['startup_entry']['comparison']['compared_value_count']} startup-entry values; "
+        f"{report['process_idempotence']['comparison']['compared_value_count']} process-init idempotence values; "
         f"report: {relative(arguments.report)})"
     )
     return 0

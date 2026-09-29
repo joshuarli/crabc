@@ -67,6 +67,13 @@ class InitRecursionEvidenceTests(unittest.TestCase):
         entry_rust_command = evidence.rust_test_command(
             "/usr/bin/cargo", temporary / "rust-target", evidence.STARTUP_ENTRY_FILTER,
         )
+        idempotence_c_command = evidence.c_trace_command(
+            "/usr/bin/musl-gcc", source, temporary / "process-init-idempotence.c",
+            temporary / "process-init-idempotence-c", schema,
+        )
+        idempotence_rust_command = evidence.rust_test_command(
+            "/usr/bin/cargo", temporary / "rust-target", evidence.PROCESS_IDEMPOTENCE_FILTER,
+        )
         lifecycle_checks = []
         for check in evidence.EXPECTED_LIFECYCLE_CHECKS:
             command = evidence.rust_test_command(
@@ -166,6 +173,31 @@ class InitRecursionEvidenceTests(unittest.TestCase):
                 },
                 "trace": evidence.EXPECTED_STARTUP_ENTRY_TRACE_VALUES,
             },
+            process_idempotence_c_probe={
+                "build_command": evidence.normalize_command(idempotence_c_command, temporary, source),
+                "elf": evidence.EXPECTED_C_ELF,
+                "run_command": [f"{evidence.NORMALIZED_EVIDENCE_ROOT}/process-init-idempotence-c"],
+                "source_sha256": evidence.sha256_bytes(evidence.PROCESS_IDEMPOTENCE_C_PROBE.encode("utf-8")),
+                "trace": evidence.EXPECTED_PROCESS_IDEMPOTENCE_TRACE_VALUES,
+            },
+            process_idempotence_rust_probe={
+                "cargo_command": evidence.normalize_command(idempotence_rust_command, temporary, None),
+                "lockfile": {
+                    "path": evidence.relative(evidence.LOCKFILE),
+                    "sha256": evidence.sha256_file(evidence.LOCKFILE),
+                },
+                "passed_test_count": 1,
+                "source": {
+                    "path": evidence.relative(evidence.PROCESS_IDEMPOTENCE_RUST_SOURCE),
+                    "sha256": evidence.sha256_file(evidence.PROCESS_IDEMPOTENCE_RUST_SOURCE),
+                },
+                "target_dir": {
+                    "isolated": True,
+                    "retained": False,
+                    "value": f"{evidence.NORMALIZED_EVIDENCE_ROOT}/rust-target",
+                },
+                "trace": evidence.EXPECTED_PROCESS_IDEMPOTENCE_TRACE_VALUES,
+            },
             lifecycle_checks=lifecycle_checks,
         )
 
@@ -252,6 +284,18 @@ class InitRecursionEvidenceTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(evidence.EvidenceError):
                 evidence.compare_startup_entry_traces(evidence.EXPECTED_STARTUP_ENTRY_TRACE_VALUES, changed)
 
+    def test_repeated_process_init_compares_registered_owner_and_stable_counts(self):
+        expected = evidence.EXPECTED_PROCESS_IDEMPOTENCE_TRACE_VALUES
+        self.assertEqual(
+            evidence.compare_process_idempotence_traces(expected, expected),
+            {"compared_value_count": len(expected), "status": "matched"},
+        )
+        for key in expected:
+            changed = dict(expected)
+            changed[key] = 0
+            with self.subTest(key=key), self.assertRaises(evidence.EvidenceError):
+                evidence.compare_process_idempotence_traces(expected, changed)
+
     def test_report_requires_native_provenance_and_the_complete_lifecycle_batch(self):
         report = self.complete_report()
         evidence.validate_report(report)
@@ -268,6 +312,10 @@ class InitRecursionEvidenceTests(unittest.TestCase):
             "compared_value_count": len(evidence.EXPECTED_STARTUP_ENTRY_TRACE_VALUES),
             "status": "matched",
         })
+        self.assertEqual(report["process_idempotence"]["comparison"], {
+            "compared_value_count": len(evidence.EXPECTED_PROCESS_IDEMPOTENCE_TRACE_VALUES),
+            "status": "matched",
+        })
         self.assertEqual(
             [check["filter"] for check in report["lifecycle_checks"]],
             [check["filter"] for check in evidence.EXPECTED_LIFECYCLE_CHECKS],
@@ -277,6 +325,14 @@ class InitRecursionEvidenceTests(unittest.TestCase):
         report["startup_entry"]["rust_probe"]["trace"] = dict(
             report["startup_entry"]["rust_probe"]["trace"],
             **{"trace.startup_entry.runtime_startup_entropy_draws": 1},
+        )
+        with self.assertRaises(evidence.EvidenceError):
+            evidence.validate_report(report)
+
+        report = self.complete_report()
+        report["process_idempotence"]["rust_probe"]["trace"] = dict(
+            report["process_idempotence"]["rust_probe"]["trace"],
+            **{"trace.process_init_idempotence.thread_counts_preserved": 0},
         )
         with self.assertRaises(evidence.EvidenceError):
             evidence.validate_report(report)
