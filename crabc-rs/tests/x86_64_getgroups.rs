@@ -1,6 +1,7 @@
 #![cfg(target_arch = "x86_64")]
 
 use core::mem::MaybeUninit;
+use std::process::Command;
 
 use crabc_rs::process::{self, Gid};
 use crabc_rs::Errno;
@@ -65,4 +66,86 @@ fn x86_64_getgroups_rejects_an_undersized_buffer_without_changing_credentials() 
         process::getgroups_count().expect("re-query group count"),
         count
     );
+}
+
+#[test]
+fn x86_64_getgroups_empty_fill_keeps_the_count_query_out_of_buffer_results() {
+    let output = Command::new(std::env::current_exe().expect("locate test binary"))
+        .args([
+            "--exact",
+            "x86_64_getgroups_empty_fill_child_checks_nonempty_and_empty_lists",
+            "--ignored",
+            "--nocapture",
+        ])
+        .output()
+        .expect("run isolated supplementary-group child");
+    assert!(
+        output.status.success(),
+        "isolated supplementary-group child failed with {:?}, stdout: {}, stderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+fn set_child_groups(groups: &[u32]) {
+    let result: isize;
+    // SAFETY: Linux x86-64 setgroups reads exactly this live u32 slice. This
+    // fixture runs only in the isolated child, so credential changes cannot
+    // affect the test runner or its other tests.
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            inlateout("rax") 116usize => result,
+            in("rdi") groups.len(),
+            in("rsi") groups.as_ptr(),
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
+    assert_eq!(result, 0, "the credential fixture requires CAP_SETGID");
+}
+
+#[test]
+#[ignore = "the parent regression invokes this test only in a subprocess"]
+fn x86_64_getgroups_empty_fill_child_checks_nonempty_and_empty_lists() {
+    set_child_groups(&[0]);
+    assert_eq!(process::getgroups_count(), Ok(1));
+
+    let mut initialized: [Gid; 0] = [];
+    assert_eq!(process::getgroups(&mut initialized), Err(Errno::INVAL));
+    let mut uninitialized: [MaybeUninit<Gid>; 0] = [];
+    assert!(matches!(
+        process::getgroups(&mut uninitialized),
+        Err(Errno::INVAL),
+    ));
+
+    #[cfg(feature = "alloc")]
+    {
+        let mut groups = Vec::<Gid>::new();
+        assert_eq!(
+            process::getgroups(crabc_rs::buffer::spare_capacity(&mut groups)),
+            Err(Errno::INVAL),
+        );
+        assert_eq!(groups.len(), 0);
+    }
+
+    set_child_groups(&[]);
+    assert_eq!(process::getgroups_count(), Ok(0));
+    assert_eq!(process::getgroups(&mut initialized), Ok(0));
+    let (filled, untouched) = process::getgroups(&mut uninitialized)
+        .expect("an empty group list initializes an empty prefix");
+    assert!(filled.is_empty());
+    assert!(untouched.is_empty());
+
+    #[cfg(feature = "alloc")]
+    {
+        let mut groups = Vec::<Gid>::new();
+        assert_eq!(
+            process::getgroups(crabc_rs::buffer::spare_capacity(&mut groups)),
+            Ok(0),
+        );
+        assert_eq!(groups.len(), 0);
+    }
 }

@@ -1565,9 +1565,10 @@ pub fn getgroups_count() -> Result<usize> {
 /// The initialized-buffer form (`&mut [Gid]`, and its alloc-backed `Vec`
 /// equivalent) returns the number of IDs written. The `MaybeUninit` form
 /// returns the initialized prefix and untouched suffix through the shared
-/// [`Buffer`] contract. Linux returns [`crate::Errno::INVAL`] when the buffer
-/// is smaller than the current group list; callers performing a count query
-/// first must retry the count/fill pair when that race occurs.
+/// [`Buffer`] contract. A buffer smaller than the current group list returns
+/// [`crate::Errno::INVAL`], including an empty buffer when groups are present.
+/// Use [`getgroups_count`] for a count query; callers performing a count query
+/// first must retry the count/fill pair when credentials change between them.
 ///
 /// Linux's supplementary list is distinct from the effective group ID: this
 /// function returns exactly the IDs reported by `getgroups`, without adding or
@@ -1584,6 +1585,11 @@ pub fn getgroups<Buf: Buffer<Gid>>(mut buffer: Buf) -> Result<Buf::Output> {
     // SAFETY: `Buffer<Gid>` supplies writable storage for `length` values.
     // `Gid` is repr(transparent) over Linux x86-64's u32 gid_t representation.
     let initialized = unsafe { crabc_core::process::getgroups_raw(pointer, length)? };
+    // Linux treats zero storage as a count query without initializing any
+    // elements. Its count must not become a prefix beyond the supplied buffer.
+    if initialized > length {
+        return Err(crate::Errno::INVAL);
+    }
     // SAFETY: Linux initialized exactly the successful return prefix.
     unsafe { Ok(buffer.assume_init(initialized)) }
 }
