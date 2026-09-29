@@ -855,6 +855,194 @@ static int run_queued_writer_reader_probe(void)
     return status;
 }
 
+struct mixed_contention_round {
+    pthread_rwlock_t rwlock;
+    volatile int readers_entered;
+    volatile int readers_acquired;
+    volatile int release_readers;
+    volatile int writer_entered;
+    volatile int writer_acquired;
+    volatile int release_writer;
+    int reader_try_results[READER_WORKER_COUNT];
+    int reader_lock_results[READER_WORKER_COUNT];
+    int reader_unlock_results[READER_WORKER_COUNT];
+    int writer_lock_result;
+    int writer_unlock_result;
+};
+
+struct mixed_reader_arg {
+    struct mixed_contention_round *round;
+    int index;
+};
+
+static void *mixed_reader_main(void *opaque)
+{
+    struct mixed_reader_arg *arg = opaque;
+    struct mixed_contention_round *round = arg->round;
+    int index = arg->index;
+
+    round->reader_try_results[index] = pthread_rwlock_tryrdlock(&round->rwlock);
+    __atomic_fetch_add(&round->readers_entered, 1, __ATOMIC_RELEASE);
+    round->reader_lock_results[index] = pthread_rwlock_rdlock(&round->rwlock);
+    if (round->reader_lock_results[index] == 0) {
+        __atomic_fetch_add(&round->readers_acquired, 1, __ATOMIC_RELEASE);
+        while (__atomic_load_n(&round->release_readers, __ATOMIC_ACQUIRE) == 0)
+            ;
+        round->reader_unlock_results[index] = pthread_rwlock_unlock(&round->rwlock);
+    }
+    return (void *)(uintptr_t)(0x72656130 + index);
+}
+
+static void *mixed_writer_main(void *opaque)
+{
+    struct mixed_contention_round *round = opaque;
+
+    __atomic_store_n(&round->writer_entered, 1, __ATOMIC_RELEASE);
+    round->writer_lock_result = pthread_rwlock_wrlock(&round->rwlock);
+    if (round->writer_lock_result == 0) {
+        __atomic_store_n(&round->writer_acquired, 1, __ATOMIC_RELEASE);
+        while (__atomic_load_n(&round->release_writer, __ATOMIC_ACQUIRE) == 0)
+            ;
+        round->writer_unlock_result = pthread_rwlock_unlock(&round->rwlock);
+    }
+    return (void *)(uintptr_t)0x77726974;
+}
+
+/* Both readers first queue behind a writer, then hold concurrently while a
+ * second writer queues.  Every phase has an observed state before release, so
+ * a scheduler delay cannot masquerade as reader/writer exclusion. */
+static int run_mixed_contention_round(void)
+{
+    struct mixed_contention_round round = { 0 };
+    struct mixed_reader_arg args[READER_WORKER_COUNT];
+    pthread_t readers[READER_WORKER_COUNT];
+    pthread_t writer;
+    void *result;
+    int readers_created = 0;
+    int writer_created = 0;
+    int parent_reader_hold = 0;
+    int parent_writer_hold = 0;
+    int status = 0;
+    int index;
+
+    round.writer_lock_result = -1;
+    round.writer_unlock_result = -1;
+    for (index = 0; index != READER_WORKER_COUNT; ++index) {
+        round.reader_try_results[index] = -1;
+        round.reader_lock_results[index] = -1;
+        round.reader_unlock_results[index] = -1;
+    }
+    if (pthread_rwlock_init(&round.rwlock, 0) != 0)
+        return 1;
+    if (pthread_rwlock_wrlock(&round.rwlock) != 0)
+        return 2;
+    parent_writer_hold = 1;
+    for (index = 0; index != READER_WORKER_COUNT; ++index) {
+        args[index].round = &round;
+        args[index].index = index;
+        if (pthread_create(&readers[index], 0, mixed_reader_main, &args[index]) != 0) {
+            status = 3;
+            break;
+        }
+        ++readers_created;
+    }
+    if (status == 0 && (wait_for_int(&round.readers_entered, READER_WORKER_COUNT) != 0 ||
+        wait_for_nonnegative_count((volatile int *)&round.rwlock.__u.__i[1],
+            READER_WORKER_COUNT) != 0))
+        status = 4;
+    if (status == 0 && (round.reader_try_results[0] != EBUSY ||
+        round.reader_try_results[1] != EBUSY ||
+        __atomic_load_n(&round.readers_acquired, __ATOMIC_ACQUIRE) != 0))
+        status = 5;
+    if (pthread_rwlock_unlock(&round.rwlock) != 0 && status == 0)
+        status = 6;
+    parent_writer_hold = 0;
+    if (status == 0 && wait_for_int(&round.readers_acquired, READER_WORKER_COUNT) != 0)
+        status = 7;
+    if (status == 0 && pthread_create(&writer, 0, mixed_writer_main, &round) != 0)
+        status = 8;
+    else if (status == 0)
+        writer_created = 1;
+    if (status == 0 && (wait_for_int(&round.writer_entered, 1) != 0 ||
+        wait_for_waiter_mark((volatile int *)&round.rwlock.__u.__i[0]) != 0))
+        status = 9;
+    if (status == 0 && (pthread_rwlock_trywrlock(&round.rwlock) != EBUSY ||
+        pthread_rwlock_tryrdlock(&round.rwlock) != 0))
+        status = 10;
+    else if (status == 0)
+        parent_reader_hold = 1;
+    if (status == 0 && __atomic_load_n(&round.writer_acquired, __ATOMIC_ACQUIRE) != 0)
+        status = 11;
+    if (parent_reader_hold && pthread_rwlock_unlock(&round.rwlock) != 0 && status == 0)
+        status = 12;
+    __atomic_store_n(&round.release_readers, 1, __ATOMIC_RELEASE);
+    for (index = 0; index != readers_created; ++index) {
+        if (pthread_join(readers[index], &result) != 0 && status == 0)
+            status = 13;
+        if (status == 0 && result != (void *)(uintptr_t)(0x72656130 + index))
+            status = 14;
+    }
+    if (status == 0 && writer_created && wait_for_int(&round.writer_acquired, 1) != 0)
+        status = 15;
+    if (status == 0 && (pthread_rwlock_tryrdlock(&round.rwlock) != EBUSY ||
+        pthread_rwlock_trywrlock(&round.rwlock) != EBUSY))
+        status = 16;
+    __atomic_store_n(&round.release_writer, 1, __ATOMIC_RELEASE);
+    if (writer_created && pthread_join(writer, &result) != 0 && status == 0)
+        status = 17;
+    if (status == 0 && writer_created && result != (void *)(uintptr_t)0x77726974)
+        status = 18;
+    if (status == 0 && (round.writer_lock_result != 0 ||
+        round.writer_unlock_result != 0 ||
+        round.reader_lock_results[0] != 0 || round.reader_lock_results[1] != 0 ||
+        round.reader_unlock_results[0] != 0 || round.reader_unlock_results[1] != 0))
+        status = 19;
+    if (status == 0 && (pthread_rwlock_trywrlock(&round.rwlock) != 0 ||
+        pthread_rwlock_unlock(&round.rwlock) != 0))
+        status = 20;
+    if (pthread_rwlock_destroy(&round.rwlock) != 0 && status == 0)
+        status = 21;
+    if (status == 0)
+        emit_observation("mixed-readers=", round.readers_acquired);
+    return status;
+}
+
+/* Reinitialization clears prior sharing and all lock bookkeeping.  Destroy
+ * and attribute destroy have no owned resource to retain across cycles. */
+static int run_lifecycle_reuse_probe(void)
+{
+    pthread_rwlock_t rwlock;
+    pthread_rwlockattr_t attribute;
+    int shared = -1;
+    int cycle;
+
+    errno = E2BIG;
+    if (pthread_rwlockattr_init(&attribute) != 0 ||
+        pthread_rwlockattr_setpshared(&attribute, PTHREAD_PROCESS_SHARED) != 0 ||
+        pthread_rwlock_init(&rwlock, &attribute) != 0)
+        return 1;
+    if (rwlock.__u.__i[2] != 128 || pthread_rwlock_trywrlock(&rwlock) != 0 ||
+        pthread_rwlock_unlock(&rwlock) != 0 || pthread_rwlock_destroy(&rwlock) != 0)
+        return 2;
+    if (pthread_rwlockattr_destroy(&attribute) != 0 ||
+        pthread_rwlockattr_init(&attribute) != 0 ||
+        pthread_rwlockattr_getpshared(&attribute, &shared) != 0 ||
+        shared != PTHREAD_PROCESS_PRIVATE)
+        return 3;
+    for (cycle = 0; cycle != CONTENTION_ROUNDS; ++cycle) {
+        if (pthread_rwlock_init(&rwlock, &attribute) != 0 ||
+            rwlock.__u.__i[0] != 0 || rwlock.__u.__i[1] != 0 ||
+            rwlock.__u.__i[2] != 0 ||
+            pthread_rwlock_tryrdlock(&rwlock) != 0 ||
+            pthread_rwlock_unlock(&rwlock) != 0 ||
+            pthread_rwlock_destroy(&rwlock) != 0)
+            return 4;
+    }
+    if (pthread_rwlockattr_destroy(&attribute) != 0)
+        return 5;
+    return errno == E2BIG ? 0 : 6;
+}
+
 struct canceled_deadline_round {
     pthread_rwlock_t rwlock;
     volatile int ready;
@@ -963,6 +1151,12 @@ int crabc_x86_64_pthread_rwlock_probe(void)
     status = run_queued_writer_reader_probe();
     if (status != 0)
         return 300 + status;
+    status = run_mixed_contention_round();
+    if (status != 0)
+        return 340 + status;
+    status = run_lifecycle_reuse_probe();
+    if (status != 0)
+        return 365 + status;
     status = run_canceled_deadline_probe();
     if (status != 0)
         return 320 + status;
