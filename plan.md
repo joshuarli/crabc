@@ -515,6 +515,10 @@ are not transferable passes for a different revision.
   registration now matches eighteen pinned-C lifecycle and refusal/retry keys,
   including retained child owner identity and terminal caller-held unmap; the
   clean M6 gate passes all twenty-two runnable rows.
+  A focused regression fixes remote final free of a deleted process-main Heap
+  after its owner exits: a retained Theap now prevents dereferencing the stale
+  Heap address. Both free/exit orders match twelve pinned-C trace keys and
+  retain the OS page after collection; shared M6 registration remains open.
   All ten required gates
   remain blocked by 10 named missing API and lifetime evidence entries;
   accumulated mixed-workload main-Heap page-population parity remains unproved.
