@@ -308,6 +308,12 @@ impl<H: ModelHead> ModelPage<H> {
     /// allow_collect=true)` and, after a claiming CAS, its source tail.
     fn remote_free(&self, block: usize) {
         let block_size = self.read_live_client(block);
+        self.publish_remote_block(block, block_size);
+    }
+
+    /// The publication after a producer completed its PageMap and block
+    /// reads. A bounded race witness can pause exactly at that source edge.
+    fn publish_remote_block(&self, block: usize, block_size: usize) {
         let was_owned = publish_to_head_with_owner(
             &self.xthread_free,
             block_address(block),
@@ -810,6 +816,64 @@ fn live_owner_collects_remote_frees_before_its_page_release<H: ModelHead>() {
 #[test]
 fn loom_live_owner_collects_remote_frees_before_its_page_release() {
     model(live_owner_collects_remote_frees_before_its_page_release::<AtomicUsize>);
+}
+
+/// An owner collection observes an empty head while the final client still
+/// counts as used. Its later collection must wait for that client's remote
+/// publication before it can release the page.
+pub(super) fn empty_owner_collection_precedes_last_remote_publication() {
+    model(|| {
+        let page = Arc::new(SourcePage::new(PageImage::live(REGULAR_BLOCK_SIZE, 1, 1)));
+        let stage = Arc::new(AtomicUsize::new(0));
+        let producer_page = Arc::clone(&page);
+        let producer_stage = Arc::clone(&stage);
+        let producer = thread::spawn(move || {
+            let block_size = producer_page.read_live_client(0);
+            producer_stage.store(1, Ordering::Release);
+            while producer_stage.load(Ordering::Acquire) != 2 {
+                thread::yield_now();
+            }
+            producer_page.publish_remote_block(0, block_size);
+        });
+        while stage.load(Ordering::Acquire) != 1 {
+            thread::yield_now();
+        }
+        page.page_free_collect();
+        assert_eq!(page.xthread_free.load_relaxed(), OWNED_EMPTY);
+        assert_eq!(page.used(), 1);
+        assert_eq!(page.releases.load(Ordering::Relaxed), 0);
+        stage.store(2, Ordering::Release);
+        page.owner_collect_until_all_free_then_free();
+        producer.join().expect("the last remote free completes");
+        page.assert_quiescent(&[0], 0);
+    });
+}
+
+/// A producer changes the owned head from empty to nonempty while still
+/// counted in `used`. The owner detaches that sole block and releases the
+/// page before joining the producer, so the head CAS must order its reads.
+fn last_remote_publication_precedes_owner_detach<H: ModelHead>() {
+    model(|| {
+        let page = Arc::new(ModelPage::<H>::new(PageImage::live(REGULAR_BLOCK_SIZE, 1, 1)));
+        let producer = spawn_remote_free(&page, 0);
+        while thread_free_block_address(page.xthread_free.load_relaxed()) == 0 {
+            thread::yield_now();
+        }
+        assert_eq!(page.xthread_free.load_relaxed(), block_address(0) | THREAD_FREE_OWNED);
+        assert_eq!(page.used(), 1, "publication does not debit the last client");
+        assert_eq!(page.releases.load(Ordering::Relaxed), 0);
+        page.owner_collect_until_all_free_then_free();
+        producer.join().expect("the last remote free completes");
+        page.assert_quiescent(&[0], 0);
+    });
+}
+
+pub(super) fn last_remote_publication_precedes_owner_detach_with_source_ordering() {
+    last_remote_publication_precedes_owner_detach::<AtomicUsize>();
+}
+
+pub(super) fn last_remote_publication_precedes_owner_detach_without_source_ordering() {
+    last_remote_publication_precedes_owner_detach::<UnorderedHead>();
 }
 
 /// The same schedule without the source head orderings must fail: a

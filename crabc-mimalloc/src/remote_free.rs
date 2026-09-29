@@ -2600,3 +2600,24 @@ mod tests {
 #[cfg(all(test, feature = "loom"))]
 #[path = "remote_free_loom.rs"]
 mod loom_tests;
+
+#[cfg(all(test, feature = "loom"))]
+mod publication_collect_race_tests {
+    use super::loom_tests;
+
+    #[test]
+    fn empty_owner_collection_precedes_last_remote_publication() {
+        loom_tests::empty_owner_collection_precedes_last_remote_publication();
+    }
+
+    #[test]
+    fn last_remote_publication_precedes_owner_detach() {
+        loom_tests::last_remote_publication_precedes_owner_detach_with_source_ordering();
+    }
+
+    #[test]
+    #[should_panic(expected = "Causality violation")]
+    fn last_remote_publication_needs_source_head_ordering() {
+        loom_tests::last_remote_publication_precedes_owner_detach_without_source_ordering();
+    }
+}
