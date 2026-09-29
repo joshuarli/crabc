@@ -1003,6 +1003,13 @@ are not transferable passes for a different revision.
   The nested subprocess C/Rust trace now matches parent ownership and teardown,
   but the full M6 gate remains incomplete with ten blocked gates and nine
   missing evidence entries.
+  A six-checkpoint child Heap ownership receiver now matches pinned C and
+  reduces the M6 missing-entry count to eight. A ten-state M3 queue retirement
+  trace matches C byte for byte. A bounded M4 aligned-realloc OOM differential
+  confirms that failed replacement preserves the live allocation and passes
+  its focused gate. On clean fixed source `383ef65af`, the M5 remote-publication
+  gate passes with a retained source-sealed report; the separate abandonment
+  gate and current merged-source M5 qualification remain open.
   A later focused M2 differential matches repeated explicit process init;
   the merged-source M5 remote-publication gate passes with a 9-key pinned-C/Rust
   post-exit parallel reclaim receiver and separate Loom race,
