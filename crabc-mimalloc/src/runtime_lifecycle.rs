@@ -21767,13 +21767,13 @@ mod tests {
                     let _operation = admission::NativeAllocatorOperationGuard::enter().unwrap();
                     // SAFETY: this worker retains both linked Theaps and
                     // their TLD, as well as the process-static empty image.
-                    let tld = unsafe { &*crate::types::Theap::tld_at(core::ptr::NonNull::new(base.cast()).unwrap()) };
+                    let tld = core::ptr::NonNull::new(unsafe { crate::types::Theap::tld_at(core::ptr::NonNull::new(base.cast()).unwrap()) }).unwrap();
                     unsafe {
-                        assert!(tld.has_linked_theap_member_blocking(base.cast()).unwrap());
-                        assert!(tld.has_linked_theap_member_blocking(selected.cast()).unwrap());
-                        assert!(!tld.has_linked_theap_member_blocking(core::ptr::null_mut()).unwrap());
-                        assert!(!tld.has_linked_theap_member_blocking(crate::bootstrap::empty_default_theap_ptr()).unwrap());
-                        assert!(!tld.has_exact_theap_member(base.cast()));
+                        assert!(crate::types::ThreadLocalData::has_linked_theap_member_blocking(tld, base.cast()).unwrap());
+                        assert!(crate::types::ThreadLocalData::has_linked_theap_member_blocking(tld, selected.cast()).unwrap());
+                        assert!(!crate::types::ThreadLocalData::has_linked_theap_member_blocking(tld, core::ptr::null_mut()).unwrap());
+                        assert!(!crate::types::ThreadLocalData::has_linked_theap_member_blocking(tld, crate::bootstrap::empty_default_theap_ptr()).unwrap());
+                        assert!(!tld.as_ref().has_exact_theap_member(base.cast()));
                     }
                     let phase = with_current_thread_native_persistent_owner(|owner| owner.begin_deferred_free_collection(true));
                     match &phase { Ok(Ok(_)) => {}, Ok(Err(error)) => panic!("fixed collection source error: {error:?}"), Err(error) => panic!("fixed collection owner error: {error:?}"), }

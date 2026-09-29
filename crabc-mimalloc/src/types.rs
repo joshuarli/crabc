@@ -2153,33 +2153,67 @@ impl ThreadLocalData {
     /// after it; final one-member teardown uses the stricter check above.
     ///
     /// # Safety
-    /// `theap` is null or a retained, address-stable Theap image. Every live
-    /// list member remains retained through this observation; concurrent
-    /// link mutations use this TLD's list lock.
+    /// `pointer` names retained initialized TLD metadata whose lock remains
+    /// live through this call. `theap` is null or a retained, address-stable
+    /// Theap image. List members remain live while linked, and all head/link
+    /// changes and unlink-before-release transitions use this TLD's list
+    /// lock. Other owner-local fields may change independently.
     pub(crate) unsafe fn has_linked_theap_member_blocking(
-        &self,
+        pointer: NonNull<Self>,
         theap: *mut Theap,
     ) -> Result<bool, ThreadLocalTheapListError> {
         if theap.is_null() { return Ok(false); }
-        let guard = self.theaps_lock.lock().map_err(ThreadLocalTheapListError::Lock)?;
-        let mut current = self.theaps;
+        // SAFETY: this shared projection covers only the independently
+        // synchronized lock, before observing any ordinary list field.
+        let lock = unsafe { &*core::ptr::addr_of!((*pointer.as_ptr()).theaps_lock) };
+        let guard = lock.lock().map_err(ThreadLocalTheapListError::Lock)?;
+        // SAFETY: the held source lock serializes the initialized list head.
+        let mut current = unsafe { core::ptr::addr_of!((*pointer.as_ptr()).theaps).read() };
         let mut previous = null_mut();
         let mut found = false;
         while !current.is_null() {
             // SAFETY: source list links are protected by the held lock and
             // all typed members remain retained for this observation.
-            if unsafe { (*current).tprev != previous
-                || (*current).tld != core::ptr::from_ref(self).cast_mut() }
+            if unsafe { core::ptr::addr_of!((*current).tprev).read() != previous
+                || core::ptr::addr_of!((*current).tld).read() != pointer.as_ptr() }
             {
                 found = false;
                 break;
             }
             found |= current == theap;
             previous = current;
-            current = unsafe { (*current).tnext };
+            current = unsafe { core::ptr::addr_of!((*current).tnext).read() };
         }
         guard.unlock().map_err(ThreadLocalTheapListError::Lock)?;
         Ok(found)
+    }
+
+    /// Validates retained attached-owner identity and reads its metadata
+    /// provenance without borrowing independently mutable list fields.
+    ///
+    /// # Safety
+    /// `pointer` is retained initialized TLD metadata. Its thread, sequence,
+    /// subprocess, threadpool, and memory identity remain unchanged through
+    /// this read; the calling thread exclusively controls its recurse field.
+    /// The source list may change under its own lock.
+    pub(crate) unsafe fn attached_owner_memory_at(
+        pointer: NonNull<Self>,
+        thread: LiveThreadId,
+        sequence: ThreadSequence,
+        subprocess: &SubprocessIdentity,
+        callback_reentry: bool,
+    ) -> Option<MemoryId> {
+        // SAFETY: each projection covers only its retained immutable field
+        // or the current thread's exclusively controlled recurse marker.
+        unsafe {
+            if core::ptr::addr_of!((*pointer.as_ptr()).thread_id).read() != thread.get()
+                || core::ptr::addr_of!((*pointer.as_ptr()).thread_seq).read() != sequence.get()
+                || core::ptr::addr_of!((*pointer.as_ptr()).subprocess).read() != subprocess.as_ptr()
+                || core::ptr::addr_of!((*pointer.as_ptr()).is_in_threadpool).read()
+                || core::ptr::addr_of!((*pointer.as_ptr()).recurse).read() != callback_reentry
+            { return None; }
+            Some(core::ptr::addr_of!((*pointer.as_ptr()).memid).read())
+        }
     }
 
     /// Records a live identity on caller-pinned/static bootstrap storage.

@@ -657,6 +657,24 @@ impl<'owner> MetaAllocation<'owner> {
         true
     }
 
+    /// Returns the original retained initialized TLD pointer without
+    /// borrowing its independently locked source list. The exact metadata
+    /// role and layout guards remain those of the mutable projection.
+    #[inline]
+    pub(crate) fn thread_local_data_pointer(&self) -> Option<NonNull<ThreadLocalData>> {
+        if !self.is_live()
+            || !self.thread_local_data_initialized
+            || self.dynamic_theap_initialized
+            || self.dynamic_thread_local_backing_projected
+            || self.dynamic_arena_pages_initialized
+            || self.requested_size != crate::types::SOURCE_THREAD_LOCAL_DATA_SIZE
+            || self.pointer.as_ptr().addr() % align_of::<ThreadLocalData>() != 0
+        {
+            return None;
+        }
+        Some(self.pointer.cast())
+    }
+
     /// Projects an already initialized bounded `mi_tld_t` image.
     ///
     /// Only [`Self::initialize_thread_local_data_subprocess_attached_no_theap`] can set this

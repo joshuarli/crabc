@@ -706,6 +706,25 @@ impl DynamicAttachedThreadLocalData {
         self.metadata
     }
 
+    /// Returns the exact retained initialized TLD for field projections.
+    /// Its list can be changed by Heap teardown under the source list lock;
+    /// validation therefore reads only owner identity and metadata fields.
+    pub(crate) fn current_pointer(
+        &self,
+        callback_reentry: bool,
+    ) -> Result<core::ptr::NonNull<ThreadLocalData>, ThreadLocalDataError> {
+        self.ensure_active_current()?;
+        let allocation = self.allocation.as_ref().ok_or(ThreadLocalDataError::Projection)?;
+        let pointer = allocation.thread_local_data_pointer().ok_or(ThreadLocalDataError::Projection)?;
+        // SAFETY: the initialized-role capability retains this image; this
+        // current-thread owner controls recurse and retains stable identity.
+        let memory = unsafe { ThreadLocalData::attached_owner_memory_at(
+            pointer, self.thread, self.sequence, self.subprocess, callback_reentry,
+        ) }.ok_or(ThreadLocalDataError::Projection)?;
+        if !allocation.matches_memory_id(memory) { return Err(ThreadLocalDataError::Projection); }
+        Ok(pointer)
+    }
+
     /// Projects the exact retained TLD while its attached-Theap owner is
     /// current. The `MetaAllocation` origin/initialized marker remains the
     /// same narrow proof used by the original no-theap owner.
