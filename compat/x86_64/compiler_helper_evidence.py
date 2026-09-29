@@ -631,19 +631,23 @@ INT128_CAST_NAMES = ("__fixdfti", "__fixunsdfti", "__floattidf", "__floatuntidf"
 
 
 def _integer128_cast_transfers(*, root: Path, archive: Path, workload: Path,
-                               executable: Path, map_path: Path, trace_path: Path,
-                               source_mount: str = "/workspace") -> dict[str, Any]:
+                               executable: Path, map_path: Path, trace_path: Path | None = None,
+                               trace_lines: Sequence[str] | None = None, source_mount: str = "/workspace") -> dict[str, Any]:
     """Join emitted object relocations to the exact owned archive and final code."""
 
     root = Path(root).absolute()
-    archive, workload, executable, map_path, trace_path = map(Path, (archive, workload, executable, map_path, trace_path))
+    archive, workload, executable, map_path = map(Path, (archive, workload, executable, map_path))
+    paths = (archive, workload, executable, map_path, *((Path(trace_path),) if trace_path is not None else ()))
     require(all(path.is_absolute() and path.is_relative_to(root) and path.is_file() and not path.is_symlink()
-                for path in (archive, workload, executable, map_path, trace_path)),
+                for path in paths),
             "integer128 cast retained inputs escape the physical checkout")
     recorded_archive = source_mount + "/" + archive.relative_to(root).as_posix()
     recorded_workload = source_mount + "/" + workload.relative_to(root).as_posix()
     map_lines = map_path.read_text(encoding="utf-8").splitlines()
-    trace_lines = trace_path.read_text(encoding="utf-8").splitlines()
+    require((trace_path is None) != (trace_lines is None), "integer128 cast trace authority is ambiguous")
+    trace_lines = Path(trace_path).read_text(encoding="utf-8").splitlines() if trace_path is not None else trace_lines
+    require(type(trace_lines) is list and all(type(line) is str for line in trace_lines),
+            "integer128 cast trace rows differ")
     require(trace_lines.count(f"{recorded_archive}({ARCHIVE_MEMBER})") == 1,
             "integer128 cast trace does not extract the exact owned member")
     require(trace_lines.count(recorded_workload) == 1,
@@ -716,10 +720,20 @@ def retained_integer128_cast_link(*, root: Path, product: Path, workload: Path,
     identity = products.validate_retained_link(root, "/workspace", product, workload,
                                               executable, receipt, linkage, dict(linker))
     record = _read_json(receipt, "integer128 cast link receipt")
+    if linkage in {"static", "static-pie"}:
+        map_path = receipt.parent / record["map"]["path"]
+        trace_arguments = {"trace_path": receipt.parent / record["trace"]["path"]}
+    else:
+        import owned_dynamic_elf as dynamic_elf
+        sidecar, map_path = dynamic_elf.sidecar_paths(executable)
+        dynamic_elf.validate_record(_read_json(sidecar, "integer128 cast ELF sidecar"), executable,
+                                   output_format=products.DYNAMIC_PRODUCT_FORMAT,
+                                   fail=lambda message: require(False, message),
+                                   recorded_path=lambda path: "/workspace/" + path.relative_to(root).as_posix())
+        trace_arguments = {"trace_lines": record["link_trace"]}
     observations = _integer128_cast_transfers(
         root=root, archive=product / "usr/lib/libcrabc-builtins.a", workload=workload,
-        executable=executable, map_path=receipt.parent / record["map"]["path"],
-        trace_path=receipt.parent / record["trace"]["path"])
+        executable=executable, map_path=map_path, **trace_arguments)
     return {"link": identity, **observations}
 
 
