@@ -1759,6 +1759,7 @@ mod tests {
     extern crate std;
 
     use super::*;
+    use crate::config::BIN_HUGE;
     use core::ptr::null_mut;
 
     fn page(block_size: usize) -> Page {
@@ -2340,6 +2341,175 @@ mod tests {
                 &mut theap, 4, NonNull::new(pages[2]).unwrap()
             ).is_ok());
             std::println!("{}", line("retire-final", &theap, &pages));
+        }
+    }
+
+    #[test]
+    fn queue_bin_transition_matrix_preserves_source_owner_state() {
+        fn names(queue: &PageQueue, pages: &[*mut Page; 3]) -> std::string::String {
+            let mut result = std::string::String::new();
+            let mut current = queue.first;
+            let mut previous = null_mut();
+            while !current.is_null() {
+                assert!(result.len() < pages.len());
+                // SAFETY: this receiver owns the complete pinned queue image.
+                assert_eq!(unsafe { page_prev(current) }, previous);
+                let index = pages.iter().position(|&page| page == current).unwrap();
+                result.push((b'A' + index as u8) as char);
+                previous = current;
+                current = unsafe { page_next(current) };
+            }
+            assert_eq!(queue.count, result.len());
+            assert_eq!(queue.last, previous);
+            result
+        }
+
+        fn show(
+            bin: usize, seed: u64, step: usize, action: &str, changed: char,
+            theap: &Theap, pages: &[*mut Page; 3], sentinel: *mut Page,
+            sentinel_bin: usize, sentinel_live: bool,
+        ) {
+            let queue = theap.queue(bin).unwrap();
+            let regular = names(queue, pages);
+            let full = names(theap.queue(BIN_FULL).unwrap(), pages);
+            let mut flags = std::string::String::new();
+            let mut bytes = 0;
+            for (index, &pointer) in pages.iter().enumerate() {
+                // SAFETY: all ordinary fields remain exclusively owned by
+                // this receiver; no client or remote producer exists.
+                let page = unsafe { &*pointer };
+                assert_eq!(page.theap(), core::ptr::from_ref(theap).cast_mut());
+                let name = (b'A' + index as u8) as char;
+                let in_regular = regular.contains(name);
+                let in_full = full.contains(name);
+                assert!(!(in_regular && in_full));
+                assert_eq!(page_is_in_full(page), in_full);
+                if !in_regular && !in_full {
+                    assert!(page.next.is_null() && page.prev.is_null());
+                }
+                if in_full { bytes += usize::from(page.capacity()) * page.block_size(); }
+                flags.push(if in_full { 'F' } else if in_regular { 'R' } else { 'D' });
+            }
+            let mut direct = std::string::String::new();
+            for index in 0..PAGES_DIRECT {
+                let direct_bin = size_class::bin(index * WORD_SIZE).unwrap();
+                let expected = if direct_bin == sentinel_bin && sentinel_live {
+                    sentinel
+                } else if direct_bin == bin && queue.block_size() <= SMALL_SIZE_MAX && !queue.first.is_null() {
+                    queue.first
+                } else {
+                    EMPTY_PAGE.as_ptr()
+                };
+                assert_eq!(theap.direct_page(index), Some(expected));
+                direct.push(if expected == EMPTY_PAGE.as_ptr() { '-' }
+                    else if expected == sentinel { 'S' }
+                    else { (b'A' + pages.iter().position(|&page| page == expected).unwrap() as u8) as char });
+            }
+            assert_eq!(theap.pages_full_size(), bytes);
+            assert_eq!(theap.page_count(), regular.len() + full.len() + usize::from(sentinel_live));
+            if !cfg!(miri) {
+                std::println!(
+                    "M3B bin={bin} size={} seed={seed} step={step} action={action} page={changed} regular={regular} full={full} direct={direct} state={flags} bytes={bytes} pages={} sentinel={}",
+                    queue.block_size(), theap.page_count(), u8::from(sentinel_live),
+                );
+            }
+        }
+
+        for bin in 1..=BIN_HUGE {
+            let size = crate::size_class::bin_size(bin).unwrap();
+            if size_class::bin(size) != Some(bin) { continue; }
+            let sentinel_bin = if bin == 1 { 2 } else { 1 };
+            for seed in [0x4d3342494e_u64, 0x9e3779b97f4a7c15] {
+                let mut theap = Theap::empty();
+                let mut images = [page(size), page(size), page(size)];
+                let owner = core::ptr::from_mut(&mut theap);
+                for (index, image) in images.iter_mut().enumerate() {
+                    let count = if bin == BIN_HUGE { 1 } else { 4 + 2 * index as u16 };
+                    assert!(image.set_capacity_reserved(count, count));
+                    image.abandoned_test_set_theap(owner);
+                }
+                let pages = images.each_mut().map(core::ptr::from_mut);
+                let mut sentinel_image = page(theap.queue(sentinel_bin).unwrap().block_size());
+                assert!(sentinel_image.set_capacity_reserved(1, 1));
+                sentinel_image.abandoned_test_set_theap(owner);
+                let sentinel = core::ptr::from_mut(&mut sentinel_image);
+                // SAFETY: every pinned image is detached and exclusively
+                // owned; the unrelated live bin checks cache range isolation.
+                unsafe { page_queue_push_at_end_metadata(theap.queue_mut(sentinel_bin).unwrap(), sentinel) };
+                theap.note_page_added();
+                assert!(theap_collect_abandon_update_direct_cache(&mut theap, sentinel_bin));
+                let mut states = [0_u8; 3];
+                let mut random = seed;
+                show(bin, seed, 0, "init", '-', &theap, &pages, sentinel, sentinel_bin, true);
+                let mut step = 1;
+                while step <= 128 {
+                    random = random.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                    let index = ((random >> 32) % 3) as usize;
+                    let op = (random >> 16) % 6;
+                    let selected = pages[index];
+                    let action;
+                    // SAFETY: the inductive membership state selects the
+                    // exact source queue. Both queues, all link fields, and
+                    // page-count/cache fields are exclusive for each step.
+                    unsafe {
+                        if states[index] == 0 {
+                            if op % 2 == 0 {
+                                page_queue_push_metadata(theap.queue_mut(bin).unwrap(), selected);
+                                action = "push-head";
+                            } else {
+                                page_queue_push_at_end_metadata(theap.queue_mut(bin).unwrap(), selected);
+                                action = "push-tail";
+                            }
+                            theap.note_page_added();
+                            states[index] = 1;
+                        } else {
+                            let from_bin = if states[index] == 1 { bin } else { BIN_FULL };
+                            let to_bin = if states[index] == 1 { BIN_FULL } else { bin };
+                            if op == 0 {
+                                page_queue_remove_metadata(theap.queue_mut(from_bin).unwrap(), selected);
+                                assert!(theap.note_page_removed());
+                                states[index] = 0;
+                                action = "remove";
+                            } else if op == 1 {
+                                page_queue_move_to_front_metadata(theap.queue_mut(from_bin).unwrap(), selected);
+                                action = "front";
+                            } else {
+                                let from = theap.queue_mut(from_bin).unwrap() as *mut PageQueue;
+                                let to = theap.queue_mut(to_bin).unwrap() as *mut PageQueue;
+                                if op == 2 && states[index] == 2 {
+                                    page_queue_enqueue_from_full_metadata(&mut *to, &mut *from, selected);
+                                    action = "return-tail";
+                                } else {
+                                    page_queue_enqueue_from_ex_metadata(&mut *to, &mut *from, op % 2 == 0, selected);
+                                    action = if op % 2 == 0 { "transfer-tail" } else { "transfer-second" };
+                                }
+                                states[index] = 3 - states[index];
+                            }
+                        }
+                    }
+                    assert!(theap_collect_abandon_update_direct_cache(&mut theap, bin));
+                    show(bin, seed, step, action, (b'A' + index as u8) as char,
+                        &theap, &pages, sentinel, sentinel_bin, true);
+                    step += 1;
+                }
+                for (index, state) in states.iter().enumerate() {
+                    if *state == 0 { continue; }
+                    let from = if *state == 1 { bin } else { BIN_FULL };
+                    // SAFETY: the selected image remains a member of its
+                    // exclusive source queue until this terminal removal.
+                    unsafe { page_queue_remove_metadata(theap.queue_mut(from).unwrap(), pages[index]) };
+                    assert!(theap.note_page_removed());
+                    assert!(theap_collect_abandon_update_direct_cache(&mut theap, bin));
+                    show(bin, seed, step, "remove", (b'A' + index as u8) as char,
+                        &theap, &pages, sentinel, sentinel_bin, true);
+                    step += 1;
+                }
+                // SAFETY: the unrelated bin retains its one pinned sentinel.
+                unsafe { page_queue_remove_metadata(theap.queue_mut(sentinel_bin).unwrap(), sentinel) };
+                assert!(theap.note_page_removed());
+                assert!(theap_collect_abandon_update_direct_cache(&mut theap, sentinel_bin));
+                show(bin, seed, step, "release-sentinel", 'S', &theap, &pages, sentinel, sentinel_bin, false);
+            }
         }
     }
 

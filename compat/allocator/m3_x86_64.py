@@ -1061,7 +1061,7 @@ def run_queue_retirement_differential(contract: Mapping[str, Any]) -> dict[str, 
     )
     lines = str(record["stdout"]).splitlines()
     parsed = []
-    for line in lines:
+    for line in (line for line in lines if line.startswith("M3R ")):
         match = re.fullmatch(
             r"M3R ([a-z-]+) regular=([ABC]*) full=([ABC]*) direct=([ABC-]) state=([RFD]{3}) bytes=(\d+) pages=(\d+)",
             line,
@@ -1075,6 +1075,125 @@ def run_queue_retirement_differential(contract: Mapping[str, Any]) -> dict[str, 
         unmet.append(f"queue retirement differential exited {record['status']}")
     if parsed != list(expected):
         unmet.append("pinned C/Rust queue retirement transitions differ from the source sequence")
+    reachable = set(reachable_bin_ranges()) | {BIN_HUGE}
+    sequences: dict[tuple[int, int], dict[str, Any]] = {}
+    free_stages: dict[int, set[str]] = {}
+    for line in lines:
+        if line.startswith("M3R "):
+            continue
+        if line.startswith("M3B "):
+            match = re.fullmatch(
+                r"M3B bin=(\d+) size=(\d+) seed=(\d+) step=(\d+) action=([a-z-]+) page=([ABCS-]) regular=([ABC]*) full=([ABC]*) direct=([ABCS-]+) state=([RFD]{3}) bytes=(\d+) pages=(\d+) sentinel=([01])",
+                line,
+            )
+            if match is None:
+                unmet.append(f"malformed queue matrix state: {line}")
+                continue
+            bin_text, size_text, seed_text, step_text, action, page, regular, full, direct, state, bytes_text, pages_text, sentinel_text = match.groups()
+            bin_index, size, seed, step = map(int, (bin_text, size_text, seed_text, step_text))
+            key = (bin_index, seed)
+            previous = sequences.get(key)
+            if bin_index not in reachable or source_bin(size) != bin_index:
+                unmet.append(f"queue matrix has an unreachable bin/size: {bin_index}/{size}")
+            if action == "init":
+                if previous is not None or step != 0:
+                    unmet.append(f"queue matrix repeated or malformed initial state: {key}")
+                previous = {"regular": "", "full": "", "sentinel": True, "step": -1, "size": size, "actions": set()}
+            if previous is None:
+                unmet.append(f"queue matrix has no initial state: {key}")
+                continue
+            expected_regular = str(previous["regular"])
+            expected_full = str(previous["full"])
+            expected_sentinel = bool(previous["sentinel"])
+            source = "regular" if page in expected_regular else "full" if page in expected_full else None
+            if action in {"push-head", "push-tail"}:
+                if source is not None or page not in "ABC":
+                    unmet.append(f"queue matrix pushes an attached/invalid page: {key}/{step}")
+                expected_regular = page + expected_regular if action == "push-head" else expected_regular + page
+            elif action in {"remove", "front", "transfer-tail", "transfer-second", "return-tail"}:
+                if source is None:
+                    unmet.append(f"queue matrix acts on a detached page: {key}/{step}")
+                else:
+                    source_names = expected_regular if source == "regular" else expected_full
+                    source_names = source_names.replace(page, "")
+                    destination_names = expected_full if source == "regular" else expected_regular
+                    if action == "front":
+                        source_names = page + source_names
+                    elif action.startswith("transfer") or action == "return-tail":
+                        if action == "return-tail" and source != "full":
+                            unmet.append(f"queue matrix returns a page outside the full queue: {key}/{step}")
+                        destination_names = (
+                            destination_names[:1] + page + destination_names[1:]
+                            if action == "transfer-second" else destination_names + page
+                        )
+                    if source == "regular":
+                        expected_regular, expected_full = source_names, destination_names
+                    else:
+                        expected_full, expected_regular = source_names, destination_names
+            elif action == "release-sentinel":
+                if page != "S" or expected_regular or expected_full or not expected_sentinel:
+                    unmet.append(f"queue matrix releases its sentinel with reachable pages: {key}/{step}")
+                expected_sentinel = False
+            elif action != "init":
+                unmet.append(f"unknown queue transition: {action}")
+            expected_state = "".join("R" if name in expected_regular else "F" if name in expected_full else "D" for name in "ABC")
+            capacities = dict.fromkeys("ABC", 1) if bin_index == BIN_HUGE else {"A": 4, "B": 6, "C": 8}
+            expected_bytes = sum(capacities[name] * size for name in expected_full)
+            sentinel_bin = 2 if bin_index == 1 else 1
+            expected_direct = "".join(
+                "S" if source_bin(index * WORD) == sentinel_bin and expected_sentinel else
+                expected_regular[0] if source_bin(index * WORD) == bin_index and expected_regular else "-"
+                for index in range(SMALL_SIZE_MAX // WORD + 1)
+            )
+            if (
+                (regular, full, direct, state) != (expected_regular, expected_full, expected_direct, expected_state)
+                or len(set(regular + full)) != len(regular + full)
+                or int(bytes_text) != expected_bytes
+                or int(pages_text) != len(regular + full) + expected_sentinel
+                or bool(int(sentinel_text)) != expected_sentinel
+                or size != previous["size"] or step != previous["step"] + 1
+            ):
+                unmet.append(f"queue matrix violates its owner/cache/transition invariant: {key}/{step}")
+            sequences[key] = {
+                "regular": regular, "full": full, "sentinel": bool(int(sentinel_text)),
+                "step": step, "size": size, "actions": previous["actions"] | {action},
+            }
+        elif line.startswith("M3F "):
+            match = re.fullmatch(
+                r"M3F size=(\d+) stage=([a-z-]+) capacity=(\d+) reserved=(\d+) used=(\d+) zero=([01]) free=([\d,-]+) local=([\d,-]+)", line,
+            )
+            if match is None:
+                unmet.append(f"malformed free-list state: {line}")
+                continue
+            size_text, stage, capacity_text, reserved_text, used_text, zero, free_text, local_text = match.groups()
+            size, capacity, reserved, used = map(int, (size_text, capacity_text, reserved_text, used_text))
+            free = [] if free_text == "-" else [int(index) for index in free_text.split(",")]
+            local = [] if local_text == "-" else [int(index) for index in local_text.split(",")]
+            bin_index = source_bin(size)
+            if (
+                bin_index not in reachable - {BIN_HUGE} or not 0 <= used <= capacity <= reserved
+                or used + len(free) + len(local) != capacity
+                or len(set(free + local)) != len(free + local)
+                or any(index < 0 or index >= capacity for index in free + local)
+                or stage == "fresh" and (capacity != 0 or zero != "1")
+                or stage == "exhausted" and (used != reserved or free or local or zero != "0")
+            ):
+                unmet.append(f"free-list matrix violates initialized ownership/counts: {size}/{stage}")
+            free_stages.setdefault(bin_index, set()).add(stage)
+        else:
+            unmet.append(f"unrecognized local primitive trace record: {line}")
+    required_actions = {"init", "push-head", "push-tail", "remove", "front", "transfer-tail", "transfer-second", "return-tail", "release-sentinel"}
+    for bin_index in sorted(reachable):
+        for seed in fixture["transition_seeds"]:
+            sequence = sequences.get((bin_index, int(seed, 0)))
+            if sequence is None:
+                unmet.append(f"queue matrix did not execute bin {bin_index}, seed {seed}")
+            elif sequence["sentinel"] or sequence["regular"] or sequence["full"] or not required_actions <= sequence["actions"]:
+                unmet.append(f"queue matrix did not complete all transitions and release bin {bin_index}, seed {seed}")
+    required_free_stages = {"fresh", "extend", "allocated", "local-two", "transfer", "both-lists", "false-force", "quick-preserve", "force-append", "reallocated", "local-many", "quick-transfer", "exhausted"}
+    for bin_index in sorted(reachable - {BIN_HUGE}):
+        if not required_free_stages <= free_stages.get(bin_index, set()):
+            unmet.append(f"free-list matrix did not execute every source mode for bin {bin_index}")
     return {
         "c_fixture_sha256": run.sha256_file(paths["c_fixture"]),
         "c_trace_sha256": run.sha256_file(c_trace_path) if c_trace_path.is_file() else None,
@@ -1082,7 +1201,10 @@ def run_queue_retirement_differential(contract: Mapping[str, Any]) -> dict[str, 
         "raw_runtime_receipt": str(receipt_path),
         "runner_sha256": run.sha256_file(paths["runner"]),
         "rust_source_sha256": run.sha256_file(ROOT / "crabc-mimalloc/src/page_queue.rs"),
+        "rust_free_list_sha256": run.sha256_file(ROOT / "crabc-mimalloc/src/free_list.rs"),
         "rust_test": fixture["rust_test"],
+        "rust_matrix_test": fixture["rust_matrix_test"],
+        "rust_free_test": fixture["rust_free_test"],
         "rust_trace_sha256": run.sha256_file(rust_trace_path) if rust_trace_path.is_file() else None,
         "trace_sha256": run.sha256_file(trace_path),
         "status": "passed" if not unmet else "failed",
@@ -1394,6 +1516,14 @@ def prerequisite_status(contract: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def evaluate_gate(contract: Mapping[str, Any], checks: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    required_checks = {
+        "local-trace-differential", "queue-reorder-differential", "queue-retirement-differential",
+        "persistent-owner-trace-differential", "rust-unit-batch", "miri",
+    }
+    declared_checks = {check for component in contract["components"] for check in component["checks"]}
+    omitted = required_checks - declared_checks
+    if omitted:
+        raise GateError(f"M3 components omit required checks: {', '.join(sorted(omitted))}")
     if not any(
         component["id"] == "page-queues" and "queue-reorder-differential" in component["checks"]
         for component in contract["components"]

@@ -21,7 +21,7 @@
       {"milestone": "m2", "report": "reports/allocator/x86_64/m2-memory-substrate-latest.json"}
     ],
     "nonclaims": [
-      "No remote-free, abandonment, reclaim, thread-exit, or cross-thread lifetime behavior (M5).",
+      "No remote-free publication/collection, abandonment, reclaim, thread-exit, or cross-thread lifetime completion (M5).",
       "No calloc, realloc, aligned, usable-size, explicit collection, or OOM-preservation behavior (M4).",
       "No public mi_* API, libc integration, backend selection, or AArch64 evidence."
     ]
@@ -70,6 +70,9 @@
   "queue_retirement_differential": {
     "c_fixture": "compat/allocator/x86_64_m3_queue_retirement.c",
     "rust_test": "types::page_queue::tests::queue_retirement_and_reuse_preserve_owner_state",
+    "rust_matrix_test": "types::page_queue::tests::queue_bin_transition_matrix_preserves_source_owner_state",
+    "rust_free_test": "free_list::tests::source_bin_free_list_matrix_preserves_order_and_zeroing",
+    "transition_seeds": ["0x4d3342494e", "0x9e3779b97f4a7c15"],
     "runner": "compat/allocator/x86_64_m3_queue_retirement.py"
   },
   "workloads": [
@@ -166,11 +169,17 @@
     "miriflags": ["-Zmiri-strict-provenance"],
     "module_prefixes": [
       "single_thread::local_trace::",
-      "page::tests::"
+      "page::tests::",
+      "free_list::tests::source_bin_free_list_matrix_preserves_order_and_zeroing",
+      "types::page_queue::tests::queue_bin_transition_matrix_preserves_source_owner_state",
+      "local_fast_path::tests::foreign_free_declines_while_owner_updates_ordinary_page_state"
     ],
     "required_tests": [
       "single_thread::local_trace::emit_m3_local_trace",
-      "single_thread::local_trace::m3_local_trace_is_deterministic_across_fresh_engines"
+      "single_thread::local_trace::m3_local_trace_is_deterministic_across_fresh_engines",
+      "free_list::tests::source_bin_free_list_matrix_preserves_order_and_zeroing",
+      "types::page_queue::tests::queue_bin_transition_matrix_preserves_source_owner_state",
+      "local_fast_path::tests::foreign_free_declines_while_owner_updates_ordinary_page_state"
     ]
   },
   "components": [
@@ -182,14 +191,14 @@
     },
     {
       "id": "page-queues",
-      "source_scope": "src/page-queue.c queue push/remove/enqueue_from/enqueue_from_full/move_to_front, direct-cache update, and BIN_FULL membership with pages_full_size.",
+      "source_scope": "src/page-queue.c queue push/remove/enqueue_from/enqueue_from_full/move_to_front, complete direct-cache updates isolated from an unrelated live bin, and BIN_FULL membership with pages_full_size across every reachable regular/huge bin under seeded transitions.",
       "checks": ["local-trace-differential", "queue-reorder-differential", "queue-retirement-differential", "rust-unit-batch"],
       "remaining_conditions": []
     },
     {
       "id": "local-allocation-free",
       "source_scope": "src/alloc.c small/direct and generic allocation, src/page.c mi_find_page/mi_page_queue_find_free_ex/fresh pages/extend, and src/free.c owner-local mi_free_block_local with unfull.",
-      "checks": ["local-trace-differential", "rust-unit-batch"],
+      "checks": ["local-trace-differential", "queue-retirement-differential", "rust-unit-batch"],
       "remaining_conditions": []
     },
     {
@@ -212,7 +221,7 @@
     },
     {
       "id": "miri-execution",
-      "source_scope": "Strict-provenance Miri (Stacked Borrows) over the complete local trace engine and page geometry: arena management, PageMap initialize/register/unregister/destroy, fresh pages, intrusive queue and full-queue transitions, free-list extend/pop/push/collect, retirement and release, with provenance, initialization, pointer arithmetic, and mapping lifetimes through crabc-core's cfg(miri) kernel model beneath the unchanged os.rs.",
+      "source_scope": "Strict-provenance Miri (Stacked Borrows) over the complete local trace engine, all reachable bin queue/free-list primitive matrices, and page geometry: arena management, PageMap initialize/register/unregister/destroy, fresh pages, intrusive queue and full-queue transitions, free-list extend/pop/push/collect, retirement and release, with provenance, initialization, pointer arithmetic, and mapping lifetimes through crabc-core's cfg(miri) kernel model beneath the unchanged os.rs. A concurrent foreign-free rejection proves atomic owner identity is checked before borrowing ordinary page metadata.",
       "checks": ["miri"],
       "remaining_conditions": []
     },

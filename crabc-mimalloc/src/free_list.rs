@@ -967,6 +967,123 @@ mod tests {
     }
 
     #[test]
+    fn source_bin_free_list_matrix_preserves_order_and_zeroing() {
+        fn names(list: &LocalFreeList, head: *mut u8) -> std::string::String {
+            let mut result = std::string::String::new();
+            let mut current = head;
+            let mut count = 0;
+            while let Some(block) = NonNull::new(current) {
+                assert!(count < usize::from(list.capacity()));
+                let offset = block.addr().get() - list.base.addr().get();
+                assert_eq!(offset % list.block_size, 0);
+                if count > 0 { result.push(','); }
+                result.push_str(&std::format!("{}", offset / list.block_size));
+                current = list.checked_next(block).unwrap();
+                count += 1;
+            }
+            if count == 0 { result.push('-'); }
+            result
+        }
+
+        fn show(stage: &str, list: &LocalFreeList) {
+            let free = names(list, list.free());
+            let local = names(list, list.local_free());
+            if !cfg!(miri) {
+                std::println!(
+                    "M3F size={} stage={stage} capacity={} reserved={} used={} zero={} free={free} local={local}",
+                    list.block_size, list.capacity(), list.reserved(), list.used(),
+                    u8::from(list.free_is_zero()),
+                );
+            }
+        }
+
+        fn pop_checked(list: &mut LocalFreeList, zeroes: &[u8]) -> NonNull<u8> {
+            let block = list.pop(true).unwrap().unwrap();
+            // SAFETY: this pop uniquely returns one full initialized block;
+            // the byte observation ends before any local-free link write.
+            let bytes = unsafe { core::slice::from_raw_parts(block.as_ptr(), list.block_size) };
+            assert_eq!(bytes, zeroes);
+            block
+        }
+
+        for bin in 1..crate::config::BIN_HUGE {
+            let block_size = crate::size_class::bin_size(bin).unwrap();
+            if crate::size_class::bin(block_size) != Some(bin) { continue; }
+            let first_extend = LocalFreeList::page_extend_count(0, u16::MAX, block_size).unwrap();
+            let reserved = first_extend + 3;
+            let bytes = usize::from(reserved) * block_size;
+            let zeroes = std::vec![0_u8; block_size];
+            let mut storage = std::vec![0_usize; bytes / LINK_SIZE];
+            let base = NonNull::new(storage.as_mut_ptr().cast::<u8>()).unwrap();
+            let mut state = TestPageState::fresh(true);
+            // SAFETY: the aligned word buffer owns exactly the reserved
+            // byte span, remains live throughout the receiver, and has no
+            // references into its blocks while list operations write links.
+            let mut list = unsafe { LocalFreeList::from_raw_parts(
+                base, bytes, block_size, &mut state.capacity, reserved,
+                &mut state.free, &mut state.local_free, &mut state.used,
+                &mut state.free_is_zero,
+            ) }.unwrap();
+            let mut allocated = std::vec::Vec::new();
+            show("fresh", &list);
+            while allocated.len() < usize::from(reserved) {
+                if list.free().is_null() {
+                    assert!(list.extend().unwrap() > 0);
+                    show("extend", &list);
+                }
+                allocated.push(pop_checked(&mut list, &zeroes));
+            }
+            show("allocated", &list);
+            for &block in &allocated[..2] {
+                // SAFETY: each exact allocation is dirtied before its one
+                // local free; at least two other clients remain allocated.
+                unsafe {
+                    ptr::write_bytes(block.as_ptr(), 0xa5, block_size);
+                    list.push_local(block).unwrap();
+                }
+            }
+            show("local-two", &list);
+            assert!(list.collect_local(false).unwrap());
+            show("transfer", &list);
+            assert_eq!(pop_checked(&mut list, &zeroes), allocated[1]);
+            // SAFETY: the exact block just returned by pop is no longer
+            // observed after this write and its next local free.
+            unsafe {
+                ptr::write_bytes(allocated[1].as_ptr(), 0xa5, block_size);
+                list.push_local(allocated[1]).unwrap();
+            }
+            show("both-lists", &list);
+            assert!(!list.collect_local(false).unwrap());
+            show("false-force", &list);
+            assert!(list.quick_collect().unwrap());
+            show("quick-preserve", &list);
+            assert!(list.collect_local(true).unwrap());
+            show("force-append", &list);
+            assert_eq!(pop_checked(&mut list, &zeroes), allocated[1]);
+            assert_eq!(pop_checked(&mut list, &zeroes), allocated[0]);
+            show("reallocated", &list);
+            for &block in &allocated[..allocated.len() - 1] {
+                // SAFETY: every selected allocation is current and returned
+                // exactly once; the final client keeps `used` positive.
+                unsafe {
+                    ptr::write_bytes(block.as_ptr(), 0xa5, block_size);
+                    list.push_local(block).unwrap();
+                }
+            }
+            show("local-many", &list);
+            assert!(list.quick_collect().unwrap());
+            show("quick-transfer", &list);
+            for &block in allocated[..allocated.len() - 1].iter().rev() {
+                assert_eq!(pop_checked(&mut list, &zeroes), block);
+            }
+            assert_eq!(list.extend().unwrap(), 0);
+            assert!(!list.collect_local(true).unwrap());
+            assert!(!list.quick_collect().unwrap());
+            show("exhausted", &list);
+        }
+    }
+
+    #[test]
     fn construction_makes_geometry_and_storage_preconditions_explicit() {
         let mut storage = Page::<64>([0; 64]);
         let base = NonNull::new(storage.0.as_mut_ptr()).unwrap();
