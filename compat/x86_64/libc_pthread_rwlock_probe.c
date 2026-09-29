@@ -1147,6 +1147,169 @@ static int run_worker_owned_probe(void)
     return status;
 }
 
+struct reused_contention_round {
+    pthread_rwlock_t rwlock;
+    volatile int entered;
+    volatile int acquired;
+    volatile int release;
+    int try_result;
+    int lock_result;
+    int unlock_result;
+    int worker_errno;
+};
+
+static void *reused_writer_main(void *opaque)
+{
+    struct reused_contention_round *round = opaque;
+
+    errno = EACCES;
+    round->try_result = pthread_rwlock_trywrlock(&round->rwlock);
+    __atomic_store_n(&round->entered, 1, __ATOMIC_RELEASE);
+    round->lock_result = pthread_rwlock_wrlock(&round->rwlock);
+    if (round->lock_result == 0) {
+        __atomic_store_n(&round->acquired, 1, __ATOMIC_RELEASE);
+        while (__atomic_load_n(&round->release, __ATOMIC_ACQUIRE) == 0)
+            ;
+        round->unlock_result = pthread_rwlock_unlock(&round->rwlock);
+    }
+    round->worker_errno = errno;
+    return (void *)(uintptr_t)0x72777772;
+}
+
+static void *reused_reader_main(void *opaque)
+{
+    struct reused_contention_round *round = opaque;
+
+    errno = EACCES;
+    round->try_result = pthread_rwlock_tryrdlock(&round->rwlock);
+    __atomic_store_n(&round->entered, 1, __ATOMIC_RELEASE);
+    round->lock_result = pthread_rwlock_rdlock(&round->rwlock);
+    if (round->lock_result == 0) {
+        __atomic_store_n(&round->acquired, 1, __ATOMIC_RELEASE);
+        while (__atomic_load_n(&round->release, __ATOMIC_ACQUIRE) == 0)
+            ;
+        round->unlock_result = pthread_rwlock_unlock(&round->rwlock);
+    }
+    round->worker_errno = errno;
+    return (void *)(uintptr_t)0x72777264;
+}
+
+/* Reuse the exact storage after a queued writer has drained, then reverse
+ * the holder and contender roles through the shared futex route.  Joining
+ * before destroy makes each object lifetime quiescent. */
+static int run_contended_reuse_probe(void)
+{
+    struct reused_contention_round round = {
+        .try_result = -1, .lock_result = -1, .unlock_result = -1,
+        .worker_errno = -1,
+    };
+    pthread_rwlockattr_t attribute;
+    pthread_t thread;
+    void *result = 0;
+    int queued_reader = -1;
+    int writer_held_reader = -1;
+    int reader_held_writer = -1;
+    int reader_held_reader = -1;
+    int status = 0;
+
+    errno = E2BIG;
+    if (pthread_rwlock_init(&round.rwlock, 0) != 0 ||
+        pthread_rwlock_rdlock(&round.rwlock) != 0)
+        return 1;
+    if (pthread_create(&thread, 0, reused_writer_main, &round) != 0)
+        return 2;
+    if (wait_for_int(&round.entered, 1) != 0 ||
+        wait_for_waiter_mark((volatile int *)&round.rwlock.__u.__i[0]) != 0 ||
+        wait_for_nonnegative_count((volatile int *)&round.rwlock.__u.__i[1], 1) != 0)
+        status = 3;
+    if (status == 0) {
+        queued_reader = pthread_rwlock_tryrdlock(&round.rwlock);
+        if (queued_reader == 0 && pthread_rwlock_unlock(&round.rwlock) != 0)
+            status = 4;
+        if (round.try_result != EBUSY || queued_reader != 0 ||
+            pthread_rwlock_trywrlock(&round.rwlock) != EBUSY)
+            status = 5;
+    }
+    if (pthread_rwlock_unlock(&round.rwlock) != 0 && status == 0)
+        status = 6;
+    if (status == 0 && wait_for_int(&round.acquired, 1) != 0)
+        status = 7;
+    if (status == 0) {
+        writer_held_reader = pthread_rwlock_tryrdlock(&round.rwlock);
+        if (writer_held_reader != EBUSY)
+            status = 8;
+    }
+    __atomic_store_n(&round.release, 1, __ATOMIC_RELEASE);
+    if (pthread_join(thread, &result) != 0 && status == 0)
+        status = 9;
+    if (status == 0 && (result != (void *)(uintptr_t)0x72777772 ||
+        round.lock_result != 0 || round.unlock_result != 0 ||
+        round.worker_errno != EACCES ||
+        __atomic_load_n(&round.rwlock.__u.__i[0], __ATOMIC_ACQUIRE) != 0 ||
+        __atomic_load_n(&round.rwlock.__u.__i[1], __ATOMIC_ACQUIRE) != 0))
+        status = 10;
+    if (pthread_rwlock_destroy(&round.rwlock) != 0 && status == 0)
+        status = 11;
+    if (status != 0)
+        return status;
+
+    if (pthread_rwlockattr_init(&attribute) != 0 ||
+        pthread_rwlockattr_setpshared(&attribute, PTHREAD_PROCESS_SHARED) != 0 ||
+        pthread_rwlock_init(&round.rwlock, &attribute) != 0 ||
+        pthread_rwlockattr_destroy(&attribute) != 0 ||
+        round.rwlock.__u.__i[0] != 0 || round.rwlock.__u.__i[1] != 0 ||
+        round.rwlock.__u.__i[2] != 128 ||
+        pthread_rwlock_wrlock(&round.rwlock) != 0)
+        return 12;
+    round.entered = 0;
+    round.acquired = 0;
+    round.release = 0;
+    round.try_result = -1;
+    round.lock_result = -1;
+    round.unlock_result = -1;
+    round.worker_errno = -1;
+    if (pthread_create(&thread, 0, reused_reader_main, &round) != 0)
+        return 13;
+    if (wait_for_int(&round.entered, 1) != 0 ||
+        wait_for_waiter_mark((volatile int *)&round.rwlock.__u.__i[0]) != 0 ||
+        wait_for_nonnegative_count((volatile int *)&round.rwlock.__u.__i[1], 1) != 0)
+        status = 14;
+    if (status == 0 && (round.try_result != EBUSY ||
+        pthread_rwlock_trywrlock(&round.rwlock) != EBUSY))
+        status = 15;
+    if (pthread_rwlock_unlock(&round.rwlock) != 0 && status == 0)
+        status = 16;
+    if (status == 0 && wait_for_int(&round.acquired, 1) != 0)
+        status = 17;
+    if (status == 0) {
+        reader_held_writer = pthread_rwlock_trywrlock(&round.rwlock);
+        reader_held_reader = pthread_rwlock_tryrdlock(&round.rwlock);
+        if (reader_held_reader == 0 && pthread_rwlock_unlock(&round.rwlock) != 0)
+            status = 18;
+        if (reader_held_writer != EBUSY || reader_held_reader != 0)
+            status = 19;
+    }
+    __atomic_store_n(&round.release, 1, __ATOMIC_RELEASE);
+    if (pthread_join(thread, &result) != 0 && status == 0)
+        status = 20;
+    if (status == 0 && (result != (void *)(uintptr_t)0x72777264 ||
+        round.lock_result != 0 || round.unlock_result != 0 ||
+        round.worker_errno != EACCES || errno != E2BIG ||
+        pthread_rwlock_trywrlock(&round.rwlock) != 0 ||
+        pthread_rwlock_unlock(&round.rwlock) != 0))
+        status = 21;
+    if (pthread_rwlock_destroy(&round.rwlock) != 0 && status == 0)
+        status = 22;
+    if (status == 0) {
+        emit_observation("reused-queued-reader=", queued_reader);
+        emit_observation("reused-writer-held-reader=", writer_held_reader);
+        emit_observation("reused-reader-held-writer=", reader_held_writer);
+        emit_observation("reused-reader-held-reader=", reader_held_reader);
+        emit_observation("reused-worker-errno=", round.worker_errno);
+    }
+    return status;
+}
+
 struct canceled_deadline_round {
     pthread_rwlock_t rwlock;
     volatile int ready;
@@ -1264,6 +1427,9 @@ int crabc_x86_64_pthread_rwlock_probe(void)
     status = run_worker_owned_probe();
     if (status != 0)
         return 380 + status;
+    status = run_contended_reuse_probe();
+    if (status != 0)
+        return 400 + status;
     status = run_canceled_deadline_probe();
     if (status != 0)
         return 320 + status;
