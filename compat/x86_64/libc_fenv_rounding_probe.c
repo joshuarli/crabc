@@ -53,6 +53,126 @@ static uint32_t float_bits(float value)
 	return view.bits;
 }
 
+static double double_from_bits(uint64_t bits)
+{
+	union {
+		uint64_t bits;
+		double value;
+	} view = { .bits = bits };
+	return view.value;
+}
+
+static float float_from_bits(uint32_t bits)
+{
+	union {
+		uint32_t bits;
+		float value;
+	} view = { .bits = bits };
+	return view.value;
+}
+
+static int raw_round_state(int mode, uint32_t expected_flags)
+{
+	uint32_t mxcsr;
+	uint16_t x87_status;
+	uint16_t x87_control;
+
+	__asm__ volatile ("stmxcsr %0" : "=m"(mxcsr) : : "memory");
+	__asm__ volatile ("fnstsw %0" : "=m"(x87_status) : : "memory");
+	__asm__ volatile ("fnstcw %0" : "=m"(x87_control) : : "memory");
+	return mxcsr == (UINT32_C(0x1f80) | ((uint32_t)mode << 3) |
+		expected_flags) && x87_control == (UINT16_C(0x037f) | mode) &&
+		(x87_status & FE_ALL_EXCEPT) == 0;
+}
+
+static int check_double_edge(double_round_function function, uint64_t input,
+	uint64_t expected, int mode, uint32_t expected_flags)
+{
+	volatile double value = double_from_bits(input);
+	double result;
+
+	if (fesetenv(FE_DFL_ENV) != 0 || fesetround(mode) != 0)
+		return 0;
+	result = function(value);
+	return double_bits(result) == expected &&
+		raw_round_state(mode, expected_flags);
+}
+
+static int check_float_edge(float_round_function function, uint32_t input,
+	uint32_t expected, int mode, uint32_t expected_flags)
+{
+	volatile float value = float_from_bits(input);
+	float result;
+
+	if (fesetenv(FE_DFL_ENV) != 0 || fesetround(mode) != 0)
+		return 0;
+	result = function(value);
+	return float_bits(result) == expected &&
+		raw_round_state(mode, expected_flags);
+}
+
+static int check_raw_rounding_edges(void)
+{
+	static const int modes[4] = {
+		FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO,
+	};
+	static const uint64_t positive_double[4] = {
+		0, 0, UINT64_C(0x3ff0000000000000), 0,
+	};
+	static const uint64_t negative_double[4] = {
+		UINT64_C(0x8000000000000000), UINT64_C(0xbff0000000000000),
+		UINT64_C(0x8000000000000000), UINT64_C(0x8000000000000000),
+	};
+	static const uint32_t positive_float[4] = {
+		0, 0, UINT32_C(0x3f800000), 0,
+	};
+	static const uint32_t negative_float[4] = {
+		UINT32_C(0x80000000), UINT32_C(0xbf800000),
+		UINT32_C(0x80000000), UINT32_C(0x80000000),
+	};
+	int index;
+
+	/* The pinned x86 SSE path reports denormal input in MXCSR even when
+	 * nearbyint clears the inexact raised while rounding it to zero. */
+	for (index = 0; index < 4; index++) {
+		int mode = modes[index];
+		if (!check_double_edge(direct_rint, 1, positive_double[index],
+				mode, 0x22) ||
+			!check_double_edge(direct_nearbyint, 1,
+				positive_double[index], mode, 0x02) ||
+			!check_double_edge(direct_rint,
+				UINT64_C(0x8000000000000001),
+				negative_double[index], mode, 0x22) ||
+			!check_double_edge(direct_nearbyint,
+				UINT64_C(0x8000000000000001),
+				negative_double[index], mode, 0x02))
+			return 1;
+		if (!check_float_edge(direct_rintf, 1, positive_float[index],
+				mode, 0x22) ||
+			!check_float_edge(direct_nearbyintf, 1,
+				positive_float[index], mode, 0x02) ||
+			!check_float_edge(direct_rintf, UINT32_C(0x80000001),
+				negative_float[index], mode, 0x22) ||
+			!check_float_edge(direct_nearbyintf, UINT32_C(0x80000001),
+				negative_float[index], mode, 0x02))
+			return 2;
+		/* Musl's exponent fast path returns signaling NaNs unchanged. No
+		 * SSE operation consumes them, so neither unit raises invalid. */
+		if (!check_double_edge(direct_rint, UINT64_C(0x7ff0000000000042),
+				UINT64_C(0x7ff0000000000042), mode, 0) ||
+			!check_double_edge(direct_nearbyint,
+				UINT64_C(0x7ff0000000000042),
+				UINT64_C(0x7ff0000000000042), mode, 0) ||
+			!check_float_edge(direct_rintf, UINT32_C(0x7f800042),
+				UINT32_C(0x7f800042), mode, 0) ||
+			!check_float_edge(direct_nearbyintf,
+				UINT32_C(0x7f800042),
+				UINT32_C(0x7f800042), mode, 0))
+			return 3;
+	}
+	return 0;
+}
+
 static uint16_t long_sign_exponent(long double value)
 {
 	union {
@@ -260,6 +380,8 @@ int crabc_x86_64_fenv_rounding_probe(void)
 		status = check_preserved_exceptions() == 0 ? 0 : 2;
 	if (status == 0)
 		status = check_special_values() == 0 ? 0 : 3;
+	if (status == 0)
+		status = check_raw_rounding_edges() == 0 ? 0 : 5;
 	if (fesetenv(&original) != 0 && status == 0)
 		status = 4;
 	return status;
