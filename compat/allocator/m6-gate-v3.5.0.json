@@ -58,6 +58,10 @@
       "runner": "compat/allocator/x86_64_m6_public_heap_alignment.py",
       "scope": "Source-built pinned-C/native-adapter mi_heap_zalloc_aligned_at over ordinary and large alignments with offsets, zeroed client extents, invalid alignment and overflow errno, a worker-owned Theap, source Heap identity and a live OS-backed aligned block through mi_heap_delete and its final free, and mi_heap_destroy with a live aligned block."
     },
+    "differential:deleted-heap-remote-exit": {
+      "runner": "compat/allocator/x86_64_m6_deleted_heap_remote_exit.py",
+      "scope": "Source-built pinned-C/native-adapter deleted process-main Heap with an aligned OS-backed live block, remote final free before or after the owner exits, Heap and region identity, errno, collection, and page/Theap statistics."
+    },
     "differential:main-heap-visitor-population": {
       "runner": "compat/allocator/x86_64_m6_main_visitor_population.py",
       "scope": "Source-built pinned-C/native-adapter main-Heap area and block population through live non-main Heap allocation, destruction, visitor remote collection, and final collection for 1, 2, 10, 100, 250, 500, and 1000 Heaps; includes direct/fork and reserved-arena cases, detached Theap-image frees, and replaced dynamic TLS slot images."
@@ -184,11 +188,12 @@
         "differential:heap-in-arena",
         "differential:child-heap-in-arena",
         "differential:public-heap-adapter",
+        "differential:deleted-heap-remote-exit",
         "differential:heap-destroy",
         "unit:heap-lifecycle"
       ],
       "blocked_by": [
-        "Non-main Heaps exist for threads of the process main subprocess (`subproc::main_heaps`, exported as mi_heap_new/mi_heap_main/mi_heap_delete/mi_heap_destroy/mi_heap_collect) and of child subprocesses (`types::heap_registry::lifecycle`). Process-main and child-subprocess mi_heap_theap have bounded source-built evidence. Heaps selected from one live exclusive parent have source-built allocation, delete, destroy, and failure traces in both subprocesses; mi_heap_set_numa_affinity and broader failure and cross-thread lifetime coverage remain unproved or absent."
+        "Non-main Heaps exist for threads of the process main subprocess (`subproc::main_heaps`, exported as mi_heap_new/mi_heap_main/mi_heap_delete/mi_heap_destroy/mi_heap_collect) and of child subprocesses (`types::heap_registry::lifecycle`). Process-main and child-subprocess mi_heap_theap have bounded source-built evidence. Heaps selected from one live exclusive parent have source-built allocation, delete, destroy, and failure traces in both subprocesses. A deleted process-main Heap's remote final free matches pinned C in both owner-exit orders; mi_heap_set_numa_affinity and broader failure and cross-thread lifetime coverage remain unproved or absent."
       ]
     },
     {
@@ -418,11 +423,12 @@
         "differential:heap-destroy",
         "differential:arena-destroy",
         "differential:public-heap-lifecycle",
+        "differential:deleted-heap-remote-exit",
         "differential:subprocess-lifecycle",
         "fault:heap-lifecycle"
       ],
       "blocked_by": [
-        "The runnable heap-destroy, arena-destroy, and subprocess-lifecycle differentials cover only the main-Heap Theap-list pass, quiescent arena-group retirement, and quiescent root-child subprocess destruction; public Heap, cross-thread, and failure-path differentials do not exist."
+        "A deleted process-main Heap's remote final free matches pinned C before and after its owner exits. The heap-destroy, arena-destroy, and subprocess-lifecycle differentials cover the main-Heap Theap-list pass, quiescent arena-group retirement, and quiescent root-child subprocess destruction; concurrent Theap detachment and broader public Heap cross-thread and failure-path differentials remain open."
       ]
     },
     {
