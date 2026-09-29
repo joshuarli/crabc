@@ -886,6 +886,19 @@ static void section_api_modes(void) {
     mi_option_set_enabled(mi_option_guarded_precise, false);
     p = mi_heap_zalloc_aligned_at(heaps[h], 64, 8, 7);
     fill(p, 64, 0x39);
+    size_t pre = SIZE_MAX, post = SIZE_MAX;
+    counts = (struct allocation_error_counts){ 0 };
+    mi_register_error(count_allocation_errors, &counts);
+    q = mi_urealloc(p, 129, &pre, &post);
+    key_name(key, sizeof key, "api_modes.urealloc_interior", h, 0);
+    line(key, "%d,%zu,%zu,%zu,%d", q == NULL, pre, post, counts.invalid,
+         q == NULL ? has_fill(p, 64, 0x39) : has_fill(q, 64, 0x39));
+    mi_register_error(NULL, NULL);
+    mi_option_set_enabled(mi_option_guarded_precise, true);
+    mi_free(q == NULL ? p : q);
+    mi_option_set_enabled(mi_option_guarded_precise, false);
+    p = mi_heap_zalloc_aligned_at(heaps[h], 64, 8, 7);
+    fill(p, 64, 0x39);
     counts = (struct allocation_error_counts){ 0 };
     mi_register_error(count_allocation_errors, &counts);
     q = mi_heap_rezalloc(heaps[h], p, 129);
