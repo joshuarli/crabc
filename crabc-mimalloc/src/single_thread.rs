@@ -37817,10 +37817,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         if self.is_collection_poisoned() {
             return None;
         }
-        // `mi_malloc_generic` normalizes a C zero request to one word before
-        // entering the ordinary size-class machinery. The returned block is
-        // distinct and freeable even though callers may not dereference it.
-        let request = request.max(WORD_SIZE);
+        // Padding needs one writable word even for a zero request. Other
+        // small requests retain their exact size for requested-byte accounting;
+        // the bin selector independently provides the minimum block geometry.
+        let request = if request == 0 && PADDING_SIZE != 0 { WORD_SIZE } else { request };
         if !size_class::request_size_is_valid(request) {
             return None;
         }
@@ -37847,7 +37847,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         if self.is_collection_poisoned() {
             return DeferredFreeAllocationPhase::Complete(None);
         }
-        let request = request.max(WORD_SIZE);
+        let request = if request == 0 && PADDING_SIZE != 0 { WORD_SIZE } else { request };
         if !size_class::request_size_is_valid(request) {
             // An oversized request is never below `MI_SMALL_MAX_OBJ_SIZE`, so
             // `_mi_malloc_generic` enters its fallback without a search.
