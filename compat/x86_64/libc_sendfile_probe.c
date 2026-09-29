@@ -1,4 +1,9 @@
-/* Static crabc-libc x86-64 freestanding sendfile fixture. */
+/* Static x86-64 sendfile fixture shared by pinned musl and crabc-libc.
+ *
+ * Raw syscalls own only fixture setup, observation, and cleanup. Each
+ * sendfile result is checked against the regular-file contract and written
+ * as a physical record for a byte-for-byte pinned-musl comparison.
+ */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE 1
 #endif
@@ -31,7 +36,7 @@ static long raw3(long n, long a, long b, long c) { long r; __asm__ volatile("sys
 
 static int path(char *p, size_t n, long pid, char prefix)
 {
-    static const char a[] = "/tmp/crabc-x86-sendfile-";
+    static const char a[] = ".work/x86_64/tmp/crabc-sendfile-";
     char digits[20];
     size_t i = 0;
     size_t prefix_length = 0;
@@ -79,13 +84,67 @@ static int check_bytes(int fd, const char *expected, size_t n)
     return 0;
 }
 
+static size_t append_text(char *buffer, size_t used, const char *text)
+{
+    while (*text)
+        buffer[used++] = *text++;
+    return used;
+}
+
+static size_t append_number(char *buffer, size_t used, long value)
+{
+    char reverse[24];
+    size_t count = 0;
+    unsigned long magnitude;
+
+    if (value < 0) {
+        buffer[used++] = '-';
+        magnitude = (unsigned long)(-(value + 1)) + 1;
+    } else {
+        magnitude = (unsigned long)value;
+    }
+    do {
+        reverse[count++] = (char)('0' + magnitude % 10);
+        magnitude /= 10;
+    } while (magnitude);
+    while (count)
+        buffer[used++] = reverse[--count];
+    return used;
+}
+
+static int record_case(const char *name, long value, int error, off_t *offset,
+    int input, int output)
+{
+    char record[160];
+    size_t used = 0;
+
+    used = append_text(record, used, "case=");
+    used = append_text(record, used, name);
+    used = append_text(record, used, " value=");
+    used = append_number(record, used, value);
+    used = append_text(record, used, " errno=");
+    used = append_number(record, used, error);
+    used = append_text(record, used, " offset=");
+    if (offset)
+        used = append_number(record, used, *offset);
+    else
+        used = append_text(record, used, "null");
+    used = append_text(record, used, " input=");
+    used = append_number(record, used, current_position(input));
+    used = append_text(record, used, " output=");
+    used = append_number(record, used, current_position(output));
+    record[used++] = '\n';
+    return raw3(SYS_write, 1, (long)(void *)record, used) == (long)used ? 0 : -1;
+}
+
 int crabc_x86_64_sendfile_probe(void)
 {
     static const char payload[] = "0123456789";
     static const char expected[] = "234589";
     char input_path[96], output_path[96];
-    off_t explicit_offset = 2, invalid_offset = -1;
-    int input = -1, output = -1, closed = -1, result = 0;
+    off_t explicit_offset = 2, zero_offset = 6, beyond_offset = 12;
+    off_t invalid_offset = -1, bad_output_offset = 3;
+    int input = -1, output = -1, closed = -1, closed_output = -1, result = 0;
     long transferred;
 
     if (path(input_path, sizeof(input_path), raw0(SYS_getpid), 'i') != 0 ||
@@ -99,25 +158,51 @@ int crabc_x86_64_sendfile_probe(void)
 
     errno = ERANGE;
     transferred = sendfile(output, input, &explicit_offset, 4);
+    if (record_case("explicit", transferred, errno, &explicit_offset, input, output)) { result = 13; goto cleanup; }
     if (transferred != 4 || explicit_offset != 6 || current_position(input) != 8 || errno != ERANGE) { result = 13; goto cleanup; }
     if (check_bytes(output, "2345", 4) != 0) { result = 14; goto cleanup; }
     if (raw3(SYS_lseek, output, 4, SEEK_SET) != 4) { result = 15; goto cleanup; }
 
+    errno = EDOM;
     transferred = sendfile(output, input, (off_t *)0, 4);
-    if (transferred != 2 || current_position(input) != 10 || current_position(output) != 6) { result = 16; goto cleanup; }
+    if (record_case("short", transferred, errno, (off_t *)0, input, output)) { result = 16; goto cleanup; }
+    if (transferred != 2 || current_position(input) != 10 || current_position(output) != 6 || errno != EDOM) { result = 16; goto cleanup; }
+    errno = E2BIG;
     transferred = sendfile(output, input, (off_t *)0, 1);
-    if (transferred != 0 || current_position(input) != 10) { result = 17; goto cleanup; }
+    if (record_case("eof", transferred, errno, (off_t *)0, input, output)) { result = 17; goto cleanup; }
+    if (transferred != 0 || current_position(input) != 10 || current_position(output) != 6 || errno != E2BIG) { result = 17; goto cleanup; }
     if (check_bytes(output, expected, 6) != 0) { result = 18; goto cleanup; }
 
+    errno = ENOTTY;
+    transferred = sendfile(output, input, &zero_offset, 0);
+    if (record_case("zero-count", transferred, errno, &zero_offset, input, output)) { result = 22; goto cleanup; }
+    if (transferred != 0 || zero_offset != 6 || current_position(input) != 10 || current_position(output) != 6 || errno != ENOTTY) { result = 22; goto cleanup; }
+
+    errno = ENOTTY;
+    transferred = sendfile(output, input, &beyond_offset, 4);
+    if (record_case("beyond-eof", transferred, errno, &beyond_offset, input, output)) { result = 23; goto cleanup; }
+    if (transferred != 0 || beyond_offset != 12 || current_position(input) != 10 || current_position(output) != 6 || errno != ENOTTY) { result = 23; goto cleanup; }
+
     errno = EDOM;
-    if (sendfile(output, input, &invalid_offset, 1) != -1 || errno != EINVAL) { result = 19; goto cleanup; }
+    transferred = sendfile(output, input, &invalid_offset, 1);
+    if (record_case("negative-offset", transferred, errno, &invalid_offset, input, output)) { result = 19; goto cleanup; }
+    if (transferred != -1 || errno != EINVAL || invalid_offset != -1 || current_position(input) != 10 || current_position(output) != 6) { result = 19; goto cleanup; }
     closed = (int)raw1(SYS_dup, input);
     if (closed < 0 || close_fd(closed) != 0) { result = 20; goto cleanup; }
     errno = E2BIG;
-    if (sendfile(output, closed, (off_t *)0, 1) != -1 || errno != EBADF) { result = 21; goto cleanup; }
+    transferred = sendfile(output, closed, (off_t *)0, 1);
+    if (record_case("closed-input", transferred, errno, (off_t *)0, input, output)) { result = 21; goto cleanup; }
+    if (transferred != -1 || errno != EBADF || current_position(input) != 10 || current_position(output) != 6) { result = 21; goto cleanup; }
+
+    closed_output = (int)raw1(SYS_dup, output);
+    if (closed_output < 0 || close_fd(closed_output) != 0) { result = 24; goto cleanup; }
+    errno = E2BIG;
+    transferred = sendfile(closed_output, input, &bad_output_offset, 1);
+    if (record_case("closed-output", transferred, errno, &bad_output_offset, input, output)) { result = 25; goto cleanup; }
+    if (transferred != -1 || errno != EBADF || bad_output_offset != 3 || current_position(input) != 10 || current_position(output) != 6 || check_bytes(output, expected, 6) != 0) { result = 25; goto cleanup; }
 
 cleanup:
-    (void)close_fd(closed); (void)close_fd(input); (void)close_fd(output);
+    (void)close_fd(closed_output); (void)close_fd(closed); (void)close_fd(input); (void)close_fd(output);
     (void)raw1(SYS_unlink, (long)(void *)input_path);
     (void)raw1(SYS_unlink, (long)(void *)output_path);
     return result;
