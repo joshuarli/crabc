@@ -1503,14 +1503,27 @@ class CrtInitFiniBindingTests(unittest.TestCase):
                 tables.append({'name': '.dynsym', 'rows': copy.deepcopy(rows)})
             observations['complete_elf_facts'][mode] = {
                 'header': {'fields': [{'name': 'Type', 'value': elf_type}]},
-                'sections': [{'name': '.init', 'index': 3, 'address': '0000000000000900'},
-                             {'name': '.fini', 'index': 4, 'address': '0000000000000a00'}],
+                'sections': [{'name': '.init', 'index': 3, 'address': '0000000000000900', 'size': '6'},
+                             {'name': '.fini', 'index': 4, 'address': '0000000000000a00', 'size': '6'}],
                 'symbol_tables': tables}
             observations['executables'][mode] = {'identity': {'sha256': mode},
                 'needed': ['libc.so'] if dynamic else [], 'relocations': [],
                 'link': {'validated': {'linkage': linkage,
                                        'product_manifest_sha256': manifests[image],
                                        'executable_sha256': mode}}}
+            frames = {}
+            for name, address, section in (('_init', 0x900, 3), ('_fini', 0xa00, 4)):
+                prologue = {'path': crti, 'sha256': hashes[image + '-crti.o']}
+                epilogue = {'path': crtn, 'sha256': hashes[image + '-crtn.o']}
+                source = {'name': name, 'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT',
+                          'size': 0, 'value': 0, 'section': 3}
+                frames[name] = {'prologue': prologue, 'epilogue': epilogue,
+                    'executable': {'sha256': mode}, 'source_symbol': source,
+                    'final_symbol': {**source, 'value': address, 'section': section},
+                    'function_extent': {'address': address, 'size': 6},
+                    'contributions': [{'role': 'prologue', 'input': prologue},
+                                      {'role': 'epilogue', 'input': epilogue}]}
+            observations['executables'][mode]['application_frames'] = frames
             inputs = [{'path': path if dynamic else 'usr/lib/' + path.rsplit('/', 1)[-1],
                        'sha256': hashes['dynamic-' + path.rsplit('/', 1)[-1]] if dynamic and path.endswith(('.o',))
                        else hashes['static-' + path.rsplit('/', 1)[-1]] if path.endswith(('.o',))
@@ -1535,6 +1548,15 @@ class CrtInitFiniBindingTests(unittest.TestCase):
             accounting, rule, [self.MEMBER], companion, observations, artifacts, evidence)
         self.assertEqual([row['identity']['name'] for row in joins], list(self.NAMES))
         self.assertEqual(accounting['blockers'], [])
+        self.assertTrue(all(set(row['physical_final_frames']) == set(self.MODES) for row in joins))
+
+    def test_missing_authenticated_complete_frames_keeps_lifecycle_pair(self):
+        rule, accounting, companion, observations, artifacts, evidence = self.fixture()
+        for executable in observations['executables'].values():
+            executable.pop('application_frames', None)
+        self.assertEqual(selection.attach_crt_init_fini_imports(
+            accounting, rule, [self.MEMBER], companion, observations, artifacts, evidence), [])
+        self.assertEqual(len(accounting['blockers']), 2)
 
     def test_foreign_weak_duplicate_or_misplaced_fragment_retains_pair(self):
         cases = {
@@ -1548,6 +1570,16 @@ class CrtInitFiniBindingTests(unittest.TestCase):
             'final relocation': lambda a, o, e: o['executables']['owned-non-pie-normal']['relocations'].append({'name': '_fini'}),
             'foreign map': lambda a, o, e: e['static-normal'].update(map='foreign.o:(.init)\n'),
             'foreign fini map': lambda a, o, e: e['static-pie-empty'].update(map=e['static-pie-empty']['map'].replace('/owned/static/usr/lib/crti.o:(.fini)', '/foreign/crti.o:(.fini)')),
+            'foreign frame prologue': lambda a, o, e: o['executables']['static-normal']['application_frames']['_init']['prologue'].update(sha256='x'),
+            'foreign frame epilogue': lambda a, o, e: o['executables']['owned-pie-normal']['application_frames']['_fini']['epilogue'].update(sha256='x'),
+            'foreign frame executable': lambda a, o, e: o['executables']['static-pie-empty']['application_frames']['_init']['executable'].update(sha256='x'),
+            'wrong source frame section': lambda a, o, e: o['executables']['static-empty']['application_frames']['_fini']['source_symbol'].update(section=4),
+            'wrong final frame address': lambda a, o, e: o['executables']['owned-non-pie-normal']['application_frames']['_init']['final_symbol'].update(value=0x800),
+            'nonzero frame symbol size': lambda a, o, e: o['executables']['static-normal']['application_frames']['_init']['source_symbol'].update(size=6),
+            'short frame extent': lambda a, o, e: o['executables']['owned-pie-empty']['application_frames']['_fini']['function_extent'].update(size=5),
+            'missing closing contribution': lambda a, o, e: o['executables']['static-normal']['application_frames']['_init']['contributions'].pop(),
+            'foreign closing contribution': lambda a, o, e: o['executables']['static-normal']['application_frames']['_init']['contributions'][-1].update(input={'sha256':'x'}),
+            'missing frame': lambda a, o, e: o['executables']['static-empty']['application_frames'].pop('_fini'),
         }
         for label, alter in cases.items():
             with self.subTest(label=label):

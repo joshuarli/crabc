@@ -7974,6 +7974,7 @@ def attach_crt_init_fini_imports(accounting: Mapping[str, Any], rule: Mapping[st
     executables = observations.get('executables', {})
     if (type(facts) is not dict or type(executables) is not dict or set(link_evidence) != set(modes)):
         return []
+    physical_frames = {name: {} for name in names}
     for mode, (linkage, image) in modes.items():
         elf, executable = facts.get(mode), executables.get(mode)
         if type(elf) is not dict or type(executable) is not dict:
@@ -8017,6 +8018,9 @@ def attach_crt_init_fini_imports(accounting: Mapping[str, Any], rule: Mapping[st
             return []
         sections = {row.get('name'): row for row in elf.get('sections', [])}
         tables = elf.get('symbol_tables', [])
+        frames = executable.get('application_frames')
+        if type(frames) is not dict or set(frames) != set(names):
+            return []
         for name in names:
             section = sections.get('.' + name[1:])
             rows = [(table.get('name'), row) for table in tables for row in table.get('rows', [])
@@ -8028,6 +8032,39 @@ def attach_crt_init_fini_imports(accounting: Mapping[str, Any], rule: Mapping[st
                                and row.get('section_index') == str(section.get('index'))
                                and row.get('value') == section.get('address') for _table, row in rows)):
                 return []
+            frame = frames[name]
+            if (type(frame) is not dict
+                    or any(type(frame.get(key)) is not dict for key in ('prologue', 'epilogue', 'executable'))):
+                return []
+            source_symbol, final_symbol = frame.get('source_symbol'), frame.get('final_symbol')
+            source_row = source_rows[name][1][f'{image}-crti.o']['row']
+            if (type(source_symbol) is not dict or type(final_symbol) is not dict
+                    or any(symbol.get('name') != name or symbol.get('type') != 'FUNC'
+                           or symbol.get('binding') != 'GLOBAL' or symbol.get('visibility') != 'DEFAULT'
+                           or symbol.get('size') != 0 for symbol in (source_symbol, final_symbol))
+                    or source_symbol.get('section') != int(source_row['section_index'])
+                    or source_symbol.get('value') != int(source_row['value'], 16)
+                    or final_symbol.get('section') != section['index']
+                    or final_symbol.get('value') != int(section['address'], 16)
+                    or frame.get('prologue', {}).get('sha256') != hashes[f'{image}-crti.o']
+                    or frame.get('epilogue', {}).get('sha256') != hashes[f'{image}-crtn.o']
+                    or frame.get('executable', {}).get('sha256') != executable['identity']['sha256']):
+                return []
+            extent, contributions = frame.get('function_extent'), frame.get('contributions')
+            if (type(extent) is not dict or extent.get('address') != final_symbol['value']
+                    or type(extent.get('size')) is not int or extent['size'] <= 0
+                    or extent['size'] != int(section.get('size', '0'), 16)
+                    or type(contributions) is not list or len(contributions) < 2
+                    or any(type(contribution) is not dict for contribution in contributions)
+                    or contributions[0].get('role') != 'prologue'
+                    or contributions[-1].get('role') != 'epilogue'
+                    or contributions[0].get('input') != frame['prologue']
+                    or contributions[-1].get('input') != frame['epilogue']):
+                return []
+            # The owning reader replays the complete instruction and input
+            # roster. Bind its zero-size opening symbol and bounded extent to
+            # this exact source occurrence and final image before selecting it.
+            physical_frames[name][mode] = copy.deepcopy(frame)
             if not dynamic:
                 evidence = link_evidence[mode]
                 if type(evidence.get('trace')) is not str or type(evidence.get('map')) is not str:
@@ -8057,6 +8094,7 @@ def attach_crt_init_fini_imports(accounting: Mapping[str, Any], rule: Mapping[st
                       'weak_shared_occurrence_index': definitions['candidate-shared']['index'],
                       'static_crti_occurrence_index': definitions['static-crti.o']['index'],
                       'dynamic_crti_occurrence_index': definitions['dynamic-crti.o']['index'],
+                      'physical_final_frames': physical_frames[name],
                       'final_modes': sorted(modes), 'discharged_reasons': [ORDINARY_IMPORT_REASON]})
     return joins
 
