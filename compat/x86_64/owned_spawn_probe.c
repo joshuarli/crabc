@@ -83,17 +83,24 @@ static int child(int argc, char **argv) {
         CHECK(!sigaction(SIGUSR1,NULL,&action) && action.sa_handler==SIG_DFL);
         CHECK(!sigprocmask(SIG_SETMASK,NULL,&mask) && sigismember(&mask,SIGUSR2));
         CHECK(getpgrp()==getpid());
+    } else if (!strcmp(argv[2],"inherited-mask") || !strcmp(argv[2],"cleared-mask")) {
+        sigset_t mask;
+        CHECK(!sigprocmask(SIG_SETMASK,NULL,&mask));
+        CHECK(sigismember(&mask,SIGUSR2)==(!strcmp(argv[2],"inherited-mask")));
     } else if (!strcmp(argv[2],"session")) {
         CHECK(getsid(0)==getpid());
-    } else if (!strcmp(argv[2],"descriptor") || !strcmp(argv[2],"collision") || !strcmp(argv[2],"ordered-directory")) {
+    } else if (!strcmp(argv[2],"descriptor") || !strcmp(argv[2],"collision") ||
+               !strcmp(argv[2],"ordered-directory") || !strcmp(argv[2],"copied-paths")) {
         int flags=fcntl(9,F_GETFD);
         CHECK(flags>=0 && !(flags&FD_CLOEXEC));
         if (!strcmp(argv[2],"descriptor")) {
             flags=fcntl(3,F_GETFD); CHECK(flags>=0 && !(flags&FD_CLOEXEC));
         } else CHECK(fcntl(3,F_GETFD)==-1 && errno==EBADF);
+        if (!strcmp(argv[2],"ordered-directory") || !strcmp(argv[2],"copied-paths")) {
+            CHECK(access("spawn-marker",F_OK)==0);
+        }
         if (!strcmp(argv[2],"ordered-directory")) {
             sigset_t mask;
-            CHECK(access("spawn-marker",F_OK)==0);
             CHECK(getpgrp()==getpid());
             CHECK(!sigprocmask(SIG_SETMASK,NULL,&mask) && sigismember(&mask,SIGUSR2));
         }
@@ -109,6 +116,42 @@ static void *worker(void *unused) {
     char *arguments[]={"spawn-child","child","basic",NULL};
     if (posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,NULL,NULL,arguments,child_environment) || reap(pid,23)) return (void *)1;
     return NULL;
+}
+static int action_failure_cases(const char *missing, char **arguments) {
+    posix_spawn_file_actions_t actions;
+    pid_t pid;
+    int old_errno;
+    CHECK(!posix_spawn_file_actions_init(&actions));
+    errno=ENOSPC;
+    CHECK(posix_spawn_file_actions_addclose(&actions,-1)==EBADF && errno==ENOSPC);
+    CHECK(posix_spawn_file_actions_adddup2(&actions,-1,9)==EBADF && errno==ENOSPC);
+    CHECK(posix_spawn_file_actions_adddup2(&actions,3,-1)==EBADF && errno==ENOSPC);
+    CHECK(posix_spawn_file_actions_addopen(&actions,-1,missing,O_RDONLY,0)==EBADF && errno==ENOSPC);
+    CHECK(posix_spawn_file_actions_addfchdir_np(&actions,-1)==EBADF && errno==ENOSPC);
+    CHECK(!posix_spawn_file_actions_addchdir_np(&actions,missing));
+    pid=-123; errno=ENOSPC;
+    CHECK(posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,&actions,NULL,arguments,child_environment)==ENOENT && pid==-123 && errno==ENOSPC);
+    CHECK(!posix_spawn_file_actions_destroy(&actions));
+    CHECK(waitpid(-1,NULL,WNOHANG)==-1 && errno==ECHILD);
+    CHECK(!posix_spawn_file_actions_init(&actions));
+    CHECK(!posix_spawn_file_actions_addfchdir_np(&actions,123));
+    pid=-123; errno=ENOSPC;
+    CHECK(posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,&actions,NULL,arguments,child_environment)==EBADF && pid==-123 && errno==ENOSPC);
+    CHECK(!posix_spawn_file_actions_destroy(&actions));
+    CHECK(waitpid(-1,NULL,WNOHANG)==-1 && errno==ECHILD);
+    CHECK(!posix_spawn_file_actions_init(&actions));
+    CHECK(!posix_spawn_file_actions_addopen(&actions,9,missing,O_RDONLY,0));
+    pid=-123; errno=ENOSPC;
+    CHECK(posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,&actions,NULL,arguments,child_environment)==ENOENT && pid==-123 && errno==ENOSPC);
+    CHECK(!posix_spawn_file_actions_destroy(&actions));
+    CHECK(waitpid(-1,NULL,WNOHANG)==-1 && errno==ECHILD);
+    old_errno=errno;
+    CHECK(!posix_spawn_file_actions_init(&actions));
+    pid=-123;
+    CHECK(!posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,&actions,NULL,arguments,child_environment) && errno==old_errno && !reap(pid,23));
+    CHECK(!posix_spawn_file_actions_destroy(&actions));
+    CHECK(waitpid(pid,NULL,WNOHANG)==-1 && errno==ECHILD);
+    return 0;
 }
 int main(int argc, char **argv) {
     if (argc>=2 && !strcmp(argv[1],"child")) return child(argc,argv);
@@ -177,6 +220,19 @@ int main(int argc, char **argv) {
     pid=-123; errno=ENOSPC;
     CHECK(posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,NULL,&attributes,arguments,child_environment)==EPERM && pid==-123 && errno==ENOSPC);
     CHECK(!posix_spawnattr_destroy(&attributes));
+    sigset_t saved_mask, empty_mask;
+    CHECK(!sigprocmask(SIG_BLOCK,&blocked,&saved_mask));
+    arguments[2]="inherited-mask";
+    CHECK(!posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,NULL,NULL,arguments,child_environment) && !reap(pid,23));
+    CHECK(!posix_spawnattr_init(&attributes));
+    sigemptyset(&empty_mask);
+    CHECK(!posix_spawnattr_setsigmask(&attributes,&empty_mask));
+    CHECK(!posix_spawnattr_setflags(&attributes,POSIX_SPAWN_SETSIGMASK));
+    arguments[2]="cleared-mask";
+    CHECK(!posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,NULL,&attributes,arguments,child_environment) && !reap(pid,23));
+    CHECK(!posix_spawnattr_destroy(&attributes));
+    CHECK(!sigprocmask(SIG_SETMASK,NULL,&parent_mask) && sigismember(&parent_mask,SIGUSR2));
+    CHECK(!sigprocmask(SIG_SETMASK,&saved_mask,NULL));
     posix_spawn_file_actions_t actions;
     CHECK(!posix_spawn_file_actions_init(&actions));
     CHECK(!posix_spawn_file_actions_addopen(&actions,3,output,O_CREAT|O_WRONLY|O_CLOEXEC,0600));
@@ -199,6 +255,20 @@ int main(int argc, char **argv) {
     CHECK(!posix_spawn_file_actions_destroy(&actions));
     fd=open(output,O_RDONLY); memset(bytes,0,sizeof bytes);
     CHECK(fd>=0 && read(fd,bytes,sizeof bytes)==15 && !strcmp(bytes,"ordered-actions") && !close(fd));
+    char directory_copy[4096], open_copy[64], copied_output[4096];
+    snprintf(directory_copy,sizeof directory_copy,"%s",argv[1]);
+    snprintf(open_copy,sizeof open_copy,"spawn-copied-output");
+    snprintf(copied_output,sizeof copied_output,"%s/%s",argv[1],open_copy);
+    CHECK(!posix_spawn_file_actions_init(&actions));
+    CHECK(!posix_spawn_file_actions_addchdir_np(&actions,directory_copy));
+    CHECK(!posix_spawn_file_actions_addopen(&actions,9,open_copy,O_CREAT|O_WRONLY,0600));
+    directory_copy[0]='X'; open_copy[0]='X';
+    arguments[2]="copied-paths";
+    CHECK(!posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,&actions,NULL,arguments,child_environment) && !reap(pid,23));
+    CHECK(!posix_spawn_file_actions_destroy(&actions));
+    fd=open(copied_output,O_RDONLY); memset(bytes,0,sizeof bytes);
+    CHECK(fd>=0 && read(fd,bytes,sizeof bytes)==15 && !strcmp(bytes,"ordered-actions") && !close(fd));
+    CHECK(!unlink(copied_output));
     CHECK(!posix_spawn_file_actions_init(&actions));
     CHECK(!posix_spawn_file_actions_addopen(&actions,4,output,O_TRUNC|O_WRONLY,0600));
     CHECK(!posix_spawn_file_actions_addclose(&actions,5));
@@ -245,6 +315,8 @@ int main(int argc, char **argv) {
     errno=ENOSPC;
     CHECK(posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,&actions,NULL,arguments,child_environment)==EBADF && pid==-123 && errno==ENOSPC);
     CHECK(!posix_spawn_file_actions_destroy(&actions));
+    arguments[2]="basic";
+    CHECK(!action_failure_cases(missing,arguments));
     pthread_t thread; void *result;
     CHECK(!pthread_create(&thread,NULL,worker,NULL) && !pthread_join(thread,&result) && !result);
     struct rlimit limit, low; CHECK(!getrlimit(RLIMIT_NOFILE,&limit)); low=limit; low.rlim_cur=3;
