@@ -5,6 +5,7 @@ revision, its products and report bytes, and the gate reads each leaf result
 separately. Leaf replays themselves belong to the leaf readers' tests.
 """
 
+import argparse
 import json
 import sys
 import tempfile
@@ -149,6 +150,87 @@ class AbiDifferentialEvidenceTests(unittest.TestCase):
         (evidence.ROOT / record["companions"]["crt_startup_report"]["path"]).write_text("replaced")
         with self.assertRaisesRegex(evidence.EvidenceError, "changed after collection"):
             evidence.load_companions(manifest, self.cohort())
+
+    def test_fchdir_work_directory_is_collected_and_forwarded(self) -> None:
+        def command(_cohort, _reports, output):
+            script = ("import pathlib, sys; o = pathlib.Path(sys.argv[1]); o.mkdir(); "
+                      "(o / 'report.json').write_text('receipt'); (o / 'workload.o').write_bytes(b'object')")
+            return [sys.executable, "-c", script, str(output)], {}
+
+        producer = evidence.CompanionProducer("fchdir_ordinary_import_work", command, lambda output: output)
+        with mock.patch.object(evidence, "_validate_fchdir_work") as validate, mock.patch.object(evidence, "PRODUCERS", (producer,)):
+            manifest, record = self.collect((producer,))
+            self.assertEqual(record["outcomes"]["fchdir_ordinary_import_work"]["status"], "produced")
+            work = evidence.load_companions(manifest, self.cohort())["fchdir_ordinary_import_work"]
+            self.assertTrue(work.is_dir())
+            (work / "workload.o").write_bytes(b"changed")
+            with self.assertRaisesRegex(evidence.EvidenceError, "changed after collection"):
+                evidence.load_companions(manifest, self.cohort())
+            (work / "workload.o").write_bytes(b"object")
+            self.record["selection_companions"] = {
+                "fchdir_ordinary_import_work": record["companions"]["fchdir_ordinary_import_work"]}
+            self.assertEqual(evidence.load(self.write()).selection_arguments()["fchdir_ordinary_import_work"], work)
+        validate.assert_called_with(work, static_product=self.work / "static", dynamic_product=self.work / "dynamic")
+
+    def test_fchdir_work_seal_rejects_changed_content_and_symlinks(self) -> None:
+        work = self.work / "fchdir"
+        work.mkdir()
+        (work / "report.json").write_text("receipt")
+        (work / "workload.o").write_bytes(b"object")
+        self.record["selection_companions"]["fchdir_ordinary_import_work"] = {
+            "path": work.relative_to(evidence.ROOT).as_posix(),
+            "sha256": evidence._companion_sha256("fchdir_ordinary_import_work", work),
+        }
+        with mock.patch.object(evidence, "_validate_fchdir_work"):
+            self.assertIn("fchdir_ordinary_import_work", evidence.load(self.write()).companions)
+            (work / "workload.o").write_bytes(b"changed")
+            with self.assertRaisesRegex(evidence.EvidenceError, "changed after assembly"):
+                evidence.load(self.write())
+            (work / "workload.o").write_bytes(b"object")
+            (work / "escaped").symlink_to(self.reports["native_abi_ratchet"])
+            with self.assertRaisesRegex(evidence.EvidenceError, "non-physical entry"):
+                evidence.load(self.write())
+
+    def test_fchdir_work_replays_receipt_against_selected_products(self) -> None:
+        work = self.work / "fchdir"
+        work.mkdir()
+        (work / "report.json").write_text("receipt")
+        self.record["selection_companions"]["fchdir_ordinary_import_work"] = {
+            "path": work.relative_to(evidence.ROOT).as_posix(),
+            "sha256": evidence._companion_sha256("fchdir_ordinary_import_work", work),
+        }
+        with mock.patch.object(evidence.fchdir_import_receipt, "validate_report", side_effect=ValueError("foreign products")) as reader:
+            with self.assertRaisesRegex(evidence.EvidenceError, "foreign products"):
+                evidence.load(self.write())
+        reader.assert_called_once_with(work / "report.json", static_product=self.work / "static",
+                                       dynamic_product=self.work / "dynamic")
+
+    def test_assembly_forwards_fchdir_work_and_seals_it(self) -> None:
+        import native_abi_ratchet
+        import native_abi_selection
+
+        work = self.work / "fchdir"
+        work.mkdir()
+        (work / "report.json").write_text("receipt")
+        output = evidence.OUTPUT_PARENT / f"assemble-test-{self.work.name}"
+        self.addCleanup(lambda: __import__("shutil").rmtree(output, ignore_errors=True))
+        cohort = self.cohort()
+        arguments = argparse.Namespace(**cohort.__dict__, output=output, companions=None,
+                                       selection_companion=[f"fchdir_ordinary_import_work={work}"])
+
+        def build_report(*, output, **kwargs):
+            self.assertEqual(kwargs["fchdir_ordinary_import_work"], work)
+            output.mkdir()
+            (output / "report.json").write_text("selection")
+
+        with mock.patch.object(evidence, "_validate_fchdir_work") as validate, \
+             mock.patch.object(native_abi_ratchet, "check", return_value=self.reports["native_abi_ratchet"]), \
+             mock.patch.object(native_abi_selection, "build_report", side_effect=build_report):
+            receipt = evidence.assemble(arguments)
+        entry = json.loads(receipt.read_text())["selection_companions"]["fchdir_ordinary_import_work"]
+        self.assertEqual(entry["path"], work.relative_to(evidence.ROOT).as_posix())
+        self.assertEqual(entry["sha256"], evidence._companion_sha256("fchdir_ordinary_import_work", work))
+        validate.assert_called_with(work, static_product=self.work / "static", dynamic_product=self.work / "dynamic")
 
     def test_source_companion_must_be_its_fixed_source_report(self) -> None:
         name = "headers_layouts_aggregate_report"

@@ -32,6 +32,7 @@ import argparse
 import hashlib
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -44,6 +45,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import native_abi_inventory as inventory  # noqa: E402
+import native_abi_fchdir_import_receipt as fchdir_import_receipt  # noqa: E402
 
 SCHEMA = "crabc.x86_64-abi-differential-evidence/v1"
 RECEIPT_NAME = "abi-evidence.json"
@@ -90,7 +92,9 @@ SELECTION_COMPANIONS = (
     "bsd_random_receipt_report",
     "public_data_declaration_runtime_report",
     "loader_structural_owner_receipt_report",
+    "fchdir_ordinary_import_work",
 )
+DIRECTORY_COMPANIONS = {"fchdir_ordinary_import_work"}
 # The one companion that is checked-in generated source rather than `.work`
 # evidence; the source seal already binds its bytes.
 SOURCE_COMPANIONS = {
@@ -117,6 +121,39 @@ def require(condition: bool, message: str) -> None:
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _tree_sha256(path: Path) -> str:
+    """Seal every physical directory and regular file in a retained work tree."""
+    digest = hashlib.sha256()
+    def raise_walk_error(error: OSError) -> None:
+        raise error
+
+    for parent, directories, files in os.walk(path, onerror=raise_walk_error, followlinks=False):
+        directories.sort()
+        for name in sorted((*directories, *files)):
+            child = Path(parent) / name
+            relative = child.relative_to(path).as_posix().encode()
+            mode = child.lstat().st_mode
+            require(stat.S_ISDIR(mode) or stat.S_ISREG(mode), f"companion work has a non-physical entry: {child}")
+            digest.update(b"D" if stat.S_ISDIR(mode) else b"F")
+            digest.update(len(relative).to_bytes(8, "big"))
+            digest.update(relative)
+            if stat.S_ISREG(mode):
+                digest.update(hashlib.sha256(child.read_bytes()).digest())
+    return digest.hexdigest()
+
+
+def _companion_sha256(name: str, path: Path) -> str:
+    return _tree_sha256(path) if name in DIRECTORY_COMPANIONS else _sha256(path)
+
+
+def _validate_fchdir_work(path: Path, *, static_product: Path, dynamic_product: Path) -> None:
+    try:
+        fchdir_import_receipt.validate_report(path / "report.json", static_product=static_product,
+                                              dynamic_product=dynamic_product)
+    except Exception as error:  # noqa: BLE001 - a rejected producer cannot enter the set
+        raise EvidenceError(f"fchdir work does not bind to this source and products: {error}") from error
 
 
 def _checkout_path(value: object, kind: str, description: str) -> Path:
@@ -150,7 +187,7 @@ def _companion_path(name: str, value: object) -> Path:
         path = ROOT / SOURCE_COMPANIONS[name]
         require(path.is_file() and not path.is_symlink(), f"{name} source report is absent")
         return path
-    return _checkout_path(value, "file", name)
+    return _checkout_path(value, "directory" if name in DIRECTORY_COMPANIONS else "file", name)
 
 
 def _companion_relative(name: str, path: Path) -> str:
@@ -159,7 +196,9 @@ def _companion_relative(name: str, path: Path) -> str:
         require(Path(os.path.abspath(path)) == ROOT / SOURCE_COMPANIONS[name],
                 f"{name} must be its source report {SOURCE_COMPANIONS[name]}")
         return SOURCE_COMPANIONS[name]
-    return _relative(path, name)
+    relative = _relative(path, name)
+    _companion_path(name, relative)
+    return relative
 
 
 def current_source() -> dict[str, Any]:
@@ -185,7 +224,11 @@ class EvidenceSet:
         self.companions: dict[str, Path] = {}
         for name, entry in record["selection_companions"].items():
             path = _companion_path(name, entry.get("path"))
-            require(_sha256(path) == entry.get("sha256"), f"selection companion {name} bytes changed after assembly")
+            require(_companion_sha256(name, path) == entry.get("sha256"),
+                    f"selection companion {name} bytes changed after assembly")
+            if name == "fchdir_ordinary_import_work":
+                _validate_fchdir_work(path, static_product=self.inputs["static_product"],
+                                      dynamic_product=self.inputs["dynamic_product"])
             self.companions[name] = path
 
     @property
@@ -554,6 +597,12 @@ PRODUCERS = (
                           "--loader-debug-report", str(r["loader_debug_report"]),
                           "--loader-runtime-registry-report", str(r["loader_runtime_registry_report"])], {}),
         _in, requires=("loader_debug_report", "loader_runtime_registry_report")),
+    CompanionProducer(
+        "fchdir_ordinary_import_work",
+        lambda c, r, o: (["python3", "-B", "compat/x86_64/native_abi_fchdir_import_receipt.py", "collect",
+                          "--static-product", str(c.static_product), "--dynamic-product", str(c.dynamic_product),
+                          "--output", str(o)], {}),
+        lambda output: output, requires=("native_c_allocator_boundary_report",)),
 )
 
 
@@ -604,7 +653,13 @@ def collect_companions(cohort: Cohort, output: Path, *, only: Sequence[str] = ()
         outcome: dict[str, Any] = {"returncode": completed.returncode, "log": _relative(log, "log")}
         try:
             report = producer.report(target)
-            produced = completed.returncode == 0 and report.is_file() and not report.is_symlink()
+            produced = completed.returncode == 0 and (report.is_dir() if producer.keyword in DIRECTORY_COMPANIONS
+                                                       else report.is_file()) and not report.is_symlink()
+            if produced and producer.keyword == "fchdir_ordinary_import_work":
+                _companion_path(producer.keyword, _relative(report, producer.keyword))
+                _tree_sha256(report)
+                _validate_fchdir_work(report, static_product=cohort.static_product,
+                                      dynamic_product=cohort.dynamic_product)
         except (OSError, EvidenceError):
             produced = False
         if produced:
@@ -622,7 +677,7 @@ def collect_companions(cohort: Cohort, output: Path, *, only: Sequence[str] = ()
         "source": source,
         "cohort": cohort.record(),
         "companions": {
-            name: {"path": _companion_relative(name, path), "sha256": _sha256(path)}
+            name: {"path": _companion_relative(name, path), "sha256": _companion_sha256(name, path)}
             for name, path in sorted(reports.items())
         },
         "outcomes": outcomes,
@@ -649,7 +704,10 @@ def load_companions(path: Path, cohort: Cohort) -> dict[str, Path]:
     for name, entry in record["companions"].items():
         require(isinstance(entry, dict) and set(entry) == {"path", "sha256"}, f"companion {name} entry is malformed")
         companion = _companion_path(name, entry["path"])
-        require(_sha256(companion) == entry["sha256"], f"companion {name} bytes changed after collection")
+        require(_companion_sha256(name, companion) == entry["sha256"], f"companion {name} bytes changed after collection")
+        if name == "fchdir_ordinary_import_work":
+            _validate_fchdir_work(companion, static_product=cohort.static_product,
+                                  dynamic_product=cohort.dynamic_product)
         companions[name] = companion
     return companions
 
@@ -674,6 +732,12 @@ def assemble(arguments: argparse.Namespace) -> Path:
     source = current_source()
     inputs = {name: Path(os.path.abspath(getattr(arguments, name))) for name in INPUT_KINDS}
     reports = {name: Path(os.path.abspath(getattr(arguments, name))) for name in COLLECTED_REPORTS}
+    for name, path in companions.items():
+        physical = _companion_path(name, _companion_relative(name, path))
+        _companion_sha256(name, physical)
+        if name == "fchdir_ordinary_import_work":
+            _validate_fchdir_work(physical, static_product=inputs["static_product"],
+                                  dynamic_product=inputs["dynamic_product"])
     OUTPUT_PARENT.mkdir(parents=True, exist_ok=True)
     output.mkdir()
     reports["native_abi_ratchet"] = native_abi_ratchet.check(
@@ -699,7 +763,7 @@ def assemble(arguments: argparse.Namespace) -> Path:
             name: {"path": _relative(reports[name], name), "sha256": _sha256(reports[name])} for name in REPORTS
         },
         "selection_companions": {
-            name: {"path": _companion_relative(name, path), "sha256": _sha256(path)}
+            name: {"path": _companion_relative(name, path), "sha256": _companion_sha256(name, path)}
             for name, path in sorted(companions.items())
         },
     }
