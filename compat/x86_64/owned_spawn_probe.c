@@ -85,12 +85,18 @@ static int child(int argc, char **argv) {
         CHECK(getpgrp()==getpid());
     } else if (!strcmp(argv[2],"session")) {
         CHECK(getsid(0)==getpid());
-    } else if (!strcmp(argv[2],"descriptor") || !strcmp(argv[2],"collision")) {
+    } else if (!strcmp(argv[2],"descriptor") || !strcmp(argv[2],"collision") || !strcmp(argv[2],"ordered-directory")) {
         int flags=fcntl(9,F_GETFD);
         CHECK(flags>=0 && !(flags&FD_CLOEXEC));
         if (!strcmp(argv[2],"descriptor")) {
             flags=fcntl(3,F_GETFD); CHECK(flags>=0 && !(flags&FD_CLOEXEC));
         } else CHECK(fcntl(3,F_GETFD)==-1 && errno==EBADF);
+        if (!strcmp(argv[2],"ordered-directory")) {
+            sigset_t mask;
+            CHECK(access("spawn-marker",F_OK)==0);
+            CHECK(getpgrp()==getpid());
+            CHECK(!sigprocmask(SIG_SETMASK,NULL,&mask) && sigismember(&mask,SIGUSR2));
+        }
         CHECK(write(9,"ordered-actions",15)==15);
     } else if (!strcmp(argv[2],"directory")) {
         CHECK(access("spawn-marker",F_OK)==0);
@@ -181,6 +187,40 @@ int main(int argc, char **argv) {
     CHECK(!posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,&actions,NULL,arguments,child_environment) && !reap(pid,23));
     CHECK(!posix_spawn_file_actions_destroy(&actions));
     fd=open(output,O_RDONLY); char bytes[32]={0};
+    CHECK(fd>=0 && read(fd,bytes,sizeof bytes)==15 && !strcmp(bytes,"ordered-actions") && !close(fd));
+    /* The first open takes the error pipe's write descriptor. A later close
+     * takes its relocated descriptor, so both moves must preserve reporting. */
+    CHECK(!posix_spawn_file_actions_init(&actions));
+    CHECK(!posix_spawn_file_actions_addopen(&actions,4,output,O_TRUNC|O_WRONLY,0600));
+    CHECK(!posix_spawn_file_actions_addclose(&actions,5));
+    CHECK(!posix_spawn_file_actions_adddup2(&actions,4,9));
+    arguments[2]="collision";
+    CHECK(!posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,&actions,NULL,arguments,child_environment) && !reap(pid,23));
+    CHECK(!posix_spawn_file_actions_destroy(&actions));
+    fd=open(output,O_RDONLY); memset(bytes,0,sizeof bytes);
+    CHECK(fd>=0 && read(fd,bytes,sizeof bytes)==15 && !strcmp(bytes,"ordered-actions") && !close(fd));
+    CHECK(!posix_spawn_file_actions_init(&actions));
+    CHECK(!posix_spawn_file_actions_addopen(&actions,4,output,O_TRUNC|O_WRONLY,0600));
+    CHECK(!posix_spawn_file_actions_addclose(&actions,5));
+    CHECK(!posix_spawn_file_actions_adddup2(&actions,123,9));
+    pid=-123; errno=ENOSPC;
+    CHECK(posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,&actions,NULL,arguments,child_environment)==EBADF && pid==-123 && errno==ENOSPC);
+    CHECK(!posix_spawn_file_actions_destroy(&actions));
+    CHECK(waitpid(-1,NULL,WNOHANG)==-1 && errno==ECHILD);
+    CHECK(!posix_spawn_file_actions_init(&actions));
+    CHECK(!posix_spawn_file_actions_addchdir_np(&actions,argv[1]));
+    CHECK(!posix_spawn_file_actions_addopen(&actions,4,"spawn-output",O_TRUNC|O_WRONLY,0600));
+    CHECK(!posix_spawn_file_actions_adddup2(&actions,4,9));
+    CHECK(!posix_spawn_file_actions_addclose(&actions,4));
+    CHECK(!posix_spawnattr_init(&attributes));
+    CHECK(!posix_spawnattr_setpgroup(&attributes,0));
+    CHECK(!posix_spawnattr_setsigmask(&attributes,&blocked));
+    CHECK(!posix_spawnattr_setflags(&attributes,POSIX_SPAWN_SETPGROUP|POSIX_SPAWN_SETSIGMASK));
+    arguments[2]="ordered-directory";
+    CHECK(!posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,&actions,&attributes,arguments,child_environment) && !reap(pid,23));
+    CHECK(!posix_spawnattr_destroy(&attributes));
+    CHECK(!posix_spawn_file_actions_destroy(&actions));
+    fd=open(output,O_RDONLY); memset(bytes,0,sizeof bytes);
     CHECK(fd>=0 && read(fd,bytes,sizeof bytes)==15 && !strcmp(bytes,"ordered-actions") && !close(fd));
     CHECK(!posix_spawn_file_actions_init(&actions));
     CHECK(!posix_spawn_file_actions_addopen(&actions,4,output,O_TRUNC|O_WRONLY|O_CLOEXEC,0600));
