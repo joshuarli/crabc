@@ -235,9 +235,12 @@ static int offsets_append_reuse(void)
 {
     static const char *const alpha[] = { "alpha" };
     static const char *const appended[] = { "alpha", "beta", "gamma" };
+    static const char *const after_error[] = { "alpha", "beta", "gamma", "delta" };
     static const char *const old[] = { "old" };
     static const char *const replacement[] = { "replacement" };
     wordexp_t words = { 0 };
+    char **prior_vector;
+    char *prior_words[3];
 
     words.we_offs = 2;
     if (wordexp("alpha", &words, WRDE_DOOFFS) != 0 ||
@@ -247,15 +250,37 @@ static int offsets_append_reuse(void)
     if (wordexp("beta gamma", &words, WRDE_DOOFFS | WRDE_APPEND) != 0 ||
         !check_words(&words, 3, appended))
         return 2;
-    if (!check_freed(&words))
+    prior_vector = words.we_wordv;
+    for (size_t i = 0; i < 3; ++i)
+        prior_words[i] = words.we_wordv[words.we_offs + i];
+    /* A command rejected under NOCMD cannot consume or replace an appended
+     * result, including its offset slots and original string allocations. */
+    if (wordexp("delta $(printf ignored)", &words,
+            WRDE_DOOFFS | WRDE_APPEND | WRDE_NOCMD) != WRDE_CMDSUB ||
+        words.we_wordv != prior_vector || words.we_offs != 2 ||
+        !check_words(&words, 3, appended) ||
+        words.we_wordv[0] != NULL || words.we_wordv[1] != NULL)
         return 3;
+    for (size_t i = 0; i < 3; ++i) {
+        if (words.we_wordv[words.we_offs + i] != prior_words[i])
+            return 4;
+    }
+    if (wordexp("delta", &words, WRDE_DOOFFS | WRDE_APPEND) != 0 ||
+        !check_words(&words, 4, after_error))
+        return 5;
+    if (wordexp("replacement", &words, WRDE_DOOFFS | WRDE_REUSE) != 0 ||
+        words.we_offs != 2 || words.we_wordv[0] != NULL ||
+        words.we_wordv[1] != NULL || !check_words(&words, 1, replacement))
+        return 6;
+    if (!check_freed(&words))
+        return 7;
 
     if (wordexp("old", &words, 0) != 0 || !check_words(&words, 1, old))
-        return 4;
+        return 8;
     if (wordexp("replacement", &words, WRDE_REUSE) != 0 ||
         !check_words(&words, 1, replacement))
-        return 5;
-    return check_freed(&words) ? 0 : 6;
+        return 9;
+    return check_freed(&words) ? 0 : 10;
 }
 
 /* A selected command requires a usable shell; ordinary expansion does not.
