@@ -3,8 +3,8 @@
  *
  * This raw-bit corpus runs through pinned musl 1.2.6 and one freestanding
  * crabc archive. It records both pointed-to result bits and IEEE exception
- * flags under each MXCSR rounding direction, including tiny/subnormal inputs,
- * all argument-reduction paths, signed zero, infinite, quiet-NaN, and
+ * flags and raw MXCSR under each rounding direction, including tiny/subnormal
+ * inputs, argument-reduction cutoffs, signed zero, infinite, quiet-NaN, and
  * signaling-NaN inputs. A second record for every call aliases the two output
  * pointers, retaining musl's source-ordered final-store behavior. It selects
  * only binary64/binary32 GNU sincos: sincosl, public sin/cos, fenv policy,
@@ -28,8 +28,8 @@
 
 #pragma STDC FENV_ACCESS ON
 
-#define SINCOS_F64_CASES 32
-#define SINCOS_F32_CASES 32
+#define SINCOS_F64_CASES 64
+#define SINCOS_F32_CASES 64
 #define SINCOS_ROUNDING_CASES 4
 #define SINCOS_RECORDS_PER_CALL 2
 #define SINCOS_RECORD_WORDS 5
@@ -47,7 +47,7 @@ typedef void (*float_sincos_function)(float, float *, float *);
 static double_sincos_function volatile direct_sincos = (sincos);
 static float_sincos_function volatile direct_sincosf = (sincosf);
 
-/* The freestanding start object writes these exact 20,480 bytes with syscall. */
+/* The freestanding start object writes these exact 40,960 bytes with syscall. */
 uint64_t crabc_x86_64_math_sincos_records[SINCOS_RECORD_STORAGE_WORDS];
 
 static const uint64_t binary64_inputs[SINCOS_F64_CASES] = {
@@ -67,6 +67,23 @@ static const uint64_t binary64_inputs[SINCOS_F64_CASES] = {
 	UINT64_C(0xc012d97c7f3321d2), UINT64_C(0xc01921fb54442d18),
 	UINT64_C(0xc1d0000000000000), UINT64_C(0xc415af1d78b58c40),
 	UINT64_C(0xffefffffffffffff), UINT64_C(0xfff0000000000000),
+	/* Both sides of the small and pi/4 branches, then the large reducer. */
+	UINT64_C(0x800fffffffffffff), UINT64_C(0x8010000000000000),
+	UINT64_C(0x0000000000000002), UINT64_C(0x8000000000000002),
+	UINT64_C(0x3e46a09dffffffff), UINT64_C(0x3e46a09e00000000),
+	UINT64_C(0xbe46a09dffffffff), UINT64_C(0xbe46a09e00000000),
+	UINT64_C(0x3fe921fbffffffff), UINT64_C(0x3fe921fc00000000),
+	UINT64_C(0xbfe921fbffffffff), UINT64_C(0xbfe921fc00000000),
+	UINT64_C(0xbff921fb54442d17), UINT64_C(0xbff921fb54442d19),
+	UINT64_C(0x400921fb54442d17), UINT64_C(0x400921fb54442d19),
+	UINT64_C(0xc00921fb54442d17), UINT64_C(0xc00921fb54442d19),
+	UINT64_C(0x4130000000000000), UINT64_C(0xc130000000000000),
+	UINT64_C(0x41d0000000000001), UINT64_C(0xc1d0000000000001),
+	UINT64_C(0x5f30000000000000), UINT64_C(0xdf30000000000000),
+	UINT64_C(0x7e37e43c8800759c), UINT64_C(0xfe37e43c8800759c),
+	UINT64_C(0x7feffffffffffffe), UINT64_C(0xffeffffffffffffe),
+	UINT64_C(0x7ff8000000000001), UINT64_C(0xfff8000000000041),
+	UINT64_C(0xfff0000000000042), UINT64_C(0x7ff0000000000001),
 };
 
 static const uint32_t binary32_inputs[SINCOS_F32_CASES] = {
@@ -81,6 +98,18 @@ static const uint32_t binary32_inputs[SINCOS_F32_CASES] = {
 	UINT32_C(0xbfc90fdb), UINT32_C(0xc0490fdb), UINT32_C(0xc096cbe4),
 	UINT32_C(0xc0c90fdb), UINT32_C(0xc9800000), UINT32_C(0xe0ad78ec),
 	UINT32_C(0xff7fffff), UINT32_C(0xff800000),
+	/* Small, quadrant, and reduction boundaries with mirrored signs. */
+	UINT32_C(0x807fffff), UINT32_C(0x80800000), UINT32_C(0x00000002),
+	UINT32_C(0x80000002), UINT32_C(0x397fffff), UINT32_C(0x39800000),
+	UINT32_C(0xb97fffff), UINT32_C(0xb9800000), UINT32_C(0x3f490fd9),
+	UINT32_C(0x3f490fdd), UINT32_C(0xbf490fda), UINT32_C(0xbf490fdc),
+	UINT32_C(0x4016cbe2), UINT32_C(0x4016cbe3), UINT32_C(0x4016cbe4),
+	UINT32_C(0xc016cbe3), UINT32_C(0x407b53d0), UINT32_C(0x407b53d1),
+	UINT32_C(0x407b53d2), UINT32_C(0xc07b53d1), UINT32_C(0x49800001),
+	UINT32_C(0xc9800001), UINT32_C(0x4e800000), UINT32_C(0xce800000),
+	UINT32_C(0x71800000), UINT32_C(0xf1800000), UINT32_C(0x7f7ffffe),
+	UINT32_C(0xff7ffffe), UINT32_C(0x7fc00001), UINT32_C(0xffc00041),
+	UINT32_C(0xff800042), UINT32_C(0x7f800001),
 };
 
 static const int rounding_modes[SINCOS_ROUNDING_CASES] = {
@@ -114,6 +143,9 @@ static float float_from_bits(uint32_t bits)
 static void append_record(size_t *cursor, uint64_t input, uint64_t sine,
 	uint64_t cosine_or_tag, int rounding_mode)
 {
+	uint32_t mxcsr;
+
+	__asm__ volatile("stmxcsr %0" : "=m"(mxcsr));
 	crabc_x86_64_math_sincos_records[(*cursor)++] = input;
 	crabc_x86_64_math_sincos_records[(*cursor)++] = sine;
 	crabc_x86_64_math_sincos_records[(*cursor)++] = cosine_or_tag;
@@ -121,7 +153,7 @@ static void append_record(size_t *cursor, uint64_t input, uint64_t sine,
 		((uint64_t)(uint32_t)rounding_mode << 32) |
 		(uint32_t)fegetround();
 	crabc_x86_64_math_sincos_records[(*cursor)++] =
-		(uint32_t)fetestexcept(FE_ALL_EXCEPT);
+		((uint64_t)mxcsr << 32) | (uint32_t)fetestexcept(FE_ALL_EXCEPT);
 }
 
 static int record_binary64(size_t *cursor, int rounding_mode, uint64_t input)
