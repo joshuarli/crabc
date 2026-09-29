@@ -4,9 +4,10 @@
  * then through a freestanding executable linked solely with the selected
  * crabc archive. It proves only F_GETLK/F_SETLK with the public 32-byte
  * struct flock record: an unlocked query, parent lock ownership across fork,
- * release when a duplicate closes, reciprocal POSIX/OFD conflicts, an OFD
- * lock inherited across fork and retained after the parent closes its
- * descriptor, stale errno on success, and direct kernel errors. It is
+ * release when a duplicate closes, exact child-owned byte ranges with a
+ * conflict/unlock/retry, reciprocal POSIX/OFD conflicts, an OFD lock inherited
+ * across fork and retained after the parent closes its descriptor, stale
+ * errno on success, and direct kernel errors. It is
  * not F_SETLKW cancellation, public OFD fcntl commands, lockf, flock,
  * generic fcntl, descriptor/pathname policy, CRT, pthread/TLS lifecycle,
  * loader, sysroot, or public x86 support.
@@ -330,6 +331,108 @@ static int check_selected_record_lock_lifecycle(const struct fixture_file *file)
     return status == 0 ? 0 : 80 + status;
 }
 
+static int child_holds_byte_range(int descriptor, int ready_write,
+    int release_read)
+{
+    struct flock lock = write_lock();
+    char signal = 'L';
+
+    lock.l_start = 32;
+    lock.l_len = 16;
+    errno = E2BIG;
+    if (fcntl(descriptor, F_SETLK, &lock) != 0 || errno != E2BIG)
+        return 1;
+    if (raw_syscall3(SYS_write, ready_write, (long)(void *)&signal, 1) != 1)
+        return 2;
+    if (raw_syscall3(SYS_read, release_read, (long)(void *)&signal, 1) != 0)
+        return 3;
+    lock.l_type = F_UNLCK;
+    errno = ERANGE;
+    if (fcntl(descriptor, F_SETLK, &lock) != 0 || errno != ERANGE)
+        return 4;
+    return 0;
+}
+
+static int check_forked_byte_range_and_retry(const struct fixture_file *file)
+{
+    struct flock query = write_lock();
+    struct flock disjoint = write_lock();
+    struct flock overlap = write_lock();
+    int ready[2];
+    int release[2];
+    int child_status = -1;
+    int status = 0;
+    char signal;
+    long child;
+    long waited;
+
+    if (raw_syscall1(SYS_pipe, (long)(void *)ready) != 0)
+        return 1;
+    if (raw_syscall1(SYS_pipe, (long)(void *)release) != 0) {
+        (void)raw_syscall1(SYS_close, ready[0]);
+        (void)raw_syscall1(SYS_close, ready[1]);
+        return 2;
+    }
+    child = raw_syscall0(SYS_fork);
+    if (child == 0) {
+        (void)raw_syscall1(SYS_close, ready[0]);
+        (void)raw_syscall1(SYS_close, release[1]);
+        raw_exit(child_holds_byte_range(file->descriptor, ready[1],
+            release[0]));
+    }
+    (void)raw_syscall1(SYS_close, ready[1]);
+    (void)raw_syscall1(SYS_close, release[0]);
+    if (child < 0) {
+        (void)raw_syscall1(SYS_close, ready[0]);
+        (void)raw_syscall1(SYS_close, release[1]);
+        return 3;
+    }
+
+    if (raw_syscall3(SYS_read, ready[0], (long)(void *)&signal, 1) != 1 ||
+        signal != 'L')
+        status = 4;
+    (void)raw_syscall1(SYS_close, ready[0]);
+    query.l_len = 96;
+    errno = ERANGE;
+    if (status == 0 && (fcntl(file->observer, F_GETLK, &query) != 0 ||
+        errno != ERANGE || query.l_type != F_WRLCK ||
+        query.l_whence != SEEK_SET || query.l_start != 32 ||
+        query.l_len != 16 || query.l_pid != child))
+        status = 5;
+
+    disjoint.l_len = 16;
+    errno = E2BIG;
+    if (status == 0 && (fcntl(file->observer, F_SETLK, &disjoint) != 0 ||
+        errno != E2BIG))
+        status = 6;
+    overlap.l_start = 40;
+    overlap.l_len = 4;
+    errno = 0;
+    if (status == 0 && (fcntl(file->observer, F_SETLK, &overlap) != -1 ||
+        errno != EAGAIN))
+        status = 7;
+    /* Closing the pipe releases the child even when a parent check fails. */
+    if (raw_syscall1(SYS_close, release[1]) != 0 && status == 0)
+        status = 8;
+    do {
+        waited = raw_syscall4(SYS_wait4, child,
+            (long)(void *)&child_status, 0, 0);
+    } while (waited == -EINTR);
+    if (status == 0 && (waited != child || child_status != 0))
+        status = 9;
+    disjoint.l_type = F_UNLCK;
+    if (status == 0 && fcntl(file->observer, F_SETLK, &disjoint) != 0)
+        status = 10;
+    errno = E2BIG;
+    if (status == 0 && (fcntl(file->observer, F_SETLK, &overlap) != 0 ||
+        errno != E2BIG))
+        status = 11;
+    overlap.l_type = F_UNLCK;
+    if (status == 0 && fcntl(file->observer, F_SETLK, &overlap) != 0)
+        status = 12;
+    return status;
+}
+
 static int check_ofd_conflict(const struct fixture_file *file)
 {
     struct flock lock = write_lock();
@@ -506,6 +609,13 @@ int crabc_x86_64_fcntl_record_locks_probe(void)
     status = check_selected_record_lock_lifecycle(&file);
     if (status == 0 && RECORD_CASE("process-lock-fork-close-unlock\n") != 0)
         status = 91;
+    if (status == 0) {
+        status = check_forked_byte_range_and_retry(&file);
+        if (status != 0)
+            status += 130;
+    }
+    if (status == 0 && RECORD_CASE("forked-byte-range-conflict-unlock-retry\n") != 0)
+        status = 96;
     if (status == 0) {
         status = check_ofd_conflict(&file);
         if (status != 0)

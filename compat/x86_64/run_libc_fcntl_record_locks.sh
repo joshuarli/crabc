@@ -4,9 +4,10 @@
 # The same project-header C fixture first runs through pinned musl, then as a
 # true `-nostdlib -static` executable linked solely through the selected
 # crabc archive. It proves pointer-bearing F_GETLK/F_SETLK record locks:
-# parent ownership across fork, release on duplicate close, reciprocal
-# POSIX/OFD conflicts, an inherited OFD lock after the parent's close, stale
-# errno on success, and Linux errors. Fixture setup uses raw syscalls, so no C
+# parent ownership across fork, release on duplicate close, exact child-owned
+# byte ranges with a conflict/unlock/retry, reciprocal POSIX/OFD conflicts, an
+# inherited OFD lock after the parent's close, stale errno on success, and
+# Linux errors. Fixture setup uses raw syscalls, so no C
 # descriptor lifecycle symbols are pulled in. This is not F_SETLKW cancellation, public
 # OFD fcntl commands, lockf, flock, generic fcntl, CRT,
 # pthread/TLS lifecycle, loader, sysroot, or public x86 support.
