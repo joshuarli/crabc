@@ -60,7 +60,7 @@ def workload_rows(path: Path) -> dict[str, Any]:
             and not re.search(r"\bwctomb\b", relocations.stdout),
             "wctomb workload imports the provider directly")
     rows = {}
-    for name in ("wprintf",):
+    for name in ("fwscanf",):
         selected = [line.split() for line in symbols.stdout.splitlines()
                     if line.endswith(" " + name) and line.split()[0].endswith(":")]
         require(len(selected) == 1 and selected[0][3:7] == ["NOTYPE", "GLOBAL", "DEFAULT", "UND"],

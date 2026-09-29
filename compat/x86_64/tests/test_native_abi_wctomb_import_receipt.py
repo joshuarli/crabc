@@ -1,4 +1,4 @@
-"""Focused checks for the wide printer's owned wctomb importer receipt."""
+"""Focused checks for the wide scanner's owned wctomb importer receipt."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,16 +15,16 @@ import native_abi_selection as selection
 
 
 class WctombImportReceiptTests(unittest.TestCase):
-    def test_workload_retains_wprintf_without_importing_wctomb(self):
-        symbols = "  1: 0000000000000000 0 NOTYPE GLOBAL DEFAULT UND wprintf\n"
-        relocations = "0000000000000001 0000000000000000 R_X86_64_PLT32 0000000000000000 wprintf - 4\n"
+    def test_workload_retains_fwscanf_without_importing_wctomb(self):
+        symbols = "  1: 0000000000000000 0 NOTYPE GLOBAL DEFAULT UND fwscanf\n"
+        relocations = "0000000000000001 0000000000000000 R_X86_64_PLT32 0000000000000000 fwscanf - 4\n"
         completed = lambda output: mock.Mock(stdout=output, returncode=0)
         with mock.patch.object(receipt.subprocess, "run", side_effect=(
                 completed(symbols), completed(relocations))):
-            self.assertEqual(set(receipt.workload_rows(Path("workload.o"))), {"wprintf"})
+            self.assertEqual(set(receipt.workload_rows(Path("workload.o"))), {"fwscanf"})
         with mock.patch.object(receipt.subprocess, "run", side_effect=(
                 completed(symbols), completed(""))):
-            with self.assertRaisesRegex(receipt.WctombImportError, "workload wprintf"):
+            with self.assertRaisesRegex(receipt.WctombImportError, "workload fwscanf"):
                 receipt.workload_rows(Path("workload.o"))
         with mock.patch.object(receipt.subprocess, "run", side_effect=(
                 completed(symbols + "  2: 0000000000000000 0 NOTYPE GLOBAL DEFAULT UND wctomb\n"),

@@ -3,5 +3,6 @@
 
 int main(void)
 {
-    return wprintf(L"%lc", L'A') < 0;
+    wchar_t value = 0;
+    return fwscanf(stdin, L"%lc", &value) < 0;
 }

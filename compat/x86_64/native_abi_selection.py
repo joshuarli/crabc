@@ -9563,7 +9563,7 @@ def btowc_ordinary_import_adapter(
 def wctomb_ordinary_import_adapter(
         work_path: Path | None, *, boundary_report_path: Path | None,
         paths: Mapping[str, Path]) -> dict[str, Any] | None:
-    """Bind the wide printer's retained wctomb call to its final provider."""
+    """Bind the wide scanner's retained wctomb call to its final provider."""
     if work_path is None:
         return None
     require(boundary_report_path is not None,
@@ -9581,7 +9581,7 @@ def wctomb_ordinary_import_adapter(
             static_product=paths['static_product'],
             dynamic_product=paths['dynamic_product'],
             elf_facts_report=paths['elf_report'], name='wctomb',
-            required_importer_section='.text.crabc_owned_wprint_wprintf_core',
+            required_importer_section='.text.crabc_owned_vfwscanf',
             required_source_call_count=1, independent_retained_work=work,
             expected_importers=1)
     except (KeyError, TypeError, ValueError, OSError,
