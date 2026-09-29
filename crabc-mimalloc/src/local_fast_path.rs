@@ -161,7 +161,7 @@ pub(crate) unsafe fn allocate(
     alignment: Option<usize>,
     zero: bool,
 ) -> Option<NonNull<u8>> {
-    if size < WORD_SIZE || alignment.is_some_and(|alignment| !alignment.is_power_of_two()) {
+    if alignment.is_some_and(|alignment| !alignment.is_power_of_two()) {
         return None;
     }
     if size == WORD_SIZE && alignment == Some(MAX_ALIGN_SIZE) {
@@ -181,6 +181,9 @@ pub(crate) unsafe fn allocate(
     let theap_ref = unsafe { theap.as_ref() };
     let mut observed_empty_direct_page = core::ptr::null_mut();
     if direct_small {
+        // Release small allocation preserves the original requested bytes,
+        // including zero: direct slot zero and bin one both supply a word
+        // block while level-two statistics retain the unrounded request.
         let direct_index = invariants::word_count(size)?;
         if direct_index >= PAGES_DIRECT {
             return None;
