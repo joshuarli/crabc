@@ -77,9 +77,15 @@ are not transferable passes for a different revision.
   backend. Independent physical replay of that same-source assessment and its
   three-pair POSIX matrix passes; the C ABI gate remains incomplete at seven
   components and nine of eleven capabilities. A source-bound native-shadow
-  diagnostic passes all three allocator C ABI leaves but its dynamic
-  qualification reproducibly stops when a POSIX timer callback's 4097-byte
-  allocation returns `ENOMEM`; the same-source accepted-C control passes.
+  diagnostic passes all three allocator C ABI leaves. Its earlier dynamic
+  qualification stopped when a reused POSIX timer pthread reset live native
+  allocator TLS and the next 4097-byte allocation returned `ENOMEM`. The
+  opt-in v2 reset now preserves the fourteen live allocator TLS objects;
+  source-built native and accepted-C timer runners and callback-ordinal
+  controls pass in all static and dynamic modes. Both private registry reports
+  pass independent physical replay. Native full dynamic qualification remains
+  blocked at a separate pthread-scheduling `EINVAL` case that also fails on
+  pre-v2 native-shadow products; the same-source accepted-C control passes.
   `consumer.rust-std-lto` passes its
   Rust, native-facade, LTO, and unwind leaves on clean `d6733f516`; its
   pinned-image receipt passed independent physical validation and public
@@ -394,7 +400,9 @@ are not transferable passes for a different revision.
   M6 gate passes all twenty runnable rows. Metadata-commit refusal now matches
   seventeen pinned-C failure, warning, recovery, and reuse keys; the next
   clean M6 gate passes all twenty-one runnable rows. Child callback
-  registration remains open.
+  registration now matches eighteen pinned-C lifecycle and refusal/retry keys,
+  including retained child owner identity and terminal caller-held unmap; the
+  final 22-row clean gate rerun remains in progress.
   All ten required gates
   remain blocked by 10 named missing API and lifetime evidence entries;
   accumulated mixed-workload main-Heap page-population parity remains unproved.
