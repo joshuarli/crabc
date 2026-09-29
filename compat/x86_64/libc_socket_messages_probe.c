@@ -8,8 +8,9 @@
  * limit, close-on-exec, credentials, zero-length records, error precedence,
  * ancillary and payload truncation, and SIOCATMARK. Poisoned public padding
  * proves the musl-shaped adapter rather than a raw Linux msghdr call.
- * Fixture-local raw close/fcntl calls only clean up and inspect received
- * descriptors; they do not select generic descriptor, ioctl,
+ * Fixture-local raw close/fcntl calls clean up and inspect received
+ * descriptors; a raw write emits the matched lifetime receipt. They do not
+ * select generic descriptor, ioctl,
  * cancellation, allocator, CRT, loader, sysroot, or public x86 support.
  */
 
@@ -679,6 +680,114 @@ finish:
     return status;
 }
 
+static int check_rights_lifetime_after_truncation(void)
+{
+    static const char payload = 'L';
+    static const char transferred_payload = 'K';
+    static const char success[] = "rights-lifetime: kept=usable discarded=closed errno=preserved\n";
+    char received_payload = 0;
+    char received_transferred = 0;
+    char discarded_payload = 0;
+    unsigned char send_control[CMSG_SPACE(2 * sizeof(int))] = { 0 };
+    unsigned char receive_control[CMSG_LEN(sizeof(int))] = { 0 };
+    struct iovec send_iov = { (void *)&payload, 1 };
+    struct iovec receive_iov = { &received_payload, 1 };
+    struct msghdr send_message = { 0 };
+    struct msghdr receive_message = { 0 };
+    struct cmsghdr *header = (struct cmsghdr *)(void *)send_control;
+    int carrier[2] = { -1, -1 };
+    int kept[2] = { -1, -1 };
+    int discarded[2] = { -1, -1 };
+    int rights[2];
+    int transferred = -1;
+    int baseline;
+    int status = 0;
+
+    if (socketpair(AF_UNIX, SOCK_DGRAM, 0, carrier) != 0 ||
+        socketpair(AF_UNIX, SOCK_DGRAM, 0, kept) != 0 ||
+        socketpair(AF_UNIX, SOCK_STREAM, 0, discarded) != 0) {
+        status = 1;
+        goto finish;
+    }
+    baseline = open_descriptor_count();
+    rights[0] = kept[0];
+    rights[1] = discarded[0];
+    header->cmsg_len = CMSG_LEN(sizeof(rights));
+    header->__pad1 = -1;
+    header->cmsg_level = SOL_SOCKET;
+    header->cmsg_type = SCM_RIGHTS;
+    copy_bytes(CMSG_DATA(header), rights, sizeof(rights));
+    send_message.msg_iov = &send_iov;
+    send_message.msg_iovlen = 1;
+    send_message.__pad1 = -1;
+    send_message.msg_control = send_control;
+    send_message.msg_controllen = sizeof(send_control);
+    send_message.__pad2 = -1;
+    receive_message.msg_iov = &receive_iov;
+    receive_message.msg_iovlen = 1;
+    receive_message.__pad1 = -1;
+    receive_message.msg_control = receive_control;
+    receive_message.msg_controllen = sizeof(receive_control);
+    receive_message.__pad2 = -1;
+
+    errno = ERANGE;
+    if (sendmsg(carrier[0], &send_message, 0) != 1 || errno != ERANGE) {
+        status = 2;
+        goto finish;
+    }
+    raw_close(kept[0]);
+    kept[0] = -1;
+    raw_close(discarded[0]);
+    discarded[0] = -1;
+    errno = EINTR;
+    if (recvmsg(carrier[1], &receive_message, MSG_CMSG_CLOEXEC) != 1 ||
+        errno != EINTR || received_payload != payload ||
+        receive_message.msg_flags != (MSG_CTRUNC | MSG_CMSG_CLOEXEC) ||
+        receive_message.msg_controllen != CMSG_LEN(sizeof(int)) ||
+        receive_message.__pad1 != 0 || receive_message.__pad2 != 0) {
+        status = 3;
+        goto finish;
+    }
+    header = CMSG_FIRSTHDR(&receive_message);
+    if (!header || header->cmsg_level != SOL_SOCKET ||
+        header->cmsg_type != SCM_RIGHTS ||
+        header->cmsg_len != CMSG_LEN(sizeof(int))) {
+        status = 4;
+        goto finish;
+    }
+    copy_bytes(&transferred, CMSG_DATA(header), sizeof(transferred));
+    if (transferred < 0 || raw_getfd(transferred) != FD_CLOEXEC ||
+        send(transferred, &transferred_payload, 1, 0) != 1 ||
+        recv(kept[1], &received_transferred, 1, MSG_DONTWAIT) != 1 ||
+        received_transferred != transferred_payload) {
+        status = 5;
+        goto finish;
+    }
+    if (recv(discarded[1], &discarded_payload, 1, MSG_DONTWAIT) != 0) {
+        status = 6;
+        goto finish;
+    }
+    raw_close(transferred);
+    transferred = -1;
+    if (open_descriptor_count() != baseline - 2) {
+        status = 7;
+        goto finish;
+    }
+    if (raw3(SYS_write, 1, (long)success, sizeof(success) - 1) !=
+        sizeof(success) - 1)
+        status = 8;
+
+finish:
+    raw_close(transferred);
+    raw_close(discarded[1]);
+    raw_close(discarded[0]);
+    raw_close(kept[1]);
+    raw_close(kept[0]);
+    raw_close(carrier[1]);
+    raw_close(carrier[0]);
+    return status;
+}
+
 static int check_mmsg(void)
 {
     static const char first[] = "one";
@@ -988,6 +1097,9 @@ int crabc_x86_64_socket_messages_probe(void)
     result = check_rights_limit_and_discard();
     if (result != 0)
         return 110 + result;
+    result = check_rights_lifetime_after_truncation();
+    if (result != 0)
+        return 170 + result;
     result = check_mmsg();
     if (result != 0)
         return 50 + result;

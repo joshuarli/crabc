@@ -68,7 +68,7 @@ assert_named_syscall() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mapfile mkdir nm objdump readelf rustup sort; do
+for tool in ar awk cargo chmod cmp cp diff grep mapfile mkdir nm objdump readelf rustup sha256sum sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -76,8 +76,29 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_socket_messages_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-socket-messages.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-socket-messages.XXXXXX")"
+report_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-socket-messages.XXXXXX")"
+retain_evidence() {
+    local status="$1"
+    local path
+
+    printf 'runner_exit=%s\n' "$status" >"$report_dir/status.txt"
+    for path in "$reference" "$candidate" "$work_dir/reference.stdout" \
+        "$work_dir/reference.stderr" "$work_dir/candidate.stdout" \
+        "$work_dir/candidate.stderr" "$work_dir/reference.status" \
+        "$work_dir/candidate.status"; do
+        if [ -f "$path" ]; then
+            cp "$path" "$report_dir/"
+        fi
+    done
+    sha256sum "$ROOT_DIR/compat/x86_64/libc_socket_messages_probe.c" \
+        "$ROOT_DIR/compat/x86_64/run_libc_socket_messages.sh" \
+        >"$report_dir/source-sha256.txt"
+    (cd "$report_dir" && sha256sum -- * >SHA256SUMS)
+    chmod a+r "$report_dir"/*
+    chmod a+rx "$report_dir"
+}
+trap 'status=$?; retain_evidence "$status"; rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-socket-messages-reference"
@@ -105,10 +126,12 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_socket_messages_probe.c \
     -o "$reference"
-if "$reference"; then
+if "$reference" >"$work_dir/reference.stdout" 2>"$work_dir/reference.stderr"; then
+    printf 'exit=0\n' >"$work_dir/reference.status"
     :
 else
     status=$?
+    printf 'exit=%s\n' "$status" >"$work_dir/reference.status"
     fail "pinned-musl socket-message fixture exited ${status}"
 fi
 
@@ -191,11 +214,18 @@ if grep -Eq '\$0x133' "$sendmmsg_disassembly"; then
     fail "sendmmsg incorrectly uses raw Linux SYS_sendmmsg"
 fi
 
-if "$candidate"; then
+if "$candidate" >"$work_dir/candidate.stdout" 2>"$work_dir/candidate.stderr"; then
+    printf 'exit=0\n' >"$work_dir/candidate.status"
     :
 else
     status=$?
+    printf 'exit=%s\n' "$status" >"$work_dir/candidate.status"
     fail "freestanding socket-message fixture exited ${status}"
 fi
+cmp "$work_dir/reference.stdout" "$work_dir/candidate.stdout" ||
+    fail "reference and candidate stdout differ"
+cmp "$work_dir/reference.stderr" "$work_dir/candidate.stderr" ||
+    fail "reference and candidate stderr differ"
 
 printf 'x86 static crabc-libc socket messages: PASS\n'
+printf 'evidence: %s\n' "$report_dir"
