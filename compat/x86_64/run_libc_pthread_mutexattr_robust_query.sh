@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 bounded static pthread mutex-attribute robust-query evidence.
+# Native Linux/x86-64 static pthread mutex-attribute robustness differential.
 #
 # The same project-header fixture first runs against pinned musl 1.2.6, then
 # as a true `-nostdlib -static` executable linked only with the selected crabc
-# archive. It proves exactly pthread_mutexattr_getrobust's raw four-byte record
-# projection: only bit 2 is observed and the caller-owned word is unchanged.
-# It does not select robust-list probing, the setter, attribute lifecycle,
-# mutex initialization or operation, threads, TLS, synchronization,
-# cancellation, CRT, loader, sysroot, or public x86 support.
+# archive. It compares raw traces of getter queries, setter transitions,
+# rejected values, and guards around the public four-byte record and output.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -57,27 +54,6 @@ assert_selected_c_abi_surface() {
     fi
 }
 
-assert_no_unselected_mutexattr_exports() {
-    local symbols_path="$1"
-    local unselected
-
-    for unselected in pthread_mutexattr_setrobust \
-        pthread_mutexattr_init pthread_mutexattr_destroy \
-        pthread_mutexattr_settype pthread_mutexattr_gettype \
-        pthread_mutexattr_setpshared pthread_mutexattr_getpshared \
-        pthread_mutexattr_setprotocol pthread_mutexattr_getprotocol \
-        pthread_mutexattr_setprioceiling pthread_mutexattr_getprioceiling \
-        pthread_mutex_init pthread_mutex_destroy pthread_mutex_lock \
-        pthread_mutex_trylock pthread_mutex_unlock pthread_mutex_timedlock \
-        pthread_mutex_consistent; do
-        [ "$symbols_path" = "$candidate_symbols" ] ||
-            fail "mutexattr robust-query sibling exclusions apply only to the final candidate"
-        if grep -Eq "[[:space:]]${unselected}$" "$symbols_path"; then
-            fail "artifact accidentally exports unselected ${unselected}"
-        fi
-    done
-}
-
 assert_direct_record_path() {
     local disassembly="$work_dir/pthread_mutexattr_getrobust-disassembly"
 
@@ -96,8 +72,13 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_pthread_c11_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-pthread-mutexattr-robust-query.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp" "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/pthread-mutexattr-robust-query.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
+evidence_dir="$ROOT_DIR/.work/x86_64/reports/pthread-mutexattr-robust-query"
+mkdir -p "$evidence_dir"
+reference_trace="$evidence_dir/musl.trace"
+candidate_trace="$evidence_dir/crabc.trace"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-pthread-mutexattr-robust-query-reference"
 candidate="$work_dir/crabc-static-pthread-mutexattr-robust-query-candidate"
@@ -126,7 +107,7 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_pthread_mutexattr_robust_query_probe.c \
     -o "$reference"
-if timeout "$EXECUTION_TIMEOUT" "$reference"; then
+if timeout "$EXECUTION_TIMEOUT" "$reference" >"$reference_trace"; then
     :
 else
     status=$?
@@ -135,12 +116,15 @@ fi
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
+cp "$archive.source-runtime.json" "$evidence_dir/source-runtime.json"
 
 nm -A --defined-only "$archive" >"$archive_symbols"
 readelf --symbols --wide "$archive" >"$archive_elf_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
 grep -Eq '[[:space:]][TW][[:space:]]pthread_mutexattr_getrobust$' "$archive_symbols" ||
     fail "archive does not define pthread_mutexattr_getrobust"
+grep -Eq '[[:space:]][TW][[:space:]]pthread_mutexattr_setrobust$' "$archive_symbols" ||
+    fail "archive does not define pthread_mutexattr_setrobust"
 readelf --relocs --wide "$archive" >"$archive_relocations"
 objdump -dr "$archive" >"$archive_disassembly"
 if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|mimalloc|sha_crypt' \
@@ -160,20 +144,18 @@ fi
     compat/x86_64/libc_pthread_mutexattr_robust_query_start.S "$archive" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
+cp "$candidate_symbols" "$evidence_dir/candidate-symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 grep -Eq '[[:space:]]pthread_mutexattr_getrobust$' "$candidate_symbols" ||
     fail "candidate does not define pthread_mutexattr_getrobust"
-assert_no_unselected_mutexattr_exports "$candidate_symbols"
-for unselected in __errno_location __crabc_x86_static_tls_bootstrap \
-    pthread_cond_init pthread_cond_destroy pthread_cond_wait pthread_cond_timedwait \
-    get_robust_list; do
-    if grep -Eq "[[:space:]]${unselected}$" "$candidate_symbols"; then
-        fail "candidate pulled unselected ${unselected}"
-    fi
-done
+grep -Eq '[[:space:]]pthread_mutexattr_setrobust$' "$candidate_symbols" ||
+    fail "candidate does not define pthread_mutexattr_setrobust"
+# The setter's archive member retains adjacent mutex entry points and TLS
+# bootstrap code. The final link must still resolve everything from the owned
+# static archive, and the getter itself must remain a direct record query.
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$candidate_symbols")"
 if [ -n "$unresolved_symbols" ]; then
     printf '%s\n' "$unresolved_symbols" >&2
@@ -183,23 +165,18 @@ if grep -Eq 'Requesting program interpreter|INTERP' "$candidate_headers" ||
     grep -Eq 'NEEDED' "$candidate_dynamic"; then
     fail "candidate selected a dynamic runtime"
 fi
-if grep -Eq '[[:space:]]TLS[[:space:]]' "$candidate_headers" ||
-    grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' \
-        "$candidate_relocations" "$candidate_symbols" "$candidate_disassembly"; then
-    fail "candidate must remain TLS-free"
-fi
-if grep -Eq 'crabc_core|mimalloc|sha_crypt' \
-    "$candidate_symbols" "$candidate_disassembly"; then
-    fail "candidate selects an unowned runtime dependency"
-fi
-
 assert_direct_record_path
 
-if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
+if timeout "$EXECUTION_TIMEOUT" "$candidate" >"$candidate_trace"; then
     :
 else
     status=$?
     fail "freestanding mutexattr robust-query fixture exited ${status}"
 fi
 
-printf 'x86 static crabc-libc pthread mutexattr robust query: PASS\n'
+if ! cmp -s "$reference_trace" "$candidate_trace"; then
+    diff -u "$reference_trace" "$candidate_trace" >&2 || true
+    fail "pinned-musl and freestanding robustness traces differ; raw traces: $evidence_dir"
+fi
+
+printf 'x86 static crabc-libc pthread mutexattr robust transitions: PASS (%s)\n' "$evidence_dir"
