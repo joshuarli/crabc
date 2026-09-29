@@ -279,9 +279,10 @@ are not transferable passes for a different revision.
   accounting; its focused differential matches while all eight M3 components
   pass, with M1/M2 prerequisites still required for the M3 gate.
   A source-equivalent shared child mapped-page claim scan reduces linked Rust
-  allocator text by 2,256 bytes, with pinned C text unchanged; six focused
-  tests, nine Rust profiles, and the clean owner differential pass. Qualifying
-  timing remains open.
+  allocator text by 2,256 bytes. Sharing the following child queue insertion
+  and outlining cold reabandonment remove another 583 bytes, with pinned C text
+  unchanged. Both changes pass focused tests, nine Rust profiles, and clean
+  owner differentials; qualifying timing remains open.
   Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). On an idle host the development engine harness
