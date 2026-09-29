@@ -350,8 +350,9 @@ unsafe fn allocate_eight_byte_overalloc_head(theap: NonNull<Theap>, zero: bool) 
         };
         (first, base)
     };
-    let misalignment = base.as_ptr().addr() & (alignment - 1);
-    let adjustment = if misalignment == 0 { 0 } else { alignment - misalignment };
+    // The source rounds the client pointer up to the next alignment boundary.
+    // Negating the address modulo a power of two gives exactly that padding.
+    let adjustment = (0usize.wrapping_sub(base.as_ptr().addr())) & (alignment - 1);
     if adjustment != 0 {
         // The interior flag shares the source atomic owner word. Its relaxed
         // update leaves the same owner and full-page bits intact.
