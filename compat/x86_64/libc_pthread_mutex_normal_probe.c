@@ -4,9 +4,12 @@
  * against a `-nostdlib -static` executable linked only through the selected
  * crabc archive. It specifies one deliberately bounded process-private
  * normal-mutex slice: NULL-attribute initialization, lock, contended
- * trylock, unlock, and destroy. Two default-attribute joinable workers first
- * observe contention while the creator holds the mutex, then acquire and
- * release it after the creator releases that hold. This is not a claim for
+ * trylock, unlock, destroy, and repeated initialization of the same object
+ * after destruction. Two default-attribute joinable workers first observe
+ * contention while the creator holds the mutex, then acquire and release it
+ * after the creator releases that hold. Each completed round publishes its
+ * fixed-width observations for a byte-exact musl/crabc comparison. This is
+ * not a claim for
  * mutex attributes, C11 wrappers, condition variables, process-shared,
  * robust, recursive, error-checking, timed, or cancellation behavior.
  */
@@ -20,6 +23,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdint.h>
+#include <stddef.h>
 
 _Static_assert(__builtin_types_compatible_p(__typeof__(&pthread_mutex_init),
     int (*)(pthread_mutex_t *__restrict, const pthread_mutexattr_t *__restrict)),
@@ -50,7 +54,7 @@ struct normal_mutex_worker {
 };
 
 struct normal_mutex_round {
-    pthread_mutex_t mutex;
+    pthread_mutex_t *mutex;
     volatile int pre_release_count;
     volatile int release_workers;
     volatile int lock_attempt_count;
@@ -65,6 +69,19 @@ struct normal_mutex_round {
  * enters the same selected normal/private state machine before any init call.
  */
 static pthread_mutex_t static_normal_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* The entry shim is freestanding. Use the Linux write boundary directly so
+ * both executables publish the same fixed-width observation records without
+ * selecting stdio or another libc wrapper. */
+static int write_observation(const int32_t *words, size_t count)
+{
+    long result;
+    size_t bytes = count * sizeof(*words);
+
+    __asm__ volatile("syscall" : "=a"(result) : "a"(1L), "D"(1L),
+        "S"(words), "d"(bytes) : "rcx", "r11", "memory");
+    return result == (long)bytes ? 0 : 1;
+}
 
 static int run_static_initializer_probe(void)
 {
@@ -90,16 +107,16 @@ static void *normal_mutex_worker(void *opaque)
     struct normal_mutex_worker *worker = opaque;
     struct normal_mutex_round *round = worker->round;
 
-    worker->pre_release_trylock = pthread_mutex_trylock(&round->mutex);
+    worker->pre_release_trylock = pthread_mutex_trylock(round->mutex);
     worker->pre_release_unlock = 0;
     if (worker->pre_release_trylock == 0)
-        worker->pre_release_unlock = pthread_mutex_unlock(&round->mutex);
+        worker->pre_release_unlock = pthread_mutex_unlock(round->mutex);
     __atomic_fetch_add(&round->pre_release_count, 1, __ATOMIC_RELEASE);
 
     while (__atomic_load_n(&round->release_workers, __ATOMIC_ACQUIRE) == 0)
         ;
 
-    worker->lock_result = pthread_mutex_lock(&round->mutex);
+    worker->lock_result = pthread_mutex_lock(round->mutex);
     __atomic_fetch_add(&round->lock_attempt_count, 1, __ATOMIC_RELEASE);
     worker->unlock_result = 0;
     if (worker->lock_result == 0) {
@@ -116,15 +133,16 @@ static void *normal_mutex_worker(void *opaque)
             ;
 
         __atomic_store_n(&round->critical_active, 0, __ATOMIC_RELEASE);
-        worker->unlock_result = pthread_mutex_unlock(&round->mutex);
+        worker->unlock_result = pthread_mutex_unlock(round->mutex);
     }
 
     return (void *)worker->marker;
 }
 
-static int run_normal_private_mutex_round(void)
+static int run_normal_private_mutex_round(pthread_mutex_t *mutex,
+    int32_t *observation)
 {
-    struct normal_mutex_round round = {0};
+    struct normal_mutex_round round = {.mutex = mutex};
     struct normal_mutex_worker workers[WORKER_COUNT] = {
         {
             .round = &round,
@@ -150,30 +168,30 @@ static int run_normal_private_mutex_round(void)
     int status = 0;
 
     errno = E2BIG;
-    if (pthread_mutex_init(&round.mutex, 0) != 0)
+    if (pthread_mutex_init(mutex, 0) != 0)
         return 1;
-    if (pthread_mutex_lock(&round.mutex) != 0) {
-        (void)pthread_mutex_destroy(&round.mutex);
+    if (pthread_mutex_lock(mutex) != 0) {
+        (void)pthread_mutex_destroy(mutex);
         return 2;
     }
-    if (pthread_mutex_trylock(&round.mutex) != EBUSY) {
-        (void)pthread_mutex_unlock(&round.mutex);
-        (void)pthread_mutex_destroy(&round.mutex);
+    if (pthread_mutex_trylock(mutex) != EBUSY) {
+        (void)pthread_mutex_unlock(mutex);
+        (void)pthread_mutex_destroy(mutex);
         return 3;
     }
 
     if (pthread_create(&threads[0], 0, normal_mutex_worker, &workers[0]) != 0) {
-        (void)pthread_mutex_unlock(&round.mutex);
-        (void)pthread_mutex_destroy(&round.mutex);
+        (void)pthread_mutex_unlock(mutex);
+        (void)pthread_mutex_destroy(mutex);
         return 4;
     }
     first_created = 1;
     if (pthread_create(&threads[1], 0, normal_mutex_worker, &workers[1]) != 0) {
         __atomic_store_n(&round.release_workers, 1, __ATOMIC_RELEASE);
         __atomic_store_n(&round.release_critical, 1, __ATOMIC_RELEASE);
-        (void)pthread_mutex_unlock(&round.mutex);
+        (void)pthread_mutex_unlock(mutex);
         (void)pthread_join(threads[0], 0);
-        (void)pthread_mutex_destroy(&round.mutex);
+        (void)pthread_mutex_destroy(mutex);
         return 5;
     }
     second_created = 1;
@@ -182,7 +200,7 @@ static int run_normal_private_mutex_round(void)
         WORKER_COUNT)
         ;
 
-    if (pthread_mutex_unlock(&round.mutex) != 0 && status == 0)
+    if (pthread_mutex_unlock(mutex) != 0 && status == 0)
         status = 6;
     __atomic_store_n(&round.release_workers, 1, __ATOMIC_RELEASE);
 
@@ -225,16 +243,25 @@ static int run_normal_private_mutex_round(void)
             status = 12;
     }
 
-    if (pthread_mutex_trylock(&round.mutex) != 0) {
+    if (pthread_mutex_trylock(mutex) != 0) {
         if (status == 0)
             status = 13;
-    } else if (pthread_mutex_unlock(&round.mutex) != 0 && status == 0) {
+    } else if (pthread_mutex_unlock(mutex) != 0 && status == 0) {
         status = 14;
     }
-    if (pthread_mutex_destroy(&round.mutex) != 0 && status == 0)
+    if (pthread_mutex_destroy(mutex) != 0 && status == 0)
         status = 15;
     if (errno != E2BIG && status == 0)
         status = 16;
+    observation[0] = workers[0].pre_release_trylock;
+    observation[1] = workers[1].pre_release_trylock;
+    observation[2] = workers[0].lock_result;
+    observation[3] = workers[1].lock_result;
+    observation[4] = workers[0].unlock_result;
+    observation[5] = workers[1].unlock_result;
+    observation[6] = __atomic_load_n(&round.critical_entries, __ATOMIC_ACQUIRE);
+    observation[7] = __atomic_load_n(&round.critical_overlap, __ATOMIC_ACQUIRE);
+    observation[8] = errno;
     return status;
 }
 
@@ -242,11 +269,12 @@ int crabc_x86_64_pthread_mutex_normal_probe(void)
 {
     int round_index;
     int initializer_status;
+    pthread_mutex_t reused_mutex;
 
-    /* Six exact two-worker rounds are enough to require repeated waiter
-     * mark/wake handoffs without turning this artifact into a stress suite or
-     * a general pthread admission test. The exit-code encoding stays below
-     * 255 so the freestanding entry shim preserves a failing round. */
+    /* Reuse one quiescent object across six exact two-worker rounds to
+     * exercise the destroy/reinitialize transition as well as waiter
+     * handoffs. The exit-code encoding stays below 255 so the freestanding
+     * entry shim preserves a failing round. */
     errno = E2BIG;
     initializer_status = run_static_initializer_probe();
     if (initializer_status != 0)
@@ -254,10 +282,14 @@ int crabc_x86_64_pthread_mutex_normal_probe(void)
     if (errno != E2BIG)
         return 8;
     for (round_index = 0; round_index != CONTENTION_ROUNDS; ++round_index) {
-        int round_status = run_normal_private_mutex_round();
+        int32_t observation[9];
+        int round_status = run_normal_private_mutex_round(&reused_mutex,
+            observation);
 
         if (round_status != 0)
             return 40 + (round_index * 20) + round_status;
+        if (write_observation(observation, 9) != 0)
+            return 20 + round_index;
     }
     return 0;
 }

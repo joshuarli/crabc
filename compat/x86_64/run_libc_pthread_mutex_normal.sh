@@ -4,8 +4,10 @@
 # The same project-header fixture first runs against pinned musl 1.2.6, then
 # as a true `-nostdlib -static` executable linked only with the selected crabc
 # archive. It proves NULL-attribute process-private normal-mutex init/lock/
-# trylock/unlock/destroy and two selected create/join workers under contention,
-# not general pthread synchronization, C11, CRT, loader, or public x86 support.
+# trylock/unlock/destroy, repeated same-object initialization after destruction,
+# and two selected create/join workers under contention. The successful runs
+# must publish identical fixed-width status streams. This does not establish
+# general pthread synchronization, C11, CRT, loader, or public x86 support.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -56,7 +58,7 @@ assert_selected_c_abi_surface() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort timeout; do
+for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sha256sum sort timeout wc; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -65,8 +67,8 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_types_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_pthread_c11_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-pthread-mutex-normal.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/crabc-x86-64-libc-pthread-mutex-normal.XXXXXX")"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-pthread-mutex-normal-reference"
 candidate="$work_dir/crabc-static-pthread-mutex-normal-candidate"
@@ -84,6 +86,12 @@ candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"
+reference_stream="$work_dir/musl-stream.bin"
+candidate_stream="$work_dir/crabc-stream.bin"
+reference_stderr="$work_dir/musl-stderr.txt"
+candidate_stderr="$work_dir/crabc-stderr.txt"
+statuses="$work_dir/statuses.txt"
+hashes="$work_dir/sha256sum.txt"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
@@ -96,12 +104,15 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_pthread_mutex_normal_probe.c \
     -o "$reference"
-if timeout "$EXECUTION_TIMEOUT" "$reference"; then
-    :
+if timeout "$EXECUTION_TIMEOUT" "$reference" >"$reference_stream" 2>"$reference_stderr"; then
+    printf 'musl=0\n' >"$statuses"
 else
     reference_status=$?
+    printf 'musl=%s\n' "$reference_status" >"$statuses"
     fail "pinned-musl reference execution exited ${reference_status}"
 fi
+[ "$(wc -c <"$reference_stream")" -eq 216 ] ||
+    fail "pinned-musl reference did not publish six complete observation records"
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -196,11 +207,20 @@ python3 "$ROOT_DIR/compat/x86_64/elf_call_closure.py" check "$candidate" \
     --instruction '^xchg .*\(%r' --syscall 'nr=202,a2=0x81' ||
     fail "pthread_mutex_unlock lacks its exchange release or private futex wake"
 
-if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
-    :
+if timeout "$EXECUTION_TIMEOUT" "$candidate" >"$candidate_stream" 2>"$candidate_stderr"; then
+    printf 'crabc=0\n' >>"$statuses"
 else
     candidate_status=$?
+    printf 'crabc=%s\n' "$candidate_status" >>"$statuses"
     fail "candidate execution exited ${candidate_status}"
 fi
+[ "$(wc -c <"$candidate_stream")" -eq 216 ] ||
+    fail "candidate did not publish six complete observation records"
+sha256sum "$reference" "$candidate" "$reference_stream" "$candidate_stream" \
+    "$reference_stderr" "$candidate_stderr" >"$hashes"
+cmp -s "$reference_stream" "$candidate_stream" ||
+    fail "candidate mutex observations differ from pinned musl"
+cmp -s "$reference_stderr" "$candidate_stderr" ||
+    fail "candidate stderr differs from pinned musl"
 
-printf 'x86 static crabc-libc normal pthread mutex: PASS\n'
+printf 'x86 static crabc-libc normal pthread mutex: PASS\nevidence: %s\n' "$work_dir"
