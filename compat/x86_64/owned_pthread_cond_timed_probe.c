@@ -10,6 +10,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <time.h>
+#include <sys/mman.h>
+#include <sys/wait.h>
 #include "pthread_futex_wait_witness.h"
 
 /* PI relock sleeps in the kernel's private FUTEX_LOCK_PI operation. */
@@ -298,6 +300,156 @@ static int c11_timeout(void)
     puts("C11 timed condition status and mutex ownership: PASS");
     return 0;
 }
+static atomic_int timed_ready[2], timed_tid[2], timed_completed;
+static int timed_permits, timed_results[2];
+static clockid_t timed_clock;
+static void *timed_handoff_waiter(void *argument)
+{
+    int index = (int)(uintptr_t)argument;
+    if (pthread_mutex_lock(&mutex)) _Exit(51);
+    atomic_store(&timed_tid[index], (int)syscall(SYS_gettid));
+    atomic_store(&timed_ready[index], 1);
+    struct timespec until = deadline(timed_clock, 30000);
+    while (!timed_permits) {
+        int result = pthread_cond_timedwait(&condition, &mutex, &until);
+        if (result || !owned_mutex(&mutex)) _Exit(52);
+    }
+    --timed_permits;
+    timed_results[index] = 1;
+    atomic_fetch_add(&timed_completed, 1);
+    if (pthread_mutex_unlock(&mutex)) _Exit(53);
+    return 0;
+}
+static int timed_handoff(clockid_t clock, int shared)
+{
+    pthread_condattr_t cond_attr;
+    pthread_mutexattr_t mutex_attr;
+    timed_clock = clock;
+    if (pthread_mutexattr_init(&mutex_attr) ||
+        (shared && pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED)) ||
+        pthread_mutex_init(&mutex, &mutex_attr) || pthread_mutexattr_destroy(&mutex_attr) ||
+        pthread_condattr_init(&cond_attr) || pthread_condattr_setclock(&cond_attr, clock) ||
+        (shared && pthread_condattr_setpshared(&cond_attr, PTHREAD_PROCESS_SHARED)) ||
+        pthread_cond_init(&condition, &cond_attr) || pthread_condattr_destroy(&cond_attr)) return 54;
+    pthread_t threads[2];
+    for (int index = 0; index != 2; ++index) {
+        if (pthread_create(&threads[index], 0, timed_handoff_waiter,
+            (void *)(uintptr_t)index)) return 55;
+        while (!atomic_load(&timed_ready[index])) sched_yield();
+        if (shared) {
+            witness_pthread_futex_wait_at(atomic_load(&timed_tid[index]), 0,
+                (unsigned long)(uintptr_t)((char *)&condition + 8));
+        } else {
+            witness_pthread_futex_wait(atomic_load(&timed_tid[index]), 128);
+        }
+    }
+    if (pthread_mutex_lock(&mutex)) return 56;
+    timed_permits = 1;
+    if (pthread_cond_signal(&condition) || pthread_mutex_unlock(&mutex)) return 57;
+    while (atomic_load(&timed_completed) != 1) sched_yield();
+    if (pthread_mutex_lock(&mutex)) return 58;
+    timed_permits = 1;
+    if (pthread_cond_broadcast(&condition) || pthread_mutex_unlock(&mutex)) return 59;
+    for (int index = 0; index != 2; ++index) {
+        if (pthread_join(threads[index], 0)) return 62;
+    }
+    if (atomic_load(&timed_completed) != 2 || !timed_results[0] || !timed_results[1] ||
+        pthread_cond_destroy(&condition) || pthread_mutex_destroy(&mutex)) return 63;
+    puts("pthread timed condition signal/broadcast handoff and relock: PASS");
+    return 0;
+}
+static atomic_int race_ready, race_tid, race_result;
+static void *timed_race_waiter(void *argument)
+{
+    int late = (int)(uintptr_t)argument;
+    if (pthread_mutex_lock(&mutex)) _Exit(64);
+    atomic_store(&race_tid, (int)syscall(SYS_gettid));
+    struct timespec until = deadline(CLOCK_MONOTONIC, late ? 20 : 30000);
+    atomic_store(&race_ready, 1);
+    int result = pthread_cond_timedwait(&condition, &mutex, &until);
+    if (!owned_mutex(&mutex) || (late ? result != ETIMEDOUT && result != 0 : result != 0)) _Exit(65);
+    atomic_store(&race_result, result);
+    if (pthread_mutex_unlock(&mutex)) _Exit(66);
+    return 0;
+}
+static int timed_signal_timeout_race(void)
+{
+    init_condition(CLOCK_MONOTONIC);
+    if (pthread_mutex_init(&mutex, 0)) return 67;
+    for (int iteration = 0; iteration != 8; ++iteration) {
+        int late = iteration & 1;
+        atomic_store(&race_ready, 0);
+        atomic_store(&race_result, -1);
+        if (pthread_create(&waiter, 0, timed_race_waiter, (void *)(uintptr_t)late)) return 68;
+        while (!atomic_load(&race_ready)) sched_yield();
+        witness_pthread_futex_wait(atomic_load(&race_tid), 128);
+        if (pthread_mutex_lock(&mutex)) return 69;
+        if (late) {
+            struct timespec pause = { .tv_sec = 0, .tv_nsec = 30000000 };
+            if (nanosleep(&pause, 0)) return 71;
+        }
+        if (pthread_cond_signal(&condition) || pthread_mutex_unlock(&mutex) ||
+            pthread_join(waiter, 0)) return 72;
+        int result = atomic_load(&race_result);
+        if (late ? result != 0 && result != ETIMEDOUT : result != 0) return 73;
+    }
+    if (pthread_cond_destroy(&condition) || pthread_mutex_destroy(&mutex)) return 74;
+    puts("pthread timed condition signal/timeout race and reuse: PASS");
+    return 0;
+}
+struct timed_shared_state {
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    atomic_int ready;
+    int permit;
+};
+static void timed_shared_child(struct timed_shared_state *state, clockid_t clock, int signal_child)
+{
+    if (pthread_mutex_lock(&state->mutex)) _Exit(75);
+    struct timespec until = deadline(clock, signal_child ? 30000 : 1000);
+    atomic_store(&state->ready, 1);
+    int result = pthread_cond_timedwait(&state->condition, &state->mutex, &until);
+    if (result != (signal_child ? 0 : ETIMEDOUT) || !owned_mutex(&state->mutex) ||
+        state->permit != signal_child || pthread_mutex_unlock(&state->mutex)) _Exit(76);
+    _Exit(0);
+}
+static int timed_shared_lifecycle(clockid_t clock)
+{
+    struct timed_shared_state *state = mmap(0, 4096, PROT_READ | PROT_WRITE,
+        MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    if (state == MAP_FAILED) return 77;
+    for (int pass = 0; pass != 2; ++pass) {
+        pthread_mutexattr_t mutex_attr;
+        pthread_condattr_t cond_attr;
+        if (pthread_mutexattr_init(&mutex_attr) ||
+            pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED) ||
+            pthread_mutex_init(&state->mutex, &mutex_attr) ||
+            pthread_mutexattr_destroy(&mutex_attr) || pthread_condattr_init(&cond_attr) ||
+            pthread_condattr_setpshared(&cond_attr, PTHREAD_PROCESS_SHARED) ||
+            pthread_condattr_setclock(&cond_attr, clock) ||
+            pthread_cond_init(&state->condition, &cond_attr) ||
+            pthread_condattr_destroy(&cond_attr)) return 78;
+        atomic_store(&state->ready, 0);
+        state->permit = 0;
+        pid_t child = fork();
+        if (child < 0) return 79;
+        if (!child) timed_shared_child(state, clock, pass);
+        while (!atomic_load(&state->ready)) sched_yield();
+        witness_process_futex_wait_at(child, child, 0,
+            (unsigned long)(uintptr_t)((char *)&state->condition + 8));
+        if (pass) {
+            if (pthread_mutex_lock(&state->mutex)) return 80;
+            state->permit = 1;
+            if (pthread_cond_signal(&state->condition) || pthread_mutex_unlock(&state->mutex)) return 81;
+        }
+        int status;
+        if (waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status) ||
+            pthread_cond_destroy(&state->condition) || pthread_mutex_destroy(&state->mutex)) return 82;
+    }
+    if (munmap(state, 4096)) return 83;
+    puts("pthread shared timed condition timeout, destroy/reinit and signal: PASS");
+    return 0;
+}
 int main(int argc, char **argv)
 {
     if (argc != 2) return 70;
@@ -309,6 +461,12 @@ int main(int argc, char **argv)
     if (!strcmp(argv[1], "private-shared-mutex")) return private_condition_shared_mutex();
     if (!strcmp(argv[1], "private-timeout-relock-cancel")) return cancel_after_shared_mutex_timeout(0);
     if (!strcmp(argv[1], "shared-timeout-relock-cancel")) return cancel_after_shared_mutex_timeout(1);
+    if (!strcmp(argv[1], "handoff-realtime")) return timed_handoff(CLOCK_REALTIME, 0);
+    if (!strcmp(argv[1], "handoff-monotonic")) return timed_handoff(CLOCK_MONOTONIC, 0);
+    if (!strcmp(argv[1], "handoff-shared")) return timed_handoff(CLOCK_MONOTONIC, 1);
+    if (!strcmp(argv[1], "timeout-race")) return timed_signal_timeout_race();
+    if (!strcmp(argv[1], "shared-lifecycle-realtime")) return timed_shared_lifecycle(CLOCK_REALTIME);
+    if (!strcmp(argv[1], "shared-lifecycle-monotonic")) return timed_shared_lifecycle(CLOCK_MONOTONIC);
     unrecoverable = !strcmp(argv[1], "robust-unrecoverable");
     pi_robust = !strcmp(argv[1], "pi-robust-cancel");
     cancel_during_relock = unrecoverable || pi_robust || !strcmp(argv[1], "robust-cancel");
