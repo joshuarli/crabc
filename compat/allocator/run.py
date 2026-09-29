@@ -13446,6 +13446,42 @@ M2_X86_64_REGISTERED_ARENA_PAGE_MAP_RECEIVERS = {
         "commit_fields": set(),
         "scope": "pinned-c-rust-two-registered-arenas-page-map-top-commit-fault-retry-and-terminal-destroy",
     },
+    "registered-arena-page-map-double-fault-c-rust-differential": {
+        "artifact": "m2-registered-arena-page-map-double-fault",
+        "target": "compat/allocator/m2_registered_arena_page_map_double_fault_x86_64.py",
+        "kind": "c-rust-registered-arena-page-map-fault-differential",
+        "cases": (),
+        "fields": {
+            "first_reserved", "second_reserved", "first_claim_held", "partial_top",
+            "registry_before_fault", "reserved_before_fault", "committed_before_fault",
+            "commits_before_fault", "mmaps_before_fault", "first_returned",
+            "first_in_second", "faults", "protection_calls", "first_protection_offset",
+            "first_protection_length", "second_protection_offset", "second_protection_length",
+            "third_protects_top", "third_protection_length", "third_protection_flags",
+            "fourth_replays_top", "fourth_protection_flags", "fifth_replays_top",
+            "fifth_protection_length", "fifth_protection_flags", "top_advanced_after_fault",
+            "registry_after_failure", "reserved_after_failure", "committed_after_failure",
+            "commits_after_failure", "mmaps_after_failure", "first_mapped", "second_mapped",
+            "warning_order", "warning_count", "warning_first_commits",
+            "warning_second_commits", "warning_first_committed", "warning_second_committed",
+            "warning1_commits", "warning2_commits", "warning3_commits", "warning4_commits",
+            "warning1_committed", "warning2_committed", "warning3_committed",
+            "warning4_committed", "initial_top_count", "warning1_top_count",
+            "warning2_top_count", "warning3_top_count", "warning4_top_count",
+            "warning1_registry", "warning2_registry", "warning3_registry",
+            "warning4_registry", "retry_in_second", "retry_published", "retry_cleared",
+            "top_advanced", "registry_after_retry", "terminal_registry",
+            "terminal_reserved", "terminal_committed", "terminal_first_gone",
+            "terminal_second_gone",
+        },
+        "stable_fields": (
+            "initial_top_count", "warning1_top_count", "warning2_top_count",
+            "warning3_top_count", "warning4_top_count",
+        ),
+        "stable_receipt": "header_dependent_top_counts",
+        "commit_fields": set(),
+        "scope": "pinned-c-rust-two-consecutive-registered-arena-page-map-top-commit-faults-warning-order-retry-and-terminal-destroy",
+    },
 }
 M2_X86_64_VM_PROCESS_RECEIVERS = {
     **{check_id: {**receiver, "kind": "c-rust-process-external-os-differential"}
@@ -15311,13 +15347,24 @@ def _m2_x86_64_vm_check_records(
         ):
             raise HarnessError("native x86 M2 process VM receipt inventory is invalid")
 
-        def matching_integer_traces(c_trace: object, rust_trace: object, fields: set[str]) -> bool:
-            return (
-                isinstance(c_trace, Mapping)
-                and isinstance(rust_trace, Mapping)
-                and set(c_trace) == set(rust_trace) == fields
-                and all(type(value) is int for value in (*c_trace.values(), *rust_trace.values()))
-                and all(c_trace[field] == rust_trace[field] for field in fields)
+        def matching_integer_traces(
+            c_trace: object, rust_trace: object, fields: set[str],
+            stable_fields: tuple[str, ...] = (),
+        ) -> bool:
+            if (
+                not isinstance(c_trace, Mapping)
+                or not isinstance(rust_trace, Mapping)
+                or set(c_trace) != set(rust_trace) or set(c_trace) != fields
+                or not all(type(value) is int for value in (*c_trace.values(), *rust_trace.values()))
+                or not set(stable_fields) <= fields
+            ):
+                return False
+            if not all(c_trace[field] == rust_trace[field] for field in fields - set(stable_fields)):
+                return False
+            return not stable_fields or all(
+                trace[stable_fields[0]] > 0
+                and all(trace[field] == trace[stable_fields[0]] for field in stable_fields[1:])
+                for trace in (c_trace, rust_trace)
             )
 
         for check_id, receiver in M2_X86_64_VM_PROCESS_RECEIVERS.items():
@@ -15331,6 +15378,16 @@ def _m2_x86_64_vm_check_records(
             }
             if receiver["commit_fields"]:
                 expected_keys |= {"commit_c", "commit_rust", "commit_c_commands", "commit_rust_commands"}
+            stable_fields = receiver.get("stable_fields", ())
+            stable_receipt = receiver.get("stable_receipt")
+            if stable_fields:
+                if (
+                    receiver["cases"]
+                    or not isinstance(stable_receipt, str) or not stable_receipt
+                    or not set(stable_fields) <= receiver["fields"]
+                ):
+                    raise HarnessError("native x86 M2 process VM stable-field definition is invalid")
+                expected_keys.add(stable_receipt)
             if (
                 check.get("kind") != receiver["kind"]
                 or check.get("target") != receiver["target"]
@@ -15351,7 +15408,9 @@ def _m2_x86_64_vm_check_records(
                     not isinstance(c_trace, Mapping)
                     or not isinstance(rust_trace, Mapping)
                     or set(c_trace) != set(rust_trace) or set(c_trace) != set(cases)
-                    or any(not matching_integer_traces(c_trace[case], rust_trace[case], receiver["fields"])
+                    or any(not matching_integer_traces(
+                        c_trace[case], rust_trace[case], receiver["fields"], stable_fields
+                    )
                            for case in cases)
                 ):
                     raise HarnessError("native x86 M2 process VM case traces are invalid")
@@ -15366,9 +15425,14 @@ def _m2_x86_64_vm_check_records(
                         **{case: {"run_status": 0, "stderr": ""} for case in cases},
                     }
             else:
-                if not matching_integer_traces(c_trace, rust_trace, receiver["fields"]):
+                if not matching_integer_traces(c_trace, rust_trace, receiver["fields"], stable_fields):
                     raise HarnessError("native x86 M2 process VM flat traces are invalid")
                 expected_commands = {"build_status": 0, "run_status": 0, "stderr": ""}
+            if stable_fields and observed[stable_receipt] != {
+                "c": {field: c_trace[field] for field in stable_fields},
+                "rust": {field: rust_trace[field] for field in stable_fields},
+            }:
+                raise HarnessError("native x86 M2 process VM stable-field receipt is invalid")
             if any(observed.get(key) != expected_commands for key in ("c_commands", "rust_commands")):
                 raise HarnessError("native x86 M2 process VM command receipts are invalid")
             if receiver["commit_fields"] and (

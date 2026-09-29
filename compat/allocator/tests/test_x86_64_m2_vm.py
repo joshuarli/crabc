@@ -36,6 +36,7 @@ EXPECTED_VM_CHECK_IDS = (
     "explicit-arena-metadata-fault-c-rust-differential",
     "registered-arena-metadata-fault-c-rust-differential",
     "registered-arena-page-map-fault-c-rust-differential",
+    "registered-arena-page-map-double-fault-c-rust-differential",
     "selected-subprocess-statistics-aggregation",
     "process-policy-ticket-zero-live-random",
     "aligned-map-trim-failure-leak",
@@ -879,6 +880,13 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "scope": "one fresh process-owned mapping per side",
                 "status": "matched",
             }
+            if receiver.get("stable_fields"):
+                for field in receiver["stable_fields"]:
+                    observed["rust"][field] = 2
+                observed[receiver["stable_receipt"]] = {
+                    "c": {field: observed["c"][field] for field in receiver["stable_fields"]},
+                    "rust": {field: observed["rust"][field] for field in receiver["stable_fields"]},
+                }
             if receiver["commit_fields"]:
                 commit = {field: 1 for field in receiver["commit_fields"]}
                 observed.update({
@@ -937,6 +945,21 @@ class NativeVmAssemblyTests(unittest.TestCase):
                             row["commit_c_commands"]["run_status"] = 1
                         else:
                             row["commit_rust_commands"]["run_status"] = 1
+                        with self.assertRaises(RUNNER.HarnessError):
+                            RUNNER._m2_x86_64_vm_check_records(
+                                summary, self.vm_evidence(summary), process_vm_evidence=changed
+                            )
+            if receiver.get("stable_fields"):
+                for name in ("missing_snapshot", "changed_snapshot", "changed_warning_count"):
+                    with self.subTest(check_id=check_id, mutation=name):
+                        changed = copy.deepcopy(evidence)
+                        row = changed[check_id]
+                        if name == "missing_snapshot":
+                            row.pop(receiver["stable_receipt"])
+                        elif name == "changed_snapshot":
+                            row[receiver["stable_receipt"]]["rust"][receiver["stable_fields"][0]] += 1
+                        else:
+                            row["rust"][receiver["stable_fields"][1]] += 1
                         with self.assertRaises(RUNNER.HarnessError):
                             RUNNER._m2_x86_64_vm_check_records(
                                 summary, self.vm_evidence(summary), process_vm_evidence=changed
@@ -1362,6 +1385,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "explicit-arena-metadata-fault-c-rust-differential",
                 "registered-arena-metadata-fault-c-rust-differential",
                 "registered-arena-page-map-fault-c-rust-differential",
+                "registered-arena-page-map-double-fault-c-rust-differential",
             },
             {record["id"] for record in vm_records},
         )
