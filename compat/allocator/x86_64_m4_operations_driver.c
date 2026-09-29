@@ -748,6 +748,53 @@ static void section_api_modes(void) {
   static const size_t sizes[] = { 0, 1, 7, 8, 9, 17, 33, 64, 129, 1024, 1025, 4096, 65537, 524288, 524289 };
   static const size_t alignments[] = { 1, 8, 16, 64, 4096, 131072 };
   char key[96];
+  mi_heap_t* main_heap = mi_heap_main();
+  mi_heap_t* auxiliary_heap = mi_heap_new();
+  mi_theap_t* previous = mi_theap_set_default(mi_heap_theap(auxiliary_heap));
+  mi_heap_t* heaps[] = { main_heap, auxiliary_heap };
+  for (size_t h = 0; h < sizeof heaps / sizeof heaps[0]; h++) {
+    void* p = mi_heap_malloc(heaps[h], 33);
+    const size_t usable = mi_usable_size(p);
+    key_name(key, sizeof key, "api_modes.heap_target", h, 0);
+    line(key, "%d,%d", p != NULL, p != NULL && mi_heap_of(p) == heaps[h]);
+    if (p == NULL) { continue; }
+    fill(p, usable, 0x69);
+    for (size_t kind = 0; kind < 8; kind++) {
+      errno = 0;
+      void* failed = NULL;
+      switch (kind) {
+        case 0: failed = mi_heap_calloc(heaps[h], SIZE_MAX, 2); break;
+        case 1: failed = mi_heap_mallocn(heaps[h], SIZE_MAX, 2); break;
+        case 2: failed = mi_heap_calloc_aligned(heaps[h], SIZE_MAX, 2, 64); break;
+        case 3: failed = mi_heap_calloc_aligned_at(heaps[h], SIZE_MAX, 2, 64, 7); break;
+        case 4: failed = mi_heap_reallocn(heaps[h], p, SIZE_MAX, 2); break;
+        case 5: failed = mi_heap_recalloc(heaps[h], p, SIZE_MAX, 2); break;
+        case 6: failed = mi_heap_recalloc_aligned(heaps[h], p, SIZE_MAX, 2, 64); break;
+        case 7: failed = mi_heap_recalloc_aligned_at(heaps[h], p, SIZE_MAX, 2, 64, 7); break;
+      }
+      key_name(key, sizeof key, "api_modes.heap_count_failure", h, kind);
+      line(key, "%d,%d,%d,%d", failed == NULL, errno,
+           mi_usable_size(p) == usable, has_fill(p, usable, 0x69));
+    }
+    void* q = mi_heap_rezalloc(heaps[h], p, usable + 17);
+    key_name(key, sizeof key, "api_modes.heap_realloc_target", h, 0);
+    line(key, "%d,%d,%d,%d", q != NULL, q != NULL && mi_heap_of(q) == heaps[h],
+         q != NULL && has_fill(q, usable, 0x69),
+         q != NULL && mi_usable_size(q) >= usable
+           && is_zero((char*)q + usable, mi_usable_size(q) - usable));
+    mi_free(q == NULL ? p : q);
+    p = mi_heap_zalloc_aligned_at(heaps[h], 33, 64, 0);
+    key_name(key, sizeof key, "api_modes.heap_aligned_target", h, 0);
+    line(key, "%d,%d,%d", p != NULL, p != NULL && mi_heap_of(p) == heaps[h],
+         p != NULL && is_zero(p, mi_usable_size(p)));
+    q = mi_heap_rezalloc_aligned_at(heaps[h], p, 160, 64, 0);
+    key_name(key, sizeof key, "api_modes.heap_aligned_realloc_target", h, 0);
+    line(key, "%d,%d,%d", q != NULL, q != NULL && mi_heap_of(q) == heaps[h],
+         q != NULL && is_zero(q, mi_usable_size(q)));
+    mi_free(q == NULL ? p : q);
+  }
+  mi_theap_set_default(previous);
+  mi_heap_delete(auxiliary_heap);
   for (size_t s = 0; s < sizeof sizes / sizeof sizes[0]; s++) {
     void* p = mi_calloc(1, sizes[s]);
     const size_t usable = mi_usable_size(p);

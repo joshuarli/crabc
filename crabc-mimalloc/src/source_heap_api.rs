@@ -940,7 +940,7 @@ unsafe fn heap_visit_free_map(
 /// `page` is a live page of `heap`, and no callback may retire or move that
 /// page, mutate its free lists, or race its ordinary-field owner. The caller
 /// keeps the page's arena slice registered for the whole call.
-unsafe fn visit_heap_page(
+pub(crate) unsafe fn visit_heap_page(
     heap: NonNull<Heap>,
     page: NonNull<Page>,
     visit_blocks: bool,
@@ -1194,8 +1194,8 @@ unsafe fn heap_allocate(heap: *mut c_void, size: usize, request: Request, zero: 
     if is_main_heap(heap) {
         main_heaps::select_main_heap_theap();
         return match (request, zero) {
-            (Request::Plain, false) => crate::source_api::malloc(size),
-            (Request::Plain, true) => crate::source_api::zalloc(size),
+            (Request::Plain, false) => crate::source_api::malloc_zero_native(size, false),
+            (Request::Plain, true) => crate::source_api::malloc_zero_native(size, true),
             (Request::Aligned { alignment, offset }, false) => crate::source_api::malloc_aligned_at(size, alignment, offset),
             (Request::Aligned { alignment, offset }, true) => crate::source_api::zalloc_aligned_at(size, alignment, offset),
         };
