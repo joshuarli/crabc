@@ -14,7 +14,9 @@
 # on the initial thread, on a worker, and after the initial thread's
 # pthread_exit, and a churn of creation, exit, fork, and targeted-thread
 # lookups around repeated transitions.  Every raw stream is compared
-# byte-for-byte with pinned musl.
+# byte-for-byte with pinned musl. The divergence scenario splits task credentials
+# with a raw syscall and checks both an aborted first failure and SIGKILL after
+# a worker has succeeded before the caller fails.
 set -euo pipefail
 ulimit -c 0
 
@@ -283,7 +285,7 @@ run_oracle() {
         validate_transcript "$scenario" "$work/oracle-$scenario.stdout"
         [ ! -s "$work/oracle-$scenario.stderr" ]
     done
-    for scenario in transitions threads; do
+    for scenario in transitions threads divergence; do
         run_in_root "$work/oracle-root" "$work/oracle-$scenario.stdout" \
             "$work/oracle-$scenario.stderr" /consumer "$scenario"
         [ ! -s "$work/oracle-$scenario.stderr" ]
@@ -313,7 +315,7 @@ run_candidate() {
         validate_transcript "$scenario" "$work/$label-$scenario.stdout"
         compare_with_oracle "$label" "$scenario"
     done
-    for scenario in transitions threads; do
+    for scenario in transitions threads divergence; do
         run_in_root "$root" \
             "$work/$label-$scenario.stdout" "$work/$label-$scenario.stderr" \
             "${command[@]}" "$scenario"
@@ -364,6 +366,7 @@ mapped user namespace setgroups result: a valid one-element current-gid slice is
 same-object alias result: setreuid, seteuid, setregid, and setegid succeed for unchanged IDs in pinned musl and crabc
 same-object transitions result: pinned musl and crabc produce identical raw results and kernel IDs for real single-threaded setgroups, setresuid/setresgid, setuid, and setgid changes as container root
 same-object threads result: every thread reports each transition of all nine setters from initial-thread, worker, and post-pthread_exit callers; a first-thread EPERM changes no thread; transitions stay complete under creation, exit, fork, and targeted-lookup churn
+same-object divergence result: raw task-local credential splits make an unprivileged first worker abort setresuid and setgroups without mutation; a root worker succeeding before the unprivileged caller fails terminates the process with SIGKILL for both setters
 EOF
 
 if [ "$static_was_supplied" -eq 0 ] && [ "$dynamic_was_supplied" -eq 0 ]; then

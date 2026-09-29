@@ -670,6 +670,135 @@ static void threads_churn(void)
     fflush(stdout);
 }
 
+/* Linux lets raw credential syscalls split a thread group's credentials.
+ * The libc setters must then preserve musl's failure ordering: a failing
+ * first worker prevents the root caller from running its syscall, while a
+ * successful root worker followed by an unprivileged caller's failure kills
+ * the process rather than returning with inconsistent credentials. */
+struct divergent_worker {
+    int drop_uid;
+    int ready;
+    int release;
+    long raw_drop_result;
+    struct credential_ids before;
+    struct credential_ids after;
+    long groups_before;
+    long groups_after;
+    gid_t group_list_before[256];
+    gid_t group_list_after[256];
+};
+
+static long capture_group_list(gid_t groups[256])
+{
+    return raw_syscall3(SYS_getgroups, 256, (long)groups, 0);
+}
+
+static int group_lists_equal(long before_count, const gid_t before[256],
+    long after_count, const gid_t after[256])
+{
+    long index;
+    if (before_count < 0 || before_count != after_count)
+        return 0;
+    for (index = 0; index < before_count; ++index)
+        if (before[index] != after[index])
+            return 0;
+    return 1;
+}
+
+static void *divergent_worker_main(void *argument)
+{
+    struct divergent_worker *worker = argument;
+    if (worker->drop_uid)
+        worker->raw_drop_result = raw_syscall3(SYS_setresuid, 41, 42, 43);
+    else
+        worker->raw_drop_result = 0;
+    (void)capture_ids(&worker->before);
+    worker->groups_before = capture_group_list(worker->group_list_before);
+    __atomic_store_n(&worker->ready, 1, __ATOMIC_SEQ_CST);
+    while (!__atomic_load_n(&worker->release, __ATOMIC_SEQ_CST))
+        ;
+    (void)capture_ids(&worker->after);
+    worker->groups_after = capture_group_list(worker->group_list_after);
+    return NULL;
+}
+
+static int divergent_setter(int groups, int partial)
+{
+    static const gid_t replacement[2] = { 5, 6 };
+    struct divergent_worker worker = { .drop_uid = !partial };
+    struct credential_ids caller_before = { 0 };
+    struct credential_ids caller_after = { 0 };
+    gid_t caller_group_list_before[256] = { 0 };
+    gid_t caller_group_list_after[256] = { 0 };
+    pthread_t thread;
+    long caller_groups_before;
+    long caller_groups_after;
+    int result;
+    int error;
+
+    if (pthread_create(&thread, NULL, divergent_worker_main, &worker) != 0)
+        return 0;
+    while (!__atomic_load_n(&worker.ready, __ATOMIC_SEQ_CST))
+        ;
+    if (worker.raw_drop_result != 0 || !capture_ids(&caller_before))
+        return 0;
+    caller_groups_before = capture_group_list(caller_group_list_before);
+    if (partial && raw_syscall3(SYS_setresuid, 41, 42, 43) != 0)
+        return 0;
+    errno = 0;
+    result = groups ? setgroups(2, replacement) : setresuid(51, 52, 53);
+    error = errno;
+    if (partial)
+        return 0; /* A return after the root worker succeeded is invalid. */
+
+    __atomic_store_n(&worker.release, 1, __ATOMIC_SEQ_CST);
+    if (pthread_join(thread, NULL) != 0 || !capture_ids(&caller_after))
+        return 0;
+    caller_groups_after = capture_group_list(caller_group_list_after);
+    if (result != -1 || error != EPERM ||
+        !ids_unchanged(&caller_before, &caller_after) ||
+        !ids_unchanged(&worker.before, &worker.after) ||
+        !group_lists_equal(caller_groups_before, caller_group_list_before,
+            caller_groups_after, caller_group_list_after) ||
+        !group_lists_equal(worker.groups_before, worker.group_list_before,
+            worker.groups_after, worker.group_list_after))
+        return 0;
+    printf("credentials-divergence first-failure-%s: status=%d errno=%d "
+        "caller=%lu/%lu/%lu worker=%lu/%lu/%lu groups=%ld/%ld\n",
+        groups ? "setgroups" : "setresuid", result, error,
+        (unsigned long)caller_after.real_uid,
+        (unsigned long)caller_after.effective_uid,
+        (unsigned long)caller_after.saved_uid,
+        (unsigned long)worker.after.real_uid,
+        (unsigned long)worker.after.effective_uid,
+        (unsigned long)worker.after.saved_uid,
+        caller_groups_after, worker.groups_after);
+    fflush(stdout);
+    return 1;
+}
+
+static int run_divergent_case(int groups, int partial)
+{
+    pid_t child = fork();
+    int status;
+
+    if (child < 0)
+        return 0;
+    if (child == 0)
+        _exit(divergent_setter(groups, partial) ? 0 : 1);
+    if (waitpid(child, &status, 0) != child)
+        return 0;
+    if (partial) {
+        if (!WIFSIGNALED(status) || WTERMSIG(status) != SIGKILL)
+            return 0;
+        printf("credentials-divergence partial-%s: signal=%d\n",
+            groups ? "setgroups" : "setresuid", WTERMSIG(status));
+        fflush(stdout);
+        return 1;
+    }
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
 static int equals(const char *left, const char *right)
 {
     while (*left == *right) {
@@ -732,6 +861,16 @@ int main(int argc, char **argv)
             !run_transition(threads_churn))
             return 7;
         puts("credentials-profile threads: every thread observes each transition");
+        return 0;
+    }
+    if (equals(argv[1], "divergence")) {
+        struct credential_ids ids = { 0 };
+        if (!capture_ids(&ids) || ids.real_uid != 0 || ids.effective_uid != 0)
+            return 8;
+        if (!run_divergent_case(0, 0) || !run_divergent_case(1, 0) ||
+            !run_divergent_case(0, 1) || !run_divergent_case(1, 1))
+            return 9;
+        puts("credentials-divergence: first failure aborts; partial success kills");
         return 0;
     }
     if (equals(argv[1], "aliases")) {
