@@ -7,7 +7,7 @@ readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly RECORD_SIZE=32
-readonly EXPECTED_RECORDS=232
+readonly EXPECTED_RECORDS=15720
 readonly SELECTED_SYMBOLS=(exp2 exp2f)
 readonly FENV_SIBLINGS=(feclearexcept fegetenv fegetround fesetenv fesetround fetestexcept)
 readonly LOCAL_PROVIDERS=(
@@ -153,9 +153,15 @@ fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$headers" "$dynamic"; then
 	fail "candidate is dynamic"
 fi
-if grep -Eq '[[:space:]]TLS[[:space:]]|TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' \
-	"$headers" "$relocs" "$candidate_symbols" "$disassembly"; then
-	fail "candidate retains TLS"
+if [ "$(awk '$1 == "TLS" { count++; if ($6 != "0x000004") bad=1 } END { print count == 1 && !bad }' "$headers")" != 1 ]; then
+	fail "candidate TLS segment is not the four-byte errno cell"
+fi
+if [ "$(awk '$4 == "TLS" { count++; if ($3 != 4 || $5 != "GLOBAL" || $6 != "HIDDEN" || $8 !~ /5errno5ERRNO$/) bad=1 } END { print count == 1 && !bad }' "$candidate_symbols")" != 1 ]; then
+	fail "candidate retains TLS outside libc errno"
+fi
+if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' \
+	"$relocs" "$candidate_symbols" "$disassembly"; then
+	fail "candidate retains dynamic TLS access"
 fi
 if grep -Eq 'crabc_core|mimalloc|float_parse|math_special|math_complex|math_elementary_long_double|libm' \
 	"$candidate_symbols" "$disassembly"; then
@@ -175,7 +181,12 @@ if grep -Eq 'vfmadd|vfnmadd|vfmsub|vfnmsub' "$disassembly"; then
 	fail "candidate accidentally retains an FMA ISA instruction"
 fi
 
+report_dir="$ROOT_DIR/.work/x86_64/libc-math-exp2"
+mkdir -p "$report_dir"
+cp "$candidate" "$report_dir/candidate"
 "$candidate" >"$candidate_output" || fail "freestanding exp2/exp2f fixture failed"
+cp "$reference_output" "$report_dir/oracle.records"
+cp "$candidate_output" "$report_dir/candidate.records"
 if ! cmp -s "$reference_output" "$candidate_output"; then
 	cmp -l "$reference_output" "$candidate_output" | sed -n '1,120p' >&2 || true
 	fail "candidate exp2/exp2f record stream differs from pinned musl"
