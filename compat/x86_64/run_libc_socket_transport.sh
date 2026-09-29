@@ -5,11 +5,12 @@
 # `-nostdlib -static` executable linked solely through the selected crabc
 # archive. It selects local AF_UNIX named stream/datagram and pair traffic, plus
 # AF_INET loopback UDP and TCP lifecycle calls, including nonblocking TCP
-# readiness, SO_ERROR, shutdown, and peer closure. It observes Linux 5.10's atomic
-# SOCK_CLOEXEC | SOCK_NONBLOCK success for socket, socketpair, and accept4,
+# readiness, SO_ERROR, shutdown, descriptor duplication, and peer closure.
+# It observes Linux 5.10's atomic SOCK_CLOEXEC | SOCK_NONBLOCK success for
+# socket, socketpair, and accept4,
 # plus musl's zero-flag accept4 dispatch through accept under a syscall filter.
-# Raw close/fcntl/poll/getsockopt are fixture observers only; this is not socket options,
-# ioctl/interface, message/vector I/O,
+# Raw close/dup/fcntl/poll/getsockopt are fixture observers only; this is not
+# socket options, ioctl/interface, message/vector I/O,
 # resolver/netdb, pathname/fcntl APIs, pthread cancellation, libc.so, CRT,
 # loader, or sysroot.
 set -euo pipefail

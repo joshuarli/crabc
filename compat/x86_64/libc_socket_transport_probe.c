@@ -26,6 +26,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/socket.h>
@@ -64,8 +65,8 @@ _Static_assert(SYS_socket == 41 && SYS_connect == 42 && SYS_accept == 43 &&
     SYS_bind == 49 && SYS_listen == 50 && SYS_getsockname == 51 &&
     SYS_getpeername == 52 && SYS_socketpair == 53 && SYS_accept4 == 288,
     "x86 selected socket syscall numbers");
-_Static_assert(SYS_write == 1 && SYS_close == 3 && SYS_getpid == 39 &&
-    SYS_fcntl == 72,
+_Static_assert(SYS_write == 1 && SYS_close == 3 && SYS_poll == 7 &&
+    SYS_dup == 32 && SYS_getpid == 39 && SYS_fcntl == 72,
     "x86 fixture-only descriptor syscall numbers");
 _Static_assert(F_GETFD == 1 && F_GETFL == 3 && FD_CLOEXEC == 1 &&
     O_NONBLOCK == 04000,
@@ -153,6 +154,15 @@ static int raw_getfd(int file_descriptor)
 static int raw_getfl(int file_descriptor)
 {
     return (int)raw_syscall3(SYS_fcntl, file_descriptor, F_GETFL, 0);
+}
+
+static int raw_poll_ready(int file_descriptor, short events, short required)
+{
+    struct pollfd entry = { .fd = file_descriptor, .events = events };
+    long result = raw_syscall3(SYS_poll, (long)&entry, 1, 3000);
+
+    return result == 1 && (entry.revents & required) == required &&
+        (entry.revents & POLLNVAL) == 0;
 }
 
 static int bytes_equal(const char *left, const char *right, size_t length)
@@ -488,8 +498,19 @@ static int check_unix_pair(void)
         status = 4;
         goto finish;
     }
-    if (shutdown(pair[0], SHUT_WR) != 0 || recv(pair[1], received, 1, 0) != 0)
+    if (shutdown(pair[0], SHUT_WR) != 0 || recv(pair[1], received, 1, 0) != 0) {
         status = 5;
+        goto finish;
+    }
+    errno = 0;
+    if (send(pair[0], "x", 1, MSG_NOSIGNAL) != -1 || errno != EPIPE) {
+        status = 6;
+        goto finish;
+    }
+    trace_unix_value('t', (unsigned int)errno);
+    if (send(pair[1], "w", 1, 0) != 1 ||
+        recv(pair[0], received, 1, 0) != 1 || received[0] != 'w')
+        status = 7;
 
 finish:
     raw_close(pair[1]);
@@ -506,6 +527,7 @@ static int check_loopback_datagram(void)
     int sender = -1;
     struct sockaddr_in bound = loopback_address();
     struct sockaddr_in source = { 0 };
+    struct sockaddr disconnected = { .sa_family = AF_UNSPEC };
     socklen_t bound_length = sizeof(bound);
     socklen_t source_length = sizeof(source);
     char received[3] = { 0, 0, 0 };
@@ -532,6 +554,28 @@ static int check_loopback_datagram(void)
         source_length != sizeof(source) || source.sin_family != AF_INET ||
         source.sin_addr.s_addr != 0x0100007fU || source.sin_port == 0) {
         status = 3;
+        goto finish;
+    }
+    if (connect(sender, (const struct sockaddr *)&bound, sizeof(bound)) != 0 ||
+        send(sender, "c", 1, 0) != 1 ||
+        recv(receiver, received, 1, 0) != 1 || received[0] != 'c') {
+        status = 4;
+        goto finish;
+    }
+    if (connect(sender, &disconnected, sizeof(disconnected.sa_family)) != 0) {
+        status = 5;
+        goto finish;
+    }
+    errno = 0;
+    if (send(sender, "x", 1, 0) != -1 || errno != EDESTADDRREQ) {
+        status = 6;
+        goto finish;
+    }
+    trace_unix_value('u', (unsigned int)errno);
+    if (sendto(sender, "r", 1, 0, (const struct sockaddr *)&bound,
+            sizeof(bound)) != 1 ||
+        recv(receiver, received, 1, 0) != 1 || received[0] != 'r') {
+        status = 7;
     }
 
 finish:
@@ -546,11 +590,14 @@ static int check_loopback_stream(void)
     int first_client = -1;
     int second_client = -1;
     int first_peer = -1;
+    int first_peer_copy = -1;
     int second_peer = -1;
+    int closed_peer;
     struct sockaddr_in listener_address = loopback_address();
     struct sockaddr_in peer_address = { 0 };
     socklen_t listener_length = sizeof(listener_address);
     socklen_t peer_length = sizeof(peer_address);
+    char byte = 0;
     int status = 0;
 
     listener = socket(AF_INET, SOCK_STREAM, 0);
@@ -587,6 +634,45 @@ static int check_loopback_stream(void)
         status = 4;
         goto finish;
     }
+    first_peer_copy = (int)raw_syscall1(SYS_dup, first_peer);
+    if (first_peer_copy < 0 || raw_getfd(first_peer_copy) != 0 ||
+        (raw_getfl(first_peer_copy) & O_NONBLOCK) != 0) {
+        status = 7;
+        goto finish;
+    }
+    closed_peer = first_peer;
+    raw_close(first_peer);
+    first_peer = -1;
+    errno = 0;
+    if (send(closed_peer, "x", 1, 0) != -1 || errno != EBADF) {
+        status = 8;
+        goto finish;
+    }
+    trace_unix_value('v', (unsigned int)errno);
+    if (send(first_client, "a", 1, 0) != 1 ||
+        !raw_poll_ready(first_peer_copy, POLLIN, POLLIN) ||
+        recv(first_peer_copy, &byte, 1, 0) != 1 || byte != 'a') {
+        status = 9;
+        goto finish;
+    }
+    if (shutdown(first_client, SHUT_WR) != 0 ||
+        !raw_poll_ready(first_peer_copy, POLLIN | POLLRDHUP,
+            POLLIN | POLLRDHUP) ||
+        recv(first_peer_copy, &byte, 1, 0) != 0 ||
+        send(first_peer_copy, "b", 1, 0) != 1 ||
+        !raw_poll_ready(first_client, POLLIN, POLLIN) ||
+        recv(first_client, &byte, 1, 0) != 1 || byte != 'b') {
+        status = 10;
+        goto finish;
+    }
+    raw_close(first_peer_copy);
+    first_peer_copy = -1;
+    if (!raw_poll_ready(first_client, POLLIN | POLLRDHUP,
+            POLLIN | POLLRDHUP) ||
+        recv(first_client, &byte, 1, 0) != 0) {
+        status = 11;
+        goto finish;
+    }
 
     second_client = socket(AF_INET, SOCK_STREAM, 0);
     if (second_client < 0 ||
@@ -608,6 +694,7 @@ static int check_loopback_stream(void)
 
 finish:
     raw_close(second_peer);
+    raw_close(first_peer_copy);
     raw_close(first_peer);
     raw_close(second_client);
     raw_close(first_client);
