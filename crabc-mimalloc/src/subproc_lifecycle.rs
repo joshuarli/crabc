@@ -1511,7 +1511,42 @@ pub(crate) unsafe fn native_child_heap_release(
     >,
 > {
     // SAFETY: current-thread slot, no other reference live.
-    let current = unsafe { current_child_member() }.as_mut()?;
+    let current = unsafe { current_child_member() }.as_mut();
+    // Source permits a caller outside the Heap's subprocess to destroy it.
+    // The Heap's identity selects its child record; the current thread's
+    // membership cannot stand in for a different child's owner.
+    let subprocess = unsafe { heap.as_ref().subprocess_pointer() };
+    if subprocess != crate::subproc::MainSubprocess::global().identity_ptr() {
+        // SAFETY: a live child Heap keeps its source subprocess image pinned;
+        // the identity is its first field and its record remains published.
+        let image = unsafe { &*subprocess.cast::<crate::subproc::ChildSubprocessImage>() };
+        let id = NativeSubprocessId(image.native_record()?);
+        if current.as_ref().is_none_or(|member| member.id != id) {
+            if !destroy {
+                return Some(Err(NativeSubprocessError::Gone));
+            }
+            let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
+                return Some(Err(NativeSubprocessError::Closed));
+            };
+            let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
+                .ready_child_subprocess_inputs() else {
+                return Some(Err(NativeSubprocessError::NotReady));
+            };
+            // SAFETY: the source Heap and record are live; the record lock
+            // excludes other child lifecycle operations for the release.
+            return Some(unsafe {
+                id.with_owner(|owner| {
+                    owner.as_mut()
+                        .map(|child| unsafe {
+                            crate::types::heap_registry::lifecycle::child_heap_destroy_foreign(child, binding, heap)
+                        })
+                        .ok_or(NativeSubprocessError::Gone)
+                })
+                .and_then(|result| result)
+            });
+        }
+    }
+    let current = current?;
     let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
         return Some(Err(NativeSubprocessError::Closed));
     };

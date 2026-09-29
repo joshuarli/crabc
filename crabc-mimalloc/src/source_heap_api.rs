@@ -1346,9 +1346,9 @@ pub unsafe fn heap_calloc_aligned_at(
 /// legal release could not complete (its owners are retained).
 ///
 /// # Safety
-/// `heap` is null or a live Heap of the calling thread's subprocess that no
-/// other thread uses during the call; after a destroy no block of it is used
-/// again.
+/// `heap` is null or a live Heap that no other thread uses during the call;
+/// after a destroy no block of it is used again. A foreign child Heap may be
+/// destroyed after its owner thread exits.
 pub unsafe fn heap_release(heap: *mut c_void, destroy: bool) -> bool {
     let Some(heap) = NonNull::new(heap.cast::<Heap>()) else { return true };
     // SAFETY: forwarded; the child route checks its own membership.

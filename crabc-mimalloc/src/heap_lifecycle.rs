@@ -42,6 +42,7 @@ use core::mem::{align_of, size_of};
 use core::ptr::NonNull;
 
 use super::{Heap, SourceHeapRegistryError};
+use crate::types::Theap;
 use crate::meta::{ChildHeapTheapError, ChildMainHeapContextOwner, ChildMetadataPageEngineError, ChildThreadOwner, MetaAllocator};
 use crate::owned_tls_key_registry::{
     OwnedThreadLocalKeyError, OwnedThreadLocalKeyLease, OwnedThreadLocalKeyRegistry,
@@ -340,6 +341,95 @@ pub(crate) unsafe fn child_heap_destroy(
         delete_heap_pages(child, binding, heap, None)?;
         release_heap(child, member, binding, heap)
     }
+}
+
+/// `mi_heap_destroy` of a child Heap by a thread outside that subprocess.
+/// Its former owner may have exited, so all detached Theaps and Heap-owned
+/// blocks are released through their child backing without a caller TLD.
+///
+/// # Safety
+/// `heap` is a live non-main Heap of `child`, no thread uses it during this
+/// call, and no block of it is used after the call. The child record lock
+/// excludes concurrent child lifecycle operations.
+pub(crate) unsafe fn child_heap_destroy_foreign(
+    child: &mut ChildMainHeapContextOwner<'_>,
+    binding: ProcessMainBackingBinding,
+    heap: NonNull<Heap>,
+) -> Result<HeapReleaseOutcome, HeapReleaseError> {
+    if child.main_heap_pointer() == Some(heap) {
+        return Ok(HeapReleaseOutcome::MainHeapRefused);
+    }
+    let identity = child
+        .with_child_image(|image| core::ptr::NonNull::from(image.get_ref().identity()))
+        .ok_or(HeapReleaseError::InvalidChild)?;
+    let mut released = true;
+    // SAFETY: the Heap's Theap list is stable under the child record lock.
+    unsafe {
+        heap.as_ref().detach_and_take_theaps(identity.as_ref(), |theap| {
+            heap.as_ref().merge_detached_theap_statistics(theap.as_ref());
+            if !Theap::decref_at(theap) {
+                return;
+            }
+            if !Theap::is_detached_at(theap) {
+                identity.as_ref().record_statistics_theap_unlinked();
+            }
+            let memory = theap.as_ref().memory_id();
+            if memory.arena_memory().is_some() {
+                // SAFETY: this was the Theap's final reference and its list
+                // edge was just removed; the child retains the arena.
+                core::ptr::drop_in_place(theap.as_ptr());
+                released &= child.with_child_image(|image| {
+                    unsafe { image.get_ref().identity().arena_backing().release_slices(memory) }
+                }) == Some(true);
+            } else {
+                let mut freed = false;
+                let result = child.with_metadata_page_engine(binding, |_child, engine| {
+                    freed = unsafe { engine.free(theap.cast()) }.is_ok();
+                });
+                released &= result.is_ok() && freed;
+            }
+        })
+    }
+    .map_err(HeapReleaseError::List)?;
+    if !released {
+        return Err(HeapReleaseError::Retained);
+    }
+    // SAFETY: every Theap is detached and no block will be used again.
+    unsafe { delete_heap_pages(child, binding, heap, None) }?;
+    // SAFETY: each record remains a live child block until its own free.
+    if !unsafe { heap.as_ref() }.take_non_main_arena_pages(|record| unsafe {
+        free_foreign_child_block(binding, record)
+    }) {
+        return Err(HeapReleaseError::Retained);
+    }
+    // SAFETY: the Heap now has no Theap or page and the child owns it.
+    let image = unsafe { unlink_empty_heap(child, heap) }?.ok_or(HeapReleaseError::InvalidChild)?;
+    // SAFETY: the image has left every Heap list and remains a live block.
+    if unsafe { free_foreign_child_block(binding, image.cast()) } {
+        Ok(HeapReleaseOutcome::Released)
+    } else {
+        Err(HeapReleaseError::Retained)
+    }
+}
+
+/// `_mi_free_subproc_safe` when no current TLD belongs to the child.
+///
+/// # Safety
+/// `block` is one exact live child allocation that no other thread frees.
+unsafe fn free_foreign_child_block(binding: ProcessMainBackingBinding, block: NonNull<u8>) -> bool {
+    // SAFETY: the block stays live until the nonlocal free completes.
+    let Some(allocation) = (unsafe { binding.page_map().lookup_live_allocation(block) }).ok().flatten() else {
+        return false;
+    };
+    // SAFETY: the caller owns this exact block and its child stays live.
+    matches!(
+        unsafe {
+            crate::subproc::lifecycle::free_child_block_nonlocal(
+                binding, allocation, |_candidate| crate::abandoned::ReclaimOnFreeOutcome::Declined,
+            )
+        },
+        Some(crate::single_thread::ChildNonlocalFreeResult::Freed | crate::single_thread::ChildNonlocalFreeResult::Released)
+    )
 }
 
 /// `mi_heap_delete_pages` over the child's arenas; see
