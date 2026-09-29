@@ -50,13 +50,14 @@ assert_named_syscall() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff nm objdump readelf rustup; do require_tool "$tool"; done
+for tool in ar cargo cmp diff nm objdump readelf rustup sha256sum; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_time_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-time-observation.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/libc-time-observation"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-time-observation/run.XXXXXX")"
+chmod 0755 "$work_dir"
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-time-observation-reference"
@@ -71,7 +72,15 @@ for header in errno.h time.h sys/time.h sys/syscall.h bits/alltypes.h bits/sysca
 done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_time_observation_probe.c -o "$reference"
-"$reference" || fail "pinned-musl time-observation fixture failed"
+if "$reference" >"$work_dir/musl.stdout" 2>"$work_dir/musl.stderr"; then
+    printf '0\n' >"$work_dir/musl.status"
+else
+    status=$?
+    printf '%s\n' "$status" >"$work_dir/musl.status"
+    fail "pinned-musl time-observation fixture failed ($status); evidence: $work_dir"
+fi
+[ -s "$work_dir/musl.stdout" ] && [ -s "$work_dir/musl.stderr" ] ||
+    fail "pinned-musl fixture omitted observation streams; evidence: $work_dir"
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit x86 static libc archive"
@@ -129,5 +138,26 @@ assert_named_syscall clock_getres e5
 # clock_gettime read; this bare archive has no vDSO owner, so that read is
 # the direct clock_gettime syscall rather than SYS_gettimeofday.
 assert_named_syscall gettimeofday e4
-"$candidate" || fail "freestanding time-observation fixture failed"
-printf 'x86 static crabc-libc time observation: PASS\n'
+if "$candidate" >"$work_dir/crabc.stdout" 2>"$work_dir/crabc.stderr"; then
+    printf '0\n' >"$work_dir/crabc.status"
+else
+    status=$?
+    printf '%s\n' "$status" >"$work_dir/crabc.status"
+    fail "freestanding time-observation fixture failed ($status); evidence: $work_dir"
+fi
+[ -s "$work_dir/crabc.stdout" ] && [ -s "$work_dir/crabc.stderr" ] ||
+    fail "freestanding fixture omitted observation streams; evidence: $work_dir"
+( cd "$work_dir" && sha256sum \
+    musl-time-observation-reference crabc-static-time-observation-candidate \
+    musl.stdout musl.stderr musl.status crabc.stdout crabc.stderr crabc.status \
+    archive-symbols archive-relocations candidate-symbols candidate-program-headers \
+    candidate-relocations candidate-disassembly >sha256sums.txt )
+sha256sum "$ROOT_DIR/compat/x86_64/libc_time_observation_probe.c" \
+    "$ROOT_DIR/compat/x86_64/libc_time_observation_start.S" \
+    "$ROOT_DIR/compat/x86_64/run_libc_time_observation.sh" \
+    "$archive" "$archive.source-runtime.json" >"$work_dir/source-sha256sums.txt"
+cmp -s "$work_dir/musl.stdout" "$work_dir/crabc.stdout" || {
+    diff -u "$work_dir/musl.stdout" "$work_dir/crabc.stdout" >&2 || true
+    fail "pinned-musl and crabc observations differ; evidence: $work_dir"
+}
+printf 'x86 static crabc-libc time observation: PASS; evidence: %s\n' "$work_dir"
