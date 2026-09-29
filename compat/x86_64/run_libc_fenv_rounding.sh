@@ -39,7 +39,9 @@ for tool in ar cargo cmp diff grep nm objdump readelf rustup sort; do require_to
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-fenv-rounding.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp" "$ROOT_DIR/.work/x86_64/reports/libc-fenv-rounding"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-fenv-rounding.XXXXXX")"
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-fenv-rounding"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"; archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-fenv-rounding-reference"
@@ -58,7 +60,7 @@ for header in fenv.h math.h stdint.h features.h bits/alltypes.h; do
 done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
 	compat/x86_64/libc_fenv_rounding_probe.c -o "$reference"
-if "$reference"; then
+if "$reference" >"$report_dir/musl.raw"; then
 	:
 else
 	status=$?
@@ -120,11 +122,15 @@ for instruction in addsd subsd addss subss fldt frndint; do
 	grep -Eq "[[:space:]]${instruction}([[:space:]]|$)" "$disassembly" \
 		|| fail "candidate lacks ${instruction}"
 done
-if "$candidate"; then
+if "$candidate" >"$report_dir/crabc.raw"; then
 	:
 else
 	status=$?
 	fail "freestanding fenv-rounding fixture failed with exit status ${status}"
 fi
+if ! cmp -s "$report_dir/musl.raw" "$report_dir/crabc.raw"; then
+	diff -u "$report_dir/musl.raw" "$report_dir/crabc.raw" | sed -n '1,80p' >&2 || true
+	fail "pinned-musl and freestanding fenv-rounding records differ ($report_dir)"
+fi
 
-printf 'x86 static libc fenv-sensitive rounding: PASS\n'
+printf 'x86 static libc fenv-sensitive rounding: PASS (raw: %s)\n' "$report_dir"

@@ -350,6 +350,234 @@ static int check_special_values(void)
 	return 0;
 }
 
+/* Write one fixed-width hexadecimal row through the Linux syscall ABI so the
+ * same observation code runs in the musl program and the freestanding image. */
+static char differential_row[128];
+static unsigned differential_length;
+static int differential_write_error;
+
+static void put_hex(uint64_t value, unsigned digits)
+{
+	unsigned start = differential_length;
+	differential_length += digits;
+	while (digits != 0) {
+		digits--;
+		differential_row[start + digits] = "0123456789abcdef"[value & 15];
+		value >>= 4;
+	}
+}
+
+static void put_long_bits(long double value)
+{
+	union {
+		long double value;
+		unsigned char raw[16];
+	} view = { .value = value };
+	int index;
+	for (index = 9; index >= 0; index--)
+		put_hex(view.raw[index], 2);
+}
+
+static void finish_row(void)
+{
+	register long number __asm__("rax") = 1;
+	register long descriptor __asm__("rdi") = 1;
+	register const char *bytes __asm__("rsi") = differential_row;
+	register long count __asm__("rdx") = differential_length;
+	differential_row[differential_length++] = '\n';
+	count = differential_length;
+	__asm__ volatile ("syscall" : "+a"(number) : "D"(descriptor),
+		"S"(bytes), "d"(count) : "rcx", "r11", "memory");
+	if (number != count)
+		differential_write_error = 1;
+}
+
+static void begin_row(unsigned precision, unsigned operation, unsigned mode,
+	unsigned seed, unsigned input)
+{
+	/* Identity fields precede result bits, MXCSR, x87 control, and x87 flags. */
+	differential_length = 0;
+	put_hex(precision, 1);
+	put_hex(operation, 1);
+	put_hex(mode, 1);
+	put_hex(seed, 1);
+	put_hex(input, 2);
+	differential_row[differential_length++] = ' ';
+}
+
+static void put_environment(void)
+{
+	uint32_t mxcsr;
+	uint16_t control;
+	uint16_t status;
+	__asm__ volatile ("stmxcsr %0" : "=m"(mxcsr) : : "memory");
+	__asm__ volatile ("fnstcw %0" : "=m"(control) : : "memory");
+	__asm__ volatile ("fnstsw %0" : "=m"(status) : : "memory");
+	put_hex(mxcsr, 8);
+	put_hex(control, 4);
+	put_hex(status & FE_ALL_EXCEPT, 2);
+}
+
+static int inexact_matches_input(int operation, int seed, int index)
+{
+	int exact = index == 0 || index == 1 || index == 8 || index == 9;
+	int expected = (seed & FE_INEXACT) != 0 || (!operation && !exact);
+	return ((fetestexcept(FE_INEXACT) & FE_INEXACT) != 0) == expected;
+}
+
+static int emit_differential(void)
+{
+	static const int modes[4] = {
+		FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO,
+	};
+	static const int seeds[4] = {
+		0, FE_INEXACT, FE_DIVBYZERO, FE_INEXACT | FE_DIVBYZERO,
+	};
+	static const uint64_t doubles[] = {
+		0, UINT64_C(0x8000000000000000),
+		UINT64_C(0x3fe0000000000000), UINT64_C(0xbfe0000000000000),
+		UINT64_C(0x3ff8000000000000), UINT64_C(0xbff8000000000000),
+		1, UINT64_C(0x8000000000000001),
+		UINT64_C(0x3ff0000000000000), UINT64_C(0xbff0000000000000),
+		UINT64_C(0x432fffffffffffff), UINT64_C(0xc32fffffffffffff),
+	};
+	static const uint32_t floats[] = {
+		0, UINT32_C(0x80000000),
+		UINT32_C(0x3f000000), UINT32_C(0xbf000000),
+		UINT32_C(0x3fc00000), UINT32_C(0xbfc00000),
+		1, UINT32_C(0x80000001),
+		UINT32_C(0x3f800000), UINT32_C(0xbf800000),
+		UINT32_C(0x4affffff), UINT32_C(0xcaffffff),
+	};
+	static const long double longs[] = {
+		0.0L, -0.0L, 0.5L, -0.5L, 1.5L, -1.5L,
+		0x1p-16445L, -0x1p-16445L, 1.0L, -1.0L,
+		0x1.fffffffffffffffep62L, -0x1.fffffffffffffffep62L,
+	};
+	int mode, seed, operation, index;
+	for (mode = 0; mode < 4; mode++)
+	for (seed = 0; seed < 4; seed++)
+	for (operation = 0; operation < 2; operation++)
+	for (index = 0; index < 12; index++) {
+		volatile double d = double_from_bits(doubles[index]);
+		volatile float f = float_from_bits(floats[index]);
+		volatile long double l = longs[index];
+		double dr;
+		float fr;
+		long double lr;
+		if (fesetenv(FE_DFL_ENV) != 0 || fesetround(modes[mode]) != 0 ||
+			feraiseexcept(seeds[seed]) != 0)
+			return 1;
+		dr = operation ? direct_nearbyint(d) : direct_rint(d);
+		if (!inexact_matches_input(operation, seeds[seed], index))
+			return 4;
+		begin_row(0, operation, mode, seed, index);
+		put_hex(double_bits(dr), 16);
+		differential_row[differential_length++] = ' ';
+		put_environment();
+		finish_row();
+		if (fesetenv(FE_DFL_ENV) != 0 || fesetround(modes[mode]) != 0 ||
+			feraiseexcept(seeds[seed]) != 0)
+			return 2;
+		fr = operation ? direct_nearbyintf(f) : direct_rintf(f);
+		if (!inexact_matches_input(operation, seeds[seed], index))
+			return 5;
+		begin_row(1, operation, mode, seed, index);
+		put_hex(float_bits(fr), 8);
+		differential_row[differential_length++] = ' ';
+		put_environment();
+		finish_row();
+		if (fesetenv(FE_DFL_ENV) != 0 || fesetround(modes[mode]) != 0 ||
+			feraiseexcept(seeds[seed]) != 0)
+			return 3;
+		lr = operation ? direct_nearbyintl(l) : direct_rintl(l);
+		if (!inexact_matches_input(operation, seeds[seed], index))
+			return 6;
+		begin_row(2, operation, mode, seed, index);
+		put_long_bits(lr);
+		differential_row[differential_length++] = ' ';
+		put_environment();
+		finish_row();
+	}
+	return differential_write_error;
+}
+
+static int set_split_rounding(int mxcsr_mode, int x87_mode)
+{
+	uint32_t mxcsr;
+	uint16_t control;
+	if (fesetenv(FE_DFL_ENV) != 0)
+		return 0;
+	__asm__ volatile ("stmxcsr %0" : "=m"(mxcsr) : : "memory");
+	__asm__ volatile ("fnstcw %0" : "=m"(control) : : "memory");
+	mxcsr = (mxcsr & ~UINT32_C(0x6000)) | ((uint32_t)mxcsr_mode << 3);
+	control = (uint16_t)((control & ~UINT16_C(0x0c00)) | x87_mode);
+	__asm__ volatile ("ldmxcsr %0" : : "m"(mxcsr) : "memory");
+	__asm__ volatile ("fldcw %0" : : "m"(control) : "memory");
+	return 1;
+}
+
+/* Opposite unit modes prove that binary32/64 use MXCSR while binary80 uses
+ * the x87 control word, beyond observing that fesetround updates both. */
+static int check_split_rounding(void)
+{
+	static const int mxcsr_modes[2] = { FE_UPWARD, FE_DOWNWARD };
+	static const int x87_modes[2] = { FE_DOWNWARD, FE_UPWARD };
+	static const uint64_t double_results[2][2] = {
+		{ UINT64_C(0x3ff0000000000000), UINT64_C(0x8000000000000000) },
+		{ 0, UINT64_C(0xbff0000000000000) },
+	};
+	static const uint32_t float_results[2][2] = {
+		{ UINT32_C(0x3f800000), UINT32_C(0x80000000) },
+		{ 0, UINT32_C(0xbf800000) },
+	};
+	static const int long_results[2][2] = {
+		{ 0, -1 }, { 1, -0x10 },
+	};
+	int selection, sign, operation;
+	for (selection = 0; selection < 2; selection++)
+	for (sign = 0; sign < 2; sign++)
+	for (operation = 0; operation < 2; operation++) {
+		volatile double d = sign ? -0.5 : 0.5;
+		volatile float f = sign ? -0.5f : 0.5f;
+		volatile long double l = sign ? -0.5L : 0.5L;
+		double dr;
+		float fr;
+		long double lr;
+		if (!set_split_rounding(mxcsr_modes[selection], x87_modes[selection]))
+			return 1;
+		dr = operation ? direct_nearbyint(d) : direct_rint(d);
+		if (double_bits(dr) != double_results[selection][sign])
+			return 2;
+		begin_row(0, operation, 4 + selection, 0, sign);
+		put_hex(double_bits(dr), 16);
+		differential_row[differential_length++] = ' ';
+		put_environment();
+		finish_row();
+		if (!set_split_rounding(mxcsr_modes[selection], x87_modes[selection]))
+			return 3;
+		fr = operation ? direct_nearbyintf(f) : direct_rintf(f);
+		if (float_bits(fr) != float_results[selection][sign])
+			return 4;
+		begin_row(1, operation, 4 + selection, 0, sign);
+		put_hex(float_bits(fr), 8);
+		differential_row[differential_length++] = ' ';
+		put_environment();
+		finish_row();
+		if (!set_split_rounding(mxcsr_modes[selection], x87_modes[selection]))
+			return 5;
+		lr = operation ? direct_nearbyintl(l) : direct_rintl(l);
+		if (!check_long_value(lr, long_results[selection][sign]))
+			return 6;
+		begin_row(2, operation, 4 + selection, 0, sign);
+		put_long_bits(lr);
+		differential_row[differential_length++] = ' ';
+		put_environment();
+		finish_row();
+	}
+	return differential_write_error;
+}
+
 int crabc_x86_64_fenv_rounding_probe(void)
 {
 	static const int modes[4] = {
@@ -382,6 +610,10 @@ int crabc_x86_64_fenv_rounding_probe(void)
 		status = check_special_values() == 0 ? 0 : 3;
 	if (status == 0)
 		status = check_raw_rounding_edges() == 0 ? 0 : 5;
+	if (status == 0)
+		status = emit_differential() == 0 ? 0 : 6;
+	if (status == 0)
+		status = check_split_rounding() == 0 ? 0 : 7;
 	if (fesetenv(&original) != 0 && status == 0)
 		status = 4;
 	return status;
