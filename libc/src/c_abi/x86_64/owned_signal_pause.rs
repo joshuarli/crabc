@@ -13,14 +13,13 @@ use super::{readiness_waits, signal_control, signal_set_mutation,
 #[no_mangle]
 pub extern "C" fn sigpause(signal: c_int) -> c_int {
     let mut mask = [0u64; PUBLIC_SIGSET_WORDS];
-    // Valid local storage makes the source query infallible in ordinary
-    // execution. Retain the private Rust boundary's early syscall error for
-    // an externally rejected query; never consume indeterminate mask bytes.
-    if unsafe { signal_control::sigprocmask(0, core::ptr::null(), mask.as_mut_ptr().cast()) } < 0 {
-        return -1;
-    }
+    // Musl still validates the requested signal after a rejected mask query.
+    // Keep initialized storage for that validation and avoid suspending when
+    // the query did not produce a usable mask.
+    let query = unsafe { signal_control::sigprocmask(0, core::ptr::null(), mask.as_mut_ptr().cast()) };
     if unsafe { signal_set_mutation::sigdelset(mask.as_mut_ptr().cast(), signal) } < 0 {
         return -1;
     }
+    if query < 0 { return -1; }
     unsafe { readiness_waits::sigsuspend(mask.as_ptr().cast()) }
 }

@@ -103,6 +103,53 @@ static void partial_action_failure(void) {
     CHECK(sighold(SIGUSR1) == -1 && errno == EPERM);
     CHECK(sigrelse(SIGUSR1) == -1 && errno == EPERM);
 }
+static void pause_invalid_after_query_failure(void) {
+    /* The mask query fails, but sigdelset must still reject these values. */
+    deny_syscall(SYS_rt_sigprocmask, EPERM);
+    const int invalid[] = {0, 32, 33, 34, 65};
+    for (unsigned i = 0; i < sizeof invalid / sizeof *invalid; i++) {
+        errno = EDOM;
+        int result = sigpause(invalid[i]), error = errno;
+        printf("pause-invalid=%d result=%d errno=%d\n", invalid[i], result, error);
+        CHECK(result == -1 && error == EINVAL);
+    }
+}
+static atomic_int pause_ready, pause_go;
+static void *pause_worker(void *unused) {
+    (void)unused;
+    sigset_t mask, after;
+    CHECK(sigemptyset(&mask) == 0);
+    CHECK(sigaddset(&mask, SIGUSR1) == 0 && sigaddset(&mask, SIGUSR2) == 0);
+    CHECK(pthread_sigmask(SIG_BLOCK, &mask, 0) == 0);
+    atomic_store(&pause_ready, 1);
+    while (!atomic_load(&pause_go)) sched_yield();
+    errno = EDOM;
+    int result = sigpause(SIGUSR1), error = errno;
+    CHECK(pthread_sigmask(SIG_SETMASK, 0, &after) == 0);
+    int blocked1 = sigismember(&after, SIGUSR1), blocked2 = sigismember(&after, SIGUSR2);
+    printf("thread-pause result=%d errno=%d blocked1=%d blocked2=%d calls=%d\n",
+           result, error, blocked1, blocked2, first_calls);
+    CHECK(result == -1 && error == EINTR && blocked1 == 1 && blocked2 == 1 && first_calls == 1);
+    return 0;
+}
+static void pause_threaded_delivery(void) {
+    struct sigaction saved, installed;
+    CHECK(sigaction(SIGUSR1, 0, &saved) == 0);
+    memset(&installed, 0, sizeof installed);
+    installed.sa_handler = first;
+    CHECK(sigemptyset(&installed.sa_mask) == 0);
+    CHECK(sigaction(SIGUSR1, &installed, 0) == 0);
+    pthread_t worker;
+    CHECK(pthread_create(&worker, 0, pause_worker, 0) == 0);
+    while (!atomic_load(&pause_ready)) sched_yield();
+    errno = ECHILD;
+    int result = pthread_kill(worker, SIGUSR1), error = errno;
+    CHECK(result == 0 && error == ECHILD);
+    atomic_store(&pause_go, 1);
+    void *joined;
+    CHECK(pthread_join(worker, &joined) == 0 && joined == 0 && first_calls == 1);
+    CHECK(sigaction(SIGUSR1, &saved, 0) == 0);
+}
 static sem_t canceled_wait;
 static atomic_int worker_ready;
 static void *cancellation_worker(void *unused) {
@@ -193,6 +240,8 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[1], "failed-interrupt")) interrupt_bookkeeping(1, 0);
     else if (!strcmp(argv[1], "restart")) interrupt_bookkeeping(0, 1);
     else if (!strcmp(argv[1], "partial-action")) partial_action_failure();
+    else if (!strcmp(argv[1], "pause-query-failure")) pause_invalid_after_query_failure();
+    else if (!strcmp(argv[1], "pause-threaded")) pause_threaded_delivery();
     else if (!strcmp(argv[1], "cancellation")) cancellation_case();
     else if (!strcmp(argv[1], "reporting")) reporting_case();
     else if (!strcmp(argv[1], "partial-reporting")) partial_reporting_case();

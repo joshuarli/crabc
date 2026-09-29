@@ -48,7 +48,7 @@ chmod a+rx "$work"
 printf 'signal helpers evidence: %s\n' "$work"
 readonly probe="$ROOT/compat/x86_64/owned_signal_helpers_probe.c"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly cases=(actions interrupt failed-interrupt restart partial-action cancellation reporting partial-reporting)
+readonly cases=(actions interrupt failed-interrupt restart partial-action pause-query-failure pause-threaded cancellation reporting partial-reporting)
 # Musl's historical entry points are overridable weak aliases, not merely
 # functions that happen to forward to signal. Retain binding/address evidence.
 assert_signal_aliases() {
