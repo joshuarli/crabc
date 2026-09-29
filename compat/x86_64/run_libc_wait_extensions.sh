@@ -55,15 +55,16 @@ assert_named_syscall() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar cargo cmp diff grep nm objdump readelf rustup sort; do
+for tool in ar cargo cmp diff grep nm objdump readelf rustup sha256sum sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_wait_extensions_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-wait-extensions.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-wait-extensions.XXXXXX")"
+chmod a+rx "$work_dir"
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-wait-extensions-reference"
@@ -90,7 +91,14 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I "$ROOT_DIR/include" compat/x86_64/libc_wait_extensions_probe.c \
     -o "$reference"
-"$reference" || fail "pinned-musl wait-extension fixture failed"
+if "$reference" >"$work_dir/musl.stdout" 2>"$work_dir/musl.stderr"; then
+    reference_status=0
+else
+    reference_status=$?
+fi
+printf '%s\n' "$reference_status" >"$work_dir/musl.status"
+[ "$reference_status" -eq 0 ] ||
+    fail "pinned-musl wait-extension fixture failed (evidence $work_dir)"
 
 build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -152,5 +160,19 @@ if ! grep -Eq '<wait4>|\$0x3d' "$wait3_disassembly"; then
     fail "wait3 does not reach the wait4 delegation path"
 fi
 
-"$candidate" || fail "freestanding wait-extension fixture failed"
-printf 'x86 static crabc-libc wait extensions: PASS\n'
+if "$candidate" >"$work_dir/crabc.stdout" 2>"$work_dir/crabc.stderr"; then
+    candidate_status=0
+else
+    candidate_status=$?
+fi
+printf '%s\n' "$candidate_status" >"$work_dir/crabc.status"
+sha256sum "$reference" "$candidate" "$work_dir/musl.stdout" \
+    "$work_dir/crabc.stdout" "$work_dir/musl.stderr" "$work_dir/crabc.stderr" \
+    >"$work_dir/sha256sum.txt"
+[ "$candidate_status" -eq "$reference_status" ] ||
+    fail "wait-extension status differs from pinned musl (evidence $work_dir)"
+cmp "$work_dir/musl.stdout" "$work_dir/crabc.stdout" ||
+    fail "wait-extension stdout differs from pinned musl (evidence $work_dir)"
+cmp "$work_dir/musl.stderr" "$work_dir/crabc.stderr" ||
+    fail "wait-extension stderr differs from pinned musl (evidence $work_dir)"
+printf 'x86 static crabc-libc wait extensions: PASS (evidence %s)\n' "$work_dir"

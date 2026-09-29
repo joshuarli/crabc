@@ -17,6 +17,7 @@
 
 #include <errno.h>
 #include <stddef.h>
+#include <signal.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
@@ -34,7 +35,7 @@ _Static_assert(sizeof(struct rusage) == 272 && _Alignof(struct rusage) == 8 &&
     "x86 public wait4 rusage ABI");
 _Static_assert(SYS_read == 0 && SYS_write == 1 && SYS_close == 3 &&
     SYS_pipe == 22 && SYS_fork == 57 && SYS_exit == 60 && SYS_wait4 == 61 &&
-    SYS_setpgid == 109,
+    SYS_kill == 62 && SYS_setpgid == 109,
     "x86 wait-extension and fixture syscall numbers");
 _Static_assert(WNOHANG == 1 && WUNTRACED == 2 && WCONTINUED == 8,
     "wait4 option values");
@@ -117,6 +118,11 @@ static int raw_close(int descriptor)
     return (int)raw_syscall1(SYS_close, descriptor);
 }
 
+static int raw_kill(pid_t child, int signal)
+{
+    return (int)raw_syscall2(SYS_kill, child, signal);
+}
+
 static int raw_pipe(int descriptors[2])
 {
     return (int)raw_syscall1(SYS_pipe, (long)descriptors);
@@ -138,6 +144,12 @@ static int raw_write_byte(int descriptor, char byte)
         result = raw_syscall3(SYS_write, descriptor, (long)&byte, 1);
     } while (result == -EINTR);
     return result == 1;
+}
+
+static int emit_record(const char *record, size_t length)
+{
+    return raw_syscall3(SYS_write, 1, (long)record, (long)length) ==
+        (long)length;
 }
 
 /* Cleanup deliberately avoids both selected wait-extension entry points. */
@@ -282,13 +294,14 @@ static int check_wait4_rusage_and_errno(void)
     fill_bytes(&usage, 0xa5, sizeof(usage));
     errno = 0;
     if (wait4(control.child, &status, WNOHANG, &usage) != 0 ||
-        status != 0x5a5a5a5a || !bytes_are(&usage, 0xa5, sizeof(usage)))
+        errno != 0 || status != 0x5a5a5a5a ||
+        !bytes_are(&usage, 0xa5, sizeof(usage)))
         goto cleanup;
     if (!release_child(&control))
         goto cleanup;
     errno = 0;
     if (wait4(control.child, &status, 0, &usage) != control.child ||
-        !WIFEXITED(status) || WEXITSTATUS(status) != 42 ||
+        errno != 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 42 ||
         !usage_is_canonical(&usage) || !usage_tail_is_unchanged(&usage))
         goto cleanup;
     control.reaped = 1;
@@ -318,13 +331,14 @@ static int check_wait3_wait_any_and_rusage(void)
     fill_bytes(&usage, 0xa5, sizeof(usage));
     errno = 0;
     if (wait3(&status, WNOHANG, &usage) != 0 || status != 0x6b6b6b6b ||
-        !bytes_are(&usage, 0xa5, sizeof(usage)))
+        errno != 0 || !bytes_are(&usage, 0xa5, sizeof(usage)))
         goto cleanup;
     if (!release_child(&control))
         goto cleanup;
     errno = 0;
     if (wait3(&status, 0, &usage) != control.child || !WIFEXITED(status) ||
-        WEXITSTATUS(status) != 43 || !usage_is_canonical(&usage) ||
+        WEXITSTATUS(status) != 43 || errno != 0 ||
+        !usage_is_canonical(&usage) ||
         !usage_tail_is_unchanged(&usage))
         goto cleanup;
     control.reaped = 1;
@@ -363,6 +377,86 @@ cleanup:
     return result;
 }
 
+static int check_stop_continue_exit(int use_wait3)
+{
+    struct child_control control;
+    struct rusage usage;
+    int status;
+    int result = 1;
+    int state;
+
+    initialize_control(&control);
+    if (spawn_blocked_child(&control, use_wait3, 46) != 0)
+        goto cleanup;
+    if (raw_kill(control.child, SIGSTOP) != 0)
+        goto cleanup;
+
+    for (state = 0; state != 3; ++state) {
+        status = 0x5a5a5a5a;
+        fill_bytes(&usage, 0xa5, sizeof(usage));
+        errno = 73;
+        if ((use_wait3 ? wait3(&status, state == 0 ? WUNTRACED :
+                    state == 1 ? WCONTINUED : 0, &usage) :
+                wait4(control.child, &status, state == 0 ? WUNTRACED :
+                    state == 1 ? WCONTINUED : 0, &usage)) != control.child ||
+            errno != 73 || !usage_is_canonical(&usage) ||
+            !usage_tail_is_unchanged(&usage))
+            goto cleanup;
+        if (state == 0) {
+            if (status != (SIGSTOP << 8 | 0x7f) ||
+                raw_kill(control.child, SIGCONT) != 0)
+                goto cleanup;
+            if (use_wait3) {
+                static const char record[] = "wait3 stopped 0x137f errno 73 usage prefix\n";
+                if (!emit_record(record, sizeof(record) - 1))
+                    goto cleanup;
+            } else {
+                static const char record[] = "wait4 stopped 0x137f errno 73 usage prefix\n";
+                if (!emit_record(record, sizeof(record) - 1))
+                    goto cleanup;
+            }
+        } else if (state == 1) {
+            if (status != 0xffff || !release_child(&control))
+                goto cleanup;
+            if (use_wait3) {
+                static const char record[] = "wait3 continued 0xffff errno 73 usage prefix\n";
+                if (!emit_record(record, sizeof(record) - 1))
+                    goto cleanup;
+            } else {
+                static const char record[] = "wait4 continued 0xffff errno 73 usage prefix\n";
+                if (!emit_record(record, sizeof(record) - 1))
+                    goto cleanup;
+            }
+        } else if (status != (46 << 8)) {
+            goto cleanup;
+        } else if (use_wait3) {
+            static const char record[] = "wait3 exited 0x2e00 errno 73 usage prefix\n";
+            if (!emit_record(record, sizeof(record) - 1))
+                goto cleanup;
+        } else {
+            static const char record[] = "wait4 exited 0x2e00 errno 73 usage prefix\n";
+            if (!emit_record(record, sizeof(record) - 1))
+                goto cleanup;
+        }
+    }
+    control.reaped = 1;
+    status = 0x5a5a5a5a;
+    fill_bytes(&usage, 0xa5, sizeof(usage));
+    errno = 0;
+    if ((use_wait3 ? wait3(&status, WNOHANG, &usage) :
+            wait4(control.child, &status, WNOHANG, &usage)) != -1 ||
+        errno != ECHILD || status != 0x5a5a5a5a ||
+        !bytes_are(&usage, 0xa5, sizeof(usage)))
+        goto cleanup;
+    result = 0;
+
+cleanup:
+    if (!control.reaped && control.child > 0)
+        (void)raw_kill(control.child, SIGCONT);
+    cleanup_child(&control);
+    return result;
+}
+
 int crabc_x86_64_wait_extensions_probe(void)
 {
     int status = check_wait4_rusage_and_errno();
@@ -372,7 +466,13 @@ int crabc_x86_64_wait_extensions_probe(void)
     if (status != 0)
         return 20 + status;
     status = check_optional_outputs();
-    return status == 0 ? 0 : 30 + status;
+    if (status != 0)
+        return 30 + status;
+    status = check_stop_continue_exit(0);
+    if (status != 0)
+        return 40 + status;
+    status = check_stop_continue_exit(1);
+    return status == 0 ? 0 : 50 + status;
 }
 
 #ifndef CRABC_WAIT_EXTENSIONS_FREESTANDING
