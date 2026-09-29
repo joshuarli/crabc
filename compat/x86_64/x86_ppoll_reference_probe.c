@@ -1,4 +1,4 @@
-/* Pinned-musl Linux/x86-64 ppoll, pause, and signal-mask reference. */
+/* Pinned-musl and owned x86 ppoll timeout/error-precedence differential. */
 #define _GNU_SOURCE 1
 
 #include <errno.h>
@@ -9,6 +9,31 @@
 #include <time.h>
 #include <unistd.h>
 
+static int check_invalid_timeout_precedence(void)
+{
+    struct timespec invalid_nanoseconds = { 0, 1000000000L };
+    struct timespec negative_seconds = { -1, 0 };
+    struct pollfd fd = { -1, POLLIN, 0x1234 };
+    sigset_t empty = { 0 };
+
+    /* Linux rejects the copied timeout before it touches a pollfd array.
+     * The C caller's timespec and revents must remain unchanged on error. */
+    errno = 0;
+    if (ppoll(&fd, 1, &invalid_nanoseconds, &empty) != -1 ||
+        errno != EINVAL || fd.revents != 0x1234 ||
+        invalid_nanoseconds.tv_sec != 0 ||
+        invalid_nanoseconds.tv_nsec != 1000000000L)
+        return 2;
+
+    errno = 0;
+    if (ppoll(NULL, 1, &negative_seconds, &empty) != -1 ||
+        errno != EINVAL || negative_seconds.tv_sec != -1 ||
+        negative_seconds.tv_nsec != 0)
+        return 3;
+    return 0;
+}
+
+#ifndef CRABC_PPOLL_CANDIDATE
 static volatile sig_atomic_t ppoll_seen;
 static volatile sig_atomic_t pause_seen;
 
@@ -36,6 +61,9 @@ int main(void)
     struct sigaction action;
     struct sigaction old_action;
     char byte;
+
+    if (check_invalid_timeout_precedence() != 0)
+        return 25;
 
     if (pipe(pipe_fds) != 0)
         return 10;
@@ -96,3 +124,9 @@ int main(void)
     printf("ppoll=0,1,1 revents=0x0,pollin,pollhup mask-restored=1 pause=eintr\n");
     return 0;
 }
+#else
+int crabc_x86_64_readiness_waits_probe(void)
+{
+    return check_invalid_timeout_precedence();
+}
+#endif
