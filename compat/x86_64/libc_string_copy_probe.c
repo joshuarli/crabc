@@ -20,12 +20,16 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#ifndef CRABC_STRING_COPY_FREESTANDING
+#include <errno.h>
+#endif
 #include <sys/mman.h>
 #include <sys/syscall.h>
 
 _Static_assert(sizeof(size_t) == 8 && sizeof(void *) == 8,
     "x86-64 LP64 widths");
-_Static_assert(SYS_mmap == 9 && SYS_mprotect == 10 && SYS_munmap == 11,
+_Static_assert(SYS_mmap == 9 && SYS_mprotect == 10 && SYS_munmap == 11 &&
+    SYS_write == 1,
     "Linux x86-64 mapping syscall numbers");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&stpcpy),
     char *(*)(char *, const char *)), "stpcpy declaration");
@@ -117,6 +121,154 @@ static int bytes_zero(const unsigned char *bytes, size_t length)
         if (bytes[index] != 0)
             return 0;
     return 1;
+}
+
+/* Emit identical raw observations from the musl and freestanding programs.
+ * Each record includes the call shape, returned pointer offset, and the exact
+ * destination bytes. A short write is a fixture failure.
+ */
+static int emit_record(const unsigned char *record, size_t length)
+{
+    return raw_syscall4(SYS_write, 1, (long)record, (long)length, 0) ==
+        (long)length ? 0 : -1;
+}
+
+static int check_guarded_matrix(void)
+{
+    enum { PAGE_BYTES = 4096, MAX_BYTES = 64 };
+    static const unsigned char lengths[] = { 0, 1, 3, 7, 15, 31 };
+    static const unsigned char counts[] = { 0, 1, 2, 4, 8, 32 };
+    unsigned char *mapping = raw_mmap(PAGE_BYTES * 4);
+    unsigned char *source;
+    unsigned char *destination;
+    unsigned char expected[MAX_BYTES];
+    unsigned char record[5 + MAX_BYTES];
+    char *returned;
+    size_t operation, mode, length_index, count_index, source_length;
+    size_t count, copied, prefix, written, index, record_length;
+    int status = 0;
+
+    if (mapping == MAP_FAILED)
+        return 1;
+    if (raw_mprotect(mapping + PAGE_BYTES, PAGE_BYTES, PROT_NONE) != 0 ||
+        raw_mprotect(mapping + PAGE_BYTES * 3, PAGE_BYTES, PROT_NONE) != 0) {
+        status = 2;
+        goto cleanup;
+    }
+    for (operation = 0; operation < 6; ++operation) {
+        for (mode = 0; mode < 2; ++mode) {
+            if (mode != 0 && operation != 1 && operation != 3 && operation != 5)
+                continue;
+            for (length_index = 0; length_index < sizeof lengths; ++length_index) {
+                for (count_index = 0; count_index < sizeof counts; ++count_index) {
+                    if ((operation == 0 || operation == 2 || operation == 4) &&
+                        count_index != 0)
+                        continue;
+                    source_length = lengths[length_index];
+                    count = counts[count_index];
+                    if (mode != 0) {
+                        if (count == 0)
+                            continue;
+                        source_length = count;
+                    }
+                    source = mapping + PAGE_BYTES - source_length - (mode == 0);
+                    for (index = 0; index < source_length; ++index)
+                        source[index] = (unsigned char)(0x81 + index * 3);
+                    if (mode == 0)
+                        source[source_length] = 0;
+                    if (count == 0 &&
+                        (operation == 1 || operation == 3 || operation == 5))
+                        source = mapping + PAGE_BYTES;
+
+                    prefix = operation >= 4 ? 2 : 0;
+                    copied = operation == 1 || operation == 3 || operation == 5 ?
+                        (source_length < count ? source_length : count) : source_length;
+                    written = operation == 1 || operation == 3 ? count :
+                        prefix + copied + 1;
+                    if (written > MAX_BYTES) {
+                        status = 3;
+                        goto cleanup;
+                    }
+                    destination = mapping + PAGE_BYTES * 3 - written;
+                    for (index = 0; index < 16; ++index)
+                        (destination - 16)[index] = 0xa5;
+                    for (index = 0; index < written; ++index)
+                        destination[index] = expected[index] = 0xa5;
+                    if (prefix != 0) {
+                        destination[0] = expected[0] = 'P';
+                        destination[1] = expected[1] = 0x80;
+                        destination[2] = 0;
+                    }
+                    for (index = 0; index < copied; ++index)
+                        expected[prefix + index] = source[index];
+                    if (operation == 1 || operation == 3) {
+                        for (index = copied; index < count; ++index)
+                            expected[index] = 0;
+                    } else {
+                        expected[prefix + copied] = 0;
+                    }
+#ifndef CRABC_STRING_COPY_FREESTANDING
+                    errno = 173;
+#endif
+                    switch (operation) {
+                    case 0: returned = strcpy((char *)destination, (char *)source); break;
+                    case 1: returned = strncpy((char *)destination, (char *)source, count); break;
+                    case 2: returned = stpcpy((char *)destination, (char *)source); break;
+                    case 3: returned = stpncpy((char *)destination, (char *)source, count); break;
+                    case 4: returned = strcat((char *)destination, (char *)source); break;
+                    default: returned = strncat((char *)destination, (char *)source, count); break;
+                    }
+#ifndef CRABC_STRING_COPY_FREESTANDING
+                    if (errno != 173) {
+                        status = 4;
+                        goto cleanup;
+                    }
+#endif
+                    if (returned != (char *)destination +
+                            (operation == 2 ? source_length :
+                             operation == 3 ? copied : 0) ||
+                        !bytes_equal(destination, expected, written)) {
+                        status = 5;
+                        goto cleanup;
+                    }
+                    for (index = 0; index < 16; ++index) {
+                        if ((destination - 16)[index] != 0xa5) {
+                            status = 6;
+                            goto cleanup;
+                        }
+                    }
+                    for (index = 0; source != mapping + PAGE_BYTES &&
+                            index < source_length; ++index) {
+                        if (source[index] != (unsigned char)(0x81 + index * 3)) {
+                            status = 7;
+                            goto cleanup;
+                        }
+                    }
+                    if (mode == 0 && source != mapping + PAGE_BYTES &&
+                        source[source_length] != 0) {
+                        status = 8;
+                        goto cleanup;
+                    }
+                    record[0] = (unsigned char)operation;
+                    record[1] = (unsigned char)mode;
+                    record[2] = (unsigned char)source_length;
+                    record[3] = (unsigned char)count;
+                    record[4] = (unsigned char)(returned - (char *)destination);
+                    for (index = 0; index < written; ++index)
+                        record[5 + index] = destination[index];
+                    record_length = 5 + written;
+                    if (emit_record(record, record_length) != 0) {
+                        status = 9;
+                        goto cleanup;
+                    }
+                }
+            }
+        }
+    }
+cleanup:
+    if (raw_munmap(mapping, PAGE_BYTES * 4) != 0 && status == 0)
+        status = 10;
+    return status;
 }
 
 static int check_basic_copy_and_returns(void)
@@ -398,6 +550,9 @@ int crabc_x86_64_string_copy_probe(void)
     status = check_page_edges();
     if (status != 0)
         return 40 + status;
+    status = check_guarded_matrix();
+    if (status != 0)
+        return 60 + status;
     return 0;
 }
 

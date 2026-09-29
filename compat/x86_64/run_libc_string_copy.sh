@@ -54,20 +54,23 @@ assert_selected_c_abi_surface() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff grep nm objdump readelf rustup sort; do
+for tool in ar cargo cmp diff grep nm objdump readelf rustup sha256sum sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-string-copy.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp" "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-string-copy.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-string-copy-reference"
 candidate="$work_dir/crabc-static-string-copy-candidate"
 header_trace="$work_dir/header-trace"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
+reference_output="$work_dir/musl-observations.bin"
+candidate_output="$work_dir/crabc-observations.bin"
 archive_symbols="$work_dir/archive-symbols"
 selected_c_abi_symbols="$work_dir/selected-c-abi-symbols"
 expected_c_abi_symbols="$work_dir/expected-c-abi-symbols"
@@ -88,7 +91,7 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_string_copy_probe.c \
     -o "$reference"
-if "$reference"; then :; else
+if "$reference" >"$reference_output"; then :; else
     status=$?
     fail "pinned-musl string-copy fixture exited ${status}"
 fi
@@ -153,9 +156,32 @@ if grep -Eq 'crabc_core|mimalloc|sha_crypt' \
     fail "candidate selects an unowned or hidden runtime symbol"
 fi
 
-if "$candidate"; then :; else
+if "$candidate" >"$candidate_output"; then :; else
     status=$?
     fail "freestanding string-copy fixture exited ${status}"
 fi
+cmp "$reference_output" "$candidate_output" ||
+    fail "pinned-musl and crabc string-copy observations differ"
 
-printf 'x86 static crabc-libc string copy: PASS\n'
+receipt_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-string-copy.XXXXXX")"
+cp "$reference_output" "$receipt_dir/musl-observations.bin"
+cp "$candidate_output" "$receipt_dir/crabc-observations.bin"
+cp "$reference" "$receipt_dir/musl-string-copy-reference"
+cp "$candidate" "$receipt_dir/crabc-static-string-copy-candidate"
+cp "$candidate_symbols" "$candidate_program_headers" "$candidate_dynamic" \
+    "$candidate_relocations" "$receipt_dir/"
+cp "$archive.source-runtime.json" "$receipt_dir/source-runtime.json"
+sha256sum compat/x86_64/libc_string_copy_probe.c "$archive" \
+    >"$receipt_dir/source-sha256sums.txt"
+(
+    cd "$receipt_dir"
+    sha256sum musl-string-copy-reference crabc-static-string-copy-candidate \
+        musl-observations.bin crabc-observations.bin >sha256sums.txt
+)
+printf 'checkout HEAD %s\n' "$(git rev-parse HEAD)" >"$receipt_dir/summary.txt"
+printf 'observation bytes %s\n' "$(wc -c <"$candidate_output")" >>"$receipt_dir/summary.txt"
+printf 'candidate ELF: static, no interpreter, no TLS, no unresolved symbols\n' \
+    >>"$receipt_dir/summary.txt"
+chmod -R a+rX "$receipt_dir"
+
+printf 'x86 static crabc-libc string copy: PASS (%s)\n' "$receipt_dir"
