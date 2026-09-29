@@ -358,6 +358,53 @@ static void run_putenv_inheritance(void)
     CHECK(clearenv() == 0 && text_equal(aliased_entry, "ALIAS=third!"));
 }
 
+static void run_mutation_lifetime(void)
+{
+    static char first[] = "BORROW=first";
+    static char second[] = "BORROW=second";
+    static char third[] = "BORROW=third!";
+    static char keep[] = "KEEP=stable";
+    static char *direct_environment[] = { first, second, keep, NULL };
+    char remove_borrow[] = "BORROW";
+    char borrowed_again[] = "BORROW=last";
+    char *copied;
+
+    environ = direct_environment;
+    CHECK(putenv(third) == 0);
+    CHECK(environ == direct_environment && direct_environment[0] == third &&
+        direct_environment[1] == second);
+    CHECK(text_equal(first, "BORROW=first"));
+    CHECK(getenv("BORROW") == third + 7);
+
+    /* The value source remains live until setenv has copied it. */
+    CHECK(setenv("BORROW", third + 7, 1) == 0);
+    copied = getenv("BORROW");
+    CHECK(copied != third + 7 && text_equal(copied, "third!"));
+    CHECK(environ == direct_environment && direct_environment[1] == second);
+    third[7] = 'T';
+    CHECK(text_equal(getenv("BORROW"), "third!"));
+    CHECK(text_equal(third, "BORROW=Third!"));
+
+    errno = EBUSY;
+    CHECK(setenv("BORROW", "ignored", 0) == 0 && errno == EBUSY);
+    CHECK(getenv("BORROW") == copied);
+    CHECK(putenv(remove_borrow) == 0 && errno == EBUSY);
+    CHECK(environ == direct_environment && direct_environment[0] == keep &&
+        direct_environment[1] == NULL && getenv("BORROW") == NULL);
+    CHECK(text_equal(second, "BORROW=second") &&
+        text_equal(third, "BORROW=Third!"));
+
+    CHECK(setenv("BORROW", "owned", 1) == 0);
+    CHECK(environ != direct_environment && text_equal(getenv("BORROW"), "owned"));
+    CHECK(putenv(borrowed_again) == 0);
+    CHECK(getenv("BORROW") == borrowed_again + 7);
+    borrowed_again[7] = 'L';
+    CHECK(text_equal(getenv("BORROW"), "Last"));
+    CHECK(clearenv() == 0 && aliases_match(NULL));
+    CHECK(text_equal(borrowed_again, "BORROW=Last") &&
+        text_equal(keep, "KEEP=stable"));
+}
+
 /* Musl rejects a null, empty, or '='-containing name with EINVAL before it
  * looks at the environment; a successful call and a missing unset name leave
  * errno untouched. clearenv also succeeds on an already-cleared vector. */
@@ -435,6 +482,13 @@ int main(int argc, char **argv)
             CHECK(write(1, "environment-putenv-inheritance-ok\n",
                 sizeof("environment-putenv-inheritance-ok\n") - 1) ==
                 (ssize_t)(sizeof("environment-putenv-inheritance-ok\n") - 1));
+            return 0;
+        }
+        if (text_equal(argv[1], "mutation-lifetime")) {
+            run_mutation_lifetime();
+            CHECK(write(1, "environment-mutation-lifetime-ok\n",
+                sizeof("environment-mutation-lifetime-ok\n") - 1) ==
+                (ssize_t)(sizeof("environment-mutation-lifetime-ok\n") - 1));
             return 0;
         }
         if (text_equal(argv[1], "allocation-failure")) {
