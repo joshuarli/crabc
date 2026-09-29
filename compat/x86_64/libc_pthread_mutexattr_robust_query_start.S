@@ -1,7 +1,7 @@
 /* Direct Linux x86-64 entry for the bounded mutexattr robust-query candidate.
  *
  * This intentionally owns no CRT, TLS, errno, thread, lifecycle, mutex, or
- * robust-list setup. The selected getter only observes caller-owned attribute
+ * robust-list setup. The probe changes and reads caller-owned attribute
  * storage, then this shim exits through Linux x86-64 syscall 60.
  */
 	.text
