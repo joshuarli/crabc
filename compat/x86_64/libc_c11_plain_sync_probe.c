@@ -62,6 +62,7 @@ enum {
     BROADCAST_WAITER_COUNT = 2,
     PING_PONG_HANDOFFS = 64,
     PING_PONG_ROUNDS = 4,
+    REUSE_LIFETIMES = 2,
 };
 
 /* `entered` is only a fixture admission gate. Each worker increments it while
@@ -357,6 +358,141 @@ static int run_ping_pong_round(void)
     return status;
 }
 
+/* The holder publishes ownership before the parent tries the same mutex.
+ * The parent's successful lock after release proves a real cross-thread
+ * handoff. Reinitializing both records after quiescent destruction exercises
+ * their next object lifetime at the same addresses. */
+struct c11_reuse_round {
+    mtx_t mutex;
+    cnd_t condition;
+    volatile int held;
+    volatile int release_holder;
+    volatile int waiter_entered;
+    int predicate;
+};
+
+struct c11_reuse_worker {
+    struct c11_reuse_round *round;
+    int lock_result;
+    int wait_result;
+    int unlock_result;
+    int observed_predicate;
+    int final_errno;
+    int marker;
+};
+
+static int c11_reuse_holder_main(void *opaque)
+{
+    struct c11_reuse_worker *worker = opaque;
+
+    errno = EACCES;
+    worker->lock_result = mtx_lock(&worker->round->mutex);
+    __atomic_store_n(&worker->round->held,
+        worker->lock_result == thrd_success ? 1 : -1, __ATOMIC_RELEASE);
+    if (worker->lock_result == thrd_success) {
+        while (__atomic_load_n(&worker->round->release_holder,
+            __ATOMIC_ACQUIRE) == 0)
+            ;
+        worker->unlock_result = mtx_unlock(&worker->round->mutex);
+    }
+    worker->final_errno = errno;
+    return worker->marker;
+}
+
+static int c11_reuse_waiter_main(void *opaque)
+{
+    struct c11_reuse_worker *worker = opaque;
+
+    errno = EACCES;
+    worker->lock_result = mtx_lock(&worker->round->mutex);
+    if (worker->lock_result == thrd_success) {
+        __atomic_store_n(&worker->round->waiter_entered, 1, __ATOMIC_RELEASE);
+        while (worker->round->predicate == 0) {
+            worker->wait_result = cnd_wait(&worker->round->condition,
+                &worker->round->mutex);
+            if (worker->wait_result != thrd_success)
+                break;
+        }
+        worker->observed_predicate = worker->round->predicate;
+        worker->unlock_result = mtx_unlock(&worker->round->mutex);
+    }
+    worker->final_errno = errno;
+    return worker->marker;
+}
+
+static int run_cross_thread_reuse_round(void)
+{
+    struct c11_reuse_round round = { 0 };
+    int lifetime;
+
+    errno = E2BIG;
+    for (lifetime = 0; lifetime != REUSE_LIFETIMES; ++lifetime) {
+        struct c11_reuse_worker holder = {
+            .round = &round, .lock_result = -1, .wait_result = -1,
+            .unlock_result = -1, .observed_predicate = -1,
+            .final_errno = -1, .marker = 0x123456 + lifetime,
+        };
+        struct c11_reuse_worker waiter = {
+            .round = &round, .lock_result = -1, .wait_result = -1,
+            .unlock_result = -1, .observed_predicate = -1,
+            .final_errno = -1, .marker = -0x123456 - lifetime,
+        };
+        thrd_t thread;
+        int result;
+
+        __atomic_store_n(&round.held, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&round.release_holder, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&round.waiter_entered, 0, __ATOMIC_RELAXED);
+        round.predicate = 0;
+        if (mtx_init(&round.mutex, mtx_plain) != thrd_success)
+            return 1;
+        if (cnd_init(&round.condition) != thrd_success)
+            return 2;
+        if (thrd_create(&thread, c11_reuse_holder_main, &holder) != thrd_success)
+            return 3;
+        while (__atomic_load_n(&round.held, __ATOMIC_ACQUIRE) == 0)
+            ;
+        if (__atomic_load_n(&round.held, __ATOMIC_ACQUIRE) != 1)
+            return 4;
+        if (mtx_trylock(&round.mutex) != thrd_busy)
+            return 5;
+        __atomic_store_n(&round.release_holder, 1, __ATOMIC_RELEASE);
+        if (mtx_lock(&round.mutex) != thrd_success)
+            return 6;
+        if (mtx_unlock(&round.mutex) != thrd_success)
+            return 7;
+        if (thrd_join(thread, &result) != thrd_success ||
+            result != holder.marker || holder.lock_result != thrd_success ||
+            holder.unlock_result != thrd_success ||
+            holder.final_errno != EACCES)
+            return 8;
+
+        if (thrd_create(&thread, c11_reuse_waiter_main, &waiter) != thrd_success)
+            return 9;
+        while (__atomic_load_n(&round.waiter_entered, __ATOMIC_ACQUIRE) == 0)
+            ;
+        if (mtx_lock(&round.mutex) != thrd_success)
+            return 10;
+        round.predicate = 1;
+        if ((lifetime == 0 ? cnd_signal(&round.condition) :
+             cnd_broadcast(&round.condition)) != thrd_success)
+            return 11;
+        if (mtx_unlock(&round.mutex) != thrd_success)
+            return 12;
+        if (thrd_join(thread, &result) != thrd_success ||
+            result != waiter.marker || waiter.lock_result != thrd_success ||
+            waiter.wait_result != thrd_success ||
+            waiter.unlock_result != thrd_success ||
+            waiter.observed_predicate != 1 || waiter.final_errno != EACCES)
+            return 13;
+        cnd_destroy(&round.condition);
+        mtx_destroy(&round.mutex);
+        if (errno != E2BIG)
+            return 14;
+    }
+    return 0;
+}
+
 /* This is deliberately candidate-only boundary evidence. Pinned musl admits
  * recursive/timed C11 kinds, while the selected x86 bridge refuses any kind
  * other than mtx_plain without initializing or interpreting that object. */
@@ -396,6 +532,8 @@ static int run_c11_plain_sync(void)
         if ((status = run_ping_pong_round()) != 0)
             return 128 + (round * 16) + status;
     }
+    if ((status = run_cross_thread_reuse_round()) != 0)
+        return 208 + status;
     return 0;
 }
 

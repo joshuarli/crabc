@@ -7,8 +7,9 @@
 # archive. It proves only mtx_plain init/destroy/lock/trylock/unlock and
 # private cnd init/destroy/wait/signal/broadcast over the selected static
 # worker, normal-mutex, and condition engines: held busy trylock, one signal,
-# two-waiter broadcast, repeated predicate ping-pong, errno preservation, and
-# quiescent destruction. It is not recursive/timed C11 behavior, cancellation,
+# two-waiter broadcast, repeated predicate ping-pong, cross-thread contention
+# and same-storage lifetime reuse, errno preservation, and quiescent destruction.
+# It is not recursive/timed C11 behavior, cancellation,
 # TSS, once, dynamic TLS, CRT, loader, sysroot, C11-family completion, or
 # public x86 support.
 set -euo pipefail
@@ -73,7 +74,7 @@ closure_check() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort timeout; do
+for tool in ar awk cargo chmod cmp diff grep mkdir nm objdump readelf rustup sha256sum sort timeout; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -82,8 +83,9 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_types_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_pthread_c11_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-c11-plain-sync.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-c11-plain-sync.XXXXXX")"
+chmod 755 "$work_dir"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-c11-plain-sync-reference"
 candidate="$work_dir/crabc-static-c11-plain-sync-candidate"
@@ -113,10 +115,12 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_c11_plain_sync_probe.c \
     -o "$reference"
-if timeout "$EXECUTION_TIMEOUT" "$reference"; then
-    :
+if timeout "$EXECUTION_TIMEOUT" "$reference" \
+    >"$work_dir/reference.stdout" 2>"$work_dir/reference.stderr"; then
+    printf '0\n' >"$work_dir/reference.status"
 else
     reference_status=$?
+    printf '%s\n' "$reference_status" >"$work_dir/reference.status"
     fail "pinned-musl reference execution exited ${reference_status}"
 fi
 
@@ -226,11 +230,28 @@ for public_symbol in cnd_signal cnd_broadcast; do
         fail "${public_symbol} lacks its private futex wake path"
 done
 
-if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
-    :
+if timeout "$EXECUTION_TIMEOUT" "$candidate" \
+    >"$work_dir/candidate.stdout" 2>"$work_dir/candidate.stderr"; then
+    printf '0\n' >"$work_dir/candidate.status"
 else
     candidate_status=$?
+    printf '%s\n' "$candidate_status" >"$work_dir/candidate.status"
     fail "candidate execution exited ${candidate_status}"
 fi
+cmp "$work_dir/reference.status" "$work_dir/candidate.status" ||
+    fail "candidate status differs from pinned musl"
+cmp "$work_dir/reference.stdout" "$work_dir/candidate.stdout" ||
+    fail "candidate stdout differs from pinned musl"
+cmp "$work_dir/reference.stderr" "$work_dir/candidate.stderr" ||
+    fail "candidate stderr differs from pinned musl"
+sha256sum "$reference" "$candidate" \
+    "$work_dir/reference.status" "$work_dir/candidate.status" \
+    "$work_dir/reference.stdout" "$work_dir/candidate.stdout" \
+    "$work_dir/reference.stderr" "$work_dir/candidate.stderr" \
+    "$ROOT_DIR/compat/x86_64/libc_c11_plain_sync_probe.c" \
+    "$ROOT_DIR/compat/x86_64/libc_c11_plain_sync_start.S" \
+    "$ROOT_DIR/compat/x86_64/run_libc_c11_plain_sync.sh" \
+    >"$work_dir/hashes.sha256"
 
 printf 'x86 static crabc-libc C11 plain synchronization: PASS\n'
+printf 'evidence: %s\n' "$work_dir"
