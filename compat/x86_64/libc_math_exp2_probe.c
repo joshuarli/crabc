@@ -26,8 +26,13 @@
 
 #pragma STDC FENV_ACCESS ON
 
+#ifdef CRABC_MATH_EXP2_EXTENDED
+#define EXP2_F64_CASES 47
+#define EXP2_F32_CASES 43
+#else
 #define EXP2_F64_CASES 31
 #define EXP2_F32_CASES 27
+#endif
 #define EXP2_ROUNDING_CASES 4
 #define EXP2_RECORD_WORDS 4
 #define EXP2_RECORD_COUNT \
@@ -41,7 +46,7 @@ typedef float (*float_unary_function)(float);
 static double_unary_function volatile direct_exp2 = (exp2);
 static float_unary_function volatile direct_exp2f = (exp2f);
 
-/* The freestanding start object writes these exact 7,424 bytes with syscall. */
+/* The freestanding start object writes the selected corpus with syscall. */
 uint64_t crabc_x86_64_math_exp2_records[EXP2_RECORD_STORAGE_WORDS];
 
 static const uint64_t binary64_inputs[EXP2_F64_CASES] = {
@@ -61,6 +66,17 @@ static const uint64_t binary64_inputs[EXP2_F64_CASES] = {
 	UINT64_C(0x7fefffffffffffff), UINT64_C(0x7ff0000000000000),
 	UINT64_C(0xfff0000000000000), UINT64_C(0x7ff8000000000041),
 	UINT64_C(0x7ff0000000000042),
+#ifdef CRABC_MATH_EXP2_EXTENDED
+	/* Adjacent inputs straddle underflow, normal, overflow, and reduction edges. */
+	UINT64_C(0xc090cbffffffffff), UINT64_C(0xc090cc0000000001),
+	UINT64_C(0xc090c7ffffffffff), UINT64_C(0xc090c80000000001),
+	UINT64_C(0xc08fefffffffffff), UINT64_C(0xc08ff00000000001),
+	UINT64_C(0x408fffffffffffff), UINT64_C(0x4090000000000001),
+	UINT64_C(0xc08ffbffffffffff), UINT64_C(0xc08ffc0000000001),
+	UINT64_C(0x408ffbffffffffff), UINT64_C(0x408ffc0000000001),
+	UINT64_C(0xbf8fffffffffffff), UINT64_C(0xbf90000000000001),
+	UINT64_C(0x3f8fffffffffffff), UINT64_C(0x3f90000000000001),
+#endif
 };
 
 static const uint32_t binary32_inputs[EXP2_F32_CASES] = {
@@ -73,6 +89,16 @@ static const uint32_t binary32_inputs[EXP2_F32_CASES] = {
 	UINT32_C(0x42800000), UINT32_C(0x42fe0000), UINT32_C(0x43000000),
 	UINT32_C(0x7f7fffff), UINT32_C(0x7f800000), UINT32_C(0xff800000),
 	UINT32_C(0x7fc00041), UINT32_C(0x7f800042), UINT32_C(0xff7fffff),
+#ifdef CRABC_MATH_EXP2_EXTENDED
+	UINT32_C(0xc315ffff), UINT32_C(0xc3160001),
+	UINT32_C(0xc314ffff), UINT32_C(0xc3150001),
+	UINT32_C(0xc2fbffff), UINT32_C(0xc2fc0001),
+	UINT32_C(0x42ffffff), UINT32_C(0x43000001),
+	UINT32_C(0xc2feffff), UINT32_C(0xc2ff0001),
+	UINT32_C(0x42feffff), UINT32_C(0x42ff0001),
+	UINT32_C(0xbcffffff), UINT32_C(0xbd000001),
+	UINT32_C(0x3cffffff), UINT32_C(0x3d000001),
+#endif
 };
 
 static const int rounding_modes[EXP2_ROUNDING_CASES] = {
