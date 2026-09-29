@@ -104,6 +104,37 @@ static void byte_names(void)
     globfree(&result);
 }
 
+static void append_after_directory_error(void)
+{
+    glob_t result = {0};
+    char first[128];
+    char *first_address;
+
+    result.gl_offs = 3;
+    observe("error-append", &result, "/fixture/dir/[az]*", GLOB_DOOFFS);
+    if (result.gl_pathc != 2 ||
+        strlen(result.gl_pathv[result.gl_offs]) >= sizeof first) abort();
+    first_address = result.gl_pathv[result.gl_offs];
+    strcpy(first, first_address);
+
+    observe("error-append", &result, "/fixture/blocked/*",
+        GLOB_DOOFFS | GLOB_APPEND);
+    observe("error-append", &result, "/fixture/blocked/*",
+        GLOB_DOOFFS | GLOB_APPEND | GLOB_ERR);
+    observe("error-append", &result, "/fixture/blocked/*",
+        GLOB_DOOFFS | GLOB_APPEND | 0x10000);
+    observe("error-append", &result, "/fixture/blocked/*",
+        GLOB_DOOFFS | GLOB_APPEND | GLOB_NOCHECK | GLOB_ERR);
+    observe("error-append", &result, "/fixture/dir/z*",
+        GLOB_DOOFFS | GLOB_APPEND);
+
+    if (result.gl_pathv[result.gl_offs] != first_address ||
+        strcmp(result.gl_pathv[result.gl_offs], first)) abort();
+    globfree(&result);
+    if (result.gl_pathc || result.gl_pathv) abort();
+    printf("error-append freed offs=%zu\n", result.gl_offs);
+}
+
 static unsigned next_random(unsigned *state)
 {
     unsigned value = *state;
@@ -194,5 +225,6 @@ int main(void)
     one("denied-abort", "/fixture/blocked/*", 0x10000);
     one("denied-nocheck", "/fixture/blocked/*", GLOB_NOCHECK);
     one("denied-nocheck-err", "/fixture/blocked/*", GLOB_NOCHECK | GLOB_ERR);
+    append_after_directory_error();
     return fflush(stdout) != 0;
 }
