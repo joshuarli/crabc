@@ -551,6 +551,26 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(leaf.stat().st_mode), 0o755)
         self.assertFalse((self.work / "qualification-cases/installed/fork.json").exists())
 
+    def test_unix_mechanisms_retains_directory_and_receipt_named_by_runner(self):
+        leaf = self.work / "leaf-artifacts/installed-unix-mechanisms"
+        receipt = self.put("leaf-artifacts/installed-unix-mechanisms/receipt.json", {"schema": 1})
+        for suffix in (".log", ".json"):
+            (self.work / "qualification-cases/installed/unix-mechanisms").with_suffix(suffix).unlink()
+
+        def execute(command, **arguments):
+            self.assertEqual(command, qualification.case_command(self.work, "installed", "unix-mechanisms"))
+            arguments["stdout"].write(f"owned unix mechanisms evidence: {leaf}\n".encode())
+            arguments["stdout"].write(f"owned unix mechanisms: PASS; evidence: {receipt}\n".encode())
+            return subprocess.CompletedProcess(command, 0)
+
+        with mock.patch.object(qualification.subprocess, "run", side_effect=execute), \
+             mock.patch.object(qualification, "require_live_oracle"):
+            qualification.run_case(self.work, "installed", "unix-mechanisms")
+
+        record = qualification.read(self.work / "qualification-cases/installed/unix-mechanisms.json")
+        qualification.validate_case(record, "installed", "unix-mechanisms", self.source, self.manifest)
+        self.assertIn("receipt.json", record["artifacts"][qualification.relative(leaf)])
+
     def test_successful_corpus_exit_cannot_publish_a_rejected_native_report(self):
         case = "package-corpus"
         record = self.work / "qualification-cases/installed" / (case + ".json")

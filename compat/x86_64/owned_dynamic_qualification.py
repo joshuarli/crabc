@@ -358,6 +358,8 @@ def leaf_evidence_directories(log: Path, source_mount: str, *, failed: bool = Fa
     Paths in logs use the producer's container mount; record them relative to
     the checkout so host-side validation does not depend on /workspace.
     Symlinks and special fixture nodes are described without following them.
+    A receipt.json printed after its physical directory is part of that root,
+    rather than a second root. Its bytes are sealed by the directory snapshot.
     A failed leaf may also print a diagnostic such as "<label> evidence:
     <reason>". Its failure is the result, so for it only lines naming an
     existing root are retained and every other line is left to its log.
@@ -369,6 +371,9 @@ def leaf_evidence_directories(log: Path, source_mount: str, *, failed: bool = Fa
         try:
             require(name.startswith(prefix), "leaf evidence escapes its source mount")
             path = evidence_path(ROOT / name[len(prefix):])
+            if path.name == "receipt.json" and path.parent in directories:
+                require(path.is_file() and not path.is_symlink(), "leaf evidence receipt missing")
+                continue
             require(path.is_dir() and not path.is_symlink(), "leaf evidence directory missing")
         except QualificationError:
             if failed:
