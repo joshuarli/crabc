@@ -70,7 +70,11 @@ are not transferable passes for a different revision.
   ordinary-import reason. A later sealed C allocator boundary binds its one
   retained `getrusage` source call to the owned final targets in both static
   modes and shared libc, discharging that ordinary-import reason through the
-  final-call attachment; broader ABI closure stays open.
+  final-call attachment. A source-sealed owned AIO receipt now binds the
+  retained `aio_suspend` archive calls through GOT/register forms to one owned
+  provider in ET_EXEC, static PIE, and shared libc; the selector falls from
+  707 to 706 blockers after independent report validation. Broader ABI
+  closure stays open.
   `libc.c-abi-compat` now runs a physical
   same-cohort text/math/locale/stdio family admission; its current assessment admits seven
   of ten components and retains three allocator components at the selected C
@@ -97,7 +101,10 @@ are not transferable passes for a different revision.
   latter evidence condition met while 14 prerequisite families remain open.
   A sealed `libc.resolver` assessment admits all six components with no gaps;
   its receipt passed independent physical validation, while final-candidate
-  replay and public promotion remain separate.
+  replay and public promotion remain separate. Two source-built pinned-musl
+  differentials match the owned resolver's search/UDP-truncation/TCP-CNAME
+  recovery route and its bounded short-TCP-frame failure route; these focused
+  observations do not replace final-candidate family replay.
   `performance.release` is a read-only receipt gate whose
   runtime, native-facade and allocator M9 inputs do not exist yet. The pinned
   standalone unwinder now returns a phase error for faulting CFI
@@ -219,6 +226,10 @@ are not transferable passes for a different revision.
   `purge_decommits=0` matches 15 more MADV_FREE and counter observations. A
   committed medium OS page matches 136 C/Rust
   publication, PageMap, terminal-release, and failed-unmap relations. A
+  distinct fully committed published OS page matches 26 more C/Rust fields
+  across failed terminal unmap, retained raw cleanup, and independent later
+  publication and release. Its on-demand prefix variant cannot publish in
+  pinned C on this source revision. A
   separate second-arena EIO purge regression now matches all 19 fields,
   including the pinned decommit warning and its callback order.
   A failed second-arena MADV_FREE reset regression now matches all 23 fields,
@@ -348,6 +359,11 @@ are not transferable passes for a different revision.
   Sharing the direct-cache queue-head update across page transitions reduces
   a separate clean linked Rust total from 716,437 to 705,454 bytes, with the
   pinned-C total and measured 64-byte path counts unchanged.
+  A guarded reuse of an empty direct-page head when the queue head names the
+  same page reduces both 64-byte local and worker malloc paths from 98 to 97
+  instructions, with two calls unchanged and 90 bytes more linked Rust text;
+  owner traces and the clean M3 owner-only gate pass. This is structural
+  codegen evidence, not qualifying timing.
   Remote publication is at 165 Rust instructions after source-equivalent
   owner-word and published-PageMap checks, with its 100-trace and 25-value
   differentials passing.
