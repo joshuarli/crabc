@@ -227,6 +227,28 @@ def bin_matrix_workload() -> WorkloadBuilder:
     return builder
 
 
+def queue_candidate_front_workload(size: int, freed_from_first: int) -> WorkloadBuilder:
+    """Select an older queue member behind an expandable, unavailable head.
+
+    A full first page moves to BIN_FULL when a second page opens. Local frees
+    append the first page behind that new head. The head has no immediate free
+    block yet can extend, so the source candidate search visits both members,
+    prefers the older page's available blocks, and moves it to the front.
+    """
+
+    builder = WorkloadBuilder()
+    per_page = page_size_for_block(size) // size
+    first = [builder.allocate(size) for _ in range(per_page)]
+    second = builder.allocate(size)
+    for identifier in first[:freed_from_first]:
+        builder.free(identifier)
+    replacements = [builder.allocate(size) for _ in range(freed_from_first)]
+    builder.free_all(first[freed_from_first:])
+    builder.free(second)
+    builder.free_all(replacements)
+    return builder
+
+
 RETIRE_PROBE_SIZES = (8, 48, 1000, 1024, 1025, 4096, 10240, 10241, 40000, 86016, 100_000, 524_288)
 
 
@@ -452,6 +474,9 @@ def generate_workloads(contract: Mapping[str, Any]) -> dict[str, str]:
     arena_bytes = int(contract["profile"]["arena_bytes"])
     generators = {
         "bin-matrix": lambda parameters: bin_matrix_workload(),
+        "queue-candidate-front": lambda parameters: queue_candidate_front_workload(
+            int(parameters["size"]), int(parameters["freed_from_first"])
+        ),
         "retire-reuse": lambda parameters: retire_reuse_workload(),
         "generic-administration": lambda parameters: generic_administration_workload(
             int(parameters["calls"])
@@ -602,6 +627,94 @@ def first_divergence(c_lines: Sequence[str], rust_lines: Sequence[str]) -> dict[
     }
 
 
+def queue_candidate_front_witness(
+    lines: Sequence[str], size: int, freed_from_first: int
+) -> dict[str, Any]:
+    """Require the source's full-to-tail and candidate-to-head transitions."""
+
+    per_page = page_size_for_block(size) // size
+    second_step = per_page + 1
+    before_move_step = second_step + freed_from_first
+    move_step = before_move_step + 1
+    regular_bin = source_bin(size)
+    queues: dict[int, tuple[int, ...]] = {}
+    snapshots: dict[int, dict[int, tuple[int, ...]]] = {}
+    page_states: dict[int, tuple[int, int, int, str, str]] = {}
+    states_by_step: dict[int, dict[int, tuple[int, int, int, str, str]]] = {}
+    allocated_on_step: dict[int, int] = {}
+    step = 0
+    for line in lines:
+        if line.startswith("@"):
+            if step:
+                snapshots[step] = dict(queues)
+                states_by_step[step] = dict(page_states)
+            step = int(line.split(" ", 1)[0][1:])
+        elif line.startswith("Q"):
+            parts = line.split()
+            queue_bin = int(parts[0][1:])
+            members = "".join(parts[1:-1])
+            queues[queue_bin] = tuple(int(member) for member in members.split(",") if member)
+            if len(queues[queue_bin]) != int(parts[-1][1:]):
+                raise GateError(f"queue {queue_bin} trace count disagrees with its members")
+        elif line.startswith("= P"):
+            allocated_on_step[step] = int(line.split()[1][1:])
+        elif match := PAGE_LINE.match(line):
+            page_states[int(match.group(2))] = (
+                int(match.group(5)), int(match.group(6)), int(match.group(7)),
+                match.group(8), match.group(9),
+            )
+        elif line.startswith("-P"):
+            page_states.pop(int(line[2:]), None)
+    if step:
+        snapshots[step] = dict(queues)
+        states_by_step[step] = dict(page_states)
+
+    first = allocated_on_step.get(1)
+    second = allocated_on_step.get(second_step)
+    regular_after_second = snapshots.get(second_step, {}).get(regular_bin)
+    full_after_second = snapshots.get(second_step, {}).get(BIN_FULL)
+    regular_before_move = snapshots.get(before_move_step, {}).get(regular_bin)
+    regular_after_move = snapshots.get(move_step, {}).get(regular_bin)
+    selected = allocated_on_step.get(move_step)
+    second_before_move = states_by_step.get(before_move_step, {}).get(second)
+    first_before_move = states_by_step.get(before_move_step, {}).get(first)
+    unmet = []
+    if first is None or second is None or first == second:
+        unmet.append("two distinct source pages were not observed")
+    else:
+        if regular_after_second != (second,) or full_after_second != (first,):
+            unmet.append("the first page did not enter BIN_FULL behind the second page")
+        if regular_before_move != (second, first):
+            unmet.append("local frees did not append the first page behind the second")
+        if second_before_move is None or not (
+            second_before_move[0] < second_before_move[1]
+            and second_before_move[2] == second_before_move[0]
+            and second_before_move[3:] == ("-", "-")
+        ):
+            unmet.append("the newer head was not expandable and without a free block")
+        if first_before_move is None or not (
+            first_before_move[0] == first_before_move[1] == per_page
+            and first_before_move[2] == per_page - freed_from_first
+            and first_before_move[4] != "-"
+        ):
+            unmet.append("the older page did not retain the expected local frees")
+        if regular_after_move != (first, second) or selected != first:
+            unmet.append("candidate search did not move and allocate from the older page")
+    return {
+        "regular_bin": regular_bin,
+        "first_page": first,
+        "second_page": second,
+        "regular_after_second": regular_after_second,
+        "full_after_second": full_after_second,
+        "regular_before_move": regular_before_move,
+        "regular_after_move": regular_after_move,
+        "selected_page": selected,
+        "second_before_move": second_before_move,
+        "first_before_move": first_before_move,
+        "unmet": unmet,
+    }
+
+
 PAGE_LINE = re.compile(
     r"^([+~])P(\d+) q(\d+) s(\d+) c(\d+) r(\d+) u(\d+) f(\S+) l(\S+) x(\d+) F([01]) z([01]) S(\d+)$"
 )
@@ -736,6 +849,7 @@ def run_differential(contract: Mapping[str, Any], *, offline: bool) -> dict[str,
         work = Path(temporary_name)
         c_build = build_c_driver(contract, work, offline)
         rust_binary = rust_test_binary()
+        workload_specs = {entry["id"]: entry for entry in contract["workloads"]}
         for name, text in workloads.items():
             workload = ARTIFACT_ROOT / f"{name}.workload"
             workload.write_text(text, encoding="utf-8")
@@ -751,6 +865,13 @@ def run_differential(contract: Mapping[str, Any], *, offline: bool) -> dict[str,
             repeat_matches = c_repeat.read_bytes() == c_output.read_bytes()
             divergence = first_divergence(c_lines, rust_lines)
             digest = sha256_bytes(text.encode("utf-8"))
+            specification = workload_specs[name]
+            queue_witness = None
+            if specification["generator"] == "queue-candidate-front":
+                parameters = specification["parameters"]
+                queue_witness = queue_candidate_front_witness(
+                    c_lines, int(parameters["size"]), int(parameters["freed_from_first"])
+                )
             results.append(
                 {
                     "c_repeat_identical": repeat_matches,
@@ -758,6 +879,7 @@ def run_differential(contract: Mapping[str, Any], *, offline: bool) -> dict[str,
                     "coverage": trace_coverage(c_lines),
                     "divergence": divergence,
                     "id": name,
+                    "queue_candidate_front": queue_witness,
                     "rust_trace_sha256": run.sha256_file(rust_output),
                     "status": "matched" if divergence is None and repeat_matches else "diverged",
                     "trace_lines": len(c_lines),
@@ -777,6 +899,11 @@ def run_differential(contract: Mapping[str, Any], *, offline: bool) -> dict[str,
         if result["status"] != "matched":
             where = result["divergence"]["operation"] if result["divergence"] else "C repeat"
             unmet.append(f"workload {result['id']} diverged at {where}")
+        if result["queue_candidate_front"] is not None:
+            unmet += [
+                f"workload {result['id']}: {condition}"
+                for condition in result["queue_candidate_front"]["unmet"]
+            ]
     unmet += [f"coverage: {item}" for item in report["coverage_unmet"]]
     report["unmet"] = unmet
     report["status"] = "passed" if not unmet else "failed"

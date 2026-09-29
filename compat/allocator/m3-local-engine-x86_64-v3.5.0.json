@@ -68,6 +68,16 @@
       "generator": "bin-matrix"
     },
     {
+      "id": "queue-candidate-small",
+      "generator": "queue-candidate-front",
+      "parameters": {"size": "8192", "freed_from_first": "2"}
+    },
+    {
+      "id": "queue-candidate-medium",
+      "generator": "queue-candidate-front",
+      "parameters": {"size": "32768", "freed_from_first": "5"}
+    },
+    {
       "id": "retire-reuse",
       "generator": "retire-reuse"
     },
