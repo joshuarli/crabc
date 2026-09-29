@@ -9,7 +9,7 @@ _start:
     testl %eax, %eax
     jnz .Lcrabc_sin_fail
     lea crabc_x86_64_math_sin_records(%rip), %rsi
-    mov $8192, %edx
+    mov $32768, %edx
 .Lcrabc_sin_write:
     mov $1, %eax
     mov $1, %edi
