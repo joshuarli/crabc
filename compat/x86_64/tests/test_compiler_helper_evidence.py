@@ -22,6 +22,21 @@ SPEC.loader.exec_module(EVIDENCE)
 
 
 class CompilerHelperEvidenceTests(unittest.TestCase):
+    def test_complex_edge_differential_keeps_final_elf_and_rejects_tampering(self) -> None:
+        if not Path(EVIDENCE.ORACLE_CC).is_file():
+            self.skipTest("pinned musl compiler is available only in the native image")
+        scratch = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            report = EVIDENCE.collect_complex_edge_differential(work)
+            self.assertEqual(report["cases"], 13 ** 4)
+            self.assertEqual(EVIDENCE.validate_complex_edge_differential(work / "complex-edge-report.json"), report)
+            executable = work / "complex-edge-candidate"
+            executable.write_bytes(executable.read_bytes() + b"tampered")
+            with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "complex edge candidate identity"):
+                EVIDENCE.validate_complex_edge_differential(work / "complex-edge-report.json")
+
     def test_supplied_product_runner_rejects_overlap_and_empty_argument_before_writes(self):
         scratch = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
         scratch.mkdir(parents=True, exist_ok=True)

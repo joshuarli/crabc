@@ -865,6 +865,61 @@ AGGREGATE_ARTIFACTS = (
     "pinned-musl-reference.o",
     "pinned-musl-reference",
 )
+COMPLEX_EDGE_SCHEMA = "crabc.x86_64-compiler-helper-complex-edge/v1"
+COMPLEX_EDGE_SOURCE = Path("compat/x86_64/complex_mul_support.c")
+COMPLEX_EDGE_CASES = 13 ** 4
+COMPLEX_EDGE_TRANSCRIPT = f"complex-edge-ok {COMPLEX_EDGE_CASES}\n".encode("ascii")
+# The source oracle and owned archive are separate linked objects. Compare NaN
+# classification, but keep exact bits for every other result, including zero.
+COMPLEX_EDGE_PROBE = r'''#include <math.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+typedef double _Complex complex_double;
+extern complex_double __muldc3(double, double, double, double);
+extern complex_double crabc_reference_muldc3(double, double, double, double);
+static uint64_t bits(double value) {
+    uint64_t result;
+    memcpy(&result, &value, sizeof result);
+    return result;
+}
+static int same(double left, double right) {
+    return (isnan(left) && isnan(right)) || bits(left) == bits(right);
+}
+int main(void) {
+    volatile double values[] = {
+        0.0, -0.0, 1.0, -1.0, 2.0, -2.0,
+        0x1p1023, -0x1p1023, 0x1p-1074, -0x1p-1074,
+        INFINITY, -INFINITY, NAN
+    };
+    unsigned cases = 0;
+    for (unsigned a = 0; a < 13; ++a)
+    for (unsigned b = 0; b < 13; ++b)
+    for (unsigned c = 0; c < 13; ++c)
+    for (unsigned d = 0; d < 13; ++d) {
+        complex_double owned = __muldc3(values[a], values[b], values[c], values[d]);
+        complex_double oracle = crabc_reference_muldc3(values[a], values[b], values[c], values[d]);
+        if (!same(__real__ owned, __real__ oracle) ||
+            !same(__imag__ owned, __imag__ oracle)) {
+            fprintf(stderr, "complex mismatch %u %u %u %u: %llx %llx / %llx %llx\n",
+                    a, b, c, d,
+                    (unsigned long long)bits(__real__ owned),
+                    (unsigned long long)bits(__imag__ owned),
+                    (unsigned long long)bits(__real__ oracle),
+                    (unsigned long long)bits(__imag__ oracle));
+            return 1;
+        }
+        ++cases;
+    }
+    printf("complex-edge-ok %u\n", cases);
+    return 0;
+}
+'''
+COMPLEX_EDGE_ARTIFACTS = (
+    "libcrabc-builtins.a", "libcrabc-builtins.a.provenance.json",
+    "libm.h", "complex-edge-probe.c", "complex-edge-oracle.o",
+    "complex-edge-probe.o", "complex-edge-candidate", "complex-edge-commands.json",
+)
 EXPECTED_TRANSCRIPT = b"compiler-helper-aggregate-ok\n"
 IMAGE_PATTERN = re.compile(r"crabc-core-evidence@sha256:[0-9a-f]{64}\Z")
 SOURCE_MOUNT = "/workspace"
@@ -1291,6 +1346,130 @@ def _live_tool(command: Sequence[str], description: str) -> str:
     return completed.stdout
 
 
+def _complex_edge_commands(work: Path) -> tuple[tuple[str, list[str]], ...]:
+    cc = ORACLE_CC
+    archive = str(work / "libcrabc-builtins.a")
+    return (
+        ("build", ["python3", str(ROOT / BUILDER), "--output", archive,
+                   "--provenance", str(work / "libcrabc-builtins.a.provenance.json"),
+                   "--verify-reproducible"]),
+        ("oracle-compile", [cc, "-std=c11", "-O2", "-fno-builtin", "-ffunction-sections",
+                            "-I", str(work), "-include", "math.h",
+                            "-D__mulsc3=crabc_reference_mulsc3",
+                            "-D__muldc3=crabc_reference_muldc3",
+                            "-D__mulxc3=crabc_reference_mulxc3", "-c",
+                            str(ROOT / COMPLEX_EDGE_SOURCE), "-o", str(work / "complex-edge-oracle.o")]),
+        ("probe-compile", [cc, "-std=c11", "-O2", "-fno-builtin", "-c",
+                           str(work / "complex-edge-probe.c"), "-o", str(work / "complex-edge-probe.o")]),
+        ("link", [cc, "-no-pie", "-Wl,--gc-sections", "-Wl,-t", str(work / "complex-edge-probe.o"),
+                  str(work / "complex-edge-oracle.o"), archive, "-o", str(work / "complex-edge-candidate")]),
+        ("execute", [str(work / "complex-edge-candidate")]),
+    )
+
+
+def _complex_edge_record(work: Path) -> dict[str, Any]:
+    work = _physical_directory(work, "complex edge work")
+    require((work / "libm.h").read_bytes() == b"", "complex edge private header differs")
+    require((work / "complex-edge-probe.c").read_bytes() == COMPLEX_EDGE_PROBE.encode("ascii"),
+            "complex edge probe source differs")
+    artifacts = {name: _work_identity(work, work / name, "complex edge " + name)
+                 for name in COMPLEX_EDGE_ARTIFACTS}
+    commands = []
+    for label, argv in _complex_edge_commands(work):
+        stdout = work / "raw" / (label + ".stdout")
+        stderr = work / "raw" / (label + ".stderr")
+        require(stdout.is_file() and stderr.is_file(), "complex edge command stream is missing")
+        commands.append({"label": label, "argv": argv, "status": 0,
+                         "stdout": _work_identity(work, stdout, "complex edge " + label + " stdout"),
+                         "stderr": _work_identity(work, stderr, "complex edge " + label + " stderr")})
+    require(same(_read_json(work / "complex-edge-commands.json", "complex edge commands"), commands),
+            "complex edge command record differs")
+    require((work / "raw/execute.stdout").read_bytes() == COMPLEX_EDGE_TRANSCRIPT
+            and (work / "raw/execute.stderr").read_bytes() == b"",
+            "complex edge differential transcript differs")
+    require(str(work / "libcrabc-builtins.a") in (work / "raw/link.stdout").read_text(encoding="utf-8"),
+            "complex edge link did not retain the owned archive")
+    archive = work / "libcrabc-builtins.a"
+    contract = load_contract(ROOT)
+    require(_nm_defined_names(archive) == set(helper_names(contract)),
+            "complex edge archive roster differs")
+    provenance = _provenance(work / "libcrabc-builtins.a.provenance.json", contract,
+                             artifacts["libcrabc-builtins.a"])
+    oracle_names = _nm_defined_names(work / "complex-edge-oracle.o")
+    require("crabc_reference_muldc3" in oracle_names and "__muldc3" not in oracle_names,
+            "complex edge source oracle definition differs")
+    probe_imports = set(_live_tool(["nm", "--undefined-only", str(work / "complex-edge-probe.o")],
+                                   "complex edge probe imports").split())
+    require({"__muldc3", "crabc_reference_muldc3"} <= probe_imports,
+            "complex edge probe does not import both implementations")
+    candidate = work / "complex-edge-candidate"
+    final_definitions = _nm_defined_names(candidate)
+    require({"__muldc3", "crabc_reference_muldc3"} <= final_definitions,
+            "complex edge final ELF definitions differ")
+    header = _live_tool(["readelf", "-hW", str(candidate)], "complex edge final ELF header")
+    require("Advanced Micro Devices X86-64" in header and "EXEC (Executable file)" in header,
+            "complex edge final ELF target differs")
+    disassembly = _live_tool(["objdump", "--disassemble", str(candidate)], "complex edge final ELF calls")
+    for name in ("__muldc3", "crabc_reference_muldc3"):
+        require(re.search(r"\bcall\S*\s+[^\n]*<" + name + r">", disassembly) is not None,
+                "complex edge final ELF does not call " + name)
+    return {"schema": COMPLEX_EDGE_SCHEMA, "target": TARGET, "cases": COMPLEX_EDGE_CASES,
+            "source": [file_identity(ROOT, relative) for relative in
+                       (SOURCE, BUILDER, CONTRACT, COMPLEX_EDGE_SOURCE, READER)],
+            "compiler": _external_file_identity(Path(ORACLE_CC), "complex edge pinned musl compiler"),
+            "artifacts": artifacts, "provenance": provenance, "commands": commands,
+            "observations": {"owned_archive_retained": True, "distinct_source_oracle_retained": True,
+                             "final_elf_direct_calls": ["__muldc3", "crabc_reference_muldc3"],
+                             "signed_zero_compared_by_bits": True,
+                             "transcript": COMPLEX_EDGE_TRANSCRIPT.decode("ascii")},
+            "scope": "A pinned-musl differential fixture around the owned helper archive; not an installed candidate product."}
+
+
+def collect_complex_edge_differential(work: Path) -> dict[str, Any]:
+    """Run the bounded compiler-rt complex edge oracle in the pinned x86 image."""
+
+    work = checkout_work_directory(ROOT, work)
+    require(not work.exists() or (work.is_dir() and not work.is_symlink() and not any(work.iterdir())),
+            "complex edge work directory must be fresh and empty")
+    require(Path(ORACLE_CC).is_file(), "complex edge pinned musl compiler is unavailable")
+    work.mkdir(parents=True, exist_ok=True)
+    (work / "raw").mkdir()
+    # Only public math macros are needed by the source translation here.
+    (work / "libm.h").write_bytes(b"")
+    (work / "complex-edge-probe.c").write_text(COMPLEX_EDGE_PROBE, encoding="ascii")
+    commands = []
+    for label, argv in _complex_edge_commands(work):
+        result = subprocess.run(argv, cwd=ROOT, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        (work / "raw" / (label + ".stdout")).write_bytes(result.stdout)
+        (work / "raw" / (label + ".stderr")).write_bytes(result.stderr)
+        require(result.returncode == 0,
+                f"complex edge {label} failed: {result.stderr.decode('utf-8', errors='replace')}")
+        commands.append({"label": label, "argv": argv, "status": result.returncode,
+                         "stdout": _work_identity(work, work / "raw" / (label + ".stdout"),
+                                                  "complex edge " + label + " stdout"),
+                         "stderr": _work_identity(work, work / "raw" / (label + ".stderr"),
+                                                  "complex edge " + label + " stderr")})
+    (work / "complex-edge-commands.json").write_text(canonical_json(commands), encoding="utf-8")
+    report = _complex_edge_record(work)
+    (work / "complex-edge-report.json").write_text(canonical_json(report), encoding="utf-8")
+    return report
+
+
+def validate_complex_edge_differential(report_path: Path) -> dict[str, Any]:
+    report_path = _physical_file(report_path, "complex edge report")
+    require(report_path.name == "complex-edge-report.json", "complex edge report name differs")
+    report = _read_json(report_path, "complex edge report")
+    require(type(report) is dict and type(report.get("artifacts")) is dict
+            and type(report["artifacts"].get("complex-edge-candidate")) is dict,
+            "complex edge candidate identity fields differ")
+    _resolve_work_identity(report_path.parent, report["artifacts"]["complex-edge-candidate"],
+                           "complex edge candidate identity")
+    expected = _complex_edge_record(report_path.parent)
+    require(same(report, expected), "complex edge report does not reconstruct")
+    return report
+
+
 def _nm_defined_names(path: Path) -> set[str]:
     return {line.split()[-1] for line in _live_tool(["nm", "--defined-only", "--extern-only", str(path)],
                                                      "compiler-helper symbol table").splitlines()
@@ -1480,6 +1659,10 @@ def main(argv: list[str] | None = None) -> int:
     replay.add_argument("report", type=Path)
     source_replay = commands.add_parser("validate-source-seal", allow_abbrev=False)
     source_replay.add_argument("source", type=Path)
+    complex_collect = commands.add_parser("collect-complex-edge-differential", allow_abbrev=False)
+    complex_collect.add_argument("--work", required=True, type=Path)
+    complex_replay = commands.add_parser("validate-complex-edge-differential", allow_abbrev=False)
+    complex_replay.add_argument("report", type=Path)
     work_directory = commands.add_parser("validate-work-dir", allow_abbrev=False)
     work_directory.add_argument("--root", required=True, type=Path)
     work_directory.add_argument("--work", required=True, type=Path)
@@ -1523,6 +1706,12 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "validate-source-seal":
             validate_source_seal(args.source)
             print("compiler-helper source seal valid")
+        elif args.command == "collect-complex-edge-differential":
+            collect_complex_edge_differential(args.work)
+            print("compiler-helper complex edge differential valid")
+        elif args.command == "validate-complex-edge-differential":
+            validate_complex_edge_differential(args.report)
+            print("compiler-helper complex edge differential receipt valid")
         elif args.command == "validate-work-dir":
             print(checkout_work_directory(args.root, args.work, product=args.product))
         elif args.command == "validate-materialized-product":
