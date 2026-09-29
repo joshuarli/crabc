@@ -9009,7 +9009,8 @@ def attach_errno_storage_lifecycle(accounting: Mapping[str, Any], companion: Map
 def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                                    companion: Mapping[str, Any], name: str, *,
                                    projection_override: Mapping[str, Any] | None = None,
-                                   loader_occurrence: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
+                                   loader_occurrence: Mapping[str, Any] | None = None,
+                                   shared_direct_call: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
     """Bind all authenticated archive callers to their final provider.
 
     Each member's relocation form and selected final call are replayed by the
@@ -9213,6 +9214,18 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                                for call in item['calls']}
                         for item, source in zip(shared['importers'], importers)),
                 'ordinary shared whole-image call inventory differs')
+    if name == 'memmove':
+        direct = exact(shared_direct_call, {
+            'libc_sha256', 'bcopy_address', 'call_address',
+            'provider_address', 'branch_kind'}, 'memmove shared bcopy call')
+        bcopy_importers = [(source, linked) for source, linked in zip(importers, shared['importers'])
+                           if source['shared_caller_functions'] == ['bcopy']]
+        require(len(bcopy_importers) == 1 and not bcopy_importers[0][1]['calls']
+                and direct['provider_address'] == shared['provider_address']
+                and direct['branch_kind'] == 'direct-tail-jump'
+                and type(direct['bcopy_address']) is int
+                and direct['call_address'] == direct['bcopy_address'] + 3,
+                'memmove shared direct bcopy call differs')
         if name == 'close':
             require(len(all_calls) == 1
                     and all_calls[0].get('source_function')
@@ -9382,7 +9395,8 @@ def memmove_ordinary_import_adapter(
             dynamic_product=paths['dynamic_product'],
             elf_facts_report=paths['elf_report'], name='memmove',
             independent_retained_work=work, expected_importers=2,
-            shared_call_inventory=True, all_defined_shared_callers=True)
+            shared_call_inventory=True, all_defined_shared_callers=True,
+            mixed_memmove_call_forms=True)
     except (KeyError, TypeError, ValueError, OSError,
             memmove_import_receipt.MemmoveImportError,
             product_evidence.ProductEvidenceError,
@@ -9391,7 +9405,8 @@ def memmove_ordinary_import_adapter(
     require(receipt['source']['revision'] == selection_source()['revision'],
             'memmove import selects another source revision')
     return {'report': file_identity(receipt_path), 'projection': projection,
-            'loader_occurrence': receipt['loader_occurrence']}
+            'loader_occurrence': receipt['loader_occurrence'],
+            'shared_direct_call': receipt['shared_bcopy_direct_call']}
 
 
 def owned_aio_ordinary_import_adapter(
@@ -12369,7 +12384,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         _attach_ordinary_static_import(
             accounting, native_c_allocator_boundary_companion, 'memmove',
             projection_override=memmove_ordinary_import_companion['projection'],
-            loader_occurrence=memmove_ordinary_import_companion['loader_occurrence']))
+            loader_occurrence=memmove_ordinary_import_companion['loader_occurrence'],
+            shared_direct_call=memmove_ordinary_import_companion['shared_direct_call']))
     ordinary_static_import_joins.extend(memmove_import_joins)
     for scan_import, caller, call_count in (
             ('mbrtowc', 'crabc_owned_scan_vfscanf', 1),

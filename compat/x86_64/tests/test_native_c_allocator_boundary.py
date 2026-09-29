@@ -24,6 +24,37 @@ SPEC.loader.exec_module(BOUNDARY)
 
 
 class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
+    def test_memmove_imports_admit_measured_mixed_calls_only_when_selected(self) -> None:
+        got = [{"kind": "R_X86_64_GOTPCREL"}, {"kind": "R_X86_64_GOTPCREL"}]
+        direct = [{"kind": "R_X86_64_PLT32"}]
+        BOUNDARY._ordinary_import_call_forms(
+            "memmove", got, is_c=False, required_importer_section=None,
+            mixed_memmove_call_forms=True)
+        BOUNDARY._ordinary_import_call_forms(
+            "memmove", direct, is_c=False, required_importer_section=None,
+            mixed_memmove_call_forms=True)
+        with self.assertRaises(BOUNDARY.AllocatorBoundaryError):
+            BOUNDARY._ordinary_import_call_forms(
+                "memmove", direct, is_c=False, required_importer_section=None,
+                mixed_memmove_call_forms=False)
+        with self.assertRaises(BOUNDARY.AllocatorBoundaryError):
+            BOUNDARY._ordinary_import_call_forms(
+                "strlen", direct, is_c=False, required_importer_section=None,
+                mixed_memmove_call_forms=True)
+
+    def test_memmove_bcopy_unnamed_text_maps_to_its_defined_function(self) -> None:
+        rows = [{"name": "bcopy", "type": "FUNC", "binding": "GLOBAL",
+                 "section_index": "3"}]
+        sections = [{"name": ".text", "index": 3}]
+        self.assertEqual(BOUNDARY._ordinary_import_caller_functions(
+            "memmove", rows, sections, [{"section": ".text"}],
+            mixed_memmove_call_forms=True), ["bcopy"])
+        with self.assertRaises(BOUNDARY.AllocatorBoundaryError):
+            BOUNDARY._ordinary_import_caller_functions(
+                "memmove", rows + [{"name": "foreign", "type": "FUNC",
+                                    "binding": "GLOBAL", "section_index": "3"}],
+                sections, [{"section": ".text"}], mixed_memmove_call_forms=True)
+
     def test_archive_relocation_uses_full_elf_section_name_when_readelf_truncates_it(self) -> None:
         section = ".text." + "long_rust_monomorphization_" * 12
         relocation = ".rela" + section

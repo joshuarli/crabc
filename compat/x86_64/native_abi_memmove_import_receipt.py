@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import struct
 import subprocess
 import sys
 from typing import Any
@@ -17,6 +18,7 @@ if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 import native_abi_inventory as inventory
 import owned_posix_product_evidence as product_evidence
+import native_c_allocator_boundary as boundary
 
 ROOT = inventory.ROOT
 SOURCE = MODULE_DIR / "native_abi_memmove_import_fixture.c"
@@ -91,6 +93,38 @@ def loader_occurrence(dynamic_product: Path) -> dict[str, Any]:
             "size_bytes": int(rows[0][2]), "section_index": rows[0][6]}
 
 
+def shared_bcopy_direct_call(dynamic_product: Path) -> dict[str, Any]:
+    """Bind the shared bcopy tail branch that has no memmove GOT relocation."""
+    libc = regular(dynamic_product / "usr/lib/libc.so", "memmove shared libc")
+    symbols = subprocess.run(("/usr/bin/readelf", "-Ws", str(libc)),
+                             capture_output=True, text=True, check=False)
+    require(symbols.returncode == 0, "memmove shared symbol table is unreadable")
+    addresses = {}
+    for name in ("bcopy", "memmove"):
+        rows = [line.split() for line in symbols.stdout.splitlines()
+                if line.endswith(" " + name) and line.split()[0].endswith(":" )]
+        require(len(rows) == 2 and all(row[3:6] == ["FUNC", "GLOBAL", "DEFAULT"]
+                                       and row[6].isdigit() for row in rows)
+                and len({(row[1], row[2], row[6]) for row in rows}) == 1,
+                f"memmove shared {name} provider rows differ")
+        addresses[name] = (int(rows[0][1], 16), int(rows[0][2]))
+    bcopy_address, bcopy_size = addresses["bcopy"]
+    provider_address, _provider_size = addresses["memmove"]
+    require(bcopy_address > 0 and bcopy_size == 8 and provider_address > 0,
+            "memmove shared bcopy or provider address differs")
+    try:
+        body = boundary._public_weak_virtual_bytes(
+            libc.read_bytes(), bcopy_address, bcopy_size, 3, executable=True)
+    except boundary.AllocatorBoundaryError as error:
+        raise MemmoveImportError(str(error)) from error
+    require(body[:4] == b"\x48\x87\xfe\xe9"
+            and bcopy_address + 8 + struct.unpack_from("<i", body, 4)[0] == provider_address,
+            "memmove shared bcopy tail branch resolves elsewhere")
+    return {"libc_sha256": digest(libc), "bcopy_address": bcopy_address,
+            "call_address": bcopy_address + 3, "provider_address": provider_address,
+            "branch_kind": "direct-tail-jump"}
+
+
 def compile_command(dynamic_product: Path, work: Path) -> list[str]:
     return [str(dynamic_product / "bin/crabc-cc-dynamic"), *COMPILE_FLAGS,
             "-c", str(SOURCE), "-o", str(work / "workload.o")]
@@ -139,6 +173,7 @@ def collect(static_product: Path, dynamic_product: Path, output: Path) -> dict[s
               "static_driver_sha256": digest(static_product / "bin/crabc-cc"),
               "workload_sha256": digest(output / "workload.o"),
               "workload_rows": rows, "loader_occurrence": loader_occurrence(dynamic_product),
+              "shared_bcopy_direct_call": shared_bcopy_direct_call(dynamic_product),
               "commands": commands,
               "links": {mode: product_evidence.validate_link(
                   static_product if mode.startswith("static") else dynamic_product,
@@ -159,7 +194,8 @@ def validate_report(report_path: Path, *, static_product: Path, dynamic_product:
     require(type(report) is dict and set(report) == {
         "schema", "source_sha256", "source", "static_product", "dynamic_product",
         "dynamic_driver_sha256", "static_driver_sha256", "workload_sha256",
-        "workload_rows", "loader_occurrence", "commands", "links"}, "memmove report shape differs")
+        "workload_rows", "loader_occurrence", "shared_bcopy_direct_call",
+        "commands", "links"}, "memmove report shape differs")
     require(report["schema"] == SCHEMA and report["source_sha256"] == digest(SOURCE)
             and report["source"] == inventory.collector_source_seal()
             and report["static_product"] == str(static_product)
@@ -168,7 +204,8 @@ def validate_report(report_path: Path, *, static_product: Path, dynamic_product:
             and report["static_driver_sha256"] == digest(static_product / "bin/crabc-cc")
             and report["workload_sha256"] == digest(work / "workload.o")
             and report["workload_rows"] == workload_rows(work / "workload.o")
-            and report["loader_occurrence"] == loader_occurrence(dynamic_product),
+            and report["loader_occurrence"] == loader_occurrence(dynamic_product)
+            and report["shared_bcopy_direct_call"] == shared_bcopy_direct_call(dynamic_product),
             "memmove source, products, or workload changed")
     require(set(report["commands"]) == {"compile", *MODES}
             and set(report["links"]) == set(MODES), "memmove command or link roster differs")

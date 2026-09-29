@@ -48,6 +48,30 @@ class MemmoveImportReceiptTests(unittest.TestCase):
             with self.assertRaisesRegex(receipt.MemmoveImportError, "loader occurrence differs"):
                 receipt.loader_occurrence(product)
 
+    def test_shared_bcopy_tail_branch_targets_the_shared_provider(self):
+        symbols = "\n".join(
+            f"  {index}: {address:016x} {size} FUNC GLOBAL DEFAULT 9 {name}"
+            for index, (name, address, size) in enumerate((
+                ("bcopy", 0x1000, 8), ("bcopy", 0x1000, 8),
+                ("memmove", 0x1010, 20), ("memmove", 0x1010, 20)), 1))
+        with mock.patch.object(receipt, "regular", return_value=Path("libc")), \
+                mock.patch.object(receipt, "digest", return_value="b" * 64), \
+                mock.patch.object(Path, "read_bytes", return_value=b"ELF"), \
+                mock.patch.object(receipt.subprocess, "run", return_value=completed(symbols)), \
+                mock.patch.object(receipt.boundary, "_public_weak_virtual_bytes",
+                                  return_value=b"\x48\x87\xfe\xe9\x08\0\0\0"):
+            self.assertEqual(receipt.shared_bcopy_direct_call(Path("product")), {
+                "libc_sha256": "b" * 64, "bcopy_address": 0x1000,
+                "call_address": 0x1003, "provider_address": 0x1010,
+                "branch_kind": "direct-tail-jump"})
+        with mock.patch.object(receipt, "regular", return_value=Path("libc")), \
+                mock.patch.object(Path, "read_bytes", return_value=b"ELF"), \
+                mock.patch.object(receipt.subprocess, "run", return_value=completed(symbols)), \
+                mock.patch.object(receipt.boundary, "_public_weak_virtual_bytes",
+                                  return_value=b"\x48\x87\xfe\xe9\x09\0\0\0"):
+            with self.assertRaisesRegex(receipt.MemmoveImportError, "resolves elsewhere"):
+                receipt.shared_bcopy_direct_call(Path("product"))
+
 
 if __name__ == "__main__":
     unittest.main()
