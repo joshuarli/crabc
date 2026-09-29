@@ -3733,6 +3733,84 @@ mod tests {
         }).join().expect("the process-init trace thread completes");
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_concurrent_process_init_callback_c_rust_trace() {
+        let config = memory_config();
+        let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
+        let (attached_tx, attached_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (result_tx, result_rx) = mpsc::channel();
+        let (teardown_tx, teardown_rx) = mpsc::channel();
+
+        let initializer = thread::spawn(move || {
+            let (mut owner, startup) = unsafe {
+                storage.prepare_with_test_components_and_vm_options(
+                    config, resolved_vm_options(), main_static, subprocess,
+                    metadata, page_map_storage, None,
+                )
+            }.expect("the source default owner is attached before the callback interval");
+            let first_default = default_theap();
+            let initialized_at_callback = unsafe { first_default.as_ref().is_initialized() }
+                && storage.state.load(Ordering::Acquire) == SOURCE_ATTACHED;
+            let recursive = unsafe { storage.initialize_with_test_components(
+                config, main_static, subprocess, metadata, page_map_storage,
+            ) };
+            let reentry_preserves_owner = matches!(recursive, Err(ProcessMainInitError::Initializing))
+                && default_theap() == first_default;
+            attached_tx.send((initialized_at_callback, reentry_preserves_owner, first_default.as_ptr() as usize))
+                .expect("the callback observer remains live");
+            release_rx.recv().expect("the callback interval is released");
+            startup.complete().expect("source startup completes after the callback interval");
+            let ready_owner_stable = default_theap().as_ptr() as usize == first_default.as_ptr() as usize
+                && owner.ready().is_ok();
+            result_tx.send(ready_owner_stable).expect("the final observer remains live");
+            teardown_rx.recv().expect("the original owner retains teardown");
+            owner.teardown().expect("the original owner tears down");
+        });
+
+        let (initialized_at_callback, reentry_preserves_owner, first_default) = attached_rx
+            .recv_timeout(Duration::from_secs(2)).expect("the owner reaches the callback interval");
+        let (contender_tx, contender_rx) = mpsc::channel();
+        let contender = thread::spawn(move || {
+            let initially_empty = unsafe { !default_theap().as_ref().is_initialized() };
+            let result = unsafe { storage.initialize_with_test_components(
+                config, main_static, subprocess, metadata, page_map_storage,
+            ) };
+            let still_empty = unsafe { !default_theap().as_ref().is_initialized() };
+            contender_tx.send((matches!(result, Err(ProcessMainInitError::AlreadyInitialized)),
+                initially_empty && still_empty)).expect("the contender observer remains live");
+        });
+        wait_for_process_once_contender(storage);
+        let contender_waits = contender_rx.recv_timeout(Duration::from_millis(50)).is_err();
+        release_tx.send(()).expect("the owner retains its callback interval");
+        let ready_owner_stable = result_rx.recv_timeout(Duration::from_secs(2))
+            .expect("the original owner publishes READY");
+        let (contender_observed_ready, contender_no_tld) = contender_rx
+            .recv_timeout(Duration::from_secs(2)).expect("the contender observes the released state");
+        let counters_preserved = subprocess.total_thread_count() == 1
+            && subprocess.live_thread_count() == 1;
+        let trace = [
+            ("initialized_at_callback", initialized_at_callback),
+            ("reentry_preserves_owner", reentry_preserves_owner),
+            ("contender_waits", contender_waits),
+            ("ready_owner_stable", ready_owner_stable),
+            ("contender_observed_ready", contender_observed_ready),
+            ("contender_no_tld", contender_no_tld),
+            ("counters_preserved", counters_preserved),
+            ("owner_identity_preserved", first_default != 0),
+        ];
+        std::println!("CRABC_MI_CONCURRENT_INIT_RUST_TRACE_BEGIN");
+        for (key, value) in trace {
+            std::println!("trace.concurrent_init.{key}={}", usize::from(value));
+            assert!(value, "concurrent process initialization changes {key}");
+        }
+        std::println!("CRABC_MI_CONCURRENT_INIT_RUST_TRACE_END");
+        teardown_tx.send(()).expect("the original owner still owns teardown");
+        contender.join().expect("the contender finishes");
+        initializer.join().expect("the original owner finishes");
+    }
+
     #[test]
     fn process_main_owner_opens_the_ticket_zero_first_arena_page_owner() {
         thread::spawn(|| {
