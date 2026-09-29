@@ -53,7 +53,7 @@ assert_fixture_tls_capacity() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mkdir nm objdump python3 readelf rustup sort timeout; do require_tool "$tool"; done
+for tool in ar awk cargo cmp diff grep mkdir nm objdump python3 readelf rustup sha256sum sort timeout; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
@@ -231,5 +231,66 @@ for suffix in stdout stderr status; do
     cmp "$work_dir/owned-reference.$suffix" "$work_dir/owned-candidate.$suffix" ||
         fail "owned pathname-stream $suffix differs from pinned musl"
 done
+
+lifetime_probe="$ROOT_DIR/compat/x86_64/libc_stdio_path_stream_lifetime_probe.c"
+lifetime_object="$work_dir/path-stream-lifetime.o"
+lifetime_reference="$work_dir/musl-path-stream-lifetime-reference"
+lifetime_candidate="$work_dir/crabc-path-stream-lifetime-candidate"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
+    "$lifetime_probe" >/dev/null 2>"$work_dir/lifetime-header-trace"
+for header in errno.h fcntl.h stdio.h string.h sys/stat.h unistd.h; do
+    grep -Fq "$ROOT_DIR/include/$header" "$work_dir/lifetime-header-trace" ||
+        fail "lifetime fixture did not use the project $header header"
+done
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" \
+    -fno-builtin -fno-stack-protector -c "$lifetime_probe" -o "$lifetime_object"
+"$ORACLE_CC" -static -fno-pie -no-pie "$lifetime_object" -o "$lifetime_reference"
+( cd "$work_dir"; "$owned_sysroot/bin/crabc-cc" -static \
+    --link-receipt path-stream-lifetime.crabc-link.json \
+    "$lifetime_object" -o "$lifetime_candidate" )
+readelf --program-headers --wide "$lifetime_candidate" >"$work_dir/lifetime-candidate-program-headers"
+readelf --dynamic --wide "$lifetime_candidate" >"$work_dir/lifetime-candidate-dynamic" || true
+if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \
+    "$work_dir/lifetime-candidate-program-headers" "$work_dir/lifetime-candidate-dynamic"; then
+    fail "lifetime candidate selected a dynamic runtime"
+fi
+
+for scenario in buffered-reopen adopted-position null-append failed-reopen adopted-read-error; do
+    for runtime in reference candidate; do
+        if [ "$runtime" = reference ]; then
+            program="$lifetime_reference"
+        else
+            program="$lifetime_candidate"
+        fi
+        status=0
+        LC_ALL=C timeout "$EXECUTION_TIMEOUT" "$program" "$scenario" \
+            "$work_dir/$scenario-$runtime-first" \
+            "$work_dir/$scenario-$runtime-second" \
+            >"$work_dir/$scenario-$runtime.stdout" \
+            2>"$work_dir/$scenario-$runtime.stderr" || status=$?
+        printf '%s\n' "$status" >"$work_dir/$scenario-$runtime.status"
+    done
+    for suffix in stdout stderr status; do
+        cmp "$work_dir/$scenario-reference.$suffix" \
+            "$work_dir/$scenario-candidate.$suffix" ||
+            fail "$scenario $suffix differs from pinned musl"
+    done
+    [ "$(cat "$work_dir/$scenario-reference.status")" = 0 ] ||
+        fail "$scenario pinned-musl fixture failed"
+done
+(
+    cd "$work_dir"
+    sha256sum cargo-target/x86_64-unknown-linux-musl/debug/libc.a \
+        musl-path-stream-reference crabc-static-path-stream-candidate \
+        musl-owned-path-stream-reference crabc-owned-path-stream-candidate \
+        path-stream-owned.o path-stream-owned.crabc-link.json \
+        musl-path-stream-lifetime-reference \
+        crabc-path-stream-lifetime-candidate path-stream-lifetime.o \
+        path-stream-lifetime.crabc-link.json owned-sysroot-build.json \
+        *-reference.stdout *-reference.stderr *-reference.status \
+        *-candidate.stdout *-candidate.stderr *-candidate.status \
+        >lifetime-products-and-streams.sha256
+    sha256sum -c lifetime-products-and-streams.sha256 >/dev/null
+)
 
 printf 'x86 static crabc-libc fixed and owned pathname streams: PASS; evidence: %s\n' "$work_dir"
