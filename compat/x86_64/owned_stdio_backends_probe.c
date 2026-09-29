@@ -200,6 +200,44 @@ static int cookies(void)
     errno=0; status=fseek(f,-1,SEEK_SET); record(43,status,f,NULL,0); fclose(f);
     return 0;
 }
+
+/* The same binary record crosses FILE buffering, allocated line input,
+ * logical-position restoration, and scanf on two independent backends. */
+static int binary_record(void)
+{
+    static const unsigned char bytes[] = {'A', 'B', 0, 'C', 'D', 0, 'E'};
+    struct cookie state={0};
+    memcpy(state.data, bytes, sizeof bytes);
+    state.len=sizeof bytes;
+    cookie_io_functions_t functions={reader,writer,seeker,closer};
+    for (int backend=0; backend<2; backend++) {
+        FILE *f=backend ? fopencookie(&state,"r",functions)
+                        : fmemopen((void *)bytes,sizeof bytes,"r");
+        if (!f) return 50;
+        char buffer[32];
+        if (setvbuf(f,buffer,_IOFBF,sizeof buffer)) return 51;
+        fpos_t start;
+        if (fgetpos(f,&start)) return 52;
+        char *line=NULL; size_t capacity=0;
+        errno=0;
+        ssize_t length=getdelim(&line,&capacity,0,f);
+        if (length!=3 || memcmp(line,bytes,3) || ftell(f)!=3) return 53;
+        record(50+backend,(int)length,f,line,(size_t)length);
+        if (fsetpos(f,&start) || ftell(f)!=0) return 54;
+        char prefix[3]={0};
+        if (fscanf(f,"%2c",prefix)!=1 || memcmp(prefix,"AB",2)) return 55;
+        if (fgetc(f)!=0 || ftell(f)!=3) return 56;
+        errno=0;
+        length=getdelim(&line,&capacity,0,f);
+        if (length!=3 || memcmp(line,"CD\0",3)) return 57;
+        record(52+backend,(int)length,f,line,(size_t)length);
+        if (fgetc(f)!='E' || fgetc(f)!=EOF || !feof(f) || ferror(f)) return 58;
+        free(line);
+        if (fclose(f)) return 59;
+    }
+    if (state.closes!=1) return 60;
+    return 0;
+}
 #endif
 
 int main(int argc,char **argv)
@@ -209,6 +247,7 @@ int main(int argc,char **argv)
 #ifndef DESCRIPTOR_ONLY
     status=memories(); if(status) return status;
     status=cookies(); if(status) return status;
+    status=binary_record(); if(status) return status;
     /* Deliberately left open: ordinary exit must flush the registered cookie.
      * Userdata is static and survives main; no close callback is expected. */
     exit_descriptor=open(argv[1],O_WRONLY|O_CREAT|O_TRUNC,0600);
