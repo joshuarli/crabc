@@ -598,6 +598,7 @@ static int check_loopback_stream(void)
     socklen_t listener_length = sizeof(listener_address);
     socklen_t peer_length = sizeof(peer_address);
     char byte = 0;
+    char received[2] = { 0, 0 };
     int status = 0;
 
     listener = socket(AF_INET, SOCK_STREAM, 0);
@@ -614,12 +615,23 @@ static int check_loopback_stream(void)
     }
 
     first_client = socket(AF_INET, SOCK_STREAM, 0);
-    if (first_client < 0 ||
-        connect(first_client, (const struct sockaddr *)&listener_address,
+    if (first_client < 0) {
+        status = 2;
+        goto finish;
+    }
+    errno = 0;
+    if (getpeername(first_client, (struct sockaddr *)&peer_address,
+            &peer_length) != -1 || errno != ENOTCONN) {
+        status = 12;
+        goto finish;
+    }
+    trace_unix_value('w', (unsigned int)errno);
+    if (connect(first_client, (const struct sockaddr *)&listener_address,
             sizeof(listener_address)) != 0) {
         status = 2;
         goto finish;
     }
+    peer_length = sizeof(peer_address);
     first_peer = accept(listener, (struct sockaddr *)&peer_address, &peer_length);
     if (first_peer < 0 || peer_length != sizeof(peer_address) ||
         peer_address.sin_family != AF_INET ||
@@ -644,22 +656,49 @@ static int check_loopback_stream(void)
     raw_close(first_peer);
     first_peer = -1;
     errno = 0;
+    if (getpeername(closed_peer, (struct sockaddr *)&peer_address,
+            &peer_length) != -1 || errno != EBADF) {
+        status = 13;
+        goto finish;
+    }
+    trace_unix_value('x', (unsigned int)errno);
+    peer_length = sizeof(peer_address);
+    if (getpeername(first_peer_copy, (struct sockaddr *)&peer_address,
+            &peer_length) != 0 || peer_length != sizeof(peer_address) ||
+        peer_address.sin_family != AF_INET ||
+        peer_address.sin_addr.s_addr != 0x0100007fU ||
+        peer_address.sin_port == 0) {
+        status = 14;
+        goto finish;
+    }
+    errno = 0;
     if (send(closed_peer, "x", 1, 0) != -1 || errno != EBADF) {
         status = 8;
         goto finish;
     }
     trace_unix_value('v', (unsigned int)errno);
-    if (send(first_client, "a", 1, 0) != 1 ||
+    if (send(first_client, "ab", 2, 0) != 2 ||
         !raw_poll_ready(first_peer_copy, POLLIN, POLLIN) ||
-        recv(first_peer_copy, &byte, 1, 0) != 1 || byte != 'a') {
+        recv(first_peer_copy, &byte, 1, MSG_PEEK) != 1 || byte != 'a' ||
+        recv(first_peer_copy, received, sizeof(received), 0) != 2 ||
+        !bytes_equal(received, "ab", sizeof(received))) {
         status = 9;
         goto finish;
     }
     if (shutdown(first_client, SHUT_WR) != 0 ||
         !raw_poll_ready(first_peer_copy, POLLIN | POLLRDHUP,
             POLLIN | POLLRDHUP) ||
-        recv(first_peer_copy, &byte, 1, 0) != 0 ||
-        send(first_peer_copy, "b", 1, 0) != 1 ||
+        recv(first_peer_copy, &byte, 1, 0) != 0) {
+        status = 10;
+        goto finish;
+    }
+    errno = 0;
+    if (send(first_client, "x", 1, MSG_NOSIGNAL) != -1 || errno != EPIPE) {
+        status = 15;
+        goto finish;
+    }
+    trace_unix_value('y', (unsigned int)errno);
+    if (send(first_peer_copy, "b", 1, 0) != 1 ||
         !raw_poll_ready(first_client, POLLIN, POLLIN) ||
         recv(first_client, &byte, 1, 0) != 1 || byte != 'b') {
         status = 10;
