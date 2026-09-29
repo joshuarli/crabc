@@ -89,6 +89,13 @@ would exceed the limit. Every installed entry mode runs that stress. Two native
 loader tests check current/initial TLS reset without TCB/DTV replacement and
 exact private import admission before relocation writes.
 
+The shared periodic deletion case holds the first callback through twelve
+nominal expiration intervals, deletes the timer from another thread while the
+callback is still active, and then releases it. It checks that deletion keeps
+the caller's errno, the callback completes, the worker exits, and no queued
+expiration starts another callback. Pinned musl and every owned link execute
+the same case from the same application object.
+
 ## Source and ownership map
 
 The fixed oracle is musl 1.2.6, revision

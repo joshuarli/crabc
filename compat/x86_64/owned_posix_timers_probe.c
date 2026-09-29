@@ -236,6 +236,50 @@ static void thread_timer_contract(void)
            atomic_load(&periodic_detached), atomic_load(&periodic_stack), atomic_load(&periodic_masked),
            atomic_load(&periodic_overrun) > 0, calls == 4);
 }
+/* Deletion lets an active callback finish before the worker consumes its
+ * wakeup. Expirations accumulated behind that callback
+ * must not cause another notification after deletion. */
+static atomic_int pending_delete_entered, pending_delete_release;
+static atomic_int pending_delete_returned, pending_delete_calls;
+static atomic_int pending_delete_tid;
+static void pending_delete_notify(union sigval value)
+{
+    CHECK(value.sival_int == 62);
+    int ordinal = atomic_fetch_add(&pending_delete_calls, 1);
+    CHECK(ordinal == 0);
+    atomic_store(&pending_delete_tid, gettid());
+    atomic_store(&pending_delete_entered, 1);
+    while (!atomic_load(&pending_delete_release)) sched_yield();
+    CHECK(atomic_load(&pending_delete_returned) == 1);
+    atomic_store(&pending_delete_returned, 2);
+}
+static void pending_delete_contract(void)
+{
+    struct sigevent event = {.sigev_notify = SIGEV_THREAD, .sigev_value.sival_int = 62,
+                             .sigev_notify_function = pending_delete_notify};
+    timer_t timer;
+    CHECK(timer_create(CLOCK_MONOTONIC, &event, &timer) == 0);
+    struct itimerspec arm = {.it_value = {0, 10000000}, .it_interval = {0, 10000000}};
+    CHECK(timer_settime(timer, 0, &arm, NULL) == 0);
+    wait_count(&pending_delete_entered, 1);
+    struct timespec delay = {0, 120000000};
+    CHECK(nanosleep(&delay, NULL) == 0);
+    CHECK(atomic_load(&pending_delete_calls) == 1);
+    errno = 46;
+    CHECK(timer_delete(timer) == 0 && errno == 46);
+    atomic_store(&pending_delete_returned, 1);
+    atomic_store(&pending_delete_release, 1);
+    wait_count(&pending_delete_returned, 2);
+    pid_t tid = atomic_load(&pending_delete_tid);
+    for (int i = 0; i < 2000 && syscall(SYS_tgkill, getpid(), tid, 0) == 0; ++i) {
+        struct timespec pause = {0, 1000000}; nanosleep(&pause, NULL);
+    }
+    CHECK(syscall(SYS_tgkill, getpid(), tid, 0) == -1 && errno == ESRCH);
+    delay = (struct timespec){0, 30000000};
+    CHECK(nanosleep(&delay, NULL) == 0);
+    CHECK(atomic_load(&pending_delete_calls) == 1);
+    puts("pending periodic deletion: active callback finishes, queued notifications stop");
+}
 static void kernel_timer(void)
 {
     struct sigevent event = {.sigev_notify = SIGEV_NONE};
@@ -457,7 +501,7 @@ int main(int argc, char **argv)
     alarm(20);
     if (argc > 2) plugin_path = argv[2];
     creator_cancellation();
-    kernel_timer(); thread_timer(); thread_timer_contract();
+    kernel_timer(); thread_timer(); thread_timer_contract(); pending_delete_contract();
     pid_t child = fork(); CHECK(child >= 0);
     if (!child) { kernel_timer(); thread_timer(); _Exit(0); }
     int status; CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
