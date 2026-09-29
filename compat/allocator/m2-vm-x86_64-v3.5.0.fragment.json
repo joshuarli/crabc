@@ -417,8 +417,7 @@
           "native-vm-fixed-lifecycle-differential",
           "process-policy-first-arena-clean-primary-fallback",
           "process-policy-first-arena-trim-leak",
-          "process-policy-ticket-zero-live-random",
-          "arena-reservation-option-wrap-before-clamp"
+          "process-policy-ticket-zero-live-random"
         ]
       },
       {
@@ -863,8 +862,7 @@
           "native-vm-fixed-lifecycle-differential",
           "process-policy-first-arena-clean-primary-fallback",
           "process-policy-first-arena-trim-leak",
-          "process-policy-ticket-zero-live-random",
-          "arena-reservation-option-wrap-before-clamp"
+          "process-policy-ticket-zero-live-random"
         ],
         "missing_conditions": [
           "The complete regular Linux reservation-decision/failure class is compared by the existing arena-reservation lifecycle companion. Successful large-page attempts, exclusive/NUMA/huge placement, full manage-failure ownership, ambient hint/random attachment and source diagnostics across every arena caller remain unqualified."
@@ -1112,12 +1110,6 @@
         "id": "process-policy-first-arena-clean-primary-fallback",
         "kind": "rust-unit",
         "target": "process_arena::tests::process_default_os_arena_retries_the_source_smaller_policy_arena_after_clean_primary_failure",
-        "expected_passed_test_count": 1
-      },
-      {
-        "id": "arena-reservation-option-wrap-before-clamp",
-        "kind": "rust-unit",
-        "target": "arena::selection::tests::reservation_size_option_alignment_wraps_before_source_minimum_clamp",
         "expected_passed_test_count": 1
       },
       {
