@@ -372,6 +372,16 @@ symbol rows and absence of a `getenv` implementation import in dynamic
 executables. Exact archive occurrences and final targets reject foreign or
 duplicate callers and providers before the ordinary-import reason is removed.
 
+The ordinary `getrusage` import is confined to the authenticated fixed C
+allocator archive member. Its source `PLT32` relocations must survive or be
+explicitly discarded in both installed static link forms. Every retained
+ET_EXEC and static-PIE call, and the corresponding shared-libc C caller, must
+resolve to the selected owned `getrusage` definition. The shared provider
+must appear in both symbol tables, while dynamic executables must not import
+the implementation. Exact archive occurrence accounting rejects another
+importer, a changed provider binding, or a duplicate definition before this
+ordinary-import reason is removed.
+
 The owned scanf archive member imports `mbrtowc` once from
 `crabc_owned_scan_vfscanf`. A static-only `fscanf` branch in the existing
 installed-header workload retains that C section in ET_EXEC and static PIE.

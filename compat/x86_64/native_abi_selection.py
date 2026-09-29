@@ -5492,6 +5492,11 @@ def native_c_allocator_boundary_adapter(report_path: Path | None, *, facts: Mapp
             dynamic_product=paths['dynamic_product'], elf_facts_report=paths['elf_report'],
             name='getenv',
         )
+        getrusage_import_resolution = native_c_allocator_boundary.ordinary_import_resolution(
+            report, report_path=report_path, static_product=paths['static_product'],
+            dynamic_product=paths['dynamic_product'], elf_facts_report=paths['elf_report'],
+            name='getrusage',
+        )
     except (KeyError, TypeError, ValueError, OSError, native_c_allocator_boundary.AllocatorBoundaryError) as error:
         raise SelectionError(f'native C allocator errno import resolution rejected: {error}') from error
     selected_products = {
@@ -5522,7 +5527,8 @@ def native_c_allocator_boundary_adapter(report_path: Path | None, *, facts: Mapp
         'ordinary_import_resolutions': {'__errno_location': errno_import_resolution,
                                         'abort': abort_import_resolution,
                                         'fputs': fputs_import_resolution,
-                                        'getenv': getenv_import_resolution},
+                                        'getenv': getenv_import_resolution,
+                                        'getrusage': getrusage_import_resolution},
         'limits': list(C_ALLOCATOR_BOUNDARY_LIMITS),
     }
 
@@ -8998,7 +9004,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
     address proof; other ordinary functions have no such storage claim.
     """
     scan_caller = name == 'mbrtowc'
-    require(name in {'__errno_location', 'abort', 'fputs', 'getenv', 'mbrtowc'}
+    require(name in {'__errno_location', 'abort', 'fputs', 'getenv', 'getrusage', 'mbrtowc'}
             and (projection_override is not None) == scan_caller,
             'ordinary import identity differs')
     companion = exact(companion, {
@@ -9027,7 +9033,8 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                 'static_provider', 'shared_dynsym_provider', 'shared_symtab_provider'))),
             'ordinary import provider account differs')
     importers = projection['importers']
-    require(type(importers) is list and (len(importers) == 1 if scan_caller else len(importers) >= 2),
+    require(type(importers) is list and (len(importers) == 1 if scan_caller or name == 'getrusage'
+                                               else len(importers) >= 2),
             'ordinary import roster differs')
     c_member = runtime['static_c_member']
     member_indices = []
@@ -9044,7 +9051,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                 and type(item['shared_caller_functions']) is list
                 and item['shared_caller_functions'],
                 'ordinary archive importer evidence differs')
-        if name in {'abort', 'fputs', 'getenv', 'mbrtowc'}:
+        if name in {'abort', 'fputs', 'getenv', 'getrusage', 'mbrtowc'}:
             kind = ('R_X86_64_PLT32' if scan_caller or member['member_index'] == c_member['member_index']
                     else 'R_X86_64_GOTPCREL')
             require(all(type(call) is dict and set(call) == {'section', 'offset', 'kind'}
@@ -9165,7 +9172,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                                calls + linked['discarded_calls']) ==
                         sorted((call['section'], call['offset']) for call in source_item['source_calls']),
                     f'ordinary {mode} importer final calls differ')
-            if name in {'abort', 'fputs', 'getenv', 'mbrtowc'}:
+            if name in {'abort', 'fputs', 'getenv', 'getrusage', 'mbrtowc'}:
                 kinds = {(call['section'], call['offset']): call['kind']
                          for call in source_item['source_calls']}
                 require(all((type(call.get('got_slot')) is int and call['got_slot'] > 0)
@@ -9189,10 +9196,11 @@ def attach_ordinary_static_imports(accounting: Mapping[str, Any],
     if companion is None:
         return []
     resolutions = companion.get('ordinary_import_resolutions')
-    require(type(resolutions) is dict and set(resolutions) == {'__errno_location', 'abort', 'fputs', 'getenv'},
+    require(type(resolutions) is dict and set(resolutions) == {
+        '__errno_location', 'abort', 'fputs', 'getenv', 'getrusage'},
             'ordinary import resolution roster differs')
     joins = []
-    for name in ('__errno_location', 'abort', 'fputs', 'getenv'):
+    for name in ('__errno_location', 'abort', 'fputs', 'getenv', 'getrusage'):
         joins.extend(_attach_ordinary_static_import(accounting, companion, name))
     return joins
 
@@ -9528,8 +9536,9 @@ def attach_native_c_allocator_runtime_imports(
         static_placement = placements.get((key, 'candidate-static'))
         shared_placement = placements.get((key, 'candidate-shared'))
         metadata = {'type': 'FUNC', 'binding': binding, 'visibility': 'DEFAULT'}
+        # This C call is covered only after its retained final targets are decoded.
         covered = (
-            len(imports) == 1
+            name != 'getrusage' and len(imports) == 1
             and imports[0].get('artifact_key') == 'candidate-static'
             and imports[0].get('table') == '.symtab'
             and imports[0].get('member_name') == runtime['static_c_member']['name']

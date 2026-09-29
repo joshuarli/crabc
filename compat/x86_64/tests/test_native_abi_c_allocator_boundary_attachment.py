@@ -284,6 +284,8 @@ class NativeCAllocatorBoundaryAttachmentTests(unittest.TestCase):
                     "c_runtime_static_links": self._runtime_static_links(runtime),
                 },
             },
+            "public_weak": {},
+            "errno_import": {},
             "interposition": {
                 "command": {}, "work": "interposition", "observation": {},
             },
@@ -426,6 +428,14 @@ class NativeCAllocatorBoundaryAttachmentTests(unittest.TestCase):
             selection.native_c_allocator_boundary,
             "source_resolution",
             return_value=copy.deepcopy(report["inputs"]["source_resolution"]),
+        ), mock.patch.object(
+            selection.native_c_allocator_boundary, "private_vm_resolution", return_value={},
+        ), mock.patch.object(
+            selection.native_c_allocator_boundary, "public_weak_resolution", return_value={},
+        ), mock.patch.object(
+            selection.native_c_allocator_boundary, "errno_import_resolution", return_value={},
+        ), mock.patch.object(
+            selection.native_c_allocator_boundary, "ordinary_import_resolution", return_value={},
         ):
             companion = selection.native_c_allocator_boundary_adapter(
                 self.report_path,
@@ -518,15 +528,17 @@ class NativeCAllocatorBoundaryAttachmentTests(unittest.TestCase):
             for row in accounting["identities"]
         ))
 
-    def test_exact_c_runtime_imports_clear_only_their_ordinary_reasons(self) -> None:
+    def test_exact_c_runtime_imports_defer_final_call_reason(self) -> None:
         accounting = self.runtime_accounting()
         companion = self._adapter(self.boundary_report())
         joins = selection.attach_native_c_allocator_runtime_imports(accounting, companion)
         self.assertEqual([row["identity"]["name"] for row in joins], list(self.runtime_roles))
-        self.assertTrue(all(row["ordinary_import_covered"] for row in joins))
+        self.assertEqual([row["identity"]["name"] for row in joins
+                          if not row["ordinary_import_covered"]], ["getrusage"])
         for row in accounting["identities"]:
-            self.assertNotIn(selection.ORDINARY_IMPORT_REASON, row["unresolved"])
-            if row["identity"]["name"] in {"memcpy", "memset"}:
+            if row["identity"]["name"] == "getrusage":
+                self.assertEqual(row["unresolved"], [selection.ORDINARY_IMPORT_REASON])
+            elif row["identity"]["name"] in {"memcpy", "memset"}:
                 self.assertEqual(row["unresolved"], [
                     "candidate definition placement is not selected: candidate-loader",
                 ])
@@ -662,6 +674,10 @@ class NativeCAllocatorBoundaryAttachmentTests(unittest.TestCase):
                 "source_resolution",
                 return_value=copy.deepcopy(report["inputs"]["source_resolution"]),
             ),
+            mock.patch.object(selection.native_c_allocator_boundary, "private_vm_resolution", return_value={}),
+            mock.patch.object(selection.native_c_allocator_boundary, "public_weak_resolution", return_value={}),
+            mock.patch.object(selection.native_c_allocator_boundary, "errno_import_resolution", return_value={}),
+            mock.patch.object(selection.native_c_allocator_boundary, "ordinary_import_resolution", return_value={}),
             mock.patch.object(selection, "selection_source", return_value=self.source),
         ):
             companion = selection.native_c_allocator_boundary_adapter(

@@ -1705,7 +1705,8 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
             "shared_caller_functions": sorted({call["section"][6:]
                                                for call in calls}),
         })
-    require((len(imported) >= 2 if required_importer_section is None else len(imported) == 1)
+    require((len(imported) >= (1 if name == "getrusage" else 2)
+             if required_importer_section is None else len(imported) == 1)
             and len({item["member"]["member_index"] for item in imported}) == len(imported)
             and len([item for item in imported if item["member"]["member_index"] == c_member["member_index"]])
             == (1 if required_importer_section is None else 0)
