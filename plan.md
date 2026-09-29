@@ -971,7 +971,9 @@ are not transferable passes for a different revision.
   provider counts, call edges; lane `pattern`). M3's direct-page pop retains
   `retire_expire` and its differential trace passes. M7 exact statistics
   receipts now match the 122-key C/Rust differential after startup defers the
-  first arena; the gate still requires MI_STAT>0 and a merged-source receipt.
+  first arena. An 8 KiB MI_STAT=2 regular-page producer matches 44 further
+  pinned-C/Rust keys; its scoped gate passes all 27 runnable rows but remains
+  blocked by named unproved statistics producers and merged-source evidence.
   The pinned musl `raise-race` workload itself can fail
   with the same late-handler-fork `ECHILD` pattern as the candidate, so that
   report alone is not a runtime defect. Timing-limited leaves under host load
@@ -994,6 +996,11 @@ are not transferable passes for a different revision.
   mode. The fixed-graph loader now admits `RTLD_NOLOAD` acquisition of retained
   initial DSOs while its bounded sibling keeps its narrower admission rule;
   focused loader and nine-profile Rust checks pass on the integrated source.
+  The merged static nanosleep fixture also passes with a main-checkout source
+  receipt. A pinned-image declaration inventory and native object report on
+  clean `ce0d8ab` replayed 2,093 jobs and 45,788 references, retaining two
+  C++ spelling mismatches; their source seal does not match the current ABI
+  selector cohort, so its declaration blocker remains open.
 - **Housekeeping:** superseded branches are archived under
   `refs/archive/branches/`, old stashes under `refs/archive/stash/`, and
   pre-campaign evidence receipts in `.work/archive/*-receipts.tar.gz`. A fresh
