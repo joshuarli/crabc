@@ -48,7 +48,11 @@ it compiles one `workload.c` object with the pinned musl 1.2.6 headers.
 That unchanged object links into a pinned-musl static ET_EXEC reference and,
 for each product arm, the owned static ET_EXEC/static-PIE plus dynamic
 PIE/non-PIE artifacts. The runner audits every driver's receipt, link trace,
-ELF type, interpreter, and runtime inputs.
+ELF type, interpreter, and runtime inputs. Static archives remain required
+inputs even when the workload extracts no member: `static_receipt_audit`
+authenticates their hashes and exact positions in the sealed link recipe.
+The trace must contain every direct object, and each traced archive member
+must belong to one of those authenticated archives.
 
 The dispatcher runs only the second phase in a native Linux/x86-64 Docker
 container with `--network none` and `SYS_CHROOT`. The runner rejects any

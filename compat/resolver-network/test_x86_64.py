@@ -318,6 +318,94 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
             self.assertTrue((root / "artifacts/dynamic-non-pie").is_dir())
             self.assertEqual(command.call_args_list[0].args[0][3], "link.receipt.json")
 
+    @contextlib.contextmanager
+    def static_link_fixture(self, *, pie=False, extract_builtins=False):
+        with tempfile.TemporaryDirectory(dir=runner.ROOT / ".work") as directory:
+            root = Path(directory)
+            product = root / "static"
+            library = product / "usr/lib"
+            library.mkdir(parents=True)
+            entry = "rcrt1.o" if pie else "crt1.o"
+            roles = ("crt-entry", "crt-prologue", "libc", "builtins", "crt-epilogue")
+            runtime = [library / name for name in
+                       (entry, "crti.o", "libc.a", "libcrabc-builtins.a", "crtn.o")]
+            for path in runtime:
+                path.write_bytes(path.name.encode())
+            application = root / "workload.o"
+            application.write_bytes(b"application")
+            output = root / "workload"
+            output.write_bytes(b"linked output")
+            receipt = root / "link.receipt.json"
+            receipt.with_suffix(".map").write_bytes(b"owned map")
+            lines = [str(runtime[0]), str(runtime[1]), str(application),
+                     f"{runtime[2]}(resolver.o)"]
+            if extract_builtins:
+                lines.append(f"{runtime[3]}(helper.o)")
+            lines.append(str(runtime[4]))
+            trace = receipt.with_suffix(".trace")
+            trace.write_text("\n".join(lines) + "\n", encoding="ascii")
+            record = {
+                "schema": 1, "format": runner.STATIC_FORMAT,
+                "mode": {"id": "static-pie" if pie else "static-et-exec",
+                         "crt_object": entry, "elf_type": "ET_DYN" if pie else "ET_EXEC",
+                         "interpreter": "absent"},
+                "input_receipts": [
+                    {"role": role, "path": path.relative_to(product).as_posix(),
+                     "sha256": runner.sha256_file(path)}
+                    for role, path in zip(roles, runtime)
+                ] + [{"role": "application", "path": str(application),
+                      "sha256": runner.sha256_file(application)}],
+                "output": {"path": str(output), "sha256": runner.sha256_file(output)},
+                "owned_link_contract": [
+                    "ld.lld", "-static", *(["-pie"] if pie else []),
+                    "--no-dynamic-linker", "--no-undefined", "--eh-frame-hdr", "--gc-sections",
+                    "-z", "relro", "-z", "now", "-e", "_start",
+                    str(runtime[0]), str(runtime[1]), "<application-objects>",
+                    str(runtime[2]), str(runtime[3]), str(runtime[4]), "-o", "<output>",
+                ],
+            }
+
+            def audit():
+                for field in ("map", "trace"):
+                    path = receipt.with_suffix("." + field)
+                    record[field] = {"path": path.name, "sha256": runner.sha256_file(path)}
+                receipt.write_text(json.dumps(record), encoding="ascii")
+                return runner.static_receipt_audit(
+                    product, "--static-pie" if pie else "--static-et-exec",
+                    application, output, receipt,
+                )
+
+            yield record, trace, audit
+
+    def test_static_receipt_authenticates_a_builtins_archive_without_extracted_members(self) -> None:
+        for pie in (False, True):
+            for extracted in (False, True):
+                with self.subTest(pie=pie, extracted=extracted), self.static_link_fixture(
+                        pie=pie, extract_builtins=extracted) as (_, _, audit):
+                    self.assertIn("receipt", audit())
+
+    def test_static_receipt_rejects_an_unbound_unused_archive(self) -> None:
+        for remove_from in ("input_receipts", "owned_link_contract"):
+            with self.subTest(remove_from=remove_from), self.static_link_fixture() as (record, _, audit):
+                if remove_from == "input_receipts":
+                    record[remove_from] = [item for item in record[remove_from] if item["role"] != "builtins"]
+                else:
+                    record[remove_from] = [item for item in record[remove_from] if not item.endswith("libcrabc-builtins.a")]
+                with self.assertRaisesRegex(runner.RunnerError, "runtime|contract"):
+                    audit()
+
+    def test_static_receipt_still_rejects_unowned_or_missing_direct_trace_inputs(self) -> None:
+        for missing_direct in (False, True):
+            with self.subTest(missing_direct=missing_direct), self.static_link_fixture() as (_, trace, audit):
+                lines = trace.read_text().splitlines()
+                if missing_direct:
+                    lines.pop(0)
+                else:
+                    lines.append("/ambient/libgcc.a(helper.o)")
+                trace.write_text("\n".join(lines) + "\n", encoding="ascii")
+                with self.assertRaisesRegex(runner.RunnerError, "unowned|boundary"):
+                    audit()
+
     def test_dynamic_receipt_audit_accepts_closed_schema_one_and_schema_two(self) -> None:
         with tempfile.TemporaryDirectory(dir=runner.ROOT / ".work") as directory:
             root = Path(directory)
