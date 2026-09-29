@@ -98,13 +98,22 @@ are not transferable passes for a different revision.
   libc, lowering identical-product selection from 734 to 733 blockers. The
   loader's separate `memmove` definition remains unresolved, and full closure
   remains open.
+  A later source-sealed comparison receipt accounts for the `memcmp` importer
+  and thirteen `bcmp` importers, including the shared `bcmp` tail branch and
+  twenty retained shared calls. Independent copied-root validation of the
+  exact source and products resolves both ordinary-import reasons: 5,151
+  identities and 41,173 occurrences remain fixed while blockers fall from
+  734 to 732. Their separate loader placements and full closure remain open.
   Broader ABI closure stays open.
   `libc.c-abi-compat` now runs a physical
   same-cohort text/math/locale/stdio family admission; its current assessment admits seven
   of ten components and retains three allocator components at the selected C
   backend. Independent physical replay of that same-source assessment and its
   three-pair POSIX matrix passes; the C ABI gate remains incomplete at seven
-  components and nine of eleven capabilities. A source-bound native-shadow
+  components and nine of eleven capabilities. An exact-source copied cohort at
+  `798dea9ad` independently reconstructs its 219-case dynamic product and
+  seven-of-ten family assessment from retained main-checkout evidence; its
+  three allocator gaps remain explicit. A source-bound native-shadow
   diagnostic passes all three allocator C ABI leaves. Its earlier dynamic
   qualification stopped when a reused POSIX timer pthread reset live native
   allocator TLS and the next 4097-byte allocation returned `ENOMEM`. The
@@ -155,7 +164,10 @@ are not transferable passes for a different revision.
   receipt validation for primary and extracted products. A newer clean
   `1dd3eeed3` selected-C cohort passes all 219 dynamic qualification cases
   and the qualifying Rust std/LTO consumer with 147 retained files physically
-  reread; it makes no native allocator or public x86 promotion claim. A native-shadow
+  reread. A later exact-source `57eda1969` consumer receipt also passes an
+  independent replay against byte-copied main-checkout products, external
+  provider receipts, and the complete frozen lane matrix; neither cohort
+  makes a native allocator or public x86 promotion claim. A native-shadow
   source cohort passes its development Rust std/LTO leaves, unwind and provider
   regressions, with an independently reread product and receipt; public
   validation correctly rejects that development receipt. Its full dynamic
@@ -497,8 +509,11 @@ are not transferable passes for a different revision.
   qualifying timing evidence.
   Contended timing is not qualifying. Allocator M3 passes every own
   component and waits only on M2; M4 passes including all 47 distinct checks
-  from the unmodified upstream `test-api.c` through the native adapter. M6 now source-differentiates
-  quiescent non-main and isolated process-main Heap block visitation across 138
+  from the unmodified upstream `test-api.c` through the native adapter.
+  Word-sized aligned realloc now delegates in pinned-C order for non-power-of-two
+  alignment; the pre-fix failing regressions, eight-key C/Rust preservation
+  trace, and all eleven M4 gates pass.
+  M6 now source-differentiates quiescent non-main and isolated process-main Heap block visitation across 138
   adapter keys, including all five exported Heap membership and region queries
   and the quiescent page-utilization query; seventeen
   runnable evidence rows pass on an earlier clean M6 gate. A later clean gate
@@ -569,6 +584,9 @@ are not transferable passes for a different revision.
   taken ownership. Two clean 32-process runs match pinned C across 2,048
   race rounds per side, and the attached-worker destroy/delete traces each
   match five observations.
+  Foreign destruction of a child-subprocess Heap after its owner exits now
+  follows the retained subprocess owner; its fork differential matches all
+  fifteen pinned-C observations. The M6 aggregate remains blocked.
   A two-worker mixed page population and release trace after both owners exit
   now matches fourteen pinned-C keys and is registered in the visitation and
   destruction-lifetime gates.
@@ -705,6 +723,9 @@ are not transferable passes for a different revision.
   and deterministic `MI_STAT=2` rows match pinned C; static teardown retains
   that count as pinned C does. Full raw output matched in one clean run; a
   later rerun differed only in elapsed and process system time.
+  Chunk-bin merges now include all six bins and sample source peak before
+  current; the 30-field C/Rust trace and 26 runnable scoped statistics rows
+  pass. Producer coverage still blocks the statistics gate.
   A clean full M7 gate passes all 38 runnable rows, including 23 statistics
   evidence rows, while eight required gates remain blocked by their named
   missing profiles or producers. A failed regular-page extension commit,
