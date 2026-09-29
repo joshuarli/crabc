@@ -396,6 +396,18 @@ import is kept distinct from the libc's own ordinary archive imports. A foreign
 or duplicate archive caller, provider, final target, or workload import blocks
 this attachment.
 
+The ordinary `aio_cancel` import has multiple Rust archive callers. The
+retained AIO static links select only the `close` call section; other source
+relocations are accounted as discarded, including a section in an otherwise
+selected archive member. Both ET_EXEC and static PIE must retain that direct
+GOT call to the unique owned provider. Shared libc is compiled through a
+different Rust object layout, so its final executable segments are scanned
+for every branch through the provider's relative GOT slot. Each such branch
+must belong to a source-named caller, while the shared provider and the
+dynamic workloads retain their exact owned symbol and import placements.
+The selector checks every authenticated archive import occurrence and rejects
+missing selected calls, altered targets, and extra importers or providers.
+
 The owned scanf archive member imports `mbrtowc` once from
 `crabc_owned_scan_vfscanf`. A static-only `fscanf` branch in the existing
 installed-header workload retains that C section in ET_EXEC and static PIE.

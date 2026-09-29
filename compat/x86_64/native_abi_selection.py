@@ -9005,8 +9005,9 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
     address proof; other ordinary functions have no such storage claim.
     """
     scan_caller = name == 'mbrtowc'
-    independent = name in {'mbrtowc', 'aio_suspend'}
-    require(name in {'__errno_location', 'abort', 'fputs', 'getenv', 'getrusage', 'mbrtowc', 'aio_suspend'}
+    independent = name in {'mbrtowc', 'aio_suspend', 'aio_cancel'}
+    require(name in {'__errno_location', 'abort', 'fputs', 'getenv', 'getrusage',
+                     'mbrtowc', 'aio_suspend', 'aio_cancel'}
             and (projection_override is not None) == independent,
             'ordinary import identity differs')
     companion = exact(companion, {
@@ -9021,7 +9022,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
         'static_provider_member', 'static_provider', 'shared_dynsym_provider',
         'shared_symtab_provider', 'importers', 'static_final_links',
         'shared_final', 'dynamic_final_import_absent',
-        *({'dynamic_final_owned_imports'} if name == 'aio_suspend' else set()),
+        *({'dynamic_final_owned_imports'} if name in {'aio_suspend', 'aio_cancel'} else set()),
     }, 'ordinary import resolution')
     runtime = companion['account']['c_runtime_imports']
     claim = next((row for row in runtime['imports']
@@ -9031,13 +9032,14 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
              and same(projection['static_provider'], claim['static_rust_provider'])
              and same(projection['shared_dynsym_provider'], claim['shared_dynsym_provider'])
              and same(projection['shared_symtab_provider'], claim['shared_symtab_provider']))
-            and projection['dynamic_final_import_absent'] is (name != 'aio_suspend')
+            and projection['dynamic_final_import_absent'] is (name not in {'aio_suspend', 'aio_cancel'})
             and (not independent or all(projection[field]['name'] == name for field in (
                 'static_provider', 'shared_dynsym_provider', 'shared_symtab_provider'))),
             'ordinary import provider account differs')
     importers = projection['importers']
     require(type(importers) is list and (len(importers) == 1 if scan_caller or name == 'getrusage'
                                        else len(importers) == 2 if name == 'aio_suspend'
+                                       else len(importers) >= 1 if name == 'aio_cancel'
                                        else len(importers) >= 2),
             'ordinary import roster differs')
     c_member = runtime['static_c_member']
@@ -9055,7 +9057,8 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                 and type(item['shared_caller_functions']) is list
                 and item['shared_caller_functions'],
                 'ordinary archive importer evidence differs')
-        if name in {'abort', 'fputs', 'getenv', 'getrusage', 'mbrtowc', 'aio_suspend'}:
+        if name in {'abort', 'fputs', 'getenv', 'getrusage', 'mbrtowc',
+                    'aio_suspend', 'aio_cancel'}:
             kind = ('R_X86_64_PLT32' if scan_caller or member['member_index'] == c_member['member_index']
                     else 'R_X86_64_GOTPCREL')
             require(all(type(call) is dict and set(call) == {'section', 'offset', 'kind'}
@@ -9132,16 +9135,32 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
     shared = exact(projection['shared_final'], {
         'provider_address', 'importers', *({'tls_symbol_offset', 'tls_segment_size',
                                           'tls_relocation_slot'} if tls_claim else set()),
+        *({'provider_calls'} if name == 'aio_cancel' else set()),
     }, 'ordinary shared final')
     require(type(shared['provider_address']) is int and shared['provider_address'] > 0
             and [item.get('member') for item in shared['importers']] ==
                 [item['member'] for item in importers]
-            and all(type(item.get('calls')) is list and item['calls']
+            and all(type(item.get('calls')) is list
+                    and (item['calls'] or name == 'aio_cancel')
                     and all(call.get('target_address') == shared['provider_address']
                             for call in item['calls'])
                     for item in shared['importers']),
             'ordinary shared calls or TLS address differ')
-    if name == 'aio_suspend':
+    if name == 'aio_cancel':
+        all_calls = [call for item in shared['importers'] for call in item['calls']]
+        require(type(shared['provider_calls']) is list and shared['provider_calls']
+                and same(all_calls, shared['provider_calls'])
+                and all(call.get('target_address') == shared['provider_address']
+                        and type(call.get('got_slot')) is int
+                        and call.get('branch_kind') in {'indirect-call', 'tail-jump'}
+                        for call in all_calls)
+                and all(type(item.get('no_call_source_functions')) is list
+                        and set(item['no_call_source_functions'])
+                            == set(source['shared_caller_functions'])
+                            - {call['function'] for call in item['calls']}
+                        for item, source in zip(shared['importers'], importers)),
+                'ordinary shared whole-image call inventory differs')
+    if name in {'aio_suspend', 'aio_cancel'}:
         require(projection['dynamic_final_owned_imports'] == [
             {'mode': mode, 'import_rows': 2,
              'shared_provider_address': shared['provider_address']}
@@ -9175,20 +9194,23 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
             linked = exact(linked, {'member', 'resolved_calls', 'discarded_calls'},
                            f'ordinary {mode} importer calls')
             calls = linked['resolved_calls']
-            require(type(calls) is list and calls
+            require(type(calls) is list and (calls or name == 'aio_cancel')
                     and all(call.get('target_address') == link['provider_address']
                             and type(call.get('call_address')) is int for call in calls)
                     and sorted((call['section'], call['offset']) for call in
                                calls + linked['discarded_calls']) ==
                         sorted((call['section'], call['offset']) for call in source_item['source_calls']),
                     f'ordinary {mode} importer final calls differ')
-            if name in {'abort', 'fputs', 'getenv', 'getrusage', 'mbrtowc', 'aio_suspend'}:
+            if name in {'abort', 'fputs', 'getenv', 'getrusage', 'mbrtowc',
+                        'aio_suspend', 'aio_cancel'}:
                 kinds = {(call['section'], call['offset']): call['kind']
                          for call in source_item['source_calls']}
                 require(all((type(call.get('got_slot')) is int and call['got_slot'] > 0)
                             == (kinds[(call['section'], call['offset'])] == 'R_X86_64_GOTPCREL')
                             for call in calls),
                         f'ordinary {mode} GOT/direct call proof differs')
+        require(name != 'aio_cancel' or any(item['resolved_calls'] for item in link['importers']),
+                f'ordinary {mode} has no retained owned archive call')
     _remove_identity_requirements(accounting, record, [ORDINARY_IMPORT_REASON],
                                   description='ordinary import')
     return [{'identity': copy.deepcopy(record['identity']),
@@ -9271,6 +9293,35 @@ def owned_aio_ordinary_import_adapter(
     return {'report': {'path': str(report_path),
                        'sha256': hashlib.sha256(report_path.read_bytes()).hexdigest()},
             'projection': projection}
+
+
+def attach_owned_aio_ordinary_import(
+        accounting: Mapping[str, Any], companion: Mapping[str, Any] | None,
+        boundary: Mapping[str, Any] | None, *, boundary_report_path: Path | None,
+        paths: Mapping[str, Path], name: str) -> tuple[list[dict[str, Any]], Mapping[str, Any] | None]:
+    """Attach one owned AIO import through the validated family receipt."""
+    if companion is None or boundary is None:
+        return [], None
+    require(name in {'aio_suspend', 'aio_cancel'} and boundary_report_path is not None,
+            'owned AIO ordinary import identity or boundary differs')
+    if name == 'aio_suspend':
+        projection = companion['projection']
+    else:
+        try:
+            report = native_c_allocator_boundary.json_object(
+                boundary_report_path, 'owned AIO boundary account')
+            projection = native_c_allocator_boundary.ordinary_import_resolution(
+                report, report_path=boundary_report_path,
+                static_product=paths['static_product'],
+                dynamic_product=paths['dynamic_product'],
+                elf_facts_report=paths['elf_report'], name=name,
+                independent_retained_work=Path(companion['report']['path']).parent,
+                shared_call_inventory=True)
+        except (KeyError, TypeError, ValueError, OSError,
+                native_c_allocator_boundary.AllocatorBoundaryError) as error:
+            raise SelectionError(f'owned AIO ordinary import rejected: {error}') from error
+    return (_attach_ordinary_static_import(
+        accounting, boundary, name, projection_override=projection), projection)
 
 
 def attach_stack_check_static_import(accounting: Mapping[str, Any], rust_members: Sequence[str],
@@ -12096,13 +12147,24 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             report_path=native_c_allocator_boundary_report, paths=paths,
             name='mbrtowc', caller_section='.text.crabc_owned_scan_vfscanf'))
     ordinary_static_import_joins.extend(owned_scan_joins)
-    owned_aio_joins, _ = _attach(
+    (owned_aio_joins, _), _ = _attach(
         rejected, 'owned_aio_ordinary_import_resolution', accounting,
         owned_aio_ordinary_import_companion,
-        lambda: [] if owned_aio_ordinary_import_companion is None else _attach_ordinary_static_import(
-            accounting, native_c_allocator_boundary_companion, 'aio_suspend',
-            projection_override=owned_aio_ordinary_import_companion['projection']))
+        lambda: attach_owned_aio_ordinary_import(
+            accounting, owned_aio_ordinary_import_companion,
+            native_c_allocator_boundary_companion,
+            boundary_report_path=native_c_allocator_boundary_report,
+            paths=paths, name='aio_suspend'), empty=([], None))
     ordinary_static_import_joins.extend(owned_aio_joins)
+    (owned_aio_cancel_joins, owned_aio_cancel_projection), _ = _attach(
+        rejected, 'owned_aio_cancel_ordinary_import_resolution', accounting,
+        owned_aio_ordinary_import_companion,
+        lambda: attach_owned_aio_ordinary_import(
+            accounting, owned_aio_ordinary_import_companion,
+            native_c_allocator_boundary_companion,
+            boundary_report_path=native_c_allocator_boundary_report,
+            paths=paths, name='aio_cancel'), empty=([], None))
+    ordinary_static_import_joins.extend(owned_aio_cancel_joins)
     rust_allocation_handler_joins, _ = _attach(
         rejected, 'rust_allocation_handler_provenance', accounting, native_c_allocator_boundary_companion,
         lambda: attach_rust_allocation_handlers(
@@ -12280,6 +12342,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'errno_storage_lifecycle_companion': errno_storage_lifecycle_companion,
             'errno_storage_lifecycle_joins': errno_storage_lifecycle_joins,
             'ordinary_static_import_joins': ordinary_static_import_joins,
+            'owned_aio_cancel_ordinary_import_projection': owned_aio_cancel_projection,
             'owned_aio_ordinary_import_companion': owned_aio_ordinary_import_companion,
             'stack_check_static_import_joins': stack_check_static_import_joins,
             'native_c_allocator_boundary_companion': native_c_allocator_boundary_companion,

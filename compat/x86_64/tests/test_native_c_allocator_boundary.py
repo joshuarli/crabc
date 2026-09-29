@@ -24,6 +24,45 @@ SPEC.loader.exec_module(BOUNDARY)
 
 
 class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
+    def test_unselected_archive_caller_records_discarded_source_relocation(self) -> None:
+        source_call = {"section": ".text.unselected", "offset": 7,
+                       "kind": "R_X86_64_GOTPCREL"}
+        result = BOUNDARY._ordinary_final_member_calls(
+            b"", archive_member="/workspace/current/libc.a(caller.o)",
+            source_calls=[source_call], map_text="", relocation_text="",
+            provider_address=0x3000, elf_type=2, name="ordinary_provider")
+        self.assertEqual(result, {"resolved_calls": [], "discarded_calls": [source_call]})
+
+    def test_shared_image_call_scan_rejects_missing_or_foreign_got_target(self) -> None:
+        image = bytearray(0x400)
+        image[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<H", image, 16, 3)
+        struct.pack_into("<Q", image, 32, 64)
+        struct.pack_into("<HH", image, 54, 56, 2)
+        struct.pack_into("<IIQQQQQQ", image, 64, 1, 5, 0x100, 0x1000, 0, 0x100, 0x100, 0x1000)
+        struct.pack_into("<IIQQQQQQ", image, 120, 1, 6, 0x300, 0x2000, 0, 0x100, 0x100, 0x1000)
+        image[0x110:0x112] = b"\xff\x15"
+        struct.pack_into("<i", image, 0x112, 0x2000 - 0x1016)
+        struct.pack_into("<Q", image, 0x300, 0x3000)
+        symbols = "1: 0000000000001010 32 FUNC GLOBAL DEFAULT 9 close"
+        kwargs = {"symbol_text": symbols, "relocations": "0000000000002000  .got + 0x0",
+                  "provider_address": 0x3000, "source_functions": {"close"}}
+        calls = BOUNDARY._ordinary_shared_provider_calls(bytes(image), **kwargs)
+        self.assertEqual([(call["function"], call["call_address"], call["got_slot"])
+                          for call in calls], [("close", 0x1010, 0x2000)])
+        for mutation in ("missing-call", "foreign-target", "unaccounted-register-load"):
+            with self.subTest(mutation=mutation):
+                forged = bytearray(image)
+                if mutation == "missing-call":
+                    forged[0x110:0x112] = b"\x90\x90"
+                elif mutation == "foreign-target":
+                    struct.pack_into("<Q", forged, 0x300, 0x3001)
+                else:
+                    forged[0x120:0x123] = b"\x48\x8b\x2d"
+                    struct.pack_into("<i", forged, 0x123, 0x2000 - 0x1027)
+                with self.assertRaises(BOUNDARY.AllocatorBoundaryError):
+                    BOUNDARY._ordinary_shared_provider_calls(bytes(forged), **kwargs)
+
     def test_ordinary_got_register_call_rejects_missing_or_foreign_target(self) -> None:
         image = bytearray(0x400)
         image[:6] = b"\x7fELF\x02\x01"

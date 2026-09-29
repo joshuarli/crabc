@@ -364,6 +364,81 @@ class OrdinaryOwnedAioImportAttachmentTests(unittest.TestCase):
                 with self.assertRaises(selection.SelectionError):
                     selection._attach_ordinary_static_import(
                         changed_accounting, companion, name, projection_override=changed)
+
+
+class OrdinaryOwnedAioCancelImportAttachmentTests(unittest.TestCase):
+    def test_selected_caller_and_discarded_archive_relocation_stay_distinct(self) -> None:
+        accounting, companion = abort_fixture()
+        name = "aio_cancel"
+        ident = selection.identity(name)
+        accounting["identities"][0]["identity"] = ident
+        accounting["blockers"][0]["identity"] = ident
+        for placement in accounting["placement_joins"]:
+            placement["identity"] = ident
+        for row in accounting["occurrences"]:
+            row["row"]["name"] = name
+            row["row"]["raw_name"] = name
+        second = {"member": "another-rust-caller.o", "member_index": 25,
+                  "member_occurrence": 0}
+        accounting["occurrences"][1]["member_name"] = second["member"]
+        accounting["occurrences"][1]["member_index"] = second["member_index"]
+        projection = companion["ordinary_import_resolutions"].pop("abort")
+        for field in ("static_provider", "shared_dynsym_provider", "shared_symtab_provider"):
+            projection[field]["name"] = name
+        for item in projection["importers"]:
+            item["import"]["name"] = name
+        projection["importers"][1]["member"] = second
+        projection["importers"][1]["source_calls"][0]["kind"] = "R_X86_64_GOTPCREL"
+        for link in projection["static_final_links"].values():
+            link["importers"][1]["member"] = second
+            link["importers"][1]["resolved_calls"] = []
+            link["importers"][1]["discarded_calls"] = deepcopy(
+                projection["importers"][1]["source_calls"])
+        shared = projection["shared_final"]
+        shared["importers"][1]["member"] = second
+        shared["importers"][1]["calls"] = []
+        shared["importers"][0]["no_call_source_functions"] = []
+        shared["importers"][1]["no_call_source_functions"] = ["call_5"]
+        shared["importers"][0]["calls"][0].update(
+            {"got_slot": 0x3500, "branch_kind": "indirect-call"})
+        shared["provider_calls"] = deepcopy(shared["importers"][0]["calls"])
+        projection["dynamic_final_import_absent"] = False
+        projection["dynamic_final_owned_imports"] = [
+            {"mode": mode, "import_rows": 2,
+             "shared_provider_address": shared["provider_address"]}
+            for mode in ("pie", "non-pie")]
+
+        joins = selection._attach_ordinary_static_import(
+            accounting, companion, name, projection_override=projection)
+        self.assertEqual([join["identity"]["name"] for join in joins], [name])
+        self.assertEqual(accounting["blockers"], [])
+        for mutation in ("missing-retained-call", "foreign-pie-target",
+                         "changed-discarded-source", "foreign-shared-target",
+                         "duplicate-importer", "foreign-dynamic-target"):
+            with self.subTest(mutation=mutation):
+                changed_accounting, changed = deepcopy(accounting), deepcopy(projection)
+                changed_accounting["identities"][0]["unresolved"] = [selection.ORDINARY_IMPORT_REASON]
+                changed_accounting["blockers"] = [{"code": "identity-unresolved", "identity": ident,
+                                                   "reason": selection.ORDINARY_IMPORT_REASON}]
+                if mutation == "missing-retained-call":
+                    changed["static_final_links"]["static"]["importers"][0]["resolved_calls"] = []
+                elif mutation == "foreign-pie-target":
+                    changed["static_final_links"]["static-pie"]["importers"][0][
+                        "resolved_calls"][0]["target_address"] += 1
+                elif mutation == "changed-discarded-source":
+                    changed["static_final_links"]["static"]["importers"][1][
+                        "discarded_calls"][0]["offset"] += 1
+                elif mutation == "foreign-shared-target":
+                    changed["shared_final"]["provider_calls"][0]["target_address"] += 1
+                elif mutation == "duplicate-importer":
+                    duplicate = deepcopy(changed_accounting["occurrences"][0])
+                    duplicate["index"] = 100
+                    changed_accounting["occurrences"].append(duplicate)
+                else:
+                    changed["dynamic_final_owned_imports"][0]["shared_provider_address"] += 1
+                with self.assertRaises(selection.SelectionError):
+                    selection._attach_ordinary_static_import(
+                        changed_accounting, companion, name, projection_override=changed)
 def fputs_fixture() -> tuple[dict, dict]:
     accounting, companion = abort_fixture()
     name = "fputs"

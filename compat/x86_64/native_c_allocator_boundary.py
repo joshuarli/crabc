@@ -1172,7 +1172,6 @@ def _ordinary_final_member_calls(image: bytes, *, archive_member: str,
             if register is not None:
                 call["register_call_address"] = register_address
         resolved.append(call)
-    require(resolved, f"ordinary {name} final image has no selected call from importer: {archive_member}")
     return {"resolved_calls": resolved, "discarded_calls": discarded}
 
 
@@ -1240,7 +1239,8 @@ def _errno_shared_caller_calls(image: bytes, symbol_text: str, functions: Sequen
 def _ordinary_shared_caller_calls(image: bytes, symbol_text: str, relocations: str,
                                   source_calls: Sequence[Mapping[str, object]],
                                   provider_address: int, name: str,
-                                  discarded_functions: set[str] | None = None) -> list[dict[str, object]]:
+                                  discarded_functions: set[str] | None = None,
+                                  absent_functions: list[str] | None = None) -> list[dict[str, object]]:
     """Read matching shared call forms from source-named functions and GOT slots."""
     functions = set()
     for source in source_calls:
@@ -1276,6 +1276,9 @@ def _ordinary_shared_caller_calls(image: bytes, symbol_text: str, relocations: s
                     f"ordinary {name} shared Rust caller is ambiguous: {function}")
             if not names:
                 if discarded_functions is not None and function in discarded_functions:
+                    require(absent_functions is not None,
+                            f"ordinary {name} missing shared caller is not recorded")
+                    absent_functions.append(function)
                     continue
                 # The shared glob entry inlines its tilde expansion call.
                 require(source_mangled.group("tail").endswith(
@@ -1345,7 +1348,75 @@ def _ordinary_shared_caller_calls(image: bytes, symbol_text: str, relocations: s
             require(len({call["function"] for call in calls
                          if call["source_function"] == function}) == 1,
                     f"ordinary {name} inlined Rust caller is ambiguous: {function}")
-    require(calls, f"ordinary {name} shared importer has no provider call")
+    require(calls or (absent_functions is not None and len(absent_functions) == len(functions)),
+            f"ordinary {name} shared importer has no provider call")
+    return calls
+
+
+def _ordinary_shared_provider_calls(image: bytes, *, symbol_text: str,
+                                    relocations: str, provider_address: int,
+                                    source_functions: set[str]) -> list[dict[str, object]]:
+    """Find every final executable branch through the selected provider GOT."""
+    require(len(image) >= 64 and image[:6] == b"\x7fELF\x02\x01"
+            and struct.unpack_from("<H", image, 16)[0] == 3,
+            "ordinary shared final image differs")
+    slots = set()
+    for match in re.finditer(r"^\s*([0-9a-f]+)\s+\.got\b", relocations, re.MULTILINE):
+        slot = int(match.group(1), 16)
+        value = struct.unpack("<Q", _public_weak_virtual_bytes(
+            image, slot, 8, 3, executable=False))[0]
+        if value == provider_address:
+            require(slot not in slots, "ordinary shared provider GOT relocation is duplicate")
+            slots.add(slot)
+    require(slots, "ordinary shared provider has no relative GOT slot")
+    functions = set()
+    for line in symbol_text.splitlines():
+        parts = line.split()
+        if (len(parts) >= 8 and parts[0].endswith(":") and parts[3] == "FUNC"
+                and parts[4] in {"GLOBAL", "LOCAL"} and parts[6] != "UND"
+                and parts[-1] in source_functions):
+            functions.add((parts[-1], int(parts[1], 16), int(parts[2])))
+    require(functions and all(size > 0 for _, _, size in functions),
+            "ordinary shared source caller symbols are missing")
+    headers = struct.unpack_from("<Q", image, 32)[0]
+    entry_size, count = struct.unpack_from("<HH", image, 54)
+    require(entry_size >= 56 and headers + entry_size * count <= len(image),
+            "ordinary shared program headers differ")
+    calls = []
+    for index in range(count):
+        header = headers + entry_size * index
+        kind, flags = struct.unpack_from("<II", image, header)
+        if kind != 1 or not flags & 1:
+            continue
+        file_offset = struct.unpack_from("<Q", image, header + 8)[0]
+        virtual = struct.unpack_from("<Q", image, header + 16)[0]
+        size = struct.unpack_from("<Q", image, header + 32)[0]
+        require(file_offset + size <= len(image), "ordinary shared executable segment is truncated")
+        body = image[file_offset:file_offset + size]
+        for offset in range(len(body) - 5):
+            address = virtual + offset
+            if offset + 7 <= len(body) and 0x40 <= body[offset] <= 0x4f \
+                    and body[offset + 1] in (0x8b, 0x8d) \
+                    and body[offset + 2] & 0xc7 == 0x05:
+                load_slot = address + 7 + struct.unpack_from("<i", body, offset + 3)[0]
+                require(load_slot not in slots,
+                        "ordinary shared provider has an unaccounted register GOT load")
+            opcode = body[offset:offset + 2]
+            if opcode not in (b"\xff\x15", b"\xff\x25"):
+                continue
+            slot = address + 6 + struct.unpack_from("<i", body, offset + 2)[0]
+            if slot not in slots:
+                continue
+            owners = sorted({name for name, start, length in functions
+                             if start <= address < start + length})
+            require(len(owners) == 1,
+                    "ordinary shared provider call has a foreign or ambiguous caller")
+            calls.append({"function": owners[0], "call_address": address,
+                          "got_slot": slot, "target_address": provider_address,
+                          "branch_kind": "indirect-call" if opcode == b"\xff\x15" else "tail-jump"})
+    require(calls, "ordinary shared provider has no final call")
+    require(slots == {call["got_slot"] for call in calls},
+            "ordinary shared provider has an unreferenced GOT slot")
     return calls
 
 
@@ -1693,7 +1764,8 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
                                elf_facts_report: Path, name: str,
                                required_importer_section: str | None = None,
                                independent_retained_work: Path | None = None,
-                               expected_importers: int | None = None) -> dict[str, object]:
+                               expected_importers: int | None = None,
+                               shared_call_inventory: bool = False) -> dict[str, object]:
     """Bind all archive callers of one ordinary import to final libc providers."""
     facts = json_object(elf_facts_report, f"{name} ELF facts")["facts"]
     members = facts["candidate-static"]
@@ -1709,7 +1781,7 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
                             and required_importer_section != ".text."
                             if required_importer_section is not None else False)
         cohort_selected = (independent_retained_work is not None
-                           and expected_importers is not None and expected_importers > 0)
+                           and (expected_importers is None or expected_importers > 0))
         require(claim is None and (section_selected or cohort_selected),
                 f"ordinary {name} independent caller boundary differs")
         provider_member, provider_row = _static_definition(
@@ -1799,8 +1871,8 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
                                                for call in calls}),
         })
     require((len(imported) >= (1 if name == "getrusage" else 2)
-             if not independent else len(imported) == (
-                 expected_importers if expected_importers is not None else 1))
+             if not independent else (len(imported) == expected_importers
+                                      if expected_importers is not None else len(imported) >= 1))
             and len({item["member"]["member_index"] for item in imported}) == len(imported)
             and len([item for item in imported if item["member"]["member_index"] == c_member["member_index"]])
             == (0 if independent else 1)
@@ -1840,16 +1912,25 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
         linked = []
         for item in imported:
             selected = f"{mounted_archive}({item['member']['member']})"
-            require(trace.splitlines().count(selected) == 1,
-                    f"ordinary {name} {mode} importer is not selected once")
+            selected_count = trace.splitlines().count(selected)
+            require(selected_count == 1 if not shared_call_inventory
+                    else selected_count in (0, 1),
+                    f"ordinary {name} {mode} importer selection differs")
+            final_calls = _ordinary_final_member_calls(
+                image, archive_member=selected, source_calls=item["source_calls"],
+                map_text=map_text, relocation_text=relocations.stdout,
+                provider_address=address, elf_type=elf_type, name=name,
+                source_sections=item["source_sections"])
+            require(selected_count == 1 or not final_calls["resolved_calls"],
+                    f"ordinary {name} {mode} unselected importer has a final call")
+            require(final_calls["resolved_calls"] or shared_call_inventory,
+                    f"ordinary {name} {mode} importer has no selected final call")
             linked.append({
                 "member": dict(item["member"]),
-                **_ordinary_final_member_calls(
-                    image, archive_member=selected, source_calls=item["source_calls"],
-                    map_text=map_text, relocation_text=relocations.stdout,
-                    provider_address=address, elf_type=elf_type, name=name,
-                    source_sections=item["source_sections"]),
+                **final_calls,
             })
+        require(any(item["resolved_calls"] for item in linked),
+                f"ordinary {name} {mode} final image has no selected archive call")
         static_modes[mode] = {"provider_member": dict(provider),
                               "provider_address": address, "importers": linked}
     shared_libc = physical_file(dynamic_product / "usr/lib/libc.so",
@@ -1877,12 +1958,32 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
                                       if linked["member"] == item["member"]
                                       for discarded in linked["discarded_calls"])
                                   for mode in STATIC_MODES)}
-    shared_calls = [{"member": dict(item["member"]),
-                     "calls": _ordinary_shared_caller_calls(
-                         shared_image, shared_symbols.stdout, shared_relocations.stdout,
-                         item["source_calls"], shared_address, name,
-                         discarded_functions if independent_retained_work is not None else None)}
-                    for item in imported]
+    shared_calls = []
+    if shared_call_inventory:
+        require(independent_retained_work is not None,
+                f"ordinary {name} whole-image call inventory lacks retained links")
+        final_shared_calls = _ordinary_shared_provider_calls(
+            shared_image, symbol_text=shared_symbols.stdout,
+            relocations=shared_relocations.stdout, provider_address=shared_address,
+            source_functions={function for item in imported
+                              for function in item["shared_caller_functions"]})
+        for item in imported:
+            calls = [call for call in final_shared_calls
+                     if call["function"] in item["shared_caller_functions"]]
+            shared_calls.append({"member": dict(item["member"]), "calls": calls,
+                                 "no_call_source_functions": sorted(set(
+                                     item["shared_caller_functions"])
+                                     - {call["function"] for call in calls})})
+    else:
+        for item in imported:
+            absent: list[str] | None = [] if independent_retained_work is not None else None
+            calls = _ordinary_shared_caller_calls(
+                shared_image, shared_symbols.stdout, shared_relocations.stdout,
+                item["source_calls"], shared_address, name,
+                discarded_functions if independent_retained_work is not None else None,
+                absent)
+            shared_calls.append({"member": dict(item["member"]), "calls": calls,
+                                 **({"absent_functions": absent} if absent is not None else {})})
     dynamic_imports = []
     for mode in DYNAMIC_MODES:
         executable = physical_file(work / f"dynamic-{mode}",
@@ -1911,7 +2012,9 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
         "shared_symtab_provider": dict(claim["shared_symtab_provider"]),
         "importers": [{key: value for key, value in item.items() if key != "source_sections"}
                       for item in imported], "static_final_links": static_modes,
-        "shared_final": {"provider_address": shared_address, "importers": shared_calls},
+        "shared_final": {"provider_address": shared_address, "importers": shared_calls,
+                         **({"provider_calls": final_shared_calls}
+                            if shared_call_inventory else {})},
         "dynamic_final_import_absent": independent_retained_work is None,
         **({"dynamic_final_owned_imports": dynamic_imports}
            if independent_retained_work is not None else {}),
