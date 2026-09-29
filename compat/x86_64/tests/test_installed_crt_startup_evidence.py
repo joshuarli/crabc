@@ -14,7 +14,7 @@ import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import installed_crt_startup_evidence as reader
 
-@unittest.skipUnless(Path('/opt/musl-1.2.6/lib/libc.so').is_file(),
+@unittest.skipUnless(Path('/opt/rustup/toolchains/nightly-2026-09-15-x86_64-unknown-linux-musl/bin/rustc').is_file(),
                      'physical CRT regression requires the pinned native environment')
 class OwnedCrtFramePhysicalTests(unittest.TestCase):
     @classmethod
@@ -26,6 +26,7 @@ class OwnedCrtFramePhysicalTests(unittest.TestCase):
         from scripts import build_x86_64_owned_sysroot as producer
         sysroot=producer.pinned_rustc_sysroot(producer.pinned_rustup())
         objdump=sysroot/'lib/rustlib'/producer.TARGET/'bin/llvm-objdump'
+        cls.linker=sysroot/'lib/rustlib'/producer.TARGET/'bin/gcc-ld/ld.lld'
         subprocess.run([sys.executable,'-B',str(reader.ROOT/'crt/build_x86_64.py'),
                         '--out-dir',str(cls.work/'crt'),'--llvm-objdump',str(objdump)],
                        check=True,capture_output=True)
@@ -151,6 +152,40 @@ _fini: ret
                     self.assertEqual([x['role'] for x in row['contributions']],['prologue','application','epilogue'])
                     self.assertEqual(row['application_relocations'][0]['target'],
                                      'legacy_init' if name=='_init' else 'legacy_fini')
+
+    def test_physical_local_callback_calls_resolve_section_offsets_to_defined_functions(self):
+        source=self.work/'local.S'
+        source.write_text((self.work/'application.S').read_text().replace('.global legacy_','.local legacy_'))
+        application=self.work/'local.o'
+        subprocess.run(['gcc','-c',str(source),'-o',str(application)],check=True,capture_output=True)
+        for mode in ('static','static-pie'):
+            name='local-'+mode;binary=self.work/name;mapping=self.work/(name+'.map')
+            subprocess.run([str(self.linker),'-static',*(['-pie'] if mode=='static-pie' else []),
+                            '--no-dynamic-linker','--no-undefined','--gc-sections','-e','_start',
+                            '-Map='+str(mapping),str(self.work/'crt/crti.o'),str(application),
+                            str(self.work/'crt/crtn.o'),'-o',str(binary)],check=True,capture_output=True)
+            subprocess.run([str(binary)],check=True,capture_output=True)
+            frames=reader.owned_crt_frame_providers(
+                reader.ROOT,self.work/'crt/crti.o',self.work/'crt/crtn.o',binary,mapping,
+                application_objects=(application,),source_mount=str(reader.ROOT))
+            for symbol,row in frames.items():
+                call=row['application_relocations'][0]
+                self.assertEqual(call['kind'],2)
+                self.assertEqual(call['target'],'legacy_init' if symbol=='_init' else 'legacy_fini')
+                self.assertEqual(row['function_extent']['size'],11)
+            original=application.read_bytes();elf=reader.Elf(application)
+            table=next(row for row in elf.sections if row[1]==4
+                       and reader.static_authority.section_name(elf,elf.sections[row[7]])=='.init')
+            changed=bytearray(original)
+            addend=struct.unpack_from('<q',changed,table[4]+16)[0]
+            struct.pack_into('<q',changed,table[4]+16,addend+1)
+            application.write_bytes(changed)
+            try:
+                with self.assertRaises(reader.StartupEvidenceError):
+                    reader.owned_crt_frame_providers(
+                        reader.ROOT,self.work/'crt/crti.o',self.work/'crt/crtn.o',binary,mapping,
+                        application_objects=(application,),source_mount=str(reader.ROOT))
+            finally:application.write_bytes(original)
 
     def test_physical_empty_frames_and_archive_fallback_keep_distinct_origins(self):
         for mode in ('static','static-pie'):

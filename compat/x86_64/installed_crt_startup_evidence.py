@@ -1180,9 +1180,28 @@ def owned_crt_frame_providers(root,prologue,epilogue,executable,map_path,
             if role=='application':
                 require(len(data)==5*len(calls) and sorted(call[0] for call in calls)==list(range(1,len(data),5)),
                         'CRT application fragment must contain only bounded direct calls')
-                for offset,kind,addend,symbol in calls:
-                    require(kind==4 and addend==-4 and data[offset-1]==0xe8
-                            and symbol['type']=='FUNC' and 0<symbol['section']<len(image.sections)
+                for offset,kind,addend,relocation_symbol in calls:
+                    require(data[offset-1]==0xe8,'CRT application relocation is not a direct call')
+                    symbol=relocation_symbol
+                    if kind==2:
+                        require(symbol['type']=='3' and symbol['binding']=='LOCAL'
+                                and symbol['value']==0 and symbol['size']==0
+                                and 0<symbol['section']<len(image.sections),
+                                'CRT section-relative call lacks a canonical source section')
+                        source_offset=addend+4
+                        candidates=[]
+                        for table_index,table in enumerate(image.sections):
+                            if table[1]!=2:continue
+                            require(table[9]==24 and table[5]%24==0,'CRT source symbol table differs')
+                            for number in range(table[5]//24):
+                                item=image.symbol_row(table_index,number)
+                                if item['type']=='FUNC' and item['section']==symbol['section'] and item['value']==source_offset:
+                                    candidates.append(item)
+                        require(len(candidates)==1,'CRT section-relative call lacks a unique source function')
+                        symbol=candidates[0]
+                    else:
+                        require(kind==4 and addend==-4,'CRT application call relocation differs')
+                    require(symbol['type']=='FUNC' and 0<symbol['section']<len(image.sections)
                             and symbol['size']>0,'CRT application call target differs')
                     source_target=image.sections[symbol['section']]
                     target_section=static_authority.section_name(image,source_target)
@@ -1193,11 +1212,11 @@ def owned_crt_frame_providers(root,prologue,epilogue,executable,map_path,
                     require(mapped==[(owner,target_section,resolved['value'],symbol['size'])]
                             and resolved['type']=='FUNC' and resolved['size']==symbol['size'],
                             'CRT application target owner/placement differs')
-                    displacement=resolved['value']+addend-(address+offset)
+                    displacement=resolved['value']-(address+offset+4)
                     require(-(1<<31)<=displacement<(1<<31),'CRT application call displacement overflows')
                     struct.pack_into('<i',data,offset,displacement)
                     relocations.append({'input':ident(root,path),'offset':offset,'kind':kind,'addend':addend,
-                                        'target':symbol['name'],'target_address':resolved['value']})
+                                        'source_symbol':relocation_symbol,'target':symbol['name'],'target_address':resolved['value']})
             else:require(not calls,'CRT frame fragment has an unexpected relocation')
             proofs.append({'role':role,'input':ident(root,path),'section':label,'address':address,'size':size,
                            'source_sha256':hashlib.sha256(image.data[row[4]:row[4]+row[5]]).hexdigest()})
