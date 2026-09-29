@@ -38,11 +38,11 @@ static int descriptor(const char *path)
 }
 
 #ifndef DESCRIPTOR_ONLY
-struct cookie { unsigned char data[4096]; size_t pos, len; int reads, writes, closes, short_write, failure; FILE *nested; };
+struct cookie { unsigned char data[4096]; size_t pos, len; int reads, writes, closes, short_write, failure, read_fail_at; FILE *nested; };
 static ssize_t reader(void *opaque, char *buffer, size_t length)
 {
     struct cookie *c=opaque; c->reads++;
-    if (c->failure) { errno=EIO; return -1; }
+    if (c->failure || (c->read_fail_at && c->reads >= c->read_fail_at)) { errno=EIO; return -1; }
     size_t available=c->pos<c->len ? c->len-c->pos : 0;
     if (length>available) length=available;
     memcpy(buffer, c->data+c->pos, length); c->pos+=length;
@@ -317,6 +317,48 @@ static int binary_record(void)
     if (state.closes!=1) return 60;
     return 0;
 }
+
+/* A cookie read fills the user buffer, then fails at its next callback.
+ * Recovery must discard the error while preserving the logical seek target. */
+static int cookie_read_recovery(void)
+{
+    struct cookie state={0};
+    memcpy(state.data,"abcdef",6); state.len=6; state.read_fail_at=2;
+    cookie_io_functions_t functions={reader,writer,seeker,closer};
+    FILE *f=fopencookie(&state,"r+",functions);
+    if (!f) return 70;
+    char buffer[3];
+    if (setvbuf(f,buffer,_IOFBF,sizeof buffer)) return 71;
+    for (int index=0; index<6; index++)
+        if (fgetc(f)!='a'+index) return 72;
+    errno=0;
+    int result=fgetc(f); record(70,result,f,&state.reads,sizeof state.reads);
+    if (result!=EOF || !ferror(f) || feof(f)) return 73;
+    clearerr(f); state.read_fail_at=0;
+    errno=0;
+    result=fseek(f,1,SEEK_SET); record(71,result,f,&state.pos,sizeof state.pos);
+    if (result || ferror(f) || fgetc(f)!='b') return 74;
+    errno=0;
+    result=fseek(f,-1,SEEK_CUR); record(72,result,f,&state.pos,sizeof state.pos);
+    if (result || fgetc(f)!='b' || fclose(f) || state.closes!=1) return 75;
+    return 0;
+}
+
+/* A fixed stream permits a seek into its unwritten capacity. EOF from that
+ * position does not erase the earlier bytes, and a later seek clears EOF. */
+static int fixed_seek_recovery(void)
+{
+    unsigned char data[8]="ab";
+    FILE *f=fmemopen(data,sizeof data,"a+");
+    if (!f || fseek(f,6,SEEK_SET)) return 76;
+    errno=0;
+    int result=fgetc(f); record(73,result,f,data,sizeof data);
+    if (result!=EOF || !feof(f) || ferror(f)) return 77;
+    errno=0;
+    result=fseek(f,0,SEEK_SET); record(74,result,f,data,sizeof data);
+    if (result || feof(f) || fgetc(f)!='a' || fclose(f)) return 78;
+    return 0;
+}
 #endif
 
 int main(int argc,char **argv)
@@ -328,6 +370,8 @@ int main(int argc,char **argv)
     status=cookies(); if(status) return status;
     status=global_cookie_flush(); if(status) return status;
     status=binary_record(); if(status) return status;
+    status=cookie_read_recovery(); if(status) return status;
+    status=fixed_seek_recovery(); if(status) return status;
     /* Deliberately left open: ordinary exit must flush the registered cookie.
      * Userdata is static and survives main; no close callback is expected. */
     exit_descriptor=open(argv[1],O_WRONLY|O_CREAT|O_TRUNC,0600);
