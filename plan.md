@@ -687,10 +687,13 @@ are not transferable passes for a different revision.
   its full 50-key stage trace now matches with source-accounted PageMap
   placement, including an opposite-placement control that charges the 64 KiB
   submap at different stages. A
-  source-built `MI_DEBUG=1`/`MI_PADDING=1` probe records a real gap: pinned C
-  fills the requested bytes, returns the logical 17-byte usable size, and
-  reports a corrupted padding byte; native Rust currently does none of these.
-  The full current-source gate remains blocked by named unproved producers. Other
+  source-built `MI_DEBUG=1`/`MI_PADDING=1` probe exposed missing requested-byte
+  fill, logical usable size, and corrupted-padding reporting. A default-off
+  native debug slice now matches pinned C for the 17-byte and regular-page
+  padding traces plus the existing show-errors profile; all three runnable
+  scoped debug rows pass. Aligned and huge debug paths, wider assertions,
+  arena output, sanitizer applicability, and remote encoded free links remain
+  open. The full current-source gate remains blocked by named unproved producers. Other
   page and fast-path shapes, other remote bin-free, and other metadata-Theap
   statistics producers remain unproved, so full M7
   stays open. Static
