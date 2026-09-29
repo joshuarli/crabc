@@ -1647,6 +1647,7 @@ mod tests {
         fragments: std::sync::Mutex<std::vec::Vec<std::vec::Vec<u8>>>,
         subprocess: *const crate::subproc::SubprocessIdentity,
         reserved_at_commit_warning: AtomicI64,
+        committed_at_commit_warning: AtomicI64,
         reserved_at_free_warning: AtomicI64,
         committed_at_free_warning: AtomicI64,
         reserved_at_allocation_warning: AtomicI64,
@@ -1667,6 +1668,7 @@ mod tests {
             let current = unsafe { &*capture.subprocess }.vm_statistics().snapshot();
             if bytes.starts_with(b"cannot commit OS memory") {
                 capture.reserved_at_commit_warning.store(current.reserved_current, Ordering::Release);
+                capture.committed_at_commit_warning.store(current.committed_current, Ordering::Release);
             } else if bytes.starts_with(b"unable to free OS memory") {
                 capture.reserved_at_free_warning.store(current.reserved_current, Ordering::Release);
                 capture.committed_at_free_warning.store(current.committed_current, Ordering::Release);
@@ -1815,6 +1817,7 @@ mod tests {
             fragments: std::sync::Mutex::new(std::vec::Vec::new()),
             subprocess: subprocess.identity(),
             reserved_at_commit_warning: AtomicI64::new(i64::MIN),
+            committed_at_commit_warning: AtomicI64::new(i64::MIN),
             reserved_at_free_warning: AtomicI64::new(i64::MIN),
             committed_at_free_warning: AtomicI64::new(i64::MIN),
             reserved_at_allocation_warning: AtomicI64::new(i64::MIN),
@@ -2279,6 +2282,7 @@ mod tests {
             fragments: std::sync::Mutex::new(std::vec::Vec::new()),
             subprocess: subprocess.identity(),
             reserved_at_commit_warning: AtomicI64::new(i64::MIN),
+            committed_at_commit_warning: AtomicI64::new(i64::MIN),
             reserved_at_free_warning: AtomicI64::new(i64::MIN),
             committed_at_free_warning: AtomicI64::new(i64::MIN),
             reserved_at_allocation_warning: AtomicI64::new(i64::MIN),
@@ -2395,6 +2399,7 @@ mod tests {
             fragments: std::sync::Mutex::new(std::vec::Vec::new()),
             subprocess: subprocess.identity(),
             reserved_at_commit_warning: AtomicI64::new(i64::MIN),
+            committed_at_commit_warning: AtomicI64::new(i64::MIN),
             reserved_at_free_warning: AtomicI64::new(i64::MIN),
             committed_at_free_warning: AtomicI64::new(i64::MIN),
             reserved_at_allocation_warning: AtomicI64::new(i64::MIN),
@@ -2527,6 +2532,7 @@ mod tests {
             fragments: std::sync::Mutex::new(std::vec::Vec::new()),
             subprocess: subprocess.identity(),
             reserved_at_commit_warning: AtomicI64::new(i64::MIN),
+            committed_at_commit_warning: AtomicI64::new(i64::MIN),
             reserved_at_free_warning: AtomicI64::new(i64::MIN),
             committed_at_free_warning: AtomicI64::new(i64::MIN),
             reserved_at_allocation_warning: AtomicI64::new(i64::MIN),
@@ -2926,6 +2932,7 @@ mod tests {
             fragments: std::sync::Mutex::new(std::vec::Vec::new()),
             subprocess: subprocess.identity(),
             reserved_at_commit_warning: AtomicI64::new(i64::MIN),
+            committed_at_commit_warning: AtomicI64::new(i64::MIN),
             reserved_at_free_warning: AtomicI64::new(i64::MIN),
             committed_at_free_warning: AtomicI64::new(i64::MIN),
             reserved_at_allocation_warning: AtomicI64::new(i64::MIN),
@@ -3111,6 +3118,269 @@ mod tests {
         // SAFETY: neither OS page retains a PageMap entry or mapping owner.
         unsafe { map.destroy() }.unwrap();
         // SAFETY: callback output no longer has a stack-backed capture.
+        unsafe { output.register_output(None, core::ptr::null_mut()) };
+    }
+
+    /// A failed private metadata commit rolls back only its own mapping while
+    /// an earlier failed terminal release remains available for raw cleanup.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_os_page_escaped_map_fault_c_rust_trace() {
+        use crate::bootstrap::ExclusiveTheapBootstrap;
+        use crate::diagnostic_output::{OutputCallback, OutputOwner};
+        use crate::page_map::PageMap;
+
+        fn source_pointer(value: usize) -> std::string::String {
+            let width = if value <= u32::MAX as usize { 8 }
+                else if value >> 16 <= u32::MAX as usize { 12 } else { 16 };
+            std::format!("0x{value:0width$X}")
+        }
+
+        let environment = std::boxed::Box::leak(std::boxed::Box::new([
+            b"mimalloc_allow_large_os_pages=0\0".as_ptr().cast(),
+            b"mimalloc_allow_thp=0\0".as_ptr().cast(),
+            b"mimalloc_purge_delay=-1\0".as_ptr().cast(),
+            b"mimalloc_show_errors=1\0".as_ptr().cast(),
+            b"mimalloc_max_warnings=100\0".as_ptr().cast(),
+            core::ptr::null(),
+        ]));
+        FRESH_OS_CLEANUP_ENVIRONMENT.store(environment.as_mut_ptr(), Ordering::Release);
+        let output = std::boxed::Box::leak(std::boxed::Box::new(
+            OutputOwner::new(fresh_os_cleanup_default_output),
+        ));
+        // SAFETY: the leaked option image and output outlive every selected
+        // process policy read and synchronous warning callback.
+        unsafe { output.initialize_source_options(fresh_os_cleanup_environment) };
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let warnings = FreshOsCleanupWarnings {
+            fragments: std::sync::Mutex::new(std::vec::Vec::new()),
+            subprocess: subprocess.identity(),
+            reserved_at_commit_warning: AtomicI64::new(i64::MIN),
+            committed_at_commit_warning: AtomicI64::new(i64::MIN),
+            reserved_at_free_warning: AtomicI64::new(i64::MIN),
+            committed_at_free_warning: AtomicI64::new(i64::MIN),
+            reserved_at_allocation_warning: AtomicI64::new(i64::MIN),
+            committed_at_allocation_warning: AtomicI64::new(i64::MIN),
+            mmap_at_allocation_warning: AtomicI64::new(i64::MIN),
+        };
+        // SAFETY: callbacks are synchronous and this stack capture remains
+        // live until registration is removed below.
+        unsafe { output.register_output(Some(capture_fresh_os_cleanup_warning as OutputCallback),
+            &warnings as *const FreshOsCleanupWarnings as *mut c_void) };
+        let policy = std::boxed::Box::leak(std::boxed::Box::new(
+            unsafe { crate::os::VmPolicy::from_process_options(output) }));
+        policy.finish_preloading();
+        let process = VmProcess::new(policy, subprocess);
+        let memory_config = config(4 * KIB);
+        let mut map = PageMap::initialize_for_process(memory_config, 0, true, process).unwrap();
+        let mut bootstrap = std::boxed::Box::pin(ExclusiveTheapBootstrap::new());
+        let mut session = bootstrap.as_mut().activate_detached_for_main_subprocess(
+            process.main_subprocess().expect("fixture uses process main"),
+        ).unwrap();
+        let fault = fault::install(fault::Plan::disabled());
+
+        // SAFETY: the detached session retains its random image through this
+        // mapping call; publication uses the exact owned metadata prefix.
+        let mut first_random = unsafe { crate::os::CurrentTheapRandom::new(
+            NonNull::from(session.theap())) };
+        let first_claim = OsAlignedPageClaim::allocate_for_process_with_random(process,
+            memory_config, 16 * KIB, 1, crate::arena::ArenaId::none(),
+            Some(&mut first_random)).unwrap_or_else(|_| panic!("first committed OS page"));
+        let first_layout = first_claim.layout();
+        let first_memory = first_claim.memory_id().unwrap();
+        let first_base = first_claim.base().unwrap();
+        let first_start = first_claim.slice_start().unwrap();
+        // SAFETY: this claim owns a committed metadata slot; no other page
+        // uses the detached session or PageMap during publication.
+        let mut first_primary = unsafe { session.publish_fresh_page(first_claim.metadata().unwrap(),
+            first_layout.block_size(), first_layout.page_offset(), first_layout.reserved(), 0,
+            first_memory.initially_zero(), first_memory) }.unwrap();
+        assert!(unsafe { first_claim.publish_secondary_metadata(first_primary) });
+        unsafe { map.register_range(first_start.as_ptr(), first_layout.page_map_size(), first_primary) }.unwrap();
+        first_claim.into_published().unwrap();
+        // SAFETY: the live primary and copied MemoryId name exactly one
+        // published mapping owned by this process.
+        let first_owner = unsafe { PublishedOsAlignedPage::from_page_for_process(
+            process, memory_config, first_primary) }.unwrap();
+        unsafe { map.unregister_range(first_start.as_ptr(), first_layout.page_map_size()) }.unwrap();
+        assert!(unsafe { first_owner.clear_secondary_metadata() });
+        assert!(session.retire_page(unsafe { first_primary.as_mut() }).is_some());
+        let first_cleared = unsafe { map.checked_lookup(first_start.as_ptr()) }.is_null();
+        warnings.fragments.lock().unwrap().clear();
+        let before_first = process.subprocess().vm_statistics().snapshot();
+        fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::from_raw(5).unwrap()));
+        let first_two_unmaps = fault.capture_unmap_ranges();
+        // SAFETY: metadata and lookup are retired; this token holds the sole
+        // terminal unmap right for the first published page.
+        let first_failure = unsafe { first_owner.reclaim() }.expect_err("first unmap EIO");
+        let OsAlignedPageOwner::Published(first_retry) = first_failure.into_owner() else {
+            panic!("failed published release retains raw owner")
+        };
+        let after_first = process.subprocess().vm_statistics().snapshot();
+        let mut residence = 0u8;
+        // SAFETY: the failed syscall leaves the exact first mapping live;
+        // mincore does not borrow its retired page metadata.
+        let first_escaped = unsafe { crabc_core::mm::mincore_raw(
+            first_base, 4096, &mut residence) }.is_ok();
+
+        let before_second = process.subprocess().vm_statistics().snapshot();
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::from_raw(5).unwrap()));
+        let protection = fault.capture_protection_ranges();
+        // SAFETY: the detached session remains live and supplies this
+        // independent fresh allocation's source random image.
+        let mut second_random = unsafe { crate::os::CurrentTheapRandom::new(
+            NonNull::from(session.theap())) };
+        let second_failure = OsAlignedPageClaim::allocate_for_process_with_random(process,
+            memory_config, 16 * KIB, 1, crate::arena::ArenaId::none(),
+            Some(&mut second_random)).err().expect("second metadata commit EIO");
+        let second_failed = second_failure.error().stage() == OsAlignedPageFailureStage::MetadataCommit
+            && second_failure.into_owner().is_none() && fault.observed() == 1;
+        let (attempts, attempt_count) = protection.attempts().expect("one bounded metadata protection");
+        let (second_address, second_commit_size, protection_flags) = attempts[0];
+        let second_commit_calls = attempt_count;
+        drop(protection);
+        let after_second = process.subprocess().vm_statistics().snapshot();
+        let (first_ranges, first_range_count) = first_two_unmaps.all().expect("two bounded releases");
+        let second_rollback_exact = first_range_count == 2
+            && first_ranges[0] == (first_base.addr(), first_layout.mapping_length())
+            && first_ranges[1] == (second_address, first_layout.mapping_length())
+            && protection_flags == 3;
+        drop(first_two_unmaps);
+        // SAFETY: failed metadata commit rolls back the second mapping; the
+        // first escaped map remains live under its raw retry token.
+        let second_unmapped = unsafe { crabc_core::mm::mincore_raw(
+            second_address as *mut u8, 4096, &mut residence) }.is_err();
+        let first_survives = unsafe { crabc_core::mm::mincore_raw(
+            first_base, 4096, &mut residence) }.is_ok();
+
+        fault.set(fault::Plan::disabled());
+        let third_unmap = fault.capture_unmap_ranges();
+        // SAFETY: no other page uses this detached session; the earlier
+        // escaped map has only a terminal raw cleanup token.
+        let mut third_random = unsafe { crate::os::CurrentTheapRandom::new(
+            NonNull::from(session.theap())) };
+        let third_claim = OsAlignedPageClaim::allocate_for_process_with_random(process,
+            memory_config, 16 * KIB, 1, crate::arena::ArenaId::none(),
+            Some(&mut third_random)).unwrap_or_else(|_| panic!("third committed OS page"));
+        let third_layout = third_claim.layout();
+        let third_memory = third_claim.memory_id().unwrap();
+        let third_base = third_claim.base().unwrap();
+        let third_start = third_claim.slice_start().unwrap();
+        // SAFETY: a successful metadata/block commit leaves this third
+        // primary slot writable and exclusively owned by the new claim.
+        let mut third_primary = unsafe { session.publish_fresh_page(third_claim.metadata().unwrap(),
+            third_layout.block_size(), third_layout.page_offset(), third_layout.reserved(), 0,
+            third_memory.initially_zero(), third_memory) }.unwrap();
+        assert!(unsafe { third_claim.publish_secondary_metadata(third_primary) });
+        unsafe { map.register_range(third_start.as_ptr(), third_layout.page_map_size(), third_primary) }.unwrap();
+        let third_published = third_memory.initially_committed()
+            && unsafe { map.checked_lookup(third_start.as_ptr()) } == third_primary.as_ptr()
+            && third_base != first_base;
+        third_claim.into_published().unwrap();
+        // SAFETY: the third primary and MemoryId identify this distinct
+        // published mapping and transfer only its terminal release right.
+        let third_owner = unsafe { PublishedOsAlignedPage::from_page_for_process(
+            process, memory_config, third_primary) }.unwrap();
+        unsafe { map.unregister_range(third_start.as_ptr(), third_layout.page_map_size()) }.unwrap();
+        assert!(unsafe { third_owner.clear_secondary_metadata() });
+        assert!(session.retire_page(unsafe { third_primary.as_mut() }).is_some());
+        // SAFETY: all third-page lookup and metadata readers are retired.
+        assert!(unsafe { third_owner.reclaim() }.is_ok());
+        let (third_ranges, third_count) = third_unmap.all().expect("bounded third release");
+        let third_release_exact = third_count == 1
+            && third_ranges[0] == (third_base.addr(), third_layout.mapping_length());
+        drop(third_unmap);
+        // SAFETY: the third mapping is gone; first still has its distinct
+        // live raw retry token and no published metadata.
+        let third_unmapped = unsafe { crabc_core::mm::mincore_raw(
+            third_base, 4096, &mut residence) }.is_err();
+        let first_after_third = unsafe { crabc_core::mm::mincore_raw(
+            first_base, 4096, &mut residence) }.is_ok();
+        let before_raw = process.subprocess().vm_statistics().snapshot();
+        // SAFETY: no PageMap entry, alias, primary, or page reader survives;
+        // this token retains the sole first-map unmap authority.
+        let raw_cleanup = unsafe { first_retry.retry_reclaim() }.is_ok();
+        let raw_no_stats = process.subprocess().vm_statistics().snapshot() == before_raw;
+        // SAFETY: both terminal releases completed and neither range has a
+        // surviving reference or published lookup entry.
+        let terminal_unmapped = unsafe { crabc_core::mm::mincore_raw(
+            first_base, 4096, &mut residence) }.is_err()
+            && unsafe { crabc_core::mm::mincore_raw(
+                third_base, 4096, &mut residence) }.is_err();
+
+        let fragments = warnings.fragments.lock().unwrap();
+        let first_body = std::format!(
+            "unable to free OS memory (error: 5 (0x05), size: 0x{:X} bytes, address: {})\n",
+            first_layout.mapping_length(), source_pointer(first_base.addr()),
+        );
+        let second_body = std::format!(
+            "cannot commit OS memory (error: 5 (0x05), address: {}, size: 0x{:X} bytes)\n",
+            source_pointer(second_address), second_commit_size,
+        );
+        let warning_calls = fragments.iter().filter(|fragment|
+            fragment.starts_with(b"unable to free OS memory")
+                || fragment.starts_with(b"cannot commit OS memory")).count();
+        let warning_fragments = fragments.len();
+        let warning_order = warning_fragments == 4
+            && fragments[0].starts_with(b"mimalloc: warning: thread 0x")
+            && fragments[1] == first_body.as_bytes()
+            && fragments[2].starts_with(b"mimalloc: warning: thread 0x")
+            && fragments[3] == second_body.as_bytes();
+        let first_warning_exact = fragments.len() >= 2 && fragments[1] == first_body.as_bytes();
+        let second_warning_exact = fragments.len() >= 4 && fragments[3] == second_body.as_bytes();
+        drop(fragments);
+        let first_warning_before_stats = warnings.reserved_at_free_warning.load(Ordering::Acquire)
+                == before_first.reserved_current
+            && warnings.committed_at_free_warning.load(Ordering::Acquire)
+                == before_first.committed_current;
+        let second_warning_reserved_delta = warnings.reserved_at_commit_warning.load(Ordering::Acquire)
+            - before_second.reserved_current;
+        let second_warning_committed_delta = warnings.committed_at_commit_warning.load(Ordering::Acquire)
+            - before_second.committed_current;
+        for (field, value) in [
+            ("first_size", first_layout.mapping_length() as i64),
+            ("first_cleared", i64::from(first_cleared)),
+            ("first_escaped", i64::from(first_escaped)),
+            ("first_reserved_delta", after_first.reserved_current - before_first.reserved_current),
+            ("first_committed_delta", after_first.committed_current - before_first.committed_current),
+            ("first_warning_before_stats", i64::from(first_warning_before_stats)),
+            ("second_failed", i64::from(second_failed)),
+            ("second_commit_calls", second_commit_calls as i64),
+            ("second_commit_size", second_commit_size as i64),
+            ("second_rollback_exact", i64::from(second_rollback_exact)),
+            ("second_unmapped", i64::from(second_unmapped)),
+            ("first_survives", i64::from(first_survives)),
+            ("second_reserved_delta", after_second.reserved_current - before_second.reserved_current),
+            ("second_committed_delta", after_second.committed_current - before_second.committed_current),
+            ("second_commit_stat_delta", after_second.commit_calls - before_second.commit_calls),
+            ("second_mmap_stat_delta", after_second.mmap_calls - before_second.mmap_calls),
+            ("second_warning_reserved_delta", second_warning_reserved_delta),
+            ("second_warning_committed_delta", second_warning_committed_delta),
+            ("warning_calls", warning_calls as i64),
+            ("warning_fragments", warning_fragments as i64),
+            ("warning_order", i64::from(warning_order)),
+            ("first_warning_exact", i64::from(first_warning_exact)),
+            ("second_warning_exact", i64::from(second_warning_exact)),
+            ("third_published", i64::from(third_published)),
+            ("third_size", third_layout.mapping_length() as i64),
+            ("third_release_exact", i64::from(third_release_exact)),
+            ("third_unmapped", i64::from(third_unmapped)),
+            ("first_after_third", i64::from(first_after_third)),
+            ("unmap_calls", (first_range_count + third_count) as i64),
+            ("raw_cleanup", i64::from(raw_cleanup)),
+            ("raw_no_stats", i64::from(raw_no_stats)),
+            ("terminal_unmapped", i64::from(terminal_unmapped)),
+        ] {
+            std::println!("{field}={value}");
+        }
+        assert!(first_cleared && first_escaped && second_failed && second_rollback_exact
+            && second_unmapped && first_survives && warning_order && third_published
+            && third_release_exact && third_unmapped && first_after_third && raw_cleanup
+            && raw_no_stats && terminal_unmapped);
+        drop(fault);
+        // SAFETY: both OS pages have no mapping or PageMap owner.
+        unsafe { map.destroy() }.unwrap();
+        // SAFETY: the stack capture is no longer available to callbacks.
         unsafe { output.register_output(None, core::ptr::null_mut()) };
     }
 
