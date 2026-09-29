@@ -5,9 +5,10 @@
 # as a true `-nostdlib -static` candidate linked solely through the selected
 # crabc archive. It proves the complete public barrier surface: attribute
 # lifecycle/pshared records, count validation, private reusable two-thread
-# handoff, and a shared-futex cross-fork round. The fixture's raw mapping,
-# fork, wait, clock, and exit plumbing is test-only and does not select a C
-# process runtime, CRT, loader, sysroot, or public x86 support.
+# handoff, repeated generations, signal interruption under contention, and
+# shared-futex cross-fork generations followed by destroy and reinit. The
+# fixture's raw process, clock, signal, and output plumbing is test-only and
+# does not select a C process runtime, CRT, loader, sysroot, or public x86 support.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -68,8 +69,26 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_types_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_pthread_c11_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-pthread-barrier.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp" \
+    "$ROOT_DIR/.work/x86_64/reports/libc-pthread-barrier"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/crabc-x86-64-libc-pthread-barrier.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-pthread-barrier"
+reference_stdout="$report_dir/musl.stdout"
+reference_stderr="$report_dir/musl.stderr"
+candidate_stdout="$report_dir/crabc.stdout"
+candidate_stderr="$report_dir/crabc.stderr"
+: >"$reference_stdout"
+: >"$reference_stderr"
+: >"$candidate_stdout"
+: >"$candidate_stderr"
+expected_stdout="$work_dir/expected.stdout"
+printf '%s\n' \
+    'barrier-attributes-and-precedence: pass' \
+    'barrier-private-basic: pass' \
+    'barrier-private-generations-64: pass' \
+    'barrier-signal-contention: pass' \
+    'barrier-shared-generations-32: pass' >"$expected_stdout"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-pthread-barrier-reference"
 candidate="$work_dir/crabc-static-pthread-barrier-candidate"
@@ -91,7 +110,7 @@ errno_disassembly="$work_dir/errno-disassembly"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_pthread_barrier_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h pthread.h bits/alltypes.h sys/mman.h sys/syscall.h time.h; do
+for header in errno.h pthread.h signal.h bits/alltypes.h sys/mman.h sys/syscall.h time.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use project $header"
 done
@@ -99,12 +118,16 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_pthread_barrier_probe.c \
     -o "$reference"
-if timeout "$EXECUTION_TIMEOUT" "$reference"; then
+if timeout "$EXECUTION_TIMEOUT" "$reference" \
+    >"$reference_stdout" 2>"$reference_stderr"; then
     :
 else
     status=$?
     fail "pinned-musl barrier fixture exited ${status}"
 fi
+cmp -s "$expected_stdout" "$reference_stdout" ||
+    fail "pinned-musl barrier phase stream differed"
+[ ! -s "$reference_stderr" ] || fail "pinned-musl barrier emitted stderr"
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -201,11 +224,16 @@ python3 "$ELF_CALL_CLOSURE" check "$candidate" \
     --no-syscall 'nr=*' --no-instruction '%fs:' ||
     fail "pthread_barrier_init must not select a syscall or TLS seam"
 
-if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
+if timeout "$EXECUTION_TIMEOUT" "$candidate" \
+    >"$candidate_stdout" 2>"$candidate_stderr"; then
     :
 else
     status=$?
     fail "freestanding barrier fixture exited ${status}"
 fi
+cmp -s "$reference_stdout" "$candidate_stdout" ||
+    fail "candidate barrier phase stream differed from pinned musl"
+cmp -s "$reference_stderr" "$candidate_stderr" ||
+    fail "candidate barrier stderr differed from pinned musl"
 
 printf 'x86 static crabc-libc pthread barrier: PASS\n'

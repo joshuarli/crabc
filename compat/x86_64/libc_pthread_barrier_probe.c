@@ -4,9 +4,10 @@
  * as a true `-nostdlib -static` candidate linked only through the selected
  * crabc archive. It covers the complete public barrier surface: the four-byte
  * attribute lifecycle and pshared record, count validation, a reusable
- * process-private two-thread barrier, and a shared-futex cross-fork barrier.
- * Fixture-local raw syscalls provide only mapping, fork, wait, clock, and exit
- * plumbing; they do not select a C process runtime, CRT, loader, or sysroot.
+ * process-private generations, signal interruption under contention, and
+ * repeated shared-futex cross-fork generations with destruction and reinit.
+ * Fixture-local raw syscalls provide mapping, process control, timing, signal
+ * delivery, reporting, and exit plumbing without a C process runtime or CRT.
  */
 
 #ifndef _GNU_SOURCE
@@ -21,6 +22,7 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdint.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
@@ -40,8 +42,9 @@ _Static_assert(PTHREAD_PROCESS_PRIVATE == 0 && PTHREAD_PROCESS_SHARED == 1,
 _Static_assert(PTHREAD_BARRIER_SERIAL_THREAD == -1,
     "musl serial barrier result");
 _Static_assert(EINVAL == 22, "Linux x86 EINVAL");
-_Static_assert(SYS_mmap == 9 && SYS_munmap == 11 && SYS_fork == 57 &&
-    SYS_exit == 60 && SYS_wait4 == 61 && SYS_clock_gettime == 228,
+_Static_assert(SYS_write == 1 && SYS_mmap == 9 && SYS_munmap == 11 && SYS_fork == 57 &&
+    SYS_exit == 60 && SYS_wait4 == 61 && SYS_clock_gettime == 228 &&
+    SYS_getpid == 39 && SYS_gettid == 186 && SYS_tgkill == 234,
     "x86 barrier fixture syscall numbers");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&pthread_barrierattr_init),
     int (*)(pthread_barrierattr_t *)), "pthread_barrierattr_init declaration");
@@ -62,6 +65,8 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&pthread_barrier_wait),
 enum {
     FIXTURE_TIMEOUT_SECONDS = 3,
     PRIVATE_BARRIER_ROUNDS = 2,
+    CONTENTION_ROUNDS = 64,
+    SHARED_BARRIER_ROUNDS = 32,
     SHARED_MAPPING_BYTES = 4096,
     INVALID_BARRIER_COUNT = 0x80000000U,
 };
@@ -91,6 +96,17 @@ static long raw_syscall2(long number, long argument_one, long argument_two)
     __asm__ volatile("syscall" : "=a"(result)
         : "a"(number), "D"(argument_one), "S"(argument_two)
         : "rcx", "r11", "memory");
+    return result;
+}
+
+static long raw_syscall3(long number, long argument_one, long argument_two,
+    long argument_three)
+{
+    long result;
+
+    __asm__ volatile("syscall" : "=a"(result)
+        : "a"(number), "D"(argument_one), "S"(argument_two),
+          "d"(argument_three) : "rcx", "r11", "memory");
     return result;
 }
 
@@ -128,6 +144,14 @@ static int raw_failed(long result)
 {
     return result < 0 && result >= -4095;
 }
+
+static int report_phase(const char *message, unsigned long length)
+{
+    return raw_syscall3(SYS_write, 1, (long)(const void *)message, length) ==
+        (long)length ? 0 : -1;
+}
+
+#define REPORT_PHASE(message) report_phase(message, sizeof(message) - 1)
 
 static void raw_exit(int status) __attribute__((noreturn));
 
@@ -173,6 +197,20 @@ static int wait_for_int(const volatile int *value, int expected)
             return 0;
     } while (!deadline_reached(CLOCK_MONOTONIC, &deadline));
     return -1;
+}
+
+static int wait_for_delay(long nanoseconds)
+{
+    struct timespec start, now;
+
+    if (raw_clock(CLOCK_MONOTONIC, &start) != 0)
+        return -1;
+    do {
+        if (raw_clock(CLOCK_MONOTONIC, &now) != 0)
+            return -1;
+    } while ((now.tv_sec - start.tv_sec) * 1000000000L +
+        now.tv_nsec - start.tv_nsec < nanoseconds);
+    return 0;
 }
 
 static int wait_for_child(long child, int *status)
@@ -225,7 +263,9 @@ static int run_attribute_and_count_probe(void)
         process_shared != PTHREAD_PROCESS_PRIVATE)
         return 2;
     if (pthread_barrierattr_setpshared(&attribute, PTHREAD_PROCESS_SHARED) != 0 ||
-        attribute.__attr != 0x80000000U)
+        attribute.__attr != 0x80000000U ||
+        pthread_barrierattr_getpshared(&attribute, &process_shared) != 0 ||
+        process_shared != PTHREAD_PROCESS_SHARED)
         return 3;
     if (pthread_barrierattr_setpshared(&attribute, -1) != EINVAL ||
         attribute.__attr != 0x80000000U ||
@@ -245,6 +285,11 @@ static int run_attribute_and_count_probe(void)
     if (pthread_barrier_init(&barrier, 0, INVALID_BARRIER_COUNT) != EINVAL ||
         !barrier_words_match(&barrier, 0x5a5a5a5a))
         return 7;
+    if (pthread_barrier_init(0, 0, 0) != EINVAL ||
+        pthread_barrier_init(0, 0, INVALID_BARRIER_COUNT) != EINVAL ||
+        pthread_barrierattr_setpshared(0, -1) != EINVAL ||
+        pthread_barrierattr_destroy(0) != 0)
+        return 11;
 
     if (pthread_barrier_init(&barrier, 0, 1) != 0 ||
         barrier.__u.__i[2] != 0)
@@ -252,7 +297,173 @@ static int run_attribute_and_count_probe(void)
     if (pthread_barrier_wait(&barrier) != PTHREAD_BARRIER_SERIAL_THREAD ||
         pthread_barrier_destroy(&barrier) != 0)
         return 9;
+    if (pthread_barrier_init(&barrier, 0, 1) != 0 ||
+        pthread_barrier_wait(&barrier) != PTHREAD_BARRIER_SERIAL_THREAD ||
+        pthread_barrier_destroy(&barrier) != 0)
+        return 12;
     return errno == E2BIG ? 0 : 10;
+}
+
+struct contention_rounds {
+    pthread_barrier_t barrier;
+    volatile int arrived[CONTENTION_ROUNDS][3];
+    int results[CONTENTION_ROUNDS][3];
+    int worker_errno[2];
+    volatile int next_worker_id;
+};
+
+static int contention_participant(struct contention_rounds *rounds, int id)
+{
+    unsigned generation;
+
+    for (generation = 0; generation != CONTENTION_ROUNDS; ++generation) {
+        __atomic_store_n(&rounds->arrived[generation][id], 1, __ATOMIC_RELEASE);
+        rounds->results[generation][id] = pthread_barrier_wait(&rounds->barrier);
+        for (int peer = 0; peer != 3; ++peer)
+            if (__atomic_load_n(&rounds->arrived[generation][peer],
+                    __ATOMIC_ACQUIRE) != 1)
+                return 1;
+    }
+    return 0;
+}
+
+static void *contention_worker(void *opaque)
+{
+    struct contention_rounds *rounds = opaque;
+    int id = __atomic_fetch_add(&rounds->next_worker_id, 1,
+        __ATOMIC_RELAXED) + 1;
+    int result;
+
+    errno = EACCES;
+    result = contention_participant(rounds, id);
+    rounds->worker_errno[id - 1] = errno;
+    return (void *)(uintptr_t)result;
+}
+
+static int run_contention_generations(void)
+{
+    struct contention_rounds rounds = { 0 };
+    pthread_t workers[2];
+    void *results[2];
+    unsigned generation;
+    int main_result;
+
+    errno = E2BIG;
+    if (pthread_barrier_init(&rounds.barrier, 0, 3) != 0)
+        return 1;
+    if (pthread_create(&workers[0], 0, contention_worker, &rounds) != 0)
+        return 2;
+    if (pthread_create(&workers[1], 0, contention_worker, &rounds) != 0)
+        return 3;
+    main_result = contention_participant(&rounds, 0);
+    if (pthread_join(workers[0], &results[0]) != 0 ||
+        pthread_join(workers[1], &results[1]) != 0)
+        return 4;
+    if (main_result != 0 || results[0] != 0 || results[1] != 0 ||
+        rounds.worker_errno[0] != EACCES || rounds.worker_errno[1] != EACCES)
+        return 5;
+    for (generation = 0; generation != CONTENTION_ROUNDS; ++generation) {
+        int serial = 0;
+        for (int id = 0; id != 3; ++id) {
+            int result = rounds.results[generation][id];
+            serial += result == PTHREAD_BARRIER_SERIAL_THREAD;
+            if (result != 0 && result != PTHREAD_BARRIER_SERIAL_THREAD)
+                return 6;
+        }
+        if (serial != 1)
+            return 7;
+    }
+    if (pthread_barrier_destroy(&rounds.barrier) != 0 ||
+        pthread_barrier_init(&rounds.barrier, 0, 1) != 0 ||
+        pthread_barrier_wait(&rounds.barrier) != PTHREAD_BARRIER_SERIAL_THREAD ||
+        pthread_barrier_destroy(&rounds.barrier) != 0)
+        return 8;
+    return errno == E2BIG ? 0 : 9;
+}
+
+static volatile sig_atomic_t signal_deliveries;
+
+static void barrier_signal_handler(int signal)
+{
+    if (signal == SIGUSR1)
+        ++signal_deliveries;
+}
+
+struct interrupted_round {
+    pthread_barrier_t barrier;
+    volatile int entered[2];
+    volatile long worker_tid[2];
+    int result[2];
+    int worker_errno[2];
+};
+
+struct interrupted_worker_context {
+    struct interrupted_round *round;
+    int id;
+};
+
+static void *interrupted_worker(void *opaque)
+{
+    struct interrupted_worker_context *context = opaque;
+    struct interrupted_round *round = context->round;
+    int id = context->id;
+
+    errno = EACCES;
+    __atomic_store_n(&round->worker_tid[id], raw_syscall0(SYS_gettid),
+        __ATOMIC_RELEASE);
+    __atomic_store_n(&round->entered[id], 1, __ATOMIC_RELEASE);
+    round->result[id] = pthread_barrier_wait(&round->barrier);
+    round->worker_errno[id] = errno;
+    return 0;
+}
+
+static int run_signal_interrupted_barrier(void)
+{
+    struct interrupted_round round = { 0 };
+    struct interrupted_worker_context context[2] = {
+        { &round, 0 }, { &round, 1 }
+    };
+    struct sigaction action = { 0 }, old_action;
+    pthread_t worker[2];
+    int main_result;
+    int serial;
+    int status = 0;
+
+    action.sa_handler = barrier_signal_handler;
+    if (sigemptyset(&action.sa_mask) != 0 ||
+        sigaction(SIGUSR1, &action, &old_action) != 0)
+        return 1;
+    if (pthread_barrier_init(&round.barrier, 0, 3) != 0)
+        return 2;
+    if (pthread_create(&worker[0], 0, interrupted_worker, &context[0]) != 0 ||
+        pthread_create(&worker[1], 0, interrupted_worker, &context[1]) != 0)
+        return 3;
+    if (wait_for_int(&round.entered[0], 1) != 0 ||
+        wait_for_int(&round.entered[1], 1) != 0 ||
+        wait_for_delay(10000000L) != 0)
+        return 4;
+    if (raw_syscall3(SYS_tgkill, raw_syscall0(SYS_getpid),
+            __atomic_load_n(&round.worker_tid[0], __ATOMIC_ACQUIRE), SIGUSR1) != 0)
+        return 5;
+    main_result = pthread_barrier_wait(&round.barrier);
+    if (pthread_join(worker[0], 0) != 0 || pthread_join(worker[1], 0) != 0)
+        status = 6;
+    serial = (main_result == PTHREAD_BARRIER_SERIAL_THREAD) +
+        (round.result[0] == PTHREAD_BARRIER_SERIAL_THREAD) +
+        (round.result[1] == PTHREAD_BARRIER_SERIAL_THREAD);
+    if (serial != 1 ||
+        (main_result != 0 && main_result != PTHREAD_BARRIER_SERIAL_THREAD) ||
+        (round.result[0] != 0 &&
+            round.result[0] != PTHREAD_BARRIER_SERIAL_THREAD) ||
+        (round.result[1] != 0 &&
+            round.result[1] != PTHREAD_BARRIER_SERIAL_THREAD) ||
+        signal_deliveries != 1 || round.worker_errno[0] != EACCES ||
+        round.worker_errno[1] != EACCES)
+        status = 7;
+    if (pthread_barrier_destroy(&round.barrier) != 0 ||
+        sigaction(SIGUSR1, &old_action, 0) != 0)
+        status = 8;
+    return status;
 }
 
 struct private_barrier_round {
@@ -315,7 +526,9 @@ static int run_private_thread_barrier_probe(void)
 struct shared_barrier_round {
     pthread_barrier_t barrier;
     volatile int child_entered;
-    volatile int child_result;
+    volatile int child_result[SHARED_BARRIER_ROUNDS];
+    volatile int parent_arrived[SHARED_BARRIER_ROUNDS];
+    volatile int child_arrived[SHARED_BARRIER_ROUNDS];
     volatile int child_errno;
 };
 
@@ -328,6 +541,8 @@ static int run_process_shared_barrier_probe(void)
     long child;
     int child_status = -1;
     int parent_result;
+    int parent_results[SHARED_BARRIER_ROUNDS];
+    unsigned generation;
     int status = 0;
 
     if (raw_failed(mapped))
@@ -356,26 +571,49 @@ static int run_process_shared_barrier_probe(void)
 
         errno = EACCES;
         __atomic_store_n(&round->child_entered, 1, __ATOMIC_RELEASE);
-        child_result = pthread_barrier_wait(&round->barrier);
-        __atomic_store_n(&round->child_result, child_result, __ATOMIC_RELEASE);
+        for (generation = 0; generation != SHARED_BARRIER_ROUNDS; ++generation) {
+            __atomic_store_n(&round->child_arrived[generation], 1, __ATOMIC_RELEASE);
+            child_result = pthread_barrier_wait(&round->barrier);
+            if (__atomic_load_n(&round->parent_arrived[generation],
+                    __ATOMIC_ACQUIRE) != 1)
+                raw_exit(2);
+            __atomic_store_n(&round->child_result[generation], child_result,
+                __ATOMIC_RELEASE);
+        }
         __atomic_store_n(&round->child_errno, errno, __ATOMIC_RELEASE);
-        raw_exit(child_result == 0 ||
-            child_result == PTHREAD_BARRIER_SERIAL_THREAD ? 0 : 1);
+        raw_exit(0);
     }
 
     if (wait_for_int(&round->child_entered, 1) != 0)
         status = 5;
-    parent_result = pthread_barrier_wait(&round->barrier);
+    for (generation = 0; generation != SHARED_BARRIER_ROUNDS; ++generation) {
+        __atomic_store_n(&round->parent_arrived[generation], 1, __ATOMIC_RELEASE);
+        parent_result = pthread_barrier_wait(&round->barrier);
+        parent_results[generation] = parent_result;
+        if (__atomic_load_n(&round->child_arrived[generation],
+                __ATOMIC_ACQUIRE) != 1 && status == 0)
+            status = 11;
+    }
+    if (pthread_barrier_destroy(&round->barrier) != 0 && status == 0)
+        status = 8;
     if (wait_for_child(child, &child_status) != 0 && status == 0)
         status = 6;
     if (status == 0 && (((child_status & 0x7f) != 0) ||
         ((child_status >> 8) & 0xff) != 0 ||
-        !exactly_one_serial(parent_result,
-            __atomic_load_n(&round->child_result, __ATOMIC_ACQUIRE)) ||
         __atomic_load_n(&round->child_errno, __ATOMIC_ACQUIRE) != EACCES))
         status = 7;
-    if (pthread_barrier_destroy(&round->barrier) != 0 && status == 0)
-        status = 8;
+    for (generation = 0; generation != SHARED_BARRIER_ROUNDS; ++generation)
+        if (!exactly_one_serial(parent_results[generation],
+                __atomic_load_n(&round->child_result[generation],
+                    __ATOMIC_ACQUIRE)) && status == 0)
+            status = 12;
+    if (pthread_barrierattr_init(&attribute) != 0 ||
+        pthread_barrierattr_setpshared(&attribute, PTHREAD_PROCESS_SHARED) != 0 ||
+        pthread_barrier_init(&round->barrier, &attribute, 1) != 0 ||
+        pthread_barrier_wait(&round->barrier) != PTHREAD_BARRIER_SERIAL_THREAD ||
+        pthread_barrier_destroy(&round->barrier) != 0 ||
+        pthread_barrierattr_destroy(&attribute) != 0)
+        status = 13;
     if (raw_syscall2(SYS_munmap, mapped, SHARED_MAPPING_BYTES) != 0 && status == 0)
         status = 9;
     if (errno != E2BIG && status == 0)
@@ -390,11 +628,27 @@ int crabc_x86_64_pthread_barrier_probe(void)
     status = run_attribute_and_count_probe();
     if (status != 0)
         return status;
+    if (REPORT_PHASE("barrier-attributes-and-precedence: pass\n") != 0)
+        return 90;
     status = run_private_thread_barrier_probe();
     if (status != 0)
         return 20 + status;
+    if (REPORT_PHASE("barrier-private-basic: pass\n") != 0)
+        return 91;
+    status = run_contention_generations();
+    if (status != 0)
+        return 60 + status;
+    if (REPORT_PHASE("barrier-private-generations-64: pass\n") != 0)
+        return 92;
+    status = run_signal_interrupted_barrier();
+    if (status != 0)
+        return 80 + status;
+    if (REPORT_PHASE("barrier-signal-contention: pass\n") != 0)
+        return 93;
     status = run_process_shared_barrier_probe();
-    return status == 0 ? 0 : 40 + status;
+    if (status != 0)
+        return 40 + status;
+    return REPORT_PHASE("barrier-shared-generations-32: pass\n") == 0 ? 0 : 94;
 }
 
 #if !defined(CRABC_PTHREAD_BARRIER_FREESTANDING)
