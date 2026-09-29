@@ -82,7 +82,7 @@ assert_named_syscall() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp comm diff grep mkdir nm objdump readelf rustup sort; do
+for tool in ar awk cargo cat chmod cmp comm diff grep mkdir mktemp nm objdump readelf rustup sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -97,14 +97,18 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_x86_getitimer_reference.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_x86_setitimer_reference.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-interval-timers.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+report_root="$ROOT_DIR/.work/x86_64/reports/libc-interval-timers"
+mkdir -p "$report_root"
+work_dir="$(mktemp -d "$report_root/run.XXXXXX")"
+chmod 755 "$work_dir"
 baseline_target="$work_dir/cargo-baseline"
 featured_target="$work_dir/cargo-featured"
 baseline_archive="$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
 featured_archive="$featured_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-interval-timers-reference"
 candidate="$work_dir/crabc-interval-timers-candidate"
+reference_trace="$work_dir/musl-observation.txt"
+candidate_trace="$work_dir/crabc-observation.txt"
 header_trace="$work_dir/header-trace"
 baseline_symbols="$work_dir/baseline-symbols"
 featured_symbols="$work_dir/featured-symbols"
@@ -136,7 +140,8 @@ done
 "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -U_GNU_SOURCE \
     -fno-builtin -fno-stack-protector -I "$ROOT_DIR/include" \
     compat/x86_64/libc_interval_timers_probe.c -o "$reference"
-"$reference" || fail "pinned-musl interval-timers fixture failed"
+"$reference" >"$reference_trace" 2>"$work_dir/musl-stderr.txt" ||
+    fail "pinned-musl interval-timers fixture failed; evidence: $work_dir"
 
 build_source_runtime_libc "$baseline_target/x86_64-unknown-linux-musl/debug/libc.a"
 build_source_runtime_libc "$featured_target/x86_64-unknown-linux-musl/debug/libc.a" \
@@ -224,5 +229,11 @@ grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
 assert_named_syscall getitimer 24
 assert_named_syscall setitimer 26
 
-"$candidate" || fail "freestanding interval-timers fixture failed"
-printf 'x86 opt-in static libc interval timers: PASS\n'
+"$candidate" >"$candidate_trace" 2>"$work_dir/crabc-stderr.txt" ||
+    fail "freestanding interval-timers fixture failed; evidence: $work_dir"
+cmp -s "$reference_trace" "$candidate_trace" || {
+    diff -u "$reference_trace" "$candidate_trace" >&2 || true
+    fail "pinned-musl and freestanding observations differ; evidence: $work_dir"
+}
+cat "$reference_trace"
+printf 'x86 opt-in static libc interval timers: PASS (evidence: %s)\n' "$work_dir"

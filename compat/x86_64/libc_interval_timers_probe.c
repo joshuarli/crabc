@@ -43,7 +43,7 @@ _Static_assert(offsetof(struct itimerval, it_interval) == 0 &&
     offsetof(struct itimerval, it_value) == 16, "x86 itimerval offsets");
 _Static_assert(offsetof(struct guarded_itimerval, trailing) == 32,
     "tail sentinels begin after the kernel record");
-_Static_assert(SYS_getitimer == 36 && SYS_setitimer == 38,
+_Static_assert(SYS_write == 1 && SYS_getitimer == 36 && SYS_setitimer == 38,
     "x86 interval-timer syscall numbers");
 _Static_assert(ITIMER_REAL == 0 && ITIMER_VIRTUAL == 1 && ITIMER_PROF == 2,
     "x86 interval-timer selectors");
@@ -70,6 +70,11 @@ static const struct itimerval disarmed_setting = {
 static const struct itimerval invalid_setting = {
     { 0, 0 },
     { 0, 1000000 },
+};
+
+static const struct itimerval one_shot_setting = {
+    { 0, 0 },
+    { 180, 0 },
 };
 
 static long raw_syscall2(long number, long argument_one, long argument_two)
@@ -106,6 +111,12 @@ static int raw_setitimer(int which, const struct itimerval *new_value,
         (long)(void *)old_value);
 }
 
+static int report_stage(const char *message, unsigned long length)
+{
+    return raw_syscall3(SYS_write, 1, (long)(const void *)message,
+        (long)length) == (long)length ? 0 : 1;
+}
+
 static void fill_bytes(void *address, unsigned char value, unsigned long count)
 {
     unsigned char *bytes = address;
@@ -128,12 +139,6 @@ static int canonical_timeval(const struct timeval *value)
 {
     return value->tv_sec >= 0 && value->tv_usec >= 0 &&
         value->tv_usec < 1000000;
-}
-
-static int canonical_itimerval(const struct itimerval *value)
-{
-    return canonical_timeval(&value->it_interval) &&
-        canonical_timeval(&value->it_value);
 }
 
 static int trailing_is_unchanged(const struct guarded_itimerval *value)
@@ -174,7 +179,8 @@ static int check_getitimer_queries(void)
         fill_bytes(&value, 0xa5, sizeof(value));
         errno = ERANGE;
         if (getitimer(selectors[index], &value.value) != 0 ||
-            errno != ERANGE || !canonical_itimerval(&value.value) ||
+            errno != ERANGE || !timeval_is_zero(&value.value.it_interval) ||
+            !timeval_is_zero(&value.value.it_value) ||
             !trailing_is_unchanged(&value))
             return 2 + (int)index;
     }
@@ -212,6 +218,24 @@ static int check_setitimer_exchange(void)
             errno != ERANGE || !old_matches_setting(&old.value, &second_setting) ||
             !trailing_is_unchanged(&old))
             return 30 + (int)index;
+
+        fill_bytes(&old, 0xa5, sizeof(old));
+        errno = ERANGE;
+        if (setitimer(selectors[index], &one_shot_setting, &old.value) != 0 ||
+            errno != ERANGE || !timeval_is_zero(&old.value.it_interval) ||
+            !timeval_is_zero(&old.value.it_value) ||
+            !trailing_is_unchanged(&old))
+            return 40 + (int)index;
+
+        fill_bytes(&old, 0xa5, sizeof(old));
+        if (getitimer(selectors[index], &old.value) != 0 ||
+            !timeval_is_zero(&old.value.it_interval) ||
+            !old_matches_setting(&old.value, &one_shot_setting) ||
+            !trailing_is_unchanged(&old))
+            return 50 + (int)index;
+
+        if (setitimer(selectors[index], &disarmed_setting, 0) != 0)
+            return 60 + (int)index;
     }
     return 0;
 }
@@ -220,6 +244,10 @@ static int check_invalid_inputs(void)
 {
     struct guarded_itimerval old;
     struct guarded_itimerval value;
+    struct itimerval invalid;
+    static const struct timeval invalid_fields[] = {
+        { -1, 0 }, { 0, -1 }, { 0, 1000000 },
+    };
 
     if (raw_setitimer(ITIMER_REAL, &first_setting, 0) != 0)
         return 1;
@@ -228,6 +256,28 @@ static int check_invalid_inputs(void)
     if (setitimer(ITIMER_REAL, &invalid_setting, &old.value) != -1 ||
         errno != EINVAL || !record_is_unchanged(&old))
         return 2;
+
+    for (unsigned long field = 0; field < 2; ++field) {
+        for (unsigned long index = 0;
+             index < sizeof(invalid_fields) / sizeof(invalid_fields[0]);
+             ++index) {
+            invalid = first_setting;
+            if (field == 0)
+                invalid.it_interval = invalid_fields[index];
+            else
+                invalid.it_value = invalid_fields[index];
+            fill_bytes(&old, 0xa5, sizeof(old));
+            errno = 0;
+            if (setitimer(ITIMER_REAL, &invalid, &old.value) != -1 ||
+                errno != EINVAL || !record_is_unchanged(&old))
+                return 10 + (int)(field * 3 + index);
+            fill_bytes(&value, 0xa5, sizeof(value));
+            if (raw_getitimer(ITIMER_REAL, &value.value) != 0 ||
+                !old_matches_setting(&value.value, &first_setting) ||
+                !trailing_is_unchanged(&value))
+                return 20 + (int)(field * 3 + index);
+        }
+    }
 
     fill_bytes(&value, 0xa5, sizeof(value));
     errno = 0;
@@ -241,6 +291,37 @@ static int check_invalid_inputs(void)
         errno != EINVAL || !record_is_unchanged(&old))
         return 4;
 
+    fill_bytes(&value, 0xa5, sizeof(value));
+    errno = 0;
+    if (getitimer(-1, &value.value) != -1 || errno != EINVAL ||
+        !record_is_unchanged(&value))
+        return 30;
+
+    errno = 0;
+    if (getitimer(3, (struct itimerval *)1) != -1 || errno != EINVAL)
+        return 31;
+    errno = 0;
+    if (setitimer(3, (const struct itimerval *)1, &old.value) != -1 ||
+        errno != EFAULT || !record_is_unchanged(&old))
+        return 32;
+
+    fill_bytes(&value, 0xa5, sizeof(value));
+    if (raw_getitimer(ITIMER_REAL, &value.value) != 0 ||
+        !old_matches_setting(&value.value, &first_setting) ||
+        !trailing_is_unchanged(&value))
+        return 33;
+
+    errno = 0;
+    if (setitimer(ITIMER_REAL, &second_setting,
+            (struct itimerval *)1) != -1 || errno != EFAULT)
+        return 34;
+    fill_bytes(&value, 0xa5, sizeof(value));
+    if (raw_getitimer(ITIMER_REAL, &value.value) != 0 ||
+        !old_matches_setting(&value.value, &second_setting) ||
+        !trailing_is_unchanged(&value))
+        return 35;
+
+    errno = 0;
     if (getitimer(ITIMER_REAL, 0) != -1 || errno != EFAULT)
         return 5;
     if (setitimer(ITIMER_REAL, &disarmed_setting, 0) != 0)
@@ -254,11 +335,22 @@ int crabc_x86_64_interval_timers_probe(void)
 
     if (status != 0)
         return 10 + status;
+    if (report_stage("getitimer-disarmed=ok\n",
+            sizeof("getitimer-disarmed=ok\n") - 1) != 0)
+        return 90;
     status = check_setitimer_exchange();
     if (status != 0)
         return 20 + status;
+    if (report_stage("setitimer-snapshot-disarm-rearm=ok\n",
+            sizeof("setitimer-snapshot-disarm-rearm=ok\n") - 1) != 0)
+        return 91;
     status = check_invalid_inputs();
-    return status == 0 ? 0 : 40 + status;
+    if (status != 0)
+        return 100 + status;
+    if (report_stage("invalid-fields-precedence-commit=ok\n",
+            sizeof("invalid-fields-precedence-commit=ok\n") - 1) != 0)
+        return 92;
+    return 0;
 }
 
 #ifndef CRABC_INTERVAL_TIMERS_FREESTANDING

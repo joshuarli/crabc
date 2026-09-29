@@ -49,11 +49,11 @@ static_archive_member! { getitimer_source {
     ///
     /// # Safety
     ///
-    /// `old` must be null only when intentionally testing Linux's pointer-error
-    /// behavior. Otherwise it must point to writable, properly aligned storage
-    /// for one complete x86-64 `struct itimerval` for the duration of the
-    /// syscall. `which` is passed to Linux unchanged; the caller owns the
-    /// process-global timer state and any concurrent access policy.
+    /// A valid `old` must point to writable storage for one complete x86-64
+    /// `struct itimerval` throughout the syscall. Null and invalid addresses
+    /// are passed through for Linux pointer validation. `which` is also passed
+    /// unchanged; the caller owns the process-global timer state and any
+    /// concurrent access policy.
     #[no_mangle]
     pub unsafe extern "C" fn getitimer(which: c_int, old: *mut Itimerval) -> c_int {
         // SAFETY: the public C caller owns the selector and output-pointer
@@ -76,11 +76,12 @@ static_archive_member! { setitimer_source {
     ///
     /// # Safety
     ///
-    /// `new` must be non-null and point to readable, properly aligned storage for
-    /// one complete x86-64 `struct itimerval` for the duration of the syscall.
-    /// `old` may be null, or must point to writable storage for the same complete
-    /// record. `which` is passed to Linux unchanged; the caller owns the
-    /// process-global timer state and any concurrent access policy.
+    /// A valid non-null `new` must point to readable storage for one complete
+    /// x86-64 `struct itimerval` throughout the syscall. A valid non-null `old`
+    /// must point to writable storage for the same record. Null and invalid
+    /// addresses are passed through for Linux pointer validation. `which` is
+    /// also passed unchanged; the caller owns the process-global timer state
+    /// and any concurrent access policy.
     #[no_mangle]
     pub unsafe extern "C" fn setitimer(
         which: c_int,
