@@ -133,6 +133,42 @@ static void naming_case(void) {
     CHECK(close(slave) == 0 && close(other_slave) == 0 && close(m) == 0 && close(other) == 0);
     CHECK(descriptor_count() == baseline);
 }
+static void descriptor_lifetime_case(void) {
+    int baseline = descriptor_count();
+    int master = posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
+    CHECK(master >= 0 && grantpt(master) == 0 && unlockpt(master) == 0);
+    char name[32], observed[32];
+    CHECK(ptsname_r(master, name, sizeof name) == 0);
+    int second_master = dup(master);
+    CHECK(second_master >= 0 && close(master) == 0);
+    errno = EDOM;
+    CHECK(ptsname_r(second_master, observed, sizeof observed) == 0 &&
+          !strcmp(observed, name) && errno == EDOM);
+    CHECK(unlockpt(master) == -1 && errno == EBADF);
+    errno = EDOM;
+    CHECK(grantpt(master) == 0 && errno == EDOM);
+
+    int slave = open(name, O_RDWR | O_NOCTTY);
+    /* The released integer slot now names the slave, while the duplicated
+       master remains alive under a different integer. */
+    CHECK(slave == master);
+    errno = EDOM;
+    CHECK(unlockpt(master) == -1 && errno == ENOTTY);
+    errno = EDOM;
+    CHECK(ptsname_r(master, observed, sizeof observed) == ENOTTY && errno == EDOM);
+    int second_slave = dup(slave);
+    CHECK(second_slave >= 0 && close(slave) == 0);
+    errno = EDOM;
+    CHECK(ttyname_r(second_slave, observed, sizeof observed) == 0 &&
+          !strcmp(observed, name) && errno == EDOM);
+    CHECK(ptsname_r(second_slave, observed, sizeof observed) == ENOTTY && errno == EDOM);
+    CHECK(close(second_master) == 0);
+    memset(observed, 'X', sizeof observed);
+    errno = EDOM;
+    int result = ttyname_r(second_slave, observed, sizeof observed);
+    CHECK(result == EIO && errno == EIO && observed[0] == 'X');
+    CHECK(close(second_slave) == 0 && descriptor_count() == baseline);
+}
 static void openpty_case(void) {
     int baseline = descriptor_count(), m = -101, s = -102;
     char name[32]; memset(name, 'X', sizeof name);
@@ -361,6 +397,7 @@ static void cancellation_case(void) {
 int main(int argc, char **argv) {
     CHECK(argc == 2);
     if (!strcmp(argv[1], "naming")) naming_case();
+    else if (!strcmp(argv[1], "descriptor-lifetime")) descriptor_lifetime_case();
     else if (!strcmp(argv[1], "openpty")) openpty_case();
     else if (!strcmp(argv[1], "no-controlling-terminal")) no_controlling_terminal_case();
     else if (!strcmp(argv[1], "optional-errors")) optional_errors_case();

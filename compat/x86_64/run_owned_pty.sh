@@ -23,7 +23,7 @@ printf 'PTY evidence: %s\n' "$work"
 readonly execution_root="$work/execution-root"
 readonly probe="$ROOT/compat/x86_64/owned_pty_probe.c"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly cases=(naming openpty no-controlling-terminal optional-errors master-failure unlock-failure number-failure slave-failure login login-failures forkpty pipe-failure fork-failure child-login-failure cancellation)
+readonly cases=(naming descriptor-lifetime openpty no-controlling-terminal optional-errors master-failure unlock-failure number-failure slave-failure login login-failures forkpty pipe-failure fork-failure child-login-failure cancellation)
 # The public naming entry is musl's weak alias of a hidden internal provider;
 # ptsname must keep calling that internal body if the application overrides it.
 assert_ptsname_binding() {
