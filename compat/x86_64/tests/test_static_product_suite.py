@@ -7,6 +7,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -28,6 +29,8 @@ def load_module(name: str, path: Path):
 
 
 PRODUCT = load_module("static_product_suite_test", VALIDATOR_PATH)
+PACKAGE = load_module("static_product_suite_package_test", ROOT / "compat/x86_64/owned_static_sysroot_package.py")
+FIXTURES = load_module("static_product_suite_package_fixtures", Path(__file__).with_name("test_owned_static_sysroot_package.py"))
 WORK = "/workspace/.work/x86_64/tmp/crabc-x86-64-owned-static-sysroot.Ab12Cd"
 
 
@@ -125,6 +128,51 @@ class StaticProductSuiteTests(unittest.TestCase):
                                  encoding="utf-8")
             with self.assertRaisesRegex(PRODUCT.StaticProductError, "installed tree digest rows"):
                 PRODUCT.validate_tree_manifest(report, "primary", manifest)
+
+    def test_reader_replays_retained_archive_against_the_primary_installed_tree(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            report = Path(temporary)
+            source = report / "source"
+            FIXTURES.OwnedStaticSysrootPackageTests().populate_tree(source)
+            manifest = json.loads((source / PACKAGE.MANIFEST_RELATIVE_PATH).read_text())
+            manifest_path = report / "products/primary/manifest.json"
+            manifest_path.parent.mkdir(parents=True)
+            shutil.copyfile(source / PACKAGE.MANIFEST_RELATIVE_PATH, manifest_path)
+            tree_path = report / "reproducibility/primary-tree.sha256"
+            tree_path.parent.mkdir(parents=True)
+            tree_path.write_text("".join(
+                f"{sha(path.read_bytes())}  ./{path.relative_to(source).as_posix()}\n"
+                for path in sorted(source.rglob("*")) if path.is_file()), encoding="utf-8")
+            archive_dir = report / "archives"
+            archive_dir.mkdir()
+            primary = archive_dir / "primary.tar.xz"
+            reproduction = archive_dir / "reproduction.tar.xz"
+            PACKAGE.create_archive(source, primary)
+            shutil.copyfile(primary, reproduction)
+            archives = {name: PRODUCT.digest(archive_dir / name)
+                        for name in ("primary.tar.xz", "reproduction.tar.xz")}
+            PRODUCT.validate_archive_replay(report, archives, manifest)
+
+            # A second canonical package can keep the current source seal and
+            # still carry a different installed payload. Rehashing the claimed
+            # archive digests must not make it the observed primary product.
+            changed = report / "changed"
+            shutil.copytree(source, changed)
+            libc = changed / "usr/lib/libc.a"
+            libc.write_bytes(libc.read_bytes() + b"changed")
+            changed_manifest_path = changed / PACKAGE.MANIFEST_RELATIVE_PATH
+            changed_manifest = json.loads(changed_manifest_path.read_text())
+            changed_manifest["installed"]["files"]["usr/lib/libc.a"] = sha(libc.read_bytes())
+            changed_manifest_path.write_text(json.dumps(changed_manifest, sort_keys=True) + "\n")
+            foreign = archive_dir / "foreign.tar.xz"
+            PACKAGE.create_archive(changed, foreign)
+            shutil.copyfile(foreign, primary)
+            shutil.copyfile(foreign, reproduction)
+            archives = {name: PRODUCT.digest(archive_dir / name) for name in archives}
+            with self.assertRaisesRegex(PRODUCT.StaticProductError, "archive payload differs"):
+                PRODUCT.validate_archive_replay(report, archives, manifest)
 
     def write_case(self, report: Path, product: str, mode: str, case_path: str, *,
                    trace_lines: list[str] | None = None, program_headers: str | None = None,

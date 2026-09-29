@@ -348,7 +348,10 @@ def collect(work_dir: Path, started_source: str) -> Path:
                             for product in ("primary", "reproduction", "extracted")}, source)
     for name in ("primary-tree.sha256", "reproduction-tree.sha256", "primary-build.json", "reproduction-build.json"):
         retain(work_dir / name, f"reproducibility/{name}")
-    archives = {name: digest(work_dir / name) for name in ("primary.tar.xz", "reproduction.tar.xz")}
+    archives = {}
+    for name in ("primary.tar.xz", "reproduction.tar.xz"):
+        retain(work_dir / name, f"archives/{name}")
+        archives[name] = files[f"archives/{name}"]
     for reference in sorted((work_dir / "header-consumer").glob("printf-matrix-reference*")):
         retain(reference, f"references/{reference.name}")
     retain(work_dir / "consumer-matrix-logs" / "summary.json", "consumer-matrix/summary.json")
@@ -480,6 +483,36 @@ def inspect_case(report: Path, product: str, mode: str, case_path: str,
             f"{label} retains non-relative dynamic relocations: {sorted(kinds)}")
 
 
+def validate_archive_replay(report: Path, archives: Mapping[str, str], manifest: Mapping[str, Any]) -> None:
+    """Extract retained package bytes and compare their files with the primary tree."""
+
+    import owned_static_sysroot_package as package
+
+    expected_names = {"primary.tar.xz", "reproduction.tar.xz"}
+    require(set(archives) == expected_names, "static product receipt lacks the two package archives")
+    for name in expected_names:
+        require(digest(report / "archives" / name) == archives[name],
+                f"retained static product archive changed: {name}")
+    require(archives["primary.tar.xz"] == archives["reproduction.tar.xz"],
+            "independent static packages differ")
+
+    scratch = evidence_directory(ROOT / ".work/x86_64/tmp")
+    scratch.mkdir(parents=True, exist_ok=True)
+    try:
+        with tempfile.TemporaryDirectory(prefix=".verify-static-product.", dir=scratch) as temporary:
+            extracted = package.extract_archive(report / "archives/primary.tar.xz", Path(temporary) / "tree")
+            entries = package.source_entries(extracted)
+            package.validate_installed_tree(extracted, entries)
+            extracted_manifest = read_json(extracted / INSTALLED_MANIFEST)
+            require(extracted_manifest == manifest, "archive payload differs from the primary installed manifest")
+            rows = {f"{digest(path)}  ./{relative.as_posix()}" for relative, path in entries if path.is_file()}
+            original = (report / "reproducibility/primary-tree.sha256").read_text(encoding="utf-8").splitlines()
+            require(len(original) == len(rows) and set(original) == rows,
+                    "archive payload differs from the primary installed tree")
+    except package.PackageError as error:
+        raise StaticProductError(f"retained static product archive cannot be replayed: {error}") from error
+
+
 def validate_receipt(path: Path) -> dict[str, Any]:
     """Independently re-read one receipt and all of its retained evidence."""
     path = evidence_directory(path)
@@ -517,8 +550,11 @@ def validate_receipt(path: Path) -> dict[str, Any]:
     require(files["reproducibility/primary-tree.sha256"] == files["reproducibility/reproduction-tree.sha256"],
             "two clean installed trees are not byte-identical")
     archives = receipt["archives"]
-    require(isinstance(archives, Mapping) and set(archives) == {"primary.tar.xz", "reproduction.tar.xz"}
-            and len(set(archives.values())) == 1, "independent static packages differ")
+    require(isinstance(archives, Mapping) and all(isinstance(value, str) for value in archives.values()),
+            "static product archive digests are invalid")
+    require(all(files.get(f"archives/{name}") == value for name, value in archives.items()),
+            "static product archive digests differ from retained bytes")
+    validate_archive_replay(report, archives, manifests["primary"])
 
     roster = suite_cases(contract)
     observed = receipt["observed"]
