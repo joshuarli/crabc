@@ -1,11 +1,11 @@
-/* Static x86-64 bounded integer-source-overflow sscanf behavior fixture.
+/* Static x86-64 bounded integer sscanf behavior fixture.
  *
- * The fixture deliberately owns only the previously unproved musl
- * unsigned-long-long source-overflow result of the existing no-FILE,
- * NUL-terminated `sscanf`/`vsscanf` boundary.  Every input is a narrow
- * byte-string literal and every conversion is one of %d, %i, %u, or %x.
- * It is not a claim about floating, wide, scanset, positional, FILE, or
- * general stdio behavior.
+ * The fixture checks musl unsigned-long-long source overflow, selected
+ * matching failures, field widths, suppression, and input exhaustion at the
+ * no-FILE, NUL-terminated `sscanf`/`vsscanf` boundary. Every input is a narrow
+ * byte-string literal and every integer conversion is %d, %i, %u, or %x.
+ * It does not exercise floating, wide, scanset, positional, FILE, or general
+ * stdio behavior.
  */
 
 #include <errno.h>
@@ -169,6 +169,18 @@ static int check_integer_failure_and_consumption(void)
     result = sscanf(" \t", "%d%n", &signed_value, &consumed);
     if (result != EOF || signed_value != 37 || consumed != -1 || errno != EINTR)
         return 8;
+
+    errno = EDOM;
+    result = sscanf("x", "%d%n", &signed_value, &consumed);
+    if (result != 0 || signed_value != 37 || consumed != -1 || errno != EINVAL)
+        return 9;
+
+    /* Suppressing a malformed conversion does not hide its matching failure
+     * or turn the following count directive into an assignment. */
+    errno = EINTR;
+    result = sscanf("-", "%*u%n", &consumed);
+    if (result != 0 || consumed != -1 || errno != EINVAL)
+        return 10;
 
     return 0;
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the closed x86 static integer-source-overflow scanf evidence profile.
+# Run the closed x86 static integer scanf source and matching-failure profile.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
