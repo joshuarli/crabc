@@ -5,7 +5,8 @@
 # archive support does not appear here. Keep names ASCII-sorted and update
 # every deliberate selected boundary; the runners fail on drift.
 # Hidden globals are recorded too: `__crabc_x86_static_tls_bootstrap` is private
-# fixture/runtime glue, and `__fseeko`/`__ftello` own the weak positioning aliases.
+# fixture/runtime glue, the gettext C ABI jumps retain public delegation, and
+# `__fseeko`/`__ftello` own the weak positioning aliases.
 # These internal names are uninstalled and are not a stable public C API.
 _Exit
 ___environ
@@ -13,6 +14,8 @@ __aio_atfork
 __clock_gettime
 __clock_nanosleep
 __crabc_x86_fixed_graph_dlfcn_record
+__crabc_x86_gettext_cabi_dgettext
+__crabc_x86_gettext_cabi_dngettext
 __crabc_x86_static_tls_bootstrap
 __ctype_b_loc
 __ctype_get_mb_cur_max

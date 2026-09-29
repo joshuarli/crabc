@@ -3208,7 +3208,7 @@
     "aarch64_capability_ledger": "4c774b50acb3aea5cb9a5e6be2af4ac1dfae50e377f3d113d66a9d47375ce875",
     "aarch64_headers": "a0d35f0950abb3c060b978dfb5257cf50f70bed46ce91d371f43d65db7626b68",
     "x86_public_headers": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f",
-    "x86_static_c_exports": "3698b538aea4c357f0536bacf340bf4c0c520a6b8cc6d34a8e119b4ce1c655b3"
+    "x86_static_c_exports": "4d423b2388a92a85ef67488c953eb84275554f9b05025e3ce212a759e4a982e0"
   },
   "unsupported_contracts": [
     {
@@ -3220,7 +3220,7 @@
     "promotion_family_count": 26,
     "promotion_ready": false,
     "public_support": false,
-    "selected_static_export_count": 1275,
+    "selected_static_export_count": 1277,
     "selected_static_exports_in_aarch64_dynamic_candidate_set": 1217
   }
 }
