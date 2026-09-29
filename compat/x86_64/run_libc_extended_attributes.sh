@@ -5,12 +5,13 @@
 # true `-nostdlib -static` candidate linked only with the selected archive. It
 # covers all twelve path/no-follow-path/descriptor xattr C entries, byte values
 # (including embedded NULs and a zero-length value), size queries, caller
-# buffers, NUL-separated names, CREATE/REPLACE, and direct errno results.
+# buffers, NUL-separated names, CREATE/REPLACE, direct errno results,
+# symlink follow/no-follow behavior, and descriptor access after unlink.
 #
-# No-follow operations use a regular fixture file deliberately: user-xattr
-# storage on symbolic links is filesystem policy. A filesystem that uniformly
-# rejects the initial xattr write with EOPNOTSUPP or ENOSYS follows the fixture's
-# deterministic unavailable branch; the candidate must take the same branch.
+# Symlink no-follow reads are compared to direct Linux syscalls in each run:
+# user-xattr storage on symbolic links is filesystem policy. A filesystem that
+# uniformly rejects the initial xattr write with EOPNOTSUPP or ENOSYS follows
+# the fixture's deterministic unavailable branch; the candidate must match.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 

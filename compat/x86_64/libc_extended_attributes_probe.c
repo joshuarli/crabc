@@ -6,15 +6,16 @@
  * Values are byte strings (including embedded NULs), caller buffers remain
  * caller-owned, and a zero-length value is distinct from a zero-size query.
  *
- * The no-follow calls deliberately address the regular fixture file rather
- * than a symbolic link. Whether a filesystem permits user xattrs on symlinks
- * is filesystem policy, not a property of l* syscall dispatch. A filesystem
- * which uniformly rejects the first path set operation with EOPNOTSUPP or
- * ENOSYS takes the deterministic unavailable branch (status 77).
+ * The no-follow calls cover both a regular file and a symbolic link. A raw
+ * Linux syscall supplies the symlink result because filesystems differ in
+ * their policy for user xattrs on symlinks. The descriptor remains usable
+ * after the last pathname is removed. A filesystem which uniformly rejects
+ * the first path set operation with EOPNOTSUPP or ENOSYS takes the
+ * deterministic unavailable branch (status 77).
  *
- * Fixture-local raw openat/close/unlink setup keeps the final binary's public
- * libc surface to xattr plus errno. This is not a general C filesystem or
- * startup claim.
+ * Fixture-local raw openat/close/unlink/symlinkat setup keeps the final
+ * binary's public libc surface to xattr plus errno. This is not a general C
+ * filesystem or startup claim.
  */
 
 #ifndef _GNU_SOURCE
@@ -45,7 +46,8 @@ enum {
 
 _Static_assert(sizeof(size_t) == 8 && sizeof(ssize_t) == 8,
     "x86 LP64 xattr sizes");
-_Static_assert(SYS_openat == 257 && SYS_close == 3 && SYS_unlink == 87,
+_Static_assert(SYS_openat == 257 && SYS_close == 3 && SYS_unlink == 87 &&
+    SYS_symlinkat == 266,
     "x86 fixture setup syscall numbers");
 _Static_assert(SYS_setxattr == 188 && SYS_lsetxattr == 189 && SYS_fsetxattr == 190 &&
     SYS_getxattr == 191 && SYS_lgetxattr == 192 && SYS_fgetxattr == 193 &&
@@ -116,6 +118,16 @@ static void raw_close(int descriptor)
 static void raw_unlink(const char *path)
 {
     (void)raw_syscall6(SYS_unlink, (long)path, 0, 0, 0, 0, 0);
+}
+
+static int raw_symlink(const char *target, const char *link)
+{
+    long result = raw_syscall6(SYS_symlinkat, (long)target, AT_FDCWD,
+        (long)link, 0, 0, 0);
+
+    if (result >= 0) return 0;
+    errno = (int)-result;
+    return -1;
 }
 
 static void fill(unsigned char *buffer, size_t length, unsigned char value)
@@ -256,21 +268,60 @@ static int list_matches(enum xattr_form form, const char *path, int descriptor,
         list_contains(list, (size_t)result, flags_name);
 }
 
+static int descriptor_list_has_name(int descriptor, const char *name)
+{
+    char list[CRABC_XATTR_LIST_CAPACITY];
+    ssize_t result = flistxattr(descriptor, list, sizeof(list));
+
+    return result > 0 && result <= (ssize_t)sizeof(list) &&
+        list_contains(list, (size_t)result, name);
+}
+
+static int symlink_nofollow_matches_kernel(const char *link, const char *name)
+{
+    unsigned char expected[CRABC_XATTR_LIST_CAPACITY];
+    unsigned char actual[CRABC_XATTR_LIST_CAPACITY];
+    long raw_result;
+    ssize_t result;
+
+    raw_result = raw_syscall6(SYS_lgetxattr, (long)link, (long)name,
+        (long)expected, sizeof(expected), 0, 0);
+    fill(actual, sizeof(actual), CRABC_XATTR_UNTOUCHED);
+    result = lgetxattr(link, name, actual, sizeof(actual));
+    if (raw_result < 0) {
+        if (result != -1 || errno != -raw_result) return 0;
+    } else if (result != raw_result ||
+        !bytes_equal(expected, actual, (size_t)result)) {
+        return 0;
+    }
+
+    raw_result = raw_syscall6(SYS_llistxattr, (long)link, (long)expected,
+        sizeof(expected), 0, 0, 0);
+    fill(actual, sizeof(actual), CRABC_XATTR_UNTOUCHED);
+    result = llistxattr(link, (char *)actual, sizeof(actual));
+    if (raw_result < 0) return result == -1 && errno == -raw_result;
+    return result == raw_result &&
+        bytes_equal(expected, actual, (size_t)result);
+}
+
 static int run_fixture(void)
 {
     static const char path[] = "xattr-record";
+    static const char link[] = "xattr-link";
     static const char path_name[] = "user.crabc-x86-c-path";
     static const char nofollow_name[] = "user.crabc-x86-c-nofollow";
     static const char fd_name[] = "user.crabc-x86-c-fd";
     static const char empty_name[] = "user.crabc-x86-c-empty";
     static const char flags_name[] = "user.crabc-x86-c-flags";
     static const char missing_name[] = "user.crabc-x86-c-missing";
+    static const char unlinked_name[] = "user.crabc-x86-c-unlinked";
     static const unsigned char path_value[] = {'p', 'a', '\0', 't', 'h'};
     static const unsigned char nofollow_value[] = {'n', 'o', '\0', 'f', 'o', 'l', 'l', 'o', 'w'};
     static const unsigned char fd_value[] = {'f', 'd', '\0', 'v', 'a', 'l', 'u', 'e'};
     static const unsigned char replacement_value[] = {'r', 'e', 'p', 'l', '\0', 'a', 'c', 'e', 'd'};
     unsigned char short_buffer[1];
     int descriptor = -1;
+    int link_created = 0;
     int result = 0;
 
     descriptor = raw_open_record(path);
@@ -302,6 +353,18 @@ static int run_fixture(void)
             sizeof(fd_value)) ||
         get_for(XATTR_PATH, path, descriptor, empty_name, NULL, 0) != 0) {
         result = 13;
+        goto cleanup;
+    }
+
+    if (raw_symlink(path, link) != 0) {
+        result = 20;
+        goto cleanup;
+    }
+    link_created = 1;
+    if (!get_matches(XATTR_PATH, link, descriptor, path_name, path_value,
+            sizeof(path_value)) ||
+        !symlink_nofollow_matches_kernel(link, path_name)) {
+        result = 21;
         goto cleanup;
     }
 
@@ -358,10 +421,31 @@ static int run_fixture(void)
         get_for(XATTR_DESCRIPTOR, path, descriptor, fd_name, NULL, 0) != -1 ||
         errno != ENODATA || removexattr(path, path_name) != -1 || errno != ENODATA) {
         result = 19;
+        goto cleanup;
+    }
+
+    raw_unlink(path);
+    if (set_for(XATTR_DESCRIPTOR, path, descriptor, unlinked_name, fd_value,
+            sizeof(fd_value), XATTR_CREATE) != 0 ||
+        !get_matches(XATTR_DESCRIPTOR, path, descriptor, unlinked_name,
+            fd_value, sizeof(fd_value))) {
+        result = 22;
+        goto cleanup;
+    }
+    if (getxattr(path, unlinked_name, NULL, 0) != -1 || errno != ENOENT ||
+        getxattr(link, unlinked_name, NULL, 0) != -1 || errno != ENOENT ||
+        !descriptor_list_has_name(descriptor, unlinked_name)) {
+        result = 23;
+        goto cleanup;
+    }
+    if (fremovexattr(descriptor, unlinked_name) != 0 ||
+        fgetxattr(descriptor, unlinked_name, NULL, 0) != -1 || errno != ENODATA) {
+        result = 24;
     }
 
 cleanup:
     raw_close(descriptor);
+    if (link_created) raw_unlink(link);
     raw_unlink(path);
     return result;
 }
