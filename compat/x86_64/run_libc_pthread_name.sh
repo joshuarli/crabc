@@ -3,9 +3,8 @@
 #
 # The same GNU project-header fixture first executes through pinned musl, then
 # a dependency-free crabc archive and -nostdlib -static candidate. It selects
-# selected main and worker self pthread_setname_np/pthread_getname_np
-# through direct prctl=157 task-comm operations; no TCB, cross-thread name, /proc,
-# cancellation, or general prctl surface is selected.
+# selected main, worker self, and a parked live worker through Linux's
+# task-comm operations.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -70,14 +69,11 @@ assert_pthread_name_path() {
             fail "$symbol lacks its fixed prctl option $option"
         grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
             fail "$symbol lacks a direct prctl syscall"
-        if grep -Eq '__errno_location|c_status|set_errno' "$disassembly"; then
-            fail "$symbol must not publish pthread status through errno"
-        fi
     done
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mkdir nm objdump python3 readelf rustup sort; do
+for tool in ar awk cargo chmod cmp diff grep mkdir nm objdump python3 readelf rustup sha256sum sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -87,14 +83,11 @@ bash "$ROOT_DIR/compat/x86_64/run_pthread_c11_header_abi.sh" >/dev/null
 
 mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
 work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/crabc-x86-64-pthread-name.XXXXXX")"
+chmod 755 "$work_dir"
 cleanup_work_dir() {
     local status=$?
     trap - EXIT
-    if [ "$status" -eq 0 ]; then
-        rm -rf -- "$work_dir"
-    else
-        printf 'x86 static pthread task name retained failure evidence: %s\n' "$work_dir" >&2
-    fi
+    printf 'x86 static pthread task name raw evidence: %s\n' "$work_dir" >&2
     exit "$status"
 }
 trap cleanup_work_dir EXIT
@@ -131,12 +124,9 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_pthread_name_probe.c \
     -o "$reference"
-if "$reference"; then
-    :
-else
-    status=$?
-    fail "pinned-musl pthread task-name fixture exited ${status}"
-fi
+reference_status=0
+"$reference" >"$work_dir/musl.stdout" 2>"$work_dir/musl.stderr" || reference_status=$?
+[ "$reference_status" -eq 0 ] || fail "pinned-musl pthread task-name fixture exited ${reference_status}"
 
 archive="$(python3 "$source_runtime_helper" build \
     --work "$source_runtime_work" --features '' --print-archive)"
@@ -161,11 +151,6 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     "$archive_relocations" "$archive_disassembly"; then
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
-if grep -Eq '/proc/self/task|SYS_OPEN|SYS_WRITE|pthread_setcancel' \
-    libc/src/c_abi/x86_64/pthread_name.rs; then
-    fail "pthread task-name source must not select musl's non-self path"
-fi
-
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_PTHREAD_NAME_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
@@ -214,11 +199,21 @@ grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
 
 assert_pthread_name_path
 
-if "$candidate"; then
-    :
-else
-    status=$?
-    fail "freestanding pthread task-name fixture exited ${status}"
-fi
+candidate_status=0
+"$candidate" >"$work_dir/crabc.stdout" 2>"$work_dir/crabc.stderr" || candidate_status=$?
+sha256sum "$reference" "$candidate" "$work_dir/musl.stdout" \
+    "$work_dir/musl.stderr" "$work_dir/crabc.stdout" "$work_dir/crabc.stderr" \
+    >"$work_dir/hashes.sha256"
+[ "$candidate_status" -eq 0 ] || fail "freestanding pthread task-name fixture exited ${candidate_status}"
+cmp "$work_dir/musl.stdout" "$work_dir/crabc.stdout" ||
+    fail "musl/crabc task-name observation streams differ"
+cmp "$work_dir/musl.stderr" "$work_dir/crabc.stderr" ||
+    fail "musl/crabc task-name error streams differ"
+for marker in self-max15 self-empty self-zero-buffer self-restore \
+    other-read-initial other-max15 other-too-long other-short-buffer \
+    other-zero-buffer other-empty worker-self-observed-empty; do
+    grep -Fxq "$marker" "$work_dir/musl.stdout" ||
+        fail "oracle observation stream lacks $marker"
+done
 
 printf 'x86 static crabc-libc pthread task name: PASS\n'

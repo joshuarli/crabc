@@ -3,12 +3,12 @@
  * The same GNU project-header C body first runs against pinned musl 1.2.6,
  * then through a dependency-free -nostdlib -static candidate linked only with
  * the selected crabc archive. It proves pthread_setname_np and
- * pthread_getname_np for selected main and worker self handles:
+ * pthread_getname_np for selected main, worker self, and a parked live worker:
  * Linux's sixteen-byte task-comm state changes through PR_SET_NAME and is
  * observed both through the paired pthread getter and raw PR_GET_NAME.
- * Candidate-only non-self handles fail closed with ESRCH before input/output
- * observation. This does not select cross-thread naming, a TCB/thread list, /proc task
- * naming, cancellation, a general prctl C API, scheduler/affinity attributes,
+ * Candidate-only foreign handles fail closed with ESRCH before input/output
+ * observation. This does not select a public TCB/thread list, general prctl C API,
+ * scheduler/affinity attributes,
  * lifecycle, synchronization, TSS, CRT, loader, sysroot, general pthread/TLS
  * behavior, or public x86 support.
  */
@@ -96,6 +96,13 @@ static int bytes_are(const char *value, unsigned count, char expected)
     return 1;
 }
 
+/* Each marker follows checked return, errno, and output observations. The
+ * oracle and candidate streams therefore identify the same physical cases. */
+#define TRACE(mark) do { \
+    static const char text[] = mark "\n"; \
+    (void)raw_syscall5(SYS_write, 1, (long)(uintptr_t)text, sizeof(text) - 1, 0, 0); \
+} while (0)
+
 static int check_self_name_pair(void)
 {
     static const char selected_name[] = "crabc-pth-name";
@@ -150,31 +157,73 @@ static int check_self_name_pair(void)
         return 15;
 
     errno = preserved_errno;
+    if (pthread_setname_np(self, "0123456789abcde") != 0 || errno != preserved_errno)
+        return 18;
+    fill_bytes(observed, sizeof(observed), (char)0x5a);
+    if (pthread_getname_np(self, observed, sizeof(observed)) != 0 ||
+        errno != preserved_errno || !name_has_prefix_and_nul(observed, "0123456789abcde"))
+        return 19;
+    TRACE("self-max15");
+
+    if (pthread_setname_np(self, "") != 0 || errno != preserved_errno)
+        return 20;
+    fill_bytes(observed, sizeof(observed), (char)0x5a);
+    if (pthread_getname_np(self, observed, sizeof(observed)) != 0 ||
+        errno != preserved_errno || observed[0] != '\0')
+        return 21;
+    TRACE("self-empty");
+
+    fill_bytes(observed, sizeof(observed), (char)0x5a);
+    if (pthread_getname_np(self, observed, 0) != ERANGE ||
+        errno != preserved_errno || !bytes_are(observed, sizeof(observed), (char)0x5a))
+        return 22;
+    TRACE("self-zero-buffer");
+
+    errno = preserved_errno;
     if (pthread_setname_np(self, original) != 0)
         return 16;
     if (errno != preserved_errno)
         return 17;
+    TRACE("self-restore");
     return 0;
 }
+
+struct worker_gate {
+    int stage;
+    int result;
+};
+
+#define WORKER_FAIL(code) do { \
+    gate->result = code; \
+    __atomic_store_n(&gate->stage, 1, __ATOMIC_RELEASE); \
+    return (void *)(uintptr_t)(code); \
+} while (0)
 
 static void *check_worker_self_name(void *unused)
 {
     static const char worker_name[] = "crabc-pth-work";
+    struct worker_gate *gate = unused;
     pthread_t self = pthread_self();
     char observed[CRABC_TASK_COMM_LEN];
 
-    (void)unused;
     errno = E2BIG;
     if (pthread_setname_np(self, worker_name) != 0 || errno != E2BIG)
-        return (void *)(uintptr_t)1;
+        WORKER_FAIL(1);
     fill_bytes(observed, sizeof(observed), (char)0x5a);
     if (pthread_getname_np(self, observed, sizeof(observed)) != 0 || errno != E2BIG)
-        return (void *)(uintptr_t)2;
+        WORKER_FAIL(2);
     if (!name_has_prefix_and_nul(observed, worker_name))
-        return (void *)(uintptr_t)3;
+        WORKER_FAIL(3);
     fill_bytes(observed, sizeof(observed), (char)0x5a);
     if (raw_get_name(observed) != 0 || !name_has_prefix_and_nul(observed, worker_name))
-        return (void *)(uintptr_t)4;
+        WORKER_FAIL(4);
+    __atomic_store_n(&gate->stage, 1, __ATOMIC_RELEASE);
+    while (__atomic_load_n(&gate->stage, __ATOMIC_ACQUIRE) != 2)
+        __asm__ volatile("pause" ::: "memory");
+    fill_bytes(observed, sizeof(observed), (char)0x5a);
+    if (pthread_getname_np(self, observed, sizeof(observed)) != 0 ||
+        errno != E2BIG || observed[0] != '\0')
+        return (void *)(uintptr_t)5;
     return 0;
 }
 
@@ -182,12 +231,83 @@ static int check_worker_name_pair(void)
 {
     pthread_t worker;
     void *result = (void *)(uintptr_t)5;
+    struct worker_gate gate = { 0, 0 };
+    char observed[CRABC_TASK_COMM_LEN];
+    int status = 0;
 
-    if (pthread_create(&worker, 0, check_worker_self_name, 0) != 0)
+    if (pthread_create(&worker, 0, check_worker_self_name, &gate) != 0)
         return 1;
+    while (__atomic_load_n(&gate.stage, __ATOMIC_ACQUIRE) != 1)
+        __asm__ volatile("pause" ::: "memory");
+    if (gate.result != 0) {
+        status = gate.result;
+        goto release;
+    }
+    errno = E2BIG;
+    fill_bytes(observed, sizeof(observed), (char)0x5a);
+    if (pthread_getname_np(worker, observed, sizeof(observed)) != 0 ||
+        errno != E2BIG || !name_has_prefix_and_nul(observed, "crabc-pth-work")) {
+        status = 6;
+        goto release;
+    }
+    TRACE("other-read-initial");
+    if (pthread_setname_np(worker, "0123456789abcde") != 0 || errno != E2BIG) {
+        status = 7;
+        goto release;
+    }
+    fill_bytes(observed, sizeof(observed), (char)0x5a);
+    if (pthread_getname_np(worker, observed, sizeof(observed)) != 0 ||
+        errno != E2BIG || !name_has_prefix_and_nul(observed, "0123456789abcde")) {
+        status = 8;
+        goto release;
+    }
+    TRACE("other-max15");
+    if (pthread_setname_np(worker, "0123456789abcdef") != ERANGE || errno != E2BIG) {
+        status = 9;
+        goto release;
+    }
+    fill_bytes(observed, sizeof(observed), (char)0x5a);
+    if (pthread_getname_np(worker, observed, sizeof(observed)) != 0 ||
+        errno != E2BIG || !name_has_prefix_and_nul(observed, "0123456789abcde")) {
+        status = 10;
+        goto release;
+    }
+    TRACE("other-too-long");
+    fill_bytes(observed, sizeof(observed), (char)0x5a);
+    if (pthread_getname_np(worker, observed, 15) != ERANGE ||
+        errno != E2BIG || !bytes_are(observed, sizeof(observed), (char)0x5a)) {
+        status = 11;
+        goto release;
+    }
+    TRACE("other-short-buffer");
+    fill_bytes(observed, sizeof(observed), (char)0x5a);
+    if (pthread_getname_np(worker, observed, 0) != ERANGE ||
+        errno != E2BIG || !bytes_are(observed, sizeof(observed), (char)0x5a)) {
+        status = 12;
+        goto release;
+    }
+    TRACE("other-zero-buffer");
+    if (pthread_setname_np(worker, "") != 0 || errno != E2BIG) {
+        status = 13;
+        goto release;
+    }
+    fill_bytes(observed, sizeof(observed), (char)0x5a);
+    if (pthread_getname_np(worker, observed, sizeof(observed)) != 0 ||
+        errno != E2BIG || observed[0] != '\0') {
+        status = 14;
+        goto release;
+    }
+    TRACE("other-empty");
+release:
+    __atomic_store_n(&gate.stage, 2, __ATOMIC_RELEASE);
     if (pthread_join(worker, &result) != 0)
         return 2;
-    return (int)(uintptr_t)result;
+    if (status != 0)
+        return status;
+    if (result != 0)
+        return (int)(uintptr_t)result;
+    TRACE("worker-self-observed-empty");
+    return 0;
 }
 
 #if defined(CRABC_PTHREAD_NAME_FREESTANDING)
