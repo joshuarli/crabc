@@ -968,7 +968,8 @@ def validate_runtime_bytes(workspace: Path) -> dict[str, str]:
     expected += [name + r" ptr=0 errno=[0-9]+ input=[0-9a-f]{8}" for name in query]
     expected += [name + r" ptr=0 errno=[0-9]+ input=[0-9a-f]{8}" for name in update]
     expected += [name + r" result=-1 errno=[0-9]+ input=[0-9a-f]{8}" for name in names]
-    expected += [r"pututxline-zero ptr=0 errno=0 input=[0-9a-f]{8}", "utmpx-ok"]
+    expected += [r"pututxline-zero ptr=0 errno=0 input=[0-9a-f]{8}",
+                 "lifecycle old=83febd9e new=6699de69 workers=4 descriptors=0", "utmpx-ok"]
     require(len(lines) == len(expected) and all(re.fullmatch(pattern, line) is not None
             for pattern, line in zip(expected, lines)), "oracle raw semantic stream differs")
     result: dict[str, str] = {}

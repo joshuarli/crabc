@@ -697,5 +697,5 @@ else
 fi
 sha256sum -c "$work/header-input.sha256" >"$work/header-input-verified.txt"
 sha256sum -c "$work/input.sha256" >"$work/input-verified.txt"
-printf 'owned utmpx: PASS (one installed-header object through pinned musl; %s; seven strong providers, nine weak same-address aliases, C/C++ declarations, null/unreadable ignored inputs, ENOTSUP name results, unchanged errno and caller input, raw status/stdout/stderr and sealed link identities retained); evidence: %s\n' \
+printf 'owned utmpx: PASS (one installed-header object through pinned musl; %s; seven strong providers, nine weak same-address aliases, C/C++ declarations, null/unreadable ignored inputs, ENOTSUP name results, unchanged errno and caller input, record rotation, concurrent calls and descriptor lifecycle, raw status/stdout/stderr and sealed link identities retained); evidence: %s\n' \
     "$matrix" "$work"

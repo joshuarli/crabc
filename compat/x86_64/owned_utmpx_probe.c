@@ -1,12 +1,15 @@
 #define _GNU_SOURCE 1
 
 #include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <utmp.h>
 #include <utmpx.h>
+#include <unistd.h>
 
 typedef void (*utmpx_void_signature)(void);
 typedef struct utmpx *(*utmpx_cursor_signature)(void);
@@ -135,6 +138,105 @@ static void call_name(const char *name, utmpx_name_signature function,
         checksum((const unsigned char *)input, sizeof *input));
 }
 
+static const unsigned char old_record[] = "old-utmp-record";
+static const unsigned char new_record[] = "new-utmp-record";
+static pthread_barrier_t rotation_barrier;
+
+static void wait_for_rotation(void)
+{
+    int result = pthread_barrier_wait(&rotation_barrier);
+    CHECK(result == 0 || result == PTHREAD_BARRIER_SERIAL_THREAD);
+}
+
+static void write_record(const char *path, const unsigned char *bytes, size_t count)
+{
+    int descriptor = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    CHECK(descriptor >= 0);
+    CHECK(write(descriptor, bytes, count) == (ssize_t)count);
+    CHECK(close(descriptor) == 0);
+}
+
+static void check_record(const char *path, const unsigned char *bytes, size_t count)
+{
+    unsigned char actual[sizeof old_record];
+    int descriptor = open(path, O_RDONLY);
+    CHECK(descriptor >= 0 && count <= sizeof actual);
+    CHECK(read(descriptor, actual, sizeof actual) == (ssize_t)count);
+    CHECK(memcmp(actual, bytes, count) == 0);
+    CHECK(close(descriptor) == 0);
+}
+
+static unsigned open_descriptors(void)
+{
+    unsigned count = 0;
+    for (int descriptor = 3; descriptor < 256; ++descriptor) {
+        errno = 0;
+        int result = fcntl(descriptor, F_GETFD);
+        CHECK(result >= 0 || errno == EBADF);
+        count += result >= 0;
+    }
+    return count;
+}
+
+static void exercise_inert_state(const struct utmpx *record)
+{
+    errno = EDOM;
+    public_setutxent();
+    public_updwtmpx("/state/append", record);
+    CHECK(public_pututxline(record) == NULL);
+    CHECK(public_getutxid(record) == NULL);
+    CHECK(public_getutxline(record) == NULL);
+    CHECK(public_getutxent() == NULL);
+    public_endutxent();
+    CHECK(errno == EDOM);
+    CHECK(public_utmpxname("/state/utmp-live") == -1 && errno == ENOTSUP);
+    CHECK(public_getutxent() == NULL && errno == ENOTSUP);
+}
+
+static void *concurrent_state(void *argument)
+{
+    const struct utmpx *record = argument;
+    wait_for_rotation();
+    for (unsigned phase = 0; phase < 2; ++phase) {
+        for (unsigned iteration = 0; iteration < 128; ++iteration)
+            exercise_inert_state(record);
+        if (phase == 0)
+            wait_for_rotation();
+    }
+    return NULL;
+}
+
+static void record_rotation_and_descriptor_lifecycle(const struct utmpx *record)
+{
+    pthread_t workers[4];
+    write_record("/state/utmp-live", old_record, sizeof old_record);
+    int sentinel = open("/state/sentinel", O_RDWR | O_CREAT | O_TRUNC, 0600);
+    CHECK(sentinel >= 0 && write(sentinel, "guard", 5) == 5);
+    CHECK(lseek(sentinel, 2, SEEK_SET) == 2);
+    unsigned initial_descriptors = open_descriptors();
+    exercise_inert_state(record);
+    check_record("/state/utmp-live", old_record, sizeof old_record);
+    CHECK(open_descriptors() == initial_descriptors);
+    CHECK(pthread_barrier_init(&rotation_barrier, NULL, 5) == 0);
+    for (unsigned index = 0; index < 4; ++index)
+        CHECK(pthread_create(&workers[index], NULL, concurrent_state, (void *)record) == 0);
+    wait_for_rotation();
+    CHECK(rename("/state/utmp-live", "/state/utmp-rotated") == 0);
+    write_record("/state/utmp-live", new_record, sizeof new_record);
+    wait_for_rotation();
+    for (unsigned index = 0; index < 4; ++index)
+        CHECK(pthread_join(workers[index], NULL) == 0);
+    CHECK(pthread_barrier_destroy(&rotation_barrier) == 0);
+    check_record("/state/utmp-rotated", old_record, sizeof old_record);
+    check_record("/state/utmp-live", new_record, sizeof new_record);
+    CHECK(access("/state/append", F_OK) == -1 && errno == ENOENT);
+    CHECK(open_descriptors() == initial_descriptors);
+    CHECK(fcntl(sentinel, F_GETFD) >= 0 && lseek(sentinel, 0, SEEK_CUR) == 2);
+    CHECK(close(sentinel) == 0);
+    printf("lifecycle old=%08x new=%08x workers=4 descriptors=0\n",
+        checksum(old_record, sizeof old_record), checksum(new_record, sizeof new_record));
+}
+
 int main(void)
 {
     struct utmpx before;
@@ -200,6 +302,8 @@ int main(void)
     CHECK(errno == 0);
     printf("pututxline-zero ptr=0 errno=%d input=%08x\n", errno,
         checksum((const unsigned char *)&before, sizeof before));
+
+    record_rotation_and_descriptor_lifecycle(&before);
 
     puts("utmpx-ok");
     return 0;

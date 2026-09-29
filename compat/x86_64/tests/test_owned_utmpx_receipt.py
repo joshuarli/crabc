@@ -82,7 +82,7 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
                 for symbol in (*receipt.STRONG, *receipt.WEAK)
             ).encode())
 
-    def runtime_fixture(self) -> Path:
+    def runtime_fixture(self, include_lifecycle: bool = True) -> Path:
         raw = self.workspace / ".work/utmpx-receipt/owned-utmpx-receipt"
         lines = ["aliases=1"]
         ordinary = ("endutxent", "endutent", "setutxent", "setutent", "getutxent", "getutent")
@@ -95,7 +95,10 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
             lines.append(f"{name} ptr=0 errno={errno} input=8c82909b")
         for name in ("utmpname-null", "utmpname-protected", "utmpxname-null", "utmpxname-protected"):
             lines.append(f"{name} result=-1 errno=95 input=8c82909b")
-        lines.extend(("pututxline-zero ptr=0 errno=0 input=8c82909b", "utmpx-ok"))
+        lines.append("pututxline-zero ptr=0 errno=0 input=8c82909b")
+        if include_lifecycle:
+            lines.append("lifecycle old=83febd9e new=6699de69 workers=4 descriptors=0")
+        lines.append("utmpx-ok")
         stdout = ("\n".join(lines) + "\n").encode("ascii")
         oracle = raw / "oracle"
         self.write(oracle, b"\x7fELF retained oracle")
@@ -413,6 +416,11 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
         oracle.write_bytes(oracle.read_bytes() + b"forged trailing byte")
         with self.assertRaisesRegex(receipt.ReceiptError, "reported runtime differs"):
             receipt.same(reported, receipt.validate_runtime_bytes(self.workspace), "reported runtime differs")
+
+    def test_runtime_stream_requires_record_rotation_and_concurrent_descriptor_lifecycle(self) -> None:
+        self.runtime_fixture(include_lifecycle=False)
+        with self.assertRaisesRegex(receipt.ReceiptError, "oracle raw semantic stream differs"):
+            receipt.validate_runtime_bytes(self.workspace)
 
     def test_source_bytes_and_modes_cannot_be_reauthorized_by_report_rows(self) -> None:
         for name in receipt.SOURCES:
