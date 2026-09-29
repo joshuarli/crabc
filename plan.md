@@ -1020,6 +1020,18 @@ are not transferable passes for a different revision.
   passes. FILE DSO ownership, regex, wordexp, robust mutex, VM, and descriptor
   pipeline focused evidence also passes on its lane source. These receipts do
   not replace merged-source family, allocator, or promotion gates.
+  The historical `24482abc2` resolver family assessment now independently
+  replays six admitted components with no gaps. A fresh clean `383ef65af`
+  requalification passed all 73 installed dynamic cases but stopped in the
+  second product: one SQLite package-corpus case timed out at twelve seconds
+  after passing in the byte-identical installed product. It has no 219-case
+  receipt or POSIX family admission. A clean M5 lane adds a source-built
+  three-producer remote-collection differential and passes its focused gate;
+  M2 TLD retry, M7 worker statistics, and M8 native-shadow worker transfer
+  have matching focused C/Rust or musl/selected-C/native-shadow receipts.
+  A separate sealed ABI cohort binds the `wcsrtombs` ordinary import and
+  reduces its selector from 738 to 737 blockers; current-main closure remains
+  open.
   Merged main also replays the 831-function static replacement gate after
   preserving application `getrandom` overrides through `getentropy`, and the
   installed filesystem gate after correcting the `fchmodat2`-ENOSYS requested
