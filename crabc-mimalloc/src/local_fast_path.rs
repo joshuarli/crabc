@@ -451,6 +451,8 @@ pub(crate) unsafe fn allocate_ordinary_eight_word(theap: NonNull<Theap>) -> Opti
 /// Same Theap contract as [`allocate`]. `page` must be the PageMap page
 /// registered for `block`, and `block` an exact live allocation that the
 /// caller consumes, with `current_thread` the caller's thread identity.
+/// A foreign page grants access only to its atomic identity; its owner may
+/// concurrently mutate every ordinary field while this attempt declines.
 #[inline]
 pub(crate) unsafe fn free(
     theap: NonNull<Theap>,
@@ -458,18 +460,27 @@ pub(crate) unsafe fn free(
     block: NonNull<u8>,
     current_thread: usize,
 ) -> bool {
-    // SAFETY: the live client keeps its page registered and initialized.
-    // This read-only snapshot ends before the owner mutates ordinary fields.
-    let (owner, page_theap, used, retire_expire) = {
+    // SAFETY: the live client keeps initialized metadata stable. Project only
+    // its atomic identity until it proves this thread owns the ordinary
+    // fields; even a whole-page shared borrow would race with a foreign owner.
+    let producer = unsafe { Page::remote_free_producer_state_at(page) };
+    let owner = unsafe { producer.xthread_id.as_ref() }
+        .load(core::sync::atomic::Ordering::Acquire);
+    if owner != current_thread {
+        return false;
+    }
+    // SAFETY: the exact identity equality also excludes both page flags.
+    // This thread now owns the ordinary fields, and this snapshot ends before
+    // their local mutation. Remote producers retain only disjoint atomics.
+    let (page_theap, used, retire_expire) = {
         let page_ref = unsafe { page.as_ref() };
         (
-            page_ref.owner_thread_id(),
             page_ref.theap(),
             page_ref.used(),
             page_ref.retire_expire(),
         )
     };
-    if owner != current_thread || page_theap != theap.as_ptr() {
+    if page_theap != theap.as_ptr() {
         return false;
     }
     // An exact live block implies `used > 0`; source `mi_free_block_local`
@@ -645,5 +656,44 @@ unsafe fn push_local_free(page: NonNull<Page>, block: NonNull<u8>) {
         *block.as_ptr().cast::<*mut Block>() = *state.local_free.as_ptr();
         *state.used.as_ptr() -= 1;
         *state.local_free.as_ptr() = block.as_ptr().cast::<Block>();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+
+    use super::*;
+    use core::sync::atomic::{AtomicPtr, Ordering};
+    use std::boxed::Box;
+    use std::sync::Barrier;
+
+    #[test]
+    fn foreign_free_declines_while_owner_updates_ordinary_page_state() {
+        let mut page = Box::new(Page::remote_free_test_page(2, 1));
+        let page_pointer = AtomicPtr::new(core::ptr::from_mut(&mut *page));
+        let mut block = [0usize; 2];
+        let block_pointer = AtomicPtr::new(block.as_mut_ptr().cast::<u8>());
+        let start = Barrier::new(2);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let page = NonNull::new(page_pointer.load(Ordering::Relaxed)).unwrap();
+                // SAFETY: the initialized fixture stays live until both threads
+                // join; only this source owner writes ordinary page fields.
+                let state = unsafe { Page::remote_free_owner_state_at(page) }.unwrap();
+                start.wait();
+                unsafe { *state.used.as_ptr() = 2 };
+            });
+            let page = NonNull::new(page_pointer.load(Ordering::Relaxed)).unwrap();
+            let block = NonNull::new(block_pointer.load(Ordering::Relaxed)).unwrap();
+            start.wait();
+            // SAFETY: the fixture retains its counted client and initialized
+            // metadata. Identity 16 is foreign to the source owner 12, so the
+            // local attempt must decline without reading any ordinary field
+            // or touching this client. The sentinel Theap is never dereferenced.
+            assert!(!unsafe { free(NonNull::dangling(), page, block, 16) });
+        });
+        assert_eq!(page.used(), 2);
+        assert_eq!(block, [0; 2]);
     }
 }
