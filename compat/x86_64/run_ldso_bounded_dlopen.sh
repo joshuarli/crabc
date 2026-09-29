@@ -7,6 +7,7 @@ readonly SOURCE="$ROOT_DIR/ldso/src/x86_64_initial_graph_source_root.rs"
 readonly BRIDGE_SOURCE="$ROOT_DIR/libc/src/c_abi/x86_64/fixed_graph_dlfcn_runtime.rs"
 readonly START="$ROOT_DIR/compat/x86_64/ldso_public_dlfcn_start.S"
 readonly PROBE="$ROOT_DIR/compat/x86_64/ldso_bounded_dlopen_probe.c"
+readonly REFERENCE_PROBE="$ROOT_DIR/compat/x86_64/ldso_bounded_dlopen_reference_probe.c"
 readonly FINI_PROBE="$ROOT_DIR/compat/x86_64/ldso_bounded_dlopen_fini_probe.c"
 readonly PLUGIN="$ROOT_DIR/compat/x86_64/ldso_bounded_dlopen_plugin.c"
 readonly PREINIT_PROBE="$ROOT_DIR/compat/x86_64/ldso_bounded_dlopen_preinit_probe.c"
@@ -87,11 +88,14 @@ PY
 
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
 case "$(uname -m)" in x86_64|amd64) ;; *) fail 'requires native x86-64' ;; esac
-for tool in awk cc grep python3 readelf rustc; do require_tool "$tool"; done
+for tool in awk cc grep python3 readelf rustc sha256sum; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail 'missing pinned musl 1.2.6 compiler'
 [ -x "$MUSL_LOADER" ] || fail 'missing pinned musl 1.2.6 loader'
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-bounded-dlopen.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/tmp" "$ROOT_DIR/.work/logs"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/tmp/ldso-bounded-dlopen.XXXXXX")"
+report_dir="$(mktemp -d "$ROOT_DIR/.work/logs/ldso-bounded-dlopen.XXXXXX")"
+chmod 755 "$report_dir"
 trap 'rm -rf -- "$work_dir"' EXIT
 interpreter="$work_dir/ld-crabc-x86_64-bounded-dlopen.so"
 archive="$work_dir/libcrabc-bounded-dlopen.a"
@@ -163,6 +167,10 @@ rewrite_init_array_as_preinit "$work_dir/libbounded-preinit-malformed.so" 1
     -pthread -ldl -o "$work_dir/main-musl-bounded-dlopen"
 "$ORACLE_CC" -std=c11 -fPIE -pie -fno-builtin \
     -Wl,--dynamic-linker,"$MUSL_LOADER" -Wl,-rpath,"$work_dir" \
+    "$REFERENCE_PROBE" -L"$work_dir" -Wl,--no-as-needed -l:libmid-bounded-dlopen.so \
+    -pthread -ldl -o "$work_dir/main-musl-bounded-dlopen-reference"
+"$ORACLE_CC" -std=c11 -fPIE -pie -fno-builtin \
+    -Wl,--dynamic-linker,"$MUSL_LOADER" -Wl,-rpath,"$work_dir" \
     "$FINI_PROBE" -L"$work_dir" -Wl,--no-as-needed -l:libmid-bounded-dlopen.so \
     -ldl -o "$work_dir/main-musl-bounded-dlopen-fini"
 "$ORACLE_CC" -std=c11 -DCRABC_BOUNDED_DLFCN_FREESTANDING=1 \
@@ -172,6 +180,13 @@ rewrite_init_array_as_preinit "$work_dir/libbounded-preinit-malformed.so" 1
     -Wl,-rpath,"$work_dir" "$START" "$PROBE" "$archive" -L"$work_dir" \
     -Wl,--no-as-needed -l:libmid-bounded-dlopen.so \
     -o "$work_dir/main-crabc-bounded-dlopen"
+"$ORACLE_CC" -std=c11 -DCRABC_BOUNDED_DLFCN_FREESTANDING=1 \
+    -I"$ROOT_DIR/include" -nostdlib -fPIE -pie -ffreestanding -fno-builtin \
+    -fno-stack-protector -fno-asynchronous-unwind-tables -Wl,--hash-style=sysv \
+    -Wl,-z,now -Wl,--no-undefined -Wl,--dynamic-linker,"$interpreter" \
+    -Wl,-rpath,"$work_dir" "$START" "$REFERENCE_PROBE" "$archive" -L"$work_dir" \
+    -Wl,--no-as-needed -l:libmid-bounded-dlopen.so \
+    -o "$work_dir/main-crabc-bounded-dlopen-reference"
 cc -DCRABC_BOUNDED_DLFCN_FREESTANDING=1 \
     -I"$ROOT_DIR/include" -nostdlib -fPIE -pie -ffreestanding -fno-builtin \
     -fno-stack-protector -fno-asynchronous-unwind-tables -Wl,--hash-style=sysv \
@@ -263,6 +278,13 @@ readelf -Ws "$work_dir/libbounded-fini-malformed.so" | awk \
     fail 'malformed runtime plugin lacks non-executable DT_FINI target evidence'
 readelf -lW "$work_dir/libbounded-tls.so" | grep -F ' TLS ' >/dev/null ||
     fail 'malformed runtime plugin lacks PT_TLS rejection evidence'
+readelf -Ws "$work_dir/libbounded-tls.so" | awk \
+    '$4 == "TLS" && $8 == "bounded_plugin_tls" { initialized=1 }
+     $4 == "TLS" && $8 == "bounded_plugin_tbss" { zero_filled=1 }
+     END { exit initialized && zero_filled ? 0 : 1 }' ||
+    fail 'TLS oracle plugin lacks initialized and zero-filled thread data'
+readelf -rW "$work_dir/libbounded-tls.so" | grep -F '__tls_get_addr' >/dev/null ||
+    fail 'TLS oracle plugin lacks dynamic thread-address relocation'
 actual="$(readelf -dW "$work_dir/libbounded-unretained.so" | sed -n 's/.*Shared library: \[\(.*\)\].*/\1/p')"
 [ "$actual" = libbounded-unretained-dependency.so ] ||
     fail "unretained-dependency fixture drifted: $actual"
@@ -307,5 +329,28 @@ fi
 (cd "$work_dir" && run_clean "$work_dir/main-crabc-bounded-preinit") ||
     fail 'crabc runtime DSO DT_PREINIT_ARRAY inertness behavior failed'
 
+{
+    printf 'source hashes\n'
+    sha256sum "$REFERENCE_PROBE" "$TLS_PLUGIN" "$PLUGIN"
+    for image in libbounded-tls.so libbounded-plugin.so main-musl-bounded-dlopen-reference main-crabc-bounded-dlopen-reference; do
+        printf '\nELF %s\n' "$image"
+        sha256sum "$work_dir/$image"
+        readelf -hW -lW -dW -rW -Ws "$work_dir/$image"
+    done
+} >"$report_dir/reference-elf.txt"
+{
+    printf 'pinned musl 1.2.6 TLS and 48-reference route: '
+    (cd "$work_dir" && run_clean "$work_dir/main-musl-bounded-dlopen-reference")
+    printf 'exit 0\n'
+    printf 'crabc TLS rejection and 48-reference route: '
+    (cd "$work_dir" && run_clean "$work_dir/main-crabc-bounded-dlopen-reference")
+    printf 'exit 0\n'
+} >"$report_dir/reference-execution.txt" 2>&1 || {
+    cat "$report_dir/reference-execution.txt" >&2
+    fail 'TLS/reference differential failed'
+}
+
 printf '%s\n' 'x86 bounded runtime DSO DT_PREINIT_ARRAY inertness: PASS'
 printf '%s\n' 'x86 bounded runtime dlopen search/mapping/concurrency: PASS'
+printf '%s\n' 'x86 bounded runtime TLS rejection and reference lifetime: PASS'
+printf 'retained bounded dlopen report directory: %s\n' "$report_dir"
