@@ -5,8 +5,9 @@
 # project-header C fixture first executes through pinned musl 1.2.6,
 # then as a true -nostdlib -static candidate linked only with the selected
 # crabc archive. It proves a generic Linux ioctl=16 forwarding boundary for
-# FIONREAD pointer output, FIONBIO pointer input, the exact no-vararg
-# FIOCLEX/FIONCLEX descriptor requests, and errno translation. The two-word
+# FIONREAD/TIOCINQ pointer output, FIONBIO and TIOCSPTLCK pointer input,
+# TIOCGPTPEER scalar flags, the exact no-vararg FIOCLEX/FIONCLEX descriptor
+# requests, and errno translation. The two-word
 # FIOCLEX/FIONCLEX paths force rdx=0 (the expected instruction shape is
 # `xor %edx, %edx`) before syscall; every other admitted call has an explicit
 # third C word. Other two-word forms remain outside this artifact. It does not
@@ -37,6 +38,13 @@ require_native_linux_x86_64() {
 
 require_tool() {
     command -v "$1" >/dev/null 2>&1 || fail "requires $1"
+}
+
+hash_report() {
+    (
+        cd "$report_dir"
+        sha256sum ./*.elf ./*.stdout ./*.stderr ./*.status >sha256sums.txt
+    )
 }
 
 assert_selected_c_abi_surface() {
@@ -141,7 +149,8 @@ assert_fixture_tls_capacity() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cat cmp diff grep mkdir nm objdump readelf rustup sort wc; do
+for tool in ar awk cargo cat cmp cp diff grep mkdir nm objdump readelf rustup \
+    sha256sum sort wc; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -149,8 +158,14 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_ioctl_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-ioctl.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-ioctl.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-ioctl"
+mkdir -p "$report_dir"
+rm -f "$report_dir"/{musl-reference,crabc-candidate}.elf \
+    "$report_dir"/{musl,crabc}.{stdout,stderr,status} \
+    "$report_dir/sha256sums.txt"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-ioctl-reference"
 candidate="$work_dir/crabc-static-ioctl-candidate"
@@ -178,12 +193,16 @@ done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_ioctl_probe.c -o "$reference"
-if "$reference"; then
-    :
+cp "$reference" "$report_dir/musl-reference.elf"
+if "$reference" >"$report_dir/musl.stdout" 2>"$report_dir/musl.stderr"; then
+    reference_status=0
 else
-    status=$?
-    fail "pinned-musl ioctl fixture exited ${status}"
+    reference_status=$?
 fi
+printf '%s\n' "$reference_status" >"$report_dir/musl.status"
+hash_report
+[ "$reference_status" -eq 0 ] ||
+    fail "pinned-musl ioctl fixture exited ${reference_status}; report: $report_dir"
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -212,6 +231,8 @@ fi
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
     compat/x86_64/libc_ioctl_probe.c compat/x86_64/libc_ioctl_start.S \
     "$archive" -o "$candidate"
+cp "$candidate" "$report_dir/crabc-candidate.elf"
+hash_report
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
 readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
@@ -260,11 +281,18 @@ grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
 assert_ioctl_no_argument_path
 assert_ioctl_word_path
 
-if "$candidate"; then
-    :
+if "$candidate" >"$report_dir/crabc.stdout" 2>"$report_dir/crabc.stderr"; then
+    candidate_status=0
 else
-    status=$?
-    fail "freestanding ioctl fixture exited ${status}"
+    candidate_status=$?
 fi
+printf '%s\n' "$candidate_status" >"$report_dir/crabc.status"
+hash_report
+[ "$candidate_status" -eq 0 ] ||
+    fail "freestanding ioctl fixture exited ${candidate_status}; report: $report_dir"
+cmp "$report_dir/musl.stdout" "$report_dir/crabc.stdout" ||
+    fail "ioctl fixture standard output differs; report: $report_dir"
+cmp "$report_dir/musl.stderr" "$report_dir/crabc.stderr" ||
+    fail "ioctl fixture diagnostic output differs; report: $report_dir"
 
-printf 'x86 static crabc-libc generic ioctl: PASS\n'
+printf 'x86 static crabc-libc generic ioctl: PASS (%s)\n' "$report_dir"
