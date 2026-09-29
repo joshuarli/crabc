@@ -171,8 +171,8 @@
       "scope": "Deterministic failure injection for Heap, Theap, TLD, TLS-slot, arena-page metadata, and arena allocation with unique-owner audit."
     },
     "unit:heap-lifecycle": {
-      "runner": null,
-      "scope": "Focused Rust Heap lifecycle regressions."
+      "runner": "compat/allocator/x86_64_m6_heap_lifecycle_unit.py",
+      "scope": "A fresh-process private Rust unit observes two child workers' selected-arena Theaps before and after Heap deletion: distinct TLD and Heap links, exact arena slices, cached references, detached references, delayed slice release, and child Theap counts. Its ordered ownership transitions are compared directly with the pinned-v3.5.0 C source-built two-worker oracle."
     },
     "unit:heap-membership": {
       "runner": "compat/allocator/heap_membership.py",

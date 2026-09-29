@@ -780,15 +780,39 @@ mod tests {
                     assert_eq!((unsafe { first.as_ref() }.refcount(), unsafe { second.as_ref() }.refcount()), (2, 2));
                     let before = unsafe { &*identity }.statistics().final_output_snapshot().theaps;
                     assert_eq!((before.current - baseline.current, before.total - baseline.total), (2, 2));
+                    std::println!("unit.two_before={},{},{},{},{},{}",
+                        i64::from(unsafe { heap.as_ref() }.test_theaps_head() == second.as_ptr()
+                            && second_next == first.as_ptr() && first_next.is_null()),
+                        i64::from(first_tld != second_tld
+                            && unsafe { crate::types::ThreadLocalData::theaps_head_at(NonNull::new(first_tld).unwrap()) } == first.as_ptr()
+                            && unsafe { crate::types::ThreadLocalData::theaps_head_at(NonNull::new(second_tld).unwrap()) } == second.as_ptr()),
+                        i64::from(first_span.arena == arena.as_ptr() && second_span.arena == arena.as_ptr()
+                            && first_span.slice_index != second_span.slice_index),
+                        i64::from(!selected_theap_slice_is_free(arena, first_memory)
+                            && !selected_theap_slice_is_free(arena, second_memory)),
+                        i64::from(unsafe { first.as_ref() }.refcount() == 2 && unsafe { second.as_ref() }.refcount() == 2),
+                        i64::from(before.current - baseline.current == 2 && before.total - baseline.total == 2));
+                    std::println!("unit.two_refs={},{}", unsafe { first.as_ref() }.refcount(), unsafe { second.as_ref() }.refcount());
 
                     assert!(unsafe { crate::source_heap_api::heap_release(heap.as_ptr().cast(), false) });
-                    let (_, _, _, _, detached_tld) = unsafe { crate::types::Theap::test_list_links(second) };
+                    let (detached_next, detached_prev, _, _, detached_tld) =
+                        unsafe { crate::types::Theap::test_list_links(second) };
                     assert!(detached_tld.is_null());
                     assert_eq!(unsafe { second.as_ref() }.refcount(), 1);
                     assert!(selected_theap_slice_is_free(arena, first_memory));
                     assert!(!selected_theap_slice_is_free(arena, second_memory));
                     assert_eq!(unsafe { &*identity }.statistics().final_output_snapshot().theaps.current - baseline.current, 1);
+                    std::println!("unit.two_detached={},{},{},{}",
+                        i64::from(detached_tld.is_null() && detached_next.is_null() && detached_prev.is_null()),
+                        unsafe { second.as_ref() }.refcount(),
+                        i64::from(selected_theap_slice_is_free(arena, first_memory)
+                            && !selected_theap_slice_is_free(arena, second_memory)),
+                        unsafe { &*identity }.statistics().final_output_snapshot().theaps.current - baseline.current);
                     assert_eq!(unsafe { native_child_heap_theap(main) }, Some(crate::compiler_tls::default_theap()));
+                    std::println!("unit.two_first_released={},{},{}",
+                        i64::from(selected_theap_slice_is_free(arena, first_memory)),
+                        i64::from(!selected_theap_slice_is_free(arena, second_memory)),
+                        unsafe { &*identity }.statistics().final_output_snapshot().theaps.current - baseline.current);
 
                     let probe = native_child_heap_new_in_arena(arena).unwrap().unwrap().unwrap();
                     let probe_theap = unsafe { native_child_heap_theap(probe) }.expect("a probe Theap");
@@ -798,11 +822,17 @@ mod tests {
                     assert_eq!(unsafe { native_child_heap_theap(main) }, Some(crate::compiler_tls::default_theap()));
                     assert!(!selected_theap_slice_is_free(arena, second_memory));
                     assert_eq!(unsafe { &*identity }.statistics().final_output_snapshot().theaps.current - baseline.current, 1);
+                    std::println!("unit.two_held={},{}",
+                        i64::from(!selected_theap_slice_is_free(arena, second_memory)),
+                        unsafe { &*identity }.statistics().final_output_snapshot().theaps.current - baseline.current);
 
                     release_second_send.send(()).unwrap();
                     second_released_receive.recv().unwrap();
                     assert!(selected_theap_slice_is_free(arena, second_memory));
                     assert_eq!(unsafe { &*identity }.statistics().final_output_snapshot().theaps.current - baseline.current, 0);
+                    std::println!("unit.two_released={},{}",
+                        i64::from(selected_theap_slice_is_free(arena, second_memory)),
+                        i64::from(unsafe { &*identity }.statistics().final_output_snapshot().theaps.current - baseline.current == 0));
                     let final_heap = native_child_heap_new_in_arena(arena).unwrap().unwrap().unwrap();
                     let final_theap = unsafe { native_child_heap_theap(final_heap) }.expect("a final selected Theap");
                     assert_eq!(unsafe { final_theap.as_ref() }.memory_id().arena_memory().unwrap().arena, arena.as_ptr());
