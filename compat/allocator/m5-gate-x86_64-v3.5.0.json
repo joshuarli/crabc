@@ -143,6 +143,16 @@
       ],
       "scope": "Pinned C and native Rust publish distinct medium-page frees before and after normal owner exit. The first publication is collected on exit, the second reclaims the abandoned page, and forced collection clears its PageMap span exactly once."
     },
+    "differential:exit-callback-survivor": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m5_exit_callback_survivor_evidence.py",
+        "--offline",
+        "--report",
+        "{scratch}/exit-callback-survivor.json"
+      ],
+      "scope": "A worker's source deferred-free callback allocates a second client on its still-live medium page during normal owner exit. After the worker joins, the initial thread frees both clients and forces their PageMap release."
+    },
     "differential:nonabandoning-mapped-large-owner-exit": {
       "command": [
         "python3",
@@ -328,6 +338,7 @@
         "differential:nonabandoning-active-survivor-owner-exit",
         "differential:nonabandoning-late-remote-owner-exit",
         "differential:owner-exit-late-remote-two-producers",
+        "differential:exit-callback-survivor",
         "differential:nonabandoning-mapped-large-owner-exit",
         "differential:arena-medium-pre-reclaim-remote-exit",
         "differential:arena-singleton-regular-owner-exit",
