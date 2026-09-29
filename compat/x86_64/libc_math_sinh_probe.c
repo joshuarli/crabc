@@ -31,8 +31,21 @@
 #error "the raw binary32/binary64 fixture requires SSE evaluation"
 #endif
 
-#define SINH_F64_CASES 32
-#define SINH_F32_CASES 32
+#define SINH_F64_BASE_CASES 32
+#define SINH_F32_BASE_CASES 32
+#define SINH_NEIGHBOR_RADIUS 8
+#define SINH_NEIGHBOR_WIDTH (2 * SINH_NEIGHBOR_RADIUS + 1)
+#define SINH_F64_ANCHORS 10
+#define SINH_F32_ANCHORS 10
+#define SINH_GRID_EXPONENTS 13
+#define SINH_GRID_FRACTIONS 3
+#define SINH_SIGN_CASES 2
+#define SINH_F64_CASES (SINH_F64_BASE_CASES + \
+	SINH_F64_ANCHORS * SINH_SIGN_CASES * SINH_NEIGHBOR_WIDTH + \
+	SINH_GRID_EXPONENTS * SINH_GRID_FRACTIONS * SINH_SIGN_CASES)
+#define SINH_F32_CASES (SINH_F32_BASE_CASES + \
+	SINH_F32_ANCHORS * SINH_SIGN_CASES * SINH_NEIGHBOR_WIDTH + \
+	SINH_GRID_EXPONENTS * SINH_GRID_FRACTIONS * SINH_SIGN_CASES)
 #define SINH_ROUNDING_CASES 4
 #define SINH_RECORD_WORDS 4
 #define SINH_RECORD_COUNT ((SINH_F64_CASES + SINH_F32_CASES) * SINH_ROUNDING_CASES)
@@ -45,10 +58,12 @@ typedef float (*float_unary_function)(float);
 static double_unary_function volatile direct_sinh = (sinh);
 static float_unary_function volatile direct_sinhf = (sinhf);
 
-/* The freestanding start object writes these exact 8,192 bytes with syscall. */
+/* The freestanding start object writes this exact record stream with syscall. */
 uint64_t crabc_x86_64_math_sinh_records[SINH_RECORD_STORAGE_WORDS];
+const uint64_t crabc_x86_64_math_sinh_record_bytes =
+	sizeof(crabc_x86_64_math_sinh_records);
 
-static const uint64_t binary64_inputs[SINH_F64_CASES] = {
+static const uint64_t binary64_inputs[SINH_F64_BASE_CASES] = {
 	UINT64_C(0x0000000000000000), UINT64_C(0x8000000000000000),
 	UINT64_C(0x0000000000000001), UINT64_C(0x8000000000000001),
 	UINT64_C(0x000fffffffffffff), UINT64_C(0x0010000000000000),
@@ -67,7 +82,7 @@ static const uint64_t binary64_inputs[SINH_F64_CASES] = {
 	UINT64_C(0x7ff0000000000042), UINT64_C(0xfff0000000000042),
 };
 
-static const uint32_t binary32_inputs[SINH_F32_CASES] = {
+static const uint32_t binary32_inputs[SINH_F32_BASE_CASES] = {
 	UINT32_C(0x00000000), UINT32_C(0x80000000), UINT32_C(0x00000001),
 	UINT32_C(0x80000001), UINT32_C(0x007fffff), UINT32_C(0x00800000),
 	UINT32_C(0x39000000), UINT32_C(0x39800000), UINT32_C(0xb9800000),
@@ -79,6 +94,41 @@ static const uint32_t binary32_inputs[SINH_F32_CASES] = {
 	UINT32_C(0xc2b20000), UINT32_C(0x7f7fffff), UINT32_C(0xff7fffff),
 	UINT32_C(0x7f800000), UINT32_C(0xff800000), UINT32_C(0x7fc00041),
 	UINT32_C(0x7f800042), UINT32_C(0xff800042),
+};
+
+/* Windows cover tiny-input and reconstruction branches and IEEE boundaries. */
+static const uint64_t binary64_anchors[SINH_F64_ANCHORS] = {
+	UINT64_C(0x0000000000000010), UINT64_C(0x000fffffffffffff),
+	UINT64_C(0x0010000000000000), UINT64_C(0x3e40000000000000),
+	UINT64_C(0x3e50000000000000), UINT64_C(0x3fe62e42fefa39ef),
+	UINT64_C(0x4034000000000000), UINT64_C(0x4080000000000000),
+	UINT64_C(0x40862e42fefa39ef), UINT64_C(0x408633ce8fb9f87e),
+};
+
+static const uint32_t binary32_anchors[SINH_F32_ANCHORS] = {
+	UINT32_C(0x00000010), UINT32_C(0x007fffff),
+	UINT32_C(0x00800000), UINT32_C(0x39000000),
+	UINT32_C(0x39800000), UINT32_C(0x3f317218),
+	UINT32_C(0x41200000), UINT32_C(0x42b00000),
+	UINT32_C(0x42b17217), UINT32_C(0x42b2d4fc),
+};
+
+static const uint16_t binary64_grid_exponents[SINH_GRID_EXPONENTS] = {
+	0, 1, 0x3cc, 0x3e4, 0x3fe, 0x3ff, 0x400, 0x402,
+	0x403, 0x408, 0x409, 0x7fd, 0x7fe,
+};
+
+static const uint8_t binary32_grid_exponents[SINH_GRID_EXPONENTS] = {
+	0, 1, 0x70, 0x7c, 0x7e, 0x7f, 0x80, 0x81,
+	0x82, 0x85, 0x86, 0xfd, 0xfe,
+};
+
+static const uint64_t binary64_grid_fractions[SINH_GRID_FRACTIONS] = {
+	0, UINT64_C(0x0008000000000000), UINT64_C(0x000fffffffffffff),
+};
+
+static const uint32_t binary32_grid_fractions[SINH_GRID_FRACTIONS] = {
+	0, UINT32_C(0x00400000), UINT32_C(0x007fffff),
 };
 
 static const int rounding_modes[SINH_ROUNDING_CASES] = {
@@ -154,20 +204,64 @@ int crabc_x86_64_math_sinh_probe(void)
 	size_t cursor = 0;
 	size_t input_index;
 	size_t mode_index;
+	size_t anchor_index;
+	size_t fraction_index;
+	size_t sign_index;
+	int offset;
 	int status = 0;
 
 	if (fegetenv(&original) != 0 || fesetenv(FE_DFL_ENV) != 0)
 		return 1;
 	for (mode_index = 0; mode_index < SINH_ROUNDING_CASES && status == 0;
 		mode_index++) {
-		for (input_index = 0; input_index < SINH_F64_CASES && status == 0;
+		for (input_index = 0; input_index < SINH_F64_BASE_CASES && status == 0;
 			input_index++)
 			status = record_binary64(&cursor, rounding_modes[mode_index],
 				binary64_inputs[input_index]);
-		for (input_index = 0; input_index < SINH_F32_CASES && status == 0;
+		for (anchor_index = 0; anchor_index < SINH_F64_ANCHORS && status == 0;
+			anchor_index++)
+			for (offset = -SINH_NEIGHBOR_RADIUS;
+				offset <= SINH_NEIGHBOR_RADIUS && status == 0; offset++)
+				for (sign_index = 0; sign_index < SINH_SIGN_CASES && status == 0;
+					sign_index++)
+					status = record_binary64(&cursor, rounding_modes[mode_index],
+						(binary64_anchors[anchor_index] + offset) |
+						((uint64_t)sign_index << 63));
+		for (input_index = 0; input_index < SINH_GRID_EXPONENTS && status == 0;
+			input_index++)
+			for (fraction_index = 0;
+				fraction_index < SINH_GRID_FRACTIONS && status == 0;
+				fraction_index++)
+				for (sign_index = 0; sign_index < SINH_SIGN_CASES && status == 0;
+					sign_index++)
+					status = record_binary64(&cursor, rounding_modes[mode_index],
+						((uint64_t)binary64_grid_exponents[input_index] << 52) |
+						binary64_grid_fractions[fraction_index] |
+						((uint64_t)sign_index << 63));
+		for (input_index = 0; input_index < SINH_F32_BASE_CASES && status == 0;
 			input_index++)
 			status = record_binary32(&cursor, rounding_modes[mode_index],
 				binary32_inputs[input_index]);
+		for (anchor_index = 0; anchor_index < SINH_F32_ANCHORS && status == 0;
+			anchor_index++)
+			for (offset = -SINH_NEIGHBOR_RADIUS;
+				offset <= SINH_NEIGHBOR_RADIUS && status == 0; offset++)
+				for (sign_index = 0; sign_index < SINH_SIGN_CASES && status == 0;
+					sign_index++)
+					status = record_binary32(&cursor, rounding_modes[mode_index],
+						(binary32_anchors[anchor_index] + offset) |
+						((uint32_t)sign_index << 31));
+		for (input_index = 0; input_index < SINH_GRID_EXPONENTS && status == 0;
+			input_index++)
+			for (fraction_index = 0;
+				fraction_index < SINH_GRID_FRACTIONS && status == 0;
+				fraction_index++)
+				for (sign_index = 0; sign_index < SINH_SIGN_CASES && status == 0;
+					sign_index++)
+					status = record_binary32(&cursor, rounding_modes[mode_index],
+						((uint32_t)binary32_grid_exponents[input_index] << 23) |
+						binary32_grid_fractions[fraction_index] |
+						((uint32_t)sign_index << 31));
 	}
 	if (cursor != SINH_RECORD_STORAGE_WORDS && status == 0)
 		status = 3;

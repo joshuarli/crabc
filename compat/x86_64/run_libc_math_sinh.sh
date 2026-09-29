@@ -7,7 +7,7 @@ readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly RECORD_SIZE=32
-readonly EXPECTED_RECORDS=256
+readonly EXPECTED_RECORDS=3600
 readonly SELECTED_SYMBOLS=(sinh sinhf)
 readonly FENV_SIBLINGS=(feclearexcept fegetenv fegetround fesetenv fesetround fetestexcept)
 readonly PRIVATE_PROVIDERS=(
@@ -50,14 +50,16 @@ assert_selected_c_abi_surface() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mktemp nm objdump readelf rustup sort wc; do
+for tool in ar awk cargo cmp cp diff grep mktemp nm objdump readelf rustup sort wc; do
 	require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-math-sinh.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp" "$ROOT_DIR/.work/x86_64/reports/libc-math-sinh"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-math-sinh.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-math-sinh"
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-reference"
@@ -213,6 +215,8 @@ if grep -Eq 'vfmadd|vfnmadd|vfmsub|vfnmsub' "$disassembly"; then
 fi
 
 "$candidate" >"$candidate_output" || fail "freestanding sinh/sinhf fixture failed"
+cp -- "$reference_output" "$report_dir/reference.records"
+cp -- "$candidate_output" "$report_dir/candidate.records"
 if ! cmp -s "$reference_output" "$candidate_output"; then
 	cmp -l "$reference_output" "$candidate_output" | sed -n '1,120p' >&2 || true
 	fail "candidate sinh/sinhf record stream differs from pinned musl"
