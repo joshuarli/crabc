@@ -68,9 +68,9 @@ readonly execution_root="$work/execution-root"
 chmod a+rx "$work"
 printf 'owned pthread signal evidence: %s\n' "$work"
 
-# Each command retains its untouched result.  The empty success transcript is
-# still behavior evidence because the probe's task-retirement checks execute
-# before it returns; a failed assertion is preserved on stderr with its exit.
+# Each command retains its untouched result. The success transcript follows
+# the probe's task-retirement and blocked-pending-delivery checks; a failed
+# assertion is preserved on stderr with its exit.
 run_host() {
     local output="$1"
     shift

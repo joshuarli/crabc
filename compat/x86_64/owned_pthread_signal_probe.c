@@ -49,11 +49,11 @@ static int c11_receiver(void *opaque)
     return receive_signal(opaque);
 }
 
-static int wait_for_ready(struct worker_state *state)
+static int wait_for_ready(atomic_int *ready)
 {
     const struct timespec pause = { 0, 1000000 };
     for (int retry = 0; retry < 5000; ++retry) {
-        if (atomic_load_explicit(&state->ready, memory_order_acquire)) return 0;
+        if (atomic_load_explicit(ready, memory_order_acquire)) return 0;
         if (nanosleep(&pause, NULL)) return 1;
     }
     return 1;
@@ -79,7 +79,7 @@ static int deliver_to_worker(int c11)
     thrd_t c11_worker;
     if (c11) CHECK(thrd_create(&c11_worker, c11_receiver, &state) == thrd_success);
     else CHECK(pthread_create(&worker, NULL, pthread_receiver, &state) == 0);
-    CHECK(wait_for_ready(&state) == 0);
+    CHECK(wait_for_ready(&state.ready) == 0);
     errno = ERANGE;
     CHECK(pthread_kill(state.handle, 0) == 0 && errno == ERANGE);
     CHECK(pthread_kill(state.handle, -1) == EINVAL && errno == ERANGE);
@@ -107,6 +107,65 @@ static void receive_self(int signal)
     if (signal == SIGUSR2) ++self_deliveries;
 }
 
+struct pending_state {
+    atomic_int ready;
+    atomic_int sent;
+};
+
+static volatile sig_atomic_t worker_deliveries;
+static void receive_worker(int signal)
+{
+    if (signal == SIGUSR2) ++worker_deliveries;
+}
+
+static int pending_worker_run(void *opaque)
+{
+    struct pending_state *state = opaque;
+    sigset_t selected, pending;
+    CHECK(sigemptyset(&selected) == 0 && sigaddset(&selected, SIGUSR2) == 0);
+    CHECK(pthread_sigmask(SIG_BLOCK, &selected, NULL) == 0);
+    atomic_store_explicit(&state->ready, 1, memory_order_release);
+    const struct timespec pause = { 0, 1000000 };
+    for (int retry = 0; retry < 5000; ++retry) {
+        if (atomic_load_explicit(&state->sent, memory_order_acquire)) break;
+        CHECK(nanosleep(&pause, NULL) == 0);
+    }
+    CHECK(atomic_load_explicit(&state->sent, memory_order_acquire));
+    errno = ERANGE;
+    CHECK(sigpending(&pending) == 0 && sigismember(&pending, SIGUSR2) == 1
+          && worker_deliveries == 0 && errno == ERANGE);
+    CHECK(pthread_sigmask(SIG_UNBLOCK, &selected, NULL) == 0 && errno == ERANGE);
+    CHECK(worker_deliveries == 1);
+    CHECK(sigpending(&pending) == 0 && sigismember(&pending, SIGUSR2) == 0
+          && errno == ERANGE);
+    return 0;
+}
+
+static void *pending_worker(void *opaque)
+{
+    return (void *)(intptr_t)pending_worker_run(opaque);
+}
+
+static int deliver_blocked_to_worker(void)
+{
+    struct pending_state state = { 0 };
+    pthread_t worker;
+    struct sigaction action = { 0 }, old_action;
+    action.sa_handler = receive_worker;
+    CHECK(sigemptyset(&action.sa_mask) == 0);
+    CHECK(sigaction(SIGUSR2, &action, &old_action) == 0);
+    CHECK(pthread_create(&worker, NULL, pending_worker, &state) == 0);
+    CHECK(wait_for_ready(&state.ready) == 0);
+    errno = ERANGE;
+    CHECK(pthread_kill(worker, SIGUSR2) == 0 && errno == ERANGE);
+    atomic_store_explicit(&state.sent, 1, memory_order_release);
+    void *result;
+    CHECK(pthread_join(worker, &result) == 0 && result == NULL);
+    CHECK(worker_deliveries == 1);
+    CHECK(sigaction(SIGUSR2, &old_action, NULL) == 0);
+    return 0;
+}
+
 int main(void)
 {
     sigset_t signals, saved, observed;
@@ -126,7 +185,9 @@ int main(void)
     CHECK(sigismember(&observed, SIGUSR2) == 0);
     CHECK(deliver_to_worker(0) == 0);
     CHECK(deliver_to_worker(1) == 0);
+    CHECK(deliver_blocked_to_worker() == 0);
     CHECK(sigaction(SIGUSR2, &old_action, NULL) == 0);
     CHECK(pthread_sigmask(SIG_SETMASK, &saved, NULL) == 0);
+    puts("pthread-signal: blocked SIGUSR2 pending then delivered to worker");
     return 0;
 }
