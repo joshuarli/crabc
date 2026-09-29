@@ -2,10 +2,9 @@
  *
  * The same project-header C body first runs against pinned musl 1.2.6 and
  * then through a true dependency-free `-nostdlib -static` crabc candidate.
- * It proves the modern `sigaltstack` record/precondition boundary and one
- * real SA_ONSTACK handler entry/return through the already-selected action
- * restorer. It neither allocates a signal stack nor turns the existing signal
- * leaves into a general signal framework, pthread policy, or runtime claim.
+ * It records the sigaltstack record/precondition boundary and two bounded
+ * SA_ONSTACK handler entries through the selected action restorer. Static
+ * storage keeps the alternate stack alive throughout both deliveries.
  */
 
 #ifndef _GNU_SOURCE
@@ -49,9 +48,30 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&raise), int (*)(int)),
 
 static unsigned char alternate_stack[ALT_STACK_BYTES]
     __attribute__((aligned(64)));
-static volatile sig_atomic_t handler_signal;
-static volatile sig_atomic_t handler_on_alt_stack;
-static volatile sig_atomic_t handler_disable_rejected;
+enum {
+    OUTER_SIGNAL, OUTER_ON_STACK, OUTER_FLAGS, OUTER_QUERY_ERRNO,
+    OUTER_DISABLE_ERRNO, NESTED_RAISE_RESULT, NESTED_RAISE_ERRNO,
+    OUTER_AFTER_FLAGS, OUTER_AFTER_ERRNO, OUTER_PHASE,
+    INNER_SIGNAL, INNER_ON_STACK, INNER_FLAGS, INNER_QUERY_ERRNO,
+    INNER_DISABLE_ERRNO, INNER_PHASE, HANDLER_RECORDS
+};
+static volatile sig_atomic_t handler_records[HANDLER_RECORDS];
+static volatile sig_atomic_t handler_phase;
+static uint32_t observations[32];
+
+/* A fixture-only write leaves the selected libc archive independent of stdio. */
+static long write_observations(void)
+{
+    long result;
+    register long number __asm__("rax") = 1;
+    register long descriptor __asm__("rdi") = 1;
+    register const void *buffer __asm__("rsi") = observations;
+    register long length __asm__("rdx") = sizeof(observations);
+
+    __asm__ volatile ("syscall" : "=a"(result) : "a"(number), "D"(descriptor),
+        "S"(buffer), "d"(length) : "rcx", "r11", "memory");
+    return result;
+}
 
 static int same_stack(const stack_t *left, const stack_t *right)
 {
@@ -72,20 +92,42 @@ static void record_alt_stack_delivery(int signal)
     uintptr_t marker_address = (uintptr_t)(const void *)&marker;
     uintptr_t stack_start = (uintptr_t)(const void *)alternate_stack;
     uintptr_t stack_end = stack_start + sizeof(alternate_stack);
+    int saved_errno = errno;
+    int inner = signal == SIGUSR2;
+    int base = inner ? INNER_SIGNAL : OUTER_SIGNAL;
 
-    handler_signal = signal;
+    handler_records[base] = signal;
+    handler_records[base + 1] = marker_address >= stack_start &&
+        marker_address < stack_end;
+    errno = ERANGE;
     if (sigaltstack(0, &running) == 0 &&
-        (running.ss_flags & SS_ONSTACK) != 0 &&
         running.ss_sp == (void *)alternate_stack &&
-        running.ss_size == sizeof(alternate_stack) &&
-        marker_address >= stack_start && marker_address < stack_end)
-        handler_on_alt_stack = 1;
+        running.ss_size == sizeof(alternate_stack))
+        handler_records[base + 2] = running.ss_flags;
+    handler_records[base + 3] = errno;
 
-    /* Linux rejects replacement/disable while this frame owns the stack.
-     * The wrapper deliberately leaves that EPERM policy to the kernel. */
+    /* Query and disable take the direct syscall path in both selected
+     * runtimes. An enabled request could invoke size preflight, so handlers
+     * never make one. Linux rejects disable while either frame owns the stack. */
     errno = 0;
-    if (sigaltstack(&disable, 0) == -1 && errno == EPERM)
-        handler_disable_rejected = 1;
+    if (sigaltstack(&disable, 0) == -1)
+        handler_records[base + 4] = errno;
+
+    if (inner) {
+        handler_records[INNER_PHASE] = handler_phase;
+    } else {
+        handler_phase = 1;
+        errno = ERANGE;
+        handler_records[NESTED_RAISE_RESULT] = raise(SIGUSR2);
+        handler_records[NESTED_RAISE_ERRNO] = errno;
+        errno = E2BIG;
+        if (sigaltstack(0, &running) == 0)
+            handler_records[OUTER_AFTER_FLAGS] = running.ss_flags;
+        handler_records[OUTER_AFTER_ERRNO] = errno;
+        handler_phase = 2;
+        handler_records[OUTER_PHASE] = handler_phase;
+    }
+    errno = saved_errno;
 }
 
 static int test_altstack(void)
@@ -120,14 +162,19 @@ static int test_altstack(void)
         .ss_size = sizeof(alternate_stack),
     };
     struct sigaction saved_action = {0};
+    struct sigaction saved_nested_action = {0};
     struct sigaction action = {0};
     int action_saved = 0;
+    int nested_action_saved = 0;
     int stack_changed = 0;
     int result = 1;
+    int index;
 
     errno = ERANGE;
     if (sigaltstack(0, &original) != 0 || errno != ERANGE)
-        return result;
+        goto cleanup;
+    observations[0] = original.ss_flags;
+    observations[1] = original.ss_size;
 
     errno = E2BIG;
     if (sigaltstack(0, 0) != 0 || errno != E2BIG) {
@@ -161,6 +208,8 @@ static int test_altstack(void)
         result = 6;
         goto cleanup;
     }
+    observations[2] = previous.ss_flags;
+    observations[3] = errno;
     stack_changed = 1;
 
     errno = E2BIG;
@@ -170,12 +219,20 @@ static int test_altstack(void)
         result = 7;
         goto cleanup;
     }
+    observations[4] = observed.ss_flags;
+    observations[5] = observed.ss_size;
+    observations[6] = errno;
 
     if (sigaction(SIGUSR1, 0, &saved_action) != 0) {
         result = 8;
         goto cleanup;
     }
     action_saved = 1;
+    if (sigaction(SIGUSR2, 0, &saved_nested_action) != 0) {
+        result = 16;
+        goto cleanup;
+    }
+    nested_action_saved = 1;
     if (sigemptyset(&action.sa_mask) != 0) {
         result = 9;
         goto cleanup;
@@ -187,15 +244,33 @@ static int test_altstack(void)
         result = 10;
         goto cleanup;
     }
+    if (sigaction(SIGUSR2, &action, 0) != 0) {
+        result = 17;
+        goto cleanup;
+    }
 
-    handler_signal = 0;
-    handler_on_alt_stack = 0;
-    handler_disable_rejected = 0;
-    if (raise(SIGUSR1) != 0 || handler_signal != SIGUSR1 ||
-        handler_on_alt_stack != 1 || handler_disable_rejected != 1) {
+    errno = E2BIG;
+    if (raise(SIGUSR1) != 0 || errno != E2BIG ||
+        handler_records[OUTER_SIGNAL] != SIGUSR1 ||
+        handler_records[OUTER_ON_STACK] != 1 ||
+        handler_records[OUTER_FLAGS] != SS_ONSTACK ||
+        handler_records[OUTER_QUERY_ERRNO] != ERANGE ||
+        handler_records[OUTER_DISABLE_ERRNO] != EPERM ||
+        handler_records[NESTED_RAISE_RESULT] != 0 ||
+        handler_records[NESTED_RAISE_ERRNO] != ERANGE ||
+        handler_records[OUTER_AFTER_FLAGS] != SS_ONSTACK ||
+        handler_records[OUTER_AFTER_ERRNO] != E2BIG ||
+        handler_records[OUTER_PHASE] != 2 ||
+        handler_records[INNER_SIGNAL] != SIGUSR2 ||
+        handler_records[INNER_ON_STACK] != 1 ||
+        handler_records[INNER_FLAGS] != SS_ONSTACK ||
+        handler_records[INNER_QUERY_ERRNO] != ERANGE ||
+        handler_records[INNER_DISABLE_ERRNO] != EPERM ||
+        handler_records[INNER_PHASE] != 1) {
         result = 11;
         goto cleanup;
     }
+    observations[23] = errno;
 
     if (sigaltstack(0, &observed) != 0 ||
         observed.ss_sp != (void *)alternate_stack || observed.ss_flags != 0 ||
@@ -203,6 +278,7 @@ static int test_altstack(void)
         result = 12;
         goto cleanup;
     }
+    observations[24] = observed.ss_flags;
 
     errno = ERANGE;
     if (sigaltstack(&disable, &disabled_previous) != 0 || errno != ERANGE ||
@@ -210,6 +286,8 @@ static int test_altstack(void)
         result = 13;
         goto cleanup;
     }
+    observations[25] = disabled_previous.ss_flags;
+    observations[26] = errno;
     /* Keep cleanup responsible for restoring the captured entry state until
      * that restoration has itself succeeded below. */
     stack_changed = 1;
@@ -221,20 +299,31 @@ static int test_altstack(void)
         result = 14;
         goto cleanup;
     }
+    observations[27] = observed.ss_flags;
+    observations[28] = observed.ss_size;
+    observations[29] = errno;
 
     errno = ERANGE;
     if (sigaltstack(&original, 0) != 0 || errno != ERANGE) {
         result = 15;
         goto cleanup;
     }
+    observations[30] = errno;
     stack_changed = 0;
     result = 0;
 
 cleanup:
+    if (nested_action_saved)
+        (void)sigaction(SIGUSR2, &saved_nested_action, 0);
     if (action_saved)
         (void)sigaction(SIGUSR1, &saved_action, 0);
     if (stack_changed)
         (void)sigaltstack(&original, 0);
+    for (index = 0; index < HANDLER_RECORDS; ++index)
+        observations[7 + index] = handler_records[index];
+    observations[31] = result;
+    if (write_observations() != sizeof(observations) && result == 0)
+        result = 18;
     return result;
 }
 

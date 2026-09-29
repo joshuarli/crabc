@@ -4,9 +4,9 @@
 # The same project-header C body first runs against pinned musl 1.2.6 and
 # then as a dependency-free `-nostdlib -static` executable linked solely
 # through the selected crabc archive. It proves the narrow stack_t/preflight
-# query/disable boundary and one real SA_ONSTACK handler round trip through
-# the already selected signal-action restorer. It is not generic signal,
-# pthread, startup, loader, or public-x86 evidence.
+# query/disable boundary and bounded nested SA_ONSTACK delivery through the
+# already selected signal-action restorer. Binary observation streams and the
+# two static executables remain in the ignored lane report directory.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -91,7 +91,7 @@ assert_fixture_tls_capacity() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep nm objdump readelf rustup sort; do
+for tool in ar awk cargo cmp diff grep nm objdump python3 readelf rustup sha256sum sort timeout; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -99,8 +99,10 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_signal_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-signal-altstack.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+report_root="$ROOT_DIR/.work/x86_64/reports/libc-signal-altstack"
+mkdir -p "$report_root"
+work_dir="$(mktemp -d "$report_root/run.XXXXXX")"
+trap 'chmod -R a+rX "$report_root"' EXIT
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-signal-altstack-reference"
@@ -129,12 +131,13 @@ done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     compat/x86_64/libc_signal_altstack_probe.c -o "$reference"
-if "$reference"; then
-    :
+if timeout 20s "$reference" >"$work_dir/musl.stdout" 2>"$work_dir/musl.stderr"; then
+    status=0
 else
     status=$?
-    fail "pinned-musl signal-altstack fixture exited ${status}"
 fi
+printf '%s\n' "$status" >"$work_dir/musl.status"
+[ "$status" -eq 0 ] || fail "pinned-musl signal-altstack fixture exited ${status}; evidence: ${work_dir}"
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit x86 static libc archive"
@@ -209,11 +212,48 @@ grep -Eq '\bsyscall\b' "$restorer_disassembly" ||
     fail "candidate restorer lacks x86 syscall instruction"
 assert_sigaltstack_syscall
 
-if "$candidate"; then
-    :
+if timeout 20s "$candidate" >"$work_dir/crabc.stdout" 2>"$work_dir/crabc.stderr"; then
+    status=0
 else
     status=$?
-    fail "freestanding signal-altstack fixture exited ${status}"
 fi
+printf '%s\n' "$status" >"$work_dir/crabc.status"
+[ "$status" -eq 0 ] || fail "freestanding signal-altstack fixture exited ${status}; evidence: ${work_dir}"
 
-printf 'x86 static crabc-libc signal altstack: PASS\n'
+python3 - "$work_dir/musl.stdout" "$work_dir/expected.stdout" <<'PY'
+import struct
+import sys
+
+# The records carry entry state, install/query/disable errno, both live
+# handler observations, their bounded nesting order, and restored state.
+expected = (
+    2, 0, 2, 34, 0, 65536, 7,
+    10, 1, 1, 34, 1, 0, 34, 1, 7, 2,
+    12, 1, 1, 34, 1, 1,
+    7, 0, 0, 34, 2, 0, 7, 34, 0,
+)
+assert len(expected) == 32
+with open(sys.argv[2], 'wb') as output:
+    output.write(struct.pack('<32I', *expected))
+with open(sys.argv[1], 'rb') as observed:
+    assert observed.read() == struct.pack('<32I', *expected), 'musl observation drift'
+PY
+cmp "$work_dir/musl.stdout" "$work_dir/crabc.stdout" ||
+    fail "crabc physical observations differ from pinned musl; evidence: ${work_dir}"
+cmp "$work_dir/musl.stderr" "$work_dir/crabc.stderr" ||
+    fail "crabc stderr differs from pinned musl; evidence: ${work_dir}"
+[ ! -s "$work_dir/musl.stderr" ] || fail "pinned musl produced stderr; evidence: ${work_dir}"
+cmp "$work_dir/musl.status" "$work_dir/crabc.status" ||
+    fail "crabc status differs from pinned musl; evidence: ${work_dir}"
+
+(
+    cd "$work_dir"
+    sha256sum musl-signal-altstack-reference crabc-static-signal-altstack-candidate \
+        musl.stdout musl.stderr musl.status crabc.stdout crabc.stderr crabc.status \
+        expected.stdout >SHA256SUMS
+)
+sha256sum compat/x86_64/libc_signal_altstack_probe.c \
+    compat/x86_64/libc_signal_altstack_start.S \
+    compat/x86_64/run_libc_signal_altstack.sh >"$work_dir/SOURCE-SHA256SUMS"
+
+printf 'x86 static crabc-libc signal altstack: PASS (%s)\n' "$work_dir"
