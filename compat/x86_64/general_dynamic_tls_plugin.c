@@ -12,6 +12,7 @@
 _Thread_local int growth_value __attribute__((aligned(4096))) = 17 + GENERATION;
 static _Thread_local unsigned char growth_zero[73] __attribute__((aligned(64)));
 static int constructed;
+static int expected_finalizer_value = -1;
 
 int *growth_address(void) { return &growth_value; }
 int growth_check(void)
@@ -23,6 +24,7 @@ int growth_check(void)
     return 0;
 }
 int growth_constructed(void) { return constructed; }
+void growth_expect_finalizer_value(int value) { expected_finalizer_value = value; }
 
 static void initialize(void) __attribute__((constructor));
 static void initialize(void)
@@ -45,6 +47,12 @@ static void initialize(void)
 static void finalize(void) __attribute__((destructor));
 static void finalize(void)
 {
-    if (constructed != 1) abort();
-    printf("runtime fini %d\n", GENERATION);
+    if (constructed != 1 || growth_check()
+        || (expected_finalizer_value >= 0
+            && *growth_address() != expected_finalizer_value))
+        abort();
+    if (expected_finalizer_value >= 0)
+        printf("runtime fini %d value=%d\n", GENERATION, *growth_address());
+    else
+        printf("runtime fini %d\n", GENERATION);
 }

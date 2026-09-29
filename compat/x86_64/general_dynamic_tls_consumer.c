@@ -12,6 +12,7 @@ enum { GENERATIONS = 40, WORKERS = 4 };
 typedef int *(*address_fn)(void);
 static address_fn addresses[GENERATIONS];
 static int (*checks[GENERATIONS])(void);
+static void (*expect_finalizer_value[GENERATIONS])(int);
 static void *handles[GENERATIONS];
 static atomic_int stage, ready, completed, concurrent_start;
 static int *worker_addresses[WORKERS][GENERATIONS];
@@ -76,8 +77,16 @@ static int visit(struct dl_phdr_info *info, size_t size, void *argument)
     return 0;
 }
 
-int main(void)
+static void *finish_process(void *argument)
 {
+    (void)argument;
+    exit(0);
+}
+
+int main(int argc, char **argv)
+{
+    CHECK(argc == 1 || (argc == 2 && !strcmp(argv[1], "worker-finalize")));
+    int worker_finalizes = argc == 2;
     pthread_t workers[WORKERS];
     for (uintptr_t index = 0; index < WORKERS; ++index)
         CHECK(!pthread_create(&workers[index], 0, existing_worker, (void *)index));
@@ -92,10 +101,14 @@ int main(void)
         CHECK(handles[generation]);
         addresses[generation] = (address_fn)dlsym(handles[generation], "growth_address");
         checks[generation] = (int (*)(void))dlsym(handles[generation], "growth_check");
-        CHECK(addresses[generation] && checks[generation] && !checks[generation]());
+        expect_finalizer_value[generation] =
+            (void (*)(int))dlsym(handles[generation], "growth_expect_finalizer_value");
+        CHECK(addresses[generation] && checks[generation]
+            && expect_finalizer_value[generation] && !checks[generation]());
         main_addresses[generation] = addresses[generation]();
         CHECK(*main_addresses[generation] == 17 + generation);
         *main_addresses[generation] = 2000 + generation;
+        expect_finalizer_value[generation](2000 + generation);
         CHECK(!dlsym(RTLD_DEFAULT, "growth_value"));
         CHECK(dlerror() && !dlerror());
         Dl_info info;
@@ -136,5 +149,12 @@ int main(void)
     CHECK(dlopen("libgrowth0.so", RTLD_NOW | RTLD_NOLOAD | RTLD_GLOBAL) == handles[0]);
     CHECK(dlsym(RTLD_DEFAULT, "growth_value") == main_addresses[0]);
     puts("runtime TLS: old/new workers, 41 modules, retained addresses, recursive/concurrent constructors");
+    if (worker_finalizes) {
+        for (int generation = 0; generation < GENERATIONS; ++generation)
+            expect_finalizer_value[generation](17 + generation);
+        CHECK(!pthread_create(&workers[0], 0, finish_process, 0));
+        CHECK(!pthread_join(workers[0], 0));
+        abort();
+    }
     return 0;
 }

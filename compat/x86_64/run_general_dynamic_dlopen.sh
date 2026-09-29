@@ -92,6 +92,17 @@ if [ "$status" -ne 0 ]; then
 fi
 cmp "$work/oracle.stdout" "$work/growth.stdout"
 printf 'general runtime TLS: PASS (musl differential, 41 runtime modules and existing/new workers); evidence: %s\n' "$work"
+LD_LIBRARY_PATH="$work/oracle" timeout 40 "$work/oracle/growth" worker-finalize \
+    >"$work/oracle-worker-finalize.stdout"
+status=0
+timeout 40 chroot "$work/execution-root" /growth worker-finalize \
+    >"$work/growth-worker-finalize.stdout" 2>"$work/growth-worker-finalize.stderr" || status=$?
+if [ "$status" -ne 0 ] || ! cmp -s "$work/oracle-worker-finalize.stdout" "$work/growth-worker-finalize.stdout"; then
+    printf 'general runtime TLS worker finalization: FAIL status=%s; evidence: %s\n' "$status" "$work" >&2
+    diff -u "$work/oracle-worker-finalize.stdout" "$work/growth-worker-finalize.stdout" >&2 || true
+    exit 1
+fi
+printf 'general runtime TLS worker finalization: PASS (musl differential, retained runtime modules); evidence: %s\n' "$work"
 "$driver" --dynamic-shared-object "$ROOT/compat/x86_64/general_dynamic_failure_plugin.c" -o "$work/libfailure.so"
 "$driver" --dynamic-shared-object -DINITIAL_EXEC "$ROOT/compat/x86_64/general_dynamic_failure_plugin.c" -o "$work/libfailure-ie.so"
 "$driver" "$entry_mode" "$ROOT/compat/x86_64/general_dynamic_failure_consumer.c" -o "$work/failure"
