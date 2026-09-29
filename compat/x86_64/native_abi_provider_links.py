@@ -247,6 +247,107 @@ def _call_transcripts(view: Mapping[str, Any], member: str,
             '\n'.join(line for rows in relocations.values() for line in rows))
 
 
+def import_relocations(transcript: str, name: str, *, image: bytes) -> list[dict[str, Any]]:
+    """Retain the complete executable relocation roster for a function import.
+
+    A function reference may load its address without calling it at that site.
+    Only the exact PC-relative instruction forms decoded below are accepted;
+    data pointers and unsupported addends remain outside this proof.
+    """
+    sections = calls._ordinary_relocation_sections(image)
+    section, references = None, []
+    for line in transcript.splitlines():
+        header = re.match(r"^Relocation section '(\.rela\.text(?:\.[^']+)?)' at offset 0x([0-9a-f]+)", line)
+        if header:
+            section = sections.get(int(header.group(2), 16))
+            require(section is not None and ('.rela' + section).startswith(header.group(1)),
+                    'provider import relocation heading differs from ELF target')
+            continue
+        if line.startswith('Relocation section '):
+            section = None
+            continue
+        row = re.match(r'^\s*([0-9a-f]{16})\s+\S+\s+(R_X86_64_\w+)\s+\S+\s+(\S+)\s+([+-])\s+(\d+)\s*$', line)
+        if row is None or row.group(3) != name:
+            continue
+        require(section is not None and row.group(2) in {'R_X86_64_PLT32', 'R_X86_64_GOTPCREL', 'R_X86_64_PC32'}
+                and row.group(4) == '-' and row.group(5) == '4',
+                f'provider import {name} relocation is not a supported reference')
+        references.append({'section': section, 'offset': int(row.group(1), 16), 'kind': row.group(2)})
+    require(references and len({(row['section'], row['offset']) for row in references}) == len(references),
+            f'provider import {name} relocation roster differs')
+    return references
+
+
+def final_member_references(image: bytes, *, archive_member: str, source_calls: list[dict[str, Any]],
+                            map_text: str, relocation_text: str, provider_address: int,
+                            elf_type: int, name: str, source_sections: Mapping[str, bytes]) -> dict[str, Any]:
+    """Bind exact source instruction operands to their final provider address.
+
+    Register address loads prove address binding only. They do not assert a
+    later indirect call, register lifetime, reachability or function semantics.
+    Direct calls retain the existing branch proof and all sites must survive.
+    """
+    resolved, discarded = [], []
+    for reference in source_calls:
+        section, offset, kind = reference['section'], reference['offset'], reference['kind']
+        rows = [line for line in map_text.splitlines() if line.rstrip().endswith(f'{archive_member}:({section})')]
+        require(len(rows) <= 1, f'provider {name} source section map is ambiguous')
+        if not rows:
+            discarded.append(dict(reference))
+            continue
+        source = source_sections[section]
+        parts = rows[0].split()
+        require(len(parts) >= 5 and type(offset) is int and offset >= 1
+                and offset + 4 <= len(source) and offset + 4 <= int(parts[2], 16),
+                f'provider {name} reference leaves selected section')
+        prefix = source[offset - 3:offset] if offset >= 3 else b''
+        address_load = (len(prefix) == 3 and prefix[0] in {0x48, 0x4c} and prefix[2] & 0xc7 == 0x05
+                        and ((kind == 'R_X86_64_GOTPCREL' and prefix[1] == 0x8b)
+                             or (kind == 'R_X86_64_PC32' and prefix[1] == 0x8d)))
+        conditional = (kind == 'R_X86_64_PLT32' and offset >= 2
+                       and source[offset - 2] == 0x0f and 0x80 <= source[offset - 1] <= 0x8f)
+        if not address_load and not conditional:
+            prefix_size = 1 if kind == 'R_X86_64_PLT32' else 2
+            prefix = source[offset - prefix_size:offset]
+            require((kind == 'R_X86_64_PLT32' and prefix in {b'\xe8', b'\xe9'})
+                    or (kind == 'R_X86_64_GOTPCREL' and prefix in {b'\xff\x15', b'\xff\x25'}),
+                    f'provider {name} reference opcode differs')
+            require(calls._public_weak_virtual_bytes(image, int(parts[0], 16) + offset - prefix_size,
+                                                     prefix_size, elf_type, executable=True) == prefix,
+                    f'provider {name} final reference opcode differs')
+            result = calls._ordinary_final_member_calls(image, archive_member=archive_member,
+                source_calls=[reference], map_text=map_text, relocation_text=relocation_text,
+                provider_address=provider_address, elf_type=elf_type, name=name, source_sections=source_sections)
+            resolved.extend(result['resolved_calls'])
+            discarded.extend(result['discarded_calls'])
+            continue
+        prefix_size = 3 if address_load else 2
+        call_address = int(parts[0], 16) + offset - prefix_size
+        opcode = calls._public_weak_virtual_bytes(image, call_address, prefix_size + 4, elf_type, executable=True)
+        require(opcode[:prefix_size] == source[offset - prefix_size:offset],
+                f'provider {name} reference opcode differs')
+        target = call_address + prefix_size + 4 + struct.unpack_from('<i', opcode, prefix_size)[0]
+        record = {'section': section, 'offset': offset, 'call_address': call_address,
+                  'target_address': provider_address}
+        if kind == 'R_X86_64_GOTPCREL':
+            slot = target
+            target = struct.unpack('<Q', calls._public_weak_virtual_bytes(image, slot, 8, elf_type, executable=False))[0]
+            relative = re.findall(rf'^0*{slot:x}\s+\S+\s+R_X86_64_RELATIVE\s+([0-9a-f]+)\s*$', relocation_text, re.MULTILINE)
+            relr = re.findall(rf'^\s*0*{slot:x}\s+\.got\b', relocation_text, re.MULTILINE)
+            relocations = re.findall(rf'^\s*0*{slot:x}\s+\S+\s+(R_X86_64_\w+)', relocation_text, re.MULTILINE)
+            require((elf_type == 2 and target == provider_address and not relocations and not relr)
+                    or (elf_type == 3 and ((len(relative) == 1 and int(relative[0], 16) == provider_address
+                                           and target == 0 and relocations == ['R_X86_64_RELATIVE'] and not relr)
+                                          or (len(relr) == 1 and target == provider_address and not relocations))),
+                    f'provider {name} GOT resolves to a foreign provider')
+            record.update(got_slot=slot, branch_kind='got-address-load')
+        else:
+            require(target == provider_address, f'provider {name} reference resolves to a foreign provider')
+            record['branch_kind'] = 'rip-relative-address' if address_load else 'conditional-jump'
+        resolved.append(record)
+    return {'resolved_calls': resolved, 'discarded_calls': discarded}
+
+
 def project(work: Path, static: Path, accounting: Mapping[str, Any], facts: Mapping[str, Any]) -> dict[str, Any]:
     retained = validate(work, static, facts)
     archive = static / 'usr/lib/libc.a'
@@ -289,7 +390,7 @@ def project(work: Path, static: Path, accounting: Mapping[str, Any], facts: Mapp
                         relocations = read_tool('readelf', '-rW', path)
                     source_members[member] = (result.stdout, relocations)
                 image, relocations = source_members[member]
-                source_calls = calls._ordinary_import_relocations(relocations, name, image=image)
+                source_calls = import_relocations(relocations, name, image=image)
                 source_imports.append((row, source_calls, calls._ordinary_source_sections(
                     image, {item['section'] for item in source_calls})))
             for mode, view in final.items():
@@ -312,7 +413,7 @@ def project(work: Path, static: Path, accounting: Mapping[str, Any], facts: Mapp
                     require(view['trace_counts'].get(member) == 1,
                             'provider importer was not extracted exactly once')
                     map_text, relocation_text = _call_transcripts(view, member, source_calls)
-                    result = calls._ordinary_final_member_calls(view['image'], archive_member=member,
+                    result = final_member_references(view['image'], archive_member=member,
                         source_calls=source_calls, map_text=map_text, relocation_text=relocation_text,
                         provider_address=address, elf_type=view['type'], name=name, source_sections=sections)
                     require(result['resolved_calls'] and not result['discarded_calls'],

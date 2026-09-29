@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import shutil
 import subprocess
+import struct
 import tempfile
 import unittest
 
@@ -76,6 +77,66 @@ class ProviderLinkAttachmentTests(unittest.TestCase):
 
 
 class ProviderFixtureObjectTests(unittest.TestCase):
+    def test_real_archive_references_keep_all_register_loads_address_expressions_and_conditional_branches(self):
+        import native_abi_provider_links as links
+        compiler, linker = shutil.which('clang') or shutil.which('gcc'), shutil.which('ld.lld')
+        if compiler is None or linker is None:
+            self.skipTest('native compiler and linker are required')
+        scratch = ROOT / '.work/x86_64/provider-links-object-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            source = ['.section .text.caller,"ax",@progbits', '.globl caller', '.type caller,@function', 'caller:',
+                      'call domain_body', 'jmp domain_body']
+            for register in range(16):
+                source += [f'.byte {0x48 if register < 8 else 0x4c}, 0x8b, {0x05 + ((register % 8) << 3)}',
+                           '.long 0', '.reloc .-4, R_X86_64_GOTPCREL, domain_body-4']
+            source += ['.byte 0x48, 0x8d, 0x05', '.long 0', '.reloc .-4, R_X86_64_PC32, domain_body-4',
+                       '.byte 0x0f, 0x84', '.long 0', '.reloc .-4, R_X86_64_PLT32, domain_body-4', 'ret',
+                       '.size caller,.-caller', '.section .text.provider,"ax",@progbits',
+                       '.globl domain_body', '.type domain_body,@function', 'domain_body:', 'ret',
+                       '.size domain_body,.-domain_body', '.section .note.GNU-stack,"",@progbits']
+            (work / 'caller.S').write_text('\n'.join(source) + '\n')
+            subprocess.run([compiler, '-c', str(work / 'caller.S'), '-o', str(work / 'caller.o')],
+                           check=True, capture_output=True)
+            subprocess.run(['ar', 'rcs', str(work / 'libdomain.a'), str(work / 'caller.o')],
+                           check=True, capture_output=True)
+            image = (work / 'caller.o').read_bytes()
+            references = links.import_relocations(links.read_tool('readelf', '-rW', work / 'caller.o'),
+                                                  'domain_body', image=image)
+            self.assertEqual(len(references), 20)
+            sections = links.calls._ordinary_source_sections(image, {row['section'] for row in references})
+            member = str(work / 'libdomain.a') + '(caller.o)'
+            for mode, elf_type, flag in [('static', 2, '-static'), ('static-pie', 3, '-pie')]:
+                output, map_path = work / mode, work / (mode + '.map')
+                subprocess.run([linker, flag, '--no-relax', '-e', 'caller', '--undefined=caller',
+                                         '-Map=' + str(map_path), str(work / 'libdomain.a'), '-o', str(output)],
+                                        check=True, capture_output=True)
+                symbol_text = links.read_tool('readelf', '-sW', output)
+                address = int(next(row.split()[1] for row in symbol_text.splitlines()
+                                   if row.split() and row.split()[-1] == 'domain_body'), 16)
+                arguments = dict(archive_member=member, source_calls=references, map_text=map_path.read_text(),
+                                 relocation_text=links.read_tool('readelf', '-rW', output),
+                                 provider_address=address, elf_type=elf_type, name='domain_body', source_sections=sections)
+                proof = links.final_member_references(output.read_bytes(), **arguments)
+                self.assertEqual(len(proof['resolved_calls']), 20)
+                self.assertEqual(proof['discarded_calls'], [])
+                self.assertEqual({row['branch_kind'] for row in proof['resolved_calls']},
+                                 {'call', 'tail-jump', 'got-address-load', 'rip-relative-address', 'conditional-jump'})
+                for reference in references:
+                    with self.assertRaisesRegex((ValueError, links.calls.AllocatorBoundaryError), 'foreign provider'):
+                        links.final_member_references(output.read_bytes(), **{
+                            **arguments, 'source_calls': [reference], 'provider_address': address + 1})
+                changed = bytearray(output.read_bytes())
+                table, count = struct.unpack_from('<Q', changed, 32)[0], struct.unpack_from('<H', changed, 56)[0]
+                call_address = proof['resolved_calls'][0]['call_address']
+                for index in range(count):
+                    header = struct.unpack_from('<IIQQQQQQ', changed, table + 56 * index)
+                    if header[0] == 1 and header[3] <= call_address < header[3] + header[5]:
+                        changed[header[2] + call_address - header[3]] ^= 1
+                with self.assertRaisesRegex(ValueError, 'opcode differs'):
+                    links.final_member_references(bytes(changed), **arguments)
+
     def test_link_commands_reserve_owned_driver_relative_sidecars(self):
         import crabc_cc_static as driver
         import native_abi_provider_links as links
@@ -102,7 +163,7 @@ class ProviderFixtureObjectTests(unittest.TestCase):
 
     def test_real_object_forces_exact_complete_function_addresses(self):
         import native_abi_provider_links as links
-        compiler = shutil.which('gcc')
+        compiler = shutil.which('clang') or shutil.which('gcc')
         if compiler is None:
             self.skipTest('native compiler is required')
         scratch = ROOT / '.work/x86_64/provider-links-object-tests'
