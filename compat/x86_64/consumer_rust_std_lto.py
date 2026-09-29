@@ -66,6 +66,13 @@ GATE = "consumer.rust-std-lto"
 TARGET = "x86_64-unknown-linux-musl"
 CHANNEL = pinned_toolchain(ROOT)
 FROZEN_GATES = ("rust-std", "rust-std-dependent", "lto", "lto-native-facade")
+FROZEN_LANES = {
+    "rust-std": ("stock-std",),
+    "rust-std-dependent": ("stock-std",),
+    "lto": ("A", "B", "C", "D"),
+    "lto-native-facade": ("control-o3", "fat-lto", "stock-std-fat"),
+}
+CROSS_DSO_ORIGINS = ("stock-std", "build-std")
 # The frozen consumers run on the installed pair; the unwind matrix also runs
 # on the extracted pair. Labels are the static preparation's product names.
 CONSUMER_PRODUCT = "primary"
@@ -1005,7 +1012,7 @@ def run_gate(arguments: argparse.Namespace) -> tuple[dict[str, Any], Path]:
         for label in unwind_labels:
             unwind[label]["cross_dso"] = {
                 origin: cross_dso_lane(context, label, build_std=origin == "build-std")
-                for origin in ("stock-std", "build-std")
+                for origin in CROSS_DSO_ORIGINS
             }
             unwind[label]["unmet"] += [item for lane in unwind[label]["cross_dso"].values() for item in lane["unmet"]]
     regressions = (provider_regressions(context, {"cargo_home": provider_sources["cargo_home"],
@@ -1124,9 +1131,20 @@ def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
     require(provider_links > 0, "consumer gate provider has no retained link receipt")
     gates = record.get("gates")
     require(isinstance(gates, dict) and set(gates) == set(FROZEN_GATES), "consumer gate receipt lacks a frozen gate")
+    for gate, lanes in FROZEN_LANES.items():
+        require(isinstance(gates[gate], dict) and isinstance(gates[gate].get("lanes"), dict)
+                and set(gates[gate]["lanes"]) == set(lanes),
+                f"consumer gate {gate} lacks its frozen consumer lanes")
     unwind = record.get("unwind")
     require(isinstance(unwind, dict) and set(unwind) == set(UNWIND_PRODUCTS),
             "consumer gate receipt lacks the installed/extracted unwind matrix")
+    for label in UNWIND_PRODUCTS:
+        require(isinstance(unwind[label], dict) and isinstance(unwind[label].get("cross_dso"), dict)
+                and set(unwind[label]["cross_dso"]) == set(CROSS_DSO_ORIGINS),
+                f"consumer gate {label} lacks a cross-DSO consumer")
+        require(all(isinstance(lane, dict) and lane.get("unmet") == []
+                    for lane in unwind[label]["cross_dso"].values()),
+                f"consumer gate {label} cross-DSO consumer failed")
     unmet = record.get("unmet_conditions")
     named = [str(item) for item in unmet[:8]] if isinstance(unmet, list) and unmet else ["a lane is unmet"]
     require(record.get("passed") is True and unmet == []

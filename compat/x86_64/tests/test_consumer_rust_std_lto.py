@@ -160,14 +160,24 @@ class ReceiptReaderTests(unittest.TestCase):
             "schema": GATE.SCHEMA, "gate": GATE.GATE, "source_sha256": "a" * 64, "qualifying": True,
             "cohort": self.cohort, "passed": True, "unmet_conditions": [],
             "toolchain": {"rustc_vv": "test-compiler"}, "provider": self.provider, "products": self.products,
-            "gates": {gate: {"lanes": {"lane": {"unmet": []}}} for gate in GATE.FROZEN_GATES},
-            "unwind": {label: {"unmet": []} for label in GATE.UNWIND_PRODUCTS},
+            "gates": {
+                gate: {"lanes": {lane: {"unmet": []} for lane in lanes}}
+                for gate, lanes in {
+                    "rust-std": ("stock-std",),
+                    "rust-std-dependent": ("stock-std",),
+                    "lto": ("A", "B", "C", "D"),
+                    "lto-native-facade": ("control-o3", "fat-lto", "stock-std-fat"),
+                }.items()
+            },
+            "unwind": {label: {"unmet": [], "cross_dso": {
+                origin: {"unmet": []} for origin in ("stock-std", "build-std")}}
+                for label in GATE.UNWIND_PRODUCTS},
             "provider_regressions": {"lanes": {script: {"unmet": []} for script in GATE.PROVIDER_REGRESSIONS}},
             "retained_files": {str(self.evidence): GATE.sha256_file(self.evidence),
                                str(archive): GATE.sha256_file(archive),
                                str(link_receipt): GATE.sha256_file(link_receipt)},
         }
-        self.record["gates"]["rust-std"]["lanes"]["lane"]["candidate_build"] = {
+        self.record["gates"]["rust-std"]["lanes"]["stock-std"]["candidate_build"] = {
             "link_receipt": {"path": str(link_receipt), "sha256": GATE.sha256_file(link_receipt)}}
         self.receipt = root / "receipt.json"
         qualification = mock.MagicMock()
@@ -206,6 +216,24 @@ class ReceiptReaderTests(unittest.TestCase):
 
     def test_complete_current_receipt_is_read(self) -> None:
         self.assertTrue(self.validate(self.record)["passed"])
+
+    def test_missing_frozen_consumer_lane_fails_closed(self) -> None:
+        record = copy.deepcopy(self.record)
+        del record["gates"]["lto"]["lanes"]["D"]
+        with self.assertRaisesRegex(GATE.GateError, "lto.*lanes"):
+            self.validate(record)
+
+    def test_missing_cross_dso_consumer_fails_closed(self) -> None:
+        record = copy.deepcopy(self.record)
+        del record["unwind"]["extracted"]["cross_dso"]["build-std"]
+        with self.assertRaisesRegex(GATE.GateError, "cross-DSO"):
+            self.validate(record)
+
+    def test_cross_dso_failure_fails_even_if_parent_summary_is_empty(self) -> None:
+        record = copy.deepcopy(self.record)
+        record["unwind"]["primary"]["cross_dso"]["stock-std"]["unmet"] = ["execution failed"]
+        with self.assertRaisesRegex(GATE.GateError, "cross-DSO"):
+            self.validate(record)
 
     def test_current_receipt_accepts_reproduction_cohort_product(self) -> None:
         reproduction = self.receipt.parent / "reproduction"
