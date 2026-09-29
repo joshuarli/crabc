@@ -3,6 +3,7 @@
 #include <glob.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 static unsigned callbacks;
@@ -59,6 +60,50 @@ static void sequence(const char *label, int flags)
     globfree(&result);
 }
 
+static void append_lifetime(const char *label, size_t offsets)
+{
+    glob_t result = {0};
+    char first[128];
+    char *first_address;
+    size_t i;
+
+    result.gl_offs = offsets;
+    observe(label, &result, "/fixture/dir/[az]*", offsets ? GLOB_DOOFFS : 0);
+    if (result.gl_pathc != 2) abort();
+    first_address = result.gl_pathv[offsets];
+    if (strlen(first_address) >= sizeof first) abort();
+    strcpy(first, first_address);
+    observe(label, &result, "/fixture/absent*",
+        GLOB_APPEND | (offsets ? GLOB_DOOFFS : 0));
+    if (result.gl_pathc != 2 || result.gl_pathv[offsets] != first_address ||
+        strcmp(result.gl_pathv[offsets], first)) abort();
+    observe(label, &result, "/fixture/*-dir",
+        GLOB_APPEND | GLOB_MARK | GLOB_NOSORT | (offsets ? GLOB_DOOFFS : 0));
+    if (result.gl_pathc != 3 || result.gl_pathv[offsets] != first_address ||
+        strcmp(result.gl_pathv[offsets], first)) abort();
+    observe(label, &result, "/fixture/no-such-name",
+        GLOB_APPEND | GLOB_NOCHECK | (offsets ? GLOB_DOOFFS : 0));
+    if (result.gl_pathc != 4 || result.gl_pathv[offsets] != first_address ||
+        strcmp(result.gl_pathv[offsets], first)) abort();
+    for (i = 0; i < offsets; ++i)
+        if (result.gl_pathv[i]) abort();
+    globfree(&result);
+    if (result.gl_pathc || result.gl_pathv) abort();
+    printf("%s freed offs=%zu\n", label, result.gl_offs);
+}
+
+static void byte_names(void)
+{
+    glob_t result = {0};
+    observe("byte-names", &result, "/fixture/dir/?name", 0);
+    globfree(&result);
+    result.gl_offs = 3;
+    observe("byte-append", &result, "/fixture/dir/[az]*", GLOB_DOOFFS);
+    observe("byte-append", &result, "/fixture/dir/?name",
+        GLOB_DOOFFS | GLOB_APPEND | GLOB_NOSORT);
+    globfree(&result);
+}
+
 static unsigned next_random(unsigned *state)
 {
     unsigned value = *state;
@@ -75,11 +120,15 @@ static void generated_sequences(void)
         "/fixture/dangling", "/fixture/loop/*", "/fixture/file/child",
         "/fixture/missing*", "/fixture/dir/../*", "/fixture/*-dir",
         "/fixture/[dl]*", "/fixture/blocked/*", "",
+        "/fixture/dir/.*", "/fixture/dir/?name",
+        "/fixture/escaped\\*", "/fixture/dir/[az]*",
     };
     static const int options[] = {
         0, GLOB_MARK, GLOB_NOCHECK, GLOB_NOSORT, GLOB_ERR,
         GLOB_MARK | GLOB_NOCHECK, GLOB_MARK | GLOB_NOSORT,
         GLOB_NOCHECK | GLOB_ERR, GLOB_MARK | GLOB_NOCHECK | GLOB_NOSORT,
+        GLOB_PERIOD, GLOB_NOESCAPE, GLOB_PERIOD | GLOB_MARK,
+        GLOB_NOESCAPE | GLOB_NOCHECK,
     };
     unsigned random = 0x6b67ae85;
     size_t sequence_index, call;
@@ -110,12 +159,15 @@ int main(void)
         "/fixture/missing*", "/fixture/file/child", "/fixture/dir/*",
         "/fixture/*-dir", "/fixture/dir/../*", "/fixture/loop/*",
         "/fixture/blocked/*", "/fixture/blocked/missing",
+        "/fixture/dir/.*", "/fixture/dir/?name",
+        "/fixture/escaped\\*",
     };
     static const int flags[] = {
         0, GLOB_MARK, GLOB_NOCHECK, GLOB_NOSORT, GLOB_DOOFFS,
         GLOB_MARK | GLOB_NOCHECK, GLOB_MARK | GLOB_NOSORT,
         GLOB_MARK | GLOB_NOCHECK | GLOB_NOSORT | GLOB_DOOFFS,
         GLOB_ERR, GLOB_ERR | GLOB_NOCHECK,
+        GLOB_PERIOD, GLOB_NOESCAPE,
     };
     size_t p, f;
     char label[48];
@@ -131,6 +183,10 @@ int main(void)
         snprintf(label, sizeof label, "sequence-%zu", f);
         sequence(label, flags[f]);
     }
+    append_lifetime("append-zero", 0);
+    append_lifetime("append-one", 1);
+    append_lifetime("append-seven", 7);
+    byte_names();
     generated_sequences();
     if (setgid(65534) || setuid(65534)) return 2;
     one("denied-ignore", "/fixture/blocked/*", 0);

@@ -52,6 +52,9 @@ prepare_fixture() {
     mkdir -p "$target/fixture/dir" "$target/fixture/blocked"
     : >"$target/fixture/dir/alpha"
     : >"$target/fixture/dir/zeta"
+    : >"$target/fixture/dir/.hidden"
+    : >"$target/fixture/dir/"$'\200'"name"
+    : >"$target/fixture/escaped*"
     : >"$target/fixture/file"
     : >"$target/fixture/blocked/secret"
     ln -s dir "$target/fixture/link-dir"
@@ -100,4 +103,7 @@ for mode in dynamic-pie dynamic-non-pie; do
         fi
     done
 done
+sha256sum "$probe" "$work/probe.o" "$work/oracle" "$work/static" \
+    "$work/static-pie" "$work/dynamic-pie" "$work/dynamic-non-pie" \
+    "$work"/*.stdout "$work"/*.stderr >"$work/sha256.txt"
 printf 'glob sequence: PASS (pinned musl, static/static PIE, dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"

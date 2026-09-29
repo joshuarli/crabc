@@ -590,6 +590,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-pthread-spin  qualify installed private/shared pthread spin locking
   owned-syslog [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify owned C syslog delivery and state against musl
   owned-pattern  qualify owned C fnmatch/glob/globfree behavior against musl
+  owned-glob-sequence  compare glob append sequences and result ownership with pinned musl
   owned-regex [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  replay the installed TRE regex component against musl
   owned-wcsftime [DYNAMIC_SYSROOT]  compare installed wide calendar formatting with musl
   owned-strfmon [DYNAMIC_SYSROOT]  compare installed monetary formatting with musl
@@ -7344,7 +7345,7 @@ case "$command" in
     owned-system-cancellation) ;;
     owned-rand) ;;
     owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-c-abi-compat|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-native-allocator-fork|owned-native-worker-lifecycle|owned-native-allocator-stress|owned-allocator-override|owned-native-allocator-policy|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-wordexp-expected-inputs|owned-stdio|owned-stdio-file-engine|owned-numeric-calendar|owned-math-fenv-all-entry|owned-calendar-component|owned-text-locale-numeric-component|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition|owned-regex) ;;
-    owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-mount-table|owned-pattern|owned-wcsftime|owned-strfmon|owned-native-allocator-dso) ;;
+    owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-mount-table|owned-pattern|owned-glob-sequence|owned-wcsftime|owned-strfmon|owned-native-allocator-dso) ;;
     owned-process-globals) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
@@ -10012,6 +10013,11 @@ PY
         [ "$#" -eq 0 ] || fail "owned-pattern takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_pattern.sh
+        ;;
+    owned-glob-sequence)
+        [ "$#" -eq 0 ] || fail "owned-glob-sequence takes no arguments"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_glob_sequence.sh
         ;;
     owned-filesystem-mechanisms)
         [ "$#" -eq 0 ] || fail "owned-filesystem-mechanisms takes no arguments"
