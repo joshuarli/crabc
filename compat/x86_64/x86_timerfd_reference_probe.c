@@ -257,6 +257,63 @@ static int check_lifecycle(timerfd_create_fn create, timerfd_settime_fn settime,
     return 0;
 }
 
+static int check_absolute_overrun_shared_descriptor(timerfd_create_fn create,
+                                                     timerfd_settime_fn settime,
+                                                     timerfd_gettime_fn gettime)
+{
+    struct itimerspec past_periodic = {{60, 0}, {1, 0}};
+    struct itimerspec past_one_shot = {{0, 0}, {1, 0}};
+    struct itimerspec current;
+    struct pollfd ready;
+    uint64_t expirations;
+    int timer = create(CLOCK_REALTIME, TFD_NONBLOCK);
+    int alias;
+
+    if (timer < 0)
+        return 1;
+    alias = dup(timer);
+    if (alias < 0)
+        return 2;
+    if (settime(timer, TFD_TIMER_ABSTIME, &past_periodic, NULL) != 0)
+        return 3;
+    if (gettime(alias, &current) != 0 ||
+        current.it_interval.tv_sec != 60 || current.it_interval.tv_nsec != 0 ||
+        !canonical_timespec(&current.it_value))
+        return 4;
+    /* Wait for kernel expiration processing before checking shared reads. */
+    ready.fd = alias;
+    ready.events = POLLIN;
+    ready.revents = 0;
+    if (poll(&ready, 1, 1000) != 1 || (ready.revents & POLLIN) == 0)
+        return 12;
+    errno = 0;
+    if (!expect_error((int)read(alias, &expirations,
+                                sizeof(expirations) - 1), EINVAL))
+        return 5;
+    if (read(timer, &expirations, sizeof(expirations)) !=
+            (ssize_t)sizeof(expirations) || expirations < 2)
+        return 6;
+    errno = 0;
+    if (!expect_error((int)read(alias, &expirations,
+                                sizeof(expirations)), EAGAIN))
+        return 14;
+    if (settime(alias, TFD_TIMER_ABSTIME, &past_one_shot, NULL) != 0)
+        return 7;
+    if (close(timer) != 0)
+        return 8;
+    ready.revents = 0;
+    if (poll(&ready, 1, 1000) != 1 || (ready.revents & POLLIN) == 0)
+        return 13;
+    if (read(alias, &expirations, sizeof(expirations)) !=
+            (ssize_t)sizeof(expirations) || expirations != 1)
+        return 9;
+    errno = 0;
+    if (!expect_error((int)read(alias, &expirations,
+                                sizeof(expirations)), EAGAIN))
+        return 10;
+    return close(alias) == 0 ? 0 : 11;
+}
+
 int main(void)
 {
     int failure;
@@ -290,6 +347,17 @@ int main(void)
     if (failure != 0)
         return 90 + failure;
 
-    puts("layout=size32 align8 offsets=0,16 syscalls=283,286,287 clocks=all-linux flags=known+future-forwarded lifecycle=musl+raw-relative,absolute,cancel-flag,periodic-setting expirations=u64 errors=EINVAL,EAGAIN,EPERM");
+    failure = check_absolute_overrun_shared_descriptor(timerfd_create,
+                                                       timerfd_settime,
+                                                       timerfd_gettime);
+    if (failure != 0)
+        return 100 + failure;
+    failure = check_absolute_overrun_shared_descriptor(raw_timerfd_create,
+                                                       raw_timerfd_settime,
+                                                       raw_timerfd_gettime);
+    if (failure != 0)
+        return 120 + failure;
+
+    puts("layout=size32 align8 offsets=0,16 syscalls=283,286,287 clocks=all-linux flags=known+future-forwarded lifecycle=musl+raw-relative,absolute,cancel-flag,periodic-setting,shared-overrun expirations=u64 errors=EINVAL,EAGAIN,EPERM");
     return 0;
 }

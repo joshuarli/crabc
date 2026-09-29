@@ -230,6 +230,109 @@ static int test_realtime_cancel_on_set_flag(void)
     return 0;
 }
 
+static int test_absolute_overrun_shared_descriptor(void)
+{
+    struct itimerspec past_periodic = {
+        .it_interval = { .tv_sec = 60, .tv_nsec = 0 },
+        .it_value = { .tv_sec = 1, .tv_nsec = 0 },
+    };
+    struct itimerspec past_one_shot = {
+        .it_value = { .tv_sec = 1, .tv_nsec = 0 },
+    };
+    struct itimerspec current = {0};
+    struct pollfd ready;
+    uint64_t expirations = 0;
+    int descriptor = timerfd_create(CLOCK_REALTIME, TFD_NONBLOCK);
+    int alias = -1;
+    int result = 1;
+
+    if (descriptor < 0)
+        return result;
+    alias = dup(descriptor);
+    if (alias < 0) {
+        result = 2;
+        goto cleanup;
+    }
+    errno = 0;
+    if (timerfd_settime(descriptor, TFD_TIMER_ABSTIME,
+            &past_periodic, 0) != 0 || errno != 0) {
+        result = 3;
+        goto cleanup;
+    }
+    if (timerfd_gettime(alias, &current) != 0 ||
+        current.it_interval.tv_sec != 60 || current.it_interval.tv_nsec != 0 ||
+        !timespec_is_canonical_nonnegative(&current.it_value)) {
+        result = 4;
+        goto cleanup;
+    }
+    /* An already elapsed absolute deadline may become readable after the
+     * kernel processes the expiration, rather than inside settime(). */
+    ready.fd = alias;
+    ready.events = POLLIN;
+    ready.revents = 0;
+    if (poll(&ready, 1, 1000) != 1 || (ready.revents & POLLIN) == 0) {
+        result = 14;
+        goto cleanup;
+    }
+    errno = 0;
+    if (read(alias, &expirations, sizeof(expirations) - 1) != -1 ||
+        errno != EINVAL) {
+        result = 5;
+        goto cleanup;
+    }
+    errno = 0;
+    if (read(descriptor, &expirations, sizeof(expirations)) !=
+            (ssize_t)sizeof(expirations)) {
+        result = 6;
+        goto cleanup;
+    }
+    if (expirations < 2) {
+        result = 13;
+        goto cleanup;
+    }
+    errno = 0;
+    if (read(alias, &expirations, sizeof(expirations)) != -1 ||
+        errno != EAGAIN) {
+        result = 16;
+        goto cleanup;
+    }
+    if (timerfd_settime(alias, TFD_TIMER_ABSTIME,
+            &past_one_shot, 0) != 0) {
+        result = 7;
+        goto cleanup;
+    }
+    if (close(descriptor) != 0) {
+        result = 8;
+        descriptor = -1;
+        goto cleanup;
+    }
+    descriptor = -1;
+    ready.revents = 0;
+    if (poll(&ready, 1, 1000) != 1 || (ready.revents & POLLIN) == 0) {
+        result = 15;
+        goto cleanup;
+    }
+    if (read(alias, &expirations, sizeof(expirations)) !=
+            (ssize_t)sizeof(expirations) || expirations != 1) {
+        result = 9;
+        goto cleanup;
+    }
+    errno = 0;
+    if (read(alias, &expirations, sizeof(expirations)) != -1 ||
+        errno != EAGAIN) {
+        result = 10;
+        goto cleanup;
+    }
+    result = 0;
+
+cleanup:
+    if (descriptor >= 0 && close(descriptor) != 0 && result == 0)
+        result = 11;
+    if (alias >= 0 && close(alias) != 0 && result == 0)
+        result = 12;
+    return result;
+}
+
 int crabc_x86_64_timerfd_probe(void)
 {
     int result = test_create_and_control();
@@ -239,6 +342,9 @@ int crabc_x86_64_timerfd_probe(void)
     result = test_realtime_cancel_on_set_flag();
     if (result != 0)
         return 32 + result;
+    result = test_absolute_overrun_shared_descriptor();
+    if (result != 0)
+        return 48 + result;
     return 0;
 }
 
