@@ -120,15 +120,16 @@ assert_ebusy_retry() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff nm objdump readelf rustup; do
+for tool in ar cargo cmp diff nm objdump readelf rustup sha256sum; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-descriptor-io.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-descriptor-io.XXXXXX")"
+chmod g+rx "$work_dir"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-descriptor-io-reference"
 candidate="$work_dir/crabc-static-descriptor-io-candidate"
@@ -152,10 +153,18 @@ for header in errno.h fcntl.h sys/mman.h sys/types.h unistd.h sys/syscall.h bits
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" \
         || fail "fixture did not use the project $header header"
 done
+grep -Fq "$ROOT_DIR/include/sys/uio.h" "$header_trace" \
+    || fail "fixture did not use the project sys/uio.h header"
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_descriptor_io_probe.c -o "$reference"
-"$reference"
+if "$reference" >"$work_dir/musl.stdout" 2>"$work_dir/musl.stderr"; then
+    printf '0\n' >"$work_dir/musl.status"
+else
+    status=$?
+    printf '%s\n' "$status" >"$work_dir/musl.status"
+    fail "pinned-musl descriptor probe failed with status $status; raw evidence: $work_dir"
+fi
 
 # Pin one codegen unit for the instruction-level syscall ABI judge below.
 # Multi-unit dev builds may retain calls to private raw_syscall helpers; the
@@ -167,7 +176,7 @@ build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" "$expected_c_abi_symbols"
-for symbol in __errno_location __lseek __dup3 close read write pread pwrite lseek ftruncate \
+for symbol in __errno_location __lseek __dup3 close read write pread pwrite readv writev preadv pwritev lseek ftruncate \
     fsync fdatasync dup dup2 dup3 pipe pipe2; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
@@ -199,7 +208,7 @@ readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in __errno_location __lseek __dup3 close read write pread pwrite lseek ftruncate \
+for symbol in __errno_location __lseek __dup3 close read write pread pwrite readv writev preadv pwritev lseek ftruncate \
     fsync fdatasync dup dup2 dup3 pipe pipe2; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate does not define ${symbol}"
@@ -266,6 +275,28 @@ done
 assert_ebusy_retry dup2
 assert_ebusy_retry __dup3
 
-"$candidate"
+if "$candidate" >"$work_dir/crabc.stdout" 2>"$work_dir/crabc.stderr"; then
+    printf '0\n' >"$work_dir/crabc.status"
+else
+    status=$?
+    printf '%s\n' "$status" >"$work_dir/crabc.status"
+    fail "crabc descriptor probe failed with status $status; raw evidence: $work_dir"
+fi
+cmp "$work_dir/musl.status" "$work_dir/crabc.status" \
+    || fail "descriptor exit statuses differ; raw evidence: $work_dir"
+cmp "$work_dir/musl.stdout" "$work_dir/crabc.stdout" \
+    || fail "descriptor observation streams differ; raw evidence: $work_dir"
+cmp "$work_dir/musl.stderr" "$work_dir/crabc.stderr" \
+    || fail "descriptor error streams differ; raw evidence: $work_dir"
+cp "$ROOT_DIR/compat/x86_64/libc_descriptor_io_probe.c" "$work_dir/probe.c"
+cp "$ROOT_DIR/compat/x86_64/run_libc_descriptor_io.sh" "$work_dir/runner.sh"
+(
+    cd "$work_dir"
+    sha256sum probe.c runner.sh \
+        musl-descriptor-io-reference crabc-static-descriptor-io-candidate \
+        musl.stdout musl.stderr musl.status crabc.stdout crabc.stderr crabc.status \
+        >hashes.sha256
+)
+chmod -R g+rX "$work_dir"
 
-printf 'x86 static crabc-libc descriptor I/O: PASS\n'
+printf 'x86 static crabc-libc descriptor I/O: PASS (%s)\n' "$work_dir"

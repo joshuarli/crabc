@@ -27,6 +27,7 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 _Static_assert(sizeof(long) == 8 && sizeof(void *) == 8,
@@ -73,6 +74,16 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&pipe),
     int (*)(int *)), "pipe declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&pipe2),
     int (*)(int *, int)), "pipe2 declaration");
+_Static_assert(sizeof(struct iovec) == 16 && _Alignof(struct iovec) == 8,
+    "x86 vector record layout");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&readv),
+    ssize_t (*)(int, const struct iovec *, int)), "readv declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&writev),
+    ssize_t (*)(int, const struct iovec *, int)), "writev declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&preadv),
+    ssize_t (*)(int, const struct iovec *, int, off_t)), "preadv declaration");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&pwritev),
+    ssize_t (*)(int, const struct iovec *, int, off_t)), "pwritev declaration");
 
 static long raw_syscall1(long number, long argument1)
 {
@@ -136,6 +147,187 @@ static int bytes_equal(const char *left, const char *right, size_t length)
             return 0;
     }
     return 1;
+}
+
+/* Record measured values through a fixture-local raw write, so the two libc
+ * implementations cannot substitute a common output function for the calls
+ * under test. Each line is small enough for one regular-file write. */
+static int trace_value(const char *name, long value)
+{
+    char line[96];
+    char digits[24];
+    unsigned long magnitude;
+    size_t length = 0;
+    size_t count = 0;
+    int negative = value < 0;
+
+    while (*name)
+        line[length++] = *name++;
+    line[length++] = '=';
+    magnitude = negative ? 0UL - (unsigned long)value : (unsigned long)value;
+    do {
+        digits[count++] = (char)('0' + magnitude % 10);
+        magnitude /= 10;
+    } while (magnitude);
+    if (negative)
+        line[length++] = '-';
+    while (count)
+        line[length++] = digits[--count];
+    line[length++] = '\n';
+    return raw_syscall3(SYS_write, 1, (long)line, length) == (long)length;
+}
+
+static int trace_bytes(const char *name, const char *bytes, size_t count)
+{
+    static const char hex[] = "0123456789abcdef";
+    char line[96];
+    size_t length = 0;
+    size_t index;
+
+    while (*name)
+        line[length++] = *name++;
+    line[length++] = '=';
+    for (index = 0; index < count; ++index) {
+        unsigned char byte = (unsigned char)bytes[index];
+        line[length++] = hex[byte >> 4];
+        line[length++] = hex[byte & 15];
+    }
+    line[length++] = '\n';
+    return raw_syscall3(SYS_write, 1, (long)line, length) == (long)length;
+}
+
+static int trace_error(const char *name, ssize_t result, int expected_errno)
+{
+    return trace_value(name, result) && trace_value("errno", errno) &&
+        result == -1 && errno == expected_errno;
+}
+
+static int trace_offset(int descriptor, const char *name, off_t expected)
+{
+    off_t observed = lseek(descriptor, 0, SEEK_CUR);
+
+    return trace_value(name, observed) && observed == expected;
+}
+
+/* A single open file description mixes scalar and vector operations. Regular
+ * file EOF makes short reads deterministic; a nonblocking pipe proves the
+ * same transfer boundary without depending on its capacity or scheduling. */
+static int check_scalar_vector_composition(void)
+{
+    char buffer[8] = { 0 };
+    char first[2] = { 0, 0 };
+    char second[6] = { 0, 0, 0, 0, 0, 0 };
+    struct iovec write_parts[2] = { { (void *)"cd", 2 }, { (void *)"ef", 2 } };
+    struct iovec read_parts[2] = { { first, 2 }, { second, 6 } };
+    struct iovec positioned_parts[2] = { { (void *)"Y", 1 }, { (void *)"Z", 1 } };
+    int descriptor = -1;
+    int ends[2] = { -1, -1 };
+    ssize_t result;
+    int status = 0;
+
+    descriptor = raw_memfd_create("crabc-scalar-vector", 0);
+    if (descriptor < 0)
+        return 1;
+    result = write(descriptor, "ab", 2);
+    if (!trace_value("file.write", result) || result != 2 ||
+        !trace_offset(descriptor, "file.offset.after.write", 2)) { status = 2; goto finish; }
+    result = writev(descriptor, write_parts, 2);
+    if (!trace_value("file.writev", result) || result != 4 ||
+        !trace_offset(descriptor, "file.offset.after.writev", 6)) { status = 3; goto finish; }
+    if (lseek(descriptor, 1, SEEK_SET) != 1) { status = 4; goto finish; }
+    result = readv(descriptor, read_parts, 2);
+    if (!trace_value("file.readv.short", result) ||
+        !trace_bytes("file.readv.bytes", first, 2) ||
+        !trace_bytes("file.readv.tail", second, 3) ||
+        result != 5 || !bytes_equal(first, "bc", 2) ||
+        !bytes_equal(second, "def", 3) || second[3] != 0 ||
+        !trace_offset(descriptor, "file.offset.after.readv", 6)) { status = 5; goto finish; }
+    result = pread(descriptor, buffer, 4, 2);
+    if (!trace_value("file.pread", result) ||
+        !trace_bytes("file.pread.bytes", buffer, 4) || result != 4 ||
+        !bytes_equal(buffer, "cdef", 4) ||
+        !trace_offset(descriptor, "file.offset.after.pread", 6)) { status = 6; goto finish; }
+    result = preadv(descriptor, read_parts, 2, 4);
+    if (!trace_value("file.preadv.short", result) ||
+        !trace_bytes("file.preadv.bytes", first, 2) || result != 2 ||
+        !bytes_equal(first, "ef", 2) ||
+        !trace_offset(descriptor, "file.offset.after.preadv", 6)) { status = 7; goto finish; }
+    result = pwrite(descriptor, "X", 1, 1);
+    if (!trace_value("file.pwrite", result) || result != 1 ||
+        !trace_offset(descriptor, "file.offset.after.pwrite", 6)) { status = 8; goto finish; }
+    result = pwritev(descriptor, positioned_parts, 2, 3);
+    if (!trace_value("file.pwritev", result) || result != 2 ||
+        !trace_offset(descriptor, "file.offset.after.pwritev", 6)) { status = 9; goto finish; }
+    if (lseek(descriptor, 0, SEEK_SET) != 0) { status = 10; goto finish; }
+    result = read(descriptor, buffer, sizeof(buffer));
+    if (!trace_value("file.read.short", result) ||
+        !trace_bytes("file.read.bytes", buffer, 6) || result != 6 ||
+        !bytes_equal(buffer, "aXcYZf", 6) ||
+        !trace_offset(descriptor, "file.offset.after.read", 6)) { status = 11; goto finish; }
+    result = writev(descriptor, write_parts, 0);
+    if (!trace_value("file.writev.empty", result) || result != 0 ||
+        !trace_offset(descriptor, "file.offset.after.empty", 6)) { status = 12; goto finish; }
+    result = read(descriptor, buffer, 1);
+    if (!trace_value("file.read.eof", result) || result != 0 ||
+        !trace_offset(descriptor, "file.offset.after.eof", 6)) { status = 24; goto finish; }
+
+    errno = 0;
+    result = read(-1, buffer, 1);
+    if (!trace_error("error.read.badfd", result, EBADF)) { status = 13; goto finish; }
+    errno = 0;
+    result = write(-1, "X", 1);
+    if (!trace_error("error.write.badfd", result, EBADF)) { status = 25; goto finish; }
+    errno = 0;
+    result = readv(-1, read_parts, 2);
+    if (!trace_error("error.readv.badfd", result, EBADF)) { status = 26; goto finish; }
+    errno = 0;
+    result = writev(-1, write_parts, 2);
+    if (!trace_error("error.writev.badfd", result, EBADF)) { status = 14; goto finish; }
+    errno = 0;
+    result = writev(descriptor, write_parts, -1);
+    if (!trace_error("error.writev.count", result, EINVAL)) { status = 27; goto finish; }
+    errno = 0;
+    result = pread(descriptor, buffer, 1, -1);
+    if (!trace_error("error.pread.offset", result, EINVAL)) { status = 15; goto finish; }
+    errno = 0;
+    result = pwrite(-1, "X", 1, 0);
+    if (!trace_error("error.pwrite.badfd", result, EBADF)) { status = 28; goto finish; }
+    errno = 0;
+    result = preadv(-1, read_parts, 2, 0);
+    if (!trace_error("error.preadv.badfd", result, EBADF)) { status = 29; goto finish; }
+    errno = 0;
+    result = preadv(descriptor, read_parts, -1, 0);
+    if (!trace_error("error.preadv.count", result, EINVAL)) { status = 16; goto finish; }
+    errno = 0;
+    result = pwritev(descriptor, positioned_parts, 2, -1);
+    if (!trace_error("error.pwritev.offset", result, EINVAL) ||
+        !trace_offset(descriptor, "file.offset.after.errors", 6)) { status = 17; goto finish; }
+
+    if (pipe2(ends, O_NONBLOCK) != 0) { status = 18; goto finish; }
+    result = write(ends[1], "123", 3);
+    if (!trace_value("pipe.write", result) || result != 3) { status = 19; goto finish; }
+    result = readv(ends[0], read_parts, 2);
+    if (!trace_value("pipe.readv.short", result) ||
+        !trace_bytes("pipe.readv.bytes", first, 2) ||
+        !trace_bytes("pipe.readv.tail", second, 1) ||
+        result != 3 || !bytes_equal(first, "12", 2) || second[0] != '3') {
+        status = 20; goto finish;
+    }
+    errno = 0;
+    result = read(ends[0], buffer, 1);
+    if (!trace_error("pipe.read.empty", result, EAGAIN)) { status = 21; goto finish; }
+    result = writev(ends[1], positioned_parts, 2);
+    if (!trace_value("pipe.writev", result) || result != 2) { status = 22; goto finish; }
+    result = read(ends[0], buffer, sizeof(buffer));
+    if (!trace_value("pipe.read.short", result) ||
+        !trace_bytes("pipe.read.bytes", buffer, 2) || result != 2 ||
+        !bytes_equal(buffer, "YZ", 2)) status = 23;
+
+finish:
+    raw_close(ends[0]);
+    raw_close(ends[1]);
+    raw_close(descriptor);
+    return status;
 }
 
 static int check_transfer_position_truncate_and_sync(void)
@@ -504,6 +696,9 @@ int crabc_x86_64_descriptor_io_probe(void)
     status = check_pipe_and_pipe2();
     if (status != 0)
         return 90 + status;
+    status = check_scalar_vector_composition();
+    if (status != 0)
+        return 110 + status;
     return 0;
 }
 
