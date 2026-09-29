@@ -7,12 +7,14 @@
 # archive. It proves only all-zero/NULL-attribute process-private cond init,
 # destroy, wait, signal, and broadcast paired with the selected normal mutex:
 # one deterministic signal, two-waiter broadcast, eight reused two-waiter
-# signal/broadcast rounds, four 64-handoff ping-pong rounds, no-waiter signal,
-# stale errno preservation, and quiescent destroy.
-# It is not condition attributes, process-shared/timed/C11/cancellation
-# behavior, allocator/dynamic-TLS integration, general pthread completion,
+# signal/broadcast rounds, middle-waiter cancellation and survivor/replacement
+# wakes, four 64-handoff ping-pong rounds, no-waiter signal, stale errno
+# preservation, and quiescent destroy.
+# It is not condition attributes, process-shared/timed/C11 behavior,
+# allocator/dynamic-TLS integration, general pthread completion,
 # CRT, loader, sysroot, or public x86 support.
 set -euo pipefail
+ulimit -c 0
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -136,6 +138,7 @@ printf '%s\n' \
     'cond-two-waiter-broadcast: pass' \
     'cond-no-waiter-signal: pass' \
     'cond-reused-signal-broadcast-8: pass' \
+    'cond-canceled-middle-survivors-and-reuse: pass' \
     'cond-ping-pong-4x64: pass' >"$expected_stdout"
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
@@ -183,7 +186,8 @@ readelf --symbols --wide "$archive" >"$archive_elf_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
-    pthread_create pthread_exit pthread_join pthread_mutex_init \
+    pthread_create pthread_exit pthread_join pthread_cancel \
+    _pthread_cleanup_push _pthread_cleanup_pop pthread_mutex_init \
     pthread_mutex_destroy pthread_mutex_lock pthread_mutex_trylock \
     pthread_mutex_unlock pthread_cond_init pthread_cond_destroy \
     pthread_cond_wait pthread_cond_signal pthread_cond_broadcast; do
@@ -222,7 +226,8 @@ readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap \
-    pthread_create pthread_exit pthread_join pthread_mutex_init \
+    pthread_create pthread_exit pthread_join pthread_cancel \
+    _pthread_cleanup_push _pthread_cleanup_pop pthread_mutex_init \
     pthread_mutex_destroy pthread_mutex_lock pthread_mutex_trylock \
     pthread_mutex_unlock pthread_cond_init pthread_cond_destroy \
     pthread_cond_wait pthread_cond_signal pthread_cond_broadcast \

@@ -5,8 +5,8 @@
  * crabc archive. It specifies one deliberately bounded process-private
  * condition-variable block paired with the selected normal mutex: all-zero
  * static or NULL-attribute initialization, wait, signal, broadcast, reused
- * two-waiter handoff, and quiescent destruction. It is not a claim for
- * condition attributes, process-shared or timed waits, cancellation, C11
+ * two-waiter handoff, cancellation removal amid live waiters, and quiescent
+ * destruction. It is not a claim for condition attributes, process-shared or timed waits, C11
  * conditions, allocator integration, dynamic TLS, a general pthread runtime,
  * CRT, loader, or public x86 support.
  */
@@ -451,6 +451,157 @@ static int run_reuse_round(void)
     return status;
 }
 
+struct canceled_middle_round {
+    pthread_cond_t condition;
+    pthread_mutex_t mutex;
+    volatile int entered;
+    volatile int completed;
+    volatile int cleanup_count;
+    volatile int cleanup_mutex_held;
+    int permits;
+};
+
+struct canceled_middle_waiter {
+    struct canceled_middle_round *round;
+    int status;
+    int final_errno;
+    uintptr_t marker;
+};
+
+/* A canceled condition waiter runs cleanup after its condition wait has
+ * reacquired the mutex. Leave the mutex unlocked so surviving waiters can
+ * consume their later permits on this same condition object. */
+static void canceled_middle_cleanup(void *opaque)
+{
+    struct canceled_middle_round *round = opaque;
+    int held = pthread_mutex_trylock(&round->mutex) == EBUSY;
+
+    __atomic_store_n(&round->cleanup_mutex_held, held, __ATOMIC_RELEASE);
+    __atomic_fetch_add(&round->cleanup_count, 1, __ATOMIC_RELEASE);
+    (void)pthread_mutex_unlock(&round->mutex);
+}
+
+static void *canceled_middle_waiter_main(void *opaque)
+{
+    struct canceled_middle_waiter *waiter = opaque;
+    struct canceled_middle_round *round = waiter->round;
+
+    errno = EACCES;
+    waiter->status = pthread_mutex_lock(&round->mutex);
+    if (waiter->status != 0)
+        return 0;
+    pthread_cleanup_push(canceled_middle_cleanup, round);
+    __atomic_fetch_add(&round->entered, 1, __ATOMIC_RELEASE);
+    while (round->permits == 0) {
+        waiter->status = pthread_cond_wait(&round->condition, &round->mutex);
+        if (waiter->status != 0)
+            break;
+    }
+    if (waiter->status == 0) {
+        --round->permits;
+        __atomic_fetch_add(&round->completed, 1, __ATOMIC_RELEASE);
+    }
+    pthread_cleanup_pop(0);
+    if (pthread_mutex_unlock(&round->mutex) != 0 && waiter->status == 0)
+        waiter->status = 1;
+    waiter->final_errno = errno;
+    return (void *)waiter->marker;
+}
+
+/* Cancel the middle of three enrolled waiters. Signal and broadcast must
+ * hand two subsequent permits only to the survivors. A fourth worker then
+ * reuses the same condition and mutex after the canceled node has retired. */
+static int run_canceled_middle_round(void)
+{
+    struct canceled_middle_round round = { 0 };
+    struct canceled_middle_waiter waiters[4] = {
+        { .round = &round, .marker = (uintptr_t)0x1020304050607080ULL },
+        { .round = &round, .marker = (uintptr_t)0x2030405060708090ULL },
+        { .round = &round, .marker = (uintptr_t)0x30405060708090a0ULL },
+        { .round = &round, .marker = (uintptr_t)0x405060708090a0b0ULL },
+    };
+    pthread_t threads[4];
+    void *results[4] = { 0, 0, 0, 0 };
+    int index;
+    int status = 0;
+
+    errno = E2BIG;
+    if (pthread_mutex_init(&round.mutex, 0) != 0)
+        return 1;
+    if (pthread_cond_init(&round.condition, 0) != 0)
+        return 2;
+    for (index = 0; index != 3; ++index) {
+        if (pthread_create(&threads[index], 0, canceled_middle_waiter_main,
+                &waiters[index]) != 0)
+            return 3;
+        while (__atomic_load_n(&round.entered, __ATOMIC_ACQUIRE) != index + 1)
+            ;
+        /* The worker released the mutex only after enrolling its waiter. */
+        if (pthread_mutex_lock(&round.mutex) != 0 ||
+            pthread_mutex_unlock(&round.mutex) != 0)
+            return 4;
+    }
+    if (pthread_cancel(threads[1]) != 0 ||
+        pthread_join(threads[1], &results[1]) != 0)
+        return 5;
+    if (results[1] != PTHREAD_CANCELED ||
+        __atomic_load_n(&round.cleanup_count, __ATOMIC_ACQUIRE) != 1 ||
+        __atomic_load_n(&round.cleanup_mutex_held, __ATOMIC_ACQUIRE) != 1)
+        return 6;
+
+    if (pthread_mutex_lock(&round.mutex) != 0)
+        return 7;
+    round.permits = 1;
+    if (pthread_cond_signal(&round.condition) != 0 ||
+        pthread_mutex_unlock(&round.mutex) != 0)
+        return 8;
+    while (__atomic_load_n(&round.completed, __ATOMIC_ACQUIRE) != 1)
+        ;
+    if (pthread_mutex_lock(&round.mutex) != 0)
+        return 9;
+    if (round.permits != 0)
+        return 10;
+    round.permits = 1;
+    if (pthread_cond_broadcast(&round.condition) != 0 ||
+        pthread_mutex_unlock(&round.mutex) != 0)
+        return 11;
+    for (index = 0; index < 3; index += 2) {
+        if (pthread_join(threads[index], &results[index]) != 0)
+            return 12;
+        if (results[index] != (void *)waiters[index].marker ||
+            waiters[index].status != 0 || waiters[index].final_errno != EACCES)
+            status = 13;
+    }
+    if (status != 0 || __atomic_load_n(&round.completed, __ATOMIC_ACQUIRE) != 2 ||
+        round.permits != 0)
+        return 14;
+
+    if (pthread_create(&threads[3], 0, canceled_middle_waiter_main,
+            &waiters[3]) != 0)
+        return 15;
+    while (__atomic_load_n(&round.entered, __ATOMIC_ACQUIRE) != 4)
+        ;
+    if (pthread_mutex_lock(&round.mutex) != 0)
+        return 16;
+    if (round.permits != 0 ||
+        __atomic_load_n(&round.completed, __ATOMIC_ACQUIRE) != 2)
+        return 17;
+    round.permits = 1;
+    if (pthread_cond_signal(&round.condition) != 0 ||
+        pthread_mutex_unlock(&round.mutex) != 0)
+        return 18;
+    if (pthread_join(threads[3], &results[3]) != 0 ||
+        results[3] != (void *)waiters[3].marker ||
+        waiters[3].status != 0 || waiters[3].final_errno != EACCES ||
+        __atomic_load_n(&round.completed, __ATOMIC_ACQUIRE) != 3 ||
+        __atomic_load_n(&round.cleanup_count, __ATOMIC_ACQUIRE) != 1)
+        return 19;
+    if (pthread_cond_destroy(&round.condition) != 0 ||
+        pthread_mutex_destroy(&round.mutex) != 0 || errno != E2BIG)
+        return 20;
+    return 0;
+}
+
 /* This is deliberately candidate-only boundary evidence, not a pinned-musl
  * comparison: musl accepts a valid condition attribute while this selected
  * static x86 slice rejects every non-NULL attribute without reading it. */
@@ -670,6 +821,11 @@ int crabc_x86_64_pthread_cond_private_probe(void)
         return 208 + status;
     if (REPORT_PHASE("cond-reused-signal-broadcast-8: pass\n") != 0)
         return 234;
+    status = run_canceled_middle_round();
+    if (status != 0)
+        return 160 + status;
+    if (REPORT_PHASE("cond-canceled-middle-survivors-and-reuse: pass\n") != 0)
+        return 236;
 #if defined(CRABC_PTHREAD_COND_PRIVATE_FREESTANDING)
     status = run_candidate_only_attribute_rejection();
     if (status != 0)
