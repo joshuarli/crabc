@@ -14,6 +14,190 @@ import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import installed_crt_startup_evidence as reader
 
+@unittest.skipUnless(Path('/opt/musl-1.2.6/lib/libc.so').is_file(),
+                     'physical CRT regression requires the pinned native environment')
+class OwnedCrtFramePhysicalTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        parent=reader.ROOT/'.work/x86_64/crt-startup-development';parent.mkdir(parents=True,exist_ok=True)
+        cls.scratch=tempfile.TemporaryDirectory(dir=parent)
+        cls.work=Path(cls.scratch.name)
+        sys.path.insert(0,str(reader.ROOT))
+        from scripts import build_x86_64_owned_sysroot as producer
+        sysroot=producer.pinned_rustc_sysroot(producer.pinned_rustup())
+        objdump=sysroot/'lib/rustlib'/producer.TARGET/'bin/llvm-objdump'
+        subprocess.run([sys.executable,'-B',str(reader.ROOT/'crt/build_x86_64.py'),
+                        '--out-dir',str(cls.work/'crt'),'--llvm-objdump',str(objdump)],
+                       check=True,capture_output=True)
+        source=cls.work/'application.S'
+        source.write_text(r''' .text
+.global _start
+.type _start,@function
+_start:
+    mov %rsp,%r12
+    call _init
+    cmp %rsp,%r12
+    jne bad
+    call _fini
+    cmp %rsp,%r12
+    jne bad
+    cmp $3,%ebx
+    jne bad
+    xor %edi,%edi
+    jmp done
+bad: mov $1,%edi
+done: mov $60,%eax
+    syscall
+.size _start,.-_start
+.section .text.legacy_init,"ax",@progbits
+.global legacy_init
+.hidden legacy_init
+.type legacy_init,@function
+legacy_init: mov $1,%ebx
+    ret
+.size legacy_init,.-legacy_init
+.section .text.legacy_fini,"ax",@progbits
+.global legacy_fini
+.hidden legacy_fini
+.type legacy_fini,@function
+legacy_fini: or $2,%ebx
+    ret
+.size legacy_fini,.-legacy_fini
+.section .init,"ax",@progbits
+    call legacy_init
+.section .fini,"ax",@progbits
+    call legacy_fini
+.section .note.GNU-stack,"",@progbits
+''')
+        subprocess.run(['gcc','-c',str(source),'-o',str(cls.work/'application.o')],check=True,capture_output=True)
+        for mode in ('static','static-pie'):
+            command=[str(sysroot/'lib/rustlib'/producer.TARGET/'bin/gcc-ld/ld.lld'),
+                     '-static',*(['-pie'] if mode=='static-pie' else []),
+                     '--no-dynamic-linker','--no-undefined','--gc-sections','-e','_start',
+                     '-Map='+str(cls.work/(mode+'.map')),str(cls.work/'crt/crti.o'),
+                     str(cls.work/'application.o'),str(cls.work/'crt/crtn.o'),
+                     '-o',str(cls.work/mode)]
+            subprocess.run(command,check=True,capture_output=True)
+            subprocess.run([str(cls.work/mode)],check=True,capture_output=True)
+
+        empty=cls.work/'empty.S'
+        empty.write_text(r''' .text
+.global _start
+.type _start,@function
+_start:
+    mov %rsp,%r12
+    call _init
+    cmp %rsp,%r12
+    jne bad
+    call _fini
+    cmp %rsp,%r12
+    jne bad
+    xor %edi,%edi
+    jmp done
+bad: mov $1,%edi
+ done: mov $60,%eax
+    syscall
+.size _start,.-_start
+.section .note.GNU-stack,"",@progbits
+''')
+        weak=cls.work/'fallback.S'
+        weak.write_text(r''' .section .text._init,"ax",@progbits
+.weak _init
+.type _init,@function
+_init: ret
+.size _init,.-_init
+.section .text._fini,"ax",@progbits
+.weak _fini
+.type _fini,@function
+_fini: ret
+.size _fini,.-_fini
+.section .note.GNU-stack,"",@progbits
+''')
+        for name in ('empty','fallback'):
+            subprocess.run(['gcc','-c',str(cls.work/(name+'.S')),'-o',str(cls.work/(name+'.o'))],
+                           check=True,capture_output=True)
+        subprocess.run(['ar','rcs',str(cls.work/'fallback.a'),str(cls.work/'fallback.o')],check=True,capture_output=True)
+        for mode in ('static','static-pie'):
+            for variant in ('empty','fallback'):
+                name=variant+'-'+mode
+                inputs=([str(cls.work/'crt/crti.o'),str(cls.work/'empty.o'),str(cls.work/'fallback.a'),
+                         str(cls.work/'crt/crtn.o')] if variant=='empty' else
+                        [str(cls.work/'empty.o'),str(cls.work/'fallback.a')])
+                command=[str(sysroot/'lib/rustlib'/producer.TARGET/'bin/gcc-ld/ld.lld'),
+                         '-static',*(['-pie'] if mode=='static-pie' else []),
+                         '--no-dynamic-linker','--no-undefined','--gc-sections','-e','_start',
+                         '-Map='+str(cls.work/(name+'.map')),*inputs,'-o',str(cls.work/name)]
+                subprocess.run(command,check=True,capture_output=True)
+                subprocess.run([str(cls.work/name)],check=True,capture_output=True)
+
+    @classmethod
+    def tearDownClass(cls):cls.scratch.cleanup()
+
+    def account(self,mode='static'):
+        return reader.owned_crt_frame_providers(
+            reader.ROOT,self.work/'crt/crti.o',self.work/'crt/crtn.o',
+            self.work/mode,self.work/(mode+'.map'),
+            application_objects=(self.work/'application.o',),source_mount=str(reader.ROOT))
+
+    def test_physical_owned_frames_bind_zero_size_symbols_to_ordered_complete_functions(self):
+        for mode in ('static','static-pie'):
+            with self.subTest(mode=mode):
+                account=self.account(mode)
+                self.assertEqual(set(account),{'_init','_fini'})
+                for name,row in account.items():
+                    self.assertEqual(row['source_symbol']['size'],0)
+                    self.assertEqual(row['final_symbol']['size'],0)
+                    self.assertEqual(row['function_extent']['size'],11)
+                    self.assertEqual([x['role'] for x in row['contributions']],['prologue','application','epilogue'])
+                    self.assertEqual(row['application_relocations'][0]['target'],
+                                     'legacy_init' if name=='_init' else 'legacy_fini')
+
+    def test_physical_empty_frames_and_archive_fallback_keep_distinct_origins(self):
+        for mode in ('static','static-pie'):
+            name='empty-'+mode
+            frames=reader.owned_crt_frame_providers(
+                reader.ROOT,self.work/'crt/crti.o',self.work/'crt/crtn.o',
+                self.work/name,self.work/(name+'.map'),
+                application_objects=(self.work/'empty.o',),source_mount=str(reader.ROOT))
+            for symbol,row in frames.items():
+                self.assertEqual(row['function_extent']['size'],6)
+                self.assertEqual([item['role'] for item in row['contributions']],['prologue','epilogue'])
+                self.assertEqual(row['application_relocations'],[])
+                fallback=reader.Elf(self.work/('fallback-'+mode)).symbol(symbol,dynamic=False)
+                source=reader.Elf(self.work/'fallback.o').symbol(symbol,dynamic=False)
+                for item in (source,fallback):
+                    self.assertEqual((item['type'],item['binding'],item['size']),('FUNC','WEAK',1))
+                elf=reader.Elf(self.work/('fallback-'+mode));section=elf.sections[fallback['section']]
+                offset=section[4]+fallback['value']-section[3]
+                self.assertEqual(elf.data[offset:offset+1],b'\xc3')
+
+    def test_physical_owned_frames_reject_changed_bytes_order_and_extra_contributors(self):
+        self.account()
+        binary=self.work/'static';original=binary.read_bytes()
+        elf=reader.Elf(binary);symbol=elf.symbol('_init',dynamic=False)
+        section=elf.sections[symbol['section']]
+        changed=bytearray(original);changed[section[4]]=0x90
+        binary.write_bytes(changed)
+        try:
+            with self.assertRaises(reader.StartupEvidenceError):self.account()
+        finally:binary.write_bytes(original)
+        map_path=self.work/'static.map';mapping=map_path.read_text()
+        for replacement in (mapping.replace('crti.o:(.init)','crtn.o:(.init)'),
+                            mapping.replace('application.o:(.init)','unselected.o:(.init)'),
+                            '\n'.join(line for line in mapping.splitlines() if 'crtn.o:(.init)' not in line),
+                            mapping.replace('crti.o:(.init)','application.o:(.init)')):
+            map_path.write_text(replacement)
+            try:
+                with self.assertRaises(reader.StartupEvidenceError):self.account()
+            finally:map_path.write_text(mapping)
+        prologue=self.work/'crt/crti.o';before=prologue.read_bytes()
+        opening=reader.Elf(prologue);symbol=opening.symbol('_fini',dynamic=False)
+        changed=bytearray(before);changed[opening.sections[symbol['section']][4]]=0x90
+        prologue.write_bytes(changed)
+        try:
+            with self.assertRaises(reader.StartupEvidenceError):self.account()
+        finally:prologue.write_bytes(before)
+
 class InstalledCrtStartupTests(unittest.TestCase):
     _FROZEN_0E_REPORT = (
         Path(__file__).resolve().parents[4] / 'native_abi_protocol_integration/.work/x86_64/'
@@ -784,6 +968,10 @@ int main(void) {
         facts['candidate-loader']=member([])
         facts['dynamic-crabc-dynamic-attach.o']=member([row(reader.ATTACH,'FUNC',section='1'),row(reader.RECORD,'FUNC',visibility='HIDDEN',section='1'),
                                                         row(reader.HANDOFF,'OBJECT','WEAK')])
+        for key in ('static-crti.o','dynamic-crti.o'):
+            facts[key]=member([row(name,'FUNC',section='1') for name in ('_init','_fini')])
+        for key in ('static-crtn.o','dynamic-crtn.o'):
+            facts[key]=member([])
         return facts
 
     def test_actual_shaped_product_tables_cannot_collapse_import_origins(self):

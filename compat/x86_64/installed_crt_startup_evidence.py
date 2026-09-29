@@ -92,7 +92,8 @@ def expected_contract():
             'record_sizes':{'owned_handoff':32,'conventional_snapshot':88},
             'roles':{'linker_boundaries':['_GLOBAL_OFFSET_TABLE_',*ARRAYS],
                      'private_static_bootstrap':BOOTSTRAP,'main_attachment':[ATTACH,RECORD],
-                     'private_loader_handoffs':[HANDOFF,CONVENTIONAL]},
+                     'private_loader_handoffs':[HANDOFF,CONVENTIONAL],
+                     'application_frames':['_init','_fini']},
             # The descriptor is a private loader-to-main-image weak-GOT wire.
             # It is deliberately separate from the twelve CRT identity rows:
             # those rows prove CRT callers, while this account proves the
@@ -374,6 +375,7 @@ def validate_streams(streams):
     require(same(streams,expected),'startup runtime roster, wire owner or transcript differs')
 
 RUNTIME_SOURCES=('crt/src/x86_64_startup.rs','crt/src/x86_64_dynamic_startup.rs','crt/src/x86_64_array_boundaries.rs',
+    'crt/src/x86_64_crti.rs','crt/src/x86_64_crtn.rs',
     'crt/src/x86_64_crt1.rs','crt/src/x86_64_rcrt1.rs','crt/src/x86_64_Scrt1.rs','crt/build_x86_64.py',
     'scripts/build_x86_64_owned_dynamic_sysroot.py','ldso/Cargo.toml','ldso/build.rs',
     'libc/src/c_abi/x86_64/static_tls.rs','libc/src/c_abi/x86_64/static_startup.rs',
@@ -410,8 +412,8 @@ def product_paths(root,inputs):
     static=root/inputs['static_preparation']['primary']['path'];dynamic=root/inputs['dynamic_product']['path']
     return {'candidate-static':static/'usr/lib/libc.a','candidate-shared':dynamic/'usr/lib/libc.so',
             'candidate-loader':dynamic/'lib/ld-crabc-x86_64.so.1',
-            **{'static-'+n:static/'usr/lib'/n for n in ('crt1.o','Scrt1.o','rcrt1.o')},
-            **{'dynamic-'+n:dynamic/'usr/lib'/n for n in ('crt1.o','Scrt1.o','crabc-dynamic-attach.o')}}
+            **{'static-'+n:static/'usr/lib'/n for n in ('crt1.o','Scrt1.o','rcrt1.o','crti.o','crtn.o')},
+            **{'dynamic-'+n:dynamic/'usr/lib'/n for n in ('crt1.o','Scrt1.o','crabc-dynamic-attach.o','crti.o','crtn.o')}}
 
 
 def descriptor_runtime_inputs(root,inputs):
@@ -447,9 +449,13 @@ def admit(root,preparation,static,dynamic,historical):
     history=read(historical)
     artifacts={}
     for key,path in product_paths(root,value).items():
-        expected=history['artifacts'][key]['identity'];current=ident(root,path)
-        require(type(expected['size']) is int and expected['size']==current['size'] and expected['sha256']==current['sha256'],
-                'historical startup product identity differs: '+key)
+        current=ident(root,path)
+        # Frame fragments are authenticated by the admitted product tree; the
+        # historical ELF roster covers only the earlier entry-object inputs.
+        if key not in ('static-crti.o','static-crtn.o','dynamic-crti.o','dynamic-crtn.o'):
+            expected=history['artifacts'][key]['identity']
+            require(type(expected['size']) is int and expected['size']==current['size'] and expected['sha256']==current['sha256'],
+                    'historical startup product identity differs: '+key)
         artifacts[key]=current
     return {**value,'startup_artifacts':artifacts}
 
@@ -628,6 +634,12 @@ def account_products(facts):
                     for x in rows(facts,key,'.dynsym')),'unexpected public startup identity: '+key)
     # Retain local, weak and absent named providers without fabricating imports
     # for source-resolved private loader records or optimized attachments.
+    for key in ('static-crti.o','dynamic-crti.o'):
+        result[key]={}
+        for name in ('_init','_fini'):
+            item=exact(facts,key,name);require_function(item['row'],item['section'],'DEFAULT')
+            require(item['row']['size_bytes']==0,'CRT frame opening symbol must retain its zero size')
+            result[key][name]=item
     result['all_named_rows']={key:[x for table in ('.symtab','.dynsym') for x in rows(facts,key,table) if x['row']['name'] in NAMES] for key in product_paths(ROOT,{'static_preparation':{'primary':{'path':'.work/s'}},'dynamic_product':{'path':'.work/d'}})}
     return result
 
@@ -1073,6 +1085,137 @@ def descriptor_admission_observations(root,work,inputs,tools):
 def needed_libraries(path):
     return dynamic_names(path)[1]
 
+def owned_crt_frame_providers(root,prologue,epilogue,executable,map_path,
+                              application_objects=(),source_mount='/workspace'):
+    """Reconstruct the selected application initialization and finalization frames.
+
+    The opening symbol has zero size because the linker concatenates sections
+    from separate objects. Its bounded function extent comes from the complete
+    ordered contribution roster, exact frame instructions, and resolved direct
+    application calls. No zero-size symbol acquires a generic function waiver.
+    Callers authenticate the driver receipt and traced inputs before using this
+    physical relation as an installed-product provider selection.
+    """
+    root=Path(root);prologue=Path(prologue);epilogue=Path(epilogue)
+    executable=Path(executable);map_path=Path(map_path)
+    paths=(prologue,*map(Path,application_objects),epilogue)
+    require(len(set(paths))==len(paths),'CRT frame input roster duplicates an object')
+    def mounted(path):
+        return str(Path(source_mount)/path.relative_to(root))
+    images={mounted(path):Elf(static_authority.physical(path)) for path in paths}
+    final=Elf(static_authority.physical(executable))
+    require(final.elf_type in (2,3),'CRT frame requires an executable ELF')
+    require(all(image.elf_type==1 for image in images.values()),'CRT frame inputs must be relocatable')
+    contributions={};mapped_symbols={};output=None;owner=None;section_name=None
+    lines=static_authority.physical(map_path).read_text().splitlines()
+    require(lines and lines[0].split()==['VMA','LMA','Size','Align','Out','In','Symbol'],
+            'CRT frame map header differs')
+    for line in lines[1:]:
+        match=re.fullmatch(r'\s*([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+(\d+)\s+(.*)',line)
+        require(match is not None,'malformed CRT frame map row')
+        address,load,size,alignment,name=match.groups()
+        address,load,size=int(address,16),int(load,16),int(size,16)
+        if ':(' in name and name.endswith(')'):
+            owner,section_name=name.rsplit(':(',1);section_name=section_name[:-1]
+            if output in ('.init','.fini') or section_name in ('.init','.fini'):
+                require(output==section_name and owner in images and address==load,
+                        'CRT frame map admits an unselected contribution')
+                contributions.setdefault(output,[]).append((owner,address,size))
+        elif name.startswith('.'):
+            output=name;owner=None;section_name=None
+        elif owner in images and section_name is not None:
+            mapped_symbols.setdefault(name,[]).append((owner,section_name,address,size))
+    def section(image,name):
+        selected=[(index,row) for index,row in enumerate(image.sections)
+                  if static_authority.section_name(image,row)==name]
+        require(len(selected)==1,'CRT frame section missing/duplicate: '+name)
+        index,row=selected[0]
+        require(row[1]==1 and row[2]&6==6 and row[4]+row[5]<=len(image.data),
+                'CRT frame section is not bounded executable bytes')
+        return index,row
+    def source_relocations(image,index):
+        result=[]
+        for row in image.sections:
+            if row[7]!=index or row[1] not in (4,9):continue
+            require(row[1]==4 and row[9]==24 and row[5]%24==0,'CRT frame relocation table differs')
+            for number in range(row[5]//24):
+                offset,info,addend=image.unpack('<QQq',row[4]+number*24)
+                result.append((offset,info&0xffffffff,addend,image.symbol_row(row[6],info>>32)))
+        return result
+    result={}
+    for name in ('_init','_fini'):
+        label='.'+name[1:];opening=images[mounted(prologue)];closing=images[mounted(epilogue)]
+        source=opening.symbol(name,dynamic=False);target=final.symbol(name,dynamic=False)
+        open_index,open_section=section(opening,label);close_index,close_section=section(closing,label)
+        expected_shape={'type':'FUNC','binding':'GLOBAL','visibility':'DEFAULT','size':0}
+        require(all({key:row[key] for key in expected_shape}==expected_shape for row in (source,target))
+                and source['section']==open_index and source['value']==0,
+                'CRT frame opening/final symbol contract differs')
+        require(opening.data[open_section[4]:open_section[4]+open_section[5]]==bytes.fromhex('554889e5')
+                and closing.data[close_section[4]:close_section[4]+close_section[5]]==bytes.fromhex('5dc3')
+                and not source_relocations(opening,open_index) and not source_relocations(closing,close_index),
+                'CRT frame opening/closing instructions differ')
+        selected=[]
+        for path in paths:
+            image=images[mounted(path)]
+            matches=[row for row in image.sections if static_authority.section_name(image,row)==label]
+            require(len(matches)<=1,'CRT frame input duplicates a section')
+            if matches and matches[0][5]:selected.append(path)
+        expected_owners=[mounted(path) for path in selected]
+        roster=contributions.get(label,[])
+        require([row[0] for row in roster]==expected_owners
+                and expected_owners[0]==mounted(prologue) and expected_owners[-1]==mounted(epilogue),
+                'CRT frame contribution order/roster differs')
+        final_index,final_section=section(final,label)
+        require(mapped_symbols.get(name)==[(mounted(prologue),label,target['value'],0)]
+                and target['section']==final_index and target['value']==final_section[3],
+                'CRT frame symbol does not start its complete output section')
+        cursor=target['value'];expected=bytearray();proofs=[];relocations=[]
+        for path,(owner,address,size) in zip(selected,roster):
+            image=images[owner];index,row=section(image,label)
+            require(address==cursor and size==row[5],'CRT frame contribution size/placement differs')
+            data=bytearray(image.data[row[4]:row[4]+row[5]])
+            calls=source_relocations(image,index)
+            role='prologue' if path==prologue else 'epilogue' if path==epilogue else 'application'
+            if role=='application':
+                require(len(data)==5*len(calls) and sorted(call[0] for call in calls)==list(range(1,len(data),5)),
+                        'CRT application fragment must contain only bounded direct calls')
+                for offset,kind,addend,symbol in calls:
+                    require(kind==4 and addend==-4 and data[offset-1]==0xe8
+                            and symbol['type']=='FUNC' and 0<symbol['section']<len(image.sections)
+                            and symbol['size']>0,'CRT application call target differs')
+                    source_target=image.sections[symbol['section']]
+                    target_section=static_authority.section_name(image,source_target)
+                    require(symbol['value']+symbol['size']<=source_target[5],
+                            'CRT application target escapes its source section')
+                    resolved=final.symbol(symbol['name'],dynamic=False)
+                    mapped=mapped_symbols.get(symbol['name'],[])
+                    require(mapped==[(owner,target_section,resolved['value'],symbol['size'])]
+                            and resolved['type']=='FUNC' and resolved['size']==symbol['size'],
+                            'CRT application target owner/placement differs')
+                    displacement=resolved['value']+addend-(address+offset)
+                    require(-(1<<31)<=displacement<(1<<31),'CRT application call displacement overflows')
+                    struct.pack_into('<i',data,offset,displacement)
+                    relocations.append({'input':ident(root,path),'offset':offset,'kind':kind,'addend':addend,
+                                        'target':symbol['name'],'target_address':resolved['value']})
+            else:require(not calls,'CRT frame fragment has an unexpected relocation')
+            proofs.append({'role':role,'input':ident(root,path),'section':label,'address':address,'size':size,
+                           'source_sha256':hashlib.sha256(image.data[row[4]:row[4]+row[5]]).hexdigest()})
+            expected.extend(data);cursor+=size
+        require(len(expected)==final_section[5]
+                and final.data[final_section[4]:final_section[4]+final_section[5]]==expected,
+                'CRT complete function bytes differ from selected fragments')
+        require(any(program[0]==1 and program[1]&1 and program[3]<=target['value']
+                    and cursor<=program[3]+program[5]
+                    and program[2]+target['value']-program[3]==final_section[4]
+                    for program in final.programs),'CRT function lacks exact executable file mapping')
+        result[name]={'prologue':ident(root,prologue),'epilogue':ident(root,epilogue),
+                      'executable':ident(root,executable),'map':ident(root,map_path),
+                      'source_symbol':source,'final_symbol':target,
+                      'function_extent':{'address':target['value'],'size':len(expected)},
+                      'contributions':proofs,'application_relocations':relocations}
+    return result
+
 def executable_observations(root,work,inputs,tools,facts):
     result={};linker={k:tools['linker']['original'][k] for k in ('path','sha256')}
     for case in cases():
@@ -1126,6 +1269,10 @@ def executable_observations(root,work,inputs,tools,facts):
             linked=products.validate_retained_link(root,'/workspace',product,work/(variant+'.o'),path,receipt,
                                                   mode if static else mode.removeprefix('owned-'),linker,export_dynamic=False)
             account['link']={'receipt':ident(root,receipt),'validated':{k:v for k,v in linked.items() if k!='product'}}
+            account['application_frames']=owned_crt_frame_providers(
+                root,product/'usr/lib/crti.o',product/'usr/lib/crtn.o',path,
+                work/(name+('.link.map' if static else '.crabc-link.map')),
+                application_objects=(work/(variant+'.o'),))
             if static:
                 trace=receipt.with_suffix('.trace').read_text();member=exact(facts,'candidate-static',BOOTSTRAP)['member']
                 gotmember=exact(facts,'candidate-static','_GLOBAL_OFFSET_TABLE_')['member']

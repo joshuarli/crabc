@@ -16,6 +16,8 @@ private_static_bootstrap = "__crabc_x86_static_tls_bootstrap"
 main_attachment = ["__crabc_x86_loader_tls_runtime_v1_attach", "__crabc_x86_loader_tls_runtime_v1_record"]
 private_loader_handoffs = ["__crabc_x86_64_owned_crt_handoff", "__crabc_x86_64_loader_conventional_startup_v1"]
 
+application_frames = ["_init", "_fini"]
+
 [descriptor_handoff]
 name = "__crabc_x86_64_loader_tls_runtime_v1"
 source_artifact = "dynamic-crabc-dynamic-attach.o"
