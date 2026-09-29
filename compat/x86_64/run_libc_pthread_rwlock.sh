@@ -5,9 +5,10 @@
 # as a true `-nostdlib -static` executable linked solely through the selected
 # crabc archive.  It proves the complete rwlock and rwlockattr family,
 # same-address weak aliases, timed status behavior, private reader/writer
-# contention, and cross-process shared-futex wakeups.  This private static
-# artifact has no general pthread/TLS, C runtime, sysroot, or public x86
-# support contract.
+# contention, ordered last-reader handoff, protected-data publication, exact
+# errno preservation, and cross-process shared-futex wakeups.  This private
+# static artifact has no general pthread/TLS, C runtime, sysroot, or public
+# x86 support contract.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 

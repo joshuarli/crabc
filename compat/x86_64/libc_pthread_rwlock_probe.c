@@ -857,8 +857,10 @@ static int run_queued_writer_reader_probe(void)
 
 struct mixed_contention_round {
     pthread_rwlock_t rwlock;
+    int payload;
     volatile int readers_entered;
     volatile int readers_acquired;
+    volatile int readers_released;
     volatile int release_readers;
     volatile int writer_entered;
     volatile int writer_acquired;
@@ -866,8 +868,12 @@ struct mixed_contention_round {
     int reader_try_results[READER_WORKER_COUNT];
     int reader_lock_results[READER_WORKER_COUNT];
     int reader_unlock_results[READER_WORKER_COUNT];
+    int reader_payloads[READER_WORKER_COUNT];
+    int reader_errno[READER_WORKER_COUNT];
     int writer_lock_result;
     int writer_unlock_result;
+    int writer_previous_payload;
+    int writer_errno;
 };
 
 struct mixed_reader_arg {
@@ -881,15 +887,20 @@ static void *mixed_reader_main(void *opaque)
     struct mixed_contention_round *round = arg->round;
     int index = arg->index;
 
+    errno = EACCES;
     round->reader_try_results[index] = pthread_rwlock_tryrdlock(&round->rwlock);
     __atomic_fetch_add(&round->readers_entered, 1, __ATOMIC_RELEASE);
     round->reader_lock_results[index] = pthread_rwlock_rdlock(&round->rwlock);
     if (round->reader_lock_results[index] == 0) {
+        round->reader_payloads[index] = __atomic_load_n(&round->payload, __ATOMIC_RELAXED);
         __atomic_fetch_add(&round->readers_acquired, 1, __ATOMIC_RELEASE);
-        while (__atomic_load_n(&round->release_readers, __ATOMIC_ACQUIRE) == 0)
+        while ((__atomic_load_n(&round->release_readers, __ATOMIC_ACQUIRE) &
+            (1 << index)) == 0)
             ;
         round->reader_unlock_results[index] = pthread_rwlock_unlock(&round->rwlock);
+        __atomic_fetch_add(&round->readers_released, 1, __ATOMIC_RELEASE);
     }
+    round->reader_errno[index] = errno;
     return (void *)(uintptr_t)(0x72656130 + index);
 }
 
@@ -897,20 +908,25 @@ static void *mixed_writer_main(void *opaque)
 {
     struct mixed_contention_round *round = opaque;
 
+    errno = EACCES;
     __atomic_store_n(&round->writer_entered, 1, __ATOMIC_RELEASE);
     round->writer_lock_result = pthread_rwlock_wrlock(&round->rwlock);
     if (round->writer_lock_result == 0) {
+        round->writer_previous_payload = __atomic_load_n(&round->payload, __ATOMIC_RELAXED);
+        __atomic_store_n(&round->payload, 202, __ATOMIC_RELAXED);
         __atomic_store_n(&round->writer_acquired, 1, __ATOMIC_RELEASE);
         while (__atomic_load_n(&round->release_writer, __ATOMIC_ACQUIRE) == 0)
             ;
         round->writer_unlock_result = pthread_rwlock_unlock(&round->rwlock);
     }
+    round->writer_errno = errno;
     return (void *)(uintptr_t)0x77726974;
 }
 
 /* Both readers first queue behind a writer, then hold concurrently while a
- * second writer queues.  Every phase has an observed state before release, so
- * a scheduler delay cannot masquerade as reader/writer exclusion. */
+ * second writer queues.  The first reader releases while the second still
+ * holds; only the final release can hand ownership to the writer.  The
+ * protected payload checks publication in both handoff directions. */
 static int run_mixed_contention_round(void)
 {
     struct mixed_contention_round round = { 0 };
@@ -922,6 +938,7 @@ static int run_mixed_contention_round(void)
     int writer_created = 0;
     int parent_reader_hold = 0;
     int parent_writer_hold = 0;
+    int published_payload = -1;
     int status = 0;
     int index;
 
@@ -937,6 +954,7 @@ static int run_mixed_contention_round(void)
     if (pthread_rwlock_wrlock(&round.rwlock) != 0)
         return 2;
     parent_writer_hold = 1;
+    __atomic_store_n(&round.payload, 101, __ATOMIC_RELAXED);
     for (index = 0; index != READER_WORKER_COUNT; ++index) {
         args[index].round = &round;
         args[index].index = index;
@@ -976,6 +994,12 @@ static int run_mixed_contention_round(void)
     if (parent_reader_hold && pthread_rwlock_unlock(&round.rwlock) != 0 && status == 0)
         status = 12;
     __atomic_store_n(&round.release_readers, 1, __ATOMIC_RELEASE);
+    if (status == 0 && wait_for_int(&round.readers_released, 1) != 0)
+        status = 22;
+    if (status == 0 && (__atomic_load_n(&round.writer_acquired, __ATOMIC_ACQUIRE) != 0 ||
+        __atomic_load_n(&round.rwlock.__u.__i[0], __ATOMIC_ACQUIRE) == 0))
+        status = 23;
+    __atomic_store_n(&round.release_readers, 3, __ATOMIC_RELEASE);
     for (index = 0; index != readers_created; ++index) {
         if (pthread_join(readers[index], &result) != 0 && status == 0)
             status = 13;
@@ -995,15 +1019,25 @@ static int run_mixed_contention_round(void)
     if (status == 0 && (round.writer_lock_result != 0 ||
         round.writer_unlock_result != 0 ||
         round.reader_lock_results[0] != 0 || round.reader_lock_results[1] != 0 ||
-        round.reader_unlock_results[0] != 0 || round.reader_unlock_results[1] != 0))
+        round.reader_unlock_results[0] != 0 || round.reader_unlock_results[1] != 0 ||
+        round.reader_payloads[0] != 101 || round.reader_payloads[1] != 101 ||
+        round.writer_previous_payload != 101 ||
+        round.reader_errno[0] != EACCES || round.reader_errno[1] != EACCES ||
+        round.writer_errno != EACCES || errno != E2BIG ||
+        __atomic_load_n(&round.readers_released, __ATOMIC_ACQUIRE) != READER_WORKER_COUNT))
         status = 19;
-    if (status == 0 && (pthread_rwlock_trywrlock(&round.rwlock) != 0 ||
+    if (status == 0 && (pthread_rwlock_rdlock(&round.rwlock) != 0 ||
+        (published_payload = __atomic_load_n(&round.payload, __ATOMIC_RELAXED)) != 202 ||
+        pthread_rwlock_unlock(&round.rwlock) != 0 ||
+        pthread_rwlock_trywrlock(&round.rwlock) != 0 ||
         pthread_rwlock_unlock(&round.rwlock) != 0))
         status = 20;
     if (pthread_rwlock_destroy(&round.rwlock) != 0 && status == 0)
         status = 21;
-    if (status == 0)
+    if (status == 0) {
         emit_observation("mixed-readers=", round.readers_acquired);
+        emit_observation("mixed-writer-published=", published_payload);
+    }
     return status;
 }
 
