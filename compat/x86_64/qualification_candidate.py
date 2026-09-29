@@ -16,8 +16,8 @@ each producer still receives a fresh output. Any other revision, a dirty
 tree, or a changed completed output fails closed. `--dry-run` resolves the
 whole plan, names every preflight blocker, and runs nothing.
 
-The order follows `owned-posix-native-execution.md`'s admission sequence and
-the dynamic-product lane's full preflight. Steps run sequentially: the only
+The order follows the installed POSIX admission sequence and the complete
+dynamic-product preflight. Steps run sequentially: the only
 independence the sequence allows (products; the matrix and its companions)
 is not worth the contention it adds to timing-limited leaves.
 """
@@ -44,8 +44,8 @@ DISPATCHER = "./scripts/dev-x86_64.sh"
 MOUNT = "/workspace"
 WORK_PARENT = Path(".work/x86_64")
 PAIRS = {"primary": "installed", "reproduction": "second", "extracted": "extracted"}
-# The text/math/locale/stdio family's per-pair producers and their reports,
-# in the order `owned-text-math-locale-stdio-family.md` names them.
+# Each static/dynamic product pair supplies all text, math, locale, and stdio
+# component reports before their aggregate can be admitted.
 TEXT_PRODUCERS = (
     ("locale", "owned-locale", "owned-locale-products.json"),
     ("numeric", "owned-numeric-calendar", "owned-numeric-calendar-products.json"),
@@ -518,7 +518,9 @@ def _host(root: Path, value: str) -> Path:
 
 def _discover(root: Path, context: Context, step: Step, stdout: str) -> dict[str, str]:
     found: dict[str, str] = {}
-    printed = {_host(root, token.rstrip(".,;:)")) for token in re.findall(r"/workspace/\S+", stdout)}
+    # Receipt readers also print JSON diagnostics. A quoted path ends at its
+    # string delimiter, rather than including the following JSON fields.
+    printed = {_host(root, token.rstrip(".,;:)")) for token in re.findall(r"/workspace/[^\s\"']+", stdout)}
     for output in step.outputs:
         if output.fixed is not None:
             path = root / context.template(output.fixed)

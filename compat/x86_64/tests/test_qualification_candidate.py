@@ -157,6 +157,21 @@ class ExecutionTests(unittest.TestCase):
         self.assertNotIn("error", resumed)
         self.assertEqual(self.calls, [])
 
+    def test_printed_receipt_is_discovered_after_large_json_diagnostics(self) -> None:
+        step = next(step for step in candidate.plan()
+                    if len(step.outputs) == 1 and step.outputs[0].printed is not None
+                    and step.outputs[0].fixed is None and step.outputs[0].glob is None)
+        output = step.outputs[0]
+        receipt = self.root / ".work/x86_64/tmp/leaf" / output.printed
+        receipt.parent.mkdir(parents=True)
+        receipt.write_text("{}\n", encoding="utf-8")
+        printed_path = "/workspace/" + receipt.relative_to(self.root).as_posix()
+        diagnostic = json.dumps({"product": printed_path, "details": "x" * 5000}, separators=(",", ":"))
+        stdout = diagnostic + "\nretained evidence: " + printed_path + "\n"
+        context = candidate.Context(self.root, self.work, self.inputs)
+        self.assertEqual(candidate._discover(self.root, context, step, stdout),
+                         {output.name: receipt.relative_to(self.root).as_posix()})
+
     def test_failure_stops_closed_and_a_restart_resumes_from_the_failed_step(self) -> None:
         self.fail = {"pthread-family"}
         summary = self._execute()
