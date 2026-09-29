@@ -52,6 +52,181 @@ static float float_from_bits(uint32_t bits)
 	return view.value;
 }
 
+/* The same binary stream is written by pinned musl and the static candidate. */
+struct remainder_record {
+	uint64_t x;
+	uint64_t y;
+	uint64_t result;
+	uint32_t case_id;
+	uint32_t requested_mode;
+	uint32_t observed_mode;
+	uint32_t exceptions;
+};
+
+static int write_record(const struct remainder_record *record)
+{
+	const unsigned char *data = (const unsigned char *)record;
+	unsigned long remaining = sizeof(*record);
+
+	while (remaining != 0) {
+		long written;
+		__asm__ volatile("syscall" : "=a"(written) :
+			"a"(1), "D"(1), "S"(data), "d"(remaining) :
+			"rcx", "r11", "memory");
+		if (written <= 0)
+			return 1;
+		data += written;
+		remaining -= (unsigned long)written;
+	}
+	return 0;
+}
+
+static int observe_double(uint32_t id, int mode, int sticky, uint64_t x, uint64_t y)
+{
+	struct remainder_record record = {0};
+	if (feclearexcept(FE_ALL_EXCEPT) != 0 ||
+		(sticky && feraiseexcept(FE_DIVBYZERO) != 0))
+		return 1;
+	record.x = x;
+	record.y = y;
+	record.case_id = id | ((uint32_t)sticky << 31);
+	record.requested_mode = (uint32_t)mode;
+	record.result = double_bits(direct_fmod(double_from_bits(x), double_from_bits(y)));
+	record.observed_mode = (uint32_t)fegetround();
+	record.exceptions = (uint32_t)fetestexcept(FE_ALL_EXCEPT);
+	return record.observed_mode != record.requested_mode || write_record(&record);
+}
+
+static int observe_float(uint32_t id, int mode, int sticky, uint32_t x, uint32_t y)
+{
+	struct remainder_record record = {0};
+	if (feclearexcept(FE_ALL_EXCEPT) != 0 ||
+		(sticky && feraiseexcept(FE_DIVBYZERO) != 0))
+		return 1;
+	record.x = x;
+	record.y = y;
+	record.case_id = id | ((uint32_t)sticky << 31);
+	record.requested_mode = (uint32_t)mode;
+	record.result = float_bits(direct_fmodf(float_from_bits(x), float_from_bits(y)));
+	record.observed_mode = (uint32_t)fegetround();
+	record.exceptions = (uint32_t)fetestexcept(FE_ALL_EXCEPT);
+	return record.observed_mode != record.requested_mode || write_record(&record);
+}
+
+static uint64_t next_bits(uint64_t *state)
+{
+	uint64_t value = *state;
+	value ^= value << 13;
+	value ^= value >> 7;
+	value ^= value << 17;
+	*state = value;
+	return value;
+}
+
+static int emit_remainder_records(void)
+{
+	static const struct { uint64_t x, y; } double_edges[] = {
+		{ 0, UINT64_C(0x3ff0000000000000) },
+		{ UINT64_C(0x8000000000000000), UINT64_C(0x3ff0000000000000) },
+		{ UINT64_C(0xc010000000000000), UINT64_C(0x4000000000000000) },
+		{ UINT64_C(0xbff0000000000000), UINT64_C(0xbff0000000000000) },
+		{ 1, 2 }, { 2, 1 },
+		{ UINT64_C(0x000fffffffffffff), 1 },
+		{ UINT64_C(0x0010000000000000), UINT64_C(0x000fffffffffffff) },
+		{ UINT64_C(0x0010000000000001), UINT64_C(0x0010000000000000) },
+		{ UINT64_C(0x7fefffffffffffff), 1 },
+		{ UINT64_C(0x7fefffffffffffff), UINT64_C(0x0010000000000001) },
+		{ UINT64_C(0x433fffffffffffff), UINT64_C(0x4026000000000000) },
+		{ UINT64_C(0x3ff0000000000000), 0 },
+		{ UINT64_C(0x7ff0000000000000), UINT64_C(0x3ff0000000000000) },
+		{ UINT64_C(0x3ff0000000000000), UINT64_C(0x7ff0000000000000) },
+		{ UINT64_C(0x7ff8000000000041), UINT64_C(0x3ff0000000000000) },
+		{ UINT64_C(0x3ff0000000000000), UINT64_C(0x7ff8000000000041) },
+		{ UINT64_C(0x7ff0000000000042), UINT64_C(0x3ff0000000000000) },
+		{ UINT64_C(0x3ff0000000000000), UINT64_C(0x7ff0000000000042) },
+	};
+	static const struct { uint32_t x, y; } float_edges[] = {
+		{ 0, UINT32_C(0x3f800000) },
+		{ UINT32_C(0x80000000), UINT32_C(0x3f800000) },
+		{ UINT32_C(0xc0800000), UINT32_C(0x40000000) },
+		{ UINT32_C(0xbf800000), UINT32_C(0xbf800000) },
+		{ 1, 2 }, { 2, 1 },
+		{ UINT32_C(0x007fffff), 1 },
+		{ UINT32_C(0x00800000), UINT32_C(0x007fffff) },
+		{ UINT32_C(0x00800001), UINT32_C(0x00800000) },
+		{ UINT32_C(0x7f7fffff), 1 },
+		{ UINT32_C(0x7f7fffff), UINT32_C(0x00800001) },
+		{ UINT32_C(0x4b7fffff), UINT32_C(0x41300000) },
+		{ UINT32_C(0x3f800000), 0 },
+		{ UINT32_C(0x7f800000), UINT32_C(0x3f800000) },
+		{ UINT32_C(0x3f800000), UINT32_C(0x7f800000) },
+		{ UINT32_C(0x7fc00041), UINT32_C(0x3f800000) },
+		{ UINT32_C(0x3f800000), UINT32_C(0x7fc00041) },
+		{ UINT32_C(0x7f800042), UINT32_C(0x3f800000) },
+		{ UINT32_C(0x3f800000), UINT32_C(0x7f800042) },
+	};
+	static const int modes[] = {
+		FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO,
+	};
+	uint64_t state;
+	uint32_t id;
+
+	for (unsigned int mode = 0; mode < 4; mode++) {
+		if (fesetround(modes[mode]) != 0)
+			return 1;
+		for (int sticky = 0; sticky < 2; sticky++) {
+			id = 0;
+			for (unsigned int i = 0; i < sizeof(double_edges) / sizeof(double_edges[0]); i++)
+				if (observe_double(id++, modes[mode], sticky,
+					double_edges[i].x, double_edges[i].y))
+					return 2;
+			for (unsigned int i = 0; i < sizeof(float_edges) / sizeof(float_edges[0]); i++)
+				if (observe_float(id++, modes[mode], sticky,
+					float_edges[i].x, float_edges[i].y))
+					return 3;
+			/* Exercise both sides of exact quotient and divisor-power boundaries. */
+			for (unsigned int i = 0; i < 64; i++) {
+				uint64_t y = (uint64_t)(1 + i * 32) << 52;
+				uint64_t twice = y + (UINT64_C(1) << 52);
+				if (observe_double(id++, modes[mode], sticky, twice - 1, y) ||
+					observe_double(id++, modes[mode], sticky, twice, y + 1) ||
+					observe_double(id++, modes[mode], sticky, twice + 1, y - 1))
+					return 4;
+			}
+			for (unsigned int i = 0; i < 32; i++) {
+				uint32_t y = (1 + i * 8) << 23;
+				uint32_t twice = y + (UINT32_C(1) << 23);
+				if (observe_float(id++, modes[mode], sticky, twice - 1, y) ||
+					observe_float(id++, modes[mode], sticky, twice, y + 1) ||
+					observe_float(id++, modes[mode], sticky, twice + 1, y - 1))
+					return 5;
+			}
+			state = UINT64_C(0x4c6f6e67466d6f64);
+			for (unsigned int i = 0; i < 256; i++) {
+				uint64_t x = next_bits(&state);
+				uint64_t y = next_bits(&state);
+				uint64_t x_exp = 1 + (i * 997U) % 2046U;
+				uint64_t y_exp = 1 + (i * 619U) % 2046U;
+				x = (x & UINT64_C(0x800fffffffffffff)) | (x_exp << 52);
+				y = (y & UINT64_C(0x800fffffffffffff)) | (y_exp << 52);
+				if (observe_double(id++, modes[mode], sticky, x, y))
+					return 6;
+			}
+			for (unsigned int i = 0; i < 256; i++) {
+				uint32_t x = (uint32_t)next_bits(&state);
+				uint32_t y = (uint32_t)next_bits(&state);
+				uint32_t x_exp = 1 + (i * 107U) % 254U;
+				uint32_t y_exp = 1 + (i * 71U) % 254U;
+				x = (x & UINT32_C(0x807fffff)) | (x_exp << 23);
+				y = (y & UINT32_C(0x807fffff)) | (y_exp << 23);
+				if (observe_float(id++, modes[mode], sticky, x, y))
+					return 7;
+			}
+		}
+	}
+	return 0;
+}
+
 static int check_binary64_values(void)
 {
 	volatile double negative_zero = -0.0;
@@ -185,6 +360,8 @@ int crabc_x86_64_math_fmod_probe(void)
 		status = check_fenv_boundary() == 0 ? 0 : 40;
 	if (status == 0)
 		status = check_invalid_domain() == 0 ? 0 : 60;
+	if (status == 0)
+		status = emit_remainder_records() == 0 ? 0 : 70;
 	if (fesetenv(&original) != 0 && status == 0)
 		status = 80;
 	return status;

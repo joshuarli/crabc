@@ -30,11 +30,12 @@ assert_selected_c_abi_surface() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mktemp nm objdump readelf rustup sort; do require_tool "$tool"; done
+for tool in ar awk cargo cmp diff grep mktemp nm objdump readelf rustup sort wc; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-math-fmod.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-math-fmod.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
@@ -62,7 +63,7 @@ for header in fenv.h float.h math.h stdint.h features.h bits/alltypes.h; do
 done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
 	compat/x86_64/libc_math_fmod_probe.c -o "$reference"
-if "$reference"; then
+if "$reference" >"$work_dir/oracle.records"; then
 	:
 else
 	status=$?
@@ -161,8 +162,22 @@ for instruction in divsd divss; do
 	grep -Eq "[[:space:]]${instruction}([[:space:]]|$)" "$disassembly" ||
 		fail "candidate lacks ${instruction} domain-error path"
 done
-"$candidate" || fail "freestanding math fmod fixture failed"
+"$candidate" >"$work_dir/candidate.records" || fail "freestanding math fmod fixture failed"
+report_root="$ROOT_DIR/.work/x86_64/reports/libc-math-fmod"
+mkdir -p "$report_root"
+cp "$work_dir/oracle.records" "$report_root/oracle.records"
+cp "$work_dir/candidate.records" "$report_root/candidate.records"
+cp "$target_dir/x86_64-unknown-linux-musl/debug/libc.a.source-runtime.json" \
+	"$report_root/source-runtime.json"
+record_bytes="$(wc -c <"$work_dir/oracle.records")"
+[ "$record_bytes" -gt 4096 ] && [ "$((record_bytes % 40))" -eq 0 ] ||
+	fail "pinned musl emitted an incomplete fmod record stream"
+if ! cmp -s "$work_dir/oracle.records" "$work_dir/candidate.records"; then
+	cmp -l "$work_dir/oracle.records" "$work_dir/candidate.records" | head -32 >&2 || true
+	fail "static fmod records differ from pinned musl"
+fi
 bash "$ROOT_DIR/compat/x86_64/run_libc_math_fmod_mxcsr.sh" ||
 	fail "pinned-musl raw fmod differential failed"
 
-printf 'x86 static libc math fmod: PASS\n'
+printf 'x86 static libc math fmod: PASS (%s exact records)\n' "$((record_bytes / 40))"
+printf 'raw records: %s\n' "$report_root"
