@@ -3,11 +3,12 @@
  * The same project-header C body first runs through pinned musl 1.2.6 and
  * then through a freestanding executable linked solely with the selected
  * crabc archive. It proves only F_GETLK/F_SETLK with the public 32-byte
- * struct flock record: an unlocked query, a parent-owned conflicting write
- * lock observed by a child, nonblocking conflict errors, release, stale
- * errno on success, and direct kernel errors. It is not F_SETLKW
- * cancellation, OFD locks, lockf, flock, generic fcntl, descriptor/pathname
- * policy, CRT, pthread/TLS lifecycle, loader, sysroot, or public x86 support.
+ * struct flock record: an unlocked query, parent lock ownership across fork,
+ * release when a duplicate closes, conflict with an OFD lock on an independent
+ * open description, stale errno on success, and direct kernel errors. It is
+ * not F_SETLKW cancellation, public OFD fcntl commands, lockf, flock,
+ * generic fcntl, descriptor/pathname policy, CRT, pthread/TLS lifecycle,
+ * loader, sysroot, or public x86 support.
  */
 
 #ifndef _GNU_SOURCE
@@ -37,16 +38,18 @@ _Static_assert(offsetof(struct flock, l_type) == 0 &&
     offsetof(struct flock, l_len) == 16 &&
     offsetof(struct flock, l_pid) == 24, "x86 struct flock offsets");
 _Static_assert(SYS_open == 2 && SYS_close == 3 && SYS_fcntl == 72 &&
-    SYS_fork == 57 && SYS_wait4 == 61 && SYS_getpid == 39 && SYS_unlink == 87,
+    SYS_dup == 32 && SYS_fork == 57 && SYS_wait4 == 61 &&
+    SYS_getpid == 39 && SYS_unlink == 87,
     "x86 selected record-lock fixture syscall numbers");
 _Static_assert(F_GETLK == 5 && F_SETLK == 6 && F_SETLKW == 7 &&
-    F_RDLCK == 0 && F_WRLCK == 1 && F_UNLCK == 2,
+    F_OFD_SETLK == 37 && F_RDLCK == 0 && F_WRLCK == 1 && F_UNLCK == 2,
     "x86 selected record-lock command and type values");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&fcntl),
     int (*)(int, int, ...)), "fcntl declaration");
 
 struct fixture_file {
     int descriptor;
+    int observer;
     char path[88];
 };
 
@@ -135,14 +138,25 @@ static int make_path(char *output, size_t capacity, long process_id)
 static int setup_file(struct fixture_file *file)
 {
     file->descriptor = -1;
+    file->observer = -1;
     if (make_path(file->path, sizeof(file->path), raw_syscall0(SYS_getpid)) != 0)
         return -1;
     file->descriptor = (int)raw_syscall3(
         SYS_open, (long)(void *)file->path, O_CREAT | O_EXCL | O_RDWR, 0600);
     if (file->descriptor < 0)
         return -1;
-    if (raw_syscall1(SYS_unlink, (long)(void *)file->path) != 0) {
+    file->observer = (int)raw_syscall3(
+        SYS_open, (long)(void *)file->path, O_RDWR, 0);
+    if (file->observer < 0) {
         (void)raw_syscall1(SYS_close, file->descriptor);
+        (void)raw_syscall1(SYS_unlink, (long)(void *)file->path);
+        file->descriptor = -1;
+        return -1;
+    }
+    if (raw_syscall1(SYS_unlink, (long)(void *)file->path) != 0) {
+        (void)raw_syscall1(SYS_close, file->observer);
+        (void)raw_syscall1(SYS_close, file->descriptor);
+        file->observer = -1;
         file->descriptor = -1;
         return -1;
     }
@@ -151,10 +165,15 @@ static int setup_file(struct fixture_file *file)
 
 static int cleanup_file(struct fixture_file *file)
 {
+    int status = 0;
+
+    if (file->observer >= 0 && raw_syscall1(SYS_close, file->observer) != 0)
+        status = -1;
+    file->observer = -1;
     if (file->descriptor >= 0 && raw_syscall1(SYS_close, file->descriptor) != 0)
-        return -1;
+        status = -1;
     file->descriptor = -1;
-    return 0;
+    return status;
 }
 
 static struct flock write_lock(void)
@@ -197,6 +216,19 @@ static int child_observes_parent_lock(int descriptor, pid_t parent)
     return 0;
 }
 
+static int child_close_preserves_parent_lock(int descriptor, int observer,
+    pid_t parent)
+{
+    if (raw_syscall1(SYS_close, descriptor) != 0)
+        return 1;
+    return child_observes_parent_lock(observer, parent);
+}
+
+static int child_observes_unlocked(int descriptor)
+{
+    return check_unlocked_query(descriptor);
+}
+
 static int run_child_case(int descriptor, pid_t parent)
 {
     long child = raw_syscall0(SYS_fork);
@@ -215,9 +247,46 @@ static int run_child_case(int descriptor, pid_t parent)
     return status == 0 ? 0 : 3;
 }
 
+static int run_child_close_case(int descriptor, int observer, pid_t parent)
+{
+    long child = raw_syscall0(SYS_fork);
+    int status = -1;
+    long waited;
+
+    if (child == 0)
+        raw_exit(child_close_preserves_parent_lock(descriptor, observer, parent));
+    if (child < 0)
+        return 1;
+    do {
+        waited = raw_syscall4(SYS_wait4, child, (long)(void *)&status, 0, 0);
+    } while (waited == -EINTR);
+    if (waited != child)
+        return 2;
+    return status == 0 ? 0 : 3;
+}
+
+static int run_child_unlocked_case(int descriptor)
+{
+    long child = raw_syscall0(SYS_fork);
+    int status = -1;
+    long waited;
+
+    if (child == 0)
+        raw_exit(child_observes_unlocked(descriptor));
+    if (child < 0)
+        return 1;
+    do {
+        waited = raw_syscall4(SYS_wait4, child, (long)(void *)&status, 0, 0);
+    } while (waited == -EINTR);
+    if (waited != child)
+        return 2;
+    return status == 0 ? 0 : 3;
+}
+
 static int check_selected_record_lock_lifecycle(const struct fixture_file *file)
 {
     struct flock lock = write_lock();
+    int duplicate;
     int status;
 
     status = check_unlocked_query(file->descriptor);
@@ -229,12 +298,52 @@ static int check_selected_record_lock_lifecycle(const struct fixture_file *file)
     status = run_child_case(file->descriptor, (pid_t)raw_syscall0(SYS_getpid));
     if (status != 0)
         return 20 + status;
+    status = run_child_close_case(file->descriptor, file->observer,
+        (pid_t)raw_syscall0(SYS_getpid));
+    if (status != 0)
+        return 30 + status;
+    duplicate = (int)raw_syscall1(SYS_dup, file->descriptor);
+    if (duplicate < 0 || raw_syscall1(SYS_close, duplicate) != 0)
+        return 40;
+    status = run_child_unlocked_case(file->observer);
+    if (status != 0)
+        return 50 + status;
+    errno = E2BIG;
+    if (fcntl(file->descriptor, F_SETLK, &lock) != 0 || errno != E2BIG)
+        return 60;
     lock.l_type = F_UNLCK;
     errno = ERANGE;
     if (fcntl(file->descriptor, F_SETLK, &lock) != 0 || errno != ERANGE)
-        return 30;
+        return 70;
     status = check_unlocked_query(file->descriptor);
-    return status == 0 ? 0 : 40 + status;
+    return status == 0 ? 0 : 80 + status;
+}
+
+static int check_ofd_conflict(const struct fixture_file *file)
+{
+    struct flock lock = write_lock();
+    struct flock query = write_lock();
+
+    /* A second open description supplies a kernel OFD lock. The public
+     * candidate call under test is its F_GETLK/F_SETLK response. */
+    if (raw_syscall3(SYS_fcntl, file->observer, F_OFD_SETLK,
+        (long)(void *)&lock) != 0)
+        return 1;
+    errno = ERANGE;
+    if (fcntl(file->descriptor, F_GETLK, &query) != 0 || errno != ERANGE)
+        return 2;
+    if (query.l_type != F_WRLCK || query.l_pid != -1 ||
+        query.l_whence != SEEK_SET || query.l_start != 0 || query.l_len != 0)
+        return 3;
+    errno = 0;
+    if (fcntl(file->descriptor, F_SETLK, &lock) != -1 ||
+        (errno != EACCES && errno != EAGAIN))
+        return 4;
+    lock.l_type = F_UNLCK;
+    if (raw_syscall3(SYS_fcntl, file->observer, F_OFD_SETLK,
+        (long)(void *)&lock) != 0)
+        return 5;
+    return check_unlocked_query(file->descriptor) == 0 ? 0 : 6;
 }
 
 static int check_errors(int descriptor)
@@ -278,6 +387,11 @@ int crabc_x86_64_fcntl_record_locks_probe(void)
     if (setup_file(&file) != 0)
         return 1;
     status = check_selected_record_lock_lifecycle(&file);
+    if (status == 0) {
+        status = check_ofd_conflict(&file);
+        if (status != 0)
+            status += 100;
+    }
     if (status == 0)
         status = check_errors(file.descriptor);
 #ifdef CRABC_FCNTL_RECORD_LOCKS_FREESTANDING

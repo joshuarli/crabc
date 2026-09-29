@@ -3,11 +3,12 @@
 #
 # The same project-header C fixture first runs through pinned musl, then as a
 # true `-nostdlib -static` executable linked solely through the selected
-# crabc archive. It proves only pointer-bearing F_GETLK/F_SETLK record locks:
-# an unlocked query, a child observation/conflict against a parent lock,
-# release, stale errno on success, and direct Linux errors. Fixture setup uses
-# raw Linux syscalls, so no C descriptor lifecycle symbols are pulled in. This
-# is not F_SETLKW cancellation, OFD locks, lockf, flock, generic fcntl, CRT,
+# crabc archive. It proves pointer-bearing F_GETLK/F_SETLK record locks:
+# parent ownership across fork, release on duplicate close, conflict with an
+# OFD lock on another open description, stale errno on success, and Linux
+# errors. Fixture setup uses raw syscalls, so no C descriptor lifecycle symbols
+# are pulled in. This is not F_SETLKW cancellation, public
+# OFD fcntl commands, lockf, flock, generic fcntl, CRT,
 # pthread/TLS lifecycle, loader, sysroot, or public x86 support.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
@@ -130,7 +131,8 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_fcntl_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_x86_fcntl_getlk_reference.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-fcntl-record-locks.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/tmp"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/tmp/libc-fcntl-record-locks.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-fcntl-record-locks-reference"
