@@ -21,6 +21,9 @@ mod tests;
 
 const R_NONE: u32 = 0;
 const R_64: u32 = 1;
+// The x86-64 PC-relative form stores the low 32 bits of S+A-P. Its target
+// occupies four bytes and may begin at a non-word-aligned address.
+const R_X86_64_PC32: u32 = 2;
 const R_COPY: u32 = 5;
 const SHN_ABS: u16 = 0xfff1;
 // musl dynlink.c:find_sym2 includes GNU unique alongside global and weak in
@@ -616,7 +619,7 @@ unsafe fn word_value(
     }
     match kind {
         R_X86_64_RELATIVE if index == 0 => add_signed(object.base, addend),
-        R_64 | R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT => {
+        R_64 | R_X86_64_PC32 | R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT => {
             let address = if index == 0 { 0 } else {
                 match unsafe { lookup_with_record(scope, objects, owner,
                     requested_symbol?, requested_name?, false, false) }? {
@@ -624,7 +627,8 @@ unsafe fn word_value(
                     None => 0,
                 }
             };
-            add_signed(address, addend)
+            if kind == R_X86_64_PC32 { Some(address.wrapping_add(addend as u64)) }
+            else { add_signed(address, addend) }
         }
         #[cfg(crabc_general_initial_tls_materialization_v1)]
         R_X86_64_DTPMOD64 | R_X86_64_DTPOFF64 | R_X86_64_TPOFF64 => {
@@ -648,7 +652,7 @@ unsafe fn word_value(
 /// None is invalid relocation; Some(None) is a validated deferred strong
 /// PLT/GOT reference. Weak undefined symbols still receive zero immediately.
 unsafe fn word_resolution(scope: &SymbolScope<'_>, objects: &[Object], owner: usize,
-    kind: u32, index: usize, addend: i64, lazy: bool,
+    offset: u64, kind: u32, index: usize, addend: i64, lazy: bool,
 ) -> Option<Option<u64>> {
     if lazy && index != 0 && matches!(kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT) {
         let name = unsafe { symbol_name(&objects[owner], index) }?;
@@ -659,7 +663,14 @@ unsafe fn word_resolution(scope: &SymbolScope<'_>, objects: &[Object], owner: us
             return Some(None);
         }
     }
-    unsafe { word_value(scope, objects, owner, kind, index, addend) }.map(Some)
+    let value = unsafe { word_value(scope, objects, owner, kind, index, addend) }?;
+    if kind == R_X86_64_PC32 {
+        // P is the relocated field's runtime address, including load bias.
+        // Musl's uint32_t store truncates the modular displacement.
+        let place = runtime_address(objects[owner].base, offset)?;
+        return Some(Some(value.wrapping_sub(place) & u32::MAX as u64));
+    }
+    Some(Some(value))
 }
 
 #[derive(Clone, Copy)]
@@ -769,13 +780,13 @@ unsafe fn preflight_object_resolved(
                 if table != object.rela { return None; }
                 unsafe { copy_relocation(scope, objects, owner, offset, symbol, addend) }?.length
             } else {
-                let value = unsafe { word_resolution(scope, objects, owner, kind, symbol, addend, lazy) }?;
+                let value = unsafe { word_resolution(scope, objects, owner, offset, kind, symbol, addend, lazy) }?;
                 // A non-lazy caller keeps each word value for application,
                 // which then needs no second symbol lookup.
                 if let Some(resolved) = resolved.as_deref_mut() { resolved.push(value?)?; }
-                8
+                if kind == R_X86_64_PC32 { 4 } else { 8 }
             };
-            unsafe { admitted_target(object, &mut writable, offset, length, kind != R_COPY) }?;
+            unsafe { admitted_target(object, &mut writable, offset, length, kind != R_COPY && kind != R_X86_64_PC32) }?;
         }
     }
     Some(())
@@ -792,7 +803,11 @@ unsafe fn apply_resolved_word_relocations(object: &Object, values: &[u64]) -> Op
             if kind == R_NONE || kind == R_COPY { continue; }
             let value = *values.next()?;
             let address = runtime_address(object.base, unsafe { read_u64(entry) })?;
-            unsafe { core::ptr::write_unaligned(address as *mut u64, value); }
+            if kind == R_X86_64_PC32 {
+                unsafe { core::ptr::write_unaligned(address as *mut u32, value as u32); }
+            } else {
+                unsafe { core::ptr::write_unaligned(address as *mut u64, value); }
+            }
         }
     }
     if values.next().is_some() { return None; }
@@ -807,9 +822,15 @@ unsafe fn apply_word_relocations(scope: &SymbolScope<'_>, objects: &[Object], ow
             let info = unsafe { read_u64(entry.add(8)) };
             let kind = info as u32;
             if kind == R_NONE || kind == R_COPY { continue; }
-            let value = unsafe { word_value(scope, objects, owner, kind, (info >> 32) as usize, read_i64(entry.add(16))) }?;
-            let address = runtime_address(object.base, unsafe { read_u64(entry) })?;
-            unsafe { core::ptr::write_unaligned(address as *mut u64, value); }
+            let offset = unsafe { read_u64(entry) };
+            let value = unsafe { word_resolution(scope, objects, owner, offset, kind,
+                (info >> 32) as usize, read_i64(entry.add(16)), false) }??;
+            let address = runtime_address(object.base, offset)?;
+            if kind == R_X86_64_PC32 {
+                unsafe { core::ptr::write_unaligned(address as *mut u32, value as u32); }
+            } else {
+                unsafe { core::ptr::write_unaligned(address as *mut u64, value); }
+            }
         }
     }
     unsafe { apply_relr_table(object) }

@@ -124,4 +124,35 @@ done
 ! grep -q '(NEEDED)' "$work/libcrabc-dynamic.so.dynamic.txt"
 readelf --dyn-syms -W "$work/libcrabc-dynamic.so" >"$work/libcrabc-dynamic.so.symbols.txt"
 ! grep -q '__crabc_dynamic_main_thread_runtime_v1_fini_state' "$work/libcrabc-dynamic.so.symbols.txt"
+if [ "$pie_model" = pie ] && [ "$tls_model" = global-dynamic ]; then
+    cc -fPIC -shared -nostdlib -Wl,--hash-style=sysv -Wl,-z,now \
+        -Wl,-soname,libpc32.so -DPC32_LIBRARY \
+        "$FIXTURES/general_dynamic_pc32.c" -o "$work/libpc32-original.so"
+    python3 -B "$FIXTURES/general_dynamic_pc32_mutate.py" \
+        "$work/libpc32-original.so" "$work/libpc32.so"
+    readelf -rW "$work/libpc32.so" >"$work/libpc32.relocations.txt"
+    grep -q 'R_X86_64_PC32.*pc32_target' "$work/libpc32.relocations.txt"
+    cc -nostdlib -fPIE -pie -Wl,--hash-style=sysv -Wl,-z,now \
+        -Wl,--allow-shlib-undefined \
+        -Wl,--dynamic-linker,"$work/loader.so" -Wl,-rpath,"$work" \
+        "$work/crt/Scrt1.o" "$work/crt/crti.o" \
+        "$FIXTURES/general_dynamic_pc32.c" \
+        -Wl,--whole-archive "$work/consumer.a" -Wl,--no-whole-archive \
+        -L"$work" -Wl,--no-as-needed -l:libpc32.so -l:libcrabc-dynamic.so \
+        "$work/crt/crtn.o" -o "$work/pc32-candidate"
+    /usr/local/bin/crabc-x86_64-musl-gcc -fPIE -pie -Wl,-rpath,"$work" \
+        "$FIXTURES/general_dynamic_pc32.c" -L"$work" \
+        -Wl,--no-as-needed -l:libpc32.so -o "$work/pc32-oracle"
+    candidate_status=0 oracle_status=0
+    env -i PATH=/usr/bin:/bin timeout 10 "$work/pc32-candidate" || candidate_status=$?
+    env -i PATH=/usr/bin:/bin timeout 10 "$work/pc32-oracle" || oracle_status=$?
+    [ "$candidate_status" -eq 33 ] && [ "$oracle_status" -eq 33 ]
+    python3 -B "$FIXTURES/general_dynamic_pc32_mutate.py" \
+        "$work/libpc32-original.so" "$work/libpc32-invalid.so" --invalid-target
+    cp "$work/libpc32-invalid.so" "$work/libpc32.so"
+    rejected_status=0
+    env -i PATH=/usr/bin:/bin timeout 10 "$work/pc32-candidate" \
+        >"$work/pc32-rejected.stdout" 2>"$work/pc32-rejected.stderr" || rejected_status=$?
+    [ "$rejected_status" -eq 127 ] && [ ! -s "$work/pc32-rejected.stdout" ]
+fi
 printf 'general dynamic lifecycle: PASS (owned Scrt1/libc, return/exit/_Exit, musl order, guard/TLS/env/auxv); evidence: %s\n' "$work"

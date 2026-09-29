@@ -59,8 +59,15 @@ pub(in super::super) unsafe fn relocate_new(objects: &[Object], indices: &[usize
                 if kind == R_NONE { continue; }
                 let record = DeferredRelocation { owner, offset: unsafe { read_u64(entry) },
                     kind, symbol: (info >> 32) as usize, addend: unsafe { read_i64(entry.add(16)) } };
-                match unsafe { word_resolution(&scope, objects, owner, kind, record.symbol, record.addend, lazy && !object.bind_now) }? {
-                    Some(value) => unsafe { core::ptr::write_unaligned(runtime_address(object.base, record.offset)? as *mut u64, value); },
+                match unsafe { word_resolution(&scope, objects, owner, record.offset, kind, record.symbol, record.addend, lazy && !object.bind_now) }? {
+                    Some(value) => {
+                        let address = runtime_address(object.base, record.offset)?;
+                        if kind == R_X86_64_PC32 {
+                            unsafe { core::ptr::write_unaligned(address as *mut u32, value as u32); }
+                        } else {
+                            unsafe { core::ptr::write_unaligned(address as *mut u64, value); }
+                        }
+                    }
                     None => pending.push(record)?,
                 }
             }
@@ -121,7 +128,7 @@ pub(in super::super) unsafe fn diagnose_new<'a>(objects: &'a [Object], indices: 
                         return Some(RelocationFailure::InitialExecTls { owner, symbol: name, definer: module });
                     }
                 }
-                if !matches!(kind, R_64 | R_COPY | R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT | R_X86_64_RELATIVE
+                if !matches!(kind, R_64 | R_X86_64_PC32 | R_COPY | R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT | R_X86_64_RELATIVE
                     | R_X86_64_DTPMOD64 | R_X86_64_DTPOFF64 | R_X86_64_TPOFF64)
                 {
                     return Some(RelocationFailure::UnsupportedType { owner, kind });
@@ -159,7 +166,7 @@ impl PreparedRetry {
             let object = objects.get(record.owner)?;
             if !matches!(record.kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT) || record.symbol == 0 { return None; }
             unsafe { write_target(object, record.offset, 8, true) }?;
-            match unsafe { word_resolution(&scope, objects, record.owner, record.kind, record.symbol, record.addend, true) }? {
+            match unsafe { word_resolution(&scope, objects, record.owner, record.offset, record.kind, record.symbol, record.addend, true) }? {
                 None => prepared.pending.push(record)?,
                 Some(value) => {
                     let address = runtime_address(object.base, record.offset)?;

@@ -854,6 +854,54 @@ fn invalid_later_object_relocation_cannot_commit_earlier_main_or_dependency_writ
 }
 
 #[test]
+fn pc32_relocation_writes_four_bytes_and_preflights_the_whole_graph() {
+    let mut main = Image::new(); let mut provider = Image::new();
+    main.data[0] = 0x1122334455667788;
+    main.symbol(1, 1, 1, 0, 0, 0, 4);
+    provider.symbol(1, 1, 1, 0, 1, 0x1000, 4);
+    main.rela(0x1002, R_X86_64_PC32, 1, 7);
+    let mut objects = [EMPTY_OBJECT; TEST_OBJECTS];
+    objects[0] = main.object(false); objects[1] = provider.object(true);
+    assert!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_some());
+    let displacement = (provider.object(true).base + 0x1000).wrapping_add(7)
+        .wrapping_sub(main.object(false).base + 0x1002) as u32;
+    let mut expected = 0x1122334455667788u64.to_le_bytes();
+    expected[2..6].copy_from_slice(&displacement.to_le_bytes());
+    assert_eq!(main.data[0], u64::from_le_bytes(expected));
+
+    let mut late = Image::new();
+    late.rela(0x1000 + IMAGE_DATA_BYTES as u64 - 3, R_X86_64_PC32, 0, 0);
+    objects[0] = main.object(false); objects[2] = late.object(true);
+    let before = main.data[0];
+    main.rela(0x1008, R_X86_64_RELATIVE, 0, 0x1000);
+    objects[0] = main.object(false);
+    assert!(unsafe { relocate_initial_graph(&graph(3), &objects) }.is_none());
+    assert_eq!(main.data[0], before);
+    assert_eq!(main.data[1], 0);
+}
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[test]
+fn runtime_pc32_relocation_commits_four_bytes_only_after_all_new_objects_preflight() {
+    let mut main = Image::new(); let mut first = Image::new(); let mut late = Image::new();
+    main.symbol(1, 1, 1, 0, 1, 0x1000, 4);
+    first.symbol(1, 1, 1, 0, 0, 0, 4);
+    first.data[0] = 0xaabbccdd11223344;
+    first.rela(0x1001, R_X86_64_PC32, 1, -4);
+    late.rela(0x1000 + IMAGE_DATA_BYTES as u64 - 2, R_X86_64_PC32, 0, 0);
+    let objects = [main.object(false), first.object(true), late.object(true)];
+    assert!(unsafe { deferred::relocate_new(&objects, &[0, 1, 2], 1, 0, false) }.is_none());
+    assert_eq!(first.data[0], 0xaabbccdd11223344);
+
+    assert!(unsafe { deferred::relocate_new(&objects[..2], &[0, 1], 1, 0, false) }.is_some());
+    let displacement = (main.object(false).base + 0x1000).wrapping_sub(4)
+        .wrapping_sub(first.object(true).base + 0x1001) as u32;
+    let mut expected = 0xaabbccdd11223344u64.to_le_bytes();
+    expected[1..5].copy_from_slice(&displacement.to_le_bytes());
+    assert_eq!(first.data[0], u64::from_le_bytes(expected));
+}
+
+#[test]
 fn none_relocation_has_no_destination_or_symbol_access() {
     let mut main = Image::new();
     main.data[0] = 0xaaaa;
