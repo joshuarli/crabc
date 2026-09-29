@@ -102,6 +102,10 @@
       "runner": "compat/allocator/x86_64_m6_managed_callback_failure.py",
       "scope": "Source-built pinned-C/native-adapter process-main mi_manage_memory with a callback that rejects its first metadata commit: null arena output, unchanged errno, one metadata warning, retained caller mapping, successful retry on that mapping, selected Heap allocation and release, one purge callback returning no-recommit without unmapping, later selected reuse and the exact remaining commit/purge callback order, followed by caller-held terminal munmap."
     },
+    "differential:child-managed-callback": {
+      "runner": "compat/allocator/x86_64_m6_child_managed_callback.py",
+      "scope": "Source-built pinned-C/native-adapter child-member mi_manage_memory with caller-owned aligned memory: a failed metadata callback leaves a null arena output, unchanged errno, and retained mapping with one warning; retry publishes in the child's exact arena registry with the supplied callback and argument; selected Theap and allocation use the managed range; one purge callback returns no-recommit and later selected reuse follows the exact commit/purge trace; child destruction preserves the mapping until the caller's final munmap."
+    },
     "differential:public-reservation-warning": {
       "runner": "compat/allocator/x86_64_m6_reservation_warning.py",
       "scope": "Source-built pinned-C/native-adapter mi_reserve_os_memory_ex aligned OS map failure in the process main subprocess and a fresh child member: ENOMEM return, cleared arena output, errno from the failing primitive, ordered direct-map, aligned-fallback, and over-allocation warnings, and joined child teardown."
@@ -360,13 +364,14 @@
         "differential:managed-os-lifecycle",
         "differential:managed-callback",
         "differential:managed-callback-failure",
+        "differential:child-managed-callback",
         "differential:public-reservation-warning",
         "differential:public-arena",
         "upstream:test-api-heaps",
         "unit:arena"
       ],
       "blocked_by": [
-        "Main and child public aligned OS map failures match the source return, null arena output, primitive errno, and ordered direct-map, fallback, and over-allocation warnings. Public managed OS memory has main and child selected-allocation, short-region warning/errno, child destruction, and caller-held unmap evidence. Main-process callback-managed memory matches selected commit/purge geometry, short-region refusal, failed metadata commit warning with retry, and a failed purge that leaves its span committed for reuse. Other OS failure branches, managed-memory cleanup and child callback cases, huge-page reservation, arena queries, and broader lifetime coverage remain open."
+        "Main and child public aligned OS map failures match the source return, null arena output, primitive errno, and ordered direct-map, fallback, and over-allocation warnings. Public managed OS memory has main and child selected-allocation, short-region warning/errno, child destruction, and caller-held unmap evidence. Main and child callback-managed memory match selected commit/purge geometry, failed metadata commit warning with retry, and a failed purge that leaves its span committed for reuse; main short-region refusal also matches. Other OS failure branches, managed-memory cleanup, callback reentrancy and broader child lifetime cases, huge-page reservation, and arena queries remain open."
       ]
     },
     {

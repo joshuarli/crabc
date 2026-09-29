@@ -212,7 +212,7 @@ pub unsafe fn manage_os_memory_ex(
 }
 
 /// `mi_manage_memory` retains the caller's external mapping and optional
-/// commit/purge callback in the process-main arena group.
+/// commit/purge callback in the calling subprocess's arena group.
 ///
 /// # Safety
 /// `start..start + size` is one live caller-owned mapping until every arena,
@@ -245,18 +245,27 @@ pub unsafe fn manage_memory(
         // SAFETY: caller supplied a writable output.
         unsafe { arena_id.write(null_mut()) };
     }
+    let Some(lease) = (unsafe { crate::arena::ProcessExternalArenaLease::new(
+        start.cast(), size, is_committed, is_pinned, is_zero,
+        crate::arena::CommitHook::new(callback, user_argument),
+    ) }) else { return false };
     if crate::subproc::lifecycle::current_thread_is_child_member() {
-        // Child callback arenas need a child-owned callback lease and registry.
-        return false;
+        // SAFETY: the public caller retains the mapping and callback through
+        // child teardown. The child record retains its image and exact arena
+        // registry while the lease is admitted or returned on failure.
+        let Some(managed) = (unsafe { crate::subproc::lifecycle::native_child_manage_memory(
+            size, lease, numa_node, exclusive,
+        ) }) else { return false };
+        if !arena_id.is_null() {
+            // SAFETY: caller supplied a writable output.
+            unsafe { arena_id.write(managed.as_ptr().cast()) };
+        }
+        return true;
     }
     let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
         .ready_child_subprocess_inputs() else { return false };
     let Ok(config) = binding.page_map().memory_config() else { return false };
     let Some(_active) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else { return false };
-    let Some(lease) = (unsafe { crate::arena::ProcessExternalArenaLease::new(
-        start.cast(), size, is_committed, is_pinned, is_zero,
-        crate::arena::CommitHook::new(callback, user_argument),
-    ) }) else { return false };
     // SAFETY: the public caller retains the mapping and callback for every
     // published owner. The process-static arena backing retains the lease;
     // failed prepublication setup returns it without taking the unmap right.

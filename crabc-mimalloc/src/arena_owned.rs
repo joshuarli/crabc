@@ -145,7 +145,7 @@ impl ArenaCommitOutcome {
 ///
 /// It retains no terminal mapping operation: pinned mi_manage_memory keeps
 /// external-memory release with its caller. The callback is instead a
-/// process-lived transition capability for this exact range.
+/// arena-lived transition capability for this exact range.
 ///
 /// # Safety
 ///
@@ -191,7 +191,7 @@ impl ProcessExternalOsArenaLease {
 }
 
 impl ProcessExternalArenaLease {
-    /// Forms the process-lived external ownership and transition capability.
+    /// Forms the external ownership and transition capability for one arena.
     ///
     /// # Safety
     ///
@@ -857,6 +857,61 @@ impl ProcessArenaBacking {
         numa_node: i32,
         exclusive: bool,
     ) -> Result<ManagedExternalRegion, ProcessExternalArenaInstallFailure> {
+        // SAFETY: the process-static identity and caller-retained mapping
+        // outlive every published arena slot.
+        unsafe { self.install_external_callback_arena_retained(
+            process, StoredVmProcess::from_static_process(process), config,
+            managed_size, lease, numa_node, exclusive,
+        ) }
+    }
+
+    /// Registers callback-managed memory in a pinned child arena group.
+    /// The child image retains the callback slot until quiescent teardown;
+    /// the caller retains the external mapping and its terminal unmap right.
+    ///
+    /// # Safety
+    /// The caller holds the child record lock through publication, keeps
+    /// the pinned child image alive through all arena and page uses, and
+    /// destroys its arena group before releasing the image. The mapping and
+    /// callback argument remain valid until that teardown completes.
+    pub(crate) unsafe fn install_owned_external_callback_arena_for_child(
+        &self,
+        child: crate::os::ChildVmProcess<'_>,
+        config: MemoryConfig,
+        managed_size: usize,
+        lease: ProcessExternalArenaLease,
+        numa_node: i32,
+        exclusive: bool,
+    ) -> Result<ManagedExternalRegion, ProcessExternalArenaInstallFailure> {
+        if !core::ptr::eq(child.identity().arena_backing(), self) {
+            return Err(ProcessExternalArenaInstallFailure::Returned {
+                error: ManageArenaError::InvalidRegion,
+                lease,
+            });
+        }
+        let process = child.process();
+        // SAFETY: the child record lock retains the pinned image and policy
+        // through publication; child teardown retires these slots first.
+        unsafe { self.install_external_callback_arena_retained(
+            process, StoredVmProcess::from_retained_process(process), config,
+            managed_size, lease, numa_node, exclusive,
+        ) }
+    }
+
+    /// # Safety
+    /// `stored_process` names `process` and remains live until this backing's
+    /// quiescent destruction. The caller retains the mapped range and callback
+    /// argument through every published arena and page use.
+    unsafe fn install_external_callback_arena_retained(
+        &self,
+        process: VmProcess<'_>,
+        stored_process: StoredVmProcess,
+        config: MemoryConfig,
+        managed_size: usize,
+        lease: ProcessExternalArenaLease,
+        numa_node: i32,
+        exclusive: bool,
+    ) -> Result<ManagedExternalRegion, ProcessExternalArenaInstallFailure> {
         let start = lease.base();
         let size = lease.size();
         let memory = lease.memory();
@@ -921,7 +976,7 @@ impl ProcessArenaBacking {
             (*slot.value.get()).write(OwnedArenaAllocation {
                 allocation: ArenaBacking::External(lease),
                 memory,
-                process: StoredVmProcess::from_static_process(process),
+                process: stored_process,
                 config,
             });
         }

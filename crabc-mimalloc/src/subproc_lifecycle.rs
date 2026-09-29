@@ -1446,6 +1446,50 @@ pub(crate) unsafe fn native_child_manage_os_memory_ex(
     }
 }
 
+/// Register caller-owned callback-managed memory in the current child's
+/// arena group. A failed prepublication commit recovers the lease without
+/// taking the external mapping or its terminal unmap right from the caller.
+///
+/// # Safety
+/// The caller retains the mapping, callback, and callback argument through
+/// child teardown. Initial flags are truthful, the callback admits contained
+/// transitions, and no other owner can unmap or mutate this range meanwhile.
+pub(crate) unsafe fn native_child_manage_memory(
+    managed_size: usize,
+    lease: crate::arena::ProcessExternalArenaLease,
+    numa_node: i32,
+    exclusive: bool,
+) -> Option<crate::arena::ArenaId> {
+    // SAFETY: this thread exclusively accesses its own child membership.
+    let current = (unsafe { current_child_member() }).as_mut()?;
+    let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
+    let binding = current.binding;
+    let config = binding.page_map().memory_config().ok()?;
+    // SAFETY: the child record lock retains the pinned image through
+    // publication and the image's arena backing retires this callback lease
+    // before child destruction. No terminal unmap right enters the record.
+    unsafe {
+        current.id.with_owner(|owner| owner.as_mut().and_then(|child| {
+            child.with_child_image(|image| {
+                let process = crate::os::ChildVmProcess::new(binding.process(), image).ok()?;
+                let result = image.identity().arena_backing()
+                    .install_owned_external_callback_arena_for_child(
+                        process, config, managed_size, lease, numa_node, exclusive,
+                    );
+                match result {
+                    Ok(managed) => Some(managed.arena_id()),
+                    Err(failure) => {
+                        // A returned lease has no published owner; a retained
+                        // lease stays in the arena until child teardown.
+                        let _ = failure.into_returned_lease();
+                        None
+                    }
+                }
+            }).flatten()
+        })).ok().flatten()
+    }
+}
+
 /// Production `mi_heap_delete` (or, with `destroy`, `mi_heap_destroy`) on
 /// the current child thread; see
 /// `types::heap_registry::lifecycle::child_heap_delete`. `None` when the
