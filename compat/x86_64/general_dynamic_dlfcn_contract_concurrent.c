@@ -2,13 +2,15 @@
  * threads read through dlsym and dl_iterate_phdr.
  *
  * One opener publishes libcc_ok0..15.so (odd ones add TLS modules) as
- * RTLD_GLOBAL. One failer repeatedly opens libfr_root.so, whose TLS
- * dependency maps before a later dependency is missing or lacks a symbol
+ * RTLD_GLOBAL and closes each handle after publishing it. One failer
+ * repeatedly opens libfr_root.so, whose TLS dependency maps before a later
+ * dependency is missing or lacks a symbol
  * (see general_dynamic_dlfcn_contract_rollback.c). Two readers run until
  * both finish. Pinned musl 1.2.6 ldso/dynlink.c serializes dlopen under its
  * write lock and dlsym/dl_iterate_phdr successor reads under the read lock,
  * so a reader never observes a rolled-back object, every published global
- * definition stays resolvable, the image list and dlpi_adds only grow, and
+ * definition stays resolvable after close, callback reentry can reacquire
+ * retained objects, the image list and dlpi_adds only grow, and
  * each thread keeps its own dlerror text. Output is invariant counts only,
  * so interleaving does not change it.
  *
@@ -41,6 +43,7 @@ static void *opener(void *argument)
         int *value = dlsym(handle, symbol);
         if (!value || *value != 900 + index) ++*violations;
         atomic_store_explicit(&published, index + 1, memory_order_release);
+        if (dlclose(handle)) ++*violations;
     }
     atomic_fetch_add(&finished, 1);
     return 0;
@@ -63,7 +66,7 @@ static void *failer(void *argument)
     return 0;
 }
 
-struct scan { long violations; unsigned images; unsigned long long adds; };
+struct scan { long violations; unsigned images; unsigned reentries; unsigned long long adds; int reenter; };
 
 static int scan_image(struct dl_phdr_info *info, size_t size, void *data)
 {
@@ -72,20 +75,40 @@ static int scan_image(struct dl_phdr_info *info, size_t size, void *data)
     scan->adds = info->dlpi_adds;
     const char *name = info->dlpi_name ? info->dlpi_name : "";
     if (strstr(name, "libfr_")) ++scan->violations;
-    if (strstr(name, "libcc_ok")) ++scan->images;
+    const char *success = strstr(name, "libcc_ok");
+    if (success) {
+        ++scan->images;
+        if (scan->reenter) {
+            int index = -1;
+            if (sscanf(success, "libcc_ok%d.so", &index) != 1 || index < 0 || index >= SUCCESSES) {
+                ++scan->violations;
+            } else {
+                char object[32], symbol[32];
+                snprintf(object, sizeof object, "libcc_ok%d.so", index);
+                snprintf(symbol, sizeof symbol, "cc_ok_value%d", index);
+                void *retained = dlopen(object, RTLD_NOW | RTLD_NOLOAD);
+                int *value = retained ? dlsym(retained, symbol) : 0;
+                if (!value || *value != 900 + index || (retained && dlclose(retained)))
+                    ++scan->violations;
+                else
+                    ++scan->reentries;
+            }
+        }
+    }
     if (info->dlpi_tls_modid && !info->dlpi_tls_data) ++scan->violations;
     return 0;
 }
 
 struct reader_result { long violations; long passes; };
 
-static void reader_pass(struct reader_result *result, unsigned *images, unsigned long long *adds)
+static void reader_pass(struct reader_result *result, unsigned *images, unsigned long long *adds, int reenter)
 {
     int visible = atomic_load_explicit(&published, memory_order_acquire);
-    struct scan scan = {0, 0, 0};
+    struct scan scan = {0, 0, 0, 0, reenter};
     dl_iterate_phdr(scan_image, &scan);
     result->violations += scan.violations;
     if (scan.images < *images || scan.images < (unsigned)visible || scan.adds < *adds) ++result->violations;
+    if (reenter && scan.reentries != scan.images) ++result->violations;
     *images = scan.images;
     *adds = scan.adds;
     for (int index = 0; index < visible; ++index) {
@@ -110,9 +133,9 @@ static void *reader(void *argument)
     struct reader_result *result = argument;
     unsigned images = 0;
     unsigned long long adds = 0;
-    do reader_pass(result, &images, &adds);
+    do reader_pass(result, &images, &adds, 0);
     while (atomic_load(&finished) != 2);
-    reader_pass(result, &images, &adds);
+    reader_pass(result, &images, &adds, 1);
     return 0;
 }
 
@@ -129,7 +152,7 @@ static int count_final(struct dl_phdr_info *info, size_t size, void *data)
 int main(int argc, char **argv)
 {
     if (argc != 2 || (strcmp(argv[1], "missing") && strcmp(argv[1], "unresolved"))) return 2;
-    struct scan before = {0, 0, 0};
+    struct scan before = {0, 0, 0, 0, 0};
     dl_iterate_phdr(count_final, &before);
     long opener_violations = 0, failer_mismatches = 0;
     struct reader_result results[READERS] = {{0, 0}};
@@ -141,7 +164,7 @@ int main(int argc, char **argv)
     for (int index = 0; index < READERS + 2; ++index)
         if (pthread_join(threads[index], 0)) return 4;
 
-    struct scan after = {0, 0, 0};
+    struct scan after = {0, 0, 0, 0, 0};
     dl_iterate_phdr(count_final, &after);
     printf("opener violations=%ld\n", opener_violations);
     printf("failer mismatches=%ld\n", failer_mismatches);

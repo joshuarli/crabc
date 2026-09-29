@@ -383,9 +383,14 @@ for mode in missing unresolved; do
             exit 1
         fi
     done
+    grep -Fxq 'opener violations=0' "$work/concurrent-$mode-candidate.stdout"
+    grep -Fxq 'failer mismatches=0' "$work/concurrent-$mode-candidate.stdout"
+    grep -Fxq 'reader 0 violations=0 ran=1' "$work/concurrent-$mode-candidate.stdout"
+    grep -Fxq 'reader 1 violations=0 ran=1' "$work/concurrent-$mode-candidate.stdout"
+    grep -Fxq 'final images=16 rolled back visible=0 adds delta=48' "$work/concurrent-$mode-candidate.stdout"
     grep -Fxq 'concurrent contract: complete' "$work/concurrent-$mode-candidate.stdout"
 done
-printf 'general concurrent load: PASS (musl differential, success/failure loads beside dlsym and dl_iterate_phdr readers); evidence: %s\n' "$work"
+printf 'general concurrent load: PASS (musl differential, retained closes and callback reentry beside success/failure loads); evidence: %s\n' "$work"
 
 # dlfcn reentry from runtime constructors: nested NOLOAD of an unconstructed
 # root, self reopen/close, nested loads and a pending caller-visible error.
