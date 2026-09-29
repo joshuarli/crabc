@@ -224,6 +224,62 @@ static int private_condition_shared_mutex(void)
     puts("private condition broadcast releases waiters onto a shared mutex: PASS");
     return 0;
 }
+static void relock_timeout_cleanup(void *unused)
+{
+    (void)unused;
+    if (!owned_mutex(&mutex) || pthread_mutex_unlock(&mutex)) _Exit(43);
+    atomic_store(&cleaned, 1);
+}
+static void *relock_timeout_waiter(void *unused)
+{
+    (void)unused;
+    if (pthread_mutex_lock(&mutex)) _Exit(44);
+    pthread_cleanup_push(relock_timeout_cleanup, 0);
+    atomic_store(&waiter_tid, (int)syscall(SYS_gettid));
+    struct timespec until = deadline(CLOCK_MONOTONIC, 1000);
+    atomic_store(&ready, 1);
+    errno = E2BIG;
+    int result = pthread_cond_timedwait(&condition, &mutex, &until);
+    if (result != ETIMEDOUT || errno != E2BIG || !owned_mutex(&mutex)) _Exit(45);
+    atomic_store(&observed_result, result);
+    /* Cancellation requested during the relock remains pending until this
+     * explicit point. Cleanup must observe the reacquired mutex. */
+    pthread_testcancel();
+    _Exit(46);
+    pthread_cleanup_pop(0);
+    return 0;
+}
+static int cancel_after_shared_mutex_timeout(int shared_condition)
+{
+    pthread_mutexattr_t mutex_attr;
+    pthread_condattr_t cond_attr;
+    if (pthread_mutexattr_init(&mutex_attr) ||
+        pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED) ||
+        pthread_mutex_init(&mutex, &mutex_attr) || pthread_mutexattr_destroy(&mutex_attr) ||
+        pthread_condattr_init(&cond_attr) ||
+        pthread_condattr_setclock(&cond_attr, CLOCK_MONOTONIC) ||
+        (shared_condition && pthread_condattr_setpshared(&cond_attr, PTHREAD_PROCESS_SHARED)) ||
+        pthread_cond_init(&condition, &cond_attr) || pthread_condattr_destroy(&cond_attr) ||
+        pthread_create(&waiter, 0, relock_timeout_waiter, 0)) return 47;
+    while (!atomic_load(&ready)) sched_yield();
+    int tid = atomic_load(&waiter_tid);
+    if (shared_condition) {
+        witness_pthread_futex_wait_at(tid, 0,
+            (unsigned long)(uintptr_t)((char *)&condition + 8));
+    } else {
+        witness_pthread_futex_wait(tid, 128);
+    }
+    if (pthread_mutex_lock(&mutex)) return 48;
+    witness_pthread_futex_wait_at(tid, 0,
+        (unsigned long)(uintptr_t)((char *)&mutex + 4));
+    if (pthread_cancel(waiter) || pthread_mutex_unlock(&mutex)) return 49;
+    void *result;
+    if (pthread_join(waiter, &result) || result != PTHREAD_CANCELED ||
+        atomic_load(&observed_result) != ETIMEDOUT || !atomic_load(&cleaned) ||
+        pthread_cond_destroy(&condition) || pthread_mutex_destroy(&mutex)) return 50;
+    puts("pthread timed condition timeout wins cancellation during shared mutex relock: PASS");
+    return 0;
+}
 static int c11_timeout(void)
 {
     mtx_t lock;
@@ -251,6 +307,8 @@ int main(int argc, char **argv)
     if (!strcmp(argv[1], "pending-validation")) return pending_validation();
     if (!strcmp(argv[1], "c11")) return c11_timeout();
     if (!strcmp(argv[1], "private-shared-mutex")) return private_condition_shared_mutex();
+    if (!strcmp(argv[1], "private-timeout-relock-cancel")) return cancel_after_shared_mutex_timeout(0);
+    if (!strcmp(argv[1], "shared-timeout-relock-cancel")) return cancel_after_shared_mutex_timeout(1);
     unrecoverable = !strcmp(argv[1], "robust-unrecoverable");
     pi_robust = !strcmp(argv[1], "pi-robust-cancel");
     cancel_during_relock = unrecoverable || pi_robust || !strcmp(argv[1], "robust-cancel");
