@@ -7,9 +7,8 @@ readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly RECORD_SIZE=40
-readonly PREVIOUS_RECORDS=224
 readonly SELECTED_SYMBOLS=(log logf)
-readonly FENV_SIBLINGS=(feclearexcept fegetenv fegetround fesetenv fesetround fetestexcept)
+readonly FENV_SIBLINGS=(feclearexcept fegetenv fegetround feraiseexcept fesetenv fesetround fetestexcept)
 
 fail() { printf 'ERROR: x86 static libc log/logf: %s\n' "$*" >&2; exit 1; }
 require_tool() { command -v "$1" >/dev/null 2>&1 || fail "requires $1"; }
@@ -33,7 +32,7 @@ assert_selected_c_abi_surface() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mkdir mktemp nm objdump readelf rm rustup sort wc; do
+for tool in ar awk cargo cmp diff grep mkdir mktemp nm objdump python3 readelf rm rustup sort wc; do
 	require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -77,8 +76,6 @@ reference_bytes="$(wc -c < "$reference_output")"
 [ "$((reference_bytes % RECORD_SIZE))" -eq 0 ] ||
 	fail "pinned-musl fixture emitted a partial record"
 record_count="$((reference_bytes / RECORD_SIZE))"
-[ "$record_count" -gt "$PREVIOUS_RECORDS" ] ||
-	fail "pinned-musl fixture did not extend the previous record stream"
 
 build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -156,9 +153,89 @@ if grep -Eq 'vfmadd|vfnmadd|vfmsub|vfnmsub' "$disassembly"; then
 fi
 
 "$candidate" >"$candidate_output" || fail "freestanding log/logf fixture failed"
-if ! cmp -s "$reference_output" "$candidate_output"; then
-	cmp -l "$reference_output" "$candidate_output" | sed -n '1,120p' >&2 || true
-	fail "candidate log/logf record stream differs from pinned musl"
-fi
+python3 - "$reference_output" "$candidate_output" <<'PY' || fail "candidate log/logf differs from pinned musl"
+import struct
+import sys
+from pathlib import Path
+
+
+def fail(index, reason, reference, candidate):
+    raise SystemExit(
+        f"record {index}: {reason}; "
+        f"musl={tuple(hex(word) for word in reference)} "
+        f"crabc={tuple(hex(word) for word in candidate)}"
+    )
+
+
+def is_nan(bits, is_float):
+    exponent = 0x7f800000 if is_float else 0x7ff0000000000000
+    fraction = 0x007fffff if is_float else 0x000fffffffffffff
+    return bits & exponent == exponent and bits & fraction != 0
+
+
+def check_semantics(index, record):
+    input_bits, result_bits, mode_word, flags, errno = record
+    request = mode_word >> 32
+    is_float = bool(request & 0x80000000)
+    dirty = bool(request & 0x40000000)
+    requested_round = request & 0xffff
+    if requested_round != mode_word & 0xffffffff:
+        fail(index, "rounding direction changed", record, record)
+    if errno != (119 if dirty else 77):
+        fail(index, "caller errno changed", record, record)
+    if dirty and flags & 0x28 != 0x28:
+        fail(index, "preexisting overflow/inexact flags cleared", record, record)
+    if is_float and input_bits >> 32 != 1:
+        fail(index, "binary32 input tag is invalid", record, record)
+    if is_float and result_bits >> 32:
+        fail(index, "binary32 result has upper bits", record, record)
+    input_bits &= 0xffffffff if is_float else 0xffffffffffffffff
+    sign = 0x80000000 if is_float else 0x8000000000000000
+    infinity = 0x7f800000 if is_float else 0x7ff0000000000000
+    one = 0x3f800000 if is_float else 0x3ff0000000000000
+    expected_flags = 0x28 if dirty else 0
+    if input_bits & ~sign == 0:
+        if result_bits != sign | infinity or flags != expected_flags | 0x04:
+            fail(index, "signed zero must divide by zero to negative infinity", record, record)
+    elif input_bits == one:
+        if result_bits != 0 or flags != expected_flags:
+            fail(index, "log(1) must be exact positive zero", record, record)
+    elif input_bits == infinity:
+        if result_bits != infinity or flags != expected_flags:
+            fail(index, "positive infinity must be unchanged", record, record)
+    elif is_nan(input_bits, is_float):
+        quiet_bit = 0x00400000 if is_float else 0x0008000000000000
+        expected_nan_flags = expected_flags | (0 if input_bits & quiet_bit else 0x01)
+        if not is_nan(result_bits, is_float) or flags != expected_nan_flags:
+            fail(index, "quiet/signaling NaN exception behavior differs", record, record)
+    elif input_bits & sign:
+        if not is_nan(result_bits, is_float) or flags & 0x01 == 0:
+            fail(index, "negative argument must signal invalid and return NaN", record, record)
+
+
+reference_bytes = Path(sys.argv[1]).read_bytes()
+candidate_bytes = Path(sys.argv[2]).read_bytes()
+if len(reference_bytes) != len(candidate_bytes):
+    raise SystemExit(
+        f"record length differs: musl={len(reference_bytes)} crabc={len(candidate_bytes)}"
+    )
+for index, (reference, candidate) in enumerate(zip(
+    struct.iter_unpack('<5Q', reference_bytes),
+    struct.iter_unpack('<5Q', candidate_bytes),
+)):
+    check_semantics(index, reference)
+    check_semantics(index, candidate)
+    if reference[0] != candidate[0] or reference[2:] != candidate[2:]:
+        fail(index, "input, rounding, flags, or errno differs", reference, candidate)
+    is_float = bool(reference[2] >> 63)
+    reference_nan = is_nan(reference[1], is_float)
+    candidate_nan = is_nan(candidate[1], is_float)
+    # The C/IEEE result contract specifies a NaN class, not its sign or payload.
+    # Finite and infinite bits retain the stronger pinned-musl differential.
+    if reference_nan != candidate_nan or (
+        not reference_nan and reference[1] != candidate[1]
+    ):
+        fail(index, "result differs", reference, candidate)
+PY
 
 printf 'x86 static libc log/logf: PASS (%s records)\n' "$record_count"

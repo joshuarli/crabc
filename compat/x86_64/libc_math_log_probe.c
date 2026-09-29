@@ -3,8 +3,8 @@
  *
  * This raw-bit corpus runs through pinned musl 1.2.6 and one freestanding
  * crabc archive. It records result bits, IEEE exception flags, and errno under
- * each MXCSR rounding direction, including subnormal normalization, table
- * boundaries, the close-to-one path, signed-zero divide-by-zero,
+ * each MXCSR rounding direction, including dispersed positive subnormals,
+ * table boundaries, the close-to-one path, signed-zero divide-by-zero,
  * negative-domain invalid, infinities, quiet NaNs, and signaling NaNs. It selects only
  * the binary64/binary32 natural logarithm pair: `logl`, fenv policy/APIs,
  * special math, and general libm remain outside this leaf.
@@ -39,10 +39,16 @@
 #define LOG_F32_SUBNORMAL_POWERS 23
 #define LOG_F64_NORMAL_POWERS 64
 #define LOG_F32_NORMAL_POWERS 32
+#define LOG_DISPERSED_SUBNORMALS 256
+#define LOG_F64_ONE_RADIUS 1024
+#define LOG_F32_ONE_RADIUS 512
 #define LOG_ROUNDING_CASES 4
 #define LOG_RECORD_WORDS 5
 #define LOG_RECORD_COUNT \
 	((LOG_F64_CASES + LOG_F32_CASES + \
+	  LOG_F64_CASES + LOG_F32_CASES + \
+	  2 * LOG_DISPERSED_SUBNORMALS + \
+	  2 * LOG_F64_ONE_RADIUS + 1 + 2 * LOG_F32_ONE_RADIUS + 1 + \
 	  (LOG_F64_THRESHOLDS + LOG_F32_THRESHOLDS) * \
 	    (2 * LOG_THRESHOLD_RADIUS + 1) + \
 	  (LOG_F64_TABLE_BOUNDARIES + LOG_F32_TABLE_BOUNDARIES + \
@@ -139,20 +145,55 @@ static float float_from_bits(uint32_t bits)
 	return view.value;
 }
 
-static int record_binary64(size_t *cursor, int rounding_mode, uint64_t input)
+static int record_binary64_state(size_t *cursor, int rounding_mode,
+	uint64_t input, int dirty)
 {
 	double result;
 
 	if (fesetround(rounding_mode) != 0 || feclearexcept(FE_ALL_EXCEPT) != 0)
 		return 1;
-	errno = 77;
+	if (dirty && feraiseexcept(FE_OVERFLOW | FE_INEXACT) != 0)
+		return 1;
+	errno = dirty ? 119 : 77;
 	result = direct_log(double_from_bits(input));
 	if (*cursor + LOG_RECORD_WORDS > LOG_RECORD_STORAGE_WORDS)
 		return 2;
 	crabc_x86_64_math_log_records[(*cursor)++] = input;
 	crabc_x86_64_math_log_records[(*cursor)++] = double_bits(result);
 	crabc_x86_64_math_log_records[(*cursor)++] =
-		((uint64_t)(uint32_t)rounding_mode << 32) |
+		((uint64_t)((uint32_t)rounding_mode |
+			(dirty ? UINT32_C(0x40000000) : 0)) << 32) |
+		(uint32_t)fegetround();
+	crabc_x86_64_math_log_records[(*cursor)++] =
+		(uint32_t)fetestexcept(FE_ALL_EXCEPT);
+	crabc_x86_64_math_log_records[(*cursor)++] = (uint32_t)errno;
+	return 0;
+}
+
+static int record_binary64(size_t *cursor, int rounding_mode, uint64_t input)
+{
+	return record_binary64_state(cursor, rounding_mode, input, 0);
+}
+
+static int record_binary32_state(size_t *cursor, int rounding_mode,
+	uint32_t input, int dirty)
+{
+	float result;
+
+	if (fesetround(rounding_mode) != 0 || feclearexcept(FE_ALL_EXCEPT) != 0)
+		return 1;
+	if (dirty && feraiseexcept(FE_OVERFLOW | FE_INEXACT) != 0)
+		return 1;
+	errno = dirty ? 119 : 77;
+	result = direct_logf(float_from_bits(input));
+	if (*cursor + LOG_RECORD_WORDS > LOG_RECORD_STORAGE_WORDS)
+		return 2;
+	crabc_x86_64_math_log_records[(*cursor)++] =
+		UINT64_C(0x0000000100000000) | input;
+	crabc_x86_64_math_log_records[(*cursor)++] = float_bits(result);
+	crabc_x86_64_math_log_records[(*cursor)++] =
+		((uint64_t)((uint32_t)rounding_mode | UINT32_C(0x80000000) |
+			(dirty ? UINT32_C(0x40000000) : 0)) << 32) |
 		(uint32_t)fegetround();
 	crabc_x86_64_math_log_records[(*cursor)++] =
 		(uint32_t)fetestexcept(FE_ALL_EXCEPT);
@@ -162,24 +203,7 @@ static int record_binary64(size_t *cursor, int rounding_mode, uint64_t input)
 
 static int record_binary32(size_t *cursor, int rounding_mode, uint32_t input)
 {
-	float result;
-
-	if (fesetround(rounding_mode) != 0 || feclearexcept(FE_ALL_EXCEPT) != 0)
-		return 1;
-	errno = 77;
-	result = direct_logf(float_from_bits(input));
-	if (*cursor + LOG_RECORD_WORDS > LOG_RECORD_STORAGE_WORDS)
-		return 2;
-	crabc_x86_64_math_log_records[(*cursor)++] =
-		UINT64_C(0x0000000100000000) | input;
-	crabc_x86_64_math_log_records[(*cursor)++] = float_bits(result);
-	crabc_x86_64_math_log_records[(*cursor)++] =
-		((uint64_t)(uint32_t)rounding_mode << 32) |
-		(uint32_t)fegetround();
-	crabc_x86_64_math_log_records[(*cursor)++] =
-		(uint32_t)fetestexcept(FE_ALL_EXCEPT);
-	crabc_x86_64_math_log_records[(*cursor)++] = (uint32_t)errno;
-	return 0;
+	return record_binary32_state(cursor, rounding_mode, input, 0);
 }
 
 static int record_binary64_neighbors(size_t *cursor, int rounding_mode,
@@ -232,6 +256,34 @@ int crabc_x86_64_math_log_probe(void)
 			input_index++)
 			status = record_binary32(&cursor, rounding_modes[mode_index],
 				binary32_inputs[input_index]);
+		/* Preexisting exceptions must remain sticky, and neither an ordinary
+		 * nor a domain call may overwrite the caller's errno sentinel. */
+		for (input_index = 0; input_index < LOG_F64_CASES && status == 0;
+			input_index++)
+			status = record_binary64_state(&cursor,
+				rounding_modes[mode_index], binary64_inputs[input_index], 1);
+		for (input_index = 0; input_index < LOG_F32_CASES && status == 0;
+			input_index++)
+			status = record_binary32_state(&cursor,
+				rounding_modes[mode_index], binary32_inputs[input_index], 1);
+		status = status ? status : record_binary64_neighbors(&cursor,
+			rounding_modes[mode_index], UINT64_C(0x3ff0000000000000),
+			LOG_F64_ONE_RADIUS);
+		status = status ? status : record_binary32_neighbors(&cursor,
+			rounding_modes[mode_index], UINT32_C(0x3f800000),
+			LOG_F32_ONE_RADIUS);
+		for (input_index = 1; input_index <= LOG_DISPERSED_SUBNORMALS && status == 0;
+			input_index++) {
+			status = record_binary64(&cursor, rounding_modes[mode_index],
+				((uint64_t)input_index *
+				 UINT64_C(0x0009e3779b97f4a7)) &
+				UINT64_C(0x000fffffffffffff));
+			if (status == 0)
+				status = record_binary32(&cursor,
+					rounding_modes[mode_index],
+					((uint32_t)input_index * UINT32_C(0x004f1bbd)) &
+					UINT32_C(0x007fffff));
+		}
 		for (input_index = 0; input_index < LOG_F64_THRESHOLDS && status == 0;
 			input_index++)
 			status = record_binary64_neighbors(&cursor,
