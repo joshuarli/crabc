@@ -137,6 +137,16 @@ class M5GateContractTests(unittest.TestCase):
             "blocked",
         )
 
+    def test_two_publisher_owner_exit_differential_is_required(self) -> None:
+        evidence_id = "differential:owner-exit-late-remote-two-producers"
+        summary = self.validate()
+        self.assertIn(evidence_id, summary["runnable_evidence"])
+        records = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
+        records[evidence_id] = {"status": "failed"}
+        report = gate.gate_report(self.contract, summary, records)
+        generic_exit = next(entry for entry in report["gates"] if entry["id"] == "m5.generic-exit")
+        self.assertEqual(generic_exit["status"], "failed")
+
     def test_receipt_evidence_is_runnable_and_passes_only_on_a_valid_receipt(self) -> None:
         summary = self.validate()
         for evidence_id in ("receipt:libc-shadow-pthread-teardown", "receipt:upstream-test-stress",

@@ -133,6 +133,16 @@
       ],
       "scope": "Pinned C and native Rust keep an active survivor while a full medium page and independent OS singleton finish owner exit before the first remote medium free; the late free reclaims the abandoned page, whose final free retires it until forced collection."
     },
+    "differential:owner-exit-late-remote-two-producers": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m5_owner_exit_late_remote_evidence.py",
+        "--offline",
+        "--report",
+        "{scratch}/owner-exit-late-remote-two-producers.json"
+      ],
+      "scope": "Pinned C and native Rust publish distinct medium-page frees before and after normal owner exit. The first publication is collected on exit, the second reclaims the abandoned page, and forced collection clears its PageMap span exactly once."
+    },
     "differential:nonabandoning-mapped-large-owner-exit": {
       "command": [
         "python3",
@@ -317,6 +327,7 @@
         "differential:nonabandoning-mixed-owner-exit",
         "differential:nonabandoning-active-survivor-owner-exit",
         "differential:nonabandoning-late-remote-owner-exit",
+        "differential:owner-exit-late-remote-two-producers",
         "differential:nonabandoning-mapped-large-owner-exit",
         "differential:arena-medium-pre-reclaim-remote-exit",
         "differential:arena-singleton-regular-owner-exit",
