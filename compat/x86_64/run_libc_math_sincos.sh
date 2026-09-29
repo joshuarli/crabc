@@ -44,7 +44,7 @@ assert_selected_c_abi_surface() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp cp diff grep mkdir mktemp nm objdump readelf rustup sort wc; do
+for tool in ar awk cargo cmp cp diff grep mkdir mktemp nm objdump readelf rustup sha256sum sort wc; do
 	require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -54,7 +54,8 @@ bash "$ROOT_DIR/compat/x86_64/run_math_sincos_header_abi.sh" >/dev/null
 evidence_dir="$ROOT_DIR/.work/sincos"
 mkdir -p "$evidence_dir"
 work_dir="$(mktemp -d "$evidence_dir/run.XXXXXX")"
-trap 'rm -rf -- "$work_dir"' EXIT
+receipt_dir="$(mktemp -d "$evidence_dir/evidence.XXXXXX")"
+chmod 755 "$work_dir" "$receipt_dir"
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-reference"
@@ -78,6 +79,12 @@ cd "$ROOT_DIR"
 for header in fenv.h float.h math.h stddef.h stdint.h features.h bits/alltypes.h; do
 	grep -Fq "$ROOT_DIR/include/$header" "$trace" ||
 		fail "fixture did not use project $header"
+done
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
+	compat/x86_64/libc_math_sincosl_probe.c >/dev/null 2>"$work_dir/sincosl-header-trace"
+for header in fenv.h float.h math.h stddef.h stdint.h features.h bits/alltypes.h; do
+	grep -Fq "$ROOT_DIR/include/$header" "$work_dir/sincosl-header-trace" ||
+		fail "binary80 fixture did not use project $header"
 done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -fno-builtin \
 	-fno-stack-protector compat/x86_64/libc_math_sincos_probe.c -lm -o "$reference"
@@ -177,11 +184,59 @@ if grep -Eq 'vfmadd|vfnmadd|vfmsub|vfnmsub' "$disassembly"; then
 fi
 
 "$candidate" >"$candidate_output" || fail "freestanding sincos/sincosf fixture failed"
-cp "$reference_output" "$evidence_dir/oracle.records"
-cp "$candidate_output" "$evidence_dir/candidate.records"
+cp "$reference" "$candidate" "$reference_output" "$candidate_output" "$receipt_dir/"
 if ! cmp -s "$reference_output" "$candidate_output"; then
 	cmp -l "$reference_output" "$candidate_output" | sed -n '1,120p' >&2 || true
-	fail "candidate sincos/sincosf record stream differs from pinned musl"
+	( cd "$receipt_dir"; sha256sum ./* >sha256sums.txt )
+	fail "candidate sincos/sincosf record stream differs from pinned musl; raw evidence: $receipt_dir"
 fi
 
-printf 'x86 static libc sincos/sincosf: PASS (%s records)\n' "$record_count"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -fno-builtin \
+	-frounding-math -ffp-contract=off -fno-stack-protector \
+	compat/x86_64/libc_math_sincosl_probe.c -lm -o "$work_dir/musl-sincosl"
+"$work_dir/musl-sincosl" >"$work_dir/musl-sincosl.records" ||
+	fail "pinned-musl sincosl fixture failed"
+[ "$(wc -c < "$work_dir/musl-sincosl.records")" -eq 16384 ] ||
+	fail "pinned-musl sincosl fixture emitted an incomplete stream"
+
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_MATH_SINCOSL_FREESTANDING \
+	-I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
+	-fno-builtin -frounding-math -ffp-contract=off -fno-stack-protector \
+	-Wl,-e,_start -Wl,--no-undefined -Wl,--gc-sections \
+	compat/x86_64/libc_math_sincosl_probe.c \
+	compat/x86_64/libc_math_sincosl_start.S "$archive" -o "$work_dir/crabc-sincosl"
+readelf --symbols --wide "$work_dir/crabc-sincosl" >"$work_dir/sincosl-symbols"
+readelf --program-headers --wide "$work_dir/crabc-sincosl" >"$work_dir/sincosl-headers"
+readelf --dynamic --wide "$work_dir/crabc-sincosl" >"$work_dir/sincosl-dynamic" || true
+readelf --relocs --wide "$work_dir/crabc-sincosl" >"$work_dir/sincosl-relocations"
+grep -Eq '[[:space:]]FUNC[[:space:]]+GLOBAL[[:space:]]+DEFAULT[[:space:]]+[0-9]+[[:space:]]sincosl$' \
+	"$work_dir/sincosl-symbols" || fail "candidate does not retain strong sincosl"
+if awk '$7 == "UND" && NF >= 8 { print }' "$work_dir/sincosl-symbols" | grep . >/dev/null; then
+	fail "sincosl candidate has unresolved symbols"
+fi
+if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' \
+	"$work_dir/sincosl-headers" "$work_dir/sincosl-dynamic"; then
+	fail "sincosl candidate is dynamic"
+fi
+if grep -Eq '[[:space:]]TLS[[:space:]]|TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_addr' \
+	"$work_dir/sincosl-headers" "$work_dir/sincosl-relocations" "$work_dir/sincosl-symbols"; then
+	fail "sincosl candidate retains TLS"
+fi
+"$work_dir/crabc-sincosl" >"$work_dir/crabc-sincosl.records" ||
+	fail "freestanding sincosl fixture failed"
+cp "$work_dir/musl-sincosl" "$work_dir/crabc-sincosl" \
+	"$work_dir/musl-sincosl.records" "$work_dir/crabc-sincosl.records" "$receipt_dir/"
+cp "$trace" "$work_dir/sincosl-header-trace" "$candidate_symbols" \
+	"$work_dir/sincosl-symbols" "$headers" "$work_dir/sincosl-headers" \
+	"$dynamic" "$work_dir/sincosl-dynamic" "$relocs" \
+	"$work_dir/sincosl-relocations" "$receipt_dir/"
+( cd "$receipt_dir"; sha256sum ./* >sha256sums.txt )
+if ! cmp -s "$work_dir/musl-sincosl.records" "$work_dir/crabc-sincosl.records"; then
+	cmp -l "$work_dir/musl-sincosl.records" "$work_dir/crabc-sincosl.records" |
+		sed -n '1,120p' >&2 || true
+	fail "candidate sincosl record stream differs from pinned musl; raw evidence: $receipt_dir"
+fi
+
+printf 'x86 static libc sincos/sincosf/sincosl: PASS (%s binary32/64 and 256 binary80 records; raw evidence: %s)\n' \
+	"$record_count" "$receipt_dir"
+rm -rf -- "$work_dir"
