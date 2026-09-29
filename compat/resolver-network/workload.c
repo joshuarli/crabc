@@ -327,6 +327,41 @@ static int query_cname(const char *name, const char *expected_name,
     return memcmp(value, &address, 4) == 0;
 }
 
+/* Keep the first returned addrinfo alive across a second lookup.  Both its
+   address and canonical name must still belong to that result until freed. */
+static int tc_failover_lifetime(void)
+{
+    struct addrinfo hints;
+    struct addrinfo *results = NULL;
+    struct in_addr expected;
+    unsigned char packet[2048];
+    unsigned char value[4];
+    int length;
+    int matched = 0;
+
+    memset(&hints, 0, sizeof hints);
+    hints.ai_family = AF_INET;
+    hints.ai_flags = AI_CANONNAME;
+    if (getaddrinfo("tc-failover.example.test", NULL, &hints, &results) != 0)
+        return 0;
+    if (inet_pton(AF_INET, "198.51.100.55", &expected) != 1)
+        goto out;
+    length = res_query("tc-failover.example.test", C_IN, T_A, packet,
+        sizeof packet);
+    if (length < 0 || !find_dns_answer(packet, length, T_A, value, 4) ||
+        memcmp(value, &expected, 4) != 0)
+        goto out;
+    matched = results && results->ai_family == AF_INET &&
+        results->ai_addrlen >= sizeof(struct sockaddr_in) &&
+        results->ai_canonname &&
+        strcmp(results->ai_canonname, "tc-failover.example.test") == 0 &&
+        memcmp(&((struct sockaddr_in *)results->ai_addr)->sin_addr,
+            &expected, sizeof expected) == 0;
+out:
+    freeaddrinfo(results);
+    return matched;
+}
+
 static int resolver_cases(void)
 {
     unsigned char packet[2048];
@@ -380,6 +415,12 @@ static int resolver_cases(void)
         !query_a("tc.example.test", "198.51.100.45"))
         return fail("resolver-tc-tcp");
     puts("resolver.tc-tcp=accepted-over-tcp");
+
+#if defined(__x86_64__)
+    if (!install_nameservers(0) || !tc_failover_lifetime())
+        return fail("resolver-tc-failover-lifetime");
+    puts("resolver.tc-failover-lifetime=accepted-over-tcp");
+#endif
 
     if (!install_nameservers(1) ||
         !search_a("searchhost", "198.51.100.17"))

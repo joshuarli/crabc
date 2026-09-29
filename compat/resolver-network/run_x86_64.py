@@ -23,6 +23,7 @@ import selectors
 import shutil
 import signal
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -96,6 +97,7 @@ EXPECTED_STDOUT = (
     "resolver.cname=target.example.test\n"
     "resolver.cname-chain=final.example.test\n"
     "resolver.tc-tcp=accepted-over-tcp\n"
+    "resolver.tc-failover-lifetime=accepted-over-tcp\n"
     "resolver.search=searchhost.search.test\n"
     "resolver.fallback=second-server\n"
     "network.tcp4=loopback\n"
@@ -116,7 +118,7 @@ REQUIRED_SERVER_NAMES = {
     "a.example.test.", "aaaa.example.test.", "nxdomain.example.test.",
     "nodata.example.test.", "malformed.example.test.", "source-spoof.example.test.", "alias.example.test.",
     "chain.example.test.",
-    "tc.example.test.", "searchhost.search.test.", "fallback.example.test.",
+    "tc.example.test.", "tc-failover.example.test.", "searchhost.search.test.", "fallback.example.test.",
 }
 HEADER_TRACE_PATH = re.compile(r"^\.+ (/.+)$")
 
@@ -975,6 +977,76 @@ def run_chroot_with_dns(
     return raw, ready, events
 
 
+def tc_failover_provenance(events: Sequence[Mapping[str, object]]) -> bool:
+    """Check the exact wire bytes and route of the truncated fallback lookup."""
+    name = "tc-failover.example.test."
+    encoded_name = b"".join(bytes((len(label),)) + label.encode("ascii")
+                            for label in name.rstrip(".").split(".")) + b"\0"
+    question = encoded_name + b"\0\1\0\1"
+    selected = [event for event in events if event.get("name") == name]
+    observed: set[tuple[str, str, str]] = set()
+    udp_questions: set[bytes] = set()
+    tcp_questions: set[bytes] = set()
+    udp_index = None
+    tcp_index = None
+    routed_requests: dict[bytes, set[tuple[str, str, str]]] = {}
+    for index, event in enumerate(selected):
+        role = event.get("role")
+        transport = event.get("transport")
+        action = event.get("action")
+        if not isinstance(role, str) or not isinstance(transport, str) or not isinstance(action, str):
+            return False
+        route = (role, transport, action)
+        if route not in {("valid", "udp", "drop"), ("drop", "udp", "drop"),
+                         ("fallback", "udp", "tc-sequence"), ("fallback", "tcp", "answer")}:
+            return False
+        raw_request = event.get("request_hex")
+        raw_response = event.get("response_hex")
+        if not isinstance(raw_request, str):
+            return False
+        try:
+            request = bytes.fromhex(raw_request)
+            response = bytes.fromhex(raw_response) if isinstance(raw_response, str) else None
+        except ValueError:
+            return False
+        if raw_request != request.hex() or (response is not None and raw_response != response.hex()):
+            return False
+        end = 12 + len(question)
+        if (len(request) < end or request[12:end] != question or
+            int.from_bytes(request[2:4], "big") & 0x8100 != 0x0100 or
+            event.get("qtype") != 1 or event.get("qclass") != 1):
+            return False
+        if transport == "udp" and event.get("identifier") != int.from_bytes(request[:2], "big"):
+            return False
+        if action == "drop":
+            if raw_response is not None:
+                return False
+        else:
+            prior = routed_requests.get(request, set())
+            if transport == "udp" and not {("valid", "udp", "drop"),
+                                            ("drop", "udp", "drop")} <= prior:
+                return False
+            if transport == "tcp" and ("fallback", "udp", "tc-sequence") not in prior:
+                return False
+            flags = 0x8380 if transport == "udp" else 0x8180
+            answers = 0 if transport == "udp" else 1
+            expected = struct.pack("!HHHHHH", int.from_bytes(request[:2], "big"),
+                                   flags, 1, answers, 0, 0) + question
+            if transport == "tcp":
+                expected += b"\xc0\x0c" + struct.pack("!HHIH", 1, 1, 60, 4) + bytes((198, 51, 100, 55))
+                tcp_questions.add(request[12:end])
+                tcp_index = index if tcp_index is None else tcp_index
+            else:
+                udp_questions.add(request[12:end])
+                udp_index = index if udp_index is None else udp_index
+            if response != expected:
+                return False
+        observed.add(route)
+        routed_requests.setdefault(request, set()).add(route)
+    return (len(observed) == 4 and udp_questions == {question} and tcp_questions == {question}
+            and udp_index is not None and tcp_index is not None and udp_index < tcp_index)
+
+
 def event_contract(
     events: Iterable[Mapping[str, object]], *, executions: int = 1,
     by_execution: Mapping[str, Sequence[Mapping[str, object]]] | None = None,
@@ -1007,13 +1079,15 @@ def event_contract(
                         event.get("action") == "cname-chain")
     tc_udp = count(lambda event: event.get("name") == "tc.example.test." and event.get("transport") == "udp" and event.get("action") == "tc-sequence")
     tc_tcp = count(lambda event: event.get("name") == "tc.example.test." and event.get("transport") == "tcp" and event.get("action") == "answer")
+    tc_failover = tc_failover_provenance(events)
     passed = (
         REQUIRED_SERVER_NAMES <= names and all(value >= executions for value in name_counts.values())
         and malformed >= executions and source_spoof >= executions and source_other == 0
         and valid_drop >= executions and drop >= executions and fallback >= executions
         and cname >= executions and cname_chain >= executions and tc_udp >= executions and tc_tcp >= executions
+        and (tc_failover if executions == 1 else True)
     )
-    result = {"expected_execution_count": executions, "query_counts": name_counts, "required_names_seen": sorted(REQUIRED_SERVER_NAMES & names), "required_names_missing": sorted(REQUIRED_SERVER_NAMES - names), "malformed_sequence_observations": malformed, "source_spoof_observations": source_spoof, "source_spoof_other_route_observations": source_other, "valid_fallback_drop_observations": valid_drop, "drop_endpoint_observations": drop, "fallback_query_observations": fallback, "cname_query_observations": cname, "cname_chain_query_observations": cname_chain, "tc_udp_truncated_observations": tc_udp, "tc_tcp_retry_observations": tc_tcp, "passed": passed}
+    result = {"expected_execution_count": executions, "query_counts": name_counts, "required_names_seen": sorted(REQUIRED_SERVER_NAMES & names), "required_names_missing": sorted(REQUIRED_SERVER_NAMES - names), "malformed_sequence_observations": malformed, "source_spoof_observations": source_spoof, "source_spoof_other_route_observations": source_other, "valid_fallback_drop_observations": valid_drop, "drop_endpoint_observations": drop, "fallback_query_observations": fallback, "cname_query_observations": cname, "cname_chain_query_observations": cname_chain, "tc_udp_truncated_observations": tc_udp, "tc_tcp_retry_observations": tc_tcp, "tc_failover_provenance_passed": tc_failover if executions == 1 else all(tc_failover_provenance(raw) for raw in by_execution.values()) if by_execution is not None else False, "passed": passed}
     if by_execution is not None:
         segments = {label: event_contract(raw) for label, raw in by_execution.items()}
         result["by_execution"] = segments

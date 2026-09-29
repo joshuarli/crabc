@@ -51,6 +51,7 @@ RECORDS: dict[tuple[str, int], tuple[str, bytes | None]] = {
     ("alias.example.test.", 1): ("cname", socket.inet_aton("198.51.100.44")),
     ("chain.example.test.", 1): ("cname-chain", socket.inet_aton("198.51.100.54")),
     ("tc.example.test.", 1): ("tc-sequence", socket.inet_aton("198.51.100.45")),
+    ("tc-failover.example.test.", 1): ("tc-sequence", socket.inet_aton("198.51.100.55")),
     ("fallback.example.test.", 1): ("answer", socket.inet_aton("198.51.100.18")),
     ("searchhost.search.test.", 1): ("answer", socket.inet_aton("198.51.100.17")),
     ("nxdomain.example.test.", 1): ("nxdomain", None),
@@ -133,7 +134,7 @@ def canonical_name(name: str) -> str:
 def drops_query(role: str, name: str) -> bool:
     """Keep fallback observable even when a resolver chooses valid first."""
     return (role != "valid" and name == "source-spoof.example.test.") or role == "drop" or (
-        role == "valid" and name == "fallback.example.test."
+        role == "valid" and name in ("fallback.example.test.", "tc-failover.example.test.")
     )
 
 
@@ -494,6 +495,9 @@ class LoopbackDnsServer:
             event["action"] = "drop"
             if role == "valid":
                 event["drop_reason"] = "fallback"
+            if name == "tc-failover.example.test.":
+                event["request_hex"] = packet.hex()
+                event["response_hex"] = None
             self._record(event)
             return
         behavior, _ = RECORDS.get((name, qtype), ("nxdomain", None))
@@ -512,8 +516,12 @@ class LoopbackDnsServer:
             self._record(event)
             return
         event["action"] = behavior
+        responses = self._response_packets(packet, name, qtype, identifier, "udp", role)
+        if name == "tc-failover.example.test.":
+            event["request_hex"] = packet.hex()
+            event["response_hex"] = responses[0].hex() if len(responses) == 1 else None
         self._record(event)
-        for response in self._response_packets(packet, name, qtype, identifier, "udp", role):
+        for response in responses:
             try:
                 sock.sendto(response, peer)
             except OSError:
@@ -545,12 +553,19 @@ class LoopbackDnsServer:
                 event["action"] = "drop"
                 if role == "valid":
                     event["drop_reason"] = "fallback"
+                if name == "tc-failover.example.test.":
+                    event["request_hex"] = packet.hex()
+                    event["response_hex"] = None
                 self._record(event)
                 return
             behavior, _ = RECORDS.get((name, qtype), ("nxdomain", None))
             event["action"] = "answer" if behavior == "tc-sequence" else behavior
+            responses = self._response_packets(packet, name, qtype, identifier, "tcp", role)
+            if name == "tc-failover.example.test.":
+                event["request_hex"] = packet.hex()
+                event["response_hex"] = responses[0].hex() if len(responses) == 1 else None
             self._record(event)
-            for response in self._response_packets(packet, name, qtype, identifier, "tcp", role):
+            for response in responses:
                 connection.sendall(struct.pack("!H", len(response)) + response)
         except OSError:
             return

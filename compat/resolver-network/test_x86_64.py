@@ -7,6 +7,7 @@ import contextlib
 import io
 import importlib.util
 import json
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -26,6 +27,22 @@ def load_runner():
 
 
 runner = load_runner()
+
+
+def tc_failover_events() -> list[dict[str, object]]:
+    name = "tc-failover.example.test."
+    question = (b"\x0btc-failover\x07example\x04test\0\0\1\0\1")
+    request = struct.pack("!HHHHHH", 0x1234, 0x0100, 1, 0, 0, 0) + question
+    truncated = struct.pack("!HHHHHH", 0x1234, 0x8380, 1, 0, 0, 0) + question
+    complete = (struct.pack("!HHHHHH", 0x1234, 0x8180, 1, 1, 0, 0) + question +
+                b"\xc0\x0c" + struct.pack("!HHIH", 1, 1, 60, 4) + bytes((198, 51, 100, 55)))
+    routes = (("valid", "udp", "drop", None), ("drop", "udp", "drop", None),
+              ("fallback", "udp", "tc-sequence", truncated),
+              ("fallback", "tcp", "answer", complete))
+    return [dict(name=name, role=role, transport=transport, action=action,
+                 qtype=1, qclass=1, identifier=0x1234 if transport == "udp" else None,
+                 request_hex=request.hex(), response_hex=response.hex() if response else None)
+            for role, transport, action, response in routes]
 
 
 class NativeResolverNetworkRunnerTests(unittest.TestCase):
@@ -113,7 +130,8 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
 
     def test_event_contract_requires_every_resolver_transition(self) -> None:
         events = [{"name": name, "action": "answer", "role": "valid"}
-                  for name in runner.REQUIRED_SERVER_NAMES if name != "source-spoof.example.test."]
+                  for name in runner.REQUIRED_SERVER_NAMES
+                  if name not in {"source-spoof.example.test.", "tc-failover.example.test."}]
         events.extend(
             [
                 {"name": "malformed.example.test.", "action": "malformed-sequence"},
@@ -131,6 +149,7 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
                  "valid_source": "127.0.0.1"},
             ]
         )
+        events.extend(tc_failover_events())
         self.assertFalse(runner.event_contract(events)["passed"])
         events.append({"name": "tc.example.test.", "transport": "tcp", "action": "answer"})
         self.assertTrue(runner.event_contract(events)["passed"])
@@ -151,7 +170,8 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
 
     def test_event_contract_requires_a_spoofed_source_before_the_valid_answer(self) -> None:
         events = [{"name": name, "action": "answer", "role": "valid"}
-                  for name in runner.REQUIRED_SERVER_NAMES if name != "source-spoof.example.test."]
+                  for name in runner.REQUIRED_SERVER_NAMES
+                  if name not in {"source-spoof.example.test.", "tc-failover.example.test."}]
         events.extend([
             {"name": "malformed.example.test.", "action": "malformed-sequence"},
             {"name": "fallback.example.test.", "role": "valid", "action": "drop"},
@@ -162,6 +182,7 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
             {"name": "tc.example.test.", "transport": "udp", "action": "tc-sequence"},
             {"name": "tc.example.test.", "transport": "tcp", "action": "answer"},
         ])
+        events.extend(tc_failover_events())
         self.assertFalse(runner.event_contract(events)["passed"])
         events.append({"name": "source-spoof.example.test.", "role": "valid", "transport": "udp",
                        "action": "source-spoof-sequence", "forged_source": "127.0.0.4",
@@ -170,6 +191,18 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
         events.append({"name": "source-spoof.example.test.", "role": "fallback", "transport": "udp",
                        "action": "answer"})
         self.assertFalse(runner.event_contract(events)["passed"])
+
+    def test_truncated_failover_requires_exact_wire_provenance(self) -> None:
+        events = tc_failover_events()
+        self.assertTrue(runner.tc_failover_provenance(events))
+        ad_bit = [{**event, "request_hex": event["request_hex"][:4] + "0120" + event["request_hex"][8:]}
+                  for event in events]
+        self.assertTrue(runner.tc_failover_provenance(ad_bit))
+        changed = [dict(event) for event in events]
+        changed[-1]["response_hex"] = changed[-1]["response_hex"][:-2] + "56"
+        self.assertFalse(runner.tc_failover_provenance(changed))
+        self.assertFalse(runner.tc_failover_provenance(events[:-1]))
+        self.assertFalse(runner.tc_failover_provenance(events[:2] + events[3:] + events[2:3]))
 
     def test_comparison_keeps_stream_records_raw(self) -> None:
         reference = runner.outcome(0, b"unchanged\n", b"")

@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 import shutil
+import struct
 import tempfile
 import sys
 import unittest
@@ -28,6 +29,22 @@ def load_reader():
     finally:
         sys.modules.pop(spec.name, None)
     return module
+
+
+def tc_failover_events() -> list[dict[str, object]]:
+    name = "tc-failover.example.test."
+    question = (b"\x0btc-failover\x07example\x04test\0\0\1\0\1")
+    request = struct.pack("!HHHHHH", 0x1234, 0x0100, 1, 0, 0, 0) + question
+    truncated = struct.pack("!HHHHHH", 0x1234, 0x8380, 1, 0, 0, 0) + question
+    complete = (struct.pack("!HHHHHH", 0x1234, 0x8180, 1, 1, 0, 0) + question +
+                b"\xc0\x0c" + struct.pack("!HHIH", 1, 1, 60, 4) + bytes((198, 51, 100, 55)))
+    routes = (("valid", "udp", "drop", None), ("drop", "udp", "drop", None),
+              ("fallback", "udp", "tc-sequence", truncated),
+              ("fallback", "tcp", "answer", complete))
+    return [dict(name=name, role=role, transport=transport, action=action,
+                 qtype=1, qclass=1, identifier=0x1234 if transport == "udp" else None,
+                 request_hex=request.hex(), response_hex=response.hex() if response else None)
+            for role, transport, action, response in routes]
 
 
 class ResolverNetworkComponentReceiptTests(unittest.TestCase):
@@ -66,6 +83,18 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
         self.assertFalse(contract["passed"])
         self.assertEqual(contract["required_names_missing"], sorted(self.reader.REQUIRED_SERVER_NAMES))
 
+    def test_tcp_failover_wire_bytes_and_route_are_checked_independently(self) -> None:
+        events = tc_failover_events()
+        self.assertTrue(self.reader.tc_failover_provenance(events))
+        ad_bit = [{**event, "request_hex": event["request_hex"][:4] + "0120" + event["request_hex"][8:]}
+                  for event in events]
+        self.assertTrue(self.reader.tc_failover_provenance(ad_bit))
+        changed = [dict(event) for event in events]
+        changed[2]["response_hex"] = changed[2]["response_hex"].replace("8380", "8180", 1)
+        self.assertFalse(self.reader.tc_failover_provenance(changed))
+        self.assertFalse(self.reader.tc_failover_provenance(events[1:]))
+        self.assertFalse(self.reader.tc_failover_provenance(events[:2] + events[3:] + events[2:3]))
+
     def test_fallback_query_without_an_answer_from_fallback_endpoint_is_rejected(self) -> None:
         events = [
             {"name": name, "role": "valid", "transport": "udp", "action": "answer"}
@@ -86,7 +115,8 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
 
     def test_aggregate_events_cannot_substitute_for_a_missing_mode_stream(self) -> None:
         events = [{"name": name, "role": "valid", "transport": "udp", "action": "answer"}
-                  for name in self.reader.REQUIRED_SERVER_NAMES if name != "source-spoof.example.test."]
+                  for name in self.reader.REQUIRED_SERVER_NAMES
+                  if name not in {"source-spoof.example.test.", "tc-failover.example.test."}]
         events.extend([
             {"name": "malformed.example.test.", "action": "malformed-sequence"},
             {"name": "fallback.example.test.", "role": "valid", "action": "drop"},
@@ -100,6 +130,7 @@ class ResolverNetworkComponentReceiptTests(unittest.TestCase):
              "action": "source-spoof-sequence", "forged_source": "127.0.0.4",
              "valid_source": "127.0.0.1"},
         ])
+        events.extend(tc_failover_events())
         aggregate = events * 2
         self.assertTrue(self.reader.recompute_event_contract(aggregate, executions=2)["passed"])
         wrong_chain = [
