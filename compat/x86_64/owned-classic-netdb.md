@@ -135,6 +135,21 @@ comparison, ELF provider, DNS event and ordinary installed-driver receipt is
 retained. Standalone
 execution requires Docker network-none plus SYS_CHROOT.
 
+The `services` case also compares the pinned musl and owned service lifecycle
+calls before and after replacing `/etc/services`: `setservent` ignores both
+stayopen values, `getservent` returns null, `endservent` preserves errno, and
+fresh lookups observe the new file while the separate name and port result
+records retain their identity. In the same installed-header object, it checks
+the fixed protocol table through all 36 entries across every product arm.
+`setprotoent`, `endprotoent`, name lookup, and number lookup share one cursor
+and result record; misses leave the cursor exhausted. The test supplies a
+conflicting `/etc/protocols` file and checks that the fixed table is
+unchanged. These calls preserve a seeded errno. The existing receipt seals the
+probe bytes and all seven executions of this case. The static provider has its
+separate object-level proof in `run_libc_protocol_database.sh`; this matrix
+adds installed static PIE and dynamic consumer observations. The protocol
+result remains non-reentrant and requires callers to serialize access.
+
 ## Reconstructable component receipt
 
 `owned_classic_netdb.py` retains `classic-netdb-products.json` beside the

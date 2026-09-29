@@ -300,6 +300,8 @@ static void reverse_dns(void) {
 }
 static void services(void) {
     struct servent s,*r;_Alignas(16) char b[128];char requested[]="alt",tcp[]="tcp",udp[]="udp";
+    errno=EDOM;setservent(1);CHECK(errno==EDOM);CHECK(!getservent()&&errno==EDOM);
+    endservent();CHECK(errno==EDOM);
     CHECK(!getservbyname_r(requested,0,&s,b,sizeof b,&r)&&r==&s&&s.s_name==requested&&s.s_aliases[0]==requested&&!s.s_aliases[1]&&s.s_port==htons(45001)&&!strcmp(s.s_proto,"udp"));
     CHECK(!getservbyname_r(requested,tcp,&s,b,sizeof b,&r)&&r==&s&&s.s_name==requested&&s.s_proto!=tcp&&!strcmp(s.s_proto,"tcp"));
     CHECK(!getservbyname_r("prefix-alias",tcp,&s,b,sizeof b,&r)&&r==&s&&s.s_port==htons(45004));
@@ -326,6 +328,43 @@ static void services(void) {
     file("/etc/services",moved,sizeof moved-1);
     CHECK(getservbyport_r(htons(45005),tcp,&s,b,sizeof b,&r)==ENOENT&&!r);
     CHECK(!getservbyport_r(htons(45007),tcp,&s,b,sizeof b,&r)&&r==&s&&!strcmp(s.s_name,"moved"));
+    errno=EDOM;setservent(0);CHECK(errno==EDOM);
+    CHECK(!getservent()&&errno==EDOM);
+    CHECK(!getservbyname_r("current",tcp,&s,b,sizeof b,&r)&&r==&s&&s.s_port==htons(45007));
+    CHECK(getservbyname("current",tcp)==shared_name&&shared_name->s_port==htons(45007));
+}
+static void protocols(void) {
+    struct protoent *first,*p;char **aliases;
+    static const struct {int number;const char *name;} expected[]={
+        {0,"ip"},{1,"icmp"},{2,"igmp"},{3,"ggp"},{4,"ipencap"},{5,"st"},
+        {6,"tcp"},{8,"egp"},{12,"pup"},{17,"udp"},{20,"hmp"},{22,"xns-idp"},
+        {27,"rdp"},{29,"iso-tp4"},{36,"xtp"},{37,"ddp"},{38,"idpr-cmtp"},
+        {41,"ipv6"},{43,"ipv6-route"},{44,"ipv6-frag"},{45,"idrp"},
+        {46,"rsvp"},{47,"gre"},{50,"esp"},{51,"ah"},{57,"skip"},
+        {58,"ipv6-icmp"},{59,"ipv6-nonxt"},{60,"ipv6-opts"},{73,"rspf"},
+        {81,"vmtp"},{89,"ospf"},{94,"ipip"},{98,"encap"},{103,"pim"},
+        {255,"raw"}
+    };
+    const char altered[]="invented 6 invented-alias\n";
+    file("/etc/protocols",altered,sizeof altered-1);
+    errno=EDOM;setprotoent(1);CHECK(errno==EDOM);
+    first=getprotoent();CHECK(first&&first->p_proto==0&&!strcmp(first->p_name,"ip")&&errno==EDOM);
+    aliases=first->p_aliases;CHECK(aliases&&!aliases[0]);
+    p=getprotobyname("tcp");CHECK(p==first&&p->p_aliases==aliases&&p->p_proto==6&&!strcmp(p->p_name,"tcp")&&errno==EDOM);
+    p=getprotoent();CHECK(p==first&&p->p_proto==8&&!strcmp(p->p_name,"egp")&&errno==EDOM);
+    CHECK(!getprotobyname("TCP")&&errno==EDOM);
+    CHECK(!getprotoent()&&errno==EDOM);
+    p=getprotobynumber(255);CHECK(p==first&&p->p_proto==255&&!strcmp(p->p_name,"raw")&&errno==EDOM);
+    CHECK(!getprotoent()&&errno==EDOM);
+    endprotoent();CHECK(errno==EDOM);
+    p=getprotoent();CHECK(p==first&&p->p_proto==0&&!strcmp(p->p_name,"ip")&&errno==EDOM);
+    setprotoent(-7);CHECK(errno==EDOM);
+    for(unsigned i=0;i<sizeof expected/sizeof expected[0];i++) {
+        p=getprotoent();CHECK(p==first&&p->p_aliases==aliases&&!aliases[0]&&p->p_proto==expected[i].number&&!strcmp(p->p_name,expected[i].name)&&errno==EDOM);
+    }
+    CHECK(!getprotoent()&&errno==EDOM);
+    CHECK(!getprotobyname("invented")&&errno==EDOM);
+    CHECK(!getprotobynumber(256)&&errno==EDOM);
 }
 static void service_buffers(void) {
     struct servent s,*r;_Alignas(16) char raw[128];
@@ -416,6 +455,6 @@ static void allocation_failure(void) {
 int main(int argc,char **argv) {
     CHECK(argc==2);setup();const char *s=argv[1];
     if(!strcmp(s,"host-numeric"))host_numeric();else if(!strcmp(s,"host-local"))host_local();else if(!strcmp(s,"host-buffers"))host_buffers();else if(!strcmp(s,"host-many"))host_many();else if(!strcmp(s,"host-dns"))host_dns();else if(!strcmp(s,"dns-record-order"))dns_record_order();else if(!strcmp(s,"dns-record-prefix"))dns_record_prefix();else if(!strcmp(s,"dns-batch"))dns_batch();else if(!strcmp(s,"search-precedence"))search_precedence();
-    else if(!strcmp(s,"mixed-family"))mixed_family_precedence();else if(!strcmp(s,"reverse-local"))reverse_local();else if(!strcmp(s,"reverse-dns"))reverse_dns();else if(!strcmp(s,"services"))services();else if(!strcmp(s,"service-buffers"))service_buffers();else if(!strcmp(s,"empty-reporting"))empty_and_reporting();else if(!strcmp(s,"addrinfo"))addrinfo();else if(!strcmp(s,"threads-fork"))threads_and_fork();else if(!strcmp(s,"allocation"))allocation_failure();else if(!strcmp(s,"socket-error"))socket_error();else if(!strcmp(s,"fcntl-error"))fcntl_error();else io_errors(s);
+    else if(!strcmp(s,"mixed-family"))mixed_family_precedence();else if(!strcmp(s,"reverse-local"))reverse_local();else if(!strcmp(s,"reverse-dns"))reverse_dns();else if(!strcmp(s,"services")){services();protocols();}else if(!strcmp(s,"service-buffers"))service_buffers();else if(!strcmp(s,"empty-reporting"))empty_and_reporting();else if(!strcmp(s,"addrinfo"))addrinfo();else if(!strcmp(s,"threads-fork"))threads_and_fork();else if(!strcmp(s,"allocation"))allocation_failure();else if(!strcmp(s,"socket-error"))socket_error();else if(!strcmp(s,"fcntl-error"))fcntl_error();else io_errors(s);
     puts("classic netdb scenario passed");return 0;
 }
