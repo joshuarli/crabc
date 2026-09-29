@@ -56,7 +56,7 @@ compile_and_check_companions() {
 }
 compile_and_check_companions oracle "" "$oracle_cc" -pthread -I"$ROOT/include"
 "$oracle_cc" -std=c11 -pthread -I"$ROOT/include" "$probe" -o "$work/oracle"
-scenarios=(realtime monotonic attributes pending-validation c11 robust-timeout robust-cancel robust-unrecoverable pi-robust-cancel private-shared-mutex private-timeout-relock-cancel shared-timeout-relock-cancel handoff-realtime handoff-monotonic handoff-shared timeout-race shared-lifecycle-realtime shared-lifecycle-monotonic)
+scenarios=(realtime monotonic attributes pending-validation c11 robust-timeout robust-cancel robust-unrecoverable pi-robust-cancel private-shared-mutex private-timeout-relock-cancel shared-timeout-relock-cancel handoff-realtime handoff-monotonic handoff-shared timeout-race spurious-realtime spurious-monotonic shared-lifecycle-realtime shared-lifecycle-monotonic)
 for scenario in "${scenarios[@]}"; do
     timeout 20 python3 -B "$ROOT/compat/x86_64/run_pthread_wait_witness.py" "" "$work/oracle" "$scenario" >"$work/oracle-$scenario.stdout"
 done
@@ -91,4 +91,4 @@ for mode in pie non-pie; do
         cmp "$work/oracle-$scenario.stdout" "$work/direct-$mode-$scenario.stdout"
     done
 done
-printf 'owned timed pthread conditions: PASS (musl + requested installed static and dynamic kernel/direct entries, clocks/timeouts, timed signal/broadcast and timeout races, shared lifecycle, C11, timed/shared cancellation, timeout/relock cancellation with shared mutex, distinct-address fork handoffs and robust relock precedence); evidence: %s\n' "$work"
+printf 'owned timed pthread conditions: PASS (musl + requested installed static and dynamic kernel/direct entries, clocks/timeouts, timed signal/broadcast, raw futex spurious wakes and timeout races, shared lifecycle, C11, timed/shared cancellation, timeout/relock cancellation with shared mutex, distinct-address fork handoffs and robust relock precedence); evidence: %s\n' "$work"

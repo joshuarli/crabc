@@ -397,6 +397,62 @@ static int timed_signal_timeout_race(void)
     puts("pthread timed condition signal/timeout race and reuse: PASS");
     return 0;
 }
+static atomic_int spurious_ready, spurious_tid, spurious_returned;
+static int spurious_permit;
+static clockid_t spurious_clock;
+static void *spurious_waiter(void *unused)
+{
+    (void)unused;
+    if (pthread_mutex_lock(&mutex)) _Exit(84);
+    atomic_store(&spurious_tid, (int)syscall(SYS_gettid));
+    atomic_store(&spurious_ready, 1);
+    struct timespec until = deadline(spurious_clock, 30000);
+    errno = E2BIG;
+    while (!spurious_permit) {
+        int result = pthread_cond_timedwait(&condition, &mutex, &until);
+        if (result || !owned_mutex(&mutex) || errno != E2BIG) _Exit(85);
+        atomic_fetch_add(&spurious_returned, 1);
+    }
+    if (pthread_mutex_unlock(&mutex)) _Exit(86);
+    return 0;
+}
+static int shared_spurious_wake(clockid_t clock)
+{
+    pthread_mutexattr_t mutex_attr;
+    pthread_condattr_t cond_attr;
+    spurious_clock = clock;
+    if (pthread_mutexattr_init(&mutex_attr) ||
+        pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED) ||
+        pthread_mutex_init(&mutex, &mutex_attr) || pthread_mutexattr_destroy(&mutex_attr) ||
+        pthread_condattr_init(&cond_attr) ||
+        pthread_condattr_setpshared(&cond_attr, PTHREAD_PROCESS_SHARED) ||
+        pthread_condattr_setclock(&cond_attr, clock) ||
+        pthread_cond_init(&condition, &cond_attr) || pthread_condattr_destroy(&cond_attr)) return 87;
+    pthread_t thread;
+    if (pthread_create(&thread, 0, spurious_waiter, 0)) return 88;
+    while (!atomic_load(&spurious_ready)) sched_yield();
+    int tid = atomic_load(&spurious_tid);
+    unsigned long address = (unsigned long)(uintptr_t)((char *)&condition + 8);
+    witness_pthread_futex_wait_at(tid, 0, address);
+    /* Raw futex wakes leave the condition sequence unchanged. The waiter
+     * must reenter its timed futex wait until a real condition signal arrives. */
+    for (int wake = 0; wake != 2; ++wake) {
+        for (;;) {
+            long count = syscall(SYS_futex, (void *)(uintptr_t)address, 1, 1, 0);
+            if (count == 1) break;
+            if (count != 0) return 89;
+            sched_yield();
+        }
+    }
+    if (atomic_load(&spurious_returned) != 0 || pthread_mutex_lock(&mutex)) return 89;
+    spurious_permit = 1;
+    if (pthread_cond_signal(&condition) || pthread_mutex_unlock(&mutex) ||
+        pthread_join(thread, 0)) return 90;
+    if (atomic_load(&spurious_returned) != 1 ||
+        pthread_cond_destroy(&condition) || pthread_mutex_destroy(&mutex)) return 91;
+    puts("pthread shared timed condition ignores raw futex wakes: PASS");
+    return 0;
+}
 struct timed_shared_state {
     pthread_mutex_t mutex;
     pthread_cond_t condition;
@@ -465,6 +521,8 @@ int main(int argc, char **argv)
     if (!strcmp(argv[1], "handoff-monotonic")) return timed_handoff(CLOCK_MONOTONIC, 0);
     if (!strcmp(argv[1], "handoff-shared")) return timed_handoff(CLOCK_MONOTONIC, 1);
     if (!strcmp(argv[1], "timeout-race")) return timed_signal_timeout_race();
+    if (!strcmp(argv[1], "spurious-realtime")) return shared_spurious_wake(CLOCK_REALTIME);
+    if (!strcmp(argv[1], "spurious-monotonic")) return shared_spurious_wake(CLOCK_MONOTONIC);
     if (!strcmp(argv[1], "shared-lifecycle-realtime")) return timed_shared_lifecycle(CLOCK_REALTIME);
     if (!strcmp(argv[1], "shared-lifecycle-monotonic")) return timed_shared_lifecycle(CLOCK_MONOTONIC);
     unrecoverable = !strcmp(argv[1], "robust-unrecoverable");
