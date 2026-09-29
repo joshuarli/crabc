@@ -52,6 +52,30 @@ def enabled_features(features, name):
 
 
 class OwnedPosixFilesystemTests(unittest.TestCase):
+    def test_namespace_boundaries_are_exercised_in_an_isolated_directory(self) -> None:
+        scratch = ROOT / ".work" / "x86_64" / "tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            directory = Path(temporary)
+            container_directory = "/workspace/" + directory.relative_to(ROOT).as_posix()
+            result = subprocess.run(
+                [
+                    str(ROOT / "scripts" / "lanes" / "rust-check.sh"),
+                    "sh", "-c",
+                    '/usr/local/bin/crabc-x86_64-musl-gcc -std=c11 -D_GNU_SOURCE '
+                    '-pthread -I/workspace/include '
+                    '/workspace/compat/x86_64/owned_posix_filesystem_probe.c '
+                    '-o "$1/filesystem-probe" && cd "$1" && '
+                    './filesystem-probe namespace-boundaries',
+                    "sh", container_directory,
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "namespace boundaries ok\n")
+
     @staticmethod
     def _write_file(root: Path, relative: str, contents: bytes) -> Path:
         path = root / relative

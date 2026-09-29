@@ -1264,6 +1264,88 @@ static int alias_edges_case(void)
     return 0;
 }
 
+static int namespace_boundaries_case(void)
+{
+    static const char root[] = "namespace-boundaries";
+    char target[4] = { 'X', 'X', 'X', 'X' };
+    struct stat source_before;
+    struct stat target_before;
+    struct stat observed;
+    int rootfd;
+    int sourcefd;
+    int targetfd;
+
+    CHECK(mkdir(root, 0700) == 0);
+    rootfd = open(root, O_RDONLY | O_DIRECTORY);
+    CHECK(rootfd >= 0);
+    CHECK(mkdirat(rootfd, "source", 0700) == 0);
+    CHECK(mkdirat(rootfd, "target", 0700) == 0);
+    sourcefd = openat(rootfd, "source", O_RDONLY | O_DIRECTORY);
+    targetfd = openat(rootfd, "target", O_RDONLY | O_DIRECTORY);
+    CHECK(sourcefd >= 0 && targetfd >= 0);
+    CHECK(write_file("namespace-boundaries/source/item", "source") == 0);
+    CHECK(write_file("namespace-boundaries/target/item", "target") == 0);
+    CHECK(fstatat(sourcefd, "item", &source_before, 0) == 0);
+    CHECK(fstatat(targetfd, "item", &target_before, 0) == 0);
+    CHECK(source_before.st_ino != target_before.st_ino);
+    CHECK(symlinkat("item", sourcefd, "alias") == 0);
+
+    /* A hard link to the final symlink retains the link inode; following it
+     * instead retains the regular source inode across directory descriptors. */
+    errno = E2BIG;
+    CHECK(linkat(sourcefd, "alias", targetfd, "alias-hard", 0) == 0 && errno == E2BIG);
+    CHECK(fstatat(targetfd, "alias-hard", &observed, AT_SYMLINK_NOFOLLOW) == 0 &&
+          S_ISLNK(observed.st_mode));
+    errno = E2BIG;
+    CHECK(readlinkat(targetfd, "alias-hard", target, 2) == 2 && errno == E2BIG);
+    CHECK(target[0] == 'i' && target[1] == 't' && target[2] == 'X');
+    errno = E2BIG;
+    CHECK(linkat(sourcefd, "alias", targetfd, "followed", AT_SYMLINK_FOLLOW) == 0 &&
+          errno == E2BIG);
+    CHECK(fstatat(targetfd, "followed", &observed, AT_SYMLINK_NOFOLLOW) == 0 &&
+          S_ISREG(observed.st_mode) && observed.st_ino == source_before.st_ino);
+    CHECK_ERR(readlinkat(targetfd, "followed", target, sizeof(target)), EINVAL);
+
+    CHECK_ERR(linkat(-1, "alias", targetfd, "bad-old", 0), EBADF);
+    CHECK_ERR(linkat(sourcefd, "alias", -1, "bad-new", 0), EBADF);
+    CHECK_ERR(readlinkat(-1, "alias", target, sizeof(target)), EBADF);
+    CHECK_ERR(unlinkat(-1, "alias", 0), EBADF);
+    CHECK_ERR(renameat2(-1, "alias", targetfd, "bad-rename", 0), EBADF);
+    CHECK_ERR(unlinkat(targetfd, "alias-hard", AT_REMOVEDIR), ENOTDIR);
+
+    /* Replacement leaves the target bound to the source inode, while a failed
+     * no-replace request leaves both directory entries intact. */
+    errno = E2BIG;
+    CHECK(renameat2(sourcefd, "item", targetfd, "item", 0) == 0 && errno == E2BIG);
+    CHECK(fstatat(targetfd, "item", &observed, 0) == 0 &&
+          observed.st_ino == source_before.st_ino && observed.st_ino != target_before.st_ino);
+    CHECK_ERR(fstatat(sourcefd, "item", &observed, 0), ENOENT);
+    CHECK_ERR(renameat2(sourcefd, "alias", targetfd, "item", RENAME_NOREPLACE), EEXIST);
+    CHECK(fstatat(sourcefd, "alias", &observed, AT_SYMLINK_NOFOLLOW) == 0 &&
+          S_ISLNK(observed.st_mode));
+    CHECK(fstatat(targetfd, "item", &observed, 0) == 0 &&
+          observed.st_ino == source_before.st_ino);
+    errno = E2BIG;
+    CHECK(renameat2(sourcefd, "alias", targetfd, "followed", RENAME_EXCHANGE) == 0 &&
+          errno == E2BIG);
+    CHECK(fstatat(sourcefd, "alias", &observed, AT_SYMLINK_NOFOLLOW) == 0 &&
+          S_ISREG(observed.st_mode));
+    CHECK(fstatat(targetfd, "followed", &observed, AT_SYMLINK_NOFOLLOW) == 0 &&
+          S_ISLNK(observed.st_mode));
+
+    CHECK(unlinkat(sourcefd, "alias", 0) == 0);
+    CHECK(unlinkat(targetfd, "alias-hard", 0) == 0);
+    CHECK(unlinkat(targetfd, "followed", 0) == 0);
+    CHECK(unlinkat(targetfd, "item", 0) == 0);
+    CHECK(close(sourcefd) == 0 && close(targetfd) == 0);
+    CHECK(unlinkat(rootfd, "source", AT_REMOVEDIR) == 0);
+    CHECK(unlinkat(rootfd, "target", AT_REMOVEDIR) == 0);
+    CHECK(close(rootfd) == 0);
+    CHECK(rmdir(root) == 0);
+    puts("namespace boundaries ok");
+    return 0;
+}
+
 static int run_case(const char *name)
 {
     if (strcmp(name, "aliases") == 0)
@@ -1294,6 +1376,8 @@ static int run_case(const char *name)
         return handle_edges_case();
     if (strcmp(name, "alias-edges") == 0)
         return alias_edges_case();
+    if (strcmp(name, "namespace-boundaries") == 0)
+        return namespace_boundaries_case();
     errno = EINVAL;
     return -1;
 }
