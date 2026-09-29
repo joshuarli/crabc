@@ -104,6 +104,60 @@ static int check_default_precision_and_rounding(void)
     return 0;
 }
 
+static int check_nearest_even_and_fourteen_digits(void)
+{
+    struct output_case {
+        const char *format;
+        uint64_t bits;
+        const char *expected;
+    };
+    static const struct output_case cases[] = {
+        { "%.1a", UINT64_C(0x3ff0800000000000), "0x1.0p+0" },
+        { "%.1a", UINT64_C(0x3ff1800000000000), "0x1.2p+0" },
+        { "%.1a", UINT64_C(0x3ff2800000000000), "0x1.2p+0" },
+        { "%.1a", UINT64_C(0x3ff3800000000000), "0x1.4p+0" },
+        { "%.0a", UINT64_C(0x3ff8000000000000), "0x2p+0" },
+        { "%#.0A", UINT64_C(0x3ff8000000000000), "0X2.P+0" },
+        { "%.0a", UINT64_C(0x000fffffffffffff), "0x2p-1023" },
+        { "%.14a", UINT64_C(0x000fffffffffffff),
+            "0x1.ffffffffffffe0p-1023" },
+        { "%.14a", UINT64_C(0x0000000000000001),
+            "0x1.00000000000000p-1074" },
+        { "%.14a", UINT64_C(0x0010000000000000),
+            "0x1.00000000000000p-1022" },
+        { "%.14a", UINT64_C(0x3ff123456789abcd),
+            "0x1.123456789abcd0p+0" },
+        { "%.14A", UINT64_C(0x3ff123456789abcd),
+            "0X1.123456789ABCD0P+0" },
+        { "%+#.0A", UINT64_C(0x0000000000000000), "+0X0.P+0" },
+        { "%#.0A", UINT64_C(0x8000000000000000), "-0X0.P+0" },
+        { "%.14a", UINT64_C(0x8000000000000000),
+            "-0x0.00000000000000p+0" },
+    };
+    char output[64];
+    int original = fegetround();
+    size_t index;
+
+    if (fesetround(FE_TONEAREST) != 0)
+        return 1;
+    for (index = 0; index < sizeof(cases) / sizeof(cases[0]); ++index) {
+        int result;
+
+        errno = EILSEQ;
+        result = snprintf(output, sizeof(output), cases[index].format,
+            double_from_bits(cases[index].bits));
+        if (result != (int)byte_length(cases[index].expected) ||
+            !equal_text(output, cases[index].expected) || errno != EILSEQ ||
+            fegetround() != FE_TONEAREST) {
+            (void)fesetround(original);
+            return 2 + (int)index;
+        }
+    }
+    if (fesetround(original) != 0 || fegetround() != original)
+        return 18;
+    return 0;
+}
+
 static int check_subnormal_special_width_and_truncation(void)
 {
     static const char finite_expected[] =
@@ -261,6 +315,9 @@ int crabc_x86_64_stdio_float_hex_output_probe(void)
     int status = check_default_precision_and_rounding();
     if (status != 0)
         return status;
+    status = check_nearest_even_and_fourteen_digits();
+    if (status != 0)
+        return 10 + status;
     status = check_subnormal_special_width_and_truncation();
     if (status != 0)
         return 100 + status;
