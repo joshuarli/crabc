@@ -186,6 +186,34 @@ impl PageEntry {
     const fn empty() -> Self { Self(UnsafeCell::new(null_mut())) }
 }
 
+/// Linux x86-64 source-sized storage for the PageMap's private lock.
+///
+/// The source pthread mutex occupies 40 bytes at eight-byte alignment. Its
+/// extent determines the flexible-array offset and thus reservation and lazy
+/// commit counts. Keep that extent while using the existing private futex
+/// lock; the remaining bytes are reserved storage, not a pthread ABI object.
+#[cfg(target_arch = "x86_64")]
+#[repr(C, align(8))]
+struct PageMapLock {
+    inner: PrivateLock,
+    reserved: [u8; 40 - size_of::<PrivateLock>()],
+}
+
+#[cfg(target_arch = "x86_64")]
+impl PageMapLock {
+    const fn new() -> Self {
+        Self { inner: PrivateLock::new(), reserved: [0; 40 - size_of::<PrivateLock>()] }
+    }
+
+    fn lock(&self) -> Result<crate::lock::PrivateLockGuard<'_>> { self.inner.lock() }
+
+    #[cfg(test)]
+    fn try_lock(&self) -> Option<crate::lock::PrivateLockGuard<'_>> { self.inner.try_lock() }
+}
+
+#[cfg(target_arch = "aarch64")]
+type PageMapLock = PrivateLock;
+
 /// The mapped prefix of the source `mi_page_map_t` flexible-array object.
 ///
 /// `submaps[0]` is the first raw pointer word. Further words immediately
@@ -197,7 +225,7 @@ pub(crate) struct PageMapHeader {
     committed_count: AtomicUsize,
     reserved_size: usize,
     memid: MemoryId,
-    lock: PrivateLock,
+    lock: PageMapLock,
     submaps: [UnsafeCell<*mut PageEntry>; 1],
 }
 
@@ -511,7 +539,7 @@ impl PageMap {
                 committed_count: AtomicUsize::new(0),
                 reserved_size,
                 memid,
-                lock: PrivateLock::new(),
+                lock: PageMapLock::new(),
                 submaps: [UnsafeCell::new(null_mut())],
             });
         }
@@ -1231,7 +1259,14 @@ mod tests {
 
     #[test]
     fn mapped_header_changes_max_reservation_and_count_boundaries() {
-        assert_eq!(size_of::<PageMapHeader>(), 56);
+        assert_eq!(size_of::<PageMapHeader>(), if cfg!(target_arch = "x86_64") { 88 } else { 56 });
+        #[cfg(target_arch = "x86_64")]
+        {
+            assert_eq!(size_of::<PageMapLock>(), 40);
+            assert_eq!(core::mem::align_of::<PageMapLock>(), 8);
+            assert_eq!(core::mem::offset_of!(PageMapHeader, lock), 40);
+            assert_eq!(core::mem::offset_of!(PageMapHeader, submaps), 80);
+        }
         let requested = reserve_count(MAX_VABITS).unwrap();
         let source_bytes = mapped_size_for_count(requested).unwrap();
         let source_reserved = invariants::align_up(source_bytes, 4 * 1024).unwrap();
@@ -1243,7 +1278,7 @@ mod tests {
 
         assert_eq!(source_bytes, size_of::<PageMapHeader>() + (requested - 1) * 8);
         assert!(source_reserved > flat_reserved);
-        assert_eq!(page_map_count_of_size(source_reserved), requested + 506);
+        assert_eq!(page_map_count_of_size(source_reserved), requested + if cfg!(target_arch = "x86_64") { 502 } else { 506 });
     }
 
     #[test]
@@ -1255,7 +1290,7 @@ mod tests {
         )
         .unwrap();
         let initial_count = page_map_count_of_size(initial_bytes);
-        assert_eq!(initial_count, minimum + 506);
+        assert_eq!(initial_count, minimum + if cfg!(target_arch = "x86_64") { 502 } else { 506 });
 
         let required_index = initial_count + 1;
         let extension_bytes = invariants::align_up(
@@ -1264,7 +1299,28 @@ mod tests {
         )
         .unwrap();
         assert_eq!(extension_bytes, 192 * 1024);
-        assert_eq!(page_map_count_of_size(extension_bytes), 24_570);
+        assert_eq!(page_map_count_of_size(extension_bytes), if cfg!(target_arch = "x86_64") { 24_566 } else { 24_570 });
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn lazy_commit_extends_at_the_source_linux_header_boundary() {
+        let mut page_map = PageMap::initialize(memory_config(false), 47, false)
+            .expect("reserve the source lazy-commit profile");
+        assert_eq!(page_map.header().unwrap().reserved_size, 2_101_248);
+        assert_eq!(page_map.committed_count(), Ok(16_886));
+        assert_eq!(page_map.reserved_count(), 262_646);
+
+        // The last index whose complete source header fits in four slices
+        // commits that prefix. Its successor needs a fifth slice even though
+        // a smaller private lock representation would still fit in four.
+        page_map.ensure_committed(32_757).unwrap();
+        assert_eq!(page_map.committed_count(), Ok(32_758));
+        page_map.ensure_committed(32_758).unwrap();
+        assert_eq!(page_map.committed_count(), Ok(40_950));
+        assert!(page_map.submap_at(32_758).unwrap().is_none());
+        // SAFETY: no roots, registered ranges, or readers remain.
+        unsafe { page_map.destroy() }.unwrap();
     }
 
     #[test]
@@ -1502,7 +1558,7 @@ mod tests {
         let control_has_overcommit_false = !page_map.memory_config().has_overcommit();
         let control_max_vabits = MAX_VABITS;
         let layout_header_bytes = size_of::<PageMapHeader>();
-        let layout_lock_bytes = size_of::<PrivateLock>();
+        let layout_lock_bytes = size_of::<PageMapLock>();
         let init_root_empty_before = root.load().is_none();
         let init_reserve_count = reserve_count(MAX_VABITS)
             .expect("the frozen maximum virtual-address width has a reserve count");
