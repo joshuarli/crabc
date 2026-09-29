@@ -207,6 +207,66 @@ static int timed_exited_invalid_deadline_case(void)
     return 53;
 }
 
+/* A timeout and a cancelled blocked join each relinquish ownership. A later
+ * joiner must still be able to wait for and reap the same live target. */
+static void *transfer_blocked_joiner(void *unused)
+{
+    (void)unused;
+    pthread_cleanup_push(cleanup, 0);
+    atomic_store(&joiner_tid, (int)syscall(SYS_gettid));
+    atomic_store(&ready, 1);
+    void *result = (void *)(uintptr_t)0x1234;
+    if (pthread_join(target, &result)) _Exit(54);
+    _Exit(55);
+    pthread_cleanup_pop(0);
+}
+
+static void *transfer_timed_joiner(void *unused)
+{
+    (void)unused;
+    void *result = (void *)(uintptr_t)0x1234;
+    struct timespec future = realtime_after(10000);
+    atomic_store(&joiner_tid, (int)syscall(SYS_gettid));
+    atomic_store(&ready, 1);
+    errno = E2BIG;
+    if (pthread_timedjoin_np(target, &result, &future) ||
+        result != (void *)(uintptr_t)37 || errno != E2BIG) _Exit(56);
+    return (void *)(uintptr_t)99;
+}
+
+static int ownership_transfer_case(void)
+{
+    void *result = (void *)(uintptr_t)0x1234;
+    struct timespec past = { .tv_sec = 0, .tv_nsec = 0 };
+    if (pthread_create(&target, 0, target_body, 0)) return 57;
+    errno = E2BIG;
+    if (pthread_timedjoin_np(target, &result, &past) != ETIMEDOUT ||
+        result != (void *)(uintptr_t)0x1234 || errno != E2BIG) return 58;
+    if (pthread_tryjoin_np(target, &result) != EBUSY ||
+        result != (void *)(uintptr_t)0x1234 || errno != E2BIG) return 59;
+
+    pthread_t first;
+    if (pthread_create(&first, 0, transfer_blocked_joiner, 0)) return 63;
+    while (!atomic_load(&ready)) sched_yield();
+    witness_pthread_futex_wait(atomic_load(&joiner_tid), selected_join_futex_operation());
+    if (pthread_cancel(first) || pthread_join(first, &result) ||
+        result != PTHREAD_CANCELED || !atomic_load(&cleanup_ran)) return 64;
+    result = (void *)(uintptr_t)0x1234;
+    errno = E2BIG;
+    if (pthread_tryjoin_np(target, &result) != EBUSY ||
+        result != (void *)(uintptr_t)0x1234 || errno != E2BIG) return 65;
+
+    atomic_store(&ready, 0);
+    pthread_t second;
+    if (pthread_create(&second, 0, transfer_timed_joiner, 0)) return 66;
+    while (!atomic_load(&ready)) sched_yield();
+    witness_pthread_futex_wait(atomic_load(&joiner_tid), selected_join_futex_operation());
+    atomic_store(&release_target, 1);
+    if (pthread_join(second, &result) || result != (void *)(uintptr_t)99) return 67;
+    puts("pthread timed timeout, try busy, cancelled join, and timed successor ownership: PASS");
+    return 0;
+}
+
 static int join_cancellation_case(const char *scenario)
 {
     pending_entry = !strcmp(scenario, "entry") || !strcmp(scenario, "timed-entry");
@@ -320,6 +380,7 @@ int main(int argc, char **argv)
     if (!strcmp(argv[1], "try-status")) return tryjoin_status_case();
     if (!strcmp(argv[1], "timed-status")) return timed_status_case();
     if (!strcmp(argv[1], "timed-exited-invalid")) return timed_exited_invalid_deadline_case();
+    if (!strcmp(argv[1], "ownership-transfer")) return ownership_transfer_case();
     if (!strcmp(argv[1], "tsd-exit")) return tsd_exit_case();
     if (strcmp(argv[1], "entry") && strcmp(argv[1], "blocked") &&
         strcmp(argv[1], "disabled") && strcmp(argv[1], "masked") &&
