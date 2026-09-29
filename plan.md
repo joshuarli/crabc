@@ -396,6 +396,9 @@ are not transferable passes for a different revision.
   visits drain them, and global expiry clears. The shared M2 gate passes 101
   runnable checks with VM, arenas, initialization, and fault injection still
   partial.
+  An escaped OS-page and second metadata-commit fault receiver matches 32
+  pinned-C/Rust fields and raises the shared M2 run to 102 runnable checks,
+  including 58 VM checks; those four partial components remain open.
   A separate source-built fresh-arena
   receiver matches 46 C/Rust fields when metadata commit and cleanup unmap
   both fail, leaving a raw escaped map while a later healthy arena claim
@@ -412,6 +415,9 @@ are not transferable passes for a different revision.
   A failed huge-arena primitive unmap now emits the pinned-C warning before
   accounting; its focused differential matches while all eight M3 components
   pass, with M1/M2 prerequisites still required for the M3 gate.
+  M3 page queues now require the six-snapshot source-matched reorder
+  differential; all five own gate checks, including Miri, pass while M1/M2
+  prerequisite receipts remain absent from the full M3 run.
   A separate process-owned huge primitive receiver matches 30 pinned-C/Rust
   fields for one retained 1 GiB prefix after later mapping failures, warning
   order, accounting, terminal release, and an ordinary later map. Its virtual
