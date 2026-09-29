@@ -1892,14 +1892,18 @@ def public_weak_resolution(report: Mapping[str, Any], *, report_path: Path,
 
 def _ordinary_import_call_forms(name: str, calls: Sequence[Mapping[str, object]], *,
                                 is_c: bool, required_importer_section: str | None,
-                                mixed_memmove_call_forms: bool) -> None:
+                                mixed_memmove_call_forms: bool,
+                                mixed_memcmp_call_forms: bool = False) -> None:
     """Admit the selected provider's actual archive branch forms."""
     require(type(mixed_memmove_call_forms) is bool
-            and (not mixed_memmove_call_forms or name == "memmove"),
+            and (not mixed_memmove_call_forms or name == "memmove")
+            and type(mixed_memcmp_call_forms) is bool
+            and (not mixed_memcmp_call_forms or name == "memcmp"),
             f"ordinary {name} mixed call policy differs")
     expected = "R_X86_64_PLT32" if is_c or required_importer_section else "R_X86_64_GOTPCREL"
     allowed = ({"R_X86_64_PLT32", "R_X86_64_GOTPCREL"}
-               if (name in OWNED_MEMORY_IMPORTS or mixed_memmove_call_forms) and not is_c
+               if (name in OWNED_MEMORY_IMPORTS or mixed_memmove_call_forms
+                   or mixed_memcmp_call_forms) and not is_c
                else {expected})
     require(bool(calls) and all(call.get("kind") in allowed for call in calls),
             f"ordinary {name} importer call form differs")
@@ -1908,19 +1912,20 @@ def _ordinary_import_call_forms(name: str, calls: Sequence[Mapping[str, object]]
 def _ordinary_import_caller_functions(name: str, rows: Sequence[Mapping[str, object]],
                                       sections: Sequence[Mapping[str, object]],
                                       calls: Sequence[Mapping[str, object]], *,
-                                      mixed_memmove_call_forms: bool) -> list[str]:
+                                      mixed_memmove_call_forms: bool,
+                                      mixed_memcmp_call_forms: bool = False) -> list[str]:
     functions = {str(call["section"])[6:] for call in calls
                  if call["section"] != ".text"}
     if any(call["section"] == ".text" for call in calls):
-        if mixed_memmove_call_forms:
+        if mixed_memmove_call_forms or mixed_memcmp_call_forms:
             text_indices = {str(section["index"]) for section in sections
                             if section["name"] == ".text"}
             defined = {row["name"] for row in rows
                        if row.get("type") == "FUNC" and row.get("binding") == "GLOBAL"
                        and row.get("section_index") in text_indices}
-            require(name == "memmove" and len(text_indices) == 1
-                    and defined == {"bcopy"},
-                    "ordinary memmove unnamed text caller differs")
+            require(len(text_indices) == 1
+                    and defined == ({"bcopy"} if name == "memmove" else {"bcmp"}),
+                    f"ordinary {name} unnamed text caller differs")
             functions.update(defined)
         else:
             functions.add("")
@@ -1937,15 +1942,20 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
                                shared_call_inventory: bool = False,
                                all_defined_shared_callers: bool = False,
                                mixed_memmove_call_forms: bool = False,
+                               mixed_memcmp_call_forms: bool = False,
                                retained_link_stems: Mapping[str, str] | None = None,
                                shared_inlined_owner_leaves: tuple[str, str] | None = None) -> dict[str, object]:
     """Bind all archive callers of one ordinary import to final libc providers."""
     require(type(mixed_memmove_call_forms) is bool
             and (not mixed_memmove_call_forms or (name == "memmove"
                  and independent_retained_work is not None and shared_call_inventory
+                 and all_defined_shared_callers))
+            and type(mixed_memcmp_call_forms) is bool
+            and (not mixed_memcmp_call_forms or (name == "memcmp"
+                 and independent_retained_work is not None and shared_call_inventory
                  and all_defined_shared_callers)),
             f"ordinary {name} mixed call boundary differs")
-    bulk_memory = name in OWNED_MEMORY_IMPORTS or mixed_memmove_call_forms
+    bulk_memory = name in OWNED_MEMORY_IMPORTS or mixed_memmove_call_forms or mixed_memcmp_call_forms
     require(not bulk_memory or shared_call_inventory,
             f"ordinary {name} requires complete shared call inventory")
     require(type(all_defined_shared_callers) is bool
@@ -2041,7 +2051,8 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
         is_c = member["member_index"] == c_member["member_index"]
         _ordinary_import_call_forms(
             name, calls, is_c=is_c, required_importer_section=required_importer_section,
-            mixed_memmove_call_forms=mixed_memmove_call_forms)
+            mixed_memmove_call_forms=mixed_memmove_call_forms,
+            mixed_memcmp_call_forms=mixed_memcmp_call_forms)
         require(required_importer_section is None
                      or (not is_c and len(calls) == required_source_call_count
                          and all(call["section"] == required_importer_section for call in calls)),
@@ -2056,7 +2067,8 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
                 selected.stdout, {call["section"] for call in calls}),
             "shared_caller_functions": _ordinary_import_caller_functions(
                 name, rows, member["sections"], calls,
-                mixed_memmove_call_forms=mixed_memmove_call_forms),
+                mixed_memmove_call_forms=mixed_memmove_call_forms,
+                mixed_memcmp_call_forms=mixed_memcmp_call_forms),
         })
     require((len(imported) >= (1 if name == "getrusage" else 2)
              if not independent else (len(imported) == expected_importers

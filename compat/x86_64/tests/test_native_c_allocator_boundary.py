@@ -24,6 +24,30 @@ SPEC.loader.exec_module(BOUNDARY)
 
 
 class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
+    def test_memcmp_bcmp_import_admits_only_its_selected_mixed_calls(self) -> None:
+        for kind in ("R_X86_64_PLT32", "R_X86_64_GOTPCREL"):
+            BOUNDARY._ordinary_import_call_forms(
+                "memcmp", [{"kind": kind}], is_c=False,
+                required_importer_section=None, mixed_memmove_call_forms=False,
+                mixed_memcmp_call_forms=True)
+        with self.assertRaises(BOUNDARY.AllocatorBoundaryError):
+            BOUNDARY._ordinary_import_call_forms(
+                "strlen", [{"kind": "R_X86_64_PLT32"}], is_c=False,
+                required_importer_section=None, mixed_memmove_call_forms=False,
+                mixed_memcmp_call_forms=True)
+        rows = [{"name": "bcmp", "type": "FUNC", "binding": "GLOBAL",
+                 "section_index": "3"}]
+        sections = [{"name": ".text", "index": 3}]
+        self.assertEqual(BOUNDARY._ordinary_import_caller_functions(
+            "memcmp", rows, sections, [{"section": ".text"}],
+            mixed_memmove_call_forms=False, mixed_memcmp_call_forms=True), ["bcmp"])
+        with self.assertRaises(BOUNDARY.AllocatorBoundaryError):
+            BOUNDARY._ordinary_import_caller_functions(
+                "memcmp", rows + [{"name": "foreign", "type": "FUNC",
+                                   "binding": "GLOBAL", "section_index": "3"}],
+                sections, [{"section": ".text"}],
+                mixed_memmove_call_forms=False, mixed_memcmp_call_forms=True)
+
     def test_memmove_imports_admit_measured_mixed_calls_only_when_selected(self) -> None:
         got = [{"kind": "R_X86_64_GOTPCREL"}, {"kind": "R_X86_64_GOTPCREL"}]
         direct = [{"kind": "R_X86_64_PLT32"}]
