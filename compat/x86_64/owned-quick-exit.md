@@ -36,7 +36,9 @@ Run `./scripts/dev-x86_64.sh owned-quick-exit`. The runner uses the same C11
 object with pinned musl, installed static/static-PIE, and dynamic PIE/non-PIE
 through kernel and direct-loader entry. It checks strong archive and shared
 ELF provider binding; LIFO order; the 32-slot limit and unchanged `errno`;
-reentrant refill; no ordinary-exit, destructor, or buffered-stdio action;
+reentrant refill; recursive `quick_exit` from a callback, with the inner call
+draining the remaining table and selecting the final status; no ordinary-exit,
+destructor, or buffered-stdio action;
 worker process termination; controlled concurrent registration; a 32-worker
 barrier that contends every available slot; and forked table inheritance with
 copied-lock repair. A full-table case also forks from the first quick-exit
@@ -47,3 +49,9 @@ directory under
 `.work/x86_64/tmp/` and is a required dynamic qualification case. This is
 component evidence and does not complete a runtime family or public native-x86
 support.
+
+The dynamic modes also load a DSO that registers two callbacks between
+executable registrations. The same source is linked with pinned musl and the
+installed dynamic product. Both entries must dispatch all four callbacks in
+global reverse order and omit the DSO destructor. The DSO remains mapped until
+termination so each callback retains a valid executable address.

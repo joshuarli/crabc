@@ -6,7 +6,7 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/owned_quick_exit_probe.c"
-readonly SCENARIOS='lifo capacity reentrant worker concurrent contention fork fork-during-quick-exit atexit-chain atexit-contention'
+readonly SCENARIOS='lifo capacity reentrant recursive worker concurrent contention fork fork-during-quick-exit atexit-chain atexit-contention'
 
 [ "$#" -le 1 ] || { printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2; exit 2; }
 provided_dynamic="${1:-}"
@@ -50,6 +50,7 @@ expected_output() {
         lifo) printf CBA ;;
         capacity) printf '%032d' 0 | tr 0 X ;;
         reentrant) printf RN; printf '%031d' 0 | tr 0 F ;;
+        recursive) printf RCBA ;;
         worker) printf W ;;
         concurrent) printf QQQQ ;;
         contention) printf '%032d' 0 | tr 0 Q ;;
@@ -69,6 +70,7 @@ expected_status() {
         lifo) printf 41 ;;
         capacity) printf 43 ;;
         reentrant) printf 42 ;;
+        recursive) printf 53 ;;
         worker) printf 44 ;;
         concurrent) printf 45 ;;
         contention) printf 48 ;;
@@ -132,6 +134,19 @@ fi
 "$ORACLE_CC" -static -fno-pie -no-pie "$work/workload.o" -o "$work/oracle"
 run_cases oracle "$work/oracle"
 
+# Keep the DSO mapped while its registered callbacks run. quick_exit must
+# call those functions in global LIFO order without running DSO destructors.
+mkdir "$work/oracle-dso"
+"$ORACLE_CC" -std=c11 -fPIC -shared -DQUICK_EXIT_DSO "$PROBE" \
+    -o "$work/oracle-dso/libquick-exit-probe.so"
+"$ORACLE_CC" -fPIE -pie "$work/workload.o" -o "$work/oracle-dynamic"
+"$provided_dynamic/bin/crabc-cc-dynamic" --dynamic-shared-object -std=c11 \
+    -DQUICK_EXIT_DSO "$PROBE" -o "$work/libquick-exit-probe.so"
+assert_result 54 "$work/oracle-dso.stdout" env \
+    LD_LIBRARY_PATH="$work/oracle-dso" "$work/oracle-dynamic" dso \
+    "$work/oracle-dso/libquick-exit-probe.so"
+[ "$(cat "$work/oracle-dso.stdout")" = CMLA ]
+
 if [ "$#" -eq 0 ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$work/static-product" >"$work/static-build.json"
     assert_static_providers "$work/static-product/usr/lib/libc.a" "$work/static-symbols.txt"
@@ -151,8 +166,20 @@ for mode in pie non-pie; do
     root="$work/$mode-root"
     cp -a "$provided_dynamic" "$root"
     cp "$work/consumer-$mode" "$root/consumer"
+    cp "$work/libquick-exit-probe.so" "$root/usr/lib/"
     run_cases "dynamic-$mode-kernel" /consumer chroot "$root"
     run_cases "dynamic-$mode-direct" /consumer chroot "$root" /lib/ld-crabc-x86_64.so.1
+    for entry in kernel direct; do
+        if [ "$entry" = kernel ]; then
+            assert_result 54 "$work/dynamic-$mode-kernel-dso.stdout" \
+                chroot "$root" /consumer dso /usr/lib/libquick-exit-probe.so
+        else
+            assert_result 54 "$work/dynamic-$mode-direct-dso.stdout" \
+                chroot "$root" /lib/ld-crabc-x86_64.so.1 /consumer \
+                dso /usr/lib/libquick-exit-probe.so
+        fi
+        cmp "$work/oracle-dso.stdout" "$work/dynamic-$mode-$entry-dso.stdout"
+    done
     for entry in kernel direct; do
         for scenario in $SCENARIOS; do
             cmp "$work/oracle-$scenario.stdout" "$work/dynamic-$mode-$entry-$scenario.stdout"
@@ -160,4 +187,4 @@ for mode in pie non-pie; do
     done
 done
 
-printf 'owned quick-exit: PASS (same C11 object, musl and owned static/static-PIE/dynamic PIE/non-PIE kernel/direct; LIFO, fixed 32-slot errno, reentrant refill, ordinary-exit/fini/stdio exclusion, chained ordinary atexit beyond 32 with nested and 16-way contended registration, worker exit_group, controlled concurrent and 32-way contended registration, fork registry repair, and fork during a full-table quick-exit drain); evidence: %s\n' "$work"
+printf 'owned quick-exit: PASS (same C11 object, musl and owned static/static-PIE/dynamic PIE/non-PIE kernel/direct; LIFO, fixed 32-slot errno, reentrant refill, recursive quick_exit status/order, loaded DSO callbacks and destructor exclusion, ordinary-exit/fini/stdio exclusion, chained ordinary atexit beyond 32 with nested and 16-way contended registration, worker exit_group, controlled concurrent and 32-way contended registration, fork registry repair, and fork during a full-table quick-exit drain); evidence: %s\n' "$work"

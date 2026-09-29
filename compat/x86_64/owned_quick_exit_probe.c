@@ -4,6 +4,7 @@
  * registration never fails below memory exhaustion, and a handler registered
  * by a running handler runs next. at_quick_exit stays fixed at 32. */
 #include <errno.h>
+#include <dlfcn.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -11,6 +12,22 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#ifdef QUICK_EXIT_DSO
+static void dso_first_handler(void) { (void)write(1, "L", 1); }
+static void dso_second_handler(void) { (void)write(1, "M", 1); }
+
+void register_quick_exit_dso_handlers(void)
+{
+	if (at_quick_exit(dso_first_handler) || at_quick_exit(dso_second_handler))
+		_Exit(127);
+}
+
+__attribute__((destructor)) static void dso_fini_handler(void)
+{
+	(void)write(1, "Z", 1);
+}
+#else
 
 static _Atomic int concurrent_registered;
 static _Atomic int concurrent_release;
@@ -54,6 +71,13 @@ static void parent_handler(void) { emit("P", 1); }
 static void worker_handler(void) { emit("W", 1); }
 static void concurrent_handler(void) { emit("Q", 1); }
 static void split_filler_handler(void) { emit("A", 1); }
+
+static void recursive_handler(void)
+{
+	emit("R", 1);
+	CHECK(at_quick_exit(third_handler) == 0);
+	quick_exit(53);
+}
 
 /* The first callback has already freed slot 32 when fork copies the table.
  * Each process must independently refill that slot and drain its 31 inherited
@@ -265,9 +289,37 @@ static void run_fork_during_quick_exit(void)
 	quick_exit(62);
 }
 
+static void run_recursive(void)
+{
+	install_exclusion_markers();
+	CHECK(at_quick_exit(first_handler) == 0);
+	CHECK(at_quick_exit(second_handler) == 0);
+	CHECK(at_quick_exit(recursive_handler) == 0);
+	quick_exit(52);
+}
+
+static void run_dso(const char *path)
+{
+	void *handle;
+	void (*register_handlers)(void);
+	install_exclusion_markers();
+	CHECK(at_quick_exit(first_handler) == 0);
+	handle = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+	CHECK(handle != NULL);
+	register_handlers = (void (*)(void))dlsym(handle, "register_quick_exit_dso_handlers");
+	CHECK(register_handlers != NULL);
+	register_handlers();
+	CHECK(at_quick_exit(third_handler) == 0);
+	quick_exit(54);
+}
+
 int main(int argc, char **argv)
 {
+	if (argc == 3 && !strcmp(argv[1], "dso"))
+		run_dso(argv[2]);
 	CHECK(argc == 2);
+	if (!strcmp(argv[1], "recursive"))
+		run_recursive();
 	if (!strcmp(argv[1], "lifo"))
 		run_lifo();
 	if (!strcmp(argv[1], "capacity"))
@@ -290,3 +342,4 @@ int main(int argc, char **argv)
 		run_atexit_contention();
 	fail();
 }
+#endif
