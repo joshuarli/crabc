@@ -104,7 +104,8 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_qsort_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-qsort.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-qsort.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
@@ -123,7 +124,9 @@ for header in stddef.h stdlib.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$trace" ||
         fail "fixture did not use project $header"
 done
-"$ORACLE_CC" -std=c11 -fno-builtin -fno-stack-protector \
+# The pinned compiler defaults to PIE; use an explicit static ET_EXEC reference.
+"$ORACLE_CC" -std=c11 -static -fno-pie -no-pie -fno-builtin \
+    -fno-stack-protector \
     -I "$ROOT_DIR/include" compat/x86_64/libc_qsort_probe.c -o "$reference"
 "$reference" || fail "pinned-musl qsort fixture failed"
 
