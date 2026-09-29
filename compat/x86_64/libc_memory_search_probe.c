@@ -48,6 +48,38 @@ static long raw_syscall4(long number, long argument1, long argument2,
     return result;
 }
 
+static long raw_write(const char *bytes, size_t length)
+{
+    long result;
+
+    __asm__ volatile("syscall"
+        : "=a"(result)
+        : "a"((long)SYS_write), "D"(1L), "S"(bytes), "d"(length)
+        : "rcx", "r11", "memory");
+    return result;
+}
+
+/* Every record includes the case coordinates and the observed return offset. */
+static int record_search(char kind, size_t placement, size_t length,
+    size_t needle_length, size_t variant, const unsigned char *base,
+    const void *result)
+{
+    static const char digits[] = "0123456789abcdef";
+    size_t values[5] = { placement, length, needle_length, variant,
+        result == NULL ? (size_t)-1 : (size_t)((const unsigned char *)result - base) };
+    char line[1 + 5 * 17 + 1];
+    size_t cursor = 0;
+
+    line[cursor++] = kind;
+    for (size_t field = 0; field < 5; ++field) {
+        line[cursor++] = ' ';
+        for (size_t shift = 16; shift != 0; --shift)
+            line[cursor++] = digits[(values[field] >> ((shift - 1) * 4)) & 15];
+    }
+    line[cursor++] = '\n';
+    return raw_write(line, cursor) == (long)cursor ? 0 : -1;
+}
+
 static long raw_syscall6(long number, long argument1, long argument2,
     long argument3, long argument4, long argument5, long argument6)
 {
@@ -318,6 +350,84 @@ static int test_memchr_alignment_sweep(void)
     return status;
 }
 
+/* The same physical input ranges produce comparable raw offset records for
+ * pinned musl and the selected static archive, including overlapping needles
+ * and ranges that end exactly at an inaccessible page. */
+static int test_search_differential_matrix(void)
+{
+    enum { PAGE_BYTES = 4096 };
+    static const size_t lengths[] = {
+        0, 1, 2, 3, 4, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 191
+    };
+    static const size_t needle_lengths[] = { 0, 1, 2, 3, 4, 5, 8, 17, 33, 65 };
+    static const int targets[] = { 0xff, 'a', 0, 0x100 + 'a', 0x7f };
+    unsigned char absent[65];
+    unsigned char *mapping = raw_mmap(PAGE_BYTES * 2);
+    int status = 0;
+
+    if (mapping == MAP_FAILED)
+        return 1;
+    if (raw_mprotect(mapping + PAGE_BYTES, PAGE_BYTES, PROT_NONE) != 0) {
+        raw_munmap(mapping, PAGE_BYTES * 2);
+        return 2;
+    }
+    for (size_t index = 0; index < sizeof absent; ++index)
+        absent[index] = 0x7f;
+
+    for (size_t side = 0; side < 2 && status == 0; ++side) {
+        for (size_t placement = 0; placement < 16 && status == 0; ++placement) {
+            for (size_t shape = 0; shape < sizeof lengths / sizeof lengths[0] && status == 0;
+                    ++shape) {
+                size_t length = lengths[shape];
+                unsigned char *range = side == 0
+                    ? mapping + 1024 + placement
+                    : mapping + PAGE_BYTES - placement - length;
+                size_t case_id = side * 16 + placement;
+
+                for (size_t index = 0; index < length; ++index)
+                    range[index] = index == length / 2 ? 0 :
+                        (index + placement) % 5 == 0 ? 0xff :
+                        index % 3 == 0 ? 'b' : 'a';
+                for (size_t target = 0; target < sizeof targets / sizeof targets[0];
+                        ++target) {
+                    if (record_search('F', case_id, length, 0, target, range,
+                            memchr(range, targets[target], length)) != 0 ||
+                        record_search('R', case_id, length, 0, target, range,
+                            memrchr(range, targets[target], length)) != 0) {
+                        status = 3;
+                        break;
+                    }
+                }
+                for (size_t width = 0;
+                        width < sizeof needle_lengths / sizeof needle_lengths[0] &&
+                        status == 0; ++width) {
+                    size_t needle_length = needle_lengths[width];
+                    if (record_search('A', case_id, length, needle_length, 0, range,
+                            memmem(range, length, absent, needle_length)) != 0) {
+                        status = 4;
+                        break;
+                    }
+                    if (needle_length > length)
+                        continue;
+                    for (size_t variant = 0; variant < 3; ++variant) {
+                        size_t offset = variant == 0 ? 0 : variant == 1
+                            ? (length - needle_length) / 2 : length - needle_length;
+                        if (record_search('O', case_id, length, needle_length,
+                                variant, range, memmem(range, length,
+                                    range + offset, needle_length)) != 0) {
+                            status = 5;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (raw_munmap(mapping, PAGE_BYTES * 2) != 0 && status == 0)
+        status = 6;
+    return status;
+}
+
 int crabc_x86_64_memory_search_probe(void)
 {
     int status;
@@ -340,6 +450,9 @@ int crabc_x86_64_memory_search_probe(void)
     status = test_memchr_alignment_sweep();
     if (status != 0)
         return 60 + status;
+    status = test_search_differential_matrix();
+    if (status != 0)
+        return 70 + status;
     return 0;
 }
 

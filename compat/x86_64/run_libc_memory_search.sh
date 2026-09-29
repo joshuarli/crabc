@@ -53,18 +53,24 @@ assert_selected_c_abi_surface() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff grep nm objdump readelf rustup sort; do
+for tool in ar cargo chmod cmp cp diff grep head mkdir mktemp nm objdump readelf rustup sha256sum sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-memory-search.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-memory-search.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/reports"
+report_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-memory-search.XXXXXX")"
+chmod 755 "$report_dir"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-memory-search-reference"
 candidate="$work_dir/crabc-static-memory-search-candidate"
+reference_records="$report_dir/musl.records"
+candidate_records="$report_dir/crabc.records"
 header_trace="$work_dir/header-trace"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 archive_symbols="$work_dir/archive-symbols"
@@ -87,7 +93,7 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_memory_search_probe.c \
     -o "$reference"
-if "$reference"; then :; else
+if "$reference" >"$reference_records"; then :; else
     status=$?
     fail "pinned-musl memory-search fixture exited ${status}"
 fi
@@ -151,9 +157,23 @@ if grep -Eq 'crabc_core|mimalloc|sha_crypt' \
     fail "candidate selects an unowned or hidden runtime symbol"
 fi
 
-if "$candidate"; then :; else
+if "$candidate" >"$candidate_records"; then :; else
     status=$?
     fail "freestanding memory-search fixture exited ${status}"
 fi
+cp "$reference" "$report_dir/musl.elf"
+cp "$candidate" "$report_dir/crabc.elf"
+cp "$candidate_symbols" "$report_dir/crabc.symbols"
+cp "$candidate_program_headers" "$report_dir/crabc.program-headers"
+cp "$candidate_dynamic" "$report_dir/crabc.dynamic"
+cp "$candidate_relocations" "$report_dir/crabc.relocations"
+sha256sum compat/x86_64/libc_memory_search_probe.c \
+    compat/x86_64/libc_memory_search_start.S "$archive" \
+    "$report_dir/musl.elf" "$report_dir/crabc.elf" \
+    "$reference_records" "$candidate_records" >"$report_dir/physical.sha256"
+if ! cmp -s "$reference_records" "$candidate_records"; then
+    diff -u "$reference_records" "$candidate_records" | head -80 >&2 || true
+    fail "pinned-musl and freestanding return-offset records differ; see $report_dir"
+fi
 
-printf 'x86 static crabc-libc memory search: PASS\n'
+printf 'x86 static crabc-libc memory search: PASS (raw receipt: %s)\n' "$report_dir"
