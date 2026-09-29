@@ -220,6 +220,13 @@ def _valid_report(runner: object, profile: dict[str, object]) -> dict[str, objec
         ),
     }
     state = _clean_source_state()
+    mapped = INVENTORY._process_owned_transition_receiver("map")
+    map_values = mapped.expected_values()
+    map_trace = lambda language: "\n".join((
+        f"CRABC_M2_PROCESS_OWNED_MAP_FAULT_{language}_TRACE_BEGIN",
+        *(f"{field}={map_values[field]}" for field in mapped.FIELDS),
+        f"CRABC_M2_PROCESS_OWNED_MAP_FAULT_{language}_TRACE_END", "",
+    ))
     commit = INVENTORY._process_owned_transition_receiver("commit")
     commit_values = commit.expected_values()
     commit_trace = lambda language: "\n".join((
@@ -242,6 +249,28 @@ def _valid_report(runner: object, profile: dict[str, object]) -> dict[str, objec
         "format": INVENTORY.FORMAT,
         "os_publication_receipt": _valid_os_publication_report(),
         "metadata_publication_receipt": _valid_metadata_publication_report(),
+        "map_receipt": {
+            "status": "matched", "c": map_values, "rust": dict(map_values),
+            "mismatches": [], "scope": "process-owned first map fault and retry",
+            "source_seal": {
+                "revision": runner.load_pin()["revision"],
+                "archive_sha256": runner.load_pin()["sha256"],
+                "fixture_sha256": hashlib.sha256(mapped.FIXTURE.read_bytes()).hexdigest(),
+            },
+            "c_commands": {
+                "build": {"command": ["musl-gcc", "-DMI_LIBC_MUSL=1", str(mapped.FIXTURE),
+                    "-Wl,--wrap=mmap", "-o", "/evidence/map-fault"],
+                    "status": 0, "stdout": "", "stderr": ""},
+                "run": {"command": ["/evidence/map-fault"], "status": 0,
+                    "stdout": map_trace("C"), "stderr": ""},
+            },
+            "rust_commands": {"run": {
+                "command": ["python3", "compat/allocator/run_unit_x86_64.py", INVENTORY.MAP_TARGET],
+                "status": 0, "stdout": map_trace("RUST")
+                    + "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n",
+                "stderr": "",
+            }},
+        },
         "commit_receipt": {
             "status": "matched", "c": commit_values, "rust": dict(commit_values),
             "mismatches": [], "scope": "process-owned commit fault and retry",
@@ -727,6 +756,11 @@ class FaultInventoryShapeTests(unittest.TestCase):
                 "target": INVENTORY.METADATA_PUBLICATION_TARGET,
                 "expected_passed_test_count": 1,
             }, {
+                "id": INVENTORY.MAP_CHECK_ID,
+                "kind": "c-rust-fault-seam-inventory",
+                "target": INVENTORY.MAP_TARGET,
+                "expected_passed_test_count": 1,
+            }, {
                 "id": INVENTORY.COMMIT_CHECK_ID,
                 "kind": "c-rust-fault-seam-inventory",
                 "target": INVENTORY.COMMIT_TARGET,
@@ -819,6 +853,14 @@ class FaultInventoryShapeTests(unittest.TestCase):
             run = report["commit_receipt"]["c_commands"]["run"]
             run["stdout"] = run["stdout"].replace("warning_after_attempt=1", "warning_after_attempt=0")
             with self.assertRaisesRegex(ValueError, "commit relation"):
+                INVENTORY.validate_report(report)
+
+    def test_report_rejects_map_warning_after_accounting(self) -> None:
+        with _retained_profile_contract() as (runner, profile):
+            report = _valid_report(runner, profile)
+            run = report["map_receipt"]["c_commands"]["run"]
+            run["stdout"] = run["stdout"].replace("warning_mmap_calls=0", "warning_mmap_calls=1")
+            with self.assertRaisesRegex(ValueError, "map relation"):
                 INVENTORY.validate_report(report)
 
     def test_report_requires_its_current_fragment_projection(self) -> None:

@@ -28,9 +28,8 @@ from typing import Any, Mapping, Sequence
 
 
 SCHEMA = "crabc-mimalloc-x86_64-fault-seam-inventory-evidence"
-# Format 6 retains both process-owned range-transition fault streams beside
-# the existing source diagnostic, OS publication, and metadata receivers.
-FORMAT = 6
+# Format 7 includes the process-owned first-map failure and retry stream.
+FORMAT = 7
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "compat/allocator/m2_vm_x86_64.c"
 REPORT_DEFAULT = ROOT / "compat/reports/allocator/x86_64/fault-seam-inventory.json"
@@ -42,6 +41,8 @@ DECOMMIT_CHECK_ID = "process-owned-decommit-fault-receiver"
 DECOMMIT_TARGET = "os::tests::emit_m2_process_owned_decommit_fault_c_rust_trace"
 COMMIT_CHECK_ID = "process-owned-commit-fault-receiver"
 COMMIT_TARGET = "os::tests::emit_m2_process_owned_commit_fault_c_rust_trace"
+MAP_CHECK_ID = "process-owned-map-fault-receiver"
+MAP_TARGET = "os::tests::emit_m2_process_owned_map_fault_c_rust_trace"
 OS_PUBLICATION_BEGIN = "CRABC_MI_M2_OS_PUBLICATION_TRACE_BEGIN"
 OS_PUBLICATION_END = "CRABC_MI_M2_OS_PUBLICATION_TRACE_END"
 OS_ON_DEMAND_VALUES_BEGIN = "CRABC_MI_M2_OS_ON_DEMAND_VALUES_BEGIN"
@@ -508,7 +509,7 @@ SOURCE_ROWS = (
         "os-normal-offset-allocation-owner",
         "src/os.c:438-527",
         ("os.rs NormalOsAllocation paths",),
-        ("normal-offset-full-owner",),
+        ("normal-process-map-failure-no-owner", "normal-offset-full-owner"),
     ),
     SourceRow(
         "os-range-transition-fault-owners",
@@ -559,6 +560,7 @@ SOURCE_ROW_CHECK_IDS = {
     "metadata-page-publication": (METADATA_PUBLICATION_CHECK_ID, METADATA_RECOVERY_CHECK_ID),
 }
 BRANCH_ROW_CHECK_IDS = {
+    "normal-process-map-failure-no-owner": (FAULT_COMPONENT_CHECK_ID, MAP_CHECK_ID),
     "commit-failure-owner-retry": (FAULT_COMPONENT_CHECK_ID, COMMIT_CHECK_ID),
     "decommit-failure-owner-retry": (FAULT_COMPONENT_CHECK_ID, DECOMMIT_CHECK_ID),
 }
@@ -608,6 +610,15 @@ BRANCH_ROWS = (
         "Unmap", 1, "ENOMEM",
         "C continues its best-effort cleanup accounting; Rust exposes the exact still-live cleanup owner",
         "modeled-owner-divergence",
+    ),
+    BranchRow(
+        "normal-process-map-failure-no-owner",
+        "os-normal-offset-allocation-owner",
+        "_mi_os_alloc committed regular mapping with failed first primitive and exact retry",
+        "NormalOsAllocation process owner",
+        "Map", 1, "ENOMEM",
+        "failed first map has no owner; a same-request retry publishes one exact mapping",
+        "retry-owner",
     ),
     BranchRow(
         "normal-offset-full-owner",
@@ -854,6 +865,11 @@ def load_fragment(path: Path = FRAGMENT_PATH) -> dict[str, Any]:
         "id": METADATA_RECOVERY_CHECK_ID,
         "kind": "c-rust-fault-seam-inventory",
         "target": METADATA_PUBLICATION_TARGET,
+        "expected_passed_test_count": 1,
+    }, {
+        "id": MAP_CHECK_ID,
+        "kind": "c-rust-fault-seam-inventory",
+        "target": MAP_TARGET,
         "expected_passed_test_count": 1,
     }, {
         "id": COMMIT_CHECK_ID,
@@ -1128,13 +1144,15 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError("fault inventory OS publication receipt is missing")
     if "metadata_publication_receipt" not in report:
         raise ValueError("fault inventory metadata publication receipt is missing")
+    if "map_receipt" not in report:
+        raise ValueError("fault inventory process-owned map receipt is missing")
     if "decommit_receipt" not in report:
         raise ValueError("fault inventory process-owned decommit receipt is missing")
     if "commit_receipt" not in report:
         raise ValueError("fault inventory process-owned commit receipt is missing")
     expected_keys = {
         "architecture", "branch_records", "diagnostic_owner_boundary", "format", "os_publication_receipt",
-        "metadata_publication_receipt", "commit_receipt", "decommit_receipt",
+        "metadata_publication_receipt", "map_receipt", "commit_receipt", "decommit_receipt",
         "fault_component_fragment", "huge_branch_receipt", "inventory", "nonclaims", "schema", "status",
         "stopped_receivers", "source_state_after", "source_state_before", "upstream",
         "unqualified_branches", "vm_receipt",
@@ -1168,6 +1186,7 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
     metadata_receipt = validate_metadata_publication_report(report["metadata_publication_receipt"])
     pin = runner.load_pin()
     for transition, target, wrapper in (
+        ("map", MAP_TARGET, "-Wl,--wrap=mmap"),
         ("commit", COMMIT_TARGET, "-Wl,--wrap=mprotect"),
         ("decommit", DECOMMIT_TARGET, "-Wl,--wrap=madvise"),
     ):
@@ -1176,7 +1195,7 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         expected_fields = {
             "status", "c", "rust", "mismatches", "c_commands", "rust_commands", "scope",
         }
-        if transition == "commit":
+        if transition in {"map", "commit"}:
             expected_fields.add("source_seal")
         if (not isinstance(receipt, Mapping) or set(receipt) != expected_fields
                 or receipt["status"] != "matched" or receipt["mismatches"] != []):
@@ -1211,12 +1230,12 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         if (c_values != receiver.expected_values() or rust_values != c_values
                 or receipt["c"] != c_values or receipt["rust"] != rust_values):
             raise ValueError(f"fault inventory process-owned {transition} relation changed")
-        if transition == "commit" and receipt["source_seal"] != {
+        if transition in {"map", "commit"} and receipt["source_seal"] != {
             "revision": pin["revision"],
             "archive_sha256": pin["sha256"],
             "fixture_sha256": hashlib.sha256(receiver.FIXTURE.read_bytes()).hexdigest(),
         }:
-            raise ValueError("fault inventory process-owned commit source seal changed")
+            raise ValueError(f"fault inventory process-owned {transition} source seal changed")
     if report.get("upstream") != {
         "archive_sha256": pin["sha256"], "revision": pin["revision"],
     }:
@@ -1257,6 +1276,7 @@ def validate_report(report: Mapping[str, Any]) -> dict[str, Any]:
         "huge_branch_receipt": huge_receipt,
         "os_publication_receipt": os_receipt,
         "metadata_publication_receipt": metadata_receipt,
+        "map_receipt": dict(report["map_receipt"]),
         "commit_receipt": dict(report["commit_receipt"]),
         "decommit_receipt": dict(report["decommit_receipt"]),
         "inventory": inventory,
@@ -1273,7 +1293,7 @@ class EvidenceError(RuntimeError):
 
 
 def _process_owned_transition_receiver(transition: str) -> Any:
-    if transition not in ("commit", "decommit"):
+    if transition not in ("map", "commit", "decommit"):
         raise EvidenceError("unknown process-owned range transition")
     path = ROOT / f"compat/allocator/m2_process_owned_{transition}_fault_x86_64.py"
     spec = importlib.util.spec_from_file_location(
@@ -2835,6 +2855,9 @@ def run_evidence(
 
     os_receipt = run_os_publication_receiver(offline=offline, test_program=test_program)
     metadata_receipt = run_metadata_publication_receiver(offline=offline, test_program=test_program)
+    map_receipt = _process_owned_transition_receiver("map").run(offline=offline, c_only=False)
+    if map_receipt["status"] != "matched":
+        raise EvidenceError("process-owned map fault relation changed")
     commit_receipt = _process_owned_transition_receiver("commit").run(offline=offline, c_only=False)
     if commit_receipt["status"] != "matched":
         raise EvidenceError("process-owned commit fault relation changed")
@@ -2900,6 +2923,7 @@ def run_evidence(
         "architecture": "x86_64",
         "os_publication_receipt": os_receipt,
         "metadata_publication_receipt": metadata_receipt,
+        "map_receipt": map_receipt,
         "commit_receipt": commit_receipt,
         "decommit_receipt": decommit_receipt,
         "branch_records": _branch_records(),

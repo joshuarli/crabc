@@ -14779,6 +14779,171 @@ mod tests {
     }
 
     #[cfg(target_arch = "x86_64")]
+    struct ProcessOwnedMapWarning {
+        count: AtomicUsize,
+        errno: AtomicBool,
+        size: AtomicBool,
+        after_attempt: AtomicUsize,
+        reserved: AtomicI64,
+        committed: AtomicI64,
+        mmap_calls: AtomicI64,
+        commit_calls: AtomicI64,
+        subprocess: AtomicPtr<crate::subproc::SubprocessIdentity>,
+        fault: AtomicPtr<fault::Guard>,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" fn capture_process_owned_map_warning(
+        message: *const c_char, argument: *mut c_void,
+    ) {
+        if message.is_null() || argument.is_null() { return; }
+        // SAFETY: this isolated process test retains its capture and subprocess
+        // identity for the synchronous source warning callback.
+        let capture = unsafe { &*(argument as *const ProcessOwnedMapWarning) };
+        let body = unsafe { CStr::from_ptr(message) }.to_bytes();
+        if !body.windows(b"unable to allocate OS memory".len())
+            .any(|part| part == b"unable to allocate OS memory") { return; }
+        capture.count.fetch_add(1, Ordering::AcqRel);
+        capture.errno.store(body.windows(b"error: 12 (0x0C)".len())
+            .any(|part| part == b"error: 12 (0x0C)"), Ordering::Release);
+        capture.size.store(body.windows(b"size: 0x2000 bytes".len())
+            .any(|part| part == b"size: 0x2000 bytes"), Ordering::Release);
+        let fault = capture.fault.load(Ordering::Acquire);
+        if !fault.is_null() {
+            // SAFETY: the installed fault guard outlives this callback.
+            capture.after_attempt.store(unsafe { &*fault }.observed(), Ordering::Release);
+        }
+        let subprocess = capture.subprocess.load(Ordering::Acquire);
+        if !subprocess.is_null() {
+            // SAFETY: the retained subprocess exposes atomic VM statistics.
+            let stats = unsafe { &*subprocess }.vm_statistics().snapshot();
+            capture.reserved.store(stats.reserved_current, Ordering::Release);
+            capture.committed.store(stats.committed_current, Ordering::Release);
+            capture.mmap_calls.store(stats.mmap_calls, Ordering::Release);
+            capture.commit_calls.store(stats.commit_calls, Ordering::Release);
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_process_owned_map_fault_c_rust_trace() {
+        let _environment_serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK.lock().unwrap();
+        let _environment_reset = VmPolicySourceEnvironmentReset;
+        let mut environment = [
+            b"mimalloc_show_errors=1\0".as_ptr().cast(),
+            b"mimalloc_max_warnings=100\0".as_ptr().cast(),
+            b"mimalloc_allow_large_os_pages=0\0".as_ptr().cast(),
+            b"mimalloc_allow_thp=0\0".as_ptr().cast(),
+            core::ptr::null(),
+        ];
+        VM_POLICY_SOURCE_ENVIRONMENT.store(environment.as_mut_ptr(), Ordering::Release);
+        let capture = std::boxed::Box::leak(std::boxed::Box::new(ProcessOwnedMapWarning {
+            count: AtomicUsize::new(0), errno: AtomicBool::new(false),
+            size: AtomicBool::new(false), after_attempt: AtomicUsize::new(0),
+            reserved: AtomicI64::new(0), committed: AtomicI64::new(0),
+            mmap_calls: AtomicI64::new(0), commit_calls: AtomicI64::new(0),
+            subprocess: AtomicPtr::new(core::ptr::null_mut()),
+            fault: AtomicPtr::new(core::ptr::null_mut()),
+        }));
+        let output = std::boxed::Box::leak(std::boxed::Box::new(
+            OutputOwner::new(unexpected_default_diagnostic_output),
+        ));
+        // SAFETY: the source environment and callback storage remain live
+        // throughout policy setup and the faulted map attempt.
+        unsafe {
+            output.initialize_source_options(vm_policy_source_environment_for_test);
+            output.register_output(Some(capture_process_owned_map_warning as OutputCallback),
+                capture as *mut ProcessOwnedMapWarning as *mut c_void);
+        }
+        // SAFETY: this test retains the initialized output owner to process exit.
+        let policy = unsafe { VmPolicy::from_process_options(output) };
+        policy.finish_preloading();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        capture.subprocess.store(core::ptr::from_ref(process.subprocess()).cast_mut(), Ordering::Release);
+        let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(),
+            1024 * 1024, false, false);
+        let page = config.page_size().bytes();
+        let request_size = 2 * page;
+        let before = subprocess.vm_statistics().snapshot();
+        let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+        capture.fault.store(core::ptr::from_ref(&fault).cast_mut(), Ordering::Release);
+        let first = NormalOsAllocation::allocate_for_process(process, config, request_size);
+        let first_failed = first.as_ref().err().is_some_and(|failure| failure.error() == Errno::NOMEM);
+        let first_no_owner = first.err().is_some_and(|failure| failure.into_mapping().is_none());
+        let failed_map_attempts = fault.observed();
+        let failed = subprocess.vm_statistics().snapshot();
+        fault.set(fault::Plan::disabled());
+        let raw = fault.capture_policy_mmaps();
+        let retry = NormalOsAllocation::allocate_for_process(process, config, request_size).unwrap();
+        let (attempts, raw_calls) = raw.attempts().unwrap();
+        drop(raw);
+        let retry_succeeded = raw_calls == 1;
+        let geometry = attempts[0];
+        let pointer = retry.pointer().unwrap();
+        let base = retry.base().unwrap();
+        let full_owner = retry.full_size() == Ok(request_size)
+            && retry.memory_id().unwrap().os_base().map(|address| address.value()) == Some(base.addr())
+            && retry.memory_id().unwrap().initially_committed();
+        // SAFETY: the successful committed map owns both writable pages.
+        let writable = unsafe {
+            core::ptr::write_volatile(pointer.as_ptr(), 0x51);
+            core::ptr::write_volatile(pointer.as_ptr().add(page), 0x52);
+            core::ptr::read_volatile(pointer.as_ptr()) == 0x51
+                && core::ptr::read_volatile(pointer.as_ptr().add(page)) == 0x52
+        };
+        let after_retry = subprocess.vm_statistics().snapshot();
+        retry.release_for_process(process, true).unwrap();
+        let terminal = subprocess.vm_statistics().snapshot();
+        let mut residence = 0u8;
+        // SAFETY: only the former raw address is probed after exact release.
+        let terminal_unmapped = unsafe { crabc_core::mm::mincore_raw(base, page, &mut residence) }
+            == Err(Errno::NOMEM);
+        // The injected Rust Map edge occurs before its kernel call; the one
+        // captured retry syscall proves the unchanged request geometry.
+        let fields: [(&str, i64); 35] = [
+            ("page_size", page as i64), ("request_size", request_size as i64),
+            ("first_failed", i64::from(first_failed)),
+            ("first_no_owner", i64::from(first_no_owner)),
+            ("map_calls", (failed_map_attempts + raw_calls) as i64),
+            ("first_null_hint", i64::from(geometry.hint.is_none())),
+            ("first_length", geometry.length as i64),
+            ("first_protection", geometry.protection as i64),
+            ("first_anonymous_private", i64::from(geometry.flags & (MAP_ANONYMOUS | MAP_PRIVATE)
+                == (MAP_ANONYMOUS | MAP_PRIVATE))),
+            ("retry_null_hint", i64::from(geometry.hint.is_none())),
+            ("retry_length", geometry.length as i64),
+            ("retry_protection", geometry.protection as i64),
+            ("retry_anonymous_private", i64::from(geometry.flags & (MAP_ANONYMOUS | MAP_PRIVATE)
+                == (MAP_ANONYMOUS | MAP_PRIVATE))),
+            ("warning_count", capture.count.load(Ordering::Acquire) as i64),
+            ("warning_errno", i64::from(capture.errno.load(Ordering::Acquire))),
+            ("warning_size", i64::from(capture.size.load(Ordering::Acquire))),
+            ("warning_after_attempt", capture.after_attempt.load(Ordering::Acquire) as i64),
+            ("warning_reserved", capture.reserved.load(Ordering::Acquire) - before.reserved_current),
+            ("warning_committed", capture.committed.load(Ordering::Acquire) - before.committed_current),
+            ("warning_mmap_calls", capture.mmap_calls.load(Ordering::Acquire) - before.mmap_calls),
+            ("warning_commit_calls", capture.commit_calls.load(Ordering::Acquire) - before.commit_calls),
+            ("failed_reserved", failed.reserved_current - before.reserved_current),
+            ("failed_committed", failed.committed_current - before.committed_current),
+            ("failed_mmaps", failed.mmap_calls - before.mmap_calls),
+            ("failed_commits", failed.commit_calls - before.commit_calls),
+            ("retry_succeeded", i64::from(retry_succeeded)),
+            ("full_owner", i64::from(full_owner)), ("writable", i64::from(writable)),
+            ("retry_reserved", after_retry.reserved_current - before.reserved_current),
+            ("retry_committed", after_retry.committed_current - before.committed_current),
+            ("retry_mmaps", after_retry.mmap_calls - before.mmap_calls),
+            ("retry_commits", after_retry.commit_calls - before.commit_calls),
+            ("terminal_reserved", terminal.reserved_current - before.reserved_current),
+            ("terminal_committed", terminal.committed_current - before.committed_current),
+            ("terminal_unmapped", i64::from(terminal_unmapped)),
+        ];
+        std::println!("CRABC_M2_PROCESS_OWNED_MAP_FAULT_RUST_TRACE_BEGIN");
+        for (field, value) in fields { std::println!("{field}={value}"); }
+        std::println!("CRABC_M2_PROCESS_OWNED_MAP_FAULT_RUST_TRACE_END");
+    }
+
+    #[cfg(target_arch = "x86_64")]
     struct ProcessOwnedCommitWarning {
         count: AtomicUsize,
         exact: AtomicBool,

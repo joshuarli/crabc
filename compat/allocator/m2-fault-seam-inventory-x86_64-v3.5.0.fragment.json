@@ -246,6 +246,26 @@
         ]
       },
       {
+        "id": "normal-process-map-failure-no-owner",
+        "disposition": "admitted-current-source-c-rust-relation",
+        "source_scope": "_mi_os_alloc committed regular mapping with failed first primitive and exact retry",
+        "source_anchors": [
+          {
+            "member": "src/os.c",
+            "start_line": 438,
+            "end_line": 527,
+            "sha256": "fc4e177b6d6c35be7372e641d8d0209f03cdc84f2f87099dfcf1a00eb0ad1b89"
+          }
+        ],
+        "evidence_check_ids": [
+          "source-indexed-fault-seam-inventory",
+          "process-owned-map-fault-receiver"
+        ],
+        "missing_conditions": [
+          "The named source relation is bounded; it does not promote an unselected receiver."
+        ]
+      },
+      {
         "id": "normal-offset-full-owner",
         "disposition": "admitted-current-source-c-rust-relation",
         "source_scope": "_mi_os_alloc_aligned_at_offset full provenance release",
@@ -721,6 +741,12 @@
         "id": "metadata-publication-recovery",
         "kind": "c-rust-fault-seam-inventory",
         "target": "meta::tests::emit_metadata_publication_fault_receiver_trace",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "process-owned-map-fault-receiver",
+        "kind": "c-rust-fault-seam-inventory",
+        "target": "os::tests::emit_m2_process_owned_map_fault_c_rust_trace",
         "expected_passed_test_count": 1
       },
       {

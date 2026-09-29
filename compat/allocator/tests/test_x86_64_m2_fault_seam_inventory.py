@@ -76,6 +76,14 @@ class NativeFaultInventoryM2AssemblyTests(unittest.TestCase):
                 }, {
                     "comparison_status": "source-specific-relation-verified",
                     "component": "fault-injection",
+                    "command": report["map_receipt"]["rust_commands"]["run"]["command"],
+                    "evidence_scope": "fixed-pinned-c-branch-profile-and-private-rust-fault-plan",
+                    "id": INVENTORY.MAP_CHECK_ID,
+                    "passed_test_count": 1,
+                    "target": INVENTORY.MAP_TARGET,
+                }, {
+                    "comparison_status": "source-specific-relation-verified",
+                    "component": "fault-injection",
                     "command": report["commit_receipt"]["rust_commands"]["run"]["command"],
                     "evidence_scope": "fixed-pinned-c-branch-profile-and-private-rust-fault-plan",
                     "id": INVENTORY.COMMIT_CHECK_ID,
