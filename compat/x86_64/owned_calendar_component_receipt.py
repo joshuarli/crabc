@@ -136,8 +136,8 @@ TZIF_MUSL_DEFECT_STDOUT = (
     b"5 offset=3600 timezone=-3600 dst=0 name=TWO\n"
     b"6 offset=3600 timezone=0 dst=0 name=ONE\n"
 )
-# `owned-strptime.md` records these fixed delimiter boundaries separately from
-# the pinned-musl guard-page fault.
+# These fixed delimiter boundaries are independent of the pinned-musl
+# guard-page fault on malformed input.
 STRPTIME_DELIMITERS_STDOUT = (
     b"0 end=3 isdst=0\n1 end=3 isdst=1\n2 end=7 isdst=-1\n"
     b"3 end=7 isdst=-1\n4 end=7 isdst=-1\n5 end=7 isdst=-1\n"
