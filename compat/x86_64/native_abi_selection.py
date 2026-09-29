@@ -50,6 +50,7 @@ import prepared_worker_tls_evidence as prepared_worker_evidence
 import owned_errno_storage_lifecycle as errno_storage_evidence
 import native_c_allocator_boundary
 import native_abi_strlen_import_receipt as strlen_import_receipt
+import native_abi_memmove_import_receipt as memmove_import_receipt
 import owned_posix_product_evidence as product_evidence
 import headers_layouts_aggregate
 import owned_public_data_variable_runtime as public_data_variable_runtime
@@ -9007,7 +9008,8 @@ def attach_errno_storage_lifecycle(accounting: Mapping[str, Any], companion: Map
 
 def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                                    companion: Mapping[str, Any], name: str, *,
-                                   projection_override: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
+                                   projection_override: Mapping[str, Any] | None = None,
+                                   loader_occurrence: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
     """Bind all authenticated archive callers to their final provider.
 
     Each member's relocation form and selected final call are replayed by the
@@ -9016,10 +9018,10 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
     """
     scan_call_count = {'mbrtowc': 1, 'mbsinit': 1, 'fmodl': 2}.get(name)
     scan_caller = scan_call_count is not None
-    bulk_memory = name in (*native_c_allocator_boundary.OWNED_MEMORY_IMPORTS, 'strlen')
-    independent = name in {'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close', 'strlen'}
+    bulk_memory = name in (*native_c_allocator_boundary.OWNED_MEMORY_IMPORTS, 'strlen', 'memmove')
+    independent = name in {'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove'}
     require(name in {'__errno_location', 'abort', 'fputs', 'getenv', 'getrusage',
-                     'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close', 'strlen',
+                     'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove',
                      *native_c_allocator_boundary.OWNED_MEMORY_IMPORTS}
             and (projection_override is not None) == independent,
             'ordinary import identity differs')
@@ -9035,7 +9037,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
         'static_provider_member', 'static_provider', 'shared_dynsym_provider',
         'shared_symtab_provider', 'importers', 'static_final_links',
         'shared_final', 'dynamic_final_import_absent',
-        *({'dynamic_final_owned_imports'} if name in {'aio_suspend', 'aio_cancel', 'close', 'strlen'} else set()),
+        *({'dynamic_final_owned_imports'} if name in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove'} else set()),
     }, 'ordinary import resolution')
     runtime = companion['account']['c_runtime_imports']
     claim = next((row for row in runtime['imports']
@@ -9045,7 +9047,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
              and same(projection['static_provider'], claim['static_rust_provider'])
              and same(projection['shared_dynsym_provider'], claim['shared_dynsym_provider'])
              and same(projection['shared_symtab_provider'], claim['shared_symtab_provider']))
-            and projection['dynamic_final_import_absent'] is (name not in {'aio_suspend', 'aio_cancel', 'close', 'strlen'})
+            and projection['dynamic_final_import_absent'] is (name not in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove'})
             and (not independent or all(projection[field]['name'] == name for field in (
                 'static_provider', 'shared_dynsym_provider', 'shared_symtab_provider'))),
             'ordinary import provider account differs')
@@ -9115,6 +9117,21 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                         and row.get('row', {}).get('name') == name
                         for row in occurrences.values()),
                 'strlen has an unexpected candidate loader placement')
+    if name == 'memmove':
+        loader_rows = [row for row in occurrences.values()
+                       if row.get('artifact_key') == 'candidate-loader'
+                       and row.get('row', {}).get('name') == name]
+        require(loader_occurrence is not None and len(loader_rows) == 1
+                and loader_rows[0].get('table') == '.dynsym'
+                and loader_rows[0].get('role') == 'definition'
+                and all(loader_rows[0]['row'].get(field) == value for field, value in {
+                    'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT',
+                    'version': None, 'version_default': False,
+                    'section_index': loader_occurrence.get('section_index'),
+                    'size_bytes': loader_occurrence.get('size_bytes'),
+                }.items())
+                and int(loader_rows[0]['row']['value'], 16) == loader_occurrence.get('address'),
+                'memmove loader occurrence differs from retained ELF')
     static_imports = [row for row in rows if row.get('artifact_key') == 'candidate-static'
                       and row.get('role') == 'import']
     require(len(rows) == len(importers) + 3 and len(static_imports) == len(importers)
@@ -9202,7 +9219,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                         == importers[0]['shared_caller_functions'][0]
                     and all_calls[0]['function'] != all_calls[0]['source_function'],
                     'ordinary inlined source call ownership differs')
-    if name in {'aio_suspend', 'aio_cancel', 'close', 'strlen'}:
+    if name in {'aio_suspend', 'aio_cancel', 'close', 'strlen', 'memmove'}:
         require(projection['dynamic_final_owned_imports'] == [
             {'mode': mode, 'import_rows': 2,
              'shared_provider_address': shared['provider_address']}
@@ -9266,6 +9283,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
              'import_occurrence_indices': sorted(row['index'] for row in static_imports),
              'import_members': [item['member']['member'] for item in importers],
              'static_final_modes': ['static', 'static-pie'],
+             **({'loader_occurrence_index': loader_rows[0]['index']} if name == 'memmove' else {}),
              'shared_fs_tls_address': tls_claim,
              'discharged_reason': ORDINARY_IMPORT_REASON}]
 
@@ -9340,6 +9358,40 @@ def strlen_ordinary_import_adapter(
     require(receipt['source']['revision'] == selection_source()['revision'],
             'strlen import selects another source revision')
     return {'report': file_identity(receipt_path), 'projection': projection}
+
+
+def memmove_ordinary_import_adapter(
+        work_path: Path | None, *, boundary_report_path: Path | None,
+        paths: Mapping[str, Path]) -> dict[str, Any] | None:
+    """Replay memmove archive calls and retain the loader's separate definition."""
+    if work_path is None:
+        return None
+    require(boundary_report_path is not None,
+            'memmove import requires the installed C boundary account')
+    work = physical_work_path(work_path, directory=True, own=True)
+    receipt_path = physical_work_path(work / 'report.json', directory=False, own=True)
+    try:
+        receipt = memmove_import_receipt.validate_report(
+            receipt_path, static_product=paths['static_product'],
+            dynamic_product=paths['dynamic_product'])
+        boundary = native_c_allocator_boundary.json_object(
+            boundary_report_path, 'memmove boundary account')
+        projection = native_c_allocator_boundary.ordinary_import_resolution(
+            boundary, report_path=boundary_report_path,
+            static_product=paths['static_product'],
+            dynamic_product=paths['dynamic_product'],
+            elf_facts_report=paths['elf_report'], name='memmove',
+            independent_retained_work=work, expected_importers=2,
+            shared_call_inventory=True, all_defined_shared_callers=True)
+    except (KeyError, TypeError, ValueError, OSError,
+            memmove_import_receipt.MemmoveImportError,
+            product_evidence.ProductEvidenceError,
+            native_c_allocator_boundary.AllocatorBoundaryError) as error:
+        raise SelectionError(f'memmove ordinary import rejected: {error}') from error
+    require(receipt['source']['revision'] == selection_source()['revision'],
+            'memmove import selects another source revision')
+    return {'report': file_identity(receipt_path), 'projection': projection,
+            'loader_occurrence': receipt['loader_occurrence']}
 
 
 def owned_aio_ordinary_import_adapter(
@@ -12093,6 +12145,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   errno_storage_lifecycle_report: Path | None = None,
                   native_c_allocator_boundary_report: Path | None = None,
                   strlen_ordinary_import_work: Path | None = None,
+                  memmove_ordinary_import_work: Path | None = None,
                   owned_aio_report: Path | None = None,
                   owned_syslog_work: Path | None = None,
                   stdio_alias_contract_report: Path | None = None,
@@ -12153,6 +12206,11 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         rejected, 'strlen_ordinary_import_work',
         lambda: strlen_ordinary_import_adapter(
             strlen_ordinary_import_work,
+            boundary_report_path=native_c_allocator_boundary_report, paths=paths))
+    memmove_ordinary_import_companion = _admit(
+        rejected, 'memmove_ordinary_import_work',
+        lambda: memmove_ordinary_import_adapter(
+            memmove_ordinary_import_work,
             boundary_report_path=native_c_allocator_boundary_report, paths=paths))
     owned_aio_ordinary_import_companion = _admit(
         rejected, 'owned_aio_report',
@@ -12304,6 +12362,15 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             accounting, native_c_allocator_boundary_companion, 'strlen',
             projection_override=strlen_ordinary_import_companion['projection']))
     ordinary_static_import_joins.extend(strlen_import_joins)
+    memmove_import_joins, _ = _attach(
+        rejected, 'memmove_ordinary_import_resolution', accounting,
+        memmove_ordinary_import_companion,
+        lambda: [] if memmove_ordinary_import_companion is None else
+        _attach_ordinary_static_import(
+            accounting, native_c_allocator_boundary_companion, 'memmove',
+            projection_override=memmove_ordinary_import_companion['projection'],
+            loader_occurrence=memmove_ordinary_import_companion['loader_occurrence']))
+    ordinary_static_import_joins.extend(memmove_import_joins)
     for scan_import, caller, call_count in (
             ('mbrtowc', 'crabc_owned_scan_vfscanf', 1),
             ('mbsinit', 'crabc_owned_scan_vfscanf', 1),
@@ -12527,6 +12594,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'stack_check_static_import_joins': stack_check_static_import_joins,
             'native_c_allocator_boundary_companion': native_c_allocator_boundary_companion,
             'strlen_ordinary_import_companion': strlen_ordinary_import_companion,
+            'memmove_ordinary_import_companion': memmove_ordinary_import_companion,
             'native_c_allocator_boundary_joins': native_c_allocator_boundary_joins,
             'native_c_allocator_runtime_import_joins': native_c_allocator_runtime_import_joins,
             'native_c_allocator_private_vm_import_joins': native_c_allocator_private_vm_import_joins,
@@ -12579,6 +12647,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  errno_storage_lifecycle_report: Path | None = None,
                  native_c_allocator_boundary_report: Path | None = None,
                  strlen_ordinary_import_work: Path | None = None,
+                 memmove_ordinary_import_work: Path | None = None,
                  owned_aio_report: Path | None = None,
                  owned_syslog_work: Path | None = None,
                  stdio_alias_contract_report: Path | None = None,
@@ -12609,6 +12678,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            errno_storage_lifecycle_report=errno_storage_lifecycle_report,
                            native_c_allocator_boundary_report=native_c_allocator_boundary_report,
                            strlen_ordinary_import_work=strlen_ordinary_import_work,
+                           memmove_ordinary_import_work=memmove_ordinary_import_work,
                            owned_aio_report=owned_aio_report,
                            owned_syslog_work=owned_syslog_work,
                            stdio_alias_contract_report=stdio_alias_contract_report,
@@ -12639,6 +12709,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     errno_storage_lifecycle_report: Path | None = None,
                     native_c_allocator_boundary_report: Path | None = None,
                     strlen_ordinary_import_work: Path | None = None,
+                    memmove_ordinary_import_work: Path | None = None,
                     owned_aio_report: Path | None = None,
                     owned_syslog_work: Path | None = None,
                     stdio_alias_contract_report: Path | None = None,
@@ -12671,6 +12742,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              errno_storage_lifecycle_report=errno_storage_lifecycle_report,
                              native_c_allocator_boundary_report=native_c_allocator_boundary_report,
                              strlen_ordinary_import_work=strlen_ordinary_import_work,
+                             memmove_ordinary_import_work=memmove_ordinary_import_work,
                              owned_aio_report=owned_aio_report,
                              owned_syslog_work=owned_syslog_work,
                              stdio_alias_contract_report=stdio_alias_contract_report,
@@ -12709,6 +12781,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--errno-storage-lifecycle-report', type=Path)
     parser.add_argument('--native-c-allocator-boundary-report', type=Path)
     parser.add_argument('--strlen-ordinary-import-work', type=Path)
+    parser.add_argument('--memmove-ordinary-import-work', type=Path)
     parser.add_argument('--owned-aio-report', type=Path)
     parser.add_argument('--owned-syslog-work', type=Path)
     parser.add_argument('--stdio-alias-contract-report', type=Path)
@@ -12734,13 +12807,16 @@ def main(argv: Sequence[str]) -> int:
         parser.error('--ordinary-declaration-abi-report requires --declaration-report')
     if args.strlen_ordinary_import_work is not None and args.native_c_allocator_boundary_report is None:
         parser.error('--strlen-ordinary-import-work requires --native-c-allocator-boundary-report')
+    if args.memmove_ordinary_import_work is not None and args.native_c_allocator_boundary_report is None:
+        parser.error('--memmove-ordinary-import-work requires --native-c-allocator-boundary-report')
     kwargs = {key: getattr(args, key) for key in ('measurement_checkout', 'base_inventory', 'static_product', 'dynamic_product',
                                                 'static_preparation', 'declaration_report', 'public_data_ordinary_link_report',
                                                 'loader_debug_abi_report', 'compiler_helper_aggregate_report',
                                                 'ordinary_declaration_abi_report', 'loader_runtime_registry_report',
                                                 'pthread_alias_contract_report', 'prepared_worker_tls_report',
                                                 'errno_storage_lifecycle_report', 'native_c_allocator_boundary_report',
-                                                'strlen_ordinary_import_work', 'owned_aio_report', 'owned_syslog_work',
+                                                'strlen_ordinary_import_work', 'memmove_ordinary_import_work',
+                                                'owned_aio_report', 'owned_syslog_work',
                                                 'stdio_alias_contract_report', 'crt_startup_report',
                                                 'syscall_alias_contract_report', 'utmpx_receipt_report',
                                                 'pthread_timed_feature_report', 'resolver_alias_receipt_report',
