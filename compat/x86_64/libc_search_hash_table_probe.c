@@ -49,6 +49,35 @@ static unsigned allocation_calls;
 static unsigned release_calls;
 static int fail_next_allocation;
 
+/* Report API observations without selecting stdio in the freestanding image. */
+static int trace_observations(const char *name, const int *values, size_t count)
+{
+    static const char digits[] = "0123456789abcdef";
+    char line[96];
+    size_t length = 0;
+    size_t index;
+    register long result __asm__("rax") = 1;
+
+    while (name[length] != '\0') {
+        if (length >= sizeof line - 2) return 0;
+        line[length] = name[length];
+        ++length;
+    }
+    if (length + count * 2 + 2 > sizeof line) return 0;
+    line[length++] = ':';
+    for (index = 0; index < count; ++index) {
+        if (values[index] < 0 || values[index] > 255) return 0;
+        line[length++] = digits[(unsigned)values[index] >> 4];
+        line[length++] = digits[(unsigned)values[index] & 15];
+    }
+    line[length++] = '\n';
+    __asm__ volatile("syscall"
+        : "+a"(result)
+        : "D"(1L), "S"(line), "d"((long)length)
+        : "rcx", "r11", "memory");
+    return result == (long)length;
+}
+
 #ifdef CRABC_SEARCH_HASH_TABLE_FREESTANDING
 struct crabc_limit {
     unsigned long current;
@@ -166,6 +195,13 @@ static int check_zero_capacity_duplicate_and_destroy(void)
         duplicate != stored || duplicate->key != first.key ||
         duplicate->data != &first_data)
         return 5;
+    {
+        int observations[] = {
+            duplicate == stored, duplicate->key == first.key,
+            duplicate->data == &first_data
+        };
+        if (!trace_observations("duplicate", observations, 3)) return 10;
+    }
     stored = (ENTRY *)(uintptr_t)1;
     if (hsearch_r(missing, FIND, &stored, &table) != 0 || stored != NULL)
         return 6;
@@ -181,6 +217,10 @@ static int check_zero_capacity_duplicate_and_destroy(void)
     hdestroy_r(&table);
     if (table.__tab != NULL || release_calls != releases)
         return 9;
+    {
+        int observations[] = { stored == NULL, table.__tab == NULL };
+        if (!trace_observations("miss-destroy", observations, 2)) return 11;
+    }
     return 0;
 }
 
@@ -192,6 +232,7 @@ static int check_global_reentrant_independence(void)
     ENTRY global_item = { "shared-key", &global_data };
     ENTRY reentrant_item = { "shared-key", &reentrant_data };
     ENTRY *result = NULL;
+    int observations[3];
 
     if (hcreate(3) != 1 || hcreate_r(3, &table) != 1)
         return 1;
@@ -199,13 +240,146 @@ static int check_global_reentrant_independence(void)
         hsearch_r(reentrant_item, ENTER, &result, &table) != 1 ||
         result == NULL || result->data != &reentrant_data)
         return 2;
+    observations[0] = result->data == &reentrant_data;
     result = hsearch(global_item, FIND);
     if (result == NULL || result->data != &global_data)
         return 3;
+    observations[1] = result->data == &global_data;
     hdestroy_r(&table);
     result = hsearch(global_item, FIND);
     if (result == NULL || result->data != &global_data)
         return 4;
+    observations[2] = result->data == &global_data;
+    hdestroy();
+    if (!trace_observations("global-record", observations, 3)) return 5;
+    return 0;
+}
+
+static int check_collisions_and_record_ownership(void)
+{
+    struct hsearch_data first = { 0 };
+    struct hsearch_data second = { 0 };
+    char keys[4][2] = { "a", "i", "q", "y" };
+    char equal_keys[4][2] = { "a", "i", "q", "y" };
+    int first_values[4] = { 41, 42, 43, 44 };
+    int second_values[4] = { 51, 52, 53, 54 };
+    int changed_value = 64;
+    int observations[16] = { 0 };
+    ENTRY *first_entries[4] = { NULL };
+    ENTRY *second_entries[4] = { NULL };
+    ENTRY *result = NULL;
+    unsigned index;
+
+    /* All four hashes have the same low three bits at the minimum size. */
+    if (hcreate_r(0, &first) != 1 || hcreate_r(0, &second) != 1)
+        return 1;
+    for (index = 0; index < 4; ++index) {
+        unsigned reverse = 3 - index;
+        ENTRY left = { keys[index], &first_values[index] };
+        ENTRY right = { keys[reverse], &second_values[reverse] };
+
+        if (hsearch_r(left, ENTER, &first_entries[index], &first) != 1 ||
+            hsearch_r(right, ENTER, &second_entries[reverse], &second) != 1 ||
+            first_entries[index] == NULL || second_entries[reverse] == NULL)
+            return 2;
+        observations[index] = first_entries[index]->key == keys[index];
+        observations[4 + index] =
+            second_entries[reverse]->data == &second_values[reverse];
+    }
+    for (index = 0; index < 4; ++index) {
+        ENTRY duplicate = { equal_keys[index], &changed_value };
+
+        if (hsearch_r(duplicate, ENTER, &result, &first) != 1 ||
+            result != first_entries[index] || result->key != keys[index] ||
+            result->data != &first_values[index])
+            return 3;
+        observations[8 + index] = result->key != equal_keys[index];
+        if (hsearch_r(duplicate, FIND, &result, &second) != 1 ||
+            result != second_entries[index] ||
+            result->data != &second_values[index])
+            return 4;
+        observations[12 + index] = result != first_entries[index];
+    }
+    if (!trace_observations("colliding-records", observations, 16))
+        return 5;
+
+    first_entries[2]->data = &changed_value;
+    {
+        ENTRY lookup = { equal_keys[2], NULL };
+        ENTRY *left = NULL;
+        ENTRY *right = NULL;
+        int changed[4];
+
+        if (hsearch_r(lookup, FIND, &left, &first) != 1 ||
+            hsearch_r(lookup, FIND, &right, &second) != 1 ||
+            left == NULL || right == NULL)
+            return 6;
+        changed[0] = left == first_entries[2];
+        changed[1] = left->data == &changed_value;
+        changed[2] = right == second_entries[2];
+        changed[3] = right->data == &second_values[2];
+        if (!trace_observations("entry-mutation", changed, 4)) return 7;
+        if (!changed[0] || !changed[1] || !changed[2] || !changed[3])
+            return 8;
+    }
+
+    hdestroy_r(&first);
+    if (first.__tab != NULL) return 9;
+    for (index = 0; index < 4; ++index) {
+        ENTRY lookup = { equal_keys[index], NULL };
+
+        if (hsearch_r(lookup, FIND, &result, &second) != 1 ||
+            result != second_entries[index])
+            return 10;
+    }
+    if (hcreate_r(0, &first) != 1) return 11;
+    {
+        ENTRY lookup = { equal_keys[2], NULL };
+        int absent = hsearch_r(lookup, FIND, &result, &first);
+        int lifecycle[] = { first.__tab != NULL, absent, result == NULL,
+            second.__tab != NULL };
+
+        if (!trace_observations("record-lifecycle", lifecycle, 4))
+            return 12;
+        if (absent != 0 || result != NULL) return 13;
+    }
+    hdestroy_r(&first);
+    hdestroy_r(&second);
+    return 0;
+}
+
+static int check_failed_create_recovery(void)
+{
+    struct hsearch_data table = { 0 };
+    int created;
+    int failure_errno;
+    int observations[6];
+
+    if (!begin_allocation_failure()) return 1;
+    errno = 0;
+    created = hcreate_r(8, &table);
+    failure_errno = errno;
+    if (!end_allocation_failure()) return 2;
+    observations[0] = created;
+    observations[1] = failure_errno;
+    observations[2] = table.__tab == NULL;
+    if (created != 0 || failure_errno != ENOMEM || table.__tab != NULL)
+        return 3;
+    observations[3] = hcreate_r(8, &table);
+    if (observations[3] != 1) return 4;
+    hdestroy_r(&table);
+
+    if (!begin_allocation_failure()) return 5;
+    errno = 0;
+    created = hcreate(8);
+    failure_errno = errno;
+    if (!end_allocation_failure()) return 6;
+    observations[4] = created;
+    observations[5] = failure_errno;
+    if (created != 0 || failure_errno != ENOMEM) return 7;
+    if (!trace_observations("create-failure-retry", observations, 6))
+        return 8;
+    if (hcreate(8) != 1) return 9;
     hdestroy();
     return 0;
 }
@@ -220,6 +394,8 @@ static int check_resize_failure_rollback(void)
     ENTRY *result = NULL;
     ENTRY *old_mapping_entry = NULL;
     ENTRY *current_mapping_entry = NULL;
+    int failed_errno;
+    int observations[4];
     unsigned index;
 
     reset_allocation_observation();
@@ -239,15 +415,22 @@ static int check_resize_failure_rollback(void)
         if (hsearch_r(seventh, ENTER, &result, &table) != 0 ||
             result != NULL || errno != ENOMEM)
             return 4;
+        failed_errno = errno;
+        observations[0] = result == NULL;
+        observations[1] = failed_errno;
         if (!end_allocation_failure()) return 5;
 #ifdef CRABC_SEARCH_HASH_TABLE_FREESTANDING
         if (!mapping_is_live(old_mapping_entry)) return 6;
 #endif
         if (hsearch_r(seventh, FIND, &result, &table) != 0 || result != NULL)
             return 7;
+        observations[2] = result == NULL;
         if (hsearch_r(seventh, ENTER, &result, &table) != 1 ||
             result == NULL || result->data != &values[6])
             return 8;
+        observations[3] = result->data == &values[6];
+        if (!trace_observations("resize-failure-retry", observations, 4))
+            return 13;
         current_mapping_entry = result;
 #ifdef CRABC_SEARCH_HASH_TABLE_FREESTANDING
         if (mapping_is_live(old_mapping_entry)) return 9;
@@ -275,11 +458,14 @@ static int check_unsigned_hash_bytes(void)
     struct hsearch_data table = { 0 };
     char ascii_key[] = "a";
     char high_key[2] = { (char)0x80, '\0' };
+    char equal_high_key[2] = { (char)0x80, '\0' };
     ENTRY ascii_item = { ascii_key, ascii_key };
     ENTRY high_item = { high_key, high_key };
+    ENTRY equal_high_item = { equal_high_key, ascii_key };
     ENTRY *ascii_result = NULL;
     ENTRY *high_result = NULL;
-    ptrdiff_t entry_delta;
+    ENTRY *found = NULL;
+    int observations[4];
 
     if (hcreate_r(512, &table) != 1)
         return 1;
@@ -287,9 +473,15 @@ static int check_unsigned_hash_bytes(void)
         hsearch_r(high_item, ENTER, &high_result, &table) != 1 ||
         ascii_result == NULL || high_result == NULL)
         return 2;
-    entry_delta = high_result - ascii_result;
-    if (entry_delta != 31)
+    if (hsearch_r(equal_high_item, FIND, &found, &table) != 1 ||
+        found != high_result || found->key != high_key ||
+        found->data != high_key)
         return 3;
+    observations[0] = ascii_result != high_result;
+    observations[1] = high_result == found;
+    observations[2] = found->key != equal_high_key;
+    observations[3] = found->data == high_key;
+    if (!trace_observations("high-byte-key", observations, 4)) return 4;
     hdestroy_r(&table);
     return 0;
 }
@@ -303,13 +495,18 @@ static int check_overflow_and_repeated_create(void)
     ENTRY second_item = { "second-live", &second_data };
     ENTRY *first_entry = NULL;
     ENTRY *second_entry = NULL;
+    ENTRY *lookup = NULL;
+    int observations[6];
+    int overflow_errno;
     unsigned releases;
 
     errno = 0;
     if (hcreate_r((size_t)-1, &table) != 0 || table.__tab != NULL ||
         errno != ENOMEM)
         return 1;
+    overflow_errno = errno;
     hdestroy_r(&table);
+    observations[0] = overflow_errno;
 
     reset_allocation_observation();
     if (hcreate_r(1, &table) != 1 ||
@@ -317,6 +514,12 @@ static int check_overflow_and_repeated_create(void)
         hcreate_r(1, &table) != 1 ||
         hsearch_r(second_item, ENTER, &second_entry, &table) != 1)
         return 2;
+    observations[1] = hsearch_r(first_item, FIND, &lookup, &table);
+    observations[2] = lookup == NULL;
+    observations[3] = hsearch_r(second_item, FIND, &lookup, &table);
+    if (observations[1] != 0 || !observations[2] ||
+        observations[3] != 1 || lookup != second_entry)
+        return 10;
 #ifndef CRABC_SEARCH_HASH_TABLE_FREESTANDING
     if (allocation_calls != 4)
         return 3;
@@ -340,6 +543,12 @@ static int check_overflow_and_repeated_create(void)
         hcreate(1) != 1 ||
         (second_entry = hsearch(second_item, ENTER)) == NULL)
         return 6;
+    lookup = hsearch(first_item, FIND);
+    observations[4] = lookup == NULL;
+    lookup = hsearch(second_item, FIND);
+    observations[5] = lookup == second_entry;
+    if (!observations[4] || !observations[5]) return 11;
+    if (!trace_observations("repeat-create", observations, 6)) return 12;
 #ifndef CRABC_SEARCH_HASH_TABLE_FREESTANDING
     if (allocation_calls != 4)
         return 7;
@@ -366,6 +575,10 @@ int crabc_x86_64_search_hash_table_probe(void)
     if (result != 0) return 10 + result;
     result = check_global_reentrant_independence();
     if (result != 0) return 30 + result;
+    result = check_collisions_and_record_ownership();
+    if (result != 0) return 130 + result;
+    result = check_failed_create_recovery();
+    if (result != 0) return 150 + result;
     result = check_resize_failure_rollback();
     if (result != 0) return 50 + result;
     result = check_unsigned_hash_bytes();

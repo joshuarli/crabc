@@ -3,11 +3,10 @@
 #
 # Closed C/C++ feature profiles prove the exact musl <search.h> exposure and
 # x86 ABI. One project-header fixture runs against pinned musl 1.2.6 and as a
-# true freestanding candidate. The musl allocation call is wrapped; the
-# candidate uses a temporary address-space ceiling plus mapping-liveness
-# probes, so failure and ownership transitions are deterministic in both
-# executions. This closes only the private search.hash-table capability, not
-# general allocation or public x86 support.
+# true freestanding candidate. Their normalized operation transcripts must
+# match physically. The musl allocation call is wrapped; the candidate uses
+# a temporary address-space ceiling plus mapping-liveness probes, so failure
+# and ownership transitions are deterministic in both executions.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -78,14 +77,15 @@ case "$(uname -m)" in
     x86_64|amd64) ;;
     *) fail "requires native x86-64" ;;
 esac
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort timeout; do
+for tool in ar awk cargo chmod cmp diff grep mkdir nm objdump readelf rustup sha256sum sort timeout; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-search-hash-table.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-search-hash-table.XXXXXX")"
+trap 'chmod -R a+rX "$work_dir"' EXIT
 c_header="$ROOT_DIR/compat/x86_64/search_hash_table_header_abi_probe.c"
 cxx_header="$ROOT_DIR/compat/x86_64/search_hash_table_header_abi_probe.cpp"
 hidden_header="$ROOT_DIR/compat/x86_64/search_hash_table_header_hidden_probe.c"
@@ -201,7 +201,8 @@ done
 for symbol in hcreate_r hdestroy_r hsearch_r; do
     assert_weak_function "$reference_symbols" "$symbol" "pinned-musl static reference"
 done
-if timeout "$EXECUTION_TIMEOUT" "$reference"; then
+if timeout "$EXECUTION_TIMEOUT" "$reference" >"$work_dir/pinned-musl.stdout" \
+    2>"$work_dir/pinned-musl.stderr"; then
     :
 else
     status=$?
@@ -284,11 +285,20 @@ if grep -Eq 'panic_(bounds_check|nounwind)|rust_begin_unwind|core9panicking' \
     "$candidate_hash_disassembly"; then
     fail "selected hash-table call graph directly selects Rust panic machinery"
 fi
-if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
+if timeout "$EXECUTION_TIMEOUT" "$candidate" >"$work_dir/crabc.stdout" \
+    2>"$work_dir/crabc.stderr"; then
     :
 else
     status=$?
     fail "freestanding hash-table fixture exited $status"
 fi
+if ! cmp -s "$work_dir/pinned-musl.stdout" "$work_dir/crabc.stdout"; then
+    diff -u "$work_dir/pinned-musl.stdout" "$work_dir/crabc.stdout" >&2 || true
+    fail "pinned-musl and freestanding observations differ; evidence: $work_dir"
+fi
 
-printf 'x86 static libc search.hash-table: PASS\n'
+sha256sum "$runtime_fixture" "$reference" "$candidate" \
+    "$work_dir/pinned-musl.stdout" "$work_dir/crabc.stdout" \
+    >"$work_dir/source-and-product.sha256"
+
+printf 'x86 static libc search.hash-table: PASS (evidence: %s)\n' "$work_dir"
