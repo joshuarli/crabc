@@ -20,7 +20,7 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::mem::{align_of, offset_of, size_of};
 use core::ptr;
 
-use super::{c_result, c_status, errno, mq_setattr, posix_semaphore, pthread_attr,
+use super::{c_result, c_status, errno, posix_semaphore, pthread_attr,
     pthread_cancel, pthread_create_join, pthread_identity, raw_syscall,
     signal_control, signal_set_mutation, socket_transport};
 
@@ -107,17 +107,31 @@ static_archive_member! { mq_unlink_source {
     }
 }}
 
+// These entry stubs keep relocations to the public functions across LTO.
+// Rust direct calls to definitions in this crate can fold into private bodies,
+// bypassing a program's strong definition at the final static link. The shared
+// libc deliberately binds these ordinary functions locally, as pinned musl does.
+// The SysV x86-64 register ABI permits a tail jump after adding a null deadline
+// or new-attribute argument, with the caller's return address still in place.
 // Musl's `src/mq/mq_getattr.c` object.
 static_archive_member! { mq_getattr_source {
-    /// Query queue attributes through the existing mq_getsetattr owner.
+    /// Query queue attributes through the public mq_setattr entry.
     /// # Safety
     /// `attributes` must designate writable LP64 `struct mq_attr` storage and the
     /// descriptor must remain open during the call. Invalid kernel inputs retain
     /// their direct errors.
-    #[no_mangle]
-    pub unsafe extern "C" fn mq_getattr(queue: c_int, attributes: *mut c_void) -> c_int {
-        unsafe { mq_setattr::mq_setattr(queue, ptr::null(), attributes) }
-    }
+    core::arch::global_asm!(r#"
+    .section .text.mq_getattr,"ax",@progbits
+    .p2align 4
+    .global mq_getattr
+    .type mq_getattr,@function
+mq_getattr:
+    mov rdx, rsi
+    xor esi, esi
+    jmp mq_setattr@PLT
+    .size mq_getattr, .-mq_getattr
+    .section .note.GNU-stack,"",@progbits
+"#);
 }}
 
 // Musl's `src/mq/mq_send.c` object.
@@ -126,10 +140,17 @@ static_archive_member! { mq_send_source {
     /// # Safety
     /// `message` must designate `length` readable bytes for the call. The caller
     /// owns descriptor lifetime and shared queue synchronization.
-    #[no_mangle]
-    pub unsafe extern "C" fn mq_send(queue: c_int, message: *const c_char, length: usize, priority: c_uint) -> c_int {
-        unsafe { mq_timedsend(queue, message, length, priority, ptr::null()) }
-    }
+    core::arch::global_asm!(r#"
+    .section .text.mq_send,"ax",@progbits
+    .p2align 4
+    .global mq_send
+    .type mq_send,@function
+mq_send:
+    xor r8d, r8d
+    jmp mq_timedsend@PLT
+    .size mq_send, .-mq_send
+    .section .note.GNU-stack,"",@progbits
+"#);
 }}
 
 // Musl's `src/mq/mq_receive.c` object.
@@ -139,10 +160,17 @@ static_archive_member! { mq_receive_source {
     /// `message` must designate `length` writable bytes; `priority` must be null
     /// or writable unsigned-int storage. The caller owns descriptor lifetime and
     /// any concurrent accesses to the queue or destination storage.
-    #[no_mangle]
-    pub unsafe extern "C" fn mq_receive(queue: c_int, message: *mut c_char, length: usize, priority: *mut c_uint) -> isize {
-        unsafe { mq_timedreceive(queue, message, length, priority, ptr::null()) }
-    }
+    core::arch::global_asm!(r#"
+    .section .text.mq_receive,"ax",@progbits
+    .p2align 4
+    .global mq_receive
+    .type mq_receive,@function
+mq_receive:
+    xor r8d, r8d
+    jmp mq_timedreceive@PLT
+    .size mq_receive, .-mq_receive
+    .section .note.GNU-stack,"",@progbits
+"#);
 }}
 
 // Musl's `src/mq/mq_timedsend.c` object.

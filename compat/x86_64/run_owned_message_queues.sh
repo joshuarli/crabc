@@ -31,11 +31,21 @@ if [ -z "$provided_dynamic" ]; then
 fi
 python3 -B "$ROOT/compat/x86_64/compile_owned_message_queues.py" "$provided_dynamic" "$work"
 sha256sum "$work/probe.o" >"$work/probe.sha256"
+"$provided_dynamic/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin -c \
+    "$ROOT/compat/x86_64/owned_message_queues_interpose.c" -o "$work/interpose.o"
+sha256sum "$work/interpose.o" >"$work/interpose.sha256"
 "$oracle_cc" -static -no-pie -pthread "$work/probe.o" -o "$work/oracle"
+"$oracle_cc" -static -no-pie "$work/interpose.o" -o "$work/oracle-interpose"
+"$oracle_cc" -pie "$work/interpose.o" -o "$work/oracle-dynamic-interpose"
 mkdir -p "$work/oracle-root"
 cp "$work/oracle" "$work/oracle-root/consumer"
 timeout 35 python3 -B "$witness" "$work/oracle-root" /consumer >"$work/oracle.stdout"
 grep -qx owned-message-queues-ok "$work/oracle.stdout"
+cp "$work/oracle-interpose" "$work/oracle-root/consumer"
+timeout 35 python3 -B "$witness" "$work/oracle-root" /consumer >"$work/oracle-interpose.stdout"
+grep -qx owned-message-queues-interpose-ok "$work/oracle-interpose.stdout"
+timeout 35 "$work/oracle-dynamic-interpose" --shared-local >"$work/oracle-dynamic-interpose.stdout"
+grep -qx owned-message-queues-local-ok "$work/oracle-dynamic-interpose.stdout"
 if [ "$#" -eq 0 ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$work/static-product" >"$work/static-build.json"
     for mode in static static-pie; do
@@ -44,6 +54,10 @@ if [ "$#" -eq 0 ]; then
         cp "$work/$mode" "$work/$mode-root/consumer"
         timeout 35 python3 -B "$witness" "$work/$mode-root" /consumer >"$work/$mode.stdout"
         cmp "$work/oracle.stdout" "$work/$mode.stdout"
+        "$work/static-product/bin/crabc-cc" "-$mode" "$work/interpose.o" -o "$work/$mode-interpose"
+        cp "$work/$mode-interpose" "$work/$mode-root/consumer"
+        timeout 35 python3 -B "$witness" "$work/$mode-root" /consumer >"$work/$mode-interpose.stdout"
+        cmp "$work/oracle-interpose.stdout" "$work/$mode-interpose.stdout"
     done
 fi
 for mode in pie non-pie; do
@@ -55,6 +69,14 @@ for mode in pie non-pie; do
         if [ "$entry" = direct ]; then command=(/lib/ld-crabc-x86_64.so.1 /consumer); fi
         timeout 35 python3 -B "$witness" "$work/$mode-root" "${command[@]}" >"$work/$mode-$entry.stdout"
         cmp "$work/oracle.stdout" "$work/$mode-$entry.stdout"
+    done
+    "$provided_dynamic/bin/crabc-cc-dynamic" "--dynamic-$mode" "$work/interpose.o" -o "$work/dynamic-$mode-interpose"
+    cp "$work/dynamic-$mode-interpose" "$work/$mode-root/consumer"
+    for entry in kernel direct; do
+        command=(/consumer --shared-local)
+        if [ "$entry" = direct ]; then command=(/lib/ld-crabc-x86_64.so.1 /consumer --shared-local); fi
+        timeout 35 python3 -B "$witness" "$work/$mode-root" "${command[@]}" >"$work/$mode-$entry-interpose.stdout"
+        cmp "$work/oracle-dynamic-interpose.stdout" "$work/$mode-$entry-interpose.stdout"
     done
 done
 printf 'owned message queues: PASS (same object, musl + installed static/dynamic entries, POSIX message queues); evidence: %s\n' "$work"
