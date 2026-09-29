@@ -1,5 +1,6 @@
 /* Allocation-free wide-character fixture shared by musl and crabc-libc. */
 
+#include <errno.h>
 #include <locale.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -31,6 +32,66 @@ static int wide_equal(const wchar_t *left, const wchar_t *right)
         ++left;
         ++right;
     }
+    return 0;
+}
+
+static int check_wide_boundaries(void)
+{
+    static const wchar_t units[] = {
+        0x10437, -1, 'A', 0x4e00, 0, 'Z', 0x10ffff, -2
+    };
+    static const wchar_t unterminated[] = { 'A', 0x4e00, -1, 0x10437 };
+    wchar_t actual[16];
+    wchar_t expected[16];
+    size_t source, destination, count, index, limit;
+
+    /* Every legal source/destination/count triple includes both overlap
+       directions, exact adjacency, self-copy, and zero-length moves. */
+    for (source = 0; source != 8; ++source) {
+        for (destination = 0; destination != 8; ++destination) {
+            for (count = 0; count <= 8; ++count) {
+                for (index = 0; index != 16; ++index) {
+                    actual[index] = units[index % 8];
+                    expected[index] = actual[index];
+                }
+                if (destination > source && destination < source + count) {
+                    for (index = count; index != 0; --index)
+                        expected[destination + index - 1] =
+                            expected[source + index - 1];
+                } else {
+                    for (index = 0; index != count; ++index)
+                        expected[destination + index] = expected[source + index];
+                }
+                errno = E2BIG;
+                if (wmemmove(actual + destination, actual + source, count) !=
+                        actual + destination || errno != E2BIG ||
+                    wmemcmp(actual, expected, 16) != 0 || errno != E2BIG)
+                    return 1;
+            }
+        }
+    }
+
+    /* The limit may end before, at, or after the first terminator. */
+    for (limit = 0; limit <= 8; ++limit) {
+        errno = ERANGE;
+        if (wcsnlen(units, limit) != (limit < 4 ? limit : 4) ||
+            errno != ERANGE)
+            return 2;
+    }
+    for (limit = 0; limit <= 4; ++limit) {
+        errno = ERANGE;
+        if (wcsnlen(unterminated, limit) != limit || errno != ERANGE)
+            return 3;
+    }
+
+    /* A NUL search returns the terminator itself and never scans the tail. */
+    errno = ENOENT;
+    if (wcschr(units, 0) != units + 4 || errno != ENOENT ||
+        wcschr(units, 'Z') != NULL || errno != ENOENT ||
+        wcschr(units, 0x10437) != units || errno != ENOENT ||
+        wcschr(units, -1) != units + 1 || errno != ENOENT ||
+        wcschr(units + 4, 0) != units + 4 || errno != ENOENT)
+        return 4;
     return 0;
 }
 
@@ -136,8 +197,13 @@ static int check_collation_case_and_width(void)
     size_t index;
 
     for (index = 0; index < sizeof(locales) / sizeof(locales[0]); ++index) {
+        int boundary_result;
+
         if (setlocale(LC_ALL, locales[index]) == NULL)
             return 1;
+        boundary_result = check_wide_boundaries();
+        if (boundary_result != 0)
+            return 6 + boundary_result;
         if (wcscoll(source, lower) >= 0 || wcsxfrm(transformed, source, 8) != 3 ||
             !wide_equal(transformed, source))
             return 2;

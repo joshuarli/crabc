@@ -60,14 +60,15 @@ assert_fixture_tls_capacity() {
 [ "$#" -eq 0 ] || fail "usage: $0"
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mkdir mktemp nm objdump readelf rustup sort wc; do
+for tool in ar awk cargo chmod cmp cp diff grep mkdir mktemp nm objdump readelf rustup sha256sum sort wc; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_wide_character_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-wide-character.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-wide-character.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
@@ -75,6 +76,8 @@ reference="$work_dir/musl-wide-character-reference"
 candidate="$work_dir/crabc-static-wide-character-candidate"
 reference_output="$work_dir/reference-fingerprint"
 candidate_output="$work_dir/candidate-fingerprint"
+reference_error="$work_dir/reference-stderr"
+candidate_error="$work_dir/candidate-stderr"
 trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
 selected_symbols="$work_dir/selected-c-abi-symbols"
@@ -88,15 +91,19 @@ disassembly="$work_dir/candidate-disassembly"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_XOPEN_SOURCE=700 -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_wide_character_probe.c >/dev/null 2>"$trace"
-for header in locale.h stdint.h unistd.h wchar.h wctype.h features.h bits/alltypes.h; do
+for header in errno.h locale.h stdint.h unistd.h wchar.h wctype.h features.h bits/alltypes.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$trace" ||
         fail "fixture did not use project $header"
 done
 "$ORACLE_CC" -std=c11 -D_XOPEN_SOURCE=700 -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_wide_character_probe.c -o "$reference"
-if "$reference" >"$reference_output"; then :; else
-    status=$?; fail "pinned-musl wide-character fixture failed with status $status"
+if "$reference" >"$reference_output" 2>"$reference_error"; then
+    reference_status=0
+else
+    reference_status=$?
 fi
+[ "$reference_status" -eq 0 ] ||
+    fail "pinned-musl wide-character fixture failed with status $reference_status"
 [ "$(wc -c <"$reference_output")" -eq 8 ] ||
     fail "pinned-musl fixture did not emit one 64-bit Unicode fingerprint"
 
@@ -125,7 +132,7 @@ readelf --program-headers --wide "$candidate" >"$headers"
 readelf --dynamic --wide "$candidate" >"$dynamic" || true
 readelf --relocs --wide "$candidate" >"$relocations"
 objdump -d "$candidate" >"$disassembly"
-for symbol in setlocale write "${SELECTED_SYMBOLS[@]}"; do
+for symbol in __errno_location setlocale write "${SELECTED_SYMBOLS[@]}"; do
     grep -Eq "[[:space:]]${symbol}$" "$symbols" || fail "candidate lacks $symbol"
 done
 if awk '$7 == "UND" && NF >= 8 { print }' "$symbols" | grep . >/dev/null; then
@@ -144,11 +151,35 @@ if grep -Eq 'mimalloc|sha_crypt|malloc|calloc|realloc|wcsdup|fgetwc|swprintf|wcs
     "$symbols" "$disassembly"; then
     fail "candidate selects an allocator, locale object, wide I/O, or numeric dependency"
 fi
-if "$candidate" >"$candidate_output"; then :; else
-    status=$?; fail "freestanding wide-character fixture failed with status $status"
+if "$candidate" >"$candidate_output" 2>"$candidate_error"; then
+    candidate_status=0
+else
+    candidate_status=$?
 fi
+[ "$candidate_status" -eq 0 ] ||
+    fail "freestanding wide-character fixture failed with status $candidate_status"
 [ "$(wc -c <"$candidate_output")" -eq 8 ] ||
     fail "candidate did not emit one 64-bit Unicode fingerprint"
 cmp "$reference_output" "$candidate_output" ||
     fail "candidate Unicode classification/case/width fingerprint differs from pinned musl"
+mkdir -p "$ROOT_DIR/.work/x86_64/reports"
+report_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-wide-character.XXXXXX")"
+chmod 755 "$report_dir"
+cp "$reference" "$report_dir/musl.elf"
+cp "$candidate" "$report_dir/crabc.elf"
+cp "$reference_output" "$report_dir/musl.stdout"
+cp "$candidate_output" "$report_dir/crabc.stdout"
+cp "$reference_error" "$report_dir/musl.stderr"
+cp "$candidate_error" "$report_dir/crabc.stderr"
+cp "$ROOT_DIR/compat/x86_64/libc_wide_character_probe.c" "$report_dir/probe.c"
+cp "$ROOT_DIR/compat/x86_64/run_libc_wide_character.sh" "$report_dir/runner.sh"
+printf '%s\n' "$reference_status" >"$report_dir/musl.status"
+printf '%s\n' "$candidate_status" >"$report_dir/crabc.status"
+(
+    cd "$report_dir"
+    sha256sum musl.elf crabc.elf musl.stdout crabc.stdout \
+        musl.stderr crabc.stderr musl.status crabc.status probe.c runner.sh \
+        >sha256sums.txt
+)
 printf 'x86 static libc wide-character core: PASS\n'
+printf 'report: %s\n' "$report_dir"
