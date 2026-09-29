@@ -2,12 +2,10 @@
  * Static Linux/x86-64 cosh/coshf C ABI differential regression.
  *
  * This raw-bit corpus runs through pinned musl 1.2.6 and one freestanding
- * crabc archive. It records result bits and IEEE exception flags under each
- * MXCSR rounding direction, including tiny/subnormal inputs, the stable
- * expm1 reconstruction, overflow reconstruction, signed zero, infinite,
- * quiet-NaN, and signaling-NaN inputs. It selects only binary64/binary32
- * hyperbolic cosine: coshl, other hyperbolic surface, public exp/expm1 ABI,
- * fenv policy, special math, and general libm remain outside this leaf.
+ * crabc archive. It records result bits, IEEE exception flags, and MXCSR
+ * before and after each call under all four rounding directions. Fixed
+ * neighborhoods straddle the tiny, expm1, exponential, reduction, and
+ * overflow boundaries; a deterministic exponent grid exercises the interior.
  */
 
 #if !defined(__linux__) || !defined(__x86_64__) || !defined(__LP64__) || \
@@ -31,10 +29,15 @@
 #error "the raw binary32/binary64 fixture requires SSE evaluation"
 #endif
 
-#define COSH_F64_CASES 32
-#define COSH_F32_CASES 32
+#define COSH_BASE_CASES 32
+#define COSH_EDGE_CASES 12
+#define COSH_EDGE_RADIUS 8
+#define COSH_EDGE_WIDTH (2 * COSH_EDGE_RADIUS + 1)
+#define COSH_GRID_CASES 512
+#define COSH_F64_CASES (COSH_BASE_CASES + 2 * COSH_EDGE_CASES * COSH_EDGE_WIDTH + COSH_GRID_CASES)
+#define COSH_F32_CASES COSH_F64_CASES
 #define COSH_ROUNDING_CASES 4
-#define COSH_RECORD_WORDS 4
+#define COSH_RECORD_WORDS 5
 #define COSH_RECORD_COUNT ((COSH_F64_CASES + COSH_F32_CASES) * COSH_ROUNDING_CASES)
 #define COSH_RECORD_STORAGE_WORDS (COSH_RECORD_COUNT * COSH_RECORD_WORDS)
 
@@ -45,10 +48,11 @@ typedef float (*float_unary_function)(float);
 static double_unary_function volatile direct_cosh = (cosh);
 static float_unary_function volatile direct_coshf = (coshf);
 
-/* The freestanding start object writes these exact 8,192 bytes with syscall. */
+/* The freestanding start object writes this complete record array with syscall. */
 uint64_t crabc_x86_64_math_cosh_records[COSH_RECORD_STORAGE_WORDS];
+const size_t crabc_x86_64_math_cosh_record_bytes = sizeof(crabc_x86_64_math_cosh_records);
 
-static const uint64_t binary64_inputs[COSH_F64_CASES] = {
+static const uint64_t binary64_inputs[COSH_BASE_CASES] = {
 	UINT64_C(0x0000000000000000), UINT64_C(0x8000000000000000),
 	UINT64_C(0x0000000000000001), UINT64_C(0x8000000000000001),
 	UINT64_C(0x000fffffffffffff), UINT64_C(0x0010000000000000),
@@ -67,7 +71,7 @@ static const uint64_t binary64_inputs[COSH_F64_CASES] = {
 	UINT64_C(0x7ff0000000000042), UINT64_C(0xfff0000000000042),
 };
 
-static const uint32_t binary32_inputs[COSH_F32_CASES] = {
+static const uint32_t binary32_inputs[COSH_BASE_CASES] = {
 	UINT32_C(0x00000000), UINT32_C(0x80000000), UINT32_C(0x00000001),
 	UINT32_C(0x80000001), UINT32_C(0x007fffff), UINT32_C(0x00800000),
 	UINT32_C(0x39000000), UINT32_C(0x39800000), UINT32_C(0xb9800000),
@@ -80,6 +84,72 @@ static const uint32_t binary32_inputs[COSH_F32_CASES] = {
 	UINT32_C(0x7f800000), UINT32_C(0xff800000), UINT32_C(0x7fc00041),
 	UINT32_C(0x7f800042), UINT32_C(0xff800042),
 };
+
+/* Each edge is tested at eight adjacent encodings on either side, with both signs. */
+static const uint64_t binary64_edges[COSH_EDGE_CASES] = {
+	UINT64_C(0x3e50000000000000), UINT64_C(0x3fd62e42fefa39ef),
+	UINT64_C(0x3fe62e4200000000), UINT64_C(0x3fe62e42fefa39ef),
+	UINT64_C(0x3ff0000000000000), UINT64_C(0x4000000000000000),
+	UINT64_C(0x4036000000000000), UINT64_C(0x4080000000000000),
+	UINT64_C(0x40862e4200000000), UINT64_C(0x40862e42fefa39ef),
+	UINT64_C(0x408633ce8fb9f87d), UINT64_C(0x408fffffffffffff),
+};
+
+static const uint32_t binary32_edges[COSH_EDGE_CASES] = {
+	UINT32_C(0x39800000), UINT32_C(0x3eb17218),
+	UINT32_C(0x3f317217), UINT32_C(0x3f317218),
+	UINT32_C(0x3f800000), UINT32_C(0x40000000),
+	UINT32_C(0x41200000), UINT32_C(0x41a00000),
+	UINT32_C(0x42b00000), UINT32_C(0x42b17217),
+	UINT32_C(0x42b17218), UINT32_C(0x42b2d4fc),
+};
+
+static const uint16_t binary64_grid_exponents[16] = {
+	0, 1, 512, 1022, 1023, 1024, 1025, 1030,
+	1044, 1060, 1085, 1120, 1132, 1133, 2046, 2047,
+};
+
+static const uint8_t binary32_grid_exponents[16] = {
+	0, 1, 64, 125, 126, 127, 128, 130,
+	135, 140, 150, 160, 165, 166, 254, 255,
+};
+
+static uint64_t binary64_input(size_t index)
+{
+	if (index < COSH_BASE_CASES)
+		return binary64_inputs[index];
+	index -= COSH_BASE_CASES;
+	if (index < 2 * COSH_EDGE_CASES * COSH_EDGE_WIDTH) {
+		size_t edge = index / (2 * COSH_EDGE_WIDTH);
+		size_t position = index % (2 * COSH_EDGE_WIDTH);
+		uint64_t magnitude = binary64_edges[edge] +
+			(uint64_t)((int)(position % COSH_EDGE_WIDTH) - COSH_EDGE_RADIUS);
+		return magnitude | ((uint64_t)(position / COSH_EDGE_WIDTH) << 63);
+	}
+	index -= 2 * COSH_EDGE_CASES * COSH_EDGE_WIDTH;
+	return ((uint64_t)((index / 16) & 1) << 63) |
+		((uint64_t)binary64_grid_exponents[index & 15] << 52) |
+		(((uint64_t)(index + 1) * UINT64_C(0x9e3779b97f4a7c15)) &
+			UINT64_C(0x000fffffffffffff));
+}
+
+static uint32_t binary32_input(size_t index)
+{
+	if (index < COSH_BASE_CASES)
+		return binary32_inputs[index];
+	index -= COSH_BASE_CASES;
+	if (index < 2 * COSH_EDGE_CASES * COSH_EDGE_WIDTH) {
+		size_t edge = index / (2 * COSH_EDGE_WIDTH);
+		size_t position = index % (2 * COSH_EDGE_WIDTH);
+		uint32_t magnitude = binary32_edges[edge] +
+			(uint32_t)((int)(position % COSH_EDGE_WIDTH) - COSH_EDGE_RADIUS);
+		return magnitude | ((uint32_t)(position / COSH_EDGE_WIDTH) << 31);
+	}
+	index -= 2 * COSH_EDGE_CASES * COSH_EDGE_WIDTH;
+	return ((uint32_t)((index / 16) & 1) << 31) |
+		((uint32_t)binary32_grid_exponents[index & 15] << 23) |
+		(((uint32_t)(index + 1) * UINT32_C(0x9e3779b9)) & UINT32_C(0x007fffff));
+}
 
 static const int rounding_modes[COSH_ROUNDING_CASES] = {
 	FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO,
@@ -109,13 +179,27 @@ static float float_from_bits(uint32_t bits)
 	return view.value;
 }
 
+static uint32_t read_mxcsr(void)
+{
+	uint32_t value;
+
+	__asm__ volatile("stmxcsr %0" : "=m"(value));
+	return value;
+}
+
 static int record_binary64(size_t *cursor, int rounding_mode, uint64_t input)
 {
 	double result;
+	uint32_t before;
+	uint32_t after;
 
 	if (fesetround(rounding_mode) != 0 || feclearexcept(FE_ALL_EXCEPT) != 0)
 		return 1;
+	before = read_mxcsr();
+	if ((before & UINT32_C(0x6000)) != (uint32_t)rounding_mode << 3)
+		return 5;
 	result = direct_cosh(double_from_bits(input));
+	after = read_mxcsr();
 	if (*cursor + COSH_RECORD_WORDS > COSH_RECORD_STORAGE_WORDS)
 		return 2;
 	crabc_x86_64_math_cosh_records[(*cursor)++] = input;
@@ -125,16 +209,24 @@ static int record_binary64(size_t *cursor, int rounding_mode, uint64_t input)
 		(uint32_t)fegetround();
 	crabc_x86_64_math_cosh_records[(*cursor)++] =
 		(uint32_t)fetestexcept(FE_ALL_EXCEPT);
+	crabc_x86_64_math_cosh_records[(*cursor)++] =
+		((uint64_t)before << 32) | after;
 	return 0;
 }
 
 static int record_binary32(size_t *cursor, int rounding_mode, uint32_t input)
 {
 	float result;
+	uint32_t before;
+	uint32_t after;
 
 	if (fesetround(rounding_mode) != 0 || feclearexcept(FE_ALL_EXCEPT) != 0)
 		return 1;
+	before = read_mxcsr();
+	if ((before & UINT32_C(0x6000)) != (uint32_t)rounding_mode << 3)
+		return 5;
 	result = direct_coshf(float_from_bits(input));
+	after = read_mxcsr();
 	if (*cursor + COSH_RECORD_WORDS > COSH_RECORD_STORAGE_WORDS)
 		return 2;
 	crabc_x86_64_math_cosh_records[(*cursor)++] =
@@ -145,6 +237,8 @@ static int record_binary32(size_t *cursor, int rounding_mode, uint32_t input)
 		(uint32_t)fegetround();
 	crabc_x86_64_math_cosh_records[(*cursor)++] =
 		(uint32_t)fetestexcept(FE_ALL_EXCEPT);
+	crabc_x86_64_math_cosh_records[(*cursor)++] =
+		((uint64_t)before << 32) | after;
 	return 0;
 }
 
@@ -163,11 +257,11 @@ int crabc_x86_64_math_cosh_probe(void)
 		for (input_index = 0; input_index < COSH_F64_CASES && status == 0;
 			input_index++)
 			status = record_binary64(&cursor, rounding_modes[mode_index],
-				binary64_inputs[input_index]);
+				binary64_input(input_index));
 		for (input_index = 0; input_index < COSH_F32_CASES && status == 0;
 			input_index++)
 			status = record_binary32(&cursor, rounding_modes[mode_index],
-				binary32_inputs[input_index]);
+				binary32_input(input_index));
 	}
 	if (cursor != COSH_RECORD_STORAGE_WORDS && status == 0)
 		status = 3;

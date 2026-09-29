@@ -6,8 +6,8 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
-readonly RECORD_SIZE=32
-readonly EXPECTED_RECORDS=256
+readonly RECORD_SIZE=40
+readonly EXPECTED_RECORDS=7616
 readonly SELECTED_SYMBOLS=(cosh coshf)
 readonly FENV_SIBLINGS=(feclearexcept fegetenv fegetround fesetenv fesetround fetestexcept)
 readonly PRIVATE_PROVIDERS=(
@@ -56,14 +56,16 @@ done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-math-cosh.XXXXXX)"
+evidence_dir="$ROOT_DIR/.work/x86_64/libc_math_cosh"
+mkdir -p "$evidence_dir"
+work_dir="$(mktemp -d "$evidence_dir/run.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-reference"
 candidate="$work_dir/crabc-candidate"
-reference_output="$work_dir/reference.records"
-candidate_output="$work_dir/candidate.records"
+reference_output="$evidence_dir/musl-reference.records"
+candidate_output="$evidence_dir/crabc-candidate.records"
 header_cxx_reference="$work_dir/musl-math-cosh-header.o"
 header_cxx_candidate="$work_dir/project-math-cosh-header.o"
 header_trace="$work_dir/header-trace"
@@ -218,4 +220,5 @@ if ! cmp -s "$reference_output" "$candidate_output"; then
 	fail "candidate cosh/coshf record stream differs from pinned musl"
 fi
 
-printf 'x86 static libc cosh/coshf: PASS (%s records)\n' "$record_count"
+printf 'x86 static libc cosh/coshf: PASS (%s records; streams: %s)\n' \
+	"$record_count" "$evidence_dir"

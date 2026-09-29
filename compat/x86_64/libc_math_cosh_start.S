@@ -3,6 +3,7 @@
 	.type _start,@function
 	.extern crabc_x86_64_math_cosh_probe
 	.extern crabc_x86_64_math_cosh_records
+	.extern crabc_x86_64_math_cosh_record_bytes
 _start:
 	call crabc_x86_64_math_cosh_probe
 	test %eax, %eax
@@ -10,9 +11,10 @@ _start:
 	mov $1, %rax
 	mov $1, %rdi
 	lea crabc_x86_64_math_cosh_records(%rip), %rsi
-	mov $8192, %rdx
+	mov crabc_x86_64_math_cosh_record_bytes(%rip), %rdx
+	mov %rdx, %r8
 	syscall
-	cmp $8192, %rax
+	cmp %r8, %rax
 	jne .Lfailure
 	xor %rdi, %rdi
 	mov $60, %rax
