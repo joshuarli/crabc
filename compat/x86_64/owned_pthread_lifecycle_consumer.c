@@ -1233,8 +1233,24 @@ static int run_worker_cancellation_signal_mask(void)
     return result != 0 || !(after_create & cancel);
 }
 
+/* The initial task has a pthread_t even though it has no worker control
+ * mapping. Its live handle accepts the same detach transition as a worker. */
+static int run_detach_initial_task(void)
+{
+    pid_t child = fork();
+    int status;
+    if (child == 0) {
+        errno = E2BIG;
+        _Exit(pthread_detach(pthread_self()) == 0 && errno == E2BIG ? 0 : 1);
+    }
+    return child < 0 || waitpid(child, &status, 0) != child ||
+        !WIFEXITED(status) || WEXITSTATUS(status) != 0;
+}
+
 int main(void)
 {
+    if (run_detach_initial_task() != 0)
+        return 98;
     const int capacity = run_concurrent_lifecycle_capacity();
     if (run_worker_cancellation_signal_mask() != 0)
         return 99;

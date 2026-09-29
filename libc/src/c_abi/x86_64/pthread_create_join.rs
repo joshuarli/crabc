@@ -679,11 +679,15 @@ static SELECTED_INITIAL_THREAD_TASK_STATE: AtomicU8 =
 // Musl's initial thread is joinable like any other: its `detach_state`
 // futex leaves `DT_JOINABLE` for `DT_EXITED` immediately before a non-final
 // pthread_exit reaches SYS_exit, and pthread_join waits on that word. The
-// initial task has no worker control, so its join state lives here: the
-// exit word is 1 until that same point, the claim admits one joiner, and the
-// result carries the pthread_exit or thrd_exit value.
+// initial task has no worker control, so its join/detach state lives here:
+// the exit word is 1 until that same point, and a single ownership word
+// admits either one joiner or a detach. The result carries the pthread_exit
+// or thrd_exit value.
 static SELECTED_INITIAL_THREAD_RUNNING: AtomicI32 = AtomicI32::new(1);
-static SELECTED_INITIAL_THREAD_JOIN_CLAIMED: AtomicU8 = AtomicU8::new(0);
+static SELECTED_INITIAL_THREAD_JOIN_OWNERSHIP: AtomicU8 = AtomicU8::new(0);
+const INITIAL_THREAD_JOINABLE: u8 = 0;
+const INITIAL_THREAD_JOIN_CLAIMED: u8 = 1;
+const INITIAL_THREAD_DETACHED: u8 = 2;
 static SELECTED_INITIAL_THREAD_RESULT: AtomicUsize = AtomicUsize::new(0);
 static SELECTED_INITIAL_THREAD_RESULT_KIND: AtomicU8 = AtomicU8::new(0);
 const FUTEX_WAKE: i64 = 1;
@@ -1195,6 +1199,7 @@ impl DeferredProcessChildRegistryReset {
     pub(super) unsafe fn complete(self) {
         SELECTED_WORKER_REGISTRY_HEAD.store(0, Ordering::Release);
         SELECTED_INITIAL_THREAD_TASK_STATE.store(SelectedRuntimeTaskState::ACTIVE, Ordering::Release);
+        SELECTED_INITIAL_THREAD_RUNNING.store(1, Ordering::Release);
         SELECTED_WORKER_REGISTRY_LOCK.store(0, Ordering::Release);
         // Musl `__post_Fork`: the copied thread-list lock has no owner here.
         #[cfg(crabc_x86_owned_runtime)]
@@ -1213,6 +1218,19 @@ unsafe fn prepare_process_child(
     inherited_worker: Option<*mut ThreadControl>,
 ) -> DeferredProcessChildRegistryReset {
     let thread_pointer = pthread_identity::current_thread_pointer();
+    // The surviving task becomes the child's initial task. A detached caller
+    // stays detached, while a vanished joiner's claim cannot cross fork.
+    let caller_detached = if let Some(control) = inherited_worker {
+        (unsafe { (*control).lifecycle.load(Ordering::Acquire) })
+            == SelectedWorkerLifecycleState::Detached.encode()
+    } else {
+        SELECTED_INITIAL_THREAD_JOIN_OWNERSHIP.load(Ordering::Acquire)
+            == INITIAL_THREAD_DETACHED
+    };
+    SELECTED_INITIAL_THREAD_JOIN_OWNERSHIP.store(
+        if caller_detached { INITIAL_THREAD_DETACHED } else { INITIAL_THREAD_JOINABLE },
+        Ordering::Release,
+    );
     if let Some(control) = inherited_worker {
         // SAFETY: fork's locked lookup or clone's caller-owned snapshot
         // retains this mapped control through sole-child adoption.
@@ -3541,7 +3559,7 @@ fn publish_selected_initial_thread_exit(result: SelectedWorkerResult) {
 /// Cancellation of a joiner waiting for the initial thread leaves it joinable.
 #[cfg(crabc_x86_owned_runtime)]
 unsafe extern "C" fn cancel_selected_initial_thread_join(_argument: *mut c_void) {
-    SELECTED_INITIAL_THREAD_JOIN_CLAIMED.store(0, Ordering::Release);
+    SELECTED_INITIAL_THREAD_JOIN_OWNERSHIP.store(INITIAL_THREAD_JOINABLE, Ordering::Release);
 }
 
 /// Join the initial thread: claim it, wait on its exit word with the same
@@ -3558,8 +3576,8 @@ unsafe fn join_selected_initial_thread(
     if current_is_selected_initial_thread() {
         return Err(EDEADLK);
     }
-    if SELECTED_INITIAL_THREAD_JOIN_CLAIMED
-        .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+    if SELECTED_INITIAL_THREAD_JOIN_OWNERSHIP
+        .compare_exchange(INITIAL_THREAD_JOINABLE, INITIAL_THREAD_JOIN_CLAIMED, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
     {
         return Err(EINVAL);
@@ -3581,7 +3599,7 @@ unsafe fn join_selected_initial_thread(
         if matches!(wait, SelectedWorkerJoinWait::Timed(_)) && (error == ETIMEDOUT || error == EINVAL) {
             #[cfg(crabc_x86_owned_runtime)]
             unsafe { pthread_cancel::pthread_setcancelstate(JOIN_CANCEL_DISABLE, core::ptr::null_mut()); }
-            SELECTED_INITIAL_THREAD_JOIN_CLAIMED.store(0, Ordering::Release);
+            SELECTED_INITIAL_THREAD_JOIN_OWNERSHIP.store(INITIAL_THREAD_JOINABLE, Ordering::Release);
             return Err(error);
         }
     }
@@ -3783,6 +3801,23 @@ unsafe fn join_selected_worker_inner(
 pub(super) unsafe fn detach_selected_worker(thread: *mut c_void) -> c_int {
     if thread.is_null() {
         return EINVAL;
+    }
+    if static_tls::is_initial_thread_pointer(thread.cast()) {
+        // The process-lifetime initial TLS remains mapped after a non-final
+        // exit, so detachment can claim either a running or exited main task.
+        return if SELECTED_INITIAL_THREAD_JOIN_OWNERSHIP
+            .compare_exchange(
+                INITIAL_THREAD_JOINABLE,
+                INITIAL_THREAD_DETACHED,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+        {
+            0
+        } else {
+            EINVAL
+        };
     }
     let Some(_) = claim_selected_worker_by_thread_pointer(
         thread,
