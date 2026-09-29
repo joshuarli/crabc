@@ -253,9 +253,18 @@ int main(void) {
     void *leaf = typed_dlopen("libleaf-public-dlfcn.so", RTLD_NOW | RTLD_LOCAL);
     if (main_handle == NULL || mid_one == NULL || mid_one != mid_two || leaf == NULL) return 46;
 
+    void *mid_noload = typed_dlopen("libmid-public-dlfcn.so", RTLD_NOLOAD | RTLD_NOW);
+    void *leaf_noload = typed_dlopen("libleaf-public-dlfcn.so", RTLD_NOLOAD | RTLD_NOW);
+    if (mid_noload != mid_one || leaf_noload != leaf
+        || typed_dlsym(mid_noload, "mid_value") != (void *)&mid_value
+        || typed_dlsym(leaf_noload, "leaf_data") != (void *)mid_leaf_data_address()
+        || typed_dlerror() != NULL) return 73;
+    if (typed_dlclose(mid_noload) != 0 || typed_dlclose(leaf_noload) != 0) return 74;
+
     typed_dlerror();
     void *main_noload = typed_dlopen(NULL, RTLD_NOLOAD);
-    if (main_noload != main_handle) return 69;
+    void *main_noload_now = typed_dlopen(NULL, RTLD_NOW | RTLD_NOLOAD);
+    if (main_noload != main_handle || main_noload_now != main_handle) return 69;
     if (typed_dlerror() != NULL) return 70;
 
     typed_dlerror();
@@ -385,6 +394,12 @@ int main(void) {
         || typed_dlinfo(mid_one, RTLD_DI_LINKMAP, &map) != -1) return 57;
 #endif
     if (typed_dlclose(leaf) != 0 || typed_dlclose(main_handle) != 0) return 58;
+    mid_noload = typed_dlopen("libmid-public-dlfcn.so", RTLD_NOLOAD | RTLD_NOW);
+    leaf_noload = typed_dlopen("libleaf-public-dlfcn.so", RTLD_NOLOAD | RTLD_NOW);
+    if (mid_noload != mid_one || leaf_noload != leaf
+        || typed_dlsym(mid_noload, "mid_value") != (void *)&mid_value
+        || typed_dlsym(leaf_noload, "leaf_data") != (void *)mid_leaf_data_address()) return 75;
+    if (typed_dlclose(mid_noload) != 0 || typed_dlclose(leaf_noload) != 0) return 76;
     return 0;
 #endif
 #endif

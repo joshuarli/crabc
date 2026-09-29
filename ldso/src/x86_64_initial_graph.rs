@@ -39,8 +39,10 @@
 //! absolute RUNPATH when every dependency is already retained. That one DSO
 //! may carry a validated legacy `DT_INIT` entry followed by its bounded init
 //! array and one validated-but-inert legacy `DT_FINI` entry, then make
-//! no-mapping `RTLD_NOLOAD` acquisitions of its appended identity. It still
-//! cannot promote, finalize, or unload an object, and neither sibling
+//! no-mapping `RTLD_NOLOAD` acquisitions of its appended identity. The
+//! initial-only sibling can acquire the retained main/mid/leaf identities
+//! with `RTLD_NOLOAD` as well. It still cannot promote, finalize, or unload
+//! an object, and neither sibling
 //! publishes borrowed link-map state or public dlfcn entry points.
 
 #![allow(clippy::missing_safety_doc)]
@@ -794,10 +796,11 @@ pub static __crabc_x86_64_fixed_graph_introspection_v1: FixedGraphIntrospectionV
 ///
 /// Handles are loader-owned identity tokens with explicit acquisition counts;
 /// callbacks return copied text and metadata. `open` accepts only the retained
-/// main/mid/leaf identities, except that the cfg-isolated bounded sibling can
-/// map one runtime object and then `RTLD_NOLOAD`-acquire only that published
-/// identity. It cannot search the filesystem, add an object beyond that one
-/// bounded transaction, mutate global scope, or make mappings unloadable.
+/// main/mid/leaf identities. The initial-only sibling permits `RTLD_NOLOAD`
+/// for its retained dependencies; the cfg-isolated bounded sibling limits that
+/// flag to the one runtime object it can map. It cannot search the filesystem,
+/// add an object beyond that one bounded transaction, mutate global scope, or
+/// make mappings unloadable.
 #[cfg(crabc_fixed_graph_dlfcn)]
 #[repr(C)]
 pub struct FixedGraphDlfcnV1 {
@@ -4575,7 +4578,7 @@ unsafe extern "C" fn fixed_graph_open(
         return -1;
     }
     if path.is_null() {
-        if no_load {
+        if cfg!(crabc_bounded_runtime_dlopen) && no_load {
             fixed_graph_set_error(error, b"RTLD_NOLOAD is limited to the runtime object");
             return -1;
         }
@@ -4589,7 +4592,7 @@ unsafe extern "C" fn fixed_graph_open(
     let object_count = fixed_graph_object_count();
     for index in 1..object_count {
         if fixed_graph_name_matches(index, path) {
-            if no_load && index < INITIAL_OBJECT_COUNT {
+            if cfg!(crabc_bounded_runtime_dlopen) && no_load && index < INITIAL_OBJECT_COUNT {
                 fixed_graph_set_error(error, b"RTLD_NOLOAD is limited to the runtime object");
                 return -1;
             }
