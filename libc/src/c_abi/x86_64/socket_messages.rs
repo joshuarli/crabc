@@ -216,6 +216,11 @@ unsafe fn sendmsg_result(file_descriptor: c_int, message: *const MsgHdr, flags: 
 }
 
 /// Invoke Linux `recvmsg` with a copied, kernel-safe public header.
+///
+/// The kernel installs SCM_RIGHTS descriptors that fit the caller's control
+/// extent and closes discarded rights when that extent truncates the message.
+/// The copied header preserves its returned flags, including MSG_CTRUNC and
+/// the kernel's MSG_CMSG_CLOEXEC bit, without a second ancillary walk.
 #[inline(always)]
 unsafe fn recvmsg_result(file_descriptor: c_int, message: *mut MsgHdr, flags: c_int) -> i64 {
     if message.is_null() {
@@ -372,8 +377,10 @@ static_archive_member! { recvmsg_source {
     ///
     /// `message` must designate a readable/writable x86 public `msghdr`; every
     /// nested output pointer must remain valid for the syscall. The caller owns
-    /// descriptor lifetime, blocking, and message/ancillary policy. The owned runtime
-    /// supplies pthread cancellation.
+    /// descriptor lifetime, blocking, and message/ancillary policy. Any
+    /// SCM_RIGHTS descriptors returned in the control buffer become caller-owned
+    /// and must be closed by the caller. The owned runtime supplies pthread
+    /// cancellation.
     #[no_mangle]
     pub unsafe extern "C" fn recvmsg(
         file_descriptor: c_int,

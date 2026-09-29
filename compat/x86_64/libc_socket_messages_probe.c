@@ -4,8 +4,9 @@
  * through a freestanding executable linked solely with the selected crabc
  * `libc.a`. It extends the already selected socket-transport and vector-I/O
  * records only with socket options, padded send/receive message records,
- * bounded batched message calls, descriptor passing with close-on-exec and
- * ancillary truncation, and SIOCATMARK. In particular, poisoned public
+ * bounded batched message calls, repeated descriptor peeks, the 253-rights
+ * limit, close-on-exec, ancillary and payload truncation, and SIOCATMARK.
+ * In particular, poisoned public
  * padding proves the musl-shaped adapter rather than a raw Linux msghdr call.
  * Fixture-local raw close/fcntl calls only clean up and inspect received
  * descriptors; they do not select generic descriptor, ioctl,
@@ -114,6 +115,17 @@ static void raw_close(int descriptor)
 static int raw_getfd(int descriptor)
 {
     return (int)raw3(SYS_fcntl, descriptor, F_GETFD, 0);
+}
+
+static int open_descriptor_count(void)
+{
+    int descriptor;
+    int count = 0;
+
+    for (descriptor = 0; descriptor < 1024; ++descriptor)
+        if (raw_getfd(descriptor) >= 0)
+            ++count;
+    return count;
 }
 
 static int bytes_equal(const void *left, const void *right, size_t length)
@@ -393,6 +405,279 @@ finish:
     return status;
 }
 
+static int check_rights_peek_and_discard(void)
+{
+    static const char payload[] = "rights";
+    char received[sizeof(payload)] = { 0 };
+    unsigned char send_control[CMSG_SPACE(2 * sizeof(int))] = { 0 };
+    unsigned char receive_control[CMSG_SPACE(2 * sizeof(int))] = { 0 };
+    struct iovec send_iov = { (void *)payload, sizeof(payload) };
+    struct iovec receive_iov = { received, sizeof(received) };
+    struct msghdr send_message = { 0 };
+    struct msghdr receive_message = { 0 };
+    struct cmsghdr *header = (struct cmsghdr *)(void *)send_control;
+    int pair[2] = { -1, -1 };
+    int passed[2] = { -1, -1 };
+    int baseline;
+    int status = 0;
+    int index;
+
+    if (socketpair(AF_UNIX, SOCK_DGRAM, 0, pair) != 0) {
+        status = 1;
+        goto finish;
+    }
+    baseline = open_descriptor_count();
+    header->cmsg_len = CMSG_LEN(sizeof(pair));
+    header->__pad1 = -1;
+    header->cmsg_level = SOL_SOCKET;
+    header->cmsg_type = SCM_RIGHTS;
+    copy_bytes(CMSG_DATA(header), pair, sizeof(pair));
+    send_message.msg_iov = &send_iov;
+    send_message.msg_iovlen = 1;
+    send_message.__pad1 = -1;
+    send_message.msg_control = send_control;
+    send_message.msg_controllen = sizeof(send_control);
+    send_message.__pad2 = -1;
+    receive_message.msg_iov = &receive_iov;
+    receive_message.msg_iovlen = 1;
+    receive_message.msg_control = receive_control;
+
+    if (sendmsg(pair[0], &send_message, 0) != sizeof(payload)) {
+        status = 2;
+        goto finish;
+    }
+    for (index = 0; index < 2; ++index) {
+        struct cmsghdr *received_header;
+
+        receive_message.msg_controllen = sizeof(receive_control);
+        receive_message.msg_flags = 0;
+        receive_message.__pad1 = -1;
+        receive_message.__pad2 = -1;
+        if (recvmsg(pair[1], &receive_message,
+                MSG_PEEK | MSG_CMSG_CLOEXEC) != sizeof(payload)) {
+            status = 3;
+            goto finish;
+        }
+        if (!bytes_equal(received, payload, sizeof(payload))) {
+            status = 9;
+            goto finish;
+        }
+        if (receive_message.msg_flags != MSG_CMSG_CLOEXEC) {
+            status = 10;
+            goto finish;
+        }
+        if (receive_message.msg_controllen != CMSG_LEN(sizeof(pair))) {
+            status = 11;
+            goto finish;
+        }
+        if (receive_message.__pad1 != 0 || receive_message.__pad2 != 0) {
+            status = 12;
+            goto finish;
+        }
+        received_header = CMSG_FIRSTHDR(&receive_message);
+        if (!received_header || received_header->cmsg_level != SOL_SOCKET ||
+            received_header->cmsg_type != SCM_RIGHTS ||
+            received_header->cmsg_len != CMSG_LEN(sizeof(pair))) {
+            status = 4;
+            goto finish;
+        }
+        copy_bytes(passed, CMSG_DATA(received_header), sizeof(passed));
+        if (passed[0] < 0 || passed[1] < 0 || passed[0] == passed[1] ||
+            raw_getfd(passed[0]) != FD_CLOEXEC ||
+            raw_getfd(passed[1]) != FD_CLOEXEC) {
+            status = 5;
+            goto finish;
+        }
+        raw_close(passed[0]);
+        raw_close(passed[1]);
+        passed[0] = passed[1] = -1;
+        if (open_descriptor_count() != baseline) {
+            status = 6;
+            goto finish;
+        }
+    }
+
+    /* No control storage discards both pending rights without installing fds. */
+    receive_message.msg_control = 0;
+    receive_message.msg_controllen = 0;
+    receive_message.msg_flags = 0;
+    receive_message.__pad1 = -1;
+    receive_message.__pad2 = -1;
+    if (recvmsg(pair[1], &receive_message, MSG_CMSG_CLOEXEC) !=
+            sizeof(payload) ||
+        !(receive_message.msg_flags & MSG_CTRUNC) ||
+        receive_message.msg_controllen != 0 ||
+        receive_message.__pad1 != 0 || receive_message.__pad2 != 0 ||
+        open_descriptor_count() != baseline) {
+        status = 7;
+        goto finish;
+    }
+
+    /* A nonblocking error still copies back the sanitized public header. */
+    receive_message.msg_control = receive_control;
+    receive_message.msg_controllen = sizeof(receive_control);
+    receive_message.msg_flags = 0x1234;
+    receive_message.__pad1 = -1;
+    receive_message.__pad2 = -1;
+    errno = 0;
+    if (recvmsg(pair[1], &receive_message, MSG_DONTWAIT) != -1 ||
+        errno != EAGAIN || receive_message.msg_flags != 0x1234 ||
+        receive_message.msg_controllen != sizeof(receive_control) ||
+        receive_message.__pad1 != 0 || receive_message.__pad2 != 0 ||
+        open_descriptor_count() != baseline) {
+        status = 8;
+        goto finish;
+    }
+
+    /* Data truncation returns the datagram length while ancillary rights survive. */
+    receive_iov.iov_len = 2;
+    receive_message.msg_controllen = sizeof(receive_control);
+    receive_message.msg_flags = 0;
+    receive_message.__pad1 = -1;
+    receive_message.__pad2 = -1;
+    if (sendmsg(pair[0], &send_message, 0) != sizeof(payload) ||
+        recvmsg(pair[1], &receive_message,
+            MSG_TRUNC | MSG_CMSG_CLOEXEC) != sizeof(payload) ||
+        !bytes_equal(received, payload, 2) ||
+        receive_message.msg_flags != (MSG_TRUNC | MSG_CMSG_CLOEXEC) ||
+        receive_message.msg_controllen != CMSG_LEN(sizeof(pair)) ||
+        receive_message.__pad1 != 0 || receive_message.__pad2 != 0) {
+        status = 13;
+        goto finish;
+    }
+    header = CMSG_FIRSTHDR(&receive_message);
+    if (!header || header->cmsg_level != SOL_SOCKET ||
+        header->cmsg_type != SCM_RIGHTS ||
+        header->cmsg_len != CMSG_LEN(sizeof(pair))) {
+        status = 14;
+        goto finish;
+    }
+    copy_bytes(passed, CMSG_DATA(header), sizeof(passed));
+    if (passed[0] < 0 || passed[1] < 0 || passed[0] == passed[1] ||
+        raw_getfd(passed[0]) != FD_CLOEXEC ||
+        raw_getfd(passed[1]) != FD_CLOEXEC) {
+        status = 15;
+        goto finish;
+    }
+    raw_close(passed[0]);
+    raw_close(passed[1]);
+    passed[0] = passed[1] = -1;
+    if (open_descriptor_count() != baseline) {
+        status = 16;
+    }
+
+finish:
+    raw_close(passed[1]);
+    raw_close(passed[0]);
+    raw_close(pair[1]);
+    raw_close(pair[0]);
+    return status;
+}
+
+static int check_rights_limit_and_discard(void)
+{
+    static const char payload = 'm';
+    char received = 0;
+    unsigned char send_control[CMSG_SPACE(254 * sizeof(int))] = { 0 };
+    unsigned char receive_control[CMSG_SPACE(sizeof(int))] = { 0 };
+    struct iovec send_iov = { (void *)&payload, 1 };
+    struct iovec receive_iov = { &received, 1 };
+    struct msghdr send_message = { 0 };
+    struct msghdr receive_message = { 0 };
+    struct cmsghdr *header = (struct cmsghdr *)(void *)send_control;
+    int rights[254];
+    int pair[2] = { -1, -1 };
+    int passed = -1;
+    int baseline;
+    int status = 0;
+    int index;
+
+    if (socketpair(AF_UNIX, SOCK_DGRAM, 0, pair) != 0) {
+        status = 1;
+        goto finish;
+    }
+    baseline = open_descriptor_count();
+    for (index = 0; index < 254; ++index)
+        rights[index] = pair[0];
+    header->cmsg_len = CMSG_LEN(sizeof(rights));
+    header->__pad1 = -1;
+    header->cmsg_level = SOL_SOCKET;
+    header->cmsg_type = SCM_RIGHTS;
+    copy_bytes(CMSG_DATA(header), rights, sizeof(rights));
+    send_message.msg_iov = &send_iov;
+    send_message.msg_iovlen = 1;
+    send_message.__pad1 = -1;
+    send_message.msg_control = send_control;
+    send_message.msg_controllen = sizeof(send_control);
+    send_message.__pad2 = -1;
+    receive_message.msg_iov = &receive_iov;
+    receive_message.msg_iovlen = 1;
+    receive_message.msg_control = receive_control;
+    receive_message.msg_controllen = CMSG_LEN(sizeof(int));
+
+    errno = 0;
+    if (sendmsg(pair[0], &send_message, 0) != -1 || errno != EINVAL ||
+        open_descriptor_count() != baseline) {
+        status = 2;
+        goto finish;
+    }
+    errno = 0;
+    if (recvmsg(pair[1], &receive_message, MSG_DONTWAIT) != -1 ||
+        errno != EAGAIN) {
+        status = 3;
+        goto finish;
+    }
+
+    /* Linux accepts 253 rights, then closes those excluded by control capacity. */
+    header->cmsg_len = CMSG_LEN(253 * sizeof(int));
+    send_message.msg_controllen = CMSG_SPACE(253 * sizeof(int));
+    receive_message.msg_controllen = CMSG_LEN(sizeof(int));
+    receive_message.msg_flags = 0;
+    errno = ERANGE;
+    if (sendmsg(pair[0], &send_message, 0) != 1 || errno != ERANGE) {
+        status = 4;
+        goto finish;
+    }
+    if (recvmsg(pair[1], &receive_message, MSG_CMSG_CLOEXEC) != 1) {
+        status = 8;
+        goto finish;
+    }
+    if (received != payload) {
+        status = 9;
+        goto finish;
+    }
+    if (receive_message.msg_flags != (MSG_CTRUNC | MSG_CMSG_CLOEXEC)) {
+        status = 10;
+        goto finish;
+    }
+    if (receive_message.msg_controllen != CMSG_LEN(sizeof(int))) {
+        status = 11;
+        goto finish;
+    }
+    header = CMSG_FIRSTHDR(&receive_message);
+    if (!header || header->cmsg_level != SOL_SOCKET ||
+        header->cmsg_type != SCM_RIGHTS ||
+        header->cmsg_len != CMSG_LEN(sizeof(int))) {
+        status = 5;
+        goto finish;
+    }
+    copy_bytes(&passed, CMSG_DATA(header), sizeof(passed));
+    if (passed < 0 || raw_getfd(passed) != FD_CLOEXEC) {
+        status = 6;
+        goto finish;
+    }
+    raw_close(passed);
+    passed = -1;
+    if (open_descriptor_count() != baseline)
+        status = 7;
+
+finish:
+    raw_close(passed);
+    raw_close(pair[1]);
+    raw_close(pair[0]);
+    return status;
+}
+
 static int check_mmsg(void)
 {
     static const char first[] = "one";
@@ -505,6 +790,12 @@ int crabc_x86_64_socket_messages_probe(void)
     result = check_rights_flags_and_truncation();
     if (result != 0)
         return 40 + result;
+    result = check_rights_peek_and_discard();
+    if (result != 0)
+        return 80 + result;
+    result = check_rights_limit_and_discard();
+    if (result != 0)
+        return 110 + result;
     result = check_mmsg();
     if (result != 0)
         return 50 + result;
