@@ -70,6 +70,16 @@
       ],
       "scope": "Under a fixed RLIMIT_AS both processes refuse the same OS-backed requests: NULL results and errno for malloc/calloc/aligned/realloc/posix_memalign, preservation of the old block and its bytes on realloc and aligned-realloc failure, reallocf release, continued service from existing pages, and recovery after the limit is lifted."
     },
+    "differential:oom-survival": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m4_gate.py",
+        "--offline",
+        "--differential",
+        "oom-survival"
+      ],
+      "scope": "Separate pinned-C and native-adapter processes constrain RLIMIT_AS, fail a 2 GiB offset-aligned replacement with NULL and ENOMEM, observe the original usable extent and all 1000 bytes, then reuse the exact original pointer without changing errno."
+    },
     "differential:aligned-preservation": {
       "command": [
         "python3",
@@ -293,6 +303,7 @@
       "acceptance": "OS refusal propagates as the source NULL/errno result without corrupting allocator state, and every failed reallocation preserves the old block and its bytes (`reallocf` releases it). `mi_option_retry_on_oom` is a Windows-only retry and has no Linux effect.",
       "evidence": [
         "differential:oom-failure",
+        "differential:oom-survival",
         "unit:native-operations",
         "differential:aligned-preservation"
       ],

@@ -87,10 +87,11 @@ NATIVE_TESTS = (
 NATIVE_TEST_FEATURES = "native-runtime-test-audit"
 
 OPERATIONS_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m4_operations_driver.c"
+OOM_SURVIVAL_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m4_oom_survival_driver.c"
 OPERATIONS_TRACE_BEGIN = "CRABC_MI_M4_OPERATIONS_TRACE_BEGIN"
 OPERATIONS_TRACE_END = "CRABC_MI_M4_OPERATIONS_TRACE_END"
 # Driver scenarios, each one evidence entry run in fresh processes.
-DIFFERENTIAL_SCENARIOS = ("operations", "page-kinds", "collection", "oom", "threads", "aligned-preservation")
+DIFFERENTIAL_SCENARIOS = ("operations", "page-kinds", "collection", "oom", "oom-survival", "threads", "aligned-preservation")
 # Scenarios the driver ends with `abort()` in pinned C (plain-C `mi_new`
 # without a new handler); both processes must terminate the same way.
 ABORT_SCENARIOS = (
@@ -416,7 +417,7 @@ def compare_operations_traces(c_trace: Mapping[str, str], rust_trace: Mapping[st
     )
 
 
-def build_c_driver(source: Path, temporary: Path) -> Path:
+def build_c_driver(source: Path, temporary: Path, driver_source: Path = OPERATIONS_DRIVER) -> Path:
     """Link the shared driver against the pinned release `src/static.c`."""
 
     compiler = harness.require_tool("musl-gcc")
@@ -425,7 +426,7 @@ def build_c_driver(source: Path, temporary: Path) -> Path:
         [
             compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
             *harness.CONFIGURATION_PROFILES["release"], "-I", str(source / "include"),
-            str(OPERATIONS_DRIVER), str(source / "src/static.c"), "-pthread", "-o", str(driver),
+            str(driver_source), str(source / "src/static.c"), "-pthread", "-o", str(driver),
         ],
         cwd=source,
     )
@@ -448,7 +449,7 @@ def build_adapter_library(temporary: Path) -> Path:
     return target_dir / RUST_TARGET / "release" / ADAPTER_STATICLIB
 
 
-def build_rust_driver(source: Path, temporary: Path) -> Path:
+def build_rust_driver(source: Path, temporary: Path, driver_source: Path = OPERATIONS_DRIVER) -> Path:
     """Link the same driver, unchanged, against the native adapter only."""
 
     library = build_adapter_library(temporary)
@@ -456,7 +457,7 @@ def build_rust_driver(source: Path, temporary: Path) -> Path:
     link = harness.command_record(
         [
             harness.require_tool("musl-gcc"), "-std=c11", "-O2", "-I", str(source / "include"),
-            str(OPERATIONS_DRIVER), str(library), "-pthread", "-o", str(driver),
+            str(driver_source), str(library), "-pthread", "-o", str(driver),
         ],
         cwd=source,
     )
@@ -475,8 +476,13 @@ def run_operations_differential(offline: bool, scenario: str) -> dict[str, Any]:
     with harness.temporary_directory("crabc-mimalloc-x86_64-m4-operations-") as name:
         temporary = Path(name)
         source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
-        drivers = {"c": build_c_driver(source, temporary), "rust": build_rust_driver(source, temporary)}
-        executions = {side: run_driver(driver, (scenario,)) for side, driver in drivers.items()}
+        driver_source = OOM_SURVIVAL_DRIVER if scenario == "oom-survival" else OPERATIONS_DRIVER
+        drivers = {
+            "c": build_c_driver(source, temporary, driver_source),
+            "rust": build_rust_driver(source, temporary, driver_source),
+        }
+        arguments = () if scenario == "oom-survival" else (scenario,)
+        executions = {side: run_driver(driver, arguments) for side, driver in drivers.items()}
         for side, execution in executions.items():
             harness.require_success(execution, f"M4 operations {side} driver")
         traces = {

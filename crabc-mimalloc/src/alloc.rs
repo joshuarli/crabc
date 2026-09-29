@@ -565,7 +565,8 @@ pub(crate) fn ordinary_replacement_work<P: AllocationPointerFacts>(
 /// order while leaving each allocator action under caller control.
 ///
 /// Allocation is always uninitialized, matching pinned realloc. Failure
-/// returns before any copy or free callback, so the old allocation remains
+/// returns ownership of the unchanged source before any copy or free callback;
+/// a non-Copy source token must not be dropped while its allocation stays
 /// live. After success the old pointer is released only through the supplied
 /// general pointer-centered free callback.
 #[inline]
@@ -576,7 +577,7 @@ pub(crate) fn execute_pointer_reallocation<P, Allocate, ReplacementWork, Initial
     initialize: Initialize,
     copy: Copy,
     free: Free,
-) -> Option<P>
+) -> Result<P, Option<P>>
 where
     P: AllocationPointerFacts,
     Allocate: FnOnce(usize, bool) -> Option<P>,
@@ -586,9 +587,11 @@ where
     Free: FnOnce(P),
 {
     match decision {
-        PointerReallocationDecision::Reuse(pointer) => Some(pointer),
+        PointerReallocationDecision::Reuse(pointer) => Ok(pointer),
         PointerReallocationDecision::Replace(plan) => {
-            let replacement = allocate(plan.request_size(), false)?;
+            let Some(replacement) = allocate(plan.request_size(), false) else {
+                return Err(plan.into_source());
+            };
             let work = replacement_work(&replacement, &plan);
             if work.needs_initialization() {
                 initialize(&replacement, &work);
@@ -597,7 +600,7 @@ where
                 copy(&replacement, &source, work.copy_size());
                 free(source);
             }
-            Some(replacement)
+            Ok(replacement)
         }
     }
 }
@@ -659,6 +662,7 @@ mod tests {
     extern crate std;
 
     use super::*;
+    use std::boxed::Box;
     use std::cell::RefCell;
     use std::vec::Vec;
 
@@ -773,7 +777,7 @@ mod tests {
             },
         );
 
-        assert_eq!(result, Some(replacement));
+        assert_eq!(result, Ok(replacement));
         assert_eq!(*calls.borrow(), ["allocate", "copy", "free"]);
         assert_eq!(old.client_address(), 0x2000);
         assert_eq!(old.canonical_address(), 0x2000);
@@ -805,7 +809,7 @@ mod tests {
             |_| unreachable!("the old allocation survives allocation failure"),
         );
 
-        assert_eq!(failed_result, None);
+        assert_eq!(failed_result, Err(Some(old)));
         assert_eq!(*failed_calls.borrow(), ["allocate"]);
         assert_eq!(old, TestAllocationPointer::exact(0x2000, 128).unwrap());
 
@@ -847,8 +851,41 @@ mod tests {
             },
         );
 
-        assert_eq!(zero_result, Some(replacement));
+        assert_eq!(zero_result, Ok(replacement));
         assert_eq!(*zero_calls.borrow(), ["allocate", "initialize", "copy", "free"]);
+    }
+
+    #[test]
+    fn failed_replacement_returns_the_owned_source_with_its_bytes() {
+        struct OwnedSourceFacts(Box<[u8; 64]>);
+
+        impl AllocationPointerFacts for OwnedSourceFacts {
+            fn client_address(&self) -> usize { self.0.as_ptr().addr() }
+            fn canonical_address(&self) -> usize { self.client_address() }
+            fn block_size(&self) -> usize { self.0.len() }
+            fn usable_size(&self) -> usize { self.0.len() }
+        }
+
+        let old = OwnedSourceFacts(Box::new([0x71; 64]));
+        let old_address = old.client_address();
+        let decision = ordinary_reallocation_decision(
+            OrdinaryReallocationSource::replacement_required(old),
+            2 * 1024 * 1024 * 1024,
+            false,
+        );
+        let failed = execute_pointer_reallocation(
+            decision,
+            |_, _| None,
+            |_, _| unreachable!("replacement work requires a new allocation"),
+            |_, _| unreachable!("initialization requires a new allocation"),
+            |_, _, _| unreachable!("copy requires a new allocation"),
+            |_| unreachable!("failure must leave the old allocation live"),
+        );
+        let Err(Some(old)) = failed else {
+            panic!("failed replacement must return its live source");
+        };
+        assert_eq!(old.client_address(), old_address);
+        assert!(old.0.iter().all(|byte| *byte == 0x71));
     }
 
     #[test]
