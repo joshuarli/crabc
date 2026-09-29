@@ -22,6 +22,9 @@ mkdir "$work/candidate" "$work/oracle"
 readonly driver="$installed/bin/crabc-cc-dynamic"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly source="$fixtures/general_dynamic_failed_open_dso.c"
+cp "$installed/share/crabc/manifest.json" "$work/installed-manifest.json"
+cp "$installed/share/crabc/dynamic-product-state.json" "$work/installed-product-state.json"
+(cd "$installed" && sha256sum lib/ld-crabc-x86_64.so.1 usr/lib/libc.so) >"$work/installed-runtime.sha256"
 "$driver" --dynamic-shared-object -DFAILED_OPEN_TLS "$source" -o "$work/candidate/libfo_tls.so"
 "$driver" --dynamic-shared-object -DFAILED_OPEN_LATE "$source" -o "$work/candidate/libfo_late.so"
 "$driver" --dynamic-shared-object -DFAILED_OPEN_ROOT "$source" \
@@ -39,19 +42,28 @@ mv "$work/oracle/libfo_late.so" "$work/oracle/libfo_late-good.so"
 "$oracle_cc" -fPIC -shared -DFAILED_OPEN_LATE -DFAILED_OPEN_MISSING_SYMBOL "$source" -Wl,-soname,libfo_late.so -o "$work/oracle/libfo_late-unresolved.so"
 "$oracle_cc" -fPIE -pie "$fixtures/general_dynamic_failed_open.c" -o "$work/oracle/consumer"
 for directory in "$work/candidate" "$work/oracle"; do
+    python3 -B "$fixtures/general_dynamic_failed_open_unresolved.py" \
+        "$directory/libfo_late-unresolved.so"
     python3 -B "$fixtures/general_dynamic_failed_open_malformed.py" \
         "$directory/libfo_late-good.so" "$directory/libfo_late.so"
+    for artifact in consumer libfo_root.so libfo_tls.so libfo_late.so \
+        libfo_late-unresolved.so libfo_late-good.so; do
+        readelf -hW -lW -dW -rW --dyn-syms "$directory/$artifact" \
+            >"$work/$(basename "$directory")-$artifact.elf"
+    done
+    (cd "$directory" && sha256sum consumer libfo_*.so) >"$work/$(basename "$directory").sha256"
 done
 cp -a "$installed" "$work/execution-root"
 cp "$work/candidate/consumer" "$work/execution-root/consumer"
 cp "$work/candidate"/*.so "$work/execution-root/usr/lib/"
 status=0
-LD_LIBRARY_PATH=/usr/lib timeout 20 chroot "$work/execution-root" /consumer \
-    /usr/lib/libfo_late-unresolved.so /usr/lib/libfo_late-good.so /usr/lib/libfo_late.so \
+LD_LIBRARY_PATH=/usr/lib timeout 20 bash -c 'exec 9</proc; exec chroot "$@"' bash \
+    "$work/execution-root" /consumer \
+    /usr/lib/libfo_late-unresolved.so /usr/lib/libfo_late-good.so /usr/lib/libfo_late.so 9 \
     >"$work/candidate.stdout" 2>"$work/candidate.stderr" || status=$?
 oracle_status=0
 LD_LIBRARY_PATH="$work/oracle" timeout 20 "$work/oracle/consumer" \
-    "$work/oracle/libfo_late-unresolved.so" "$work/oracle/libfo_late-good.so" "$work/oracle/libfo_late.so" \
+    "$work/oracle/libfo_late-unresolved.so" "$work/oracle/libfo_late-good.so" "$work/oracle/libfo_late.so" -1 \
     >"$work/oracle.stdout" 2>"$work/oracle.stderr" || oracle_status=$?
 if [ "$status" -ne 0 ] || [ "$oracle_status" -ne 0 ] \
     || ! cmp -s "$work/candidate.stdout" "$work/oracle.stdout"; then
@@ -63,4 +75,4 @@ fi
 grep -Fxq 'failed-open transaction: complete' "$work/candidate.stdout"
 grep -Fxq 'T' "$work/candidate.stdout"
 [ "$(grep -Fxc 'T' "$work/candidate.stdout")" -eq 1 ]
-printf 'failed-open transaction: PASS (pinned-musl malformed, relocation and retry differential); evidence: %s\n' "$work"
+printf 'failed-open transaction: PASS (pinned-musl rollback, retry and retained reopen differential); evidence: %s\n' "$work"

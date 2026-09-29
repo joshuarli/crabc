@@ -3,7 +3,6 @@
 # Routes focused core/facade/C ABI tests, loader/CRT gates, and installed
 # sysroot consumers through the pinned native container. Mutable host state
 # stays under the checkout's .work boundary; each runner owns its child state.
-# See compat/x86_64/README.md for commands and their evidence contracts.
 # A passing command proves its named boundary, not public-platform promotion.
 # Native mimalloc has its separate contained compat/allocator/run-x86_64.sh.
 set -euo pipefail
@@ -676,6 +675,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-owned-wordexp  run the installed x86 wordexp/wordfree ET_EXEC/static-PIE gate
   owned-loader-short-stack  compare owned dynamic startup with musl at libc-test's 100 KiB stack limit
   general-dynamic-dlopen [--entry-mode dynamic-pie|dynamic-non-pie] DYNAMIC_SYSROOT  run bounded runtime loader dlfcn evidence against one supplied product
+  general-dynamic-failed-open DYNAMIC_SYSROOT  compare failed loader transactions and retry with pinned musl
   owned-dynamic-sysroot  qualify both clean dynamic builds and extracted runtime
   owned-combined-sysroot  compose, reproduce, package and extract the combined four-mode sysroot
   owned-dynamic-pthread-exit  test installed dynamic main and last pthread exit
@@ -7314,6 +7314,7 @@ case "$command" in
     dynamic-main-thread-runtime-v1-target-root) ;;
     general-dynamic-lifecycle) ;;
     general-dynamic-dlopen) ;;
+    general-dynamic-failed-open) ;;
     general-relocations) ;;
     math-special-header-abi|libc-math-special) ;;
     math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10|math-exp10-header-abi|math-log-header-abi|math-sin-header-abi|math-tan-header-abi|math-tanh-header-abi|math-atanh-header-abi|math-acosh-header-abi|math-sincos-header-abi|math-pow-header-abi|libc-math-exp10|libc-math-log|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh|libc-math-acosh|libc-math-sincos|libc-math-pow) ;;
@@ -7621,6 +7622,11 @@ case "$command" in
     general-dynamic-dlopen)
         prepare_general_dynamic_dlopen_arguments "$@"
         set -- "${GENERAL_DYNAMIC_DLOPEN_ARGUMENTS[@]}"
+        ;;
+    general-dynamic-failed-open)
+        [ "$#" -eq 1 ] || fail "general-dynamic-failed-open requires one dynamic sysroot"
+        prepare_owned_dynamic_product_argument "$command" "$@"
+        set -- "${OWNED_DYNAMIC_PRODUCT_ARGUMENTS[@]}"
         ;;
     owned-static-replacement)
         [ "$#" -le 1 ] || fail "usage: ./scripts/dev-x86_64.sh owned-static-replacement [STATIC_SYSROOT]"
@@ -11875,6 +11881,11 @@ PY
             CRABC_GENERAL_DYNAMIC_ENTRY_MODE="$1" \
             CRABC_GENERAL_DYNAMIC_DLOPEN_SKIP_SEARCH=1 \
             bash /workspace/compat/x86_64/run_general_dynamic_dlopen.sh "$2"
+        ;;
+    general-dynamic-failed-open)
+        [ "$#" -eq 1 ] || fail "general-dynamic-failed-open requires one dynamic sysroot"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_general_dynamic_failed_open.sh "$1"
         ;;
     general-relocations)
         [ "$#" -eq 0 ] || fail "general-relocations takes no arguments"

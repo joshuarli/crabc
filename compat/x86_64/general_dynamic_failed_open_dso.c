@@ -6,10 +6,12 @@ __attribute__((constructor)) static void failed_open_tls_constructor(void) {
     (void)write(1, "T\n", 2);
 }
 #elif defined(FAILED_OPEN_LATE)
-#ifndef FAILED_OPEN_MISSING_SYMBOL
+#include <unistd.h>
 int failed_open_late_value = 5;
-#endif
 int failed_open_late_anchor(void) { return 1; }
+#ifdef FAILED_OPEN_MISSING_SYMBOL
+pid_t (*failed_open_late_import)(void) = getpid;
+#endif
 #elif defined(FAILED_OPEN_ROOT)
 extern int *failed_open_tls_address(void);
 extern int failed_open_late_value;
