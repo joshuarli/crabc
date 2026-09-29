@@ -873,7 +873,7 @@ run_static_mode() {
         tls) ;;
         pthread)
             probe=libc_pthread_tls_aggregate_probe.c
-            expected_output=''
+            expected_output=$'A0\nA1\nB0\nB1'
             minimum_tls_alignment=1
             ;;
         sysv-message-cancellation)
