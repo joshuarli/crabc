@@ -68,6 +68,8 @@ enum {
     PRIVATE_BARRIER_ROUNDS = 2,
     CONTENTION_ROUNDS = 64,
     SHARED_BARRIER_ROUNDS = 32,
+    LIFECYCLE_EPOCHS = 6,
+    LIFECYCLE_PHASES = 6,
     SHARED_MAPPING_BYTES = 4096,
     INVALID_BARRIER_COUNT = 0x80000000U,
 };
@@ -643,6 +645,206 @@ static int run_process_shared_barrier_probe(void)
     return status;
 }
 
+struct reused_barrier {
+    pthread_barrier_t barrier;
+    volatile int payload[3];
+    volatile int result[LIFECYCLE_PHASES][2][3];
+};
+
+static int reused_participant(struct reused_barrier *round,
+    unsigned epoch, int id, int participants)
+{
+    unsigned phase;
+    int status = 0;
+
+    for (phase = 0; phase != LIFECYCLE_PHASES; ++phase) {
+        int peer;
+
+        /* Relaxed payload operations leave cross-process publication to the
+         * barrier; the second wait keeps the next phase from overwriting it.
+         */
+        __atomic_store_n(&round->payload[id],
+            (int)((epoch + 1) * 1000 + phase * 10 + id), __ATOMIC_RELAXED);
+        __atomic_store_n(&round->result[phase][0][id],
+            pthread_barrier_wait(&round->barrier), __ATOMIC_RELAXED);
+        for (peer = 0; peer != participants; ++peer)
+            if (__atomic_load_n(&round->payload[peer], __ATOMIC_RELAXED) !=
+                (int)((epoch + 1) * 1000 + phase * 10 + peer))
+                status = 1;
+        __atomic_store_n(&round->result[phase][1][id],
+            pthread_barrier_wait(&round->barrier), __ATOMIC_RELAXED);
+    }
+    return status;
+}
+
+struct reused_private_worker_context {
+    struct reused_barrier *round;
+    unsigned epoch;
+    int worker_errno;
+};
+
+static void *reused_private_worker(void *opaque)
+{
+    struct reused_private_worker_context *context = opaque;
+    int status;
+
+    errno = EACCES;
+    status = reused_participant(context->round, context->epoch, 1, 2);
+    context->worker_errno = errno;
+    return (void *)(uintptr_t)status;
+}
+
+static int run_reused_private_barrier_probe(void)
+{
+    struct reused_barrier round = { 0 };
+    unsigned epoch;
+    int status = 0;
+
+    errno = E2BIG;
+    for (epoch = 0; epoch != LIFECYCLE_EPOCHS; ++epoch) {
+        struct reused_private_worker_context context = { &round, epoch, -1 };
+        pthread_t thread;
+        void *worker_result = (void *)(uintptr_t)-1;
+        unsigned phase;
+
+        fill_barrier_words(&round.barrier, 0x5a5a5a5a);
+        if (pthread_barrier_init(&round.barrier, 0, 2) != 0 ||
+            round.barrier.__u.__i[2] != 1 ||
+            round.barrier.__u.__i[0] != 0 ||
+            round.barrier.__u.__i[1] != 0 ||
+            round.barrier.__u.__i[3] != 0 ||
+            round.barrier.__u.__i[4] != 0 ||
+            round.barrier.__u.__i[5] != 0 ||
+            round.barrier.__u.__i[6] != 0 ||
+            round.barrier.__u.__i[7] != 0)
+            return 1;
+        if (pthread_create(&thread, 0, reused_private_worker, &context) != 0)
+            return 2;
+        if (reused_participant(&round, epoch, 0, 2) != 0)
+            status = 3;
+        if (pthread_join(thread, &worker_result) != 0)
+            status = 4;
+        if ((uintptr_t)worker_result != 0 || context.worker_errno != EACCES)
+            status = 5;
+        for (phase = 0; phase != LIFECYCLE_PHASES; ++phase) {
+            int wave;
+
+            for (wave = 0; wave != 2; ++wave)
+                if (!exactly_one_serial(round.result[phase][wave][0],
+                        round.result[phase][wave][1]))
+                    status = 6;
+        }
+        if (pthread_barrier_destroy(&round.barrier) != 0)
+            status = 7;
+        if (status != 0)
+            break;
+    }
+    return status != 0 ? status : errno != E2BIG ? 8 : 0;
+}
+
+static int run_reused_shared_barrier_probe(void)
+{
+    long mapped = raw_syscall6(SYS_mmap, 0, SHARED_MAPPING_BYTES,
+        PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    struct reused_barrier *round;
+    pthread_barrierattr_t attribute;
+    unsigned epoch;
+    int status = 0;
+
+    if (raw_failed(mapped))
+        return 1;
+    round = (struct reused_barrier *)(void *)mapped;
+    errno = E2BIG;
+    if (pthread_barrierattr_init(&attribute) != 0 ||
+        pthread_barrierattr_setpshared(&attribute, PTHREAD_PROCESS_SHARED) != 0) {
+        status = 2;
+        goto done;
+    }
+    for (epoch = 0; epoch != LIFECYCLE_EPOCHS; ++epoch) {
+        long child[2] = { -1, -1 };
+        int child_status[2] = { -1, -1 };
+        int parent_result;
+        int id;
+        unsigned phase;
+
+        fill_barrier_words(&round->barrier, 0x5a5a5a5a);
+        if (pthread_barrier_init(&round->barrier, &attribute, 3) != 0 ||
+            round->barrier.__u.__i[2] != (int)0x80000002U ||
+            round->barrier.__u.__i[0] != 0 ||
+            round->barrier.__u.__i[1] != 0 ||
+            round->barrier.__u.__i[3] != 0 ||
+            round->barrier.__u.__i[4] != 0 ||
+            round->barrier.__u.__i[5] != 0 ||
+            round->barrier.__u.__i[6] != 0 ||
+            round->barrier.__u.__i[7] != 0) {
+            status = 3;
+            break;
+        }
+        for (id = 1; id != 3; ++id) {
+            child[id - 1] = raw_syscall0(SYS_fork);
+            if (child[id - 1] == 0) {
+                int child_result;
+
+                errno = EACCES;
+                child_result = reused_participant(round, epoch, id, 3);
+                raw_exit(child_result != 0 ? 2 : errno != EACCES ? 3 : 0);
+            }
+            if (child[id - 1] < 0) {
+                status = 4;
+                break;
+            }
+        }
+        if (status != 0) {
+            for (id = 0; id != 2; ++id)
+                if (child[id] > 0) {
+                    (void)raw_syscall2(SYS_kill, child[id], SIGKILL);
+                    (void)wait_for_child(child[id], &child_status[id]);
+                }
+            break;
+        }
+        parent_result = reused_participant(round, epoch, 0, 3);
+        for (id = 0; id != 2; ++id)
+            if (wait_for_child(child[id], &child_status[id]) != 0)
+                status = 5;
+        if (parent_result != 0 && status == 0)
+            status = 6;
+        for (id = 0; id != 2; ++id)
+            if (child_status[id] != 0 && status == 0)
+                status = 7;
+        for (phase = 0; phase != LIFECYCLE_PHASES; ++phase) {
+            int wave;
+
+            for (wave = 0; wave != 2; ++wave) {
+                int serial = 0;
+
+                for (id = 0; id != 3; ++id) {
+                    int result = __atomic_load_n(&round->result[phase][wave][id],
+                        __ATOMIC_RELAXED);
+                    serial += result == PTHREAD_BARRIER_SERIAL_THREAD;
+                    if (result != 0 &&
+                        result != PTHREAD_BARRIER_SERIAL_THREAD && status == 0)
+                        status = 8;
+                }
+                if (serial != 1 && status == 0)
+                    status = 9;
+            }
+        }
+        if (pthread_barrier_destroy(&round->barrier) != 0 && status == 0)
+            status = 10;
+        if (status != 0)
+            break;
+    }
+    if (pthread_barrierattr_destroy(&attribute) != 0 && status == 0)
+        status = 11;
+done:
+    if (raw_syscall2(SYS_munmap, mapped, SHARED_MAPPING_BYTES) != 0 &&
+        status == 0)
+        status = 12;
+    if (errno != E2BIG && status == 0)
+        status = 13;
+    return status;
+}
+
 int crabc_x86_64_pthread_barrier_probe(void)
 {
     int status;
@@ -662,6 +864,11 @@ int crabc_x86_64_pthread_barrier_probe(void)
         return 60 + status;
     if (REPORT_PHASE("barrier-private-generations-64: pass\n") != 0)
         return 92;
+    status = run_reused_private_barrier_probe();
+    if (status != 0)
+        return 110 + status;
+    if (REPORT_PHASE("barrier-private-reuse-six-lifetimes: pass\n") != 0)
+        return 96;
     status = run_signal_interrupted_barrier();
     if (status != 0)
         return 80 + status;
@@ -670,7 +877,12 @@ int crabc_x86_64_pthread_barrier_probe(void)
     status = run_process_shared_barrier_probe();
     if (status != 0)
         return 40 + status;
-    return REPORT_PHASE("barrier-shared-generations-32: pass\n") == 0 ? 0 : 94;
+    if (REPORT_PHASE("barrier-shared-generations-32: pass\n") != 0)
+        return 94;
+    status = run_reused_shared_barrier_probe();
+    if (status != 0)
+        return 100 + status;
+    return REPORT_PHASE("barrier-shared-reuse-six-lifetimes: pass\n") == 0 ? 0 : 95;
 }
 
 #if !defined(CRABC_PTHREAD_BARRIER_FREESTANDING)

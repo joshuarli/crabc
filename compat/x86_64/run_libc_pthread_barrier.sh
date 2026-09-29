@@ -6,7 +6,8 @@
 # crabc archive. It proves the complete public barrier surface: attribute
 # lifecycle/pshared records, count validation, private reusable two-thread
 # handoff, repeated generations, signal interruption under contention, and
-# shared-futex cross-fork generations followed by destroy and reinit. The
+# same-address private and shared reuse with fresh thread or process
+# participants. The
 # fixture's raw process, clock, signal, and output plumbing is test-only and
 # does not select a C process runtime, CRT, loader, sysroot, or public x86 support.
 set -euo pipefail
@@ -114,8 +115,10 @@ printf '%s\n' \
     'barrier-attributes-and-precedence: pass' \
     'barrier-private-basic: pass' \
     'barrier-private-generations-64: pass' \
+    'barrier-private-reuse-six-lifetimes: pass' \
     'barrier-signal-contention: pass' \
-    'barrier-shared-generations-32: pass' >"$expected_stdout"
+    'barrier-shared-generations-32: pass' \
+    'barrier-shared-reuse-six-lifetimes: pass' >"$expected_stdout"
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 header_trace="$work_dir/header-trace"
