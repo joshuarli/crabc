@@ -12,6 +12,9 @@
 # user-xattr storage on symbolic links is filesystem policy. A filesystem that
 # uniformly rejects the initial xattr write with EOPNOTSUPP or ENOSYS follows
 # the fixture's deterministic unavailable branch; the candidate must match.
+# A second shared fixture records each operation's result, errno, and full
+# caller buffer through mutations. Its pinned-musl and candidate traces must
+# match byte for byte and are retained below the ignored report directory.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -100,8 +103,11 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_xattr_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-extended-attributes.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp" "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-extended-attributes.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
+trace_dir="$ROOT_DIR/.work/x86_64/reports/libc-extended-attributes-differential"
+mkdir -p "$trace_dir"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-extended-attributes-reference"
 candidate="$work_dir/crabc-static-extended-attributes-candidate"
@@ -236,6 +242,41 @@ else
 fi
 [ "$candidate_branch" = "$reference_branch" ] ||
     fail "candidate xattr filesystem branch $candidate_branch differs from musl $reference_branch"
+
+differential_reference="$work_dir/musl-extended-attributes-differential"
+differential_candidate="$work_dir/crabc-extended-attributes-differential"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
+    -I"$ROOT_DIR/include" compat/x86_64/libc_extended_attributes_differential_probe.c \
+    -o "$differential_reference"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_EXTENDED_ATTRIBUTES_FREESTANDING \
+    -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
+    -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    compat/x86_64/libc_extended_attributes_differential_probe.c \
+    compat/x86_64/libc_extended_attributes_start.S "$archive" -o "$differential_candidate"
+if run_fixture "$reference_work" "$differential_reference" "musl differential" \
+    >"$trace_dir/musl.trace"; then
+    differential_reference_branch=supported
+else
+    differential_reference_branch=unavailable
+fi
+if run_fixture "$candidate_work" "$differential_candidate" "candidate differential" \
+    >"$trace_dir/crabc.trace"; then
+    differential_candidate_branch=supported
+else
+    differential_candidate_branch=unavailable
+fi
+[ "$differential_reference_branch" = "$reference_branch" ] ||
+    fail "musl differential filesystem branch differs from base fixture"
+[ "$differential_candidate_branch" = "$candidate_branch" ] ||
+    fail "candidate differential filesystem branch differs from base fixture"
+if ! cmp -s "$trace_dir/musl.trace" "$trace_dir/crabc.trace"; then
+    diff -u "$trace_dir/musl.trace" "$trace_dir/crabc.trace" >&2 || true
+    fail "candidate operation transcript differs from pinned musl"
+fi
+if [ "$reference_branch" = supported ]; then
+    grep -q '^fd-missing-after-unlink ' "$trace_dir/musl.trace" ||
+        fail "differential did not reach descriptor mutation after unlink"
+fi
 
 printf 'x86 static crabc-libc extended attributes: PASS (%s filesystem)\n' \
     "$reference_branch"
