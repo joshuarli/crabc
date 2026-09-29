@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 # Native Linux/x86-64 selected-static file-handle ABI evidence.
 #
-# The candidate owns exactly name_to_handle_at/open_by_handle_at. Raw openat,
-# openat and close provide setup only; the fixture pathname is confined to the
-# runner's disposable working directories. Filesystem
-# handle support and the privilege needed to reopen a raw handle are retained
-# as kernel outcomes, so an unprivileged overlay runner may report the
-# portable unsupported result without fabricating success.
+# The candidate owns exactly name_to_handle_at/open_by_handle_at. Raw syscalls
+# provide fixture setup and observation. The differential runs on one mount
+# and one persistent inode, retaining filesystem support and reopen authority
+# as exact kernel outcomes.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -146,7 +144,7 @@ assert_direct_or_bound_syscall() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation" ;; esac
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf sort; do
+for tool in ar awk cargo cmp cp diff grep mkdir nm objdump od readelf sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -154,7 +152,8 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_file_handles_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-file-handles.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64" "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-file-handles.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-file-handles-reference"
@@ -194,5 +193,36 @@ assert_direct_or_bound_syscall name_to_handle_at 0x12f syscall5 %r10 %r8
 assert_direct_or_bound_syscall open_by_handle_at 0x130 syscall3
 (cd "$candidate_work" && "$candidate") ||
     fail "freestanding file-handle fixture failed"
+
+reference_differential="$work_dir/musl-file-handles-differential"
+candidate_differential="$work_dir/crabc-file-handles-differential"
+differential_work="$work_dir/differential-work"
+reference_transcript="$work_dir/musl-transcript.bin"
+candidate_transcript="$work_dir/crabc-transcript.bin"
+mkdir "$differential_work"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
+    -I "$ROOT_DIR/include" compat/x86_64/libc_file_handles_differential.c \
+    -o "$reference_differential"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_FILE_HANDLES_FREESTANDING \
+    -I "$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
+    -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -Wl,--gc-sections compat/x86_64/libc_file_handles_differential.c \
+    compat/x86_64/libc_file_handles_start.S "$archive" -o "$candidate_differential"
+(cd "$differential_work" && "$reference_differential" >"$reference_transcript") ||
+    fail "pinned-musl differential fixture failed"
+(cd "$differential_work" && "$candidate_differential" >"$candidate_transcript") ||
+    fail "candidate differential fixture failed"
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-file-handles"
+mkdir -p "$report_dir"
+cp "$reference_transcript" "$report_dir/musl-transcript.bin"
+cp "$candidate_transcript" "$report_dir/crabc-transcript.bin"
+if ! cmp -s "$reference_transcript" "$candidate_transcript"; then
+    od -An -td4 -w28 "$reference_transcript" >"$report_dir/musl-transcript.txt"
+    od -An -td4 -w28 "$candidate_transcript" >"$report_dir/crabc-transcript.txt"
+    diff -u "$report_dir/musl-transcript.txt" "$report_dir/crabc-transcript.txt" >&2 || true
+    fail "file-handle syscall observations differ from pinned musl"
+fi
+od -An -td4 -w28 "$reference_transcript" >"$report_dir/musl-transcript.txt"
+od -An -td4 -w28 "$candidate_transcript" >"$report_dir/crabc-transcript.txt"
 
 printf 'x86 static crabc-libc file handles: PASS\n'
