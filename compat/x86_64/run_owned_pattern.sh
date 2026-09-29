@@ -18,9 +18,11 @@ readonly CASES=(
     fnmatch-escaped
     fnmatch-range
     fnmatch-nested-class
+    fnmatch-boundary
     glob-literal
     glob-nested
     glob-dangling-mark
+    glob-boundary
     fnmatch-pathname-unmatchable
     fnmatch-corpus
     glob-corpus
@@ -319,4 +321,4 @@ for mode in pie non-pie; do
     done
 done
 
-printf 'owned pattern: PASS (same project-header object with pinned musl; C/POSIX/C.UTF-8 fnmatch; invalid bytes and classes; glob sort, append, offsets, tilde, mark, trailing slash, ownership, and dropped-privilege unreadable callback; glob-corpus directory-stream, descriptor-flag, file-status and mapping syscalls against musl; static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
+printf 'owned pattern: PASS (same project-header object with pinned musl; C/POSIX/C.UTF-8 fnmatch flags and errno; glob brace literals, path-length boundaries and errno; glob sort, append, offsets, tilde, mark, trailing slash, ownership, and dropped-privilege unreadable callback; glob-corpus directory-stream, descriptor-flag, file-status and mapping syscalls against musl; static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"

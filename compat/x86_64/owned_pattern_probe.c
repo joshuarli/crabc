@@ -27,6 +27,7 @@
 #include "owned_fnmatch_edge_probe.c"
 
 static int failure_line;
+static void corpus_trace_bytes(const char *label, const char *bytes);
 
 #define CHECK(condition) do { \
     if (!(condition)) { \
@@ -132,6 +133,51 @@ static int matcher_utf8_and_invalid_cases(void)
     CHECK(fnmatch("\377", "x", 0) == FNM_NOMATCH);
     CHECK(fnmatch("\303", "\303", 0) == FNM_NOMATCH);
     CHECK(fnmatch("*x", "\303x", 0) == 0);
+    return 0;
+}
+
+/* Record the matcher's observable errno across flag combinations that cross
+ * component, leading-period, escape, and literal-brace boundaries. */
+static int matcher_boundary_case(void)
+{
+    static const struct {
+        const char *name;
+        const char *pattern;
+        const char *subject;
+        int flags;
+    } samples[] = {
+        { "slash-star", "a/*", "a/b/c", FNM_PATHNAME },
+        { "slash-leading-dir", "a/*", "a/b/c", FNM_PATHNAME | FNM_LEADING_DIR },
+        { "period-component", "a/*", "a/.hidden", FNM_PATHNAME | FNM_PERIOD },
+        { "period-explicit", "a/.*", "a/.hidden", FNM_PATHNAME | FNM_PERIOD },
+        { "period-bracket", "[.]hidden", ".hidden", FNM_PERIOD },
+        { "escaped-slash", "a\\/b", "a/b", FNM_PATHNAME },
+        { "noescape-slash", "a\\/b", "a/b", FNM_PATHNAME | FNM_NOESCAPE },
+        { "escaped-star", "a\\*", "a*", 0 },
+        { "noescape-star", "a\\*", "a*", FNM_NOESCAPE },
+        { "brace-literal", "{a,b}", "{a,b}", 0 },
+        { "brace-no-expand", "{a,b}", "a", 0 },
+        { "casefold-range", "[A-Z]", "a", FNM_CASEFOLD },
+        { "invalid-subject", "*", "\377", 0 },
+        { "invalid-pattern", "\377", "a", 0 },
+    };
+    static const char *const locales[] = { "C", "POSIX", "C.UTF-8" };
+    size_t locale;
+    size_t index;
+
+    for (locale = 0; locale < sizeof locales / sizeof *locales; ++locale) {
+        CHECK(setlocale(LC_CTYPE, locales[locale]) != 0);
+        for (index = 0; index < sizeof samples / sizeof *samples; ++index) {
+            int result;
+
+            errno = E2BIG;
+            result = fnmatch(samples[index].pattern, samples[index].subject,
+                samples[index].flags);
+            printf("matcher-boundary locale=%s case=%s flags=%d result=%d errno=%d\n",
+                locales[locale], samples[index].name, samples[index].flags,
+                result, errno);
+        }
+    }
     return 0;
 }
 
@@ -365,6 +411,62 @@ static int glob_unreadable_error_cases(void)
     CHECK(glob("/fixture/blocked/*", 0, capture_error, &result) == GLOB_ABORTED);
     CHECK(error_calls == 1 && error_code == EACCES);
     globfree(&result);
+    return 0;
+}
+
+/* The installed glob interface has no brace-expansion or result-limit flag.
+ * Observe the literal spelling and the PATH_MAX edge under the same pinned
+ * musl object and each installed candidate. The initial errno is deliberately
+ * nonzero so success, failure, and traversal side effects remain visible. */
+static int glob_boundary_case(void)
+{
+    static const struct {
+        const char *name;
+        const char *pattern;
+        int flags;
+    } samples[] = {
+        { "brace-literal", "/fixture/{a,b}.txt", GLOB_NOCHECK },
+        { "brace-missing", "/fixture/{a,b}.txt", 0 },
+        { "escaped-brace", "/fixture/\\{a,b\\}.txt", GLOB_NOCHECK },
+        { "escaped-star", "/fixture/star\\*", 0 },
+        { "noescape-star", "/fixture/star\\*", GLOB_NOESCAPE | GLOB_NOCHECK },
+        { "slash-period", "/fixture/*/.hidden", GLOB_PERIOD },
+        { "slash-file", "/fixture/a.txt/*", GLOB_NOCHECK },
+        { "missing-component", "/fixture/missing/*", GLOB_ERR | GLOB_NOCHECK },
+    };
+    char path[4098];
+    size_t index;
+
+    CHECK(setlocale(LC_CTYPE, "C") != 0);
+    for (index = 0; index < sizeof samples / sizeof *samples; ++index) {
+        glob_t result = { 0 };
+        int status;
+        size_t match;
+
+        errno = E2BIG;
+        status = glob(samples[index].pattern, samples[index].flags, 0, &result);
+        printf("boundary %s status=%d errno=%d count=%zu", samples[index].name,
+            status, errno, result.gl_pathc);
+        for (match = 0; match < result.gl_pathc; ++match)
+            corpus_trace_bytes("path", result.gl_pathv[match]);
+        putchar('\n');
+        globfree(&result);
+    }
+
+    memset(path, 'a', sizeof path);
+    memcpy(path, "/fixture/", sizeof "/fixture/" - 1);
+    for (index = 4094; index <= 4097; ++index) {
+        glob_t result = { 0 };
+        int status;
+
+        path[index] = 0;
+        errno = E2BIG;
+        status = glob(path, GLOB_NOCHECK, 0, &result);
+        printf("boundary length=%zu status=%d errno=%d count=%zu\n",
+            index, status, errno, result.gl_pathc);
+        globfree(&result);
+        path[index] = 'a';
+    }
     return 0;
 }
 
@@ -804,6 +906,8 @@ static int glob_corpus(int trace)
 
 static int run_selected_case(const char *selector)
 {
+    if (!strcmp(selector, "fnmatch-boundary")) return matcher_boundary_case();
+    if (!strcmp(selector, "glob-boundary")) return glob_boundary_case();
     if (!strcmp(selector, "fnmatch-edge-matrix")) return matcher_edge_matrix_case();
     if (!strcmp(selector, "fnmatch-pathname-unmatchable")) return fnmatch_pathname_unmatchable_case();
     if (!strcmp(selector, "fnmatch-corpus")) return fnmatch_corpus(0);
