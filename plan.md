@@ -289,9 +289,11 @@ are not transferable passes for a different revision.
   pass, with M1/M2 prerequisites still required for the M3 gate.
   A source-equivalent shared child mapped-page claim scan reduces linked Rust
   allocator text by 2,256 bytes. Sharing the following child queue insertion
-  and outlining cold reabandonment remove another 583 bytes, with pinned C text
-  unchanged. Both changes pass focused tests, nine Rust profiles, and clean
-  owner differentials; qualifying timing remains open.
+  and outlining cold reabandonment remove another 583 bytes; sharing the
+  static-main mapped reabandon publication removes 507 more. Pinned C text
+  and audited active instruction counts stay unchanged. These changes pass
+  focused tests, nine Rust profiles, and clean owner differentials; qualifying
+  timing remains open.
   Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). On an idle host the development engine harness
