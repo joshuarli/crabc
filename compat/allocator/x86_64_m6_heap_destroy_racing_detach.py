@@ -13,7 +13,7 @@ ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m6-heap-destroy-racing-detach"
 BEGIN = "CRABC_MI_M6_HEAP_DESTROY_RACING_DETACH_BEGIN"
 END = "CRABC_MI_M6_HEAP_DESTROY_RACING_DETACH_END"
 EXPECTED = {"race.completed": "64", "race.owners": "0,0"}
-REPETITIONS = 12
+REPETITIONS = 32
 
 
 def run_differential() -> int:

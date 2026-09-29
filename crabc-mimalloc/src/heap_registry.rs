@@ -529,6 +529,35 @@ impl super::Theap {
 }
 
 impl super::ThreadLocalData {
+    /// Whether a finishing thread's Theap still belongs to its TLD list.
+    /// A Heap destroy removes it under this lock before taking over its
+    /// pages, so an unavailable owner-side engine needs no retry once absent.
+    ///
+    /// # Safety
+    /// `tld` is the finishing thread's live TLD. `theap` is used only as an
+    /// address identity and may already have left both intrusive lists.
+    pub(crate) unsafe fn contains_theap_for_thread_done(
+        tld: core::ptr::NonNull<Self>,
+        theap: core::ptr::NonNull<super::Theap>,
+    ) -> Result<bool, SourceHeapRegistryError> {
+        // SAFETY: the caller retains this TLD; the held lock protects every
+        // member and link while the list is traversed.
+        let tld_pointer = tld.as_ptr();
+        let guard = unsafe { (*tld_pointer).theaps_lock.lock() }
+            .map_err(SourceHeapRegistryError::ListLockAcquire)?;
+        let mut current = unsafe { (*tld_pointer).theaps };
+        let mut found = false;
+        while !current.is_null() {
+            if current == theap.as_ptr() {
+                found = true;
+                break;
+            }
+            current = unsafe { (*current).tnext };
+        }
+        guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)?;
+        Ok(found)
+    }
+
     /// Detach the next auxiliary Theap of a finishing thread from both source
     /// lists while its TLD lock retains the selected image. A concurrent Heap
     /// destroy must acquire that same lock before dropping its list reference.

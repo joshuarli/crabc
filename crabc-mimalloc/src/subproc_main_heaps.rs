@@ -1168,7 +1168,15 @@ pub(crate) fn native_thread_done() -> bool {
             (unsafe { engine.collect_abandon_child_thread_done(theap, thread.thread) }) && engine.finish_quiescent_in_place()
         });
         if drained != Some(true) {
-            return false;
+            // A concurrent Heap destroy may detach this image before its
+            // owner-side engine can begin. The destroyer then owns the page
+            // transition; the worker must still finish its other Theaps.
+            // An actual failed collection keeps this thread's owner live.
+            if drained.is_some()
+                || unsafe { ThreadLocalData::contains_theap_for_thread_done(thread.tld, theap) } != Ok(false)
+            {
+                return false;
+            }
         }
     }
     // SAFETY: the immutable source empty Theap is process-static.
