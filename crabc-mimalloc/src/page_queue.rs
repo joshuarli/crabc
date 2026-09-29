@@ -2265,6 +2265,14 @@ mod tests {
             } else {
                 regular_queue.first
             });
+            for index in 0..PAGES_DIRECT {
+                let expected = if size_class::bin(index * WORD_SIZE) == Some(4) && !regular_queue.first.is_null() {
+                    regular_queue.first
+                } else {
+                    EMPTY_PAGE.as_ptr()
+                };
+                assert_eq!(theap.direct_page(index), Some(expected));
+            }
             let direct_name = if direct == EMPTY_PAGE.as_ptr() {
                 '-'
             } else {
@@ -2284,61 +2292,74 @@ mod tests {
         assert!(a.set_capacity_reserved(4, 4));
         assert!(b.set_capacity_reserved(6, 6));
         assert!(c.set_capacity_reserved(8, 8));
-        a.abandoned_test_set_theap(&mut theap);
-        b.abandoned_test_set_theap(&mut theap);
-        c.abandoned_test_set_theap(&mut theap);
+        let owner = NonNull::from(&mut theap);
+        a.abandoned_test_set_theap(owner.as_ptr());
+        b.abandoned_test_set_theap(owner.as_ptr());
+        c.abandoned_test_set_theap(owner.as_ptr());
         let pages = [&mut a as *mut Page, &mut b as *mut Page, &mut c as *mut Page];
+        // SAFETY: the fixture owns the complete pinned local Theap image.
+        let mut fields = unsafe { TheapCollectAbandonFieldAccess::new(owner) };
 
         // SAFETY: the fixture owns every queue, link, page, and Theap local
         // field for the complete source-ordered transition sequence.
         unsafe {
             for &pointer in &pages {
-                page_queue_push_at_end_metadata(theap.queue_mut(4).unwrap(), pointer);
-                assert!(theap_collect_abandon_update_direct_cache(&mut theap, 4));
-                theap.note_page_added();
+                page_queue_push_at_end_metadata(fields.queue_mut(4).unwrap(), pointer);
+                assert!(fields.update_direct_cache(4));
+                Theap::note_local_page_added_at(owner);
             }
             std::println!("{}", line("start", &theap, &pages));
 
-            assert!(theap_collect_abandon_detach_page(
-                &mut theap, 4, NonNull::new(pages[0]).unwrap()
+            assert!(theap_collect_abandon_detach_page_at(
+                &mut fields, 4, NonNull::new(pages[0]).unwrap()
             ).is_ok());
             std::println!("{}", line("retire-head", &theap, &pages));
 
-            page_queue_push_at_end_metadata(theap.queue_mut(4).unwrap(), pages[0]);
-            assert!(theap_collect_abandon_update_direct_cache(&mut theap, 4));
-            theap.note_page_added();
+            page_queue_push_at_end_metadata(fields.queue_mut(4).unwrap(), pages[0]);
+            assert!(fields.update_direct_cache(4));
+            Theap::note_local_page_added_at(owner);
             std::println!("{}", line("reuse-tail", &theap, &pages));
 
-            page_queue_move_to_front_metadata(theap.queue_mut(4).unwrap(), pages[2]);
-            assert!(theap_collect_abandon_update_direct_cache(&mut theap, 4));
+            page_queue_move_to_front_metadata(fields.queue_mut(4).unwrap(), pages[2]);
+            assert!(fields.update_direct_cache(4));
             std::println!("{}", line("move-head", &theap, &pages));
 
-            let regular = theap.queue_mut(4).unwrap() as *mut PageQueue;
-            let full = theap.queue_mut(BIN_FULL).unwrap() as *mut PageQueue;
-            page_queue_enqueue_from_metadata(&mut *full, &mut *regular, pages[2]);
-            assert!(theap_collect_abandon_update_direct_cache(&mut theap, 4));
+            {
+                let regular = fields.queue_mut(4).unwrap() as *mut PageQueue;
+                let full = fields.queue_mut(BIN_FULL).unwrap() as *mut PageQueue;
+                page_queue_enqueue_from_metadata(&mut *full, &mut *regular, pages[2]);
+            }
+            assert!(fields.update_direct_cache(4));
             std::println!("{}", line("full-head", &theap, &pages));
 
-            page_queue_enqueue_from_metadata(&mut *full, &mut *regular, pages[1]);
-            assert!(theap_collect_abandon_update_direct_cache(&mut theap, 4));
+            {
+                let regular = fields.queue_mut(4).unwrap() as *mut PageQueue;
+                let full = fields.queue_mut(BIN_FULL).unwrap() as *mut PageQueue;
+                page_queue_enqueue_from_metadata(&mut *full, &mut *regular, pages[1]);
+            }
+            assert!(fields.update_direct_cache(4));
             std::println!("{}", line("full-next", &theap, &pages));
 
-            assert!(theap_collect_abandon_detach_page(
-                &mut theap, 4, NonNull::new(pages[0]).unwrap()
+            assert!(theap_collect_abandon_detach_page_at(
+                &mut fields, 4, NonNull::new(pages[0]).unwrap()
             ).is_ok());
             std::println!("{}", line("retire-last-regular", &theap, &pages));
 
-            page_queue_enqueue_from_full_metadata(&mut *regular, &mut *full, pages[2]);
-            assert!(theap_collect_abandon_update_direct_cache(&mut theap, 4));
+            {
+                let regular = fields.queue_mut(4).unwrap() as *mut PageQueue;
+                let full = fields.queue_mut(BIN_FULL).unwrap() as *mut PageQueue;
+                page_queue_enqueue_from_full_metadata(&mut *regular, &mut *full, pages[2]);
+            }
+            assert!(fields.update_direct_cache(4));
             std::println!("{}", line("reuse-from-full", &theap, &pages));
 
-            assert!(theap_collect_abandon_detach_page(
-                &mut theap, BIN_FULL, NonNull::new(pages[1]).unwrap()
+            assert!(theap_collect_abandon_detach_page_at(
+                &mut fields, BIN_FULL, NonNull::new(pages[1]).unwrap()
             ).is_ok());
             std::println!("{}", line("retire-full", &theap, &pages));
 
-            assert!(theap_collect_abandon_detach_page(
-                &mut theap, 4, NonNull::new(pages[2]).unwrap()
+            assert!(theap_collect_abandon_detach_page_at(
+                &mut fields, 4, NonNull::new(pages[2]).unwrap()
             ).is_ok());
             std::println!("{}", line("retire-final", &theap, &pages));
         }
@@ -2422,22 +2443,24 @@ mod tests {
             for seed in [0x4d3342494e_u64, 0x9e3779b97f4a7c15] {
                 let mut theap = Theap::empty();
                 let mut images = [page(size), page(size), page(size)];
-                let owner = core::ptr::from_mut(&mut theap);
+                let owner = NonNull::from(&mut theap);
                 for (index, image) in images.iter_mut().enumerate() {
                     let count = if bin == BIN_HUGE { 1 } else { 4 + 2 * index as u16 };
                     assert!(image.set_capacity_reserved(count, count));
-                    image.abandoned_test_set_theap(owner);
+                    image.abandoned_test_set_theap(owner.as_ptr());
                 }
                 let pages = images.each_mut().map(core::ptr::from_mut);
                 let mut sentinel_image = page(theap.queue(sentinel_bin).unwrap().block_size());
                 assert!(sentinel_image.set_capacity_reserved(1, 1));
-                sentinel_image.abandoned_test_set_theap(owner);
+                sentinel_image.abandoned_test_set_theap(owner.as_ptr());
                 let sentinel = core::ptr::from_mut(&mut sentinel_image);
                 // SAFETY: every pinned image is detached and exclusively
                 // owned; the unrelated live bin checks cache range isolation.
-                unsafe { page_queue_push_at_end_metadata(theap.queue_mut(sentinel_bin).unwrap(), sentinel) };
-                theap.note_page_added();
-                assert!(theap_collect_abandon_update_direct_cache(&mut theap, sentinel_bin));
+                unsafe {
+                    page_queue_push_at_end_metadata(Theap::local_queue_mut_at(owner, sentinel_bin).unwrap(), sentinel);
+                    Theap::note_local_page_added_at(owner);
+                    assert!(theap_collect_abandon_update_direct_cache_at(owner, sentinel_bin));
+                }
                 let mut states = [0_u8; 3];
                 let mut random = seed;
                 show(bin, seed, 0, "init", '-', &theap, &pages, sentinel, sentinel_bin, true);
@@ -2454,28 +2477,32 @@ mod tests {
                     unsafe {
                         if states[index] == 0 {
                             if op % 2 == 0 {
-                                page_queue_push_metadata(theap.queue_mut(bin).unwrap(), selected);
+                                page_queue_push_metadata(Theap::local_queue_mut_at(owner, bin).unwrap(), selected);
                                 action = "push-head";
                             } else {
-                                page_queue_push_at_end_metadata(theap.queue_mut(bin).unwrap(), selected);
+                                page_queue_push_at_end_metadata(Theap::local_queue_mut_at(owner, bin).unwrap(), selected);
                                 action = "push-tail";
                             }
-                            theap.note_page_added();
+                            Theap::note_local_page_added_at(owner);
                             states[index] = 1;
                         } else {
                             let from_bin = if states[index] == 1 { bin } else { BIN_FULL };
                             let to_bin = if states[index] == 1 { BIN_FULL } else { bin };
                             if op == 0 {
-                                page_queue_remove_metadata(theap.queue_mut(from_bin).unwrap(), selected);
-                                assert!(theap.note_page_removed());
+                                page_queue_remove_metadata(Theap::local_queue_mut_at(owner, from_bin).unwrap(), selected);
+                                assert!(Theap::note_local_page_removed_at(owner));
                                 states[index] = 0;
                                 action = "remove";
                             } else if op == 1 {
-                                page_queue_move_to_front_metadata(theap.queue_mut(from_bin).unwrap(), selected);
+                                page_queue_move_to_front_metadata(Theap::local_queue_mut_at(owner, from_bin).unwrap(), selected);
                                 action = "front";
                             } else {
-                                let from = theap.queue_mut(from_bin).unwrap() as *mut PageQueue;
-                                let to = theap.queue_mut(to_bin).unwrap() as *mut PageQueue;
+                                // Both source queues must remain borrowed at
+                                // once. Project each disjoint field directly:
+                                // a second whole-Theap mutable borrow would
+                                // invalidate the first queue's pointer.
+                                let from = Theap::local_queue_mut_at(owner, from_bin).unwrap() as *mut PageQueue;
+                                let to = Theap::local_queue_mut_at(owner, to_bin).unwrap() as *mut PageQueue;
                                 if op == 2 && states[index] == 2 {
                                     page_queue_enqueue_from_full_metadata(&mut *to, &mut *from, selected);
                                     action = "return-tail";
@@ -2487,7 +2514,7 @@ mod tests {
                             }
                         }
                     }
-                    assert!(theap_collect_abandon_update_direct_cache(&mut theap, bin));
+                    assert!(unsafe { theap_collect_abandon_update_direct_cache_at(owner, bin) });
                     show(bin, seed, step, action, (b'A' + index as u8) as char,
                         &theap, &pages, sentinel, sentinel_bin, true);
                     step += 1;
@@ -2497,17 +2524,21 @@ mod tests {
                     let from = if *state == 1 { bin } else { BIN_FULL };
                     // SAFETY: the selected image remains a member of its
                     // exclusive source queue until this terminal removal.
-                    unsafe { page_queue_remove_metadata(theap.queue_mut(from).unwrap(), pages[index]) };
-                    assert!(theap.note_page_removed());
-                    assert!(theap_collect_abandon_update_direct_cache(&mut theap, bin));
+                    unsafe {
+                        page_queue_remove_metadata(Theap::local_queue_mut_at(owner, from).unwrap(), pages[index]);
+                        assert!(Theap::note_local_page_removed_at(owner));
+                        assert!(theap_collect_abandon_update_direct_cache_at(owner, bin));
+                    }
                     show(bin, seed, step, "remove", (b'A' + index as u8) as char,
                         &theap, &pages, sentinel, sentinel_bin, true);
                     step += 1;
                 }
                 // SAFETY: the unrelated bin retains its one pinned sentinel.
-                unsafe { page_queue_remove_metadata(theap.queue_mut(sentinel_bin).unwrap(), sentinel) };
-                assert!(theap.note_page_removed());
-                assert!(theap_collect_abandon_update_direct_cache(&mut theap, sentinel_bin));
+                unsafe {
+                    page_queue_remove_metadata(Theap::local_queue_mut_at(owner, sentinel_bin).unwrap(), sentinel);
+                    assert!(Theap::note_local_page_removed_at(owner));
+                    assert!(theap_collect_abandon_update_direct_cache_at(owner, sentinel_bin));
+                }
                 show(bin, seed, step, "release-sentinel", 'S', &theap, &pages, sentinel, sentinel_bin, false);
             }
         }

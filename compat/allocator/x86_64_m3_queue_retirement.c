@@ -59,13 +59,18 @@ static void show(const char* step, const mi_theap_t* theap,
   if (direct != theap->pages_free_direct[4]) abort();
   const char direct_name = direct == _mi_page_empty_get() ? '-' : name_of(direct, pages);
   if (direct != (theap->pages[4].first == NULL ? _mi_page_empty_get() : theap->pages[4].first)) abort();
+  for (size_t i = 0; i < MI_PAGES_DIRECT; i++) {
+    const mi_page_t* expected = mi_bin(i * sizeof(uintptr_t)) == 4 && theap->pages[4].first != NULL
+                                  ? theap->pages[4].first : _mi_page_empty_get();
+    if (theap->pages_free_direct[i] != expected) abort();
+  }
   if (theap->page_count != strlen(regular) + strlen(full)) abort();
   printf("M3R %s regular=%s full=%s direct=%c state=%s bytes=%zu pages=%zu\n",
          step, regular, full, direct_name, flags, bytes, theap->page_count);
 }
 
 static void retirement_sequence(void) {
-  mi_theap_t theap = {0};
+  mi_theap_t theap = _mi_theap_empty;
   mi_page_queue_t* regular = &theap.pages[4];
   mi_page_queue_t* full = &theap.pages[MI_BIN_FULL];
   regular->block_size = 32;
