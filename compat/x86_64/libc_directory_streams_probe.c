@@ -150,6 +150,19 @@ static int create_file(const char *path)
     return close(descriptor) == 0;
 }
 
+/* The selected static fcntl leaf covers descriptor flags only. Use the raw
+ * duplication mechanism to keep this probe focused on DIR ownership. */
+static int duplicate_descriptor(int descriptor)
+{
+    long result;
+
+    __asm__ volatile("syscall" : "=a"(result)
+        : "a"((long)SYS_fcntl), "D"((long)descriptor),
+          "S"((long)F_DUPFD), "d"(0L)
+        : "rcx", "r11", "memory");
+    return (int)result;
+}
+
 static int check_readdir_stream(const char *long_name)
 {
     DIR *directory = NULL;
@@ -233,6 +246,100 @@ static int check_readdir_r(const char *long_name)
 
 cleanup:
     if (directory != NULL && closedir(directory) != 0 && status == 0) status = 4;
+    return status;
+}
+
+static int check_mutation_eof_and_descriptor_lifetime(void)
+{
+    DIR *directory = opendir("directory");
+    struct dirent copied;
+    struct dirent *result = NULL;
+    struct dirent *entry;
+    char after_cookie[CRABC_DIRECTORY_NAME_MAX + 1];
+    long cookie;
+    long eof_cookie;
+    int duplicate = -1;
+    int saw_added = 0;
+    int status = 0;
+
+    if (directory == NULL || (entry = readdir(directory)) == NULL) {
+        status = 1;
+        goto cleanup;
+    }
+    cookie = telldir(directory);
+    entry = readdir(directory);
+    if (cookie < 0 || entry == NULL || !copy_name(after_cookie, entry->d_name)) {
+        status = 2;
+        goto cleanup;
+    }
+    if (!create_file("directory/added")) {
+        status = 3;
+        goto cleanup;
+    }
+    seekdir(directory, cookie);
+    entry = readdir(directory);
+    if (entry == NULL || !strings_equal(entry->d_name, after_cookie)) {
+        status = 4;
+        goto cleanup;
+    }
+    rewinddir(directory);
+    if (telldir(directory) != 0) {
+        status = 5;
+        goto cleanup;
+    }
+    errno = E2BIG;
+    for (;;) {
+        result = &copied;
+        if (readdir_r(directory, &copied, &result) != 0) {
+            status = 6;
+            goto cleanup;
+        }
+        if (result == NULL) break;
+        if (strings_equal(copied.d_name, "added")) saw_added = 1;
+    }
+    if (!saw_added || errno != E2BIG || telldir(directory) < 0) {
+        status = 7;
+        goto cleanup;
+    }
+    eof_cookie = telldir(directory);
+    seekdir(directory, eof_cookie);
+    result = &copied;
+    if (readdir_r(directory, &copied, &result) != 0 || result != NULL ||
+        errno != E2BIG || telldir(directory) != eof_cookie) {
+        status = 16;
+        goto cleanup;
+    }
+    duplicate = duplicate_descriptor(dirfd(directory));
+    if (duplicate < 0) {
+        status = 8;
+        goto cleanup;
+    }
+    if (closedir(directory) != 0) {
+        directory = NULL;
+        status = 15;
+        goto cleanup;
+    }
+    directory = NULL;
+    if (fcntl(duplicate, F_GETFD) < 0) {
+        status = 9;
+        goto cleanup;
+    }
+    directory = fdopendir(duplicate);
+    if (directory == NULL) {
+        status = 10;
+        goto cleanup;
+    }
+    duplicate = -1;
+    rewinddir(directory);
+    if (readdir_r(directory, &copied, &result) != 0 || result != &copied ||
+        !strings_equal(copied.d_name, "."))
+        status = 11;
+
+cleanup:
+    if (directory != NULL && closedir(directory) != 0 && status == 0) status = 12;
+    if (duplicate >= 0 && close(duplicate) != 0 && status == 0) status = 13;
+    if (unlink("directory/added") != 0 && errno != ENOENT && status == 0)
+        status = 14;
     return status;
 }
 
@@ -559,6 +666,112 @@ static int check_fdopendir_flag_lookup_failure(void)
     return close(descriptor) == 0 ? 0 : 6;
 }
 
+#ifdef CRABC_DIRECTORY_STREAMS_FREESTANDING
+/* A traced kernel reply can supply a malformed record that a real filesystem
+ * cannot produce. The public readdir_r copy must reject its excess length
+ * before writing beyond one caller-owned struct dirent. */
+static long trace_syscall4(long number, long first, long second, long third,
+    long fourth)
+{
+    long result;
+    register long arg4 __asm__("r10") = fourth;
+
+    __asm__ volatile("syscall" : "=a"(result)
+        : "a"(number), "D"(first), "S"(second), "d"(third), "r"(arg4)
+        : "rcx", "r11", "memory");
+    return result;
+}
+
+static long trace_peek_user(long child, long offset)
+{
+    enum { PTRACE_PEEKUSER = 3 };
+    long value = -1;
+
+    if (trace_syscall4(SYS_ptrace, PTRACE_PEEKUSER, child, offset,
+            (long)&value) != 0)
+        return -1;
+    return value;
+}
+
+static int check_oversize_record(void)
+{
+    enum {
+        PTRACE_TRACEME = 0, PTRACE_POKEDATA = 5,
+        PTRACE_POKEUSER = 6, PTRACE_SYSCALL = 24,
+        PTRACE_SETOPTIONS = 0x4200, PTRACE_O_TRACESYSGOOD = 1,
+        REGISTER_RAX = 80, REGISTER_RSI = 104, REGISTER_ORIG_RAX = 120,
+        SIGTRAP_NUMBER = 5,
+    };
+    DIR *directory = opendir("directory");
+    long child;
+    long status;
+    int injected = 0;
+    int saw_getdents = 0;
+    int attempts = 0;
+
+    if (directory == NULL) return 1;
+    child = trace_syscall4(SYS_fork, 0, 0, 0, 0);
+    if (child < 0) return 2;
+    if (child == 0) {
+        struct {
+            struct dirent entry;
+            unsigned long canary;
+        } output;
+        struct dirent *result = &output.entry;
+        int code;
+
+        output.canary = 0x5a817266f0e4d39bUL;
+        if (trace_syscall4(SYS_ptrace, PTRACE_TRACEME, 0, 0, 0) != 0)
+            trace_syscall4(SYS_exit_group, 11, 0, 0, 0);
+        __asm__ volatile("int3");
+        code = readdir_r(directory, &output.entry, &result);
+        trace_syscall4(SYS_exit_group,
+            code == EIO && result == &output.entry &&
+            output.canary == 0x5a817266f0e4d39bUL ? 0 : 12, 0, 0, 0);
+        __builtin_unreachable();
+    }
+    status = 0;
+    if (trace_syscall4(SYS_wait4, child, (long)&status, 0, 0) != child ||
+        (status & 0xff) != 0x7f || ((status >> 8) & 0xff) != SIGTRAP_NUMBER)
+        return 3;
+    if (trace_syscall4(SYS_ptrace, PTRACE_SETOPTIONS, child, 0,
+            PTRACE_O_TRACESYSGOOD) != 0)
+        return 4;
+    for (;;) {
+        long original;
+
+        if (trace_syscall4(SYS_ptrace, PTRACE_SYSCALL, child, 0, 0) != 0)
+            return 5;
+        if (trace_syscall4(SYS_wait4, child, (long)&status, 0, 0) != child)
+            return 6;
+        if ((status & 0x7f) == 0) break;
+        if ((status & 0xff) != 0x7f ||
+            ((status >> 8) & 0xff) != (SIGTRAP_NUMBER | 0x80) ||
+            ++attempts > 1000)
+            return 7;
+        original = trace_peek_user(child, REGISTER_ORIG_RAX);
+        if (original == SYS_getdents64) saw_getdents = 1;
+        if (original == SYS_getdents64 && !injected &&
+            trace_peek_user(child, REGISTER_RAX) >= 0) {
+            long buffer = trace_peek_user(child, REGISTER_RSI);
+            long record_word = 288 | (8L << 16) | ('x' << 24);
+
+            if (buffer < 0 ||
+                trace_syscall4(SYS_ptrace, PTRACE_POKEDATA, child, buffer, 1) != 0 ||
+                trace_syscall4(SYS_ptrace, PTRACE_POKEDATA, child, buffer + 8, 1) != 0 ||
+                trace_syscall4(SYS_ptrace, PTRACE_POKEDATA, child, buffer + 16,
+                    record_word) != 0 ||
+                trace_syscall4(SYS_ptrace, PTRACE_POKEUSER, child,
+                    REGISTER_RAX, 288) != 0)
+                return 8;
+            injected = 1;
+        }
+    }
+    if (closedir(directory) != 0) return 9;
+    return injected ? ((status >> 8) & 0xff) : (saw_getdents ? 11 : 10);
+}
+#endif
+
 int crabc_x86_64_directory_streams_probe(void)
 {
     char long_name[CRABC_DIRECTORY_NAME_MAX + 1];
@@ -584,6 +797,10 @@ int crabc_x86_64_directory_streams_probe(void)
         status += 20;
         goto cleanup;
     }
+    if ((status = check_mutation_eof_and_descriptor_lifetime()) != 0) {
+        status += 100;
+        goto cleanup;
+    }
     if ((status = check_fdopendir()) != 0) {
         status += 30;
         goto cleanup;
@@ -600,6 +817,12 @@ int crabc_x86_64_directory_streams_probe(void)
         status = 52;
         goto cleanup;
     }
+#ifdef CRABC_DIRECTORY_STREAMS_FREESTANDING
+    if ((status = check_oversize_record()) != 0) {
+        status += 90;
+        goto cleanup;
+    }
+#endif
     if ((status = check_closedir_interrupted_close()) != 0) {
         status += 70;
         goto cleanup;

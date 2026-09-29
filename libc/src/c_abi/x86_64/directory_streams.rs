@@ -404,7 +404,10 @@ unsafe fn next_record(stream: *mut DirectoryStream) -> *mut Dirent {
         return ptr::null_mut();
     }
     let record_length = unsafe { ptr::read_unaligned(record.add(16) as *const u16) } as usize;
-    if record_length < LINUX_DIRENT64_HEADER_SIZE || record_length > remaining {
+    if record_length < LINUX_DIRENT64_HEADER_SIZE
+        || record_length > size_of::<Dirent>()
+        || record_length > remaining
+    {
         *position = *end;
         // SAFETY: selected malformed-record handling owns the C errno result.
         unsafe { errno::set_errno(EIO) };
