@@ -33,6 +33,12 @@
  * forked (a `_Fork` child changes its own IDs), and targeted by pthread_kill
  * and pthread_getschedparam, so the rendezvous meets threads entering and
  * leaving the process and threads inside a thread-list lookup.
+ *
+ * The `fork` subcase starts with two live threads after process-wide group
+ * and ID changes. A worker forks with both fork and _Fork. Each child observes
+ * the inherited credentials, changes its own groups and IDs, then reports
+ * EPERM when it attempts to regain root. Both surviving parent threads retain
+ * the original credentials.
  */
 
 #ifndef _GNU_SOURCE
@@ -799,6 +805,170 @@ static int run_divergent_case(int groups, int partial)
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
+struct fork_credentials {
+    struct credential_ids inherited;
+    struct credential_ids changed;
+    struct credential_ids rejected;
+    long inherited_groups;
+    long changed_groups;
+    long rejected_groups;
+    gid_t inherited_group_list[256];
+    gid_t changed_group_list[256];
+    gid_t rejected_group_list[256];
+    int setgroups_status;
+    int setresgid_status;
+    int setresuid_status;
+    int rejected_status;
+    int rejected_error;
+};
+
+struct fork_worker {
+    int use_fork;
+    int success;
+    struct fork_credentials child;
+    struct credential_ids parent_ids;
+    long parent_groups;
+    gid_t parent_group_list[256];
+};
+
+static int ids_match(const struct credential_ids *ids, uid_t real_uid,
+    uid_t effective_uid, uid_t saved_uid, gid_t real_gid,
+    gid_t effective_gid, gid_t saved_gid)
+{
+    return ids->real_uid == real_uid && ids->effective_uid == effective_uid &&
+        ids->saved_uid == saved_uid && ids->real_gid == real_gid &&
+        ids->effective_gid == effective_gid && ids->saved_gid == saved_gid;
+}
+
+/* The child can use raw pipe I/O after either fork entry. Its libc calls
+ * exercise the post-fork credential rendezvous with one surviving task. */
+static void fork_credential_child(int write_end)
+{
+    static const gid_t replacement[1] = { 7 };
+    struct fork_credentials report = { 0 };
+    int ok = capture_ids(&report.inherited);
+    report.inherited_groups = capture_group_list(report.inherited_group_list);
+    report.setgroups_status = setgroups(1, replacement);
+    report.setresgid_status = setresgid(31, 32, 33);
+    report.setresuid_status = setresuid(41, 42, 43);
+    ok = capture_ids(&report.changed) && ok;
+    report.changed_groups = capture_group_list(report.changed_group_list);
+    errno = 0;
+    report.rejected_status = setuid(0);
+    report.rejected_error = errno;
+    ok = capture_ids(&report.rejected) && ok;
+    report.rejected_groups = capture_group_list(report.rejected_group_list);
+    ok = raw_syscall3(SYS_write, write_end, (long)&report, sizeof(report)) ==
+        (long)sizeof(report) && ok;
+    _exit(ok ? 0 : 1);
+}
+
+static void *fork_credential_worker(void *argument)
+{
+    struct fork_worker *worker = argument;
+    int pipe_ends[2];
+    pid_t child;
+    int status = 0;
+    long received;
+    int parent_ids_ok;
+    int waited;
+
+    if (pipe(pipe_ends) != 0)
+        return NULL;
+    child = worker->use_fork ? fork() : _Fork();
+    if (child == 0) {
+        (void)raw_syscall3(SYS_close, pipe_ends[0], 0, 0);
+        fork_credential_child(pipe_ends[1]);
+    }
+    (void)close(pipe_ends[1]);
+    if (child < 0) {
+        (void)close(pipe_ends[0]);
+        return NULL;
+    }
+    received = raw_syscall3(SYS_read, pipe_ends[0], (long)&worker->child,
+        sizeof(worker->child));
+    (void)close(pipe_ends[0]);
+    worker->parent_groups = capture_group_list(worker->parent_group_list);
+    parent_ids_ok = capture_ids(&worker->parent_ids);
+    waited = waitpid(child, &status, 0) == child;
+    worker->success = received == (long)sizeof(worker->child) &&
+        parent_ids_ok && waited && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    return NULL;
+}
+
+static int run_fork_credential_case(int use_fork)
+{
+    static const gid_t groups[2] = { 5, 6 };
+    struct fork_worker worker = { .use_fork = use_fork };
+    struct credential_ids parent_before = { 0 };
+    struct credential_ids parent_after = { 0 };
+    gid_t parent_group_list[256] = { 0 };
+    gid_t parent_group_list_after[256] = { 0 };
+    long parent_groups;
+    long parent_groups_after;
+    pthread_t thread;
+
+    if (setgroups(2, groups) != 0 || setresgid(11, 12, 13) != 0 ||
+        setresuid(21, 0, 23) != 0 || !capture_ids(&parent_before))
+        return 0;
+    parent_groups = capture_group_list(parent_group_list);
+    if (pthread_create(&thread, NULL, fork_credential_worker, &worker) != 0 ||
+        pthread_join(thread, NULL) != 0 || !capture_ids(&parent_after))
+        return 0;
+    parent_groups_after = capture_group_list(parent_group_list_after);
+    if (!worker.success || parent_groups != 2 ||
+        parent_group_list[0] != 5 || parent_group_list[1] != 6 ||
+        !ids_match(&parent_before, 21, 0, 23, 11, 12, 13) ||
+        !ids_unchanged(&parent_before, &parent_after) ||
+        !ids_unchanged(&parent_before, &worker.parent_ids) ||
+        !group_lists_equal(parent_groups, parent_group_list,
+            parent_groups_after, parent_group_list_after) ||
+        !group_lists_equal(parent_groups, parent_group_list,
+            worker.parent_groups, worker.parent_group_list) ||
+        !group_lists_equal(parent_groups, parent_group_list,
+            worker.child.inherited_groups, worker.child.inherited_group_list) ||
+        !ids_unchanged(&parent_before, &worker.child.inherited) ||
+        worker.child.setgroups_status != 0 ||
+        worker.child.setresgid_status != 0 ||
+        worker.child.setresuid_status != 0 ||
+        !ids_match(&worker.child.changed, 41, 42, 43, 31, 32, 33) ||
+        worker.child.changed_groups != 1 ||
+        worker.child.changed_group_list[0] != 7 ||
+        worker.child.rejected_status != -1 ||
+        worker.child.rejected_error != EPERM ||
+        !ids_unchanged(&worker.child.changed, &worker.child.rejected) ||
+        !group_lists_equal(worker.child.changed_groups,
+            worker.child.changed_group_list, worker.child.rejected_groups,
+            worker.child.rejected_group_list))
+        return 0;
+    printf("credentials-fork %s: inherited=21/0/23,11/12/13,groups=2:5,6 "
+        "child=41/42/43,31/32/33,groups=1:7 regain=%d/%d "
+        "parent=21/0/23,11/12/13,groups=2:5,6\n",
+        use_fork ? "fork" : "_Fork", worker.child.rejected_status,
+        worker.child.rejected_error);
+    fflush(stdout);
+    return 1;
+}
+
+static int run_fork_credentials(void)
+{
+    pid_t child;
+    int status;
+    int use_fork;
+
+    for (use_fork = 0; use_fork <= 1; ++use_fork) {
+        child = fork();
+        if (child < 0)
+            return 0;
+        if (child == 0)
+            _exit(run_fork_credential_case(use_fork) ? 0 : 1);
+        if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
+            WEXITSTATUS(status) != 0)
+            return 0;
+    }
+    return 1;
+}
+
 static int equals(const char *left, const char *right)
 {
     while (*left == *right) {
@@ -871,6 +1041,15 @@ int main(int argc, char **argv)
             !run_divergent_case(0, 1) || !run_divergent_case(1, 1))
             return 9;
         puts("credentials-divergence: first failure aborts; partial success kills");
+        return 0;
+    }
+    if (equals(argv[1], "fork")) {
+        struct credential_ids ids = { 0 };
+        if (!capture_ids(&ids) || ids.real_uid != 0 || ids.effective_uid != 0)
+            return 10;
+        if (!run_fork_credentials())
+            return 11;
+        puts("credentials-fork: children mutate independently of both parent threads");
         return 0;
     }
     if (equals(argv[1], "aliases")) {
