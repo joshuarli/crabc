@@ -433,8 +433,8 @@ are not transferable passes for a different revision.
   versus 86 in pinned C; local malloc remains 80 versus 87. Neither change is
   qualifying timing evidence.
   Contended timing is not qualifying. Allocator M3 passes every own
-  component and waits only on M2; M4 passes including the unmodified
-  upstream `test-api.c` through the native adapter. M6 now source-differentiates
+  component and waits only on M2; M4 passes including all 47 distinct checks
+  from the unmodified upstream `test-api.c` through the native adapter. M6 now source-differentiates
   quiescent non-main and isolated process-main Heap block visitation across 138
   adapter keys, including all five exported Heap membership and region queries
   and the quiescent page-utilization query; seventeen
