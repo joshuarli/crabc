@@ -947,12 +947,12 @@ impl HeapTheapStatistics {
 
     /// Pinned `mi_huge_page_alloc` records the physical page block size and
     /// one huge-page allocation immediately after the fresh page succeeds.
+    /// These allocation events remain enabled at statistics level zero;
+    /// only the matching free debit depends on the selected level.
     #[inline]
     pub(crate) fn malloc_huge_allocated(&self, block_size: usize) {
-        if STAT_LEVEL > 0 {
-            self.malloc_huge.update_owner_local(bytes_to_i64(block_size));
-            self.malloc_huge_count.increase_owner_local(1);
-        }
+        self.malloc_huge.update_owner_local(bytes_to_i64(block_size));
+        self.malloc_huge_count.increase_owner_local(1);
     }
 
     /// Pinned `mi_stat_free` subtracts the physical huge-page block size from
@@ -1695,6 +1695,32 @@ impl HeapTheapStatistics {
 mod tests {
     use super::*;
     use std::println;
+
+    #[cfg(not(feature = "mi-stat-1"))]
+    #[test]
+    fn level_zero_huge_allocation_survives_owner_merge_and_free() {
+        let owner = HeapTheapStatistics::new();
+        let heap = HeapTheapStatistics::new();
+        let process = HeapTheapStatistics::new();
+        owner.malloc_huge_allocated(589_824);
+        heap.merge_from_and_reset(&owner);
+        process.merge_from_and_reset(&heap);
+        let allocated = final_stat_count(&process.malloc_huge);
+        assert_eq!(allocated.total, 589_824);
+        assert_eq!(allocated.peak, 589_824);
+        assert_eq!(allocated.current, 589_824);
+        assert_eq!(i64_load_relaxed(&process.malloc_huge_count.total), 1);
+        assert_eq!(final_stat_count(&owner.malloc_huge).current, 0);
+
+        owner.malloc_huge_freed(589_824);
+        heap.merge_from_and_reset(&owner);
+        process.merge_from_and_reset(&heap);
+        let freed = final_stat_count(&process.malloc_huge);
+        assert_eq!(freed.total, 589_824);
+        assert_eq!(freed.peak, 589_824);
+        assert_eq!(freed.current, 589_824);
+        assert_eq!(i64_load_relaxed(&process.malloc_huge_count.total), 1);
+    }
 
     #[cfg(feature = "mi-stat-1")]
     #[test]
