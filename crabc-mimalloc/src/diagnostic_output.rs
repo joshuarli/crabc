@@ -3190,6 +3190,52 @@ mod tests {
     }
 
     #[test]
+    fn delayed_output_saturation_trace_for_pinned_c_comparison() {
+        struct Deliveries {
+            count: usize,
+            lengths: [usize; 2],
+            hashes: [u64; 2],
+        }
+
+        unsafe extern "C" fn capture(message: *const c_char, argument: *mut c_void) {
+            // SAFETY: registration and delivery are serialized in this test;
+            // the stack record and each source C string outlive the call.
+            let deliveries = unsafe { &mut *argument.cast::<Deliveries>() };
+            assert!(deliveries.count < 2);
+            let index = deliveries.count;
+            deliveries.count += 1;
+            deliveries.hashes[index] = 14_695_981_039_346_656_037;
+            for byte in unsafe { CStr::from_ptr(message) }.to_bytes() {
+                deliveries.lengths[index] += 1;
+                deliveries.hashes[index] = (deliveries.hashes[index] ^ u64::from(*byte))
+                    .wrapping_mul(1_099_511_628_211);
+            }
+        }
+
+        let mut owner = output_owner();
+        let mut deliveries = Deliveries { count: 0, lengths: [0; 2], hashes: [0; 2] };
+        let mut fragment = [b'x'; 901];
+        fragment[900] = 0;
+        for _ in 0..19 {
+            // SAFETY: no registration overlaps this dispatch; the source
+            // fragment is NUL terminated and copied into the delayed buffer.
+            unsafe { owner.raw_message(source_message(&fragment)) };
+        }
+        // SAFETY: the stack record stays live until all synchronous output
+        // deliveries finish, and this is the only registration.
+        unsafe { owner.register_output(Some(capture), (&mut deliveries as *mut Deliveries).cast()) };
+        // SAFETY: registration completed before this direct callback delivery.
+        unsafe { owner.raw_message(source_message(b"tail\n\0")) };
+
+        std::println!("CRABC_MI_M7_DELAYED_OUTPUT_SATURATION_TRACE_BEGIN");
+        std::println!("deliveries={}", deliveries.count);
+        for index in 0..deliveries.count {
+            std::println!("delivery.{index}={},{:016x}", deliveries.lengths[index], deliveries.hashes[index]);
+        }
+        std::println!("CRABC_MI_M7_DELAYED_OUTPUT_SATURATION_TRACE_END");
+    }
+
+    #[test]
     fn huge_reservation_failure_formats_requested_gib_count() {
         for (pages, expected) in [
             (1, b"failed to reserve 1 GiB huge pages\n".as_slice()),

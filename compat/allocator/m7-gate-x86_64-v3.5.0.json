@@ -52,6 +52,10 @@
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--options-differential"],
       "scope": "Separate pinned-C and Rust processes install the same environment images and compare every descriptor's name, legacy spelling, KiB unit, value, init state, and mi_option_get_size; the TID-normalized deprecated/invalid warning fragments in table order; the boolean-versus-mi_option_set store path (guarded coupling); the clamp, size, set_default, enable/disable, and out-of-range results; the complete mi_options_print_out output; the _mi_error_message gate (verbose bypass, show_errors, max_errors cap, error prefix), handler argument and code, and default errno result; and the thread-prefix formatting."
     },
+    "differential:delayed-output-saturation": {
+      "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--delayed-output-saturation-differential"],
+      "scope": "Source-built pinned C and Rust retain the first 16383 bytes of nineteen 900-byte pre-registration messages, deliver that truncated buffer exactly once on custom output registration, then deliver a later message separately. Callback lengths and byte hashes match."
+    },
     "differential:show-errors-profile": {
       "command": [
         "python3",
@@ -349,6 +353,7 @@
       "evidence": [
         "differential:deferred-free-callback",
         "differential:diagnostic-output-owner",
+        "differential:delayed-output-saturation",
         "differential:options-environment",
         "differential:error-reporting-sites",
         "differential:thread-init-failure",

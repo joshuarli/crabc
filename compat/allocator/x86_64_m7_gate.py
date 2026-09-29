@@ -62,6 +62,10 @@ OPTIONS_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_options_oracle.c"
 OPTIONS_RUST_TEST = "diagnostic_output::tests::source_options_trace_for_pinned_c_comparison"
 OPTIONS_TRACE_BEGIN = "CRABC_MI_M7_OPTIONS_TRACE_BEGIN"
 OPTIONS_TRACE_END = "CRABC_MI_M7_OPTIONS_TRACE_END"
+DELAYED_OUTPUT_SATURATION_ORACLE = harness.ALLOCATOR_ROOT / "x86_64_m7_delayed_output_saturation_oracle.c"
+DELAYED_OUTPUT_SATURATION_TEST = "diagnostic_output::tests::delayed_output_saturation_trace_for_pinned_c_comparison"
+DELAYED_OUTPUT_SATURATION_TRACE_BEGIN = "CRABC_MI_M7_DELAYED_OUTPUT_SATURATION_TRACE_BEGIN"
+DELAYED_OUTPUT_SATURATION_TRACE_END = "CRABC_MI_M7_DELAYED_OUTPUT_SATURATION_TRACE_END"
 # Every environment image both halves must replay. A scenario absent from both
 # traces would otherwise compare equal.
 OPTIONS_SCENARIOS = (
@@ -885,8 +889,9 @@ def run_trace_differential(
             raise harness.HarnessError(f"pinned C {subject} trace repeated trace key {key}")
         c_trace[key] = derive(str(c_execution["stderr"]))
     rust_trace_image = parse_options_trace(str(rust_execution["stdout"]), f"Rust {subject} trace", begin, end)
-    require_complete(c_trace, f"pinned C {subject} trace")
-    require_complete(rust_trace_image, f"Rust {subject} trace")
+    if require_complete is not None:
+        require_complete(c_trace, f"pinned C {subject} trace")
+        require_complete(rust_trace_image, f"Rust {subject} trace")
     compare_options_traces(c_trace, rust_trace_image)
     report = {
         "compared_key_count": len(c_trace),
@@ -1041,6 +1046,16 @@ def run_options_differential(offline: bool) -> dict[str, Any]:
         offline, subject="options", oracle=OPTIONS_ORACLE, test=OPTIONS_RUST_TEST,
         begin=OPTIONS_TRACE_BEGIN, end=OPTIONS_TRACE_END,
         require_complete=require_complete_options_trace, report_name="options-environment.json",
+    )
+
+
+def run_delayed_output_saturation_differential(offline: bool) -> dict[str, Any]:
+    return run_trace_differential(
+        offline, subject="delayed-output-saturation", oracle=DELAYED_OUTPUT_SATURATION_ORACLE,
+        test=DELAYED_OUTPUT_SATURATION_TEST, begin=DELAYED_OUTPUT_SATURATION_TRACE_BEGIN,
+        end=DELAYED_OUTPUT_SATURATION_TRACE_END,
+        require_complete=None,
+        report_name="delayed-output-saturation.json",
     )
 
 
@@ -2141,6 +2156,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode.add_argument("--gate", choices=GATE_IDS, help="execute only this gate's runnable evidence")
     mode.add_argument("--options-differential", action="store_true",
         help="run the pinned-C/Rust options/environment differential")
+    mode.add_argument("--delayed-output-saturation-differential", action="store_true",
+        help="compare the pinned-C/Rust delayed output cap and custom callback transition")
     mode.add_argument("--show-errors-profile-differential", action="store_true",
         help="run the pinned-C/Rust MI_SHOW_ERRORS options and diagnostics differential")
     mode.add_argument("--option-effects-differential", action="store_true",
@@ -2215,6 +2232,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.options_differential:
         report = run_options_differential(arguments.offline)
         print(f"M7 options/environment differential passed: {report['compared_key_count']} keys")
+        return 0
+    if arguments.delayed_output_saturation_differential:
+        report = run_delayed_output_saturation_differential(arguments.offline)
+        print(f"M7 delayed output saturation differential passed: {report['compared_key_count']} keys")
         return 0
     if arguments.show_errors_profile_differential:
         report = run_show_errors_profile_differential(arguments.offline)
