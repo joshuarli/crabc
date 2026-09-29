@@ -111,7 +111,6 @@ mkdir -p "$ROOT_DIR/.work/x86_64/tmp" \
 work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-event-descriptors.XXXXXX")"
 report_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-event-descriptors/run.XXXXXX")"
 chmod 755 "$report_dir"
-trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-event-descriptors-reference"
 candidate="$work_dir/crabc-static-event-descriptors-candidate"
@@ -131,6 +130,36 @@ candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"
+
+retain_artifacts() {
+    local status=$?
+    local artifact
+
+    trap - EXIT
+    if [ -f "$reference" ]; then
+        cp "$reference" "$report_dir/musl.elf" || status=1
+    fi
+    if [ -f "$candidate" ]; then
+        cp "$candidate" "$report_dir/crabc.elf" || status=1
+    fi
+    (
+        cd "$ROOT_DIR"
+        sha256sum compat/x86_64/libc_event_descriptors_probe.c \
+            compat/x86_64/libc_event_descriptors_start.S \
+            compat/x86_64/run_libc_event_descriptors.sh
+    ) >"$report_dir/source.sha256" || status=1
+    (
+        cd "$report_dir"
+        for artifact in musl.elf crabc.elf musl.records crabc.records \
+            musl.status crabc.status musl.stderr crabc.stderr observations.txt \
+            expected-observations.txt; do
+            if [ -f "$artifact" ]; then sha256sum "$artifact"; fi
+        done
+    ) >"$report_dir/artifact.sha256" || status=1
+    rm -rf -- "$work_dir" || status=1
+    exit "$status"
+}
+trap retain_artifacts EXIT
 
 mkdir "$reference_work" "$candidate_work"
 cd "$ROOT_DIR"
@@ -154,7 +183,7 @@ else
     printf '%s\n' "$reference_status" >"$report_dir/musl.status"
     fail "pinned-musl reference execution exited $reference_status; receipt: $report_dir"
 fi
-[ "$(wc -c <"$report_dir/musl.records")" -eq 208 ] ||
+[ "$(wc -c <"$report_dir/musl.records")" -eq 336 ] ||
     fail "pinned-musl reference emitted an unexpected receipt length; receipt: $report_dir"
 
 # Pin one codegen unit for the instruction-level syscall ABI judge below.
@@ -277,6 +306,22 @@ od -v -An -tx8 -w8 "$report_dir/musl.records" | awk '{ print $1 }' \
     >"$report_dir/observations.txt"
 cat >"$report_dir/expected-observations.txt" <<'EOF'
 0000000000000001
+a1b2c3d4e5f60718
+0000000000000001
+8172635445362718
+0000000000000003
+0000000000000001
+1029384756abcdef
+0000000000000001
+fedcba6547382910
+0000000000006261
+0000000000000001
+0000000000000001
+0123456789abcdef
+0000000000000010
+0000000000000011
+0000000000000002
+0000000000000001
 0000000000000002
 0000000000000001
 13579bdf2468ace0
@@ -305,20 +350,4 @@ fedcba9876543210
 EOF
 cmp -s "$report_dir/expected-observations.txt" "$report_dir/observations.txt" ||
     fail "pinned-musl observations differ from the event-descriptor contract; receipt: $report_dir"
-cp "$reference" "$report_dir/musl.elf"
-cp "$candidate" "$report_dir/crabc.elf"
-(
-    cd "$ROOT_DIR"
-    sha256sum compat/x86_64/libc_event_descriptors_probe.c \
-        compat/x86_64/libc_event_descriptors_start.S \
-        compat/x86_64/run_libc_event_descriptors.sh
-) >"$report_dir/source.sha256"
-(
-    cd "$report_dir"
-    sha256sum musl.elf crabc.elf musl.records crabc.records \
-        musl.status crabc.status musl.stderr crabc.stderr observations.txt \
-        expected-observations.txt \
-        >artifact.sha256
-)
-
 printf 'x86 static crabc-libc event descriptors: PASS (%s)\n' "$report_dir"

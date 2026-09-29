@@ -446,6 +446,199 @@ cleanup:
     return status;
 }
 
+static int check_epoll_oneshot_edge_rearm(void)
+{
+    struct rearm_receipt {
+        uint64_t counter_first_events;
+        uint64_t counter_first_token;
+        uint64_t counter_rearmed_events;
+        uint64_t counter_rearmed_token;
+        uint64_t counter_value;
+        uint64_t pipe_first_events;
+        uint64_t pipe_first_token;
+        uint64_t pipe_rearmed_events;
+        uint64_t pipe_rearmed_token;
+        uint64_t pipe_bytes;
+        uint64_t edge_first_events;
+        uint64_t edge_second_events;
+        uint64_t edge_token;
+        uint64_t hangup_events;
+        uint64_t duplicate_add_errno;
+        uint64_t deleted_modify_errno;
+    } receipt = { 0 };
+    const uint64_t counter_first_token = UINT64_C(0xa1b2c3d4e5f60718);
+    const uint64_t counter_rearmed_token = UINT64_C(0x8172635445362718);
+    const uint64_t pipe_first_token = UINT64_C(0x1029384756abcdef);
+    const uint64_t pipe_rearmed_token = UINT64_C(0xfedcba6547382910);
+    const uint64_t edge_token = UINT64_C(0x0123456789abcdef);
+    struct epoll_event interest = { 0 };
+    struct epoll_event observed = { 0 };
+    eventfd_t value = 0;
+    char bytes[2] = { 0 };
+    int pipe_fds[2] = { -1, -1 };
+    int epoll = -1;
+    int counter = -1;
+    int status = 0;
+
+    _Static_assert(sizeof(struct rearm_receipt) == 128,
+        "epoll rearm observation record has sixteen 64-bit fields");
+    epoll = epoll_create1(EPOLL_CLOEXEC);
+    counter = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (epoll < 0 || counter < 0 ||
+        raw_syscall3(SYS_pipe2, (long)(uintptr_t)pipe_fds,
+            O_NONBLOCK | O_CLOEXEC, 0) != 0) {
+        status = 1;
+        goto cleanup;
+    }
+
+    interest.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
+    interest.data.u64 = counter_first_token;
+    if (epoll_ctl(epoll, EPOLL_CTL_ADD, counter, &interest) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 0 ||
+        eventfd_write(counter, 1) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLIN ||
+        observed.data.u64 != counter_first_token) {
+        status = 2;
+        goto cleanup;
+    }
+    receipt.counter_first_events = observed.events;
+    receipt.counter_first_token = observed.data.u64;
+    if (eventfd_write(counter, 2) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 0) {
+        status = 3;
+        goto cleanup;
+    }
+    interest.data.u64 = counter_rearmed_token;
+    if (epoll_ctl(epoll, EPOLL_CTL_MOD, counter, &interest) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLIN ||
+        observed.data.u64 != counter_rearmed_token) {
+        status = 4;
+        goto cleanup;
+    }
+    receipt.counter_rearmed_events = observed.events;
+    receipt.counter_rearmed_token = observed.data.u64;
+    if (eventfd_read(counter, &value) != 0 || value != 3 ||
+        epoll_wait(epoll, &observed, 1, 0) != 0) {
+        status = 4;
+        goto cleanup;
+    }
+    receipt.counter_value = value;
+    errno = 0;
+    if (!expect_error(epoll_ctl(epoll, EPOLL_CTL_ADD, counter, &interest),
+            EEXIST)) {
+        status = 5;
+        goto cleanup;
+    }
+    receipt.duplicate_add_errno = (uint64_t)errno;
+
+    interest.data.u64 = pipe_first_token;
+    if (epoll_ctl(epoll, EPOLL_CTL_ADD, pipe_fds[0], &interest) != 0 ||
+        write(pipe_fds[1], "a", 1) != 1 ||
+        epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLIN || observed.data.u64 != pipe_first_token) {
+        status = 6;
+        goto cleanup;
+    }
+    receipt.pipe_first_events = observed.events;
+    receipt.pipe_first_token = observed.data.u64;
+    if (write(pipe_fds[1], "b", 1) != 1 ||
+        epoll_wait(epoll, &observed, 1, 0) != 0) {
+        status = 6;
+        goto cleanup;
+    }
+    interest.data.u64 = pipe_rearmed_token;
+    if (epoll_ctl(epoll, EPOLL_CTL_MOD, pipe_fds[0], &interest) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLIN ||
+        observed.data.u64 != pipe_rearmed_token) {
+        status = 7;
+        goto cleanup;
+    }
+    receipt.pipe_rearmed_events = observed.events;
+    receipt.pipe_rearmed_token = observed.data.u64;
+    if (read(pipe_fds[0], bytes, sizeof(bytes)) != (ssize_t)sizeof(bytes) ||
+        bytes[0] != 'a' || bytes[1] != 'b' ||
+        epoll_wait(epoll, &observed, 1, 0) != 0) {
+        status = 7;
+        goto cleanup;
+    }
+    receipt.pipe_bytes = (uint64_t)(unsigned char)bytes[0] |
+        ((uint64_t)(unsigned char)bytes[1] << 8);
+
+    interest.events = EPOLLIN | EPOLLET;
+    interest.data.u64 = edge_token;
+    if (epoll_ctl(epoll, EPOLL_CTL_MOD, pipe_fds[0], &interest) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 0 ||
+        write(pipe_fds[1], "c", 1) != 1 ||
+        epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLIN || observed.data.u64 != edge_token) {
+        status = 8;
+        goto cleanup;
+    }
+    receipt.edge_first_events = observed.events;
+    if (epoll_wait(epoll, &observed, 1, 0) != 0 ||
+        write(pipe_fds[1], "d", 1) != 1 ||
+        epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLIN || observed.data.u64 != edge_token) {
+        status = 9;
+        goto cleanup;
+    }
+    receipt.edge_second_events = observed.events;
+    receipt.edge_token = observed.data.u64;
+    if (read(pipe_fds[0], bytes, sizeof(bytes)) != (ssize_t)sizeof(bytes) ||
+        bytes[0] != 'c' || bytes[1] != 'd' ||
+        epoll_wait(epoll, &observed, 1, 0) != 0) {
+        status = 9;
+        goto cleanup;
+    }
+    if (close(pipe_fds[1]) != 0) {
+        status = 10;
+        goto cleanup;
+    }
+    pipe_fds[1] = -1;
+    if (epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLHUP || observed.data.u64 != edge_token) {
+        status = 11;
+        goto cleanup;
+    }
+    receipt.hangup_events = observed.events;
+    if (epoll_wait(epoll, &observed, 1, 0) != 0) {
+        status = 11;
+        goto cleanup;
+    }
+    if (epoll_ctl(epoll, EPOLL_CTL_DEL, pipe_fds[0], 0) != 0) {
+        status = 12;
+        goto cleanup;
+    }
+    errno = 0;
+    if (!expect_error(epoll_ctl(epoll, EPOLL_CTL_MOD, pipe_fds[0],
+            &interest), ENOENT)) {
+        status = 13;
+        goto cleanup;
+    }
+    receipt.deleted_modify_errno = (uint64_t)errno;
+    if (close(pipe_fds[0]) != 0) {
+        status = 14;
+        goto cleanup;
+    }
+    pipe_fds[0] = -1;
+    if (epoll_wait(epoll, &observed, 1, 0) != 0) {
+        status = 14;
+        goto cleanup;
+    }
+    if (write(STDOUT_FILENO, &receipt, sizeof(receipt)) !=
+        (ssize_t)sizeof(receipt)) status = 15;
+
+cleanup:
+    if (pipe_fds[1] >= 0 && close(pipe_fds[1]) != 0 && status == 0) status = 16;
+    if (pipe_fds[0] >= 0 && close(pipe_fds[0]) != 0 && status == 0) status = 17;
+    if (counter >= 0 && close(counter) != 0 && status == 0) status = 18;
+    if (epoll >= 0 && close(epoll) != 0 && status == 0) status = 19;
+    return status;
+}
+
 static int check_epoll_descriptor_reuse(void)
 {
     struct descriptor_reuse_receipt {
@@ -963,6 +1156,8 @@ int crabc_x86_64_event_descriptors_probe(void)
     if (status != 0) return status;
     status = check_eventfd_epoll_readiness();
     if (status != 0) return 300 + status;
+    status = check_epoll_oneshot_edge_rearm();
+    if (status != 0) return 700 + status;
     status = check_epoll_descriptor_reuse();
     if (status != 0) return 500 + status;
     status = check_inotify();
