@@ -41,10 +41,14 @@ def trace(output: str, language: str) -> dict[str, int]:
         raise harness.HarnessError(f'{language} decommit fault roster differs: {sorted(values)}')
     return values
 
-def c_oracle(offline: bool) -> tuple[dict[str, int], dict]:
+def c_oracle(offline: bool, profile: str = 'release') -> tuple[dict[str, int], dict]:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
+    configuration = list(harness.CONFIGURATION_PROFILES['release'])
+    if profile == 'debug-1':
+        configuration = [flag for flag in configuration if flag not in ('-DNDEBUG', '-DMI_DEBUG=0', '-DMI_STAT=0')]
+        configuration.extend(('-DMI_DEBUG=1', '-DMI_STAT=2'))
     with harness.temporary_directory(prefix='m2-process-owned-decommit-fault-') as temporary:
         source = harness.safe_extract(archive, Path(temporary), pin['archive_root'])
         binary = ARTIFACTS / 'pinned-c-oracle'
@@ -52,7 +56,7 @@ def c_oracle(offline: bool) -> tuple[dict[str, int], dict]:
             '-ftls-model=initial-exec', '-DMI_SHARED_LIB', '-DMI_SHARED_LIB_EXPORT',
             '-DMI_LIBC_MUSL=1', '-DMI_PRIM_HAS_PROCESS_ATTACH=1',
             '-I', str(source / 'include'), '-I', str(source / 'src'),
-            *harness.CONFIGURATION_PROFILES['release'], str(FIXTURE),
+            *configuration, str(FIXTURE),
             '-Wl,--wrap=madvise', '-pthread', '-o', str(binary)]
         build = harness.command_record(command, cwd=source, timeout_seconds=300)
         harness.require_success(build, 'pinned C process-owned decommit fault build')
@@ -63,7 +67,34 @@ def c_oracle(offline: bool) -> tuple[dict[str, int], dict]:
     return trace(str(execution['stdout']), 'C'), {
         'build': build, 'run': execution}
 
-def rust_receiver() -> tuple[dict[str, int], dict]:
+def rust_receiver(profile: str = 'release') -> tuple[dict[str, int], dict]:
+    if profile == 'debug-1':
+        build = harness.command_record(['cargo', 'test', '--locked', '--target',
+            'x86_64-unknown-linux-musl', '-p', 'crabc-mimalloc', '--lib',
+            '--no-default-features', '--features', 'mi-debug-1', '--no-run',
+            '--message-format=json'], cwd=ROOT, timeout_seconds=3600)
+        harness.require_success(build, 'Rust debug decommit receiver build')
+        candidates = []
+        for line in str(build['stdout']).splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (event.get('reason') == 'compiler-artifact'
+                    and event.get('target', {}).get('name') == 'crabc_mimalloc'
+                    and event.get('profile', {}).get('test') is True
+                    and isinstance(event.get('executable'), str)):
+                candidates.append(event['executable'])
+        if len(candidates) != 1:
+            raise harness.HarnessError('debug decommit needs one exact library test executable')
+        execution = harness.command_record([candidates[0], TEST, '--exact', '--nocapture',
+            '--test-threads=1'], cwd=ROOT, timeout_seconds=120)
+        (ARTIFACTS / 'rust.stdout').write_text(str(execution['stdout']))
+        (ARTIFACTS / 'rust.stderr').write_text(str(execution['stderr']))
+        harness.require_success(execution, 'Rust debug decommit receiver')
+        if harness.parse_rust_test_count(str(execution['stdout'])) != 1:
+            raise harness.HarnessError('debug decommit receiver did not execute exactly once')
+        return trace(str(execution['stdout']), 'RUST'), {'build': build, 'run': execution}
     command = ['python3', 'compat/allocator/run_unit_x86_64.py', TEST]
     execution = harness.command_record(command, cwd=ROOT, timeout_seconds=900)
     (ARTIFACTS / 'rust.stdout').write_text(str(execution['stdout']))
@@ -71,7 +102,7 @@ def rust_receiver() -> tuple[dict[str, int], dict]:
     harness.require_success(execution, 'Rust process-owned decommit fault receiver')
     return trace(str(execution['stdout']), 'RUST'), {'run': execution}
 
-def expected_values() -> dict[str, int]:
+def expected_values(profile: str = 'release') -> dict[str, int]:
     return {
         'allocated': 1, 'full_owner': 1, 'page_size': 4096,
         'mapping_size': 12288, 'request_offset': 19, 'request_size': 8197,
@@ -86,15 +117,17 @@ def expected_values() -> dict[str, int]:
         'warning_reserved': 12288, 'warning_committed': 12288,
         'warning_commit_calls': 0, 'warning_mmap_calls': 1,
         'reserved_after_retry': 12288, 'committed_after_retry': 12288,
-        'commits_after_retry': 0, 'mmaps_after_retry': 1,
+        'commits_after_retry': 2 if profile == 'debug-1' else 0, 'mmaps_after_retry': 1,
         'terminal_reserved': 0, 'terminal_committed': 0, 'terminal_unmapped': 1,
     }
 
-def run(offline: bool, c_only: bool) -> dict:
+def run(offline: bool, c_only: bool, profile: str = 'release') -> dict:
     harness.require_native_x86_64()
-    c, c_commands = c_oracle(offline)
-    rust, rust_commands = ({}, {}) if c_only else rust_receiver()
-    expected = expected_values()
+    if profile not in ('release', 'debug-1'):
+        raise harness.HarnessError('unsupported process-owned decommit profile')
+    c, c_commands = c_oracle(offline, profile)
+    rust, rust_commands = ({}, {}) if c_only else rust_receiver(profile)
+    expected = expected_values(profile)
     mismatches = [f'c.{field}' for field, value in expected.items() if c[field] != value]
     if not c_only:
         mismatches.extend(f'rust.{field}' for field, value in expected.items() if rust[field] != value)
@@ -106,7 +139,7 @@ def run(offline: bool, c_only: bool) -> dict:
     report = {'status': 'matched' if not mismatches else 'red', 'c': c, 'rust': rust,
         'mismatches': mismatches, 'c_commands': c_commands,
         'rust_commands': rust_commands,
-        'scope': 'regular process-owned OS mapping, failed contained MADV_DONTNEED, exact warning-time VM state, retained page, successful same-range retry, and terminal release'}
+        'scope': 'regular process-owned OS mapping, failed contained MADV_DONTNEED, exact warning-time VM state, retained page, successful same-range retry, and terminal release; debug checks physical protection after advisory failure and success before explicit recommit'}
     (ARTIFACTS / 'evidence.json').write_text(json.dumps(report, indent=2, sort_keys=True) + '\n')
     print(f'process-owned decommit fault {report["status"].upper()} ({len(FIELDS)} fields)')
     return report
@@ -115,5 +148,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--c-only', action='store_true')
+    parser.add_argument('--profile', choices=('release', 'debug-1'), default='release')
     args = parser.parse_args()
-    raise SystemExit(0 if run(args.offline, args.c_only)['status'] == 'matched' else 1)
+    raise SystemExit(0 if run(args.offline, args.c_only, args.profile)['status'] == 'matched' else 1)

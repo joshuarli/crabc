@@ -2831,14 +2831,22 @@ impl<'arena> ArenaView<'arena> {
                     )
                 }
             }
-            None => match unsafe { os::decommit_arena_range(page_size, start, size) } {
-                Ok(Some(DecommitOutcome::DoesNotNeedRecommit)) | Ok(None) => false,
-                // In the frozen Linux release profile, `_mi_prim_decommit`
-                // sets `needs_recommit = false` after its MADV_DONTNEED
-                // attempt even when that advisory reports an error. The
-                // source reports the error but consumes this purge work, with
-                // the live mapping still accessible and committed.
-                Err(_) => false,
+            None => {
+                let Some(subprocess) = NonNull::new(arena.subprocess) else {
+                    return self.restore_failed_purge(slice_index, slice_count);
+                };
+                match unsafe { os::decommit_arena_range(page_size, start, size) } {
+                    Ok(Some(DecommitOutcome::DoesNotNeedRecommit)) | Ok(None) => false,
+                    Ok(Some(DecommitOutcome::NeedsRecommit)) => {
+                        // SAFETY: this published arena retains its subprocess;
+                        // source debug charges only a successful advisory span.
+                        unsafe { subprocess.as_ref() }.vm_statistics().committed_decrease(size);
+                        true
+                    },
+                    // An advisory error retains accounting while source debug
+                    // protection may still require recommit before later reuse.
+                    Err(_) => os::decommit_needs_recommit(),
+                }
             },
         };
         if (needs_recommit || !all_committed)

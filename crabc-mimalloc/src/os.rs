@@ -764,10 +764,10 @@ impl<'a> VmProcess<'a> {
     /// Applies the no-callback purge policy to a caller-owned external arena.
     ///
     /// The raw span advances purge statistics before its complete contained
-    /// pages are considered for decommit or reset. The normal Linux decommit
-    /// advisory never transfers ownership or lowers committed statistics,
-    /// even when the advisory fails. An empty contained range preserves the
-    /// decommit branch's initial needs-recommit result.
+    /// pages are considered for decommit or reset. Decommit keeps ownership;
+    /// the active debug profile lowers committed accounting only after a
+    /// successful advisory and requires recommit even after advisory failure.
+    /// An empty contained range preserves the initial needs-recommit result.
     ///
     /// # Safety
     ///
@@ -782,7 +782,7 @@ impl<'a> VmProcess<'a> {
         address: *mut u8,
         length: usize,
         allow_reset: bool,
-        _stat_size: usize,
+        stat_size: usize,
     ) -> Result<bool> {
         if self.policy.purge_delay_milliseconds() < 0 {
             return Ok(false);
@@ -799,14 +799,17 @@ impl<'a> VmProcess<'a> {
             // the raw advisory. This helper cannot release that mapping.
             return match unsafe { decommit_arena_range(page_size, address, length) } {
                 Ok(Some(DecommitOutcome::DoesNotNeedRecommit)) => Ok(false),
+                Ok(Some(DecommitOutcome::NeedsRecommit)) => {
+                    self.subprocess.vm_statistics().committed_decrease(stat_size);
+                    Ok(true)
+                },
                 Err(error) => {
                     self.policy.source_warning(SourceFormattedMessage::os_decommit_failure(
                         error, normalized.addr(), normalized_length,
                     ));
-                    // The Linux primitive stores false after its advisory
-                    // attempt, including an error; the caller retains the
-                    // external mapping and its release responsibility.
-                    Ok(false)
+                    // Source debug protection still ran after the advisory
+                    // error. Only the advisory success can lower accounting.
+                    Ok(decommit_needs_recommit())
                 }
                 Ok(None) => Ok(true),
             };
@@ -1955,14 +1958,57 @@ pub(crate) enum CommitOutcome {
     NotKnownZero,
 }
 
-/// The default-release decommit outcome on Linux.
+/// The source Linux decommit flag after its advisory attempt.
 ///
-/// `_mi_prim_decommit` uses `MADV_DONTNEED` and leaves the mapping accessible
-/// for this profile, so a subsequent reuse does not require `mprotect`.
+/// Release leaves pages accessible. The active x86 debug profile attempts
+/// protection and requires callers to recommit even if protection fails.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DecommitOutcome {
     /// The range may be reused without a recommit transition.
     DoesNotNeedRecommit,
+    /// The source requires recommit before reuse; protection is best effort.
+    NeedsRecommit,
+}
+
+/// Preserve the paused target profile while selecting source debug protection
+/// for native x86. This flag survives advisory and protection failures.
+#[inline]
+pub(crate) const fn decommit_needs_recommit() -> bool {
+    cfg!(all(target_arch = "x86_64", feature = "mi-debug-1"))
+}
+
+/// Applies the Linux advisory followed by its source debug protection.
+///
+/// # Safety
+///
+/// The complete-page range must remain in one live mapping with no Rust
+/// references observing its bytes during the discard/protection transitions.
+#[inline]
+unsafe fn decommit_primitive(address: *mut u8, length: usize) -> Result<DecommitOutcome> {
+    #[cfg(test)]
+    fault::record_advice_range(address, length, MADV_DONTNEED);
+    let advice = fault_before(FaultPoint::Decommit).and_then(|()| {
+        // SAFETY: the caller owns this live, complete-page range and excludes
+        // references while Linux discards its backing contents.
+        unsafe { crabc_core::mm::madvise_raw(address, length, MADV_DONTNEED) }
+    });
+    if decommit_needs_recommit() {
+        #[cfg(test)]
+        fault::record_protection_range(address, length, PROT_NONE);
+        // Protection follows even a failed advisory. Its error cannot replace
+        // the source advisory result or suppress the caller's recommit flag.
+        let _ = fault_before(FaultPoint::Protect).and_then(|()| {
+            // SAFETY: the same live page range remains exclusively owned;
+            // protection changes accessibility without transferring ownership.
+            unsafe { crabc_core::mm::mprotect_raw(address, length, PROT_NONE) }
+        });
+    }
+    advice?;
+    Ok(if decommit_needs_recommit() {
+        DecommitOutcome::NeedsRecommit
+    } else {
+        DecommitOutcome::DoesNotNeedRecommit
+    })
 }
 
 /// The fixed Linux `_mi_os_reuse` outcome.
@@ -2107,14 +2153,9 @@ pub(crate) unsafe fn decommit_arena_range(
     let Some((address, length)) = contained_unowned_page_range(page_size, address, length)? else {
         return Ok(None);
     };
-    #[cfg(test)]
-    fault::record_advice_range(address, length, MADV_DONTNEED);
-    fault_before(FaultPoint::Decommit)?;
-    // SAFETY: the caller proves that the conservatively page-contained range
-    // stays within its live external mapping and carries no Rust references
-    // across this raw Linux advisory.
-    unsafe { crabc_core::mm::madvise_raw(address, length, MADV_DONTNEED) }?;
-    Ok(Some(DecommitOutcome::DoesNotNeedRecommit))
+    // SAFETY: the caller retains every complete contained page in its live
+    // mapping and excludes references during both source transitions.
+    unsafe { decommit_primitive(address, length) }.map(Some)
 }
 
 /// One failed aligned-map attempt.
@@ -3072,12 +3113,11 @@ impl Mapping {
         self.commit_for_process(process, offset, length, stat_already_committed)
     }
 
-    /// Releases physical contents for complete pages inside the requested range.
+    /// Discards complete contained pages and applies source debug protection.
     ///
-    /// This follows the conservative `mi_os_page_align_area_conservative`
-    /// branch of `mi_os_decommit_ex`. The frozen normal-release Unix primitive
-    /// uses `MADV_DONTNEED` and reports `needs_recommit = false`; it does not
-    /// install `PROT_NONE` because `MI_DEBUG == 0` and `MI_SECURE <= 2`.
+    /// Release retains accessibility; native x86 debug requests recommit and
+    /// attempts `PROT_NONE` even when the advisory fails. Protection errors do
+    /// not replace the advisory's result or transfer the mapping's ownership.
     #[inline]
     pub(crate) fn decommit(
         &self,
@@ -3087,38 +3127,32 @@ impl Mapping {
         let Some(range) = self.page_range(offset, length, PageAlignment::Contained)? else {
             return Ok(None);
         };
-        // Record before the injection point, like the C oracle's `madvise`
-        // link wrapper, so an injected failure is still an observed call.
-        #[cfg(test)]
-        fault::record_advice_range(range.address, range.length, MADV_DONTNEED);
-        fault_before(FaultPoint::Decommit)?;
-
-        // SAFETY: `range` is a complete-page subrange of this live mapping.
-        // `MADV_DONTNEED` may discard its bytes but creates no Rust reference
-        // and does not change the mapping's ownership or accessibility.
-        unsafe { crabc_core::mm::madvise_raw(range.address, range.length, MADV_DONTNEED) }?;
-        Ok(Some(DecommitOutcome::DoesNotNeedRecommit))
+        // SAFETY: this still-live owner contains the complete page range;
+        // neither source transition creates or retains a Rust reference.
+        unsafe { decommit_primitive(range.address, range.length) }.map(Some)
     }
 
     /// Runs `mi_os_decommit_ex` with its explicit source statistic span.
     ///
-    /// The frozen Linux primitive returns `DoesNotNeedRecommit`, so it does
-    /// not lower committed statistics. A profile with a different primitive
-    /// needs a separate qualified source boundary; this native x86 contract
-    /// must not manufacture that outcome from a generic boolean.
+    /// Only successful decommit that requires recommit lowers committed
+    /// statistics, by the caller's explicit source span rather than the
+    /// complete-page primitive range. Advisory failure retains accounting.
     pub(crate) fn decommit_for_process(
         &self,
         process: VmProcess<'_>,
         offset: usize,
         length: usize,
-        _stat_size: usize,
+        stat_size: usize,
     ) -> Result<Option<DecommitOutcome>> {
         let range = self.page_range(offset, length, PageAlignment::Contained)?;
         let result = self.decommit(offset, length);
+        if result == Ok(Some(DecommitOutcome::NeedsRecommit)) {
+            process.subprocess.vm_statistics().committed_decrease(stat_size);
+        }
         if let (Some(range), Err(error)) = (range, &result) {
             // The conservative range is the primitive's exact attempted span.
-            // A failed advisory retains mapping ownership and statistics, but
-            // its source warning is emitted before the purge caller returns.
+            // A failed advisory retains ownership and accounting even when
+            // debug protection removed access; warn before the caller returns.
             process.policy.source_warning(SourceFormattedMessage::os_decommit_failure(
                 *error, range.address.addr(), range.length,
             ));
@@ -3194,11 +3228,11 @@ impl Mapping {
     /// supply a source-owned typed commit capability; silently treating it as
     /// reset/decommit would erase its failure ownership.
     ///
-    /// Pinned `src/os.c:663-679` intentionally consumes an advisory failure
-    /// here. The normal Unix `_mi_prim_decommit` stores `needs_recommit =
-    /// false` after its `madvise` result, including an error; only a
-    /// conservative empty range retains `_mi_os_purge_ex`'s initial true.
-    /// A failed reset also reports false. Those result values drive the arena
+    /// The source intentionally consumes advisory failure here. Release
+    /// decommit reports no recommit requirement; debug decommit requires it
+    /// even after advisory failure because protection is attempted anyway.
+    /// A conservative empty range retains the initialized true result.
+    /// A failed reset reports false. Those result values drive the arena
     /// commitment bitmap; the retained [`Mapping`] remains the only retry
     /// owner in every case. Do not surface the primitive error through this
     /// source-shaped policy result.
@@ -3225,11 +3259,11 @@ impl Mapping {
                 return Ok(true);
             }
             return match self.decommit_for_process(process, offset, length, stat_size) {
-                // `src/prim/unix/prim.c:544-548` assigns false after the
-                // `MADV_DONTNEED` call even when that call returned an error.
-                // `_mi_os_purge_ex` returns that source output while retaining
-                // this mapping for the caller's later retry or release.
-                Ok(Some(DecommitOutcome::DoesNotNeedRecommit)) | Err(_) => Ok(false),
+                Ok(Some(DecommitOutcome::DoesNotNeedRecommit)) => Ok(false),
+                Ok(Some(DecommitOutcome::NeedsRecommit)) => Ok(true),
+                // The profile flag survives advisory failure; debug may have
+                // removed access while this owner retains the exact mapping.
+                Err(_) => Ok(decommit_needs_recommit()),
                 // The preflight above normally makes this unreachable, but
                 // keep the source's initialized local result if the mapping
                 // can produce a conservative empty range again.
@@ -11393,6 +11427,128 @@ mod tests {
         fault.set(fault::Plan::disabled());
     }
 
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-1"))]
+    fn debug_mapping_permissions(address: *mut u8) -> std::string::String {
+        let maps = std::fs::read_to_string("/proc/self/maps").expect("read native mapping protections");
+        for line in maps.lines() {
+            let mut fields = line.split_whitespace();
+            let range = fields.next().unwrap();
+            let (start, end) = range.split_once('-').unwrap();
+            let start = usize::from_str_radix(start, 16).unwrap();
+            let end = usize::from_str_radix(end, 16).unwrap();
+            if start <= address.addr() && address.addr() < end {
+                return fields.next().unwrap().into();
+            }
+        }
+        panic!("the retained mapping must remain physically present");
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-1"))]
+    #[test]
+    fn debug_decommit_protects_contained_pages_until_exact_recommit() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let startup = current_startup();
+        let page = startup.page_size().bytes();
+        let mut mapping = Mapping::map_anonymous(startup, 3 * page, MapAccess::Committed)
+            .expect("map three committed pages for debug decommit");
+        let base = mapping.base().unwrap();
+        // SAFETY: the fresh mapping owns all three writable pages; these
+        // sentinel bytes lie outside the complete interior decommit page.
+        unsafe {
+            base.write_volatile(0x31);
+            base.add(2 * page).write_volatile(0x32);
+        }
+        assert_eq!(mapping.decommit(19, 2 * page + 5),
+            Ok(Some(DecommitOutcome::NeedsRecommit)));
+        assert_eq!(debug_mapping_permissions(base.wrapping_add(page)), "---p",
+            "debug decommit must physically remove access to its contained page");
+        assert_eq!(debug_mapping_permissions(base), "rw-p");
+        assert_eq!(debug_mapping_permissions(base.wrapping_add(2 * page)), "rw-p");
+        assert_eq!(mapping.commit(page, page), Ok(Some(CommitOutcome::NotKnownZero)));
+        assert_eq!(debug_mapping_permissions(base.wrapping_add(page)), "rw-p");
+        // SAFETY: exact recommit restored read/write access before observing
+        // discarded bytes; both neighboring sentinels remain outside it.
+        unsafe {
+            assert_eq!(base.add(page).read_volatile(), 0);
+            assert_eq!(base.read_volatile(), 0x31);
+            assert_eq!(base.add(2 * page).read_volatile(), 0x32);
+            base.add(page).write_volatile(0x33);
+        }
+        mapping.unmap().expect("release the full debug decommit owner once");
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-1"))]
+    #[test]
+    fn debug_decommit_failure_protects_without_charging_and_recommit_retries() {
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let mut mapping = Mapping::map_for_process(process, config, 3 * page, 1,
+            MapAccess::Committed, false, None).unwrap();
+        let base = mapping.base().unwrap();
+        let before = subprocess.vm_statistics().snapshot();
+        let span = 2 * page + 5;
+        fault.set(fault::Plan::at(fault::Point::Decommit, 1, Errno::IO));
+        assert_eq!(mapping.decommit_for_process(process, 19, span, span), Err(Errno::IO));
+        assert_eq!(debug_mapping_permissions(base.wrapping_add(page)), "---p");
+        assert_eq!(mapping.base(), Ok(base));
+        assert_eq!(subprocess.vm_statistics().snapshot().committed_current, before.committed_current);
+        fault.set(fault::Plan::at(fault::Point::Decommit, 1, Errno::IO));
+        assert_eq!(mapping.purge_for_process(process, 19, span, false, span), Ok(true));
+        assert_eq!(debug_mapping_permissions(base.wrapping_add(page)), "---p");
+        assert_eq!(subprocess.vm_statistics().snapshot().committed_current, before.committed_current);
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+        assert_eq!(mapping.commit_for_process(process, page, page, page), Err(Errno::NOMEM));
+        assert_eq!(debug_mapping_permissions(base.wrapping_add(page)), "---p");
+        let failed_commit = subprocess.vm_statistics().snapshot();
+        assert_eq!(failed_commit.commit_calls, before.commit_calls + 1);
+        assert_eq!(failed_commit.committed_current, before.committed_current);
+        fault.set(fault::Plan::disabled());
+        assert_eq!(mapping.commit_for_process(process, page, page, page),
+            Ok(Some(CommitOutcome::NotKnownZero)));
+        assert_eq!(subprocess.vm_statistics().snapshot().committed_current, before.committed_current);
+        assert_eq!(mapping.decommit_for_process(process, 19, span, span),
+            Ok(Some(DecommitOutcome::NeedsRecommit)));
+        assert_eq!(debug_mapping_permissions(base.wrapping_add(page)), "---p");
+        let decommitted = subprocess.vm_statistics().snapshot();
+        assert_eq!(decommitted.committed_current, before.committed_current - span as i64);
+        assert_eq!(decommitted.reserved_current, before.reserved_current);
+        assert_eq!(mapping.commit_for_process(process, 19, span, 0),
+            Ok(Some(CommitOutcome::NotKnownZero)));
+        assert_eq!(subprocess.vm_statistics().snapshot().committed_current, before.committed_current);
+        mapping.unmap_for_process(process, 3 * page, false).unwrap();
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-debug-1"))]
+    #[test]
+    fn debug_decommit_protection_failure_is_best_effort_and_keeps_source_accounting() {
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let mut mapping = Mapping::map_for_process(process, config, page, 1,
+            MapAccess::Committed, false, None).unwrap();
+        let base = mapping.base().unwrap();
+        let before = subprocess.vm_statistics().snapshot();
+        fault.set(fault::Plan::at(fault::Point::Protect, 1, Errno::NOMEM));
+        assert_eq!(mapping.decommit_for_process(process, 0, page, page),
+            Ok(Some(DecommitOutcome::NeedsRecommit)));
+        assert_eq!(fault.observed(), 1);
+        assert_eq!(debug_mapping_permissions(base), "rw-p");
+        assert_eq!(subprocess.vm_statistics().snapshot().committed_current,
+            before.committed_current - page as i64);
+        fault.set(fault::Plan::disabled());
+        assert_eq!(mapping.commit_for_process(process, 0, page, 0),
+            Ok(Some(CommitOutcome::NotKnownZero)));
+        assert_eq!(subprocess.vm_statistics().snapshot().committed_current, before.committed_current);
+        mapping.unmap_for_process(process, page, false).unwrap();
+    }
+
     #[test]
     fn native_protection_failures_preserve_mapping_owner_and_retry() {
         let fault = fault::install(fault::Plan::disabled());
@@ -14973,15 +15129,27 @@ mod tests {
         let advice = fault.capture_advice_range();
         let first_failed = mapping.decommit_for_process(process, request_offset,
             decommit_size, decommit_size) == Err(Errno::IO);
-        // SAFETY: the injected failure returned before the advisory and left
-        // this byte accessible under the same retained mapping owner.
+        if decommit_needs_recommit() {
+            #[cfg(all(target_arch = "x86_64", feature = "mi-debug-1"))]
+            assert_eq!(debug_mapping_permissions(base.wrapping_add(page)), "---p");
+            mapping.commit_for_process(process, page, page, page).unwrap();
+        }
+        // SAFETY: release kept access after advisory failure; debug explicitly
+        // recommitted the still-accounted page before inspecting its contents.
         let retained_after_failure = unsafe {
             core::ptr::read_volatile(base.wrapping_add(page)) == 0x51
         };
         let failed_attempts = fault.observed();
         fault.set(fault::Plan::disabled());
         let retry_succeeded = mapping.decommit_for_process(process, request_offset,
-            decommit_size, decommit_size) == Ok(Some(DecommitOutcome::DoesNotNeedRecommit));
+            decommit_size, decommit_size) == Ok(Some(if decommit_needs_recommit() {
+                DecommitOutcome::NeedsRecommit
+            } else { DecommitOutcome::DoesNotNeedRecommit }));
+        if decommit_needs_recommit() {
+            #[cfg(all(target_arch = "x86_64", feature = "mi-debug-1"))]
+            assert_eq!(debug_mapping_permissions(base.wrapping_add(page)), "---p");
+            mapping.commit_for_process(process, request_offset, decommit_size, 0).unwrap();
+        }
         let (ranges, advice_calls) = advice.ranges().unwrap();
         drop(advice);
         let mut residence = 0u8;
@@ -14989,7 +15157,8 @@ mod tests {
         let mapped_after_retry = unsafe {
             crabc_core::mm::mincore_raw(base.wrapping_add(page), page, &mut residence)
         }.is_ok();
-        // SAFETY: the successful Linux advisory leaves this owned page writable.
+        // SAFETY: release retained access; debug explicitly recommitted the
+        // exact caller span before this write into the retained mapping.
         let writable_after_retry = unsafe {
             core::ptr::write_volatile(base.wrapping_add(page), 0x52);
             core::ptr::read_volatile(base.wrapping_add(page)) == 0x52

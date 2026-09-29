@@ -63,6 +63,26 @@ static void capture_warning(const char* message, void* ignored) {
   warning_mmap_calls = observed_subproc->stats.mmap_calls.total;
 }
 
+#if MI_DEBUG >= 1
+static bool is_debug_protected(const unsigned char* address) {
+  FILE* maps = fopen("/proc/self/maps", "r");
+  if (maps == NULL) return false;
+  char line[256];
+  bool protected = false;
+  while (fgets(line, sizeof(line), maps) != NULL) {
+    unsigned long start, end;
+    char permissions[5];
+    if (sscanf(line, "%lx-%lx %4s", &start, &end, permissions) == 3
+        && start <= (uintptr_t)address && (uintptr_t)address < end) {
+      protected = strcmp(permissions, "---p") == 0;
+      break;
+    }
+  }
+  fclose(maps);
+  return protected;
+}
+#endif
+
 #define EMIT(name, value) printf(name "=%lld\n", (long long)(value))
 int main(void) {
   setvbuf(stdout, NULL, _IONBF, 0);
@@ -96,8 +116,18 @@ int main(void) {
   fail_first_advice = true;
   capture_advice = true;
   const bool first = _mi_os_decommit(subproc, base + request_offset, decommit_size);
+#if MI_DEBUG >= 1
+  if (!is_debug_protected(base + page)) return 20;
+  bool first_zero = false;
+  if (!_mi_os_commit_ex(subproc, base + page, page, &first_zero, page)) return 21;
+#endif
   const bool retained_after_failure = base[page] == 0x51;
   const bool retry = _mi_os_decommit(subproc, base + request_offset, decommit_size);
+#if MI_DEBUG >= 1
+  if (!is_debug_protected(base + page)) return 22;
+  bool retry_zero = false;
+  if (!_mi_os_commit_ex(subproc, base + request_offset, decommit_size, &retry_zero, 0)) return 23;
+#endif
   capture_advice = false;
   unsigned char residence = 0;
   const bool mapped_after_retry = mincore(base + page, page, &residence) == 0;
