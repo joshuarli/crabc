@@ -59,12 +59,13 @@ assert_fixture_tls_capacity() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep nm objdump readelf rustup sort; do require_tool "$tool"; done
+for tool in ar awk cargo cmp diff grep nm objdump readelf rustup sha256sum sort; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_integer_parse_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-integer-parse.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-integer-parse.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 target_dir="$work_dir/cargo-target"; archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-integer-parse-reference"; candidate="$work_dir/crabc-static-integer-parse-candidate"
@@ -73,6 +74,7 @@ selected_symbols="$work_dir/selected-c-abi-symbols"; expected_symbols="$work_dir
 symbols="$work_dir/candidate-symbols"; headers="$work_dir/candidate-program-headers"
 dynamic="$work_dir/candidate-dynamic"; relocs="$work_dir/candidate-relocations"; disassembly="$work_dir/candidate-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"
+reference_records="$work_dir/musl.records"; candidate_records="$work_dir/crabc.records"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
@@ -82,7 +84,7 @@ for header in errno.h inttypes.h stdint.h limits.h stddef.h stdlib.h features.h 
 done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_integer_parse_probe.c -o "$reference"
-"$reference" || fail "pinned-musl integer parsing fixture failed"
+"$reference" >"$reference_records" || fail "pinned-musl integer parsing fixture failed"
 
 build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
@@ -145,5 +147,34 @@ grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
 if grep -Eq 'crabc_core|mimalloc|sha_crypt' "$symbols" "$disassembly"; then
     fail "candidate selects an unowned runtime dependency"
 fi
-"$candidate" || fail "freestanding integer parsing fixture failed"
+"$candidate" >"$candidate_records" || fail "freestanding integer parsing fixture failed"
+[ -s "$reference_records" ] || fail "pinned-musl fixture emitted no differential record"
+if ! cmp -s "$reference_records" "$candidate_records"; then
+    diff -u "$reference_records" "$candidate_records" >&2 || true
+    fail "pinned-musl and freestanding integer parsing records differ"
+fi
+grep -Eq '^integer-parse-differential-fnv1a64=[0-9a-f]{16}$' "$candidate_records" ||
+    fail "candidate lacks the guarded integer parsing record"
+
+mkdir -p "$ROOT_DIR/.work/x86_64/reports"
+report_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-integer-parse.XXXXXX")"
+chmod 755 "$report_dir"
+cp "$reference" "$report_dir/musl-reference.elf"
+cp "$candidate" "$report_dir/crabc-candidate.elf"
+cp "$reference_records" "$report_dir/musl.records"
+cp "$candidate_records" "$report_dir/crabc.records"
+cp "$headers" "$report_dir/crabc-program-headers.txt"
+cp "$selected_symbols" "$report_dir/selected-c-abi-symbols.txt"
+cp "$ROOT_DIR/compat/x86_64/libc_integer_parse_probe.c" "$report_dir/libc_integer_parse_probe.c"
+cp "$ROOT_DIR/compat/x86_64/libc_integer_parse_start.S" "$report_dir/libc_integer_parse_start.S"
+cp "$ROOT_DIR/compat/x86_64/run_libc_integer_parse.sh" "$report_dir/run_libc_integer_parse.sh"
+(
+    cd "$report_dir"
+    sha256sum musl-reference.elf crabc-candidate.elf musl.records crabc.records \
+        crabc-program-headers.txt selected-c-abi-symbols.txt \
+        libc_integer_parse_probe.c libc_integer_parse_start.S \
+        run_libc_integer_parse.sh >sha256sums.txt
+)
+cat "$candidate_records"
+printf 'integer parsing physical receipt: %s\n' "$report_dir"
 printf 'x86 static libc integer parsing: PASS\n'
