@@ -59,6 +59,7 @@ PUBLIC_WEAK_WORKLOAD = ("#define _GNU_SOURCE\n#include <sys/timeb.h>\n#include <
                         "if (ftime(&stamp) != 0) return 1; "
                         "return getloadavg(loads, 3) < 0 ? 2 : 0; }\n")
 ERRNO_IMPORT_NAME = "__errno_location"
+OWNED_MEMORY_IMPORTS = ("memcpy", "memset")
 ERRNO_WORKLOAD = ("#define _GNU_SOURCE 1\n#include <stdlib.h>\n#include <stdio.h>\n#include <wchar.h>\n"
                   "#include <assert.h>\n#include <fmtmsg.h>\n#include <glob.h>\n"
                   "#include <locale.h>\n#include <spawn.h>\n#include <time.h>\n"
@@ -916,14 +917,64 @@ def _public_weak_relocations(transcript: str, name: str, kind: str) -> list[dict
     return rows
 
 
-def _ordinary_import_relocations(transcript: str, name: str) -> list[dict[str, object]]:
+def _ordinary_relocation_sections(image: bytes) -> dict[int, str]:
+    """Map relocation file offsets to full executable section names.
+
+    readelf shortens long Rust monomorphization names in relocation headings.
+    The relocation section's ELF sh_info still identifies its exact target.
+    """
+    require(len(image) >= 64 and image[:6] == b"\x7fELF\x02\x01",
+            "ordinary importer is not ELF64 little-endian")
+    table = struct.unpack_from("<Q", image, 40)[0]
+    entry_size, count, names_index = struct.unpack_from("<HHH", image, 58)
+    require(entry_size >= 64 and count > 0 and names_index < count
+            and table + entry_size * count <= len(image),
+            "ordinary importer section table differs")
+    headers = [struct.unpack_from("<IIQQQQIIQQ", image, table + index * entry_size)
+               for index in range(count)]
+    names_header = headers[names_index]
+    require(names_header[1] == 3 and names_header[4] + names_header[5] <= len(image),
+            "ordinary importer section names differ")
+    names = image[names_header[4]:names_header[4] + names_header[5]]
+
+    def section_name(header: tuple[int, ...]) -> str:
+        require(header[0] < len(names), "ordinary importer section name leaves string table")
+        end = names.find(b"\0", header[0])
+        require(end >= 0, "ordinary importer section name is unterminated")
+        return names[header[0]:end].decode("utf-8")
+
+    result: dict[int, str] = {}
+    for header in headers:
+        if header[1] != 4:
+            continue
+        target_index = header[7]
+        require(target_index < count and header[4] + header[5] <= len(image),
+                "ordinary importer relocation section differs")
+        target = headers[target_index]
+        target_name = section_name(target)
+        if not (target[1] == 1 and target[2] & 4 and target_name.startswith(".text")):
+            continue
+        require(header[4] not in result and section_name(header) == ".rela" + target_name,
+                "ordinary importer relocation target differs")
+        result[header[4]] = target_name
+    return result
+
+
+def _ordinary_import_relocations(transcript: str, name: str,
+                                 *, image: bytes | None = None) -> list[dict[str, object]]:
     """Retain call relocations for one archive import, including their call form."""
+    sections = _ordinary_relocation_sections(image) if image is not None else None
     section: str | None = None
     calls = []
     for line in transcript.splitlines():
-        header = re.match(r"^Relocation section '\.rela(\.text(?:\.[^']+)?)'", line)
+        header = re.match(r"^Relocation section '(\.rela\.text(?:\.[^']+)?)' at offset 0x([0-9a-f]+)", line)
         if header:
-            section = header.group(1)
+            if sections is None:
+                section = header.group(1)[5:]
+            else:
+                section = sections.get(int(header.group(2), 16))
+                require(section is not None and (".rela" + section).startswith(header.group(1)),
+                        "ordinary import relocation heading differs from ELF target")
             continue
         if line.startswith("Relocation section "):
             section = None
@@ -1139,13 +1190,16 @@ def _ordinary_final_member_calls(image: bytes, *, archive_member: str,
                 require(source_load in register_calls and opcode[:3] == source_load,
                         f"ordinary {name} GOT register load differs")
                 register = register_calls[source_load]
-                source_offsets = [index for index in range(offset + 4, len(source) - len(register) + 1)
+                next_load = next((index for index in range(offset + 4, len(source) - 6)
+                                  if source[index:index + 3] == source_load), len(source))
+                source_offsets = [index for index in range(offset + 4, next_load - len(register) + 1)
                                   if source[index:index + len(register)] == register]
-                require(len(source_offsets) == 1,
-                        f"ordinary {name} source register call is missing or ambiguous")
-                register_address = section_address + source_offsets[0]
-                require(_public_weak_virtual_bytes(image, register_address, len(register),
-                                                   elf_type, executable=True) == register,
+                require(source_offsets,
+                        f"ordinary {name} source register call is missing")
+                register_addresses = [section_address + index for index in source_offsets]
+                require(all(_public_weak_virtual_bytes(image, address, len(register),
+                                                       elf_type, executable=True) == register
+                            for address in register_addresses),
                         f"ordinary {name} final register call differs")
                 slot = call_address + 7 + struct.unpack_from("<i", opcode, 3)[0]
                 branch_kind = "register-indirect-call"
@@ -1170,7 +1224,10 @@ def _ordinary_final_member_calls(image: bytes, *, archive_member: str,
                     "got_slot": slot, "target_address": provider_address,
                     "branch_kind": branch_kind}
             if register is not None:
-                call["register_call_address"] = register_address
+                if len(register_addresses) == 1:
+                    call["register_call_address"] = register_addresses[0]
+                else:
+                    call["register_call_addresses"] = register_addresses
         resolved.append(call)
     return {"resolved_calls": resolved, "discarded_calls": discarded}
 
@@ -1465,10 +1522,30 @@ def _ordinary_shared_provider_calls(image: bytes, *, symbol_text: str,
                           "got_slot": slot, "target_address": provider_address,
                           "branch_kind": "indirect-call" if opcode == b"\xff\x15" else "tail-jump"})
     require(calls, "ordinary shared provider has no final call")
-    register_calls = [call["register_call_address"] for call in calls
-                      if "register_call_address" in call]
-    require(len(register_calls) == len(set(register_calls)),
-            "ordinary shared provider register call is ambiguous")
+    # One register call may follow several loads of the same provider slot in
+    # a large function. Every possible load still names the same target; keep
+    # their addresses while counting the call instruction once.
+    register_calls: dict[int, dict[str, object]] = {}
+    direct_calls = []
+    for call in calls:
+        register_address = call.get("register_call_address")
+        if register_address is None:
+            direct_calls.append(call)
+            continue
+        previous = register_calls.get(register_address)
+        if previous is None:
+            register_calls[register_address] = call
+            continue
+        require(all(previous[field] == call[field] for field in
+                    ("function", "got_slot", "target_address", "branch_kind")),
+                "ordinary shared provider register call has conflicting loads")
+        loads = set(previous.get("equivalent_load_addresses", [previous["call_address"]]))
+        loads.add(call["call_address"])
+        register_calls[register_address] = {
+            **(call if call["call_address"] > previous["call_address"] else previous),
+            "equivalent_load_addresses": sorted(loads),
+        }
+    calls = direct_calls + list(register_calls.values())
     require(slots == {call["got_slot"] for call in calls},
             "ordinary shared provider has an unreferenced GOT slot")
     return calls
@@ -1824,6 +1901,9 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
                                retained_link_stems: Mapping[str, str] | None = None,
                                shared_inlined_owner_leaves: tuple[str, str] | None = None) -> dict[str, object]:
     """Bind all archive callers of one ordinary import to final libc providers."""
+    bulk_memory = name in OWNED_MEMORY_IMPORTS
+    require(not bulk_memory or shared_call_inventory,
+            f"ordinary {name} requires complete shared call inventory")
     facts = json_object(elf_facts_report, f"{name} ELF facts")["facts"]
     members = facts["candidate-static"]
     runtime = report["inputs"]["c_runtime_import_bindings"]
@@ -1909,10 +1989,12 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                          text=True, check=False)
         require(relocations.returncode == 0, f"ordinary {name} source relocations unreadable")
-        calls = _ordinary_import_relocations(relocations.stdout, name)
+        calls = _ordinary_import_relocations(relocations.stdout, name, image=selected.stdout)
         is_c = member["member_index"] == c_member["member_index"]
         expected_kind = "R_X86_64_PLT32" if is_c or required_importer_section else "R_X86_64_GOTPCREL"
-        require(all(call["kind"] == expected_kind for call in calls)
+        require(all(call["kind"] in ({"R_X86_64_PLT32", "R_X86_64_GOTPCREL"}
+                                      if bulk_memory and not is_c else {expected_kind})
+                    for call in calls)
                 and (required_importer_section is None
                      or (not is_c and len(calls) == required_source_call_count
                          and all(call["section"] == required_importer_section for call in calls))),
@@ -2030,7 +2112,7 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
                                   for mode in STATIC_MODES)}
     shared_calls = []
     if shared_call_inventory:
-        require(independent_retained_work is not None,
+        require(independent_retained_work is not None or bulk_memory,
                 f"ordinary {name} whole-image call inventory lacks retained links")
         inlined_calls = []
         source_functions = {function for item in imported
@@ -2047,7 +2129,7 @@ def ordinary_import_resolution(report: Mapping[str, Any], *, report_path: Path,
             shared_image, symbol_text=shared_symbols.stdout,
             relocations=shared_relocations.stdout, provider_address=shared_address,
             source_functions=source_functions,
-            all_defined_callers=shared_inlined_owner_leaves is not None)
+            all_defined_callers=shared_inlined_owner_leaves is not None or bulk_memory)
         if inlined_calls:
             owners = {call["function"]: call["source_function"] for call in inlined_calls}
             require({(call["function"], call["call_address"], call["got_slot"],

@@ -5499,6 +5499,13 @@ def native_c_allocator_boundary_adapter(report_path: Path | None, *, facts: Mapp
             dynamic_product=paths['dynamic_product'], elf_facts_report=paths['elf_report'],
             name='getrusage',
         )
+        memory_import_resolutions = {
+            name: native_c_allocator_boundary.ordinary_import_resolution(
+                report, report_path=report_path, static_product=paths['static_product'],
+                dynamic_product=paths['dynamic_product'], elf_facts_report=paths['elf_report'],
+                name=name, shared_call_inventory=True,
+            ) for name in native_c_allocator_boundary.OWNED_MEMORY_IMPORTS
+        }
     except (KeyError, TypeError, ValueError, OSError, native_c_allocator_boundary.AllocatorBoundaryError) as error:
         raise SelectionError(f'native C allocator errno import resolution rejected: {error}') from error
     selected_products = {
@@ -5530,7 +5537,8 @@ def native_c_allocator_boundary_adapter(report_path: Path | None, *, facts: Mapp
                                         'abort': abort_import_resolution,
                                         'fputs': fputs_import_resolution,
                                         'getenv': getenv_import_resolution,
-                                        'getrusage': getrusage_import_resolution},
+                                        'getrusage': getrusage_import_resolution,
+                                        **memory_import_resolutions},
         'limits': list(C_ALLOCATOR_BOUNDARY_LIMITS),
     }
 
@@ -9007,9 +9015,11 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
     """
     scan_call_count = {'mbrtowc': 1, 'mbsinit': 1, 'fmodl': 2}.get(name)
     scan_caller = scan_call_count is not None
+    bulk_memory = name in native_c_allocator_boundary.OWNED_MEMORY_IMPORTS
     independent = name in {'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close'}
     require(name in {'__errno_location', 'abort', 'fputs', 'getenv', 'getrusage',
-                     'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close'}
+                     'mbrtowc', 'mbsinit', 'fmodl', 'aio_suspend', 'aio_cancel', 'close',
+                     *native_c_allocator_boundary.OWNED_MEMORY_IMPORTS}
             and (projection_override is not None) == independent,
             'ordinary import identity differs')
     companion = exact(companion, {
@@ -9060,11 +9070,13 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                 and item['shared_caller_functions'],
                 'ordinary archive importer evidence differs')
         if name in {'abort', 'fputs', 'getenv', 'getrusage', 'mbrtowc', 'mbsinit', 'fmodl',
-                    'aio_suspend', 'aio_cancel', 'close'}:
+                    'aio_suspend', 'aio_cancel', 'close'} or bulk_memory:
             kind = ('R_X86_64_PLT32' if scan_caller or member['member_index'] == c_member['member_index']
                     else 'R_X86_64_GOTPCREL')
             require(all(type(call) is dict and set(call) == {'section', 'offset', 'kind'}
-                        and call['kind'] == kind for call in item['source_calls']),
+                        and call['kind'] in ({'R_X86_64_PLT32', 'R_X86_64_GOTPCREL'}
+                                             if bulk_memory and kind != 'R_X86_64_PLT32'
+                                             else {kind}) for call in item['source_calls']),
                     'ordinary import source call form differs')
             if scan_caller:
                 caller = ('crabc_owned_scan_decfloat' if name == 'fmodl'
@@ -9141,13 +9153,13 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
     shared = exact(projection['shared_final'], {
         'provider_address', 'importers', *({'tls_symbol_offset', 'tls_segment_size',
                                           'tls_relocation_slot'} if tls_claim else set()),
-        *({'provider_calls'} if name in {'aio_cancel', 'close'} else set()),
+        *({'provider_calls'} if name in {'aio_cancel', 'close'} or bulk_memory else set()),
     }, 'ordinary shared final')
     require(type(shared['provider_address']) is int and shared['provider_address'] > 0
             and [item.get('member') for item in shared['importers']] ==
                 [item['member'] for item in importers]
             and all(type(item.get('calls')) is list
-                    and (item['calls'] or name == 'aio_cancel')
+                    and (item['calls'] or name == 'aio_cancel' or bulk_memory)
                     and all(call.get('target_address') == shared['provider_address']
                             for call in item['calls'])
                     for item in shared['importers']),
@@ -9159,7 +9171,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                             for call in item['calls'])
                     for item, source in zip(shared['importers'], importers)),
                 'owned scanf shared call roster differs')
-    if name in {'aio_cancel', 'close'}:
+    if name in {'aio_cancel', 'close'} or bulk_memory:
         all_calls = [call for item in shared['importers'] for call in item['calls']]
         require(type(shared['provider_calls']) is list and shared['provider_calls']
                 and (same(all_calls, shared['provider_calls']) if name == 'aio_cancel'
@@ -9218,7 +9230,7 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
             linked = exact(linked, {'member', 'resolved_calls', 'discarded_calls'},
                            f'ordinary {mode} importer calls')
             calls = linked['resolved_calls']
-            require(type(calls) is list and (calls or name == 'aio_cancel')
+            require(type(calls) is list and (calls or name == 'aio_cancel' or bulk_memory)
                     and all(call.get('target_address') == link['provider_address']
                             and type(call.get('call_address')) is int for call in calls)
                     and sorted((call['section'], call['offset']) for call in
@@ -9230,14 +9242,15 @@ def _attach_ordinary_static_import(accounting: Mapping[str, Any],
                         and len({call['call_address'] for call in calls}) == scan_call_count,
                         f'owned scanf {mode} call roster differs')
             if name in {'abort', 'fputs', 'getenv', 'getrusage', 'mbrtowc', 'mbsinit', 'fmodl',
-                        'aio_suspend', 'aio_cancel', 'close'}:
+                        'aio_suspend', 'aio_cancel', 'close'} or bulk_memory:
                 kinds = {(call['section'], call['offset']): call['kind']
                          for call in source_item['source_calls']}
                 require(all((type(call.get('got_slot')) is int and call['got_slot'] > 0)
                             == (kinds[(call['section'], call['offset'])] == 'R_X86_64_GOTPCREL')
                             for call in calls),
                         f'ordinary {mode} GOT/direct call proof differs')
-        require(name != 'aio_cancel' or any(item['resolved_calls'] for item in link['importers']),
+        require((name != 'aio_cancel' and not bulk_memory)
+                or any(item['resolved_calls'] for item in link['importers']),
                 f'ordinary {mode} has no retained owned archive call')
     _remove_identity_requirements(accounting, record, [ORDINARY_IMPORT_REASON],
                                   description='ordinary import')
@@ -9257,10 +9270,12 @@ def attach_ordinary_static_imports(accounting: Mapping[str, Any],
         return []
     resolutions = companion.get('ordinary_import_resolutions')
     require(type(resolutions) is dict and set(resolutions) == {
-        '__errno_location', 'abort', 'fputs', 'getenv', 'getrusage'},
+        '__errno_location', 'abort', 'fputs', 'getenv', 'getrusage',
+        *native_c_allocator_boundary.OWNED_MEMORY_IMPORTS},
             'ordinary import resolution roster differs')
     joins = []
-    for name in ('__errno_location', 'abort', 'fputs', 'getenv', 'getrusage'):
+    for name in ('__errno_location', 'abort', 'fputs', 'getenv', 'getrusage',
+                 *native_c_allocator_boundary.OWNED_MEMORY_IMPORTS):
         joins.extend(_attach_ordinary_static_import(accounting, companion, name))
     return joins
 

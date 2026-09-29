@@ -24,6 +24,87 @@ SPEC.loader.exec_module(BOUNDARY)
 
 
 class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
+    def test_archive_relocation_uses_full_elf_section_name_when_readelf_truncates_it(self) -> None:
+        section = ".text." + "long_rust_monomorphization_" * 12
+        relocation = ".rela" + section
+        names = b"\0.shstrtab\0" + section.encode() + b"\0" + relocation.encode() + b"\0"
+        image = bytearray(0x500)
+        image[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<Q", image, 40, 0x80)
+        struct.pack_into("<HHH", image, 58, 64, 4, 1)
+        image[0x300:0x300 + len(names)] = names
+        struct.pack_into("<IIQQQQIIQQ", image, 0x80 + 64, 1, 3, 0, 0, 0x300, len(names), 0, 0, 1, 0)
+        struct.pack_into("<IIQQQQIIQQ", image, 0x80 + 128, 11, 1, 6, 0, 0x400, 16, 0, 0, 1, 0)
+        struct.pack_into("<IIQQQQIIQQ", image, 0x80 + 192, 12 + len(section), 4, 0, 0,
+                         0x200, 24, 0, 2, 8, 24)
+        truncated = section[:80]
+        transcript = (f"Relocation section '.rela{truncated}' at offset 0x200 contains 1 entry:\n"
+                      "0000000000000007  0000000100000004 R_X86_64_PLT32 "
+                      "0000000000000000 memcpy - 4\n")
+        self.assertEqual(BOUNDARY._ordinary_import_relocations(transcript, "memcpy", image=bytes(image)), [
+            {"section": section, "offset": 7, "kind": "R_X86_64_PLT32"},
+        ])
+
+    def test_shared_register_call_accepts_same_provider_loads_once(self) -> None:
+        image = bytearray(0x500)
+        image[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<H", image, 16, 3)
+        struct.pack_into("<Q", image, 32, 64)
+        struct.pack_into("<HH", image, 54, 56, 2)
+        struct.pack_into("<IIQQQQQQ", image, 64, 1, 5, 0x100, 0x1000, 0, 0x100, 0x100, 0x1000)
+        struct.pack_into("<IIQQQQQQ", image, 120, 1, 6, 0x300, 0x2000, 0, 0x100, 0x100, 0x1000)
+        for address in (0x1010, 0x1020):
+            offset = 0x100 + address - 0x1000
+            image[offset:offset + 3] = b"\x48\x8b\x2d"
+            struct.pack_into("<i", image, offset + 3, 0x2000 - address - 7)
+        image[0x130:0x132] = b"\xff\xd5"
+        struct.pack_into("<Q", image, 0x300, 0x3000)
+        kwargs = {"symbol_text": "1: 0000000000001010 64 FUNC LOCAL DEFAULT 9 caller",
+                  "relocations": "0000000000002000  .got + 0x0", "provider_address": 0x3000,
+                  "source_functions": set(), "all_defined_callers": True}
+        calls = BOUNDARY._ordinary_shared_provider_calls(bytes(image), **kwargs)
+        self.assertEqual([(call["function"], call["register_call_address"], call["got_slot"])
+                          for call in calls], [("caller", 0x1030, 0x2000)])
+        struct.pack_into("<i", image, 0x123, 0x2008 - 0x1020 - 7)
+        struct.pack_into("<Q", image, 0x308, 0x3000)
+        with self.assertRaises(BOUNDARY.AllocatorBoundaryError):
+            BOUNDARY._ordinary_shared_provider_calls(
+                bytes(image), **{**kwargs, "relocations": kwargs["relocations"] +
+                                 "\n0000000000002008  .got + 0x0"})
+
+    def test_one_archive_got_load_accounts_for_each_retained_register_call(self) -> None:
+        image = bytearray(0x500)
+        image[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<H", image, 16, 2)
+        struct.pack_into("<Q", image, 32, 64)
+        struct.pack_into("<HH", image, 54, 56, 2)
+        struct.pack_into("<IIQQQQQQ", image, 64, 1, 5, 0x100, 0x1000, 0, 0x100, 0x100, 0x1000)
+        struct.pack_into("<IIQQQQQQ", image, 120, 1, 6, 0x300, 0x2000, 0, 0x100, 0x100, 0x1000)
+        source = bytearray(b"\x48\x8b\x2d\0\0\0\0\xff\xd5\x90\xff\xd5\x90\x90\x90\x90")
+        struct.pack_into("<i", source, 3, 0x2000 - 0x1007)
+        image[0x100:0x110] = source
+        struct.pack_into("<Q", image, 0x300, 0x3000)
+        member = "/workspace/libc.a(caller.o)"
+        result = BOUNDARY._ordinary_final_member_calls(
+            bytes(image), archive_member=member,
+            source_calls=[{"section": ".text.caller", "offset": 3,
+                           "kind": "R_X86_64_GOTPCREL"}],
+            map_text=f"1000 1000 10 16 {member}:(.text.caller)", relocation_text="",
+            provider_address=0x3000, elf_type=2, name="memcpy",
+            source_sections={".text.caller": bytes(source)})
+        self.assertEqual(result["discarded_calls"], [])
+        self.assertEqual(result["resolved_calls"][0]["register_call_addresses"], [0x1007, 0x100a])
+        altered = bytearray(image)
+        altered[0x10a:0x10c] = b"\x90\x90"
+        with self.assertRaises(BOUNDARY.AllocatorBoundaryError):
+            BOUNDARY._ordinary_final_member_calls(
+                bytes(altered), archive_member=member,
+                source_calls=[{"section": ".text.caller", "offset": 3,
+                               "kind": "R_X86_64_GOTPCREL"}],
+                map_text=f"1000 1000 10 16 {member}:(.text.caller)", relocation_text="",
+                provider_address=0x3000, elf_type=2, name="memcpy",
+                source_sections={".text.caller": bytes(source)})
+
     def test_unselected_archive_caller_records_discarded_source_relocation(self) -> None:
         source_call = {"section": ".text.unselected", "offset": 7,
                        "kind": "R_X86_64_GOTPCREL"}
