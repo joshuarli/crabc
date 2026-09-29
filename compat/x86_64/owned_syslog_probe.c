@@ -40,7 +40,7 @@ static void call_vsyslog(int priority, const char *format, ...)
     va_end(arguments);
 }
 
-static int receiver_open(void)
+static int receiver_open_type(int type)
 {
     struct sockaddr_un address;
     int descriptor;
@@ -51,13 +51,18 @@ static int receiver_open(void)
     memset(&address, 0, sizeof address);
     address.sun_family = AF_UNIX;
     memcpy(address.sun_path, "/dev/log", sizeof "/dev/log");
-    descriptor = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    descriptor = socket(AF_UNIX, type | SOCK_CLOEXEC, 0);
     if (descriptor < 0
         || bind(descriptor, (struct sockaddr *)&address, sizeof address)) {
         if (descriptor >= 0) close(descriptor);
         return -1;
     }
     return descriptor;
+}
+
+static int receiver_open(void)
+{
+    return receiver_open_type(SOCK_DGRAM);
 }
 
 static int receive_record(int descriptor, char record[1025])
@@ -239,6 +244,55 @@ static int normal(void)
     return 0;
 }
 
+static int transport(void)
+{
+    char console_record[128];
+    int first;
+    int replacement;
+    int stream;
+    int console;
+    int count;
+    time_t before;
+
+    first = receiver_open();
+    CHECK(first >= 0);
+    openlog("transport", LOG_CONS | LOG_NDELAY, LOG_LOCAL2);
+    before = time(0);
+    syslog(LOG_NOTICE, "first-datagram");
+    CHECK(expect_wire(first, LOG_LOCAL2 | LOG_NOTICE, "transport", 0,
+                      "first-datagram\n", before));
+
+    /* Replace the pathname while the logger still holds its connection to
+     * the first socket. A failed send must reconnect and deliver once. */
+    CHECK(close(first) == 0);
+    replacement = receiver_open();
+    CHECK(replacement >= 0);
+    before = time(0);
+    syslog(LOG_NOTICE, "replacement-datagram");
+    CHECK(expect_wire(replacement, LOG_LOCAL2 | LOG_NOTICE, "transport", 0,
+                      "replacement-datagram\n", before));
+    CHECK(no_record(replacement));
+
+    /* A stream listener at /dev/log cannot receive the logger's datagram.
+     * The failed retry must use the private console once. */
+    CHECK(close(replacement) == 0);
+    stream = receiver_open_type(SOCK_STREAM);
+    CHECK(stream >= 0 && listen(stream, 1) == 0);
+    console = open("/dev/console", O_WRONLY | O_TRUNC);
+    CHECK(console >= 0 && close(console) == 0);
+    syslog(LOG_ERR, "stream-fallback");
+    console = open("/dev/console", O_RDONLY);
+    CHECK(console >= 0);
+    count = read(console, console_record, sizeof console_record - 1);
+    CHECK(close(console) == 0 && count > 0 && count < (int)sizeof console_record);
+    console_record[count] = 0;
+    CHECK(!strcmp(console_record, "transport: stream-fallback\n"));
+    CHECK(close(stream) == 0);
+    closelog();
+    puts("owned-syslog-transport-ok");
+    return 0;
+}
+
 struct worker_arguments {
     int ready_descriptor;
 };
@@ -363,6 +417,7 @@ int main(int argc, char **argv)
 {
     if (argc != 2) return 2;
     if (!strcmp(argv[1], "normal")) return normal();
+    if (!strcmp(argv[1], "transport")) return transport();
     if (!strcmp(argv[1], "worker")) return worker();
     if (!strcmp(argv[1], "fork")) return forked();
     if (!strcmp(argv[1], "cancellation")) return cancellation();
