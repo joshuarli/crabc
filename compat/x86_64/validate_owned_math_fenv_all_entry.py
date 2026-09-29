@@ -14,7 +14,11 @@ CALLER_ROUNDING = 0x800  # FE_UPWARD
 CALLER_EXCEPTIONS = 0x24  # FE_DIVBYZERO | FE_INEXACT
 STAGES = (
     (1, "fenv-sensitive-aggregate", 0),
-    (2, "fenv-rounding", 0),
+    # Four modes, four flag seeds, two functions, and twelve inputs, plus
+    # two opposite unit-mode pairs with both signs and both functions.
+    # Each case emits binary64, binary32, and binary80
+    # hexadecimal rows, including identity fields and raw MXCSR/x87 state.
+    (2, "fenv-rounding", (4 * 4 * 2 * 12 + 2 * 2 * 2) * (39 + 31 + 43)),
     (3, "fdim", 0),
     (4, "exp10", 3408 * 40),
     (5, "exp10f", 1320 * 32),

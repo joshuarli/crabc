@@ -156,7 +156,7 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
         # workload. Keep the fixture independent of the validator's table so
         # a stale body extent cannot validate its own synthetic stream.
         body_sizes = (
-            0, 0, 0, 3408 * 40, 1320 * 32, 247 * 42,
+            0, 392 * (39 + 31 + 43), 0, 3408 * 40, 1320 * 32, 247 * 42,
             2764 * 40, 5544 * 32, 7604 * 64, 58984 * 64,
         )
         pieces = []
@@ -175,6 +175,11 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
         stream.validate_bytes(records)
         with self.assertRaises(stream.ValidationError):
             stream.validate_bytes(records[:-1])
+
+        rounding_body_start = 3 * stream.FRAME.size
+        missing_rounding = records[:rounding_body_start] + records[rounding_body_start + body_sizes[1]:]
+        with self.assertRaisesRegex(stream.ValidationError, "stream has"):
+            stream.validate_bytes(missing_rounding)
 
         # A begin frame records the driver's pre-call boundary and must be
         # clean just as the post-restoration frame is.  This guards a probe
@@ -478,14 +483,14 @@ class OwnedMathFenvAllEntryTests(unittest.TestCase):
         oracle = result_paths("oracle", expected)
         receipt.output_matches_oracle(result_paths("matching", expected), "matching", oracle)
         changed = bytearray(expected)
-        # The first three stages have no body. Change exp10's retained raw
-        # record after its begin frame so the stream framing remains valid and
+        # Change exp10's retained raw record after its begin frame so the
+        # stream framing remains valid and
         # the rejection below proves byte-for-byte oracle comparison.
-        first_nonempty_body = sum(
+        exp10_body_start = sum(
             2 * stream.FRAME.size + body_size
             for _stage, _label, body_size in stream.STAGES[:3]
         ) + stream.FRAME.size
-        changed[first_nonempty_body] ^= 1
+        changed[exp10_body_start] ^= 1
         stream.validate_bytes(bytes(changed))
         with self.assertRaises(receipt.ReceiptError):
             receipt.output_matches_oracle(result_paths("changed", bytes(changed)), "changed", oracle)
