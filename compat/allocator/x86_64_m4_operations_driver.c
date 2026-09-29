@@ -17,7 +17,7 @@
 
    Only the public `mimalloc.h` declarations are used. The one argument
    selects a scenario, each run in a fresh process: `operations`,
-   `page-kinds`, `collection`, `oom`, `threads`, or a process-terminating
+   `page-kinds`, `collection`, `oom`, `threads`, `aligned-preservation`, or a process-terminating
    `abort:<name>` that the runner observes through the exit status. */
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic ignored "-Walloc-size-larger-than="
@@ -695,6 +695,50 @@ static void section_aligned(void) {
   line("aligned13.bad", "%d", bad);
 }
 
+/* Exercise the distinct aligned-at validation and word-sized aligned-realloc
+   delegation while observing the original block after rejected replacements. */
+static void section_aligned_preservation(void) {
+  const size_t alignment = 64;
+  const size_t offset = 7;
+  unsigned char* p = (unsigned char*)mi_malloc_aligned_at(73, alignment, offset);
+  line("aligned_preservation.source", "%d", p != NULL &&
+       (((uintptr_t)p + offset) & (alignment - 1)) == 0);
+  if (p == NULL) { return; }
+  const size_t usable = mi_usable_size(p);
+  line("aligned_preservation.usable", "%zu", usable);
+  fill(p, usable, 0x43);
+
+  errno = 0;
+  void* failed = mi_realloc_aligned_at(p, SIZE_MAX, alignment, offset);
+  line("aligned_preservation.oversize", "%d,%d,%d,%d", failed == NULL, errno,
+       mi_usable_size(p) == usable, has_fill(p, usable, 0x43));
+  errno = 0;
+  failed = mi_realloc_aligned_at(p, 150, 3, offset);
+  line("aligned_preservation.bad_offset_alignment", "%d,%d,%d,%d", failed == NULL, errno,
+       mi_usable_size(p) == usable, has_fill(p, usable, 0x43));
+
+  const size_t half = usable - usable / 2;
+  void* reused = mi_realloc_aligned_at(p, half, alignment, offset);
+  line("aligned_preservation.reuse", "%d,%d", reused == p,
+       reused != NULL && has_fill(reused, half, 0x43));
+  if (reused == NULL) { mi_free(p); return; }
+  void* replacement = mi_realloc_aligned_at(reused, half - 1, alignment, offset);
+  line("aligned_preservation.replace", "%d,%d,%d", replacement != NULL && replacement != reused,
+       replacement != NULL && (((uintptr_t)replacement + offset) & (alignment - 1)) == 0,
+       replacement != NULL && has_fill(replacement, half - 1, 0x43));
+  mi_free(replacement == NULL ? reused : replacement);
+
+  p = (unsigned char*)mi_malloc(40);
+  line("aligned_preservation.word_source", "%d", p != NULL);
+  if (p == NULL) { return; }
+  fill(p, 40, 0x59);
+  errno = 0;
+  void* q = mi_realloc_aligned(p, 200, 3);
+  line("aligned_preservation.word_delegate", "%d,%d,%d", q != NULL, errno,
+       q != NULL && has_fill(q, 40, 0x59));
+  mi_free(q == NULL ? p : q);
+}
+
 static void section_conveniences(void) {
   char* s = mi_strdup("mimalloc");
   note("strdup", s);
@@ -1036,6 +1080,7 @@ int main(int argc, char** argv) {
   else if (strcmp(scenario, "collection") == 0) { sections[0] = section_collection; }
   else if (strcmp(scenario, "oom") == 0) { sections[0] = section_oom; }
   else if (strcmp(scenario, "threads") == 0) { sections[0] = section_threads; }
+  else if (strcmp(scenario, "aligned-preservation") == 0) { sections[0] = section_aligned_preservation; }
   else { return 2; }
   printf("%s\n", TRACE_BEGIN);
   for (int i = 0; i < 8 && sections[i] != NULL; i++) { sections[i](); }

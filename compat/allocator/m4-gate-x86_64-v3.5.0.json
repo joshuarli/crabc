@@ -70,6 +70,16 @@
       ],
       "scope": "Under a fixed RLIMIT_AS both processes refuse the same OS-backed requests: NULL results and errno for malloc/calloc/aligned/realloc/posix_memalign, preservation of the old block and its bytes on realloc and aligned-realloc failure, reallocf release, continued service from existing pages, and recovery after the limit is lifted."
     },
+    "differential:aligned-preservation": {
+      "command": [
+        "python3",
+        "compat/allocator/x86_64_m4_gate.py",
+        "--offline",
+        "--differential",
+        "aligned-preservation"
+      ],
+      "scope": "Separate pinned-C and native-adapter processes check offset-aligned usable size and bytes after oversized and invalid-alignment realloc failures, aligned ceil-half reuse and replacement, and the source's ordinary realloc delegation for a word-sized alignment argument."
+    },
     "unit:native-operations": {
       "command": [
         "python3",
@@ -208,7 +218,8 @@
       "evidence": [
         "differential:operations",
         "unit:native-operations",
-        "adapter:export-boundary"
+        "adapter:export-boundary",
+        "differential:aligned-preservation"
       ],
       "blocked_by": []
     },
@@ -223,7 +234,8 @@
       "acceptance": "`mi_usable_size` follows `_mi_usable_size` (NULL and unowned pointers report 0, interior aligned pointers report the adjusted extent) and `mi_good_size` returns the source bin or OS-page rounding for every request, including requests above MI_MAX_ALLOC_SIZE.",
       "evidence": [
         "differential:operations",
-        "adapter:export-boundary"
+        "adapter:export-boundary",
+        "differential:aligned-preservation"
       ],
       "blocked_by": []
     },
@@ -281,7 +293,8 @@
       "acceptance": "OS refusal propagates as the source NULL/errno result without corrupting allocator state, and every failed reallocation preserves the old block and its bytes (`reallocf` releases it). `mi_option_retry_on_oom` is a Windows-only retry and has no Linux effect.",
       "evidence": [
         "differential:oom-failure",
-        "unit:native-operations"
+        "unit:native-operations",
+        "differential:aligned-preservation"
       ],
       "blocked_by": []
     },

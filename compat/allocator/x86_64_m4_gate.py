@@ -90,7 +90,7 @@ OPERATIONS_DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m4_operations_driver.c"
 OPERATIONS_TRACE_BEGIN = "CRABC_MI_M4_OPERATIONS_TRACE_BEGIN"
 OPERATIONS_TRACE_END = "CRABC_MI_M4_OPERATIONS_TRACE_END"
 # Driver scenarios, each one evidence entry run in fresh processes.
-DIFFERENTIAL_SCENARIOS = ("operations", "page-kinds", "collection", "oom", "threads")
+DIFFERENTIAL_SCENARIOS = ("operations", "page-kinds", "collection", "oom", "threads", "aligned-preservation")
 # Scenarios the driver ends with `abort()` in pinned C (plain-C `mi_new`
 # without a new handler); both processes must terminate the same way.
 ABORT_SCENARIOS = (

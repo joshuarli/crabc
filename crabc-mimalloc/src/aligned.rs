@@ -183,11 +183,13 @@ pub(crate) fn aligned_reallocation_decision<P: AllocationPointerFacts>(
     offset: usize,
     zero: bool,
 ) -> Option<PointerReallocationDecision<P>> {
-    if !size_class::alignment_is_valid(alignment) {
-        return None;
-    }
+    // The non-offset entry delegates word-sized arguments before checking
+    // their power of two; the offset entry checks every alignment first.
     if alignment <= size_of::<usize>() && offset == 0 {
         return Some(ordinary_reallocation_decision(source, new_size, zero));
+    }
+    if !size_class::alignment_is_valid(alignment) {
+        return None;
     }
     let source = source.into_overaligned_pointer();
     let source = match source {
@@ -431,6 +433,31 @@ mod tests {
                 false,
             ),
             Some(crate::alloc::PointerReallocationDecision::Reuse(old))
+        );
+    }
+
+    #[test]
+    fn word_sized_aligned_reallocation_delegates_before_alignment_validation() {
+        let old = crate::alloc::TestAllocationPointer::exact(0x2000, 128).unwrap();
+        assert_eq!(
+            aligned_reallocation_decision(
+                crate::alloc::OrdinaryReallocationSource::current_target_for_test(old),
+                64,
+                3,
+                0,
+                false,
+            ),
+            Some(crate::alloc::PointerReallocationDecision::Reuse(old))
+        );
+        assert_eq!(
+            aligned_reallocation_decision(
+                crate::alloc::OrdinaryReallocationSource::current_target_for_test(old),
+                64,
+                3,
+                7,
+                false,
+            ),
+            None
         );
     }
 

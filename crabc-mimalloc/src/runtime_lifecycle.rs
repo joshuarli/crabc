@@ -12031,7 +12031,7 @@ pub unsafe fn native_reallocate_aligned(
     let Ok(_operation) = enter_native_reallocation_operation(block) else {
         return NativePageAllocationResult::Retained;
     };
-    if !crate::size_class::alignment_is_valid(alignment) {
+    if alignment > core::mem::size_of::<usize>() && !crate::size_class::alignment_is_valid(alignment) {
         return NativePageAllocationResult::AllocationFailed;
     }
     // Pinned alloc-aligned.c delegates alignments through one pointer word to
@@ -12063,7 +12063,7 @@ pub unsafe fn native_reallocate_aligned_zeroed(
     let Ok(_operation) = enter_native_reallocation_operation(block) else {
         return NativePageAllocationResult::Retained;
     };
-    if !crate::size_class::alignment_is_valid(alignment) {
+    if alignment > core::mem::size_of::<usize>() && !crate::size_class::alignment_is_valid(alignment) {
         return NativePageAllocationResult::AllocationFailed;
     }
     // SAFETY: forward the exact-live aligned client contract.
@@ -19653,6 +19653,32 @@ mod tests {
                 unsafe { block.as_ptr().write_bytes(0x3c, 40) };
                 // SAFETY: `block` is this thread's exact live native client.
                 assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn word_sized_aligned_reallocation_uses_ordinary_replacement() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::word_sized_aligned_reallocation_uses_ordinary_replacement",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                let NativePageAllocationResult::Allocated(original) = native_allocate_aligned(40, 16, false) else {
+                    panic!("the original native client must allocate");
+                };
+                // SAFETY: this thread exclusively owns the live 40-byte client.
+                unsafe { original.as_ptr().write_bytes(0x59, 40) };
+                // SAFETY: original is exact and live; a successful realloc consumes it.
+                let NativePageAllocationResult::Allocated(replacement) =
+                    (unsafe { native_reallocate_aligned(Some(original), 200, 3) }) else {
+                    panic!("word-sized alignment delegates to ordinary replacement");
+                };
+                // SAFETY: successful realloc copied the original 40 initialized bytes.
+                assert!(unsafe { core::slice::from_raw_parts(replacement.as_ptr(), 40) }
+                    .iter().all(|byte| *byte == 0x59));
+                // SAFETY: replacement is the exact live client returned above.
+                assert_eq!(unsafe { native_free(replacement) }, NativePageFreeResult::Freed);
             },
         );
     }
