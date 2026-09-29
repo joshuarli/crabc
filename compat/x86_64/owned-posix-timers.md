@@ -11,11 +11,12 @@ contracts. This component does not close a parity family or promote x86 support.
 a distinct TLS-DSO object against the installed headers using
 `crabc-cc-dynamic`. The application object links to pinned musl, owned static,
 static PIE, dynamic PIE and dynamic non-PIE. Both dynamic forms run through
-kernel and direct loader entry. The dynamic workload loads the TLS DSO at
-callback-time, on the first live callback; the TLS DSO has no initial `DT_NEEDED`
-edge from the application. Its exact object is shared with the musl
-comparison, while the application object remains the one object in every
-executable link.
+kernel and direct loader entry. Each dynamic timer callback opens the TLS DSO,
+resolves its entry, checks its current-thread TLS, and closes the handle before
+the callback retires. The next callback reopens and resolves it again. The DSO
+has no initial `DT_NEEDED` edge from the application. Its exact object is
+shared with the musl comparison, while the application object remains the one
+object in every executable link.
 
 The runner accepts `[--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]` for
 the `posix-timers` qualification case. With neither product supplied, it builds
@@ -34,6 +35,12 @@ bytes, and resets every other current-thread TLS byte. Static executables use
 the same span rule within their combined application/libc TLS image. This
 keeps the timer worker's allocator owner live across callbacks while the
 application's initialized and zero-fill TLS returns to its template.
+The DSO's process-wide visit count continues through each successful close
+and reopen, as pinned musl retains the mapped object. The callback checks that
+both DSO TLS addresses and the thread's DTV pointer stay stable across visits,
+while initialized TLS returns to 137 and TBSS returns to zero after every
+callback. These checks run through normal return, exit, cancellation, and
+self-deletion paths, including the fresh timer worker after fork.
 
 The four executable links retain the shared
 `owned_posix_product_evidence.validate_link` identities: static, static PIE,

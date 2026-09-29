@@ -26,8 +26,15 @@ static timer_t callback_timer;
 static int callback_mode;
 static int dynamic_tls;
 static const char *plugin_path = "/libtimer-tls.so";
-static void *plugin;
-static int (*plugin_touch)(void);
+static atomic_int plugin_visits;
+static void *plugin_initialized_address, *plugin_zeroed_address, *plugin_dtv;
+/* The x86-64 thread pointer's DTV word stays live across callback resets. */
+static void *current_dtv(void)
+{
+    void *dtv;
+    __asm__("movq %%fs:8, %0" : "=r"(dtv));
+    return dtv;
+}
 static void destructor(void *value)
 {
     int pass = (int)(intptr_t)value;
@@ -54,13 +61,26 @@ static void notify(union sigval value)
     if (!n) { worker = pthread_self(); atomic_store(&timer_tid, gettid()); }
     else CHECK(pthread_equal(worker, pthread_self()));
     if (dynamic_tls) {
-        if (!plugin) {
-            plugin = dlopen(plugin_path, RTLD_NOW | RTLD_LOCAL);
-            CHECK(plugin != NULL);
-            *(void **)(&plugin_touch) = dlsym(plugin, "timer_tls_touch");
-            CHECK(plugin_touch != NULL);
+        void *plugin = dlopen(plugin_path, RTLD_NOW | RTLD_LOCAL);
+        CHECK(plugin != NULL);
+        int (*plugin_touch)(void **, void **, int *);
+        *(void **)(&plugin_touch) = dlsym(plugin, "timer_tls_touch");
+        CHECK(plugin_touch != NULL);
+        void *initialized_address, *zeroed_address;
+        int visit;
+        CHECK(plugin_touch(&initialized_address, &zeroed_address, &visit) == 1);
+        CHECK(initialized_address != NULL && zeroed_address != NULL && current_dtv() != NULL);
+        CHECK(visit == atomic_fetch_add(&plugin_visits, 1) + 1);
+        if (!n) {
+            plugin_initialized_address = initialized_address;
+            plugin_zeroed_address = zeroed_address;
+            plugin_dtv = current_dtv();
+        } else {
+            CHECK(initialized_address == plugin_initialized_address);
+            CHECK(zeroed_address == plugin_zeroed_address);
+            CHECK(current_dtv() == plugin_dtv);
         }
-        CHECK(plugin_touch() == 1);
+        CHECK(dlclose(plugin) == 0 && current_dtv() == plugin_dtv);
     }
     initialized = 99; zeroed = 99;
     allocation = malloc(4097);
@@ -104,7 +124,9 @@ static void thread_timer(void)
     CHECK(pthread_join(initializer, &result) == 0 && result == PTHREAD_CANCELED);
     CHECK(pipe(cancel_pipe) == 0);
     CHECK(pthread_key_create(&key, destructor) == 0);
+    int starting_plugin_visits = atomic_load(&plugin_visits);
     for (callback_mode = 0; callback_mode < 6; ++callback_mode) {
+        plugin_initialized_address = plugin_zeroed_address = plugin_dtv = NULL;
         atomic_store(&cancel_ready, 0);
         atomic_store(&callbacks, 0); atomic_store(&destructors, 0); atomic_store(&cleaned, 0);
         struct sigevent event = {.sigev_notify = SIGEV_THREAD, .sigev_value.sival_int = 91, .sigev_notify_function = notify};
@@ -141,6 +163,10 @@ static void thread_timer(void)
     }
     CHECK(pthread_key_delete(key) == 0);
     CHECK(close(cancel_pipe[0]) == 0 && close(cancel_pipe[1]) == 0);
+    if (dynamic_tls) {
+        CHECK(atomic_load(&plugin_visits) - starting_plugin_visits == 21);
+        puts("callback TLS DSO: 21 close/reopen visits, retained state and DTV");
+    }
     puts("thread normal/exit/cancel/self-delete: identity, errno, TLS, allocation, cleanup, TSD reset");
 }
 /*
