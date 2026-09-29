@@ -848,11 +848,15 @@ are not transferable passes for a different revision.
      54-cell matrix, five native components, and independent native and
      family-admission readers; its 149-spelling family receipt is complete,
      while campaign and public promotion remain separate.
+     A clean `b38da81b` pinned text/math/locale/stdio assembly admits all
+     nine components and 16 capabilities with no unmet row; its independent
+     physical reader passes, while promotion remains separate.
      These receipts must be rerun on merged `main`.
-  2. Sixteen Codex lanes resumed on 2026-09-26; `.work/tmp/lane-agents.txt`
-     holds the active map, and the parent owns integration to `main`. The
-     `lane/abi-closure` companion-reader refresh is integrated; its merged-source
-     cohort and ABI assembly are running. The source-built static libc now compiles and links both
+  2. The Codex lane wind-down completed on 2026-09-29: all in-flight results
+     were reconciled to `main`, all completed lane worktrees were removed, and
+     `.work/tmp/lane-agents.txt` has no active lanes. The `lane/abi-closure`
+     companion-reader refresh is integrated; merged-source ABI assembly remains
+     open. The source-built static libc now compiles and links both
      freestanding C and stock Rust std consumers, and automatic exit selects
      the signed native `destroy_on_exit` behavior; their merged-revision
      qualification remains open. `m8.rust-std`, `m8.lua`, `m8.corpus`,
