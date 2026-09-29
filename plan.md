@@ -64,7 +64,10 @@ are not transferable passes for a different revision.
   retained source calls in both static modes and shared libc, reducing the
   selector to 718 blockers. A subsequent sealed cohort binds the owned scanf
   archive's `mbrtowc` import through its direct static and shared-libc calls,
-  reducing the selector to 717 blockers.
+  reducing the selector to 717 blockers. A source-sealed final-call reader now
+  resolves the retained `__popcountdi2` archive calls in ET_EXEC, static PIE,
+  and shared libc to their owned targets; the selector discharges that one
+  ordinary-import reason, while broader ABI closure stays open.
   `libc.c-abi-compat` now runs a physical
   same-cohort text/math/locale/stdio family admission; its current assessment admits seven
   of ten components and retains three allocator components at the selected C
@@ -260,6 +263,9 @@ are not transferable passes for a different revision.
   fault and a two-fault same-call recovery. The latter retains 61 exact
   C/Rust fields plus five raw header-dependent PageMap counts, each unchanged
   through four source-ordered warnings; shared gate registration is pending.
+  Separate direct process-owned protect and unprotect failure receivers each
+  match 44 C/Rust fields, including warning timing, same-range retry, live
+  mapping accounting, and terminal release; shared VM registration is pending.
   A failed second-arena committed-slice claim and same-slice retry match 24
   C/Rust fields after the regular mapping uses the warning-preserving commit
   path; two additional pinned-C fields bind the attempted `mprotect` range.
@@ -272,6 +278,10 @@ are not transferable passes for a different revision.
   A failed huge-arena primitive unmap now emits the pinned-C warning before
   accounting; its focused differential matches while all eight M3 components
   pass, with M1/M2 prerequisites still required for the M3 gate.
+  A source-equivalent shared child mapped-page claim scan reduces linked Rust
+  allocator text by 2,256 bytes, with pinned C text unchanged; six focused
+  tests, nine Rust profiles, and the clean owner differential pass. Qualifying
+  timing remains open.
   Every freestanding-C runner builds `libc.a` through
   `compat/x86_64/source_runtime_libc.sh` (source-built runtime, one archive
   member per libc module). On an idle host the development engine harness
@@ -377,8 +387,10 @@ are not transferable passes for a different revision.
   the newer clean M6 gate passes all nineteen runnable rows.
   Public main-process callback-managed memory now matches eleven pinned-C
   lifecycle keys, including callback commit and purge order; the next clean
-  M6 gate passes all twenty runnable rows. Child callback registration and
-  broader callback failure behavior remain open.
+  M6 gate passes all twenty runnable rows. Metadata-commit refusal now matches
+  seventeen pinned-C failure, warning, recovery, and reuse keys; the next
+  clean M6 gate passes all twenty-one runnable rows. Child callback
+  registration remains open.
   All ten required gates
   remain blocked by 10 named missing API and lifetime evidence entries;
   accumulated mixed-workload main-Heap page-population parity remains unproved.
