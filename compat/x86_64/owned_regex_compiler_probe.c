@@ -48,17 +48,21 @@ static int check_compiler_semantics(void)
     if (expect_compile_result("a{3,1}", REG_EXTENDED, REG_BADBR)) return 7;
     if (expect_compile_result("\\1", 0, REG_ESUBREG)) return 8;
     if (expect_compile_result("(a", REG_EXTENDED, REG_EPAREN)) return 9;
+    if (expect_compile_result("((a|b){2,3}", REG_EXTENDED, REG_EPAREN)) return 10;
+    if (expect_compile_result("[[:bogus:]]", REG_EXTENDED, REG_ECTYPE)) return 11;
+    if (expect_compile_result("\\(a\\)\\2", 0, REG_ESUBREG)) return 12;
+    if (expect_compile_result("(a|b){2,3}[", REG_EXTENDED, REG_EBRACK)) return 13;
     return 0;
 }
 
-#ifdef CRABC_OWNED_REGEX_COMPILER_FREESTANDING
+#if defined(CRABC_OWNED_REGEX_COMPILER_FREESTANDING) || \
+    defined(CRABC_OWNED_REGEX_COMPILER_ORACLE_ALLOCATOR)
 
-/* The candidate fixture interposes its allocation provider.  The compiler's
- * opaque C-ABI allocation tails must arrive here, rather than being folded to
- * the crate's private allocator.  This intentionally simple monotonic heap
- * exercises only this finite compiler fixture. It retains exact allocation
- * identities, so a foreign or duplicate release cannot hide behind a matching
- * allocation/free count. */
+/* The pinned musl and candidate fault fixtures route regex allocations here.
+ * The candidate's opaque C-ABI allocation tails must arrive here rather than
+ * being folded to the crate's private allocator. This finite monotonic heap
+ * retains allocation identities, so a foreign or duplicate release cannot
+ * hide behind a matching allocation/free count. */
 enum { HEAP_BYTES = 1 << 20, ALLOCATION_RECORD_CAPACITY = 4096 };
 
 union test_heap {
@@ -72,9 +76,16 @@ struct allocation_record {
     int live;
 };
 
+#ifdef CRABC_OWNED_REGEX_COMPILER_ORACLE_ALLOCATOR
+#define malloc regex_malloc
+#define calloc regex_calloc
+#define realloc regex_realloc
+#define free regex_free
+#endif
+
 static union test_heap heap;
 static size_t heap_cursor;
-static int allocation_budget;
+static int allocation_budget = -1;
 static size_t allocation_successes;
 static size_t allocation_releases;
 static size_t allocation_record_count;
@@ -262,6 +273,13 @@ static int check_allocation_case(const struct compiler_allocation_case *test)
             return 100 + budget;
         }
         if (!all_allocations_released()) return 200 + budget;
+
+        /* A failed compile has no graph to retain. Reusing its output record
+         * for a valid pattern must create one independently releasable graph. */
+        reset_allocator(-1);
+        if (regcomp(&expression, "^a$", REG_EXTENDED) != 0) return 3;
+        regfree(&expression);
+        if (!all_allocations_released()) return 4;
     }
     return 0;
 }
@@ -273,6 +291,10 @@ static int check_failure_cleanup(void)
         { "\\(a\\)\\1", 0, 0 },
         { "[^[:digit:]x]+", REG_EXTENDED | REG_NEWLINE, 0 },
         { "[", REG_EXTENDED, REG_EBRACK },
+        { "((a|b){2,3}", REG_EXTENDED, REG_EPAREN },
+        { "[[:bogus:]]", REG_EXTENDED, REG_ECTYPE },
+        { "\\(a\\)\\2", 0, REG_ESUBREG },
+        { "(a|b){2,3}[", REG_EXTENDED, REG_EBRACK },
     };
     size_t index;
     for (index = 0; index < sizeof(cases) / sizeof(cases[0]); index++)
@@ -291,6 +313,14 @@ int crabc_x86_64_owned_regex_compiler_probe(void)
     if (result != 0) return result;
     return check_failure_cleanup();
 }
+
+#ifdef CRABC_OWNED_REGEX_COMPILER_ORACLE_ALLOCATOR
+
+int main(void)
+{
+    return crabc_x86_64_owned_regex_compiler_probe();
+}
+#endif
 
 #else
 

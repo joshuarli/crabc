@@ -116,7 +116,8 @@ static int semantic_suite(void)
     return 0;
 }
 
-#ifdef CRABC_OWNED_REGEX_EXECUTION_FREESTANDING
+#if defined(CRABC_OWNED_REGEX_EXECUTION_FREESTANDING) || \
+    defined(CRABC_OWNED_REGEX_EXECUTION_ORACLE_ALLOCATOR)
 
 enum { HEAP_BYTES = 1 << 20, RECORD_CAPACITY = 4096 };
 
@@ -130,6 +131,13 @@ struct allocation_record {
     size_t size;
     int live;
 };
+
+#ifdef CRABC_OWNED_REGEX_EXECUTION_ORACLE_ALLOCATOR
+#define malloc regex_malloc
+#define calloc regex_calloc
+#define realloc regex_realloc
+#define free regex_free
+#endif
 
 static union test_heap heap;
 static size_t cursor;
@@ -243,7 +251,8 @@ void *realloc(void *pointer, size_t size)
     return replacement;
 }
 
-static int execution_allocation_case(const char *pattern, int cflags, const char *text)
+static int execution_allocation_case(const char *pattern, int cflags,
+    const char *text, int expected)
 {
     regex_t expression;
     regmatch_t matches[2];
@@ -253,7 +262,7 @@ static int execution_allocation_case(const char *pattern, int cflags, const char
     reset_allocator(-1);
     if (regcomp(&expression, pattern, cflags)) return 1;
     before = allocation_successes;
-    if (regexec(&expression, text, 2, matches, 0)) {
+    if (regexec(&expression, text, 2, matches, 0) != expected) {
         regfree(&expression);
         return 2;
     }
@@ -266,8 +275,14 @@ static int execution_allocation_case(const char *pattern, int cflags, const char
         if (regcomp(&expression, pattern, cflags)) return 10 + budget;
         allocation_budget = budget;
         result = regexec(&expression, text, 2, matches, 0);
+        allocation_budget = -1;
+        if (result != REG_ESPACE) {
+            regfree(&expression);
+            return 100 + budget;
+        }
+        result = regexec(&expression, text, 2, matches, 0);
         regfree(&expression);
-        if (result != REG_ESPACE || !all_released()) return 100 + budget;
+        if (result != expected || !all_released()) return 200 + budget;
     }
     return 0;
 }
@@ -288,11 +303,20 @@ int crabc_x86_64_owned_regex_execution_probe(void)
     reset_allocator(-1);
     result = semantic_suite();
     if (result || !all_released()) return result ? result : 2;
-    if ((result = execution_allocation_case("([a-z]|[[:digit:]])+", REG_EXTENDED, "a9b"))) return 20 + result;
-    if ((result = execution_allocation_case("\\(a\\)\\1", 0, "aa"))) return 200 + result;
+    if ((result = execution_allocation_case("([a-z]|[[:digit:]])+", REG_EXTENDED, "a9b", REG_OK))) return 20 + result;
+    if ((result = execution_allocation_case("\\(a\\)\\1", 0, "aa", REG_OK))) return 200 + result;
+    if ((result = execution_allocation_case("a|ab", REG_EXTENDED, "zzz", REG_NOMATCH))) return 400 + result;
+    if ((result = execution_allocation_case("\\(a\\)\\1", 0, "ab", REG_NOMATCH))) return 600 + result;
     return 0;
 #endif
 }
+
+#ifdef CRABC_OWNED_REGEX_EXECUTION_ORACLE_ALLOCATOR
+int main(void)
+{
+    return crabc_x86_64_owned_regex_execution_probe();
+}
+#endif
 
 #else
 

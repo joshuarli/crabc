@@ -12,6 +12,7 @@ export LC_ALL=C
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly CANDIDATE_CC=/usr/bin/gcc
+readonly ORACLE_LIBC=/opt/musl-1.2.6/lib/libc.a
 readonly SOURCE_STATIC_C_ABI="$ROOT_DIR/libc/src/c_abi/x86_64/static_c_abi.rs"
 
 fail() { printf 'ERROR: owned regex execution checkpoint: %s\n' "$*" >&2; exit 1; }
@@ -20,9 +21,10 @@ require_tool() { command -v "$1" >/dev/null 2>&1 || fail "requires $1"; }
 [ "$#" -eq 0 ] || fail "usage: $0"
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in cargo cmp grep mktemp readelf tar timeout; do require_tool "$tool"; done
+for tool in ar cargo cmp grep mktemp objcopy readelf tar timeout; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 [ -x "$CANDIDATE_CC" ] || fail "missing raw native candidate compiler"
+[ -f "$ORACLE_LIBC" ] || fail "missing pinned musl static archive"
 
 case "${CRABC_WORK_DIR:-$ROOT_DIR/.work/x86_64}" in
     "$ROOT_DIR"/.work/x86_64|"$ROOT_DIR"/.work/x86_64/*)
@@ -43,6 +45,7 @@ trap cleanup EXIT
 source_root="$work_dir/source"
 target_dir="$work_dir/target"
 reference="$work_dir/musl-execution"
+reference_fault="$work_dir/musl-execution-fault"
 candidate="$work_dir/candidate-execution"
 candidate_empty="$work_dir/candidate-empty-backreference"
 candidate_regerror="$work_dir/candidate-regerror-table"
@@ -95,6 +98,25 @@ cmp -s "$SOURCE_STATIC_C_ABI" "$ROOT_DIR/libc/src/c_abi/x86_64/static_c_abi.rs" 
 run_timeboxed oracle-empty-backreference "$reference" --empty-backreference
 run_timeboxed oracle-regerror-table "$reference" --regerror-table
 run_timeboxed oracle-all "$reference"
+
+# Give the pinned regex objects a recording allocator while musl startup and
+# locale state keep their ordinary allocator. Every failed matcher allocation
+# can then be retried on the same compiled graph without touching startup data.
+for member in regcomp.lo regexec.lo tre-mem.lo; do
+    ar p "$ORACLE_LIBC" "$member" >"$work_dir/$member"
+    [ -s "$work_dir/$member" ] || fail "pinned musl archive lacks $member"
+    objcopy --redefine-sym malloc=regex_malloc \
+        --redefine-sym calloc=regex_calloc \
+        --redefine-sym realloc=regex_realloc \
+        --redefine-sym free=regex_free "$work_dir/$member"
+done
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
+    -DCRABC_OWNED_REGEX_EXECUTION_ORACLE_ALLOCATOR -fno-pie -no-pie \
+    -fno-builtin -fno-stack-protector -static -I"$ROOT_DIR/include" \
+    "$ROOT_DIR/compat/x86_64/owned_regex_execution_probe.c" \
+    "$work_dir/regcomp.lo" "$work_dir/regexec.lo" "$work_dir/tre-mem.lo" \
+    -o "$reference_fault"
+run_timeboxed oracle-allocation-failures "$reference_fault"
 
 (
     cd "$source_root"
