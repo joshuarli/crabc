@@ -855,11 +855,11 @@ are not transferable passes for a different revision.
      nine components and 16 capabilities with no unmet row; its independent
      physical reader passes, while promotion remains separate.
      These receipts must be rerun on merged `main`.
-  2. The Codex lane wind-down completed on 2026-09-29: all in-flight results
-     were reconciled to `main`, all completed lane worktrees were removed, and
-     `.work/tmp/lane-agents.txt` has no active lanes. The `lane/abi-closure`
-     companion-reader refresh is integrated; merged-source ABI assembly remains
-     open. The source-built static libc now compiles and links both
+  2. Sixteen Codex lanes are active again on 2026-09-29, with their worktrees
+     listed in `.work/tmp/lane-agents.txt`; completed results are integrated
+     continuously to `main`. The prior `lane/abi-closure` companion-reader
+     refresh is integrated; merged-source ABI assembly remains open. The
+     source-built static libc now compiles and links both
      freestanding C and stock Rust std consumers, and automatic exit selects
      the signed native `destroy_on_exit` behavior; their merged-revision
      qualification remains open. `m8.rust-std`, `m8.lua`, `m8.corpus`,
