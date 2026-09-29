@@ -110,6 +110,10 @@
       "runner": "compat/allocator/x86_64_m6_child_main_heap_visitor.py",
       "scope": "Source-built pinned-C/native-adapter child-subprocess main Heap visitation before and after its allocating thread exits: regular and OS singleton ownership, ordinary and abandoned selection, null-Heap selection on a second child member, area/block order and early stops, and terminal free."
     },
+    "differential:child-main-heap-reuse": {
+      "runner": "compat/allocator/x86_64_m6_child_main_heap_reuse.py",
+      "scope": "Source-built pinned-C/native-adapter child main-Heap reuse across three successive member threads: fixed Theap and child identity after reattachment, direct allocations from the first and second owners, shared regular-page and prepended OS-page visitor order, abandoned selection before and after the second owner exits, Heap ownership, abandoned-page accounting, and terminal release."
+    },
     "differential:main-abandoned-heap-visitor": {
       "runner": "compat/allocator/x86_64_m6_main_abandoned_visitor.py",
       "scope": "Source-built pinned-C/native-adapter mi_heap_visit_abandoned_blocks on the process main Heap after a worker's regular page enters its main-arena abandoned bitmap: exact selected bin membership with a separate non-abandoned same-size page, live/freed block filtering, area/block early stops, and null-Heap selection."
@@ -328,6 +332,7 @@
         "differential:abandoned-combined-heap-visitor",
         "differential:child-abandoned-heap-visitor",
         "differential:child-main-heap-visitor",
+        "differential:child-main-heap-reuse",
         "differential:main-abandoned-heap-visitor",
         "differential:main-abandoned-os-heap-visitor",
         "differential:main-abandoned-mixed-heap-visitor",
