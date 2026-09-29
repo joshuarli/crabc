@@ -3455,6 +3455,98 @@ mod tests {
         process_with_options(options)
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_arena_purge_budget_failure_c_rust_trace() {
+        let fault = fault::install(fault::Plan::disabled());
+        let process = purge_process(100_000, true);
+        let backing = backing();
+        let mut arenas = std::vec::Vec::new();
+        let mut slices = std::vec::Vec::new();
+        let mut addresses = std::vec::Vec::new();
+        for _ in 0..3 {
+            let id = install(backing, process, MapAccess::Reserved);
+            let claim = unsafe { backing.try_find_free(search(id), 1, ARENA_SLICE_SIZE, true) }
+                .expect("one committed slice in a reserved arena");
+            arenas.push(id);
+            slices.push(claim.slice_index());
+            addresses.push(claim.start());
+            assert!(claim.release());
+            // The fixture has one collector and holds each published arena.
+            crate::atomic::i64_store_release(unsafe { &(*id.as_ptr()).purge_expire }, i64::MAX);
+        }
+        crate::atomic::i64_store_release(&backing.purge_expire, i64::MAX);
+        let pending_mask = || -> i64 {
+            arenas.iter().enumerate().fold(0, |mask, (index, id)| {
+                let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+                if unsafe { view.slices_purge() }.unwrap()
+                    .is_set_range(slices[index], 1) == Some(true) {
+                    mask | (1 << index)
+                } else { mask }
+            })
+        };
+        let expiry_mask = || -> i64 {
+            arenas.iter().enumerate().fold(0, |mask, (index, id)| {
+                if crate::atomic::i64_load_relaxed(unsafe { &(*id.as_ptr()).purge_expire }) == 0 {
+                    mask | (1 << index)
+                } else { mask }
+            })
+        };
+        let before_vm = process.subprocess().vm_statistics().snapshot();
+        let before_arena = process.subprocess().arena_statistics().snapshot();
+        let setup = backing.registry().count() == 3 && pending_mask() == 7;
+        let initial_pending = pending_mask();
+        let advice = fault.capture_advice_range();
+        fault.set(fault::Plan::at(fault::Point::Decommit, 1, Errno::from_raw(5).unwrap()));
+        assert!(unsafe { backing.collect_purge(process, config(), true, false, 1) });
+        let first_pending = pending_mask();
+        let first_expiry = expiry_mask();
+        let first_advice = advice.count();
+        let first_exact = advice.range() == Some((addresses[1] as usize, ARENA_SLICE_SIZE, 4));
+        let first_vm = process.subprocess().vm_statistics().snapshot();
+        let first_arena = process.subprocess().arena_statistics().snapshot();
+        let first_committed = unsafe { ArenaView::from_ptr(arenas[1].as_ptr()) }.unwrap();
+        let first_committed = unsafe { first_committed.slices_committed() }.unwrap()
+            .is_set_range(slices[1], 1) == Some(true);
+        assert_eq!(fault.observed(), 1);
+        assert!(unsafe { backing.collect_purge(process, config(), true, false, 2) });
+        let second_pending = pending_mask();
+        let second_expiry = expiry_mask();
+        let second_advice = advice.count();
+        let second_arena = process.subprocess().arena_statistics().snapshot();
+        assert!(unsafe { backing.collect_purge(process, config(), true, false, 0) });
+        let third_pending = pending_mask();
+        let third_expiry = expiry_mask();
+        let third_advice = advice.count();
+        let third_arena = process.subprocess().arena_statistics().snapshot();
+        assert!(unsafe { backing.collect_purge(process, config(), true, false, 0) });
+        let global_cleared = crate::atomic::i64_load_relaxed(&backing.purge_expire) == 0;
+        let final_vm = process.subprocess().vm_statistics().snapshot();
+        for (field, value) in [
+            ("setup", i64::from(setup)), ("initial_pending", initial_pending),
+            ("first_pending", first_pending), ("first_expiry", first_expiry),
+            ("first_advice", first_advice as i64), ("first_exact", i64::from(first_exact)),
+            ("first_visits", first_arena.arena_purges - before_arena.arena_purges),
+            ("first_calls", first_vm.purge_calls - before_vm.purge_calls),
+            ("first_bytes", first_vm.purged - before_vm.purged),
+            ("first_committed", i64::from(first_committed)),
+            ("second_pending", second_pending), ("second_expiry", second_expiry),
+            ("second_advice", second_advice as i64),
+            ("second_visits", second_arena.arena_purges - before_arena.arena_purges),
+            ("third_pending", third_pending), ("third_expiry", third_expiry),
+            ("third_advice", third_advice as i64),
+            ("third_visits", third_arena.arena_purges - before_arena.arena_purges),
+            ("global_cleared", i64::from(global_cleared)),
+            ("calls", final_vm.purge_calls - before_vm.purge_calls),
+            ("bytes", final_vm.purged - before_vm.purged),
+            ("registry", backing.registry().count() as i64),
+        ] {
+            std::println!("m2.arena_purge_budget_failure.{field}={value}");
+        }
+        assert!(setup && first_exact && first_committed && global_cleared);
+        drop(advice);
+    }
+
     #[test]
     fn clock_failure_uses_source_fallback_for_process_arena_purge() {
         let fault = fault::install(fault::Plan::disabled());

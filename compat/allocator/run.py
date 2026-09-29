@@ -563,6 +563,12 @@ M2_X86_64_ARENA_CHECKS = (
         "kind": "c-rust-arena-delayed-purge-failure-differential",
         "target": "compat/allocator/medium_pressure_delayed_purge_fault.py",
     },
+    {
+        "expected_passed_test_count": 1,
+        "id": "arena-purge-budget-decommit-failure-c-rust-differential",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_arena_purge_budget_failure_x86_64.py",
+    },
 )
 M2_X86_64_ARENA_DIRECT_RECEIVERS = {
     "arena-delayed-purge-decommit-failure-c-rust-differential": {
@@ -649,6 +655,25 @@ M2_X86_64_ARENA_DIRECT_RECEIVERS = {
             "arena_purges": 1, "warnings": 1,
         },
         "scope": "pinned-c-rust-scheduled-expiry-decommit-error-consumes-purge-with-committed-slice-and-later-reuse",
+    },
+    "arena-purge-budget-decommit-failure-c-rust-differential": {
+        "artifact": "m2-arena-purge-budget-failure",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_arena_purge_budget_failure_x86_64.py",
+        "fixture": "compat/allocator/m2_arena_purge_budget_failure_x86_64.c",
+        "rust_test": "arena::owned::tests::emit_m2_arena_purge_budget_failure_c_rust_trace",
+        "trace_prefix": "m2.arena_purge_budget_failure.",
+        "trace": {
+            "setup": 1, "initial_pending": 7, "first_pending": 5,
+            "first_expiry": 2, "first_advice": 1, "first_exact": 1,
+            "first_visits": 1, "first_calls": 1, "first_bytes": 65536,
+            "first_committed": 1, "second_pending": 1, "second_expiry": 6,
+            "second_advice": 2, "second_visits": 2, "third_pending": 0,
+            "third_expiry": 7, "third_advice": 3, "third_visits": 3,
+            "global_cleared": 1, "calls": 3, "bytes": 196608,
+            "registry": 3,
+        },
+        "scope": "pinned-c-rust-three-arena-bounded-purge-failed-decommit-consumes-one-visit-then-rotated-drain",
     },
 }
 M2_X86_64_RECURSION_CHECKS = (

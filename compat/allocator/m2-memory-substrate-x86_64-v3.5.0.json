@@ -291,6 +291,12 @@
           "id": "arena-delayed-purge-expiry-decommit-failure-c-rust-differential",
           "kind": "c-rust-arena-delayed-purge-failure-differential",
           "target": "compat/allocator/medium_pressure_delayed_purge_fault.py"
+        },
+        {
+          "expected_passed_test_count": 1,
+          "id": "arena-purge-budget-decommit-failure-c-rust-differential",
+          "kind": "c-rust-arena-delayed-purge-failure-differential",
+          "target": "compat/allocator/m2_arena_purge_budget_failure_x86_64.py"
         }
       ],
       "id": "arenas",
