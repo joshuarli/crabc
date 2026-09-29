@@ -137,7 +137,7 @@ for pair in accepted native; do
         >"$work/$pair-dynamic-manifest.verify.log"
 done
 
-# Preserve every execution before returning the expected red regression.
+# Preserve every execution before validating the observed kernel state.
 python3 -B - "$work" <<'PY'
 from pathlib import Path
 import re
@@ -184,7 +184,7 @@ for name in names:
     first_registration = next((i for i, line in enumerate(calls)
                                if 'MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED,' in line), -1)
     registration_before_probe = 0 <= first_registration < first_query
-    if first_query < 0 or first_registration < 0 or registration_before_probe != name.startswith('native-'):
+    if first_query < 0 or first_registration < 0 or registration_before_probe:
         print(f'{name}: unexpected kernel registration order query={first_query} '
               f'register={first_registration}')
         failed = True
@@ -192,10 +192,13 @@ for name in names:
     print(f'{name}: preinit={preinit} main-before={before} '
           f'main-after={after} child-before={child} child-after-register={registered} '
           f'register-before-first-query={registration_before_probe}')
+    for stage in expected[:-1]:
+        if rows[(stage, 8)][0] != -1:
+            print(f'{name}: expected unregistered {stage} raw -EPERM (-1), '
+                  f'got {rows[(stage, 8)][0]}')
+            failed = True
     if registered != 0:
-        failed = True
-    if child != -1:
-        print(f'{name}: RED unregistered-child assumption; expected raw -EPERM (-1), got {child}')
+        print(f'{name}: expected registered child raw 0, got {registered}')
         failed = True
 raise SystemExit(1 if failed else 0)
 PY

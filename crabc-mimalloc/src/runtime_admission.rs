@@ -286,17 +286,25 @@ impl NativeAllocatorOperationGuard {
                 FORK_CLOSED => { core::hint::spin_loop(); continue; },
                 _ => {},
             }
-            if ASYMMETRIC_ENTRY_FENCE.load(Ordering::Relaxed) {
-                // Every closing writer issues `asymmetric_writer_fence`
-                // between its epoch store and its `entered` scan. Either this
-                // store is visible to that scan, or the load below observes
-                // the writer's epoch. The compiler fence keeps the two in
-                // program order; x86 keeps them otherwise only up to the
-                // store buffer, which the writer's barrier drains.
-                record.entered.store(true, Ordering::Relaxed);
-                core::sync::atomic::compiler_fence(Ordering::SeqCst);
-            } else {
+            #[cfg(target_arch = "x86_64")]
+            {
+                // The closing writer's SeqCst epoch store and entered scan
+                // pair with this SeqCst store and the following epoch load.
                 record.entered.store(true, Ordering::SeqCst);
+            }
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                if ASYMMETRIC_ENTRY_FENCE.load(Ordering::Relaxed) {
+                    // Every closing writer issues `asymmetric_writer_fence`
+                    // between its epoch store and its `entered` scan. Either
+                    // this store is visible to that scan, or the load below
+                    // observes the writer's epoch. The compiler fence keeps
+                    // the store and load in program order.
+                    record.entered.store(true, Ordering::Relaxed);
+                    core::sync::atomic::compiler_fence(Ordering::SeqCst);
+                } else {
+                    record.entered.store(true, Ordering::SeqCst);
+                }
             }
             if epoch.state.load(Ordering::SeqCst) == observed {
                 unsafe { *record.nesting.get() = 1; }
