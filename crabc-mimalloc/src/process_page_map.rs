@@ -1317,10 +1317,8 @@ impl ProcessPageMapRoot {
         client: NonNull<u8>,
     ) -> Result<Option<LiveAllocationPointer>, ProcessPageMapError> {
         self.ensure_ready()?;
-        if self.storage.root.load().is_none() {
-            return Err(ProcessPageMapError::Poisoned);
-        }
-        // SAFETY: READY publication installed an active map. Terminal
+        // SAFETY: the READY release follows root publication, so the acquire
+        // check above proves this map initialized and active. Terminal
         // destruction ends all readers before changing that map's activity,
         // and the exact live client excludes an overlapping entry write.
         let page = unsafe { self.storage.page_map_ref().checked_lookup_in_active_map(client.as_ptr()) };
