@@ -2,10 +2,11 @@
 # Native Linux/x86-64 selected static crabc-libc posix_fallocate evidence.
 #
 # This fixture uses raw Linux setup and inspection helpers over one unlinked
-# regular file, so the candidate surface is only `posix_fallocate`: fixed
-# mode-zero allocation over the half-open [4096, 8192) range, retained prefix bytes,
-# zero-filled extension, stable position, direct POSIX error values, and
-# unchanged errno. It is private evidence, not
+# regular file, so the candidate surface is only `posix_fallocate`: extending,
+# overlapping, and boundary mode-zero ranges, retained bytes, zero-filled
+# extension, stable position, direct POSIX error values, and unchanged errno.
+# Matched execution records and both ELFs form a physical receipt. This is
+# private evidence, not
 # a general fallocate mode, pathname, CRT, pthread/TLS lifecycle, loader,
 # sysroot, or public x86-64 C ABI support claim.
 set -euo pipefail
@@ -88,7 +89,7 @@ assert_posix_fallocate_syscall_path() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cat cmp diff grep mapfile mkdir nm objdump readelf rustup sort wc; do
+for tool in ar awk cargo cat chmod cmp cp diff grep mapfile mkdir mktemp nm objdump readelf rustup sha256sum sort wc; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -97,11 +98,15 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_fcntl_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_x86_posix_fallocate_reference.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-posix-fallocate.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp" "$ROOT_DIR/.work/x86_64/reports"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-posix-fallocate.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 candidate="$work_dir/crabc-static-posix-fallocate-candidate"
+reference="$work_dir/musl-posix-fallocate-reference"
+reference_records="$work_dir/musl.records"
+candidate_records="$work_dir/crabc.records"
 header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"
 archive_relocations="$work_dir/archive-relocations"
@@ -121,8 +126,9 @@ for header in errno.h fcntl.h features.h stddef.h stdint.h sys/syscall.h sys/typ
 done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_posix_fallocate_probe.c \
-    -o "$work_dir/oracle"
-"$work_dir/oracle"
+    -o "$reference"
+"$reference" >"$reference_records" ||
+    fail "pinned-musl range matrix failed"
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit libc.a"
@@ -176,5 +182,37 @@ grep -Eq '[[:space:]]TLS[[:space:]]' "$candidate_program_headers" ||
 assert_fixture_tls_capacity
 assert_posix_fallocate_syscall_path
 
-"$candidate"
+"$candidate" >"$candidate_records" ||
+    fail "freestanding range matrix failed"
+[ "$(wc -l <"$reference_records")" -eq 9 ] ||
+    fail "pinned-musl range matrix did not record every case"
+if ! cmp -s "$reference_records" "$candidate_records"; then
+    diff -u "$reference_records" "$candidate_records" >&2 || true
+    fail "freestanding range matrix differs from pinned musl"
+fi
+
+report_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-posix-fallocate.XXXXXX")"
+chmod 755 "$report_dir"
+cp "$reference" "$report_dir/musl-reference.elf"
+cp "$candidate" "$report_dir/crabc-candidate.elf"
+cp "$reference_records" "$report_dir/musl.records"
+cp "$candidate_records" "$report_dir/crabc.records"
+cp "$candidate_program_headers" "$report_dir/crabc-program-headers.txt"
+cp "$selected_symbols" "$report_dir/selected-c-abi-symbols.txt"
+cp "$archive.source-runtime.json" "$report_dir/source-runtime.json"
+cp compat/x86_64/libc_posix_fallocate_probe.c \
+    "$report_dir/libc_posix_fallocate_probe.c"
+cp compat/x86_64/libc_posix_fallocate_start.S \
+    "$report_dir/libc_posix_fallocate_start.S"
+cp compat/x86_64/run_libc_posix_fallocate.sh \
+    "$report_dir/run_libc_posix_fallocate.sh"
+(
+    cd "$report_dir"
+    sha256sum musl-reference.elf crabc-candidate.elf musl.records crabc.records \
+        crabc-program-headers.txt selected-c-abi-symbols.txt \
+        source-runtime.json libc_posix_fallocate_probe.c \
+        libc_posix_fallocate_start.S run_libc_posix_fallocate.sh >sha256sums.txt
+)
+cat "$reference_records"
+printf 'posix_fallocate physical receipt: %s\n' "$report_dir"
 printf 'x86 static crabc-libc posix_fallocate: PASS\n'
