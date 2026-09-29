@@ -944,6 +944,72 @@ static void check_nul_boundaries(void)
     CHECK(munmap(mapping, 2 * (size_t)page) == 0);
 }
 
+/* A compact transcript keeps every public submatch slot visible.  Optional
+ * groups may be absent, repeated alternatives have distinct winning captures,
+ * and C.UTF-8 offsets count bytes even when one atom consumes several bytes.
+ * The identical object runs against the pinned and owned implementations. */
+static void trace_capture_matrix(void)
+{
+    static const struct {
+        const char *locale;
+        const char *name;
+        const char *pattern;
+        const char *subject;
+        int cflags;
+        int eflags;
+        size_t nmatch;
+    } cases[] = {
+        {"C", "optional-absent", "^(a)(b)?$", "a", REG_EXTENDED, 0, 5},
+        {"C", "optional-present", "^(a)(b)?$", "ab", REG_EXTENDED, 0, 5},
+        {"C", "repeated-inner", "^((a|ab)+)b$", "abab", REG_EXTENDED, 0, 5},
+        {"C", "ambiguous-length", "(a|aa)(a?)", "aaa", REG_EXTENDED, 0, 5},
+        {"C", "empty-groups", "(a*)(a*)", "aa", REG_EXTENDED, 0, 5},
+        {"C", "bre-backreference", "\\(a\\)\\1", "zaa", 0, 0, 5},
+        {"C", "newline-captures", "(^a)(b?)", "x\na", REG_EXTENDED | REG_NEWLINE, 0, 5},
+        {"C", "newline-notbol", "(^a)(b?)", "x\na", REG_EXTENDED | REG_NEWLINE, REG_NOTBOL, 5},
+        {"C", "short-output", "(a)(b)(c)", "abc", REG_EXTENDED, 0, 2},
+        {"C.UTF-8", "multibyte-groups", "(\303\251)(.)?", "z\303\251\303\237", REG_EXTENDED, 0, 5},
+        {"C.UTF-8", "repeated-multibyte", "((\303\251|\303\251\303\251)+)\303\251",
+            "\303\251\303\251\303\251\303\251", REG_EXTENDED, 0, 5},
+        {"C.UTF-8", "alpha-class", "([[:alpha:]]+)([^[:alpha:]]*)", "\303\2511",
+            REG_EXTENDED, 0, 5},
+        {"C", "alpha-class-byte", "([[:alpha:]]+)([^[:alpha:]]*)", "\303\2511",
+            REG_EXTENDED, 0, 5},
+        {"C.UTF-8", "icase-groups", "(\303\251)([[:lower:]]?)", "\303\211\303\251",
+            REG_EXTENDED | REG_ICASE, 0, 5},
+        {"C.UTF-8", "invalid-subject", "(.)(.)", "\303\251\377",
+            REG_EXTENDED, 0, 5},
+    };
+    size_t case_index;
+
+    for (case_index = 0; case_index != sizeof cases / sizeof *cases;
+            ++case_index) {
+        regex_t compiled;
+        regmatch_t matches[5];
+        size_t index;
+        int status;
+
+        CHECK(setlocale(LC_ALL, cases[case_index].locale) != NULL);
+        CHECK(public_regcomp(&compiled, cases[case_index].pattern,
+            cases[case_index].cflags) == REG_OK);
+        for (index = 0; index != sizeof matches / sizeof *matches; ++index) {
+            matches[index].rm_so = -70 - (regoff_t)index;
+            matches[index].rm_eo = -80 - (regoff_t)index;
+        }
+        status = public_regexec(&compiled, cases[case_index].subject,
+            cases[case_index].nmatch, matches, cases[case_index].eflags);
+        CHECK(status == REG_OK || status == REG_NOMATCH);
+        printf("capture-matrix %s %s nsub=%zu nmatch=%zu status=%d",
+            cases[case_index].locale, cases[case_index].name,
+            compiled.re_nsub, cases[case_index].nmatch, status);
+        for (index = 0; index != sizeof matches / sizeof *matches; ++index)
+            printf(" %ld,%ld", (long)matches[index].rm_so,
+                (long)matches[index].rm_eo);
+        putchar('\n');
+        public_regfree(&compiled);
+    }
+}
+
 /*
  * `--bounded-backreference`: a backreference range that leaves the subject.
  *
@@ -1071,6 +1137,7 @@ int main(int argc, char **argv)
     check_regerror_table();
     check_locale_edges();
     check_nul_boundaries();
+    trace_capture_matrix();
     /* `--corpus-trace` prints one running digest per compilation;
      * `--corpus-trace-subjects` adds every execution observation. */
     if (argc == 2 && !strcmp(argv[1], "--corpus-trace"))
