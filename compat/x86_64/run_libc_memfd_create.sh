@@ -3,10 +3,9 @@
 #
 # The same project-header C fixture first executes through pinned musl, then
 # as a -nostdlib -static candidate linked solely with the selected archive. It
-# selects only direct memfd_create=319, its Linux result-to-errno boundary, and
-# fixture-local raw close cleanup. It does not select seals, C fcntl, huge-page
-# resource policy, memfd_secret, a descriptor runtime, libc.so, CRT, dynamic
-# TLS, loader, sysroot, or public x86 support.
+# selects direct memfd_create=319 and its Linux result-to-errno boundary.
+# Fixture-local raw syscalls observe flags, seals, mappings, and descriptor
+# lifetime without selecting other C ABI entries.
 set -euo pipefail
 . "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
@@ -84,7 +83,7 @@ assert_memfd_syscall_path() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mapfile mkdir nm objdump readelf rustup sort; do
+for tool in ar awk cargo chmod cmp diff env grep mapfile mkdir nm objdump readelf rustup sort; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -92,8 +91,9 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_memfd_create_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-memfd-create.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-memfd-create.XXXXXX")"
+chmod 755 "$work_dir"
 cargo_target="$work_dir/cargo-target"
 archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-memfd-create-reference"
@@ -109,6 +109,11 @@ candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"
+reference_output="$work_dir/reference-output"
+candidate_output="$work_dir/candidate-output"
+expected_output="$work_dir/expected-output"
+reference_error="$work_dir/reference-error"
+candidate_error="$work_dir/candidate-error"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
@@ -121,7 +126,16 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_memfd_create_probe.c \
     -o "$reference"
-"$reference" || fail "pinned-musl memfd_create fixture failed"
+printf 'memfd flags seals mapping fork lifetime: PASS\n' >"$expected_output"
+if env -i LC_ALL=C TZ=UTC "$reference" >"$reference_output" 2>"$reference_error"; then
+    :
+else
+    result=$?
+    fail "pinned-musl memfd_create fixture failed ($result); evidence: $work_dir"
+fi
+[ ! -s "$reference_error" ] || fail "pinned-musl fixture wrote stderr: $work_dir"
+cmp -s "$expected_output" "$reference_output" ||
+    fail "pinned-musl fixture record differs: $work_dir"
 
 build_source_runtime_libc "$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 [ -f "$archive" ] || fail "cargo did not emit x86 static libc archive"
@@ -184,6 +198,14 @@ objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
 assert_memfd_syscall_path
-"$candidate" || fail "freestanding memfd_create fixture failed"
+if env -i LC_ALL=C TZ=UTC "$candidate" >"$candidate_output" 2>"$candidate_error"; then
+    :
+else
+    result=$?
+    fail "freestanding memfd_create fixture failed ($result); evidence: $work_dir"
+fi
+[ ! -s "$candidate_error" ] || fail "candidate fixture wrote stderr: $work_dir"
+cmp -s "$reference_output" "$candidate_output" ||
+    fail "candidate differs from pinned musl: $work_dir"
 
-printf 'x86 static crabc-libc memfd_create: PASS\n'
+printf 'x86 static crabc-libc memfd_create: PASS (evidence: %s)\n' "$work_dir"

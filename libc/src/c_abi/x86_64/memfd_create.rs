@@ -14,10 +14,11 @@
 //! Musl's source is itself one direct `syscall(SYS_memfd_create, name, flags)`
 //! wrapper. Linux therefore owns the complete NUL-terminated label-pointer,
 //! 249-byte label, and flag-word contract. In particular, this leaf neither
-//! filters unknown flags nor interprets `MFD_ALLOW_SEALING`; the accompanying
-//! artifact proves only direct valid-label, overlong-label, invalid-pointer,
-//! and invalid-flag behavior. `MFD_HUGETLB` resource and page-size policy,
-//! sealing operations, and all `fcntl` commands remain separate work.
+//! filters unknown flags nor interprets `MFD_ALLOW_SEALING`. The descriptor
+//! refers to kernel-owned state shared across duplicates and fork. The caller
+//! uses separate descriptor, mapping, and `fcntl` operations to observe or
+//! change that state. `MFD_HUGETLB` resource and page-size policy remains
+//! outside this boundary.
 
 use core::ffi::{c_char, c_int, c_uint};
 
