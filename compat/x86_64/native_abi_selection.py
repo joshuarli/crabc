@@ -54,6 +54,7 @@ import native_abi_memmove_import_receipt as memmove_import_receipt
 import native_abi_memcmp_import_receipt as memcmp_import_receipt
 import native_abi_fchdir_import_receipt as fchdir_import_receipt
 import native_abi_btowc_import_receipt as btowc_import_receipt
+import native_abi_wctomb_import_receipt as wctomb_import_receipt
 import owned_posix_product_evidence as product_evidence
 import headers_layouts_aggregate
 import owned_public_data_variable_runtime as public_data_variable_runtime
@@ -9559,6 +9560,40 @@ def btowc_ordinary_import_adapter(
     return {'report': file_identity(receipt_path), 'projection': projection}
 
 
+def wctomb_ordinary_import_adapter(
+        work_path: Path | None, *, boundary_report_path: Path | None,
+        paths: Mapping[str, Path]) -> dict[str, Any] | None:
+    """Bind the wide printer's retained wctomb call to its final provider."""
+    if work_path is None:
+        return None
+    require(boundary_report_path is not None,
+            'wctomb import requires the installed C boundary account')
+    work = physical_work_path(work_path, directory=True, own=True)
+    receipt_path = physical_work_path(work / 'report.json', directory=False, own=True)
+    try:
+        receipt = wctomb_import_receipt.validate_report(
+            receipt_path, static_product=paths['static_product'],
+            dynamic_product=paths['dynamic_product'])
+        boundary = native_c_allocator_boundary.json_object(
+            boundary_report_path, 'wctomb boundary account')
+        projection = native_c_allocator_boundary.ordinary_import_resolution(
+            boundary, report_path=boundary_report_path,
+            static_product=paths['static_product'],
+            dynamic_product=paths['dynamic_product'],
+            elf_facts_report=paths['elf_report'], name='wctomb',
+            required_importer_section='.text.crabc_owned_wprint_wprintf_core',
+            required_source_call_count=1, independent_retained_work=work,
+            expected_importers=1)
+    except (KeyError, TypeError, ValueError, OSError,
+            wctomb_import_receipt.WctombImportError,
+            product_evidence.ProductEvidenceError,
+            native_c_allocator_boundary.AllocatorBoundaryError) as error:
+        raise SelectionError(f'wctomb ordinary import rejected: {error}') from error
+    require(receipt['source']['revision'] == selection_source()['revision'],
+            'wctomb import selects another source revision')
+    return {'report': file_identity(receipt_path), 'projection': projection}
+
+
 def owned_aio_ordinary_import_adapter(
         report_path: Path | None, *, boundary_report_path: Path | None,
         paths: Mapping[str, Path]) -> dict[str, Any] | None:
@@ -12314,6 +12349,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   memcmp_ordinary_import_work: Path | None = None,
                   fchdir_ordinary_import_work: Path | None = None,
                   btowc_ordinary_import_work: Path | None = None,
+                  wctomb_ordinary_import_work: Path | None = None,
                   owned_aio_report: Path | None = None,
                   owned_syslog_work: Path | None = None,
                   stdio_alias_contract_report: Path | None = None,
@@ -12394,6 +12430,11 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         rejected, 'btowc_ordinary_import_work',
         lambda: btowc_ordinary_import_adapter(
             btowc_ordinary_import_work,
+            boundary_report_path=native_c_allocator_boundary_report, paths=paths))
+    wctomb_ordinary_import_companion = _admit(
+        rejected, 'wctomb_ordinary_import_work',
+        lambda: wctomb_ordinary_import_adapter(
+            wctomb_ordinary_import_work,
             boundary_report_path=native_c_allocator_boundary_report, paths=paths))
     owned_aio_ordinary_import_companion = _admit(
         rejected, 'owned_aio_report',
@@ -12590,6 +12631,14 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             accounting, native_c_allocator_boundary_companion, 'btowc',
             projection_override=btowc_ordinary_import_companion['projection']))
     ordinary_static_import_joins.extend(btowc_import_joins)
+    wctomb_import_joins, _ = _attach(
+        rejected, 'wctomb_ordinary_import_resolution', accounting,
+        wctomb_ordinary_import_companion,
+        lambda: [] if wctomb_ordinary_import_companion is None else
+        _attach_ordinary_static_import(
+            accounting, native_c_allocator_boundary_companion, 'wctomb',
+            projection_override=wctomb_ordinary_import_companion['projection']))
+    ordinary_static_import_joins.extend(wctomb_import_joins)
     for scan_import, caller, call_count in (
             ('mbrtowc', 'crabc_owned_scan_vfscanf', 1),
             ('mbsinit', 'crabc_owned_scan_vfscanf', 1),
@@ -12817,6 +12866,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'memcmp_ordinary_import_companion': memcmp_ordinary_import_companion,
             'fchdir_ordinary_import_companion': fchdir_ordinary_import_companion,
             'btowc_ordinary_import_companion': btowc_ordinary_import_companion,
+            'wctomb_ordinary_import_companion': wctomb_ordinary_import_companion,
             'native_c_allocator_boundary_joins': native_c_allocator_boundary_joins,
             'native_c_allocator_runtime_import_joins': native_c_allocator_runtime_import_joins,
             'native_c_allocator_private_vm_import_joins': native_c_allocator_private_vm_import_joins,
@@ -12873,6 +12923,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                   memcmp_ordinary_import_work: Path | None = None,
                  fchdir_ordinary_import_work: Path | None = None,
                   btowc_ordinary_import_work: Path | None = None,
+                 wctomb_ordinary_import_work: Path | None = None,
                  owned_aio_report: Path | None = None,
                  owned_syslog_work: Path | None = None,
                  stdio_alias_contract_report: Path | None = None,
@@ -12907,6 +12958,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            memcmp_ordinary_import_work=memcmp_ordinary_import_work,
                            fchdir_ordinary_import_work=fchdir_ordinary_import_work,
                            btowc_ordinary_import_work=btowc_ordinary_import_work,
+                           wctomb_ordinary_import_work=wctomb_ordinary_import_work,
                            owned_aio_report=owned_aio_report,
                            owned_syslog_work=owned_syslog_work,
                            stdio_alias_contract_report=stdio_alias_contract_report,
@@ -12941,6 +12993,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                   memcmp_ordinary_import_work: Path | None = None,
                     fchdir_ordinary_import_work: Path | None = None,
                   btowc_ordinary_import_work: Path | None = None,
+                    wctomb_ordinary_import_work: Path | None = None,
                     owned_aio_report: Path | None = None,
                     owned_syslog_work: Path | None = None,
                     stdio_alias_contract_report: Path | None = None,
@@ -12977,6 +13030,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                            memcmp_ordinary_import_work=memcmp_ordinary_import_work,
                              fchdir_ordinary_import_work=fchdir_ordinary_import_work,
                            btowc_ordinary_import_work=btowc_ordinary_import_work,
+                             wctomb_ordinary_import_work=wctomb_ordinary_import_work,
                              owned_aio_report=owned_aio_report,
                              owned_syslog_work=owned_syslog_work,
                              stdio_alias_contract_report=stdio_alias_contract_report,
@@ -13019,6 +13073,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--memcmp-ordinary-import-work', type=Path)
     parser.add_argument('--fchdir-ordinary-import-work', type=Path)
     parser.add_argument('--btowc-ordinary-import-work', type=Path)
+    parser.add_argument('--wctomb-ordinary-import-work', type=Path)
     parser.add_argument('--owned-aio-report', type=Path)
     parser.add_argument('--owned-syslog-work', type=Path)
     parser.add_argument('--stdio-alias-contract-report', type=Path)
@@ -13052,6 +13107,8 @@ def main(argv: Sequence[str]) -> int:
         parser.error('--fchdir-ordinary-import-work requires --native-c-allocator-boundary-report')
     if args.btowc_ordinary_import_work is not None and args.native_c_allocator_boundary_report is None:
         parser.error('--btowc-ordinary-import-work requires --native-c-allocator-boundary-report')
+    if args.wctomb_ordinary_import_work is not None and args.native_c_allocator_boundary_report is None:
+        parser.error('--wctomb-ordinary-import-work requires --native-c-allocator-boundary-report')
     kwargs = {key: getattr(args, key) for key in ('measurement_checkout', 'base_inventory', 'static_product', 'dynamic_product',
                                                 'static_preparation', 'declaration_report', 'public_data_ordinary_link_report',
                                                 'loader_debug_abi_report', 'compiler_helper_aggregate_report',
@@ -13060,6 +13117,7 @@ def main(argv: Sequence[str]) -> int:
                                                 'errno_storage_lifecycle_report', 'native_c_allocator_boundary_report',
                                                 'strlen_ordinary_import_work', 'memmove_ordinary_import_work', 'memcmp_ordinary_import_work',
                                                 'fchdir_ordinary_import_work', 'btowc_ordinary_import_work',
+                                                'wctomb_ordinary_import_work',
                                                 'owned_aio_report', 'owned_syslog_work',
                                                 'stdio_alias_contract_report', 'crt_startup_report',
                                                 'syscall_alias_contract_report', 'utmpx_receipt_report',
