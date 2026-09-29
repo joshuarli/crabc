@@ -238,6 +238,7 @@
           "explicit-arena-suffix-trim-c-rust-differential",
           "explicit-arena-metadata-fault-c-rust-differential",
           "registered-arena-metadata-fault-c-rust-differential",
+          "fresh-arena-dual-fault-c-rust-differential",
           "registered-arena-page-map-fault-c-rust-differential",
           "registered-arena-page-map-double-fault-c-rust-differential",
           "process-owned-protect-fault-c-rust-differential",
@@ -274,6 +275,7 @@
           "explicit-arena-suffix-trim-c-rust-differential",
           "explicit-arena-metadata-fault-c-rust-differential",
           "registered-arena-metadata-fault-c-rust-differential",
+          "fresh-arena-dual-fault-c-rust-differential",
           "registered-arena-page-map-fault-c-rust-differential",
           "registered-arena-page-map-double-fault-c-rust-differential",
           "process-owned-protect-fault-c-rust-differential",
@@ -305,6 +307,7 @@
           "explicit-arena-suffix-trim-c-rust-differential",
           "explicit-arena-metadata-fault-c-rust-differential",
           "registered-arena-metadata-fault-c-rust-differential",
+          "fresh-arena-dual-fault-c-rust-differential",
           "registered-arena-page-map-fault-c-rust-differential",
           "registered-arena-page-map-double-fault-c-rust-differential",
           "process-owned-protect-fault-c-rust-differential",
@@ -437,6 +440,7 @@
           "explicit-arena-suffix-trim-c-rust-differential",
           "explicit-arena-metadata-fault-c-rust-differential",
           "registered-arena-metadata-fault-c-rust-differential",
+          "fresh-arena-dual-fault-c-rust-differential",
           "registered-arena-page-map-fault-c-rust-differential",
           "registered-arena-page-map-double-fault-c-rust-differential",
           "registered-arena-terminal-unmap-fault-c-rust-differential"
@@ -478,6 +482,7 @@
           "explicit-arena-suffix-trim-c-rust-differential",
           "explicit-arena-metadata-fault-c-rust-differential",
           "registered-arena-metadata-fault-c-rust-differential",
+          "fresh-arena-dual-fault-c-rust-differential",
           "registered-arena-page-map-fault-c-rust-differential",
           "registered-arena-page-map-double-fault-c-rust-differential"
         ]
@@ -627,6 +632,7 @@
           "explicit-arena-suffix-trim-c-rust-differential",
           "explicit-arena-metadata-fault-c-rust-differential",
           "registered-arena-metadata-fault-c-rust-differential",
+          "fresh-arena-dual-fault-c-rust-differential",
           "registered-arena-page-map-fault-c-rust-differential",
           "registered-arena-page-map-double-fault-c-rust-differential",
           "process-owned-protect-fault-c-rust-differential",
@@ -667,6 +673,7 @@
           "explicit-arena-suffix-trim-c-rust-differential",
           "explicit-arena-metadata-fault-c-rust-differential",
           "registered-arena-metadata-fault-c-rust-differential",
+          "fresh-arena-dual-fault-c-rust-differential",
           "registered-arena-page-map-fault-c-rust-differential",
           "registered-arena-page-map-double-fault-c-rust-differential"
         ],
@@ -699,6 +706,7 @@
           "explicit-arena-suffix-trim-c-rust-differential",
           "explicit-arena-metadata-fault-c-rust-differential",
           "registered-arena-metadata-fault-c-rust-differential",
+          "fresh-arena-dual-fault-c-rust-differential",
           "registered-arena-page-map-fault-c-rust-differential",
           "registered-arena-page-map-double-fault-c-rust-differential",
           "process-owned-protect-fault-c-rust-differential",
@@ -1121,6 +1129,12 @@
         "id": "registered-arena-metadata-fault-c-rust-differential",
         "kind": "c-rust-explicit-arena-metadata-fault-differential",
         "target": "compat/allocator/m2_registered_arena_metadata_fault_x86_64.py",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "fresh-arena-dual-fault-c-rust-differential",
+        "kind": "c-rust-explicit-arena-metadata-fault-differential",
+        "target": "compat/allocator/m2_fresh_arena_dual_fault_x86_64.py",
         "expected_passed_test_count": 1
       },
       {

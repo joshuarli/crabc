@@ -547,6 +547,18 @@ M2_X86_64_ARENA_CHECKS = (
         "kind": "c-rust-arena-delayed-purge-failure-differential",
         "target": "compat/allocator/m2_delayed_purge_failure_x86_64.py",
     },
+    {
+        "expected_passed_test_count": 1,
+        "id": "arena-delayed-purge-mixed-outcome-c-rust-differential",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_delayed_purge_mixed_outcome_x86_64.py",
+    },
+    {
+        "expected_passed_test_count": 1,
+        "id": "arena-delayed-purge-expiry-c-rust-differential",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_delayed_purge_expiry_x86_64.py",
+    },
 )
 M2_X86_64_ARENA_DIRECT_RECEIVERS = {
     "arena-delayed-purge-decommit-failure-c-rust-differential": {
@@ -570,6 +582,47 @@ M2_X86_64_ARENA_DIRECT_RECEIVERS = {
             "arena_purges": 1, "advice_calls": 1, "warnings": 1,
         },
         "scope": "pinned-c-rust-regular-arena-delayed-purge-decommit-error-consumption-warning-after-statistics-independent-later-owner",
+    },
+    "arena-delayed-purge-mixed-outcome-c-rust-differential": {
+        "artifact": "m2-delayed-purge-mixed-outcome",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_delayed_purge_mixed_outcome_x86_64.py",
+        "fixture": "compat/allocator/m2_delayed_purge_mixed_outcome_x86_64.c",
+        "rust_test": "arena::tests::emit_m2_delayed_purge_mixed_outcome_c_rust_trace",
+        "trace_prefix": "m2.delayed_purge_mixed.",
+        "trace": {
+            "setup": 1, "pending": 1, "pending_quiet": 1, "ordered": 1,
+            "bitmaps": 1, "advice_count": 2, "warning_count": 1,
+            "warning_order": 1, "warning_stats": 1, "collected_calls": 2,
+            "collected_bytes": 131072, "collected_visits": 1,
+            "committed_delta": 0, "no_retry": 1, "survivor": 1,
+            "terminal": 1, "a_slice": 9, "neighbor_slice": 10,
+            "b_slice": 11, "registry": 1, "reserved_delta": 0,
+            "purge_calls": 2, "purged_bytes": 131072, "arena_purges": 1,
+        },
+        "scope": "pinned-c-rust-two-disjoint-delayed-purges-first-decommit-failure-second-success-and-surviving-claim",
+    },
+    "arena-delayed-purge-expiry-c-rust-differential": {
+        "artifact": "m2-delayed-purge-expiry",
+        "kind": "c-rust-arena-delayed-purge-failure-differential",
+        "target": "compat/allocator/m2_delayed_purge_expiry_x86_64.py",
+        "fixture": "compat/allocator/m2_delayed_purge_expiry_x86_64.c",
+        "rust_test": "arena::owned::purge::tests::emit_m2_delayed_purge_expiry_c_rust_trace",
+        "trace_prefix": "m2.delayed_purge_expiry.",
+        "trace": {
+            "setup": 1, "scheduled": 1, "before_quiet": 1,
+            "before_pending": 1, "before_global": 19999,
+            "due_advice": 1, "due_exact": 1, "due_bits": 1,
+            "due_expiry": 0, "due_global": 20000,
+            "due_calls": 1, "due_bytes": 65536, "due_visits": 1,
+            "due_committed": 0, "after_no_retry": 1,
+            "after_global": 0, "later_same": 1, "later_pending": 1,
+            "survivor": 1, "terminal": 1, "released_slice": 9,
+            "neighbor_slice": 10, "registry": 1, "reserved_delta": 0,
+            "purge_calls": 1, "purged_bytes": 65536,
+            "arena_purges": 1, "warnings": 0,
+        },
+        "scope": "pinned-c-rust-delayed-purge-before-at-and-after-expiry-with-retained-arena-owner",
     },
 }
 M2_X86_64_RECURSION_CHECKS = (
@@ -13451,6 +13504,55 @@ M2_X86_64_EXPLICIT_ARENA_METADATA_FAULT_RECEIVERS = {
         "commit_fields": set(),
         "scope": "pinned-c-rust-registered-os-arena-survives-second-metadata-fault-claim-and-terminal-destroy",
     },
+    "fresh-arena-dual-fault-c-rust-differential": {
+        "artifact": "m2-fresh-arena-dual-fault",
+        "target": "compat/allocator/m2_fresh_arena_dual_fault_x86_64.py",
+        "kind": "c-rust-explicit-arena-metadata-fault-differential",
+        "cases": (),
+        "fields": {
+            "refused", "no_memory_id", "registry_before", "failed_registry",
+            "metadata_calls", "metadata_size", "metadata_exact", "cleanup_calls",
+            "escaped_size", "escaped_aligned", "escaped_live",
+            "warning_fragments", "warning_bodies", "warning_order",
+            "fallback_warning_before_stats", "warning_commit_before_stats",
+            "warning_meta_before_stats", "warning_free_before_stats",
+            "reserved_after_failure", "committed_after_failure",
+            "mmap_after_failure", "commit_after_failure", "arena_after_failure",
+            "recovery_memory", "recovery_slice_index", "recovery_slice_count",
+            "recovery_initially_committed", "recovery_initially_zero",
+            "recovery_is_pinned", "recovery_arena_info_slices", "recovery_arena_size",
+            "recovery_registry", "recovery_bitmap_claimed",
+            "prior_live_during_recovery", "recovery_reserved_delta",
+            "recovery_committed_delta", "recovery_mmap_delta",
+            "recovery_commit_delta", "recovery_arena_delta", "claim_released",
+            "recovery_mapping_live", "prior_live_after_release",
+            "release_warnings", "raw_cleanup", "raw_gone", "raw_no_stats",
+        },
+        "varying_fields": {
+            "mmap_after_failure", "recovery_mmap_delta", "warning_bodies",
+            "warning_fragments", "warning_order",
+        },
+        "alignment_fallback_receipt": "selected_alignment_fallback",
+        "required_values": {
+            "refused": 1, "no_memory_id": 1, "metadata_exact": 1,
+            "escaped_aligned": 1, "escaped_live": 1,
+            "fallback_warning_before_stats": 1,
+            "warning_commit_before_stats": 1,
+            "warning_meta_before_stats": 1,
+            "warning_free_before_stats": 1,
+            "recovery_memory": 1, "recovery_bitmap_claimed": 1,
+            "prior_live_during_recovery": 1, "claim_released": 1,
+            "recovery_mapping_live": 1, "prior_live_after_release": 1,
+            "raw_cleanup": 1, "raw_gone": 1, "raw_no_stats": 1,
+            "metadata_calls": 1, "cleanup_calls": 1,
+        },
+        "same_trace_fields": (
+            ("failed_registry", "registry_before"),
+        ),
+        "rust_command_receipt": "unit-run",
+        "commit_fields": set(),
+        "scope": "pinned-c-rust-fresh-arena-metadata-commit-and-cleanup-unmap-fail-escaped-owner-later-healthy-claim-and-raw-release",
+    },
 }
 M2_X86_64_REGISTERED_ARENA_PAGE_MAP_RECEIVERS = {
     "registered-arena-page-map-fault-c-rust-differential": {
@@ -15544,7 +15646,18 @@ def _m2_x86_64_vm_check_records(
             stable_fields = receiver.get("stable_fields", ())
             stable_receipt = receiver.get("stable_receipt")
             node_growth = receiver.get("node_growth")
-            varying_fields: set[str] = set()
+            varying_fields: set[str] = set(receiver.get("varying_fields", ()))
+            alignment_fallback_receipt = receiver.get("alignment_fallback_receipt")
+            if alignment_fallback_receipt is not None:
+                if (not isinstance(alignment_fallback_receipt, str)
+                        or not alignment_fallback_receipt
+                        or varying_fields != {
+                            "mmap_after_failure", "recovery_mmap_delta",
+                            "warning_bodies", "warning_fragments", "warning_order",
+                        }
+                        or receiver["cases"] or stable_fields or node_growth is not None):
+                    raise HarnessError("native x86 M2 process VM alignment branch is invalid")
+                expected_keys.add(alignment_fallback_receipt)
             if node_growth is not None:
                 if (
                     receiver["cases"] or stable_fields
@@ -15629,6 +15742,24 @@ def _m2_x86_64_vm_check_records(
                 for trace in (c_trace, rust_trace)
             ):
                 raise HarnessError("native x86 M2 process VM owner relation is invalid")
+            if alignment_fallback_receipt is not None:
+                fallback_values = observed[alignment_fallback_receipt]
+                if (not isinstance(fallback_values, Mapping)
+                        or set(fallback_values) != {"c", "rust"}
+                        or any(
+                            type(fallback_values[label]) is not int
+                            or fallback_values[label] not in (0, 1)
+                            or fallback_values[label] != trace["mmap_after_failure"] - 1
+                            or trace["recovery_mmap_delta"] != 2 + fallback_values[label]
+                            or trace["warning_bodies"] != 3 + fallback_values[label]
+                            or trace["warning_fragments"] != 3 + fallback_values[label]
+                            or trace["warning_order"] != (
+                                4123 if fallback_values[label] else 123
+                            )
+                            or trace["recovery_registry"] != trace["registry_before"] + 1
+                            for label, trace in (("c", c_trace), ("rust", rust_trace))
+                        )):
+                    raise HarnessError("native x86 M2 process VM alignment branch receipt is invalid")
             if node_growth is not None:
                 node_bytes = {
                     label: trace[node_growth["live_reserved"]] - trace[node_growth["size"]]

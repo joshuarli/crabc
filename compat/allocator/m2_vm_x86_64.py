@@ -182,6 +182,11 @@ CHECKS = (
         "compat/allocator/m2_registered_arena_metadata_fault_x86_64.py",
     ),
     (
+        "fresh-arena-dual-fault-c-rust-differential",
+        "c-rust-explicit-arena-metadata-fault-differential",
+        "compat/allocator/m2_fresh_arena_dual_fault_x86_64.py",
+    ),
+    (
         "registered-arena-page-map-fault-c-rust-differential",
         "c-rust-registered-arena-page-map-fault-differential",
         "compat/allocator/m2_registered_arena_page_map_fault_x86_64.py",
@@ -360,6 +365,7 @@ EXPLICIT_ARENA_SOURCE_CHECK_IDS = (
     *EXPLICIT_ARENA_TRIM_CHECK_IDS,
     EXPLICIT_ARENA_METADATA_FAULT_CHECK_ID,
     "registered-arena-metadata-fault-c-rust-differential",
+    "fresh-arena-dual-fault-c-rust-differential",
     "registered-arena-page-map-fault-c-rust-differential",
     "registered-arena-page-map-double-fault-c-rust-differential",
 )
