@@ -552,6 +552,10 @@ finish:
 
 static int check_atomic_signal_waits(void)
 {
+    int pipe_fds[2] = { -1, -1 };
+    struct pollfd descriptor = { 0 };
+    fd_set readable;
+    char byte = 0;
     struct sigaction saved_action = { 0 };
     struct sigaction action = { 0 };
     struct timespec ppoll_timeout = { 1, 0 };
@@ -601,7 +605,16 @@ static int check_atomic_signal_waits(void)
         status = 6;
         goto finish;
     }
+    if (pipe(pipe_fds) != 0) {
+        status = 15;
+        goto finish;
+    }
+    descriptor.fd = pipe_fds[0];
+    descriptor.events = POLLIN;
 
+    /* A pending signal interrupts the empty pipe wait when the temporary mask
+     * unblocks it. The next wait observes actual pipe readiness after the
+     * original blocked mask has been restored. */
     saved_timeout = ppoll_timeout;
     saved_temporary = temporary;
     delivered_signal = 0;
@@ -611,14 +624,31 @@ static int check_atomic_signal_waits(void)
         goto finish;
     }
     errno = 0;
-    if (ppoll(0, 0, &ppoll_timeout, &temporary) != -1 ||
-        errno != EINTR || delivered_signal != SIGUSR1 ||
+    descriptor.revents = (short)0x7fff;
+    if (ppoll(&descriptor, 1, &ppoll_timeout, &temporary) != -1 ||
+        errno != EINTR || descriptor.revents != 0 ||
+        delivered_signal != SIGUSR1 ||
         !delivery_mask_valid || !mask_has_usr2(&delivery_mask) ||
         !bytes_equal(&ppoll_timeout, &saved_timeout, sizeof ppoll_timeout) ||
         !bytes_equal(&temporary, &saved_temporary, sizeof temporary) ||
         sigprocmask(SIG_SETMASK, 0, &observed_mask) != 0 ||
         !mask_has_usr1(&observed_mask) || mask_has_usr2(&observed_mask)) {
         status = 8;
+        goto finish;
+    }
+    if (write(pipe_fds[1], "r", 1) != 1) {
+        status = 16;
+        goto finish;
+    }
+    saved_timeout = ppoll_timeout;
+    descriptor.revents = (short)0x7fff;
+    if (ppoll(&descriptor, 1, &ppoll_timeout, &temporary) != 1 ||
+        descriptor.revents != POLLIN ||
+        !bytes_equal(&ppoll_timeout, &saved_timeout, sizeof ppoll_timeout) ||
+        sigprocmask(SIG_SETMASK, 0, &observed_mask) != 0 ||
+        !mask_has_usr1(&observed_mask) || mask_has_usr2(&observed_mask) ||
+        read(pipe_fds[0], &byte, 1) != 1 || byte != 'r') {
+        status = 17;
         goto finish;
     }
 
@@ -631,7 +661,10 @@ static int check_atomic_signal_waits(void)
         goto finish;
     }
     errno = 0;
-    if (pselect(0, 0, 0, 0, &pselect_timeout, &temporary) != -1 ||
+    FD_ZERO(&readable);
+    FD_SET(pipe_fds[0], &readable);
+    if (pselect(pipe_fds[0] + 1, &readable, 0, 0,
+            &pselect_timeout, &temporary) != -1 ||
         errno != EINTR || delivered_signal != SIGUSR1 ||
         !delivery_mask_valid || !mask_has_usr2(&delivery_mask) ||
         !bytes_equal(&pselect_timeout, &saved_timeout,
@@ -640,6 +673,24 @@ static int check_atomic_signal_waits(void)
         sigprocmask(SIG_SETMASK, 0, &observed_mask) != 0 ||
         !mask_has_usr1(&observed_mask) || mask_has_usr2(&observed_mask)) {
         status = 10;
+        goto finish;
+    }
+    if (write(pipe_fds[1], "s", 1) != 1) {
+        status = 18;
+        goto finish;
+    }
+    saved_timeout = pselect_timeout;
+    FD_ZERO(&readable);
+    FD_SET(pipe_fds[0], &readable);
+    if (pselect(pipe_fds[0] + 1, &readable, 0, 0,
+            &pselect_timeout, &temporary) != 1 ||
+        !FD_ISSET(pipe_fds[0], &readable) ||
+        !bytes_equal(&pselect_timeout, &saved_timeout,
+            sizeof pselect_timeout) ||
+        sigprocmask(SIG_SETMASK, 0, &observed_mask) != 0 ||
+        !mask_has_usr1(&observed_mask) || mask_has_usr2(&observed_mask) ||
+        read(pipe_fds[0], &byte, 1) != 1 || byte != 's') {
+        status = 19;
         goto finish;
     }
 
@@ -662,6 +713,8 @@ static int check_atomic_signal_waits(void)
     }
 
 finish:
+    close_if_open(&pipe_fds[1]);
+    close_if_open(&pipe_fds[0]);
     /* Restore the former mask before the former disposition: a failed wait
      * can leave SIGUSR1 pending, and its temporary handler remains safe while
      * the original mask is reinstated. */
@@ -671,6 +724,11 @@ finish:
     if (action_saved && sigaction(SIGUSR1, &saved_action, 0) != 0 &&
         status == 0)
         status = 14;
+    if (status == 0) {
+        static const char record[] = "pipe-mask-transition:pass\n";
+        if (write(1, record, sizeof record - 1) != sizeof record - 1)
+            status = 20;
+    }
     return status;
 }
 

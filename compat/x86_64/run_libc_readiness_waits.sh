@@ -75,7 +75,7 @@ assert_named_syscall() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff nm objdump readelf rustup; do
+for tool in ar cargo cmp diff nm objdump readelf rustup sha256sum; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -84,7 +84,28 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
 mkdir -p "$ROOT_DIR/.work/x86_64"
 work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/libc-readiness-waits.XXXXXX")"
-trap 'rm -rf -- "$work_dir"' EXIT
+mkdir -p "$ROOT_DIR/.work/x86_64/reports"
+report_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/reports/libc-readiness-waits.XXXXXX")"
+preserve_run() {
+    local status=$?
+    for artifact in musl-readiness-waits-reference \
+        crabc-static-readiness-waits-candidate \
+        reference.stdout reference.stderr reference.status \
+        candidate.stdout candidate.stderr candidate.status; do
+        if [ -f "$work_dir/$artifact" ]; then
+            cp "$work_dir/$artifact" "$report_dir/$artifact"
+        fi
+    done
+    printf '%s\n' "$status" >"$report_dir/runner.status"
+    (cd "$report_dir" && sha256sum musl-readiness-waits-reference \
+        crabc-static-readiness-waits-candidate \
+        reference.stdout reference.stderr candidate.stdout candidate.stderr \
+        >SHA256SUMS) 2>/dev/null || true
+    chmod -R a+rX "$report_dir"
+    printf 'readiness-waits evidence: %s\n' "$report_dir" >&2
+    rm -rf -- "$work_dir"
+}
+trap preserve_run EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-readiness-waits-reference"
 candidate="$work_dir/crabc-static-readiness-waits-candidate"
@@ -113,11 +134,14 @@ done
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_readiness_waits_probe.c \
     -o "$reference"
-if "$reference"; then
+reference_status=0
+"$reference" >"$work_dir/reference.stdout" 2>"$work_dir/reference.stderr" \
+    || reference_status=$?
+printf '%s\n' "$reference_status" >"$work_dir/reference.status"
+if [ "$reference_status" -eq 0 ]; then
     :
 else
-    status=$?
-    fail "pinned-musl readiness/signal-waits fixture exited ${status}"
+    fail "pinned-musl readiness/signal-waits fixture exited ${reference_status}"
 fi
 
 # Pin one codegen unit for the instruction-level syscall ABI judge below.
@@ -242,11 +266,18 @@ objdump -d --disassemble=sigsuspend "$candidate" >"$sigsuspend_disassembly"
 grep -Eq '\$0x8,%e(si|dx)|\$0x8,%r(si|dx)' "$sigsuspend_disassembly" \
     || fail "sigsuspend lacks Linux's eight-byte kernel signal-set size"
 
-if "$candidate"; then
+candidate_status=0
+"$candidate" >"$work_dir/candidate.stdout" 2>"$work_dir/candidate.stderr" \
+    || candidate_status=$?
+printf '%s\n' "$candidate_status" >"$work_dir/candidate.status"
+if [ "$candidate_status" -eq 0 ]; then
     :
 else
-    status=$?
-    fail "freestanding readiness/signal-waits fixture exited ${status}"
+    fail "freestanding readiness/signal-waits fixture exited ${candidate_status}"
 fi
+cmp "$work_dir/reference.stdout" "$work_dir/candidate.stdout" \
+    || fail "pinned-musl and candidate readiness stdout differ"
+cmp "$work_dir/reference.stderr" "$work_dir/candidate.stderr" \
+    || fail "pinned-musl and candidate readiness stderr differ"
 
 printf 'x86 static crabc-libc readiness/signal waits: PASS\n'
