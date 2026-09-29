@@ -5097,4 +5097,214 @@ pub(crate) mod tests {
         // callback removal; the healthy arena remains process-lived.
         unsafe { output.register_output(None, core::ptr::null_mut()) };
     }
+
+    /// A failed delayed decommit consumes the scheduled visit while the
+    /// committed slice and neighboring live claim retain their owners.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_delayed_purge_failure_c_rust_trace() {
+        use crate::diagnostic_output::{OutputCallback, OutputOwner};
+        use crate::os::{VmPolicy, VmProcess, fault};
+        use core::ffi::{c_char, c_void, CStr};
+        use core::sync::atomic::{AtomicPtr, Ordering};
+
+        static ENVIRONMENT: AtomicPtr<*const c_char> = AtomicPtr::new(core::ptr::null_mut());
+        unsafe fn environment() -> *const *const c_char {
+            ENVIRONMENT.load(Ordering::Acquire).cast_const()
+        }
+        unsafe extern "C" fn default_output(_message: *const c_char) {}
+        struct Warnings {
+            bodies: std::sync::Mutex<std::vec::Vec<(std::vec::Vec<u8>, i64, i64, i64)>>,
+            subprocess: *const crate::subproc::SubprocessIdentity,
+        }
+        unsafe extern "C" fn capture(message: *const c_char, argument: *mut c_void) {
+            // SAFETY: callback registration remains live during every
+            // synchronous diagnostic, and the stack capture is removed below.
+            let warnings = unsafe { &*(argument as *const Warnings) };
+            let bytes = unsafe { CStr::from_ptr(message) }.to_bytes();
+            if !bytes.starts_with(b"cannot decommit OS memory") { return; }
+            let vm = unsafe { &*warnings.subprocess }.vm_statistics().snapshot();
+            let arena = unsafe { &*warnings.subprocess }.arena_statistics().snapshot();
+            warnings.bodies.lock().unwrap().push((bytes.to_vec(),
+                vm.purge_calls, vm.purged, arena.arena_purges));
+        }
+
+        let entries = Box::leak(Box::new([
+            b"mimalloc_arena_reserve=32M\0".as_ptr().cast(),
+            b"mimalloc_arena_eager_commit=0\0".as_ptr().cast(),
+            b"mimalloc_arena_is_numa_local=0\0".as_ptr().cast(),
+            b"mimalloc_allow_large_os_pages=0\0".as_ptr().cast(),
+            b"mimalloc_allow_thp=0\0".as_ptr().cast(),
+            b"mimalloc_purge_delay=100000\0".as_ptr().cast(),
+            b"mimalloc_arena_purge_mult=1\0".as_ptr().cast(),
+            b"mimalloc_purge_decommits=1\0".as_ptr().cast(),
+            b"mimalloc_show_errors=1\0".as_ptr().cast(),
+            b"mimalloc_max_warnings=100\0".as_ptr().cast(),
+            core::ptr::null(),
+        ]));
+        ENVIRONMENT.store(entries.as_mut_ptr(), Ordering::Release);
+        let output = Box::leak(Box::new(OutputOwner::new(default_output)));
+        // SAFETY: the environment image and output live through this process
+        // policy and every synchronous callback below.
+        unsafe { output.initialize_source_options(environment) };
+        let subprocess = MainSubprocess::test_static_owner();
+        let warnings = Warnings {
+            bodies: std::sync::Mutex::new(std::vec::Vec::new()),
+            subprocess: subprocess.identity(),
+        };
+        // SAFETY: callback removal precedes the stack capture's end.
+        unsafe { output.register_output(Some(capture as OutputCallback),
+            &warnings as *const Warnings as *mut c_void) };
+        // SAFETY: this fresh process owner has completed option initialization
+        // before policy selection, and the output owner remains process-lived.
+        let policy = Box::leak(Box::new(
+            unsafe { VmPolicy::from_process_options(output) }));
+        policy.finish_preloading();
+        let process = VmProcess::new(policy, subprocess);
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(), 1 << 20, true, false,
+        );
+        let backing = subprocess.arena_backing();
+        let search = ArenaSearch { heap_sequence: 0, heap_count: 1,
+            thread_sequence: 0, numa_node: -1, requested: ArenaId::none(),
+            allow_pinned: true };
+        let fault = fault::install(fault::Plan::disabled());
+        // SAFETY: the isolated backing is bound to this process and has no
+        // concurrent registry publisher, claims, or purge visitor.
+        let released = unsafe { backing.try_allocate_slices(
+            process, config, search, 1, ARENA_SLICE_SIZE, true,
+        ) }.expect("first committed arena slice");
+        let memory = released.memory_id();
+        let arena_id = memory.arena_memory().unwrap().arena;
+        // SAFETY: the first claim pins this published parent arena.
+        let requested = ArenaSearch { requested: unsafe { ArenaId::from_arena(arena_id) }.unwrap(), ..search };
+        let survivor = unsafe { backing.try_allocate_slices(
+            process, config, requested, 1, ARENA_SLICE_SIZE, true,
+        ) }.expect("neighboring live slice");
+        let index = released.slice_index();
+        let survivor_index = survivor.slice_index();
+        let released_address = released.start();
+        let survivor_address = survivor.start();
+        // SAFETY: both claims pin their published arena and its bitmap storage.
+        let view = unsafe { ArenaView::from_ptr(arena_id) }.unwrap();
+        let arena = view.arena();
+        let free = unsafe { view.slices_free() }.unwrap();
+        let committed = unsafe { view.slices_committed() }.unwrap();
+        let purge = unsafe { view.slices_purge() }.unwrap();
+        let mut residency = 0u8;
+        // SAFETY: the arena and both claimed slices are live page-aligned mappings.
+        let setup = backing.registry().count() == 1
+            && memory.kind() == MemoryKind::Arena
+            && arena.memid.kind() == MemoryKind::Os
+            && index == 9 && survivor_index == 10
+            && unsafe { crabc_core::mm::mincore_raw(arena.start, 4096, &mut residency) }.is_ok()
+            && unsafe { crabc_core::mm::mincore_raw(released_address, 4096, &mut residency) }.is_ok()
+            && unsafe { crabc_core::mm::mincore_raw(survivor_address, 4096, &mut residency) }.is_ok();
+        let before_vm = subprocess.vm_statistics().snapshot();
+        let before_arena = subprocess.arena_statistics().snapshot();
+        assert!(released.release());
+        let pending_purge = purge.is_set_range(index, 1) == Some(true);
+        let pending_committed = committed.is_set_range(index, 1) == Some(true);
+        let pending_free = free.is_set_range(index, 1) == Some(true);
+        let pending_survivor = free.is_clear_range(survivor_index, 1) == Some(true);
+        let pending_expiry = arena.purge_expire.load(Ordering::Relaxed) > 0;
+        let pending = pending_purge && pending_committed && pending_free
+            && pending_survivor && pending_expiry;
+        let pending_no_advice = warnings.bodies.lock().unwrap().is_empty()
+            && subprocess.vm_statistics().snapshot().purge_calls == before_vm.purge_calls;
+        fault.set(fault::Plan::at(fault::Point::Decommit, 1, crabc_core::Errno::IO));
+        let advice = fault.capture_advice_range();
+        // SAFETY: the released slice is still held by this arena; there is
+        // no concurrent claim or purge visitor during forced collection.
+        assert!(unsafe { backing.collect_purge(process, config, true, true, 0) });
+        let after_first_vm = subprocess.vm_statistics().snapshot();
+        let after_first_arena = subprocess.arena_statistics().snapshot();
+        let consumed = purge.is_clear_range(index, 1) == Some(true)
+            && committed.is_set_range(index, 1) == Some(true)
+            && free.is_set_range(index, 1) == Some(true)
+            && free.is_clear_range(survivor_index, 1) == Some(true)
+            && arena.purge_expire.load(Ordering::Relaxed) == 0;
+        let first_calls = advice.count();
+        let first_exact = usize::from(advice.range() == Some((
+            released_address as usize, ARENA_SLICE_SIZE, 4,
+        )));
+        let first_warnings = warnings.bodies.lock().unwrap().len();
+        let warning_after_stats = warnings.bodies.lock().unwrap().iter().filter(|(body, calls, bytes, visits)| {
+            *calls == before_vm.purge_calls + 1
+                && *bytes == before_vm.purged + ARENA_SLICE_SIZE as i64
+                && *visits == before_arena.arena_purges + 1
+                && body.windows(b"error: 5 (0x05)".len()).any(|part| part == b"error: 5 (0x05)")
+                && body.windows(b"size: 0x10000 bytes".len()).any(|part| part == b"size: 0x10000 bytes")
+        }).count();
+        let first_purges = after_first_vm.purge_calls - before_vm.purge_calls;
+        let first_bytes = after_first_vm.purged - before_vm.purged;
+        let first_visits = after_first_arena.arena_purges - before_arena.arena_purges;
+        let first_committed = after_first_vm.committed_current - before_vm.committed_current;
+        fault.set(fault::Plan::disabled());
+        assert!(unsafe { backing.collect_purge(process, config, true, true, 0) });
+        let after_second_vm = subprocess.vm_statistics().snapshot();
+        let after_second_arena = subprocess.arena_statistics().snapshot();
+        let no_retry = advice.count() == first_calls
+            && warnings.bodies.lock().unwrap().len() == first_warnings
+            && after_second_vm.purge_calls - before_vm.purge_calls == first_purges
+            && after_second_arena.arena_purges - before_arena.arena_purges == first_visits;
+        drop(advice);
+        let later = unsafe { backing.try_allocate_slices(
+            process, config, requested, 2, ARENA_SLICE_SIZE, true,
+        ) }.expect("independent two-slice claim");
+        let later_index = later.slice_index();
+        let later_disjoint = later_index > survivor_index
+            && later.start() != released_address
+            && free.is_clear_range(later_index, 2) == Some(true);
+        assert!(later.release());
+        let later_pending = purge.is_set_range(later_index, 2) == Some(true)
+            && free.is_clear_range(survivor_index, 1) == Some(true);
+        // SAFETY: the arena stays mapped through the live survivor claim.
+        let owner_live = unsafe { crabc_core::mm::mincore_raw(
+            arena.start, 4096, &mut residency,
+        ) }.is_ok() && unsafe { crabc_core::mm::mincore_raw(
+            survivor_address, 4096, &mut residency,
+        ) }.is_ok() && backing.registry().count() == 1
+            && subprocess.vm_statistics().snapshot().reserved_current == before_vm.reserved_current;
+        assert!(survivor.release());
+        // SAFETY: releasing a slice preserves its process-owned arena mapping.
+        let terminal = unsafe { crabc_core::mm::mincore_raw(
+            arena.start, 4096, &mut residency,
+        ) }.is_ok() && backing.registry().count() == 1
+            && free.is_set_range(survivor_index, 1) == Some(true);
+        let final_vm = subprocess.vm_statistics().snapshot();
+        let final_arena = subprocess.arena_statistics().snapshot();
+        for (field, value) in [
+            ("setup", i64::from(setup)), ("pending", i64::from(pending)),
+            ("pending_purge", i64::from(pending_purge)),
+            ("pending_committed", i64::from(pending_committed)),
+            ("pending_free", i64::from(pending_free)),
+            ("pending_survivor", i64::from(pending_survivor)),
+            ("pending_expiry", i64::from(pending_expiry)),
+            ("pending_no_advice", i64::from(pending_no_advice)),
+            ("consumed", i64::from(consumed)), ("first_calls", first_calls as i64),
+            ("first_exact", first_exact as i64), ("first_warnings", first_warnings as i64),
+            ("warning_after_stats", warning_after_stats as i64),
+            ("first_purges", first_purges), ("first_bytes", first_bytes),
+            ("first_visits", first_visits), ("first_committed", first_committed),
+            ("no_retry", i64::from(no_retry)),
+            ("later_disjoint", i64::from(later_disjoint)),
+            ("later_pending", i64::from(later_pending)),
+            ("owner_live", i64::from(owner_live)), ("terminal", i64::from(terminal)),
+            ("released_slice", index as i64), ("survivor_slice", survivor_index as i64),
+            ("later_slice", later_index as i64), ("registry", backing.registry().count() as i64),
+            ("reserved", final_vm.reserved_current - before_vm.reserved_current),
+            ("purge_calls", final_vm.purge_calls - before_vm.purge_calls),
+            ("purged_bytes", final_vm.purged - before_vm.purged),
+            ("arena_purges", final_arena.arena_purges - before_arena.arena_purges),
+            ("advice_calls", first_calls as i64), ("warnings", first_warnings as i64),
+        ] {
+            std::println!("m2.delayed_purge_failure.{field}={value}");
+        }
+        assert!(setup && pending && pending_no_advice && consumed && no_retry
+            && later_disjoint && later_pending && owner_live && terminal);
+        drop(fault);
+        // SAFETY: callback removal prevents further use of stack capture.
+        unsafe { output.register_output(None, core::ptr::null_mut()) };
+    }
 }
