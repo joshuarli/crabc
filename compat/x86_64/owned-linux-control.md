@@ -42,7 +42,10 @@ arms. The focused replay does not supply a family receipt or claim
 
 `owned_linux_control_probe.c` compares invalid/nonexistent-target calls with
 their exact raw Linux errors, then checks capability reads/version queries,
-self process-memory transfers, and a traced child. The child proves negative
+self and child process-memory transfers, and a traced child. The process-memory
+child stays blocked while its parent reads and writes its separate address
+space; a later invalid remote vector proves the Linux short-transfer boundary
+and leaves the next local byte untouched. The traced child proves negative
 PEEK data, errno preservation, POKE/PEEK, resume/reap and parent-memory
 isolation. Privileged system changes are not executed: the error matrix uses
 invalid commands, descriptors, pointers or paths in the private chroot.

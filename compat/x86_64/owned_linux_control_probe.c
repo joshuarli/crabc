@@ -97,6 +97,49 @@ static int process_memory(void) {
     return 0;
 }
 
+static char child_memory[8]="child";
+static int child_process_memory(void) {
+    int ready[2];
+    CHECK(pipe(ready)==0);
+    pid_t child=fork(); CHECK(child>=0);
+    if (!child) {
+        char signal;
+        close(ready[1]);
+        if (read(ready[0],&signal,1)!=1) _exit(77);
+        _exit(signal=='x' && !memcmp(child_memory,"editd",6) ? 0 : 78);
+    }
+    close(ready[0]);
+
+    char observed[8]={0};
+    struct iovec local={observed,6}, remote={child_memory,6};
+    errno=E2BIG;
+    CHECK(process_vm_readv(child,&local,1,&remote,1,0)==6 && errno==E2BIG);
+    CHECK(!memcmp(observed,"child",6));
+
+    char replacement[6]="editd";
+    struct iovec remote_parts[2]={{child_memory,6},{(void *)-1,1}};
+    struct iovec local_parts[2]={{replacement,6},{replacement,1}};
+    errno=ERANGE;
+    CHECK(process_vm_writev(child,local_parts,2,remote_parts,2,0)==6 && errno==ERANGE);
+    CHECK(!memcmp(child_memory,"child",6));
+
+    memset(observed,0,sizeof observed);
+    local.iov_base=observed;
+    errno=E2BIG;
+    CHECK(raw6(SYS_process_vm_readv,child,(long)&local,1,(long)&remote,1,0)==6 && errno==E2BIG);
+    CHECK(!memcmp(observed,replacement,6));
+    observed[6]='?';
+    struct iovec read_parts[2]={{observed,6},{observed+6,1}};
+    errno=E2BIG;
+    CHECK(process_vm_readv(child,read_parts,2,remote_parts,2,0)==6 && errno==E2BIG);
+    CHECK(!memcmp(observed,replacement,6) && observed[6]=='?');
+    CHECK(write(ready[1],"x",1)==1);
+    close(ready[1]);
+    int status;
+    CHECK(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==0);
+    return 0;
+}
+
 static volatile long traced_word=-1;
 static int trace_child(void) {
     pid_t child=fork(); CHECK(child>=0);
@@ -126,6 +169,7 @@ int main(void) {
     CHECK(!kernel_errors());
     CHECK(!capabilities());
     CHECK(!process_memory());
+    CHECK(!child_process_memory());
     CHECK(!trace_child());
     puts("owned-linux-control-ok");
     return 0;
