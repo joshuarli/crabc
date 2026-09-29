@@ -14,7 +14,7 @@ work="$(mktemp -d "$TMPDIR/owned-pthread-getattr.XXXXXX")"
 readonly work
 printf 'pthread-getattr evidence: %s\n' "$work"
 "$oracle_cc" -std=c11 -pthread -I"$ROOT/include" "$probe" -o "$work/oracle"
-for scenario in ordinary filtered fork; do
+for scenario in ordinary filtered filtered-access fork; do
     timeout 20 "$work/oracle" "$scenario" >"$work/oracle-$scenario.stdout"
 done
 if [ "$check_static" -eq 1 ]; then
@@ -25,7 +25,7 @@ if [ "$check_static" -eq 1 ]; then
     fi
     for mode in static static-pie; do
         "$static_sysroot/bin/crabc-cc" "-$mode" -std=c11 -DCRABC_OWNED_WITNESS "$probe" -o "$work/$mode"
-        for scenario in ordinary filtered fork; do
+        for scenario in ordinary filtered filtered-access fork; do
             timeout 20 "$work/$mode" "$scenario" >"$work/$mode-$scenario.stdout"
             cmp "$work/oracle-$scenario.stdout" "$work/$mode-$scenario.stdout"
         done
@@ -39,7 +39,7 @@ cp -a "$provided_dynamic_sysroot" "$work/execution-root"
 for mode in pie non-pie; do
     "$provided_dynamic_sysroot/bin/crabc-cc-dynamic" "--dynamic-$mode" -std=c11 -DCRABC_OWNED_WITNESS "$probe" -o "$work/dynamic-$mode"
     cp "$work/dynamic-$mode" "$work/execution-root/consumer-$mode"
-    for scenario in ordinary filtered fork; do
+    for scenario in ordinary filtered filtered-access fork; do
         timeout 20 chroot "$work/execution-root" "/consumer-$mode" "$scenario" >"$work/dynamic-$mode-$scenario.stdout"
         cmp "$work/oracle-$scenario.stdout" "$work/dynamic-$mode-$scenario.stdout"
         timeout 20 chroot "$work/execution-root" /lib/ld-crabc-x86_64.so.1 \
@@ -47,4 +47,16 @@ for mode in pie non-pie; do
         cmp "$work/oracle-$scenario.stdout" "$work/direct-$mode-$scenario.stdout"
     done
 done
+cp "$probe" "$work/probe.c"
+receipt_inputs=(probe.c oracle)
+for candidate in "$work/static" "$work/static-pie" "$work/dynamic-pie" "$work/dynamic-non-pie"; do
+    if [ -f "$candidate" ]; then
+        receipt_inputs+=("${candidate##*/}")
+    fi
+done
+for transcript in "$work"/*.stdout; do
+    receipt_inputs+=("${transcript##*/}")
+done
+(cd "$work" && sha256sum "${receipt_inputs[@]}" >receipt.sha256)
+chmod g+rx "$work"
 printf 'owned pthread_getattr_np: PASS (musl + requested installed entries, live/caller/guard/detach metadata, main probe errno and filtered errors); evidence: %s\n' "$work"

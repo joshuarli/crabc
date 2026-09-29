@@ -142,6 +142,19 @@ static void check_guard(const struct observed *attributes)
     }
 }
 
+#ifdef CRABC_OWNED_WITNESS
+static void check_rejected_handle(pthread_t thread)
+{
+    pthread_attr_t attributes;
+    unsigned char before[sizeof attributes];
+    memset(&attributes, 0xa5, sizeof attributes);
+    memcpy(before, &attributes, sizeof before);
+    errno = SAVED_ERRNO;
+    CHECK(pthread_getattr_np(thread, &attributes) == ESRCH);
+    CHECK(errno == SAVED_ERRNO && memcmp(before, &attributes, sizeof before) == 0);
+}
+#endif
+
 static void run_worker(pthread_attr_t *requested, uintptr_t caller_base,
     size_t caller_size, int initially_detached, int detach_transition)
 {
@@ -155,12 +168,16 @@ static void run_worker(pthread_attr_t *requested, uintptr_t caller_base,
     CHECK(pthread_attr_getguardsize(requested ? requested : &defaults, &requested_guard) == 0);
     pthread_t thread;
     CHECK(pthread_create(&thread, requested, worker, &state) == 0);
+    if (requested)
+        CHECK(pthread_attr_setguardsize(requested, requested_guard + PAGE) == 0);
     while (!atomic_load(&state.ready))
         sched_yield();
     struct observed attributes = observe(thread);
     CHECK(attributes.base == state.attributes.base && attributes.size == state.attributes.size);
     CHECK(attributes.guard == state.attributes.guard && attributes.detached == initially_detached);
     CHECK(attributes.error == SAVED_ERRNO && state.attributes.error == SAVED_ERRNO);
+    if (requested)
+        CHECK(pthread_attr_setguardsize(requested, requested_guard) == 0);
     CHECK(attributes.base <= state.local && state.local < attributes.base + attributes.size);
     if (caller_base) {
         CHECK(attributes.base == caller_base);
@@ -184,8 +201,14 @@ static void run_worker(pthread_attr_t *requested, uintptr_t caller_base,
     if (!initially_detached && !detach_transition) {
         /* Completed joinable metadata remains mapped until its owning join. */
         struct observed after = observe(thread);
-        CHECK(after.base == attributes.base && after.detached == PTHREAD_CREATE_JOINABLE);
+        CHECK(after.base == attributes.base && after.size == attributes.size);
+        CHECK(after.guard == attributes.guard && after.detached == PTHREAD_CREATE_JOINABLE);
+        CHECK(after.error == SAVED_ERRNO);
+        check_guard(&after);
         CHECK(pthread_join(thread, NULL) == 0);
+#ifdef CRABC_OWNED_WITNESS
+        check_rejected_handle(thread);
+#endif
     }
     CHECK(local_tls[0] == 7 && local_tls[sizeof local_tls - 1] == 11);
 }
@@ -207,7 +230,7 @@ static void *fork_worker(void *unused)
     return NULL;
 }
 
-static void filtered_main_probe(void)
+static void filtered_main_probe(int denied_error)
 {
     /* Linux 5.10 uapi/linux/{filter,seccomp}.h: one narrow kernel fixture,
      * without making those raw kernel headers an installed libc dependency. */
@@ -219,7 +242,7 @@ static void filtered_main_probe(void)
     struct filter_instruction instructions[] = {
         { 0x20, 0, 0, 0 }, /* BPF_LD|BPF_W|BPF_ABS: seccomp_data.nr */
         { 0x15, 0, 1, SYS_mremap }, /* BPF_JMP|BPF_JEQ|BPF_K */
-        { 0x06, 0, 0, 0x00050000 | EPERM }, /* SECCOMP_RET_ERRNO */
+        { 0x06, 0, 0, 0x00050000 | (unsigned int)denied_error }, /* SECCOMP_RET_ERRNO */
         { 0x06, 0, 0, 0x7fff0000 }, /* SECCOMP_RET_ALLOW */
     };
     struct filter_program filter = { sizeof instructions / sizeof instructions[0], instructions };
@@ -227,7 +250,7 @@ static void filtered_main_probe(void)
     CHECK(syscall(SYS_seccomp, 1L /* SECCOMP_SET_MODE_FILTER */, 0L, &filter) == 0);
     struct observed attributes = observe(initial_thread);
     CHECK(attributes.base + attributes.size == initial_stack_top);
-    CHECK(attributes.size == PAGE && attributes.error == EPERM);
+    CHECK(attributes.size == PAGE && attributes.error == denied_error);
     CHECK(attributes.guard == 0 && attributes.detached == PTHREAD_CREATE_JOINABLE);
 }
 
@@ -241,9 +264,10 @@ int main(int argc, char **argv, char **envp)
     initial_stack_top = ((uintptr_t)(envp + 1) + PAGE - 1) & ~(uintptr_t)(PAGE - 1);
     volatile unsigned char local = 1;
     initial_local = (uintptr_t)&local;
-    if (!strcmp(argv[1], "filtered")) {
-        filtered_main_probe();
-        puts("pthread_getattr_np filtered probe: ok");
+    if (!strcmp(argv[1], "filtered") || !strcmp(argv[1], "filtered-access")) {
+        int denied_error = !strcmp(argv[1], "filtered") ? EPERM : EACCES;
+        filtered_main_probe(denied_error);
+        printf("pthread_getattr_np filtered errno %d probe: ok\n", denied_error);
         return 0;
     }
     if (!strcmp(argv[1], "fork")) {
@@ -264,6 +288,8 @@ int main(int argc, char **argv, char **envp)
     CHECK(pthread_attr_setstacksize(&attributes, 73729) == 0);
     CHECK(pthread_attr_setguardsize(&attributes, 1) == 0);
     run_worker(&attributes, 0, 0, PTHREAD_CREATE_JOINABLE, 0);
+    CHECK(pthread_attr_setguardsize(&attributes, PAGE + 1) == 0);
+    run_worker(&attributes, 0, 0, PTHREAD_CREATE_JOINABLE, 0);
     CHECK(pthread_attr_setguardsize(&attributes, 0) == 0);
     run_worker(&attributes, 0, 0, PTHREAD_CREATE_JOINABLE, 1);
     CHECK(pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED) == 0);
@@ -280,12 +306,8 @@ int main(int argc, char **argv, char **envp)
 #ifdef CRABC_OWNED_WITNESS
     /* Defensive rejection is additional owned-runtime behavior; musl's
      * direct pthread dereference makes invalid handles outside its contract. */
-    unsigned char before[sizeof attributes];
-    memset(&attributes, 0xa5, sizeof attributes);
-    memcpy(before, &attributes, sizeof before);
-    errno = SAVED_ERRNO;
-    CHECK(pthread_getattr_np((pthread_t)(uintptr_t)1, &attributes) == ESRCH);
-    CHECK(errno == SAVED_ERRNO && memcmp(before, &attributes, sizeof before) == 0);
+    check_rejected_handle((pthread_t)(uintptr_t)0);
+    check_rejected_handle((pthread_t)(uintptr_t)1);
 #endif
     puts("pthread_getattr_np live stack metadata: ok");
     return 0;
