@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <unistd.h>
 
 _Static_assert(sizeof(struct aiocb) == 168, "x86 aiocb size");
@@ -29,10 +30,12 @@ static int (*const aio_fsync_signature)(int, struct aiocb *) = aio_fsync;
 static int (*const lio_listio_signature)(int, struct aiocb *restrict const *restrict,
     int, struct sigevent *restrict) = lio_listio;
 
-static int fail(void)
+static int fail(const char *stage)
 {
 	static const char text[] = "owned-aio probe failed\n";
+	int saved_errno = errno;
 	(void)write(2, text, sizeof text - 1);
+	fprintf(stderr, "owned-aio stage=%s errno=%d\n", stage, saved_errno);
 	return 1;
 }
 
@@ -51,16 +54,32 @@ static int wait_for(struct aiocb *control)
 			return 0;
 		if (aio_suspend_signature(one, 1, &timeout) == 0)
 			return 0;
-		if (errno != EINTR)
+		if (errno != EINTR) {
+			int saved_errno = errno;
+			fprintf(stderr, "owned-aio wait errno=%d error=%d\n",
+				saved_errno, aio_error_signature(control));
+			errno = saved_errno;
 			return -1;
+		}
 	}
 }
 
 static int complete(struct aiocb *control, ssize_t expected)
 {
-	return wait_for(control) == 0
-		&& aio_error_signature(control) == 0
-		&& aio_return_signature(control) == expected;
+	int error;
+	ssize_t result;
+	if (wait_for(control))
+		return 0;
+	error = aio_error_signature(control);
+	if (error) {
+		fprintf(stderr, "owned-aio completion error=%d\n", error);
+		return 0;
+	}
+	result = aio_return_signature(control);
+	if (result != expected)
+		fprintf(stderr, "owned-aio completion result=%ld expected=%ld\n",
+			(long)result, (long)expected);
+	return result == expected;
 }
 
 int main(void)
@@ -81,9 +100,9 @@ int main(void)
 	if (!aio_read_signature || !aio_write_signature || !aio_error_signature
 		|| !aio_return_signature || !aio_cancel_signature || !aio_suspend_signature
 		|| !aio_fsync_signature || !lio_listio_signature)
-		return fail();
+		return fail("signatures");
 	if (descriptor < 0)
-		return fail();
+		return fail("open");
 
 	write_control.aio_fildes = descriptor;
 	write_control.aio_buf = one;
@@ -91,12 +110,12 @@ int main(void)
 	write_control.aio_offset = 0;
 	no_notification(&write_control);
 	if (aio_write_signature(&write_control) || !complete(&write_control, 1))
-		return fail();
+		return fail("write");
 
 	sync_control.aio_fildes = descriptor;
 	no_notification(&sync_control);
 	if (aio_fsync_signature(O_SYNC, &sync_control) || !complete(&sync_control, 0))
-		return fail();
+		return fail("fsync");
 
 	read_control.aio_fildes = descriptor;
 	read_control.aio_buf = readback;
@@ -105,7 +124,7 @@ int main(void)
 	no_notification(&read_control);
 	if (aio_read_signature(&read_control) || !complete(&read_control, 1)
 		|| readback[0] != 'a')
-		return fail();
+		return fail("read");
 
 	list_one.aio_fildes = descriptor;
 	list_one.aio_lio_opcode = LIO_WRITE;
@@ -125,13 +144,13 @@ int main(void)
 		|| aio_return_signature(&list_one) != 1
 		|| aio_return_signature(&list_two) != 1
 		|| aio_cancel_signature(descriptor, &list_one) != AIO_ALLDONE)
-		return fail();
+		return fail("list");
 
 	if (close(descriptor) || aio_fsync_signature(-1, &sync_control) != -1
 		|| errno != EINVAL)
-		return fail();
+		return fail("close-and-invalid-fsync");
 	(void)unlink("/state/owned-aio-probe");
 	if (write(1, "owned-aio basic ok\n", 19) != 19)
-		return fail();
+		return fail("stdout");
 	return 0;
 }
