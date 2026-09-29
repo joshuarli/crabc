@@ -349,7 +349,11 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
             self.assertEqual(linker["path"], "/opt/rust/lib/gcc-ld/ld.lld")
             return {"linkage": linkage, "product": str(selected), "executable_sha256": family.family.digest(executable)}
 
-        with patch.object(product_evidence, "validate_retained_link", side_effect=retained_link) as validate:
+        with patch.object(product_evidence, "retained_elf_facts", return_value={
+                "type": 3, "dynamic": True,
+                "interpreters": ["/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"],
+                "needed": ["libc.so"],
+        }), patch.object(product_evidence, "validate_retained_link", side_effect=retained_link) as validate:
             record = family._static_lifecycle_report(self.root, leaf, product, "/workspace", oracle)
         self.assertEqual(set(record["modes"]), {"static-et-exec", "static-pie"})
         self.assertEqual([call.args[6] for call in validate.call_args_list], ["static", "static-pie"])
@@ -370,7 +374,11 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
         value = json.loads(receipt.read_text(encoding="utf-8"))
         value["mode"]["id"] = "static-pie"
         receipt.write_text(json.dumps(value), encoding="utf-8")
-        with patch.object(product_evidence, "validate_retained_link"):
+        with patch.object(product_evidence, "retained_elf_facts", return_value={
+                "type": 3, "dynamic": True,
+                "interpreters": ["/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"],
+                "needed": ["libc.so"],
+        }), patch.object(product_evidence, "validate_retained_link"):
             with self.assertRaisesRegex(family.PthreadFamilyError, "link mode differs"):
                 family._static_lifecycle_report(self.root, leaf, product, "/workspace", oracle)
 
@@ -378,8 +386,27 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
         leaf, product, oracle = self._static_lifecycle_fixture()
         output = leaf / "installed-static-pie/output"
         output.write_bytes(b"foreign execution output\n")
-        with patch.object(product_evidence, "validate_retained_link", return_value={"linkage": "ok"}):
+        with patch.object(product_evidence, "retained_elf_facts", return_value={
+                "type": 3, "dynamic": True,
+                "interpreters": ["/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"],
+                "needed": ["libc.so"],
+        }), patch.object(product_evidence, "validate_retained_link", return_value={"linkage": "ok"}):
             with self.assertRaisesRegex(family.PthreadFamilyError, "output differs from pinned musl"):
+                family._static_lifecycle_report(self.root, leaf, product, "/workspace", oracle)
+
+    def test_static_lifecycle_reader_rejects_a_non_elf_oracle_executable(self) -> None:
+        leaf, product, oracle = self._static_lifecycle_fixture()
+        with patch.object(product_evidence, "validate_retained_link", return_value={"linkage": "ok"}):
+            with self.assertRaisesRegex(family.PthreadFamilyError, "pinned-musl executable"):
+                family._static_lifecycle_report(self.root, leaf, product, "/workspace", oracle)
+
+    def test_static_lifecycle_reader_rejects_a_foreign_oracle_interpreter(self) -> None:
+        leaf, product, oracle = self._static_lifecycle_fixture()
+        with patch.object(product_evidence, "retained_elf_facts", return_value={
+                "type": 3, "dynamic": True, "interpreters": ["/lib64/ld-linux-x86-64.so.2"],
+                "needed": ["libc.so"],
+        }), patch.object(product_evidence, "validate_retained_link", return_value={"linkage": "ok"}):
+            with self.assertRaisesRegex(family.PthreadFamilyError, "wrong runtime binding"):
                 family._static_lifecycle_report(self.root, leaf, product, "/workspace", oracle)
 
     def test_static_link_receipts_use_the_driver_required_work_relative_paths(self) -> None:

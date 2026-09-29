@@ -1015,6 +1015,14 @@ def _static_lifecycle_report(root: Path, leaf: Path, static_product: Path,
     require(oracle_output.read_bytes() == b"", "static lifecycle pinned-musl output differs")
     require(family.file_identity(root, oracle_executable)["size"] > 0,
             "static lifecycle pinned-musl executable is empty")
+    try:
+        oracle_elf = products.retained_elf_facts(oracle_executable)
+    except products.ProductEvidenceError as error:
+        raise PthreadFamilyError("static lifecycle pinned-musl executable is not a valid x86-64 ELF") from error
+    require(oracle_elf["type"] == 3 and oracle_elf["dynamic"]
+            and oracle_elf["interpreters"] == ["/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"]
+            and "libc.so" in oracle_elf["needed"],
+            "static lifecycle pinned-musl executable has the wrong runtime binding")
 
     mode_specs = {
         "static-et-exec": ("installed-et-exec", "static", {"id": "static-et-exec", "elf_type": "ET_EXEC",
