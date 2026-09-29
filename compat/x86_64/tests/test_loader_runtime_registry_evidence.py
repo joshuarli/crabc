@@ -7,6 +7,7 @@ import importlib.util
 import json
 from pathlib import Path
 import shutil
+import struct
 import sys
 import tempfile
 import unittest
@@ -22,6 +23,154 @@ SPEC.loader.exec_module(EVIDENCE)
 
 
 class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
+    def scope_link_fixture(self):
+        scratch = ROOT / '.work/x86_64/loader-runtime-registry-tests'
+        scratch.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=scratch)
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        shutil.copy2(ROOT / 'rust-toolchain.toml', root / 'rust-toolchain.toml')
+        output, work, product = root / '.work/report', root / '.work/report/work', root / '.work/product'
+        work.mkdir(parents=True)
+        library = product / 'usr/lib'
+        library.mkdir(parents=True)
+        manifest = product / 'share/crabc/manifest.json'
+        manifest.parent.mkdir(parents=True)
+        manifest.write_bytes(b'{}\n')
+        for name in ('crti.o', 'libc.so', 'crtn.o', 'libcrabc-builtins.a'):
+            (library / name).write_bytes(name.encode())
+        object_path = work / 'crabc-dynamic-link.fixture/source-0.o'
+        object_path.parent.mkdir()
+        object_path.write_bytes(b'object')
+        tools = {}
+        for role, native in EVIDENCE.fork_evidence.REPLAY_TOOL_PATHS.items():
+            source = root / (role + '-source')
+            source.write_bytes(role.encode())
+            source.chmod(0o755)
+            tools[role] = EVIDENCE.inventory._snapshot_regular(output, source, 'inputs/tools/' + role, native)
+        replay = EVIDENCE.fork_evidence.RetainedRuntimeInputs(root, output, tools)
+        stem = 'libscope-second.so'
+        executable = work / stem
+        image = bytearray(512)
+        ident = b'\x7fELF\x02\x01\x01' + b'\0' * 9
+        struct.pack_into('<16sHHIQQQIHHHHHH', image, 0, ident, 3, 62, 1, 0, 0, 256, 0, 64, 56, 0, 64, 4, 3)
+        struct.pack_into('<IBBHQQ', image, 88, 1, 0x12, 0, 1, 16, 4)
+        strings = b'\0scope_hidden_value\0'
+        image[128:128 + len(strings)] = strings
+        names = b'\0.dynsym\0.dynstr\0.shstrtab\0'
+        image[176:176 + len(names)] = names
+        struct.pack_into('<IIQQQQIIQQ', image, 320, 1, 11, 0, 0, 64, 48, 2, 1, 8, 24)
+        struct.pack_into('<IIQQQQIIQQ', image, 384, 9, 3, 0, 0, 128, len(strings), 0, 0, 1, 0)
+        struct.pack_into('<IIQQQQIIQQ', image, 448, 17, 3, 0, 0, 176, len(names), 0, 0, 1, 0)
+        original = bytes(image)
+        (work / (stem + '.linked')).write_bytes(original)
+        image[93] = 2
+        executable.write_bytes(image)
+        digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+        inputs = [library / name for name in ('crti.o', 'libc.so', 'crtn.o')]
+        inputs += [object_path, library / 'libcrabc-builtins.a']
+        command = [str(replay.tool_path('linker')), '-shared', '--hash-style=sysv', '--eh-frame-hdr', '-z', 'relro',
+                   '-z', 'now', '-z', 'noexecstack', '-z', 'text', '--no-undefined', '--allow-shlib-undefined',
+                   '--enable-new-dtags', '-rpath', '/usr/lib', '-soname', stem,
+                   replay.recorded(library / 'crti.o'), replay.recorded(object_path), replay.recorded(library / 'libc.so'),
+                   replay.recorded(library / 'libcrabc-builtins.a'), replay.recorded(library / 'crtn.o'), '-o', replay.recorded(executable)]
+        receipt = {'schema': 2, 'format': EVIDENCE.product_evidence.DYNAMIC_PRODUCT_FORMAT, 'mode': 'shared',
+                   'binding': 'now', 'runtime_imports': [], 'application_runpath': '/usr/lib', 'application_rpath': None,
+                   'application_search_kind': 'runpath', 'application_hash_style': 'sysv',
+                   'output_path': replay.recorded(executable), 'output_sha256': hashlib.sha256(original).hexdigest(),
+                   'manifest_sha256': digest(manifest), 'application_dsos': {},
+                   'owned_runtime_inputs': sorted(path.relative_to(product).as_posix() for path in [*inputs[:3], inputs[-1]]),
+                   'input_receipts': [{'path': replay.recorded(path), 'sha256': digest(path)} for path in inputs],
+                   'resolved_linker': {key: tools['linker']['original'][key] for key in ('path', 'sha256')},
+                   'link_command': command, 'link_trace': [replay.recorded(path) for path in inputs if path.name != 'libcrabc-builtins.a'],
+                   'campaign_complete': False}
+        receipt_path = work / (stem + '.crabc-link.json')
+        receipt_path.write_text(json.dumps(receipt), encoding='utf-8')
+        facts = {'type': 3, 'machine': 62, 'interpreters': [], 'dynamic': True, 'needed': ['libc.so'],
+                 'runpaths': ['/usr/lib'], 'rpaths': [], 'sonames': [stem], 'textrel': False}
+        return root, output, work, product, replay, receipt, original, facts
+
+    def test_scope_visibility_edit_binds_original_driver_output_and_current_bytes_in_both_readers(self):
+        root, output, work, product, replay, receipt, original, facts = self.scope_link_fixture()
+        with mock.patch.object(EVIDENCE, 'ROOT', root), \
+             mock.patch.object(EVIDENCE.product_evidence, 'retained_elf_facts', return_value=facts), \
+             mock.patch.object(EVIDENCE.subprocess, 'run', side_effect=AssertionError('host replay invoked a command')):
+            native = EVIDENCE._link_record(product, work, output, 'libscope-second.so', 'shared')
+            retained = EVIDENCE._link_record(product, work, output, 'libscope-second.so', 'shared', replay=replay)
+        self.assertEqual(native, retained)
+        self.assertEqual(native['linked_output']['sha256'], hashlib.sha256(original).hexdigest())
+        self.assertEqual(native['linked_output']['sha256'], receipt['output_sha256'])
+        self.assertEqual(native['output_transformation'], {'symbol_table': '.dynsym', 'symbol': 'scope_hidden_value',
+                         'file_offset': 93, 'before': 0, 'after': 2})
+        self.assertNotEqual(native['executable']['sha256'], native['linked_output']['sha256'])
+
+    def test_scope_visibility_edit_rejects_missing_stale_or_extra_changed_bytes_in_both_readers(self):
+        for mutation in ('missing-original', 'stale-original', 'extra-byte', 'unchanged', 'wrong-visibility'):
+            with self.subTest(mutation=mutation):
+                root, output, work, product, replay, _receipt, original, facts = self.scope_link_fixture()
+                linked, executable = work / 'libscope-second.so.linked', work / 'libscope-second.so'
+                if mutation == 'missing-original':
+                    linked.unlink()
+                elif mutation == 'stale-original':
+                    linked.write_bytes(original + b'changed')
+                else:
+                    image = bytearray(executable.read_bytes())
+                    if mutation == 'extra-byte':
+                        image[70] ^= 1
+                    else:
+                        image[93] = 0 if mutation == 'unchanged' else 1
+                    executable.write_bytes(image)
+                with mock.patch.object(EVIDENCE, 'ROOT', root), \
+                     mock.patch.object(EVIDENCE.product_evidence, 'retained_elf_facts', return_value=facts), \
+                     mock.patch.object(EVIDENCE.subprocess, 'run', side_effect=AssertionError('host replay invoked a command')):
+                    for retained in (None, replay):
+                        with self.assertRaises(EVIDENCE.RuntimeRegistryEvidenceError):
+                            EVIDENCE._link_record(product, work, output, 'libscope-second.so', 'shared', replay=retained)
+
+    def test_scope_visibility_edit_requires_one_defined_default_global_function_in_both_readers(self):
+        for mutation in ('nondefault', 'wrong-binding', 'wrong-type', 'undefined', 'missing', 'repeated', 'truncated-sections', 'bad-strings'):
+            with self.subTest(mutation=mutation):
+                root, output, work, product, replay, receipt, original, facts = self.scope_link_fixture()
+                image = bytearray(original)
+                if mutation == 'nondefault':
+                    image[93] = 2
+                elif mutation == 'wrong-binding':
+                    image[92] = 0x22
+                elif mutation == 'wrong-type':
+                    image[92] = 0x11
+                elif mutation == 'undefined':
+                    struct.pack_into('<H', image, 94, 0)
+                elif mutation == 'missing':
+                    struct.pack_into('<I', image, 88, 2)
+                elif mutation == 'repeated':
+                    struct.pack_into('<IBBHQQ', image, 64, 1, 0x12, 0, 1, 16, 4)
+                elif mutation == 'truncated-sections':
+                    struct.pack_into('<Q', image, 40, 480)
+                else:
+                    image[147] = ord('x')
+                (work / 'libscope-second.so.linked').write_bytes(image)
+                receipt['output_sha256'] = hashlib.sha256(image).hexdigest()
+                (work / 'libscope-second.so.crabc-link.json').write_text(json.dumps(receipt), encoding='utf-8')
+                image[93] = 2
+                (work / 'libscope-second.so').write_bytes(image)
+                with mock.patch.object(EVIDENCE, 'ROOT', root), \
+                     mock.patch.object(EVIDENCE.product_evidence, 'retained_elf_facts', return_value=facts), \
+                     mock.patch.object(EVIDENCE.subprocess, 'run', side_effect=AssertionError('host replay invoked a command')):
+                    for retained in (None, replay):
+                        with self.assertRaises(EVIDENCE.RuntimeRegistryEvidenceError):
+                            EVIDENCE._link_record(product, work, output, 'libscope-second.so', 'shared', replay=retained)
+
+    def test_other_dlfcn_outputs_keep_direct_compiler_hash_binding(self):
+        _root, output, work, _product, _replay, receipt, original, _facts = self.scope_link_fixture()
+        executable = work / 'libscope-second.so'
+        for stem in ('libscope-first.so', 'scope', 'consumer'):
+            with self.subTest(stem=stem):
+                with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, 'bind the executable'):
+                    EVIDENCE._dlfcn_link_output(work, output, stem, receipt, executable)
+                executable.write_bytes(original)
+                self.assertEqual(EVIDENCE._dlfcn_link_output(work, output, stem, receipt, executable), {})
+                executable.write_bytes(original[:93] + b'\x02' + original[94:])
+
     def test_replay_dlfcn_link_binds_the_retained_linker_and_exact_command(self):
         scratch = ROOT / '.work/x86_64/loader-runtime-registry-tests'; scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:

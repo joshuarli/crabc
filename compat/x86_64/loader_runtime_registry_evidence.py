@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tomllib
@@ -506,6 +507,72 @@ def _native_dlfcn_checkout_input(value: str) -> Path:
     return path
 
 
+def _dynamic_symbol_visibility_offset(image: bytes, symbol: bytes) -> int:
+    """Find one defined global function's visibility byte in a bounded ELF table."""
+
+    def unpack(layout: str, offset: int) -> tuple[Any, ...]:
+        size = struct.calcsize(layout)
+        require(0 <= offset <= len(image) - size, "dlfcn symbol table is truncated")
+        return struct.unpack_from(layout, image, offset)
+
+    require(image[:7] == b"\x7fELF\x02\x01\x01" and unpack("<HH", 16) == (3, 62),
+            "dlfcn visibility input is not an x86 ELF64 shared object")
+    sections_at = unpack("<Q", 40)[0]
+    section_size, section_count, names_index = unpack("<HHH", 58)
+    require(section_size == 64 and section_count > 0 and names_index < section_count
+            and sections_at >= 64 and sections_at + section_count * section_size <= len(image),
+            "dlfcn section table is invalid")
+    sections = [unpack("<IIQQQQIIQQ", sections_at + index * section_size) for index in range(section_count)]
+
+    def string(section: tuple[Any, ...], offset: int) -> bytes:
+        begin, size = section[4], section[5]
+        require(section[1] == 3 and begin + size <= len(image) and 0 <= offset < size,
+                "dlfcn symbol string table is invalid")
+        end = image.find(b"\0", begin + offset, begin + size)
+        require(end >= 0, "dlfcn symbol string is unterminated")
+        return image[begin + offset:end]
+
+    tables = [section for section in sections if section[1] == 11]
+    require(len(tables) == 1 and string(sections[names_index], tables[0][0]) == b".dynsym",
+            "dlfcn visibility input must have one named dynamic symbol table")
+    table = tables[0]
+    require(table[9] == 24 and table[5] % 24 == 0 and table[4] + table[5] <= len(image)
+            and table[6] < section_count, "dlfcn dynamic symbol table is invalid")
+    matches = []
+    for at in range(table[4], table[4] + table[5], 24):
+        name, info, _other, section_index, _value, _size = unpack("<IBBHQQ", at)
+        if string(sections[table[6]], name) == symbol:
+            require(info == 0x12 and 0 < section_index < section_count,
+                    "dlfcn visibility symbol is not one defined global function")
+            matches.append(at + 5)
+    require(len(matches) == 1, "dlfcn visibility symbol is missing or repeated")
+    return matches[0]
+
+
+def _dlfcn_link_output(work: Path, output: Path, stem: str, receipt: Mapping[str, Any],
+                       executable: Path) -> dict[str, object]:
+    """Bind linked bytes and the sole selected post-link visibility edit separately."""
+
+    current = executable.read_bytes()
+    if stem != "libscope-second.so":
+        require(receipt.get("output_sha256") == hashlib.sha256(current).hexdigest(),
+                f"{stem} driver receipt does not bind the executable")
+        return {}
+    require(receipt.get("mode") == "shared", "dlfcn visibility edit requires the selected shared object")
+    linked = physical_regular(work / (stem + ".linked"), "dlfcn retained original link output")
+    before = linked.read_bytes()
+    require(receipt.get("output_sha256") == hashlib.sha256(before).hexdigest(),
+            "dlfcn original link output differs from the compiler receipt")
+    offset = _dynamic_symbol_visibility_offset(before, b"scope_hidden_value")
+    require(before[offset] == 0, "dlfcn original symbol visibility is not default")
+    expected = bytearray(before)
+    expected[offset] = 2
+    require(current == expected, "dlfcn post-link output differs from the exact hidden-symbol edit")
+    return {"linked_output": identity(linked, logical_path=linked.relative_to(output).as_posix()),
+            "output_transformation": {"symbol_table": ".dynsym", "symbol": "scope_hidden_value",
+                                      "file_offset": offset, "before": 0, "after": 2}}
+
+
 def _retained_dlfcn_link_record(product: Path, work: Path, output: Path, stem: str, mode: str,
                                  receipt: dict[str, Any], executable: Path, receipt_path: Path,
                                  replay: fork_evidence.RetainedRuntimeInputs) -> dict[str, object]:
@@ -514,9 +581,9 @@ def _retained_dlfcn_link_record(product: Path, work: Path, output: Path, stem: s
     search = dynamic_receipt.validate(receipt, format=product_evidence.DYNAMIC_PRODUCT_FORMAT,
                                       label=stem, fail=fail, allow_application_dso_closure=False)
     dynamic_receipt.require_runpath(search, "/usr/lib", label=stem, fail=fail)
-    require(receipt.get("mode") == mode and receipt.get("output_path") == replay.recorded(executable)
-            and receipt.get("output_sha256") == hashlib.sha256(executable.read_bytes()).hexdigest(),
+    require(receipt.get("mode") == mode and receipt.get("output_path") == replay.recorded(executable),
             f"{stem} retained driver receipt does not bind the executable")
+    transformation = _dlfcn_link_output(work, output, stem, receipt, executable)
     manifest = product / "share/crabc/manifest.json"
     require(receipt.get("manifest_sha256") == hashlib.sha256(manifest.read_bytes()).hexdigest(),
             f"{stem} retained driver receipt uses another product")
@@ -609,7 +676,7 @@ def _retained_dlfcn_link_record(product: Path, work: Path, output: Path, stem: s
                 f"{stem} retained executable interpreter drifted")
     return {"executable": identity(executable, logical_path=(work / stem).relative_to(output).as_posix()),
             "receipt": identity(receipt_path, logical_path=(work / f"{stem}.crabc-link.json").relative_to(output).as_posix()),
-            "mode": mode}
+            "mode": mode, **transformation}
 
 
 def _link_record(product: Path, work: Path, output: Path, stem: str, mode: str,
@@ -625,8 +692,9 @@ def _link_record(product: Path, work: Path, output: Path, stem: str, mode: str,
     if replay is not None:
         return _retained_dlfcn_link_record(product, work, output, stem, mode, receipt, executable, receipt_path, replay)
     require(receipt.get("schema") == 2, f"{stem} dlfcn receipt is not the direct-driver schema")
-    require(receipt.get("mode") == mode and receipt.get("output_sha256") == hashlib.sha256(executable.read_bytes()).hexdigest(),
+    require(receipt.get("mode") == mode,
             f"{stem} owned driver receipt does not bind the executable")
+    transformation = _dlfcn_link_output(work, output, stem, receipt, executable)
     manifest = identity(product / "share/crabc/manifest.json")
     require(receipt.get("manifest_sha256") == manifest["sha256"], f"{stem} owned driver receipt uses another product")
     # The generic receipt schema establishes search and closure semantics.  At
@@ -656,7 +724,7 @@ def _link_record(product: Path, work: Path, output: Path, stem: str, mode: str,
     _dlfcn_workload_object(work, inputs[runtime_count], stem, _native_dlfcn_checkout_input)
     return {"executable": identity(executable, logical_path=(work / stem).relative_to(output).as_posix()),
             "receipt": identity(receipt_path, logical_path=(work / f"{stem}.crabc-link.json").relative_to(output).as_posix()),
-            "mode": mode}
+            "mode": mode, **transformation}
 
 
 def validate_growth_output(candidate: bytes, oracle: bytes) -> None:

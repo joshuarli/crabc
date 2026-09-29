@@ -144,7 +144,8 @@ import struct
 import sys
 
 path = Path(sys.argv[1])
-image = bytearray(path.read_bytes())
+linked = path.read_bytes()
+image = bytearray(linked)
 assert image[:6] == b'\x7fELF\x02\x01'
 sections_at = struct.unpack_from('<Q', image, 40)[0]
 section_size, section_count = struct.unpack_from('<HH', image, 58)
@@ -164,6 +165,11 @@ for section in sections:
             image[at + 5] = 2  # STV_HIDDEN, retained in .dynsym
             matches += 1
 assert matches == 1
+# Preserve the compiler-bound bytes separately from the visibility fixture;
+# replay checks that exactly this selected symbol byte changed afterwards.
+with path.with_name(path.name + '.linked').open('xb') as output:
+    output.write(linked)
+path.with_name(path.name + '.linked').chmod(path.stat().st_mode & 0o777)
 path.write_bytes(image)
 PY_SCOPE_VISIBILITY
         done
