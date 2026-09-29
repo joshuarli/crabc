@@ -98,8 +98,12 @@ are not transferable passes for a different revision.
   runs. Full native-shadow dynamic qualification reaches a separate
   `signal-handler-fork` failure: two runs record 100 `ECHILD` wait failures
   each before timeout, while the isolated native case and same-source
-  accepted-C case pass. The native 219-case receipt remains unavailable;
-  focused parent/child reaping diagnosis is underway.
+  accepted-C full case pass. A same-object source-built receiver reproduces
+  the 100 `ECHILD` waits in both backends when the final signal-handler fork
+  occurs after the testcase's child check; the waits execute in the child,
+  with default `SIGCHLD` and no child-reaping defect shown. Its guarded 52-case
+  matrix passes, but one separate intermittent native PIE-direct precreate
+  timeout remains unclassified. The native 219-case receipt remains unavailable.
   `consumer.rust-std-lto` passes its
   Rust, native-facade, LTO, and unwind leaves on clean `d6733f516`; its
   pinned-image receipt passed independent physical validation and public
@@ -202,7 +206,10 @@ are not transferable passes for a different revision.
   passes all fourteen rows on its sealed source. A huge OS singleton whose
   terminal unmap fails now leaves the independently owned medium survivor
   freeable after PageMap mutation; the generic-exit gate passes fifteen rows
-  on that sealed source. A final candidate must rerun the source-bound gate.
+  on that sealed source. Two remote producers straddling owner exit now match
+  eighteen C/Rust values and five pinned-C internals through abandonment,
+  reclaim, and one final release; the clean generic-exit gate passes sixteen
+  rows. A final candidate must rerun the source-bound gate.
   A paired medium-churn
   diagnostic matches C/Rust page-class transitions under four option profiles;
   PageMap retirement precedes arena RSS release with the default purge delay,
@@ -374,7 +381,10 @@ are not transferable passes for a different revision.
   same page reduces both 64-byte local and worker malloc paths from 98 to 97
   instructions, with two calls unchanged and 90 bytes more linked Rust text;
   owner traces and the clean M3 owner-only gate pass. This is structural
-  codegen evidence, not qualifying timing.
+  codegen evidence, not qualifying timing. A narrowly inlined ordinary
+  eight-word head then reduces both paths from 97 to 80 instructions and two
+  calls to one, adding 427 bytes of linked Rust text; local traces and the
+  clean M3 owner-only gate pass without a timing claim.
   Remote publication is at 165 Rust instructions after source-equivalent
   owner-word and published-PageMap checks, with its 100-trace and 25-value
   differentials passing.
