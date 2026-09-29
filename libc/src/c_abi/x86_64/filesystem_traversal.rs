@@ -16,7 +16,9 @@
 //!   the two callback ABIs separate.
 //! - `src/misc/nftw.c` maps to [`nftw`] and the recursive stack/history,
 //!   stat classification, `FTW_PHYS`, `FTW_MOUNT`, `FTW_DEPTH`, descriptor
-//!   limit, and fixed `PATH_MAX` pathname logic below.
+//!   limit, and fixed `PATH_MAX` pathname logic below. A directory's raw
+//!   `open(O_RDONLY)` descriptor remains unadopted during its pre-order callback;
+//!   `fdopendir` makes it close-on-exec only before descent.
 //!
 //! Pinned musl intentionally ignores `FTW_CHDIR`; the frozen AArch64 profile
 //! already selects it, including callback-visible directory CWD and restoration
@@ -250,13 +252,55 @@ unsafe fn close_directory(stream: *mut directory_streams::DirectoryStream, resul
     result
 }
 
+/// Open a directory before its callback without transferring descriptor
+/// ownership to a stream. `fdopendir` performs that transfer only when the
+/// callback permits descent, including its close-on-exec update.
+unsafe fn open_walk_directory(path: *const c_char) -> c_int {
+    #[cfg(crabc_x86_owned_runtime)]
+    {
+        unsafe extern "C" {
+            fn open(path: *const c_char, flags: c_int, ...) -> c_int;
+        }
+        // SAFETY: the bounded walk path remains live across this C call.
+        unsafe { open(path, O_RDONLY) }
+    }
+    #[cfg(not(crabc_x86_owned_runtime))]
+    {
+        let result = unsafe {
+            raw_syscall::syscall4(
+                raw_syscall::SYS_OPENAT,
+                i64::from(AT_FDCWD),
+                path as usize as i64,
+                i64::from(O_RDONLY | O_LARGEFILE),
+                0,
+            )
+        };
+        if is_linux_error(result) {
+            // SAFETY: the checked syscall result encodes one Linux errno.
+            unsafe { errno::set_errno(result.wrapping_neg() as c_int) };
+            -1
+        } else {
+            result as c_int
+        }
+    }
+}
+
 /// Finish this recursion frame in the only order that preserves the frozen
 /// CWD restoration contract: child directory descriptor, then entry CWD.
 unsafe fn finish(
     stream: *mut directory_streams::DirectoryStream,
+    unadopted_descriptor: c_int,
     saved_descriptor: c_int,
     result: c_int,
 ) -> c_int {
+    if unadopted_descriptor >= 0 {
+        // The callback may stop the walk before `fdopendir` assumes ownership.
+        // Close this retained descriptor on early exit; a raw close leaves the
+        // callback's errno and result untouched.
+        let _ = unsafe {
+            raw_syscall::syscall1(raw_syscall::SYS_CLOSE, i64::from(unadopted_descriptor))
+        };
+    }
     let result = unsafe { close_directory(stream, result) };
     unsafe { restore_cwd(saved_descriptor, result) }
 }
@@ -459,12 +503,12 @@ unsafe fn walk(
     }
 
     let mut stream = ptr::null_mut();
+    let mut descriptor = -1;
     let mut directory_error = 0;
     if directory_kind {
-        // SAFETY: io_path is a locally bounded NUL-terminated spelling that
-        // remains valid for this recursive invocation.
-        stream = unsafe { directory_streams::opendir(io_path.cast()) };
-        if stream.is_null() {
+        // The descriptor remains unadopted through the pre-order callback.
+        descriptor = unsafe { open_walk_directory(io_path.cast()) };
+        if descriptor < 0 {
             directory_error = unsafe { errno::get_errno() };
             if directory_error == EACCES {
                 kind = FTW_DNR;
@@ -478,8 +522,8 @@ unsafe fn walk(
         } else if fd_limit <= 0 {
             // Musl probes every reached directory even when no descriptor
             // budget remains, but closes it before it can recurse.
-            let _ = unsafe { directory_streams::closedir(stream) };
-            stream = ptr::null_mut();
+            let _ = unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, i64::from(descriptor)) };
+            descriptor = -1;
         }
     }
 
@@ -487,7 +531,7 @@ unsafe fn walk(
         // SAFETY: io_path is the absolute spelling prepared for CHDIR, or the
         // caller's original absolute path; chdir owns the process-global move.
         if unsafe { pathname_lifecycle::chdir(io_path.cast()) } != 0 {
-            return unsafe { finish(stream, saved_descriptor, -1) };
+            return unsafe { finish(stream, descriptor, saved_descriptor, -1) };
         }
     }
 
@@ -496,13 +540,13 @@ unsafe fn walk(
             callback(callbacks, path.cast(), &metadata, kind, callback_base, level)
         };
         if callback_result != 0 {
-            return unsafe { finish(stream, saved_descriptor, callback_result) };
+            return unsafe { finish(stream, descriptor, saved_descriptor, callback_result) };
         }
         if saved_descriptor >= 0 && is_directory_kind(kind) {
             // A callback may have changed CWD. Re-enter the current directory
             // before inspecting children, exactly as frozen FTW_CHDIR requires.
             if unsafe { pathname_lifecycle::chdir(io_path.cast()) } != 0 {
-                return unsafe { finish(stream, saved_descriptor, -1) };
+                return unsafe { finish(stream, descriptor, saved_descriptor, -1) };
             }
         }
     }
@@ -512,22 +556,29 @@ unsafe fn walk(
         if unsafe { (*cursor).device } == metadata.device()
             && unsafe { (*cursor).inode } == metadata.inode()
         {
-            return unsafe { finish(stream, saved_descriptor, 0) };
+            return unsafe { finish(stream, descriptor, saved_descriptor, 0) };
         }
         cursor = unsafe { (*cursor).chain };
     }
 
     if is_directory_kind(kind) && fd_limit > 0 {
-        if stream.is_null() {
+        if descriptor < 0 {
             // Preserve the error from the failed readability/ownership probe;
             // a DNR pre-order callback has already observed its FTW_DNR type.
-            return unsafe { finish(stream, saved_descriptor, fail(directory_error)) };
+            return unsafe { finish(stream, descriptor, saved_descriptor, fail(directory_error)) };
         }
+        // SAFETY: the successful open left this descriptor owned by the walk.
+        // `fdopendir` assumes ownership only on success.
+        stream = directory_streams::fdopendir(descriptor);
+        if stream.is_null() {
+            return unsafe { finish(stream, descriptor, saved_descriptor, -1) };
+        }
+        descriptor = -1;
         loop {
             let entry = match unsafe { directory_streams::next_entry_name(stream) } {
                 Ok(Some(entry)) => entry,
                 Ok(None) => break,
-                Err(error) => return unsafe { finish(stream, saved_descriptor, fail(error)) },
+                Err(error) => return unsafe { finish(stream, descriptor, saved_descriptor, fail(error)) },
             };
             let is_dot = entry.length == 1 && unsafe { *entry.bytes } == b'.' as c_char;
             let is_dot_dot = entry.length == 2
@@ -542,7 +593,7 @@ unsafe fn walk(
                 // A preceding non-directory callback may have changed CWD.
                 // Re-enter the parent before this child so every callback
                 // observes the frozen FTW_CHDIR directory context.
-                return unsafe { finish(stream, saved_descriptor, -1) };
+                return unsafe { finish(stream, descriptor, saved_descriptor, -1) };
             }
             debug_assert!(entry.length <= DIRECTORY_NAME_MAX);
             let (child_path_length, child_io_length) = match unsafe {
@@ -558,7 +609,7 @@ unsafe fn walk(
                 )
             } {
                 Ok(lengths) => lengths,
-                Err(error) => return unsafe { finish(stream, saved_descriptor, fail(error)) },
+                Err(error) => return unsafe { finish(stream, descriptor, saved_descriptor, fail(error)) },
             };
             let child_result = unsafe {
                 walk(
@@ -576,7 +627,7 @@ unsafe fn walk(
             };
             unsafe { restore_path(path, path_length, io_path, io_length) };
             if child_result != 0 {
-                return unsafe { finish(stream, saved_descriptor, child_result) };
+                return unsafe { finish(stream, descriptor, saved_descriptor, child_result) };
             }
         }
         // The parent stream must be closed before a post-order callback so the
@@ -589,17 +640,17 @@ unsafe fn walk(
         if saved_descriptor >= 0 && is_directory_kind(kind)
             && unsafe { pathname_lifecycle::chdir(io_path.cast()) } != 0
         {
-            return unsafe { finish(stream, saved_descriptor, -1) };
+            return unsafe { finish(stream, descriptor, saved_descriptor, -1) };
         }
         let callback_result = unsafe {
             callback(callbacks, path.cast(), &metadata, kind, callback_base, level)
         };
         if callback_result != 0 {
-            return unsafe { finish(stream, saved_descriptor, callback_result) };
+            return unsafe { finish(stream, descriptor, saved_descriptor, callback_result) };
         }
     }
 
-    unsafe { finish(stream, saved_descriptor, 0) }
+    unsafe { finish(stream, descriptor, saved_descriptor, 0) }
 }
 
 unsafe fn prepare_io_path(

@@ -747,6 +747,60 @@ static int directory_edges_case(void)
     return 0;
 }
 
+static int traversal_descriptor = -1;
+static dev_t traversal_device;
+static ino_t traversal_inode;
+static int traversal_descriptor_phase;
+
+/* nftw opens a raw descriptor before the directory callback. It transfers
+ * ownership to fdopendir only afterward, which sets close-on-exec before
+ * visiting the first child. Identify that descriptor by the root inode so
+ * the test does not rely on a particular descriptor number. */
+static int traversal_descriptor_visit(const char *path, const struct stat *metadata,
+                                      int kind, struct FTW *walk)
+{
+    int descriptor;
+
+    (void)metadata;
+    (void)walk;
+    if (kind == FTW_D && strcmp(path, "/work/traversal-descriptor") == 0) {
+        for (descriptor = 3; descriptor < 256; ++descriptor) {
+            struct stat opened;
+            if (fstat(descriptor, &opened) == 0 && opened.st_dev == traversal_device &&
+                opened.st_ino == traversal_inode) {
+                traversal_descriptor = descriptor;
+                break;
+            }
+        }
+        if (traversal_descriptor < 0 ||
+            fcntl(traversal_descriptor, F_GETFD) != 0)
+            return 37;
+        traversal_descriptor_phase = 1;
+    } else if (kind == FTW_F && strcmp(path, "/work/traversal-descriptor/child") == 0) {
+        if (traversal_descriptor_phase != 1 ||
+            fcntl(traversal_descriptor, F_GETFD) != FD_CLOEXEC)
+            return 38;
+        traversal_descriptor_phase = 2;
+    }
+    return 0;
+}
+
+static int traversal_descriptor_case(void)
+{
+    struct stat directory;
+
+    CHECK(ensure_directory("/work") == 0);
+    CHECK(ensure_directory("/work/traversal-descriptor") == 0);
+    CHECK(write_file("/work/traversal-descriptor/child", "x") == 0);
+    CHECK(stat("/work/traversal-descriptor", &directory) == 0);
+    traversal_device = directory.st_dev;
+    traversal_inode = directory.st_ino;
+    CHECK(nftw("/work/traversal-descriptor", traversal_descriptor_visit, 8, FTW_PHYS) == 0);
+    CHECK(traversal_descriptor_phase == 2);
+    puts("traversal descriptor ownership ok");
+    return 0;
+}
+
 /* Musl serializes readdir_r on one stream through the DIR lock, so
  * concurrent readers partition the stream: each record is returned to
  * exactly one reader. */
@@ -1230,6 +1284,8 @@ static int run_case(const char *name)
         return directory_threads_case();
     if (strcmp(name, "traversal-flags") == 0)
         return traversal_flags_case();
+    if (strcmp(name, "traversal-descriptor") == 0)
+        return traversal_descriptor_case();
     if (strcmp(name, "traversal-permissions") == 0)
         return traversal_permissions_case();
     if (strcmp(name, "legacy-edges") == 0)
