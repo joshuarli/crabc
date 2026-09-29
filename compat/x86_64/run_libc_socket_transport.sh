@@ -3,8 +3,8 @@
 #
 # The same project-header C fixture first runs against pinned musl, then as a
 # `-nostdlib -static` executable linked solely through the selected crabc
-# archive. It selects only local AF_UNIX pair traffic and AF_INET loopback UDP
-# and TCP lifecycle calls. It also observes Linux 5.10's atomic
+# archive. It selects local AF_UNIX named stream/datagram and pair traffic, plus
+# AF_INET loopback UDP and TCP lifecycle calls. It also observes Linux 5.10's atomic
 # SOCK_CLOEXEC | SOCK_NONBLOCK success for socket, socketpair, and accept4,
 # plus musl's zero-flag accept4 dispatch through accept under a syscall filter.
 # Raw close/fcntl are fixture plumbing only; this is not socket options,
@@ -85,6 +85,7 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
 work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-socket-transport.XXXXXX)"
 trap 'rm -rf -- "$work_dir"' EXIT
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-socket-transport"
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-socket-transport-reference"
 candidate="$work_dir/crabc-static-socket-transport-candidate"
@@ -104,7 +105,7 @@ errno_disassembly="$work_dir/errno-disassembly"
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
     compat/x86_64/libc_socket_transport_probe.c >/dev/null 2>"$header_trace"
-for header in errno.h fcntl.h netinet/in.h sys/socket.h sys/types.h \
+for header in errno.h fcntl.h netinet/in.h sys/socket.h sys/un.h sys/types.h \
     sys/syscall.h bits/fcntl.h bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" \
         || fail "fixture did not use the project $header header"
@@ -116,7 +117,7 @@ fi
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_socket_transport_probe.c \
     -o "$reference"
-if "$reference"; then
+if "$reference" >"$work_dir/musl-unix.trace"; then
     :
 else
     status=$?
@@ -228,11 +229,18 @@ assert_named_syscall getpeername 34
 assert_named_syscall socketpair 35
 assert_named_syscall accept4 120
 
-if "$candidate"; then
+if "$candidate" >"$work_dir/crabc-unix.trace"; then
     :
 else
     status=$?
     fail "freestanding socket transport fixture exited ${status}"
 fi
+if ! cmp -s "$work_dir/musl-unix.trace" "$work_dir/crabc-unix.trace"; then
+    diff -u "$work_dir/musl-unix.trace" "$work_dir/crabc-unix.trace" >&2 || true
+    fail "pinned-musl and freestanding candidate AF_UNIX observations differ"
+fi
+mkdir -p "$report_dir"
+cp "$work_dir/musl-unix.trace" "$report_dir/musl-unix.trace"
+cp "$work_dir/crabc-unix.trace" "$report_dir/crabc-unix.trace"
 
 printf 'x86 static crabc-libc socket transport: PASS\n'
