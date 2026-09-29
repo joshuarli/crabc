@@ -46,6 +46,13 @@ static int child_tid_callback(void *arg) {
     CHECK(*(int *)arg == syscall(SYS_gettid));
     return 23;
 }
+static int clone_exec_child(void *arg) {
+    char *arguments[] = { "/consumer", "exec-child", 0 };
+    char *environment[] = { 0 };
+    CHECK(pthread_getspecific(key) == arg);
+    execve(arguments[0], arguments, environment);
+    return 97;
+}
 static void *clone_cases(void *unused) {
     (void)unused;
     size_t length = 1024 * 1024;
@@ -83,6 +90,17 @@ static void *clone_cases(void *unused) {
     volatile int shared = 0;
     pid = clone(raw_child, stack + length, SIGCHLD | CLONE_VM | CLONE_VFORK, (void *)&shared);
     CHECK(pid > 0 && shared == 73); wait_for(pid, 29);
+    /* A repaired non-VM clone can replace its image from either the main
+     * thread or a worker. WNOWAIT must observe the same exit without reaping
+     * it; the following waitpid owns the final child-state transition. */
+    errno = EDOM;
+    pid = clone(clone_exec_child, stack + length, SIGCHLD, (void *)0x1234);
+    CHECK(pid > 0 && errno == EDOM);
+    siginfo_t info = {0};
+    CHECK(waitid(P_PID, (id_t)pid, &info, WEXITED | WNOWAIT) == 0);
+    CHECK(info.si_pid == pid && info.si_code == CLD_EXITED && info.si_status == 43);
+    CHECK(errno == EDOM);
+    wait_for(pid, 43);
     CHECK(callbacks == 0);
     CHECK(pthread_sigmask(SIG_SETMASK, &old, 0) == 0);
     CHECK(munmap(stack, length) == 0);
