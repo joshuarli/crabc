@@ -57,6 +57,19 @@ mod tests {
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn emit_m2_delayed_purge_expiry_c_rust_trace() {
+        delayed_purge_expiry_trace(false);
+    }
+
+    /// A failed decommit at expiry consumes the scheduled purge while the
+    /// fully committed slice remains reusable beside a live neighbor.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn emit_m2_delayed_purge_fault_c_rust_trace() {
+        delayed_purge_expiry_trace(true);
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn delayed_purge_expiry_trace(fail_due_advice: bool) {
         use super::*;
         use crate::arena::{ArenaId, ArenaSearch, ArenaView};
         use crate::diagnostic_output::{OutputCallback, OutputOwner};
@@ -175,6 +188,10 @@ mod tests {
             && committed.is_set_range(released_slice, 1) == Some(true)
             && i64_load_relaxed(&arena.purge_expire) == 10000;
         let before_global = i64_load_relaxed(&backing.purge_expire);
+        if fail_due_advice {
+            fault.set(fault::Plan::at(fault::Point::Decommit, 1,
+                crabc_core::Errno::from_raw(5).unwrap()));
+        }
         assert!(backing.collect_purge_at(process, config, false, true, 0, 10000, delay));
         let due_advice = advice.count();
         let due_exact = usize::from(advice.range() == Some((
@@ -196,11 +213,12 @@ mod tests {
         let after_vm = subprocess.vm_statistics().snapshot();
         let after_arena = subprocess.arena_statistics().snapshot();
         let after_no_retry = advice.count() == 1
-            && warning_count.load(Ordering::Relaxed) == 0
+            && warning_count.load(Ordering::Relaxed) == usize::from(fail_due_advice)
             && after_vm.purge_calls - before_vm.purge_calls == due_calls
             && after_arena.arena_purges - before_arena.arena_purges == due_visits;
         let after_global = i64_load_relaxed(&backing.purge_expire);
         drop(advice);
+        fault.set(fault::Plan::disabled());
         let later = unsafe { backing.try_allocate_slices(
             process, config, requested, 1, ARENA_SLICE_SIZE, true,
         ) }.expect("released slice can be reclaimed");
@@ -224,6 +242,7 @@ mod tests {
             && subprocess.vm_statistics().snapshot().reserved_current == before_vm.reserved_current;
         let final_vm = subprocess.vm_statistics().snapshot();
         let final_arena = subprocess.arena_statistics().snapshot();
+        let profile = if fail_due_advice { "delayed_purge_fault" } else { "delayed_purge_expiry" };
         for (field, value) in [
             ("setup", i64::from(setup)), ("scheduled", i64::from(scheduled)),
             ("before_quiet", i64::from(before_quiet)),
@@ -246,7 +265,7 @@ mod tests {
             ("arena_purges", final_arena.arena_purges - before_arena.arena_purges),
             ("warnings", warning_count.load(Ordering::Relaxed) as i64),
         ] {
-            std::println!("m2.delayed_purge_expiry.{field}={value}");
+            std::println!("m2.{profile}.{field}={value}");
         }
         assert!(setup && scheduled && before_quiet && before_pending && due_bits
             && after_no_retry && later_same && later_pending && survivor && terminal);
