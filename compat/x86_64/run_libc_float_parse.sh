@@ -10,7 +10,6 @@
 # locale databases beyond C/POSIX/C.UTF-8, and a general text runtime remain
 # outside this artifact.
 set -euo pipefail
-. "$(dirname "${BASH_SOURCE[0]}")/source_runtime_libc.sh"
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
@@ -60,20 +59,27 @@ assert_fixture_tls_capacity() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep nm objdump readelf rustup sort; do require_tool "$tool"; done
+for tool in ar awk cargo cmp diff grep nm objdump python3 readelf readlink rustup sha256sum sort; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_float_parse_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-float-parse.XXXXXX)"
+mkdir -p "$ROOT_DIR/.work/x86_64/tmp" "$ROOT_DIR/.work/x86_64/reports"
+[ "$(readlink -f "$ROOT_DIR/.work")" = "$ROOT_DIR/.work" ] ||
+    fail "checkout .work must be a physical directory"
+work_dir="$(mktemp -d "$ROOT_DIR/.work/x86_64/tmp/libc-float-parse.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
-target_dir="$work_dir/cargo-target"; archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
+report_dir="$ROOT_DIR/.work/x86_64/reports/libc-float-parse"
+[ "$(readlink -f "$work_dir")" = "$work_dir" ] ||
+    fail "floating conversion scratch must remain inside the physical checkout"
+source_runtime_receipt="$work_dir/source-runtime/receipt.json"
 reference="$work_dir/musl-float-parse-reference"; candidate="$work_dir/crabc-static-float-parse-candidate"
 trace="$work_dir/header-trace"; archive_symbols="$work_dir/archive-symbols"
 selected_symbols="$work_dir/selected-c-abi-symbols"; expected_symbols="$work_dir/expected-c-abi-symbols"
 symbols="$work_dir/candidate-symbols"; headers="$work_dir/candidate-program-headers"
 dynamic="$work_dir/candidate-dynamic"; relocs="$work_dir/candidate-relocations"; disassembly="$work_dir/candidate-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"; parser_disassembly="$work_dir/parser-disassembly"
+link_map="$work_dir/candidate.map"; link_trace="$work_dir/candidate.trace"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
@@ -85,8 +91,10 @@ done
     -I"$ROOT_DIR/include" compat/x86_64/libc_float_parse_probe.c -o "$reference"
 "$reference" || fail "pinned-musl floating-conversion fixture failed"
 
-build_source_runtime_libc "$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
+archive="$(python3 "$ROOT_DIR/compat/x86_64/native_static_source_runtime_closure.py" \
+    build --work "tmp/${work_dir##*/}/source-runtime" --print-archive)"
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
+[ -f "$source_runtime_receipt" ] || fail "source runtime closure receipt is missing"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
 for symbol in __errno_location __strtod_l __strtof_l __strtold_l atof ecvt fcvt gcvt getsubopt \
@@ -114,8 +122,14 @@ fi
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_FLOAT_PARSE_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -Wl,-Map,"$link_map" -Wl,--trace-symbol=rust_eh_personality \
     compat/x86_64/libc_float_parse_probe.c \
-    compat/x86_64/libc_float_parse_start.S "$archive" -o "$candidate"
+    compat/x86_64/libc_float_parse_start.S "$archive" -o "$candidate" \
+    2>"$link_trace"
+python3 "$ROOT_DIR/compat/x86_64/native_static_source_runtime_closure.py" \
+    audit-final-link --receipt "$source_runtime_receipt" \
+    --candidate "$candidate" --link-map "$link_map" --trace "$link_trace" \
+    --label crabc-static-float-parse-candidate
 readelf --symbols --wide "$candidate" >"$symbols"
 readelf --program-headers --wide "$candidate" >"$headers"
 readelf --dynamic --wide "$candidate" >"$dynamic" || true
@@ -164,4 +178,28 @@ else
     status=$?
     fail "freestanding floating-conversion fixture failed with status ${status}"
 fi
+mkdir -p "$report_dir"
+[ "$(readlink -f "$report_dir")" = "$report_dir" ] ||
+    fail "floating conversion report must remain inside the physical checkout"
+cp "$reference" "$report_dir/musl-reference.elf"
+cp "$candidate" "$report_dir/crabc-candidate.elf"
+cp "$source_runtime_receipt" "$report_dir/source-runtime.json"
+cp "$link_map" "$report_dir/candidate.map"
+cp "$link_trace" "$report_dir/candidate.trace"
+cp "$headers" "$report_dir/candidate-program-headers.txt"
+cp "$symbols" "$report_dir/candidate-symbols.txt"
+cp "$selected_symbols" "$report_dir/selected-c-abi-symbols.txt"
+cp "$ROOT_DIR/compat/x86_64/libc_float_parse_probe.c" "$report_dir/libc_float_parse_probe.c"
+cp "$ROOT_DIR/compat/x86_64/libc_float_parse_start.S" "$report_dir/libc_float_parse_start.S"
+cp "$ROOT_DIR/compat/x86_64/run_libc_float_parse.sh" "$report_dir/run_libc_float_parse.sh"
+printf 'musl-reference exit=0\ncrabc-candidate exit=0\n' >"$report_dir/results.txt"
+(
+    cd "$report_dir"
+    sha256sum musl-reference.elf crabc-candidate.elf source-runtime.json \
+        candidate.map candidate.trace candidate-program-headers.txt \
+        candidate-symbols.txt selected-c-abi-symbols.txt \
+        libc_float_parse_probe.c libc_float_parse_start.S \
+        run_libc_float_parse.sh results.txt >sha256sums.txt
+)
+printf 'floating conversion physical receipt: %s\n' "$report_dir"
 printf 'x86 static libc floating/locale conversion: PASS\n'

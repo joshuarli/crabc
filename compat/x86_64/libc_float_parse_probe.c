@@ -494,6 +494,58 @@ static int check_binary80_abi(strtold_fn parse_long)
         TEXT_END("nan(payload)"), EDOM, EDOM) == 0 ? 0 : 90;
 }
 
+static int check_exact_boundary_cells(strtof_fn parse_float,
+    strtod_fn parse_double, strtold_fn parse_long)
+{
+    int status;
+
+    /* Exact halfway decimal integers exercise the target precision rather
+     * than a preliminary conversion through a wider C floating type. */
+    status = expect_float(parse_float, "16777217!", UINT32_C(0x4b800000),
+        TEXT_END("16777217"), EINTR, EINTR);
+    if (status != 0)
+        return 10 + status;
+    status = expect_double(parse_double, "9007199254740993!",
+        UINT64_C(0x4340000000000000), TEXT_END("9007199254740993"),
+        EDOM, EDOM);
+    if (status != 0)
+        return 20 + status;
+    status = expect_long_double(parse_long, "18446744073709551617!",
+        UINT64_C(0x8000000000000000), UINT16_C(0x403f),
+        TEXT_END("18446744073709551617"), EINTR, EINTR);
+    if (status != 0)
+        return 30 + status;
+
+    status = expect_float(parse_float, "0x0.fffffep-126!",
+        UINT32_C(0x007fffff), TEXT_END("0x0.fffffep-126"), EDOM,
+        EDOM);
+    if (status != 0)
+        return 40 + status;
+    status = expect_double(parse_double, "0x0.fffffffffffffp-1022!",
+        UINT64_C(0x000fffffffffffff),
+        TEXT_END("0x0.fffffffffffffp-1022"), EINTR, EINTR);
+    if (status != 0)
+        return 50 + status;
+    status = expect_long_double(parse_long, "0x0.fffffffffffffffep-16382!",
+        UINT64_C(0x7fffffffffffffff), UINT16_C(0),
+        TEXT_END("0x0.fffffffffffffffep-16382"), EDOM, EDOM);
+    if (status != 0)
+        return 60 + status;
+
+    status = expect_float(parse_float, "-0e999tail",
+        UINT32_C(0x80000000), TEXT_END("-0e999"), EINTR, EINTR);
+    if (status != 0)
+        return 70 + status;
+    status = expect_double(parse_double, "-0x0p-99999tail",
+        UINT64_C(0x8000000000000000), TEXT_END("-0x0p-99999"),
+        EDOM, EDOM);
+    if (status != 0)
+        return 80 + status;
+    return expect_long_double(parse_long, "-0e-99999tail", UINT64_C(0),
+        UINT16_C(0x8000), TEXT_END("-0e-99999"), EINTR, EINTR) == 0 ?
+        0 : 90;
+}
+
 static int expect_double_flags(strtod_fn parse, feclearexcept_fn clear,
     fetestexcept_fn test, const char *input, size_t expected_end,
     int expected_flags)
@@ -549,6 +601,27 @@ static const int rounding_modes[] = {
     FE_UPWARD,
     FE_TOWARDZERO,
 };
+
+static uint16_t x87_control_word(void)
+{
+    uint16_t value;
+
+    __asm__ volatile ("fnstcw %0" : "=m"(value) : : "memory");
+    return value;
+}
+
+static uint32_t mxcsr_word(void)
+{
+    uint32_t value;
+
+    __asm__ volatile ("stmxcsr %0" : "=m"(value) : : "memory");
+    return value;
+}
+
+static void set_mxcsr_word(uint32_t value)
+{
+    __asm__ volatile ("ldmxcsr %0" : : "m"(value) : "memory");
+}
 
 static int set_and_check_rounding(fesetround_fn set_round,
     fegetround_fn get_round, int round)
@@ -970,12 +1043,106 @@ static int check_rounding_modes(strtof_fn parse_float, strtod_fn parse_double)
     return status;
 }
 
+/* The scanner and its narrowing stores use x87 arithmetic. Give MXCSR the
+ * opposite rounding mode to catch an accidental SSE conversion or a parser
+ * that changes either control word while handling a difficult value. */
+static int check_split_rounding_controls(strtof_fn parse_float,
+    strtod_fn parse_double, strtold_fn parse_long)
+{
+    const fegetenv_fn get_environment = fegetenv;
+    const fesetenv_fn set_environment = fesetenv;
+    const fesetround_fn set_round = fesetround;
+    static const char float_midpoint[] = "0x1.000001p+0!";
+    static const char double_midpoint[] = "0x1.00000000000008p+0!";
+    static const char long_midpoint[] = "0x1.0000000000000001p+0!";
+    fenv_t saved;
+    uint16_t x87_before;
+    uint32_t mxcsr_before;
+    char *end;
+    float_bits single;
+    double_bits paired;
+    long_double_bits extended;
+    int status = 0;
+    int mode_index;
+
+    if (get_environment(&saved) != 0)
+        return 1;
+    for (mode_index = 0; mode_index < 2 && status == 0; mode_index++) {
+        const int x87_round = mode_index == 0 ? FE_DOWNWARD : FE_UPWARD;
+        const int mxcsr_round = mode_index == 0 ? FE_UPWARD : FE_DOWNWARD;
+
+        if (set_round(x87_round) != 0) {
+            status = 2;
+            break;
+        }
+        set_mxcsr_word((mxcsr_word() & ~UINT32_C(0x6000)) |
+            ((uint32_t)mxcsr_round << 3));
+        x87_before = x87_control_word();
+        mxcsr_before = mxcsr_word();
+        if ((x87_before & UINT16_C(0x0c00)) != (uint16_t)x87_round ||
+            (mxcsr_before & UINT32_C(0x6000)) !=
+                ((uint32_t)mxcsr_round << 3)) {
+            status = 3;
+            break;
+        }
+
+        errno = EINTR;
+        single.value = parse_float(float_midpoint, &end);
+        if (single.bits != (mode_index == 0 ? UINT32_C(0x3f800000) :
+                UINT32_C(0x3f800001)) ||
+            end != float_midpoint + TEXT_END("0x1.000001p+0") ||
+            errno != EINTR) {
+            status = 10;
+            break;
+        }
+        errno = EDOM;
+        paired.value = parse_double(double_midpoint, &end);
+        if (paired.bits != (mode_index == 0 ?
+                UINT64_C(0x3ff0000000000000) :
+                UINT64_C(0x3ff0000000000001)) ||
+            end != double_midpoint + TEXT_END("0x1.00000000000008p+0") ||
+            errno != EDOM) {
+            status = 20;
+            break;
+        }
+        errno = EINTR;
+        extended.value = parse_long(long_midpoint, &end);
+        if (long_double_mantissa(&extended) !=
+                (mode_index == 0 ? UINT64_C(0x8000000000000000) :
+                UINT64_C(0x8000000000000001)) ||
+            long_double_sign_exponent(&extended) != UINT16_C(0x3fff) ||
+            end != long_midpoint + TEXT_END("0x1.0000000000000001p+0") ||
+            errno != EINTR) {
+            status = 30;
+            break;
+        }
+        if (x87_control_word() != x87_before ||
+            (mxcsr_word() & ~UINT32_C(0x003f)) !=
+                (mxcsr_before & ~UINT32_C(0x003f))) {
+            status = 40;
+            break;
+        }
+    }
+    if (set_environment(&saved) != 0)
+        return 4;
+    return status == 0 ? 0 : status + mode_index * 50;
+}
+
 #else
 
 static int check_rounding_modes(strtof_fn parse_float, strtod_fn parse_double)
 {
     (void)parse_float;
     (void)parse_double;
+    return 0;
+}
+
+static int check_split_rounding_controls(strtof_fn parse_float,
+    strtod_fn parse_double, strtold_fn parse_long)
+{
+    (void)parse_float;
+    (void)parse_double;
+    (void)parse_long;
     return 0;
 }
 
@@ -1224,6 +1391,10 @@ int crabc_x86_64_float_parse_probe(void)
     status = check_binary80_abi(parse_long);
     if (status != 0)
         return 570 + status;
+    status = check_exact_boundary_cells(parse_float, parse_double,
+        parse_long);
+    if (status != 0)
+        return 660 + status;
     status = check_exception_flags(parse_double);
     if (status != 0)
         return 760 + status;
@@ -1234,6 +1405,10 @@ int crabc_x86_64_float_parse_probe(void)
     status = check_rounding_modes(parse_float, parse_double);
     if (status != 0)
         return 1620 + status;
+    status = check_split_rounding_controls(parse_float, parse_double,
+        parse_long);
+    if (status != 0)
+        return 1660 + status;
     status = check_locale_argument_aliases();
     if (status != 0)
         return 1700 + status;
