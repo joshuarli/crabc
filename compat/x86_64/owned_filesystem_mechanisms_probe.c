@@ -7,10 +7,29 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+/* The installed headers expose prctl but not Linux's seccomp filter records. */
+struct filesystem_filter {
+    unsigned short code;
+    unsigned char jump_true;
+    unsigned char jump_false;
+    unsigned int constant;
+};
+
+struct filesystem_filter_program {
+    unsigned short length;
+    struct filesystem_filter *filter;
+};
+
+_Static_assert(sizeof(struct filesystem_filter) == 8, "Linux BPF instruction layout");
+_Static_assert(sizeof(struct filesystem_filter_program) == 16, "Linux BPF program layout");
+_Static_assert(offsetof(struct filesystem_filter_program, filter) == 8, "Linux BPF program pointer");
 
 /* The probe deliberately uses the installed public record, rather than an
  * internal Rust mirror.  These are the Linux/x86-64 UAPI offsets consumed by
@@ -194,6 +213,62 @@ static int allocation_and_vector_io(int directory)
     return 0;
 }
 
+static int fchmodat2_unavailable_case(int directory)
+{
+    /* Return ENOSYS only for fchmodat2, so both libcs must take musl's
+     * Linux 5.10 no-follow path while every other syscall stays available. */
+    struct filesystem_filter instructions[] = {
+        {0x20, 0, 0, 0},
+        {0x15, 0, 1, SYS_fchmodat2},
+        {0x06, 0, 0, 0x00050000U | ENOSYS},
+        {0x06, 0, 0, 0x7fff0000U},
+    };
+    struct filesystem_filter_program program = {
+        .length = sizeof(instructions) / sizeof(instructions[0]),
+        .filter = instructions,
+    };
+    struct stat metadata;
+    int descriptor = make_file(directory, "fallback-mode", "m", 1);
+    CHECK(descriptor >= 0);
+    CHECK(close(descriptor) == 0);
+    CHECK(chmod("/tmp/owned-filesystem/fallback-mode", 0640) == 0);
+    CHECK(symlinkat("fallback-mode", directory, "fallback-link") == 0);
+    CHECK(prctl(PR_SET_NO_NEW_PRIVS, 1UL, 0UL, 0UL, 0UL) == 0);
+    CHECK(prctl(PR_SET_SECCOMP, 2UL, (unsigned long)&program, 0UL, 0UL) == 0);
+
+    errno = E2BIG;
+    CHECK(fchmodat(directory, "fallback-mode", 0600, AT_SYMLINK_NOFOLLOW) == 0 && errno == E2BIG);
+    CHECK(fstatat(directory, "fallback-mode", &metadata, 0) == 0);
+    CHECK((metadata.st_mode & 0777) == 0600);
+    errno = E2BIG;
+    CHECK(lchmod("/tmp/owned-filesystem/fallback-mode", 0610) == 0 && errno == E2BIG);
+    CHECK(fstatat(directory, "fallback-mode", &metadata, 0) == 0);
+    CHECK((metadata.st_mode & 0777) == 0610);
+    CHECK_ERR(fchmodat(directory, "fallback-link", 0600, AT_SYMLINK_NOFOLLOW), EOPNOTSUPP);
+    CHECK_ERR(lchmod("/tmp/owned-filesystem/fallback-link", 0600), EOPNOTSUPP);
+    CHECK(fstatat(directory, "fallback-mode", &metadata, 0) == 0);
+    CHECK((metadata.st_mode & 0777) == 0610);
+    return 0;
+}
+
+static int fchmodat2_unavailable_child(int directory)
+{
+    int status;
+    pid_t child = fork();
+    CHECK(child >= 0);
+    if (child == 0) {
+        if (fchmodat2_unavailable_case(directory) != 0) {
+            fprintf(stderr, "fchmodat2 fallback failure at line %d errno %d\n", failure_line, errno);
+            _exit(1);
+        }
+        _exit(0);
+    }
+    CHECK(waitpid(child, &status, 0) == child);
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    puts("fchmodat2-enosys-fallback-ok");
+    return 0;
+}
+
 static int lockf_child_conflict(int descriptor)
 {
     int status;
@@ -252,6 +327,7 @@ static int run_probe(void)
     directory = open("/tmp/owned-filesystem", O_RDONLY | O_DIRECTORY);
     CHECK(directory >= 0);
     CHECK(filesystem_metadata_and_namespace(directory) == 0);
+    CHECK(fchmodat2_unavailable_child(directory) == 0);
     CHECK(allocation_and_vector_io(directory) == 0);
     CHECK(lockf_process_cases(directory) == 0);
     CHECK(close(directory) == 0);

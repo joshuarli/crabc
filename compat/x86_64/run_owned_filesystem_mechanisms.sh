@@ -92,6 +92,7 @@ mkdir -p "$work/oracle-root"
 cp "$work/oracle" "$work/oracle-root/consumer"
 run_in_root "$work/oracle-root" "$work/oracle.stdout" /consumer
 grep -qx owned-filesystem-mechanisms-ok "$work/oracle.stdout"
+grep -qx fchmodat2-enosys-fallback-ok "$work/oracle.stdout"
 
 if [ "$#" -eq 0 ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$work/static-product" >"$work/static-build.json"
@@ -121,4 +122,4 @@ for mode in pie non-pie; do
     done
 done
 
-printf 'owned filesystem mechanisms: PASS (same workload object, pinned musl, static/static-PIE/dynamic PIE/non-PIE kernel/direct chroots, procfd fallbacks, relative dirfds, symlinks, ownership, statx, allocation, locks, and vectored current-offset semantics); evidence: %s\n' "$work"
+printf 'owned filesystem mechanisms: PASS (same workload object, pinned musl, static/static-PIE/dynamic PIE/non-PIE kernel/direct chroots, forced fchmodat2 ENOSYS fallback, procfd, relative dirfds, symlinks, ownership, statx, allocation, locks, and vectored current-offset semantics); evidence: %s\n' "$work"

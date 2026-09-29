@@ -203,13 +203,13 @@ unsafe fn fchmodat_nofollow_fallback(
 ) -> i64 {
     // SAFETY: the caller owns the raw pathname and directory-descriptor
     // contract. The private helper owns its complete x86 output record.
-    let mode = match unsafe {
+    let existing_mode = match unsafe {
         stat_compat::fstatat_mode(directory_descriptor, path, AT_SYMLINK_NOFOLLOW)
     } {
-        Ok(mode) => mode,
+        Ok(existing_mode) => existing_mode,
         Err(error) => return raw_error(error),
     };
-    if is_symlink(mode) {
+    if is_symlink(existing_mode) {
         return raw_error(EOPNOTSUPP);
     }
 
@@ -241,7 +241,7 @@ unsafe fn fchmodat_nofollow_fallback(
         stat_compat::fstatat_mode(AT_FDCWD, procfd_path.as_ptr().cast(), 0)
     } {
         Err(error) => raw_error(error),
-        Ok(mode) if is_symlink(mode) => raw_error(EOPNOTSUPP),
+        Ok(existing_mode) if is_symlink(existing_mode) => raw_error(EOPNOTSUPP),
         Ok(_) => {
             // SAFETY: the local procfd pathname remains valid through the raw
             // request and the scalar mode follows the C ABI's `mode_t` width.
