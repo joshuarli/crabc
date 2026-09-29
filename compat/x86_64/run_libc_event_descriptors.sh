@@ -4,7 +4,7 @@
 # The project-header fixture first runs against pinned musl 1.2.6, then as a
 # true `-nostdlib -static` candidate linked only with the selected crabc
 # archive. It proves bounded epoll/eventfd/inotify behavior, packed records,
-# exact x86 syscall paths, and the kernel's eight-byte epoll signal mask. It
+# exact x86 syscall paths, descriptor reuse, and the kernel's eight-byte epoll signal mask. It
 # is not a general watcher policy, fanotify, timerfd, cancellation, libc.so,
 # CRT, loader, sysroot, family completion, promotion, or public x86 support.
 set -euo pipefail
@@ -154,7 +154,7 @@ else
     printf '%s\n' "$reference_status" >"$report_dir/musl.status"
     fail "pinned-musl reference execution exited $reference_status; receipt: $report_dir"
 fi
-[ "$(wc -c <"$report_dir/musl.records")" -eq 64 ] ||
+[ "$(wc -c <"$report_dir/musl.records")" -eq 128 ] ||
     fail "pinned-musl reference emitted an unexpected receipt length; receipt: $report_dir"
 
 # Pin one codegen unit for the instruction-level syscall ABI judge below.
@@ -276,6 +276,14 @@ cmp -s "$report_dir/musl.stderr" "$report_dir/crabc.stderr" ||
 od -An -tx8 -w8 "$report_dir/musl.records" | awk '{ print $1 }' \
     >"$report_dir/observations.txt"
 cat >"$report_dir/expected-observations.txt" <<'EOF'
+0000000000000001
+0000000000000002
+0000000000000001
+13579bdf2468ace0
+0000000000000001
+02468ace13579bdf
+0000000000000001
+fedcba9876543210
 0000000000000011
 0000000000000001
 9a8b7c6d5e4f3021
@@ -286,7 +294,7 @@ cat >"$report_dir/expected-observations.txt" <<'EOF'
 0000000000000016
 EOF
 cmp -s "$report_dir/expected-observations.txt" "$report_dir/observations.txt" ||
-    fail "pinned-musl observations differ from the inotify/epoll contract; receipt: $report_dir"
+    fail "pinned-musl observations differ from the event-descriptor contract; receipt: $report_dir"
 cp "$reference" "$report_dir/musl.elf"
 cp "$candidate" "$report_dir/crabc.elf"
 (

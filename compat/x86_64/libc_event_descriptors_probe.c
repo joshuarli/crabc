@@ -446,6 +446,123 @@ cleanup:
     return status;
 }
 
+static int check_epoll_descriptor_reuse(void)
+{
+    struct descriptor_reuse_receipt {
+        uint64_t reused_number;
+        uint64_t stale_modify_errno;
+        uint64_t old_events;
+        uint64_t old_token;
+        uint64_t replacement_events;
+        uint64_t replacement_token;
+        uint64_t rearmed_events;
+        uint64_t rearmed_token;
+    };
+    _Static_assert(sizeof(struct descriptor_reuse_receipt) == 64,
+        "descriptor reuse observation record has eight 64-bit fields");
+    const uint64_t old_token = UINT64_C(0x13579bdf2468ace0);
+    const uint64_t replacement_token = UINT64_C(0x02468ace13579bdf);
+    const uint64_t rearmed_token = UINT64_C(0xfedcba9876543210);
+    struct descriptor_reuse_receipt receipt = { 0 };
+    struct epoll_event interest = { 0 };
+    struct epoll_event observed = { 0 };
+    eventfd_t value = 0;
+    int epoll = -1;
+    int source = -1;
+    int duplicate = -1;
+    int replacement = -1;
+    int source_number = -1;
+    int status = 0;
+
+    epoll = epoll_create1(EPOLL_CLOEXEC);
+    source = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (epoll < 0 || source < 0) {
+        status = 1;
+        goto cleanup;
+    }
+    interest.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
+    interest.data.u64 = old_token;
+    if (epoll_ctl(epoll, EPOLL_CTL_ADD, source, &interest) != 0 ||
+        (duplicate = dup(source)) < 0) {
+        status = 2;
+        goto cleanup;
+    }
+    source_number = source;
+    if (close(source) != 0) {
+        status = 3;
+        goto cleanup;
+    }
+    source = -1;
+    replacement = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    if (replacement < 0 || replacement != source_number) {
+        status = 4;
+        goto cleanup;
+    }
+    receipt.reused_number = 1;
+
+    /* The reused number names a different open file description. The old
+     * interest survives through duplicate, but cannot modify the new one. */
+    errno = 0;
+    if (!expect_error(epoll_ctl(epoll, EPOLL_CTL_MOD, replacement, &interest),
+            ENOENT)) {
+        status = 5;
+        goto cleanup;
+    }
+    receipt.stale_modify_errno = (uint64_t)errno;
+    if (eventfd_write(duplicate, 1) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLIN || observed.data.u64 != old_token ||
+        epoll_wait(epoll, &observed, 1, 0) != 0) {
+        status = 6;
+        goto cleanup;
+    }
+    receipt.old_events = observed.events;
+    receipt.old_token = observed.data.u64;
+
+    interest.data.u64 = replacement_token;
+    if (epoll_ctl(epoll, EPOLL_CTL_ADD, replacement, &interest) != 0 ||
+        eventfd_write(replacement, 1) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLIN ||
+        observed.data.u64 != replacement_token ||
+        epoll_wait(epoll, &observed, 1, 0) != 0) {
+        status = 7;
+        goto cleanup;
+    }
+    receipt.replacement_events = observed.events;
+    receipt.replacement_token = observed.data.u64;
+
+    /* Closing the last old duplicate removes only its registration. Rearming
+     * the still-readable replacement must retain its own data and readiness. */
+    if (close(duplicate) != 0) {
+        status = 8;
+        goto cleanup;
+    }
+    duplicate = -1;
+    interest.data.u64 = rearmed_token;
+    if (epoll_ctl(epoll, EPOLL_CTL_MOD, replacement, &interest) != 0 ||
+        epoll_wait(epoll, &observed, 1, 0) != 1 ||
+        observed.events != EPOLLIN || observed.data.u64 != rearmed_token ||
+        eventfd_read(replacement, &value) != 0 || value != 1 ||
+        epoll_wait(epoll, &observed, 1, 0) != 0) {
+        status = 9;
+        goto cleanup;
+    }
+    receipt.rearmed_events = observed.events;
+    receipt.rearmed_token = observed.data.u64;
+    if (write(STDOUT_FILENO, &receipt, sizeof(receipt)) !=
+        (ssize_t)sizeof(receipt)) {
+        status = 10;
+    }
+
+cleanup:
+    if (replacement >= 0 && close(replacement) != 0 && status == 0) status = 11;
+    if (duplicate >= 0 && close(duplicate) != 0 && status == 0) status = 12;
+    if (source >= 0 && close(source) != 0 && status == 0) status = 13;
+    if (epoll >= 0 && close(epoll) != 0 && status == 0) status = 14;
+    return status;
+}
+
 static int read_created_event(int fd, int watch)
 {
     unsigned char bytes[64] = { 0 };
@@ -674,6 +791,8 @@ int crabc_x86_64_event_descriptors_probe(void)
     if (status != 0) return status;
     status = check_eventfd_epoll_readiness();
     if (status != 0) return 300 + status;
+    status = check_epoll_descriptor_reuse();
+    if (status != 0) return 500 + status;
     status = check_inotify();
     if (status != 0) return 200 + status;
     status = check_inotify_epoll_lifecycle();
