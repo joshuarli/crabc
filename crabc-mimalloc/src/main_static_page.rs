@@ -931,8 +931,8 @@ fn retain_runtime_resume_failure(
     drop(page_map_access);
 }
 
-/// The M3 persistent-owner trace image of the active initial engine's
-/// default Theap; absent from production builds.
+/// The persistent-owner trace image of the active initial engine's default
+/// Theap; absent from production builds.
 #[cfg(feature = "native-runtime-test-audit")]
 impl MainStaticRuntimeFirstArenaPageAllocator {
     /// Returns `false` unless the initial engine is active.

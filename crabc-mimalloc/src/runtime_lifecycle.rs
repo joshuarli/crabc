@@ -18165,11 +18165,9 @@ fn thread_local_data_allocation_reports() -> [SourceErrorReport; 2] {
 /// reports again. On an initialized thread (the initial one) pinned
 /// `_mi_malloc_generic` finds a fresh page whose page-map registration
 /// fails, retries after its forced collection, and reports out-of-memory
-/// for its generic request (`src/page.c:1061-1064`); a request beyond
-/// `MI_MAX_ALLOC_SIZE` is first refused by each `mi_find_page`
-/// (`src/page.c:951-954`). The page-map commit warnings of those attempts
-/// have no receiver here (`known-differences.md`,
-/// CRABC-MI-STARTUP-PAGE-MAP-FAILURE).
+/// for its generic request; a request beyond `MI_MAX_ALLOC_SIZE` is first
+/// refused by each `mi_find_page`. This allocation entry does not receive
+/// the page-map commit warnings from those attempts.
 #[cfg(target_arch = "x86_64")]
 fn allocate_without_page_map(request: usize, shape: NativeAllocationShape) -> NativePageAllocationResult {
     if current_thread_attach_is_deferred() {
