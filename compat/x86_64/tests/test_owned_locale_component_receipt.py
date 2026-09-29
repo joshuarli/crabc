@@ -134,6 +134,8 @@ class OwnedLocaleComponentReceiptTests(unittest.TestCase):
                 stdout = b"{}\n"
             if label == "oracle-run" or label.endswith("-run") or label.endswith("-kernel") or label.endswith("-direct"):
                 stdout = module.ORACLE_STDOUT
+            if label.endswith("-differential"):
+                stdout = module.TRANSCRIPT_STDOUT
             if label.endswith("-profile"):
                 stdout = module.PROFILE_STDOUT
             if label.endswith("-validate"):
@@ -232,6 +234,42 @@ class OwnedLocaleComponentReceiptTests(unittest.TestCase):
 
     def test_full_six_mode_control_reconstructs_before_negative_mutations(self) -> None:
         self.assertEqual(self.validate()["execution_mode"], "full-six-mode")
+
+    def test_supported_locale_transcript_is_recorded_in_every_execution_cell(self) -> None:
+        commands = self.report_value()["commands"]
+        self.assertIn("oracle-differential", commands)
+        for label in (
+            "static-differential", "static-pie-differential",
+            "dynamic-pie-kernel-differential", "dynamic-pie-direct-differential",
+            "dynamic-non-pie-kernel-differential", "dynamic-non-pie-direct-differential",
+        ):
+            with self.subTest(label=label):
+                self.assertIn(label, commands)
+                self.assertEqual(
+                    (self.root / commands[label]["stdout"]["path"]).read_bytes(),
+                    (self.root / commands["oracle-differential"]["stdout"]["path"]).read_bytes(),
+                )
+        self.validate()
+
+    def test_rehashed_candidate_differential_cannot_hide_changed_thread_locale(self) -> None:
+        record = self.report_value()
+        identity = record["commands"]["dynamic-pie-kernel-differential"]["stdout"]
+        path = self.root / identity["path"]
+        path.write_bytes(path.read_bytes().replace(b"thread-C|C.UTF-8;C;C;C;C;C|ASCII", b"thread-C|C.UTF-8;C;C;C;C;C|UTF-8"))
+        self.rewrite_identity(identity)
+        self.rewrite_report(record)
+        with self.assertRaisesRegex(self.module.LocaleReceiptError, "transcript differs from pinned musl"):
+            self.validate()
+
+    def test_rehashed_oracle_differential_cannot_weaken_locale_semantics(self) -> None:
+        record = self.report_value()
+        identity = record["commands"]["oracle-differential"]["stdout"]
+        path = self.root / identity["path"]
+        path.write_bytes(path.read_bytes().replace(b"global-C|C|ASCII", b"global-C|C|UTF-8"))
+        self.rewrite_identity(identity)
+        self.rewrite_report(record)
+        with self.assertRaisesRegex(self.module.LocaleReceiptError, "pinned musl supported locale"):
+            self.validate()
 
     def test_rehashed_transplanted_dynamic_source_is_rejected(self) -> None:
         state = json.loads(self.dynamic_state.read_text())

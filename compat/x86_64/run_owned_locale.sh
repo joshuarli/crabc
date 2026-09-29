@@ -243,7 +243,7 @@ mapfile -t HOSTED_TRANSLATION < <(python3 -B "$ROOT/compat/x86_64/installed_comp
 readonly COMPILER="$(resolve_compiler)"
 capture header-trace "$COMPILER" -nostdinc -isystem "$DYNAMIC_PRODUCT/usr/include" \
     "${HOSTED_TRANSLATION[@]}" -std=c11 -fPIE -E -H "$PROBE"
-for header in errno.h iconv.h langinfo.h limits.h locale.h pthread.h stddef.h stdlib.h string.h unistd.h wchar.h \
+for header in errno.h iconv.h langinfo.h limits.h locale.h pthread.h stddef.h stdio.h stdlib.h string.h unistd.h wchar.h \
     features.h bits/alltypes.h; do
     grep -Fq "$DYNAMIC_PRODUCT/usr/include/$header" "$WORK/header-trace.stderr" ||
         fail "installed header trace omitted $header"
@@ -254,6 +254,7 @@ sha256sum "$PROBE" "$ENVIRONMENT_PROBE" "$RUNNER" "$RECEIPT_READER" "$WORK/workl
 
 capture oracle-link "$ORACLE_CC" -std=c11 -pthread "$WORK/workload.o" -o "$WORK/oracle"
 capture oracle-run env -i LC_ALL=C LANG=C TZ=UTC "$WORK/oracle"
+capture oracle-differential env -i LC_ALL=C LANG=C TZ=UTC "$WORK/oracle" differential
 [ "$(cat "$WORK/oracle-run.stdout")" = 'owned-locale-products-ok' ] || fail 'pinned musl transcript differs'
 [ ! -s "$WORK/oracle-run.stderr" ] || fail 'pinned musl emitted stderr'
 
@@ -268,6 +269,9 @@ if [ -n "$STATIC_PRODUCT" ]; then
         validate_link "$mode" "$STATIC_PRODUCT" "$WORK/workload.o" "$WORK/$mode" "$receipt" "$mode"
         capture "$mode-run" env -i LC_ALL=C LANG=C TZ=UTC "$WORK/$mode"
         compare_oracle "$mode-run"
+        capture "$mode-differential" env -i LC_ALL=C LANG=C TZ=UTC "$WORK/$mode" differential
+        cmp "$WORK/oracle-differential.stdout" "$WORK/$mode-differential.stdout" ||
+            fail "$mode differential transcript differs from pinned musl"
         capture "$mode-profile" env -i LC_ALL=C LANG=C TZ=UTC "$WORK/$mode" profile
     done
 fi
@@ -292,8 +296,14 @@ for mode in pie non-pie; do
         --record "$WORK/dynamic-$mode-execution-payload.json"
     capture "dynamic-$mode-kernel" env -i LC_ALL=C LANG=C TZ=UTC /usr/sbin/chroot "$root" /consumer
     compare_oracle "dynamic-$mode-kernel"
+    capture "dynamic-$mode-kernel-differential" env -i LC_ALL=C LANG=C TZ=UTC /usr/sbin/chroot "$root" /consumer differential
+    cmp "$WORK/oracle-differential.stdout" "$WORK/dynamic-$mode-kernel-differential.stdout" ||
+        fail "dynamic-$mode kernel differential transcript differs from pinned musl"
     capture "dynamic-$mode-direct" env -i LC_ALL=C LANG=C TZ=UTC /usr/sbin/chroot "$root" "$INTERPRETER" /consumer
     compare_oracle "dynamic-$mode-direct"
+    capture "dynamic-$mode-direct-differential" env -i LC_ALL=C LANG=C TZ=UTC /usr/sbin/chroot "$root" "$INTERPRETER" /consumer differential
+    cmp "$WORK/oracle-differential.stdout" "$WORK/dynamic-$mode-direct-differential.stdout" ||
+        fail "dynamic-$mode direct differential transcript differs from pinned musl"
     capture "dynamic-$mode-kernel-profile" env -i LC_ALL=C LANG=C TZ=UTC /usr/sbin/chroot "$root" /consumer profile
     capture "dynamic-$mode-direct-profile" env -i LC_ALL=C LANG=C TZ=UTC /usr/sbin/chroot "$root" "$INTERPRETER" /consumer profile
     capture "dynamic-$mode-copy-audit-after" python3 -B "$COPIES" audit \

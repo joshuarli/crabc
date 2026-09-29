@@ -16,6 +16,7 @@
 #include <locale.h>
 #include <pthread.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <wchar.h>
@@ -42,6 +43,7 @@ struct thread_case {
     int utf8;
     int initial_errno;
     pthread_barrier_t *ready;
+    pthread_barrier_t *changed;
     pthread_barrier_t *finished;
     int result;
 };
@@ -166,8 +168,18 @@ static void *thread_main(void *argument)
     if (!barrier_wait(test->ready) || errno != test->initial_errno)
         return NULL;
     status = test->utf8 ? check_utf8_thread_state() : check_c_thread_state();
-    if (status != 0 || !barrier_wait(test->finished)) {
+    if (status != 0 || !barrier_wait(test->changed)) {
         test->result = 10 + status;
+        return NULL;
+    }
+    status = MB_CUR_MAX != (test->utf8 ? 4 : 1) ||
+        !text_equal(nl_langinfo(CODESET), test->utf8 ? "UTF-8" : "ASCII");
+    if (!barrier_wait(test->finished)) {
+        test->result = 19;
+        return NULL;
+    }
+    if (status) {
+        test->result = 19;
         return NULL;
     }
     if (errno != (test->utf8 ? EILSEQ : EBUSY)) {
@@ -185,28 +197,112 @@ static void *thread_main(void *argument)
 static int check_thread_locale_and_errno(locale_t c_locale, locale_t utf8_locale)
 {
     pthread_barrier_t ready;
+    pthread_barrier_t changed;
     pthread_barrier_t finished;
-    struct thread_case utf8 = { utf8_locale, 1, EINTR, &ready, &finished, -1 };
-    struct thread_case c = { c_locale, 0, EBUSY, &ready, &finished, -1 };
+    struct thread_case utf8 = { utf8_locale, 1, EINTR, &ready, &changed, &finished, -1 };
+    struct thread_case c = { c_locale, 0, EBUSY, &ready, &changed, &finished, -1 };
     pthread_t utf8_thread;
     pthread_t c_thread;
     int result;
 
     if (pthread_barrier_init(&ready, NULL, 3) != 0 ||
+        pthread_barrier_init(&changed, NULL, 3) != 0 ||
         pthread_barrier_init(&finished, NULL, 3) != 0)
         return 1;
     if (pthread_create(&utf8_thread, NULL, thread_main, &utf8) != 0 ||
         pthread_create(&c_thread, NULL, thread_main, &c) != 0)
         return 2;
     errno = ERANGE;
-    if (!barrier_wait(&ready) || errno != ERANGE || !barrier_wait(&finished) ||
+    if (!barrier_wait(&ready) || errno != ERANGE ||
+        setlocale(LC_ALL, "C.UTF-8") == NULL || MB_CUR_MAX != 4 ||
+        !barrier_wait(&changed) || !barrier_wait(&finished) ||
         errno != ERANGE)
         return 3;
     result = pthread_join(utf8_thread, NULL) | pthread_join(c_thread, NULL);
-    if (pthread_barrier_destroy(&ready) != 0 || pthread_barrier_destroy(&finished) != 0)
+    if (pthread_barrier_destroy(&ready) != 0 ||
+        pthread_barrier_destroy(&changed) != 0 ||
+        pthread_barrier_destroy(&finished) != 0)
         return 4;
     if (result != 0 || utf8.result != 0 || c.result != 0)
         return 5;
+    if (setlocale(LC_ALL, "C") == NULL || MB_CUR_MAX != 1)
+        return 6;
+    return 0;
+}
+
+/* Each row records the global locale and the effective thread locale with
+ * measured decode/encode bytes. The local locale can differ from the global
+ * setting, including after the global setting changes. */
+static int print_locale_row(const char *label, const char *input, size_t input_size)
+{
+    mbstate_t state = { 0 };
+    wchar_t wide = 0;
+    char encoded[8] = { 0 };
+    char line[160];
+    size_t consumed = mbrtowc(&wide, input, input_size, &state);
+    size_t produced;
+    int length;
+
+    if (consumed == (size_t)-1 || consumed == (size_t)-2 || !mbsinit(&state))
+        return 1;
+    produced = wcrtomb(encoded, wide, &state);
+    if (produced == (size_t)-1 || produced > 2 || !mbsinit(&state))
+        return 2;
+    length = snprintf(line, sizeof line, "%s|%s|%s|%zu|%zu|%04x|%zu|%02x%02x\n",
+        label, setlocale(LC_ALL, NULL), nl_langinfo(CODESET), (size_t)MB_CUR_MAX,
+        consumed, (unsigned)wide, produced, (unsigned char)encoded[0],
+        (unsigned char)encoded[1]);
+    if (length < 0 || (size_t)length >= sizeof line ||
+        write(STDOUT_FILENO, line, (size_t)length) != length)
+        return 3;
+    return 0;
+}
+
+static int print_supported_locale_transcript(void)
+{
+    static const char c_byte[] = { (char)0xc3 };
+    static const char utf8_e_acute[] = { (char)0xc3, (char)0xa9 };
+    locale_t c_locale = NULL;
+    locale_t utf8_locale = NULL;
+    locale_t previous;
+
+    if (!setlocale(LC_ALL, "C") || print_locale_row("global-C", c_byte, sizeof c_byte))
+        return 1;
+    if (!setlocale(LC_ALL, "POSIX") || print_locale_row("global-POSIX", c_byte, sizeof c_byte))
+        return 2;
+    if (!setlocale(LC_ALL, "C.UTF-8") ||
+        print_locale_row("global-UTF8", utf8_e_acute, sizeof utf8_e_acute))
+        return 3;
+    c_locale = newlocale(LC_ALL_MASK, "C", NULL);
+    utf8_locale = newlocale(LC_ALL_MASK, "C.UTF-8", NULL);
+    if (!c_locale || !utf8_locale)
+        return 4;
+    previous = uselocale(c_locale);
+    if (!previous || print_locale_row("thread-C", c_byte, sizeof c_byte) ||
+        uselocale(previous) != c_locale)
+        return 5;
+    if (!setlocale(LC_ALL, "C"))
+        return 6;
+    previous = uselocale(utf8_locale);
+    if (!previous || print_locale_row("thread-UTF8", utf8_e_acute, sizeof utf8_e_acute) ||
+        uselocale(previous) != utf8_locale)
+        return 7;
+    freelocale(utf8_locale);
+    freelocale(c_locale);
+    return 0;
+}
+
+static int check_unsupported_locale_names(void)
+{
+    locale_t unsupported;
+
+    if (setlocale(LC_ALL, "crabc-unsupported-locale") != NULL ||
+        !text_equal(setlocale(LC_ALL, NULL), "C") || MB_CUR_MAX != 1)
+        return 1;
+    errno = 0;
+    unsupported = newlocale(LC_ALL_MASK, "crabc-unsupported-locale", NULL);
+    if (unsupported != NULL || errno != ENOENT)
+        return 2;
     return 0;
 }
 
@@ -330,8 +426,15 @@ int main(int argc, char **argv)
     status = crabc_x86_64_locale_environment_probe(argc, argv);
     if (status != 0)
         return status;
+    if (argc == 2 && !strcmp(argv[1], "differential")) {
+        status = print_supported_locale_transcript();
+        return status == 0 ? 0 : 100 + status;
+    }
     if (argc == 2 && !strcmp(argv[1], "profile")) {
         static const char result[] = "owned-locale-environment-profile-ok\n";
+        status = check_unsupported_locale_names();
+        if (status != 0)
+            return 120 + status;
         return write(STDOUT_FILENO, result, sizeof result - 1) == sizeof result - 1 ? 0 : 127;
     }
     return write(STDOUT_FILENO, "owned-locale-products-ok\n", 25) == 25 ? 0 : 127;

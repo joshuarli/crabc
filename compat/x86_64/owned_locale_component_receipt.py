@@ -38,10 +38,17 @@ SOURCE_MOUNT = "/workspace"
 SCOPE = ("locale.core", "text.wide-multibyte", "text.iconv")
 HEADERS = (
     "errno.h", "iconv.h", "langinfo.h", "limits.h", "locale.h", "pthread.h", "stddef.h",
-    "stdlib.h", "string.h", "unistd.h", "wchar.h", "features.h", "bits/alltypes.h",
+    "stdio.h", "stdlib.h", "string.h", "unistd.h", "wchar.h", "features.h", "bits/alltypes.h",
 )
 ORACLE_STDOUT = b"owned-locale-products-ok\n"
 PROFILE_STDOUT = b"owned-locale-environment-profile-ok\n"
+TRANSCRIPT_STDOUT = (
+    b"global-C|C|ASCII|1|1|dfc3|1|c300\n"
+    b"global-POSIX|C|ASCII|1|1|dfc3|1|c300\n"
+    b"global-UTF8|C.UTF-8;C;C;C;C;C|UTF-8|4|2|00e9|2|c3a9\n"
+    b"thread-C|C.UTF-8;C;C;C;C;C|ASCII|1|1|dfc3|1|c300\n"
+    b"thread-UTF8|C|UTF-8|4|2|00e9|2|c3a9\n"
+)
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 SOURCE_PATHS = {
     "probe": "compat/x86_64/owned_locale_probe.c",
@@ -259,6 +266,7 @@ def command_plan(paths: Mapping[str, object], tools: Mapping[str, object], mode:
         "oracle-link": [tool("oracle"), "-std=c11", "-pthread", m(workload), "-o", m(oracle)],
         "oracle-run": ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", m(oracle)],
     }
+    plan["oracle-differential"] = [*plan["oracle-run"], "differential"]
     if mode == FULL_MODE:
         require(static is not None, "full locale mode needs a static product")
         for name, flag, linkage in (("static", "-static", "static"), ("static-pie", "-static-pie", "static-pie")):
@@ -269,6 +277,7 @@ def command_plan(paths: Mapping[str, object], tools: Mapping[str, object], mode:
             plan[f"{name}-validate"] = ["python3", "-B", "-", SOURCE_MOUNT, m(static), m(workload),
                                           m(executable), m(receipt), linkage]
             plan[f"{name}-run"] = ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", m(executable)]
+            plan[f"{name}-differential"] = [*plan[f"{name}-run"], "differential"]
             plan[f"{name}-profile"] = [*plan[f"{name}-run"], "profile"]
     for name, linkage in (("dynamic-pie", "pie"), ("dynamic-non-pie", "non-pie")):
         executable = Path(executables[name])
@@ -285,6 +294,7 @@ def command_plan(paths: Mapping[str, object], tools: Mapping[str, object], mode:
         plan[f"{name}-kernel"] = ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", "/usr/sbin/chroot", m(root_copy), "/consumer"]
         plan[f"{name}-direct"] = ["env", "-i", "LC_ALL=C", "LANG=C", "TZ=UTC", "/usr/sbin/chroot", m(root_copy), INTERPRETER, "/consumer"]
         for entry in ("kernel", "direct"):
+            plan[f"{name}-{entry}-differential"] = [*plan[f"{name}-{entry}"], "differential"]
             plan[f"{name}-{entry}-profile"] = [*plan[f"{name}-{entry}"], "profile"]
         plan[f"{name}-copy-audit-after"] = ["python3", "-B", copy_tool, "audit", *payload]
     return plan
@@ -426,6 +436,9 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Fal
                 f"installed header trace omitted {header}")
     require(raw["oracle-run"]["stdout"] == ORACLE_STDOUT and raw["oracle-run"]["stderr"] == b"",
             "pinned musl locale oracle transcript differs")
+    oracle_transcript = raw["oracle-differential"]["stdout"]
+    require(raw["oracle-differential"]["stderr"] == b"" and oracle_transcript == TRANSCRIPT_STDOUT,
+            "pinned musl supported locale differential transcript differs")
 
     links = report["links"]
     expected_links = ("static", "static-pie", "dynamic-pie", "dynamic-non-pie") if mode == FULL_MODE else ("dynamic-pie", "dynamic-non-pie")
@@ -452,12 +465,18 @@ def validate_report(root: Path, report_path: Path, *, require_static: bool = Fal
             require(raw[candidate_label]["stdout"] == raw["oracle-run"]["stdout"] and
                     raw[candidate_label]["stderr"] == raw["oracle-run"]["stderr"],
                     f"{candidate_label} transcript differs from pinned musl")
+            differential = f"{name}-differential"
+            require(raw[differential]["stdout"] == oracle_transcript and raw[differential]["stderr"] == b"",
+                    f"{differential} transcript differs from pinned musl")
         else:
             for entry in ("kernel", "direct"):
                 candidate_label = f"{name}-{entry}"
                 require(raw[candidate_label]["stdout"] == raw["oracle-run"]["stdout"] and
                         raw[candidate_label]["stderr"] == raw["oracle-run"]["stderr"],
                         f"{candidate_label} stdout differs from pinned musl")
+                differential = f"{candidate_label}-differential"
+                require(raw[differential]["stdout"] == oracle_transcript and raw[differential]["stderr"] == b"",
+                        f"{differential} transcript differs from pinned musl")
 
     payloads = report["execution_payloads"]
     require(isinstance(payloads, dict) and set(payloads) == {"pie", "non-pie"}, "locale copied payload roster differs")
