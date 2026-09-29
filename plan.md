@@ -700,9 +700,12 @@ are not transferable passes for a different revision.
   fill, logical usable size, and corrupted-padding reporting. A default-off
   native debug slice now matches pinned C for the 17-byte and regular-page
   padding traces plus the existing show-errors profile; all three runnable
-  scoped debug rows pass. Aligned and huge debug paths, wider assertions,
-  arena output, sanitizer applicability, and remote encoded free links remain
-  open. The full current-source gate remains blocked by named unproved producers. Other
+  scoped debug rows pass. The debug profile now uses the source's two page
+  keys and encoded remote free links; both remotely freed blocks are reused
+  as in pinned C, and all four runnable scoped debug rows pass. Aligned and
+  huge debug paths, wider assertions, arena output, and sanitizer
+  applicability remain open. The full current-source gate remains blocked by
+  named unproved producers. Other
   page and fast-path shapes, other remote bin-free, and other metadata-Theap
   statistics producers remain unproved, so full M7
   stays open. Static
