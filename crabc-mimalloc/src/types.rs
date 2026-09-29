@@ -4040,6 +4040,33 @@ unsafe impl Send for Arena {}
 unsafe impl Sync for Arena {}
 
 impl Page {
+    /// Copies the source arena renderer's ordinary geometry and atomic owner.
+    ///
+    /// # Safety
+    /// `page` is initialized live arena metadata. Its ordinary fields and
+    /// registration must remain stable for this short projection; remote
+    /// publications may independently change atomic fields. No reference to
+    /// the full page or its owner survives the copied image.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn arena_print_snapshot_at(page: NonNull<Self>) -> crate::arena_print::PagePrintSnapshot {
+        let raw = page.as_ptr();
+        // SAFETY: the caller retains these initialized ordinary subobjects
+        // and excludes their owner's mutations for the copying interval.
+        unsafe {
+            crate::arena_print::PagePrintSnapshot {
+                start: raw.cast::<u8>().wrapping_add(core::ptr::addr_of!((*raw).page_offset).read()),
+                used: core::ptr::addr_of!((*raw).used).read(),
+                block_size: core::ptr::addr_of!((*raw).block_size).read(),
+                reserved: core::ptr::addr_of!((*raw).reserved).read() as usize,
+                slice_pcommitted: core::ptr::addr_of!((*raw).slice_pcommitted).read() as usize,
+                memory: core::ptr::addr_of!((*raw).memid).read(),
+                theap: core::ptr::addr_of!((*raw).theap).read(),
+                thread_id: (&*core::ptr::addr_of!((*raw).xthread_id)).load(core::sync::atomic::Ordering::Relaxed)
+                    & !PAGE_FLAG_MASK,
+            }
+        }
+    }
+
     /// Reads a live page's immutable Heap identity without borrowing its
     /// independently changing owner-local fields.
     ///

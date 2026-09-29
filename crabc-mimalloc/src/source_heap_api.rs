@@ -130,6 +130,32 @@ fn with_current_arena_registry<R>(operation: impl FnOnce(&crate::arena::ArenaReg
     Some(operation(identity.arena_backing().registry()))
 }
 
+/// `mi_debug_show_arenas`: the calling subprocess's main-Heap arena image.
+///
+/// # Safety
+/// Published arenas and pages remain live during the traversal. The caller
+/// excludes ordinary page-field mutation while each short image is copied,
+/// and excludes map registration changes for each lookup. Registered output
+/// callbacks remain callable and retain the traversed arena backing. They
+/// may allocate or free between projections, as the source permits, and
+/// must satisfy the source output-registration serialization contract.
+pub unsafe fn debug_show_arenas() {
+    with_current_arena_registry(|registry| {
+        // SAFETY: the operation retains subprocess membership; the caller
+        // retains mapped arena/page geometry and callback state.
+        unsafe { crate::arena_print::print(registry) };
+    });
+}
+
+/// `mi_arenas_print`, the source alias of `mi_debug_show_arenas`.
+///
+/// # Safety
+/// The caller satisfies [`debug_show_arenas`]'s traversal and output duties.
+pub unsafe fn arenas_print() {
+    // SAFETY: forwarded traversal and output obligations.
+    unsafe { debug_show_arenas() }
+}
+
 /// `mi_arena_contains` checks the parent's own slice range, then published
 /// child ranges in the calling thread's subprocess arena group.
 ///

@@ -62,6 +62,8 @@ mod abandoned;
 mod alloc;
 mod atomic;
 mod arena;
+#[cfg(target_arch = "x86_64")]
+mod arena_print;
 mod bitmap;
 mod bootstrap;
 mod config;

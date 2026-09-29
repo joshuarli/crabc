@@ -305,6 +305,13 @@ impl ArenaRegistry {
         unsafe { arena.as_ref() }
     }
 
+    /// Acquire-loads one published arena identity without borrowing its image.
+    /// The caller must retain its backing before projecting any fields.
+    pub(crate) fn arena_print_pointer(&self, index: usize) -> Option<NonNull<Arena>> {
+        if index >= self.count() || index >= MAX_ARENAS { return None; }
+        NonNull::new(pointer_load_acquire(&self.arenas[index]))
+    }
+
     /// Publishes an initialized arena, first reusing null slots and then
     /// growing the source's high-water count.
     ///

@@ -351,6 +351,18 @@ impl SourceSubprocessRegistry {
     }
 }
 
+impl SubprocessIdentity {
+    /// Reads the source sequence after initialized membership was published.
+    /// The scalar remains immutable through terminal unlink; this projection
+    /// grants no list or lifecycle authority.
+    pub(crate) fn arena_print_sequence(&self) -> Option<usize> {
+        if !self.source_membership.initialized.load(Ordering::Acquire) { return None; }
+        // SAFETY: initialized publication follows the scalar's sole write,
+        // and the retained identity never rewrites it during unlink.
+        Some(unsafe { self.source_membership.sequence.get().read() })
+    }
+}
+
 #[cfg(test)]
 impl SubprocessIdentity {
     /// Source `subproc_seq` assigned by `mi_subproc_init`.

@@ -1091,6 +1091,23 @@ pub extern "C" fn mi_process_info_print() {
 
 use crabc_mimalloc::__crabc_runtime::source_heap_api as heaps;
 
+#[no_mangle]
+/// # Safety
+/// Arena backing and page geometry remain live and quiescent during this
+/// diagnostic traversal; callbacks retain its traversed arena backing.
+pub unsafe extern "C" fn mi_debug_show_arenas() {
+    // SAFETY: forwarded diagnostic traversal and output callback contract.
+    unsafe { heaps::debug_show_arenas() }
+}
+
+#[no_mangle]
+/// # Safety
+/// As `mi_debug_show_arenas`.
+pub unsafe extern "C" fn mi_arenas_print() {
+    // SAFETY: forwarded diagnostic traversal and output callback contract.
+    unsafe { heaps::arenas_print() }
+}
+
 /// `mi_heap_t*`, opaque to C.
 type HeapPointer = *mut c_void;
 /// `mi_theap_t*`, opaque to C.
