@@ -22,7 +22,7 @@ declare -a link_identity_records=()
 declare -a executed_linkages=()
 
 usage() {
-    printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
+    printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [--output OUTPUT] [DYNAMIC_SYSROOT]\n' "$0" >&2
     exit 2
 }
 
@@ -35,8 +35,15 @@ provided_static=''
 provided_dynamic=''
 static_was_supplied=0
 dynamic_was_supplied=0
+provided_output=''
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --output)
+            [ "$#" -ge 2 ] && [ -z "$provided_output" ] && [ -n "$2" ] || usage
+            case "$2" in -*) usage ;; esac
+            provided_output="$2"
+            shift 2
+            ;;
         --static-sysroot)
             [ "$#" -ge 2 ] && [ "$static_was_supplied" -eq 0 ] && [ -n "$2" ] || usage
             case "$2" in -*) usage ;; esac
@@ -95,7 +102,21 @@ PY
 if [ "$static_was_supplied" -eq 1 ]; then validate_product_payload "$provided_static" static; fi
 if [ "$dynamic_was_supplied" -eq 1 ]; then validate_product_payload "$provided_dynamic" dynamic; fi
 
-readonly work="$(mktemp -d "$TMPDIR/project-header-extension-policy.XXXXXX")"
+if [ -n "$provided_output" ]; then
+    python3 -B - "$ROOT" "$provided_output" <<'PY'
+from pathlib import Path
+import sys
+root, output = map(Path, sys.argv[1:])
+if (output.resolve() != output or not output.is_relative_to(root / ".work")
+        or not output.parent.is_dir() or output.exists() or output.is_symlink()):
+    raise SystemExit("project header extension output must be a fresh physical checkout .work directory")
+output.mkdir()
+PY
+    work="$provided_output"
+else
+    work="$(mktemp -d "$TMPDIR/project-header-extension-policy.XXXXXX")"
+fi
+readonly work
 chmod a+rx "$work"
 printf 'project header extension evidence: %s\n' "$work"
 

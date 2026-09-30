@@ -16,6 +16,7 @@ import copy
 import hashlib
 import json
 import shlex
+import subprocess
 import sys
 import tomllib
 from collections.abc import Mapping, Sequence
@@ -44,6 +45,7 @@ TARGET = "x86_64-unknown-linux-musl"
 PLATFORM = "Linux/x86-64 little-endian"
 ORACLE = "Pinned musl 1.2.6"
 REPORT_SCHEMA = "crabc.x86_64-headers-layouts-aggregate-report/v3"
+PRODUCT_PAIR_SCHEMA = "crabc.x86_64-header-product-pair/v1"
 FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v19"
 DIRECT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
 FAMILY = "libc.headers-layouts"
@@ -1675,11 +1677,136 @@ def write_output(report: Mapping[str, Any], path: Path = REPORT_PATH) -> None:
     path.write_text(render_report(report), encoding="utf-8")
 
 
+def pair_file_identity(path: Path) -> dict[str, Any]:
+    """Name retained bytes only through physical files in this checkout."""
+    require(path.is_file() and not path.is_symlink() and path.resolve() == path
+            and path.is_relative_to(ROOT), "header pair artifact is not a physical checkout file")
+    return {"path": path.relative_to(ROOT).as_posix(),
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "size": path.stat().st_size}
+
+
+def supplied_header_product_inputs(
+    static_product: Path, dynamic_product: Path, source: Mapping[str, str],
+) -> dict[str, Any]:
+    """Authenticate installed payloads before borrowing their header trees.
+
+    Equal header bytes establish one compiler input across the two supplied
+    products. Payload validation and matching source and allocator selections
+    keep that equality from admitting an unrelated or mixed runtime pair.
+    """
+    import header_abi_matrix
+    import owned_posix_product_evidence as products
+    import owned_posix_static_products as static_products
+
+    source_headers = header_abi_matrix.header_tree_digest(ROOT / "include")
+    records, headers = {}, {}
+    for kind, path, validator in (
+        ("static", static_product, products._validate_static_product),
+        ("dynamic", dynamic_product, products._validate_dynamic_product),
+    ):
+        require(path.is_dir() and path.resolve() == path and path.is_relative_to(ROOT / ".work"),
+                "supplied header product is not a physical checkout .work directory")
+        try:
+            manifest, _payload = validator(path)
+        except products.ProductEvidenceError as error:
+            raise AggregateError(f"supplied {kind} header product rejected: {error}") from error
+        state_path = manifest if kind == "static" else path / "share/crabc/dynamic-product-state.json"
+        state = load_json(state_path)
+        require(state.get("source_sha256") == source["content_sha256"],
+                f"supplied {kind} header product source differs")
+        require(state.get("allocator_backend") in static_products.ALLOCATOR_BACKENDS,
+                f"supplied {kind} header product allocator is invalid")
+        include = path / "usr/include"
+        tree_digest = header_abi_matrix.header_tree_digest(include)
+        require(tree_digest == source_headers, f"supplied {kind} installed header bytes differ from source")
+        records[kind] = {
+            "path": path.relative_to(ROOT).as_posix(), "manifest": pair_file_identity(manifest),
+            "source_state": pair_file_identity(state_path), "source_sha256": state["source_sha256"],
+            "allocator_backend": state["allocator_backend"],
+        }
+        headers[kind] = {"path": include.relative_to(ROOT).as_posix(), "tree_sha256": tree_digest}
+    require(records["static"]["allocator_backend"] == records["dynamic"]["allocator_backend"],
+            "supplied header product allocator selections differ")
+    return {"products": records, "installed_headers": headers}
+
+
+def pair_linker_identity() -> dict[str, Any]:
+    """Seal the native linker independently of each application link receipt."""
+    sysroot = Path(subprocess.check_output(["rustc", "--print", "sysroot"], text=True).strip())
+    path = sysroot / "lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
+    require(path.is_file(), "native header pair linker is absent")
+    return {"linker": {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}}
+
+
+def collect_supplied_header_pair(static_product: Path, dynamic_product: Path, output: Path) -> Path:
+    """Execute installed-header and sealed-link evidence for one supplied pair."""
+    import header_declaration_inventory as declarations
+    import owned_posix_static_products as static_products
+    from owned_posix_product_evidence import validate_link
+
+    source_before = static_products.source_identity(ROOT)
+    inputs_before = supplied_header_product_inputs(static_product, dynamic_product, source_before)
+    require(output.resolve() == output and output.is_relative_to(ROOT / ".work/x86_64/header-declaration-inventory")
+            and not output.exists(), "header pair output must be a fresh physical declaration evidence directory")
+    output.mkdir(parents=True)
+    tools_before = pair_linker_identity()
+    declarations.collect_report(
+        output=output / "declarations", compiler="clang", project_include=static_product / "usr/include",
+        musl_include=Path("/opt/musl-1.2.6/include"), linux_uapi_include=Path("/opt/linux-5.10-uapi/include"),
+        workers=declarations.DEFAULT_WORKERS, timeout_seconds=declarations.DEFAULT_TIMEOUT_SECONDS,
+    )
+    links_root = output / "links"
+    with (output / "links.stdout").open("xb") as stdout, (output / "links.stderr").open("xb") as stderr:
+        subprocess.run(["bash", str(MODULE_DIR / "run_project_header_extension_policy.sh"),
+                        "--static-sysroot", str(static_product), "--output", str(links_root), str(dynamic_product)],
+                       cwd=ROOT, stdout=stdout, stderr=stderr, check=True)
+    links = []
+    for mode, linkage, product in (
+        ("static-et-exec", "static", static_product), ("static-pie", "static-pie", static_product),
+        ("dynamic-et-exec", "non-pie", dynamic_product), ("dynamic-pie", "pie", dynamic_product),
+    ):
+        static = linkage in {"static", "static-pie"}
+        workload = links_root / ("cxx-addresses.o" if static else "cxx-dynamic-addresses.o")
+        executable = links_root / f"{linkage}-consumer"
+        receipt = links_root / (f"{linkage}.receipt.json" if static else f"{linkage}-consumer.crabc-link.json")
+        map_path = links_root / (f"{linkage}.receipt.map" if static else f"{linkage}-consumer.crabc-link.map")
+        trace = links_root / f"{linkage}.receipt.trace"
+        if not static:
+            trace.write_text("\n".join(load_json(receipt)["link_trace"]) + "\n", encoding="utf-8")
+        result = validate_link(product, workload, executable, receipt, linkage)
+        require(load_json(receipt)["resolved_linker"] == tools_before["linker"],
+                "header pair link used a different linker")
+        links.append({"mode": mode, "linkage": linkage, "workload": pair_file_identity(workload),
+                      "executable": pair_file_identity(executable), "map": pair_file_identity(map_path),
+                      "trace": pair_file_identity(trace), "receipt": pair_file_identity(receipt), "result": result})
+    source_after = static_products.source_identity(ROOT)
+    inputs_after = supplied_header_product_inputs(static_product, dynamic_product, source_after)
+    tools_after = pair_linker_identity()
+    require(source_before == source_after and inputs_before == inputs_after and tools_before == tools_after,
+            "header pair source, products, or linker changed during collection")
+    checked = build_report()
+    check_output(checked)
+    report = {"schema": PRODUCT_PAIR_SCHEMA, "target": TARGET, "source_mount": "/workspace",
+              "source_before": source_before, "source_after": source_after,
+              "aggregate_report": pair_file_identity(REPORT_PATH), **inputs_before,
+              "header_declaration_report": pair_file_identity(output / "declarations/report.json"),
+              "reviewed_cpp_linkage_differences": copy.deepcopy(checked["reviewed_cpp_linkage_differences"]),
+              "tools_before": tools_before, "tools_after": tools_after, "links": links}
+    path = output / "pair.json"
+    path.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
 def main(arguments: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    raw_arguments = list(sys.argv[1:] if arguments is None else arguments)
+    for option in ("--static-product", "--dynamic-product", "--pair-output"):
+        if sum(value == option or value.startswith(option + "=") for value in raw_arguments) > 1:
+            parser.error(f"{option} is repeated")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--check", action="store_true", help="validate the committed aggregate report")
     mode.add_argument("--write", action="store_true", help="write the aggregate report from current checked inputs")
+    mode.add_argument("--collect-pair", action="store_true", help="collect raw installed-header evidence from supplied products")
     mode.add_argument("--runner-list", action="store_true", help="emit reviewed native runner paths")
     mode.add_argument("--runner-contract-list", action="store_true", help="emit reviewed native runner paths with outcomes")
     mode.add_argument(
@@ -1688,8 +1815,19 @@ def main(arguments: Sequence[str] | None = None) -> int:
         help="validate the one deliberate incomplete native linkage report",
     )
     mode.add_argument("--print", action="store_true", help="print the current aggregate report")
-    parsed = parser.parse_args(arguments)
+    parser.add_argument("--static-product", type=Path)
+    parser.add_argument("--dynamic-product", type=Path)
+    parser.add_argument("--pair-output", type=Path)
+    parsed = parser.parse_args(raw_arguments)
     try:
+        pair_arguments = (parsed.static_product, parsed.dynamic_product, parsed.pair_output)
+        require(all(value is not None for value in pair_arguments) if parsed.collect_pair
+                else all(value is None for value in pair_arguments),
+                "supplied header pair collection requires both products and one output")
+        if parsed.collect_pair:
+            paths = tuple(path if path.is_absolute() else ROOT / path for path in pair_arguments)
+            print(collect_supplied_header_pair(*paths))
+            return 0
         if parsed.runner_list:
             print("\n".join(runner_paths()))
             return 0

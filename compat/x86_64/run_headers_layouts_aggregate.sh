@@ -50,7 +50,23 @@ run_accounted_incomplete_runner() {
     printf 'x86 headers/layouts aggregate: ACCOUNTED-INCOMPLETE (declared callable-provider gap)\n'
 }
 
-[ "$#" -eq 0 ] || fail "usage: $0"
+declare -a pair_arguments=()
+declare -A seen_pair_arguments=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --static-product|--dynamic-product|--pair-output)
+            [ "$#" -ge 2 ] && [ -n "$2" ] || fail "missing supplied header pair argument"
+            [ -z "${seen_pair_arguments[$1]+present}" ] || fail "repeated supplied header pair argument"
+            seen_pair_arguments["$1"]=1
+            pair_arguments+=("$1" "$2")
+            shift 2
+            ;;
+        *) fail "usage: $0 [--static-product PRODUCT --dynamic-product PRODUCT --pair-output OUTPUT]" ;;
+    esac
+done
+if [ "${#pair_arguments[@]}" -gt 0 ]; then
+    [ "${#pair_arguments[@]}" -eq 6 ] || fail "supplied header pair requires both products and one output"
+fi
 require_native_linux_x86_64
 require_tool python3
 [ -f "$AGGREGATE" ] || fail "aggregate validator is missing"
@@ -77,4 +93,7 @@ for runner_contract in "${runner_contracts[@]}"; do
 done
 
 python3 "$AGGREGATE" --check
+if [ "${#pair_arguments[@]}" -gt 0 ]; then
+    python3 "$AGGREGATE" --collect-pair "${pair_arguments[@]}"
+fi
 printf 'x86 headers/layouts aggregate: PASS (completed header foundation; C-ABI closure remains downstream)\n'

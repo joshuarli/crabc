@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -32,6 +33,58 @@ AGGREGATE = load_module("headers_layouts_aggregate_test", SCRIPT)
 
 
 class HeadersLayoutsAggregateTests(unittest.TestCase):
+    def test_supplied_product_pair_rejects_stale_source_headers_and_allocator(self) -> None:
+        import owned_posix_product_evidence as products
+
+        work = ROOT / ".work/x86_64/headers-layouts-aggregate-tests"
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            root = Path(temporary)
+            (root / "include").mkdir()
+            (root / "include/a.h").write_text("int a(void);\n")
+            paths = {kind: root / ".work" / kind for kind in ("static", "dynamic")}
+            source = {"revision": "1" * 40, "content_sha256": "2" * 64}
+            records = {}
+            for kind, path in paths.items():
+                (path / "usr/include").mkdir(parents=True)
+                (path / "usr/include/a.h").write_text("int a(void);\n")
+                (path / "share/crabc").mkdir(parents=True)
+                manifest = path / "share/crabc/manifest.json"
+                record = {"source_sha256": source["content_sha256"], "allocator_backend": "accepted-c"}
+                manifest.write_text(json.dumps(record if kind == "static" else {}))
+                if kind == "dynamic":
+                    (path / "share/crabc/dynamic-product-state.json").write_text(json.dumps(record))
+                records[kind] = manifest
+            with mock.patch.object(AGGREGATE, "ROOT", root), \
+                    mock.patch.object(products, "_validate_static_product", return_value=(records["static"], {})), \
+                    mock.patch.object(products, "_validate_dynamic_product", return_value=(records["dynamic"], {})):
+                result = AGGREGATE.supplied_header_product_inputs(paths["static"], paths["dynamic"], source)
+                self.assertEqual(result["installed_headers"]["static"]["tree_sha256"],
+                                 result["installed_headers"]["dynamic"]["tree_sha256"])
+                for mutation in ("source", "allocator", "headers"):
+                    with self.subTest(mutation=mutation):
+                        state = paths["dynamic"] / "share/crabc/dynamic-product-state.json"
+                        changed = {"source_sha256": source["content_sha256"], "allocator_backend": "accepted-c"}
+                        if mutation == "source":
+                            changed["source_sha256"] = "3" * 64
+                        elif mutation == "allocator":
+                            changed["allocator_backend"] = "native-shadow"
+                        else:
+                            (paths["dynamic"] / "usr/include/a.h").write_text("long a(void);\n")
+                        state.write_text(json.dumps(changed))
+                        with self.assertRaises(AGGREGATE.AggregateError):
+                            AGGREGATE.supplied_header_product_inputs(paths["static"], paths["dynamic"], source)
+                        (paths["dynamic"] / "usr/include/a.h").write_text("int a(void);\n")
+
+    def test_supplied_pair_arguments_fail_before_compiler_collection(self) -> None:
+        for arguments in (("--static-product", ".work/static"),
+                          ("--static-product", ".work/first", "--static-product", ".work/second")):
+            result = subprocess.run(["bash", str(RUNNER), *arguments], cwd=ROOT,
+                                    text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("supplied header pair", result.stderr)
+            self.assertEqual(result.stdout, "")
+
     def current_report(self) -> dict[str, object]:
         """Build fresh facts without rewriting the checked aggregate artifact."""
 
