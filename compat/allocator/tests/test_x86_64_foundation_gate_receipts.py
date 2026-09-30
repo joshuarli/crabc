@@ -82,8 +82,8 @@ class FoundationReceiptTests(unittest.TestCase):
     def test_artifact_parent_alias_cannot_escape_owning_checkout(self):
         with tempfile.TemporaryDirectory(dir=ROOT / ".work/tmp") as directory:
             alias = Path(directory) / "foreign-source"
-            alias.symlink_to(ROOT.parents[2], target_is_directory=True)
-            record = reader.harness.artifact_record(alias / "Cargo.toml")
+            alias.symlink_to("/etc", target_is_directory=True)
+            record = reader.harness.artifact_record(alias / "hostname")
             with self.assertRaisesRegex(reader.harness.HarnessError, "escapes"):
                 reader.authenticate_artifacts(record, Path(directory))
 
@@ -277,6 +277,7 @@ class MiriPhysicalReaderTests(unittest.TestCase):
              mock.patch.object(self.local, "_miri_compiler_inputs", return_value=self.authority), \
              mock.patch.object(reader, "authenticate_source"), \
              mock.patch.object(reader.harness, "runtime_ticket_zero_soak_source_state", return_value={}), \
+             mock.patch.object(reader.harness, "TEMP_ROOT", self.producer.fixture / "reader-scratch"), \
              mock.patch.object(reader.harness, "read_json", side_effect=lambda path: self.report if path == Path("local.json") else original(path)), \
              mock.patch.object(reader, "execute", side_effect=replay) as execute:
             try:
