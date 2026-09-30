@@ -64,6 +64,10 @@ static void print_stats(const char* label, const mi_stats_t* stats) {
   MI_STAT_FIELDS()
 #undef MI_STAT_COUNT
 #undef MI_STAT_COUNTER
+  for (size_t i = 0; i < 4; ++i) {
+    printf("%s.reserved_count%zu=%lld,%lld,%lld\n", label, i, (long long)stats->_stat_reserved[i].total, (long long)stats->_stat_reserved[i].peak, (long long)stats->_stat_reserved[i].current);
+    printf("%s.reserved_counter%zu=%lld\n", label, i, (long long)stats->_stat_counter_reserved[i].total);
+  }
   for (size_t i = 0; i <= MI_BIN_HUGE; ++i) {
     printf("%s.malloc_bin%zu=%lld,%lld,%lld\n", label, i, (long long)stats->malloc_bins[i].total, (long long)stats->malloc_bins[i].peak, (long long)stats->malloc_bins[i].current);
     printf("%s.page_bin%zu=%lld,%lld,%lld\n", label, i, (long long)stats->page_bins[i].total, (long long)stats->page_bins[i].peak, (long long)stats->page_bins[i].current);
@@ -82,6 +86,28 @@ static bool is_unit(const char* token, size_t length) {
     if (strlen(units[i]) == length && strncmp(units[i], token, length) == 0) return true;
   }
   return false;
+}
+
+static void print_hex(const char* key, const char* text) {
+  printf("%s=", key);
+  for (const unsigned char* p = (const unsigned char*)text; *p; ++p) printf("%02x", *p);
+  printf("\n");
+}
+
+/* Preserve selected subprocess and Heap identities separately from rounded
+   human-readable statistic columns. */
+static void print_headers(const char* key, const char* text) {
+  printf("%s=", key);
+  for (const char* p = text; *p; ) {
+    const char* end = strchr(p, '\n');
+    if (!end) end = p + strlen(p);
+    if (strncmp(p, "subproc ", 8) == 0 || strncmp(p, "heap ", 5) == 0 || strncmp(p, "meta ", 5) == 0) {
+      for (const char* q = p; q < end; ++q) printf("%02x", (unsigned char)*q);
+      printf("0a");
+    }
+    p = (*end == '\n') ? end + 1 : end;
+  }
+  printf("\n");
 }
 
 /* Prints `text` as hex after normalizing each line's tokens. */
@@ -173,7 +199,7 @@ static void observe(const char* stage, mi_subproc_id_t id, mi_heap_t* heap, bool
   check("snapshot.bad_size", !mi_subproc_stats_get_exclusive(id, &invalid) && memcmp(&saved, &invalid, sizeof(saved)) == 0);
   check("snapshot.null_output", !mi_subproc_stats_get(id, NULL) && !mi_subproc_stats_get_exclusive(id, NULL));
   check("json.fixed", mi_subproc_stats_get_json(id, sizeof(json_buffer), json_buffer) == json_buffer);
-  snprintf(key, sizeof(key), "%s.json", stage); print_normalized(key, json_buffer);
+  snprintf(key, sizeof(key), "%s.json", stage); print_hex(key, json_buffer);
   char short_buffer[80]; memset(short_buffer, 'x', sizeof(short_buffer));
   check("json.short", mi_subproc_stats_get_json(id, sizeof(short_buffer), short_buffer) == NULL);
   if (owner) {
@@ -184,10 +210,12 @@ static void observe(const char* stage, mi_subproc_id_t id, mi_heap_t* heap, bool
     mi_subproc_stats_print_out(id, capture, &output);
     check("print.aggregate_reentry", output.calls > 0 && output.completed);
     snprintf(key, sizeof(key), "%s.print", stage); print_normalized(key, output.text);
+    snprintf(key, sizeof(key), "%s.print_headers", stage); print_headers(key, output.text);
     output_t heaps = {.id = id, .heap = heap};
     mi_subproc_heap_stats_print_out(id, capture, &heaps);
     check("print.heaps_reentry", heaps.calls > 0 && heaps.completed);
     snprintf(key, sizeof(key), "%s.heaps", stage); print_normalized(key, heaps.text);
+    snprintf(key, sizeof(key), "%s.heap_headers", stage); print_headers(key, heaps.text);
     mi_stats_t_decl(current);
     mi_stats_t_decl(explicit);
     assert(mi_stats_get(&current) && mi_subproc_stats_get(id, &explicit));

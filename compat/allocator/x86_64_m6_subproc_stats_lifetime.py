@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Compare quiescent subprocess statistics and callback lifetime with pinned C."""
 import argparse
-import hashlib
 import json
-import os
 from pathlib import Path
 import shutil
 import sys
@@ -18,6 +16,23 @@ RUNNER = "allocator-subproc-stats-lifetime"
 PROFILES = ("release", "debug-1", "stat-1", "stat-2")
 DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m6_subproc_stats_lifetime_driver.c"
 ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m6-subproc-stats-lifetime"
+
+
+def comparable_trace(raw):
+    # CPU time, RSS and faults belong to the host process rather than the
+    # selected allocator owner. Keep every allocator statistic and commit
+    # value, including all JSON bins and callback subprocess/Heap headers.
+    lines = []
+    for line in raw.splitlines():
+        key, separator, value = line.partition(b"=")
+        if separator and key.endswith(b".json"):
+            document = json.loads(bytes.fromhex(value.decode("ascii")))
+            for field in ("elapsed_msecs", "user_msecs", "system_msecs", "page_faults", "rss_current", "rss_peak"):
+                document["process"][field] = 0
+            value = json.dumps(document, sort_keys=True, separators=(",", ":")).encode("ascii")
+            line = key + separator + value
+        lines.append(line)
+    return b"\n".join(lines)
 
 
 def run(current_only=False):
@@ -69,7 +84,7 @@ def run(current_only=False):
                 raise harness.HarnessError(f"{profile}-{backend} runtime failure; see {logs[0]}")
             traces[backend] = stress.byte_record_payload(result["stdout"], backend)
             cases.append((f"{profile}-{backend}-run", 0, logs))
-        if traces["c"] != traces["native"]:
+        if comparable_trace(traces["c"]) != comparable_trace(traces["native"]):
             raise harness.HarnessError(f"{profile} subprocess statistics differ; raw in {output}")
         print(f"Subprocess statistics {profile}: C/native PASS", flush=True)
     if receipts.source_seal(harness.ROOT) != seal:
@@ -112,7 +127,7 @@ def main():
                     raise harness.HarnessError(f"retained {binary.name} failed; see {scratch}")
                 case = next(c for c in receipt.cases if c["id"] == f"{binary.name}-run")
                 stdout = next(p for p in case["logs"] if p.endswith(".stdout"))
-                if stress.byte_record_payload(result["stdout"], binary.name) != (receipt.path.parent / "logs" / stdout).read_bytes():
+                if comparable_trace(stress.byte_record_payload(result["stdout"], binary.name)) != comparable_trace((receipt.path.parent / "logs" / stdout).read_bytes()):
                     raise harness.HarnessError(f"retained {binary.name} statistics differ; see {scratch}")
         print("Subprocess statistics retained C/native replay: PASS")
 
