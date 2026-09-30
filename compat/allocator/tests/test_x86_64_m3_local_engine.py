@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import copy
+import contextlib
 import importlib.util
+import io
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -76,6 +79,97 @@ class LocalPrimitiveTraceTests(unittest.TestCase):
         checks["prerequisites"] = {"milestones": {}, "unmet": []}
         with self.assertRaisesRegex(gate.GateError, "required checks.*miri"):
             gate.evaluate_gate(contract, checks)
+
+
+class LocalEngineSourceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        scratch = ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(prefix="m3-source-", dir=scratch)
+        self.addCleanup(self.temporary.cleanup)
+        self.fixture = Path(self.temporary.name)
+        self.source = self.fixture / "source-file"
+        self.source.write_text("initial\n")
+        self.git("init", "--quiet")
+        self.commit_source()
+
+    def git(self, *arguments: str) -> None:
+        subprocess.run(
+            ("git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false",
+             "-c", "user.name=Source regression", "-c", "user.email=source@example.invalid", *arguments),
+            cwd=self.fixture, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        )
+
+    def commit_source(self) -> None:
+        self.git("add", "source-file")
+        self.git("commit", "--quiet", "--no-verify", "-m", "source fixture")
+
+    def execute(self, mutation=None, arguments=None):
+        reports = []
+        executed = []
+
+        def differential(*arguments, **keywords):
+            executed.append("differential")
+            if mutation is not None:
+                mutation()
+            return {"status": "passed", "unmet": []}
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+            stack.enter_context(mock.patch.object(gate.run, "ROOT", self.fixture))
+            stack.enter_context(mock.patch.object(gate.run, "require_native_x86_64", return_value={"execution_mode": "native", "host_architecture": "x86_64"}))
+            stack.enter_context(mock.patch.object(gate.run, "write_json", side_effect=lambda path, report: reports.append(report)))
+            stack.enter_context(mock.patch.object(gate, "rust_test_binary", return_value=self.fixture / "test-binary"))
+            stack.enter_context(mock.patch.object(gate, "prerequisite_status", return_value={"milestones": {}, "unmet": []}))
+            stack.enter_context(mock.patch.object(gate, "run_differential", side_effect=differential))
+            for name in ("run_queue_reorder_differential", "run_queue_retirement_differential", "run_owner_differential", "run_unit_batch", "run_miri"):
+                stack.enter_context(mock.patch.object(gate, name, return_value={"status": "passed", "unmet": []}))
+            status = gate.main(arguments or [])
+        return status, reports, executed
+
+    def test_dirty_source_cannot_start_the_local_engine_gate(self) -> None:
+        self.source.write_text("dirty\n")
+        status, reports, executed = self.execute()
+        self.assertEqual(status, 2)
+        self.assertFalse(reports)
+        self.assertFalse(executed)
+
+    def test_source_edits_during_execution_cannot_publish_a_gate_receipt(self) -> None:
+        status, reports, executed = self.execute(lambda: self.source.write_text("changed\n"))
+        self.assertEqual(status, 2)
+        self.assertFalse(reports)
+        self.assertEqual(executed, ["differential"])
+
+    def test_a_new_clean_commit_during_execution_cannot_publish_a_gate_receipt(self) -> None:
+        def mutate():
+            self.source.write_text("new commit\n")
+            self.commit_source()
+
+        status, reports, executed = self.execute(mutate)
+        self.assertEqual(status, 2)
+        self.assertFalse(reports)
+        self.assertEqual(executed, ["differential"])
+
+    def test_development_miri_subset_can_inspect_uncommitted_source(self) -> None:
+        self.source.write_text("work in progress\n")
+        status, reports, executed = self.execute(arguments=["--miri-only"])
+        self.assertEqual(status, 0)
+        self.assertFalse(executed)
+        self.assertEqual(len(reports), 1)
+        self.assertNotIn("milestone", reports[0])
+
+    def test_gate_receipt_attests_one_unchanged_clean_source(self) -> None:
+        status, reports, executed = self.execute()
+        self.assertEqual(status, 0)
+        self.assertEqual(executed, ["differential"])
+        self.assertEqual(len(reports), 1)
+        source = reports[0]["source"]
+        self.assertTrue(source["unchanged_during_execution"])
+        self.assertEqual(source["before"], source["after"])
+        self.assertTrue(source["before"]["worktree_clean"])
+        revision = subprocess.check_output(("git", "rev-parse", "HEAD"), cwd=self.fixture, text=True).strip()
+        self.assertEqual(source["before"]["revision"], revision)
 
 
 class MiriWorkspaceTests(unittest.TestCase):

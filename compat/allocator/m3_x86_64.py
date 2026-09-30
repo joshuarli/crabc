@@ -6,6 +6,8 @@ allocation/free, retirement/reuse, the selected bin/page-class matrix,
 deterministic differential traces, and Miri-compatible execution. The gate
 executes each selected check and completes only after its prerequisites and
 every component pass; otherwise it names the unmet conditions and exits 3.
+The qualification receipt binds the checks to one clean Git revision before
+and after execution. Dirty or changed source cannot publish that receipt.
 
 The differential generates deterministic workloads (logical allocation IDs,
 seeded operation mixes, and a complete reachable-bin sweep), runs each one
@@ -1605,6 +1607,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
     )
     options = parser.parse_args(arguments)
     try:
+        # Development subsets can inspect work in progress. Qualification
+        # binds every local-engine observation to one clean committed source.
+        source_before = run.runtime_ticket_zero_soak_source_state() if not any((
+            options.queue_reorder_only, options.miri_only, options.owner_only, options.differential_only,
+        )) else None
         contract = load_contract()
         provenance = run.require_native_x86_64()
         lockfile = run.sha256_file(LOCKFILE)
@@ -1659,6 +1666,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         }
         if run.sha256_file(LOCKFILE) != lockfile:
             raise GateError("Cargo.lock changed during the --locked M3 gate")
+        source = run.runtime_ticket_zero_soak_source_attestation(
+            source_before, run.runtime_ticket_zero_soak_source_state()
+        )
         gate = evaluate_gate(contract, checks)
         report = {
             "checks": checks,
@@ -1668,6 +1678,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             "milestone": {"id": "m3", "status": gate["status"]},
             "gate": gate,
             "provenance": provenance,
+            "source": source,
             "upstream": contract["upstream"],
         }
         run.write_json(REPORT_PATH, report)
