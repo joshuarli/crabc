@@ -465,24 +465,50 @@ unsafe fn child_heap_release_foreign(
     }
 }
 
-/// `_mi_free_subproc_safe` when no current TLD belongs to the child.
+/// `_mi_free_subproc_safe` on a caller outside the child's TLDs. Source
+/// publishes the block without claiming an abandoned page for collection.
 ///
 /// # Safety
 /// `block` is one exact live child allocation that no other thread frees.
 unsafe fn free_foreign_child_block(binding: ProcessMainBackingBinding, block: NonNull<u8>) -> bool {
-    // SAFETY: the block stays live until the nonlocal free completes.
+    // SAFETY: the block stays live until its remote publication completes.
     let Some(allocation) = (unsafe { binding.page_map().lookup_live_allocation(block) }).ok().flatten() else {
         return false;
     };
-    // SAFETY: the caller owns this exact block and its child stays live.
-    matches!(
-        unsafe {
-            crate::subproc::lifecycle::free_child_block_nonlocal(
-                binding, allocation, |_candidate| crate::abandoned::ReclaimOnFreeOutcome::Declined,
-            )
-        },
-        Some(crate::single_thread::ChildNonlocalFreeResult::Freed | crate::single_thread::ChildNonlocalFreeResult::Released)
-    )
+    // SAFETY: the caller is outside the child's TLDs and cannot own this page.
+    unsafe { crate::remote_free::push_live_allocation_without_collect(allocation) }.is_ok()
+}
+
+/// Frees Heap administration with the source `allow_collect=false` policy.
+/// A page owned by this caller uses its ordinary local engine; a foreign or
+/// abandoned page receives only a remote-list publication. Its later owner or
+/// subprocess collector retains responsibility for draining and releasing it.
+///
+/// # Safety
+/// `owner` is this thread's admitted child owner, `child` and `binding` retain
+/// its allocation backing, and `block` is an exact live block freed once.
+unsafe fn free_heap_metadata(
+    owner: *mut ChildThreadOwner,
+    child: *mut ChildMainHeapContextOwner<'_>,
+    binding: ProcessMainBackingBinding,
+    block: NonNull<u8>,
+) -> bool {
+    // SAFETY: the caller retains this exact live block through publication.
+    let Some(allocation) = (unsafe { binding.page_map().lookup_live_allocation(block) }).ok().flatten() else {
+        return false;
+    };
+    let local = crate::compiler_tls::current_thread_identity()
+        .is_some_and(|thread| allocation.is_associated_with(thread));
+    if local {
+        drop(allocation);
+        // SAFETY: this thread owns the page, and no projection crosses the
+        // owning engine's local free operation.
+        unsafe { ChildThreadOwner::free_block(owner, child, binding, block) }.is_ok()
+    } else {
+        // SAFETY: this caller does not own the page; source preserves its low
+        // owner bit and does not collect or reclaim it from this metadata free.
+        unsafe { crate::remote_free::push_live_allocation_without_collect(allocation) }.is_ok()
+    }
 }
 
 /// `mi_heap_delete_pages` over the child's arenas; see
@@ -570,7 +596,7 @@ unsafe fn release_heap(
     // Heap, freed once; neither pointer is otherwise borrowed meanwhile.
     let freed = unsafe {
         heap.as_ref().take_non_main_arena_pages(|block| {
-            ChildThreadOwner::free_block(owner, child_pointer, binding, block).is_ok()
+            free_heap_metadata(owner, child_pointer, binding, block)
         })
     };
     if !freed {
@@ -582,9 +608,10 @@ unsafe fn release_heap(
     };
     // heap.c:225 `_mi_free_subproc_safe(heap)`.
     // SAFETY: the exact live image block; nothing names it any longer.
-    match unsafe { ChildThreadOwner::free_block(owner, child_pointer, binding, image.cast()) } {
-        Ok(()) => Ok(HeapReleaseOutcome::Released),
-        Err(_) => Err(HeapReleaseError::Retained),
+    if unsafe { free_heap_metadata(owner, child_pointer, binding, image.cast()) } {
+        Ok(HeapReleaseOutcome::Released)
+    } else {
+        Err(HeapReleaseError::Retained)
     }
 }
 
