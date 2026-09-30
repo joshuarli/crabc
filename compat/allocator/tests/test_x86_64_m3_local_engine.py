@@ -399,7 +399,7 @@ else:
             self.assertEqual(sysroot, physical_tmp / "crabc-m3-miri-cache/miri")
             self.assertTrue((sysroot / "lib/rustlib" / self.contract["miri"]["target"] / "lib").is_dir())
             print(f"Pinned Miri physical sysroot: {sysroot}", flush=True)
-            return {"status": 0, "stdout": "", "stderr": ""}
+            return {"command": list(command), "status": 0, "stdout": "", "stderr": ""}
 
         environment = {"MIRI_SYSROOT": "/inherited-sysroot", "XDG_CACHE_HOME": "/tmp/inherited-cache"}
         with mock.patch.dict(os.environ, environment):
@@ -413,6 +413,88 @@ else:
 
     def test_an_inherited_sysroot_cannot_bypass_the_checkout_storage_boundary(self) -> None:
         self.execute(inherited_sysroot=True)
+
+
+class MiriFreshInterpreterDispatchTests(unittest.TestCase):
+    def setUp(self) -> None:
+        scratch = ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(prefix="miri-dispatch-", dir=scratch)
+        self.addCleanup(self.temporary.cleanup)
+        self.fixture = Path(self.temporary.name)
+        self.capture = self.fixture / "dispatch.jsonl"
+        binary = self.fixture / "bin"
+        binary.mkdir()
+        cargo = binary / "cargo"
+        cargo.write_text('''#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+arguments = sys.argv[1:]
+if arguments == ["miri", "--version"]:
+    print("miri fixture")
+    sys.exit(0)
+if "--list" in arguments:
+    print("fixture::first: test")
+    print("fixture::second: test")
+    sys.exit(0)
+selected = [name for name in arguments[arguments.index("--") + 1:] if not name.startswith("--")]
+flags = os.environ.get("MIRIFLAGS", "").split()
+marker = os.environ.get("CRABC_MIMALLOC_FRESH_TEST_CHILD")
+with Path(os.environ["MIRI_DISPATCH_CAPTURE"]).open("a") as output:
+    output.write(json.dumps({"arguments": arguments, "selected": selected,
+                            "flags": flags, "marker": marker}) + "\\n")
+if selected != [marker] or flags != ["-Zmiri-strict-provenance", "-Zmiri-env-forward=CRABC_MIMALLOC_FRESH_TEST_CHILD"]:
+    print("isolated fixture attempted unsupported current_exe/readlink", file=sys.stderr)
+    sys.exit(1)
+name = selected[0]
+failed = os.environ.get("MIRI_DISPATCH_FAIL") == name
+print("running 1 test")
+print("test " + name + " ... " + ("FAILED" if failed else "ok"))
+print("test result: " + ("FAILED" if failed else "ok") + ". " +
+      ("0 passed; 1 failed" if failed else "1 passed; 0 failed") +
+      "; 0 ignored; 0 measured; 0 filtered out")
+sys.exit(1 if failed else 0)
+''')
+        cargo.chmod(0o755)
+        self.environment = {"PATH": f"{binary}:{os.environ['PATH']}",
+            "MIRI_DISPATCH_CAPTURE": str(self.capture),
+            "CRABC_MIMALLOC_FRESH_TEST_CHILD": "fixture::wrong-inherited-child",
+            "MIRIFLAGS": "-Zmiri-disable-isolation"}
+        self.contract = {"miri": {"target": "x86_64-unknown-linux-gnu",
+            "miriflags": ["-Zmiri-strict-provenance"], "module_prefixes": ["fixture::"],
+            "required_tests": ["fixture::first", "fixture::second"]}}
+
+    def execute(self, fail=None):
+        environment = dict(self.environment)
+        if fail is not None:
+            environment["MIRI_DISPATCH_FAIL"] = fail
+        with mock.patch.dict(os.environ, environment):
+            with mock.patch.object(gate, "ARTIFACT_ROOT", self.fixture / "artifacts"):
+                result = gate.run_miri(self.contract)
+        calls = [json.loads(line) for line in self.capture.read_text().splitlines()]
+        return result, calls
+
+    def test_each_selected_fixture_gets_a_fresh_exact_strict_interpreter(self) -> None:
+        result, calls = self.execute()
+        self.assertEqual(result["status"], "passed", result)
+        self.assertEqual([call["selected"] for call in calls], [["fixture::first"], ["fixture::second"]])
+        self.assertEqual([call["marker"] for call in calls], ["fixture::first", "fixture::second"])
+        for call in calls:
+            self.assertIn("--exact", call["arguments"])
+            self.assertIn("--test-threads=1", call["arguments"])
+            self.assertEqual(call["flags"], ["-Zmiri-strict-provenance",
+                "-Zmiri-env-forward=CRABC_MIMALLOC_FRESH_TEST_CHILD"])
+
+    def test_a_failed_fixture_does_not_hide_the_remaining_selected_fixture(self) -> None:
+        result, calls = self.execute("fixture::first")
+        self.assertEqual(result["status"], "failed", result)
+        self.assertEqual([call["selected"] for call in calls], [["fixture::first"], ["fixture::second"]])
+        self.assertEqual(result["groups"]["fixture::"]["failed"], ["fixture::first"])
+        self.assertEqual(result["groups"]["fixture::"]["passed"], 1)
+        self.assertEqual(result["groups"]["fixture::"]["unreported"], [])
 
 
 if __name__ == "__main__":

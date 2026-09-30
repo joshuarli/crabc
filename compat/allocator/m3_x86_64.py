@@ -65,6 +65,7 @@ OUTPUT_ENV = "CRABC_M3_LOCAL_TRACE_OUTPUT"
 OWNER_ENV = "CRABC_M3_OWNER_TRACE_OWNER"
 OWNER_WORKLOAD_ENV = "CRABC_M3_OWNER_TRACE_WORKLOAD"
 OWNER_OUTPUT_ENV = "CRABC_M3_OWNER_TRACE_OUTPUT"
+FRESH_TEST_CHILD_ENV = "CRABC_MIMALLOC_FRESH_TEST_CHILD"
 WORKLOAD_MAGIC = "m3-local-trace 1"
 
 spec = importlib.util.spec_from_file_location("crabc_allocator_run", RUNNER_PATH)
@@ -1442,7 +1443,9 @@ def run_miri(contract: Mapping[str, Any]) -> dict[str, Any]:
         "--lib", "--no-default-features", "--",
     ]
     environment = dict(os.environ)
-    environment["MIRIFLAGS"] = " ".join(miri["miriflags"])
+    miriflags = [*miri["miriflags"], f"-Zmiri-env-forward={FRESH_TEST_CHILD_ENV}"]
+    environment["MIRIFLAGS"] = " ".join(miriflags)
+    environment.pop(FRESH_TEST_CHILD_ENV, None)
     # Miri's sysroot builder creates a temporary Cargo package. Under the
     # launcher's `/workspace/.work/...` TMPDIR, Cargo would adopt it into the
     # checkout workspace and refuse it. The launcher bind-mounts the container
@@ -1468,23 +1471,36 @@ def run_miri(contract: Mapping[str, Any]) -> dict[str, Any]:
             "version": str(probe["stdout"]).strip(),
         }
     groups = select_by_prefix(str(listing["stdout"]), miri["module_prefixes"])
-    logs: list[str] = []
+    logs: list[str] = [f"### listing\n{json.dumps(listing['command'])}\n{listing['stdout']}\n{listing['stderr']}"]
     results: dict[str, Any] = {}
     unmet: list[str] = []
     passed: set[str] = set()
-    # Miri stops a whole process at the first undefined behaviour, so each
-    # module group runs in its own process and reports independently.
+    # Each exact test starts a new isolated interpreter with cold globals.
+    # The marked fixture enters directly: querying the native executable or
+    # spawning another process is unavailable under Miri isolation. Forward
+    # only its exact child marker; native execution keeps its exec boundary.
     for prefix, selected in groups.items():
-        record = run.command_record(
-            (*base, "--exact", "--test-threads=1", *selected),
-            cwd=ROOT,
-            env=environment,
-            timeout_seconds=7200,
-        ) if selected else {"status": 0, "stdout": "", "stderr": ""}
-        logs.append(f"### {prefix}\n{record['stdout']}\n{record['stderr']}")
-        results[prefix] = summarize_group(prefix, selected, record)
+        records: list[dict[str, Any]] = []
+        for name in selected:
+            child_environment = dict(environment, **{FRESH_TEST_CHILD_ENV: name})
+            record = run.command_record(
+                (*base, "--exact", "--test-threads=1", name),
+                cwd=ROOT,
+                env=child_environment,
+                timeout_seconds=7200,
+            )
+            records.append(record)
+            logs.append(f"### {prefix} {name}\n{json.dumps(record['command'])}\n"
+                        f"MIRIFLAGS={child_environment['MIRIFLAGS']}\n"
+                        f"{FRESH_TEST_CHILD_ENV}={name}\n{record['stdout']}\n{record['stderr']}")
+        aggregate = {
+            "status": next((record["status"] for record in records if record["status"] != 0), 0),
+            "stdout": "\n".join(str(record["stdout"]) for record in records),
+            "stderr": "\n".join(str(record["stderr"]) for record in records),
+        }
+        results[prefix] = summarize_group(prefix, selected, aggregate)
         unmet += [f"{prefix} {item}" for item in results[prefix]["unmet"]]
-        output = str(record["stdout"]) + "\n" + str(record["stderr"])
+        output = str(aggregate["stdout"]) + "\n" + str(aggregate["stderr"])
         passed.update(name for name, outcome in TEST_RESULT.findall(output) if outcome == "ok")
     (ARTIFACT_ROOT / "miri.log").write_text("\n".join(logs), encoding="utf-8")
     for name in miri["required_tests"]:
@@ -1492,7 +1508,7 @@ def run_miri(contract: Mapping[str, Any]) -> dict[str, Any]:
             unmet.append(f"required Miri test did not pass: {name}")
     return {
         "groups": results,
-        "miriflags": list(miri["miriflags"]),
+        "miriflags": miriflags,
         "passed": len(passed),
         "status": "passed" if not unmet else "failed",
         "unmet": unmet,
