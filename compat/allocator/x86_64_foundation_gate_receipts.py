@@ -52,6 +52,9 @@ def authenticate_artifacts(value: Any, pinned: Path) -> int:
 
 
 def focused_commands(report: Mapping[str, Any], summary: Mapping[str, Any]) -> dict[tuple[str, ...], list[dict[str, Any]]]:
+    require(all(component.get("native_status") == harness.M1_X86_64_FOUNDATIONS_COMPONENT_STATUS
+                and component.get("remaining_conditions") == [] for component in summary["components"]),
+            "foundation source component remains incomplete")
     expected = {(component["id"], check["id"]): check for component in summary["components"]
                 for check in component["checks"]}
     require([c["id"] for c in report["components"]] == [c["id"] for c in summary["components"]],

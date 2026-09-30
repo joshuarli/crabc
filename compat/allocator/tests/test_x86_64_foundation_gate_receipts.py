@@ -26,11 +26,23 @@ class FoundationReceiptTests(unittest.TestCase):
                 reader.authenticate_artifacts({"artifact": record}, Path(directory))
 
     def test_missing_focused_checks_cannot_be_replaced_by_complete_component_labels(self):
-        summary = {"components": [{"id": "geometry", "checks": [{"id": "allocation", "target": "tests::allocation",
+        summary = {"components": [{"id": "geometry", "native_status": reader.harness.M1_X86_64_FOUNDATIONS_COMPONENT_STATUS,
+                                   "remaining_conditions": [], "checks": [{"id": "allocation", "target": "tests::allocation",
                                                                     "expected_passed_test_count": 1}]}]}
         report = {"components": [{"id": "geometry", "status": "complete", "remaining_conditions": [],
                                   "executed_checks": []}]}
         with self.assertRaisesRegex(reader.harness.HarnessError, "required focused check"):
+            reader.focused_commands(report, summary)
+
+    def test_saved_completion_cannot_close_a_source_component_condition(self):
+        declaration = {"id": "allocation", "target": "tests::allocation", "expected_passed_test_count": 1}
+        summary = {"components": [{"id": "geometry", "native_status": "partial",
+                                   "remaining_conditions": ["unproved source branch"], "checks": [declaration]}]}
+        report = {"components": [{"id": "geometry", "status": "complete", "remaining_conditions": [],
+                                  "executed_checks": [{"id": "allocation", "component": "geometry",
+                                      "target": "tests::allocation", "passed_test_count": 1,
+                                      "command": [str(ROOT / ".work/unit-program"), "tests::allocation", "--exact"]}]}]}
+        with self.assertRaisesRegex(reader.harness.HarnessError, "source component"):
             reader.focused_commands(report, summary)
 
     def test_wrong_source_is_refused_before_any_native_replay(self):
