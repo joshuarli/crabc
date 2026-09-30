@@ -1,19 +1,17 @@
 //! Native Linux signal facilities for the staged supported targets.
 //!
-//! Linux/AArch64 exposes the complete typed mask, waiting, queue, descriptor,
-//! and alternate-stack families. The staged x86-64 surface is deliberately
-//! narrower: one-argument handler actions, delivery to the current or a
-//! known thread in the calling process, typed masks, synchronous waits,
-//! and signal descriptors.
+//! Linux/AArch64 and staged Linux/x86-64 expose typed masks, handler actions,
+//! waiting, queueing, descriptors, and alternate stacks. Delivery to a known
+//! thread is restricted to the calling process.
 //! Handler installation is unsafe because the kernel can later enter supplied
 //! code at an arbitrary interruption point. This module uses `crabc-core`'s
 //! direct kernel seams exclusively; it never calls the public C ABI or reads
 //! TLS `errno`.
 
 use core::arch::global_asm;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use core::convert::Infallible;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use core::ffi::c_void;
 use core::fmt;
 use core::mem::MaybeUninit;
@@ -234,9 +232,9 @@ const SIG_DFL: usize = 0;
 const SIG_IGN: usize = 1;
 const SA_RESTORER: u64 = 0x0400_0000;
 const SA_SIGINFO: u64 = 0x0000_0004;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SS_ONSTACK: i32 = 1;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SS_DISABLE: i32 = 2;
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SI_QUEUE: i32 = -1;
@@ -549,7 +547,6 @@ bitflags! {
         const NOCLDSTOP = 0x0000_0001;
         /// Do not leave terminated children as zombies.
         const NOCLDWAIT = 0x0000_0002;
-        #[cfg(target_arch = "aarch64")]
         /// Enter the three-argument signal-handler ABI.
         const SIGINFO = SA_SIGINFO;
         /// Run the handler on an enabled alternate signal stack.
@@ -578,7 +575,6 @@ pub enum SigHandler {
     Ignore,
     /// A one-argument C-ABI signal handler.
     Simple(unsafe extern "C" fn(Signal)),
-    #[cfg(target_arch = "aarch64")]
     /// A three-argument `SA_SIGINFO` C-ABI signal handler.
     SigInfo(unsafe extern "C" fn(Signal, *mut SigInfo, *mut c_void)),
 }
@@ -589,7 +585,6 @@ impl fmt::Debug for SigHandler {
             Self::Default => formatter.write_str("SigHandler::Default"),
             Self::Ignore => formatter.write_str("SigHandler::Ignore"),
             Self::Simple(_) => formatter.write_str("SigHandler::Simple(..)"),
-            #[cfg(target_arch = "aarch64")]
             Self::SigInfo(_) => formatter.write_str("SigHandler::SigInfo(..)"),
         }
     }
@@ -608,7 +603,6 @@ pub struct SigAction {
     handler: SigHandler,
     #[cfg(target_arch = "x86_64")]
     handler: Option<SigHandler>,
-    #[cfg(target_arch = "aarch64")]
     mask: SignalSet,
     flags: SigActionFlags,
     #[cfg(target_arch = "x86_64")]
@@ -638,7 +632,7 @@ impl SigAction {
         }
     }
 
-    /// Creates a one-argument x86-64 signal action with an empty handler mask.
+    /// Creates an x86-64 signal action with an empty handler mask.
     ///
     /// A newly constructed action always installs `crabc-rs`' x86-64
     /// `rt_sigreturn` restorer. Actions returned by [`sigaction`] retain the
@@ -648,12 +642,30 @@ impl SigAction {
     #[inline]
     #[must_use]
     pub fn new(handler: SigHandler, flags: SigActionFlags) -> Self {
+        Self::with_mask(handler, SignalSet::EMPTY, flags)
+    }
+
+    /// Creates an x86-64 signal action with the signals blocked during its
+    /// handler invocation. Unless `NODEFER` is set, Linux also blocks the
+    /// delivered signal itself.
+    ///
+    /// The handler variant owns the `SA_SIGINFO` calling convention. A newly
+    /// constructed action uses this crate's `rt_sigreturn` restorer; an action
+    /// returned by [`sigaction`] retains its original kernel record instead.
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    #[must_use]
+    pub fn with_mask(handler: SigHandler, mask: SignalSet, flags: SigActionFlags) -> Self {
+        let flags = match handler {
+            SigHandler::SigInfo(_) => flags | SigActionFlags::SIGINFO,
+            SigHandler::Default | SigHandler::Ignore | SigHandler::Simple(_) => {
+                SigActionFlags::from_bits_retain(flags.bits() & !SA_SIGINFO)
+            }
+        };
         Self {
             handler: Some(handler),
-            // A simple handler must never be entered through the three-
-            // argument SA_SIGINFO ABI, even if a caller retained that raw
-            // future-kernel bit from an observed action.
-            flags: SigActionFlags::from_bits_retain(flags.bits() & !SA_SIGINFO),
+            mask,
+            flags,
             queried_kernel: None,
         }
     }
@@ -666,12 +678,10 @@ impl SigAction {
         self.handler
     }
 
-    /// Returns the one-argument handler when its ABI is known to this staged
-    /// x86-64 facade.
+    /// Returns the handler when its ABI is known to this staged x86-64 facade.
     ///
-    /// `None` means the kernel action used an ABI this narrow facade does not
-    /// expose. The action itself remains losslessly restorable through
-    /// [`sigaction`].
+    /// The returned function pointer remains unsafe to invoke. The action
+    /// itself is losslessly restorable through [`sigaction`].
     #[cfg(target_arch = "x86_64")]
     #[inline]
     #[must_use]
@@ -679,10 +689,13 @@ impl SigAction {
         self.handler
     }
 
-    /// Returns the signals masked while this handler runs.
+    /// Returns the application-visible signals masked while this handler runs.
+    ///
+    /// Queried actions omit musl-reserved signals 32, 33, and 34 from this
+    /// projection. Reinstalling the queried x86-64 action preserves its full
+    /// original kernel mask, including those reserved bits.
     #[inline]
     #[must_use]
-    #[cfg(target_arch = "aarch64")]
     pub const fn mask(self) -> SignalSet {
         self.mask
     }
@@ -726,13 +739,14 @@ impl SigAction {
             Some(SigHandler::Default) => SIG_DFL,
             Some(SigHandler::Ignore) => SIG_IGN,
             Some(SigHandler::Simple(handler)) => handler as *const () as usize,
+            Some(SigHandler::SigInfo(handler)) => handler as *const () as usize,
             None => unreachable!("new x86-64 SigAction always has a known handler"),
         };
         crabc_core::signal::KernelSigAction {
             handler,
             flags: self.flags.bits() | SA_RESTORER,
             restorer: crabc_rs_signal_restorer as *const () as usize,
-            mask: 0,
+            mask: self.mask.0,
         }
     }
 
@@ -767,9 +781,11 @@ impl SigAction {
         let handler = match action.handler {
             SIG_DFL => Some(SigHandler::Default),
             SIG_IGN => Some(SigHandler::Ignore),
-            // The staged facade deliberately does not expose the x86-64
-            // SA_SIGINFO handler ABI. Keep its record opaque but restorable.
-            _ if action.flags & SA_SIGINFO != 0 => None,
+            address if action.flags & SA_SIGINFO != 0 => {
+                // SAFETY: Linux returned an installed three-argument C-ABI
+                // handler address. It is stored but never invoked here.
+                Some(SigHandler::SigInfo(unsafe { core::mem::transmute(address) }))
+            }
             address => {
                 // SAFETY: Linux returned the address of a one-argument C-ABI
                 // handler. This type stores but never invokes that address.
@@ -778,6 +794,7 @@ impl SigAction {
         };
         Self {
             handler,
+            mask: SignalSet(action.mask & !(1_u64 << 31) & !(1_u64 << 32) & !(1_u64 << 33)),
             flags: SigActionFlags::from_bits_retain(action.flags & !SA_RESTORER),
             queried_kernel: Some(action),
         }
@@ -790,7 +807,7 @@ impl fmt::Debug for SigAction {
         #[cfg(target_arch = "aarch64")]
         debug.field("handler", &self.handler).field("mask", &self.mask);
         #[cfg(target_arch = "x86_64")]
-        debug.field("handler", &self.handler);
+        debug.field("handler", &self.handler).field("mask", &self.mask);
         debug.field("flags", &self.flags).finish()
     }
 }
@@ -904,7 +921,7 @@ impl fmt::Debug for SigInfo {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 bitflags! {
     /// Flags reported by or supplied to `sigaltstack`.
     #[repr(transparent)]
@@ -920,7 +937,7 @@ bitflags! {
 }
 
 /// An alternate signal-stack configuration.
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[derive(Clone, Copy, Debug)]
 pub struct Stack {
     sp: *mut u8,
@@ -928,7 +945,7 @@ pub struct Stack {
     flags: StackFlags,
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 impl Stack {
     /// Builds an enabled alternate stack over caller-owned memory.
     ///
@@ -1060,8 +1077,9 @@ pub fn pending() -> Result<SignalSet> {
 /// Atomically installs `mask` while waiting for an unblocked signal.
 ///
 /// Linux returns `EINTR` after a signal handler runs, so the normal result is
-/// `Err(Errno::INTR)`.
-#[cfg(target_arch = "aarch64")]
+/// `Err(Errno::INTR)`. Linux restores the calling thread's original mask before
+/// returning, including when the handler ran on an alternate stack.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 pub fn suspend(mask: &SignalSet) -> Result<Infallible> {
     // SAFETY: `mask` provides one readable kernel signal-set word.
@@ -1218,6 +1236,10 @@ pub fn read_signalfd<Fd: AsFd>(fd: Fd) -> Result<SignalFdInfo> {
 /// the target program. In particular, it must not allocate, lock ordinary
 /// Rust synchronization primitives, or access data that another thread may
 /// be mutating without signal-safe coordination.
+/// A three-argument handler may use its `SigInfo` and context pointers only
+/// during that invocation; their storage belongs to the kernel signal frame.
+/// An `ONSTACK` action requires sufficient live stack memory on each receiving
+/// thread which has an enabled alternate stack.
 #[inline]
 pub unsafe fn sigaction(signal: Signal, action: Option<&SigAction>) -> Result<SigAction> {
     let kernel = action.map(|action| action.kernel());
@@ -1237,8 +1259,10 @@ pub unsafe fn sigaction(signal: Signal, action: Option<&SigAction>) -> Result<Si
 ///
 /// An enabled `stack` must remain allocated, writable, correctly aligned for
 /// signal frames, and otherwise unused for its entire installed lifetime. It
-/// must not be replaced or freed while a handler can execute on it.
-#[cfg(target_arch = "aarch64")]
+/// must not be freed while a handler can execute on it. The calling thread
+/// owns this stack; its memory may be reused only after a replacement or
+/// disable operation succeeds and every handler using it has returned.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 pub unsafe fn sigaltstack(stack: Option<&Stack>) -> Result<Stack> {
     let kernel = stack.map(|stack| stack.kernel());
