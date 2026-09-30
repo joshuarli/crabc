@@ -148,20 +148,29 @@ impl ExclusiveTheapBootstrap {
     /// Returns the exact pinned detached metadata-Theap identity after its
     /// bounded detached-metadata image is initialized.
     ///
-    /// This returns an identity only: it cannot start a session, expose the
-    /// Theap, or mutate it. `MetaAllocator` uses it to make the source
+    /// The exclusive pin supplies mutable provenance for later field-only
+    /// random-state access under the metadata lock. The caller must not form
+    /// overlapping whole-image references after publishing this pointer.
+    /// It cannot start a session or mutate the image. `MetaAllocator` uses it
+    /// to make the source
     /// `subproc->theap_meta = &mi_process_theap_meta` assignment one-way after
     /// `mi_theap_init` has completed the represented detached fields. It does
     /// not claim the actual source main-Heap linkage or metadata lock.
     #[inline]
     pub(crate) fn detached_metadata_theap_identity(
-        self: Pin<&Self>,
+        self: Pin<&mut Self>,
         subprocess: &'static MainSubprocess,
     ) -> Option<NonNull<Theap>> {
-        let state = self.get_ref();
+        // SAFETY: only a field pointer is returned; the pinned image stays
+        // in place and the owner excludes whole-image replacement.
+        let state = unsafe { self.get_unchecked_mut() };
+        // SAFETY: a field of the retained pinned image is non-null. A raw
+        // projection preserves the existing intrusive-list pointer's tag;
+        // a new whole-Theap mutable borrow would invalidate that pointer.
+        let identity = unsafe { NonNull::new_unchecked(core::ptr::addr_of_mut!(state.theap)) };
         (state.bound_owner == Some(TheapOwner::Detached)
             && state.is_detached_for_main_subprocess(subprocess))
-            .then(|| NonNull::from(&state.theap))
+            .then_some(identity)
     }
 
     /// Attaches and publishes a live-thread theap after this image is pinned.
@@ -1191,6 +1200,24 @@ mod tests {
             bootstrap.as_mut().begin_bound_detached_session(subprocess),
             Err(BootstrapError::AlreadyInitialized)
         ));
+    }
+
+    #[test]
+    fn detached_metadata_identity_retains_random_mutation_capability() {
+        let mut bootstrap = core::pin::pin!(ExclusiveTheapBootstrap::new());
+        let subprocess = MainSubprocess::global();
+        bootstrap.as_mut().bind_detached_for_main_subprocess(subprocess)
+            .expect("the detached image binds before its random state is used");
+        let identity = bootstrap.as_mut().detached_metadata_theap_identity(subprocess)
+            .expect("the bound detached image exposes its exact Theap");
+        // SAFETY: the pinned owner retains this initialized image and no
+        // allocator session or other random-field projection exists.
+        let first = unsafe { Theap::next_os_reservation_random_at(identity) };
+        // SAFETY: the first draw's field borrow ended before this draw.
+        let second = unsafe { Theap::next_os_reservation_random_at(identity) };
+        assert!(first.is_some());
+        assert!(second.is_some());
+        assert_ne!(first, second);
     }
 
     #[repr(C, align(8))]

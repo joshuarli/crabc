@@ -6982,8 +6982,9 @@ impl Theap {
     /// It never creates a mutable reference spanning page queues or links.
     ///
     /// # Safety
-    /// The pointer names a live caller-owned Theap. The caller exclusively
-    /// owns its random state and prevents initialization/teardown throughout
+    /// The pointer carries mutable provenance for a live caller-owned Theap;
+    /// an identity derived from a shared reference is insufficient. The caller
+    /// exclusively owns its random state and prevents initialization/teardown throughout
     /// the callback. The callback must not access that state through aliases.
     pub(crate) unsafe fn with_os_reservation_random_at<R>(
         pointer: NonNull<Self>, operation: impl FnOnce(Option<&mut TheapRandomImage>) -> R,

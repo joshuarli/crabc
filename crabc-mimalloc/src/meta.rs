@@ -5987,7 +5987,7 @@ impl<'owner> MetadataEngine<'owner> {
         }
 
         let Some(identity) = bootstrap
-            .as_ref()
+            .as_mut()
             .detached_metadata_theap_identity(subprocess)
         else {
             // A successful detached bind must expose this exact image before
