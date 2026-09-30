@@ -1,6 +1,10 @@
 {
   "schema": "crabc-mimalloc-x86_64-m5-gate",
   "format": 1,
+  "qualification_profiles": {
+    "full": {"deferred_evidence": []},
+    "correctness": {"deferred_evidence": ["perf:engine-early-proof"]}
+  },
   "upstream": {
     "version": "3.5.0",
     "revision": "18b08671c9302247bfb682286e6bf3cc1773f801"
@@ -39,6 +43,8 @@
         "native_arena_medium_pre_reclaim_remote_exit",
         "native_attachment_only_process_done",
         "native_concurrent_mixed_post_exit_completions",
+        "native_deferred_public_contract",
+        "native_foreign_child_heap_delete_contract",
         "native_huge_os_failed_unmap_exit",
         "native_huge_singleton_medium_split_exit",
         "native_initial_all_free_local_fork",
@@ -82,6 +88,10 @@
     "native:state-auditing": {
       "native_tests": [
         "native_initial_local_page_engine_persistence",
+        "native_heap_birth_geometry_contract",
+        "native_heap_stats_contract",
+        "native_subproc_heap_birth_contract",
+        "native_subproc_stats_contract",
         "native_pointer_first_nonlocal_reallocate_state_auditor",
         "native_post_exit_claim_page_map_lifetime",
         "native_runtime_first_arena_policy",

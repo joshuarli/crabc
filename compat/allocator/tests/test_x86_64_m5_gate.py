@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Contracts for the fail-closed native x86-64 Milestone 5 allocator gate."""
+"""Contracts for the fail-closed native x86-64 allocator lifecycle gate."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -146,6 +147,91 @@ class M5GateContractTests(unittest.TestCase):
         report = gate.gate_report(self.contract, summary, records)
         generic_exit = next(entry for entry in report["gates"] if entry["id"] == "m5.generic-exit")
         self.assertEqual(generic_exit["status"], "failed")
+
+    def test_correctness_profile_retains_functional_evidence_and_defers_only_throughput(self) -> None:
+        summary = self.validate()
+        records = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
+        report = gate.gate_report(self.contract, summary, records, qualification_profile="correctness")
+        self.assertEqual(report["qualification_profile"], "correctness")
+        self.assertFalse(report["performance_qualified"])
+        self.assertEqual(report["deferred_gate_ids"], ["m5.codegen-performance"])
+        self.assertEqual(report["overall_status"], "passed")
+        self.assertEqual(report["unmet_required"], [])
+        statuses = {entry["id"]: entry["status"] for entry in report["gates"]}
+        self.assertEqual(statuses.pop("m5.codegen-performance"), "deferred")
+        self.assertEqual(set(statuses.values()), {"passed"})
+        self.assertEqual(set(report["evidence"]), set(summary["runnable_evidence"]))
+        full = gate.gate_report(self.contract, summary, records)
+        self.assertEqual(full["qualification_profile"], "full")
+        self.assertEqual(full["deferred_gate_ids"], [])
+        self.assertEqual(full["overall_status"], "unmet")
+
+    def test_correctness_profile_requires_codegen_audit_and_every_functional_observation(self) -> None:
+        summary = self.validate()
+        passed = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
+        for evidence_id in passed:
+            with self.subTest(evidence=evidence_id):
+                failed = dict(passed, **{evidence_id: {"status": "failed"}})
+                report = gate.gate_report(self.contract, summary, failed, qualification_profile="correctness")
+                self.assertEqual(report["overall_status"], "unmet")
+                absent = {name: value for name, value in passed.items() if name != evidence_id}
+                report = gate.gate_report(self.contract, summary, absent, qualification_profile="correctness")
+                self.assertEqual(report["overall_status"], "unmet")
+
+    def test_unknown_qualification_profile_is_rejected(self) -> None:
+        with self.assertRaisesRegex(harness.HarnessError, "qualification profile"):
+            gate.gate_report(self.contract, self.validate(), {}, qualification_profile="subset")
+        weakened = copy.deepcopy(self.contract)
+        weakened["qualification_profiles"]["correctness"]["deferred_evidence"].append("ratchet:architecture")
+        with self.assertRaisesRegex(harness.HarnessError, "defer only"):
+            self.validate(weakened)
+
+    def test_correctness_cli_executes_all_runnable_evidence_in_a_separate_report_directory(self) -> None:
+        summary = self.validate()
+        records = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
+        with mock.patch.object(gate.harness, "require_native_x86_64"), \
+                mock.patch.object(gate.Path, "mkdir"), \
+                mock.patch.object(gate, "run_evidence", return_value=records) as execute, \
+                mock.patch.object(gate, "report_provenance", return_value={}), \
+                mock.patch.object(gate.harness, "write_json") as write:
+            self.assertEqual(gate.main(["--qualification-profile", "correctness"]), 0)
+        execute.assert_called_once_with(summary["runnable_evidence"],
+                                       gate.ARTIFACTS.with_name("m5-correctness-gate"))
+        self.assertEqual(write.call_args.args[0], gate.ARTIFACTS.with_name("m5-correctness-gate") / "report.json")
+        report = write.call_args.args[1]
+        import x86_64_m9_gate as full_reader
+        report["provenance"] = {}
+        self.assertIn("report lacks the complete passing gate roster", full_reader.correctness_evidence_unmet(
+            "m5", report, gate.ARTIFACTS, None))
+
+    def test_validated_reader_requires_profile_authenticity_and_physical_structural_replay(self) -> None:
+        import x86_64_m9_gate as audit_reader
+        scratch = ROOT / ".work/allocator-x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            artifacts = Path(temporary) / "m5-correctness-gate"
+            artifacts.mkdir()
+            report_path = artifacts / "report.json"
+            report_path.write_text("{}")
+            report = {"qualification_profile": "correctness"}
+            audit = {"provenance": {"inputs": {"mimalloc": {
+                "version": "3.5.0", "tag": "v3.5.0", "revision": "revision", "archive": {"sha256": "digest"},
+            }}, "tools": {}}}
+            with mock.patch.object(gate, "ARTIFACTS", artifacts.with_name("m5-gate")), \
+                    mock.patch.object(gate.harness, "read_json", side_effect=lambda path: report if path == report_path else audit), \
+                    mock.patch.object(audit_reader, "correctness_evidence_unmet", return_value=[]) as classify, \
+                    mock.patch.object(audit_reader, "codegen_unmet", return_value=[]), \
+                    mock.patch.object(audit_reader, "physical_codegen_unmet", return_value=[]) as replay, \
+                    mock.patch.object(gate.engine, "sha256_file", return_value="digest"):
+                self.assertEqual(gate.read_report(profile="correctness"), report)
+                classify.assert_called_once_with("m5", report, artifacts, None, qualification_profile="correctness")
+                replay.assert_called_once()
+                replay.return_value = ["retained trace differs from executable"]
+                with self.assertRaisesRegex(harness.HarnessError, "structural audit is unmet"):
+                    gate.read_report(profile="correctness")
+                classify.return_value = ["report lacks current clean source"]
+                with self.assertRaisesRegex(harness.HarnessError, "current clean source"):
+                    gate.read_report(profile="correctness")
 
     def test_receipt_evidence_is_runnable_and_passes_only_on_a_valid_receipt(self) -> None:
         summary = self.validate()
