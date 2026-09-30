@@ -455,5 +455,33 @@ print("isolated-output:" + name, flush=True)
         )
 
 
+class InstalledStaticTlsConsumerTests(unittest.TestCase):
+    """Run the real installed driver and final audit before TLS/thread execution."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        supplied = os.environ.get("CRABC_X86_64_STATIC_TLS_TEST_SYSROOT")
+        if not supplied:
+            raise unittest.SkipTest("requires an owned installed static sysroot in the pinned image")
+        cls.sysroot = Path(supplied)
+        if not cls.sysroot.is_absolute() or not (cls.sysroot / "bin/crabc-cc").is_file():
+            raise AssertionError("static TLS regression requires an absolute installed owned driver")
+        SCRATCH_ROOT.mkdir(parents=True, exist_ok=True)
+        cls.work = Path(tempfile.mkdtemp(prefix="installed-tls-", dir=SCRATCH_ROOT))
+
+    def test_static_and_static_pie_audit_then_execute_thread_tls(self) -> None:
+        for mode, name in (("-static", "et-exec"), ("-static-pie", "static-pie")):
+            with self.subTest(mode=mode):
+                result = subprocess.run(
+                    ["bash", str(RUNNER), "--consumer-job", str(self.sysroot), mode,
+                     str(self.work / name), "installed TLS regression", "pthread"],
+                    cwd=ROOT, text=True, capture_output=True, timeout=300, check=False,
+                )
+                (self.work / (name + ".stdout")).write_text(result.stdout)
+                (self.work / (name + ".stderr")).write_text(result.stderr)
+                (self.work / (name + ".status")).write_text(str(result.returncode) + "\n")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
