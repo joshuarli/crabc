@@ -675,7 +675,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-static-sysroot  build twice and run the declared owned static product suite; write its receipt
   lua-static-source-build [--allocator-backend native-shadow]  build installed x86 static Lua source/bytecode ET_EXEC/static-PIE qualification
   lua-dynamic-source-build [--allocator-backend native-shadow]  qualify pinned Lua through installed/extracted x86 dynamic sysroots
-  lua-source-build-admission [--output NEW_DIR]  validate both physical current-source Lua lane reports and product identities; retain NEW_DIR/admission.json
+  lua-source-build-admission [--output NEW_DIR] [--static-report FILE] [--dynamic-report FILE]  validate physical current-source Lua reports; explicit reports must be physical .work files
   libc-owned-wordexp  run the installed x86 wordexp/wordfree ET_EXEC/static-PIE gate
   owned-loader-short-stack  compare owned dynamic startup with musl at libc-test's 100 KiB stack limit
   general-dynamic-dlopen [--entry-mode dynamic-pie|dynamic-non-pie] DYNAMIC_SYSROOT  run bounded runtime loader dlfcn evidence against one supplied product
@@ -10198,12 +10198,32 @@ PY
         ;;
     lua-source-build-admission)
         lua_admission_arguments=()
-        if [ "$#" -eq 2 ] && [ "$1" = --output ]; then
-            lua_admission_output="$(translate_owned_posix_product "$2" fresh-output)" || exit 2
-            lua_admission_arguments=(--output "$lua_admission_output")
-        elif [ "$#" -ne 0 ]; then
-            fail "lua-source-build-admission takes no arguments or --output NEW_DIR"
-        fi
+        lua_admission_output_seen=false
+        lua_admission_static_seen=false
+        lua_admission_dynamic_seen=false
+        while [ "$#" -gt 0 ]; do
+            [ "$#" -ge 2 ] || fail "lua-source-build-admission requires a value for $1"
+            case "$1" in
+                --output)
+                    [ "$lua_admission_output_seen" = false ] || fail "duplicate --output"
+                    lua_admission_output_seen=true
+                    lua_admission_path="$(translate_owned_posix_product "$2" fresh-output)" || exit 2
+                    ;;
+                --static-report)
+                    [ "$lua_admission_static_seen" = false ] || fail "duplicate --static-report"
+                    lua_admission_static_seen=true
+                    lua_admission_path="$(translate_owned_posix_product "$2" receipt-file)" || exit 2
+                    ;;
+                --dynamic-report)
+                    [ "$lua_admission_dynamic_seen" = false ] || fail "duplicate --dynamic-report"
+                    lua_admission_dynamic_seen=true
+                    lua_admission_path="$(translate_owned_posix_product "$2" receipt-file)" || exit 2
+                    ;;
+                *) fail "lua-source-build-admission accepts only --output, --static-report and --dynamic-report" ;;
+            esac
+            lua_admission_arguments+=("$1" "$lua_admission_path")
+            shift 2
+        done
         ensure_image
         run_in_container python3 -B /workspace/compat/lua/source_build_admission.py "${lua_admission_arguments[@]}"
         ;;
