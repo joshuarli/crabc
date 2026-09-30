@@ -1856,7 +1856,7 @@ pub(crate) enum ChildHeapRelease<'a, 'heap> {
     Terminal,
 }
 
-/// One zeroed, exact-size Heap image allocated through the native runtime.
+/// One zeroed Heap image allocated through the native runtime.
 /// The token owns the allocation; dropping it frees nothing.
 #[must_use = "a child Heap image must be freed after child Heap teardown"]
 pub(crate) struct NativeChildHeapImage {
@@ -1865,9 +1865,38 @@ pub(crate) struct NativeChildHeapImage {
 }
 
 impl NativeChildHeapImage {
+    const fn image_request_size() -> usize {
+        #[cfg(target_arch = "x86_64")]
+        { crate::source_heap_api::SOURCE_HEAP_IMAGE_REQUEST_SIZE }
+        #[cfg(not(target_arch = "x86_64"))]
+        { size_of::<Heap>() }
+    }
+
     /// `mi_heap_zalloc(parent->heap_main, sizeof(mi_heap_t))` on the calling
     /// thread, through the native runtime's current owner.
     pub(crate) fn allocate() -> Option<Self> {
+        #[cfg(target_arch = "x86_64")]
+        {
+            const _: () = assert!(size_of::<Heap>() <= crate::source_heap_api::SOURCE_HEAP_IMAGE_REQUEST_SIZE);
+            let parent = crate::source_heap_api::heap_main();
+            if parent.is_null() { return None; }
+            // SAFETY: subprocess creation retains the calling thread's live
+            // parent main Heap until this unpublished child image is released.
+            let pointer = unsafe {
+                crate::source_heap_api::heap_zalloc(parent, Self::image_request_size())
+            }.value?;
+            // SAFETY: this exact ordinary allocation is still exclusively
+            // owned and contains no published Heap or client projection.
+            let usable = unsafe { crate::runtime_lifecycle::native_usable_size(pointer) };
+            if pointer.as_ptr().addr() % core::mem::align_of::<Heap>() != 0
+                || usable.is_none_or(|usable| usable < Self::image_request_size()) {
+                // SAFETY: no typed image or client was published in the block.
+                let _ = unsafe { crate::runtime_lifecycle::native_free(pointer) };
+                return None;
+            }
+            Some(Self { pointer: pointer.cast(), initialized: false })
+        }
+        #[cfg(not(target_arch = "x86_64"))]
         match crate::runtime_lifecycle::native_allocate_aligned(
             size_of::<Heap>(), core::mem::align_of::<Heap>(), true,
         ) {
@@ -1880,14 +1909,14 @@ impl NativeChildHeapImage {
 
     #[inline]
     const fn memory_id(&self) -> MemoryId {
-        MemoryId::malloc(self.pointer.as_ptr().cast(), size_of::<Heap>(), true)
+        MemoryId::malloc(self.pointer.as_ptr().cast(), Self::image_request_size(), true)
     }
 
     fn initialize_empty_image(&mut self) -> bool {
         if self.initialized || self.pointer.as_ptr().addr() % core::mem::align_of::<Heap>() != 0 {
             return false;
         }
-        // SAFETY: the token was minted from one successful exact-size zeroed
+        // SAFETY: the token was minted from one successful sufficiently large zeroed
         // allocation, is uniquely borrowed, and keeps its stable address.
         unsafe { self.pointer.as_ptr().write(Heap::bootstrap_empty()) };
         self.initialized = true;

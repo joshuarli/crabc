@@ -555,8 +555,11 @@ impl Heap {
         // SAFETY: the kind check validates the active MemoryId union member.
         let malloc = unsafe { memory.info.malloc };
         let heap_pointer = NonNull::from(self.as_ref().get_ref());
+        // The allocation token keeps its exact requested extent. The source
+        // image request may exceed the private typed Heap layout; initialization
+        // requires space for the whole typed image without shortening provenance.
         if malloc.base != heap_pointer.as_ptr().cast()
-            || malloc.size != size_of::<Heap>()
+            || malloc.size < size_of::<Heap>()
         {
             return Err(heap_registry::SourceHeapRegistryError::InvalidImage);
         }
