@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include <mimalloc.h>
+#include <errno.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -14,6 +15,7 @@ struct event { unsigned long long heartbeat; int force, phase, context, owner, n
 static struct event events[128];
 static size_t count;
 static int phase, marker, null_context, worker_case;
+static size_t request = 524289;
 static pthread_t expected_owner;
 static _Thread_local int depth;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
@@ -31,10 +33,13 @@ static void callback(bool force, unsigned long long heartbeat, void* argument) {
   size_t before = count;
   // A separate live allocation makes callback reentry cross the public API.
   // Its storage belongs to this invocation and never aliases an outer client.
-  unsigned char* p = mi_malloc(524289);
-  if (p == NULL) fail("nested allocation");
-  p[0] = 0x41; p[524288] = 0x7d;
-  if (p[0] != 0x41 || p[524288] != 0x7d) fail("nested content");
+  unsigned char* p = mi_malloc(request);
+  if (p == NULL) {
+    fprintf(stderr, "nested request=%zu errno=%d heartbeat=%llu force=%d phase=%d\n", request, errno, heartbeat, force, phase);
+    fail("nested allocation");
+  }
+  p[0] = 0x41; p[request - 1] = 0x7d;
+  if (p[0] != 0x41 || p[request - 1] != 0x7d) fail("nested content");
   mi_free(p);
   events[index].nested = 1;
   events[index].suppressed = count == before && depth == 1;
@@ -65,9 +70,10 @@ static void* worker(void* unused) {
 
 int main(int argc, char** argv) {
   if (argc != 2) return 2;
-  worker_case = strcmp(argv[1], "worker") == 0;
-  null_context = strcmp(argv[1], "null") == 0;
-  if (!worker_case && !null_context && strcmp(argv[1], "same") != 0) return 2;
+  worker_case = strcmp(argv[1], "worker") == 0 || strcmp(argv[1], "worker-small") == 0;
+  null_context = strcmp(argv[1], "null") == 0 || strcmp(argv[1], "null-small") == 0;
+  if (!worker_case && !null_context && strcmp(argv[1], "same") != 0 && strcmp(argv[1], "same-small") != 0) return 2;
+  if (strstr(argv[1], "-small")) request = 33;
   warm();
   pthread_t thread;
   if (worker_case) {
@@ -102,6 +108,7 @@ int main(int argc, char** argv) {
       i, e->context, i, e->owner, i, e->nested, i, e->suppressed);
   }
   if (worker_case && exit_forced != 1) fail("natural exit force selection");
+  printf("allocation.request=%zu\n", request);
   printf("callback.count=%zu\nunregister.quiet=1\ncontext.null=%d\nworker.exit_forced=%d\n", count, null_context, exit_forced);
   return 0;
 }

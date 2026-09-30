@@ -18,7 +18,7 @@ receipts = load_module("deferred_profile_receipts", harness.ROOT / "compat/x86_6
 RUNNER = "allocator-deferred-profiles"
 ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m7-deferred-profiles"
 PROFILES = ("release", "debug-1", "stat-1", "stat-2")
-MODES = ("same", "null", "worker")
+MODES = ("same", "null", "worker", "same-small", "null-small", "worker-small")
 FIXTURE = harness.ALLOCATOR_ROOT / "x86_64_m7_deferred_profiles_driver.c"
 
 def record(output, name, argv, cwd, runtime=False):
@@ -77,7 +77,7 @@ def run():
         shutil.copy2(library, retained_library)
         products[f"{profile}-native-mi-adapter.a"] = retained_library
         products[f"{profile}-oracle.o"] = oracle
-        traces = {}
+        traces, runtime_logs = {}, {}
         for backend, allocator in (("c", oracle), ("native", retained_library)):
             binary = directory / backend
             caller = directory / f"{backend}.o"
@@ -94,10 +94,14 @@ def run():
                     failures.append(f"{name}: runtime status {status}; actual raw in {logs[0]}")
                 traces[backend, mode] = stress.byte_record_payload(result["stdout"], name)
                 cases.append((name, status, logs))
+                runtime_logs[backend, mode] = logs
         for mode in MODES:
-            if traces["c", mode] != traces["native", mode]:
+            different = traces["c", mode] != traces["native", mode]
+            cases.append((f"{profile}-comparison-{mode}", int(different),
+                runtime_logs["c", mode] + runtime_logs["native", mode]))
+            if different:
                 failures.append(f"{profile}-{mode}: actual C/native callback traces differ; raw in {output}")
-        print(f"Deferred public caller {profile}: compared all three C/native pairs; failures={len(failures)}", flush=True)
+        print(f"Deferred public caller {profile}: compared all six C/native pairs; failures={len(failures)}", flush=True)
     if receipts.source_seal(harness.ROOT) != seal:
         raise harness.HarnessError("source changed during public deferred caller execution")
     path = receipts.write_receipt(harness.ROOT, RUNNER, output, products, cases,
@@ -138,7 +142,7 @@ def main():
                     stdout = next(p for p in recorded["logs"] if p.endswith(".stdout"))
                     if stress.byte_record_payload(result["stdout"], case) != (receipt.path.parent / "logs" / stdout).read_bytes():
                         raise harness.HarnessError(f"retained caller {case} output differs; see {scratch}")
-        print("Deferred public caller retained physical replay: twelve C/native pairs PASS")
+        print("Deferred public caller retained physical replay: twenty-four C/native pairs PASS")
 
 
 if __name__ == "__main__":
