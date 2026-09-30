@@ -9,8 +9,143 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
+
+static void require(bool condition);
+static size_t list_length(mi_subproc_t* subproc);
+
+typedef struct {
+  void* area;
+  size_t size;
+  size_t refused;
+  bool refuse;
+} heap_fault_state_t;
+
+static bool heap_fault_commit(bool commit, void* start, size_t size,
+                              bool* zero, void* argument) {
+  heap_fault_state_t* state = argument;
+  require((uintptr_t)start >= (uintptr_t)state->area &&
+          size <= state->size &&
+          (uintptr_t)start - (uintptr_t)state->area <= state->size - size);
+  if (!commit) return false;
+  if (state->refuse) { state->refused++; return false; }
+  require(mprotect(start, size, PROT_READ | PROT_WRITE) == 0);
+  if (zero != NULL) *zero = false;
+  return true;
+}
 
 static void require(bool condition) { if (!condition) abort(); }
+
+static bool heap_fault_count_page(const mi_heap_t* heap, const mi_heap_area_t* area,
+                                 void* block, size_t size, void* argument) {
+  (void)heap; (void)area; (void)block; (void)size;
+  (*(size_t*)argument)++;
+  return true;
+}
+
+static void heap_faults(bool image_failure) {
+  mi_option_set(mi_option_arena_reserve, 0);
+  mi_option_set(mi_option_purge_delay, 0);
+  const size_t size = mi_arena_min_size();
+  const size_t alignment = mi_arena_min_alignment();
+  void* raw = mmap(NULL, size + alignment, PROT_NONE,
+                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  require(raw != MAP_FAILED);
+  const uintptr_t start = ((uintptr_t)raw + alignment - 1) & ~(alignment - 1);
+  const size_t prefix = start - (uintptr_t)raw;
+  if (prefix != 0) require(munmap(raw, prefix) == 0);
+  require(munmap((void*)(start + size), alignment - prefix) == 0);
+  heap_fault_state_t state = {(void*)start, size, 0, false};
+  mi_arena_id_t arena = NULL;
+  require(mi_manage_memory(state.area, size, false, false, true,
+                           -1, !image_failure, heap_fault_commit, &state, &arena));
+  if (image_failure) {
+    mi_option_set(mi_option_limit_os_alloc, 1);
+    mi_theap_t* base = mi_theap_get_default();
+    void* caller = mi_malloc(64);
+    require(caller != NULL);
+    memset(caller, 0x59, 64);
+    const size_t count = list_length(_mi_subproc());
+    state.refuse = true;
+    for (size_t attempt = 0; attempt < 2; attempt++) {
+      size_t before = state.refused;
+      mi_heap_t* failed = mi_heap_new();
+      printf("m6.heap.image_fault.%zu=%d\n", attempt * 3, failed == NULL);
+      printf("m6.heap.image_fault.%zu=%d\n", attempt * 3 + 1, state.refused > before);
+      printf("m6.heap.image_fault.%zu=%d\n", attempt * 3 + 2, list_length(_mi_subproc()) == count);
+    }
+    state.refuse = false;
+    mi_heap_t* retry = mi_heap_new();
+    require(retry != NULL);
+    printf("m6.heap.image_fault.6=%d\n", list_length(_mi_subproc()) == count + 1);
+    printf("m6.heap.image_fault.7=%d\n", mi_theap_get_default() == base);
+    printf("m6.heap.image_fault.8=%d\n", ((unsigned char*)caller)[0] == 0x59 && mi_heap_of(caller) == mi_heap_main());
+    mi_heap_destroy(retry);
+    printf("m6.heap.image_fault.9=%d\n", list_length(_mi_subproc()) == count);
+    printf("m6.heap.image_fault.10=%d\n", ((unsigned char*)caller)[0] == 0x59);
+    unsigned char resident;
+    printf("m6.heap.image_fault.11=%d\n", mincore(state.area, 4096, &resident) == 0);
+    mi_free(caller);
+    fflush(stdout);
+    _exit(0);
+  }
+  mi_heap_t* heap = mi_heap_new_in_arena(arena);
+  require(heap != NULL);
+  mi_theap_t* base = mi_theap_get_default();
+  void* caller = mi_malloc(64);
+  require(caller != NULL);
+  memset(caller, 0x59, 64);
+  state.refuse = true;
+  for (size_t attempt = 0; attempt < 2; attempt++) {
+    size_t before = state.refused;
+    void* failed = mi_heap_malloc(heap, 64);
+    printf("m6.heap.fault.%zu=%d\n", attempt * 3, failed == NULL);
+    printf("m6.heap.fault.%zu=%d\n", attempt * 3 + 1, state.refused > before);
+    require(heap->theaps == NULL && _mi_thread_local_get(heap->theap) == NULL);
+    size_t pages = 0;
+    require(mi_heap_visit_blocks(heap, false, heap_fault_count_page, &pages));
+    printf("m6.heap.fault.%zu=%d\n", attempt * 3 + 2, pages == 0);
+  }
+  require(mi_theap_get_default() == base && ((unsigned char*)caller)[0] == 0x59);
+  state.refuse = false;
+  void* first = mi_heap_malloc(heap, 64);
+  require(first != NULL);
+  memset(first, 0x6b, 64);
+  mi_theap_t* selected = mi_heap_theap(heap);
+  printf("m6.heap.fault.6=%d\n", mi_heap_of(first) == heap);
+  printf("m6.heap.fault.7=%d\n", (uintptr_t)first >= start && (uintptr_t)first < start + size);
+  require(selected == heap->theaps && selected->hnext == NULL);
+  printf("m6.heap.fault.8=%d\n", selected != base && selected == mi_heap_theap(heap));
+  state.refuse = true;
+  size_t before = state.refused;
+  void* failed = mi_heap_malloc(heap, 589824);
+  size_t retained_pages = 0;
+  require(mi_heap_visit_blocks(heap, false, heap_fault_count_page, &retained_pages));
+  require(retained_pages == 1);
+  printf("m6.heap.fault.9=%d\n", failed == NULL && state.refused > before);
+  require(heap->theaps == selected && selected->hnext == NULL);
+  printf("m6.heap.fault.10=%d\n", mi_heap_theap(heap) == selected);
+  printf("m6.heap.fault.11=%d\n", ((unsigned char*)first)[0] == 0x6b && mi_heap_of(first) == heap);
+  state.refuse = false;
+  void* retry = mi_heap_malloc(heap, 589824);
+  retained_pages = 0;
+  require(mi_heap_visit_blocks(heap, false, heap_fault_count_page, &retained_pages));
+  require(retained_pages == 2);
+  printf("m6.heap.fault.12=%d\n", retry != NULL && mi_heap_of(retry) == heap);
+  printf("m6.heap.fault.13=%d\n", mi_heap_theap(heap) == selected && mi_theap_get_default() == base);
+  mi_free(first);
+  mi_free(retry);
+  mi_heap_destroy(heap);
+  printf("m6.heap.fault.14=%d\n", ((unsigned char*)caller)[0] == 0x59 && mi_heap_of(caller) == mi_heap_main());
+  unsigned char resident;
+  printf("m6.heap.fault.15=%d\n", mincore(state.area, 4096, &resident) == 0);
+  mi_free(caller);
+  /* The registered arena retains the callback and its caller-owned mapping
+     until process exit; no allocator operation has the caller's unmap right. */
+  fflush(stdout);
+  _exit(0);
+}
 
 static int64_t values[128];
 static size_t value_count;
@@ -406,6 +541,8 @@ static void main_subprocess_later_thread_heaps(void) {
 
 int main(int argc, char** argv) {
   mi_process_init();
+  if (argc > 1 && strcmp(argv[1], "faults") == 0) { heap_faults(false); }
+  if (argc > 1 && strcmp(argv[1], "image-faults") == 0) { heap_faults(true); }
   if (argc > 1 && strcmp(argv[1], "main") == 0) {
     /* A separate process: the process-global thread-local key registry
        and the initial thread's roots start as in test-api.c. */
