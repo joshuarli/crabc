@@ -16515,8 +16515,8 @@ def _m2_x86_64_bitmap_check_records(
         or evidence.get("rust_execution_count") != 1
         or evidence.get("rust_build_reused") is not True
         or type(evidence.get("compared_value_count")) is not int
-        or evidence.get("compared_value_count") != 132184
-        or evidence.get("transcript_sha256") != "78ff33552d928c12a9bd1e234d409e5d4dabaa77bd1ee9b7b9ee9b84966ceddb"
+        or evidence.get("compared_value_count") != 138976
+        or evidence.get("transcript_sha256") != "d0603054a031be77a9b5c047642ec28f111d28a4efa900be7bb7d192fb4a1f49"
     ):
         raise HarnessError("native x86 M2 bitmap producer result is missing or invalid")
     names = evidence.get("rust_tests")

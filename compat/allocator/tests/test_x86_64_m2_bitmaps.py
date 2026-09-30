@@ -23,8 +23,8 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
             'rust_tests': [f'bitmap::fixture_{index}' for index in range(41)]
                 + ['bitmap::native_tests::optional_isa_bitmap_allocation_trace'],
             'rust_command': ['/workspace/.work/prepared-test', 'bitmap::', '--test-threads=1', '--nocapture'],
-            'compared_value_count': 132184,
-            'transcript_sha256': '78ff33552d928c12a9bd1e234d409e5d4dabaa77bd1ee9b7b9ee9b84966ceddb',
+            'compared_value_count': 138976,
+            'transcript_sha256': 'd0603054a031be77a9b5c047642ec28f111d28a4efa900be7bb7d192fb4a1f49',
         }
 
     @staticmethod
