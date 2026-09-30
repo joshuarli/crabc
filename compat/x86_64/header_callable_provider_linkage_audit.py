@@ -541,17 +541,18 @@ def planned_binding_definitions(archive: Path, executable: Path, members: Sequen
     return result
 
 
-def _planned_command(output: Path, name: str, argv: Sequence[str]) -> tuple[subprocess.CompletedProcess, list[Path]]:
+def _planned_command(output: Path, name: str, argv: Sequence[str], *,
+                     cwd: Path | None = None) -> tuple[subprocess.CompletedProcess, list[Path]]:
     """Keep raw diagnostics even when a compiler or binding caller times out."""
     timed_out = False
     try:
-        result = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+        result = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120, cwd=cwd)
     except subprocess.TimeoutExpired as error:
         timed_out = True
         result = subprocess.CompletedProcess(argv, -1, error.stdout or b"", error.stderr or b"")
     logs = []
     for suffix, data in (("command.json", (json.dumps(list(map(str, argv))) + "\n").encode()),
-                         ("status.json", (json.dumps({"status": result.returncode, "timeout": timed_out}) + "\n").encode()),
+                         ("status.json", (json.dumps({"status": result.returncode, "timeout": timed_out, "cwd": str(cwd or Path.cwd())}) + "\n").encode()),
                          ("stdout", result.stdout), ("stderr", result.stderr)):
         path = output / f"{name}.{suffix}"
         path.write_bytes(data)
@@ -708,8 +709,8 @@ def audit_supplied_planned_profile(*, product_root: Path, profile: str, output: 
     provider_require(not output.exists(), "planned binding output must be fresh")
     objects, jobs, retained, cases = compile_planned_declarations(inventory,
         feature.additive_callables, product_root / "usr/include", output)
-    def command(name, argv):
-        result, logs = _planned_command(output, name, argv)
+    def command(name, argv, *, cwd=None):
+        result, logs = _planned_command(output, name, argv, cwd=cwd)
         cases.append((name, result.returncode, logs))
     inputs = output / "inputs.json"
     inputs.write_text(canonical_json({"source": source, "tools": tool_inputs,
@@ -727,7 +728,7 @@ def audit_supplied_planned_profile(*, product_root: Path, profile: str, output: 
         "executing linker differs from fixed image anchor")
     command("combine", [str(linker_path), "-r", *map(str, objects), str(main_object), "-o", str(workload)])
     command("owned-link", [str(product_root / "bin/crabc-cc"), str(workload), "--link-receipt",
-        link.relative_to(ROOT).as_posix(), "-o", str(executable)])
+        link.name, "-o", str(executable)], cwd=output)
     record = json.loads(link.read_text())
     product_evidence.validate_retained_link(ROOT, "/workspace", product_root, workload,
         executable, link, "static", linker_record)

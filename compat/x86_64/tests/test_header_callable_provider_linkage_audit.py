@@ -75,7 +75,7 @@ class SuppliedPlannedProfileTests(unittest.TestCase):
                 "if '-c' in args: raise SystemExit(subprocess.run(['cc',*args]).returncode)\n" +
                 "i=args.index('--link-receipt'); receipt=Path(args[i+1]); del args[i:i+2]\n" +
                 f"status=subprocess.run([{linker!r},'-static','-e','_start',*args,{str(archive)!r}]).returncode\n" +
-                f"receipt.write_text(json.dumps({{'resolved_linker': {{'path': {linker!r}, 'sha256': {anchor['files'][linker]['sha256']!r}}}}}))\n" +
+                "record={'resolved_linker': " + repr({"path": linker, "sha256": anchor["files"][linker]["sha256"]}) + ", 'map': {'path': str(receipt.with_suffix('.map'))}, 'trace': {'path': str(receipt.with_suffix('.trace'))}}\nreceipt.write_text(json.dumps(record))\n" +
                 "receipt.with_suffix('.map').write_text('fixture map\\n'); receipt.with_suffix('.trace').write_text('fixture trace\\n')\n" +
                 "raise SystemExit(status)\n")
             driver.chmod(0o755)
@@ -88,6 +88,13 @@ class SuppliedPlannedProfileTests(unittest.TestCase):
                     "name": "owner", "profile": "c11-gnu", "declaring_header": "demo.h", "type": "int (void)"}],
                 "callable_provider_partition": {"declared_unverified_feature_archives": [{"id": "x86-fixture", "members": ["owner"]}], "unprovided": {"members": ["missing"]}}}))
             output = root / ".work/output"
+            def retained_link(root, source_mount, product, workload, executable, receipt, linkage, linker):
+                record = json.loads(receipt.read_text())
+                for suffix in ("map", "trace"):
+                    resolved = product_evidence._retained_source_path(root, source_mount,
+                        record[suffix]["path"], receipt, "fixture link " + suffix)
+                    self.assertEqual(resolved, receipt.with_suffix("." + suffix))
+                return {}
             old_cwd = Path.cwd()
             try:
                 os.chdir(root)
@@ -97,7 +104,7 @@ class SuppliedPlannedProfileTests(unittest.TestCase):
                      patch.object(inventory_module, "load_contract", return_value=None), \
                      patch.object(inventory_module, "refresh_provider_accounting", side_effect=lambda r, _: r), \
                      patch.object(product_evidence, "_validate_static_product", return_value=(manifest, {})), \
-                     patch.object(product_evidence, "validate_retained_link", return_value={}), \
+                     patch.object(product_evidence, "validate_retained_link", side_effect=retained_link), \
                      patch("crabc_cc_static.linker", return_value=linker):
                     path = AUDIT.audit_supplied_planned_profile(product_root=product, profile=profile.identifier, output=output)
                     report = json.loads((output / "bindings.json").read_text())
