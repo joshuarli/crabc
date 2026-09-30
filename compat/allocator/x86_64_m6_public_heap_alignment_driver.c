@@ -90,6 +90,119 @@ static void count_new_handler(void) { new_calls++; }
 /* Supply the C++ new-handler input through the pinned weak C boundary. */
 new_handler_t _ZSt15get_new_handlerv(void) { return count_new_handler; }
 
+static const char* allocation_names[] = {
+  "mi_heap_malloc", "mi_heap_zalloc", "mi_heap_calloc", "mi_heap_mallocn",
+  "mi_heap_malloc_small", "mi_heap_zalloc_small", "mi_heap_malloc_aligned",
+  "mi_heap_malloc_aligned_at", "mi_heap_zalloc_aligned", "mi_heap_zalloc_aligned_at",
+  "mi_heap_calloc_aligned", "mi_heap_calloc_aligned_at", "mi_heap_alloc_new", "mi_heap_alloc_new_n"
+};
+static const char* replacement_names[] = {
+  "mi_heap_realloc", "mi_heap_reallocn", "mi_heap_rezalloc", "mi_heap_recalloc",
+  "mi_heap_realloc_aligned", "mi_heap_realloc_aligned_at", "mi_heap_rezalloc_aligned",
+  "mi_heap_rezalloc_aligned_at", "mi_heap_recalloc_aligned", "mi_heap_recalloc_aligned_at"
+};
+static unsigned char* allocation_entry(mi_heap_t* heap, size_t entry, size_t count, size_t size) {
+  switch (entry) {
+    case 0: return mi_heap_malloc(heap, size);
+    case 1: return mi_heap_zalloc(heap, size);
+    case 2: return mi_heap_calloc(heap, count, size);
+    case 3: return mi_heap_mallocn(heap, count, size);
+    case 4: return mi_heap_malloc_small(heap, size);
+    case 5: return mi_heap_zalloc_small(heap, size);
+    case 6: return mi_heap_malloc_aligned(heap, size, 128);
+    case 7: return mi_heap_malloc_aligned_at(heap, size, 128, client_offset(7));
+    case 8: return mi_heap_zalloc_aligned(heap, size, 128);
+    case 9: return mi_heap_zalloc_aligned_at(heap, size, 128, client_offset(7));
+    case 10: return mi_heap_calloc_aligned(heap, count, size, 128);
+    case 11: return mi_heap_calloc_aligned_at(heap, count, size, 128, client_offset(7));
+    case 12: return mi_heap_alloc_new(heap, size);
+    case 13: return mi_heap_alloc_new_n(heap, count, size);
+  }
+  return NULL;
+}
+static unsigned char* replacement_entry(mi_heap_t* heap, size_t entry,
+                                         unsigned char* old, size_t count, size_t size) {
+  switch (entry) {
+    case 0: return mi_heap_realloc(heap, old, size);
+    case 1: return mi_heap_reallocn(heap, old, count, size);
+    case 2: return mi_heap_rezalloc(heap, old, size);
+    case 3: return mi_heap_recalloc(heap, old, count, size);
+    case 4: return mi_heap_realloc_aligned(heap, old, size, 128);
+    case 5: return mi_heap_realloc_aligned_at(heap, old, size, 128, client_offset(7));
+    case 6: return mi_heap_rezalloc_aligned(heap, old, size, 128);
+    case 7: return mi_heap_rezalloc_aligned_at(heap, old, size, 128, client_offset(7));
+    case 8: return mi_heap_recalloc_aligned(heap, old, count, size, 128);
+    case 9: return mi_heap_recalloc_aligned_at(heap, old, count, size, 128, client_offset(7));
+  }
+  return NULL;
+}
+static bool payload(const unsigned char* pointer, size_t size, unsigned char value) {
+  if (pointer == NULL) return false;
+  for (size_t i = 0; i < size; i++) if (pointer[i] != value) return false;
+  return true;
+}
+static bool allocation_refusals(mi_heap_t* sentinel_heap, unsigned char* sentinel) {
+  mi_heap_t* empty = mi_heap_new();
+  if (empty == NULL || mi_heap_theap(empty) == NULL) return false;
+  unsigned char* originals[11];
+  for (size_t i = 0; i < 11; i++) {
+    originals[i] = mi_heap_malloc(sentinel_heap, 73);
+    if (originals[i] == NULL) return false;
+    memset(originals[i], 0x6b, 73);
+  }
+  bool previous_os = mi_option_is_enabled(mi_option_disallow_os_alloc);
+  bool previous_arena = mi_option_is_enabled(mi_option_disallow_arena_alloc);
+  mi_option_set_enabled(mi_option_disallow_os_alloc, true);
+  mi_option_set_enabled(mi_option_disallow_arena_alloc, true);
+  bool passed = true;
+  for (size_t entry = 0; entry < sizeof(allocation_names)/sizeof(allocation_names[0]); entry++) {
+    errno = 0;
+    size_t calls_before = new_calls;
+    unsigned char* refused = allocation_entry(empty, entry, 1, 73);
+    int observed_errno = errno;
+    bool intact = payload(sentinel, 73, 0xa5) && mi_heap_of(sentinel) == sentinel_heap;
+    printf("entry.%s.refusal=%d,%d,%d\n", allocation_names[entry], refused == NULL, observed_errno, intact);
+    passed &= refused == NULL && observed_errno == ENOMEM && intact;
+    if (entry >= 12) {
+      printf("entry.%s.refusal_handler=%zu\n", allocation_names[entry], new_calls - calls_before);
+      passed &= new_calls - calls_before == 4;
+    }
+    if (refused != NULL) mi_free(refused);
+  }
+  for (size_t entry = 0; entry < 10; entry++) {
+    errno = 0;
+    unsigned char* refused = replacement_entry(empty, entry, originals[entry], 1, 16 * 1024 * 1024);
+    int observed_errno = errno;
+    bool intact = payload(originals[entry], 73, 0x6b) && mi_heap_of(originals[entry]) == sentinel_heap;
+    printf("entry.%s.refusal=%d,%d,%d\n", replacement_names[entry], refused == NULL, observed_errno, intact);
+    passed &= refused == NULL && observed_errno == ENOMEM && intact;
+    mi_free(refused == NULL ? originals[entry] : refused);
+  }
+  const char* string_names[] = { "mi_heap_strdup", "mi_heap_strndup", "mi_heap_realpath" };
+  for (size_t entry = 0; entry < 3; entry++) {
+    errno = 0;
+    char* refused = entry == 0 ? mi_heap_strdup(empty, "heap-content") :
+        entry == 1 ? mi_heap_strndup(empty, "heap-content", 4) : mi_heap_realpath(empty, "/", NULL);
+    int observed_errno = errno;
+    bool intact = payload(sentinel, 73, 0xa5) && mi_heap_of(sentinel) == sentinel_heap;
+    printf("entry.%s.refusal=%d,%d,%d\n", string_names[entry], refused == NULL, observed_errno, intact);
+    passed &= refused == NULL && observed_errno == ENOMEM && intact;
+    mi_free(refused);
+  }
+  errno = 0;
+  unsigned char* consumed = mi_heap_reallocf(empty, originals[10], 16 * 1024 * 1024);
+  int consumed_errno = errno;
+  /* reallocf releases its input on failure. Observe only the live neighbor. */
+  bool neighbor = payload(sentinel, 73, 0xa5) && mi_heap_of(sentinel) == sentinel_heap;
+  printf("entry.mi_heap_reallocf.refusal=%d,%d,%d\n", consumed == NULL, consumed_errno, neighbor);
+  passed &= consumed == NULL && consumed_errno == ENOMEM && neighbor;
+  mi_free(consumed);
+  mi_option_set_enabled(mi_option_disallow_os_alloc, previous_os);
+  mi_option_set_enabled(mi_option_disallow_arena_alloc, previous_arena);
+  mi_heap_destroy(empty);
+  return passed;
+}
+
 /* Keep every exported Heap entry in one content/ownership transaction.
    Small-entry requests remain within their documented size precondition. */
 static bool allocation_contract(void) {
@@ -108,25 +221,19 @@ static bool allocation_contract(void) {
   if (heap == NULL) return false;
   unsigned char* live[28];
   size_t sizes[28];
-  live[0] = mi_heap_malloc(heap, 73);
-  live[1] = mi_heap_zalloc(heap, 73);
-  live[2] = mi_heap_calloc(heap, 1, 73);
-  live[3] = mi_heap_mallocn(heap, 1, 73);
-  live[4] = mi_heap_malloc_small(heap, 73);
-  live[5] = mi_heap_zalloc_small(heap, 73);
-  live[6] = mi_heap_malloc_aligned(heap, 73, 128);
-  live[7] = mi_heap_malloc_aligned_at(heap, 73, 128, client_offset(7));
-  live[8] = mi_heap_zalloc_aligned(heap, 73, 128);
-  live[9] = mi_heap_zalloc_aligned_at(heap, 73, 128, client_offset(7));
-  live[10] = mi_heap_calloc_aligned(heap, 1, 73, 128);
-  live[11] = mi_heap_calloc_aligned_at(heap, 1, 73, 128, client_offset(7));
-  live[12] = mi_heap_alloc_new(heap, 73);
-  live[13] = mi_heap_alloc_new_n(heap, 1, 73);
   bool allocations = true;
   for (size_t i = 0; i < 14; i++) {
+    errno = 37;
+    live[i] = allocation_entry(heap, i, 1, 73);
+    bool errno_preserved = errno == 37;
     sizes[i] = 73;
     bool zero = i == 1 || i == 2 || i == 5 || (i >= 8 && i <= 11);
-    allocations &= live[i] != NULL && mi_heap_of(live[i]) == heap;
+    bool owner = live[i] != NULL && mi_heap_of(live[i]) == heap;
+    bool initialized = !zero || all_zero(live[i], 73);
+    bool aligned = i < 6 || i > 11 || (live[i] != NULL &&
+        (((uintptr_t)live[i] + ((i & 1) ? client_offset(7) : 0)) % 128) == 0);
+    printf("entry.%s.normal=%d,%d,%d,%d,%d\n", allocation_names[i], live[i] != NULL, owner, initialized, aligned, errno_preserved);
+    allocations &= owner && errno_preserved;
     if (zero) allocations &= all_zero(live[i], 73);
     if (i >= 6 && i <= 11) {
       allocations &= live[i] != NULL &&
@@ -135,6 +242,22 @@ static bool allocation_contract(void) {
     if (live[i] != NULL) memset(live[i], 0xa5, 73);
   }
   printf("contract.allocations=%d\n", allocations);
+  bool refusals = allocation_refusals(heap, live[0]);
+  bool overflows = true;
+  for (size_t entry = 0; entry < sizeof(allocation_names)/sizeof(allocation_names[0]); entry++) {
+    if (entry == 4 || entry == 5) {
+      printf("entry.%s.overflow=source-small-size-precondition\n", allocation_names[entry]);
+      continue;
+    }
+    bool counted = entry == 2 || entry == 3 || entry == 10 || entry == 11 || entry == 13;
+    errno = 0;
+    unsigned char* failed = allocation_entry(heap, entry, counted ? SIZE_MAX : 1, counted ? 2 : SIZE_MAX);
+    int observed_errno = errno;
+    bool intact = payload(live[0], 73, 0xa5) && mi_heap_of(live[0]) == heap;
+    printf("entry.%s.overflow=%d,%d,%d\n", allocation_names[entry], failed == NULL, observed_errno, intact);
+    overflows &= failed == NULL && intact;
+    if (failed != NULL) mi_free(failed);
+  }
 
   bool strings = true;
   char* text = mi_heap_strdup(heap, "heap-content");
@@ -146,6 +269,14 @@ static bool allocation_contract(void) {
   strings &= mi_heap_strdup(heap, NULL) == NULL;
   strings &= mi_heap_strndup(heap, NULL, 4) == NULL;
   strings &= mi_heap_realpath(heap, "/crabc-heap-contract-absent/path", NULL) == NULL;
+  printf("entry.mi_heap_strdup.normal=%d,%d,%d\n", text != NULL, text != NULL && mi_heap_of(text) == heap,
+         text != NULL && strcmp(text, "heap-content") == 0);
+  printf("entry.mi_heap_strndup.normal=%d,%d,%d\n", limited != NULL, limited != NULL && mi_heap_of(limited) == heap,
+         limited != NULL && strcmp(limited, "heap") == 0);
+  printf("entry.mi_heap_realpath.normal=%d,%d,%d\n", path != NULL, path != NULL && mi_heap_of(path) == heap,
+         path != NULL && strcmp(path, "/") == 0);
+  printf("entry.mi_heap_strdup.null=%d\n", mi_heap_strdup(heap, NULL) == NULL);
+  printf("entry.mi_heap_strndup.null=%d\n", mi_heap_strndup(heap, NULL, 4) == NULL);
   live[14] = (unsigned char*)text; sizes[14] = 13;
   live[15] = (unsigned char*)limited; sizes[15] = 5;
   live[16] = (unsigned char*)path; sizes[16] = 2;
@@ -177,24 +308,23 @@ static bool allocation_contract(void) {
     unsigned char* old = mi_heap_zalloc(heap, 73);
     if (old == NULL) return false;
     memset(old, 0x6b, 73);
+    bool counted = kind == 1 || kind == 3 || kind == 8 || kind == 9;
+    if (counted) {
+      errno = 0;
+      unsigned char* failed = replacement_entry(heap, kind, old, SIZE_MAX, 2);
+      int observed_errno = errno;
+      bool intact = payload(old, 73, 0x6b) && mi_heap_of(old) == heap;
+      printf("entry.%s.count_overflow=%d,%d,%d\n", replacement_names[kind], failed == NULL, observed_errno, intact);
+      replacements &= failed == NULL && observed_errno == COUNT_OVERFLOW_ERRNO && intact;
+    }
     unsigned char* result = NULL;
     bool zero = kind == 2 || kind == 3 || kind >= 6;
     for (size_t stage = 0; stage < 2; stage++) {
       size_t size = stage == 0 ? SIZE_MAX : 4096;
       errno = 0;
-      switch (kind) {
-        case 0: result = mi_heap_realloc(heap, old, size); break;
-        case 1: result = mi_heap_reallocn(heap, old, 1, size); break;
-        case 2: result = mi_heap_rezalloc(heap, old, size); break;
-        case 3: result = mi_heap_recalloc(heap, old, 1, size); break;
-        case 4: result = mi_heap_realloc_aligned(heap, old, size, 128); break;
-        case 5: result = mi_heap_realloc_aligned_at(heap, old, size, 128, client_offset(7)); break;
-        case 6: result = mi_heap_rezalloc_aligned(heap, old, size, 128); break;
-        case 7: result = mi_heap_rezalloc_aligned_at(heap, old, size, 128, client_offset(7)); break;
-        case 8: result = mi_heap_recalloc_aligned(heap, old, 1, size, 128); break;
-        case 9: result = mi_heap_recalloc_aligned_at(heap, old, 1, size, 128, client_offset(7)); break;
-      }
+      result = replacement_entry(heap, kind, old, 1, size);
       if (stage == 0) {
+        printf("entry.%s.overflow=%d,%d,%d\n", replacement_names[kind], result == NULL, errno, payload(old, 73, 0x6b));
         replacements &= result == NULL && errno != 0;
         for (size_t j = 0; j < 73; j++) replacements &= old[j] == 0x6b;
       } else {
@@ -205,6 +335,9 @@ static bool allocation_contract(void) {
           if (kind >= 4) replacements &=
               (((uintptr_t)result + ((kind & 1) ? client_offset(7) : 0)) % 128) == 0;
         }
+        printf("entry.%s.normal=%d,%d,%d,%d\n", replacement_names[kind], result != NULL,
+               result != NULL && mi_heap_of(result) == heap, payload(result, 73, 0x6b),
+               !zero || (result != NULL && all_zero(result + 73, size - 73)));
         live[17 + kind] = result; sizes[17 + kind] = 4096;
         if (result != NULL) memset(result, 0xa5, 4096);
       }
@@ -213,7 +346,11 @@ static bool allocation_contract(void) {
   unsigned char* consumed = mi_heap_malloc(heap, 73);
   if (consumed == NULL) return false;
   errno = 0;
-  replacements &= mi_heap_reallocf(heap, consumed, SIZE_MAX) == NULL && errno == ENOMEM;
+  unsigned char* reallocf_failed = mi_heap_reallocf(heap, consumed, SIZE_MAX);
+  int reallocf_errno = errno;
+  replacements &= reallocf_failed == NULL && reallocf_errno == ENOMEM;
+  printf("entry.mi_heap_reallocf.overflow=%d,%d,%d\n", reallocf_failed == NULL, reallocf_errno,
+         payload(live[0], 73, 0xa5) && mi_heap_of(live[0]) == heap);
   unsigned char* reallocf_source = mi_heap_malloc(heap, 73);
   if (reallocf_source == NULL) return false;
   memset(reallocf_source, 0xa5, 73);
@@ -223,6 +360,8 @@ static bool allocation_contract(void) {
     for (size_t j = 0; j < 73; j++) replacements &= live[27][j] == 0xa5;
     memset(live[27], 0xa5, 4096);
   }
+  printf("entry.mi_heap_reallocf.normal=%d,%d,%d\n", live[27] != NULL,
+         live[27] != NULL && mi_heap_of(live[27]) == heap, payload(live[27], 4096, 0xa5));
   /* reallocf consumed its argument; it is never accessed again. */
   printf("contract.replacements=%d\n", replacements);
 
@@ -243,6 +382,10 @@ static bool allocation_contract(void) {
     } else {
       mi_free(live[i]);
     }
+    const char* entry = i < 14 ? allocation_names[i] : i < 17 ?
+        (const char*[]){ "mi_heap_strdup", "mi_heap_strndup", "mi_heap_realpath" }[i - 14] :
+        i < 27 ? replacement_names[i - 17] : "mi_heap_reallocf";
+    printf("entry.%s.lifetime=%d,%d,%d\n", entry, before, owner, copied);
     lifetime &= before && owner && copied;
     if (!before || !owner || !copied) {
       fprintf(stderr, "heap contract lifetime item %zu: before=%d owner=%d copied=%d\n",
@@ -257,7 +400,7 @@ static bool allocation_contract(void) {
   lifetime &= after != NULL;
   mi_free(after);
   printf("contract.lifetime=%d\n", lifetime);
-  return growth && allocations && strings && failures && replacements && lifetime;
+  return growth && allocations && refusals && overflows && strings && failures && replacements && lifetime;
 }
 
 int main(void) {
@@ -265,12 +408,12 @@ int main(void) {
   mi_option_set_enabled(mi_option_show_errors, true);
   mi_option_set(mi_option_arena_reserve, 0);
   puts("CRABC_MI_M6_PUBLIC_HEAP_ALIGNMENT_BEGIN");
-#ifdef CRABC_MI_DEBUG_HEAP_ALLOCATION_CONTRACT
+#ifdef CRABC_MI_HEAP_ALLOCATION_CONTRACT_ONLY
   /* The transaction retains all clients across delete, then transfers their
      content into a live destination Heap before that Heap is destroyed. */
-  bool debug_contract = allocation_contract();
+  bool contract_only = allocation_contract();
   puts("CRABC_MI_M6_PUBLIC_HEAP_ALIGNMENT_END");
-  _exit(debug_contract ? 0 : 6);
+  _exit(contract_only ? 0 : 6);
 #endif
   mi_heap_t* heap = mi_heap_new();
   mi_theap_t* main_theap = heap == NULL ? NULL : mi_heap_theap(heap);

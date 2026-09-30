@@ -3,7 +3,7 @@
 #[path = "support/native_runtime.rs"]
 mod native_runtime_test_support;
 
-use core::ffi::{c_char, c_int, c_long};
+use core::ffi::{c_char, c_int, c_long, c_void};
 use core::ptr::{NonNull, null_mut};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use crabc_mimalloc::source_api::{self as api, Block, SourceCRuntime, Sourced};
@@ -234,6 +234,8 @@ fn heap_requests_preserve_content_failure_and_legal_release_lifetimes() {
         reallocf_result.as_ptr().write_bytes(0xa5, 4096);
         live.push((reallocf_result, 4096));
 
+        refusal_preserves_live_clients(heap, &runtime);
+
         // Delete preserves application blocks. Their former Heap handle is
         // not passed to any operation after release; a live destination Heap
         // accepts each replacement and owns the copied content.
@@ -266,4 +268,93 @@ fn heap_requests_preserve_content_failure_and_legal_release_lifetimes() {
         contents(after, 73, 0x37);
         free(after);
     }
+}
+
+// The caller owns this live Heap and every input; no concurrent operation
+// observes the temporary VM policy or accesses the tested clients.
+unsafe fn refusal_preserves_live_clients(heap: *mut c_void, runtime: &Runtime) {
+    use crabc_mimalloc::source_options_api as options;
+    const DISALLOW_OS_ALLOC: i32 = 17;
+    const DISALLOW_ARENA_ALLOC: i32 = 26;
+    let empty = heaps::heap_new();
+    assert!(!empty.is_null());
+    assert!(!unsafe { heaps::heap_theap(empty) }.is_null());
+    let sentinel = block(unsafe { heaps::heap_malloc(heap, 73) });
+    unsafe { sentinel.as_ptr().write_bytes(0xa5, 73) };
+    let mut originals = Vec::new();
+    for _ in 0..11 {
+        let original = block(unsafe { heaps::heap_malloc(heap, 73) });
+        unsafe { original.as_ptr().write_bytes(0x6b, 73) };
+        originals.push(original);
+    }
+    // Create every input before refusing new pages. The untouched Heap has
+    // no application pages, so a valid small request must use the VM policy.
+    let previous_os = options::option_get(DISALLOW_OS_ALLOC);
+    let previous_arena = options::option_get(DISALLOW_ARENA_ALLOC);
+    options::option_set(DISALLOW_OS_ALLOC, 1);
+    options::option_set(DISALLOW_ARENA_ALLOC, 1);
+    unsafe {
+        for (name, request) in [
+            ("malloc", heaps::heap_malloc(empty, 73)),
+            ("zalloc", heaps::heap_zalloc(empty, 73)),
+            ("calloc", heaps::heap_calloc(empty, 1, 73)),
+            ("mallocn", heaps::heap_mallocn(empty, 1, 73)),
+            ("malloc_aligned", heaps::heap_malloc_aligned_at(empty, 73, 128, 0, false)),
+            ("malloc_aligned_at", heaps::heap_malloc_aligned_at(empty, 73, 128, ALIGNED_OFFSET, false)),
+            ("zalloc_aligned", heaps::heap_malloc_aligned_at(empty, 73, 128, 0, true)),
+            ("zalloc_aligned_at", heaps::heap_malloc_aligned_at(empty, 73, 128, ALIGNED_OFFSET, true)),
+            ("calloc_aligned", heaps::heap_calloc_aligned_at(empty, 1, 73, 128, 0)),
+            ("calloc_aligned_at", heaps::heap_calloc_aligned_at(empty, 1, 73, 128, ALIGNED_OFFSET)),
+            ("strdup", heaps::heap_strdup(empty, c"heap-content".as_ptr())),
+            ("strndup", heaps::heap_strndup(empty, c"heap-content".as_ptr(), 4)),
+        ] {
+            assert!(request.value.is_none(), "{name} refuses a fresh page");
+            assert_eq!(request.errno.apply(0), 12, "{name}");
+            assert_eq!(request.errno.apply(37), 37, "{name} preserves prior errno");
+            contents(sentinel, 73, 0xa5);
+            assert_eq!(heaps::heap_of(sentinel.as_ptr()), heap);
+        }
+        let path = heaps::heap_realpath(runtime, empty, c"/".as_ptr(), null_mut());
+        assert!(path.value.is_null());
+        assert_eq!(path.errno.apply(0), 12);
+        let calls_before = NEW_CALLS.load(Ordering::Relaxed);
+        for request in [heaps::heap_alloc_new(runtime, empty, 73),
+                        heaps::heap_alloc_new_n(runtime, empty, 1, 73)] {
+            assert!(request.value.is_none());
+            assert_eq!(request.errno.apply(0), 12);
+            assert_eq!(request.errno.apply(37), 37);
+        }
+        assert_eq!(NEW_CALLS.load(Ordering::Relaxed) - calls_before, 8);
+        for (index, entry) in [Replacement::Plain, Replacement::Counted, Replacement::Zeroed,
+            Replacement::CountedZeroed, Replacement::Aligned, Replacement::AlignedAt,
+            Replacement::AlignedZeroed, Replacement::AlignedAtZeroed,
+            Replacement::AlignedCountedZeroed, Replacement::AlignedAtCountedZeroed].into_iter().enumerate() {
+            let original = originals[index];
+            let size = 16 * 1024 * 1024;
+            let zero = entry.zeroed();
+            let request = match entry {
+                Replacement::Plain | Replacement::Zeroed => heaps::heap_realloc(empty, original.as_ptr(), size, zero),
+                Replacement::Counted | Replacement::CountedZeroed => heaps::heap_reallocn(empty, original.as_ptr(), 1, size, zero),
+                Replacement::AlignedCountedZeroed | Replacement::AlignedAtCountedZeroed =>
+                    heaps::heap_recalloc_aligned(empty, original.as_ptr(), 1, size, 128, entry.offset()),
+                _ => heaps::heap_realloc_aligned(empty, original.as_ptr(), size, 128, entry.offset(), zero),
+            };
+            assert!(request.value.0.is_none(), "replacement {index} refuses growth");
+            assert_eq!(request.errno.apply(0), 12);
+            assert_eq!(request.errno.apply(37), 37);
+            contents(original, 73, 0x6b);
+            assert_eq!(heaps::heap_of(original.as_ptr()), heap);
+            free(original);
+        }
+        let consumed = heaps::heap_reallocf(empty, originals[10].as_ptr(), 16 * 1024 * 1024);
+        assert!(consumed.value.0.is_none());
+        assert_eq!(consumed.value.1, api::FreeOutcome::Freed);
+        assert_eq!(consumed.errno.apply(0), 12);
+        contents(sentinel, 73, 0xa5);
+        assert_eq!(heaps::heap_of(sentinel.as_ptr()), heap);
+        free(sentinel);
+    }
+    options::option_set(DISALLOW_OS_ALLOC, previous_os);
+    options::option_set(DISALLOW_ARENA_ALLOC, previous_arena);
+    assert!(unsafe { heaps::heap_release(empty, true) });
 }
