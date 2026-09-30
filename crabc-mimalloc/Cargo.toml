@@ -281,6 +281,7 @@ native-runtime-test-audit = []
 native-runtime-test-fault = []
 
 [dependencies]
+rand_xoshiro = { version = "=0.8.1", default-features = false }
 chacha20 = { version = "=0.10.1", default-features = false, features = ["legacy", "zeroize"] }
 crabc-core = { path = "../crabc-core", features = ["allocator-x86-evidence"] }
 # Cargo builds every dev-dependency for an ordinary selected test target, even
