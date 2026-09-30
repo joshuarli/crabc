@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -34,6 +35,178 @@ def load_module(name: str, path: Path):
 
 ROSTER = load_module("feature_archive_roster_provider_audit_test", ROSTER_PATH)
 AUDIT = load_module("header_callable_provider_linkage_audit_test", AUDIT_PATH)
+
+
+class SuppliedPlannedProfileTests(unittest.TestCase):
+    @unittest.skipUnless(all(shutil.which(t) for t in ("cc", "clang", "ar", "readelf")), "requires native compiler tools")
+    def test_binding_receipt_rejects_crossed_source_and_changed_raw_application(self):
+        import header_callable_inventory as inventory_module
+        import owned_posix_product_evidence as product_evidence
+        import owned_posix_static_products as products
+        anchor = json.loads((ROOT / "compat/x86_64/owned_resolver_network_image_inputs.json").read_text())
+        linker = next(p for p in anchor["files"] if p.endswith("/gcc-ld/ld.lld"))
+        if not Path(linker).is_file():
+            self.skipTest("requires the pinned native image linker")
+        work = ROOT / ".work/x86_64/planned-provider-tests"
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            root = Path(temporary)
+            contract_dir = root / "compat/x86_64"
+            contract_dir.mkdir(parents=True)
+            (contract_dir / "owned_resolver_network_image_inputs.json").write_text(json.dumps(anchor))
+            (root / ".gitignore").write_text(".work/\n")
+            for args in (["init", "-q"], ["add", "."], ["-c", "user.name=T", "-c", "user.email=t@example.invalid", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "fixture"]):
+                subprocess.run(["git", *args], cwd=root, check=True)
+            source = products.source_identity(root)
+            product = root / ".work/product"
+            for directory in (product / "usr/include", product / "usr/lib", product / "share/crabc", product / "bin"):
+                directory.mkdir(parents=True)
+            (product / "usr/include/demo.h").write_text("int owner(void);\n")
+            archive = HeaderCallableProviderLinkageAuditTests.archive(product / "usr/lib", "libc",
+                'int owner(void) { return 1; }\n'
+                '__asm__(".global _start\\n_start: call main; mov %eax,%edi; mov $60,%eax; syscall");\n')
+            archive.rename(product / "usr/lib/libc.a")
+            archive = product / "usr/lib/libc.a"
+            manifest = product / "share/crabc/manifest.json"
+            manifest.write_text(json.dumps({"source_sha256": source["content_sha256"]}))
+            driver = product / "bin/crabc-cc"
+            driver.write_text("#!/usr/bin/python3\n" +
+                "import sys, subprocess, json\nfrom pathlib import Path\nargs=sys.argv[1:]\n" +
+                "if '-c' in args: raise SystemExit(subprocess.run(['cc',*args]).returncode)\n" +
+                "i=args.index('--link-receipt'); receipt=Path(args[i+1]); del args[i:i+2]\n" +
+                f"status=subprocess.run([{linker!r},'-static','-e','_start',*args,{str(archive)!r}]).returncode\n" +
+                f"receipt.write_text(json.dumps({{'resolved_linker': {{'path': {linker!r}, 'sha256': {anchor['files'][linker]['sha256']!r}}}}}))\n" +
+                "receipt.with_suffix('.map').write_text('fixture map\\n'); receipt.with_suffix('.trace').write_text('fixture trace\\n')\n" +
+                "raise SystemExit(status)\n")
+            driver.chmod(0o755)
+            profile = ROSTER.FeatureArchive(identifier="x86-fixture", state="planned", evidence_record=None,
+                runner="fixture", dispatch_command=None, baseline_features=(), enabled_features=("x86-fixture",),
+                additive_callables=("owner",), replacement_callables=(), aliases=())
+            inventory_path = root / ".work/inventory.json"
+            inventory_path.write_text(json.dumps({"schema": AUDIT.INVENTORY_SCHEMA, "profiles": [{"id": "c11-gnu", "language": "c", "standard": "c11", "defines": []}],
+                "callables": [{"tree": "candidate", "classification": "external", "declaration_kind": "function",
+                    "name": "owner", "profile": "c11-gnu", "declaring_header": "demo.h", "type": "int (void)"}],
+                "callable_provider_partition": {"declared_unverified_feature_archives": [{"id": "x86-fixture", "members": ["owner"]}], "unprovided": {"members": ["missing"]}}}))
+            output = root / ".work/output"
+            old_cwd = Path.cwd()
+            try:
+                os.chdir(root)
+                with patch.dict(os.environ, {"CRABC_X86_HEADER_DECLARATION_IMAGE_ID": "crabc-core-evidence@" + anchor["image"]}), \
+                     patch.object(AUDIT, "ROOT", root), patch.object(AUDIT, "INVENTORY_PATH", inventory_path), \
+                     patch.object(AUDIT, "load_feature_archive_roster", return_value=(profile,)), \
+                     patch.object(inventory_module, "load_contract", return_value=None), \
+                     patch.object(inventory_module, "refresh_provider_accounting", side_effect=lambda r, _: r), \
+                     patch.object(product_evidence, "_validate_static_product", return_value=(manifest, {})), \
+                     patch.object(product_evidence, "validate_retained_link", return_value={}), \
+                     patch("crabc_cc_static.linker", return_value=linker):
+                    path = AUDIT.audit_supplied_planned_profile(product_root=product, profile=profile.identifier, output=output)
+                    report = json.loads((output / "bindings.json").read_text())
+                    self.assertFalse(report["full_callable_closure"])
+                    self.assertFalse(report["family_admission"])
+                    self.assertEqual(report["provider_partition"]["unprovided"]["members"], ["missing"])
+                    self.assertEqual(AUDIT.audit_supplied_planned_profile(product_root=product, profile=profile.identifier, output=output, replay=True), path)
+                    with (output / "application.o").open("ab") as stream:
+                        stream.write(b"changed")
+                    with self.assertRaisesRegex(AUDIT.ProviderLinkageAuditError, "raw artifact changed"):
+                        AUDIT.audit_supplied_planned_profile(product_root=product, profile=profile.identifier, output=output, read=True)
+                    manifest.write_text(json.dumps({"source_sha256": "0" * 64}))
+                    with self.assertRaisesRegex(AUDIT.ProviderLinkageAuditError, "executing source differ"):
+                        AUDIT.audit_supplied_planned_profile(product_root=product, profile=profile.identifier, output=root / ".work/crossed")
+                    self.assertFalse((root / ".work/crossed").exists())
+                    manifest.write_text(json.dumps({"source_sha256": source["content_sha256"]}))
+                    previous = path.read_bytes()
+                    real_run = subprocess.run
+                    def changing_source(argv, **kwargs):
+                        result = real_run(argv, **kwargs)
+                        if str(argv[0]).endswith("/changed-during/bindings"):
+                            (root / ".gitignore").write_text(".work/\n# changed\n")
+                        return result
+                    with patch.object(AUDIT.subprocess, "run", side_effect=changing_source):
+                        with self.assertRaisesRegex(products.PreparationError, "clean committed source"):
+                            AUDIT.audit_supplied_planned_profile(product_root=product, profile=profile.identifier,
+                                output=root / ".work/changed-during")
+                    self.assertEqual(path.read_bytes(), previous)
+            finally:
+                os.chdir(old_cwd)
+
+
+class PlannedDeclarationCompilerTests(unittest.TestCase):
+    def test_timed_out_command_retains_raw_diagnostic_bytes(self):
+        work = ROOT / ".work/x86_64/planned-provider-tests"
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            output = Path(temporary)
+            error = subprocess.TimeoutExpired(["compiler"], 120, output=b"raw\xff", stderr=b"error\xfe")
+            with patch.object(AUDIT.subprocess, "run", side_effect=error):
+                with self.assertRaises(AUDIT.ProviderLinkageAuditError):
+                    AUDIT._planned_command(output, "compiler", ["compiler"])
+            self.assertEqual((output / "compiler.stdout").read_bytes(), b"raw\xff")
+            self.assertEqual((output / "compiler.stderr").read_bytes(), b"error\xfe")
+            self.assertTrue(json.loads((output / "compiler.status.json").read_text())["timeout"])
+
+    @unittest.skipUnless(all(shutil.which(t) for t in ("cc", "ar", "readelf")), "requires native ELF tools")
+    def test_planned_binding_rejects_missing_nonfunction_and_changed_weak_owner(self):
+        work = ROOT / ".work/x86_64/planned-provider-tests"
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            root = Path(temporary)
+            archive = HeaderCallableProviderLinkageAuditTests.archive(root, "owner", "int owner(void) { return 1; }\n")
+            for name, source in (("good", "int owner(void) { return 1; }\n"),
+                                 ("weak", "__attribute__((weak)) int owner(void) { return 1; }\n"),
+                                 ("data", "int owner;\n"), ("absent", "int other(void) { return 1; }\n")):
+                target = HeaderCallableProviderLinkageAuditTests.archive(root, name, source)
+                if name == "good":
+                    result = AUDIT.planned_binding_definitions(archive, target, ("owner",), ())
+                    self.assertIn("owner", result)
+                else:
+                    with self.assertRaises(AUDIT.ProviderLinkageAuditError):
+                        AUDIT.planned_binding_definitions(archive, target, ("owner",), ())
+
+    @unittest.skipUnless(all(shutil.which(t) for t in ("cc", "ar", "readelf")), "requires native ELF tools")
+    def test_planned_alias_retains_weak_same_address_target(self):
+        work = ROOT / ".work/x86_64/planned-provider-tests"
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            root = Path(temporary)
+            body = "int target(void) { return 1; } int other(void) { return 2; }\n"
+            alias = ROSTER.ArchiveAlias(name="alias_name", target="target", binding="weak-same-address")
+            good = HeaderCallableProviderLinkageAuditTests.archive(root, "good_alias", body +
+                'extern __typeof(target) alias_name __attribute__((weak, alias("target")));\n')
+            bad = HeaderCallableProviderLinkageAuditTests.archive(root, "wrong_alias", body +
+                'extern __typeof(other) alias_name __attribute__((weak, alias("other")));\n')
+            AUDIT.planned_binding_definitions(good, good, ("target",), (alias,))
+            with self.assertRaisesRegex(AUDIT.ProviderLinkageAuditError, "weak alias"):
+                AUDIT.planned_binding_definitions(good, bad, ("target",), (alias,))
+
+    @unittest.skipUnless(shutil.which("clang") and shutil.which("nm"), "requires native Clang and nm")
+    def test_selected_cxx_only_declaration_retains_ordinary_c_linkage(self):
+        work = ROOT / ".work/x86_64/planned-provider-tests"
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            root = Path(temporary)
+            headers = root / "include"
+            headers.mkdir()
+            (headers / "demo.h").write_text(
+                "int c_owner(int);\n#ifdef __cplusplus\n"
+                'extern "C" int cxx_only(int);\n#endif\n')
+            profiles = [{"id": "c11-gnu", "language": "c", "standard": "c11", "defines": []},
+                        {"id": "cxx17-gnu", "language": "cxx", "standard": "c++17", "defines": []}]
+            inventory = {"profiles": profiles, "callables": [
+                {"tree": "candidate", "classification": "external", "declaration_kind": "function",
+                 "name": name, "profile": profile, "declaring_header": "demo.h", "type": "int (int)"}
+                for name, profile in (("c_owner", "c11-gnu"), ("cxx_only", "cxx17-gnu"))]}
+            objects, jobs, products, cases = AUDIT.compile_planned_declarations(
+                inventory, ("c_owner", "cxx_only"), headers, root / "output")
+            self.assertEqual({j["profile"]["language"] for j in jobs}, {"c", "cxx"})
+            imports = "".join(subprocess.check_output(["nm", "-u", str(obj)], text=True) for obj in objects)
+            self.assertIn(" U c_owner", imports)
+            self.assertIn(" U cxx_only", imports)
+            self.assertNotIn("_Z", imports)
+            self.assertTrue(products)
+            self.assertTrue(all(status == 0 for _, status, _ in cases))
+            (headers / "demo.h").write_text("int c_owner(double);\n")
+            with self.assertRaisesRegex(AUDIT.ProviderLinkageAuditError, "declaration"):
+                AUDIT.compile_planned_declarations(inventory, ("c_owner",), headers, root / "changed")
 
 
 class HeaderCallableProviderLinkageAuditTests(unittest.TestCase):

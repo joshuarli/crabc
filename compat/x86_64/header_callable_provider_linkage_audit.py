@@ -42,6 +42,7 @@ if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 
 from feature_archive_roster import (
+    ArchiveAlias,
     FeatureArchive,
     FeatureArchiveRosterError,
     load_feature_archive_roster,
@@ -494,6 +495,248 @@ def profile_report(
         },
         failures,
     )
+
+
+def planned_binding_definitions(archive: Path, executable: Path, members: Sequence[str],
+                                aliases: Sequence[ArchiveAlias], *, readelf: str = "readelf") -> dict[str, dict[str, str]]:
+    """Require the extracted functions to retain their selected provider binding."""
+    expected = global_symbol_details(archive, readelf)
+    actual = global_symbol_details(executable, readelf)
+    result = {}
+    for name in members:
+        before = [r for r in expected.get(name, []) if r["section"] != "UND"
+                  and r["binding"] in {"GLOBAL", "WEAK"} and r["visibility"] == "DEFAULT"]
+        after = [r for r in actual.get(name, []) if r["section"] != "UND"
+                 and r["binding"] in {"GLOBAL", "WEAK"} and r["visibility"] == "DEFAULT"]
+        provider_require(len(before) == len(after) == 1 and before[0]["binding"] == after[0]["binding"],
+                         f"planned provider binding changed or missing: {name}")
+        result[name] = after[0]
+    for alias in aliases:
+        provider_require(alias.binding == "weak-same-address", f"unsupported planned alias {alias.name}")
+        names = (alias.name, alias.target)
+        entries = [[r for r in actual.get(n, []) if r["section"] != "UND"
+                    and r["visibility"] == "DEFAULT"] for n in names]
+        provider_require(all(len(r) == 1 for r in entries)
+                         and entries[0][0]["binding"] == "WEAK"
+                         and entries[1][0]["binding"] == "GLOBAL"
+                         and entries[0][0]["value"] == entries[1][0]["value"],
+                         f"planned weak alias does not match its provider: {alias.name}")
+    return result
+
+
+def _planned_command(output: Path, name: str, argv: Sequence[str]) -> tuple[subprocess.CompletedProcess, list[Path]]:
+    """Keep raw diagnostics even when a compiler or binding caller times out."""
+    timed_out = False
+    try:
+        result = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+    except subprocess.TimeoutExpired as error:
+        timed_out = True
+        result = subprocess.CompletedProcess(argv, -1, error.stdout or b"", error.stderr or b"")
+    logs = []
+    for suffix, data in (("command.json", (json.dumps(list(map(str, argv))) + "\n").encode()),
+                         ("status.json", (json.dumps({"status": result.returncode, "timeout": timed_out}) + "\n").encode()),
+                         ("stdout", result.stdout), ("stderr", result.stderr)):
+        path = output / f"{name}.{suffix}"
+        path.write_bytes(data)
+        logs.append(path)
+    provider_require(result.returncode == 0, f"planned binding command failed: {logs[-1]}")
+    return result, logs
+
+
+def compile_planned_declarations(inventory: Mapping[str, Any], members: Sequence[str], header_root: Path,
+                                 output: Path, *, compiler: str = "clang") -> tuple[
+                                     list[Path], list[dict[str, Any]], dict[str, Path],
+                                     list[tuple[str, int, list[Path]]]]:
+    """Emit address references from the actual selected C or C++ declaration.
+
+    C declarations take precedence where available. A name visible only in a
+    selected C++ profile keeps that language and linkage; no C declaration is
+    invented to make the provider easier to link. Raw compiler facts must still
+    contain the recorded declaration type before its address is emitted.
+    """
+    import header_callable_inventory as callable_inventory
+
+    output.mkdir(parents=True, exist_ok=False)
+    profiles = {p["id"]: p for p in inventory["profiles"]}
+    groups = {}
+    for name in members:
+        candidates = [r for r in inventory["callables"] if r.get("tree") == "candidate"
+                      and r.get("name") == name and r.get("classification") == "external"
+                      and r.get("declaration_kind") == "function"]
+        provider_require(candidates, f"planned provider {name} has no selected declaration")
+        candidates.sort(key=lambda r: (profiles[r["profile"]]["language"] != "c",
+                                       r["profile"] != "c11-gnu", r["profile"], r["declaring_header"]))
+        row = candidates[0]
+        groups.setdefault((row["declaring_header"], row["profile"]), []).append(row)
+    products, cases, jobs, objects = {}, [], [], []
+    resource = callable_inventory.compiler_resource_include(compiler)
+    def command(name, argv):
+        result, logs = _planned_command(output, name, argv)
+        cases.append((name, result.returncode, logs))
+        return result
+    for index, ((header, profile_id), rows) in enumerate(sorted(groups.items())):
+        raw_profile = profiles[profile_id]
+        profile = callable_inventory.Profile(profile_id, raw_profile["language"],
+                                             raw_profile["standard"], tuple(raw_profile["defines"]))
+        source = output / f"probe-{index}.{'cpp' if profile.language == 'cxx' else 'c'}"
+        source.write_text(f"#include <{header}>\n")
+        ast_command = callable_inventory.compiler_command(compiler, profile, header_root,
+            resource, Path("/opt/linux-5.10-uapi/include"), source, ast=True, preprocess=False)
+        result = command(f"ast-{index}", ast_command)
+        declarations = callable_inventory.discover_functions(json.loads(result.stdout), header_root, header)
+        for row in rows:
+            provider_require(any(r["name"] == row["name"] and r["type"] == row["type"]
+                                 for r in declarations), f"planned declaration changed: {row['name']}")
+        products[source.name] = source
+        source = output / f"caller-{index}.{'cpp' if profile.language == 'cxx' else 'c'}"
+        text = f"#include <{header}>\n"
+        text += "".join(f"__typeof__(&{r['name']}) volatile reference_{r['name']} = &{r['name']};\n" for r in rows)
+        linkage = 'extern "C" ' if profile.language == "cxx" else ""
+        checks = " && ".join(f"reference_{r['name']} != 0" for r in rows)
+        text += f"{linkage}int check_{index}(void) {{ return {checks}; }}\n"
+        source.write_text(text)
+        obj = output / f"caller-{index}.o"
+        argv = [compiler, "-x", "c++" if profile.language == "cxx" else "c",
+            f"-std={profile.standard}", "-nostdinc", "-I", str(header_root), "-isystem", str(resource),
+            "-isystem", "/opt/linux-5.10-uapi/include", *(f"-D{d}" for d in profile.defines)]
+        if profile.language == "cxx":
+            argv.append("-nostdinc++")
+        command(f"compile-{index}", [*argv, "-c", str(source), "-o", str(obj)])
+        products[source.name] = source
+        products[obj.name] = obj
+        objects.append(obj)
+        jobs.append({"header": header, "profile": raw_profile, "members": [r["name"] for r in rows]})
+    return objects, jobs, products, cases
+
+
+def audit_supplied_planned_profile(*, product_root: Path, profile: str, output: Path,
+                                  read: bool = False, replay: bool = False) -> Path:
+    """Retain binding-only evidence without changing the provider partition.
+
+    The supplied installed product must belong to this clean source. The
+    ordinary compiler and sealed driver retain declaration records, object
+    inputs and the physical link. The shared receipt reader authenticates
+    copied artifacts; the existing product/link reader reconstructs the actual
+    original inputs before replay. Callable-body semantics remain unproved.
+    """
+    import header_callable_inventory as callable_inventory
+    import native_shadow_receipt as receipts
+    import owned_posix_product_evidence as product_evidence
+    import owned_posix_static_products as products
+    import crabc_cc_static as driver
+    import header_declaration_inventory as declarations
+    import header_abi_matrix as matrix
+    import core_image
+    import os
+
+    for path in (output, product_root):
+        driver.reject_existing_symlink_components(path, "planned provider path")
+        provider_require(path.resolve().is_relative_to(ROOT / ".work"), "planned binding paths must remain checkout-local")
+    output = output.resolve()
+    product_root = product_root.resolve()
+    provider_require(os.environ.get("CRABC_X86_HEADER_DECLARATION_IMAGE_ID") == core_image.CORE_IMAGE_REFERENCE,
+                     "planned binding requires the pinned declaration image identity")
+    callable_inventory.require_pinned_linux_uapi_include(Path("/opt/linux-5.10-uapi/include"))
+    compiler, resource = declarations.command_identity("clang")
+    tool_inputs = {"image": core_image.CORE_IMAGE_ID, "compiler": compiler,
+                   "compiler_resource": matrix.header_tree_digest(resource),
+                   "linux_uapi": matrix.header_tree_digest(Path("/opt/linux-5.10-uapi/include"))}
+    source = products.source_identity(ROOT)
+    manifest_path, payload = product_evidence._validate_static_product(product_root)
+    manifest = json.loads(manifest_path.read_text())
+    provider_require(manifest.get("source_sha256") == source["content_sha256"],
+                     "planned product and executing source differ")
+    roster = load_feature_archive_roster()
+    feature = next((r for r in roster if r.identifier == profile), None)
+    provider_require(feature is not None and feature.state == "planned", "supplied profile must remain planned")
+    inventory = load_json(INVENTORY_PATH)
+    inventory = callable_inventory.refresh_provider_accounting(inventory, callable_inventory.load_contract())
+    partition = inventory["callable_provider_partition"]
+    selected = next((r for r in partition["declared_unverified_feature_archives"] if r["id"] == profile), None)
+    provider_require(selected is not None and tuple(selected["members"]) == feature.additive_callables,
+                     "planned callable source contract differs")
+    runner = "header-planned-provider-" + profile
+    provider_require(feature.additive_callables, "supplied planned profile has no callable additions")
+    anchor = json.loads((ROOT / "compat/x86_64/owned_resolver_network_image_inputs.json").read_text())
+    linker_paths = [p for p in anchor["files"] if p.endswith("/gcc-ld/ld.lld")]
+    provider_require(len(linker_paths) == 1, "fixed image linker anchor is ambiguous")
+    linker_path = linker_paths[0]
+    linker_record = {"path": linker_path, "sha256": anchor["files"][linker_path]["sha256"]}
+    archive = product_root / "usr/lib/libc.a"
+    link = output / "link.json"
+    workload = output / "application.o"
+    executable = output / "bindings"
+    if read or replay:
+        receipt = receipts.read_receipt(ROOT, runner)
+        provider_require(receipt.parameters == {"profile": profile,
+            "product": product_root.relative_to(ROOT).as_posix(), "output": output.relative_to(ROOT).as_posix(),
+            "scope": "physical-binding-only-no-behavior-or-admission"}, "planned binding receipt inputs differ")
+        for name, record in receipt.products.items():
+            raw = output / name
+            provider_require(raw.is_file() and hashlib.sha256(raw.read_bytes()).hexdigest() == record["sha256"],
+                             f"planned raw artifact changed: {name}")
+        provider_require(json.loads((output / "inputs.json").read_text()) == {"source": source, "tools": tool_inputs,
+            "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(), "payload": payload},
+                         "planned binding product, compiler or include inputs changed")
+        record = json.loads(link.read_text())
+        product_evidence.validate_retained_link(ROOT, "/workspace", product_root, workload,
+            executable, link, "static", linker_record)
+        planned_binding_definitions(archive, executable, feature.additive_callables, feature.aliases)
+        if replay:
+            provider_require(subprocess.run([str(executable)], timeout=60).returncode == 0,
+                             "planned binding retained execution failed")
+        provider_require(products.source_identity(ROOT) == source, "planned binding source changed during reading")
+        return receipt.path
+    provider_require(not output.exists(), "planned binding output must be fresh")
+    objects, jobs, retained, cases = compile_planned_declarations(inventory,
+        feature.additive_callables, product_root / "usr/include", output)
+    def command(name, argv):
+        result, logs = _planned_command(output, name, argv)
+        cases.append((name, result.returncode, logs))
+    inputs = output / "inputs.json"
+    inputs.write_text(canonical_json({"source": source, "tools": tool_inputs,
+        "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(), "payload": payload}))
+    retained[inputs.name] = inputs
+    main = output / "main.c"
+    main.write_text("".join(f"int check_{i}(void);\n" for i in range(len(jobs)))
+        + "int main(void) { return !(" + " && ".join(f"check_{i}()" for i in range(len(jobs))) + "); }\n")
+    main_object = output / "main.o"
+    command("main-compile", [str(product_root / "bin/crabc-cc"), "-c", str(main), "-o", str(main_object)])
+    # A single relocatable application input lets the existing retained link
+    # reader reconstruct the exact sealed driver contract and trace.
+    provider_require(driver.linker(product_root) == linker_path
+        and hashlib.sha256(Path(linker_path).read_bytes()).hexdigest() == linker_record["sha256"],
+        "executing linker differs from fixed image anchor")
+    command("combine", [str(linker_path), "-r", *map(str, objects), str(main_object), "-o", str(workload)])
+    command("owned-link", [str(product_root / "bin/crabc-cc"), str(workload), "--link-receipt",
+        link.relative_to(ROOT).as_posix(), "-o", str(executable)])
+    record = json.loads(link.read_text())
+    product_evidence.validate_retained_link(ROOT, "/workspace", product_root, workload,
+        executable, link, "static", linker_record)
+    command("readelf", ["readelf", "--symbols", "--wide", str(executable)])
+    command("nm", ["nm", "-g", "--defined-only", str(executable)])
+    definitions = planned_binding_definitions(archive, executable, feature.additive_callables, feature.aliases)
+    command("bindings-execute", [str(executable)])
+    binding_report = output / "bindings.json"
+    binding_report.write_text(canonical_json({"profile": profile, "jobs": jobs, "definitions": definitions,
+        "provider_partition": partition, "callable_body_behavior": False, "full_callable_closure": False,
+        "family_admission": False, "source": source, "product_manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest()}))
+    for path in (main, main_object, workload, executable, link, link.with_suffix(".map"),
+                 link.with_suffix(".trace"), binding_report):
+        retained[path.name] = path
+    compiler_after, resource_after = declarations.command_identity("clang")
+    provider_require({"image": core_image.CORE_IMAGE_ID, "compiler": compiler_after,
+        "compiler_resource": matrix.header_tree_digest(resource_after),
+        "linux_uapi": matrix.header_tree_digest(Path("/opt/linux-5.10-uapi/include"))} == tool_inputs,
+        "planned compiler or include inputs changed during execution")
+    provider_require(hashlib.sha256(Path(linker_path).read_bytes()).hexdigest() == linker_record["sha256"],
+                     "planned linker changed during execution")
+    provider_require(product_evidence._validate_static_product(product_root)[1] == payload,
+                     "planned product changed during execution")
+    provider_require(products.source_identity(ROOT) == source, "planned binding source changed during execution")
+    return receipts.write_receipt(ROOT, runner, output, retained, cases,
+        {"profile": profile, "product": product_root.relative_to(ROOT).as_posix(),
+         "output": output.relative_to(ROOT).as_posix(), "scope": "physical-binding-only-no-behavior-or-admission"}, True)
 
 
 def audit_provider_closure(
