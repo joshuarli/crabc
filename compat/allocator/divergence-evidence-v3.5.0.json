@@ -82,6 +82,10 @@
         ],
         "scope": "first-allocation residency and page-fault cost of the arena opt-out against pinned C"
       }
+    },
+    "src/free.c:debug-aligned-offset-live-client-validation": {
+      "owner": "debugalignedclosure41",
+      "disposition": "Qualify the reviewed exact-live-client correction on merged source while retaining unchanged pinned-C debug refusal; performance qualification remains deferred."
     }
   }
 }

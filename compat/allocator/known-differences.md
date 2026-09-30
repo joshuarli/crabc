@@ -87,6 +87,37 @@ is not a valid C-program observable difference and has no C differential
 entry; the selected arena witness is source-level safety evidence over C's
 assertion-invalid input, not C/Rust invalid-input parity.
 
+### `CRABC-MI-DEBUG-ALIGNED-OFFSET-LIVE-CLIENT` — accepted valid-program correction
+
+- **Port map:** `src/free.c:debug-aligned-offset-live-client-validation`
+
+Pinned mimalloc v3.5.0 `src/free.c:172-178` rejects non-word-aligned client
+addresses when `MI_DEBUG >= 1` and guarded-precise mode is disabled. Its own
+successful aligned-offset allocation can return those addresses. A pinned
+81-byte allocation with alignment 128 and offset 11 demonstrates the difference:
+release and both statistics profiles report usable storage and preserve the
+payload across reallocation; the debug profile reports usable size zero,
+loses the copied payload and diagnoses the still-live pointer as invalid.
+This is an observed valid-program difference, not invalid-input hardening or
+an assertion that C crashes.
+
+The native entry accepts that exact live client after its stable PageMap
+registration and canonical block geometry are projected. Callers must retain
+the exact client and exclude registration and lifetime changes. Registration
+alone never authenticates an arbitrary interior or stale pointer. Existing
+padding checks, failed-reallocation ownership, aligned reuse policy, and
+unregistered-pointer diagnostics remain in force. The correction covers free,
+usable-size and ordinary, Heap and Theap reallocations, including a live client
+transferred after its owner thread joins.
+
+Exact source `620f37f55` retains four-profile native regressions and read-only
+ELF replay, plus unchanged pinned-C controls with the debug refusal recorded as
+a failure. Those controls explain the accepted difference; they do not qualify
+full debug C parity or newer sources. Differential qualification of the merged
+source remains required. Performance qualification is deferred by the active
+correctness scope; its evidence flag remains false and the full profile remains
+strict. No AArch64 qualification is claimed.
+
 ### `CRABC-MI-NATIVE-CHILD-SOURCE-OWNER-REPAIR` — accepted integration boundary
 
 - **Port map:** `src/init.c:private-no-page-process-pthread-runtime-lifecycle`, `src/alloc.c:nondefault-crabc-libc-native-mimalloc-shadow-ordinary-boundary`

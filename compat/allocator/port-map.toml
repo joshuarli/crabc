@@ -4199,3 +4199,19 @@ unit_verified = true
 differential_verified = true
 stress_verified = false
 performance_qualified = false
+
+[[item]]
+upstream = "src/free.c"
+name = "debug-aligned-offset-live-client-validation"
+source_region = "mimalloc v3.5.0 src/free.c:172-178 mi_validate_ptr_page_nonnull word-alignment refusal in debug profiles; src/alloc-aligned.c successful aligned-offset allocation and reallocation"
+rust_module = "crabc_mimalloc::source_api and crabc_mimalloc::source_heap_api"
+rust_item = "source_api::pointer_validation_errno and native_block_size; source_heap_api::heap_realloc_zero"
+intentional_difference = "CRABC-MI-DEBUG-ALIGNED-OFFSET-LIVE-CLIENT: preserve usable-size, payload and release for exact live non-word-aligned clients successfully returned by aligned-offset allocation, including the debug profile whose pinned C validation rejects its own returned client. Registration alone does not authenticate arbitrary interior or stale pointers; callers retain exact-client ownership and exclude registration/lifetime changes. Canonical geometry and existing padding validation remain required, and unregistered unaligned pointers retain source diagnostic refusal. This is an accepted valid-program correction, with merged-source differential qualification still required and performance qualification deferred rather than passed."
+difference_kind = "algorithmic"
+tests = ["crabc-mimalloc/tests/native_aligned_client_contract.rs", "crabc-mimalloc/src/source_api.rs"]
+exported = false
+implemented = true
+unit_verified = true
+differential_verified = false
+stress_verified = false
+performance_qualified = false
