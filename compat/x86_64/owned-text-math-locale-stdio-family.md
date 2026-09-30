@@ -128,8 +128,10 @@ python3 -B compat/x86_64/owned_text_math_locale_stdio_family.py validate \
 ## Behavior ownership and pending inputs
 
 The older `locale`, `numeric`, and `stdio` receipts are required corroborating
-inputs with zero credits. They retain useful bounded observations, but their
-scope labels do not prove the corresponding complete capabilities.
+inputs with zero credits. The numeric report corroborates integer conversion,
+float parsing, and clock/calendar behavior; all three capabilities remain in
+its declared scope even though this corroboration earns no family credit.
+These bounded observations do not prove the corresponding complete capabilities.
 
 `owned_text_locale_numeric_component_receipt.py` is the only component allowed
 to credit `numeric.parse-float-locale`, `locale.core`,

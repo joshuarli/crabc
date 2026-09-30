@@ -381,6 +381,48 @@ class TextMathLocaleStdioFamilyTests(unittest.TestCase):
                 coordinator.admission_facts(fixture.root, output)
         self.assertTrue(changed)
 
+    def test_numeric_adapter_preserves_the_public_corroboration_scope(self) -> None:
+        import owned_numeric_calendar_component_receipt as numeric
+
+        fixture = self.fixture
+        request = coordinator.ComponentRequest(reports=fixture.reports["numeric"])
+        context = coordinator.MatrixContext(
+            SOURCE, fixture.matrix()["inputs"], fixture.products,
+            fixture.static_preparation, fixture.dynamic_qualification,
+        )
+
+        def report(pair_report: Path, scope: tuple[str, ...]) -> dict[str, object]:
+            pair = next(pair for pair, path in request.reports.items() if path == pair_report)
+            return {
+                "schema": numeric.SCHEMA,
+                "source_mount": str(fixture.root),
+                "scope": list(scope),
+                "execution_mode": numeric.FULL_MODE,
+                "products": {kind: str(path) for kind, path in fixture.products[pair].items()},
+                "family_completion": False,
+                "promotion_ready": False,
+                "public_support": False,
+            }
+
+        adapter = coordinator._reader_adapters()["numeric"]
+        with mock.patch.object(coordinator, "current_source_identity", return_value=SOURCE):
+            with mock.patch.object(numeric, "validate_report", side_effect=lambda _root, path, require_static:
+                                   report(path, numeric.SCOPE)) as reader:
+                observed = adapter(fixture.root, request, context)
+            self.assertEqual(reader.call_count, len(coordinator.PAIRS))
+            for pair, evidence in observed.items():
+                self.assertEqual(evidence.products, fixture.products[pair])
+                self.assertEqual(evidence.scope, numeric.SCOPE)
+                self.assertEqual(evidence.rows, {})
+            self.assertEqual(coordinator.COMPONENTS["numeric"].credits, ())
+
+            for scope in (numeric.SCOPE[1:], numeric.SCOPE + ("text.iconv",)):
+                with self.subTest(scope=scope), mock.patch.object(
+                        numeric, "validate_report", side_effect=lambda _root, path, require_static, scope=scope:
+                        report(path, scope)):
+                    with self.assertRaisesRegex(coordinator.FamilyError, "numeric primary public receipt contract differs"):
+                        adapter(fixture.root, request, context)
+
     def test_stdio_engine_adapter_requires_the_frozen_symbol_surface(self) -> None:
         """Engine credit depends on the reader's frozen-ledger symbol check."""
         import owned_stdio_file_engine_receipt as engine

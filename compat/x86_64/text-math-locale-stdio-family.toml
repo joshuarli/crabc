@@ -59,7 +59,7 @@ credits = []
 
 [components.numeric]
 reader = "compat/x86_64/owned_numeric_calendar_component_receipt.py"
-scope = ["numeric.parse-float-locale", "time.clock-calendar"]
+scope = ["numeric.parse-integer", "numeric.parse-float-locale", "time.clock-calendar"]
 credits = []
 
 # This aggregate reader owns the missing installed rich locale/numeric/ctype/

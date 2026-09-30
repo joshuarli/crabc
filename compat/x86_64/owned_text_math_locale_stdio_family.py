@@ -155,7 +155,7 @@ COMPONENTS = {
     ),
     "numeric": ComponentSpec(
         "compat/x86_64/owned_numeric_calendar_component_receipt.py",
-        ("numeric.parse-float-locale", "time.clock-calendar"), (),
+        ("numeric.parse-integer", "numeric.parse-float-locale", "time.clock-calendar"), (),
     ),
     "text-locale-numeric": ComponentSpec(
         "compat/x86_64/owned_text_locale_numeric_component_receipt.py",
