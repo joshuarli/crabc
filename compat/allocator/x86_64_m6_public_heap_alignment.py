@@ -274,7 +274,10 @@ def read_and_replay(profiles, replay=False):
         raise harness.HarnessError("retained receipt does not cover the selected profiles")
     print("Public Heap allocation exact-source physical receipt: PASS")
     if replay:
-        harness.require_native_x86_64(require_image_identity=True)
+        execution = harness.require_native_x86_64(require_image_identity=True)
+        inputs = json.loads((receipt.path.parent / "products/inputs.json").read_text())
+        harness.validate_native_execution_provenance(inputs["execution"],
+            expected_image_id=execution["image_id"])
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
         harness.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
         scratch = Path(tempfile.mkdtemp(prefix="heap-allocation-replay-", dir=harness.TEMP_ROOT))
