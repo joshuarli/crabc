@@ -110,6 +110,26 @@ unregistered-pointer diagnostics remain in force. The correction covers free,
 usable-size and ordinary, Heap and Theap reallocations, including a live client
 transferred after its owner thread joins.
 
+The complete operation-profile differential keeps the original source debug
+condition as a separate negative control. Its valid-client oracle selects
+`MI_DEBUG=1`, `MI_GUARDED=0` and `mi_option_guarded_precise=1` only for C;
+native execution retains `mi_option_guarded_precise=0`. The pinned preprocessed
+source must show that the selected option has exactly one executable use,
+the faulty word-alignment validation. Guarded allocation is compiled out.
+Every valid allocation, size, alignment, offset, payload and address-reuse
+observation remains in the differential. Unchanged source debug failures are
+retained and compared against their exact diagnostics and outcomes, including
+usable-size/free and ordinary/Heap reallocation controls. This oracle condition
+is explicit in the receipt, original commands and owning reader; it does not
+claim unchanged debug C parity.
+
+Calls that violate separate source assertion preconditions run in isolated
+processes: null `mi_reallocarr` output, zero-size `mi_reallocarr`, non-power-of-two
+aligned reallocation, and invalid aligned-offset reallocation. Debug source
+assertions and native returning-error behavior are checked separately, including
+preserved client ownership. Small non-offset alignments delegated to ordinary
+reallocation remain in the valid-client workload.
+
 Exact source `620f37f55` retains four-profile native regressions and read-only
 ELF replay, plus unchanged pinned-C controls with the debug refusal recorded as
 a failure. Those controls explain the accepted difference; they do not qualify
