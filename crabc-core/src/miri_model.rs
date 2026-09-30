@@ -309,6 +309,12 @@ pub(crate) unsafe fn getrandom(buffer: *mut u8, length: usize, _flags: u32) -> R
     Ok(length)
 }
 
+// The native TLS self pointer leaves the low page-flag bits clear.
+// Preserve that storage alignment while retaining the actual TLS address.
+#[cfg(target_arch = "x86_64")]
+#[thread_local]
+static THREAD_MARKER: usize = 0;
+#[cfg(not(target_arch = "x86_64"))]
 #[thread_local]
 static THREAD_MARKER: u8 = 0;
 #[thread_local]

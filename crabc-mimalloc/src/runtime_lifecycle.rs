@@ -4533,7 +4533,7 @@ impl RuntimeProcessStorage {
         self.process_once.enter(identity).ok().flatten()
     }
 
-    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[cfg(target_arch = "x86_64")]
     fn initialize(&'static self, facts: NativeProcessStartupFacts, entry: ProcessStartEntry) -> bool {
         let default_stderr_output = facts.stderr_output().into_default_stderr_output();
         let Some(completion) = self.begin_initialization_once() else {
@@ -4645,13 +4645,6 @@ impl RuntimeProcessStorage {
         // process before output delivery or the final loader reseed begins.
         tail.complete();
         true
-    }
-
-    #[cfg(all(target_arch = "x86_64", miri))]
-    fn initialize(&'static self, _facts: NativeProcessStartupFacts, _entry: ProcessStartEntry) -> bool {
-        // Miri has no raw `environ` model. Do not activate a parallel/no-op
-        // diagnostic startup path merely to consume the required x86 input.
-        false
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -10420,7 +10413,7 @@ fn start_process(entry: ProcessStartEntry) -> bool {
 ///
 /// The fixture process's own C `environ` stands in for the embedding
 /// runtime's environment owner; the production engine never names it.
-#[cfg(all(test, target_arch = "x86_64"))]
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
 pub(crate) unsafe fn test_host_process_environment() -> *const *const core::ffi::c_char {
     unsafe extern "C" {
         static mut environ: *mut *mut core::ffi::c_char;
@@ -10428,6 +10421,14 @@ pub(crate) unsafe fn test_host_process_environment() -> *const *const core::ffi:
     // SAFETY: this reads the test process's C global word only; tests that
     // mutate it do so before startup on the same thread, as C requires.
     unsafe { core::ptr::read(core::ptr::addr_of!(environ)).cast_const().cast() }
+}
+
+/// Borrows an immutable retained image of the isolated interpreter's current
+/// environment. The source startup and lazy option readers use the same C
+/// vector contract while native fixtures continue to read their live environ.
+#[cfg(all(test, target_arch = "x86_64", miri))]
+pub(crate) unsafe fn test_host_process_environment() -> *const *const core::ffi::c_char {
+    crate::test_process::miri_process_environment()
 }
 
 /// Publishes host-process startup facts and performs explicit startup, the
