@@ -198,6 +198,10 @@
       "runner": "compat/allocator/x86_64_m6_nested_child.py",
       "scope": "Independent production Rust subprocess integration covers initialized-thread admission refusal, fresh child membership, Heap list order, nested metadata ownership, owner exit, surviving-client frees and nested-before-parent destruction alongside the pinned C/Rust receiver."
     },
+    "differential:heap-source-conveniences": {
+      "runner": "compat/allocator/x86_64_m6_heap_convenience.py",
+      "scope": "Unchanged pinned typed Heap macros and C++ shared/destroying Heap allocators through ordinary C/native callers in release, debug-1, stat-1 and stat-2, including overflow, allocation refusal, new-handler behavior and retained shared ownership. C++ uses the native image test substrate; this is not owned C++ runtime qualification."
+    },
     "upstream:test-api-heaps": {
       "runner": "compat/allocator/x86_64_m6_test_api.py",
       "scope": "Unmodified test-api.c heap-os1, heap-os2, heap-many, and arena_reserve."
@@ -361,11 +365,10 @@
       ],
       "acceptance": "The pinned header-only Heap conveniences compile unchanged against the Heap entry points they expand to, with the destroying STL allocator's shared Heap lifetime preserved.",
       "evidence": [
-        "upstream:test-api-heaps"
+        "upstream:test-api-heaps",
+        "differential:heap-source-conveniences"
       ],
-      "blocked_by": [
-        "Heap convenience expansions now have the underlying exported allocation entries and an independent production allocation unit. Complete macro/inline caller coverage and per-entry boundaries across all required configurations remain unproved."
-      ]
+      "blocked_by": []
     },
     {
       "id": "m6.theap",
@@ -397,7 +400,7 @@
         "unit:theap"
       ],
       "blocked_by": [
-        "Pinned C/native direct Theap observations and an independent production integration cover default selection, direct allocation variants, cache behavior, live-client deletion, collection and release in main, worker, child and fork contexts. Guarded setters, complete statistics/visitation configurations and broader cross-thread lifetime evidence remain unproved."
+        "Pinned C/native direct Theap observations and an independent production integration cover default selection, direct allocation variants, cache behavior, live-client deletion, collection and release in main, worker, child and fork contexts. The selected non-guarded setters preserve live clients, roots, statistics and later allocations in release, debug-1, stat-1 and stat-2. Complete statistics/visitation configurations and broader cross-thread lifetime evidence remain unproved; the original full debug visitor mismatch remains unadmitted."
       ]
     },
     {

@@ -575,6 +575,12 @@ M2_X86_64_ARENA_CHECKS = (
         "kind": "c-rust-arena-delayed-purge-failure-differential",
         "target": "compat/allocator/m2_arena_purge_budget_failure_x86_64.py",
     },
+    {
+        "expected_passed_test_count": 1,
+        "id": "arena-second-partial-purge-c-rust-differential",
+        "kind": "c-rust-arena-lifecycle-differential",
+        "target": "compat/allocator/m2_second_arena_partial_purge_x86_64.py"
+    },
 )
 M2_X86_64_ARENA_DIRECT_RECEIVERS = {
     "arena-startup-huge-failure-warning-c-rust-differential": {
@@ -690,6 +696,45 @@ M2_X86_64_ARENA_DIRECT_RECEIVERS = {
             "registry": 3,
         },
         "scope": "pinned-c-rust-three-arena-bounded-purge-failed-decommit-consumes-one-visit-then-rotated-drain",
+    },
+    "arena-second-partial-purge-c-rust-differential": {
+        "artifact": "m2-second-arena-partial-purge",
+        "kind": "c-rust-arena-lifecycle-differential",
+        "target": "compat/allocator/m2_second_arena_partial_purge_x86_64.py",
+        "fixture": "compat/allocator/m2_second_arena_partial_purge_x86_64.c",
+        "rust_test": "process_arena::tests::emit_m2_second_arena_partial_purge_c_rust_trace",
+        "trace_prefix": "m2.second_purge.",
+        "trace": {
+            "setup": 1,
+            "pending": 1,
+            "partial": 1,
+            "later_pending": 1,
+            "later_purged": 1,
+            "first_survives": 1,
+            "maps_live": 1,
+            "first_purge_calls": 5,
+            "first_purged_bytes": 16777216,
+            "first_arena_purges": 1,
+            "released_slice": 9,
+            "survivor_slice": 265,
+            "purge_calls": 6,
+            "purged_bytes": 16842752,
+            "arena_purges": 2,
+            "occupied_fallback": 1,
+            "survivor_contents": 1,
+            "second_reuse_exact": 1,
+            "second_recommit": 1,
+            "second_zero": 1,
+            "first_reuse_exact": 1,
+            "owners_preserved": 1,
+            "released_all": 1,
+            "exclusive_skipped": 1,
+            "exclusive_requested": 1,
+            "exclusive_reused": 1,
+            "exclusive_sibling_preserved": 1,
+            "exclusive_released": 1
+        },
+        "scope": "pinned-c-rust-multi-arena-eligibility-partial-purge-recommit-and-sibling-safe-reuse"
     },
 }
 M2_X86_64_RECURSION_CHECKS = (

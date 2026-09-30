@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Contracts for the fail-closed Milestone 6 allocator gate."""
+"""Contracts for fail-closed Heap and subprocess allocator admission."""
 
 from __future__ import annotations
 
