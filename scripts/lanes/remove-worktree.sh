@@ -10,6 +10,7 @@ case "$path" in "$root"/.work/worktrees/*) ;; *) echo "refusing path outside $ro
 if [ -n "$(git -C "$path" status --porcelain --untracked-files=no)" ]; then
     echo "refusing to remove $path: tracked changes are uncommitted" >&2; exit 1
 fi
-docker run --rm --network none -v "$path":/target crabc-core-evidence:x86_64 \
+image=$(python3 "$root/compat/x86_64/core_image.py")
+docker run --rm --network none -v "$path":/target "$image" \
     sh -c 'find /target -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +'
 git -C "$root" worktree remove --force "$path"
