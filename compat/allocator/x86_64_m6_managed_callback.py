@@ -98,9 +98,11 @@ def check_diagnostics(client, backend, raw):
     assertion = ("source.child_callback=1,1,1" if "child" in client.DRIVER.name
                  else "source.callback=1,1")
     pattern = (r"mimalloc: warning: thread (0x[0-9A-Fa-f]+): "
-               + re.escape(client.WARNING) + r"\n")
+               + re.escape(client.WARNING))
     if backend == "c":
         pattern += ("" if "child" in client.DRIVER.name else r"\n") + re.escape(assertion) + r"\n"
+    else:
+        pattern += r"\n"
     match = re.fullmatch(pattern, raw.decode("utf-8"))
     if match is None or int(match.group(1), 16) == 0:
         raise harness.HarnessError(f"{backend} callback diagnostics differ: {raw!r}")
