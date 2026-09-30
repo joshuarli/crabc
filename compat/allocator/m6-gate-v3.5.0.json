@@ -187,8 +187,8 @@
       "scope": "Focused Rust Heap statistics and visitation regressions."
     },
     "unit:theap": {
-      "runner": null,
-      "scope": "Focused Rust Theap entry regressions."
+      "runner": "compat/allocator/x86_64_m6_public_theap.py",
+      "scope": "Independent native public Theap integration plus five isolated allocation, selection, cache, live-client deletion and release regressions alongside the pinned C/Rust receiver."
     },
     "unit:arena": {
       "runner": null,
@@ -207,7 +207,7 @@
       "scope": "Unmodified test-stress-heaps.c (MI_USE_HEAPS=4) at 1, 2, 4, and 8 workers."
     },
     "upstream:test-stress-subprocs": {
-      "runner": null,
+      "runner": "compat/allocator/x86_64_m6_test_stress_subprocs.py",
       "scope": "Unmodified test-stress-subprocs.c (two subprocesses)."
     }
   },

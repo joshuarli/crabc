@@ -228,10 +228,13 @@ def report_provenance(report: Mapping[str, Any]) -> dict[str, Any]:
 
 def run_evidence(runnable: Mapping[str, str], artifacts: Path) -> dict[str, dict[str, Any]]:
     results: dict[str, dict[str, Any]] = {}
+    executions: dict[str, dict[str, Any]] = {}
     for evidence_id, runner in runnable.items():
-        record = harness.command_record(
-            ["python3", runner], cwd=harness.ROOT, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
-        )
+        if runner not in executions:
+            executions[runner] = harness.command_record(
+                ["python3", runner], cwd=harness.ROOT, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
+            )
+        record = executions[runner]
         log = artifacts / f"{evidence_id.replace(':', '-')}.log"
         log.write_text(str(record["stdout"]) + str(record["stderr"]))
         results[evidence_id] = {

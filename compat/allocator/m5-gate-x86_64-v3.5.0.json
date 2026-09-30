@@ -460,6 +460,7 @@
     "native_error_sites": "compat/allocator/x86_64_m7_gate.py",
     "native_option_profiles": "compat/allocator/x86_64_m7_gate.py",
     "native_test_context_arena_print": "compat/allocator/x86_64_m7_gate.py",
+    "native_theap_contract": "compat/allocator/x86_64_m6_public_theap.py",
     "native_persistent_owner_local_trace": "compat/allocator/m3-local-engine-x86_64-v3.5.0.json"
   }
 }

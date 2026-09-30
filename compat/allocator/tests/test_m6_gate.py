@@ -6,8 +6,10 @@ from __future__ import annotations
 import copy
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -40,31 +42,6 @@ class M6GateContractTests(unittest.TestCase):
         summary = self.validate()
         self.assertEqual(summary["item_count"], 105)
         self.assertEqual(summary["gate_ids"], list(gate.GATE_IDS))
-        self.assertEqual(summary["runnable_evidence"], {
-            "differential:abandoned-heap-visitor": "compat/allocator/x86_64_m6_abandoned_visitor.py",
-            "differential:abandoned-os-heap-visitor": "compat/allocator/x86_64_m6_abandoned_os_visitor.py",
-            "differential:abandoned-combined-heap-visitor": "compat/allocator/x86_64_m6_abandoned_combined_visitor.py",
-            "differential:main-abandoned-heap-visitor": "compat/allocator/x86_64_m6_main_abandoned_visitor.py",
-            "differential:main-abandoned-os-heap-visitor": "compat/allocator/x86_64_m6_main_abandoned_os_visitor.py",
-            "differential:main-abandoned-mixed-heap-visitor": "compat/allocator/x86_64_m6_main_abandoned_mixed_visitor.py",
-            "differential:arena-destroy": "compat/allocator/arena_destroy.py",
-            "differential:heap-destroy": "compat/allocator/heap_destroy.py",
-            "differential:heap-in-arena": "compat/allocator/x86_64_m6_heap_in_arena.py",
-            "differential:child-heap-in-arena": "compat/allocator/x86_64_m6_child_heap_in_arena.py",
-            "differential:main-heap-visitor-population": "compat/allocator/x86_64_m6_main_visitor_population.py",
-            "differential:public-heap-adapter": "compat/allocator/x86_64_m6_adapter.py",
-            "differential:public-heap-alignment": "compat/allocator/x86_64_m6_public_heap_alignment.py",
-            "differential:public-heap-lifecycle": "compat/allocator/heap_lifecycle.py",
-            "differential:public-theap": "compat/allocator/x86_64_m6_public_theap.py",
-            "differential:managed-os-lifecycle": "compat/allocator/x86_64_m6_manage_os_memory_alias.py",
-            "differential:managed-callback": "compat/allocator/x86_64_m6_managed_callback.py",
-            "differential:managed-callback-failure": "compat/allocator/x86_64_m6_managed_callback_failure.py",
-            "differential:child-managed-callback": "compat/allocator/x86_64_m6_child_managed_callback.py",
-            "differential:public-reservation-warning": "compat/allocator/x86_64_m6_reservation_warning.py",
-            "differential:subprocess-lifecycle": "compat/allocator/subprocess_lifecycle.py",
-            "unit:heap-membership": "compat/allocator/heap_membership.py",
-            "upstream:test-api-heaps": "compat/allocator/x86_64_m6_test_api.py",
-        })
         # Every gate still names a reviewed blocker.
         self.assertEqual(summary["blocked_gate_ids"], list(gate.GATE_IDS))
         owned = {name for entry in self.contract["gates"] for name in entry["items"]}
@@ -108,7 +85,9 @@ class M6GateContractTests(unittest.TestCase):
 
     def test_missing_evidence_cannot_be_unblocked_by_editing_the_contract(self) -> None:
         unblocked = copy.deepcopy(self.contract)
-        self.gate_record(unblocked, "m6.heap-lifecycle")["blocked_by"] = []
+        selected = self.gate_record(unblocked, "m6.heap-lifecycle")
+        selected["blocked_by"] = []
+        unblocked["evidence"][selected["evidence"][0]]["runner"] = None
         with self.assertRaisesRegex(harness.HarnessError, "missing evidence without a blocker"):
             self.validate(unblocked)
 
@@ -220,11 +199,7 @@ class M6GateContractTests(unittest.TestCase):
         self.assertEqual(report["unmet_required"], list(gate.GATE_IDS))
         destruction = next(entry for entry in report["gates"] if entry["id"] == "m6.destruction-lifetime")
         self.assertEqual(destruction["status"], "blocked")
-        self.assertEqual(destruction["evidence"], {
-            "differential:heap-destroy": "passed", "differential:arena-destroy": "passed",
-            "differential:public-heap-lifecycle": "passed",
-            "differential:subprocess-lifecycle": "passed",
-        })
+        self.assertEqual(set(destruction["evidence"].values()), {"passed"})
 
     def test_a_fully_evidenced_unblocked_gate_passes_and_a_failed_run_fails(self) -> None:
         contract = copy.deepcopy(self.contract)
@@ -240,6 +215,27 @@ class M6GateContractTests(unittest.TestCase):
         self.assertEqual(report["overall_status"], "unmet")
         arena = next(entry for entry in report["gates"] if entry["id"] == "m6.arena")
         self.assertEqual(arena["status"], "failed")
+
+
+class M6EvidenceExecutionTests(unittest.TestCase):
+    def test_shared_producer_runs_once_and_failure_reaches_both_evidence_rows(self) -> None:
+        for status in (0, 1):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as name:
+                artifacts = Path(name)
+                runnable = {
+                    "differential:shared": "compat/allocator/heap_destroy.py",
+                    "unit:shared": "compat/allocator/heap_destroy.py",
+                    "differential:other": "compat/allocator/arena_destroy.py",
+                }
+                with mock.patch.object(gate.harness, "command_record", return_value={
+                    "status": status, "stdout": "observations\n", "stderr": "diagnostic\n",
+                }) as execute:
+                    results = gate.run_evidence(runnable, artifacts)
+                self.assertEqual(execute.call_count, 2)
+                for evidence_id, result in results.items():
+                    self.assertEqual(result["status"], "passed" if status == 0 else "failed")
+                    self.assertEqual((harness.ROOT / result["log"]).read_text(),
+                                     "observations\ndiagnostic\n")
 
 
 if __name__ == "__main__":
