@@ -9,6 +9,23 @@
 
 #include "mimalloc.h"
 
+/* Debug pointer validation requires word-aligned clients for usable-size,
+   reallocation, and free. Preserve nonzero offsets within that condition;
+   release also covers byte-granular aligned-at outputs. */
+static size_t client_offset(size_t offset) {
+#if MI_DEBUG
+  return (offset + sizeof(uintptr_t) - 1) & ~(sizeof(uintptr_t) - 1);
+#else
+  return offset;
+#endif
+}
+
+#if MI_DEBUG
+#define COUNT_OVERFLOW_ERRNO ENOMEM
+#else
+#define COUNT_OVERFLOW_ERRNO 0
+#endif
+
 static bool all_zero(const unsigned char* bytes, size_t size) {
   if (bytes == NULL) return false;
   for (size_t i = 0; i < size; i++) {
@@ -27,10 +44,10 @@ static void* worker_allocate(void* argument) {
   worker_state_t* state = (worker_state_t*)argument;
   errno = 0;
   unsigned char* block = (unsigned char*)mi_heap_zalloc_aligned_at(
-      state->heap, 1000, 256, 31);
+      state->heap, 1000, 256, client_offset(31));
   mi_theap_t* theap = mi_heap_theap(state->heap);
   printf("alignment.worker=%d,%d,%d,%d,%d,%d\n",
-      block != NULL, block != NULL && (((uintptr_t)block + 31) % 256) == 0,
+      block != NULL, block != NULL && (((uintptr_t)block + client_offset(31)) % 256) == 0,
       all_zero(block, 1000), block != NULL && mi_heap_of(block) == state->heap,
       theap != NULL && theap != state->main_theap, errno == 0);
   state->complete = block != NULL && theap != NULL && theap != state->main_theap;
@@ -98,11 +115,11 @@ static bool allocation_contract(void) {
   live[4] = mi_heap_malloc_small(heap, 73);
   live[5] = mi_heap_zalloc_small(heap, 73);
   live[6] = mi_heap_malloc_aligned(heap, 73, 128);
-  live[7] = mi_heap_malloc_aligned_at(heap, 73, 128, 7);
+  live[7] = mi_heap_malloc_aligned_at(heap, 73, 128, client_offset(7));
   live[8] = mi_heap_zalloc_aligned(heap, 73, 128);
-  live[9] = mi_heap_zalloc_aligned_at(heap, 73, 128, 7);
+  live[9] = mi_heap_zalloc_aligned_at(heap, 73, 128, client_offset(7));
   live[10] = mi_heap_calloc_aligned(heap, 1, 73, 128);
-  live[11] = mi_heap_calloc_aligned_at(heap, 1, 73, 128, 7);
+  live[11] = mi_heap_calloc_aligned_at(heap, 1, 73, 128, client_offset(7));
   live[12] = mi_heap_alloc_new(heap, 73);
   live[13] = mi_heap_alloc_new_n(heap, 1, 73);
   bool allocations = true;
@@ -113,7 +130,7 @@ static bool allocation_contract(void) {
     if (zero) allocations &= all_zero(live[i], 73);
     if (i >= 6 && i <= 11) {
       allocations &= live[i] != NULL &&
-          (((uintptr_t)live[i] + ((i & 1) ? 7 : 0)) % 128) == 0;
+          (((uintptr_t)live[i] + ((i & 1) ? client_offset(7) : 0)) % 128) == 0;
     }
     if (live[i] != NULL) memset(live[i], 0xa5, 73);
   }
@@ -140,18 +157,18 @@ static bool allocation_contract(void) {
   bool failures = true;
   errno = 0; failures &= mi_heap_malloc(heap, SIZE_MAX) == NULL && errno == ENOMEM;
   errno = 0; failures &= mi_heap_zalloc(heap, SIZE_MAX) == NULL && errno == ENOMEM;
-  /* Release count overflow returns before the diagnostic/default errno path. */
-  errno = 0; failures &= mi_heap_mallocn(heap, SIZE_MAX, 2) == NULL && errno == 0;
-  errno = 0; failures &= mi_heap_calloc(heap, SIZE_MAX, 2) == NULL && errno == 0;
-  errno = 0; failures &= mi_heap_calloc_aligned(heap, SIZE_MAX, 2, 128) == NULL && errno == 0;
-  errno = 0; failures &= mi_heap_calloc_aligned_at(heap, SIZE_MAX, 2, 128, 7) == NULL && errno == 0;
+  /* Count overflow diagnoses ENOMEM only when debug diagnostics are enabled. */
+  errno = 0; failures &= mi_heap_mallocn(heap, SIZE_MAX, 2) == NULL && errno == COUNT_OVERFLOW_ERRNO;
+  errno = 0; failures &= mi_heap_calloc(heap, SIZE_MAX, 2) == NULL && errno == COUNT_OVERFLOW_ERRNO;
+  errno = 0; failures &= mi_heap_calloc_aligned(heap, SIZE_MAX, 2, 128) == NULL && errno == COUNT_OVERFLOW_ERRNO;
+  errno = 0; failures &= mi_heap_calloc_aligned_at(heap, SIZE_MAX, 2, 128, client_offset(7)) == NULL && errno == COUNT_OVERFLOW_ERRNO;
   errno = 0; failures &= mi_heap_malloc_aligned(heap, 73, 24) == NULL && errno == EINVAL;
   errno = 0; failures &= mi_heap_malloc_aligned_at(heap, 73, 24, 7) == NULL && errno == EINVAL;
   errno = 0; failures &= mi_heap_zalloc_aligned(heap, 73, 24) == NULL && errno == EINVAL;
   errno = 0; failures &= mi_heap_zalloc_aligned_at(heap, 73, 24, 7) == NULL && errno == EINVAL;
   size_t before_new = new_calls;
   errno = 0; failures &= mi_heap_alloc_new(heap, SIZE_MAX) == NULL && errno == ENOMEM;
-  errno = 0; failures &= mi_heap_alloc_new_n(heap, SIZE_MAX, 2) == NULL && errno == 0;
+  errno = 0; failures &= mi_heap_alloc_new_n(heap, SIZE_MAX, 2) == NULL && errno == COUNT_OVERFLOW_ERRNO;
   failures &= new_calls == before_new + 2;
   printf("contract.failures=%d\n", failures);
 
@@ -171,11 +188,11 @@ static bool allocation_contract(void) {
         case 2: result = mi_heap_rezalloc(heap, old, size); break;
         case 3: result = mi_heap_recalloc(heap, old, 1, size); break;
         case 4: result = mi_heap_realloc_aligned(heap, old, size, 128); break;
-        case 5: result = mi_heap_realloc_aligned_at(heap, old, size, 128, 7); break;
+        case 5: result = mi_heap_realloc_aligned_at(heap, old, size, 128, client_offset(7)); break;
         case 6: result = mi_heap_rezalloc_aligned(heap, old, size, 128); break;
-        case 7: result = mi_heap_rezalloc_aligned_at(heap, old, size, 128, 7); break;
+        case 7: result = mi_heap_rezalloc_aligned_at(heap, old, size, 128, client_offset(7)); break;
         case 8: result = mi_heap_recalloc_aligned(heap, old, 1, size, 128); break;
-        case 9: result = mi_heap_recalloc_aligned_at(heap, old, 1, size, 128, 7); break;
+        case 9: result = mi_heap_recalloc_aligned_at(heap, old, 1, size, 128, client_offset(7)); break;
       }
       if (stage == 0) {
         replacements &= result == NULL && errno != 0;
@@ -186,7 +203,7 @@ static bool allocation_contract(void) {
           for (size_t j = 0; j < 73; j++) replacements &= result[j] == 0x6b;
           if (zero) replacements &= all_zero(result + 73, size - 73);
           if (kind >= 4) replacements &=
-              (((uintptr_t)result + ((kind & 1) ? 7 : 0)) % 128) == 0;
+              (((uintptr_t)result + ((kind & 1) ? client_offset(7) : 0)) % 128) == 0;
         }
         live[17 + kind] = result; sizes[17 + kind] = 4096;
         if (result != NULL) memset(result, 0xa5, 4096);
@@ -215,7 +232,7 @@ static bool allocation_contract(void) {
   bool lifetime = true;
   for (size_t i = 0; i < 28; i++) {
     if (live[i] == NULL) { lifetime = false; continue; }
-    bool before = true;
+    bool before = mi_usable_size(live[i]) >= sizes[i];
     for (size_t j = 0; j < sizes[i]; j++) before &= live[i][j] == 0xa5;
     unsigned char* replacement = mi_heap_realloc(destination, live[i], 8192);
     bool owner = replacement != NULL && mi_heap_of(replacement) == destination;
@@ -248,6 +265,13 @@ int main(void) {
   mi_option_set_enabled(mi_option_show_errors, true);
   mi_option_set(mi_option_arena_reserve, 0);
   puts("CRABC_MI_M6_PUBLIC_HEAP_ALIGNMENT_BEGIN");
+#ifdef CRABC_MI_DEBUG_HEAP_ALLOCATION_CONTRACT
+  /* The transaction retains all clients across delete, then transfers their
+     content into a live destination Heap before that Heap is destroyed. */
+  bool debug_contract = allocation_contract();
+  puts("CRABC_MI_M6_PUBLIC_HEAP_ALIGNMENT_END");
+  _exit(debug_contract ? 0 : 6);
+#endif
   mi_heap_t* heap = mi_heap_new();
   mi_theap_t* main_theap = heap == NULL ? NULL : mi_heap_theap(heap);
   printf("alignment.heap=%d,%d\n", heap != NULL, main_theap != NULL);
@@ -258,10 +282,10 @@ int main(void) {
   mi_free(dirty);
   bool cases = true;
   cases &= success_case(heap, 24, 8, 0, 0);
-  cases &= success_case(heap, 73, 128, 7, 1);
-  cases &= success_case(heap, 7, 64, 19, 2);
-  cases &= success_case(heap, 1024, 4096, 1, 3);
-  cases &= success_case(heap, 8192, 65536, 13, 4);
+  cases &= success_case(heap, 73, 128, client_offset(7), 1);
+  cases &= success_case(heap, 7, 64, client_offset(19), 2);
+  cases &= success_case(heap, 1024, 4096, client_offset(1), 3);
+  cases &= success_case(heap, 8192, 65536, client_offset(13), 4);
   cases &= success_case(heap, 4096, 1024 * 1024, 0, 5);
   failure_case(heap, 64, 24, 0, 0);
   failure_case(heap, 64, 0, 0, 1);
@@ -271,7 +295,7 @@ int main(void) {
   pthread_t worker;
   if (pthread_create(&worker, NULL, worker_allocate, &worker_state) != 0) return 4;
   if (pthread_join(worker, NULL) != 0) return 5;
-  unsigned char* live = (unsigned char*)mi_heap_zalloc_aligned_at(heap, 73, 128, 7);
+  unsigned char* live = (unsigned char*)mi_heap_zalloc_aligned_at(heap, 73, 128, client_offset(7));
   bool live_owned = live != NULL && mi_heap_of(live) == heap && all_zero(live, 73);
   printf("alignment.before_delete=%d,%d\n", live_owned, worker_state.complete);
   mi_heap_delete(heap);
@@ -285,7 +309,7 @@ int main(void) {
   mi_heap_t* destroyed = mi_heap_new();
   printf("alignment.second_heap=%d\n", destroyed != NULL);
   unsigned char* terminal = destroyed == NULL ? NULL :
-      (unsigned char*)mi_heap_zalloc_aligned_at(destroyed, 81, 128, 11);
+      (unsigned char*)mi_heap_zalloc_aligned_at(destroyed, 81, 128, client_offset(11));
   bool terminal_owned = terminal != NULL && mi_heap_of(terminal) == destroyed &&
       all_zero(terminal, 81);
   printf("alignment.second_block=%d\n", terminal_owned);

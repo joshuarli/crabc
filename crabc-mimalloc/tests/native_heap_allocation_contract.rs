@@ -18,6 +18,10 @@ unsafe extern "C" {
 // Pinned public mi_option_t value for arena_reserve.
 const ARENA_RESERVE: i32 = 23;
 const PATH_MAX_PARAMETER: c_int = 4;
+// Debug pointer validation accepts word-aligned clients. Use a nonzero
+// word-sized offset so usable-size, reallocation, and free follow that
+// source precondition while release still exercises byte-granular offsets.
+const ALIGNED_OFFSET: usize = if cfg!(feature = "mi-debug-1") { 8 } else { 7 };
 
 static NEW_CALLS: AtomicUsize = AtomicUsize::new(0);
 unsafe extern "C" fn new_handler() { NEW_CALLS.fetch_add(1, Ordering::Relaxed); }
@@ -57,7 +61,7 @@ impl Replacement {
     }
     fn offset(self) -> Option<usize> {
         matches!(self, Self::AlignedAt | Self::AlignedAtZeroed | Self::AlignedAtCountedZeroed)
-            .then_some(7)
+            .then_some(ALIGNED_OFFSET)
     }
 }
 
@@ -111,7 +115,7 @@ fn heap_requests_preserve_content_failure_and_legal_release_lifetimes() {
             if zero { contents(counted, 73, 0); }
             counted.as_ptr().write_bytes(0xa5, 73);
             live.push((counted, 73));
-            for offset in [0, 7] {
+            for offset in [0, ALIGNED_OFFSET] {
                 let aligned = block(heaps::heap_malloc_aligned_at(heap, 73, 128, offset, zero));
                 assert_eq!((aligned.as_ptr().addr() + offset) % 128, 0);
                 if zero { contents(aligned, 73, 0); }
@@ -127,13 +131,13 @@ fn heap_requests_preserve_content_failure_and_legal_release_lifetimes() {
             (heaps::heap_zalloc(heap, usize::MAX), 12),
             (heaps::heap_calloc(heap, usize::MAX, 2), count_overflow_errno),
             (heaps::heap_mallocn(heap, usize::MAX, 2), count_overflow_errno),
-            (heaps::heap_calloc_aligned_at(heap, usize::MAX, 2, 128, 7), count_overflow_errno)] {
+            (heaps::heap_calloc_aligned_at(heap, usize::MAX, 2, 128, ALIGNED_OFFSET), count_overflow_errno)] {
             assert!(result.value.is_none());
             assert_eq!(result.errno.apply(0), errno);
             assert_eq!(result.errno.apply(37), 37);
         }
         for zero in [false, true] {
-            for offset in [0, 7] {
+            for offset in [0, ALIGNED_OFFSET] {
                 let invalid = heaps::heap_malloc_aligned_at(heap, 73, 24, offset, zero);
                 assert!(invalid.value.is_none());
                 assert_eq!(invalid.errno.apply(0), 22);
@@ -239,7 +243,10 @@ fn heap_requests_preserve_content_failure_and_legal_release_lifetimes() {
         for (index, (pointer, size)) in live.into_iter().enumerate() {
             contents(pointer, size, 0xa5);
             assert!(!heaps::heap_theap(destination).is_null(), "destination remains live at output {index}");
-            let observed = api::usable_size_sourced(pointer.as_ptr()).value;
+            let usable = api::usable_size_sourced(pointer.as_ptr());
+            assert_eq!(usable.errno.apply(37), 37);
+            let observed = usable.value;
+            assert!(observed >= size, "released live output {index} remains usable");
             let owner = heaps::heap_of(pointer.as_ptr());
             let replacement = heaps::heap_realloc(destination, pointer.as_ptr(), 8192, false);
             let moved = replacement.value.0.unwrap_or_else(|| panic!(
