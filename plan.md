@@ -22,103 +22,64 @@ Update this section in place when the frontier changes. A retained report qualif
 only its exact source, configuration, image, products, and execution context.
 
 - **Campaign:** 9/26 families remain `foundation-verified`; 17 are planned.
-  The frozen inventory contains 223 capabilities: 180 implemented, 43
-  selected-private, and none missing. Public x86 support and allocator promotion
-  remain disabled; selected C mimalloc and paused AArch64 behavior are preserved.
-- **Integrated runtime fixes:** math framing now consumes the complete fenv
-  output; POSIX readers cover the actual syslog, credentials, environment,
-  signals, and timer scenarios. C ABI readers replay retained compilation,
-  header/link provenance, and artifacts. Rust unwind consumers replay nested
-  cleanup evidence. The x86 `getgroups` facade refuses a count-query result
-  beyond its supplied buffer. Loader visibility fixtures authenticate both the
-  original linker bytes and their exact permitted symbol-visibility edit.
-- **Integrated allocator fixes:** foreign local free inspects the atomic owner
-  before borrowing page state; local allocation preserves subword requested
-  sizes. Process-once release precedes loader diagnostics. Arena reservation
-  preserves source wrapping and request headroom. Allocation pops initialize
-  source debug padding and use both page keys; explicit main-Heap allocation
-  stays on its fixed Theap. Normal-bin statistics and count-overflow diagnostics
-  have expanded source differential coverage. Heap dispatch, debug realloc
-  refusal, aligned zero-size reuse, and underlying failure diagnostics now
-  match their source controls. Attached TLD membership uses locked field
-  projections rather than borrowing concurrently mutable metadata. These
-  changes do not close entire allocator milestones.
-- **Qualification:** the launcher and Rust checks now default to the immutable
-  declared core image rather than the drifting development tag. Separate clean
-  cohorts have passed all 219 case executions; their final physical receipt
-  reconstruction and same-source family runs continue. The POSIX cohort also
-  passes all 54 matrix rows and its physical reader. Original signal-handler
-  counter-window, AIO watchdog, resolver,
-  compiler, and SQLite timeout failures remain retained. The corpus now retains
-  cleanup diagnostics and bounds pipe draining; a clean full 34-case corpus and
-  its independent physical reader pass. An isolated pass does not waive a failed
-  full cohort or transfer its source seal.
-- **Allocator evidence:** scoped initialization, arena policy, page/local
-  operations, remote publication, and generic exit have native C/Rust, Miri,
-  or model evidence. Expanded normal statistics pass all three selected
-  statistics modes. A clean source-qualified run passes all six foundation
-  leaves. Another passes all nine integration leaves, 17 commands, and 14
-  physical receipts, including stress, all seeded soaks, ownership,
-  interposition, DSO boundaries, the full corpus, Rust std/LTO, and Lua.
-  Those historical source seals do not qualify later merged changes.
-  A clean merged-source run at `86c4bb932` passes all eleven API/mode gates,
-  all ten evidence classes, and its independent physical reader; all four
-  modes match 983 C/Rust fields each. The scoped Heap/Theap aggregate passes
-  all 37 executable rows, while its ten gates retain reviewed conditions and
-  eight missing runner classes. All five option-effect receivers pass,
-  including 112 profiles and 2,100 keys; controlled PageMap decisions now
-  match exact source layout and counts. Hardware obligations remain open.
-- **ABI frontier:** complete-function physical provider joins replace many
-  per-symbol witnesses. A retained diagnostic assembly reconstructs with 232
-  remaining blockers; a fresh diagnostic assembly reduces this to 159, with
-  identity, family, companion, declaration, and semantic obligations still
-  explicit. Actual family admissions remain required. The two pinned C++
-  membarrier mismatches remain raw; 24 positive and negative provider controls
-  prove their reviewed boundary without remapping symbols. Checked-header and
-  locale companions are being corrected to join the exact supplied products.
-  Strong symbol-only archive imports now retain complete relocation absence
-  without claiming a call. Owned CRT lifecycle frames bind zero-size opening
-  symbols to exact ordered fragments and complete executable bytes.
-- **Current merged frontier:** native Rust signal masks, descriptor reads,
-  synchronous waits, and process queues have pinned-musl controls and facade
-  checks. Installed header replay uses real inventory origins and an independent
-  linker-image anchor; both retained product pairs replay successfully. All 27
-  compiler helpers now have complete owned bodies, private dependencies, and
-  actual installed-call joins; final selection composition continues.
-  Crypt evidence now physically revalidates both static link modes. The private
-  diagnostic adapter has its own header, preserving the frozen allocation ABI;
-  all 198 merged runner tests pass.
-- **Current allocator frontier:** source-shaped OS-aligned debug frees pass
-  116 cases after 27 reproduced mismatches. Private arena diagnostics pass six
-  release and six debug comparisons, context lifetime controls, and all 288
-  native arena cases. Fresh-worker statistics pass 12 profiles and 984 fields;
-  OS-aligned placement differences remain raw diagnostics. Main-Theap cache,
-  fresh sibling allocation/reclamation, and fixed copied-owner fork repair pass
-  scoped source controls and all 37 executable M6 entries. Its ten gates and
-  eight missing runners remain open, including copied auxiliary siblings and
-  performance. Fresh M1 passes with immutable image provenance; M2 remains
-  partial. All eight M3 local components, native 327 and strict Miri 15 pass,
-  while the aggregate still lacks its M2 prerequisite.
-- **Current qualification frontier:** the accepted-C `c7f6d8bef` cohort passes
-  all 219 executions and its retained physical reader; its resolver family
-  command and Rust std/LTO/unwind consumer also pass, with final independent
-  reads continuing. The corresponding native cohort retains an extracted
-  signal-handler-fork timeout and remains unqualified. Native and pinned musl
-  reproduce the upstream child-counter window under controlled scheduling;
-  those diagnostics do not waive the original failure. The frozen text cohort
-  completed its component runs but failed numeric corroboration scope; that
-  reader is corrected without transferring its source seal. A fresh shared
-  merged-source cohort will supply the next complete family runs.
-- **Remaining:** complete the planned runtime families and all applicable
-  allocator API/mode/source conditions; replay the ordered gates on merged
-  source; obtain physical huge-page/NUMA evidence and an uncontended qualified
-  performance matrix; then execute the isolated allocator switch, cleanup,
-  final requalification, and public-x86 promotion. Hardware permission and
-  host qualification limits remain external conditions, never passes.
-- **Evidence and worktrees:** retain raw failures and source-qualified inputs in
-  ignored report locations, replay them before retiring merged worktrees, and
-  prepare each fresh lane with `scripts/lanes/prepare-worktree.sh`. Git owns
-  implementation history; this section records only the current frontier.
+  The frozen inventory has 223 capabilities: 180 implemented, 43 selected-private,
+  none missing. Public x86 support and allocator promotion remain disabled;
+  selected C mimalloc and paused AArch64 behavior are preserved. Codex lanes use
+  only `gpt-6.1-sol` with medium reasoning; the target is 16 concurrent lanes,
+  subject to the tool's actual capacity.
+- **Runtime and ABI:** native Rust signal masks, descriptor reads, synchronous
+  waits, and process queues have pinned-musl controls and facade checks. Header
+  replay now uses actual inventory origins and the immutable linker image.
+  All 27 compiler helpers have complete bodies, private dependencies, constants,
+  and actual installed calls; the four-mode complete and pending selectors pass.
+  Crypt readers replay both static modes, and family admission binds their exact
+  retained product pair. Resolver admission compares the validated alias summary.
+  These corrections still require fresh complete family admissions.
+- **Allocator implementation:** atomic owner checks precede page borrows; local
+  allocation preserves subword sizes and source padding/page keys. Arena reserve
+  arithmetic, debug realloc refusal, aligned reuse, and failure diagnostics have
+  source controls. Attached TLDs use locked projections. Main-Theap cache and
+  fresh sibling allocation/reclamation now follow the source; fixed copied-owner
+  repair passes scoped controls. Copied auxiliary siblings and qualifying
+  performance remain open. The private diagnostic header preserves the frozen
+  allocation adapter ABI; all 198 merged runner tests pass.
+- **Allocator evidence:** exact `f7f2dba074` passes all eleven API/mode gates,
+  ten evidence classes, and its independent physical reader; each of four modes
+  matches 983 C/Rust fields. The existing runner deletes temporary driver binaries;
+  retained source, traces, reports, and logs remain physically verified. All 37
+  scoped Heap/Theap executable rows pass, while ten gates retain conditions and
+  eight missing runner classes. Fresh plain-worker statistics pass 12 profiles
+  and 984 fields; placement-sensitive OS-aligned differences remain raw.
+  External arena callback tests now exercise actual protection transitions and
+  match 184,010 fields; canonical M2 remains partial. M1 passes with immutable
+  image provenance. All eight M3 local components, native 327 and strict Miri 15
+  pass; its aggregate still lacks M2. M3 now rejects stale-source or wrong-image
+  prerequisites. Hardware obligations remain open.
+- **Runtime qualification:** the accepted-C `c7f6d8bef` cohort passes all 219
+  executions and its retained physical reader. Its Rust std/LTO/unwind consumer
+  and independent physical replay pass with no unmet conditions. Resolver's full
+  command passes, but final admission exposed the now-corrected alias-summary
+  comparison; no admission is transferred to newer source. A separate POSIX
+  cohort passes all 54 rows, with final admission reconstruction continuing.
+  The corresponding native `c7f6d8bef` cohort retains an extracted signal-handler
+  timeout and remains unqualified. Native and musl both reproduce the workload's
+  child-counter window under controlled scheduling; that does not waive failures.
+- **Next qualification:** fresh accepted-C and native cohorts each have one
+  producer. Family lanes consume their authenticated same-source products through
+  existing supplied-product interfaces. Complete header, compiler/CRT, text,
+  math/fenv, resolver, pthread, C ABI, and Rust-consumer composition remains open.
+  Dynamic 219-case qualification and the full libc-test aggregate are distinct
+  workloads. Original numeric corroboration, signal, AIO, compiler, resolver,
+  and corpus failures remain retained. The corrected text reader needs a fresh
+  family run. A full 34-case corpus and its independent physical reader pass on
+  their historical source, which does not qualify newer merges.
+- **Remaining:** finish planned runtime families and allocator source/API/mode
+  conditions; replay ordered gates on merged source; obtain physical huge-page
+  and NUMA evidence and an uncontended performance matrix; then execute the
+  isolated allocator switch, cleanup, final qualification, and public-x86
+  promotion. Hardware permissions and host qualification remain external
+  conditions, never passes. Retain exact raw evidence in ignored report locations
+  and replay its owning reader before retiring merged worktrees. Git owns history.
 
 ## Parallel lanes
 
