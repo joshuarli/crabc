@@ -2,13 +2,17 @@
 """Compare public default-Theap switching and direct allocation with pinned C."""
 
 import argparse
+import json
 from pathlib import Path
 import re
 import shutil
+import sys
+import tempfile
 
 import run as harness
 import x86_64_m4_gate as m4
 import x86_64_m7_gate as m7
+from x86_64_m6_upstream_heap_stress import receipts
 
 
 DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m6_public_theap_driver.c"
@@ -73,98 +77,217 @@ def require_trace(trace: dict[str, str], side: str, guarded_only: bool = False) 
         raise harness.HarnessError(f"pinned C public Theap image changed: {trace}")
 
 
-def main(profile: str = "release", guarded_only: bool = False) -> None:
-    harness.require_native_x86_64()
+PROFILES = ("release", "debug-1", "stat-1", "stat-2")
+RUNNER = "allocator-public-theap"
+DIRECT_TEST = "public_theap_selection_allocation_collection_and_lifetime"
+UNIT_TESTS = (
+    "source_api::tests::switched_default_aligned_allocation_keeps_selected_heap",
+    "source_api::tests::switched_default_reallocation_keeps_selected_heap",
+    "source_api::tests::direct_theap_variants_preserve_roots_and_reallocation_lifetime",
+    "runtime_lifecycle::tests::worker_fixed_theap_collection_preserves_auxiliary_default",
+    "runtime_lifecycle::tests::runtime_loader_tail_releases_once_before_delayed_output",
+)
+
+
+def command(output, label, argv, cwd, *, runtime=False, timeout=900):
+    record = harness.command_record(argv, cwd=cwd, **({"env": {}} if runtime else {}),
+                                    timeout_seconds=timeout)
+    raw, log = output / f"{label}.json", output / f"{label}.log"
+    harness.write_json(raw, record)
+    log.write_text(str(record["stdout"]) + str(record["stderr"]))
+    harness.require_success(record, f"public Theap {label}")
+    return record, [raw, log]
+
+
+def observe(drivers, output, profile, guarded_only, cases):
+    traces = {}
+    for side in ("c", "rust"):
+        record, logs = command(output, side, [str(drivers[side])], output, runtime=True, timeout=60)
+        if side == "c":
+            for context in ("main", "worker", "child", "fork"):
+                if re.findall(rf"^source\.{context}=([01]),([01]),([01])$",
+                              str(record["stderr"]), re.MULTILINE) != [("1", "1", "1")]:
+                    raise harness.HarnessError(f"pinned C {context} Theap ownership differs")
+            for context in (() if guarded_only else ("main", "worker", "child", "fork")):
+                if re.findall(rf"^source\.{context}\.collect_empty=([01])$",
+                              str(record["stderr"]), re.MULTILINE) != ["1"]:
+                    raise harness.HarnessError(f"pinned C {context} force collection leaves live Theap pages")
+        traces[side] = m7.parse_options_trace(str(record["stdout"]), side, BEGIN, END)
+        require_trace(traces[side], side, guarded_only)
+        cases.append((f"{profile}-{side}-run", 0, logs))
+    m7.compare_options_traces(traces["c"], traces["rust"])
+    return len(traces["c"])
+
+
+def require_one_native_test(record, label):
+    if len(re.findall(r"^test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; [0-9]+ filtered out;",
+                      str(record["stdout"]), re.MULTILINE)) != 1:
+        raise harness.HarnessError(f"public Theap {label} did not execute exactly one passing test")
+
+
+def native_controls(output, profile, cases):
+    products = {}
+    for index, test in enumerate((DIRECT_TEST, *UNIT_TESTS)):
+        label = "native_theap_contract" if index == 0 else test.rsplit("::", 1)[-1]
+        target = "native_theap_contract" if index == 0 else "crabc_mimalloc"
+        record, logs = command(output, label,
+            [harness.require_tool("cargo"), "test", "--locked", "--offline", "--target", m4.RUST_TARGET,
+             "-p", "crabc-mimalloc", "--no-default-features", "--message-format=json",
+             *(("--features", f"mi-{profile}") if profile != "release" else ()),
+             *(("--test", "native_theap_contract") if index == 0 else ("--lib",)),
+             test, "--", "--exact", "--nocapture", "--test-threads=1"], harness.ROOT)
+        require_one_native_test(record, label)
+        executables = set()
+        for line in str(record["stdout"]).splitlines():
+            if not line.startswith("{"):
+                continue
+            try:
+                message = json.loads(line)
+            except ValueError:
+                continue
+            if (message.get("reason") == "compiler-artifact" and
+                    message.get("target", {}).get("name") == target and message.get("executable")):
+                executables.add(message["executable"])
+        if len(executables) != 1:
+            raise harness.HarnessError(f"public Theap {label} lacks one compiler-identified test executable")
+        retained = output / target
+        shutil.copy2(Path(executables.pop()), retained)
+        products[f"{profile}-{target}"] = retained
+        cases.append((f"{profile}-{label}", 0, logs))
+    return products
+
+
+def run_profile(profile, guarded_only, cases):
+    execution = harness.require_native_x86_64(require_image_identity=True)
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, True)
-    if profile not in ("release", "debug-1", "stat-1", "stat-2"):
-        raise harness.HarnessError(f"unsupported public Theap profile: {profile}")
-    artifacts = ARTIFACTS if profile == "release" else ARTIFACTS / profile
+    output = ARTIFACTS if profile == "release" else ARTIFACTS / profile
     if guarded_only:
-        artifacts = artifacts / "guarded-configuration"
-    client_flags = ("-DCRABC_PUBLIC_GUARDED_CONFIGURATION_ONLY=1",) if guarded_only else ()
-    artifacts.mkdir(parents=True, exist_ok=True)
+        output = output / "guarded-configuration"
+    output.mkdir(parents=True, exist_ok=True)
+    retained_driver = output / DRIVER.name
+    shutil.copy2(DRIVER, retained_driver)
+    inputs = output / "inputs.json"
+    harness.write_json(inputs, {"profile": profile, "guarded_only": guarded_only, "upstream": pin,
+        "archive_sha256": harness.sha256_file(archive), "driver_sha256": harness.sha256_file(retained_driver),
+        "source": receipts.source_seal(harness.ROOT), "execution": execution,
+        "workload_assertions": True, "allocator_flags": list(m4.api_profile_flags(profile))})
     with harness.temporary_directory("crabc-mimalloc-m6-public-theap-") as name:
-        temporary = Path(name)
-        source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
+        source = harness.safe_extract(archive, Path(name) / "source", pin["archive_root"])
         compiler = harness.require_tool("musl-gcc")
-        c_driver = temporary / "public-theap-c"
-        build = harness.command_record(
-            [compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
-             "-DCRABC_M6_SOURCE_INTERNAL=1", *m4.api_profile_flags(profile), *client_flags,
-             "-I", str(source / "include"), "-I", str(source / "src"),
-             str(DRIVER), str(source / "src/static.c"),
-             "-pthread", "-o", str(c_driver)], cwd=source,
-        )
-        (artifacts / "c-build.log").write_text(str(build["stdout"]) + str(build["stderr"]))
-        harness.require_success(build, "public Theap C build")
-        shutil.copy2(c_driver, artifacts / "public-theap-c")
-        c_run = harness.command_record([str(c_driver)], cwd=temporary, env={}, timeout_seconds=60)
-        (artifacts / "c.log").write_text(str(c_run["stdout"]) + str(c_run["stderr"]))
-        harness.require_success(c_run, "public Theap C run")
-        for context in ("main", "worker", "child", "fork"):
-            if re.findall(rf"^source\.{context}=([01]),([01]),([01])$",
-                          str(c_run["stderr"]), re.MULTILINE) != [("1", "1", "1")]:
-                raise harness.HarnessError(f"pinned C {context} Theap ownership differs")
-        for context in (() if guarded_only else ("main", "worker", "child", "fork")):
-            if re.findall(rf"^source\.{context}\.collect_empty=([01])$",
-                          str(c_run["stderr"]), re.MULTILINE) != ["1"]:
-                raise harness.HarnessError(f"pinned C {context} force collection leaves live Theap pages")
-        c_trace = m7.parse_options_trace(str(c_run["stdout"]), "c", BEGIN, END)
-        require_trace(c_trace, "c", guarded_only)
-        library = m4.build_adapter_library(temporary, profile)
-        rust_driver = temporary / "public-theap-rust"
-        link = harness.command_record(
-            [compiler, "-std=c11", "-O2", *client_flags, "-I", str(source / "include"), str(DRIVER),
-             str(library), "-pthread", "-o", str(rust_driver)], cwd=source,
-        )
-        (artifacts / "rust-link.log").write_text(str(link["stdout"]) + str(link["stderr"]))
-        harness.require_success(link, "public Theap Rust link")
-        shutil.copy2(rust_driver, artifacts / "public-theap-rust")
-        rust_run = harness.command_record([str(rust_driver)], cwd=temporary, env={}, timeout_seconds=60)
-        (artifacts / "rust.log").write_text(str(rust_run["stdout"]) + str(rust_run["stderr"]))
-        harness.require_success(rust_run, "public Theap Rust run")
-        rust_trace = m7.parse_options_trace(str(rust_run["stdout"]), "rust", BEGIN, END)
-        require_trace(rust_trace, "rust", guarded_only)
-        m7.compare_options_traces(c_trace, rust_trace)
-        if guarded_only:
-            print(f"public Theap guarded configuration ({profile}): {len(c_trace)} source-built C/Rust keys match")
-            return
-        direct_test = "public_theap_selection_allocation_collection_and_lifetime"
-        direct = harness.command_record(
-            [harness.require_tool("cargo"), "test", "--locked", "--offline", "--target", m4.RUST_TARGET,
-             "-p", "crabc-mimalloc", "--no-default-features",
-             *(("--features", f"mi-{profile}") if profile != "release" else ()), "--test", "native_theap_contract",
-             direct_test, "--", "--exact", "--nocapture", "--test-threads=1"],
-            cwd=harness.ROOT, timeout_seconds=900,
-        )
-        (artifacts / "native_theap_contract.log").write_text(
-            str(direct["stdout"]) + str(direct["stderr"]))
-        harness.require_success(direct, "public Theap direct runtime contract")
-        if len(re.findall(r"^test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;",
-                          str(direct["stdout"]), re.MULTILINE)) != 1:
-            raise harness.HarnessError("public Theap direct runtime contract did not execute exactly one test")
-        for test in (
-            "source_api::tests::switched_default_aligned_allocation_keeps_selected_heap",
-            "source_api::tests::switched_default_reallocation_keeps_selected_heap",
-            "source_api::tests::direct_theap_variants_preserve_roots_and_reallocation_lifetime",
-            "runtime_lifecycle::tests::worker_fixed_theap_collection_preserves_auxiliary_default",
-            "runtime_lifecycle::tests::runtime_loader_tail_releases_once_before_delayed_output",
-        ):
-            record = harness.command_record(
-                ["python3", "compat/allocator/run_unit_x86_64.py", test],
-                cwd=harness.ROOT, timeout_seconds=900,
-            )
-            (artifacts / f"{test.rsplit('::', 1)[-1]}.log").write_text(
-                str(record["stdout"]) + str(record["stderr"]))
-            harness.require_success(record, f"public Theap regression {test}")
-        print(f"public Theap allocation and collection: {len(c_trace)} source-built C/Rust keys match; direct runtime contract and five fresh-process regressions pass")
+        client_flags = ("-DCRABC_PUBLIC_GUARDED_CONFIGURATION_ONLY=1",) if guarded_only else ()
+        common = [compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+                  *m4.api_profile_flags(profile), "-UNDEBUG", *client_flags, "-I", str(source / "include")]
+        drivers = {side: output / f"public-theap-{side}" for side in ("c", "rust")}
+        _, logs = command(output, "c-build", [*common, "-DCRABC_M6_SOURCE_INTERNAL=1",
+            "-I", str(source / "src"), str(retained_driver), str(source / "src/static.c"),
+            "-pthread", "-o", str(drivers["c"])], source)
+        cases.append((f"{profile}-c-build", 0, logs))
+        library = m4.build_adapter_library(output, profile)
+        _, logs = command(output, "rust-link", [*common, str(retained_driver), str(library),
+                          "-pthread", "-o", str(drivers["rust"])], source)
+        cases.append((f"{profile}-rust-link", 0, logs))
+        count = observe(drivers, output, profile, guarded_only, cases)
+    products = {f"{profile}-{side}": path for side, path in drivers.items()}
+    if not guarded_only:
+        products.update(native_controls(output, profile, cases))
+    native = output / "native-execution-provenance.json"
+    harness.write_json(native, harness.native_execution_attestation(
+        execution, harness.require_native_x86_64(require_image_identity=True)))
+    products.update({f"{profile}-adapter.a": library, f"{profile}-driver.c": retained_driver,
+        f"{profile}-upstream-archive": archive, f"{profile}-inputs.json": inputs,
+        f"{profile}-native-execution-provenance.json": native})
+    return count, products
+
+
+def run_cohort(profiles, guarded_only=False):
+    if any(profile not in PROFILES for profile in profiles):
+        raise harness.HarnessError("unsupported public Theap profile")
+    seal = receipts.source_seal(harness.ROOT)
+    cases, products, total = [], {}, 0
+    for profile in profiles:
+        count, selected = run_profile(profile, guarded_only, cases)
+        total += count
+        products.update(selected)
+        print(f"public Theap ({profile}): {count} source-built C/Rust keys match", flush=True)
+    if receipts.source_seal(harness.ROOT) != seal:
+        raise harness.HarnessError("source changed during public Theap profile cohort")
+    receipts.write_receipt(harness.ROOT, RUNNER, ARTIFACTS, products, cases,
+        parameters(profiles, guarded_only), True)
+    receipts.read_receipt(harness.ROOT, RUNNER)
+    return total
+
+
+def parameters(profiles, guarded_only):
+    return {"profiles": ",".join(profiles), "guarded-only": str(int(guarded_only)),
+            "watchdog-seconds": "60", "workload-assertions": "active"}
+
+
+def main(profile: str = "release", guarded_only: bool = False) -> None:
+    run_cohort((profile,), guarded_only)
+
+
+def run_differential() -> int:
+    return run_cohort(("release",))
+
+
+def cli(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--profile", choices=PROFILES, default="release")
+    selection.add_argument("--matrix", action="store_true")
+    parser.add_argument("--guarded-only", action="store_true")
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--read", action="store_true")
+    action.add_argument("--replay", action="store_true")
+    args = parser.parse_args(argv)
+    profiles = PROFILES if args.matrix else (args.profile,)
+    if not (args.read or args.replay):
+        run_cohort(profiles, args.guarded_only)
+        return 0
+    receipt = receipts.read_receipt(harness.ROOT, RUNNER)
+    if dict(receipt.parameters) != parameters(profiles, args.guarded_only):
+        raise harness.HarnessError("public Theap receipt profile or workload parameters differ")
+    labels = ["c-build", "rust-link", "c-run", "rust-run"]
+    if not args.guarded_only:
+        labels += ["native_theap_contract", *(test.rsplit("::", 1)[-1] for test in UNIT_TESTS)]
+    for profile in profiles:
+        if receipt.case_ids(f"{profile}-") != [f"{profile}-{label}" for label in labels]:
+            raise harness.HarnessError(f"{profile} public Theap receipt lacks the full executed cohort")
+    print("public Theap exact-source physical receipt: PASS", flush=True)
+    if args.replay:
+        execution = harness.require_native_x86_64(require_image_identity=True)
+        harness.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        scratch = Path(tempfile.mkdtemp(prefix="public-theap-replay-", dir=harness.TEMP_ROOT))
+        print(f"public Theap reader raw executions: {scratch}", flush=True)
+        for profile in profiles:
+            source = receipt.path.parent / "products"
+            native = harness.read_json(source / f"{profile}-native-execution-provenance.json")
+            harness.validate_native_execution_provenance(native, expected_image_id=execution["image_id"])
+            output = scratch / profile
+            output.mkdir()
+            drivers = {}
+            for target in ("c", "rust", *(("native_theap_contract", "crabc_mimalloc") if not args.guarded_only else ())):
+                binary = output / target
+                shutil.copyfile(source / f"{profile}-{target}", binary)
+                binary.chmod(0o755)
+                drivers[target] = binary
+            observe(drivers, output, profile, args.guarded_only, [])
+            if not args.guarded_only:
+                for index, test in enumerate((DIRECT_TEST, *UNIT_TESTS)):
+                    target = "native_theap_contract" if index == 0 else "crabc_mimalloc"
+                    label = target if index == 0 else test.rsplit("::", 1)[-1]
+                    record, _ = command(output, label,
+                        [str(drivers[target]), test, "--exact", "--nocapture", "--test-threads=1"],
+                        output, runtime=True)
+                    require_one_native_test(record, label)
+        print("public Theap retained full-profile replay: PASS", flush=True)
+    return 0
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=("release", "debug-1", "stat-1", "stat-2"), default="release")
-    parser.add_argument("--guarded-only", action="store_true",
-                        help="run the bounded configuration and live-client transaction")
-    arguments = parser.parse_args()
-    main(arguments.profile, arguments.guarded_only)
+    try:
+        raise SystemExit(cli())
+    except (harness.HarnessError, receipts.ReceiptError) as error:
+        print(f"public Theap failed: {error}", file=sys.stderr)
+        raise SystemExit(1)
