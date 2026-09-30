@@ -54,8 +54,14 @@ class HeapFaultReplayTests(unittest.TestCase):
                  mock.patch.object(producer.initialization, "compare_branch_trace", return_value="pass"), \
                  mock.patch.object(Path, "write_text", write):
                 producer.run_faults(replay=True)
-            self.assertEqual(execute.call_count, 17)
-            self.assertEqual(len(writes), 17)
+            controls = [call.args[0][1] for call in execute.call_args_list if len(call.args[0]) > 1]
+            for control in (
+                "owned_tls_key_registry::tests::failed_first_or_expansion_allocation_preserves_bitmap_and_generation",
+                "owned_tls_key_registry::tests::pre_mutation_release_lock_failure_retains_the_live_lease_for_retry",
+            ):
+                self.assertIn(control, controls)
+            self.assertEqual(execute.call_count, 19)
+            self.assertEqual(len(writes), 19)
             self.assertFalse(any(path.is_relative_to(artifacts) for path in writes))
 
 

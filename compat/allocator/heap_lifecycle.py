@@ -59,6 +59,8 @@ FAULT_UNITS = (
     "main_heap_thread::tests::later_tld_metadata_failure_precedes_theap_allocation_and_root_publication",
     "main_heap_thread::tests::later_theap_metadata_failure_releases_its_tld_before_root_publication",
     "subproc::main_heaps::tests::heap_theap_survives_first_regular_slot_allocation_failure",
+    "owned_tls_key_registry::tests::failed_first_or_expansion_allocation_preserves_bitmap_and_generation",
+    "owned_tls_key_registry::tests::pre_mutation_release_lock_failure_retains_the_live_lease_for_retry",
 )
 
 
@@ -247,7 +249,7 @@ def run_faults(*, replay: bool = False) -> None:
             "seal": integrated.source_seal(), "git": engine.git_provenance(), "image_id": image_id,
             "inputs": [engine.file_record(path) for path in inputs],
             "products": [engine.file_record(path) for path in products]}})
-    print(f"Heap fault controls: 28 public C/native and 32 key-bitmap ownership observations, 64 lock-overlap fields, 40 birth/publication fields, two paired metadata-publication refusals, three isolated retry/TLS controls passed; {artifacts}")
+    print(f"Heap fault controls: 28 public C/native and 32 key-bitmap ownership observations, 64 lock-overlap fields, 40 birth/publication fields, two paired metadata-publication refusals, five isolated retry/TLS controls passed; {artifacts}")
 
 
 def main() -> None:
