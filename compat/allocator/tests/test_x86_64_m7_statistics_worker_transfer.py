@@ -1,6 +1,7 @@
 """Validate the observable aligned-transfer statistics boundary."""
 
 import sys
+from unittest import mock
 import unittest
 from pathlib import Path
 
@@ -115,6 +116,28 @@ class InitialAttachmentStatisticsTests(unittest.TestCase):
                 del trace[key]
                 with self.assertRaises(harness.HarnessError):
                     worker.validate_initial(trace, 2, "small", "Rust")
+
+
+class InitialPlacementDiagnosticTests(unittest.TestCase):
+    def test_placement_diagnostic_cannot_change_another_statistics_workload(self):
+        for arguments in ([], ['--aligned-transfer']):
+            with self.subTest(arguments=arguments), \
+                 mock.patch.object(sys, 'argv', ['worker', '--initial-placement-diagnostic', *arguments]), \
+                 mock.patch.object(worker, 'run_worker_transfer_matrix') as execute, \
+                 mock.patch('sys.stderr'):
+                with self.assertRaises(SystemExit) as stopped:
+                    worker.main()
+                self.assertEqual(stopped.exception.code, 2)
+                execute.assert_not_called()
+
+    def test_explicit_initial_diagnostic_preserves_the_selected_request_and_profile(self):
+        arguments = ['worker', '--initial-attachment', '--initial-request', 'os-aligned-small',
+                     '--profile', 'stat-0', '--initial-placement-diagnostic', '--offline']
+        with mock.patch.object(sys, 'argv', arguments), \
+             mock.patch.object(worker, 'run_worker_transfer_matrix', return_value=0) as execute:
+            self.assertEqual(worker.main(), 0)
+        execute.assert_called_once_with(True, 'stat-0', initial=True,
+            request='os-aligned-small', placement_diagnostic=True)
 
 
 if __name__ == "__main__":

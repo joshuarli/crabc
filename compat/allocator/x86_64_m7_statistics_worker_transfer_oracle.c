@@ -107,6 +107,9 @@ int main(void) {
 #ifndef CRABC_STAT_LEVEL
 #define CRABC_STAT_LEVEL 2
 #endif
+#ifndef CRABC_INITIAL_PLACEMENT_DIAGNOSTIC
+#define CRABC_INITIAL_PLACEMENT_DIAGNOSTIC 0
+#endif
 #ifndef CRABC_INITIAL_REQUEST
 #define CRABC_INITIAL_REQUEST 64
 #endif
@@ -118,6 +121,9 @@ static const char* stages[] = { "before", "untouched", "allocated", "owner_exit"
 static mi_stats_t snapshots[STAGE_COUNT];
 static void* block;
 static size_t usable;
+#if CRABC_INITIAL_PLACEMENT_DIAGNOSTIC
+static uintptr_t warm_address, client_address;
+#endif
 static char owner_output[32768], final_output[32768];
 static size_t output_length;
 static void capture_output(const char* message, void* context) {
@@ -145,6 +151,9 @@ static void* owner(void* ignored) {
 #endif
   memset(block, 0x5a, CRABC_INITIAL_REQUEST);
   usable = mi_usable_size(block);
+#if CRABC_INITIAL_PLACEMENT_DIAGNOSTIC
+  client_address = (uintptr_t)block;
+#endif
   output_length = 0;
   mi_thread_stats_print_out(capture_output, owner_output);
   capture(ALLOCATED);
@@ -212,6 +221,9 @@ int main(void) {
   if (mi_reserve_os_memory(128 * 1024 * 1024, true, false) != 0) abort();
   void* warm = mi_malloc(64);
   if (warm == NULL) abort();
+#if CRABC_INITIAL_PLACEMENT_DIAGNOSTIC
+  warm_address = (uintptr_t)warm;
+#endif
   mi_free(warm);
   mi_collect(true);
   capture(BEFORE);
@@ -235,6 +247,20 @@ int main(void) {
   show_rows("owner_output", owner_output);
   show_rows("final_output", final_output);
   printf("CRABC_MI_M7_STATISTICS_INITIAL_TRANSFER_TRACE_END\n");
+#if CRABC_INITIAL_PLACEMENT_DIAGNOSTIC
+  /* These are integers copied from live client pointers, not metadata
+     identities. The conservative aligned range bound makes crossed PageMap
+     indices visible; these diagnostics do not adjust any counter. */
+  const size_t span = CRABC_INITIAL_ALIGNMENT + usable + 65536;
+  if (client_address > UINTPTR_MAX - span) abort();
+  fprintf(stderr, "placement.warm_index=%zu\n", (size_t)(warm_address >> 29));
+  fprintf(stderr, "placement.client_index=%zu\n", (size_t)(client_address >> 29));
+  fprintf(stderr, "placement.client_bound_index=%zu\n", (size_t)((client_address + span - 1) >> 29));
+  for (unsigned stage = 0; stage < STAGE_COUNT; stage++) {
+    fprintf(stderr, "placement.%s.mmap_calls=%lld\n", stages[stage],
+        (long long)(snapshots[stage].mmap_calls.total - snapshots[BEFORE].mmap_calls.total));
+  }
+#endif
   return 0;
 }
 

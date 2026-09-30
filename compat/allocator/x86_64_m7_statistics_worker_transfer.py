@@ -150,7 +150,7 @@ def validate_aligned(trace: dict[str, str], level: int, fresh: bool, side: str) 
                 raise harness.HarnessError(f"{side} lost printed {stage}.{field} total")
 
 
-def run_worker_transfer_matrix(offline: bool, selected: str | None = None, freeing_worker: str | None = None, *, initial: bool = False, request: str | None = None) -> int:
+def run_worker_transfer_matrix(offline: bool, selected: str | None = None, freeing_worker: str | None = None, *, initial: bool = False, request: str | None = None, placement_diagnostic: bool = False) -> int:
     harness.require_native_x86_64()
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
@@ -191,7 +191,8 @@ def run_worker_transfer_matrix(offline: bool, selected: str | None = None, freei
                 common = [harness.require_tool("musl-gcc"), "-std=c11", "-ftls-model=initial-exec",
                           "-DMI_LIBC_MUSL=1", *flags, f"-DCRABC_STAT_LEVEL={level}",
                           *(["-DCRABC_INITIAL_ATTACHMENT=1", f"-DCRABC_INITIAL_REQUEST={INITIAL_REQUESTS[case_name][0]}",
-                             f"-DCRABC_INITIAL_ALIGNMENT={INITIAL_REQUESTS[case_name][1]}"] if initial else [f"-DCRABC_FRESH_FREE={int(fresh)}"]),
+                             f"-DCRABC_INITIAL_ALIGNMENT={INITIAL_REQUESTS[case_name][1]}",
+                             *(["-DCRABC_INITIAL_PLACEMENT_DIAGNOSTIC=1"] if placement_diagnostic else [])] if initial else [f"-DCRABC_FRESH_FREE={int(fresh)}"]),
                           "-I", str(source / "include"), str(fixture)]
                 builds = {}
                 executions = {}
@@ -341,11 +342,15 @@ def main() -> int:
     parser.add_argument("--aligned-transfer", action="store_true")
     parser.add_argument("--initial-attachment", action="store_true")
     parser.add_argument("--initial-request", choices=INITIAL_REQUESTS)
+    parser.add_argument("--initial-placement-diagnostic", action="store_true",
+                        help="retain live-client PageMap indices and public mapping counters in stderr")
     parser.add_argument("--read-initial-attachment", type=Path)
     parser.add_argument("--profile", choices=ALIGNED_PROFILES)
     parser.add_argument("--read-aligned-transfer", type=Path)
     parser.add_argument("--freeing-worker", choices=("attached", "fresh"))
     args = parser.parse_args()
+    if args.initial_placement_diagnostic and not args.initial_attachment:
+        parser.error("--initial-placement-diagnostic requires --initial-attachment")
     if args.initial_request is not None and not args.initial_attachment:
         parser.error("--initial-request requires --initial-attachment")
     if args.read_initial_attachment is not None:
@@ -355,7 +360,7 @@ def main() -> int:
     if args.initial_attachment:
         if args.aligned_transfer or args.freeing_worker or args.read_aligned_transfer:
             parser.error("initial attachment is a separate worker lifecycle")
-        return run_worker_transfer_matrix(args.offline, args.profile, initial=True, request=args.initial_request)
+        return run_worker_transfer_matrix(args.offline, args.profile, initial=True, request=args.initial_request, placement_diagnostic=args.initial_placement_diagnostic)
     if args.read_aligned_transfer is not None:
         if args.aligned_transfer or args.profile is not None or args.freeing_worker is not None:
             parser.error("--read-aligned-transfer cannot produce a new matrix")
