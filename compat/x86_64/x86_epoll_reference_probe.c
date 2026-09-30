@@ -9,6 +9,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <poll.h>
+#include <sys/eventfd.h>
+#include <sys/signalfd.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -134,6 +137,173 @@ static int masked_wait_restores_signal_mask(int epoll_fd, int raw)
     return failed;
 }
 
+static int ready_token(int epoll_fd, uint64_t token)
+{
+    struct epoll_event result[2];
+    return epoll_wait(epoll_fd, result, 2, 0) == 1 &&
+           result[0].data.u64 == token && (result[0].events & EPOLLIN);
+}
+
+static int no_ready_events(int epoll_fd)
+{
+    struct epoll_event result[2];
+    return epoll_wait(epoll_fd, result, 2, 0) == 0;
+}
+
+static int eventfd_composition(void)
+{
+    int counter = eventfd(0, EFD_NONBLOCK);
+    int epoll_fd = epoll_create1(EPOLL_CLOEXEC);
+    struct epoll_event interest = { .events = EPOLLIN | EPOLLOUT,
+                                    .data.u64 = 0x1234 };
+    struct epoll_event result[2];
+    struct pollfd polled = { .fd = counter, .events = POLLIN | POLLOUT };
+    eventfd_t value;
+    int duplicate;
+
+    if (counter < 0 || epoll_fd < 0 ||
+        epoll_ctl(epoll_fd, EPOLL_CTL_ADD, counter, &interest))
+        return 100;
+    if (poll(&polled, 1, 0) != 1 || polled.revents != POLLOUT ||
+        eventfd_write(counter, UINT64_MAX - 2) || eventfd_write(counter, 1))
+        return 101;
+    errno = 0;
+    if (!expect_error(eventfd_write(counter, 1), EAGAIN) ||
+        poll(&polled, 1, 0) != 1 || polled.revents != POLLIN ||
+        epoll_wait(epoll_fd, result, 2, 0) != 1 || result[0].events != EPOLLIN ||
+        result[0].data.u64 != 0x1234)
+        return 102;
+    if (eventfd_read(counter, &value) || value != UINT64_MAX - 1 ||
+        poll(&polled, 1, 0) != 1 || polled.revents != POLLOUT ||
+        epoll_wait(epoll_fd, result, 2, 0) != 1 || result[0].events != EPOLLOUT ||
+        close(counter))
+        return 103;
+
+    counter = eventfd(2, EFD_NONBLOCK | EFD_SEMAPHORE);
+    interest.events = EPOLLIN | EPOLLONESHOT;
+    interest.data.u64 = 11;
+    if (counter < 0 || epoll_ctl(epoll_fd, EPOLL_CTL_ADD, counter, &interest) ||
+        !ready_token(epoll_fd, 11) || eventfd_read(counter, &value) || value != 1 ||
+        !no_ready_events(epoll_fd))
+        return 104;
+    polled.fd = counter;
+    polled.events = POLLIN;
+    interest.data.u64 = 22;
+    if (poll(&polled, 1, 0) != 1 || polled.revents != POLLIN ||
+        epoll_ctl(epoll_fd, EPOLL_CTL_MOD, counter, &interest) ||
+        !ready_token(epoll_fd, 22) || eventfd_read(counter, &value) || value != 1)
+        return 105;
+    interest.events = EPOLLIN | EPOLLET;
+    interest.data.u64 = 44;
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_MOD, counter, &interest) ||
+        !no_ready_events(epoll_fd) || eventfd_write(counter, 2) ||
+        !ready_token(epoll_fd, 44) || eventfd_read(counter, &value) || value != 1 ||
+        !no_ready_events(epoll_fd) || eventfd_read(counter, &value) || value != 1)
+        return 106;
+    errno = 0;
+    if (!expect_error(eventfd_read(counter, &value), EAGAIN) ||
+        eventfd_write(counter, 1) || !ready_token(epoll_fd, 44) || close(counter))
+        return 107;
+
+    counter = eventfd(1, EFD_NONBLOCK);
+    duplicate = dup(counter);
+    interest.events = EPOLLIN;
+    interest.data.u64 = 51;
+    if (counter < 0 || duplicate < 0 ||
+        epoll_ctl(epoll_fd, EPOLL_CTL_ADD, counter, &interest) || close(counter) ||
+        !ready_token(epoll_fd, 51))
+        return 108;
+    interest.data.u64 = 52;
+    errno = 0;
+    if (!expect_error(epoll_ctl(epoll_fd, EPOLL_CTL_MOD, duplicate, &interest), ENOENT) ||
+        epoll_ctl(epoll_fd, EPOLL_CTL_ADD, duplicate, &interest) ||
+        epoll_wait(epoll_fd, result, 2, 0) != 2 ||
+        !((result[0].data.u64 == 51 && result[1].data.u64 == 52) ||
+          (result[0].data.u64 == 52 && result[1].data.u64 == 51)) ||
+        eventfd_read(duplicate, &value) || value != 1 || !no_ready_events(epoll_fd) ||
+        eventfd_write(duplicate, 1) || epoll_wait(epoll_fd, result, 2, 0) != 2 ||
+        close(duplicate) || !no_ready_events(epoll_fd) || close(epoll_fd))
+        return 109;
+    return 0;
+}
+
+static int signalfd_composition(void)
+{
+    sigset_t selected, previous, empty, pending;
+    struct signalfd_siginfo info;
+    struct epoll_event interest = { .events = EPOLLIN, .data.u64 = 61 };
+    struct epoll_event result[2];
+    struct pollfd polled[2];
+    eventfd_t value;
+    int signal_fd, counter, epoll_fd, descriptor_flags, status_flags;
+
+    if (sigemptyset(&selected) || sigaddset(&selected, SIGUSR1) ||
+        sigemptyset(&empty) || sigprocmask(SIG_BLOCK, &selected, &previous))
+        return 120;
+    signal_fd = signalfd(-1, &selected, SFD_NONBLOCK | SFD_CLOEXEC);
+    counter = eventfd(0, EFD_NONBLOCK);
+    epoll_fd = epoll_create1(EPOLL_CLOEXEC);
+    if (signal_fd < 0 || counter < 0 || epoll_fd < 0 ||
+        epoll_ctl(epoll_fd, EPOLL_CTL_ADD, signal_fd, &interest))
+        return 121;
+    interest.data.u64 = 62;
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, counter, &interest))
+        return 122;
+    polled[0] = (struct pollfd){ .fd = signal_fd, .events = POLLIN };
+    polled[1] = (struct pollfd){ .fd = counter, .events = POLLIN };
+    errno = 0;
+    if (!expect_error(read(signal_fd, &info, sizeof(info)), EAGAIN) ||
+        poll(polled, 2, 0) != 0 || eventfd_write(counter, 3) || raise(SIGUSR1) ||
+        poll(polled, 2, 0) != 2 || polled[0].revents != POLLIN ||
+        polled[1].revents != POLLIN || epoll_wait(epoll_fd, result, 2, 0) != 2 ||
+        !((result[0].data.u64 == 61 && result[1].data.u64 == 62) ||
+          (result[0].data.u64 == 62 && result[1].data.u64 == 61)))
+        return 123;
+    if (read(signal_fd, &info, sizeof(info)) != sizeof(info) ||
+        info.ssi_signo != SIGUSR1 || info.ssi_pid != (uint32_t)getpid() ||
+        eventfd_read(counter, &value) || value != 3 || poll(polled, 2, 0) != 0 ||
+        !no_ready_events(epoll_fd))
+        return 124;
+    if (signalfd(signal_fd, &empty, 0) != signal_fd || raise(SIGUSR1) ||
+        poll(polled, 2, 0) != 0 || !no_ready_events(epoll_fd) ||
+        sigpending(&pending) || sigismember(&pending, SIGUSR1) != 1 ||
+        signalfd(signal_fd, &selected, 0) != signal_fd ||
+        poll(polled, 2, 0) != 1 || polled[0].revents != POLLIN ||
+        !ready_token(epoll_fd, 61))
+        return 125;
+    descriptor_flags = fcntl(signal_fd, F_GETFD);
+    status_flags = fcntl(signal_fd, F_GETFL);
+    if (read(signal_fd, &info, sizeof(info)) != sizeof(info) ||
+        info.ssi_signo != SIGUSR1 || sigpending(&pending) ||
+        sigismember(&pending, SIGUSR1) != 0 ||
+        descriptor_flags < 0 || !(descriptor_flags & FD_CLOEXEC) ||
+        status_flags < 0 || !(status_flags & O_NONBLOCK) ||
+        close(signal_fd) || close(counter) || close(epoll_fd) ||
+        sigprocmask(SIG_SETMASK, &previous, NULL))
+        return 126;
+    return 0;
+}
+
+static int isolated_event_composition(void)
+{
+    pid_t child = fork();
+    int status;
+    if (child < 0)
+        return 1;
+    if (child == 0) {
+        int result = eventfd_composition();
+        if (!result)
+            result = signalfd_composition();
+        if (result)
+            fprintf(stderr, "event composition failed at %d\n", result);
+        _Exit(result);
+    }
+    while (waitpid(child, &status, 0) < 0)
+        if (errno != EINTR)
+            return 1;
+    return !WIFEXITED(status) || WEXITSTATUS(status) != 0;
+}
+
 int main(void)
 {
     const uint64_t added_data = UINT64_C(0x1122334455667788);
@@ -241,6 +411,9 @@ int main(void)
     if (close(pipe_fds[0]) != 0 || close(pipe_fds[1]) != 0 ||
         close(epoll_fd) != 0)
         return 30;
+
+    if (isolated_event_composition())
+        return 36;
 
     puts("layout=size12 align1 offsets=0,4 syscalls=291,233,281 legacy=positive-size cloexec=enabled future-event=musl+raw-accepted masked=musl+raw-restored empty=0 add=readable data=u64-preserved modify=updated delete=removed errors=EINVAL,EBADF,ENOENT");
     return 0;

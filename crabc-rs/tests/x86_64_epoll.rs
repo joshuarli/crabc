@@ -298,3 +298,102 @@ fn x86_64_epoll_rejects_invalid_timeout_values() {
         Err(Errno::INVAL)
     ));
 }
+
+
+fn immediate_event_tokens(epoll: &crabc_rs::OwnedFd) -> Vec<u64> {
+    let mut storage = [MaybeUninit::uninit(); 4];
+    let zero = Timespec { tv_sec: 0, tv_nsec: 0 };
+    let (ready, _) = event::epoll::wait(epoll, &mut storage, Some(&zero))
+        .expect("observe current epoll readiness");
+    let mut tokens: Vec<_> = ready.iter().map(|record| record.data().u64()).collect();
+    tokens.sort_unstable();
+    tokens
+}
+
+#[test]
+fn x86_64_poll_and_epoll_track_eventfd_saturation_and_drain() {
+    let counter = event::eventfd(0, event::EventfdFlags::NONBLOCK).unwrap();
+    let epoll = event::epoll::create(event::epoll::CreateFlags::CLOEXEC).unwrap();
+    event::epoll::add(&epoll, &counter, event::epoll::EventData::new_u64(0x1234),
+        event::epoll::EventFlags::IN | event::epoll::EventFlags::OUT).unwrap();
+    let zero = Timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut polled = [event::PollFd::new(&counter, event::PollFlags::IN | event::PollFlags::OUT)];
+    assert_eq!(event::poll(&mut polled, Some(&zero)), Ok(1));
+    assert_eq!(polled[0].revents(), event::PollFlags::OUT);
+    event::eventfd_write(&counter, u64::MAX - 2).unwrap();
+    event::eventfd_write(&counter, 1).unwrap();
+    assert_eq!(event::eventfd_write(&counter, 1), Err(Errno::AGAIN));
+    assert_eq!(event::poll(&mut polled, Some(&zero)), Ok(1));
+    assert_eq!(polled[0].revents(), event::PollFlags::IN);
+    let mut storage = [MaybeUninit::uninit(); 1];
+    let (ready, _) = event::epoll::wait(&epoll, &mut storage, Some(&zero)).unwrap();
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].flags(), event::epoll::EventFlags::IN);
+    assert_eq!(ready[0].data().u64(), 0x1234);
+    assert_eq!(event::eventfd_read(&counter), Ok(u64::MAX - 1));
+    assert_eq!(event::eventfd_read(&counter), Err(Errno::AGAIN));
+    assert_eq!(event::poll(&mut polled, Some(&zero)), Ok(1));
+    assert_eq!(polled[0].revents(), event::PollFlags::OUT);
+    let (ready, _) = event::epoll::wait(&epoll, &mut storage, Some(&zero)).unwrap();
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].flags(), event::epoll::EventFlags::OUT);
+}
+
+#[test]
+fn x86_64_epoll_oneshot_rearm_observes_still_readable_semaphore() {
+    let counter = event::eventfd(2, event::EventfdFlags::NONBLOCK | event::EventfdFlags::SEMAPHORE).unwrap();
+    let epoll = event::epoll::create(event::epoll::CreateFlags::empty()).unwrap();
+    let flags = event::epoll::EventFlags::IN | event::epoll::EventFlags::ONESHOT;
+    event::epoll::add(&epoll, &counter, event::epoll::EventData::new_u64(11), flags).unwrap();
+    assert_eq!(immediate_event_tokens(&epoll), [11]);
+    assert_eq!(event::eventfd_read(&counter), Ok(1));
+    assert!(immediate_event_tokens(&epoll).is_empty());
+    let zero = Timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut polled = [event::PollFd::new(&counter, event::PollFlags::IN)];
+    assert_eq!(event::poll(&mut polled, Some(&zero)), Ok(1));
+    event::epoll::modify(&epoll, &counter, event::epoll::EventData::new_u64(22), flags).unwrap();
+    assert_eq!(immediate_event_tokens(&epoll), [22]);
+    assert_eq!(event::eventfd_read(&counter), Ok(1));
+    assert_eq!(event::eventfd_read(&counter), Err(Errno::AGAIN));
+    event::epoll::modify(&epoll, &counter, event::epoll::EventData::new_u64(33), flags).unwrap();
+    assert!(immediate_event_tokens(&epoll).is_empty());
+    event::eventfd_write(&counter, 1).unwrap();
+    assert_eq!(immediate_event_tokens(&epoll), [33]);
+}
+
+#[test]
+fn x86_64_epoll_edge_trigger_reports_once_then_reports_increment_after_drain() {
+    let counter = event::eventfd(2, event::EventfdFlags::NONBLOCK | event::EventfdFlags::SEMAPHORE).unwrap();
+    let epoll = event::epoll::create(event::epoll::CreateFlags::empty()).unwrap();
+    event::epoll::add(&epoll, &counter, event::epoll::EventData::new_u64(44),
+        event::epoll::EventFlags::IN | event::epoll::EventFlags::ET).unwrap();
+    assert_eq!(immediate_event_tokens(&epoll), [44]);
+    assert_eq!(event::eventfd_read(&counter), Ok(1));
+    assert!(immediate_event_tokens(&epoll).is_empty());
+    assert_eq!(event::eventfd_read(&counter), Ok(1));
+    assert_eq!(event::eventfd_read(&counter), Err(Errno::AGAIN));
+    assert!(immediate_event_tokens(&epoll).is_empty());
+    event::eventfd_write(&counter, 1).unwrap();
+    assert_eq!(immediate_event_tokens(&epoll), [44]);
+}
+
+#[test]
+fn x86_64_epoll_registration_survives_original_close_until_last_duplicate_closes() {
+    let original = event::eventfd(1, event::EventfdFlags::NONBLOCK).unwrap();
+    let duplicate = io::dup(&original).unwrap();
+    let epoll = event::epoll::create(event::epoll::CreateFlags::empty()).unwrap();
+    let flags = event::epoll::EventFlags::IN;
+    event::epoll::add(&epoll, &original, event::epoll::EventData::new_u64(51), flags).unwrap();
+    drop(original);
+    assert_eq!(immediate_event_tokens(&epoll), [51]);
+    assert_eq!(event::epoll::modify(&epoll, &duplicate, event::epoll::EventData::new_u64(52), flags),
+        Err(Errno::NOENT));
+    event::epoll::add(&epoll, &duplicate, event::epoll::EventData::new_u64(52), flags).unwrap();
+    assert_eq!(immediate_event_tokens(&epoll), [51, 52]);
+    assert_eq!(event::eventfd_read(&duplicate), Ok(1));
+    assert!(immediate_event_tokens(&epoll).is_empty());
+    event::eventfd_write(&duplicate, 1).unwrap();
+    assert_eq!(immediate_event_tokens(&epoll), [51, 52]);
+    drop(duplicate);
+    assert!(immediate_event_tokens(&epoll).is_empty());
+}
