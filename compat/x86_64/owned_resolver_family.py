@@ -981,12 +981,14 @@ def _validate_admission_sources(
 
     alias_paths, alias_result = replays["resolver-alias-private-bodies"]
     alias_report = _read_json(alias_paths["report"], "resolver alias admission report")
-    require(alias_result.get("report") == alias_report,
-            "resolver alias assessment report differs from retained bytes")
     selected = alias_report.get("selected_source")
     require(isinstance(selected, dict) and selected.get("revision") == source["revision"]
             and selected.get("source_sha256") == source["content_sha256"],
             "resolver alias source identity differs at admission")
+    # The alias reader returns a validated summary rather than the raw report.
+    # Replay that boundary before comparing the saved assessment result.
+    require(alias_result == _alias_reader(root, alias_paths),
+            "resolver alias assessment result differs from validated report")
 
     cancellation_paths, cancellation_result = replays["resolver-cancellation"]
     audit = _read_json(cancellation_paths["work"] / cancellation.ARTIFACT_AUDIT,
@@ -1012,6 +1014,8 @@ def admission_facts(root: Path, assessment_path: Path) -> dict[str, object]:
     host checks the contract, request, cohort receipts, selected source, and
     the saved component product roots against the canonical cohort. It returns
     those cohort identities for the ledger to join to admitted POSIX evidence.
+    Alias admission also replays retained compilation and linking, so callers
+    provide the alias reader's pinned compiler and private scratch directory.
     """
 
     import owned_posix_static_products as static

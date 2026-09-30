@@ -350,6 +350,7 @@ class OwnedResolverFamilyTests(unittest.TestCase):
         import owned_classic_netdb_component_receipt as classic
         import owned_resolver_cancellation_receipt as cancellation
         import owned_protocol_database as protocol
+        import owned_resolver_alias_contract_reader as alias
 
         roots = {
             label: {kind: self._directory(f"{label}-{kind}") for kind in ("static", "dynamic")}
@@ -410,10 +411,18 @@ class OwnedResolverFamilyTests(unittest.TestCase):
         (ROOT / request_components["protocol-database-product"]["report"]).write_text(
             json.dumps(protocol_report), encoding="utf-8")
         request = self._request(request_components)
+        alias_summary = {
+            "status": alias.STATUS, "coverage": alias.coverage_projection(),
+            "candidate_occurrence_count": 19, "full_occurrence_count": 41183,
+            "unnamed_occurrence_count": 3388,
+            "source_alias_routes": list(alias.SOURCE_ALIAS_ROUTES),
+        }
+        alias_result = {"reader_schema": alias.SCHEMA, "report": alias_summary,
+                        "aliases": [list(row) for row in alias.ALIASES]}
         results = {
             "resolver-network-physical": {"report": network_report},
             "classic-netdb": {"report": json.loads(classic_report.read_text(encoding="utf-8"))},
-            "resolver-alias-private-bodies": {"report": alias_report},
+            "resolver-alias-private-bodies": alias_result,
             "resolver-cancellation": {"report": {"source_sha256": cancellation_source}},
             "protocol-database-product": {"report": protocol_report},
         }
@@ -422,7 +431,8 @@ class OwnedResolverFamilyTests(unittest.TestCase):
             name: roots[label]
             for name, label in (("installed", "primary"), ("extracted", "extracted"))
         }
-        with (mock.patch.object(cohort, "_canonical_products", return_value=(source, products)),
+        with (mock.patch.object(alias, "validate_report", return_value=alias_summary) as alias_replay,
+              mock.patch.object(cohort, "_canonical_products", return_value=(source, products)),
               mock.patch.object(network, "product_paths", return_value=network_roots),
               mock.patch.object(static, "source_identity", return_value={
                   "revision": source["revision"], "content_sha256": source["content_sha256"],
@@ -431,6 +441,20 @@ class OwnedResolverFamilyTests(unittest.TestCase):
             self.assertTrue(assessment["family_complete"], assessment["gaps"])
             path = self._file("complete-assessment.json", json.dumps(assessment))
             self.assertEqual(family.admission_facts(ROOT, path)["source"]["revision"], source["revision"])
+            alias_replay.assert_called_once_with(
+                alias_file, root=ROOT, static_product=roots["primary"]["static"],
+                dynamic_product=roots["primary"]["dynamic"],
+                product_report=ROOT / request_components["resolver-alias-private-bodies"]["product_report"],
+                static_preparation=ROOT / request_components["resolver-alias-private-bodies"]["static_preparation"],
+                elf_facts=ROOT / request_components["resolver-alias-private-bodies"]["elf_facts"],
+                base_inventory=ROOT / request_components["resolver-alias-private-bodies"]["base_inventory"],
+            )
+            changed = json.loads(json.dumps(assessment))
+            changed["components"]["resolver-alias-private-bodies"]["result"]["report"]["candidate_occurrence_count"] += 1
+            path.write_text(json.dumps(changed), encoding="utf-8")
+            with self.assertRaisesRegex(family.ResolverFamilyError, "resolver alias assessment"):
+                family.admission_facts(ROOT, path)
+            path.write_text(json.dumps(assessment), encoding="utf-8")
 
             changed_work = cancellation_work / "late-artifact"
             changed_work.write_text("changed after behavior replay\n", encoding="utf-8")
@@ -468,7 +492,8 @@ class OwnedResolverFamilyTests(unittest.TestCase):
                         ROOT, cancellation_work)
                 else:
                     changed["components"][identifier]["inputs"]["report"] = family._identity(ROOT, report_file)
-                if identifier not in ("resolver-cancellation", "protocol-database-product"):
+                if identifier not in ("resolver-cancellation", "protocol-database-product",
+                                      "resolver-alias-private-bodies"):
                     changed["components"][identifier]["result"]["report"] = changed_report
                 path.write_text(json.dumps(changed), encoding="utf-8")
                 with self.subTest(component=identifier):
