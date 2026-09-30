@@ -167,7 +167,7 @@ def callable_provider_partition(
     return partition, counts
 
 
-def global_defined_symbols(path: Path, nm: str) -> set[str]:
+def global_defined_symbols(path: Path, nm: str, readelf: str = "readelf") -> set[str]:
     result = subprocess.run(
         [nm, "-g", "--defined-only", "--format=posix", str(path)],
         check=False,
@@ -181,7 +181,46 @@ def global_defined_symbols(path: Path, nm: str) -> set[str]:
         fields = line.split()
         if len(fields) >= 2 and fields[1] in {"T", "W"}:
             symbols.add(fields[0])
-    return symbols
+    # nm's text-section classification also includes ELF objects placed in
+    # .text. Only defined externally bound functions can satisfy a callable.
+    details = global_symbol_details(path, readelf)
+    return {
+        symbol for symbol in symbols
+        if any(
+            entry["binding"] in {"GLOBAL", "WEAK"} and entry["section"] != "UND"
+            for entry in details.get(symbol, [])
+        )
+    }
+
+
+def global_symbol_details(path: Path, readelf: str) -> dict[str, list[dict[str, str]]]:
+    require(shutil.which(readelf) is not None, f"readelf is unavailable: {readelf}")
+    result = subprocess.run(
+        [readelf, "--symbols", "--wide", str(path)],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    require(result.returncode == 0, f"readelf could not read {path}: {result.stderr.strip()}")
+    details: dict[str, list[dict[str, str]]] = {}
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) < 8 or not fields[0].endswith(":"):
+            continue
+        symbol_type, binding, visibility, section, name = fields[3:8]
+        if symbol_type != "FUNC" or name == "":
+            continue
+        details.setdefault(name, []).append(
+            {
+                "binding": binding,
+                "section": section,
+                "type": symbol_type,
+                "value": fields[1],
+                "visibility": visibility,
+            }
+        )
+    return details
 
 
 def extract_one(archive: Path, symbol: str, linker: str, nm: str, work_dir: Path) -> dict[str, str]:

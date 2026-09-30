@@ -55,6 +55,7 @@ from header_callable_linkage_audit import (
     callable_provider_partition,
     candidate_external_symbols,
     global_defined_symbols,
+    global_symbol_details,
     load_json,
     load_static_exports,
     require,
@@ -96,41 +97,13 @@ def parse_profile_assignment(values: Sequence[str], location: str) -> dict[str, 
     return parsed
 
 
-def global_symbol_details(path: Path, readelf: str) -> dict[str, list[dict[str, str]]]:
-    result = subprocess.run(
-        [readelf, "--symbols", "--wide", str(path)],
-        check=False,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    provider_require(result.returncode == 0, f"readelf could not read {path}: {result.stderr.strip()}")
-    details: dict[str, list[dict[str, str]]] = {}
-    for line in result.stdout.splitlines():
-        fields = line.split()
-        if len(fields) < 8 or not fields[0].endswith(":"):
-            continue
-        symbol_type, binding, visibility, section, name = fields[3:8]
-        if symbol_type != "FUNC" or name == "":
-            continue
-        details.setdefault(name, []).append(
-            {
-                "binding": binding,
-                "section": section,
-                "type": symbol_type,
-                "value": fields[1],
-                "visibility": visibility,
-            }
-        )
-    return details
-
-
 def extract_symbol(
     archive: Path,
     symbols: Sequence[str],
     linker: str,
     nm: str,
     work_dir: Path,
+    readelf: str = "readelf",
 ) -> tuple[dict[str, Any], Path | None]:
     provider_require(symbols, "ordinary extraction needs at least one symbol")
     stem = "-".join(symbols)
@@ -159,7 +132,7 @@ def extract_symbol(
             },
             None,
         )
-    defined = global_defined_symbols(output, nm)
+    defined = global_defined_symbols(output, nm, readelf)
     missing = sorted(set(symbols) - defined)
     if missing:
         return (
@@ -186,10 +159,11 @@ def extract_many(
     linker: str,
     nm: str,
     work_dir: Path,
+    readelf: str = "readelf",
 ) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for symbol in symbols:
-        record, _ = extract_symbol(archive, (symbol,), linker, nm, work_dir)
+        record, _ = extract_symbol(archive, (symbol,), linker, nm, work_dir, readelf)
         records.append(
             {
                 "detail": record["detail"],
@@ -216,7 +190,7 @@ def abi_only_record(
     GLOBAL-versus-WEAK binding.
     """
 
-    extraction, output = extract_symbol(archive, (symbol,), linker, nm, work_dir)
+    extraction, output = extract_symbol(archive, (symbol,), linker, nm, work_dir, readelf)
     if output is None:
         return {
             "detail": extraction["detail"],
@@ -268,7 +242,7 @@ def alias_record(
     work_dir: Path,
 ) -> dict[str, str]:
     provider_require(binding == "weak-same-address", f"unsupported alias binding for {name}")
-    extraction, output = extract_symbol(archive, (name, target), linker, nm, work_dir)
+    extraction, output = extract_symbol(archive, (name, target), linker, nm, work_dir, readelf)
     if output is None:
         return {
             "detail": extraction["detail"],
@@ -335,8 +309,8 @@ def feature_rows(
     return verified, replacements
 
 
-def profile_surface(archive: Path, visible_symbols: set[str], nm: str) -> set[str]:
-    return global_defined_symbols(archive, nm) & visible_symbols
+def profile_surface(archive: Path, visible_symbols: set[str], nm: str, readelf: str) -> set[str]:
+    return global_defined_symbols(archive, nm, readelf) & visible_symbols
 
 
 def profile_report(
@@ -407,8 +381,8 @@ def profile_report(
 
     provider_require(set(archives) == {"baseline", "enabled"}, f"feature {feature.identifier} needs isolated baseline and enabled archives")
     baseline = safe_archive(archives["baseline"], f"feature {feature.identifier} baseline archive")
-    baseline_surface = profile_surface(baseline, archive_visible_symbols, nm)
-    enabled_surface = profile_surface(enabled, archive_visible_symbols, nm)
+    baseline_surface = profile_surface(baseline, archive_visible_symbols, nm, readelf)
+    enabled_surface = profile_surface(enabled, archive_visible_symbols, nm, readelf)
     removed = sorted(baseline_surface - enabled_surface)
     archive_delta = sorted(enabled_surface - baseline_surface)
     expected_archive_delta = sorted(
@@ -458,15 +432,15 @@ def profile_report(
             + "; expected "
             + ", ".join(expected_enabled_abi_only)
         )
-    additive_extraction = extract_many(enabled, feature.additive_callables, linker, nm, work_dir)
+    additive_extraction = extract_many(enabled, feature.additive_callables, linker, nm, work_dir, readelf)
     for entry in additive_extraction:
         if entry["status"] != "extracted":
             failures.append(f"additive {entry['symbol']} did not extract ordinarily")
     baseline_replacement_extraction = extract_many(
-        baseline, feature.replacement_callables, linker, nm, work_dir
+        baseline, feature.replacement_callables, linker, nm, work_dir, readelf
     )
     replacement_extraction = extract_many(
-        enabled, feature.replacement_callables, linker, nm, work_dir
+        enabled, feature.replacement_callables, linker, nm, work_dir, readelf
     )
     for entry in [*baseline_replacement_extraction, *replacement_extraction]:
         if entry["status"] != "extracted":
@@ -570,7 +544,7 @@ def audit_provider_closure(
     with tempfile.TemporaryDirectory(prefix="crabc-x86-header-callable-provider-linkage.") as temporary:
         work_dir = Path(temporary)
         default_extraction = extract_many(
-            default_archive, sorted(default_symbols), linker, nm, work_dir
+            default_archive, sorted(default_symbols), linker, nm, work_dir, readelf
         )
         failures = [
             f"default static {entry['symbol']} did not extract ordinarily"

@@ -483,6 +483,35 @@ class HeaderCallableProviderLinkageAuditTests(unittest.TestCase):
             report["summary"]["incomplete_reasons"],
         )
 
+    @unittest.skipUnless(
+        all(shutil.which(tool) for tool in ("cc", "ar", "ld", "nm", "readelf")),
+        "requires native binutils and C compiler",
+    )
+    def test_text_section_object_cannot_supply_a_declared_function(self) -> None:
+        from header_callable_linkage_audit import extract_one
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = self.archive(
+                root,
+                "object-in-text",
+                'int default_owner __attribute__((section(".text"))) = 1;\n',
+            )
+            symbols = subprocess.check_output(
+                ["nm", "--defined-only", "--format=posix", str(archive)], text=True
+            )
+            self.assertIn("default_owner T ", symbols)
+            details = subprocess.check_output(
+                ["readelf", "--symbols", "--wide", str(archive)], text=True
+            )
+            self.assertIn("OBJECT", details)
+            for name, extract in (
+                ("default", lambda: extract_one(archive, "default_owner", "ld", "nm", root)),
+                ("selected", lambda: AUDIT.extract_symbol(archive, ("default_owner",), "ld", "nm", root)[0]),
+            ):
+                with self.subTest(audit=name):
+                    self.assertNotEqual(extract()["status"], "extracted")
+
     def test_unverified_replacement_variant_remains_an_inventory_fact(self) -> None:
         verified = ROSTER.FeatureArchive(
             identifier="x86-verified-replacement",
