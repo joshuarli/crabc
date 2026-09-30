@@ -734,14 +734,15 @@ class CorrectnessTests(GateFixture):
         source = m8.qualification.source_digest()
         product = self.root / "native-policy"
         product.mkdir()
+        container_product = str(m8.CONTAINER_ROOT / product.relative_to(ROOT))
         results = {}
         no_receipt = {"product:c-allocation-interposition", "product:stdio-allocator-interposition",
                       "product:package-corpus-input"}
         for name, canonical in summary["runnable_evidence"].items():
             log = report_path.parent / f"{name.replace(':', '-')}.log"
-            log.write_text(f"native-allocator-policy evidence: {product}\n" if name == summary["products"]["evidence"]
+            log.write_text(f"{summary['products']['evidence_line']}{container_product}\n" if name == summary["products"]["evidence"]
                            else "passed\n", encoding="utf-8")
-            command = (m8.bind_products(canonical, summary["products"], str(product))
+            command = (m8.bind_products(canonical, summary["products"], container_product)
                        if m8._uses_products(canonical) else canonical)
             entry = {"command": command, "log": gate.harness.relative(log), "status": "passed"}
             if name not in no_receipt:
