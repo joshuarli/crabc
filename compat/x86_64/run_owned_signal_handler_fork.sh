@@ -136,7 +136,7 @@ for scenario in "${cases[@]}"; do observe "oracle-$scenario" /oracle "$scenario"
 observe oracle-raise-race /oracle-raise-race
 if [ "$build_static" -eq 1 ]; then
     for mode in static static-pie; do
-        "$provided_static/bin/crabc-cc" "-$mode" --link-receipt "$work/root/$mode.crabc-link.json" "$work/workload.o" -o "$work/root/$mode"
+        "$provided_static/bin/crabc-cc" "-$mode" --link-receipt "${work#"$ROOT/"}/root/$mode.crabc-link.json" "$work/workload.o" -o "$work/root/$mode"
         "$provided_static/bin/crabc-cc" "-$mode" "$work/raise-race.o" "$work/print.o" -o "$work/root/$mode-raise-race"
         compare "$mode" "/$mode" "/$mode-raise-race"
     done
