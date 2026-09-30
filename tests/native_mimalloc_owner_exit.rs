@@ -89,3 +89,28 @@ fn native_mimalloc_four_tsd_passes_preserve_joined_clients() {
     assert_eq!(candidate_output.stdout, reference_output.stdout);
     assert_eq!(candidate_output.stderr, reference_output.stderr);
 }
+
+#[test]
+fn native_mimalloc_create_refusal_preserves_live_clients_through_cancelled_tsd() {
+    let reference = test_support::TempArtifact::new("native-mimalloc-worker-refusal-reference");
+    let candidate = test_support::TempArtifact::new("native-mimalloc-worker-refusal-candidate");
+    compile_fixture(&reference, false, "native_mimalloc_worker_refusal_test.c");
+    compile_fixture(&candidate, true, "native_mimalloc_worker_refusal_test.c");
+
+    let reference_output = run(&reference, false);
+    let candidate_output = run(&candidate, true);
+    assert!(
+        reference_output.status.success(),
+        "pinned musl worker refusal fixture failed: {}",
+        String::from_utf8_lossy(&reference_output.stderr),
+    );
+    assert_eq!(reference_output.stdout, b"native mimalloc worker refusal ok\n");
+    assert_eq!(
+        candidate_output.status,
+        reference_output.status,
+        "crabc worker refusal status differs; stderr: {}",
+        String::from_utf8_lossy(&candidate_output.stderr),
+    );
+    assert_eq!(candidate_output.stdout, reference_output.stdout);
+    assert_eq!(candidate_output.stderr, reference_output.stderr);
+}
