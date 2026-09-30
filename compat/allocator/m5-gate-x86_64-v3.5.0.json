@@ -66,10 +66,11 @@
         "native_sole_post_exit_lifecycle",
         "native_source_published_live_owner_exit",
         "native_source_selected_medium_owner_exit",
+        "native_subproc_destroy_finish_contract",
         "native_three_post_exit_lifecycle",
         "native_two_post_exit_lifecycle"
       ],
-      "scope": "One generic owner-exit traversal abandons or releases every page shape, races live publishers, and leaves post-exit clients freeable in any order by independent owners, including across fork gates. A failed final regular OS-page unmap retains its exact terminal owner after the second survivor free."
+      "scope": "One generic owner-exit traversal abandons or releases every page shape, races live publishers, and leaves post-exit clients freeable in any order by independent owners, including across fork gates. A failed final regular OS-page unmap retains its exact terminal owner after the second survivor free. A parked child member finishes after coordinated child destruction without accessing its destroyed child or allocations."
     },
     "native:abandon-reclaim-release": {
       "native_tests": [
@@ -90,6 +91,7 @@
       "native_tests": [
         "native_initial_local_page_engine_persistence",
         "native_heap_birth_geometry_contract",
+        "native_main_heap_birth_geometry_contract",
         "native_heap_stats_contract",
         "native_subproc_heap_birth_contract",
         "native_subproc_stats_contract",
