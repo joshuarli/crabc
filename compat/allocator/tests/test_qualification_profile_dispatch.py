@@ -95,6 +95,27 @@ class AllocatorQualificationProfileDispatchTests(unittest.TestCase):
                 with self.subTest(command=command, arguments=arguments):
                     self.assert_rejected(command, *arguments)
 
+    def test_divergence_defaults_and_explicit_profiles_reach_reader(self) -> None:
+        for operation in ([], ["--check"]):
+            for profile in (None, "correctness", "full"):
+                for before in (True, False):
+                    selected = [] if profile is None else ["--profile", profile]
+                    arguments = [*selected, *operation] if before else [*operation, *selected]
+                    with self.subTest(arguments=arguments):
+                        runner, dispatched = self.runner_arguments("allocator-divergence-evidence", *arguments)
+                        self.assertEqual(runner, "compat/allocator/divergence_evidence.py")
+                        self.assertEqual(dispatched, [*operation, "--profile", profile or "correctness"])
+
+    def test_divergence_reader_tests_and_invalid_profiles(self) -> None:
+        runner, arguments = self.runner_arguments("allocator-divergence-evidence", "--reader-tests")
+        self.assertEqual(runner, "compat/allocator/tests/test_divergence_evidence.py")
+        self.assertEqual(arguments, [])
+        for arguments in (["--profile"], ["--profile", "unknown"],
+                          ["--profile", "full", "--profile", "full"],
+                          ["--reader-tests", "--profile", "correctness"]):
+            with self.subTest(arguments=arguments):
+                self.assert_rejected("allocator-divergence-evidence", *arguments)
+
 
 if __name__ == "__main__":
     unittest.main()

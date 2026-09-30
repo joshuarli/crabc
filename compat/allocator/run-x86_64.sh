@@ -37,7 +37,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-m7 [--check|--gate ID|--reader-tests|--arena-print|--private-context-arena-print]
   allocator-m8 [--check|--gate ID|--reader-tests]
   allocator-m9 [--check|--reader-tests|--report PATH...]
-  allocator-divergence-evidence [--check|--reader-tests]
+  allocator-divergence-evidence [--profile correctness|full] [--check|--reader-tests]
   allocator-m10 [--profile correctness|full] [--check [--performance-receipt PATH]|--build-audit|--reader-tests]
   allocator-tls | allocator-lifecycle [--only runtime-process-policy-first-arena] | allocator-startup-regular-arena [--reader-tests] | allocator-init-recursion | allocator-concurrent-init | allocator-initialization-tld [--reader-tests] | allocator-fault | allocator-fault-seam-inventory [--os-publication-receiver|--metadata-publication-receiver|--compile-only|--canonical-m2-vm-c-compile-regression|--retry-helper-regression|--timeout-clock-helper-regression|--placement-warning-helper-regression|--mbind-boundary-regression|--huge-branch-diagnosis|--reader-tests]
   allocator-release-evidence | allocator-api-coverage | allocator-cmake-modes
@@ -576,15 +576,35 @@ case "$command" in
         run_in_container "${m10_command[@]}"
         ;;
     allocator-divergence-evidence)
-        # Exits nonzero until every algorithmic divergence has its evidence.
+        divergence_profile=correctness
+        divergence_profile_selected=false
+        divergence_arguments=()
+        while [ "$#" -gt 0 ]; do
+            if [ "$1" = --profile ]; then
+                [ "$#" -ge 2 ] || fail "allocator-divergence-evidence --profile requires correctness or full"
+                [ "$divergence_profile_selected" = false ] || fail "allocator-divergence-evidence accepts one profile"
+                case "$2" in correctness|full) ;; *) fail "allocator-divergence-evidence has an unknown profile" ;; esac
+                divergence_profile="$2"
+                divergence_profile_selected=true
+                shift 2
+            else
+                divergence_arguments+=("$1")
+                shift
+            fi
+        done
+        set -- "${divergence_arguments[@]}"
         if [ "$#" -eq 0 ]; then
             divergence_command=(python3 compat/allocator/divergence_evidence.py)
         elif [ "$#" -eq 1 ] && [ "$1" = --check ]; then
             divergence_command=(python3 compat/allocator/divergence_evidence.py --check)
         elif [ "$#" -eq 1 ] && [ "$1" = --reader-tests ]; then
+            [ "$divergence_profile_selected" = false ] || fail "allocator-divergence-evidence reader-tests does not select a profile"
             divergence_command=(python3 compat/allocator/tests/test_divergence_evidence.py)
         else
-            fail "allocator-divergence-evidence accepts only --check or --reader-tests"
+            fail "allocator-divergence-evidence accepts --check or --reader-tests and an applicable --profile correctness|full"
+        fi
+        if [ "$#" -eq 0 ] || [ "$1" != --reader-tests ]; then
+            divergence_command+=(--profile "$divergence_profile")
         fi
         ensure_image
         run_in_container "${divergence_command[@]}"

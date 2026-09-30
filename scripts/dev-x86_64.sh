@@ -189,8 +189,9 @@ Native Linux/x86-64 staged-foundation evidence commands:
   campaign-dynamic  run the owned-dynamic product gate when its prerequisites close
   campaign-qualification  run the ordered qualification gate when it is ready
   qualification-manifest [--profile correctness|full] [--through GATE|--status|--publish GATE PUBLICATION RECEIPT|--validate-receipt PATH|--private-admission]  execute the ordered qualification chain (or a prefix) into a source-bound receipt, report gate conditions, or select gate evidence in the native container
-  campaign-promotion-check  run the final promotion gate when it is ready
-  campaign-all  run the complete native x86 campaign gate sequence
+  promotion-closure --qualification-receipt PATH  reread current complete qualification and native-default products
+  campaign-promotion-check [--qualification-receipt PATH]  run the final promotion gate when it is ready
+  campaign-all [--qualification-receipt PATH]  run the complete native x86 campaign gate sequence
   qualification-candidate --work DIR [--inputs FILE] [--through STEP] [--dry-run]  build one cohort, run every family aggregate and gate producer, publish and check receipts, run the chain; restartable on the same revision
   routine-c-abi-matrix <family-id>  run checked routine C ABI evidence for one family
   headers-layouts-aggregate  run finite non-promoting header accounting evidence
@@ -3701,6 +3702,32 @@ run_in_container() {
         "$image_id" "$@"
 }
 
+run_in_promotion_reader_container() {
+    prepare_work_dir
+    local private_directory status=0
+    private_directory="$(mktemp -d "$TMP_DIR/.promotion-reader.XXXXXX")"
+    docker run --rm --init --read-only --network none \
+        --user "$(id -u):$(id -g)" \
+        "${GIT_METADATA_MOUNT[@]}" \
+        --platform "$PLATFORM" --workdir /workspace \
+        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env RUSTUP_HOME=/opt/rustup --env PATH=/opt/cargo/bin:/usr/local/bin:/usr/bin:/bin \
+        --env PYTHONDONTWRITEBYTECODE=1 --env GIT_OPTIONAL_LOCKS=0 \
+        --env GIT_CONFIG_COUNT=1 --env GIT_CONFIG_KEY_0=safe.directory \
+        --env GIT_CONFIG_VALUE_0=/workspace \
+        --volume "$ROOT_DIR:/workspace:ro" \
+        --volume "$WORK_DIR:/workspace/.work/x86_64:ro" \
+        --volume "$TARGET_VOLUME:/workspace/target:ro" \
+        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo:ro" \
+        --volume "$private_directory:/workspace/.work/x86_64/tmp:rw" \
+        --volume "$private_directory:/tmp:rw" \
+        "$IMAGE" "$@" || status=$?
+    rm -rf -- "$private_directory"
+    return "$status"
+}
+
 # The supplied sysroots and provider vendor are immutable development inputs.
 # Mount exactly those directories read-only over the read-only checkout and
 # give the consumer one fresh writable evidence root. This keeps input modes
@@ -7182,13 +7209,16 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "campaign-qualification takes no arguments"
         python3 "$ROOT_DIR/compat/x86_64/campaign_runner.py" qualification
         ;;
-    campaign-promotion-check)
-        [ "$#" -eq 0 ] || fail "campaign-promotion-check takes no arguments"
-        python3 "$ROOT_DIR/compat/x86_64/campaign_runner.py" promotion-check
-        ;;
-    campaign-all)
-        [ "$#" -eq 0 ] || fail "campaign-all takes no arguments"
-        python3 "$ROOT_DIR/compat/x86_64/campaign_runner.py" all
+    campaign-promotion-check|campaign-all)
+        if [ "$#" -ne 0 ]; then
+            [ "$#" -eq 2 ] && [ "$1" = --qualification-receipt ] || fail "$command accepts only --qualification-receipt PATH"
+            translate_owned_posix_product "$2" receipt-file >/dev/null || exit 2
+        fi
+        if [ "$command" = campaign-all ]; then
+            python3 "$ROOT_DIR/compat/x86_64/campaign_runner.py" all "$@"
+        else
+            python3 "$ROOT_DIR/compat/x86_64/campaign_runner.py" promotion-check "$@"
+        fi
         ;;
     qualification-candidate)
         # Host coordinator: each step is itself a dispatcher command that
@@ -7374,7 +7404,7 @@ case "$command" in
     owned-dynamic-io-cancellation) ;;
     owned-posix-timers|owned-pthread-scheduling|owned-pthread-cpuclock|owned-message-queues|owned-named-ipc|owned-fcntl|owned-static-dl-iterate-phdr|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
     owned-pthread-lifecycle) ;;
-    qualification-manifest) ;;
+    qualification-manifest|promotion-closure) ;;
     owned-static-sysroot|owned-posix-static-products|owned-posix-family|owned-posix-native|owned-pthread-family|owned-pthread-family-composition) ;;
     lua-static-source-build) ;;
     lua-dynamic-source-build) ;;
@@ -10151,6 +10181,12 @@ PY
     owned-pthread-lifecycle)
         [ "$#" -eq 0 ] || fail "owned-pthread-lifecycle takes no arguments"
         run_in_container bash /workspace/compat/x86_64/run_owned_pthread_lifecycle.sh
+        ;;
+    promotion-closure)
+        [ "$#" -eq 2 ] && [ "$1" = --qualification-receipt ] || fail "promotion-closure requires --qualification-receipt PATH"
+        promotion_receipt="$(translate_owned_posix_product "$2" receipt-file)" || exit 2
+        ensure_image
+        run_in_promotion_reader_container python3 /workspace/compat/x86_64/campaign_promotion_closure.py --qualification-receipt "$promotion_receipt"
         ;;
     qualification-manifest)
         qualification_gate_known() {
