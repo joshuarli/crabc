@@ -1498,6 +1498,7 @@ def _miri_compiler_inputs(listing: Mapping[str, Any], miri: Mapping[str, Any]) -
     dep_info = program.with_suffix(".d")
     dependencies: set[Path] = set()
     dependency_info: set[Path] = {dep_info}
+    search_directories = []
     for index, argument in enumerate(args):
         if argument == "--extern":
             dependency = (ROOT / args[index + 1].split("=", 1)[1]).resolve(strict=True)
@@ -1507,6 +1508,7 @@ def _miri_compiler_inputs(listing: Mapping[str, Any], miri: Mapping[str, Any]) -
             directory = (ROOT / args[index + 1].split("=", 1)[-1]).resolve()
             if not directory.is_relative_to(ROOT / ".work"):
                 raise GateError("Miri compiler search directory is outside owned artifacts")
+            search_directories.append({"path": run.relative(directory), "present": directory.exists()})
             # Rust accepts absent, unused search directories. The original
             # descriptor retains their names; explicit extern inputs must exist.
             if not directory.exists():
@@ -1564,6 +1566,7 @@ def _miri_compiler_inputs(listing: Mapping[str, Any], miri: Mapping[str, Any]) -
     return {
         "program": run.artifact_record(program), "dep_info": run.artifact_record(dep_info),
         "source_files": [run.artifact_record(path) for path in sorted(sources)],
+        "search_directories": search_directories,
         "dependencies": [run.artifact_record(path) for path in sorted(dependencies)],
         "dependency_info": [run.artifact_record(path) for path in sorted(dependency_info)],
         "sysroot": {"runtime_path": str(runtime_sysroot), "path": run.relative(sysroot),
@@ -1671,6 +1674,9 @@ def run_miri(contract: Mapping[str, Any]) -> dict[str, Any]:
             for recorded in records:
                 if run.artifact_record(ROOT / recorded["path"]) != recorded:
                     raise GateError(f"Miri physical input changed during execution: {recorded['path']}")
+            for directory in authority["search_directories"]:
+                if (ROOT / directory["path"]).exists() != directory["present"]:
+                    raise GateError(f"Miri compiler search path changed during execution: {directory['path']}")
             for tool in authority["tools"].values():
                 if run.sha256_file(Path(tool["executable_path"])) != tool["executable_sha256"]:
                     raise GateError("Miri selected tool changed during execution")
