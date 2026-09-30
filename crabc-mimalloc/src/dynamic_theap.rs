@@ -3697,6 +3697,7 @@ mod tests {
     /// until all client blocks and foreign atomic projections have quiesced.
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     pub(crate) fn managed_abandoned_lifecycle_trace(mut emit: impl FnMut(i64)) {
+        use core::sync::atomic::Ordering;
         for request in [37, SMALL_SIZE_MAX + 1024, 86699] {
             for blocked in [false, true] {
                 let (send, receive) = mpsc::channel();
@@ -3854,6 +3855,172 @@ mod tests {
                 for value in receive.recv().unwrap() { emit(value); }
             }
         }
+        unsafe extern "C" fn discard_output(_: *const core::ffi::c_char) {}
+        assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096,
+            unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard_output) }));
+        assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+        crate::source_options_api::option_set(crate::config::SourceOption::ArenaReserve as i32, 0);
+        crate::source_options_api::option_set(crate::config::SourceOption::PurgeDelay as i32, -1);
+        emit(-1027);
+        for request in [37, SMALL_SIZE_MAX + 1024, 86699] {
+            for blocked in [false, true] {
+                let mut region = DynamicArenaRegion::zeroed();
+                let region_address = region.as_ptr().expose_provenance();
+                let child = crate::source_heap_api::subproc_new();
+                assert!(!child.is_null(), "live child for cross-thread arena reclamation");
+                let child_address = child.expose_provenance();
+                let (ready_send, ready_receive) = mpsc::channel();
+                let (release_send, release_receive) = mpsc::channel();
+                let origin = thread::spawn(move || {
+                    let descriptor = crate::runtime_lifecycle::current_native_allocator_thread_descriptor();
+                    // SAFETY: this worker retains its own TLS descriptor through
+                    // its explicit allocator finish and physical thread exit.
+                    assert!(unsafe { crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(descriptor) });
+                    let child = core::ptr::with_exposed_provenance_mut(child_address);
+                    // SAFETY: the parent retains this child and external mapping
+                    // until both admitted workers and every client have quiesced.
+                    assert_eq!(unsafe { crate::source_heap_api::subproc_add_current_thread(child) },
+                        crate::source_heap_api::SubprocAddCurrentThread::Added);
+                    let mut arena = core::ptr::null_mut();
+                    assert!(unsafe { crate::source_heap_api::manage_os_memory_ex(
+                        core::ptr::with_exposed_provenance_mut(region_address), ARENA_MIN_SIZE,
+                        true, true, true, -1, true, &mut arena) });
+                    let heap = unsafe { crate::source_heap_api::heap_new_in_arena(arena) };
+                    assert!(!heap.is_null());
+                    let first = unsafe { crate::source_heap_api::heap_malloc(heap, request) }.value.expect("first client");
+                    let survivor = unsafe { crate::source_heap_api::heap_malloc(heap, request) }.value.expect("survivor client");
+                    let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                        .ready_child_subprocess_inputs().unwrap();
+                    // SAFETY: both clients are live, and this thread alone owns
+                    // their page until its explicit source thread finish below.
+                    let page = unsafe { binding.page_map().lookup_live_allocation(first) }.unwrap().unwrap().page();
+                    assert_eq!(unsafe { binding.page_map().lookup_live_allocation(survivor) }.unwrap().unwrap().page(), page);
+                    let state = unsafe { crate::types::Page::abandonment_state_at(page) };
+                    let original_thread = unsafe { state.xthread_id.as_ref() }.load(Ordering::Relaxed)
+                        & !(crate::types::PAGE_FLAG_MASK as usize);
+                    assert_eq!(crate::runtime_lifecycle::finish_current_thread_native_after_user_destructors(),
+                        crate::runtime_lifecycle::ThreadFinishResult::Finished);
+                    ready_send.send((heap.expose_provenance(), first.as_ptr().expose_provenance(),
+                        survivor.as_ptr().expose_provenance(), original_thread)).unwrap();
+                    // The retired owner makes no further allocator entry. Its
+                    // live pthread prevents physical thread-identity reuse.
+                    release_receive.recv().unwrap();
+                });
+                let (heap_address, first_address, survivor_address, original_thread) = ready_receive.recv().unwrap();
+                let target = thread::spawn(move || {
+                    let descriptor = crate::runtime_lifecycle::current_native_allocator_thread_descriptor();
+                    // SAFETY: this worker retains its own TLS descriptor through
+                    // its explicit allocator finish and physical thread exit.
+                    assert!(unsafe { crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(descriptor) });
+                    let child = core::ptr::with_exposed_provenance_mut(child_address);
+                    let heap = core::ptr::with_exposed_provenance_mut::<core::ffi::c_void>(heap_address);
+                    let first = NonNull::new(core::ptr::with_exposed_provenance_mut(first_address)).unwrap();
+                    let survivor = NonNull::new(core::ptr::with_exposed_provenance_mut(survivor_address)).unwrap();
+                    // SAFETY: the child remains live, and this fresh worker has
+                    // made no allocator entry before membership admission.
+                    assert_eq!(unsafe { crate::source_heap_api::subproc_add_current_thread(child) },
+                        crate::source_heap_api::SubprocAddCurrentThread::Added);
+                    let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                        .ready_child_subprocess_inputs().unwrap();
+                    let page_of = |client| unsafe { binding.page_map().lookup_live_allocation(client) }
+                        .unwrap().unwrap().page();
+                    let page = page_of(first);
+                    // SAFETY: the origin has finished and no target allocation
+                    // or foreign claim overlaps these short scalar projections.
+                    let state = unsafe { crate::types::Page::abandonment_state_at(page) };
+                    let memory = state.memid.arena_memory().unwrap();
+                    let slice = memory.slice_index as usize;
+                    let slices = memory.slice_count as usize;
+                    let arena = unsafe { ArenaView::from_ptr(memory.arena) }.unwrap();
+                    let bin = crate::size_class::bin(state.block_size).unwrap();
+                    let heap_pointer = heap.cast::<crate::types::Heap>();
+                    let pages = unsafe { (*heap_pointer).arena_pages_at(arena.arena().arena_index as usize) }.unwrap();
+                    let layout = crate::arena::ArenaPagesLayout::for_slice_count(arena.arena().slice_count).unwrap();
+                    let bitmap_clear = |index| {
+                        // SAFETY: the child/Heap retain this initialized image;
+                        // these atomic views never outlive the joined fixture.
+                        let map = unsafe { crate::bitmap::BitmapView::attach(
+                            pages.as_ptr().cast::<u8>().add(layout.bitmap_offset(index).unwrap()),
+                            layout.bitmap_layout().byte_size(), layout.bitmap_layout()) }.unwrap();
+                        map.is_clear_range(slice, 1) == Some(true)
+                    };
+                    let count = || unsafe { (*heap_pointer).abandoned_count(bin) }.unwrap();
+                    let span_free = |set| {
+                        let map = unsafe { arena.slices_free() }.unwrap();
+                        if set { map.is_set_range(slice, slices) == Some(true) }
+                        else { map.is_clear_range(slice, slices) == Some(true) }
+                    };
+                    let mut rows = std::vec![request as i64, blocked as i64, slices as i64,
+                        unsafe { state.used.as_ptr().read() } as i64,
+                        ((unsafe { state.xthread_id.as_ref() }.load(Ordering::Relaxed)
+                            & !(crate::types::PAGE_FLAG_MASK as usize)) == THREAD_ID_ABANDONED_MAPPED) as i64,
+                        count() as i64, !bitmap_clear(bin + 1) as i64];
+                    if blocked {
+                        let head = unsafe { crate::types::Page::abandonment_atomic_state_at(page) }
+                            .xthread_free.as_ptr().expose_provenance();
+                        let (held_send, held_receive) = mpsc::channel();
+                        let (unhold_send, unhold_receive) = mpsc::channel();
+                        let holder = thread::spawn(move || {
+                            // SAFETY: two live clients retain the page while
+                            // this worker owns only its atomic low-owner word.
+                            let head = unsafe { &*core::ptr::with_exposed_provenance::<crate::atomic::AtomicWord>(head) };
+                            assert_eq!(crate::remote_free::claim_abandoned_owner(head),
+                                crate::remote_free::AbandonedOwnerClaim::ClaimedUnowned);
+                            held_send.send(()).unwrap();
+                            unhold_receive.recv().unwrap();
+                            let mut hook: Option<fn()> = None;
+                            assert_eq!(crate::remote_free::try_unown_abandoned_head(head, &mut hook),
+                                crate::remote_free::AbandonedOwnerHeadTransition::Released);
+                        });
+                        held_receive.recv().unwrap();
+                        let fallback = unsafe { crate::source_heap_api::heap_malloc(heap, request) }.value.expect("held claim falls back");
+                        assert_ne!(page_of(fallback), page, "foreign low-owner claim refuses reassociation");
+                        rows.extend([!bitmap_clear(bin + 1) as i64, count() as i64,
+                            (page_of(first) == page && page_of(survivor) == page) as i64, span_free(false) as i64]);
+                        assert!(matches!(unsafe { crate::runtime_lifecycle::native_free(fallback) },
+                            crate::runtime_lifecycle::NativePageFreeResult::Freed));
+                        unsafe { crate::source_heap_api::heap_collect(heap, true) };
+                        unhold_send.send(()).unwrap();
+                        holder.join().unwrap();
+                    } else {
+                        rows.extend([!bitmap_clear(bin + 1) as i64, count() as i64,
+                            (page_of(first) == page && page_of(survivor) == page) as i64, span_free(false) as i64]);
+                    }
+                    let reclaimed = unsafe { crate::source_heap_api::heap_malloc(heap, request) }.value.expect("released claim retries");
+                    assert_eq!(page_of(reclaimed), page, "allocation reclaims the original abandoned page");
+                    let state = unsafe { crate::types::Page::abandonment_state_at(page) };
+                    let thread_id = unsafe { state.xthread_id.as_ref() }.load(Ordering::Relaxed)
+                        & !(crate::types::PAGE_FLAG_MASK as usize);
+                    rows.extend([bitmap_clear(bin + 1) as i64, count() as i64,
+                        (thread_id > THREAD_ID_ABANDONED_MAPPED
+                            && unsafe { state.theap.as_ptr().read() }.cast() == unsafe { crate::source_heap_api::heap_theap(heap) }) as i64,
+                        (thread_id != original_thread) as i64, unsafe { state.used.as_ptr().read() } as i64]);
+                    for client in [first, survivor, reclaimed] {
+                        // SAFETY: each distinct client is exactly once live on
+                        // the page this target now owns through source reclaim.
+                        assert!(matches!(unsafe { crate::runtime_lifecycle::native_free(client) },
+                            crate::runtime_lifecycle::NativePageFreeResult::Freed));
+                    }
+                    unsafe { crate::source_heap_api::heap_collect(heap, true) };
+                    rows.extend([bitmap_clear(0) as i64, bitmap_clear(bin + 1) as i64,
+                        count() as i64, span_free(true) as i64,
+                        (unsafe { binding.page_map().registers_address(first.as_ptr()) }.unwrap() == false
+                            && unsafe { binding.page_map().registers_address(survivor.as_ptr()) }.unwrap() == false) as i64]);
+                    assert!(unsafe { crate::source_heap_api::heap_release(heap, false) }, "source-valid child Heap delete after cross-thread reclamation, rows={rows:?}");
+                    assert_eq!(crate::runtime_lifecycle::finish_current_thread_native_after_user_destructors(),
+                        crate::runtime_lifecycle::ThreadFinishResult::Finished);
+                    rows
+                });
+                for value in target.join().expect("cross-thread target finishes") { emit(value); }
+                release_send.send(()).unwrap();
+                origin.join().unwrap();
+                // SAFETY: both workers and every client have quiesced before
+                // child/arena retirement and caller-owned mapping release.
+                assert!(unsafe { crate::source_heap_api::subproc_destroy(child) });
+                drop(region);
+            }
+        }
+
     }
 
     #[cfg(target_arch = "x86_64")]
