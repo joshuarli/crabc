@@ -101,8 +101,6 @@ def check_diagnostics(client, backend, raw):
                + re.escape(client.WARNING))
     if backend == "c":
         pattern += ("" if "child" in client.DRIVER.name else r"\n") + re.escape(assertion) + r"\n"
-    else:
-        pattern += r"\n"
     match = re.fullmatch(pattern, raw.decode("utf-8"))
     if match is None or int(match.group(1), 16) == 0:
         raise harness.HarnessError(f"{backend} callback diagnostics differ: {raw!r}")

@@ -33,6 +33,7 @@ class ManagedCallbackProfilesTests(unittest.TestCase):
     def test_diagnostics_preserve_warning_and_source_assertion_semantics(self):
         raw = f"mimalloc: warning: thread 0x1234: {managed.WARNING}\nsource.callback=1,1\n".encode()
         managed.check_diagnostics(managed, "c", raw)
+        managed.check_diagnostics(managed, "native", f"mimalloc: warning: thread 0x1234: {managed.WARNING}".encode())
         child_raw = f"mimalloc: warning: thread 0x5678: {child.WARNING}source.child_callback=1,1,1\n".encode()
         managed.check_diagnostics(child, "c", child_raw)
         with self.assertRaises(managed.harness.HarnessError):
