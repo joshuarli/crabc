@@ -118,9 +118,23 @@ caller_obligation = "finite input whose truncation fits signed128; total source 
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
+name = "__fixsfti"
+rust_signature = 'pub extern "C" fn __fixsfti(value: f32) -> Uint128'
+c_abi = "binary32-to-u128"
+caller_obligation = "finite input whose truncation fits signed128; total source saturation/NaN branches do not define invalid C casts"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
 name = "__fixunsdfti"
 rust_signature = 'pub extern "C" fn __fixunsdfti(value: f64) -> Uint128'
 c_abi = "binary64-to-u128"
+caller_obligation = "finite input whose truncation fits unsigned128; total source saturation/NaN branches do not define invalid C casts"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__fixunssfti"
+rust_signature = 'pub extern "C" fn __fixunssfti(value: f32) -> Uint128'
+c_abi = "binary32-to-u128"
 caller_obligation = "finite input whose truncation fits unsigned128; total source saturation/NaN branches do not define invalid C casts"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
@@ -132,9 +146,23 @@ caller_obligation = "signed128 two-word carrier; source rounds to nearest with t
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
+name = "__floattisf"
+rust_signature = 'pub extern "C" fn __floattisf(value: Uint128) -> f32'
+c_abi = "u128-to-binary32"
+caller_obligation = "signed128 two-word carrier; source rounds to nearest with ties to even"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
 name = "__floatuntidf"
 rust_signature = 'pub extern "C" fn __floatuntidf(value: Uint128) -> f64'
 c_abi = "u128-to-binary64"
+caller_obligation = "unsigned128 two-word carrier; source rounds to nearest with ties to even"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__floatuntisf"
+rust_signature = 'pub extern "C" fn __floatuntisf(value: Uint128) -> f32'
+c_abi = "u128-to-binary32"
 caller_obligation = "unsigned128 two-word carrier; source rounds to nearest with ties to even"
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 

@@ -34,7 +34,8 @@ MEMBER_NAME = "crabc-builtins.o"
 REQUIRED_SYMBOLS = frozenset({
     "__addoti4", "__ashlti3", "__ashrti3", "__bswapdi2", "__bswapsi2", "__bswapti2",
     "__clzti2", "__ctzti2", "__divdc3", "__divmodti4", "__divti3", "__ffsti2", "__lshrti3",
-    "__fixdfti", "__fixunsdfti", "__floattidf", "__floatuntidf",
+    "__fixdfti", "__fixsfti", "__fixunsdfti", "__fixunssfti",
+    "__floattidf", "__floattisf", "__floatuntidf", "__floatuntisf",
     "__modti3", "__muldc3", "__muloti4", "__multi3", "__parityti2", "__popcountdi2",
     "__popcountti2", "__suboti4", "__udivmodti4", "__udivti3", "__umodti3",
 })
@@ -48,7 +49,7 @@ SHARED_LIBC_METADATA = {
     "dynsym": False,
 }
 HELPER_ABIS = frozenset({
-    "u128-to-binary64", "binary64-to-u128",
+    "u128-to-binary64", "binary64-to-u128", "u128-to-binary32", "binary32-to-u128",
     "complex-double", "u128-binary", "u128-bit-count", "u128-byte-swap",
     "u128-divmod-slot", "u128-overflow-slot", "u128-shift", "u32-byte-swap",
     "u64-bit-count", "u64-byte-swap",

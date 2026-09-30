@@ -50,7 +50,8 @@ MATERIALIZED_DYNAMIC_DOCUMENTATION = Path("compat/x86_64/materialized-dynamic-sy
 SELECTION_DOCUMENTATION = Path("compat/x86_64/native-abi-selection.md")
 ELF_READER = Path("compat/x86_64/loader_debug_abi_evidence.py")
 CAST_PROBE = Path("builtins/fixtures/x86_64_int128_casts_probe.c")
-SOURCE_FILES = (CAST_PROBE, CONTRACT, SOURCE, BUILDER, DYNAMIC_BUILDER, DYNAMIC_QUALIFICATION, AGGREGATE_PROBE, AGGREGATE_START, AGGREGATE_RUNNER,
+BINARY32_CAST_PROBE = Path("builtins/fixtures/x86_64_binary32_casts_probe.c")
+SOURCE_FILES = (CAST_PROBE, BINARY32_CAST_PROBE, CONTRACT, SOURCE, BUILDER, DYNAMIC_BUILDER, DYNAMIC_QUALIFICATION, AGGREGATE_PROBE, AGGREGATE_START, AGGREGATE_RUNNER,
                 SHARED_PLACEMENT_RUNNER, *SHARED_PLACEMENT_FIXTURES, READER, SELECTION, DOCUMENTATION,
                 BUILTINS_DOCUMENTATION, MATERIALIZED_DYNAMIC_DOCUMENTATION, SELECTION_DOCUMENTATION, ELF_READER)
 SCHEMA = "crabc.x86_64-compiler-helper-owner/v1"
@@ -72,7 +73,7 @@ SHARED_LIBC_METADATA = {
     "dynsym": False,
 }
 HELPER_ABIS = {
-    "u128-to-binary64", "binary64-to-u128",
+    "u128-to-binary64", "binary64-to-u128", "u128-to-binary32", "binary32-to-u128",
     "complex-double", "u128-binary", "u128-bit-count", "u128-byte-swap",
     "u128-divmod-slot", "u128-overflow-slot", "u128-shift", "u32-byte-swap",
     "u64-bit-count", "u64-byte-swap",

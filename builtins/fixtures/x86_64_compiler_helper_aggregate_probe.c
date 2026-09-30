@@ -105,6 +105,15 @@ static int equal_complex(complex_double value, double real, double imaginary) {
 
 #include "x86_64_int128_casts_probe.c"
 
+// Keep the two floating formats' volatile operands independent.
+#define unsigned_input binary32_unsigned_input
+#define signed_input binary32_signed_input
+#define floating_input binary32_floating_input
+#include "x86_64_binary32_casts_probe.c"
+#undef unsigned_input
+#undef signed_input
+#undef floating_input
+
 int crabc_x86_64_compiler_helper_aggregate_probe(void) {
     const u128 one = 1;
     const u128 word = one << 64;
@@ -135,7 +144,9 @@ int crabc_x86_64_compiler_helper_aggregate_probe(void) {
     if (CALL_ADDOTI4(maximum, 1, &overflow) != minimum || overflow != 1) return 16;
     if (CALL_SUBOTI4(minimum, 1, &overflow) != maximum || overflow != 1) return 17;
     if (CALL_MULOTI4(maximum, 2, &overflow) != -2 || overflow != 1) return 18;
-    return crabc_x86_64_int128_casts_probe();
+    int binary64_status = crabc_x86_64_int128_casts_probe();
+    if (binary64_status != 0) return binary64_status;
+    return crabc_x86_64_binary32_casts_probe();
 }
 
 #ifndef CRABC_BUILTINS_FREESTANDING
