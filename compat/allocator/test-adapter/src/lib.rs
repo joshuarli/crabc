@@ -137,6 +137,7 @@ mod enabled {
         Some(unsafe { &mut *raw })
     }
 
+    #[cfg(feature = "test-arena-diagnostics")]
     fn active_arena_diagnostic_context() -> Option<NonNull<TestAllocatorContext>> {
         let raw = CONTEXT.load(Ordering::Acquire);
         if is_transition_state(raw) { return None; }
@@ -151,6 +152,7 @@ mod enabled {
     /// is valid only during its callback and must not be retained. Delivery must
     /// not unwind, replace the pair, or shut down the context. It may allocate/free
     /// through this adapter without retaining a context borrow.
+    #[cfg(feature = "test-arena-diagnostics")]
     #[no_mangle]
     pub unsafe extern "C" fn crabc_test_register_output(
         output: Option<unsafe extern "C" fn(*const core::ffi::c_char, *mut c_void)>,
@@ -168,6 +170,7 @@ mod enabled {
     /// The caller retains the creating-thread context and output pair, excludes
     /// concurrent page/registration mutation, and forbids callback shutdown or
     /// pair replacement. A callback may allocate/free between short projections.
+    #[cfg(feature = "test-arena-diagnostics")]
     #[no_mangle]
     pub unsafe extern "C" fn crabc_test_debug_show_arenas() {
         if let Some(context) = active_arena_diagnostic_context() {
@@ -181,6 +184,7 @@ mod enabled {
     /// # Safety
     /// The caller satisfies `crabc_test_debug_show_arenas`'s retained context,
     /// callback lifetime, and creating-thread serialization obligations.
+    #[cfg(feature = "test-arena-diagnostics")]
     #[no_mangle]
     pub unsafe extern "C" fn crabc_test_arenas_print() {
         unsafe { crabc_test_debug_show_arenas() };

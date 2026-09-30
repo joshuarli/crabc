@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: MIT
  *
  * Test-only arena diagnostics for a selected private allocator context.
+ * Build with the test-arena-diagnostics Cargo feature before using these entries.
  * Allocation fixtures include the allocation adapter header directly; arena
  * fixtures explicitly opt into these callback and traversal obligations.
  */

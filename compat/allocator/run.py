@@ -25539,6 +25539,23 @@ def integration_provenance() -> dict[str, str]:
     }
 
 
+def test_adapter_build_surface(
+    expected_symbols: Sequence[str], *, architecture: str, arena_diagnostics: bool
+) -> tuple[str, list[str]]:
+    """Select the exact allocation ABI or its explicitly requested arena extension."""
+
+    expected = list(expected_symbols)
+    if not arena_diagnostics:
+        return "test-adapter", expected
+    if architecture != "x86_64":
+        raise HarnessError("private arena diagnostics require native x86")
+    header = ALLOCATOR_ROOT / "test-adapter/crabc-mimalloc-test-arena-adapter.h"
+    diagnostics = adapter_header_function_names(header.read_text())
+    if not diagnostics or set(expected).intersection(diagnostics):
+        raise HarnessError("private arena diagnostic header must extend the allocation ABI")
+    return "test-arena-diagnostics", sorted(expected + diagnostics)
+
+
 def build_test_adapter(
     readelf: str,
     nm: str,
@@ -25548,8 +25565,22 @@ def build_test_adapter(
     architecture: str = "aarch64",
     artifact_root: Path | None = None,
     expected_symbols: Sequence[str] | None = None,
+    arena_diagnostics: bool = False,
 ) -> tuple[Path, list[str], dict[str, Any]]:
     """Build and audit the test-only prefixed Rust staticlib and optional cdylib."""
+
+    if expected_symbols is None:
+        expected_symbols = contract.get("expected_adapter_symbols")
+    if (
+        not isinstance(expected_symbols, Sequence)
+        or isinstance(expected_symbols, (str, bytes))
+        or not expected_symbols
+        or not all(isinstance(symbol, str) and symbol for symbol in expected_symbols)
+    ):
+        raise HarnessError("Rust test adapter expected symbols are absent or invalid")
+    features, expected_symbols = test_adapter_build_surface(
+        expected_symbols, architecture=architecture, arena_diagnostics=arena_diagnostics
+    )
 
     if artifact_root is None:
         artifact_root = ARTIFACT_ROOT / "test-adapter"
@@ -25577,7 +25608,7 @@ def build_test_adapter(
         "--package",
         "crabc-mimalloc-test-adapter",
         "--features",
-        "test-adapter",
+        features,
         "--target",
         rust_target,
         "--release",
@@ -25598,7 +25629,7 @@ def build_test_adapter(
         "--package",
         "crabc-mimalloc-test-adapter",
         "--features",
-        "test-adapter",
+        features,
         "--target",
         rust_target,
         "--release",
@@ -25640,15 +25671,6 @@ def build_test_adapter(
     ):
         raise HarnessError("static-only Rust test adapter declares a cdylib contract")
     static_library = release_root / static_filename
-    if expected_symbols is None:
-        expected_symbols = contract.get("expected_adapter_symbols")
-    if (
-        not isinstance(expected_symbols, Sequence)
-        or isinstance(expected_symbols, (str, bytes))
-        or not expected_symbols
-        or not all(isinstance(symbol, str) and symbol for symbol in expected_symbols)
-    ):
-        raise HarnessError("Rust test adapter expected symbols are absent or invalid")
     archive_symbols = validate_adapter_dynamic_symbols(
         archive_defined_symbols(nm, static_library), expected_symbols
     )

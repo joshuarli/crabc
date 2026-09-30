@@ -1897,6 +1897,31 @@ failed   : 0
         with self.assertRaisesRegex(RUNNER.HarnessError, "forbidden allocator exports"):
             RUNNER.validate_adapter_dynamic_symbols([*expected, "malloc", "mi_malloc"], expected)
 
+    def test_adapter_diagnostics_surface_requires_explicit_native_selection(self) -> None:
+        base = ["crabc_test_free", "crabc_test_init", "crabc_test_malloc"]
+        features, expected = RUNNER.test_adapter_build_surface(
+            base, architecture="x86_64", arena_diagnostics=False
+        )
+        self.assertEqual(features, "test-adapter")
+        self.assertEqual(expected, base)
+        features, selected = RUNNER.test_adapter_build_surface(
+            base, architecture="x86_64", arena_diagnostics=True
+        )
+        diagnostics = ["crabc_test_arenas_print", "crabc_test_debug_show_arenas",
+                       "crabc_test_register_output"]
+        self.assertEqual(features, "test-arena-diagnostics")
+        self.assertEqual(selected, sorted(base + diagnostics))
+        RUNNER.validate_adapter_dynamic_symbols(selected, selected)
+        for exports in [base, selected[:-1], selected + ["crabc_test_foreign"]]:
+            with self.assertRaises(RUNNER.HarnessError):
+                RUNNER.validate_adapter_dynamic_symbols(exports, selected)
+        with self.assertRaisesRegex(RUNNER.HarnessError, "unexpected adapter symbols"):
+            RUNNER.validate_adapter_dynamic_symbols(selected, base)
+        with self.assertRaisesRegex(RUNNER.HarnessError, "forbidden allocator exports"):
+            RUNNER.validate_adapter_dynamic_symbols(selected + ["mi_malloc"], selected)
+        with self.assertRaisesRegex(RUNNER.HarnessError, "native x86"):
+            RUNNER.test_adapter_build_surface(base, architecture="aarch64", arena_diagnostics=True)
+
     def test_adapter_header_inventory_extracts_only_function_declarations(self) -> None:
         header = """
 int crabc_test_init(void);
