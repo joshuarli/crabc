@@ -609,6 +609,7 @@ def source_api_commands(root, work, source, profile, tools, m4):
     commands = {
         "oracle-build": [tools["musl-gcc"], *common, "-c", str(source / "src/static.c"), "-o", str(directory / "oracle.o")],
         "native-build": [tools["cargo"], "build", "--locked", "--offline", "--release", "--target", m4.RUST_TARGET,
+            "--manifest-path", str(root / "compat/allocator/native-mi-adapter/Cargo.toml"),
             "-p", m4.ADAPTER_PACKAGE, "--target-dir", str(directory / "cargo-target"),
             *(("--features", f"crabc-mimalloc/mi-{profile}") if profile != "release" else ())],
         "caller-build": [tools["musl-gcc"], *common, "-c", str(root / "compat/allocator/native-aligned-realloc-x86_64.c"),

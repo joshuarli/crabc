@@ -43,6 +43,65 @@ def record(output, name, argv, cwd, runtime=False):
     return result, logs
 
 
+
+def native_build_command(root, target, profile, cargo):
+    """Select the adapter and its profile independently of the command cwd."""
+    return [cargo, "build", "--locked", "--offline", "--release",
+        "--target", m4.RUST_TARGET, "--manifest-path",
+        str(root / "compat/allocator/native-mi-adapter/Cargo.toml"),
+        "-p", m4.ADAPTER_PACKAGE, "--target-dir", str(target),
+        *(("--features", f"crabc-mimalloc/mi-{profile}") if profile != "release" else ())]
+
+
+
+def read_native_build_authority(receipt):
+    """Bind each retained build to the checkout that owns its caller products.
+
+    Recorded paths may use the producer's container prefix. The retained work
+    suffix and original caller bytes bind that prefix before the manifest and
+    profile commands are compared; the current checkout supplies the source.
+    """
+    work = json.loads(receipt.path.read_text())["work"]
+    relative = Path(work)
+    if (relative.is_absolute() or not relative.parts or relative.parts[0] != ".work" or
+        relative.as_posix() != work or any(part in (".", "..") for part in work.split("/"))):
+        raise harness.HarnessError("Heap convenience work path escapes checkout")
+    cases = {case["id"]: case for case in receipt.cases}
+
+    def raw(case_id):
+        case = cases.get(case_id)
+        if case is None:
+            raise harness.HarnessError(f"Heap convenience command missing: {case_id}")
+        logs = [path for path in case["logs"] if path.endswith(".json")]
+        if len(logs) != 1:
+            raise harness.HarnessError(f"Heap convenience command record differs: {case_id}")
+        return json.loads((receipt.path.parent / "logs" / logs[0]).read_text())
+
+    first = raw("release-c-native-normal").get("command")
+    if not isinstance(first, list) or len(first) != 1 or not isinstance(first[0], str):
+        raise harness.HarnessError("Heap convenience caller command differs")
+    suffix = relative.parts + ("release", "c-native")
+    executable = Path(first[0])
+    if (not executable.is_absolute() or executable.as_posix() != first[0] or
+        any(part in (".", "..") for part in first[0].split("/")) or
+        len(executable.parts) <= len(suffix) or executable.parts[-len(suffix):] != suffix):
+        raise harness.HarnessError("Heap convenience caller is unrelated to retained work")
+    recorded_root = Path(*executable.parts[:-len(suffix)])
+    for profile in PROFILES:
+        build = raw(f"{profile}-native-build")
+        expected = native_build_command(recorded_root,
+            recorded_root / relative / profile / "cargo-target", profile, harness.require_tool("cargo"))
+        if build.get("command") != expected or build.get("kind") != "process" or build.get("status") != 0:
+            raise harness.HarnessError(f"Heap convenience {profile} native build authority differs")
+        for name in ("native-mi-adapter.a", "c-native"):
+            original = harness.ROOT / relative / profile / name
+            retained = receipt.path.parent / "products" / f"{profile}-{name}"
+            if (original.is_symlink() or not original.is_file() or original.resolve() != original.absolute() or
+                hashlib.sha256(original.read_bytes()).digest() != hashlib.sha256(retained.read_bytes()).digest()):
+                raise harness.HarnessError(f"Heap convenience original {profile}-{name} differs")
+    return receipt
+
+
 def run():
     # Expected abort processes need their signal and diagnostics, not core files.
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
@@ -83,9 +142,7 @@ def run():
         oracle = directory / "oracle.o"
         passed("oracle-build", [c_compiler, "-std=c11", *common, "-c", str(source / "src/static.c"), "-o", str(oracle)])
         target = directory / "cargo-target"
-        passed("native-build", [harness.require_tool("cargo"), "build", "--locked", "--offline", "--release",
-            "--target", m4.RUST_TARGET, "-p", m4.ADAPTER_PACKAGE, "--target-dir", str(target),
-            *(("--features", f"crabc-mimalloc/mi-{profile}") if profile != "release" else ())], harness.ROOT)
+        passed("native-build", native_build_command(harness.ROOT, target, profile, harness.require_tool("cargo")), harness.ROOT)
         library = target / m4.RUST_TARGET / "release" / m4.ADAPTER_STATICLIB
         retained_library = directory / "native-mi-adapter.a"
         shutil.copy2(library, retained_library)
@@ -130,7 +187,7 @@ def run():
         {"profiles": ",".join(PROFILES), "boundary": "explicit native-mi-adapter",
          "c-substrate": "pinned-musl-1.2.6", "cxx-substrate": "native-image-musl-libstdc++",
          "expected-overflow-abort": "SIGABRT", "watchdog-seconds": "60"}, True)
-    receipts.read_receipt(harness.ROOT, RUNNER)
+    read_native_build_authority(receipts.read_receipt(harness.ROOT, RUNNER))
     print(f"Heap convenience: all four profiles PASS; {path}")
 
 
@@ -140,7 +197,7 @@ def main():
     parser.add_argument("--replay", action="store_true", help="read receipt and rerun retained caller products in private scratch")
     args = parser.parse_args()
     if args.read or args.replay:
-        receipt = receipts.read_receipt(harness.ROOT, RUNNER)
+        receipt = read_native_build_authority(receipts.read_receipt(harness.ROOT, RUNNER))
         print("Heap convenience exact-source physical receipt: PASS")
         if args.replay:
             harness.require_native_x86_64(require_image_identity=True)

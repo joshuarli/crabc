@@ -316,6 +316,8 @@ class SourceApiSealedAuthorityTests(unittest.TestCase):
     def test_resealed_wrong_commands_fail_despite_valid_statuses_and_runtime(self):
         for case_id, mutate in (
             ("debug-1-native-build", lambda c: c.__setitem__(c.index("crabc-mimalloc/mi-debug-1"), "crabc-mimalloc/mi-stat-2")),
+            ("debug-1-native-build", lambda c: c.__setitem__(c.index("--manifest-path") + 1, "/another/Cargo.toml")),
+            ("debug-1-native-build", lambda c: c.__delitem__(slice(c.index("--manifest-path"), c.index("--manifest-path") + 2))),
             ("debug-1-oracle-build", lambda c: c.__setitem__(c.index("-DMI_DEBUG=1"), "-DMI_DEBUG=0")),
             ("debug-1-native-link", lambda c: c.__setitem__(2, c[2].replace("debug-1", "release"))),
             ("debug-1-native-execute", lambda c: c.__setitem__(0, c[0].replace("debug-1", "release"))),
