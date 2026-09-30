@@ -16,6 +16,7 @@ import re
 import subprocess
 import sys
 import tomllib
+import uuid
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -266,7 +267,12 @@ def receipt_source(source_root: Path):
     global harness
     receiver = harness
     receiver_root = Path(__file__).resolve().parents[2]
-    seal_spec = importlib.util.spec_from_file_location("foundation_source_seal", receiver_root / "compat/x86_64/native_shadow_receipt.py")
+    seal_program = receiver_root / "compat/x86_64/native_shadow_receipt.py"
+    committed_seal = subprocess.run(["git", "-c", "safe.directory=*", "-C", str(receiver_root),
+                                     "show", "HEAD:compat/x86_64/native_shadow_receipt.py"], capture_output=True, check=False)
+    require(committed_seal.returncode == 0 and committed_seal.stdout == seal_program.read_bytes(),
+            "receiver source seal helper differs from committed source")
+    seal_spec = importlib.util.spec_from_file_location("foundation_source_seal", seal_program)
     require(seal_spec is not None and seal_spec.loader is not None, "receiver source seal helper is unavailable")
     seals = importlib.util.module_from_spec(seal_spec)
     previous_seal = sys.modules.get(seal_spec.name)
@@ -274,7 +280,7 @@ def receipt_source(source_root: Path):
     sys.modules[seal_spec.name] = seals
     try:
         sys.dont_write_bytecode = True
-        seal_spec.loader.exec_module(seals)
+        exec(compile(committed_seal.stdout, str(seal_program), "exec"), seals.__dict__)
     finally:
         sys.dont_write_bytecode = previous_bytecode
         if previous_seal is None:
@@ -288,10 +294,16 @@ def receipt_source(source_root: Path):
     empty = hashlib.sha256(b"").hexdigest()
     require(receiver_identity["worktree_sha256"] == empty, "executing receiver source is not clean")
     require(producer_identity["worktree_sha256"] == empty, "retained producer source is not clean")
-    saved_modules = {name: sys.modules.get(name) for name in ("run", "m3_x86_64", "x86_64_m3_queue_retirement", "native_shadow_receipt")}
+    saved_modules = {name: sys.modules.get(name) for name in ("run", "m3_x86_64", "x86_64_m3_queue_retirement", "native_shadow_receipt", "x86_64_foundation_gate_receipts")}
     saved_path = list(sys.path)
+    previous_cache_prefix = sys.pycache_prefix
+    cache_prefix = source_root / ".work" / ("reader-bytecode-" + uuid.uuid4().hex)
+    require(not cache_prefix.exists(), "producer helper bytecode namespace is not empty")
     try:
+        # Compiled Python caches are not source authority. An absent cache
+        # prefix forces imports to read source without writing retained inputs.
         sys.dont_write_bytecode = True
+        sys.pycache_prefix = str(cache_prefix)
         for name, relative in (("run", "compat/allocator/run.py"), ("m3_x86_64", "compat/allocator/m3_x86_64.py")):
             program = source_root / relative
             require(not program.is_symlink() and program.resolve().is_relative_to(source_root), "producer helper escapes retained source")
@@ -310,6 +322,7 @@ def receipt_source(source_root: Path):
         sys.modules.pop("native_shadow_receipt", None)
         sys.path.insert(0, str(source_root / "compat/allocator"))
         yield receiver_identity, producer_identity
+        require(not cache_prefix.exists(), "producer helper bytecode namespace changed during replay")
         require(seals.source_seal(receiver_root) == receiver_identity, "executing receiver source changed during replay")
         require(seals.source_seal(source_root) == producer_identity, "retained producer source changed during replay")
         destination = os.environ.get("CRABC_RECEIPT_REPLAY_OUTPUT")
@@ -333,6 +346,7 @@ def receipt_source(source_root: Path):
             else:
                 sys.modules[name] = module
         sys.dont_write_bytecode = previous_bytecode
+        sys.pycache_prefix = previous_cache_prefix
 
 
 def read_m3_components(path: Path | None = None, *, source_root: Path | None = None) -> dict[str, Any]:

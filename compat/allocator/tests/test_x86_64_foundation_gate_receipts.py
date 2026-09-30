@@ -174,7 +174,7 @@ class RetainedProducerSourceTests(unittest.TestCase):
         for root in (self.receiver_root, self.producer_root):
             (root / "compat/allocator").mkdir(parents=True)
             (root / "compat/x86_64").mkdir()
-            (root / ".gitignore").write_text(".work/\n")
+            (root / ".gitignore").write_text(".work/\n__pycache__/\n")
         (self.receiver_root / "compat/x86_64/native_shadow_receipt.py").write_bytes(
             (ROOT / "compat/x86_64/native_shadow_receipt.py").read_bytes())
         self.receiver_file = self.receiver_root / "compat/allocator/x86_64_foundation_gate_receipts.py"
@@ -204,6 +204,21 @@ class RetainedProducerSourceTests(unittest.TestCase):
         self.assertEqual(sys.dont_write_bytecode, original_bytecode)
         self.assertEqual(list(self.producer_root.rglob("__pycache__")), [])
         self.assertEqual(list(self.receiver_root.rglob("__pycache__")), [])
+
+    def test_untracked_bytecode_cannot_replace_committed_producer_helper(self):
+        import os
+        import py_compile
+        original = self.producer_file.read_bytes()
+        stamp = self.producer_file.stat()
+        forged = b"raise RuntimeError('forged bytecode executed')\n"
+        self.producer_file.write_bytes(forged + b" " * (len(original) - len(forged)))
+        os.utime(self.producer_file, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+        py_compile.compile(str(self.producer_file), doraise=True)
+        self.producer_file.write_bytes(original)
+        os.utime(self.producer_file, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+        with mock.patch.object(reader, "__file__", str(self.receiver_file)):
+            with reader.receipt_source(self.producer_root):
+                self.assertEqual(reader.harness.ROOT, self.producer_root)
 
     def test_dirty_producer_is_refused_before_helper_loading(self):
         self.producer_file.write_text(self.producer_file.read_text() + "modified = True\n")
