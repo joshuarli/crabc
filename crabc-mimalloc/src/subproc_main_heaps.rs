@@ -1726,7 +1726,10 @@ pub(crate) mod tests {
                 // SAFETY: no worker or live client remains. Source deletion
                 // must collect the queued free and retire the moved empty page.
                 assert_eq!(unsafe { native_heap_release(heap, false) }, Ok(HeapReleaseOutcome::Released));
-                assert!(unsafe { binding().unwrap().page_map().lookup_live_allocation(NonNull::new(address as *mut u8).unwrap()) }.unwrap().is_none());
+                // SAFETY: every worker joined; this sole native-runtime
+                // caller excludes slice registration changes. Only address
+                // bits are queried, with no departed client dereference.
+                assert!(!unsafe { binding().unwrap().page_map().registers_address(address as *const u8) }.unwrap());
             },
         );
     }
