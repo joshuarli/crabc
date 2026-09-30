@@ -6956,6 +6956,84 @@ pub unsafe fn native_runtime_live_client_slice_pcommitted_test_audit(client: cor
     Some(unsafe { page.as_ref() }.slice_pcommitted())
 }
 
+/// Scalar source geometry of one quiescent live native client's page.
+/// No field grants access to page metadata or its allocation.
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeRuntimeLiveClientPageGeometryAudit {
+    pub capacity: u16,
+    pub used: usize,
+    pub reserved: u16,
+    pub block_size: usize,
+    pub slice_pcommitted: u16,
+    /// Block-start displacement from the page metadata, not the arena slice.
+    pub page_start_offset: usize,
+    /// Block-start displacement from the retained arena slice; OS pages have none.
+    pub page_slice_offset: Option<usize>,
+    pub free_head_is_null: bool,
+    pub local_free_head_is_null: bool,
+}
+
+/// Copies geometry directly from the page selected by one exact live client.
+/// Initial-thread and direct-owner pages require no persistent-worker binding.
+///
+/// # Safety
+///
+/// `client` must name a currently live native allocation throughout the call.
+/// The caller must exclude concurrent mutation of its PageMap entry, ordinary
+/// page fields, arena membership, and owning allocator: no free, extension,
+/// reassociation, collection, or arena release may race this sample. The live
+/// allocation must retain its page metadata and arena reservation for the call.
+#[cfg(any(test, feature = "native-runtime-test-audit"))]
+#[doc(hidden)]
+pub unsafe fn native_runtime_live_client_page_geometry_test_audit(
+    client: core::ptr::NonNull<u8>,
+) -> Option<NativeRuntimeLiveClientPageGeometryAudit> {
+    #[cfg(target_arch = "x86_64")]
+    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
+        return None;
+    };
+    let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
+    // SAFETY: the caller pins this exact live client and excludes PageMap
+    // retirement and reassociation during the validated lookup.
+    let page = unsafe { page_map.lookup_page_for_live_client(client) }.ok()??;
+    // SAFETY: the selected live page remains registered, and the caller's
+    // quiescence excludes mutations of every ordinary field copied below.
+    let page_ref = unsafe { page.as_ref() };
+    let page_slice_offset = if let Some(memory) = page_ref.memid().arena_memory() {
+        let span_size = (memory.slice_count as usize).checked_mul(crate::config::ARENA_SLICE_SIZE)?;
+        if span_size == 0 {
+            return None;
+        }
+        // SAFETY: the immutable arena memid belongs to the retained live page.
+        let arena = unsafe { crate::arena::ArenaView::from_ptr(memory.arena) }?;
+        let slice_start = arena.slice_start(memory.slice_index as usize)?;
+        // SAFETY: this live page retains its metadata and block storage in
+        // the same allocation; start only projects the initialized offset.
+        let block_start = unsafe { page_ref.start() };
+        let offset = block_start.addr().checked_sub(slice_start.addr())?;
+        let data_size = (page_ref.reserved() as usize).checked_mul(page_ref.block_size())?;
+        if offset.checked_add(data_size)? > span_size {
+            return None;
+        }
+        Some(offset)
+    } else {
+        None
+    };
+    Some(NativeRuntimeLiveClientPageGeometryAudit {
+        capacity: page_ref.capacity(),
+        used: page_ref.used(),
+        reserved: page_ref.reserved(),
+        block_size: page_ref.block_size(),
+        slice_pcommitted: page_ref.slice_pcommitted(),
+        page_start_offset: page_ref.page_offset(),
+        page_slice_offset,
+        free_head_is_null: page_ref.free_list_head().is_null(),
+        local_free_head_is_null: page_ref.remote_free_test_local_free().is_null(),
+    })
+}
+
 /// Reports whether one exact live native client belongs to the source-start
 /// regular parent retained by the current process binding.
 ///
@@ -19438,6 +19516,55 @@ mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
     use std::thread;
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn live_client_geometry_tracks_initial_arena_capacity_and_os_page() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::live_client_geometry_tracks_initial_arena_capacity_and_os_page",
+            || {
+                unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let NativePageAllocationResult::Allocated(first) = native_allocate_aligned(80, 16, false) else { panic!("initial allocation") };
+                // SAFETY: this fresh process alone owns every live allocation
+                // and samples between allocator operations.
+                let geometry = unsafe { native_runtime_live_client_page_geometry_test_audit(first) }.unwrap();
+                assert!(geometry.page_slice_offset.is_some());
+                assert_eq!(geometry.used, 1);
+                assert!(geometry.capacity > 1 && geometry.capacity <= geometry.reserved);
+                assert!(geometry.block_size >= 80);
+                assert!(!geometry.free_head_is_null);
+                assert!(geometry.local_free_head_is_null);
+                let map = RUNTIME_PROCESS.page_map_for_live_native_allocation().unwrap();
+                // SAFETY: first remains live and the sole thread excludes all
+                // map mutation during each validated pointer lookup.
+                let page = unsafe { map.lookup_page_for_live_client(first) }.unwrap().unwrap();
+                let mut blocks = std::vec![first];
+                for _ in 1..geometry.capacity {
+                    let NativePageAllocationResult::Allocated(block) = native_allocate_aligned(80, 16, false) else { panic!("same-page allocation") };
+                    assert_eq!(unsafe { map.lookup_page_for_live_client(block) }.unwrap().unwrap(), page);
+                    blocks.push(block);
+                }
+                let full = unsafe { native_runtime_live_client_page_geometry_test_audit(first) }.unwrap();
+                assert_eq!(full.capacity, geometry.capacity);
+                assert_eq!(full.used, geometry.capacity as usize);
+                assert_eq!(full.page_slice_offset, geometry.page_slice_offset);
+                assert_eq!(full.page_start_offset, geometry.page_start_offset);
+                assert!(full.free_head_is_null && full.local_free_head_is_null);
+                let NativePageAllocationResult::Allocated(os) = native_allocate_aligned(2 << 20, 2 << 20, false) else { panic!("OS allocation") };
+                let os_geometry = unsafe { native_runtime_live_client_page_geometry_test_audit(os) }.unwrap();
+                assert_eq!(os_geometry.page_slice_offset, None);
+                assert_eq!(os_geometry.used, 1);
+                assert_eq!(unsafe { native_free(os) }, NativePageFreeResult::Freed);
+                for block in blocks {
+                    assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                }
+            },
+        );
+    }
 
     #[cfg(target_arch = "x86_64")]
     struct RuntimeLoaderTailObservation {

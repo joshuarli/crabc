@@ -202,6 +202,7 @@ pub mod __crabc_runtime {
         native_runtime_live_client_page_test_audit, native_runtime_live_client_memory_kind_test_audit,
         native_runtime_live_client_arena_span_test_audit, native_runtime_arena_span_state_test_audit,
         native_runtime_live_client_slice_pcommitted_test_audit,
+        native_runtime_live_client_page_geometry_test_audit, NativeRuntimeLiveClientPageGeometryAudit,
         native_runtime_process_options_test_audit, NativeRuntimeProcessOptionsAudit,
         native_runtime_process_done_retained_live_page_test_audit,
         native_runtime_process_done_retained_local_page_test_audit,
