@@ -72,6 +72,24 @@ class M7GateContractTests(unittest.TestCase):
                 self.assertEqual(gate.main([option, "--offline"]), 0)
                 run.assert_called_once_with(True, replay=replay)
 
+    def test_secure_replay_preserves_the_existing_owning_reader_failure(self) -> None:
+        import x86_64_m4_gate as m4
+        with mock.patch.object(m4, "run_operations_profiles") as produce, mock.patch.object(
+                m4, "read_operations_profiles", side_effect=harness.HarnessError("native archive differs")) as read:
+            with self.assertRaisesRegex(harness.HarnessError, "native archive differs"):
+                gate.run_secure_profile_differential(True, "secure-2", replay=True)
+            produce.assert_not_called()
+            read.assert_called_once_with(("secure-2",), ("operations", "api-modes"),
+                                         replay=True, runner="allocator-m7-secure")
+
+    def test_secure_cli_dispatches_closed_selection_to_existing_receivers(self) -> None:
+        for option, replay in (("--secure-profile-differential", False),
+                               ("--secure-profile-replay", True)):
+            with self.subTest(option=option), mock.patch.object(
+                    gate, "run_secure_profile_differential", create=True) as run:
+                self.assertEqual(gate.main([option, "--secure-profile", "secure-2", "--offline"]), 0)
+                run.assert_called_once_with(True, "secure-2", replay=replay)
+
     def test_xmalloc_replay_rejects_missing_native_build_authority(self) -> None:
         import tempfile
         import types

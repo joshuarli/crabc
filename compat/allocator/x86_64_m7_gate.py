@@ -1060,6 +1060,20 @@ def run_trace_differential(
     return report
 
 
+def run_secure_profile_differential(offline: bool, profile: str, *, replay: bool = False) -> None:
+    """Use the original valid-client and isolated-precondition profile judge."""
+    import x86_64_m4_gate as m4
+
+    if profile not in ("secure-1", "secure-2"):
+        raise harness.HarnessError("secure profile selection is not declared")
+    profiles, scenarios = (profile,), ("operations", "api-modes")
+    runner = "allocator-m7-secure"
+    if not replay:
+        m4.run_operations_profiles(offline, profiles, scenarios, runner=runner)
+    m4.read_operations_profiles(profiles, scenarios, replay=replay, runner=runner)
+    print(f"{profile} original operation-profile {'replay' if replay else 'qualification'}: PASS")
+
+
 def run_xmalloc_profile_differential(offline: bool, *, replay: bool = False) -> None:
     """Retain and replay public allocation errors without changing their raw exits."""
 
@@ -2631,6 +2645,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="build and inspect the default native allocator release artifact")
     mode.add_argument("--private-context-arena-print", action="store_true",
         help="execute independent private-context arena diagnostic integration")
+    mode.add_argument("--secure-profile-differential", action="store_true",
+        help="run the original operation and API-mode workloads for a declared secure profile")
+    mode.add_argument("--secure-profile-replay", action="store_true",
+        help="authenticate and replay the original secure-profile products")
+    parser.add_argument("--secure-profile", choices=("secure-1", "secure-2"), default=None,
+        help="exact source secure profile for the secure producer or replay")
     mode.add_argument("--xmalloc-profile-differential", action="store_true",
         help="compare source allocation-error termination and returning controls")
     mode.add_argument("--xmalloc-profile-replay", action="store_true",
@@ -2640,6 +2660,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--offline", action="store_true", help="require the verified archive in the local cache")
     parser.add_argument("--scratch", type=Path, help="fresh output directory for the default baseline audit")
     arguments = parser.parse_args(argv)
+    if arguments.secure_profile_differential or arguments.secure_profile_replay:
+        if arguments.secure_profile is None:
+            parser.error("secure differential/replay requires --secure-profile")
+        run_secure_profile_differential(arguments.offline, arguments.secure_profile,
+                                        replay=arguments.secure_profile_replay)
+        return 0
+    if arguments.secure_profile is not None:
+        parser.error("--secure-profile requires the secure differential or replay mode")
     if arguments.xmalloc_profile_differential or arguments.xmalloc_profile_replay:
         run_xmalloc_profile_differential(arguments.offline, replay=arguments.xmalloc_profile_replay)
         return 0

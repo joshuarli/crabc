@@ -454,7 +454,7 @@ def compare_assertion_control(profile: str, case: str, c_record: Mapping[str, ob
         "aligned-at-invalid": ("73,64,7;150,3,7", "1,22,1",
                                "mi_alignment_is_valid(alignment)", "mi_theap_realloc_zero_aligned_at"),
     }
-    if profile not in API_PROFILES or case not in controls:
+    if profile not in (*API_PROFILES, "secure-1", "secure-2") or case not in controls:
         raise harness.HarnessError("unknown assertion control profile or case")
     arguments, outcome, assertion, function = controls[case]
     expected = {"control.input": arguments, "control.outcome": outcome}
@@ -485,7 +485,7 @@ def compare_source_client_control(profile: str, case: str, original: Mapping[str
     observation. Only the exact original source word-alignment rejection is
     accepted as a negative control; payload loss or another diagnostic fails.
     """
-    if profile not in API_PROFILES or case not in SOURCE_CLIENT_CONTROLS:
+    if profile not in (*API_PROFILES, "secure-1", "secure-2") or case not in SOURCE_CLIENT_CONTROLS:
         raise harness.HarnessError("unknown source live-client control")
     positive = {}
     for side in ("c", "rust"):
@@ -539,9 +539,12 @@ def compare_source_client_control(profile: str, case: str, original: Mapping[str
 
 def api_profile_flags(profile: str) -> tuple[str, ...]:
     flags = tuple(flag for flag in harness.CONFIGURATION_PROFILES["release"]
-                  if not flag.startswith(("-DMI_DEBUG=", "-DMI_STAT=")))
+                  if not flag.startswith(("-DMI_DEBUG=", "-DMI_STAT="))
+                  and not (profile in ("secure-1", "secure-2") and flag.startswith("-DMI_SECURE=")))
     return (*flags, *{
         "release": ("-DMI_DEBUG=0", "-DMI_STAT=0"),
+        "secure-1": ("-DMI_DEBUG=0", "-DMI_STAT=0", "-DMI_SECURE=1"),
+        "secure-2": ("-DMI_DEBUG=0", "-DMI_STAT=0", "-DMI_SECURE=2"),
         "stat-1": ("-DMI_DEBUG=0", "-DMI_STAT=1"),
         "stat-2": ("-DMI_DEBUG=0", "-DMI_STAT=2"),
         "debug-1": ("-DMI_DEBUG=1", "-DMI_STAT=2", "-DMI_PADDING=1"),
@@ -691,6 +694,9 @@ SOURCE_CLIENT_CONTROLS = ("interior-api-modes", "usable-free-73", "usable-free-1
 
 
 def operation_profile_parameters(profiles: Sequence[str], scenarios: Sequence[str]) -> dict[str, str]:
+    if (not profiles or len(set(profiles)) != len(profiles)
+            or any(profile not in (*API_PROFILES, "secure-1", "secure-2") for profile in profiles)):
+        raise harness.HarnessError("unknown or duplicate operation profile selection")
     return {"profiles": ",".join(profiles), "scenarios": ",".join(scenarios),
             "workload": "valid-program-with-isolated-source-preconditions",
             "debug-source-guarded-precise": "1", "native-guarded-precise": "0",
@@ -817,10 +823,11 @@ def source_debug_option_scope(record: Mapping[str, Any], inputs: Mapping[str, An
         raise harness.HarnessError("debug source oracle option has an unproved active use or compiler condition")
 
 
-def read_operations_profiles(profiles: Sequence[str], scenarios: Sequence[str], *, replay: bool = False):
+def read_operations_profiles(profiles: Sequence[str], scenarios: Sequence[str], *, replay: bool = False,
+                             runner: str = OPERATIONS_RUNNER):
     """Reconstruct valid workloads and isolated controls from authenticated commands and products."""
     receipts = operation_receipts()
-    receipt = receipts.read_receipt(harness.ROOT, OPERATIONS_RUNNER)
+    receipt = receipts.read_receipt(harness.ROOT, runner)
     if dict(receipt.parameters) != operation_profile_parameters(profiles, scenarios):
         raise harness.HarnessError("operation receipt profile or scenario selection changed")
     products, logs = receipt.path.parent / "products", receipt.path.parent / "logs"
@@ -946,8 +953,10 @@ def read_operations_profiles(profiles: Sequence[str], scenarios: Sequence[str], 
     return receipt
 
 
-def run_operations_profiles(offline: bool, profiles: Sequence[str], scenarios: Sequence[str]) -> dict[str, Any]:
+def run_operations_profiles(offline: bool, profiles: Sequence[str], scenarios: Sequence[str], *,
+                            runner: str = OPERATIONS_RUNNER) -> dict[str, Any]:
     """Retain every valid observation and isolated precondition before admitting a cohort."""
+    operation_profile_parameters(profiles, scenarios)
     receipts = operation_receipts()
     execution = harness.require_native_x86_64(require_image_identity=True)
     seal = receipts.source_seal(harness.ROOT)
@@ -1030,7 +1039,7 @@ def run_operations_profiles(offline: bool, profiles: Sequence[str], scenarios: S
     positive_cases = [(name, 0 if any(name.endswith(f"-{abort}-{side}")
                       for abort in ABORT_SCENARIOS for side in ("c", "rust")) else status, logs)
                       for name, status, logs in cases]
-    receipts.write_receipt(harness.ROOT, OPERATIONS_RUNNER, output, products, positive_cases,
+    receipts.write_receipt(harness.ROOT, runner, output, products, positive_cases,
         operation_profile_parameters(profiles, scenarios), not errors)
     if errors:
         raise harness.HarnessError(f"operation profile cohort failed; original raw retained at {output}: " + "; ".join(errors))

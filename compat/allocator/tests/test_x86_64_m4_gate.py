@@ -24,6 +24,20 @@ harness = gate.harness
 
 
 class M4GateContractTests(unittest.TestCase):
+    def test_secure_c_build_selects_one_exact_source_level(self) -> None:
+        for profile, level in (("secure-1", 1), ("secure-2", 2)):
+            with self.subTest(profile=profile), tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+                output = Path(directory)
+                with mock.patch.object(harness, "require_tool", return_value="/musl-gcc"), \
+                        mock.patch.object(harness, "command_record", return_value={"status": 0}) as compile, \
+                        mock.patch.object(harness, "require_success"):
+                    gate.build_c_driver(output / "source", output, profile=profile)
+                command = compile.call_args.args[0]
+                self.assertEqual([flag for flag in command if flag.startswith("-DMI_SECURE=")],
+                                 [f"-DMI_SECURE={level}"])
+                self.assertIn("-DMI_DEBUG=0", command)
+                self.assertIn("-DMI_STAT=0", command)
+
     def setUp(self) -> None:
         self.pin = harness.load_pin()
         self.contract = harness.read_json(gate.CONTRACT)
