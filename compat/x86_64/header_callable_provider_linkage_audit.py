@@ -655,7 +655,8 @@ def audit_supplied_planned_profile(*, product_root: Path, profile: str, output: 
     selected = next((r for r in partition["declared_unverified_feature_archives"] if r["id"] == profile), None)
     provider_require(selected is not None and tuple(selected["members"]) == feature.additive_callables,
                      "planned callable source contract differs")
-    runner = "header-planned-provider-" + profile
+    runner = "header-planned-provider-" + profile + "-" + hashlib.sha256(
+        product_root.relative_to(ROOT).as_posix().encode()).hexdigest()[:12]
     provider_require(feature.additive_callables, "supplied planned profile has no callable additions")
     anchor = json.loads((ROOT / "compat/x86_64/owned_resolver_network_image_inputs.json").read_text())
     linker_paths = [p for p in anchor["files"] if p.endswith("/gcc-ld/ld.lld")]

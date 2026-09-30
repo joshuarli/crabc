@@ -105,6 +105,15 @@ class SuppliedPlannedProfileTests(unittest.TestCase):
                     self.assertFalse(report["family_admission"])
                     self.assertEqual(report["provider_partition"]["unprovided"]["members"], ["missing"])
                     self.assertEqual(AUDIT.audit_supplied_planned_profile(product_root=product, profile=profile.identifier, output=output, replay=True), path)
+                    second_product = root / ".work/second-product"
+                    shutil.copytree(product, second_product)
+                    second_driver = second_product / "bin/crabc-cc"
+                    second_driver.write_text(second_driver.read_text().replace(str(product), str(second_product)))
+                    second_path = AUDIT.audit_supplied_planned_profile(product_root=second_product,
+                        profile=profile.identifier, output=root / ".work/second-output")
+                    self.assertNotEqual(path, second_path)
+                    self.assertEqual(AUDIT.audit_supplied_planned_profile(product_root=product,
+                        profile=profile.identifier, output=output, read=True), path)
                     with (output / "application.o").open("ab") as stream:
                         stream.write(b"changed")
                     with self.assertRaisesRegex(AUDIT.ProviderLinkageAuditError, "raw artifact changed"):
