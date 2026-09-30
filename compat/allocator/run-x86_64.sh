@@ -32,7 +32,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-m1
   allocator-m2
   allocator-m3 [--differential-only|--owner-only|--miri-only|--queue-reorder-only]
-  allocator-m4 [--check|--gate ID|--reader-tests]
+  allocator-m4 [--check|--gate ID|--reader-tests|--operations-matrix [--read|--replay]]
   allocator-m5 [--qualification-profile correctness|full] [--check|--gate ID|--reader-tests]
   allocator-m7 [--check|--gate ID|--reader-tests|--arena-print|--private-context-arena-print]
   allocator-m8 [--check|--gate ID|--reader-tests]
@@ -315,6 +315,14 @@ run_in_container() {
     mkdir -p "$WORK_DIR/target" "$WORK_DIR/cargo" "$WORK_DIR/tmp" \
         "$WORK_DIR/reports" "$WORK_DIR/allocator-cache"
     linked_worktree_git_mounts
+    local input_mount_mode="" temporary_mount="$WORK_DIR/tmp"
+    local -a reader_args=()
+    if [ "${1:-}" = --read-only-retained-inputs ]; then
+        shift
+        input_mount_mode=:ro
+        temporary_mount="$(mktemp -d "$WORK_DIR/tmp/retained-reader.XXXXXX")"
+        reader_args=(--read-only --network none --user "$(id -u):$(id -g)")
+    fi
     local -a capability_args=()
     local execution_image="$IMAGE"
     if [ "${1:-}" = --with-pinned-core-image ]; then
@@ -348,7 +356,7 @@ run_in_container() {
     # Receipts and executions must name the same inspected bytes even if the
     # development tag changes between inspection and container creation.
     execution_image="$image_id"
-    docker run --rm --init "${capability_args[@]}" "${EXECUTION_BUDGET_ARGS[@]}" \
+    docker run --rm --init "${reader_args[@]}" "${capability_args[@]}" "${EXECUTION_BUDGET_ARGS[@]}" \
         --platform "$PLATFORM" \
         --workdir /workspace \
         --env CARGO_HOME=/workspace/.work/allocator-x86_64/cargo \
@@ -364,12 +372,13 @@ run_in_container() {
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
-        --volume "$ROOT_DIR:/workspace" \
-        --volume "$WORK_DIR:/workspace/.work/allocator-x86_64" \
-        --volume "$WORK_DIR/target:/workspace/target" \
-        --volume "$WORK_DIR/reports:/workspace/compat/reports" \
-        --volume "$WORK_DIR/allocator-cache:/workspace/compat/allocator/.cache" \
-        --volume "$WORK_DIR/tmp:/tmp" \
+        --volume "$ROOT_DIR:/workspace$input_mount_mode" \
+        --volume "$WORK_DIR:/workspace/.work/allocator-x86_64$input_mount_mode" \
+        --volume "$WORK_DIR/target:/workspace/target$input_mount_mode" \
+        --volume "$WORK_DIR/reports:/workspace/compat/reports$input_mount_mode" \
+        --volume "$WORK_DIR/allocator-cache:/workspace/compat/allocator/.cache$input_mount_mode" \
+        --volume "$temporary_mount:/tmp" \
+        --volume "$temporary_mount:/workspace/.work/allocator-x86_64/tmp" \
         "${GIT_METADATA_MOUNTS[@]}" \
         "$execution_image" "$@"
 }
@@ -435,8 +444,23 @@ case "$command" in
             m4_command=(python3 compat/allocator/tests/test_x86_64_m4_gate.py)
         elif [ "$#" -eq 2 ] && [ "$1" = --gate ]; then
             m4_command=(python3 compat/allocator/x86_64_m4_gate.py --offline --gate "$2")
+        elif [ "${1:-}" = --operations-matrix ]; then
+            shift
+            m4_command=(python3 compat/allocator/x86_64_m4_gate.py --offline --operations-matrix)
+            m4_read=0 m4_replay=0
+            for argument in "$@"; do
+                case "$argument" in
+                    --read) [ "$m4_read" -eq 0 ] || fail "duplicate --read"; m4_read=1 ;;
+                    --replay) [ "$m4_replay" -eq 0 ] || fail "duplicate --replay"; m4_replay=1 ;;
+                    *) fail "operation matrix accepts only --read or --replay" ;;
+                esac
+                m4_command+=("$argument")
+            done
+            if [ "$m4_read" -eq 1 ] || [ "$m4_replay" -eq 1 ]; then
+                m4_command=(--read-only-retained-inputs "${m4_command[@]}")
+            fi
         else
-            fail "allocator-m4 accepts only --check, --gate ID, or --reader-tests"
+            fail "allocator-m4 accepts only --check, --gate ID, --reader-tests, or --operations-matrix [--read|--replay]"
         fi
         ensure_image
         run_in_container "${m4_command[@]}"

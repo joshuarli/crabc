@@ -95,6 +95,37 @@ class AllocatorQualificationProfileDispatchTests(unittest.TestCase):
                 with self.subTest(command=command, arguments=arguments):
                     self.assert_rejected(command, *arguments)
 
+    def test_operation_matrix_and_retained_readers_reach_original_gate(self) -> None:
+        for operation in ([], ["--read"], ["--replay"], ["--read", "--replay"]):
+            with self.subTest(operation=operation):
+                runner, arguments = self.runner_arguments("allocator-m4", "--operations-matrix", *operation)
+                self.assertEqual(runner, "compat/allocator/x86_64_m4_gate.py")
+                self.assertEqual(arguments, ["--offline", "--operations-matrix", *operation])
+                call = next(call for call in self.calls() if call[0] == "run")
+                volumes = [call[index + 1] for index, value in enumerate(call) if value == "--volume"]
+                if operation:
+                    self.assertIn("--read-only", call)
+                    self.assertEqual(call[call.index("--network") + 1], "none")
+                    for destination in ("/workspace", "/workspace/.work/allocator-x86_64",
+                                        "/workspace/target", "/workspace/compat/reports",
+                                        "/workspace/compat/allocator/.cache"):
+                        self.assertTrue(any(volume.endswith(":" + destination + ":ro") for volume in volumes),
+                                        (destination, volumes))
+                    writable = [volume for volume in volumes if not volume.endswith(":ro")]
+                    self.assertEqual(len(writable), 2, writable)
+                    self.assertEqual(writable[0].split(":")[0], writable[1].split(":")[0])
+                    self.assertIn("/retained-reader.", writable[0])
+                else:
+                    self.assertNotIn("--read-only", call)
+
+    def test_invalid_operation_matrix_arguments_reject_before_docker(self) -> None:
+        for arguments in (["--read"], ["--replay"], ["--operations-matrix", "--check"],
+                          ["--operations-matrix", "--read", "--read"],
+                          ["--operations-matrix", "--replay", "--replay"],
+                          ["--operations-matrix", "--gate", "m4.upstream"]):
+            with self.subTest(arguments=arguments):
+                self.assert_rejected("allocator-m4", *arguments)
+
     def test_divergence_defaults_and_explicit_profiles_reach_reader(self) -> None:
         for operation in ([], ["--check"]):
             for profile in (None, "correctness", "full"):
