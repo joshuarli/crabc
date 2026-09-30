@@ -71,6 +71,31 @@ fn heap_json_and_free_statistics_use_the_callers_default_theap() {
     } else {
         assert_eq!(main_delta, 0);
     }
+    // SAFETY: this caller holds both live Heaps and the main-Heap client,
+    // and restores its previous default before destroying the auxiliary.
+    let (reverse_aux_delta, reverse_main_delta) = unsafe {
+        let auxiliary = heaps::heap_new();
+        assert!(!auxiliary.is_null());
+        let client = heaps::heap_malloc(main_heap, 96).value.unwrap();
+        let selected = heaps::heap_theap(auxiliary);
+        let previous = heaps::theap_set_default(selected);
+        let main_before = heap_normal_current(main_heap);
+        let aux_before = heap_normal_current(auxiliary);
+        assert_eq!(api::free(client.as_ptr()), api::FreeOutcome::Freed);
+        let aux_after = heap_normal_current(auxiliary);
+        let main_after = heap_normal_current(main_heap);
+        heaps::theap_set_default(previous);
+        assert!(heaps::heap_release(auxiliary, true));
+        (aux_after - aux_before, main_after - main_before)
+    };
+    // A main-Heap page may use a local fast free, but that does not make its
+    // page owner the statistics owner when the caller selected another Theap.
+    assert_eq!(reverse_main_delta, 0);
+    if cfg!(feature = "mi-stat-1") {
+        assert!(reverse_aux_delta <= -96);
+    } else {
+        assert_eq!(reverse_aux_delta, 0);
+    }
 }
 
 fn json_commit_current(text: &str) -> usize {
