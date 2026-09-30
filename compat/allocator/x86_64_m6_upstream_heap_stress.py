@@ -70,6 +70,7 @@ def run_differential() -> int:
     archive = harness.fetch_archive(pin, True)
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     output = Path(tempfile.mkdtemp(prefix="run-", dir=ARTIFACTS))
+    output.chmod(0o755)
     cases = []
     with harness.temporary_directory("crabc-mimalloc-upstream-heap-stress-") as name:
         temporary = Path(name)
