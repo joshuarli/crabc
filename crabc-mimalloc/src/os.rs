@@ -2764,7 +2764,10 @@ impl Mapping {
             // creates no Rust reference from the returned mapping address.
             unsafe {
                 crabc_core::mm::mmap_raw(
-                    address.map_or(core::ptr::null_mut(), |value| value as *mut u8),
+                    // A numeric hint carries no allocation provenance and is
+                    // never dereferenced; only mmap's returned pointer owns
+                    // the new mapping. The kernel sees the same address bits.
+                    address.map_or(core::ptr::null_mut(), |value| core::ptr::without_provenance_mut(value)),
                     length,
                     protection,
                     flags,
@@ -6696,6 +6699,23 @@ fn fault_before(point: FaultPoint) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn numeric_mmap_hint_never_replaces_returned_mapping_provenance() {
+        let length = 4096;
+        let address = Mapping::mmap_with_hint(Some(MmapHint::Explicit(64 * GIB)),
+            length, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS).unwrap();
+        // SAFETY: only the pointer actually returned by mmap owns this live
+        // writable mapping. The numeric advisory address is never accessed.
+        unsafe {
+            address.write(0x5a);
+            address.add(length - 1).write(0xa5);
+            assert_eq!(address.read(), 0x5a);
+            assert_eq!(address.add(length - 1).read(), 0xa5);
+            crabc_core::mm::munmap_raw(address, length).unwrap();
+        }
+    }
+
     extern crate std;
 
     use super::*;
