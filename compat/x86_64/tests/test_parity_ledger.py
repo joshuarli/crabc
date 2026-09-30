@@ -24,6 +24,29 @@ SPEC.loader.exec_module(ledger)
 UNPATCHED_LOAD_TOML = ledger.load_toml
 
 
+class CompletionScopeTests(unittest.TestCase):
+    def test_correctness_readiness_keeps_performance_deferred(self) -> None:
+        data = {"completion": {"qualification_profile": "correctness",
+                               "deferred_families": ["performance.release"]},
+                "promotion": {"required_families": ["libc.runtime", "performance.release"]}}
+        self.assertEqual(ledger.completion_family_ids(data), ["libc.runtime"])
+        data["completion"] = {"qualification_profile": "full", "deferred_families": []}
+        self.assertEqual(ledger.completion_family_ids(data), ["libc.runtime", "performance.release"])
+
+    def test_functional_families_cannot_be_deferred(self) -> None:
+        data = {"completion": {"qualification_profile": "correctness",
+                               "deferred_families": ["libc.runtime"]},
+                "promotion": {"required_families": ["libc.runtime", "performance.release"]}}
+        with self.assertRaisesRegex(ledger.LedgerError, "deferred"):
+            ledger.completion_family_ids(data)
+
+    def test_unknown_completion_profile_is_rejected(self) -> None:
+        data = {"completion": {"qualification_profile": "unchecked", "deferred_families": []},
+                "promotion": {"required_families": ["libc.runtime", "performance.release"]}}
+        with self.assertRaisesRegex(ledger.LedgerError, "profile"):
+            ledger.completion_family_ids(data)
+
+
 class X86ParityLedgerTests(unittest.TestCase):
     def test_reviewed_membarrier_cpp_matrix_rows_reject_foreign_or_missing_difference(self) -> None:
         report = json.loads(ledger.HEADER_ABI_MATRIX_REPORT_PATH.read_text(encoding="utf-8"))

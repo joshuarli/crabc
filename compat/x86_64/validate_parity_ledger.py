@@ -9528,6 +9528,31 @@ def require_unistd_header_trace_ownership(family: Mapping[str, Any]) -> None:
         )
 
 
+def completion_family_ids(data: Mapping[str, Any]) -> list[str]:
+    """Select the completion scope without removing any frozen family.
+
+    Correctness qualification defers only the performance family. Every
+    functional owner and dependency remains a required completion boundary.
+    An absent scope retains the full historical qualification contract.
+    """
+    promotion = data.get("promotion")
+    require(isinstance(promotion, Mapping), "promotion must be a table")
+    required = nonempty_strings(promotion.get("required_families"), "promotion.required_families")
+    scope = data.get("completion")
+    if "completion" not in data:
+        return required
+    require(isinstance(scope, Mapping)
+            and set(scope) == {"qualification_profile", "deferred_families"},
+            "completion scope fields are invalid")
+    profile = scope["qualification_profile"]
+    require(isinstance(profile, str) and profile in {"correctness", "full"},
+            "completion qualification profile is invalid")
+    expected = ["performance.release"] if profile == "correctness" else []
+    require(scope["deferred_families"] == expected, "completion deferred families are invalid")
+    require(all(identifier in required for identifier in expected), "completion deferred family is absent")
+    return [identifier for identifier in required if identifier not in expected]
+
+
 def validate_ledger(
     data: Mapping[str, Any],
     *,
@@ -9588,6 +9613,7 @@ def _validate_ledger(
     require(isinstance(promotion, Mapping), "promotion must be a table")
     required_families = nonempty_strings(promotion.get("required_families"), "promotion.required_families")
     require(tuple(required_families) == EXPECTED_FAMILIES, "promotion family roster drifted")
+    completion_families = completion_family_ids(data)
 
     excluded = data.get("excluded_surface")
     require(isinstance(excluded, list) and len(excluded) == 1, "exactly one excluded surface is required")
@@ -9946,7 +9972,13 @@ def _validate_ledger(
         "header_foundation_static_export_count": header_layout_foundation_report[
             "static_export_count"
         ],
-        "promotion_ready": all(family["status"] == "foundation-verified" for family in families),
+        "qualification_profile": data.get("completion", {}).get("qualification_profile", "full"),
+        "completion_required_families": completion_families,
+        "deferred_families": [identifier for identifier in required_families if identifier not in completion_families],
+        "performance_qualified": all(family["status"] == "foundation-verified"
+                                     for family in families if family["id"] == "performance.release"),
+        "promotion_ready": all(family["status"] == "foundation-verified"
+                               for family in families if family["id"] in completion_families),
         "public_support": policy["public_support"],
     }
 

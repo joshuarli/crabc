@@ -15,6 +15,10 @@ no_emulation = true
 no_portability_framework = true
 no_symbol_count_claim = true
 
+[completion]
+qualification_profile = "correctness"
+deferred_families = ["performance.release"]
+
 [status_meaning]
 foundation_verified = "A bounded native source or artifact slice has the named evidence. It does not select the full artifact or discharge later family obligations."
 planned = "The AArch64-equivalent family remains a promotion obligation; complete native evidence is required. A `verified_slice` records a completed private vertical slice without making the family selectable."
