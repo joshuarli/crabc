@@ -5409,6 +5409,8 @@ mod tests {
         {
             emit_external_callback_lifecycle(&mut trace, &fault);
             trace.marker(25);
+            crate::dynamic_theap::managed_abandoned_lifecycle_trace(|value| trace.emit(value));
+            trace.marker(26);
         }
         #[cfg(not(all(target_arch = "x86_64", not(miri))))]
         trace.marker(24);

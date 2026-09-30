@@ -3678,6 +3678,170 @@ mod tests {
         });
     }
 
+    /// Emits real dynamic arena-page ownership transitions. Each fixture keeps
+    /// its attachment, metadata image, page map, and external backing alive
+    /// until all client blocks and foreign atomic projections have quiesced.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    pub(crate) fn managed_abandoned_lifecycle_trace(mut emit: impl FnMut(i64)) {
+        for request in [37, SMALL_SIZE_MAX + 1024, 86699] {
+            for blocked in [false, true] {
+                let (send, receive) = mpsc::channel();
+                with_non_abandoning_dynamic_page_fixture(move |owner, arena, page_map| {
+                    let mut rows = Vec::new();
+                    // SAFETY: the fixture retains the registered arena backing
+                    // across the engine and all transient bitmap observations.
+                    let observation = unsafe { ArenaView::from_ptr(core::ptr::from_ref(arena.arena()).cast_mut()) }
+                        .expect("retained arena observation");
+                    let free_slices = || {
+                        let free = unsafe { observation.slices_free() }.expect("live arena free bitmap");
+                        (0..observation.arena().slice_count)
+                            .filter(|&slice| free.is_set_range(slice, 1) == Some(true)).count()
+                    };
+                    let free_before = free_slices();
+                    let session = owner.page_session().expect("live dynamic page session");
+                    let mut allocator = DynamicTheapAllocator::activate_dynamic(
+                        session, arena, ArenaId::none(), page_map,
+                    );
+                    let first = allocator.allocate(request, false).expect("first client");
+                    let survivor = allocator.allocate(request, false).expect("surviving client");
+                    let page = NonNull::new(unsafe { allocator.page_for_block(first) })
+                        .expect("actual arena page");
+                    assert_eq!(unsafe { allocator.page_for_block(survivor) }, page.as_ptr());
+                    // SAFETY: both live clients retain this owner-associated page;
+                    // no foreign producer exists during these short projections.
+                    let memory = unsafe { page.as_ref().memid() };
+                    let span = memory.arena_memory().expect("arena page span");
+                    let slice = span.slice_index as usize;
+                    let count = span.slice_count as usize;
+                    let block_size = unsafe { page.as_ref().block_size() };
+                    let bin = crate::size_class::bin(block_size).expect("regular page bin");
+                    let (header, layout, _, ordinary_set) = allocator
+                        .test_dynamic_arena_pages_image(memory).expect("actual heap-local image");
+                    let bitmap_clear = |bitmap| {
+                        // SAFETY: this initialized flexible image belongs to the
+                        // retained attachment. Each atomic view is discarded
+                        // before teardown, and never initializes or moves it.
+                        let view = unsafe { crate::bitmap::BitmapView::attach(
+                            header.as_ptr().cast::<u8>().add(layout.bitmap_offset(bitmap).unwrap()),
+                            layout.bitmap_layout().byte_size(), layout.bitmap_layout(),
+                        ) }.expect("bounded heap-local bitmap");
+                        view.is_clear_range(slice, 1) == Some(true)
+                    };
+                    let free_span = |set| {
+                        let free = unsafe { observation.slices_free() }.expect("live arena free bitmap");
+                        if set { free.is_set_range(slice, count) == Some(true) }
+                        else { free.is_clear_range(slice, count) == Some(true) }
+                    };
+                    let heap = unsafe { page.as_ref().heap() };
+                    let abandoned_count = || unsafe { heap.as_ref() }.unwrap()
+                        .abandoned_count(bin).expect("live heap abandoned counter");
+                    rows.extend([request as i64, blocked as i64, block_size as i64, count as i64,
+                        unsafe { page.as_ref().used() } as i64,
+                        allocator.test_dynamic_regular_queue_contains_only(bin, page) as i64,
+                        ordinary_set as i64,
+                        allocator.test_dynamic_main_arena_page_is_clear(memory) as i64,
+                        free_span(false) as i64]);
+                    // SAFETY: the consuming handoff retains both current client
+                    // blocks, the exact page image, and its original owner.
+                    let mut handoff = match unsafe { allocator.abandon_mapped_regular(first) } {
+                        Ok(handoff) => handoff,
+                        Err(failure) => { core::mem::forget(failure); panic!("mapped abandonment"); }
+                    };
+                    rows.extend([
+                        (unsafe { page.as_ref().abandoned_test_thread_id() }
+                            == THREAD_ID_ABANDONED_MAPPED) as i64,
+                        handoff.test_page_count() as i64, abandoned_count() as i64,
+                        handoff.test_dynamic_abandoned_page_is_set() as i64,
+                    ]);
+                    if blocked {
+                        // SAFETY: the handoff keeps this page mapped. The worker
+                        // touches only its atomic head, joins before adoption,
+                        // and owns no client or ordinary metadata reference.
+                        let head = unsafe { crate::types::Page::abandonment_atomic_state_at(page) }
+                            .xthread_free.as_ptr() as usize;
+                        let (ready_send, ready_receive) = mpsc::channel();
+                        let (release_send, release_receive) = mpsc::channel();
+                        handoff = thread::scope(|scope| {
+                            let worker = scope.spawn(move || {
+                                let head = unsafe { &*(head as *const crate::atomic::AtomicWord) };
+                                assert_eq!(crate::remote_free::claim_abandoned_owner(head),
+                                    crate::remote_free::AbandonedOwnerClaim::ClaimedUnowned);
+                                ready_send.send(()).unwrap();
+                                release_receive.recv().unwrap();
+                                let mut hook: Option<fn()> = None;
+                                assert_eq!(crate::remote_free::try_unown_abandoned_head(head, &mut hook),
+                                    crate::remote_free::AbandonedOwnerHeadTransition::Released);
+                            });
+                            ready_receive.recv().unwrap();
+                            let handoff = match handoff.adopt() {
+                                Err(crate::single_thread::DynamicMappedAdoptFailure::Pending(handoff)) => handoff,
+                                Ok(engine) => { core::mem::forget(engine); panic!("held owner must reject claim"); }
+                                Err(failure) => { core::mem::forget(failure); panic!("held claim retains retry ownership"); }
+                            };
+                            rows.extend([handoff.test_dynamic_abandoned_page_is_set() as i64,
+                                abandoned_count() as i64,
+                                (unsafe { handoff.test_page_for_block(first) } == page.as_ptr()
+                                    && unsafe { handoff.test_page_for_block(survivor) } == page.as_ptr()) as i64,
+                                free_span(false) as i64]);
+                            release_send.send(()).unwrap();
+                            worker.join().expect("foreign owner releases its atomic claim");
+                            handoff
+                        });
+                    } else {
+                        rows.extend([handoff.test_dynamic_abandoned_page_is_set() as i64,
+                            abandoned_count() as i64,
+                            (unsafe { handoff.test_page_for_block(first) } == page.as_ptr()
+                                && unsafe { handoff.test_page_for_block(survivor) } == page.as_ptr()) as i64,
+                            free_span(false) as i64]);
+                    }
+                    let mut allocator = match handoff.adopt() {
+                        Ok(allocator) => allocator,
+                        Err(failure) => { core::mem::forget(failure); panic!("released claim retries adoption"); }
+                    };
+                    rows.extend([bitmap_clear(bin + 1) as i64, abandoned_count() as i64,
+                        (unsafe { page.as_ref().theap() } == allocator.theap_identity()
+                            && !matches!(unsafe { page.as_ref().abandoned_test_thread_id() },
+                                THREAD_ID_ABANDONED | THREAD_ID_ABANDONED_MAPPED)) as i64,
+                        allocator.test_dynamic_regular_queue_contains_only(bin, page) as i64,
+                        unsafe { page.as_ref().used() } as i64]);
+                    // SAFETY: `first` is a distinct current allocation of the
+                    // reassociated page. The typed producer retains the engine;
+                    // its worker joins before any ordinary page observation.
+                    let producer = unsafe { allocator.begin_remote_free(first) }
+                        .expect("live page admits typed foreign free");
+                    thread::scope(|scope| {
+                        let worker = scope.spawn(move || producer.publish());
+                        if let Err((producer, error)) = worker.join().expect("foreign free joins") {
+                            producer.cancel();
+                            panic!("foreign publication: {error:?}");
+                        }
+                    });
+                    rows.extend([unsafe { page.as_ref().used() } as i64,
+                        (unsafe { page.as_ref().remote_free_test_head() & !1 } != 0) as i64]);
+                    // SAFETY: the foreign producer has joined; the original
+                    // owner alone collects this still-live survivor page.
+                    assert!(unsafe { crate::types::Page::collect_for_heap_visit_at(page) });
+                    rows.extend([unsafe { page.as_ref().used() } as i64,
+                        (unsafe { page.as_ref().remote_free_test_head() & !1 } == 0) as i64]);
+                    // SAFETY: the joined producer consumed only `first`; the
+                    // survivor is the sole remaining current local allocation.
+                    unsafe { allocator.free(survivor) }.expect("survivor frees locally");
+                    assert!(matches!(allocator.finish(), Ok(())));
+                    rows.extend([bitmap_clear(0) as i64, bitmap_clear(bin + 1) as i64,
+                        abandoned_count() as i64, free_span(true) as i64,
+                        (free_slices() == free_before) as i64,
+                        // SAFETY: the active map is retained after engine finish;
+                        // no registration or removal overlaps these lookups.
+                        unsafe { (page_map.checked_lookup(first.as_ptr()).is_null()
+                            && page_map.checked_lookup(survivor.as_ptr()).is_null()) as i64 }]);
+                    send.send(rows).unwrap();
+                    DynamicPageFixtureOutcome::TearDown
+                });
+                for value in receive.recv().unwrap() { emit(value); }
+            }
+        }
+    }
+
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn x86_64_mapped_reclaim_trace_matches_pinned_c_protocol() {
@@ -23977,3 +24141,6 @@ mod tests {
         .expect("the teardown-precondition worker remains on its native identity");
     }
 }
+
+#[cfg(all(test, target_arch = "x86_64", not(miri)))]
+pub(crate) use tests::managed_abandoned_lifecycle_trace;

@@ -20,6 +20,7 @@
 */
 #include "static.c"
 #include <pthread.h>
+#include <semaphore.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -574,6 +575,136 @@ static void external_callback_lifecycle(void) {
     emit(owner->subproc.stats.commit_calls.total);
     emit(owner->subproc.stats.reserved.current);
     emit(owner->subproc.stats.committed.current);
+  }
+}
+
+/* A foreign source collector holds the abandoned owner bit while an
+   allocation-side bitmap reader rejects it. The exact page and both live
+   clients retain the arena and PageMap spans until a later successful claim. */
+/* The foreign thread holds only the source atomic ownership bit. Two live
+   clients keep the page mapped until that thread releases its claim and joins;
+   the original owner then retries the real abandoned bitmap search. */
+typedef struct held_abandoned_s {
+  mi_page_t* page;
+  sem_t ready;
+  sem_t release;
+} held_abandoned_t;
+
+static void* hold_abandoned_owner(void* argument) {
+  held_abandoned_t* state = argument;
+  require(mi_page_claim_ownership(state->page));
+  require(sem_post(&state->ready) == 0);
+  require(sem_wait(&state->release) == 0);
+  require(!mi_abandoned_page_unown(state->page, NULL));
+  return NULL;
+}
+
+static void* publish_live_remote(void* block) {
+  mi_free(block);
+  return NULL;
+}
+
+typedef struct managed_abandoned_s {
+  size_t request;
+  int blocked;
+  unsigned char* raw;
+  size_t raw_size;
+  mi_subproc_id_t child;
+} managed_abandoned_t;
+
+static void* managed_abandoned_worker(void* argument) {
+  managed_abandoned_t* state = argument;
+  const int blocked = state->blocked;
+  mi_subproc_add_current_thread(state->child);
+  unsigned char* base = _mi_align_up_ptr(state->raw, MI_ARENA_ALIGNMENT);
+  mi_arena_id_t id = _mi_arena_id_none();
+  require(mi_manage_os_memory_ex(base, MI_ARENA_MIN_SIZE, true, true, true, -1, true, &id));
+  mi_arena_t* arena = _mi_arena_from_id(id);
+  mi_heap_t* heap = mi_heap_new_in_arena(id);
+  require(arena != NULL && heap != NULL);
+  mi_theap_t* theap = _mi_heap_theap(heap);
+  const size_t free_before = free_slice_count(arena);
+  void* first = mi_heap_malloc(heap, state->request);
+  void* survivor = mi_heap_malloc(heap, state->request);
+  require(first != NULL && survivor != NULL);
+  mi_page_t* page = _mi_ptr_page(first);
+  require(page != NULL && _mi_ptr_page(survivor) == page && page->memid.memkind == MI_MEM_ARENA);
+  const size_t bin = mi_bin(page->block_size);
+  const size_t slice = page->memid.mem.arena.slice_index;
+  const size_t count = page->memid.mem.arena.slice_count;
+  mi_arena_pages_t* pages = mi_atomic_load_ptr_acquire(mi_arena_pages_t, &heap->arena_pages[arena->arena_idx]);
+  mi_page_queue_t* queue = mi_theap_page_queue_of(theap, page);
+  emit((int64_t)state->request); emit(blocked); emit((int64_t)page->block_size); emit((int64_t)count);
+  emit(page->used); emit(queue->count); emit(mi_bitmap_is_setN(pages->pages, slice, 1));
+  emit(mi_bitmap_is_clearN(arena->pages_main.pages, slice, 1));
+  emit(mi_bbitmap_is_clearN(arena->slices_free, slice, count));
+  _mi_page_abandon(page, queue);
+  emit(mi_page_is_abandoned_mapped(page)); emit(queue->count);
+  emit(mi_atomic_load_relaxed(&heap->abandoned_count[bin]));
+  emit(mi_bitmap_is_setN(pages->pages_abandoned[bin], slice, 1));
+  if (blocked) {
+    held_abandoned_t held = {.page=page};
+    require(sem_init(&held.ready, 0, 0) == 0 && sem_init(&held.release, 0, 0) == 0);
+    pthread_t worker;
+    require(pthread_create(&worker, NULL, &hold_abandoned_owner, &held) == 0);
+    require(sem_wait(&held.ready) == 0);
+    require(mi_arenas_page_try_find_abandoned(theap, count, page->block_size) == NULL);
+    emit(mi_bitmap_is_setN(pages->pages_abandoned[bin], slice, 1));
+    emit(mi_atomic_load_relaxed(&heap->abandoned_count[bin]));
+    emit(_mi_ptr_page(first) == page && _mi_ptr_page(survivor) == page);
+    emit(mi_bbitmap_is_clearN(arena->slices_free, slice, count));
+    require(sem_post(&held.release) == 0 && pthread_join(worker, NULL) == 0);
+    require(sem_destroy(&held.ready) == 0 && sem_destroy(&held.release) == 0);
+  } else {
+    emit(mi_bitmap_is_setN(pages->pages_abandoned[bin], slice, 1));
+    emit(mi_atomic_load_relaxed(&heap->abandoned_count[bin]));
+    emit(_mi_ptr_page(first) == page && _mi_ptr_page(survivor) == page);
+    emit(mi_bbitmap_is_clearN(arena->slices_free, slice, count));
+  }
+  require(mi_arenas_page_try_find_abandoned(theap, count, page->block_size) == page);
+  emit(mi_bitmap_is_clearN(pages->pages_abandoned[bin], slice, 1));
+  emit(mi_atomic_load_relaxed(&heap->abandoned_count[bin]));
+  _mi_theap_page_reclaim(theap, page);
+  emit(page->theap == theap && !mi_page_is_abandoned(page)); emit(queue->count); emit(page->used);
+  pthread_t remote;
+  require(pthread_create(&remote, NULL, &publish_live_remote, first) == 0);
+  require(pthread_join(remote, NULL) == 0);
+  emit(page->used); emit(mi_page_thread_free(page) != NULL);
+  _mi_page_free_collect(page, true);
+  emit(page->used); emit(mi_page_thread_free(page) == NULL);
+  mi_free(survivor);
+  mi_heap_collect(heap, true);
+  emit(mi_bitmap_is_clearN(pages->pages, slice, 1));
+  emit(mi_bitmap_is_clearN(pages->pages_abandoned[bin], slice, 1));
+  emit(mi_atomic_load_relaxed(&heap->abandoned_count[bin]));
+  emit(mi_bbitmap_is_setN(arena->slices_free, slice, count));
+  emit(free_slice_count(arena) == free_before);
+  emit(_mi_checked_ptr_page(first) == NULL && _mi_checked_ptr_page(survivor) == NULL);
+  mi_heap_delete(heap);
+  return NULL;
+}
+
+static void managed_abandoned_lifecycle(void) {
+  static const size_t requests[] = {37, MI_SMALL_SIZE_MAX + 1024, 86699};
+  emit_marker(25);
+  for (size_t kind = 0; kind < 3; kind++)
+  for (int blocked = 0; blocked < 2; blocked++) {
+    configure(true, 0, 1, false);
+    managed_abandoned_t state = {.request=requests[kind], .blocked=blocked,
+        .raw_size=MI_ARENA_MIN_SIZE + MI_ARENA_ALIGNMENT};
+    state.raw = __real_mmap(NULL, state.raw_size, PROT_READ|PROT_WRITE,
+                            MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+    require(state.raw != MAP_FAILED);
+    state.child = mi_subproc_new();
+    require(state.child._mi_subproc_id != NULL);
+    pthread_t owner;
+    require(pthread_create(&owner, NULL, &managed_abandoned_worker, &state) == 0);
+    require(pthread_join(owner, NULL) == 0);
+    /* Every page/client and worker has quiesced before the source registry
+       retirement; this external root remains owned by the caller. */
+    _mi_arenas_unsafe_destroy_all((mi_subproc_t*)state.child._mi_subproc_id);
+    mi_subproc_destroy(state.child);
+    require(__real_munmap(state.raw, state.raw_size) == 0);
   }
 }
 
@@ -1285,6 +1416,7 @@ int main(void) {
     }
   }
   external_callback_lifecycle();
-  emit_marker(25);
+  managed_abandoned_lifecycle();
+  emit_marker(26);
   return 0;
 }

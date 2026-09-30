@@ -13,8 +13,11 @@ development without producing a milestone receipt.
 
 The differential covers arena creation, OS reservation, and caller-owned
 external callback commitment/purge, refusal/retry, bitmap transitions, registry
-retirement, and caller release. It is not evidence for abandonment, abandoned-
-page reclaim, or cross-thread page lifecycle.
+retirement, and caller release. Real private managed arenas additionally cover
+small, medium, and large regular-page abandonment, a foreign held-owner claim
+refusal with bitmap/count restoration, retry and same-owner reassociation,
+foreign remote-free publication, owner collection, and terminal span/map release.
+This does not qualify cross-thread owner reassociation or hardware memory policy.
 """
 
 from __future__ import annotations
@@ -33,8 +36,8 @@ TARGET = "arena::owned::tests::emit_native_arena_lifecycle_trace"
 FIELD = re.compile(r"m2\.arena\.lifecycle\.([0-9]+)=(-?[0-9]+)")
 # libtest's `--nocapture` output places the first field after this delimiter.
 RUST_INLINE_PREFIX = f"test {TARGET} ... "
-# Scenario markers are `-1000 - scenario`; the final marker is scenario 25.
-FINAL_MARKER = -1025
+# Scenario markers are `-1000 - scenario`; the final marker is scenario 26.
+FINAL_MARKER = -1026
 THP_SCENARIO = -1023
 # Scenario 23 cells: this sentinel, allow_thp, eager commit, advised, last
 # advice, and whether every advice call carried it.
