@@ -372,6 +372,32 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
         self.assertEqual(set(record["modes"]), {"static-et-exec", "static-pie"})
         self.assertEqual([call.args[6] for call in validate.call_args_list], ["static", "static-pie"])
 
+    def test_static_lifecycle_reader_reconstructs_identical_links_after_checkout_copy(self) -> None:
+        leaf, product, oracle = self._static_lifecycle_fixture()
+        copied_root = self.root.parent / (self.root.name + "-copy")
+        shutil.copytree(self.root, copied_root)
+        self.addCleanup(shutil.rmtree, copied_root)
+
+        def retained_link(root, source_mount, selected, workload, executable, receipt, linkage, linker):
+            return {"linkage": linkage, "product": str(selected),
+                    "executable_sha256": family.family.digest(executable)}
+
+        with patch.object(product_evidence, "retained_elf_facts", return_value={
+                "type": 3, "dynamic": True,
+                "interpreters": ["/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"],
+                "needed": ["libc.so"],
+        }), patch.object(product_evidence, "validate_retained_link", side_effect=retained_link):
+            original = family._static_lifecycle_report(self.root, leaf, product, "/workspace", oracle)
+            copied = family._static_lifecycle_report(
+                copied_root, copied_root / leaf.relative_to(self.root),
+                copied_root / product.relative_to(self.root), "/workspace", oracle,
+            )
+
+        self.assertEqual(original, copied)
+        for mode in ("static-et-exec", "static-pie"):
+            self.assertEqual(original["modes"][mode]["link"]["product"],
+                             "/workspace/.work/products/primary-static")
+
     def test_static_lifecycle_reader_rejects_a_resealed_host_linker(self) -> None:
         leaf, product, oracle = self._static_lifecycle_fixture()
         for name in ("tools-before.json", "tools-after.json"):

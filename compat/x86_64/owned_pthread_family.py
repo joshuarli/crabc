@@ -1077,6 +1077,9 @@ def _static_lifecycle_report(root: Path, leaf: Path, static_product: Path,
             root, source_mount, static_product, workload, executable, link_receipt, linkage,
             {"path": linker["path"], "sha256": linker["sha256"]},
         )
+        # Physical product paths are validated above. Retain their declared
+        # source-mount spelling so copying the checkout preserves the receipt.
+        observed["product"] = _mounted(root, static_product, source_mount)
         output = mode_root / "output"
         require(output.read_bytes() == oracle_output.read_bytes(),
                 f"static lifecycle {mode} output differs from pinned musl")
