@@ -649,7 +649,8 @@ The active goal is complete only when all of the following hold together:
   pass the same installed and extracted suites without ambient inputs.
 - Allocator M0–M8 and M10–M11 functionality, applicable APIs/modes, source fidelity,
   production architecture, lifetime, fault/model, upstream/stress/soak and bounded
-  metadata/leak requirements pass. M5 numerical performance and M9 are deferred.
+  metadata/leak requirements pass. M5 optimization codegen and throughput,
+  along with M9 performance qualification, are deferred.
 - Rust mimalloc is the correctness-qualified x86 default. C mimalloc is absent
   from the x86 production dependency/build/artifact graph and survives only in
   isolated oracle/comparison inputs. Paused AArch64 remains unchanged.
