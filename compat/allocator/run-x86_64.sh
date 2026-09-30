@@ -34,7 +34,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-m3 [--differential-only|--owner-only|--miri-only|--queue-reorder-only]
   allocator-m4 [--check|--gate ID|--reader-tests]
   allocator-m5 [--check|--gate ID|--reader-tests]
-  allocator-m7 [--check|--gate ID|--reader-tests]
+  allocator-m7 [--check|--gate ID|--reader-tests|--arena-print]
   allocator-m8 [--check|--gate ID|--reader-tests]
   allocator-m9 [--check|--reader-tests|--report PATH...]
   allocator-divergence-evidence [--check|--reader-tests]
@@ -477,10 +477,12 @@ case "$command" in
             m7_command=(python3 compat/allocator/x86_64_m7_gate.py --check)
         elif [ "$#" -eq 1 ] && [ "$1" = --reader-tests ]; then
             m7_command=(python3 compat/allocator/tests/test_x86_64_m7_gate.py)
+        elif [ "$#" -eq 1 ] && [ "$1" = --arena-print ]; then
+            m7_command=(python3 compat/allocator/x86_64_m7_arena_print.py --offline)
         elif [ "$#" -eq 2 ] && [ "$1" = --gate ]; then
             m7_command=(python3 compat/allocator/x86_64_m7_gate.py --gate "$2")
         else
-            fail "allocator-m7 accepts only --check, --gate ID, or --reader-tests"
+            fail "allocator-m7 accepts only --check, --gate ID, --reader-tests, or --arena-print"
         fi
         ensure_image
         run_in_container "${m7_command[@]}"

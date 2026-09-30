@@ -241,6 +241,10 @@
       "command": null,
       "scope": "Pinned-C/Rust assertion, debug-fill, padding, and arena-print behavior of the MI_DEBUG/MI_SHOW_ERRORS/MI_PADDING profiles, with source-backed applicability for the sanitizer and tracking modes."
     },
+    "differential:arena-print": {
+      "command": ["python3", "compat/allocator/x86_64_m7_arena_print.py", "--offline"],
+      "scope": "Pinned C and native Rust compare exact arena output and callback fragment sizes under release and MI_DEBUG=1: twelve arena/page states, both public aliases, registered callback and stderr routes, and three verbose settings. Each side independently reports its arena identity before projecting only that pointer in the header. Prefixed private-context adapters and broader debug assertions remain separate obligations."
+    },
     "differential:debug-padding-17": {
       "command": ["python3", "compat/allocator/x86_64_m7_debug_padding_profile.py", "--offline"],
       "scope": "Source-built pinned C and Rust adapter compare a 17-byte ordinary allocation under MI_DEBUG=1 and MI_PADDING=1: logical usable size, requested-byte debug fill, and one-byte padding corruption error and warning in fresh clean and corrupt processes."
@@ -371,7 +375,7 @@
         "differential:reclaim-options"
       ],
       "blocked_by": [
-        "The option-effects differential traces the arena max-object size, arena purge delay, minimal purge size, NUMA node count, generic-collect frequency, arena reservation size/eager commit, and `_mi_os_purge_ex` (purge_decommits, purge_delay, allow_reset) decisions after `mi_option_set`. The option-profile differential covers, through process start and page allocation, disallow_arena_alloc, disallow_os_alloc, reserve_os_memory, arena_reserve, arena_eager_commit, page_commit_on_demand (a page's `slice_pcommitted` in a lazily committed arena), arena_is_numa_local (the first arena's stored node), allow_thp (the process THP state), and max_vabits (the PageMap reservation). On this host (no reserved huge pages, overcommit enabled) the reserve_huge_os_pages, reserve_huge_os_pages_at, allow_large_os_pages, and pagemap_commit profiles run but cannot discriminate their decisions: the huge and large-page mappings fail over, and overcommit commits the PageMap regardless."
+        "The option-effects differential traces the arena max-object size, arena purge delay, minimal purge size, NUMA node count, generic-collect frequency, arena reservation size/eager commit, and `_mi_os_purge_ex` (purge_decommits, purge_delay, allow_reset) decisions after `mi_option_set`. The option-profile differential covers, through process start and page allocation, disallow_arena_alloc, disallow_os_alloc, reserve_os_memory, arena_reserve, arena_eager_commit, page_commit_on_demand (a page's `slice_pcommitted` in a lazily committed arena), arena_is_numa_local (the first arena's stored node), allow_thp (the process THP state), and max_vabits (the PageMap reservation). On this host (no reserved huge pages, overcommit enabled) the reserve_huge_os_pages, reserve_huge_os_pages_at, and allow_large_os_pages profiles run but cannot discriminate their decisions: the huge and large-page mappings fail over. Separate controlled PageMap profiles discriminate commitment and exact reservation layout under both observed overcommit states."
       ]
     },
     {
@@ -499,14 +503,15 @@
       "acceptance": "Compile-time debug profiles select their own option defaults (for example `show_errors = 1` under `MI_DEBUG || MI_SHOW_ERRORS`), assertion levels, debug fill, and padding as in the pinned source; `mi_debug_show_arenas`/`mi_arenas_print` print the source arena image; sanitizer and tracking modes carry source-backed applicability decisions.",
       "evidence": [
         "differential:debug-profile",
+        "differential:arena-print",
         "differential:debug-padding-17",
         "differential:debug-padding-page",
         "differential:debug-remote-links",
         "differential:show-errors-profile"
       ],
       "blocked_by": [
-        "The default-off `MI_DEBUG=1` and `MI_PADDING=1` profile covers ordinary allocation, regular-page fill and two-block remote-free reuse, padding checks, diagnostics, and statistics; its source-built differentials do not cover the remaining debug assertions, aligned/huge paths, or arena-print behavior. MI_SHOW_ERRORS has a separate compile-time profile and differential.",
-        "`mi_debug_show_arenas` and `mi_arenas_print` are absent, including their prefixed test-adapter mapping.",
+        "The default-off `MI_DEBUG=1` and `MI_PADDING=1` profile covers ordinary allocation, regular-page fill and two-block remote-free reuse, padding checks, diagnostics, and statistics; its source-built differentials do not cover the remaining debug assertions or aligned/huge debug paths. Arena diagnostics have a separate release/debug source differential. MI_SHOW_ERRORS has a separate compile-time profile and differential.",
+        "Native `mi_debug_show_arenas` and `mi_arenas_print` are implemented; their prefixed private-context test-adapter mapping remains unproved.",
         "No applicability decision exists for the TSAN/UBSAN and Valgrind/ASAN/ETW modes."
       ]
     },
