@@ -468,6 +468,116 @@ static int signal_mask_composition(void)
     return 0;
 }
 
+struct queue_thread_control { int ready; int release; int result; };
+
+static void *queue_thread_receiver(void *opaque)
+{
+    struct queue_thread_control *control = opaque;
+    pid_t tid = syscall(SYS_gettid);
+    char released;
+    sigset_t selected, pending;
+    siginfo_t info;
+    struct timespec zero = { 0, 0 };
+    control->result = 1;
+    if (write(control->ready, &tid, sizeof tid) != sizeof tid ||
+        read(control->release, &released, 1) != 1 || sigpending(&pending) ||
+        sigismember(&pending, SIGRTMIN) != 1 || sigismember(&pending, SIGRTMAX) != 1 ||
+        sigemptyset(&selected) || sigaddset(&selected, SIGRTMIN) ||
+        sigtimedwait(&selected, &info, &zero) != SIGRTMIN ||
+        info.si_code != SI_QUEUE || info.si_pid != getpid() ||
+        info.si_uid != getuid() || info.si_value.sival_int != 101 ||
+        sigemptyset(&selected) || sigaddset(&selected, SIGRTMAX) ||
+        sigtimedwait(&selected, &info, &zero) != SIGRTMAX ||
+        info.si_code != SI_TKILL || info.si_pid != getpid())
+        return NULL;
+    control->result = 0;
+    return NULL;
+}
+
+static int queue_process_composition(void)
+{
+    sigset_t selected, previous, single, pending;
+    siginfo_t info;
+    struct signalfd_siginfo record;
+    struct timespec zero = { 0, 0 }, timeout = { 5, 0 };
+    union sigval value;
+    int fd, ready[2], release[2], child_ready[2], status;
+    pid_t tid, child;
+    pthread_t thread;
+    struct queue_thread_control control;
+    char marker;
+    if (sigemptyset(&selected) || sigaddset(&selected, SIGUSR1) ||
+        sigaddset(&selected, SIGRTMIN) || sigaddset(&selected, SIGRTMAX) ||
+        sigprocmask(SIG_BLOCK, &selected, &previous) ||
+        sigemptyset(&single) || sigaddset(&single, SIGUSR1)) return 1;
+    fd = signalfd(-1, &single, SFD_NONBLOCK | SFD_CLOEXEC);
+    value.sival_int = 11;
+    if (fd < 0 || sigqueue(getpid(), SIGUSR1, value)) return 2;
+    value.sival_int = 22;
+    if (sigqueue(getpid(), SIGUSR1, value) || read(fd, &record, sizeof record) != sizeof record ||
+        record.ssi_code != SI_QUEUE || record.ssi_pid != (unsigned)getpid() ||
+        record.ssi_uid != getuid() || record.ssi_errno != 0 || record.ssi_int != 11 ||
+        read(fd, &record, sizeof record) != -1 || errno != EAGAIN || close(fd)) return 3;
+    if (sigemptyset(&single) || sigaddset(&single, SIGRTMIN)) return 4;
+    const int values[] = { INT32_MAX, INT32_MIN, -1234567 };
+    for (unsigned i = 0; i < 3; ++i) {
+        value.sival_int = values[i];
+        if (sigqueue(getpid(), SIGRTMIN, value)) return 5;
+    }
+    for (unsigned i = 0; i < 3; ++i)
+        if (sigtimedwait(&single, &info, &zero) != SIGRTMIN || info.si_errno != 0 ||
+            info.si_code != SI_QUEUE || info.si_pid != getpid() || info.si_uid != getuid() ||
+            info.si_value.sival_int != values[i]) return 6;
+    memset(&info, 0, sizeof info);
+    info.si_signo = SIGRTMAX;
+    info.si_code = SI_QUEUE;
+    info.si_pid = getpid();
+    info.si_uid = getuid();
+    info.si_value.sival_int = INT32_MIN;
+    if (syscall(SYS_rt_sigqueueinfo, getpid(), SIGRTMAX, &info) ||
+        sigemptyset(&single) || sigaddset(&single, SIGRTMAX) ||
+        sigtimedwait(&single, &info, &zero) != SIGRTMAX || info.si_errno != 0 ||
+        info.si_code != SI_QUEUE || info.si_pid != getpid() || info.si_uid != getuid() ||
+        (uintptr_t)info.si_value.sival_ptr != UINT32_C(0x80000000)) return 15;
+    value.sival_int = 0;
+    if (sigqueue(INT32_MAX, SIGUSR1, value) != -1 || errno != ESRCH ||
+        pipe(ready) || pipe(release)) return 7;
+    control = (struct queue_thread_control){ ready[1], release[0], 1 };
+    if (pthread_create(&thread, NULL, queue_thread_receiver, &control) ||
+        read(ready[0], &tid, sizeof tid) != sizeof tid) return 8;
+    value.sival_int = 7;
+    if (sigqueue(tid, SIGUSR1, value) || sigemptyset(&single) ||
+        sigaddset(&single, SIGUSR1) || sigtimedwait(&single, &info, &zero) != SIGUSR1 ||
+        info.si_code != SI_QUEUE || info.si_value.sival_int != 7 ||
+        sigemptyset(&single) || sigaddset(&single, SIGRTMIN)) return 9;
+    value.sival_int = 101;
+    if (sigqueue(getpid(), SIGRTMIN, value) || syscall(SYS_tgkill, getpid(), tid, SIGRTMAX) ||
+        sigpending(&pending) || sigismember(&pending, SIGRTMIN) != 1 ||
+        sigismember(&pending, SIGRTMAX) != 0 || write(release[1], "r", 1) != 1 ||
+        pthread_join(thread, NULL) || control.result) return 10;
+    if (close(ready[0]) || close(ready[1]) || close(release[0]) || close(release[1]) ||
+        pipe(child_ready)) return 11;
+    child = fork();
+    if (child == -1) return 12;
+    if (!child) {
+        close(child_ready[0]);
+        if (write(child_ready[1], "r", 1) != 1 ||
+            sigtimedwait(&single, &info, &timeout) != SIGRTMIN ||
+            info.si_code != SI_QUEUE || info.si_pid != getppid() ||
+            info.si_uid != getuid() || info.si_value.sival_int != -1234) _exit(1);
+        _exit(0);
+    }
+    close(child_ready[1]);
+    if (read(child_ready[0], &marker, 1) != 1 ||
+        syscall(SYS_tgkill, getpid(), child, SIGRTMIN) != -1 || errno != ESRCH) return 13;
+    value.sival_int = -1234;
+    if (sigqueue(child, SIGRTMIN, value) || waitpid(child, &status, 0) != child ||
+        !WIFEXITED(status) || WEXITSTATUS(status) || close(child_ready[0]) ||
+        sigpending(&pending) || sigismember(&pending, SIGRTMIN) != 0 ||
+        sigprocmask(SIG_SETMASK, &previous, NULL)) return 14;
+    return 0;
+}
+
 static int signalfd_composition(void)
 {
     sigset_t selected, previous, empty, pending;
@@ -484,6 +594,11 @@ static int signalfd_composition(void)
         return 129;
     if (synchronous_wait_composition())
         return 130;
+    int queue_result = queue_process_composition();
+    if (queue_result) {
+        fprintf(stderr, "queued signal composition failed at %d\n", queue_result);
+        return 131;
+    }
     if (sigemptyset(&selected) || sigaddset(&selected, SIGUSR1) ||
         sigemptyset(&empty) || sigprocmask(SIG_BLOCK, &selected, &previous))
         return 120;

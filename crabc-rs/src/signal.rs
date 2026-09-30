@@ -218,6 +218,12 @@ fn calling_uid_raw() -> u32 {
     process::getuid().as_raw()
 }
 
+#[cfg(target_arch = "x86_64")]
+#[inline]
+fn calling_uid_raw() -> u32 {
+    crabc_core::process::getuid()
+}
+
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIG_BLOCK: i32 = 0;
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
@@ -232,7 +238,7 @@ const SA_SIGINFO: u64 = 0x0000_0004;
 const SS_ONSTACK: i32 = 1;
 #[cfg(target_arch = "aarch64")]
 const SS_DISABLE: i32 = 2;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SI_QUEUE: i32 = -1;
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGINFO_SIGNO_OFFSET: usize = 0;
@@ -242,7 +248,7 @@ const SIGINFO_ERRNO_OFFSET: usize = 4;
 const SIGINFO_CODE_OFFSET: usize = 8;
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGINFO_PID_OFFSET: usize = 16;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGINFO_UID_OFFSET: usize = 20;
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGINFO_VALUE_OFFSET: usize = 24;
@@ -859,7 +865,7 @@ impl SigInfo {
         unsafe { ptr::read_unaligned(self.0.bytes.as_ptr().add(offset).cast()) }
     }
 
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
     #[inline]
     fn queue(signal: Signal, value: i32) -> Self {
         let mut info = crabc_core::signal::SigInfo::zeroed();
@@ -1101,7 +1107,13 @@ pub fn timed_wait(set: &SignalSet, timeout: Option<&Timespec>) -> Result<(Signal
 }
 
 /// Queues an integer-valued signal for `pid` using Linux `rt_sigqueueinfo`.
-#[cfg(target_arch = "aarch64")]
+///
+/// Delivery uses the target's shared process pending queue, including when
+/// Linux resolves a nonleader thread ID in that process. It does not select a
+/// receiving thread or change any signal mask. Realtime signals retain queued
+/// values in order within each signal number; ordinary signals can coalesce.
+/// The kernel's errors are returned directly without changing C `errno`.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 pub fn queue_process(pid: Pid, signal: Signal, value: i32) -> Result<()> {
     let info = SigInfo::queue(signal, value);
@@ -1246,7 +1258,7 @@ const fn signal_bit(signal: Signal) -> u64 {
     1_u64 << (signal.as_raw() - 1)
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 fn write_i32(bytes: &mut [u8; 128], offset: usize, value: i32) {
     // SAFETY: Every caller uses a fixed field wholly within the 128-byte
