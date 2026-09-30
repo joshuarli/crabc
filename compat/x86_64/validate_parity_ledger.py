@@ -2420,7 +2420,7 @@ def repository_path(path_text: str, location: str) -> Path:
     return resolved
 
 
-def require_aarch64_parity_inventory() -> None:
+def require_aarch64_parity_inventory(*, public_support: bool = False) -> None:
     """Run the checked derived AArch64-to-x86 inventory beside this ledger."""
     require(
         AARCH64_PARITY_INVENTORY_VALIDATOR_PATH.is_file(),
@@ -2466,7 +2466,8 @@ def require_aarch64_parity_inventory() -> None:
         "AArch64 parity inventory frozen family count is invalid",
     )
     require(boundary.get("promotion_ready") is False, "AArch64 parity inventory must retain promotion_ready=false")
-    require(boundary.get("public_support") is False, "AArch64 parity inventory must retain public_support=false")
+    require(isinstance(public_support, bool) and boundary.get("public_support") is public_support,
+            "AArch64 parity inventory public declaration differs from the ledger")
 
 
 def direct_project_headers(source: Path) -> set[str]:
@@ -9553,6 +9554,48 @@ def completion_family_ids(data: Mapping[str, Any]) -> list[str]:
     return [identifier for identifier in required if identifier not in expected]
 
 
+def public_support_declaration(data: Mapping[str, Any]) -> bool:
+    """Check a public declaration without qualifying its executable products.
+
+    Family and capability completion are necessary declarations. Actual native
+    qualification and installed-product authorization remain separate checks.
+    """
+    policy = data.get("policy")
+    require(isinstance(policy, Mapping), "policy must be a table")
+    public = policy.get("public_support")
+    require(isinstance(public, bool), "policy.public_support must be a boolean")
+    fixed = {"native_execution_only", "no_emulation", "no_portability_framework", "no_symbol_count_claim"}
+    require(set(policy) == fixed | {"public_support"}
+            and all(policy[name] is True for name in fixed), "x86 parity policy drifted")
+    promotion = data.get("promotion")
+    require(isinstance(promotion, Mapping), "promotion must be a table")
+    required = promotion.get("required_families")
+    require(isinstance(required, list) and tuple(required) == EXPECTED_FAMILIES,
+            "promotion family roster drifted")
+    active = completion_family_ids(data)
+    if not public:
+        return False
+    families = data.get("family")
+    require(isinstance(families, list)
+            and all(isinstance(row, Mapping) for row in families)
+            and tuple(row.get("id") for row in families) == EXPECTED_FAMILIES,
+            "public declaration family roster drifted")
+    by_id = {row["id"]: row for row in families}
+    incomplete = [name for name in active if by_id[name].get("status") != "foundation-verified"]
+    require(not incomplete, "public declaration has incomplete families: " + ", ".join(incomplete))
+    owners = {}
+    for family in families:
+        for capability in string_list(family.get("capabilities"),
+                                      f"family[{family['id']}].capabilities", allow_empty=True):
+            require(capability not in owners, f"public declaration duplicates capability {capability}")
+            require(family.get("status") == "foundation-verified",
+                    f"public capability {capability} has an incomplete owner")
+            owners[capability] = family["id"]
+    require(set(owners) == baseline_capability_ids(ROOT / "compat/crabc-rs/coverage.toml"),
+            "public declaration capability coverage differs from the baseline")
+    return True
+
+
 def validate_ledger(
     data: Mapping[str, Any],
     *,
@@ -9588,16 +9631,7 @@ def _validate_ledger(
     baseline_path = repository_path(str(data.get("baseline_capability_ledger", "")), "baseline_capability_ledger")
     repository_path(str(data.get("baseline_gate_dispatch", "")), "baseline_gate_dispatch")
 
-    policy = data.get("policy")
-    require(isinstance(policy, Mapping), "policy must be a table")
-    expected_policy = {
-        "native_execution_only": True,
-        "public_support": False,
-        "no_emulation": True,
-        "no_portability_framework": True,
-        "no_symbol_count_claim": True,
-    }
-    require(dict(policy) == expected_policy, "x86 parity policy drifted")
+    public_support = public_support_declaration(data)
 
     meanings = data.get("status_meaning")
     require(isinstance(meanings, Mapping), "status_meaning must be a table")
@@ -9879,7 +9913,7 @@ def _validate_ledger(
     used_gates = {gate for family in families for gate in family["aarch64_gates"]}
     missing_dispatch = sorted(gate for gate in used_gates if f"    {gate})" not in dispatch_source and f"    {gate}|" not in dispatch_source)
     require(not missing_dispatch, f"AArch64 gate dispatch does not contain: {', '.join(missing_dispatch)}")
-    require_aarch64_parity_inventory()
+    require_aarch64_parity_inventory(public_support=public_support)
 
     return {
         "schema": EXPECTED_SCHEMA,
@@ -9977,9 +10011,10 @@ def _validate_ledger(
         "deferred_families": [identifier for identifier in required_families if identifier not in completion_families],
         "performance_qualified": all(family["status"] == "foundation-verified"
                                      for family in families if family["id"] == "performance.release"),
-        "promotion_ready": all(family["status"] == "foundation-verified"
-                               for family in families if family["id"] in completion_families),
-        "public_support": policy["public_support"],
+        # Structural declarations do not qualify current native executions or
+        # authorize installed products, even when every family is declared done.
+        "promotion_ready": False,
+        "public_support": public_support,
     }
 
 

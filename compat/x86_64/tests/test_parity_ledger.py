@@ -47,6 +47,86 @@ class CompletionScopeTests(unittest.TestCase):
             ledger.completion_family_ids(data)
 
 
+class PublicSupportDeclarationTests(unittest.TestCase):
+    def completed(self):
+        data = ledger.load_toml(ledger.LEDGER_PATH)
+        data["policy"]["public_support"] = True
+        for family in data["family"]:
+            if family["id"] != "performance.release":
+                family["status"] = "foundation-verified"
+        return data
+
+    def test_correctness_declaration_defers_performance_without_claiming_readiness(self):
+        data = self.completed()
+        self.assertTrue(ledger.public_support_declaration(data))
+        self.assertEqual(data["family"][-1]["status"], "planned")
+        self.assertEqual(set(ledger.completion_family_ids(data)),
+                         set(ledger.EXPECTED_FAMILIES) - {"performance.release"})
+        # The declaration check grants no waiver for the unchanged evidence
+        # readers: merely changing family statuses still fails validation.
+        with self.assertRaisesRegex(ledger.LedgerError, "native_evidence must be entirely verified"):
+            ledger.validate_ledger(data)
+
+    def test_nested_inventory_boundary_matches_the_declared_public_flag(self):
+        from types import SimpleNamespace
+        import aarch64_parity_inventory as inventory
+
+        data = self.completed()
+        original = inventory.load_toml
+        with mock.patch.object(inventory, "load_toml", side_effect=lambda path:
+                               data if path == inventory.X86_LEDGER_PATH else original(path)):
+            report = inventory.build_inventory()
+        loader = SimpleNamespace(exec_module=lambda module: setattr(module, "validate_inventory", lambda: report))
+        with mock.patch.object(ledger.importlib.util, "spec_from_file_location",
+                               return_value=SimpleNamespace(loader=loader)), \
+                mock.patch.object(ledger.importlib.util, "module_from_spec", return_value=SimpleNamespace()):
+            ledger.require_aarch64_parity_inventory(public_support=True)
+            with self.assertRaisesRegex(ledger.LedgerError, "declaration differs"):
+                ledger.require_aarch64_parity_inventory(public_support=False)
+            report["x86_boundary"]["promotion_ready"] = True
+            with self.assertRaisesRegex(ledger.LedgerError, "promotion_ready=false"):
+                ledger.require_aarch64_parity_inventory(public_support=True)
+
+    def test_every_active_family_and_frozen_roster_remain_required(self):
+        complete = self.completed()
+        for identifier in ledger.completion_family_ids(complete):
+            data = copy.deepcopy(complete)
+            next(row for row in data["family"] if row["id"] == identifier)["status"] = "planned"
+            with self.subTest(family=identifier), self.assertRaisesRegex(ledger.LedgerError, "incomplete"):
+                ledger.public_support_declaration(data)
+        complete["promotion"]["required_families"].pop()
+        with self.assertRaisesRegex(ledger.LedgerError, "roster"):
+            ledger.public_support_declaration(complete)
+
+    def test_full_declaration_also_requires_performance(self):
+        data = self.completed()
+        data["completion"] = {"qualification_profile": "full", "deferred_families": []}
+        with self.assertRaisesRegex(ledger.LedgerError, "incomplete"):
+            ledger.public_support_declaration(data)
+        data["family"][-1]["status"] = "foundation-verified"
+        self.assertTrue(ledger.public_support_declaration(data))
+
+    def test_counterfeit_boolean_scope_and_capability_mapping_are_rejected(self):
+        for value in (1, 0, "true", None):
+            data = self.completed()
+            data["policy"]["public_support"] = value
+            with self.subTest(value=value), self.assertRaisesRegex(ledger.LedgerError, "boolean"):
+                ledger.public_support_declaration(data)
+        data = self.completed()
+        data["completion"]["deferred_families"].append("libc.resolver")
+        with self.assertRaisesRegex(ledger.LedgerError, "deferred"):
+            ledger.public_support_declaration(data)
+        data = self.completed()
+        owner = next(row for row in data["family"] if row["capabilities"])
+        capability = owner["capabilities"].pop()
+        with self.assertRaisesRegex(ledger.LedgerError, "capabilit"):
+            ledger.public_support_declaration(data)
+        data["family"][-1]["capabilities"].append(capability)
+        with self.assertRaisesRegex(ledger.LedgerError, "capabilit"):
+            ledger.public_support_declaration(data)
+
+
+
 class X86ParityLedgerTests(unittest.TestCase):
     def test_reviewed_membarrier_cpp_matrix_rows_reject_foreign_or_missing_difference(self) -> None:
         report = json.loads(ledger.HEADER_ABI_MATRIX_REPORT_PATH.read_text(encoding="utf-8"))

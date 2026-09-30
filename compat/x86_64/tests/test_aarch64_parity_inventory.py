@@ -45,6 +45,45 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         with patch.object(inventory, "load_toml", side_effect=load_toml):
             return inventory.build_inventory()
 
+    def completed(self):
+        data = inventory.load_toml(inventory.X86_LEDGER_PATH)
+        data["policy"]["public_support"] = True
+        for family in data["family"]:
+            if family["id"] != "performance.release":
+                family["status"] = "foundation-verified"
+        return data
+
+    def test_public_inventory_keeps_physical_readiness_false(self):
+        report = self.build_with_x86_ledger(self.completed())
+        self.assertTrue(report["x86_boundary"]["public_support"])
+        self.assertFalse(report["x86_boundary"]["promotion_ready"])
+        self.assertEqual(report["capability_state_counts"], {inventory.STATE_IMPLEMENTED: 223})
+        self.assertEqual(report["x86_boundary"]["promotion_family_count"], 26)
+        self.assertEqual(report["frozen_baseline"], inventory.validate_frozen_baseline())
+        performance = next(row for row in report["families"] if row["id"] == "performance.release")
+        self.assertNotEqual(performance["contract_state"], inventory.STATE_IMPLEMENTED)
+        with patch.object(inventory, "build_inventory", return_value=report), \
+                patch.object(inventory.json, "loads", return_value=report):
+            self.assertEqual(inventory.validate_inventory(), report)
+
+    def test_public_inventory_refuses_premature_or_counterfeit_declaration(self):
+        data = inventory.load_toml(inventory.X86_LEDGER_PATH)
+        data["policy"]["public_support"] = True
+        with self.assertRaisesRegex(inventory.InventoryError, "incomplete"):
+            self.build_with_x86_ledger(data)
+        data = self.completed()
+        data["policy"]["public_support"] = 1
+        with self.assertRaisesRegex(inventory.InventoryError, "boolean"):
+            self.build_with_x86_ledger(data)
+        data = self.completed()
+        owner = next(row for row in data["family"] if row["capabilities"])
+        capability = owner["capabilities"].pop()
+        with self.assertRaisesRegex(inventory.InventoryError, "capabilit"):
+            self.build_with_x86_ledger(data)
+        data["family"][-1]["capabilities"].append(capability)
+        with self.assertRaisesRegex(inventory.InventoryError, "capabilit"):
+            self.build_with_x86_ledger(data)
+
     def test_frozen_baseline_record_captures_the_settlement_identity(self) -> None:
         frozen = inventory.validate_frozen_baseline()
         self.assertEqual(

@@ -14,6 +14,7 @@ import hashlib
 import json
 import re
 import shlex
+import sys
 import tomllib
 from collections import Counter
 from pathlib import Path
@@ -299,9 +300,17 @@ def build_inventory() -> dict[str, Any]:
         x86.get("baseline_platform") == frozen_baseline["platform"],
         "x86 ledger baseline platform changed",
     )
-    policy = x86.get("policy")
-    require(isinstance(policy, Mapping), "x86 ledger policy is missing")
-    require(policy.get("public_support") is False, "inventory cannot be produced from a public x86 ledger")
+    # Reuse only the declaration contract. Calling the whole ledger validator
+    # here would recurse through its checked inventory boundary.
+    local_modules = str(Path(__file__).resolve().parent)
+    if local_modules not in sys.path:
+        sys.path.insert(0, local_modules)
+    import validate_parity_ledger as declarations
+
+    try:
+        public_support = declarations.public_support_declaration(x86)
+    except declarations.LedgerError as error:
+        raise InventoryError(str(error)) from error
     registered_commands = registered_native_evidence_commands()
 
     capability_entries = baseline.get("capability")
@@ -536,7 +545,7 @@ def build_inventory() -> dict[str, Any]:
         "frozen_baseline": frozen_baseline,
         "x86_boundary": {
             "promotion_ready": False,
-            "public_support": False,
+            "public_support": public_support,
             "promotion_family_count": len(family_rows),
             "selected_static_export_count": len(static_exports),
             "selected_static_exports_in_aarch64_dynamic_candidate_set": len(set(static_exports) & candidate_symbol_set),
@@ -558,7 +567,8 @@ def validate_inventory() -> dict[str, Any]:
         raise InventoryError(f"cannot read checked inventory: {error}") from error
     require(expected == actual, "derived inventory drifted; regenerate it after reviewing the underlying AArch64/x86 contract change")
     require(actual["x86_boundary"]["promotion_ready"] is False, "inventory must retain promotion_ready=false")
-    require(actual["x86_boundary"]["public_support"] is False, "inventory must retain public_support=false")
+    require(isinstance(actual["x86_boundary"]["public_support"], bool),
+            "inventory public declaration must be a boolean")
     return actual
 
 
@@ -572,7 +582,7 @@ def main() -> int:
         f"implemented={report['capability_state_counts'].get(STATE_IMPLEMENTED, 0)}; "
         f"selected={report['capability_state_counts'].get(STATE_SELECTED, 0)}; "
         f"missing={report['capability_state_counts'].get(STATE_MISSING, 0)}; "
-        "promotion_ready=False; public_support=False)"
+        f"promotion_ready=False; public_support={report['x86_boundary']['public_support']})"
     )
     return 0
 
