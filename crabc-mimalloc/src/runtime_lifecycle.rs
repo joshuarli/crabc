@@ -11449,17 +11449,6 @@ pub unsafe fn native_stats_json(stats: *const u8, size: usize, buffer: *mut u8) 
             None => return core::ptr::null_mut(),
         }
     };
-    let info = native_process_info();
-    let process = crate::statistics::JsonProcessInfo {
-        elapsed: info.elapsed_milliseconds,
-        user: info.user_milliseconds,
-        system: info.system_milliseconds,
-        page_faults: info.page_faults,
-        rss_current: info.current_rss,
-        rss_peak: info.peak_rss,
-        commit_current: info.current_commit,
-        commit_peak: info.peak_commit,
-    };
     // `mi_rezalloc` resolves the caller's default Theap independently of
     // the Heap or subprocess whose statistics are being rendered. Both the
     // initial zeroed allocation and later growth must keep that selection.
@@ -11477,6 +11466,19 @@ pub unsafe fn native_stats_json(stats: *const u8, size: usize, buffer: *mut u8) 
             return core::ptr::null_mut();
         }
         out
+    };
+    // The growing buffer's first allocation precedes process information in
+    // the source. Its committed page must be included in that observation.
+    let info = native_process_info();
+    let process = crate::statistics::JsonProcessInfo {
+        elapsed: info.elapsed_milliseconds,
+        user: info.user_milliseconds,
+        system: info.system_milliseconds,
+        page_faults: info.page_faults,
+        rss_current: info.current_rss,
+        rss_peak: info.peak_rss,
+        commit_current: info.current_commit,
+        commit_peak: info.peak_commit,
     };
     source.render_json(process, &mut out);
     out.finish(|block| {
