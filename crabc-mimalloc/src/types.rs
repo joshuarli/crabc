@@ -2368,12 +2368,13 @@ impl ThreadLocalData {
     }
 
     /// Projects the attached calling thread's stable identity and NUMA node.
-    /// Source list mutation remains independent of these scalar fields.
+    /// Source list mutation remains independent of these scalar fields. The
+    /// recurse marker suppresses deferred callbacks, not ordinary allocation
+    /// or queries of this same retained owner from a selected callback.
     ///
     /// # Safety
     /// `pointer` retains initialized TLD metadata through the call. Its
-    /// identity and NUMA fields are stable, and the caller exclusively
-    /// controls its recurse marker.
+    /// subprocess, threadpool, identity and NUMA fields remain unchanged.
     pub(crate) unsafe fn attached_thread_identity_at(
         pointer: NonNull<Self>,
         subprocess: &SubprocessIdentity,
@@ -2382,7 +2383,6 @@ impl ThreadLocalData {
         unsafe {
             if core::ptr::addr_of!((*pointer.as_ptr()).subprocess).read() != subprocess.as_ptr()
                 || core::ptr::addr_of!((*pointer.as_ptr()).is_in_threadpool).read()
-                || core::ptr::addr_of!((*pointer.as_ptr()).recurse).read()
             { return None; }
             Some((
                 LiveThreadId::new(core::ptr::addr_of!((*pointer.as_ptr()).thread_id).read())?,

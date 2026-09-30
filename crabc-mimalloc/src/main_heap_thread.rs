@@ -2530,7 +2530,22 @@ unsafe impl TheapPageSession for MainHeapThreadPageSession<'_, '_> {
     #[cfg(target_arch = "x86_64")]
     #[inline]
     fn permits_selected_main_arena_ordinary_full_abandonment(&self) -> bool {
-        self.attachment.ensure_attached_current().is_ok()
+        if self.attachment.ensure_attached_current().is_ok() {
+            return true;
+        }
+        // An owner-local session already proved the callback's exact TLD,
+        // list membership, recurse marker, and retained engine before binding
+        // this view. Thread exit has withdrawn the fast root, but its selected
+        // callback still owns the default Theap until the drain resumes. A
+        // nested allocation may therefore fill and abandon a page normally.
+        let generation = self.attachment.deferred_free_callback_active.load(Ordering::Acquire);
+        generation != 0
+            && generation == self.attachment.deferred_free_callback_generation
+            && self.attachment.ensure_draining_current().is_ok()
+            && fast_slot_peek().is_none()
+            && self.attachment.local_theap_pointer().is_ok_and(|owner| {
+                self.attachment.default_root_matches_local_owner(owner, false)
+            })
     }
 
     fn push_selected_main_os_abandoned_page(&mut self, page: NonNull<Page>) -> bool {
