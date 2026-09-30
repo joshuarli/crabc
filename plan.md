@@ -43,10 +43,14 @@ only its exact source, configuration, image, products, and execution context.
   selects fresh pages; debug visitation decodes page links and reports usable
   block geometry. Deterministic Heap birth and release contention match C.
   Child-current statistics selection, public Heap/subprocess statistics entries,
-  ordinary JSON growth and nested destruction's process-main merge are integrated.
+  ordinary JSON growth, default-Heap JSON routing, process-info ordering and
+  nested destruction's process-main merge are integrated.
   Deferred callbacks now permit ordinary nested allocation during collection and
-  worker exit. Full numeric statistics still differ; default-Heap JSON routing,
-  process-info ordering and child metadata allocation geometry are being repaired.
+  worker exit. Foreign child-Heap deletion selects the destination child main
+  Heap. Auxiliary Heap birth now requests the pinned 6,464-byte extent, and
+  free statistics select the initialized caller's default or the page's locked
+  metadata Theap without attaching a fresh caller. All four focused profiles
+  pass; child main-Heap and subprocess metadata allocation geometry remain open.
 - **Allocator evidence:** exact `fcdd233a2` passes all 45 executable M6 entries;
   its original report retains ten contract blockers. The upstream-only condition
   is now closed by the unchanged API and both full stress workloads. The current
@@ -58,7 +62,13 @@ only its exact source, configuration, image, products, and execution context.
   tests but lacks M2. Exact `5b981fe3b` passes all 24 public deferred-callback
   C/Rust pairs across four profiles and independent read-only replay. Four-profile
   Heap collection, visitation, both unchanged stress workloads and child-arena
-  worker evidence are retained. Legacy profile failures remain unadmitted.
+  worker evidence are retained. Exact `97fbc8c25` passes the full four-profile
+  membership and Theap workloads. Exact `d28f4bd0d` passes all three full
+  abandoned-page visitor workloads in four profiles and independent read-only
+  replay. The private TLS visibility repair passes its original artifact judge.
+  Fresh strict Miri dispatch reaches selected fixtures in separate interpreters;
+  raw-environment startup remains unsupported in reached fixtures. Legacy profile
+  failures remain unadmitted.
   Huge-page/NUMA hardware and performance remain open.
 - **Runtime qualification:** accepted-C `5bd807aa7` qualifies the complete 219
   executions and separate full54 aggregate with independent read-only readers.
@@ -74,10 +84,17 @@ only its exact source, configuration, image, products, and execution context.
   immutable product leases. Its three math products pass all 206 entries and
   18 execution cells. Header, pthread, resolver, loader, Lua and Rust std/LTO
   component producers and owning read-only readers pass; ordered family closure
-  remains open. The full POSIX producer passes all five strict components;
-  independent admission replay is pending. The compiler-helper owner inventory
+  remains open. Its full five-component POSIX admission and independent
+  read-only reader pass; the existing POSIX-to-pthread admission join passes
+  twice with all inputs read-only. The complete loader component covers all
+  21 synthetic and 34 package cases on three products, with its owning reader;
+  family prerequisites remain open. The text family producer passes nine
+  components and 16 capabilities; its independent reader is pending.
+  The compiler-helper owner inventory
   now names all 32 helpers; the older text selector's 27-helper rejection remains
-  preserved. Native `e30070ce8` retains its signal-handler/fork timeout
+  preserved. A forward exact `a7fffb1ab` compiler/CRT cohort independently
+  passes all 32 helpers and 183 CRT obligations through the current selector.
+  Native `e30070ce8` retains its signal-handler/fork timeout
   after 12 successes; older `bed22dc18` timed out after 85. Both remain
   unqualified. The controlled native/musl
   child-counter reproduction does not waive that failure. No historical result
