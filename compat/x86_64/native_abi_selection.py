@@ -12580,7 +12580,7 @@ def attach_compiler_helper_shared_placement(expanded: Sequence[Mapping[str, Any]
             'owner_group': COMPILER_HELPER_GROUP,
             'owner': 'builtins',
         })
-    require(len(pending) == len(names) == 23, 'compiler-helper private shared placement count differs')
+    require(len(pending) == len(names), 'compiler-helper private shared placement count differs')
     return pending
 
 

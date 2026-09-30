@@ -101,6 +101,31 @@ class NativeAbiCompilerHelperTests(unittest.TestCase):
             selection.compiler_helper_adapter(None, ordinary_report_path=None, paths=self.paths,
                                               installed_links={'static': self.report})
 
+    def test_shared_placement_covers_the_complete_helper_contract_roster(self):
+        contract = helpers.load_contract(ROOT)
+        names = helpers.helper_names(contract)
+        metadata = {key: helpers.HELPER_METADATA[key] for key in ('type', 'binding', 'visibility')}
+        shared = {key: contract['shared_libc'][key] for key in ('type', 'binding', 'visibility')}
+        records = [{
+            'identity': selection.identity(name),
+            'selection': {'group': selection.COMPILER_HELPER_GROUP,
+                          'disposition': 'private-provider', 'owner': 'builtins'},
+            'expected_placements': [
+                {'artifact_key': placement, 'metadata_rule': 'explicit', 'metadata': metadata}
+                for placement in helpers.ARCHIVE_PLACEMENTS],
+        } for name in names]
+        projection = {name: {'table': '.symtab', 'row_index': index,
+                            'section_index': 1, 'section': '.text', 'metadata': shared}
+                      for index, name in enumerate(names)}
+        with mock.patch.object(selection, '_compiler_helper_shared_contract', return_value=(contract, {}, shared)), \
+                mock.patch.object(selection, '_validated_compiler_helper_shared_projection', return_value=projection):
+            pending = selection.attach_compiler_helper_shared_placement(records, {}, {}, {})
+            self.assertEqual({row['identity']['name'] for row in pending}, set(names))
+            self.assertTrue(all(row['expected_placements'][-1]['artifact_key'] ==
+                                selection.COMPILER_HELPER_SHARED_ARTIFACT for row in records))
+            with self.assertRaisesRegex(selection.SelectionError, 'identity differs'):
+                selection.attach_compiler_helper_shared_placement(records[:-1], {}, {}, {})
+
     def test_product_reader_rejection_stays_at_the_selection_boundary(self):
         error = selection.product_evidence.ProductEvidenceError('retained linkage differs')
         with mock.patch.object(helpers, 'validate_supplied_product_evidence', side_effect=error):
