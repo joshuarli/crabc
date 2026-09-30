@@ -4225,6 +4225,23 @@ impl Page {
         // reference to the whole concurrently owned page is formed.
         unsafe { core::ptr::addr_of!((*page.as_ptr()).heap).read() }
     }
+    /// Reads the immutable memory pinning flag without borrowing owner fields.
+    /// The result grants no access to block bytes or authority to release them.
+    ///
+    /// # Safety
+    ///
+    /// `page` names initialized metadata that remains live through this read.
+    /// Its memory identity must be initialized and its pinning flag must not
+    /// change or be reclaimed concurrently. A published page can be retained
+    /// by a live client or an owning map-reader lease; unrelated owner fields
+    /// and remote-free atomic state may change independently.
+    #[inline]
+    pub(crate) unsafe fn is_pinned_at(page: NonNull<Self>) -> bool {
+        // SAFETY: the caller retains the initialized immutable scalar. Only
+        // this field is read; no whole-page or memory-identity borrow is made.
+        unsafe { core::ptr::addr_of!((*page.as_ptr()).memid.is_pinned).read() }
+    }
+
     const fn empty() -> Self {
         Self {
             self_: AtomicPtr::new(null_mut()),
@@ -9468,7 +9485,10 @@ mod tests {
         assert!(static_empty.initially_committed());
         assert!(!static_empty.initially_zero());
 
-        let page = Page::empty();
+        let mut page = Page::empty();
+        // SAFETY: this initialized static image remains exclusively retained;
+        // the immutable memory identity is unchanged throughout the read.
+        assert!(unsafe { Page::is_pinned_at(NonNull::from(&mut page)) });
         assert!(page.memid.is_pinned());
         assert!(page.memid.initially_committed());
         assert!(!page.memid.initially_zero());
