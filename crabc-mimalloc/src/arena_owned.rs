@@ -608,7 +608,11 @@ impl ProcessArenaBacking {
             .ok_or(invalid)?;
         if size == 0 || offset.checked_add(size).is_none_or(|end| end > span) { return Err(invalid); }
         let start = view.slice_start(arena_memory.slice_index as usize).ok_or(invalid)?;
-        let page_area = (start as usize).checked_add(offset).ok_or(invalid)? as *mut u8;
+        let page_address = start.addr().checked_add(offset).ok_or(invalid)?;
+        // Preserve the claimed mapping's capability while selecting its
+        // validated interior prefix; numerical address checks do not create
+        // a new owner pointer for the commitment operation.
+        let page_area = start.with_addr(page_address);
         // SAFETY: the exact arena MemoryId/span validation above identifies
         // one live claimed page area; its caller holds the unique prefix
         // transition until successful commitment publishes page capacity.
@@ -2102,6 +2106,52 @@ mod tests {
         // SAFETY: `mincore` observes one live mapping page and writes one byte.
         assert!(unsafe { crabc_core::mm::mincore_raw(base, 4096, &mut residency) }.is_ok());
         unsafe { crabc_core::mm::munmap_raw(base, ARENA_MIN_SIZE) }.unwrap();
+    }
+
+    #[test]
+    fn claimed_page_prefix_commit_preserves_mapping_provenance() {
+        static SUBPROCESS: MainSubprocess = MainSubprocess::new();
+        static BACKING: ProcessArenaBacking = ProcessArenaBacking::new();
+        static POLICY: std::sync::OnceLock<VmPolicy> = std::sync::OnceLock::new();
+        let policy = POLICY.get_or_init(|| {
+            let mut options = VmOptions::uninitialized();
+            options.initialize_all(|_| VmOptionEnvironment::Absent);
+            VmPolicy::new(options).expect("source VM options are valid")
+        });
+        policy.finish_preloading();
+        let process = VmProcess::new_main(policy, &SUBPROCESS);
+        let (mapping, memory) = NormalOsAllocation::allocate_aligned_base_for_process(
+            process, config(), ARENA_MIN_SIZE, ARENA_ALIGNMENT, MapAccess::Reserved,
+            false, None,
+        ).expect("reserved arena mapping exists").into_mapping_and_memory();
+        // SAFETY: the exact source mapping owner transfers to this empty
+        // permanent backing; its policy and subprocess remain real statics.
+        let managed = unsafe { BACKING.install_owned_os_mapping(
+            process, config(), ARENA_MIN_SIZE, mapping, memory, -1, false,
+        ) }.unwrap_or_else(|_| panic!("reserved source mapping publishes"));
+        // SAFETY: the isolated registry has no concurrent claim or release.
+        let claim = unsafe { BACKING.try_find_free(search(managed.arena_id()),
+            1, ARENA_SLICE_SIZE, false) }.expect("one reserved slice is exclusively claimed");
+        let memory = claim.memory_id();
+        let before = SUBPROCESS.vm_statistics().snapshot();
+        // SAFETY: this outstanding span owns its newly committed first page;
+        // no PageMap entry or ordinary page bit has yet been published.
+        unsafe { BACKING.commit_page_area(memory, 0, 4096) }
+            .expect("the direct source prefix commitment succeeds");
+        let after = SUBPROCESS.vm_statistics().snapshot();
+        assert_eq!(after.commit_calls, before.commit_calls + 1);
+        assert_eq!(after.committed_current, before.committed_current + 4096);
+        // SAFETY: only this newly committed prefix is accessed; the pointer
+        // comes from the claimed mapping, not an integer reconstruction.
+        unsafe { claim.start().write(0x35); claim.start().add(4095).write(0x53); }
+        assert_eq!(unsafe { claim.start().read() }, 0x35);
+        assert_eq!(unsafe { claim.start().add(4095).read() }, 0x53);
+        // SAFETY: there is no PageMap or ordinary page bit to remove, and this
+        // exact 4096-byte prefix is reconciled once before releasing slices.
+        assert!(unsafe { BACKING.account_page_commit_before_release(memory, 4096) });
+        assert!(claim.release());
+        // SAFETY: the only claim has ended; no arena/header observer survives.
+        assert!(unsafe { BACKING.destroy_all(&mut []) }.expect("arena releases").is_released());
     }
 
     fn process() -> VmProcess<'static> {
