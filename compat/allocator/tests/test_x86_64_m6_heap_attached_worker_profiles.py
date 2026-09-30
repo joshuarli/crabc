@@ -76,5 +76,56 @@ class AttachedWorkerProducerTests(unittest.TestCase):
         execute.assert_not_called()
 
 
+    def retained_profile(self, profile, *, c_status=0, rust_stderr='', native=True):
+        output = self.output if profile == 'release' else self.output / profile
+        output.mkdir(exist_ok=True)
+        attached.harness.write_json(output / 'inputs.json', {'source': {'revision': 'original-frozen-source'}})
+        attached.harness.write_json(output / 'c.json', self.observation(destroy, status=c_status))
+        if native:
+            attached.harness.write_json(output / 'rust.json', self.observation(destroy, stderr=rust_stderr))
+        return output
+
+    def test_collector_reports_failure_and_missing_sides_then_collects_later_available_profiles(self):
+        self.retained_profile('release')
+        self.retained_profile('debug-1', c_status=-11, native=False)
+        self.retained_profile('stat-2')
+        before = {p: p.read_bytes() for p in self.output.rglob('*.json')}
+        with mock.patch.object(destroy, 'ARTIFACTS', self.output), \
+             mock.patch.object(attached.harness, 'command_record') as execute, \
+             mock.patch.object(attached.receipts, 'write_receipt') as publish, \
+             mock.patch('builtins.print') as output:
+            self.assertEqual(attached.main(destroy, ['--matrix', '--collect']), 1)
+        execute.assert_not_called()
+        publish.assert_not_called()
+        printed = '\n'.join(str(call.args[0]) for call in output.call_args_list)
+        self.assertIn('recorded status -11', printed)
+        self.assertIn('debug-1 rust: missing observation', printed)
+        self.assertIn('stat-1 c: missing observation', printed)
+        self.assertIn('stat-2: existing traces and exact diagnostics match', printed)
+        self.assertIn('original-frozen-source', printed)
+        self.assertEqual(before, {p: p.read_bytes() for p in self.output.rglob('*.json')})
+
+    def test_collector_rejects_exact_diagnostic_difference_without_any_execution_or_publication(self):
+        self.retained_profile('release', rust_stderr='additional native diagnostic\n')
+        with mock.patch.object(destroy, 'ARTIFACTS', self.output), \
+             mock.patch.object(attached.harness, 'command_record') as execute, \
+             mock.patch.object(attached.receipts, 'write_receipt') as publish:
+            self.assertEqual(attached.main(destroy, ['--collect']), 1)
+        execute.assert_not_called()
+        publish.assert_not_called()
+
+    def test_successful_existing_collection_preserves_default_cli_and_publishes_no_receipt(self):
+        self.retained_profile('release')
+        with mock.patch.object(destroy, 'ARTIFACTS', self.output), \
+             mock.patch.object(attached.harness, 'command_record') as execute, \
+             mock.patch.object(attached.receipts, 'write_receipt') as publish:
+            self.assertEqual(attached.main(destroy, ['--collect']), 0)
+        execute.assert_not_called()
+        publish.assert_not_called()
+        with mock.patch.object(attached, 'run_fixture', return_value=5) as run:
+            self.assertEqual(attached.main(destroy, []), 0)
+        self.assertEqual(run.call_args.args, (destroy, ('release',)))
+
+
 if __name__ == '__main__':
     unittest.main()

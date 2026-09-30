@@ -117,6 +117,56 @@ def run_differential() -> int:
     return run_fixture(sys.modules[__name__], ("release",))
 
 
+def collect_existing(fixture, profiles):
+    complete = True
+    for profile in profiles:
+        output = fixture.ARTIFACTS if profile == "release" else fixture.ARTIFACTS / profile
+        inputs = output / "inputs.json"
+        if inputs.is_file():
+            try:
+                source = harness.read_json(inputs).get("source", {}).get("revision", "unknown")
+            except harness.HarnessError as error:
+                source = "unreadable"
+                complete = False
+                print(f"{profile} inputs: {error}", flush=True)
+        else:
+            source = "missing"
+            complete = False
+        print(f"{profile} recorded source: {source}; raw: {output}", flush=True)
+        records = {}
+        for side in ("c", "rust"):
+            raw = output / f"{side}.json"
+            if not raw.is_file():
+                complete = False
+                print(f"{profile} {side}: missing observation", flush=True)
+                continue
+            try:
+                record = harness.read_json(raw)
+                print(f"{profile} {side}: recorded status {record.get('status')}", flush=True)
+                harness.require_success(record, f"{profile} {side} recorded workload")
+                records[side] = record
+            except harness.HarnessError as error:
+                complete = False
+                print(f"{profile} {side}: failed observation: {error}", flush=True)
+        if len(records) != 2:
+            continue
+        try:
+            c_trace = m7.parse_options_trace(str(records["c"]["stdout"]), "c", fixture.BEGIN, fixture.END)
+            if c_trace != fixture.EXPECTED:
+                raise harness.HarnessError(f"pinned {profile} attached-worker Heap changed: {c_trace}")
+            rust_trace = m7.parse_options_trace(str(records["rust"]["stdout"]), "rust", fixture.BEGIN, fixture.END)
+            m7.compare_options_traces(c_trace, rust_trace)
+            if str(records["c"]["stderr"]) != str(records["rust"]["stderr"]):
+                raise harness.HarnessError(f"{profile} attached-worker Heap diagnostics differ")
+        except harness.HarnessError as error:
+            complete = False
+            print(f"{profile}: failed comparison: {error}", flush=True)
+        else:
+            print(f"{profile}: existing traces and exact diagnostics match", flush=True)
+    print("Existing observation collection complete; no receipt published", flush=True)
+    return complete
+
+
 def main(fixture, argv=None):
     parser = argparse.ArgumentParser(description=fixture.__doc__)
     selection = parser.add_mutually_exclusive_group()
@@ -125,8 +175,12 @@ def main(fixture, argv=None):
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--read", action="store_true")
     action.add_argument("--replay", action="store_true")
+    action.add_argument("--collect", action="store_true",
+                        help="inspect available raw observations without executing or publishing a receipt")
     args = parser.parse_args(argv)
     profiles = PROFILES if args.matrix else (args.profile,)
+    if args.collect:
+        return 0 if collect_existing(fixture, profiles) else 1
     if not (args.read or args.replay):
         run_fixture(fixture, profiles)
         return 0
