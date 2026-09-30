@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import shutil
 from pathlib import Path
 import sys
 import tempfile
@@ -121,6 +122,116 @@ class HeadersLayoutsAggregateAttachmentTests(unittest.TestCase):
                 else: jobs.pop()
                 with self.assertRaises(selection.SelectionError):
                     selection.reviewed_cpp_header_linkage_joins(header, ordinary)
+
+    def test_supplied_pair_replays_each_selected_mode_and_rejects_crossed_inputs(self):
+        parent = ROOT / '.work/x86_64/headers-layouts-aggregate-attachment-tests'
+        parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as temporary:
+            work = Path(temporary)
+            source = {'revision': '1' * 40, 'content_sha256': '2' * 64, 'clean': True}
+            companion = {'report': selection.selecting_source_file_identity(REPORT),
+                         'result': {'reviewed_cpp_linkage_differences':
+                                   self._report()['reviewed_cpp_linkage_differences']}}
+            paths, products, headers = {}, {}, {}
+            def identity(path):
+                data = path.read_bytes()
+                return {'path': path.relative_to(ROOT).as_posix(),
+                        'sha256': hashlib.sha256(data).hexdigest(), 'size': len(data)}
+            for kind in ('static', 'dynamic'):
+                product = work / kind
+                shutil.copytree(ROOT / 'include', product / 'usr/include')
+                metadata = product / 'share/crabc'
+                metadata.mkdir(parents=True)
+                state = {'source_sha256': source['content_sha256'], 'allocator_backend': 'accepted-c'}
+                manifest = metadata / 'manifest.json'
+                manifest.write_text(json.dumps(state if kind == 'static' else {}))
+                state_path = manifest if kind == 'static' else metadata / 'dynamic-product-state.json'
+                state_path.write_text(json.dumps(state))
+                paths[kind + '_product'] = product
+                products[kind] = {'path': product.relative_to(ROOT).as_posix(), 'manifest': identity(manifest),
+                                  'source_state': identity(state_path), **state}
+                include = product / 'usr/include'
+                headers[kind] = {'path': include.relative_to(ROOT).as_posix(),
+                                 'tree_sha256': selection.header_matrix.header_tree_digest(include)}
+            raw_header = work / 'header-report.json'
+            raw_header.write_text('{}')
+            inventory = {'current_selecting_source': {'matches_retained': True, 'differences': []},
+                         'report': {'inputs': {'paths': {'candidate-header-root': '/workspace/' + headers['static']['path']}},
+                                    'summary': {'fixture': True}}}
+            linker = {'path': '/opt/pinned/bin/ld.lld', 'sha256': '3' * 64}
+            links = []
+            for mode, linkage, kind in (
+                ('static-et-exec', 'static', 'static'), ('static-pie', 'static-pie', 'static'),
+                ('dynamic-et-exec', 'non-pie', 'dynamic'), ('dynamic-pie', 'pie', 'dynamic'),
+            ):
+                link = work / mode
+                link.mkdir()
+                files = {role: link / filename for role, filename in (
+                    ('workload', 'workload.o'), ('executable', 'consumer'), ('receipt', 'link.json'),
+                    ('map', 'link.map'), ('trace', 'link.trace'))}
+                for path in files.values(): path.write_text('retained fixture bytes')
+                files['receipt'].write_text(json.dumps({'link_trace': ['retained input']}))
+                files['trace'].write_text('retained input\n')
+                result = {'linkage': linkage, 'product': '/workspace/' + products[kind]['path']}
+                links.append({'mode': mode, 'linkage': linkage, **{role: identity(path) for role, path in files.items()},
+                              'result': result})
+            receipt = {
+                'schema': 'crabc.x86_64-header-product-pair/v1', 'target': selection.TARGET,
+                'source_mount': '/workspace', 'source_before': {key: source[key] for key in ('revision', 'content_sha256')},
+                'source_after': {key: source[key] for key in ('revision', 'content_sha256')},
+                'aggregate_report': identity(REPORT), 'products': products, 'installed_headers': headers,
+                'header_declaration_report': identity(raw_header),
+                'reviewed_cpp_linkage_differences': companion['result']['reviewed_cpp_linkage_differences'],
+                'tools_before': {'linker': copy.deepcopy(linker)}, 'tools_after': {'linker': copy.deepcopy(linker)}, 'links': links,
+            }
+            pair_report = work / 'pair.json'
+            def write(value): pair_report.write_text(json.dumps(value))
+            def replay_link(root, mount, product, workload, executable, link_receipt, linkage, tool):
+                return {'linkage': linkage, 'product': str(product)}
+            with mock.patch.object(selection, '_common_checkout', return_value=ROOT), \
+                 mock.patch.object(selection.product_evidence, '_validate_static_product',
+                                   return_value=(paths['static_product'] / 'share/crabc/manifest.json', {})), \
+                 mock.patch.object(selection.product_evidence, '_validate_dynamic_product',
+                                   return_value=(paths['dynamic_product'] / 'share/crabc/manifest.json', {})), \
+                 mock.patch.object(selection.declaration_inventory, 'validate_report', return_value=inventory) as header_reader, \
+                 mock.patch.object(selection.product_evidence, 'validate_retained_link', side_effect=replay_link) as link_reader:
+                write(receipt)
+                result = selection.headers_layouts_product_pair_adapter(
+                    pair_report, paths=paths, source=source, header_companion=companion)
+                self.assertEqual(result['links'], links)
+                self.assertEqual([call.args[6] for call in link_reader.call_args_list], ['static', 'static-pie', 'non-pie', 'pie'])
+                header_reader.assert_called_once_with(raw_header, project_include=paths['static_product'] / 'usr/include')
+                for mutation in ('source', 'product', 'allocator', 'headers', 'raw inventory', 'link mode',
+                                 'missing link', 'malformed link', 'link output', 'link result', 'tool', 'reviewed rows', 'map'):
+                    with self.subTest(mutation=mutation):
+                        changed = copy.deepcopy(receipt)
+                        if mutation == 'source': changed['source_after']['content_sha256'] = '9' * 64
+                        elif mutation == 'product': changed['products']['dynamic']['path'] = changed['products']['static']['path']
+                        elif mutation == 'allocator': changed['products']['dynamic']['allocator_backend'] = 'native-shadow'
+                        elif mutation == 'headers': changed['installed_headers']['static']['tree_sha256'] = '9' * 64
+                        elif mutation == 'raw inventory': changed['header_declaration_report']['sha256'] = '9' * 64
+                        elif mutation == 'link mode': changed['links'][0]['linkage'] = 'pie'
+                        elif mutation == 'missing link': changed['links'].pop()
+                        elif mutation == 'malformed link': changed['links'][0] = None
+                        elif mutation == 'link output': changed['links'][0]['executable']['sha256'] = '9' * 64
+                        elif mutation == 'link result': changed['links'][0]['result']['linkage'] = 'pie'
+                        elif mutation == 'tool': changed['tools_after']['linker']['sha256'] = '9' * 64
+                        elif mutation == 'reviewed rows': changed['reviewed_cpp_linkage_differences'][0]['reference_signature'] = 'membarrier'
+                        else: changed['links'][0]['map'] = copy.deepcopy(changed['links'][1]['map'])
+                        write(changed)
+                        with self.assertRaises(selection.SelectionError):
+                            selection.headers_layouts_product_pair_adapter(
+                                pair_report, paths=paths, source=source, header_companion=companion)
+
+    def test_supplied_product_pair_receipt_requires_an_actual_selected_pair(self):
+        self.assertIsNone(selection.headers_layouts_product_pair_adapter(
+            None, paths={}, source={'revision': '1' * 40, 'content_sha256': '2' * 64, 'clean': True},
+            header_companion=None))
+        missing = ROOT / '.work/x86_64/missing-header-product-pair.json'
+        with self.assertRaises(selection.SelectionError):
+            selection.headers_layouts_product_pair_adapter(
+                missing, paths={}, source={'revision': '1' * 40, 'content_sha256': '2' * 64, 'clean': True},
+                header_companion=None)
 
     def test_missing_or_noncanonical_report_does_not_admit_the_family(self) -> None:
         self.assertIsNone(selection.headers_layouts_aggregate_adapter(None))

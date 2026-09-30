@@ -1040,6 +1040,161 @@ def headers_layouts_aggregate_adapter(report_path: Path | None) -> dict[str, Any
     }
 
 
+def headers_layouts_product_pair_adapter(
+    report_path: Path | None, *, paths: Mapping[str, Path], source: Mapping[str, Any],
+    header_companion: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Replay installed headers and four sealed links against the supplied pair.
+
+    The checked header aggregate describes compiler source forms. A separate
+    receipt binds its observations to current installed product bytes, full
+    header inventory raw evidence, and each strict owned link. Neither record
+    alone establishes ordinary provider closure or runtime semantics.
+    """
+    if report_path is None:
+        return None
+    report_path = physical_work_path(report_path, directory=False)
+    before = file_identity(report_path)
+    receipt = exact(read_json(report_path), {
+        'schema', 'target', 'source_mount', 'source_before', 'source_after', 'aggregate_report',
+        'products', 'installed_headers', 'header_declaration_report', 'reviewed_cpp_linkage_differences',
+        'tools_before', 'tools_after', 'links',
+    }, 'header product pair receipt')
+    require(receipt['schema'] == 'crabc.x86_64-header-product-pair/v1'
+            and receipt['target'] == TARGET and receipt['source_mount'] == '/workspace'
+            and header_companion is not None, 'header product pair identity or aggregate differs')
+    require(source.get('clean') is True, 'header product pair requires clean selecting source')
+    expected_source = {key: source[key] for key in ('revision', 'content_sha256')}
+    require(same(receipt['source_before'], expected_source) and same(receipt['source_after'], expected_source),
+            'header product pair source differs from selecting source')
+    require(same(receipt['reviewed_cpp_linkage_differences'],
+                 header_companion['result']['reviewed_cpp_linkage_differences']),
+            'header product pair reviewed differences do not join the checked aggregate')
+    observed_files = {}
+
+    def relative_path(value: object, *, directory: bool = False) -> Path:
+        require(type(value) is str and bool(value), 'header product pair path is missing')
+        relative = Path(value)
+        require(not relative.is_absolute() and '..' not in relative.parts
+                and relative.as_posix() == value, 'header product pair path is not canonical')
+        return physical_work_path(ROOT / relative, directory=directory)
+
+    def retained_file(value: object, *, expected: Path | None = None) -> Path:
+        record = exact(value, {'path', 'sha256', 'size'}, 'header product pair file')
+        path = expected if expected is not None else relative_path(record['path'])
+        require(record['path'] == path.relative_to(ROOT).as_posix(), 'header product pair file path differs')
+        actual = selecting_source_file_identity(path)
+        require(same(record, {key: actual[key] for key in record}), 'header product pair file bytes differ')
+        observed_files[path] = actual
+        return path
+
+    require(same(receipt['aggregate_report'], {key: header_companion['report'].get(key)
+                                              for key in ('path', 'sha256', 'size')}),
+            'header product pair aggregate does not join its authenticated companion')
+    retained_file(receipt['aggregate_report'], expected=headers_layouts_aggregate.REPORT_PATH)
+    products = exact(receipt['products'], {'static', 'dynamic'}, 'header product pair products')
+    installed = exact(receipt['installed_headers'], {'static', 'dynamic'}, 'header product pair installed headers')
+    def installed_header_digest(path: Path) -> str:
+        try:
+            return header_matrix.header_tree_digest(path)
+        except (ValueError, OSError) as error:
+            raise SelectionError(f'header product pair header tree rejected: {error}') from error
+
+    include_digest = installed_header_digest(ROOT / 'include')
+    selected_products, allocators = {}, []
+    for kind in ('static', 'dynamic'):
+        supplied = physical_work_path(paths[kind + '_product'], directory=True)
+        record = exact(products[kind], {'path', 'manifest', 'source_state', 'source_sha256', 'allocator_backend'},
+                       'header product pair ' + kind + ' product')
+        require(relative_path(record['path'], directory=True) == supplied,
+                'header product pair differs from supplied ' + kind + ' product')
+        try:
+            validator = (product_evidence._validate_static_product if kind == 'static'
+                         else product_evidence._validate_dynamic_product)
+            manifest, _files = validator(supplied)
+        except (ValueError, OSError) as error:
+            raise SelectionError(f'header product pair {kind} payload rejected: {error}') from error
+        retained_file(record['manifest'], expected=manifest)
+        state_path = manifest if kind == 'static' else supplied / 'share/crabc/dynamic-product-state.json'
+        retained_file(record['source_state'], expected=state_path)
+        state = read_json(state_path)
+        require(state.get('source_sha256') == record['source_sha256'] == source['content_sha256']
+                and state.get('allocator_backend') == record['allocator_backend']
+                and record['allocator_backend'] in {'accepted-c', 'native-shadow'},
+                'header product pair source or allocator differs: ' + kind)
+        allocators.append(record['allocator_backend'])
+        headers = exact(installed[kind], {'path', 'tree_sha256'}, 'header product pair ' + kind + ' headers')
+        require(relative_path(headers['path'], directory=True) == supplied / 'usr/include'
+                and headers['tree_sha256'] == include_digest
+                and installed_header_digest(supplied / 'usr/include') == include_digest,
+                'header product pair installed header bytes differ: ' + kind)
+        selected_products[kind] = supplied
+    require(len(set(allocators)) == 1, 'header product pair allocator selections differ')
+    header_report = retained_file(receipt['header_declaration_report'])
+    try:
+        envelope = declaration_inventory.validate_report(
+            header_report, project_include=selected_products['static'] / 'usr/include')
+    except (ValueError, OSError) as error:
+        raise SelectionError(f'header product pair compiler inventory rejected: {error}') from error
+    require(same(envelope['current_selecting_source'], {'matches_retained': True, 'differences': []})
+            and envelope['report']['inputs']['paths']['candidate-header-root']
+                == '/workspace/' + installed['static']['path'],
+            'header product pair compiler inventory does not bind installed headers')
+    tools = exact(receipt['tools_before'], {'linker'}, 'header product pair tools')
+    require(same(tools, receipt['tools_after']), 'header product pair linker changed during collection')
+    linker = exact(tools['linker'], {'path', 'sha256'}, 'header product pair linker')
+    require(type(linker['path']) is str and Path(linker['path']).is_absolute()
+            and Path(linker['path']).name == 'ld.lld'
+            and type(linker['sha256']) is str and re.fullmatch('[0-9a-f]{64}', linker['sha256']) is not None,
+            'header product pair linker identity differs')
+    roster = [('static-et-exec', 'static', 'static'), ('static-pie', 'static-pie', 'static'),
+              ('dynamic-et-exec', 'non-pie', 'dynamic'), ('dynamic-pie', 'pie', 'dynamic')]
+    links = receipt['links']
+    require(type(links) is list and all(type(row) is dict for row in links)
+            and [row.get('mode') for row in links] == [row[0] for row in roster],
+            'header product pair four-mode link roster differs')
+    for record, (mode, linkage, kind) in zip(links, roster, strict=True):
+        record = exact(record, {'mode', 'linkage', 'workload', 'executable', 'map', 'trace', 'receipt', 'result'},
+                       'header product pair ' + mode + ' link')
+        require(record['linkage'] == linkage, 'header product pair link mode differs')
+        files = {role: retained_file(record[role]) for role in ('workload', 'executable', 'map', 'trace', 'receipt')}
+        try:
+            replayed = product_evidence.validate_retained_link(
+                ROOT, '/workspace', selected_products[kind], files['workload'], files['executable'],
+                files['receipt'], linkage, linker)
+        except (ValueError, OSError) as error:
+            raise SelectionError(f'header product pair {mode} owned link rejected: {error}') from error
+        replayed['product'] = '/workspace/' + products[kind]['path']
+        require(same(replayed, record['result']), 'header product pair retained link result differs')
+        raw_link = read_json(files['receipt'])
+        if kind == 'dynamic':
+            trace = raw_link.get('link_trace')
+            require(type(trace) is list and all(type(line) is str for line in trace)
+                    and files['trace'].read_text() == '\n'.join(trace) + '\n',
+                    'header product pair dynamic trace differs')
+        else:
+            require(files['trace'] == files['receipt'].with_suffix('.trace'),
+                    'header product pair static trace does not join its link receipt')
+        require(files['map'] == files['receipt'].with_suffix('.map'),
+                'header product pair link map does not join its link receipt')
+    for path, identity_before in observed_files.items():
+        require(same(identity_before, selecting_source_file_identity(path)),
+                'header product pair input changed during replay')
+    require(same(before, file_identity(report_path)), 'header product pair receipt changed during replay')
+    for kind, product in selected_products.items():
+        require(installed_header_digest(product / 'usr/include') == include_digest,
+                'header product pair installed headers changed during replay: ' + kind)
+    return {
+        'status': 'header-product-pair-observed-with-boundaries', 'report': before,
+        'source': copy.deepcopy(expected_source), 'products': copy.deepcopy(products),
+        'installed_headers': copy.deepcopy(installed),
+        'header_declaration_report': copy.deepcopy(receipt['header_declaration_report']),
+        'header_declaration_summary': copy.deepcopy(envelope['report']['summary']),
+        'reviewed_cpp_linkage_differences': copy.deepcopy(receipt['reviewed_cpp_linkage_differences']),
+        'links': copy.deepcopy(links), 'limits': list(HEADERS_LAYOUTS_LIMITS),
+    }
+
+
 def _text_family_reader():
     """Load the public non-promoting text-family reader at its ABI boundary."""
     try:
@@ -3526,6 +3681,7 @@ def reviewed_cpp_header_linkage_joins(
     differences = header_companion['result']['reviewed_cpp_linkage_differences']
     jobs = ordinary_boundary['ordinary_job_joins']
     require(type(differences) is list and type(jobs) is list
+            and all(type(row) is dict for row in differences + jobs)
             and [row.get('profile') for row in differences] == reviewed['profiles']
             and len(jobs) == len(differences), 'header linkage crossjoin profile roster differs')
     require(same([row.get('boundary_job_index') for row in jobs], classification.get('reference_job_indices')),
@@ -12692,6 +12848,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   resolver_alias_receipt_report: Path | None = None,
                   locale_alias_contract_report: Path | None = None,
                   headers_layouts_aggregate_report: Path | None = None,
+                  headers_layouts_product_pair_report: Path | None = None,
                   text_family_semantic_report: Path | None = None,
                   posix_sysv_signal_admission_report: Path | None = None,
                   bsd_random_receipt_report: Path | None = None,
@@ -12813,6 +12970,11 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     headers_layouts_aggregate_companion = _admit(
         rejected, 'headers_layouts_aggregate_report',
         lambda: headers_layouts_aggregate_adapter(headers_layouts_aggregate_report))
+    headers_layouts_product_pair_companion = _admit(
+        rejected, 'headers_layouts_product_pair_report',
+        lambda: headers_layouts_product_pair_adapter(
+            headers_layouts_product_pair_report, paths=paths, source=source_before,
+            header_companion=headers_layouts_aggregate_companion))
     text_family_semantic_companion = _admit(rejected, 'text_family_semantic_report', lambda: text_family_semantic_adapter(
         text_family_semantic_report, paths=paths, source=source_before,
     ))
@@ -13133,6 +13295,11 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         loader_debug_report=loader_debug_report, loader_runtime_registry_report=loader_runtime_registry_report,
     )
     _recheck_headers_layouts_aggregate(headers_layouts_aggregate_companion)
+    if headers_layouts_product_pair_companion is not None:
+        require(same(headers_layouts_product_pair_companion, headers_layouts_product_pair_adapter(
+            headers_layouts_product_pair_report, paths=paths, source=source_before,
+            header_companion=headers_layouts_aggregate_companion)),
+            'header product pair changed during final selection recheck')
     _recheck_text_family_semantics(text_family_semantic_companion, paths=paths, source=source_before)
     _recheck_posix_sysv_signal_admission(
         posix_sysv_signal_admission_companion, paths=paths, source=source_before,
@@ -13167,6 +13334,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         'resolver_alias_receipt_report': resolver_alias_receipt_companion,
         'locale_alias_contract_report': locale_alias_contract_companion,
         'headers_layouts_aggregate_report': headers_layouts_aggregate_companion,
+        **({'headers_layouts_product_pair_report': headers_layouts_product_pair_companion}
+           if headers_layouts_product_pair_report is not None else {}),
         'text_family_semantic_report': text_family_semantic_companion,
         'posix_sysv_signal_admission_report': posix_sysv_signal_admission_companion,
         'bsd_random_receipt_report': bsd_random_receipt_companion,
@@ -13249,6 +13418,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'loader_structural_owner_companion': loader_structural_owner_companion,
             'loader_structural_owner_joins': loader_structural_owner_joins,
             'headers_layouts_aggregate_companion': headers_layouts_aggregate_companion,
+            'headers_layouts_product_pair_companion': headers_layouts_product_pair_companion,
             'headers_layouts_aggregate_evidence': headers_layouts_aggregate_evidence,
             'text_family_semantic_companion': text_family_semantic_companion,
             'text_fopen64_structural_joins': text_fopen64_structural_joins,
@@ -13291,6 +13461,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  resolver_alias_receipt_report: Path | None = None,
                  locale_alias_contract_report: Path | None = None,
                  headers_layouts_aggregate_report: Path | None = None,
+                 headers_layouts_product_pair_report: Path | None = None,
                  text_family_semantic_report: Path | None = None,
                  posix_sysv_signal_admission_report: Path | None = None,
                  bsd_random_receipt_report: Path | None = None,
@@ -13328,6 +13499,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            resolver_alias_receipt_report=resolver_alias_receipt_report,
                            locale_alias_contract_report=locale_alias_contract_report,
                            headers_layouts_aggregate_report=headers_layouts_aggregate_report,
+                           headers_layouts_product_pair_report=headers_layouts_product_pair_report,
                            text_family_semantic_report=text_family_semantic_report,
                            posix_sysv_signal_admission_report=posix_sysv_signal_admission_report,
                            bsd_random_receipt_report=bsd_random_receipt_report,
@@ -13365,6 +13537,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     resolver_alias_receipt_report: Path | None = None,
                     locale_alias_contract_report: Path | None = None,
                     headers_layouts_aggregate_report: Path | None = None,
+                    headers_layouts_product_pair_report: Path | None = None,
                     text_family_semantic_report: Path | None = None,
                     posix_sysv_signal_admission_report: Path | None = None,
                     bsd_random_receipt_report: Path | None = None,
@@ -13404,6 +13577,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              resolver_alias_receipt_report=resolver_alias_receipt_report,
                              locale_alias_contract_report=locale_alias_contract_report,
                              headers_layouts_aggregate_report=headers_layouts_aggregate_report,
+                             headers_layouts_product_pair_report=headers_layouts_product_pair_report,
                              text_family_semantic_report=text_family_semantic_report,
                              posix_sysv_signal_admission_report=posix_sysv_signal_admission_report,
                              bsd_random_receipt_report=bsd_random_receipt_report,
@@ -13449,6 +13623,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--resolver-alias-receipt-report', type=Path)
     parser.add_argument('--locale-alias-contract-report', type=Path)
     parser.add_argument('--headers-layouts-aggregate-report', type=Path)
+    parser.add_argument('--headers-layouts-product-pair-report', type=Path)
     parser.add_argument('--text-family-semantic-report', type=Path)
     parser.add_argument('--posix-sysv-signal-admission-report', type=Path)
     parser.add_argument('--bsd-random-receipt-report', type=Path)
@@ -13492,6 +13667,7 @@ def main(argv: Sequence[str]) -> int:
                                                 'pthread_timed_feature_report', 'resolver_alias_receipt_report',
                                                 'locale_alias_contract_report',
                                                 'headers_layouts_aggregate_report',
+                                                'headers_layouts_product_pair_report',
                                                 'text_family_semantic_report',
                                                 'posix_sysv_signal_admission_report',
                                                 'bsd_random_receipt_report',

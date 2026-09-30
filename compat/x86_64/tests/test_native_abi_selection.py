@@ -2285,6 +2285,7 @@ class PathAndCommandTests(unittest.TestCase):
             '--output', '.work/output',
             '--headers-layouts-aggregate-report',
             'compat/x86_64/generated/headers_layouts_aggregate/report.json',
+            '--headers-layouts-product-pair-report', '.work/header-pair/pair.json',
         ]
         report = {'identities': [], 'occurrences': [], 'closure': {'complete': False, 'blockers': []}}
         with mock.patch.object(selection, 'build_report', return_value=report) as build:
@@ -2293,6 +2294,7 @@ class PathAndCommandTests(unittest.TestCase):
             build.call_args.kwargs['headers_layouts_aggregate_report'],
             Path('compat/x86_64/generated/headers_layouts_aggregate/report.json'),
         )
+        self.assertEqual(build.call_args.kwargs['headers_layouts_product_pair_report'], Path('.work/header-pair/pair.json'))
 
     def test_cli_threads_loader_structural_owner_receipt(self):
         arguments = ['build-report']
