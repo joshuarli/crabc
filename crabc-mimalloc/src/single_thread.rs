@@ -40216,6 +40216,31 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         self.owns_page(unsafe { allocation.page().as_ref() })
     }
 
+    #[cfg(feature = "mi-stat-1")]
+    fn record_client_free_statistics(&self, block_size: usize) {
+        let session = NonNull::from(self.session.theap());
+        #[cfg(target_arch = "x86_64")]
+        if !self.session.theap().is_detached() {
+            let current = crate::compiler_tls::default_theap();
+            // SAFETY: compiler TLS retains this caller's current default root
+            // and TLD; the free has no callback or attachment transition here.
+            if unsafe { Theap::initialized_default_subprocess_at(current) }.is_some() {
+                // Derive the pointer from the active session when identities
+                // match. Otherwise the caller owns a distinct default Theap.
+                let selected = if current == session { session } else { current };
+                // SAFETY: the caller owns this initialized statistics image;
+                // the page engine still owns every free-list/queue transition.
+                unsafe { Theap::record_client_free_statistics_at(selected, block_size) };
+                return;
+            }
+        }
+        // Detached metadata sessions already hold their source private lock.
+        // Internal sessions without a live TLS root retain their supplied
+        // statistics owner rather than consulting an unrelated thread image.
+        // SAFETY: the session retains its exact statistics owner for the free.
+        unsafe { Theap::record_client_free_statistics_at(session, block_size) };
+    }
+
     /// Applies the source local free after its page and canonical block have
     /// already been validated by either ordinary PageMap lookup or one held
     /// pointer-first allocation classification.
@@ -40238,15 +40263,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             )
         };
         #[cfg(feature = "mi-stat-1")]
-        if block_size - PADDING_SIZE <= LARGE_MAX_OBJ_SIZE {
-            self.session.theap().record_malloc_normal_freed(block_size - PADDING_SIZE);
-            #[cfg(feature = "mi-stat-2")]
-            self.session.theap().record_malloc_normal_level_two_freed(
-                size_class::bin_for_regular_page_block_size(block_size - PADDING_SIZE),
-            );
-        } else {
-            self.session.theap().record_malloc_huge_freed(block_size);
-        }
+        self.record_client_free_statistics(block_size);
         #[cfg(not(feature = "mi-stat-1"))]
         let _ = block_size;
         let used = {
@@ -42554,7 +42571,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // `mi_stat_free` runs before the selected abandoned singleton's
             // remote publication and uses its physical page block size.
             let physical_size = unsafe { page.as_ref().block_size() };
-            self.session.theap().record_malloc_huge_freed(physical_size);
+            self.record_client_free_statistics(physical_size);
         }
         // SAFETY: the caller retained the exact source-abandoned singleton
         // and canonical live block. The helper performs the only legal

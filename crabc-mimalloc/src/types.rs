@@ -7223,6 +7223,30 @@ impl Theap {
         self.statistics.malloc_huge_freed(block_size);
     }
 
+    /// Records one source client free in its selected statistics owner. The
+    /// page remains owned by its original allocation engine; only the normal
+    /// or huge count and optional size bin are changed here.
+    ///
+    /// # Safety
+    /// `theap` is this caller's initialized default Theap or its metadata
+    /// Theap protected by the existing private lock. The source owner excludes
+    /// another producer or merge/reset during these owner-local updates.
+    #[cfg(feature = "mi-stat-1")]
+    pub(crate) unsafe fn record_client_free_statistics_at(theap: NonNull<Self>, block_size: usize) {
+        // SAFETY: only the relaxed atomic statistics tail is projected. No
+        // reference spans the Theap's independently owned queues or links.
+        let statistics = unsafe { &*core::ptr::addr_of!((*theap.as_ptr()).statistics) };
+        let normal_size = block_size - crate::config::PADDING_SIZE;
+        if normal_size <= crate::config::LARGE_MAX_OBJ_SIZE {
+            statistics.malloc_normal_freed(normal_size);
+            #[cfg(feature = "mi-stat-2")]
+            statistics.malloc_normal_level_two_freed(
+                crate::size_class::bin_for_regular_page_block_size(normal_size));
+        } else {
+            statistics.malloc_huge_freed(block_size);
+        }
+    }
+
     /// Records the current Theap's page release while a field-scoped exit
     /// collector owns its queues. The statistics tail uses relaxed atomics and
     /// is disjoint from the collector's queue, count, and Heap-link fields.

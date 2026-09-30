@@ -12584,7 +12584,12 @@ pub unsafe fn native_free(block: core::ptr::NonNull<u8>) -> NativePageFreeResult
         }
     }
     #[cfg(all(target_arch = "x86_64", not(feature = "mi-debug-1")))]
-    if let Some(owner) = native_local_fast_owner() {
+    if let Some(owner) = native_local_fast_owner().filter(|owner| {
+        // The fast path charges its page owner. Optional free statistics use
+        // the caller's default Theap, so a distinct default takes the engine
+        // path without changing the page's ownership or free disposition.
+        !cfg!(feature = "mi-stat-1") || owner.theap == crate::compiler_tls::default_theap()
+    }) {
         // Pinned `mi_free` reaches the page by `_mi_ptr_page` with no
         // readiness check; an active process's PageMap is published and
         // immutable, and the owner publication names it.
@@ -12994,17 +12999,11 @@ fn native_free_pointer_first_nonlocal(
         // physical span. An uninitialized default Theap needs the metadata
         // Theap source path.
         let theap = default_theap();
-        if unsafe { theap.as_ref().is_initialized() } {
-            let normal_size = allocation.block_size() - crate::config::PADDING_SIZE;
-            if normal_size <= crate::config::LARGE_MAX_OBJ_SIZE {
-                unsafe { theap.as_ref() }.record_malloc_normal_freed(normal_size);
-                #[cfg(feature = "mi-stat-2")]
-                unsafe { theap.as_ref() }.record_malloc_normal_level_two_freed(
-                    crate::size_class::bin_for_regular_page_block_size(normal_size),
-                );
-            } else {
-                unsafe { theap.as_ref() }.record_malloc_huge_freed(allocation.block_size());
-            }
+        // SAFETY: this is the freeing caller's retained TLS root. Project
+        // initialization and the atomic statistics tail without borrowing its
+        // independently changing queue fields.
+        if unsafe { crate::types::Theap::initialized_default_subprocess_at(theap) }.is_some() {
+            unsafe { crate::types::Theap::record_client_free_statistics_at(theap, allocation.block_size()) };
         }
     }
     // SAFETY: `allocation` is the exact current PageMap-derived source
