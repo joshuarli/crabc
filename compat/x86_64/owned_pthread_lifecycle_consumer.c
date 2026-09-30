@@ -1247,6 +1247,30 @@ static int run_detach_initial_task(void)
         !WIFEXITED(status) || WEXITSTATUS(status) != 0;
 }
 
+#ifdef CRABC_PTHREAD_SMALL_STACK_ATTACH_ONLY
+static __thread int crabc_small_stack_initial = 42;
+
+static void *small_stack_worker(void *unused)
+{
+    (void)unused;
+    return (void *)(uintptr_t)crabc_small_stack_initial;
+}
+
+int main(void)
+{
+    pthread_attr_t attributes;
+    pthread_t worker;
+    void *result = 0;
+    if (pthread_attr_init(&attributes) != 0 ||
+        pthread_attr_setstacksize(&attributes, 8 * PTHREAD_STACK_MIN) != 0)
+        return 1;
+    if (pthread_create(&worker, &attributes, small_stack_worker, 0) != 0)
+        return 2;
+    if (pthread_attr_destroy(&attributes) != 0 || pthread_join(worker, &result) != 0)
+        return 3;
+    return result != (void *)(uintptr_t)42;
+}
+#else
 int main(void)
 {
     if (run_detach_initial_task() != 0)
@@ -1286,3 +1310,4 @@ int main(void)
         return 70 + robust_mutex;
     return 0;
 }
+#endif

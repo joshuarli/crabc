@@ -1275,7 +1275,11 @@ impl VmPolicy {
     /// output route. An image policy (fixtures, the paused AArch64 process)
     /// has no route and drops it, as a source build with warnings disabled
     /// would.
-    #[inline]
+    // Warning delivery stages several bounded formatting buffers. Keep those
+    // buffers in this callee so nested metadata mapping does not reserve them
+    // in every caller while attaching a worker on its small pthread stack.
+    #[cfg_attr(target_arch = "x86_64", inline(never))]
+    #[cfg_attr(not(target_arch = "x86_64"), inline)]
     pub(crate) fn source_warning(&self, message: SourceFormattedMessage) {
         if let Some(output) = self.process_options {
             // SAFETY: `from_process_options` accepted this owner's delivery
