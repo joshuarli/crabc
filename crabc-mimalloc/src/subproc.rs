@@ -908,6 +908,29 @@ impl SubprocessIdentity {
         unsafe { Theap::final_statistics_at(theap) }.map(|(_, statistics)| statistics)
     }
 
+    /// Charges a client free to its page's detached metadata Theap.
+    /// The source metadata lock protects only this scalar statistics update;
+    /// it is released before the caller publishes or frees the block.
+    ///
+    /// # Safety
+    /// The caller retains a live allocation belonging to this subprocess and
+    /// its initialized, pinned metadata Theap. Destruction is excluded through
+    /// this call, and `block_size` is the allocation's physical block size.
+    /// No whole-Theap reference overlaps the atomic field projection.
+    #[cfg(feature = "mi-stat-1")]
+    pub(crate) unsafe fn record_metadata_client_free_statistics(
+        &self,
+        block_size: usize,
+    ) -> CoreResult<()> {
+        let guard = self.theap_meta_lock.lock()?;
+        let theap = NonNull::new(self.theap_meta.load(Ordering::Acquire))
+            .ok_or(crabc_core::Errno::INVAL)?;
+        // SAFETY: the caller retains the initialized metadata image, and the
+        // guard serializes its source statistics update without a whole borrow.
+        unsafe { Theap::record_client_free_statistics_at(theap, block_size) };
+        guard.unlock()
+    }
+
     /// The published detached metadata Theap address, for fixture checks.
     #[cfg(test)]
     pub(crate) fn test_published_metadata_theap(&self) -> *mut Theap {
@@ -940,8 +963,8 @@ impl SubprocessIdentity {
     /// `subproc->theap_meta_lock`.
     ///
     /// Production callers must first prove the existing `theap_meta` identity
-    /// admission. Only `MetaAllocator`'s selected direct allocation phase may
-    /// retain this guard; it releases the guard before `_mi_meta_rezalloc`'s
+    /// admission. Direct metadata allocation and field-only statistics updates
+    /// may retain this guard; allocation releases it before `_mi_meta_rezalloc`'s
     /// Rust copy and exact-owner free work. The source Malloc branch of
     /// `_mi_meta_free` does not take this lock, so Rust's separate backing
     /// lock remains responsible for its private allocator mutation.
