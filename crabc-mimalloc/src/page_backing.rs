@@ -1,7 +1,7 @@
 // Copyright (c) 2018-2026, Microsoft Research, Daan Leijen
 // SPDX-License-Identifier: MIT
 // Source map: mimalloc v3.5.0 src/arena.c:98-129,781-870,1216-1283 and
-// src/init.c:184-205. See UPSTREAM.md for the fixed revision and license.
+// src/init.c:184-205.
 
 //! Backing capabilities of the existing page engine. The historical
 //! selected-arena capability and process-main metadata capability remain
@@ -55,6 +55,14 @@ pub(crate) trait PageBacking<'arena>: sealed::Sealed {
         -> Option<ArenaSliceClaim<'arena>>
     {
         self.claim(config, requested, slices, commit, thread_sequence)
+    }
+    /// Fresh-page search receives the Heap/TLD node selected by its retained
+    /// Theap session. Fixed single-arena fixtures keep their original route.
+    fn claim_with_numa_node(&self, config: MemoryConfig, requested: ArenaId, slices: usize,
+        commit: bool, thread_sequence: usize, _numa_node: Option<i32>, random: crate::os::OsRandom<'_>)
+        -> Option<ArenaSliceClaim<'arena>>
+    {
+        self.claim_with_random(config, requested, slices, commit, thread_sequence, random)
     }
     /// # Safety
     /// `memory` is one outstanding claim of this exact backing owner. All
@@ -255,6 +263,13 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
         thread_sequence: usize,
         random: crate::os::OsRandom<'_>,
     ) -> Option<ArenaSliceClaim<'static>> {
+        self.claim_with_numa_node(config, requested, slices, commit, thread_sequence, None, random)
+    }
+
+    fn claim_with_numa_node(&self, config: MemoryConfig, requested: ArenaId, slices: usize,
+        commit: bool, thread_sequence: usize, allocation_numa_node: Option<i32>, random: crate::os::OsRandom<'_>)
+        -> Option<ArenaSliceClaim<'static>>
+    {
         match self {
             #[cfg(any(test, feature = "native-runtime-test-audit", not(target_arch = "x86_64")))]
             Self::SelectedSidecar(arena) => {
@@ -262,8 +277,8 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
             }
             Self::SourceStartupRegular { process, numa_node, .. } | Self::SourceRegistry { process, numa_node } => {
                 // Pinned `mi_arenas_page_alloc_fresh_area` reaches
-                // `mi_arenas_try_alloc` with the ticket-zero main heap's zero
-                // sequence and its already-stored TLD NUMA value. Preserve
+                // `mi_arenas_try_alloc` with the selected Heap affinity or
+                // its stored TLD NUMA value. Preserve
                 // the whole source search/reserve/search transition here;
                 // `PageAllocatorEngine` owns only the separate direct-OS
                 // fallback after arena eligibility rejects the request.
@@ -276,7 +291,7 @@ impl PageBacking<'static> for RuntimeFirstRegularPageBacking {
                     heap_sequence: 0,
                     heap_count: 0,
                     thread_sequence,
-                    numa_node: *numa_node,
+                    numa_node: allocation_numa_node.unwrap_or(*numa_node),
                     requested,
                     allow_pinned: true,
                 };
@@ -414,6 +429,13 @@ impl<'child> PageBacking<'child> for ChildMetadataArenaBacking<'child> {
         self.claim_child_arena_slices_with_random(config, requested, slices, commit,
             thread_sequence, random)
     }
+    fn claim_with_numa_node(&self, config: MemoryConfig, requested: ArenaId, slices: usize,
+        commit: bool, thread_sequence: usize, allocation_numa_node: Option<i32>, random: crate::os::OsRandom<'_>)
+        -> Option<ArenaSliceClaim<'child>>
+    {
+        self.claim_child_arena_slices_with_numa_node(config, requested, slices, commit,
+            thread_sequence, allocation_numa_node, random)
+    }
     unsafe fn release(&self, memory: MemoryId) -> bool {
         unsafe { ChildMetadataArenaBacking::release(self, memory) }
     }
@@ -450,6 +472,14 @@ impl<'child> ChildMetadataArenaBacking<'child> {
         commit: bool, thread_sequence: usize, random: crate::os::OsRandom<'_>)
         -> Option<ArenaSliceClaim<'child>>
     {
+        self.claim_child_arena_slices_with_numa_node(config, requested, slices, commit,
+            thread_sequence, None, random)
+    }
+
+    fn claim_child_arena_slices_with_numa_node(&self, config: MemoryConfig, requested: ArenaId,
+        slices: usize, commit: bool, thread_sequence: usize, allocation_numa_node: Option<i32>,
+        random: crate::os::OsRandom<'_>) -> Option<ArenaSliceClaim<'child>>
+    {
         // Validate the child backing before the lower route can search or
         // claim an already-published child arena.
         if self.pair.memory_config().ok()? != config { return None; }
@@ -463,7 +493,7 @@ impl<'child> ChildMetadataArenaBacking<'child> {
             heap_sequence: 0,
             heap_count: 0,
             thread_sequence,
-            numa_node: -1,
+            numa_node: allocation_numa_node.unwrap_or(-1),
             requested,
             allow_pinned: true,
         };
@@ -536,12 +566,18 @@ impl PageBacking<'static> for ProcessMetadataPageBacking {
 
     fn claim_with_random(&self, config: MemoryConfig, requested: ArenaId, slices: usize,
         commit: bool, thread_sequence: usize, random: crate::os::OsRandom<'_>) -> Option<ArenaSliceClaim<'static>> {
+        self.claim_with_numa_node(config, requested, slices, commit, thread_sequence, None, random)
+    }
+    fn claim_with_numa_node(&self, config: MemoryConfig, requested: ArenaId, slices: usize,
+        commit: bool, thread_sequence: usize, allocation_numa_node: Option<i32>, random: crate::os::OsRandom<'_>)
+        -> Option<ArenaSliceClaim<'static>>
+    {
         if self.process.policy().disallow_arena_alloc()
             || slices > self.max_object_size() / ARENA_SLICE_SIZE { return None; }
         // Source hseq zero selects the thread-sequence branch before reading
         // heap_count. No dynamic heap-count authority is fabricated here.
         let search = ArenaSearch { heap_sequence: 0, heap_count: 0, thread_sequence,
-            numa_node: -1, requested, allow_pinned: true };
+            numa_node: allocation_numa_node.unwrap_or(-1), requested, allow_pinned: true };
         unsafe { self.backing().try_allocate_slices_with_random(self.process, config, search,
             slices, ARENA_SLICE_SIZE, commit, random) }
     }

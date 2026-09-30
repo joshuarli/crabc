@@ -296,7 +296,7 @@ impl Heap {
         self.subprocess = subprocess.as_ptr();
         self.heap_seq = subprocess.heap_list().next_sequence();
         self.exclusive_arena = exclusive_arena;
-        self.numa_node = -1;
+        *self.numa_node.get_mut() = -1;
         self.memid = memory;
     }
 
@@ -460,7 +460,9 @@ impl Heap {
     /// Theap, and its thread-local slot key.
     #[cfg(test)]
     pub(crate) fn test_non_main_facts(&self) -> (usize, *mut SubprocessIdentity, bool, i32, bool, u64) {
-        (self.heap_seq, self.subprocess, self.exclusive_arena.is_null(), self.numa_node,
+        // SAFETY: this fixture observes a retained image without a concurrent setter.
+        let numa_node = unsafe { *self.numa_node.get() };
+        (self.heap_seq, self.subprocess, self.exclusive_arena.is_null(), numa_node,
             self.theaps.is_null(), self.theap_slot as u64)
     }
 

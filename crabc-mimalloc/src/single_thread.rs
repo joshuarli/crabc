@@ -41630,12 +41630,16 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // current source session retains compiler-TLS root lifetime while
         // this adapter projects only the random field at individual draws.
         let mut random = unsafe { crate::os::CurrentDefaultTheapRandom::new() };
-        let claim = self.arena.claim_with_random(
+        // SAFETY: the owned session retains its Theap, Heap and TLD, and
+        // source affinity setters cannot overlap an allocation read.
+        let numa_node = unsafe { self.session.theap().page_allocation_numa_node() };
+        let claim = self.arena.claim_with_numa_node(
             self.page_map.memory_config(),
             self.requested_arena,
             slice_count,
             commit,
             self.thread_sequence,
+            numa_node,
             Some(&mut random),
         );
         let Some(claim) = claim else {

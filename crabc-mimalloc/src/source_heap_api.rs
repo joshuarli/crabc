@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: MIT
 //
 // Source map: pinned mimalloc v3.5.0
+// - `src/heap.c:22-25` (`mi_heap_set_numa_affinity`);
 // - `src/heap.c:149-157` (`mi_heap_new_in_arena`, `mi_heap_new`) and
 //   `src/heap.c:228-261` (`mi_heap_delete`, `mi_heap_destroy`);
 // - `src/subproc.c:113-115` (`mi_heap_main`);
@@ -56,6 +57,26 @@ pub fn heap_main() -> *mut c_void {
         return crate::subproc::lifecycle::current_child_main_heap().map_or(null_mut(), |heap| heap.as_ptr().cast());
     }
     MainSubprocess::global().ready_main_heap_pointer().cast()
+}
+
+/// Set the source Heap's NUMA affinity; null selects the current main Heap.
+/// Negative values clear affinity, while nonnegative values wrap by the
+/// process-wide cached node count. This selects arena search order and does
+/// not migrate existing pages or promise hardware placement.
+///
+/// # Safety
+/// A non-null `heap` remains live through the call. The caller excludes
+/// concurrent affinity setters, allocation reads and Heap destruction.
+pub unsafe fn heap_set_numa_affinity(heap: *mut c_void, numa_node: c_int) {
+    let heap = if heap.is_null() { heap_main() } else { heap };
+    let Some(heap) = NonNull::new(heap.cast::<Heap>()) else { return };
+    let node = if numa_node < 0 { -1 } else {
+        let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
+            .ready_child_subprocess_inputs() else { return };
+        numa_node % binding.process().policy().numa_node_count() as i32
+    };
+    // SAFETY: forwarded live Heap and synchronization obligations.
+    unsafe { Heap::set_numa_affinity_at(heap, node) };
 }
 
 /// `mi_heap_new()`: null when the Heap cannot be created.

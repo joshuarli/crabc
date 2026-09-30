@@ -1190,6 +1190,16 @@ type HeapPointer = *mut c_void;
 type TheapPointer = *mut c_void;
 
 #[no_mangle]
+/// # Safety
+/// A non-null Heap remains live. No affinity setter, allocation read or Heap
+/// destruction overlaps this call.
+pub unsafe extern "C" fn mi_heap_set_numa_affinity(heap: HeapPointer, numa_node: c_int) {
+    bind_thread();
+    // SAFETY: forwarded source Heap lifetime and synchronization obligations.
+    unsafe { heaps::heap_set_numa_affinity(heap, numa_node) }
+}
+
+#[no_mangle]
 pub extern "C" fn mi_heap_new() -> HeapPointer {
     bind_thread();
     heaps::heap_new()

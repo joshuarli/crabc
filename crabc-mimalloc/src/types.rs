@@ -180,7 +180,7 @@ pub(crate) struct Heap {
     prev: *mut Heap,
     theap_slot: usize,
     exclusive_arena: *mut Arena,
-    numa_node: i32,
+    numa_node: UnsafeCell<i32>,
     theaps: *mut Theap,
     theaps_lock: PrivateLock,
     abandoned_count: [AtomicUsize; BIN_COUNT],
@@ -194,6 +194,23 @@ pub(crate) struct Heap {
 }
 
 impl Heap {
+    /// Source Heap affinity is mutable independently of its intrusive lists.
+    ///
+    /// # Safety
+    /// The Heap remains live and the caller excludes concurrent affinity
+    /// writes and allocation reads, as for the source's plain integer field.
+    pub(crate) unsafe fn numa_affinity_at(heap: NonNull<Self>) -> i32 {
+        // SAFETY: project only the interior-mutable affinity field.
+        unsafe { (*core::ptr::addr_of!((*heap.as_ptr()).numa_node)).get().read() }
+    }
+
+    /// # Safety
+    /// The Heap remains live and no concurrent affinity read or write occurs.
+    pub(crate) unsafe fn set_numa_affinity_at(heap: NonNull<Self>, numa_node: i32) {
+        // SAFETY: the caller synchronizes the source's plain field; other
+        // Heap fields and intrusive links are neither borrowed nor changed.
+        unsafe { (*core::ptr::addr_of!((*heap.as_ptr()).numa_node)).get().write(numa_node) };
+    }
     /// `mi_stats_add(stats, &heap->stats)` of `mi_heap_aggregate_visitor`.
     ///
     /// # Safety
@@ -298,7 +315,7 @@ impl Heap {
             prev: null_mut(),
             theap_slot: 0,
             exclusive_arena: null_mut(),
-            numa_node: 0,
+            numa_node: UnsafeCell::new(0),
             theaps: null_mut(),
             theaps_lock: PrivateLock::new(),
             abandoned_count: [const { AtomicUsize::new(0) }; BIN_COUNT],
@@ -514,7 +531,7 @@ impl Heap {
         // `internal.h:mi_thread_local_key_fast` is the fixed key value one.
         self.theap_slot = 1;
         self.exclusive_arena = null_mut();
-        self.numa_node = -1;
+        *self.numa_node.get_mut() = -1;
         self.theaps = null_mut();
         self.theaps_lock = PrivateLock::new();
         self.abandoned_count = [const { AtomicUsize::new(0) }; BIN_COUNT];
@@ -532,7 +549,7 @@ impl Heap {
             && self.prev.is_null()
             && self.theap_slot == 0
             && self.exclusive_arena.is_null()
-            && self.numa_node == 0
+            && unsafe { *self.numa_node.get() } == 0
             && self.theaps.is_null()
             && self
                 .abandoned_count
@@ -649,7 +666,7 @@ impl Heap {
         self.prev = null_mut();
         self.theap_slot = regular_theap_key;
         self.exclusive_arena = selected_arena;
-        self.numa_node = -1;
+        *self.numa_node.get_mut() = -1;
         self.theaps = null_mut();
         self.theaps_lock = PrivateLock::new();
         self.abandoned_count = [const { AtomicUsize::new(0) }; BIN_COUNT];
@@ -893,7 +910,7 @@ impl Heap {
         self.prev = null_mut();
         self.theap_slot = 0;
         self.exclusive_arena = null_mut();
-        self.numa_node = 0;
+        *self.numa_node.get_mut() = 0;
         self.memid = MemoryId::none();
         true
     }
@@ -1138,7 +1155,7 @@ impl Heap {
         HeapMainStaticFields {
             heap_seq: self.heap_seq,
             theap_slot: self.theap_slot,
-            numa_node: self.numa_node,
+            numa_node: unsafe { *self.numa_node.get() },
             has_exclusive_arena: !self.exclusive_arena.is_null(),
             theaps_empty: self.theaps.is_null(),
             memid: self.memid,
@@ -7001,6 +7018,21 @@ impl Theap {
         Some(unsafe { self.tld.as_ref()? }.numa_node())
     }
 
+    /// Heap affinity takes precedence over the stored TLD node for each
+    /// fresh page, including allocations through an already cached Theap.
+    ///
+    /// # Safety
+    /// The session retains this Theap, its Heap and TLD through the read.
+    /// No affinity setter overlaps the allocation operation.
+    pub(crate) unsafe fn page_allocation_numa_node(&self) -> Option<i32> {
+        if let Some(heap) = NonNull::new(self.heap.load(Ordering::Acquire)) {
+            // SAFETY: the owning session retains the Heap and excludes a setter.
+            let node = unsafe { Heap::numa_affinity_at(heap) };
+            if node >= 0 { return Some(node); }
+        }
+        self.tld_numa_node()
+    }
+
     /// Copies the source `mi_tld_t::thread_seq` from this initialized Theap.
     ///
     /// This is an observation only.  The retained-process-done local-free
@@ -7832,6 +7864,30 @@ mod tests {
     use crate::free_list::LocalFreeList;
     use crate::remote_free;
     use core::mem::{align_of, offset_of, size_of, MaybeUninit};
+
+    #[test]
+    fn heap_affinity_overrides_tld_until_cleared_without_changing_thread_state() {
+        let mut heap = Heap::bootstrap_empty();
+        let heap_pointer = NonNull::from(&mut heap);
+        let mut tld = ThreadLocalData::detached();
+        tld.numa_node = 2;
+        let mut theap = Theap::empty();
+        theap.tld = &mut tld;
+        theap.heap.store(heap_pointer.as_ptr(), Ordering::Relaxed);
+        // SAFETY: all three images remain local and no operation overlaps.
+        unsafe {
+            Heap::set_numa_affinity_at(heap_pointer, -1);
+            assert_eq!(theap.page_allocation_numa_node(), Some(2));
+            Heap::set_numa_affinity_at(heap_pointer, 0);
+            assert_eq!(theap.page_allocation_numa_node(), Some(0));
+            Heap::set_numa_affinity_at(heap_pointer, 1);
+            assert_eq!(theap.page_allocation_numa_node(), Some(1));
+            assert_eq!(theap.tld_numa_node(), Some(2));
+            Heap::set_numa_affinity_at(heap_pointer, -1);
+            assert_eq!(theap.page_allocation_numa_node(), Some(2));
+        }
+        assert_eq!(theap.heap.load(Ordering::Acquire), heap_pointer.as_ptr());
+    }
 
     #[test]
     fn heap_identity_read_while_owner_updates_ordinary_page_state() {
