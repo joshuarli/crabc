@@ -17,6 +17,9 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
+import shutil
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -528,9 +531,228 @@ def run_evidence(*, offline: bool, report_path: Path) -> dict[str, Any]:
     run.write_json(report_path, report); return report
 
 
+
+SOURCE_API_RUNNER = "allocator-aligned-offset-live-client"
+SOURCE_API_PROFILES = ("release", "debug-1", "stat-1", "stat-2")
+SOURCE_API_FIXTURE = ROOT / "compat/allocator/native-aligned-realloc-x86_64.c"
+SOURCE_API_PARAMETERS = {"request": "81", "alignment": "128", "offset": "11",
+    "replacement": "257", "profiles": ",".join(SOURCE_API_PROFILES),
+    "boundary": "exact-live-source-api-client", "c-debug-status": "1",
+    "whole-profile-parity": "false"}
+SOURCE_API_NEGATIVE = {"debug-1-c-execute": 1}
+
+
+def validate_source_api_observation(profile, backend, kind, status, stdout, stderr):
+    """Authenticate the bounded valid-client outcome, including the C refusal.
+
+    The C debug outcome is a specific difference, never general permission for
+    a failing caller. Native clients and every other C profile must succeed.
+    """
+    if profile not in SOURCE_API_PROFILES or backend not in ("c", "native"):
+        raise EvidenceError("unknown source API control")
+    refused = profile == "debug-1" and backend == "c"
+    if kind != "process" or type(status) is not int or status != int(refused):
+        raise EvidenceError("source API control has unexpected exit")
+    try:
+        lines = stdout.decode("ascii").splitlines()
+        values = {}
+        for line in lines:
+            key, value = line.split("=")
+            if key in values or not value.isdecimal():
+                raise ValueError("duplicate or noninteger observation")
+            values[key] = int(value)
+    except (UnicodeError, ValueError) as error:
+        raise EvidenceError("malformed source API observations") from error
+    expected = {"request": 81, "alignment": 128, "offset": 11,
+        "allocated": 1, "zero": 1, "aligned": 1, "usable_errno": 22 if refused else 0,
+        "reallocated": 1, "realloc_aligned": 1, "copied": 0 if refused else 1,
+        "realloc_errno": 22 if refused else 0, "free_returned": 1,
+        "free_errno": 22 if refused else 0}
+    if set(values) != set(expected) | {"usable"} or any(values.get(k) != v for k, v in expected.items()):
+        raise EvidenceError("source API control observations differ")
+    if (values["usable"] != 0 if refused else values["usable"] < 81):
+        raise EvidenceError("source API usable extent differs")
+    if refused:
+        diagnostic = re.compile(rb"mimalloc: error: thread (?:0x)?[0-9a-fA-F]+: (mi_usable_size|mi_free): invalid \(unaligned\) pointer: (?:0x)?[0-9a-fA-F]+")
+        matches = [diagnostic.fullmatch(line) for line in stderr.splitlines()]
+        if len(matches) != 4 or not all(matches) or [m.group(1) for m in matches] != [b"mi_usable_size", b"mi_usable_size", b"mi_free", b"mi_free"]:
+            raise EvidenceError("C debug refusal diagnostics differ")
+    elif stderr:
+        raise EvidenceError("successful source API control emitted diagnostics")
+    return values
+
+
+def source_api_helpers():
+    # Existing helpers own byte-faithful command records and the shared receipt.
+    allocator = str(ROOT / "compat/allocator")
+    if allocator not in sys.path:
+        sys.path.insert(0, allocator)
+    import x86_64_m4_gate as m4
+    from x86_64_m6_heap_convenience import record
+    from x86_64_m6_upstream_heap_stress import load_module, stress
+    receipts = load_module("aligned_source_api_receipts", ROOT / "compat/x86_64/native_shadow_receipt.py")
+    return m4, record, stress, receipts
+
+
+def source_api_case_ids():
+    return [f"{profile}-{step}" for profile in SOURCE_API_PROFILES for step in
+            ("oracle-build", "native-build", "caller-build", "c-link", "c-elf", "c-execute",
+             "native-link", "native-elf", "native-execute")]
+
+
+def read_source_api_control(*, replay=False):
+    _, record, stress, receipts = source_api_helpers()
+    receipt = receipts.read_receipt(ROOT, SOURCE_API_RUNNER, expected_statuses=SOURCE_API_NEGATIVE)
+    if receipt.parameters != SOURCE_API_PARAMETERS or receipt.case_ids() != source_api_case_ids():
+        raise EvidenceError("source API parameters or ordered roster differ")
+    products = receipt.path.parent / "products"
+    inputs = json.loads((products / "inputs.json").read_text())
+    execution = run.require_native_x86_64(require_image_identity=True)
+    run.validate_native_execution_provenance(inputs["execution"], expected_image_id=execution["image_id"])
+    if inputs["source"] != receipt.source or inputs["parameters"] != SOURCE_API_PARAMETERS or inputs["upstream"] != run.load_pin():
+        raise EvidenceError("source API input binding differs")
+    if sha256_file(products / SOURCE_API_FIXTURE.name) != sha256_file(SOURCE_API_FIXTURE):
+        raise EvidenceError("source API caller differs")
+    expected_products = {"inputs.json", SOURCE_API_FIXTURE.name, "mimalloc.h", "LICENSE"} | {
+        f"{profile}-{name}" for profile in SOURCE_API_PROFILES for name in
+        ("oracle.o", "caller.o", "native-mi-adapter.a", "c", "native")}
+    if set(receipt.products) != expected_products:
+        raise EvidenceError("source API retained products differ")
+    for case in receipt.cases:
+        paths = {Path(path).suffix: receipt.path.parent / "logs" / path for path in case["logs"]}
+        if set(paths) != {".json", ".stdout", ".stderr"}:
+            raise EvidenceError("source API command raw streams missing")
+        raw = json.loads(paths[".json"].read_text())
+        if raw["kind"] != "process" or type(raw["status"]) is not int or raw["status"] != case["status"]:
+            raise EvidenceError("source API command status differs from receipt")
+        for stream in ("stdout", "stderr"):
+            if stress.byte_record_payload(raw[stream], case["id"]) != paths[f".{stream}"].read_bytes():
+                raise EvidenceError("source API command raw streams differ")
+        if case["id"].endswith("-elf"):
+            header = paths[".stdout"].read_bytes()
+            if not all(value in header for value in (b"ELF64", b"little endian", b"Advanced Micro Devices X86-64")):
+                raise EvidenceError("source API retained ELF target differs")
+        if case["id"].endswith("-execute"):
+            if len(raw["command"]) != 2 or raw["command"][1] != "--valid-offset-client":
+                raise EvidenceError("source API executed selector differs")
+    scratch = None
+    if replay:
+        run.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        scratch = Path(tempfile.mkdtemp(prefix="aligned-offset-replay-", dir=run.TEMP_ROOT))
+        print(f"source API control replay raw: {scratch}", flush=True)
+    for profile in SOURCE_API_PROFILES:
+        observations = {}
+        for backend in ("c", "native"):
+            case_id = f"{profile}-{backend}-execute"
+            case = next(c for c in receipt.cases if c["id"] == case_id)
+            log_paths = {Path(path).suffix: receipt.path.parent / "logs" / path for path in case["logs"]}
+            if set(log_paths) != {".json", ".stdout", ".stderr"}:
+                raise EvidenceError("source API raw streams missing")
+            raw = json.loads(log_paths[".json"].read_text())
+            stdout, stderr = log_paths[".stdout"].read_bytes(), log_paths[".stderr"].read_bytes()
+            if (stress.byte_record_payload(raw["stdout"], case_id) != stdout or
+                stress.byte_record_payload(raw["stderr"], case_id) != stderr or raw["status"] != case["status"]):
+                raise EvidenceError("source API raw record and streams differ")
+            observations[backend] = validate_source_api_observation(profile, backend, raw["kind"], raw["status"], stdout, stderr)
+            if scratch is not None:
+                binary = scratch / f"{profile}-{backend}"
+                shutil.copyfile(products / binary.name, binary)
+                binary.chmod(0o755)
+                elf, _ = record(scratch, f"{profile}-{backend}-elf", [run.require_tool("readelf"), "-h", str(binary)], scratch)
+                header = stress.byte_record_payload(elf["stdout"], binary.name)
+                if elf["kind"] != "process" or elf["status"] != 0 or not all(value in header for value in
+                    (b"ELF64", b"little endian", b"Advanced Micro Devices X86-64")):
+                    raise EvidenceError("replayed source API ELF target differs")
+                result, _ = record(scratch, case_id, [str(binary), "--valid-offset-client"], scratch, True)
+                replay_stdout = stress.byte_record_payload(result["stdout"], case_id)
+                replay_stderr = stress.byte_record_payload(result["stderr"], case_id)
+                values = validate_source_api_observation(profile, backend, result["kind"], result["status"], replay_stdout, replay_stderr)
+                if values != observations[backend]:
+                    raise EvidenceError("retained source API replay observations differ")
+        if profile != "debug-1" and observations["c"] != observations["native"]:
+            raise EvidenceError("normal C/native source API observations differ")
+    receipts.read_receipt(ROOT, SOURCE_API_RUNNER, expected_statuses=SOURCE_API_NEGATIVE)
+    return receipt
+
+
+def run_source_api_control():
+    m4, record, stress, receipts = source_api_helpers()
+    execution = run.require_native_x86_64(require_image_identity=True)
+    seal = receipts.source_seal(ROOT)
+    pin = run.load_pin()
+    archive = run.fetch_archive(pin, True)
+    parent = run.ARTIFACT_ROOT / "x86_64/aligned-offset-live-client"
+    parent.mkdir(parents=True, exist_ok=True)
+    output = Path(tempfile.mkdtemp(prefix="run-", dir=parent))
+    source = run.safe_extract(archive, output / "source", pin["archive_root"])
+    products, cases = {}, []
+    for original in (SOURCE_API_FIXTURE, source / "include/mimalloc.h", source / "LICENSE"):
+        retained = output / original.name
+        shutil.copy2(original, retained)
+        products[retained.name] = retained
+    inputs = output / "inputs.json"
+    inputs.write_text(json.dumps({"source": seal, "execution": execution, "upstream": pin,
+        "parameters": SOURCE_API_PARAMETERS}, indent=2) + "\n")
+    products[inputs.name] = inputs
+    print(f"source API control original raw: {output}", flush=True)
+    compiler = run.require_tool("musl-gcc")
+    for profile in SOURCE_API_PROFILES:
+        directory = output / profile
+        directory.mkdir()
+        def passed(step, argv, cwd=source):
+            result, logs = record(output, f"{profile}-{step}", argv, cwd)
+            if result["kind"] != "process" or result["status"] != 0:
+                raise EvidenceError(f"{profile}-{step} failed; raw: {logs[0]}")
+            cases.append((f"{profile}-{step}", result["status"], logs))
+        common = ["-std=c11", "-D_GNU_SOURCE", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+                  *m4.api_profile_flags(profile), "-UNDEBUG", "-I", str(source / "include")]
+        oracle = directory / "oracle.o"
+        passed("oracle-build", [compiler, *common, "-c", str(source / "src/static.c"), "-o", str(oracle)])
+        target = directory / "cargo-target"
+        passed("native-build", [run.require_tool("cargo"), "build", "--locked", "--offline", "--release",
+            "--target", m4.RUST_TARGET, "-p", m4.ADAPTER_PACKAGE, "--target-dir", str(target),
+            *(("--features", f"crabc-mimalloc/mi-{profile}") if profile != "release" else ())], ROOT)
+        library = directory / "native-mi-adapter.a"
+        shutil.copy2(target / m4.RUST_TARGET / "release" / m4.ADAPTER_STATICLIB, library)
+        caller = directory / "caller.o"
+        passed("caller-build", [compiler, *common, "-c", str(SOURCE_API_FIXTURE), "-o", str(caller)])
+        for name, path in (("oracle.o", oracle), ("caller.o", caller), ("native-mi-adapter.a", library)):
+            products[f"{profile}-{name}"] = path
+        for backend, allocator in (("c", oracle), ("native", library)):
+            binary = directory / backend
+            passed(f"{backend}-link", [compiler, str(caller), str(allocator), "-pthread", "-o", str(binary)])
+            passed(f"{backend}-elf", [run.require_tool("readelf"), "-h", str(binary)])
+            products[f"{profile}-{backend}"] = binary
+            case_id = f"{profile}-{backend}-execute"
+            result, logs = record(output, case_id, [str(binary), "--valid-offset-client"], directory, True)
+            validate_source_api_observation(profile, backend, result["kind"], result["status"],
+                stress.byte_record_payload(result["stdout"], case_id), stress.byte_record_payload(result["stderr"], case_id))
+            cases.append((case_id, result["status"], logs))
+        shutil.rmtree(target)
+    if receipts.source_seal(ROOT) != seal:
+        raise EvidenceError("source changed during source API control")
+    path = receipts.write_receipt(ROOT, SOURCE_API_RUNNER, output, products, cases, SOURCE_API_PARAMETERS, True)
+    read_source_api_control()
+    return path
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__); parser.add_argument("--offline", action="store_true"); parser.add_argument("--report", type=Path, default=REPORT_DEFAULT)
+    parser.add_argument("--source-api-control", action="store_true", help="run the separate valid 81/128/11 public client control")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--read", action="store_true")
+    mode.add_argument("--replay", action="store_true")
     arguments = parser.parse_args()
+    if arguments.read or arguments.replay:
+        if not arguments.source_api_control:
+            parser.error("--read/--replay require --source-api-control")
+    if arguments.source_api_control:
+        try:
+            path = read_source_api_control(replay=arguments.replay).path if arguments.read or arguments.replay else run_source_api_control()
+        except Exception as error:
+            print(f"aligned offset source API control: FAIL: {error}", file=sys.stderr)
+            return 1
+        print(f"aligned offset source API control complete; C debug refusal retained; whole-profile parity unqualified: {path}")
+        return 0
     try: report = run_evidence(offline=arguments.offline, report_path=arguments.report)
     except (EvidenceError, OSError, json.JSONDecodeError) as error:
         print(f"allocator x86-64 aligned-overalloc differential: FAIL: {error}", file=os.sys.stderr); return 1

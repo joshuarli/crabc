@@ -9,6 +9,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -124,6 +125,76 @@ class ReportTests(unittest.TestCase):
                 mutate(weakened)
                 with self.assertRaisesRegex(evidence.EvidenceError, message):
                     evidence.validate_report(weakened)
+
+
+class SourceApiControlTests(unittest.TestCase):
+    def observation(self, refused=False):
+        values = {"request": 81, "alignment": 128, "offset": 11,
+                  "allocated": 1, "zero": 1, "aligned": 1,
+                  "usable": 0 if refused else 107,
+                  "usable_errno": 22 if refused else 0,
+                  "reallocated": 1, "realloc_aligned": 1,
+                  "copied": 0 if refused else 1,
+                  "realloc_errno": 22 if refused else 0,
+                  "free_returned": 1, "free_errno": 22 if refused else 0}
+        return "".join(f"{key}={value}\n" for key, value in values.items()).encode()
+
+    def diagnostic(self):
+        return b"".join(f"mimalloc: error: thread 0x123: {api}: invalid (unaligned) pointer: 0x456\n".encode()
+                        for api in ("mi_usable_size", "mi_usable_size", "mi_free", "mi_free"))
+
+    def test_valid_client_all_profiles_and_exact_c_debug_refusal(self):
+        for profile in ("release", "debug-1", "stat-1", "stat-2"):
+            for backend in ("c", "native"):
+                refused = profile == "debug-1" and backend == "c"
+                evidence.validate_source_api_observation(profile, backend, "process", int(refused),
+                    self.observation(refused), self.diagnostic() if refused else b"")
+
+    def test_refusal_is_not_matched_nonzero_or_a_native_waiver(self):
+        for profile, backend, kind, status, stdout, stderr in (
+            ("release", "c", "process", 1, self.observation(True), self.diagnostic()),
+            ("debug-1", "native", "process", 1, self.observation(True), self.diagnostic()),
+            ("debug-1", "c", "process", 0, self.observation(), b""),
+            ("debug-1", "c", "timeout", 1, self.observation(True), self.diagnostic()),
+            ("debug-1", "c", "process", 1, self.observation(True), b"unrelated error\n"),
+            ("stat-2", "native", "process", 0, self.observation().replace(b"copied=1", b"copied=0"), b""),
+        ):
+            with self.subTest(profile=profile, backend=backend, kind=kind):
+                with self.assertRaises(evidence.EvidenceError):
+                    evidence.validate_source_api_observation(profile, backend, kind, status, stdout, stderr)
+
+    def test_failed_real_compiler_process_keeps_raw_failure_without_receipt(self):
+        m4, record, stress, receipts = evidence.source_api_helpers()
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
+            directory = Path(temporary)
+            source = directory / "pinned-source"
+            (source / "include").mkdir(parents=True)
+            (source / "include/mimalloc.h").write_text("header")
+            (source / "LICENSE").write_text("license")
+            with mock.patch.object(evidence.run, "ARTIFACT_ROOT", directory / "products"), \
+                 mock.patch.object(evidence.run, "require_native_x86_64", return_value={}), \
+                 mock.patch.object(evidence.run, "load_pin", return_value={"archive_root": "mimalloc-3.5.0"}), \
+                 mock.patch.object(evidence.run, "fetch_archive", return_value=directory / "archive"), \
+                 mock.patch.object(evidence.run, "safe_extract", return_value=source), \
+                 mock.patch.object(evidence.run, "require_tool", return_value="/bin/false"), \
+                 mock.patch.object(receipts, "source_seal", return_value={"revision": "a" * 40}), \
+                 mock.patch.object(receipts, "write_receipt") as publish, \
+                 mock.patch.object(evidence, "source_api_helpers", return_value=(m4, record, stress, receipts)):
+                with self.assertRaisesRegex(evidence.EvidenceError, "oracle-build failed"):
+                    evidence.run_source_api_control()
+                publish.assert_not_called()
+            logs = list(directory.rglob("release-oracle-build.json"))
+            self.assertEqual(len(logs), 1)
+            raw = json.loads(logs[0].read_text())
+            self.assertEqual((raw["kind"], raw["status"]), ("process", 1))
+            self.assertEqual(logs[0].with_suffix(".stderr").read_bytes(), b"")
+
+    def test_changed_geometry_duplicate_or_missing_field_fails(self):
+        original = self.observation()
+        for changed in (original.replace(b"offset=11", b"offset=7"), original + b"copied=1\n",
+                        original.replace(b"free_returned=1\n", b"")):
+            with self.assertRaises(evidence.EvidenceError):
+                evidence.validate_source_api_observation("release", "native", "process", 0, changed, b"")
 
 
 if __name__ == "__main__":

@@ -4,11 +4,42 @@
  * crabc-mimalloc/tests/native_aligned_reallocate.rs. */
 #include "mimalloc.h"
 
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
-int main(void) {
+/* Offset alignment permits a non-word-aligned exact live client. Every call
+ * below uses that client under single-threaded lifetime exclusion. */
+static int valid_offset_client(void) {
+  unsigned char *p = mi_zalloc_aligned_at(81, 128, 11);
+  int zero = p != NULL, aligned = p != NULL && ((uintptr_t)p + 11) % 128 == 0;
+  if (p != NULL) {
+    for (size_t i = 0; i < 81; ++i) zero &= p[i] == 0;
+    memset(p, 0x63, 81);
+  }
+  printf("request=81\nalignment=128\noffset=11\nallocated=%d\nzero=%d\naligned=%d\n", p != NULL, zero, aligned);
+  if (p == NULL) return 2;
+  errno = 0;
+  size_t usable = mi_usable_size(p);
+  int usable_errno = errno;
+  errno = 0;
+  unsigned char *r = mi_realloc_aligned_at(p, 257, 128, 11);
+  int realloc_errno = errno;
+  int copied = r != NULL, realloc_aligned = r != NULL && ((uintptr_t)r + 11) % 128 == 0;
+  if (r != NULL) for (size_t i = 0; i < 81; ++i) copied &= r[i] == 0x63;
+  errno = 0;
+  mi_free(r != NULL ? r : p);
+  int free_errno = errno;
+  printf("usable=%zu\nusable_errno=%d\nreallocated=%d\nrealloc_aligned=%d\ncopied=%d\nrealloc_errno=%d\nfree_returned=1\nfree_errno=%d\n",
+         usable, usable_errno, r != NULL, realloc_aligned, copied, realloc_errno, free_errno);
+  return !(zero && aligned && usable >= 81 && usable_errno == 0 &&
+           r != NULL && realloc_aligned && copied && realloc_errno == 0 && free_errno == 0);
+}
+
+int main(int argc, char **argv) {
+  if (argc == 2 && strcmp(argv[1], "--valid-offset-client") == 0) return valid_offset_client();
+  if (argc != 1) return 64;
   void *null_zero = mi_realloc_aligned(NULL, 0, sizeof(void *));
   if (null_zero == NULL || ((unsigned char *)null_zero)[0] != 0) return 9;
   mi_free(null_zero);
