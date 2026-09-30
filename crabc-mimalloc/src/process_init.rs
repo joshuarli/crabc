@@ -1151,7 +1151,7 @@ impl ProcessMainInitializationStorage {
             #[cfg(miri)]
             let _ = (&policy, config);
         }
-        Ok(VmProcess::new(policy, subprocess))
+        Ok(VmProcess::new_main(policy, subprocess))
     }
 
     /// Builds the canonical VM/PageMap backing proof for one deliberately
@@ -2116,7 +2116,7 @@ impl ProcessMainAllocationLease {
             .ok_or(ProcessMainInitError::VmPolicyUnavailable)?;
         // SAFETY: allocation-ready publishes the already initialized policy
         // before any Theap publication; its slot is immutable and process-lived.
-        Ok(VmProcess::new(unsafe { policy.as_ref() }, self.subprocess))
+        Ok(VmProcess::new_main(unsafe { policy.as_ref() }, self.subprocess))
     }
 
     pub(crate) fn process_backing(self) -> Result<ProcessMainBackingBinding, ProcessMainInitError> {
@@ -2269,7 +2269,7 @@ impl ProcessMainReadyLease {
         // Release store; the one source process lifetime never replaces or
         // destroys this slot.
         let policy = unsafe { policy.as_ref() };
-        Ok(VmProcess::new(policy, self.subprocess))
+        Ok(VmProcess::new_main(policy, self.subprocess))
     }
 
     /// Returns the exact coordinator-issued policy/PageMap binding for a

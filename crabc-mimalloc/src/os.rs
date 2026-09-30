@@ -690,6 +690,7 @@ impl Drop for VmPolicyOptionAccess<'_> {
 pub(crate) struct VmProcess<'a> {
     policy: &'a VmPolicy,
     subprocess: &'a crate::subproc::SubprocessIdentity,
+    main_subprocess: Option<&'a crate::subproc::MainSubprocess>,
 }
 
 impl<'a> VmProcess<'a> {
@@ -698,7 +699,18 @@ impl<'a> VmProcess<'a> {
         policy: &'a VmPolicy,
         subprocess: &'a crate::subproc::SubprocessIdentity,
     ) -> Self {
-        Self { policy, subprocess }
+        Self { policy, subprocess, main_subprocess: None }
+    }
+
+    /// Retains the actual main owner alongside its narrow accounting identity.
+    /// A child or identity-only borrow cannot grant access to fields outside
+    /// that identity; the enclosing owner must be supplied independently.
+    #[inline]
+    pub(crate) fn new_main(
+        policy: &'a VmPolicy,
+        subprocess: &'a crate::subproc::MainSubprocess,
+    ) -> Self {
+        Self { policy, subprocess: subprocess.identity(), main_subprocess: Some(subprocess) }
     }
 
     #[inline]
@@ -715,15 +727,7 @@ impl<'a> VmProcess<'a> {
     /// child identity is never widened to the process wrapper.
     #[inline]
     pub(crate) fn main_subprocess(self) -> Option<&'a crate::subproc::MainSubprocess> {
-        if !self.subprocess.is_process_main() { return None; }
-        // SAFETY: `MainSubprocess::identity` is the first repr(C) field and
-        // the compile-time offset assertion in subproc.rs fixes that address
-        // relation. The role check excludes child images, which must never
-        // be projected as a main owner.
-        Some(unsafe {
-            &*core::ptr::from_ref(self.subprocess)
-                .cast::<crate::subproc::MainSubprocess>()
-        })
+        self.main_subprocess
     }
 
     /// Returns the source-selected current NUMA node for this exact policy

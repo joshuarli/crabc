@@ -253,3 +253,22 @@ fn isolated_thread_identities_are_stable_nonreserved_aligned_and_distinct() {
     assert_ne!(initial, other);
     assert_eq!(initial, identity());
 }
+
+#[cfg(miri)]
+#[test]
+fn vm_process_retains_exact_main_owner_and_identity_cannot_supply_one() {
+    let mut options = crate::config::VmOptions::uninitialized();
+    options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+    let policy = crate::os::VmPolicy::new(options).unwrap();
+    let first = crate::subproc::MainSubprocess::new();
+    let second = crate::subproc::MainSubprocess::new();
+    let child = crate::subproc::ChildSubprocessImage::new();
+    let first_process = crate::os::VmProcess::new_main(&policy, &first);
+    let second_process = crate::os::VmProcess::new_main(&policy, &second);
+    assert!(core::ptr::eq(first_process.main_subprocess().unwrap(), &first));
+    assert!(core::ptr::eq(second_process.main_subprocess().unwrap(), &second));
+    assert!(!core::ptr::eq(first_process.main_subprocess().unwrap(), second_process.main_subprocess().unwrap()));
+    assert!(core::ptr::eq(first_process.subprocess(), first.identity()));
+    assert!(crate::os::VmProcess::new(&policy, first.identity()).main_subprocess().is_none());
+    assert!(crate::os::VmProcess::new(&policy, child.identity()).main_subprocess().is_none());
+}
