@@ -3,6 +3,8 @@
 
 from pathlib import Path
 import re
+import sys
+import x86_64_m6_managed_callback as profiles
 
 import run as harness
 import x86_64_m4_gate as m4
@@ -85,5 +87,13 @@ def run_differential() -> int:
         return len(c_trace)
 
 
+def main(arguments=None):
+    profiles.profile_main(sys.modules[__name__], arguments)
+
+
 if __name__ == "__main__":
-    print(f"Child managed callback: {run_differential()} source-built C/Rust keys match")
+    try:
+        main()
+    except (harness.HarnessError, profiles.stress.EvidenceError, profiles.receipts.ReceiptError) as error:
+        print(f"Child managed callback failed: {error}", file=sys.stderr)
+        raise SystemExit(1)
