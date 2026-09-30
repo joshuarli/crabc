@@ -3645,10 +3645,12 @@ impl<'child, 'map, Session: TheapPageSession>
     /// It additionally removes each page's process PageMap range, so no
     /// pointer lookup can reach page metadata inside an unmapped arena.
     ///
-    /// Returns `false`, with the remaining pages still attached, for an
-    /// OS-backed page (source would leak its mapping, which no Rust owner
-    /// retains here), a page whose arena span cannot be proven, or retained
-    /// engine failure state. The caller must then retain the child.
+    /// Returns `false`, with the remaining pages still attached, for a
+    /// page whose complete arena or published OS span cannot be proven, or
+    /// retained engine failure state. Direct OS mappings remain mapped for
+    /// the process lifetime, matching source main-Heap destruction; they are
+    /// not reclaimed by child arena destruction. This is not a leak bound.
+    /// The caller must retain the child after any refused transition.
     ///
     /// # Safety
     /// The child is unreachable: its registry membership is removed and no
@@ -3667,13 +3669,19 @@ impl<'child, 'map, Session: TheapPageSession>
                     break;
                 }
                 let queue = queue as *mut crate::types::PageQueue;
-                let Some(ReleaseSpan::Arena { slice_start, size, .. }) = self.release_span(page) else {
-                    return false;
-                };
-                let Some(page_map_size) = NonNull::new(page)
-                    .and_then(|page| arena_page_map_size(page, slice_start, size))
-                else {
-                    return false;
+                let Some(span) = self.release_span(page) else { return false; };
+                let (slice_start, page_map_size, published) = match span {
+                    ReleaseSpan::Arena { slice_start, size, .. } => {
+                        let Some(page_map_size) = NonNull::new(page)
+                            .and_then(|page| arena_page_map_size(page, slice_start, size))
+                        else { return false; };
+                        (slice_start, page_map_size, None)
+                    }
+                    ReleaseSpan::Os(published) => (
+                        published.slice_start().as_ptr(),
+                        published.layout().page_map_size(),
+                        Some(published),
+                    ),
                 };
                 // SAFETY: this session owns the complete queue and, by the
                 // caller's contract, the page has no other reader.
@@ -3682,12 +3690,26 @@ impl<'child, 'map, Session: TheapPageSession>
                     self.update_direct_cache(bin);
                 }
                 if !self.session.note_page_removed() {
+                    if let Some(published) = published {
+                        self.park_pending_os_release(OsAlignedPageOwner::Published(published));
+                    }
                     return false;
                 }
                 // SAFETY: the prevalidated span still maps to this detached
                 // page, and no lookup can overlap per the caller contract.
                 if unsafe { self.page_map.unregister_range(slice_start, page_map_size) }.is_err() {
+                    if let Some(published) = published {
+                        self.park_pending_os_release(OsAlignedPageOwner::Published(published));
+                    }
                     return false;
+                }
+                if let Some(published) = published {
+                    // SAFETY: the unreachable child owns this unique terminal
+                    // right; queue/count and exact PageMap removal completed.
+                    if let Err(published) = unsafe { published.retain_for_subprocess_destroy() } {
+                        self.park_pending_os_release(OsAlignedPageOwner::Published(published));
+                        return false;
+                    }
                 }
             }
         }

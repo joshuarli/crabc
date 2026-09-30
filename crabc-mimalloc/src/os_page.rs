@@ -1295,6 +1295,23 @@ pub(crate) unsafe fn published_on_demand_os_page_area_for_process(
 }
 
 impl PublishedOsAlignedPage {
+    /// Consumes a direct OS page's terminal right without unmapping or changing
+    /// reserved/committed accounting. Source main-Heap destruction leaves these
+    /// mappings for the process lifetime; subsequent arena teardown does not
+    /// reclaim them. An already-accounted release right must remain retryable.
+    ///
+    /// # Safety
+    /// The caller owns this unique published right for an unreachable child.
+    /// Its queue/count and complete PageMap range have been detached, and no
+    /// thread, client, remote producer, or future owner can reach the page.
+    pub(crate) unsafe fn retain_for_subprocess_destroy(self) -> Result<(), Self> {
+        if self.release_accounted || self.process_identity.is_none() {
+            return Err(self);
+        }
+        core::mem::forget(self);
+        Ok(())
+    }
+
     /// Reconstructs and validates the OS release right before queue removal.
     ///
     /// # Safety
