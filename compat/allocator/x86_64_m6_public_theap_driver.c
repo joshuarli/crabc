@@ -68,6 +68,67 @@ static bool theap_visitor(const mi_heap_t* heap, const mi_heap_area_t* area,
   return !trace->stop;
 }
 
+/* Without guarded sampling, configuring a live Theap leaves its client
+   blocks, default selection, and allocation accounting unchanged. Retain
+   clients across each setter call so the check covers existing allocations
+   as well as requests made after configuration. */
+static bool guarded_configuration(const char* name, mi_theap_t* base,
+                                   mi_theap_t* selected, mi_heap_t* main_heap,
+                                   mi_heap_t* heap) {
+  unsigned char* selected_live = mi_theap_malloc(selected, 73);
+  unsigned char* base_live = mi_theap_malloc(base, 96);
+  if (selected_live == NULL || base_live == NULL) return false;
+  memset(selected_live, 0x6b, 73);
+  memset(base_live, 0x47, 96);
+  size_t selected_usable = mi_usable_size(selected_live);
+  size_t base_usable = mi_usable_size(base_live);
+  bool roots = true, content = true, usable = true, stats = true;
+  bool allocations = true, zero = true, aligned = true, unchanged_errno = true;
+  const size_t settings[][4] = {
+    {0, 0, 0, 0}, {1, 123, 1, 4096}, {17, 0, 32, 8192},
+    {1024, 987, 8192, 65536}, {1, 0, 0, SIZE_MAX},
+  };
+  mi_theap_t* targets[] = {base, selected, NULL};
+  for (size_t setting = 0; setting < sizeof(settings) / sizeof(settings[0]); setting++) {
+    for (size_t target = 0; target < sizeof(targets) / sizeof(targets[0]); target++) {
+      mi_stats_t before_base, before_selected, after_base, after_selected;
+      mi_stats_init(&before_base); mi_stats_init(&before_selected);
+      mi_stats_init(&after_base); mi_stats_init(&after_selected);
+      stats &= mi_theap_stats_get(base, &before_base) &&
+               mi_theap_stats_get(selected, &before_selected);
+      errno = 73;
+      mi_theap_guarded_set_sample_rate(targets[target], settings[setting][0], settings[setting][1]);
+      mi_theap_guarded_set_size_bound(targets[target], settings[setting][2], settings[setting][3]);
+      unchanged_errno &= errno == 73;
+      roots &= mi_theap_get_default() == selected &&
+               mi_heap_theap(main_heap) == base && mi_heap_theap(heap) == selected &&
+               mi_heap_of(selected_live) == heap && mi_heap_of(base_live) == main_heap;
+      usable &= mi_usable_size(selected_live) == selected_usable &&
+                mi_usable_size(base_live) == base_usable;
+      for (size_t i = 0; i < 73; i++) content &= selected_live[i] == 0x6b;
+      for (size_t i = 0; i < 96; i++) content &= base_live[i] == 0x47;
+      stats &= mi_theap_stats_get(base, &after_base) &&
+               mi_theap_stats_get(selected, &after_selected) &&
+               memcmp(&before_base, &after_base, sizeof(before_base)) == 0 &&
+               memcmp(&before_selected, &after_selected, sizeof(before_selected)) == 0;
+      unsigned char* direct = mi_theap_zalloc(selected, 257);
+      unsigned char* ordinary = mi_zalloc(513);
+      unsigned char* explicit_base = mi_theap_zalloc_aligned(base, 79, 128);
+      if (direct == NULL || ordinary == NULL || explicit_base == NULL) return false;
+      allocations &= mi_heap_of(direct) == heap && mi_heap_of(ordinary) == heap &&
+                     mi_heap_of(explicit_base) == main_heap;
+      zero &= all_zero(direct, 257) && all_zero(ordinary, 513) && all_zero(explicit_base, 79);
+      aligned &= (uintptr_t)explicit_base % 128 == 0;
+      mi_free(direct); mi_free(ordinary); mi_free(explicit_base);
+    }
+  }
+  bool defaults = mi_theap_get_default() == selected;
+  printf("%s.guarded=%d,%d,%d,%d,%d,%d,%d,%d,%d\n", name,
+         roots, content, usable, stats, allocations, zero, aligned, unchanged_errno, defaults);
+  mi_free(selected_live); mi_free(base_live);
+  return roots && content && usable && stats && allocations && zero && aligned && unchanged_errno && defaults;
+}
+
 static bool run_case(const char* name, mi_theap_t* parent_default) {
   mi_heap_t* main_heap = mi_heap_main();
   mi_theap_t* base = mi_theap_get_default();
@@ -101,6 +162,16 @@ static bool run_case(const char* name, mi_theap_t* parent_default) {
   mi_theap_t* previous = mi_theap_set_default(other);
   printf("%s.switch=%d,%d,%d\n", name, previous == base,
          mi_theap_get_default() == other, mi_heap_theap(main_heap) == base);
+
+#ifdef CRABC_PUBLIC_GUARDED_CONFIGURATION_ONLY
+  bool guarded = guarded_configuration(name, base, other, main_heap, heap);
+  previous = mi_theap_set_default(base);
+  printf("%s.restore=%d,%d\n", name, previous == other, mi_theap_get_default() == base);
+  mi_free(direct_before);
+  mi_heap_delete(heap);
+  printf("%s.done=%d\n", name, mi_theap_get_default() == base);
+  return guarded;
+#endif
 
   void* switched = mi_malloc(80);
   void* explicit_main = mi_theap_malloc(base, 96);
@@ -208,11 +279,7 @@ static bool run_case(const char* name, mi_theap_t* parent_default) {
   printf("%s.null_rezalloc=%d,%d\n", name,
          mi_heap_of(null_zero) == heap, all_zero(null_zero, 49));
 
-  mi_theap_guarded_set_sample_rate(other, 1, 123);
-  mi_theap_guarded_set_size_bound(other, 32, 1);
-  mi_theap_guarded_set_sample_rate(NULL, 1, 0);
-  mi_theap_guarded_set_size_bound(NULL, 1, 2);
-  printf("%s.guarded=%d\n", name, mi_theap_get_default() == other);
+  if (!guarded_configuration(name, base, other, main_heap, heap)) return false;
   mi_stats_t statistics;
   mi_stats_init(&statistics);
   bool stats_ok = mi_theap_stats_get(other, &statistics);
