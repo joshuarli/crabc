@@ -21777,7 +21777,17 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
                 // has a successfully accessible planned next block span.
                 let mut free_list = unsafe { LocalFreeList::from_page_at(page) }
                     .map_err(ThreadExitMappedRegularPostExitAdoptError::Extension)?;
-                match free_list.extend_count(plan.extend) {
+                #[cfg(target_arch = "x86_64")]
+                let extension = free_list.extend_count_with_random(plan.extend, || {
+                    // SAFETY: this active engine owns the selected Theap's
+                    // random field; no whole-Theap view crosses the draw.
+                    unsafe { Theap::next_os_reservation_random_at(
+                        target.session.local_field_theap_pointer(),
+                    ) }.map(|word| word as usize)
+                });
+                #[cfg(not(target_arch = "x86_64"))]
+                let extension = free_list.extend_count(plan.extend);
+                match extension {
                     Ok(0) => {
                         return Err(
                             ThreadExitMappedRegularPostExitAdoptError::ExtensionDidNotExtend,
@@ -38601,6 +38611,24 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         if let Some(first) = NonNull::new(first) {
             match self.page_quick_collect(first) {
                 Ok(true) => {
+                    #[cfg(target_arch = "x86_64")]
+                    if crate::config::SECURE_LEVEL >= 2
+                        && unsafe { first.as_ref().capacity() < first.as_ref().reserved() }
+                    {
+                        // The selected session owns its random field and the
+                        // available head. Source extension refusal keeps that
+                        // existing list usable; poisoned publication does not.
+                        let word = // SAFETY: this engine retains the selected source Theap.
+                        unsafe { Theap::next_os_reservation_random_at(
+                            self.session.local_field_theap_pointer(),
+                        ) }.map(|word| word as usize).ok_or(GenericPathError::Local(FreeListError::RandomSourceUnavailable))?;
+                        if word & 1 != 0 {
+                            let extension = self.extend_page_before_allocation(first);
+                            if self.page_commit_poison {
+                                extension?;
+                            }
+                        }
+                    }
                     // `mi_page_queue_lookup_free_first` leaves its head in
                     // place and clears retirement only after choosing it.
                     // SAFETY: this active session owns the candidate's
@@ -39322,7 +39350,16 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // queue state while it extends the source local free list.
             let mut free_list = unsafe { LocalFreeList::from_page_at(page) }
                 .map_err(GenericPathError::Local)?;
-            let extended = free_list.extend().map_err(GenericPathError::Local)?;
+            #[cfg(target_arch = "x86_64")]
+            let extension = free_list.extend_with_random(|| {
+                // SAFETY: the selected session retains exclusive random-field ownership.
+                unsafe { Theap::next_os_reservation_random_at(
+                    self.session.local_field_theap_pointer(),
+                ) }.map(|word| word as usize)
+            });
+            #[cfg(not(target_arch = "x86_64"))]
+            let extension = free_list.extend();
+            let extended = extension.map_err(GenericPathError::Local)?;
             if extended == 0 {
                 return Err(GenericPathError::Lifecycle);
             }
@@ -39364,7 +39401,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 page_ref.free_list_head(),
             )
         };
-        if slice_pcommitted == 0 || !free.is_null() {
+        if slice_pcommitted == 0 || (!free.is_null() && crate::config::SECURE_LEVEL < 2) {
             return Err(GenericPathError::PageCommit(PageCommitError::InvalidPageArea));
         }
         let page_start = page
@@ -39483,9 +39520,17 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             .map_err(PageCommitError::Extension)
             .map_err(GenericPathError::PageCommit)
             .and_then(|mut free_list| {
-                free_list
-                    .extend_count(plan.extend)
-                    .map_err(PageCommitError::Extension)
+                #[cfg(target_arch = "x86_64")]
+                let extension = free_list.extend_count_with_random(plan.extend, || {
+                    // SAFETY: this active engine owns the selected Theap's
+                    // random field; no whole-Theap view crosses the draw.
+                    unsafe { Theap::next_os_reservation_random_at(
+                        self.session.local_field_theap_pointer(),
+                    ) }.map(|word| word as usize)
+                });
+                #[cfg(not(target_arch = "x86_64"))]
+                let extension = free_list.extend_count(plan.extend);
+                extension.map_err(PageCommitError::Extension)
                     .map_err(GenericPathError::PageCommit)
             });
         match extension {
@@ -41549,7 +41594,17 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             #[cfg(feature = "mi-stat-1")]
             self.session.theap().record_page_extension_attempted();
             if slice_pcommitted == 0 {
-                let extended = free_list.extend().ok()?;
+                #[cfg(target_arch = "x86_64")]
+                let extension = free_list.extend_with_random(|| {
+                    // SAFETY: this active engine owns the selected Theap's
+                    // random field; no whole-Theap view crosses the draw.
+                    unsafe { Theap::next_os_reservation_random_at(
+                        self.session.local_field_theap_pointer(),
+                    ) }.map(|word| word as usize)
+                });
+                #[cfg(not(target_arch = "x86_64"))]
+                let extension = free_list.extend();
+                let extended = extension.ok()?;
                 if extended == 0 { return None; }
                 #[cfg(feature = "mi-stat-1")]
                 self.session.theap().record_page_extension_published(extended as usize, layout.block_size());
@@ -41567,7 +41622,16 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             if plan.commit_size != 0 {
                 return None;
             }
-            let extended = free_list.extend_count(plan.extend).ok()?;
+            #[cfg(target_arch = "x86_64")]
+            let extension = free_list.extend_count_with_random(plan.extend, || {
+                // SAFETY: the selected session retains exclusive random-field ownership.
+                unsafe { Theap::next_os_reservation_random_at(
+                    self.session.local_field_theap_pointer(),
+                ) }.map(|word| word as usize)
+            });
+            #[cfg(not(target_arch = "x86_64"))]
+            let extension = free_list.extend_count(plan.extend);
+            let extended = extension.ok()?;
             if extended != plan.extend { return None; }
             #[cfg(feature = "mi-stat-1")]
             self.session.theap().record_page_extension_published(extended as usize, layout.block_size());
@@ -44391,6 +44455,52 @@ mod tests {
         // SAFETY: force collection removed every page-map entry and all local
         // users before the explicit page-map destruction boundary.
         unsafe { page_map.destroy() }.unwrap();
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-2"))]
+    #[test]
+    fn secure_extension_prepends_capacity_on_an_available_owner_page() {
+        with_allocator(|allocator| {
+            let block = allocator.allocate(64, false).unwrap();
+            // SAFETY: this fixture owns the live allocation and its engine.
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) }).unwrap();
+            let before = unsafe { page.as_ref().capacity() };
+            assert!(before < unsafe { page.as_ref().reserved() });
+            assert!(!unsafe { page.as_ref().free_list_head() }.is_null());
+            allocator.extend_page_before_allocation(page).unwrap();
+            assert!(unsafe { page.as_ref().capacity() } > before);
+            // The original client stays valid when new blocks are prepended.
+            unsafe { block.as_ptr().write(0x71); }
+            let next = allocator.allocate(64, false).unwrap();
+            assert_ne!(block, next);
+            assert_eq!(unsafe { block.as_ptr().read() }, 0x71);
+            unsafe { allocator.free(next).unwrap(); allocator.free(block).unwrap(); }
+        });
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-2"))]
+    #[test]
+    fn secure_available_queue_head_draws_from_its_selected_theap() {
+        with_allocator(|allocator| {
+            let block = allocator.allocate(64, false).unwrap();
+            let page = NonNull::new(unsafe { allocator.page_for_block(block) }).unwrap();
+            let theap = allocator.session.local_field_theap_pointer();
+            let available = || unsafe {
+                Theap::with_os_reservation_random_at(theap, |random| {
+                    let random = random.unwrap();
+                    core::ptr::read((random as *mut crate::random::TheapRandomImage)
+                        .cast::<u8>().add(crate::random::TheapRandomImage::OUTPUT_AVAILABLE_OFFSET)
+                        .cast::<i32>())
+                })
+            };
+            let before = available();
+            let bin = size_class::bin_for_request(64).unwrap();
+            assert_eq!(allocator.find_generic_queue_page_with_first_try(
+                bin, 64, PageKind::Small, false,
+            ).unwrap(), Some(page));
+            assert_ne!(available(), before, "the source decision consumes a selected-Theap word");
+            unsafe { allocator.free(block).unwrap(); }
+        });
     }
 
     fn with_allocator(test: impl FnOnce(&mut SingleThreadAllocator<'_, '_, '_>)) {
