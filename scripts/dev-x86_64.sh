@@ -10071,9 +10071,14 @@ PY
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_mimalloc_startup_errno.sh "$@"
         ;;
     owned-signal-handler-fork)
-        [ "$#" -eq 0 ] || fail "owned-signal-handler-fork takes no arguments"
+        case "$#" in
+            0) ;;
+            1) [[ "$1" != -* ]] || fail "owned-signal-handler-fork expects a dynamic sysroot" ;;
+            3) [ "$1" = --static-sysroot ] || fail "owned-signal-handler-fork expects --static-sysroot STATIC DYNAMIC" ;;
+            *) fail "owned-signal-handler-fork accepts [[--static-sysroot STATIC] DYNAMIC]" ;;
+        esac
         ensure_image
-        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_signal_handler_fork.sh
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_signal_handler_fork.sh "$@"
         ;;
     owned-c-allocation-interposition)
         [ "$#" -le 1 ] || fail "owned-c-allocation-interposition accepts at most one dynamic sysroot"

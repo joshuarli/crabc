@@ -133,6 +133,10 @@
       "command": ["python3", "compat/allocator/x86_64_m7_statistics_worker_transfer.py", "--offline", "--aligned-transfer"],
       "scope": "Pinned C and native Rust compare aligned small/huge allocations, failed requests, owner reset/exit, attached or fresh freeing-worker accounting, and terminal output under MI_STAT=0, 1, 2 and MI_DEBUG=1 with MI_STAT=2. All eight profile/worker pairs retain exact public VM, huge allocation, requested/bin, lifecycle, and output observations. Statistics level zero preserves unconditional source huge allocation events; source debug decommit protection and successful-advisory accounting are exercised. Other alignments, page shapes, and metadata allocation producers remain separate obligations."
     },
+    "differential:statistics-initial-attachment": {
+      "command": ["python3", "compat/allocator/x86_64_m7_statistics_worker_transfer.py", "--offline", "--initial-attachment"],
+      "scope": "Pinned C and native Rust compare a fresh worker's first 64-byte, 32768-byte, and 589824-byte plain allocation under MI_STAT=0, 1, 2 and MI_DEBUG=1 with MI_STAT=2. Each profile retains owner output and untouched, allocated, exited, freed, and collected process images, including metadata-Theap, VM, page, bin, count, and requested-size accounting. OS-aligned first allocation remains a separate placement-sensitive diagnostic."
+    },
     "differential:statistics-level-one-output-merge": {
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-level-one-output-merge-differential"],
       "scope": "Pinned C MI_STAT=1 and Rust merge separate synthetic normal/huge source images into one process image, reset each source, and compare exact empty, live, combined-peak, and freed final malloc rows. Production huge allocation remains outside this fixture."
@@ -437,6 +441,7 @@
         "differential:statistics-two-owner",
         "differential:statistics-worker-transfer",
         "differential:statistics-aligned-transfer",
+        "differential:statistics-initial-attachment",
         "differential:statistics-level-one-output-merge",
         "differential:statistics-level-two-requested",
         "differential:statistics-level-two-bins",

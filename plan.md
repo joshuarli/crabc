@@ -79,6 +79,36 @@ only its exact source, configuration, image, products, and execution context.
   Strong symbol-only archive imports now retain complete relocation absence
   without claiming a call. Owned CRT lifecycle frames bind zero-size opening
   symbols to exact ordered fragments and complete executable bytes.
+- **Current merged frontier:** native Rust signal masks, descriptor reads,
+  synchronous waits, and process queues have pinned-musl controls and facade
+  checks. Installed header replay uses real inventory origins and an independent
+  linker-image anchor; both retained product pairs replay successfully. All 27
+  compiler helpers now have complete owned bodies, private dependencies, and
+  actual installed-call joins; final selection composition continues.
+  Crypt evidence now physically revalidates both static link modes. The private
+  diagnostic adapter has its own header, preserving the frozen allocation ABI;
+  all 198 merged runner tests pass.
+- **Current allocator frontier:** source-shaped OS-aligned debug frees pass
+  116 cases after 27 reproduced mismatches. Private arena diagnostics pass six
+  release and six debug comparisons, context lifetime controls, and all 288
+  native arena cases. Fresh-worker statistics pass 12 profiles and 984 fields;
+  OS-aligned placement differences remain raw diagnostics. Main-Theap cache,
+  fresh sibling allocation/reclamation, and fixed copied-owner fork repair pass
+  scoped source controls and all 37 executable M6 entries. Its ten gates and
+  eight missing runners remain open, including copied auxiliary siblings and
+  performance. Fresh M1 passes with immutable image provenance; M2 remains
+  partial. All eight M3 local components, native 327 and strict Miri 15 pass,
+  while the aggregate still lacks its M2 prerequisite.
+- **Current qualification frontier:** the accepted-C `c7f6d8bef` cohort passes
+  all 219 executions and its retained physical reader; its resolver family
+  command and Rust std/LTO/unwind consumer also pass, with final independent
+  reads continuing. The corresponding native cohort retains an extracted
+  signal-handler-fork timeout and remains unqualified. Native and pinned musl
+  reproduce the upstream child-counter window under controlled scheduling;
+  those diagnostics do not waive the original failure. The frozen text cohort
+  completed its component runs but failed numeric corroboration scope; that
+  reader is corrected without transferring its source seal. A fresh shared
+  merged-source cohort will supply the next complete family runs.
 - **Remaining:** complete the planned runtime families and all applicable
   allocator API/mode/source conditions; replay the ordered gates on merged
   source; obtain physical huge-page/NUMA evidence and an uncontended qualified
