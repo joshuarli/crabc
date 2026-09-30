@@ -293,7 +293,7 @@ impl ProcessArenaBacking {
         let count = memory.slice_count as usize;
         if !arena_slice_range_is_usable(arena, start, count) { return false; }
         let Some(owner) = (unsafe { self.allocation_for_arena(arena) }) else { return false; };
-        if !self.schedule_purge(&view, owner, start, count) { return false; }
+        if !self.schedule_purge(&view, &owner, start, count) { return false; }
         unsafe { view.slices_free() }.and_then(|free| free.set_range(start, count)) == Some(true)
     }
 
@@ -356,7 +356,7 @@ impl ProcessArenaBacking {
             let Some(view) = (unsafe { ArenaView::from_ptr(core::ptr::from_ref(arena).cast_mut()) }) else { return false; };
             let Some(owner) = (unsafe { self.allocation_for_arena(arena) }) else { return false; };
             if !core::ptr::eq(owner.process().policy(), process.policy()) || owner.config != config { return false; }
-            let Some(purged) = self.try_purge_arena(&view, owner, now, force) else { return false; };
+            let Some(purged) = self.try_purge_arena(&view, &owner, now, force) else { return false; };
             if purged >= 0 {
                 any_pending_or_purged = true;
                 if purged >= 1 {

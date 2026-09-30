@@ -9,11 +9,12 @@
 //! free would violate Rust lifetime rules. Registry clears and primitive frees
 //! still occur in source index order; snapshots cause no observable VM action.
 
-use super::{ArenaBacking, OwnedArenaAllocation, ProcessArenaBacking, ARENA_SLOT_COUNT, DESTROYED, PUBLISHED};
+use super::{ProcessArenaBacking, ARENA_SLOT_COUNT};
 use crate::config::MAX_ARENAS;
-use crate::os::{HugeOsRawReleaseRetry, HugeOsReleaseFailure, Mapping};
+use crate::os::{HugeOsAllocation, HugeOsRawReleaseRetry, HugeOsReleaseFailure, Mapping};
 use core::sync::atomic::Ordering;
 use crabc_core::Errno;
+use crate::types::{MemoryId, MemoryKind};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ArenaDestroyError {
@@ -32,7 +33,7 @@ enum FailedArenaRelease<'tracking> {
 /// Dropping this value never retries syscalls; callers must retain it until
 /// explicit raw retry succeeds. Its huge-page bitmaps borrow storage supplied
 /// before destruction, so no metadata allocation/free can recurse into a
-/// retiring allocator. The fixed array is indexed by allocation-owner slot.
+/// retiring allocator. The fixed array is indexed by the first source registry entry for each allocation.
 #[must_use = "retain failed arena releases until explicit raw retry succeeds"]
 pub(crate) struct DestroyedArenas<'tracking> {
     failures: [Option<FailedArenaRelease<'tracking>>; ARENA_SLOT_COUNT],
@@ -79,19 +80,14 @@ impl ProcessArenaBacking {
     pub(crate) unsafe fn terminal_tracking_words(&self) -> Result<usize, ArenaDestroyError> {
         if self.destroyed.load(Ordering::Acquire) { return Err(ArenaDestroyError::AlreadyDestroyed); }
         if self.huge_cleanup_retained.load(Ordering::Acquire) { return Err(ArenaDestroyError::InvalidOwnership); }
+        if self.preparing.load(Ordering::Acquire) != 0
+            || self.preparation_retained.load(Ordering::Acquire) { return Err(ArenaDestroyError::InvalidOwnership); }
         let mut words = 0usize;
-        for slot in &self.slots {
-            match slot.state.load(Ordering::Acquire) {
-                super::EMPTY => {}
-                PUBLISHED => {
-                    let owner = unsafe { (&*slot.value.get()).assume_init_ref() };
-                    if let ArenaBacking::Huge(allocation) = &owner.allocation {
-                        words = words.checked_add(allocation.release_tracking_words())
-                            .ok_or(ArenaDestroyError::InvalidOwnership)?;
-                    }
-                }
-                _ => return Err(ArenaDestroyError::InvalidOwnership),
-            }
+        for index in 0..self.registry.count() {
+            let Some(arena) = (unsafe { self.registry.arena_at(index) }) else { continue; };
+            if !arena.parent.is_null() { continue; }
+            words = words.checked_add(huge_tracking_words(arena.memid)?)
+                .ok_or(ArenaDestroyError::InvalidOwnership)?;
         }
         Ok(words)
     }
@@ -121,81 +117,88 @@ impl ProcessArenaBacking {
         if self.huge_cleanup_retained.load(Ordering::Acquire) {
             return Err(ArenaDestroyError::InvalidOwnership);
         }
+        if self.preparing.load(Ordering::Acquire) != 0
+            || self.preparation_retained.load(Ordering::Acquire) { return Err(ArenaDestroyError::InvalidOwnership); }
         let count = self.registry.count();
-        let mut release_slots = [None; MAX_ARENAS];
-        let mut seen = [false; ARENA_SLOT_COUNT];
+        if count > MAX_ARENAS { return Err(ArenaDestroyError::InvalidOwnership); }
+        let mut releases = [None; MAX_ARENAS];
         let mut required_words = 0usize;
         let tracking_start = tracking.as_ptr().addr();
-        let tracking_end = tracking_start + core::mem::size_of_val(tracking);
+        let tracking_end = tracking_start.checked_add(core::mem::size_of_val(tracking))
+            .ok_or(ArenaDestroyError::InvalidOwnership)?;
         for index in 0..count {
             let Some(arena) = (unsafe { self.registry.arena_at(index) }) else { continue; };
             let owner = unsafe { self.allocation_for_arena(arena) }
                 .ok_or(ArenaDestroyError::InvalidOwnership)?;
-            let slot_index = self.slots.iter().position(|slot| {
-                slot.state.load(Ordering::Acquire) == PUBLISHED
-                    && core::ptr::eq(unsafe { (&*slot.value.get()).assume_init_ref() }, owner)
-            }).ok_or(ArenaDestroyError::InvalidOwnership)?;
-            if seen[slot_index] { continue; }
-            seen[slot_index] = true;
-            release_slots[index] = Some(slot_index);
-            let start = owner.allocation.base().map_err(|_| ArenaDestroyError::InvalidOwnership)?.addr();
-            let end = start.checked_add(owner.allocation.length().map_err(|_| ArenaDestroyError::InvalidOwnership)?)
-                .ok_or(ArenaDestroyError::InvalidOwnership)?;
-            if tracking_start < end && start < tracking_end {
+            let span = owner.memory.os_memory().ok_or(ArenaDestroyError::InvalidOwnership)?;
+            let duplicate = releases[..index].iter().flatten().any(|memory: &MemoryId|
+                memory.os_memory().is_some_and(|previous| previous.base == span.base && previous.size == span.size));
+            if duplicate { continue; }
+            let end = span.base.addr().checked_add(span.size).ok_or(ArenaDestroyError::InvalidOwnership)?;
+            if tracking_start < end && span.base.addr() < tracking_end {
                 return Err(ArenaDestroyError::TrackingInsideArena);
             }
-            if let ArenaBacking::Huge(allocation) = &owner.allocation {
-                required_words = required_words.checked_add(allocation.release_tracking_words())
-                    .ok_or(ArenaDestroyError::InvalidOwnership)?;
-            }
-        }
-        // Unpublished/retained owners have a different source cleanup edge.
-        // They cannot disappear into this published-registry destruction.
-        for (index, slot) in self.slots.iter().enumerate() {
-            let state = slot.state.load(Ordering::Acquire);
-            if state != super::EMPTY && (state != PUBLISHED || !seen[index]) {
-                return Err(ArenaDestroyError::InvalidOwnership);
-            }
+            if owner.memory.kind() == MemoryKind::OsHuge
+                && self.process_lived_projection().is_none() { return Err(ArenaDestroyError::InvalidOwnership); }
+            required_words = required_words.checked_add(huge_tracking_words(owner.memory)?)
+                .ok_or(ArenaDestroyError::InvalidOwnership)?;
+            releases[index] = Some(owner.memory);
         }
         if tracking.len() < required_words {
             return Err(ArenaDestroyError::TrackingCapacity { required_words });
         }
         self.destroyed.store(true, Ordering::Release);
         let mut destroyed = DestroyedArenas { failures: [const { None }; ARENA_SLOT_COUNT] };
-        for (index, slot_index) in release_slots.into_iter().enumerate().take(count) {
+        // Snapshot before the first free: subarena headers can reside inside
+        // a parent released at an earlier source registry index.
+        let binding = unsafe { *self.binding.get() };
+        for (index, memory) in releases.into_iter().enumerate().take(count) {
             self.registry.arenas[index].store(core::ptr::null_mut(), Ordering::Release);
-            let Some(slot_index) = slot_index else { continue; };
-            let slot = &self.slots[slot_index];
-            // Exclusive shutdown transfers the final owner out exactly once.
-            slot.state.store(DESTROYED, Ordering::Release);
-            let owner = unsafe { (*slot.value.get()).assume_init_read() };
-            let OwnedArenaAllocation { allocation, process, .. } = owner;
-            match allocation {
-                ArenaBacking::Regular(mut mapping) => {
-                    // Source passes still_committed=true even for reserved
-                    // arenas. The OS memid retains the full reservation size.
+            let Some(memory) = memory else { continue; };
+            let binding = binding.ok_or(ArenaDestroyError::InvalidOwnership)?;
+            match memory.kind() {
+                MemoryKind::Os => {
+                    // SAFETY: this exact published token is recovered once,
+                    // after all source readers and callbacks have ended.
+                    let mut mapping = unsafe { Mapping::recover_published(memory, binding.config.page_size()) }
+                        .map_err(|_| ArenaDestroyError::InvalidOwnership)?;
                     let size = mapping.length().expect("preflight validated live mapping");
-                    if mapping.unmap_for_process_with_warning(process.project(), size, false, true).is_err() {
-                        destroyed.failures[slot_index] = Some(FailedArenaRelease::Regular(mapping));
+                    if mapping.unmap_for_process_with_warning(binding.process.project(), size, false, true).is_err() {
+                        destroyed.failures[index] = Some(FailedArenaRelease::Regular(mapping));
                     }
                 }
-                ArenaBacking::Huge(allocation) => {
+                MemoryKind::OsHuge => {
+                    let process = self.process_lived_projection().ok_or(ArenaDestroyError::InvalidOwnership)?;
+                    // SAFETY: only process-lived huge owners enter this
+                    // registry. The snapshotted memid uniquely retains every
+                    // live primitive, with all derived readers quiescent.
+                    let allocation = unsafe { HugeOsAllocation::recover_published(process, memory) }
+                        .ok_or(ArenaDestroyError::InvalidOwnership)?;
                     let (words, rest) = tracking.split_at_mut(allocation.release_tracking_words());
                     tracking = rest;
                     match allocation.release_for_process(words) {
                         Ok(()) => {}
                         Err(HugeOsReleaseFailure::FailedPages(retry)) => {
-                            destroyed.failures[slot_index] = Some(FailedArenaRelease::Huge(retry));
+                            destroyed.failures[index] = Some(FailedArenaRelease::Huge(retry));
                         }
                         Err(HugeOsReleaseFailure::Tracking(_)) => unreachable!("preflight checked exact tracking capacity"),
                     }
                 }
-                // External callers retain the unmap right for both callback
-                // and ordinary OS transition registrations.
-                ArenaBacking::External(_) | ArenaBacking::ExternalOs(_) => {}
+                MemoryKind::External => {}
+                _ => unreachable!("preflight checked published provenance"),
             }
         }
         let _ = self.registry.count.compare_exchange(count, 0, Ordering::AcqRel, Ordering::Acquire);
         Ok(destroyed)
     }
+}
+
+fn huge_tracking_words(memory: MemoryId) -> Result<usize, ArenaDestroyError> {
+    if memory.kind() != MemoryKind::OsHuge { return Ok(0); }
+    let span = memory.os_memory().ok_or(ArenaDestroyError::InvalidOwnership)?;
+    if !memory.is_pinned() || !memory.initially_committed() || span.size == 0
+        || span.size % crate::config::GIB != 0 { return Err(ArenaDestroyError::InvalidOwnership); }
+    let pages = span.size / crate::config::GIB;
+    pages.checked_add(usize::BITS as usize - 1).map(|pages| pages / usize::BITS as usize)
+        .ok_or(ArenaDestroyError::InvalidOwnership)
 }

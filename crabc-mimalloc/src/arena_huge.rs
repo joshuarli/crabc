@@ -128,7 +128,6 @@ pub(super) struct PendingHugeCleanup {
     prefix: Option<HugePrefixCleanup>,
     rejected: Option<HugeOsRejectedPrimitive>,
     metadata: Pin<&'static MetaAllocator>,
-    config: MemoryConfig,
     error: HugeArenaCleanupError,
 }
 
@@ -149,7 +148,7 @@ impl PendingHugeCleanup {
     /// An initial cleanup never repeats the rejected primitive's already
     /// attempted adjustment-free. An explicit retry may revisit retained raw
     /// owners, and continues to the independent prefix even after an error.
-    fn advance(&mut self, retry_existing: bool) {
+    fn advance(&mut self, config: MemoryConfig, retry_existing: bool) {
         if retry_existing {
             if let Some(rejected) = self.rejected.take() {
                 if let Err(rejected) = rejected.retry_raw_release() {
@@ -164,7 +163,7 @@ impl PendingHugeCleanup {
                 let tracker = match tracker {
                     Some(tracker) => tracker,
                     None => match HugeReleaseMetadata::allocate(self.metadata, allocation.process(),
-                        self.config, allocation.release_tracking_words()) {
+                        config, allocation.release_tracking_words()) {
                         Ok(tracker) => tracker,
                         Err(error) => {
                             self.error = HugeArenaCleanupError::Metadata(error);
@@ -324,12 +323,13 @@ impl ProcessArenaBacking {
         if self.huge_cleanup_retained.load(Ordering::Acquire) {
             return Err(HugeArenaReserveError::PendingCleanup);
         }
+        self.prepare_huge_reservation(process, config)?;
         let numa_node = if numa_node < -1 { -1 } else if numa_node >= 0 {
             (numa_node as usize % process.policy().numa_node_count()) as i32
         } else { numa_node };
         let outcome = HugeOsAllocation::allocate_for_process(process, config, pages,
             numa_node, timeout_milliseconds as i64, random);
-        unsafe { self.finish_huge_reservation(config, metadata, numa_node, exclusive, outcome) }
+        unsafe { self.finish_prepared_huge_reservation(config, metadata, numa_node, exclusive, outcome) }
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -346,30 +346,62 @@ impl ProcessArenaBacking {
         if self.huge_cleanup_retained.load(Ordering::Acquire) {
             return Err(HugeArenaReserveError::PendingCleanup);
         }
+        self.prepare_huge_reservation(process, config)?;
         let numa_node = if numa_node < -1 { -1 } else if numa_node >= 0 {
             (numa_node as usize % process.policy().numa_node_count()) as i32
         } else { numa_node };
         let outcome = HugeOsAllocation::allocate_for_process_with_mbind_warning(process, config,
             pages, numa_node, timeout_milliseconds as i64, random, warning);
-        unsafe { self.finish_huge_reservation(config, metadata, numa_node, exclusive, outcome) }
+        unsafe { self.finish_prepared_huge_reservation(config, metadata, numa_node, exclusive, outcome) }
+    }
+
+    fn prepare_huge_reservation(&self, process: VmProcess<'static>, config: MemoryConfig)
+        -> Result<(), HugeArenaReserveError> {
+        let _guard = self.reserve_lock.lock().map_err(HugeArenaReserveError::Lock)?;
+        if !self.begin_preparation_locked(super::StoredVmProcess::from_static_process(process), config) {
+            return Err(HugeArenaReserveError::Manage(ManageArenaError::InvalidRegion));
+        }
+        Ok(())
+    }
+
+    fn finish_huge_preparation(&self) -> Result<(), HugeArenaReserveError> {
+        let _guard = self.reserve_lock.lock().map_err(HugeArenaReserveError::Lock)?;
+        self.finish_preparation_locked();
+        Ok(())
+    }
+
+    #[cfg(test)]
+    unsafe fn finish_huge_reservation(&'static self, config: MemoryConfig,
+        metadata: Pin<&'static MetaAllocator>, numa_node: i32, exclusive: bool,
+        outcome: HugeOsAllocationOutcome<'static>) -> Result<Option<ArenaId>, HugeArenaReserveError> {
+        let process = match &outcome {
+            HugeOsAllocationOutcome::Allocated(allocation)
+            | HugeOsAllocationOutcome::AllocatedWithRejectedPrimitive { allocation, .. } => allocation.process(),
+            _ => return Err(HugeArenaReserveError::Manage(ManageArenaError::InvalidRegion)),
+        };
+        self.prepare_huge_reservation(process, config)?;
+        unsafe { self.finish_prepared_huge_reservation(config, metadata, numa_node, exclusive, outcome) }
     }
 
     /// Caller holds huge_reservation_lock. Registry installation takes the
     /// ordinary reserve lock only for its publication; metadata cleanup runs
     /// after that lock has been released, so it can safely allocate backing.
-    unsafe fn finish_huge_reservation(
+    unsafe fn finish_prepared_huge_reservation(
         &'static self, config: MemoryConfig, metadata: Pin<&'static MetaAllocator>,
         numa_node: i32, exclusive: bool, outcome: HugeOsAllocationOutcome<'static>,
     ) -> Result<Option<ArenaId>, HugeArenaReserveError> {
         let (allocation, rejected, unavailable) = match outcome {
-            HugeOsAllocationOutcome::Unavailable(stop) => return Err(HugeArenaReserveError::Unavailable(stop)),
+            HugeOsAllocationOutcome::Unavailable(stop) => {
+                self.finish_huge_preparation()?;
+                return Err(HugeArenaReserveError::Unavailable(stop));
+            },
             HugeOsAllocationOutcome::Allocated(allocation) => (Some(allocation), None, None),
             HugeOsAllocationOutcome::AllocatedWithRejectedPrimitive { allocation, rejected } =>
                 (Some(allocation), Some(rejected), None),
             HugeOsAllocationOutcome::RejectedPrimitive(rejected) =>
                 (None, Some(rejected), Some(HugeOsAllocationStop::NoncontiguousPrimitive)),
         };
-        let mut pending = PendingHugeCleanup { prefix: None, rejected, metadata, config,
+        let mut pending = PendingHugeCleanup { prefix: None, rejected, metadata,
             error: HugeArenaCleanupError::Primitive(Errno::NOMEM) };
         if let Some(rejected) = &pending.rejected {
             pending.error = HugeArenaCleanupError::Primitive(rejected.error());
@@ -383,7 +415,7 @@ impl ProcessArenaBacking {
                     pending.prefix = Some(HugePrefixCleanup::Unreleased {
                         allocation: failure.into_allocation(), tracker: None,
                     });
-                    pending.advance(false);
+                    pending.advance(config, false);
                     Err(HugeArenaReserveError::Manage(error))
                 }
             },
@@ -394,6 +426,7 @@ impl ProcessArenaBacking {
             unsafe { *self.huge_cleanup.get() = Some(pending) };
             self.huge_cleanup_retained.store(true, Ordering::Release);
         }
+        self.finish_huge_preparation()?;
         result
     }
 
@@ -405,11 +438,28 @@ impl ProcessArenaBacking {
     /// repeated; terminal metadata release remains diagnostic state.
     pub(crate) fn retry_huge_cleanup(&'static self) -> Result<(), HugeArenaCleanupError> {
         let _guard = self.huge_reservation_lock.lock().map_err(HugeArenaCleanupError::Lock)?;
+        // Inspect without transferring custody: a failed configuration-lock
+        // acquisition must leave every retained allocation available to retry.
         // SAFETY: the held huge lock excludes all other owners of this slot.
-        let Some(mut pending) = (unsafe { &mut *self.huge_cleanup.get() }).take() else { return Ok(()); };
-        pending.advance(true);
+        if unsafe { &*self.huge_cleanup.get() }.is_none() { return Ok(()); }
+        // The retained preparation pins the original complete configuration;
+        // metadata allocation/retry never follows a later caller's policy.
+        let config = {
+            let _guard = self.reserve_lock.lock().map_err(HugeArenaCleanupError::Lock)?;
+            // SAFETY: huge_cleanup_retained prevents binding reset, and this
+            // guard excludes a new publisher. Only the immutable copy escapes.
+            unsafe { &*self.binding.get() }.as_ref()
+                .map(|binding| binding.config)
+                .ok_or(HugeArenaCleanupError::Metadata(MetaError::InitializationRetained))?
+        };
+        // SAFETY: the huge lock is still held and no path above removed the
+        // pending owner. All fallible prerequisites precede this transfer.
+        let mut pending = unsafe { &mut *self.huge_cleanup.get() }.take().unwrap();
+        pending.advance(config, true);
         if pending.is_empty() {
             self.huge_cleanup_retained.store(false, Ordering::Release);
+            let _guard = self.reserve_lock.lock().map_err(HugeArenaCleanupError::Lock)?;
+            self.clear_unused_binding_locked();
             Ok(())
         } else {
             let error = pending.error;

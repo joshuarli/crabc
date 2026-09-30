@@ -2282,6 +2282,57 @@ pub(crate) mod tests {
             .0
     }
 
+    #[cfg(all(target_arch = "x86_64", not(miri), not(feature = "mi-debug-1")))]
+    #[test]
+    fn nested_metadata_record_and_compact_image_keep_distinct_live_allocations() {
+        use crate::runtime_lifecycle::{prepare_native_later_thread_arena,
+            test_initialize_process_from_host_environment, ThreadFinishResult};
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::nested_metadata_record_and_compact_image_keep_distinct_live_allocations",
+            || {
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let parent = native_subproc_new().expect("a live metadata parent");
+                let address = parent.as_ptr().addr();
+                let observations = std::thread::spawn(move || {
+                    // SAFETY: this fresh worker retains its descriptor and
+                    // the joined coordinator keeps the parent alive.
+                    assert!(unsafe { crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(
+                        crate::runtime_lifecycle::current_native_allocator_thread_descriptor()) });
+                    let parent = unsafe { NativeSubprocessId::from_ptr(core::ptr::NonNull::new(address as *mut core::ffi::c_void).unwrap()) };
+                    assert_eq!(unsafe { native_subproc_add_current_thread(parent) }, Ok(NativeChildThreadAdd::Added));
+                    let binding = native_backing();
+                    let allocator = ChildParentMetadata::Child { id: parent, binding };
+                    let committed = || allocator.with_identity(|identity| identity.vm_statistics().snapshot().committed_current).unwrap();
+                    let before = committed();
+                    let mut record = allocator.allocate(core::mem::size_of::<NativeChildSubprocess>()).unwrap();
+                    let after_record = committed();
+                    let mut image = allocator.allocate(core::mem::size_of::<crate::subproc::ChildSubprocessImage>()).unwrap();
+                    let after_image = committed();
+                    let geometry = |pointer| unsafe {
+                        parent.with_owner(|owner| owner.as_mut().unwrap().with_metadata_page_engine(binding,
+                            |_child, engine| engine.usable_size(pointer)).unwrap()).unwrap().unwrap()
+                    };
+                    let record_usable = geometry(record.pointer());
+                    let image_usable = geometry(image.pointer());
+                    assert_ne!(record.pointer(), image.pointer());
+                    allocator.free(&mut image).unwrap();
+                    allocator.free(&mut record).unwrap();
+                    assert_eq!(crate::runtime_lifecycle::finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                    (after_record - before, after_image - after_record, record_usable, image_usable)
+                }).join().unwrap();
+                assert_eq!(unsafe { native_subproc_destroy(parent) }, Ok(()));
+                std::println!("nested.record.committed={}\nnested.image.committed={}\nnested.record.usable={}\nnested.image.usable={}",
+                    observations.0, observations.1, observations.2, observations.3);
+                assert_eq!(observations.0, 64 * 1024);
+                assert_eq!(observations.1, 64 * 1024);
+                assert_eq!(observations.2, 768);
+                assert_eq!(observations.3, 6144);
+            });
+    }
+
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
     fn native_child_manage_external_os_memory_retains_child_context_and_caller_mapping() {

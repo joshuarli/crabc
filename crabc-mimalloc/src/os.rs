@@ -2209,6 +2209,38 @@ pub(crate) struct Mapping {
     is_mapped: bool,
 }
 
+/// A borrowed transition projection of source-published mapping provenance.
+/// It exposes no release operation; arena destruction retains the sole
+/// inverse transfer after every projection has ended.
+pub(crate) struct PublishedMappingView { mapping: Mapping }
+
+impl PublishedMappingView {
+    /// # Safety
+    /// `memory` describes one live mapping transferred with `into_published`.
+    /// The caller retains its published owner and excludes terminal release
+    /// throughout this projection and each page/bitmap transition.
+    pub(crate) unsafe fn new(memory: MemoryId, page_size: PageSize) -> Result<Self> {
+        // The private image only stores checked geometry; this wrapper
+        // exposes transitions and never its terminal release edge.
+        let mapping = Mapping::image_from_published(memory, page_size)?;
+        Ok(Self { mapping })
+    }
+    pub(crate) fn base(&self) -> Result<*mut u8> { self.mapping.base() }
+    pub(crate) fn length(&self) -> Result<usize> { self.mapping.length() }
+    pub(crate) fn commit_for_process(&self, process: VmProcess<'_>, offset: usize,
+        length: usize, already_committed: usize) -> Result<Option<CommitOutcome>> {
+        self.mapping.commit_for_process(process, offset, length, already_committed)
+    }
+    pub(crate) fn commit_for_process_with_warning(&self, process: VmProcess<'_>, offset: usize,
+        length: usize, already_committed: usize) -> Result<Option<CommitOutcome>> {
+        self.mapping.commit_for_process_with_warning(process, offset, length, already_committed)
+    }
+    pub(crate) fn purge_for_process(&self, process: VmProcess<'_>, offset: usize,
+        length: usize, allow_reset: bool, stat_size: usize) -> Result<bool> {
+        self.mapping.purge_for_process(process, offset, length, allow_reset, stat_size)
+    }
+}
+
 /// The two source meanings of an mmap address argument.
 ///
 /// `_mi_prim_alloc` can receive a caller-owned address for the explicit
@@ -2914,6 +2946,30 @@ impl Mapping {
         self.active()?;
         self.is_mapped = false;
         Ok(self.address)
+    }
+
+    /// Recovers a source-published mapping's unique terminal owner without
+    /// performing a mapping, accounting, or release operation.
+    ///
+    /// # Safety
+    /// `memory` must be unchanged provenance from one mapping transferred
+    /// with `into_published`; `page_size` is its original base page size.
+    /// The caller uniquely owns that token, excludes all readers and callbacks,
+    /// and must not recover it twice. Failed release retains the returned owner.
+    pub(crate) unsafe fn recover_published(memory: MemoryId, page_size: PageSize) -> Result<Self> {
+        Self::image_from_published(memory, page_size)
+    }
+
+    fn image_from_published(memory: MemoryId, page_size: PageSize) -> Result<Self> {
+        if memory.kind() != MemoryKind::Os { return Err(Errno::INVAL); }
+        let span = memory.os_memory().ok_or(Errno::INVAL)?;
+        if span.base.is_null() || span.size == 0
+            || span.base.addr() % page_size.bytes() != 0
+            || span.size % page_size.bytes() != 0
+            || span.base.addr().checked_add(span.size).is_none() { return Err(Errno::INVAL); }
+        Ok(Self { address: span.base, length: span.size, page_size,
+            initially_committed: memory.initially_committed(),
+            initially_zero: memory.initially_zero(), is_large: memory.is_pinned(), is_mapped: true })
     }
 
     /// Reclaims a mapping previously transferred by [`Mapping::into_published`].
@@ -3883,6 +3939,26 @@ impl<'a> HugeOsAllocation<'a> {
         Self::allocate_for_process_with_source_warnings(
             process, config, pages, numa_node, max_milliseconds, default_random, warning,
         )
+    }
+
+    /// Transfers the completed huge-page release token into source arena
+    /// provenance. Partial failed reservations retain their separate owners.
+    pub(crate) fn into_published(self) -> MemoryId { self.memory }
+
+    /// # Safety
+    /// `memory` is unchanged provenance from one `into_published` transfer,
+    /// every primitive page remains mapped, and this is its unique terminal
+    /// recovery after all arena/page/callback projections have ended. `process`
+    /// is the original retained accounting owner; retries keep failed pages.
+    pub(crate) unsafe fn recover_published(process: VmProcess<'a>, memory: MemoryId) -> Option<Self> {
+        let span = memory.os_memory()?;
+        if memory.kind() != MemoryKind::OsHuge || !memory.is_pinned()
+            || !memory.initially_committed() || span.size == 0
+            || span.size % HUGE_PAGE_SIZE != 0 { return None; }
+        let base = NonNull::new(span.base)?;
+        base.as_ptr().addr().checked_add(span.size)?;
+        Some(Self { process, base, page_count: span.size / HUGE_PAGE_SIZE,
+            memory, stop: HugeOsAllocationStop::Complete })
     }
 
     #[inline]

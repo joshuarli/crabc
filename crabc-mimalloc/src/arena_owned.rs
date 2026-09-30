@@ -16,16 +16,15 @@
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
-use core::mem::MaybeUninit;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crabc_core::Errno;
 
 use super::{ArenaId, ArenaRegistry, ArenaReservationPlan, ArenaSearch, ArenaSliceClaim, CommitHook, ExternalArenaPlan, ManageArenaError, ManagedExternalRegion};
 use crate::config::{ARENA_ALIGNMENT, ARENA_MAX_SIZE, ARENA_MIN_SIZE, MAX_ARENAS};
 use crate::lock::PrivateLock;
-use crate::os::{MapAccess, Mapping, MemoryConfig, NormalOsAllocation, HugeOsAllocation, PageSize, VmProcess};
+use crate::os::{MapAccess, Mapping, PublishedMappingView, MemoryConfig, NormalOsAllocation, HugeOsAllocation, PageSize, VmProcess};
 use crate::types::{Arena, MemoryId, MemoryKind};
 
 #[path = "arena_purge.rs"]
@@ -40,11 +39,6 @@ pub(crate) use destroy::{ArenaDestroyError, DestroyedArenas};
 mod huge;
 pub(crate) use huge::{HugeArenaReserveError, HugeArenaCleanupError, StartupArenaReservationOutcomes};
 
-const EMPTY: u8 = 0;
-const INITIALIZING: u8 = 1;
-const PUBLISHED: u8 = 2;
-const RETAINED: u8 = 3;
-const DESTROYED: u8 = 4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ArenaPageCommitError {
@@ -84,44 +78,11 @@ pub(crate) enum ReserveOsMemoryFailure {
     Unmanaged,
 }
 
-/// Allocation-owner slots: one per publishable arena mapping plus one spare.
-/// Source `mi_reserve_os_memory_ex2` maps and initializes a fresh arena (its
-/// metadata commit is counted) before `mi_arenas_add` can report a full
-/// registry, and only then frees the mapping. The spare lets that attempt run
-/// when every registry entry is already published, and retains the exact
-/// mapping if its cleanup unmap fails.
+/// Terminal release failure storage covers every source registry entry.
 const ARENA_SLOT_COUNT: usize = MAX_ARENAS + 1;
 
-struct ArenaAllocationSlot {
-    state: AtomicU8,
-    value: UnsafeCell<MaybeUninit<OwnedArenaAllocation>>,
-    #[cfg(test)]
-    initializing_reads: core::sync::atomic::AtomicUsize,
-}
-
-impl ArenaAllocationSlot {
-    const fn new() -> Self {
-        Self { state: AtomicU8::new(EMPTY), value: UnsafeCell::new(MaybeUninit::uninit()),
-            #[cfg(test)]
-            initializing_reads: core::sync::atomic::AtomicUsize::new(0),
-        }
-    }
-
-    /// # Safety
-    ///
-    /// PUBLISHED and RETAINED values are immutable until exclusive teardown;
-    /// no borrow may survive the unsafe `destroy_all` transition.
-    /// INITIALIZING requires the reserve lock or the callback capability for
-    /// this exact slot: another arena's publication never protects it against
-    /// initialization failure moving the mapping out or reusing the slot.
-    unsafe fn initialized(&self) -> Option<&OwnedArenaAllocation> {
-        let state = self.state.load(Ordering::Acquire);
-        if state == EMPTY || state == DESTROYED { return None; }
-        #[cfg(test)]
-        if state == INITIALIZING { self.initializing_reads.fetch_add(1, Ordering::Relaxed); }
-        Some(unsafe { (&*self.value.get()).assume_init_ref() })
-    }
-}
+#[derive(Clone, Copy)]
+struct ArenaBinding { process: StoredVmProcess, config: MemoryConfig }
 
 /// Result of one owner-bound source arena commit request.
 ///
@@ -300,14 +261,15 @@ impl ProcessExternalArenaLease {
     }
 }
 
-/// Non-owning identity pair retained by an arena slot for synchronous
+/// Non-owning identity pair retained by the arena binding for synchronous
 /// callbacks. It is intentionally not a `VmProcess<'static>`: a child arena
-/// can use the same slot machinery only while its external child owner keeps
+/// can use the same publication machinery only while its external child owner keeps
 /// the pinned subprocess image alive through `destroy_all`.
 #[derive(Clone, Copy)]
 struct StoredVmProcess {
     policy: NonNull<crate::os::VmPolicy>,
     subprocess: NonNull<crate::subproc::SubprocessIdentity>,
+    process_lived: bool,
 }
 
 impl StoredVmProcess {
@@ -315,27 +277,29 @@ impl StoredVmProcess {
         Self {
             policy: NonNull::from(process.policy()),
             subprocess: NonNull::from(process.subprocess()),
+            process_lived: true,
         }
     }
 
     /// # Safety
     /// The process policy and subprocess image remain pinned and live until
-    /// this arena slot is retired by quiescent `destroy_all`. For child use,
+    /// its arenas are retired by quiescent `destroy_all`. For child use,
     /// the external child context owner must retain both through every page,
     /// callback, and arena teardown transition.
     unsafe fn from_retained_process(process: VmProcess<'_>) -> Self {
         Self {
             policy: NonNull::from(process.policy()),
             subprocess: NonNull::from(process.subprocess()),
+            process_lived: false,
         }
     }
 
-    /// The returned short borrow is valid because the slot owner can only be
+    /// The returned short borrow is valid because the binding can only be
     /// observed while its containing backing is live; a reclaimable child
     /// owner must call `destroy_all` before releasing that context.
     fn project(&self) -> VmProcess<'_> {
         // SAFETY: every constructor either requires process-static input or
-        // has the explicit retained-context obligation above. Slot access is
+        // has the explicit retained-context obligation above. Binding access is
         // excluded by the backing's quiescent destruction contract.
         unsafe { VmProcess::new(self.policy.as_ref(), self.subprocess.as_ref()) }
     }
@@ -359,6 +323,8 @@ pub(super) struct OwnedArenaAllocation {
 /// unmap capability.
 enum ArenaBacking {
     Regular(Mapping),
+    PublishedRegular(PublishedMappingView),
+    PublishedHuge { base: NonNull<u8>, size: usize },
     Huge(HugeOsAllocation<'static>),
     External(ProcessExternalArenaLease),
     ExternalOs(ProcessExternalOsArenaLease),
@@ -368,6 +334,8 @@ impl ArenaBacking {
     fn base(&self) -> Result<*mut u8, Errno> {
         match self {
             Self::Regular(mapping) => mapping.base(),
+            Self::PublishedRegular(mapping) => mapping.base(),
+            Self::PublishedHuge { base, .. } => Ok(base.as_ptr()),
             Self::Huge(allocation) => Ok(allocation.base().as_ptr()),
             Self::External(lease) => Ok(lease.base()),
             Self::ExternalOs(lease) => Ok(lease.base.as_ptr()),
@@ -377,23 +345,25 @@ impl ArenaBacking {
     fn length(&self) -> Result<usize, Errno> {
         match self {
             Self::Regular(mapping) => mapping.length(),
+            Self::PublishedRegular(mapping) => mapping.length(),
+            Self::PublishedHuge { size, .. } => Ok(*size),
             Self::Huge(allocation) => Ok(allocation.size()),
             Self::External(lease) => Ok(lease.size()),
             Self::ExternalOs(lease) => Ok(lease.size),
         }
     }
 
-    fn regular(&self) -> Option<&Mapping> {
+    fn regular(&self) -> Option<&PublishedMappingView> {
         match self {
-            Self::Regular(mapping) => Some(mapping),
-            Self::Huge(_) | Self::External(_) | Self::ExternalOs(_) => None,
+            Self::PublishedRegular(mapping) => Some(mapping),
+            Self::Regular(_) | Self::PublishedHuge { .. } | Self::Huge(_) | Self::External(_) | Self::ExternalOs(_) => None,
         }
     }
 
     fn external(&self) -> Option<&ProcessExternalArenaLease> {
         match self {
             Self::External(lease) => Some(lease),
-            Self::Regular(_) | Self::Huge(_) | Self::ExternalOs(_) => None,
+            Self::Regular(_) | Self::PublishedRegular(_) | Self::PublishedHuge { .. } | Self::Huge(_) | Self::ExternalOs(_) => None,
         }
     }
 }
@@ -439,7 +409,17 @@ impl OwnedArenaAllocation {
                     ArenaCommitOutcome::failed()
                 }
             }
-            ArenaBacking::Huge(_) => ArenaCommitOutcome::failed(),
+            ArenaBacking::PublishedRegular(mapping) => {
+                if mapping
+                    .commit_for_process_with_warning(self.process(), offset, size, already_committed)
+                    .is_ok()
+                {
+                    ArenaCommitOutcome::committed(false)
+                } else {
+                    ArenaCommitOutcome::failed()
+                }
+            }
+            ArenaBacking::Huge(_) | ArenaBacking::PublishedHuge { .. } => ArenaCommitOutcome::failed(),
             ArenaBacking::External(lease) => unsafe { lease.commit(start, size) },
             ArenaBacking::ExternalOs(lease) => {
                 if !lease.contains_covering_page_area(self.config.page_size(), start, size) {
@@ -486,6 +466,10 @@ impl OwnedArenaAllocation {
                 .commit_for_process(self.process(), offset, size, 0)
                 .map(|_| ())
                 .map_err(ArenaPageCommitError::Mapping),
+            ArenaBacking::PublishedRegular(mapping) => mapping
+                .commit_for_process(self.process(), offset, size, 0)
+                .map(|_| ())
+                .map_err(ArenaPageCommitError::Mapping),
             ArenaBacking::External(lease) => {
                 if !lease.contains_covering_page_area(self.config.page_size(), start, size) {
                     return Err(invalid);
@@ -509,7 +493,7 @@ impl OwnedArenaAllocation {
             }
             // Pinned huge arenas are initially committed and pinned. An
             // on-demand `mi_page_extend_free` cannot reach this owner.
-            ArenaBacking::Huge(_) => Err(invalid),
+            ArenaBacking::Huge(_) | ArenaBacking::PublishedHuge { .. } => Err(invalid),
         }
     }
 
@@ -534,8 +518,8 @@ impl OwnedArenaAllocation {
 ///
 /// Installation needs `&'static self`: callbacks and registry entries never
 /// point into movable stack owners. The reserve lock serializes binding and
-/// slot transitions; an arena's Release publication follows initialization
-/// of its final mapping slot. Published slots remain immutable until exclusive
+/// preparation transitions; an arena's Release publication follows creation
+/// of its source ownership token. Published tokens remain immutable until exclusive
 /// `destroy_all`; that boundary requires all page/bitmap/callback views to end
 /// before any published mapping can be released.
 pub(crate) struct ProcessArenaBacking {
@@ -545,12 +529,17 @@ pub(crate) struct ProcessArenaBacking {
     huge_cleanup_retained: AtomicBool,
     huge_cleanup: UnsafeCell<Option<huge::PendingHugeCleanup>>,
     registry: ArenaRegistry,
-    slots: [ArenaAllocationSlot; ARENA_SLOT_COUNT],
+    // The source registry and parent arena memory IDs retain published
+    // ownership. Only synchronous preparations need an external owner.
+    binding: UnsafeCell<Option<ArenaBinding>>,
+    preparing: AtomicUsize,
+    preparation_retained: AtomicBool,
+    process_lived_binding: AtomicBool,
     purge_expire: crate::atomic::AtomicI64Value,
 }
 
-// SAFETY: the lock exclusively owns all unpublished slot transitions. Once
-// published, slots and mappings remain fixed until the unsafe quiescent
+// SAFETY: the lock exclusively owns binding and preparation transitions. Once
+// published, ownership tokens remain fixed until the unsafe quiescent
 // teardown boundary transfers ownership after all aliases end. Their shared VM
 // transitions touch only caller-owned source ranges and atomic statistics.
 // The separate huge reservation lock exclusively owns pending cleanup and its
@@ -567,7 +556,10 @@ impl ProcessArenaBacking {
             huge_cleanup_retained: AtomicBool::new(false),
             huge_cleanup: UnsafeCell::new(None),
             registry: ArenaRegistry::new(core::ptr::null_mut()),
-            slots: [const { ArenaAllocationSlot::new() }; ARENA_SLOT_COUNT],
+            binding: UnsafeCell::new(None),
+            preparing: AtomicUsize::new(0),
+            preparation_retained: AtomicBool::new(false),
+            process_lived_binding: AtomicBool::new(false),
             purge_expire: crate::atomic::AtomicI64Value::new(0),
         }
     }
@@ -643,7 +635,7 @@ impl ProcessArenaBacking {
     /// Validates a new coordinator consumer against every arena mapping
     /// already retained by this process owner. This is a one-time binding
     /// check, not a page allocation/free scan. Taking the reserve lock excludes
-    /// an unpublished slot being moved or reused while its owner is examined.
+    /// a preparation from changing its fixed process and configuration.
     pub(crate) fn matches_existing_process_binding(
         &self, process: VmProcess<'_>, config: MemoryConfig,
     ) -> Result<bool, Errno> {
@@ -700,10 +692,10 @@ impl ProcessArenaBacking {
         let Some(memory) = arena.memid.os_memory() else {
             return FirstRegularStartupArenaSelection::ExistingOutsideFirstRegularCapability;
         };
-        let Some(owner) = self.published_allocation(memory.base, memory.size) else {
+        let Some(owner) = (unsafe { self.allocation_for_arena(arena) }) else {
             return FirstRegularStartupArenaSelection::ExistingOutsideFirstRegularCapability;
         };
-        if !matches!(owner.allocation, ArenaBacking::Regular(_))
+        if !matches!(owner.allocation, ArenaBacking::PublishedRegular(_))
             || !core::ptr::eq(owner.process().policy(), process.policy())
             || !core::ptr::eq(owner.process().subprocess(), process.subprocess())
             || owner.config != config
@@ -733,36 +725,62 @@ impl ProcessArenaBacking {
         }
     }
 
-    /// Checks every stable owner while reserve_lock excludes mutation.
+    /// Checks the immutable binding while reserve_lock excludes mutation.
     ///
-    /// An INITIALIZING external slot is already address-stable before its
-    /// metadata callback runs. Reentrant setup may verify its fixed process
-    /// pair and configuration, but ordinary arena lookup still refuses that
-    /// state until the registry insertion publishes it.
+    /// A preparing external owner remains on its synchronous caller's stack.
+    /// Reentrant setup may verify the binding, but ordinary arena lookup
+    /// observes only entries already published in the registry.
     fn binding_matches_locked(&self, process: VmProcess<'_>, config: MemoryConfig) -> bool {
         let registered = self.registry.subprocess();
         if !registered.is_null() && registered != process.subprocess().as_ptr() {
             return false;
         }
-        for slot in &self.slots {
-            match slot.state.load(Ordering::Acquire) {
-                EMPTY => continue,
-                INITIALIZING | PUBLISHED | RETAINED => {}
-                _ => return false,
-            }
-            // SAFETY: reserve_lock keeps the INITIALIZING owner stable, and
-            // published or retained owners are immutable for process lifetime.
-            let Some(owner) = (unsafe { slot.initialized() }) else {
-                return false;
-            };
-            if !core::ptr::eq(owner.process().policy(), process.policy())
-                || !core::ptr::eq(owner.process().subprocess(), process.subprocess())
-                || owner.config != config
-            {
-                return false;
-            }
+        // SAFETY: reserve_lock excludes every binding change. A published
+        // source arena or retained preparation keeps this exact pair fixed.
+        unsafe { &*self.binding.get() }.is_none_or(|binding|
+            binding.process.matches(process) && binding.config == config)
+    }
+
+    fn begin_preparation_locked(&self, process: StoredVmProcess, config: MemoryConfig) -> bool {
+        if self.destroyed.load(Ordering::Acquire) || self.preparation_retained.load(Ordering::Acquire)
+            || !self.binding_matches_locked(process.project(), config) { return false; }
+        let count = self.preparing.load(Ordering::Relaxed);
+        let Some(next) = count.checked_add(1) else { return false; };
+        // SAFETY: reserve_lock owns binding writes. Publication subsequently
+        // makes this immutable copy visible with the registry's release edge.
+        if unsafe { &*self.binding.get() }.is_none() {
+            unsafe { *self.binding.get() = Some(ArenaBinding { process, config }); }
         }
+        if process.process_lived { self.process_lived_binding.store(true, Ordering::Release); }
+        self.preparing.store(next, Ordering::Release);
         true
+    }
+
+    fn finish_preparation_locked(&self) {
+        let count = self.preparing.load(Ordering::Relaxed);
+        assert!(count != 0);
+        self.preparing.store(count - 1, Ordering::Release);
+        self.clear_unused_binding_locked();
+    }
+
+    fn clear_unused_binding_locked(&self) {
+        if self.preparing.load(Ordering::Acquire) == 0 && self.registry.count() == 0
+            && !self.preparation_retained.load(Ordering::Acquire)
+            && !self.huge_cleanup_retained.load(Ordering::Acquire) {
+            // SAFETY: no published, retained, or preparing owner can observe
+            // this copy; reserve_lock excludes a new publisher.
+            unsafe { *self.binding.get() = None; }
+            self.process_lived_binding.store(false, Ordering::Release);
+        }
+    }
+
+    fn process_lived_projection(&self) -> Option<VmProcess<'static>> {
+        if !self.process_lived_binding.load(Ordering::Acquire) { return None; }
+        let binding = unsafe { *self.binding.get() }?;
+        // SAFETY: the atomic marker is published only from an exact matching
+        // VmProcess<'static> constructor. Child retained inputs cannot set it;
+        // a live arena or preparing owner excludes replacement of this pair.
+        Some(unsafe { VmProcess::new(binding.process.policy.as_ref(), binding.process.subprocess.as_ref()) })
     }
 
     /// Claims from existing process-owned arenas with source commitment and
@@ -781,7 +799,7 @@ impl ProcessArenaBacking {
             self.registry.try_find_free_with(search, slice_count, alignment, |view| {
                 let owner = self.allocation_for_arena(view.arena())?;
                 let mut claim = view.try_claim_slices_with_owner(search.requested, slice_count, commit,
-                    search.thread_sequence, Some(owner))?;
+                    search.thread_sequence, Some(&owner))?;
                 claim.backing = Some(self);
                 Some(claim)
             })
@@ -822,7 +840,7 @@ impl ProcessArenaBacking {
             StoredVmProcess::from_static_process(process), config, managed_size, mapping, memory, numa_node, exclusive) }
     }
 
-    /// The caller holds reserve_lock through every slot and registry write.
+    /// The caller holds reserve_lock through every binding and registry write.
     unsafe fn install_owned_os_mapping_locked<'process>(
         &self, process: VmProcess<'process>, stored_process: StoredVmProcess, config: MemoryConfig,
         managed_size: usize, mapping: Mapping, memory: MemoryId, numa_node: i32, exclusive: bool,
@@ -839,7 +857,7 @@ impl ProcessArenaBacking {
     ///
     /// The returned arena retains only the callback lease. It never obtains an
     /// unmap operation for external bytes. The reserve lock protects binding,
-    /// stable-slot reservation, registry insertion, and first publication, but
+    /// preparation admission, registry insertion, and first publication, but
     /// is deliberately released before every callback from metadata setup.
     ///
     /// # Safety
@@ -858,7 +876,7 @@ impl ProcessArenaBacking {
         exclusive: bool,
     ) -> Result<ManagedExternalRegion, ProcessExternalArenaInstallFailure> {
         // SAFETY: the process-static identity and caller-retained mapping
-        // outlive every published arena slot.
+        // outlive every published arena.
         unsafe { self.install_external_callback_arena_retained(
             process, StoredVmProcess::from_static_process(process), config,
             managed_size, lease, numa_node, exclusive,
@@ -866,7 +884,7 @@ impl ProcessArenaBacking {
     }
 
     /// Registers callback-managed memory in a pinned child arena group.
-    /// The child image retains the callback slot until quiescent teardown;
+    /// The child image retains the published callback token until quiescent teardown;
     /// the caller retains the external mapping and its terminal unmap right.
     ///
     /// # Safety
@@ -891,7 +909,7 @@ impl ProcessArenaBacking {
         }
         let process = child.process();
         // SAFETY: the child record lock retains the pinned image and policy
-        // through publication; child teardown retires these slots first.
+        // through publication; child teardown retires these arenas first.
         unsafe { self.install_external_callback_arena_retained(
             process, StoredVmProcess::from_retained_process(process), config,
             managed_size, lease, numa_node, exclusive,
@@ -962,25 +980,12 @@ impl ProcessArenaBacking {
                 lease,
             });
         }
-        let Some(slot) = self
-            .slots
-            .iter()
-            .find(|slot| slot.state.load(Ordering::Relaxed) == EMPTY)
-        else {
+        if !self.begin_preparation_locked(stored_process, config) {
             return Err(ProcessExternalArenaInstallFailure::Returned {
-                error: ManageArenaError::RegistryFull,
-                lease,
-            });
-        };
-        unsafe {
-            (*slot.value.get()).write(OwnedArenaAllocation {
-                allocation: ArenaBacking::External(lease),
-                memory,
-                process: stored_process,
-                config,
+                error: ManageArenaError::RegistryFull, lease,
             });
         }
-        slot.state.store(INITIALIZING, Ordering::Release);
+        let mut published = false;
         drop(guard);
 
         let result = unsafe {
@@ -1015,7 +1020,7 @@ impl ProcessArenaBacking {
                         // The first inserted arena publishes this immutable
                         // whole-range lease before a later subarena callback
                         // can reenter and allocate through the parent.
-                        slot.state.store(PUBLISHED, Ordering::Release);
+                        published = true;
                         Ok(())
                     } else {
                         Err(ManageArenaError::RegistryFull)
@@ -1024,7 +1029,14 @@ impl ProcessArenaBacking {
             )
         };
         match result {
-            Ok(managed) => Ok(managed),
+            Ok(managed) => {
+                let Ok(_guard) = self.reserve_lock.lock() else {
+                    self.preparation_retained.store(true, Ordering::Release);
+                    return Err(ProcessExternalArenaInstallFailure::Retained { error: ManageArenaError::RegistryFull });
+                };
+                self.finish_preparation_locked();
+                Ok(managed)
+            },
             Err(error) => {
                 // A rejected metadata commit warns after the callback
                 // returns and before the unpublished lease is recovered.
@@ -1038,19 +1050,18 @@ impl ProcessArenaBacking {
                 let guard = match self.reserve_lock.lock() {
                     Ok(guard) => guard,
                     Err(_) => {
-                        slot.state.store(RETAINED, Ordering::Release);
+                        self.preparation_retained.store(true, Ordering::Release);
                         return Err(ProcessExternalArenaInstallFailure::Retained { error });
                     }
                 };
-                if slot.state.load(Ordering::Acquire) != INITIALIZING {
+                if published {
+                    self.preparation_retained.store(true, Ordering::Release);
+                    self.finish_preparation_locked();
                     drop(guard);
                     return Err(ProcessExternalArenaInstallFailure::Retained { error });
                 }
-                slot.state.store(EMPTY, Ordering::Release);
-                let owner = unsafe { (*slot.value.get()).assume_init_read() };
-                let ArenaBacking::External(mut lease) = owner.allocation else {
-                    unreachable!();
-                };
+                self.finish_preparation_locked();
+                let mut lease = lease;
                 lease.invalidate_zero_after_prepare();
                 drop(guard);
                 Err(ProcessExternalArenaInstallFailure::Returned { error, lease })
@@ -1111,7 +1122,7 @@ impl ProcessArenaBacking {
         numa_node: i32,
         exclusive: bool,
     ) -> Result<ManagedExternalRegion, ManageArenaError> {
-        // SAFETY: a process-static identity and backing outlive all slots.
+        // SAFETY: a process-static identity and backing outlive all arenas.
         unsafe { self.install_external_os_arena_retained(
             process, StoredVmProcess::from_static_process(process), config,
             start, size, initially_committed, is_pinned, initially_zero,
@@ -1146,7 +1157,7 @@ impl ProcessArenaBacking {
         }
         let process = child.process();
         // SAFETY: the record lock and retained pinned child context satisfy
-        // the stored short identity's full slot lifetime.
+        // the stored short identity's full arena lifetime.
         unsafe { self.install_external_os_arena_retained(
             process, StoredVmProcess::from_retained_process(process), config,
             start, size, initially_committed, is_pinned, initially_zero,
@@ -1154,7 +1165,7 @@ impl ProcessArenaBacking {
         ) }
     }
 
-    /// Caller retains the process identity for every published slot and its
+    /// Caller retains the process identity for every published arena and its
     /// complete external mapping for every page until arena teardown.
     ///
     /// # Safety
@@ -1179,19 +1190,19 @@ impl ProcessArenaBacking {
         let memory = MemoryId::external(start, size, initially_committed, is_pinned, initially_zero);
         let _guard = self.reserve_lock.lock().map_err(|_| ManageArenaError::RegistryFull)?;
         // SAFETY: the caller retains external backing and this lock protects
-        // the stable owner slot through first registry publication.
+        // the synchronous owner through first registry publication.
         unsafe { self.install_owned_allocation_locked(
             process, stored_process, config, size,
             ArenaBacking::ExternalOs(lease), memory, numa_node, exclusive,
         ) }.map_err(|(error, _lease)| error)
     }
 
-    /// Caller holds reserve_lock until slot publication or complete rollback.
+    /// Caller holds reserve_lock until arena publication or complete rollback.
     ///
     /// # Safety
     /// `process` and `stored_process` name the same immutable policy/identity
     /// pair, and the caller retains both plus this backing until every
-    /// published slot/callback is quiescent and `destroy_all` has transferred
+    /// published arena/callback is quiescent and `destroy_all` has transferred
     /// all remaining owners. This applies to returned failure owners too.
     unsafe fn install_owned_allocation_locked(
         &self, process: VmProcess<'_>, stored_process: StoredVmProcess, config: MemoryConfig,
@@ -1222,6 +1233,7 @@ impl ProcessArenaBacking {
                 && lease.base() == start && lease.size() == size,
             ArenaBacking::ExternalOs(lease) => memory.kind() == MemoryKind::External
                 && lease.base.as_ptr() == start && lease.size == size,
+            ArenaBacking::PublishedRegular(_) | ArenaBacking::PublishedHuge { .. } => false,
         };
         if exact && valid_kind && managed_size <= size {
             // `mi_manage_os_memory_ex2` warns before rejecting a region that
@@ -1235,16 +1247,8 @@ impl ProcessArenaBacking {
             || managed_size > size || (start as usize) % ARENA_ALIGNMENT != 0 {
             return Err(fail(ManageArenaError::InvalidRegion, allocation));
         }
-        for slot in &self.slots {
-            if slot.state.load(Ordering::Acquire) == EMPTY { continue; }
-            let owner = unsafe { slot.initialized().unwrap() };
-            if !core::ptr::eq(owner.process().policy(), process.policy())
-                || !core::ptr::eq(owner.process().subprocess(), process.subprocess())
-                || owner.config != config
-            {
-                return Err(fail(ManageArenaError::InvalidRegion, allocation));
-            }
-            break;
+        if !self.binding_matches_locked(process, config) {
+            return Err(fail(ManageArenaError::InvalidRegion, allocation));
         }
         if self.registry.count() == 0 {
             // SAFETY: this lock is the only normal registry publisher.
@@ -1254,22 +1258,20 @@ impl ProcessArenaBacking {
         } else if !self.registry.is_bound_to_subprocess(process.subprocess().as_ptr()) {
             return Err(fail(ManageArenaError::InvalidRegion, allocation));
         }
-        let Some(slot) = self.slots.iter().find(|slot| slot.state.load(Ordering::Relaxed) == EMPTY) else {
+        if !self.begin_preparation_locked(stored_process, config) {
             return Err(fail(ManageArenaError::RegistryFull, allocation));
-        };
+        }
         let external_os = matches!(allocation, ArenaBacking::ExternalOs(_));
-        unsafe { (*slot.value.get()).write(OwnedArenaAllocation {
-            allocation, memory, process: stored_process, config,
-        }); }
-        slot.state.store(INITIALIZING, Ordering::Release);
-        let hook = (memory.kind() == MemoryKind::Os).then(||
-            CommitHook::new(commit_owned_arena, (slot as *const ArenaAllocationSlot).cast_mut().cast()));
+        let owner = OwnedArenaAllocation { allocation, memory, process: stored_process, config };
+        let argument = core::ptr::from_ref(&owner).cast_mut().cast();
         let metadata_hook = if external_os {
-            Some(CommitHook::new(commit_external_os_metadata,
-                (slot as *const ArenaAllocationSlot).cast_mut().cast()))
-        } else {
-            hook
-        };
+            Some(CommitHook::new(commit_external_os_metadata, argument))
+        } else if memory.kind() == MemoryKind::Os {
+            Some(CommitHook::new(commit_owned_arena, argument))
+        } else { None };
+        // Ordinary OS arenas publish the source null callback. The stack
+        // owner is used only by synchronous metadata preparation.
+        let hook = None;
         // The metadata-only external capability is used before publication;
         // the source arena field retains no callback for ordinary OS memory.
         let result = unsafe {
@@ -1295,7 +1297,13 @@ impl ProcessArenaBacking {
         };
         match result {
             Ok(managed) => {
-                slot.state.store(PUBLISHED, Ordering::Release);
+                match owner.allocation {
+                    ArenaBacking::Regular(mapping) => { mapping.into_published().expect("validated live mapping"); }
+                    ArenaBacking::Huge(allocation) => { allocation.into_published(); }
+                    ArenaBacking::External(_) | ArenaBacking::ExternalOs(_) => {}
+                    ArenaBacking::PublishedRegular(_) | ArenaBacking::PublishedHuge { .. } => unreachable!(),
+                }
+                self.finish_preparation_locked();
                 Ok(managed)
             }
             Err(error) => {
@@ -1312,8 +1320,7 @@ impl ProcessArenaBacking {
                         ),
                     );
                 }
-                slot.state.store(EMPTY, Ordering::Release);
-                let owner = unsafe { (*slot.value.get()).assume_init_read() };
+                self.finish_preparation_locked();
                 Err(fail(error, owner.allocation))
             }
         }
@@ -1322,43 +1329,46 @@ impl ProcessArenaBacking {
     /// Retrieves only backing already published by this exact process owner.
     /// The arena must be live; this does not authorize access to arbitrary
     /// addresses or transfer the full mapping's destruction capability.
-    unsafe fn allocation_for_arena(&self, arena: &Arena) -> Option<&OwnedArenaAllocation> {
+    unsafe fn allocation_for_arena(&self, arena: &Arena) -> Option<OwnedArenaAllocation> {
         if !self.registry.is_bound_to_subprocess(arena.subprocess) { return None; }
         let parent = if arena.parent.is_null() { arena } else { unsafe { &*arena.parent } };
-        let memory = parent.memid.os_memory()?;
-        if let Some(owner) = self.published_allocation(memory.base, memory.size) {
-            return Some(owner);
-        }
-        // Source registry publication can precede this target slot's final
-        // PUBLISHED store. On this miss only, wait for the one initializing
-        // publisher to finish and recheck. Never borrow unrelated temporary
-        // slots: their failed manage may move/drop/reuse the contained owner.
-        let _guard = self.reserve_lock.lock().ok()?;
-        self.published_allocation(memory.base, memory.size)
+        if self.registry.arena_print_pointer(parent.arena_index)
+            != Some(NonNull::from(parent)) { return None; }
+        // A live registry-published parent keeps the binding immutable. The
+        // caller's arena/page lifetime excludes quiescent destruction.
+        let binding = unsafe { *self.binding.get() }?;
+        if binding.process.subprocess.as_ptr() != parent.subprocess { return None; }
+        let memory = parent.memid;
+        let span = memory.os_memory()?;
+        let base = NonNull::new(span.base)?;
+        let allocation = match memory.kind() {
+            MemoryKind::Os => ArenaBacking::PublishedRegular(unsafe {
+                PublishedMappingView::new(memory, binding.config.page_size()).ok()?
+            }),
+            MemoryKind::OsHuge => ArenaBacking::PublishedHuge { base, size: span.size },
+            MemoryKind::External => match parent.commit_function {
+                Some(callback) => ArenaBacking::External(ProcessExternalArenaLease {
+                    base, size: span.size, memory,
+                    callback: CommitHook::new(callback, parent.commit_function_argument),
+                }),
+                None => ArenaBacking::ExternalOs(ProcessExternalOsArenaLease { base, size: span.size }),
+            },
+            _ => return None,
+        };
+        Some(OwnedArenaAllocation { allocation, memory, process: binding.process, config: binding.config })
     }
 
     /// The null-callback arm of source arena page commitment. Only a
-    /// process-owned caller mapping can authorize this OS transition; its
-    /// published arena retains no callback or mapping release right.
+    /// checked source-published OS or caller-owned mapping authorizes this
+    /// transition. Null callbacks never acquire an external release right.
     pub(super) fn commit_external_os_page_area(
         &self, arena: &Arena, start: *mut u8, size: usize,
     ) -> bool {
         // SAFETY: the caller holds a live claim from this published arena;
-        // the owner lookup checks its stable process-bound allocation slot.
+        // the owner lookup checks its process-bound published ownership token.
         let Some(owner) = (unsafe { self.allocation_for_arena(arena) }) else { return false };
-        if !matches!(owner.allocation, ArenaBacking::ExternalOs(_)) { return false; }
+        if !matches!(owner.allocation, ArenaBacking::ExternalOs(_) | ArenaBacking::PublishedRegular(_)) { return false; }
         owner.commit(start, size, 0)
-    }
-
-    fn published_allocation(&self, base: *mut u8, size: usize) -> Option<&OwnedArenaAllocation> {
-        self.slots.iter().find_map(|slot| {
-            if slot.state.load(Ordering::Acquire) != PUBLISHED { return None; }
-            // SAFETY: a PUBLISHED slot remains fixed until exclusive teardown,
-            // whose caller must exclude this lookup and every returned borrow.
-            let owner = unsafe { slot.initialized()? };
-            let stored = owner.memory.os_memory()?;
-            (stored.base == base && stored.size == size).then_some(owner)
-        })
     }
 
     /// Source `mi_arenas_try_alloc`: search, serialize one fresh reservation
@@ -1370,7 +1380,7 @@ impl ProcessArenaBacking {
     ///
     /// This must be the sole normal arena group for `process`, with its fixed
     /// configuration. The borrowed process policy and identity, plus this
-    /// backing, remain pinned and live through every published slot, callback,
+    /// backing, remain pinned and live through every published arena, callback,
     /// retained cleanup owner, returned claim, and quiescent `destroy_all`.
     /// `search`'s requested arena and Heap/thread inputs must describe live
     /// source owners. The returned claim retains its exact range until
@@ -1529,7 +1539,7 @@ impl ProcessArenaBacking {
     /// # Safety
     /// The caller retains the parent-issued `ChildMainHeapContextOwner` and
     /// its pinned child image until all returned claims are released and this
-    /// backing's `destroy_all` has transferred every slot. No child teardown
+    /// backing's `destroy_all` has transferred every ownership token. No child teardown
     /// or registry mutation may overlap. `search` must carry the exact live
     /// child Heap/page facts; for the child metadata-Theap source path its
     /// thread sequence is zero from the parent detached TLD, while `random`
@@ -1653,8 +1663,9 @@ impl ProcessArenaBacking {
         size: usize, access: MapAccess, allow_large: bool, exclusive: bool,
         random: crate::os::OsRandom<'_>,
     ) -> Result<ArenaId, Option<Errno>> {
-        // Reserve a cleanup slot before acquiring any new OS ownership.
-        self.slots.iter().find(|slot| slot.state.load(Ordering::Relaxed) == EMPTY).ok_or(None)?;
+        // Unpublished mapping ownership stays on this synchronous stack,
+        // including the final source attempt after a full registry.
+        if self.destroyed.load(Ordering::Acquire) || self.preparation_retained.load(Ordering::Acquire) { return Err(None); }
         let allocation = NormalOsAllocation::allocate_arena_base_for_process(process, config,
             size, ARENA_ALIGNMENT, access, allow_large, random);
         let (mut mapping, memory) = match allocation {
@@ -1751,36 +1762,36 @@ impl<'process> ProcessArenaInstallFailure<'process> {
 unsafe extern "C" fn commit_owned_arena(
     commit: bool, start: *mut u8, size: usize, is_zero: *mut bool, argument: *mut c_void,
 ) -> bool {
-    let Some(slot) = (unsafe { argument.cast::<ArenaAllocationSlot>().as_ref() }) else { return false; };
-    let Some(owner) = (unsafe { slot.initialized() }) else { return false; };
+    let Some(owner) = (unsafe { argument.cast::<OwnedArenaAllocation>().as_ref() }) else { return false; };
     let Ok(base) = owner.allocation.base() else { return false; };
     let Some(offset) = (start as usize).checked_sub(base as usize) else { return false; };
     let Ok(length) = owner.allocation.length() else { return false; };
     if offset.checked_add(size).is_none_or(|end| end > length) { return false; }
     if !is_zero.is_null() { unsafe { is_zero.write(false); } }
     if commit {
-        owner.allocation.regular().is_some_and(|mapping|
-            mapping.commit_for_process(owner.process(), offset, size, 0).is_ok())
+        match &owner.allocation {
+            ArenaBacking::Regular(mapping) => mapping.commit_for_process(owner.process(), offset, size, 0).is_ok(),
+            _ => false,
+        }
     } else {
         // This arm's source result means "needs recommit", not syscall
         // success. Native Linux retains accessibility even when its advisory
         // discard reports an error. The complete policy purge caller also
         // supplies allow_reset and already-committed accounting separately.
-        let Some(mapping) = owner.allocation.regular() else { return false; };
+        let ArenaBacking::Regular(mapping) = &owner.allocation else { return false; };
         let _ = mapping.decommit_for_process(owner.process(), offset, size, size);
         false
     }
 }
 
 /// Commits an initially reserved external arena's metadata while its owner
-/// slot is preparing. This capability never enters the published arena's
+/// is preparing. This capability never enters the published arena's
 /// `commit_function` field; later page claims use normal OS transitions.
 unsafe extern "C" fn commit_external_os_metadata(
     commit: bool, start: *mut u8, size: usize, is_zero: *mut bool, argument: *mut c_void,
 ) -> bool {
     if !commit { return false; }
-    let Some(slot) = (unsafe { argument.cast::<ArenaAllocationSlot>().as_ref() }) else { return false };
-    let Some(owner) = (unsafe { slot.initialized() }) else { return false };
+    let Some(owner) = (unsafe { argument.cast::<OwnedArenaAllocation>().as_ref() }) else { return false };
     let ArenaBacking::ExternalOs(lease) = &owner.allocation else { return false };
     if !lease.contains_covering_page_area(owner.config.page_size(), start, size) { return false; }
     if !is_zero.is_null() {
@@ -1788,7 +1799,7 @@ unsafe extern "C" fn commit_external_os_metadata(
         // accepts a writable zero observation for a direct caller.
         unsafe { is_zero.write(false) };
     }
-    // SAFETY: the initializing slot retains the caller's external range,
+    // SAFETY: the synchronous preparing owner retains the external range,
     // and no published reader can overlap this metadata transition.
     unsafe { owner.process().commit_direct_page_area(owner.config.page_size(), start, size) }.is_ok()
 }
@@ -2043,7 +2054,8 @@ mod tests {
         assert_eq!(result, Err(ManageArenaError::CommitFailed));
         assert_eq!(fault.observed(), 1);
         assert_eq!(backing.registry.count(), 0);
-        assert!(backing.slots.iter().all(|slot| slot.state.load(Ordering::Acquire) == EMPTY));
+        assert_eq!(backing.preparing.load(Ordering::Acquire), 0);
+        assert!(!backing.preparation_retained.load(Ordering::Acquire));
         let mut residency = 0u8;
         // SAFETY: `mincore` observes one live mapping page and writes one byte.
         assert!(unsafe { crabc_core::mm::mincore_raw(base, 4096, &mut residency) }.is_ok());
@@ -2437,7 +2449,7 @@ mod tests {
     }
 
     #[test]
-    fn external_metadata_callback_reenters_after_stable_slot_reservation_without_borrowing_it() {
+    fn external_metadata_callback_reenters_after_preparation_binding_without_borrowing_owner() {
         let _fault = fault::install(fault::Plan::disabled());
         let process = process();
         let backing = backing();
@@ -2475,8 +2487,8 @@ mod tests {
         assert_eq!(backing.registry().count(), 2);
         assert!(unsafe { backing.allocation_for_arena(&*outer.as_ptr()) }.is_some());
         assert!(unsafe { backing.allocation_for_arena(&*inner) }.is_some());
-        assert!(backing.slots.iter().all(|slot|
-            slot.state.load(Ordering::Acquire) != INITIALIZING));
+        assert_eq!(backing.preparing.load(Ordering::Acquire), 0);
+        assert!(!backing.preparation_retained.load(Ordering::Acquire));
     }
 
     #[test]
@@ -2508,7 +2520,8 @@ mod tests {
         assert_eq!(failure.error(), ManageArenaError::RegistryFull);
         let lease = failure.into_returned_lease().expect("the rejected first arena returns its lease");
         assert_eq!(lease.base(), base);
-        assert!(rejected.slots.iter().skip(1).all(|slot| slot.state.load(Ordering::Acquire) == EMPTY));
+        assert_eq!(rejected.preparing.load(Ordering::Acquire), 0);
+        assert!(!rejected.preparation_retained.load(Ordering::Acquire));
 
         let partial = backing();
         let regular = install(partial, process, MapAccess::Committed);
@@ -2596,7 +2609,8 @@ mod tests {
         };
         assert_eq!(failure.error(), ManageArenaError::CommitFailed);
         assert_eq!(backing.registry().count(), 0);
-        assert!(backing.slots.iter().all(|slot| slot.state.load(Ordering::Acquire) == EMPTY));
+        assert_eq!(backing.preparing.load(Ordering::Acquire), 0);
+        assert!(!backing.preparation_retained.load(Ordering::Acquire));
         assert!(trace.commits.load(Ordering::Acquire) >= 1);
         assert_eq!(process.policy().test_numa_node_count_cache(), 0);
         let lease = failure
@@ -3016,10 +3030,10 @@ mod tests {
         let parent = unsafe { &*managed.arena_id().as_ptr() };
         assert_eq!(parent.total_size, ARENA_MAX_SIZE);
         let owner = unsafe { backing.allocation_for_arena(parent) }.unwrap();
-        let ArenaBacking::Huge(allocation) = &owner.allocation else { panic!("huge owner"); };
-        assert_eq!(allocation.base(), base);
-        assert_eq!(allocation.page_count(), 17, "unpublished suffix remains owned");
-        assert_eq!(allocation.memory_id().os_memory().unwrap().size, 17 * crate::config::GIB);
+        let ArenaBacking::PublishedHuge { base: stored, size } = &owner.allocation else { panic!("huge owner"); };
+        assert_eq!(*stored, base);
+        assert_eq!(*size / crate::config::GIB, 17, "unpublished suffix remains owned");
+        assert_eq!(owner.memory.os_memory().unwrap().size, 17 * crate::config::GIB);
     }
 
     #[test]
@@ -3392,61 +3406,52 @@ mod tests {
     }
 
     #[test]
-    fn live_arena_lookup_does_not_borrow_an_unrelated_initializing_mapping_slot() {
+    fn live_arena_lookup_uses_published_provenance_while_another_mapping_is_preparing() {
         let _fault = fault::install(fault::Plan::disabled());
         let backing = backing();
         let process = process();
-        let first = install(backing, process, MapAccess::Reserved);
-        let second = install(backing, process, MapAccess::Reserved);
-        let view = unsafe { ArenaView::from_ptr(second.as_ptr()) }.unwrap();
-        let slot = &backing.slots[0];
-        let _guard = backing.reserve_lock.lock().unwrap();
-        // Model an unrelated prepublication slot ahead of the live target.
-        // Its fully written value stays stable in this isolated witness, so
-        // the old bug is observed as a forbidden borrow without executing a
-        // Rust data race or moving bytes underneath an actual reference.
-        // The lock also proves that the successful hot lookup must not take
-        // a global lock just because an unrelated slot is initializing.
-        assert_eq!(unsafe { slot.initialized() }.unwrap().memory.os_memory().unwrap().base,
-            unsafe { first.area() }.unwrap().0);
-        let before = slot.initializing_reads.load(Ordering::Relaxed);
-        slot.state.store(INITIALIZING, Ordering::Release);
-        let found = unsafe { backing.allocation_for_arena(view.arena()) };
-        slot.state.store(PUBLISHED, Ordering::Release);
-        assert!(found.is_some());
-        assert_eq!(slot.initializing_reads.load(Ordering::Relaxed), before,
-            "the target publication never authorizes borrowing another initializing slot");
+        let id = install(backing, process, MapAccess::Reserved);
+        let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+        let (mut unpublished, _) = mapped(process, MapAccess::Reserved);
+        let guard = backing.reserve_lock.lock().unwrap();
+        assert!(backing.begin_preparation_locked(StoredVmProcess::from_static_process(process), config()));
+        let owner = unsafe { backing.allocation_for_arena(view.arena()) }.unwrap();
+        assert_eq!(owner.allocation.base().unwrap(), unsafe { id.area() }.unwrap().0);
+        assert_ne!(owner.allocation.base().unwrap(), unpublished.base().unwrap());
+        assert_eq!(backing.registry.count(), 1);
+        // The lookup has no authority to move or expose the unrelated
+        // unpublished owner; it remains usable by its exact local token.
+        assert!(unpublished.commit_for_process(process, 0, 4096, 0).is_ok());
+        backing.finish_preparation_locked();
+        guard.unlock().unwrap();
+        unpublished.unmap_for_process(process, 4096, false).unwrap();
+        assert!(unsafe { backing.destroy_all(&mut []) }.unwrap().is_released());
     }
 
     #[test]
-    fn target_arena_publication_window_rechecks_under_reserve_lock_before_borrowing() {
+    fn published_arena_readers_do_not_wait_for_an_unrelated_preparation_lock() {
         let _fault = fault::install(fault::Plan::disabled());
         let backing = backing();
         let process = process();
         let id = install(backing, process, MapAccess::Reserved);
         let address = id.as_ptr() as usize;
         let expected_base = unsafe { id.area() }.unwrap().0 as usize;
-        let slot = &backing.slots[0];
         let guard = backing.reserve_lock.lock().unwrap();
-        let before = slot.initializing_reads.load(Ordering::Relaxed);
-        // Represent the actual source publication window: arena metadata is
-        // already visible, but its publisher still owns the reserve lock and
-        // has not made the mapping slot immutable for general readers.
-        slot.state.store(INITIALIZING, Ordering::Release);
+        assert!(backing.begin_preparation_locked(StoredVmProcess::from_static_process(process), config()));
+        let (send, receive) = std::sync::mpsc::channel();
         let reader = std::thread::spawn(move || {
             let arena = unsafe { &*(address as *const Arena) };
-            unsafe { backing.allocation_for_arena(arena) }.map(|owner| owner.allocation.base().unwrap() as usize)
+            let base = unsafe { backing.allocation_for_arena(arena) }
+                .map(|owner| owner.allocation.base().unwrap() as usize);
+            send.send(base).unwrap();
         });
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while !backing.reserve_lock.test_is_contended() {
-            assert!(std::time::Instant::now() < deadline, "publication miss must synchronize with its publisher");
-            std::thread::yield_now();
-        }
-        assert_eq!(slot.initializing_reads.load(Ordering::Relaxed), before);
-        slot.state.store(PUBLISHED, Ordering::Release);
+        // The source memid is already published; an unrelated initializer's
+        // lock cannot delay or authorize this short transition projection.
+        assert_eq!(receive.recv_timeout(std::time::Duration::from_secs(2)).unwrap(), Some(expected_base));
+        backing.finish_preparation_locked();
         guard.unlock().unwrap();
-        assert_eq!(reader.join().unwrap(), Some(expected_base));
-        assert_eq!(slot.initializing_reads.load(Ordering::Relaxed), before);
+        reader.join().unwrap();
+        assert!(unsafe { backing.destroy_all(&mut []) }.unwrap().is_released());
     }
 
     fn purge_process(delay: i64, decommit: bool) -> VmProcess<'static> {
@@ -4030,7 +4035,8 @@ mod tests {
         };
         assert_eq!(failure.error(), ManageArenaError::CommitFailed);
         assert_eq!(backing.registry().count(), 0);
-        assert!(backing.slots.iter().all(|slot| slot.state.load(Ordering::Acquire) == EMPTY));
+        assert_eq!(backing.preparing.load(Ordering::Acquire), 0);
+        assert!(!backing.preparation_retained.load(Ordering::Acquire));
         let (mut mapping, _, pair) = failure.into_parts();
         assert_eq!(mapping.base().unwrap(), original);
         fault.set(fault::Plan::disabled());
@@ -4092,7 +4098,7 @@ mod tests {
     }
 
     #[test]
-    fn owned_linux_decommit_callback_reports_no_recommit_not_syscall_success() {
+    fn owned_linux_purge_reports_no_recommit_without_a_published_callback() {
         let _fault = fault::install(fault::Plan::disabled());
         let backing = backing();
         let process = process();
@@ -4101,8 +4107,13 @@ mod tests {
         let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
         let arena = view.arena();
         unsafe { claim.start().write(0x5a); }
-        let needs_recommit = unsafe { arena.commit_function.unwrap()(false, claim.start(), ARENA_SLICE_SIZE,
-            core::ptr::null_mut(), arena.commit_function_argument) };
+        assert!(arena.commit_function.is_none());
+        assert!(arena.commit_function_argument.is_null());
+        let owner = unsafe { backing.allocation_for_arena(arena) }.unwrap();
+        let mapping = owner.allocation.regular().unwrap();
+        let offset = (claim.start() as usize).checked_sub(mapping.base().unwrap() as usize).unwrap();
+        let needs_recommit = mapping.purge_for_process(owner.process(), offset, ARENA_SLICE_SIZE, false,
+            ARENA_SLICE_SIZE).unwrap();
         assert!(!needs_recommit);
         assert_eq!(unsafe { claim.start().read() }, 0);
         unsafe { claim.start().write(0x3c); }
