@@ -47,7 +47,13 @@ const SOURCE_ENVIRONMENT_ENTRY_LIMIT: usize = 10_000;
 
 // `CMakeLists.txt` Release defaults plus `types.h` defaults. An unset C
 // preprocessor option evaluates to zero in the upstream `#if` expressions.
-pub(crate) const SECURE_LEVEL: usize = 0;
+pub(crate) const SECURE_LEVEL: usize = if cfg!(all(target_arch = "x86_64", feature = "mi-secure-2")) {
+    2
+} else if cfg!(all(target_arch = "x86_64", feature = "mi-secure-1")) {
+    1
+} else {
+    0
+};
 /// Defined `MI_XMALLOC` affects only the default allocation-error handler.
 /// The optional x86 profile leaves the AArch64 default handler unchanged.
 pub(crate) const XMALLOC: bool = cfg!(all(target_arch = "x86_64", feature = "mi-xmalloc"));
@@ -1094,7 +1100,13 @@ mod tests {
     fn selected_release_constants_match_the_pinned_linux_64_profiles() {
         assert_eq!(WORD_SIZE, 8);
         assert_eq!(MAX_ALIGN_SIZE, 16);
-        assert_eq!(SECURE_LEVEL, 0);
+        assert_eq!(SECURE_LEVEL, if cfg!(all(target_arch = "x86_64", feature = "mi-secure-2")) {
+            2
+        } else if cfg!(all(target_arch = "x86_64", feature = "mi-secure-1")) {
+            1
+        } else {
+            0
+        });
         assert_eq!(DEBUG_LEVEL, usize::from(cfg!(feature = "mi-debug-1")));
         let expected_stat_level = if cfg!(feature = "mi-stat-2") {
             2
