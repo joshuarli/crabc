@@ -1,6 +1,10 @@
 """Heap convenience Cargo commands select the source checkout explicitly."""
 from pathlib import Path
 import json
+import hashlib
+import io
+import signal
+import tarfile
 import shutil
 import subprocess
 import sys
@@ -51,36 +55,76 @@ class HeapConvenienceReceiptAuthorityTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.work = self.root / ".work/control/run-one"
         self.work.mkdir(parents=True)
-        self.products, self.cases = {}, []
+        archive = self.work / "mimalloc-3.5.0.tar.gz"
+        with tarfile.open(archive, "w:gz") as stream:
+            for name in ("include/mimalloc.h", "src/static.c", "src/alloc.c", "LICENSE"):
+                data = ("pinned fixture " + name).encode()
+                member = tarfile.TarInfo("mimalloc-3.5.0/" + name)
+                member.size = len(data)
+                stream.addfile(member, io.BytesIO(data))
+        self.pin = {"archive_root": "mimalloc-3.5.0", "sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}
+        source = convenience.harness.safe_extract(archive, self.work / "source", self.pin["archive_root"])
+        self.products, self.cases = {archive.name: archive}, []
+        drivers = []
+        for original in (convenience.C_SOURCE, convenience.CXX_SOURCE):
+            driver = self.root / "compat/allocator" / original.name
+            driver.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(original, driver)
+            drivers.append(driver)
+        for original in (*drivers, source / "include/mimalloc.h", source / "src/static.c", source / "LICENSE"):
+            retained = self.work / original.name
+            shutil.copy2(original, retained)
+            self.products[retained.name] = retained
+        seal = {"revision": "a" * 40, "worktree_sha256": hashlib.sha256(b"").hexdigest()}
+        execution = {"execution_mode": "native", "host_architecture": "x86_64", "image_id": "sha256:" + "1" * 64}
+        inputs = self.work / "inputs.json"
+        inputs.write_text(json.dumps({"source": seal, "execution": execution, "upstream": self.pin,
+            "profiles": convenience.PROFILES,
+            "boundary": "explicit native mi_*; host musl and C++ standard library substrate",
+            "header_sha256": hashlib.sha256((source / "include/mimalloc.h").read_bytes()).hexdigest(),
+            "expected_abort": -signal.SIGABRT, "runtime_watchdog_seconds": 60}))
+        self.products[inputs.name] = inputs
+        tools = {name: "/tools/" + name for name in ("musl-gcc", "g++", "cargo", "nm")}
         for profile in convenience.PROFILES:
             directory = self.work / profile
             directory.mkdir()
-            for name in ("native-mi-adapter.a", "c-native"):
+            for name in ("native-mi-adapter.a", "oracle.o", "c-c", "c-native", "cxx-c", "cxx-native",
+                         "c-c.o", "c-native.o", "cxx-c.o", "cxx-native.o"):
                 path = directory / name
                 path.write_bytes((profile + name).encode())
                 self.products[f"{profile}-{name}"] = path
-            command = convenience.native_build_command(self.root, directory / "cargo-target", profile, "/tools/cargo")
-            path = self.work / f"{profile}-native-build.json"
-            path.write_text(json.dumps({"command": command, "kind": "process", "status": 0}))
-            self.cases.append((f"{profile}-native-build", 0, [path]))
-        path = self.work / "release-c-native-normal.json"
-        path.write_text(json.dumps({"command": [str(self.work / "release/c-native")], "kind": "process", "status": 0}))
-        self.cases.append(("release-c-native-normal", 0, [path]))
+            for step, command in convenience.profile_commands(self.root, self.work, source, profile, tools).items():
+                case_id = profile + "-" + step
+                raw_status = -signal.SIGABRT if step.endswith("-overflow-abort") else 0
+                stdout = b"observable caller result\n" if step.endswith("-normal") else b""
+                raw = {"command": command, "kind": "process", "status": raw_status,
+                    "stdout": convenience.stress.bytes_record(stdout), "stderr": convenience.stress.bytes_record(b"")}
+                paths = [self.work / (case_id + suffix) for suffix in (".json", ".stdout", ".stderr")]
+                paths[0].write_text(json.dumps(raw)); paths[1].write_bytes(stdout); paths[2].write_bytes(b"")
+                self.cases.append((case_id, 0, paths))
         for patcher in (
             mock.patch.object(convenience.harness, "ROOT", self.root),
-            mock.patch.object(convenience.harness, "require_tool", return_value="/tools/cargo"),
-            mock.patch.object(convenience.receipts, "source_seal", return_value={"revision": "a" * 40, "worktree_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}),
+            mock.patch.object(convenience, "C_SOURCE", drivers[0]),
+            mock.patch.object(convenience, "CXX_SOURCE", drivers[1]),
+            mock.patch.object(convenience.harness, "TEMP_ROOT", self.root / ".work/reader"),
+            mock.patch.object(convenience.harness, "load_pin", return_value=self.pin),
+            mock.patch.object(convenience.harness, "require_tool", side_effect=lambda name: tools[name]),
+            mock.patch.object(convenience.harness, "require_native_x86_64", return_value=execution),
+            mock.patch.object(convenience.receipts, "source_seal", return_value=seal),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
 
     def publish(self):
         convenience.receipts.write_receipt(self.root, convenience.RUNNER, self.work,
-            self.products, self.cases, {}, True)
+            self.products, self.cases, {"profiles": ",".join(convenience.PROFILES),
+                "boundary": "explicit native-mi-adapter", "c-substrate": "pinned-musl-1.2.6",
+                "cxx-substrate": "native-image-musl-libstdc++", "expected-overflow-abort": "SIGABRT",
+                "watchdog-seconds": "60"}, True)
         return convenience.receipts.read_receipt(self.root, convenience.RUNNER)
 
     def test_valid_physically_retained_builds_are_readable(self):
-        convenience.read_native_build_authority(self.publish())
+        convenience.read_convenience_authority(self.publish())
 
     def test_newly_sealed_wrong_checkout_and_omitted_manifest_are_rejected(self):
         for wrong in ("/another/Cargo.toml", None):
@@ -93,14 +137,65 @@ class HeapConvenienceReceiptAuthorityTests(unittest.TestCase):
                 command[index + 1] = wrong
             path.write_text(json.dumps({"command": command, "kind": "process", "status": 0}))
             receipt = self.publish()
-            with self.assertRaisesRegex(convenience.harness.HarnessError, "native build authority"):
-                convenience.read_native_build_authority(receipt)
+            with self.assertRaisesRegex(convenience.harness.HarnessError, "native-build.*authority"):
+                convenience.read_convenience_authority(receipt)
+
+    def test_newly_sealed_wrong_oracle_profile_is_rejected(self):
+        path = self.work / "debug-1-oracle-build.json"
+        raw = json.loads(path.read_text())
+        raw["command"][raw["command"].index("-DMI_DEBUG=1")] = "-DMI_DEBUG=0"
+        path.write_text(json.dumps(raw))
+        receipt = self.publish()
+        with self.assertRaisesRegex(convenience.harness.HarnessError, "oracle-build.*authority"):
+            convenience.read_convenience_authority(receipt)
+
+    def test_newly_sealed_wrong_cxx_compiler_link_and_execute_are_rejected(self):
+        for case_id, mutate in (
+            ("stat-1-cxx-native-compile", lambda c: c.__setitem__(0, "/unrelated/g++")),
+            ("stat-1-cxx-native-link", lambda c: c.__setitem__(-4, "/unrelated/allocator.a")),
+            ("stat-1-cxx-native-overflow-throw", lambda c: c.__setitem__(0, "/unrelated/cxx-native")),
+        ):
+            path = self.work / (case_id + ".json")
+            original = path.read_text()
+            raw = json.loads(original)
+            mutate(raw["command"])
+            path.write_text(json.dumps(raw))
+            with self.subTest(case_id=case_id):
+                receipt = self.publish()
+                with self.assertRaisesRegex(convenience.harness.HarnessError, "command authority"):
+                    convenience.read_convenience_authority(receipt)
+            path.write_text(original)
+
+    def test_resealed_driver_header_and_license_drift_are_rejected(self):
+        for name in (convenience.CXX_SOURCE.name, "mimalloc.h", "LICENSE", "static.c", "mimalloc-3.5.0.tar.gz"):
+            path = self.products[name]
+            original = path.read_bytes()
+            path.write_bytes(b"changed authentic-looking source input")
+            with self.subTest(product=name):
+                receipt = self.publish()
+                with self.assertRaises(convenience.harness.HarnessError):
+                    convenience.read_convenience_authority(receipt)
+            path.write_bytes(original)
+
+    def test_matched_nonzero_exit_cannot_be_relabelled_a_passing_case(self):
+        path = self.work / "release-cxx-native-normal.json"
+        raw = json.loads(path.read_text()); raw["status"] = 1
+        path.write_text(json.dumps(raw))
+        receipt = self.publish()
+        with self.assertRaisesRegex(convenience.harness.HarnessError, "actual status"):
+            convenience.read_convenience_authority(receipt)
+
+    def test_missing_runtime_mode_is_not_complete_four_profile_evidence(self):
+        self.cases = [case for case in self.cases if case[0] != "stat-2-cxx-native-refusal-handler"]
+        receipt = self.publish()
+        with self.assertRaisesRegex(convenience.harness.HarnessError, "ordered caller roster"):
+            convenience.read_convenience_authority(receipt)
 
     def test_original_library_drift_is_rejected_beyond_retained_hashes(self):
         receipt = self.publish()
         self.products["stat-1-native-mi-adapter.a"].write_bytes(b"other checkout library")
-        with self.assertRaisesRegex(convenience.harness.HarnessError, "original stat-1"):
-            convenience.read_native_build_authority(receipt)
+        with self.assertRaisesRegex(convenience.harness.HarnessError, "original input or product"):
+            convenience.read_convenience_authority(receipt)
 
 
 if __name__ == "__main__":
