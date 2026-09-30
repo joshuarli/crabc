@@ -249,6 +249,10 @@
       "command": null,
       "scope": "Pinned-C/Rust assertion, debug-fill, padding, and arena-print behavior of the MI_DEBUG/MI_SHOW_ERRORS/MI_PADDING profiles, with source-backed applicability for the sanitizer and tracking modes."
     },
+    "unit:private-context-arena-print": {
+      "command": ["cargo", "test", "--locked", "--offline", "--target", "x86_64-unknown-linux-musl", "-p", "crabc-mimalloc", "--no-default-features", "--features", "test-adapter", "--test", "native_test_context_arena_print", "--", "--test-threads=1"],
+      "scope": "Independent private contexts retain their own arena populations and callbacks through reentrant allocation and foreign-thread refusal. Native global diagnostics preserve their separate output and arena identity. This Rust integration test covers context ownership, not pinned-C diagnostic formatting equivalence."
+    },
     "differential:arena-print": {
       "command": ["python3", "compat/allocator/x86_64_m7_arena_print.py", "--offline"],
       "scope": "Pinned C and native Rust compare exact arena output and callback fragment sizes under release and MI_DEBUG=1: twelve arena/page states, both public aliases, registered callback and stderr routes, and three verbose settings. Each side independently reports its arena identity before projecting only that pointer in the header. Prefixed private-context adapters and broader debug assertions remain separate obligations."
@@ -514,6 +518,7 @@
       "evidence": [
         "differential:debug-profile",
         "differential:arena-print",
+        "unit:private-context-arena-print",
         "differential:debug-padding-17",
         "differential:debug-padding-page",
         "differential:debug-remote-links",

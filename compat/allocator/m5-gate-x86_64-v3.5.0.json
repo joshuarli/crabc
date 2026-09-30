@@ -459,6 +459,7 @@
   "native_tests_owned_elsewhere": {
     "native_error_sites": "compat/allocator/x86_64_m7_gate.py",
     "native_option_profiles": "compat/allocator/x86_64_m7_gate.py",
+    "native_test_context_arena_print": "compat/allocator/m7-gate-x86_64-v3.5.0.json",
     "native_persistent_owner_local_trace": "compat/allocator/m3-local-engine-x86_64-v3.5.0.json"
   }
 }
