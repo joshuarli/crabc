@@ -1038,6 +1038,64 @@ pub unsafe extern "C" fn mi_stats_get(stats: *mut c_void) -> bool {
     unsafe { options::stats_get(stats) }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn mi_subproc_stats_get(id: *mut c_void, stats: *mut c_void) -> bool {
+    register_thread_for_statistics();
+    // SAFETY: the C caller retains the selected id and complete source image.
+    unsafe { options::subproc_stats_get(id, stats) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_subproc_stats_get_exclusive(id: *mut c_void, stats: *mut c_void) -> bool {
+    register_thread_for_statistics();
+    // SAFETY: the C caller retains the selected id and complete source image.
+    unsafe { options::subproc_stats_get_exclusive(id, stats) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_subproc_stats_get_json(id: *mut c_void, size: usize, buffer: *mut c_char) -> *mut c_char {
+    register_thread_for_statistics();
+    // SAFETY: the C caller's selected-id and writable-buffer contracts.
+    unsafe { options::subproc_stats_json(id, size, buffer) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_subproc_stats_print_out(id: *mut c_void, out: Option<OutputFunction>, argument: *mut c_void) {
+    register_thread_for_statistics();
+    let out = source_output(out.map_or(core::ptr::null(), |out| out as *const c_void));
+    // SAFETY: the C caller retains the selected id across valid callbacks.
+    unsafe { options::subproc_stats_print_out(id, out, argument) };
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_stats_get(heap: HeapPointer, stats: *mut c_void) -> bool {
+    register_thread_for_statistics();
+    // SAFETY: the C caller retains the source Heap and complete source image.
+    unsafe { heaps::heap_stats_get(heap, stats) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_stats_get_json(heap: HeapPointer, size: usize, buffer: *mut c_char) -> *mut c_char {
+    register_thread_for_statistics();
+    // SAFETY: the C caller retains the source Heap and writable buffer.
+    unsafe { heaps::heap_stats_json(heap, size, buffer) }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_stats_print_out(heap: HeapPointer, out: Option<OutputFunction>, argument: *mut c_void) {
+    register_thread_for_statistics();
+    let out = source_output(out.map_or(core::ptr::null(), |out| out as *const c_void));
+    // SAFETY: the C caller's Heap-lifetime and synchronous callback contracts.
+    unsafe { heaps::heap_stats_print_out(heap, out, argument) };
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn mi_heap_stats_merge_to_subproc(heap: HeapPointer) {
+    register_thread_for_statistics();
+    // SAFETY: the C caller retains this Heap and owning subprocess.
+    unsafe { heaps::heap_stats_merge_to_subproc(heap) };
+}
+
 /// Pinned `_mi_fputs` sends a null `out`, or one equal to `stdout` or
 /// `stderr` (`src/options.c:466-478`), to the process default route.
 fn source_output(out: *const c_void) -> Option<OutputFunction> {

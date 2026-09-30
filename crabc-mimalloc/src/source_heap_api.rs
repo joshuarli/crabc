@@ -59,6 +59,52 @@ pub fn heap_main() -> *mut c_void {
     MainSubprocess::global().ready_main_heap_pointer().cast()
 }
 
+/// Copies the full source-selected Heap statistics; null selects the
+/// calling thread's subprocess main Heap. Its existing Theap merge occurs
+/// before validating the caller's output header.
+///
+/// # Safety
+/// The Heap and the caller's selected Theap/owning Heap remain live through
+/// the call. `stats` is null or an exclusive complete source statistics image.
+pub unsafe fn heap_stats_get(heap: *mut c_void, stats: *mut c_void) -> bool {
+    // SAFETY: forwarded source identity and complete output image contracts.
+    unsafe { crate::runtime_lifecycle::native_heap_stats_get(heap, stats.cast()) }
+}
+
+/// Renders selected Heap statistics into a fixed or allocator-owned buffer.
+///
+/// # Safety
+/// The selected Heap and calling thread's roots remain live during snapshot.
+/// `buffer` is null or writable for `size` bytes; free an owned result.
+pub unsafe fn heap_stats_json(heap: *mut c_void, size: usize, buffer: *mut core::ffi::c_char) -> *mut core::ffi::c_char {
+    // SAFETY: forwarded source Heap and writable buffer contracts.
+    unsafe { crate::runtime_lifecycle::native_heap_stats_json(heap, size, buffer.cast()) }.cast()
+}
+
+/// Prints selected Heap statistics after releasing its source projections.
+///
+/// # Safety
+/// The selected Heap and caller's roots remain live during snapshot. `out`
+/// and `argument` stay callable for each message; callbacks may allocate.
+pub unsafe fn heap_stats_print_out(heap: *mut c_void, out: Option<crate::source_options_api::OutputFunction>, argument: *mut c_void) {
+    // SAFETY: forwarded source Heap and synchronous callback contracts.
+    unsafe { crate::runtime_lifecycle::native_heap_stats_print_out(heap, out, argument) };
+}
+
+/// Merges the Heap record directly into its owning subprocess and clears it.
+/// This does not merge the calling thread's Theap. Null selects its main Heap.
+///
+/// # Safety
+/// The Heap and its subprocess remain live through the merge/reset; the
+/// caller supplies the source exclusion against other merges and destruction.
+pub unsafe fn heap_stats_merge_to_subproc(heap: *mut c_void) {
+    let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else { return; };
+    let heap = if heap.is_null() { heap_main() } else { heap };
+    let Some(heap) = NonNull::new(heap.cast::<Heap>()) else { return; };
+    // SAFETY: caller retains this Heap and its initialized subprocess.
+    let _ = unsafe { Heap::merge_statistics_into_owning_subprocess_at(heap) };
+}
+
 /// Set the source Heap's NUMA affinity; null selects the current main Heap.
 /// Negative values clear affinity, while nonnegative values wrap by the
 /// process-wide cached node count. This selects arena search order and does

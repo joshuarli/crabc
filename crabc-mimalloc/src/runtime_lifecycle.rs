@@ -11150,47 +11150,79 @@ pub fn native_allocate_aligned_at(
     native_allocate_shaped::<false>(request, NativeAllocationShape::Aligned { alignment, offset }, zero)
 }
 
-/// Pinned `mi_stats_get` (`src/stats.c:640-653`) for a thread of the process
-/// main subprocess: validate the caller's `mi_stats_t` header and copy the
-/// subprocess statistics into it, then add each Heap of its list, after
-/// `mi_heap_get_stats` has merged the calling thread's own Theap into its
-/// Heap. Returns `false`, copying nothing, for a bad header or an inactive
-/// process.
-///
-/// The calling thread's Theap for each non-main Heap of the process main
-/// subprocess is merged into that Heap as well; those of child-subprocess
-/// Heaps are not, and a child-subprocess thread reports the main subprocess.
+/// Resolves one retained subprocess without keeping its child-record lock
+/// across statistics traversal or user callbacks.
 ///
 /// # Safety
-/// `stats` is valid for reads and writes of the source `mi_stats_t` image
-/// and not otherwise accessed during the call.
+/// `id` is null, the main id, or a live child retained through immediate use
+/// of the returned identity; allocator operation admission is held.
+unsafe fn statistics_subprocess_identity(id: *mut core::ffi::c_void) -> Option<*mut crate::subproc::SubprocessIdentity> {
+    let id = core::ptr::NonNull::new(id)?;
+    let main = crate::subproc::SubprocessIdentity::global();
+    if id.as_ptr() == main.as_ptr().cast() { return Some(main.as_ptr()); }
+    // SAFETY: the caller retains this exact child while its lock is released.
+    unsafe {
+        crate::subproc::lifecycle::NativeSubprocessId::from_ptr(id).with_owner(|child| {
+            child.as_mut().and_then(|child| child.identity_pointer())
+        })
+    }.ok().flatten()
+}
+
+/// Copies a selected subprocess's own statistics, optionally aggregating its
+/// listed Heaps after each existing caller-thread Theap merge. Header
+/// validation precedes traversal; metadata-Theap statistics remain hidden.
+///
+/// # Safety
+/// `id` is null, the main id, or a live child retained through the call.
+/// `stats` is null or an exclusively readable/writable complete source image.
+/// The calling thread retains its existing Theaps and their owning Heaps.
+#[doc(hidden)]
+pub unsafe fn native_subproc_stats_get(id: *mut core::ffi::c_void, stats: *mut u8, exclusive: bool) -> bool {
+    let Some(_operation) = NativeSubprocessOperation::enter() else { return false; };
+    if stats.is_null() { return false; }
+    // SAFETY: the caller retains the selected identity for the complete call.
+    let Some(identity) = (unsafe { statistics_subprocess_identity(id) }) else { return false; };
+    // SAFETY: only synchronized identity fields are projected; the caller
+    // image satisfies the complete source layout contract.
+    let identity = unsafe { &*identity };
+    if !unsafe { identity.statistics().copy_into_source_image(stats) } { return false; }
+    if !exclusive {
+        let current = crate::compiler_tls::default_theap();
+        let _ = identity.heap_list().visit_heaps(|heap| {
+            // SAFETY: source membership retains the Heap; the calling thread
+            // retains every root used by the short statistics-only projection.
+            unsafe { crate::types::Heap::add_selected_statistics_into_source_image_at(heap, current, stats) };
+            true
+        });
+    }
+    true
+}
+
+/// Copies aggregate statistics for the calling thread's current subprocess.
+///
+/// # Safety
+/// `stats` is null or an exclusively readable/writable complete source image.
 #[doc(hidden)]
 pub unsafe fn native_stats_get(stats: *mut u8) -> bool {
-    #[cfg(target_arch = "x86_64")]
-    let Ok(_operation) = admission::NativeAllocatorOperationGuard::enter() else {
-        return false;
-    };
-    if stats.is_null() || !RUNTIME_PROCESS.is_active() {
-        return false;
-    }
-    // SAFETY: PROCESS_ACTIVE follows the permanent owner publication.
-    let Some(owner) = (unsafe { RUNTIME_PROCESS.active_owner() }) else { return false; };
-    let Ok(subprocess) = owner.ready().and_then(|ready| ready.subprocess()) else { return false; };
-    let identity = subprocess.identity();
-    // SAFETY: forwarded caller image contract.
-    if !unsafe { identity.statistics().copy_into_source_image(stats) } {
-        return false;
-    }
-    merge_current_thread_theap_statistics();
-    let _ = identity.heap_list().visit_heaps(|heap| {
-        // SAFETY: a visited member is live under the list lock.
-        unsafe { crate::subproc::main_heaps::merge_current_thread_theap_statistics(heap) };
-        // SAFETY: a visited member is live under the list lock; the caller
-        // image was validated by the copy above.
-        unsafe { crate::types::Heap::add_statistics_into_source_image(heap, stats) };
-        true
-    });
-    true
+    // SAFETY: current membership retains its child until this thread leaves;
+    // the main identity is permanent. The image contract is forwarded.
+    unsafe { native_subproc_stats_get(crate::source_heap_api::subproc_current(), stats, false) }
+}
+
+/// Copies the selected Heap's full statistics after its caller-Theap merge.
+/// Null selects the calling thread's subprocess main Heap.
+///
+/// # Safety
+/// A non-null Heap and any source-selected caller-Theap/owning Heap remain
+/// live through the call. `stats` is null or an exclusive complete source image.
+#[doc(hidden)]
+pub unsafe fn native_heap_stats_get(heap: *mut core::ffi::c_void, stats: *mut u8) -> bool {
+    let Some(_operation) = NativeSubprocessOperation::enter() else { return false; };
+    let heap = if heap.is_null() { crate::source_heap_api::heap_main() } else { heap };
+    let Some(heap) = core::ptr::NonNull::new(heap.cast::<crate::types::Heap>()) else { return false; };
+    // SAFETY: the caller retains the selected Heap and current-thread roots.
+    unsafe { crate::types::Heap::copy_selected_statistics_into_source_image_at(
+        heap, crate::compiler_tls::default_theap(), stats) }
 }
 
 /// Pinned `mi_process_info` (`src/stats.c:568-597`): elapsed time since
@@ -11224,34 +11256,77 @@ fn statistics_print_facts() -> Option<(Option<&'static crate::diagnostic_output:
     Some((crate::process_init::process_output_owner(), sequence, nodes))
 }
 
-/// Pinned `mi_stats_print_out(out, arg)`: `mi_subproc_stats_print_out` of
-/// the main subprocess, whose `mi_subproc_stats_get` image (subprocess plus
-/// every Heap, after the calling thread's Theap merge) `_mi_stats_print`
-/// prints as `subproc <seq>` (`src/stats.c:512-524`).
+/// Prints a selected subprocess's aggregate statistics after releasing its
+/// Heap-list visitation lock. A null subprocess produces no output.
 ///
 /// # Safety
+/// `id` is null, the main id, or a child retained across all callbacks. A
+/// non-null `out` and `argument` are callable for each synchronous message;
+/// callbacks may reenter the allocator but cannot destroy the selected child.
+#[doc(hidden)]
+pub unsafe fn native_subproc_stats_print_out(
+    id: *mut core::ffi::c_void,
+    out: Option<unsafe extern "C" fn(*const core::ffi::c_char, *mut core::ffi::c_void)>,
+    argument: *mut core::ffi::c_void,
+) {
+    let sequence = {
+        let Some(_operation) = NativeSubprocessOperation::enter() else { return; };
+        // SAFETY: the caller keeps the selected child alive after this scope.
+        let Some(identity) = (unsafe { statistics_subprocess_identity(id) }) else { return; };
+        let Some(sequence) = (unsafe { &*identity }).arena_print_sequence() else { return; };
+        sequence
+    };
+    let mut image = crate::statistics::HeapTheapStatistics::new();
+    // SAFETY: the caller retains the id; this local source image is exclusive.
+    if !unsafe { native_subproc_stats_get(id, core::ptr::from_mut(&mut image).cast(), false) } { return; }
+    let Some((owner, _, nodes)) = statistics_print_facts() else { return; };
+    let info = native_process_info();
+    // SAFETY: all inputs are scalar snapshots; no allocator lock or owner
+    // projection spans a caller-supplied output callback.
+    unsafe { crate::diagnostic_output::render_statistics(
+        crate::diagnostic_output::StatisticsOutput::source(owner, out, argument),
+        b"subproc", sequence, image.final_output_snapshot(), info, nodes) };
+}
+
+/// Prints the calling thread's current subprocess aggregate statistics.
 ///
-/// A non-null `out` must be callable with a NUL-terminated message and
-/// `argument` for every line; it may reenter the allocator.
+/// # Safety
+/// The output callback and argument stay callable; it may reenter allocation
+/// but cannot destroy the calling thread's selected child subprocess.
 #[doc(hidden)]
 pub unsafe fn native_stats_print_out(
     out: Option<unsafe extern "C" fn(*const core::ffi::c_char, *mut core::ffi::c_void)>,
     argument: *mut core::ffi::c_void,
 ) {
-    let mut image = crate::statistics::HeapTheapStatistics::new();
-    // SAFETY: a local image with a source header, exclusively owned.
-    if !unsafe { native_stats_get(core::ptr::from_mut(&mut image).cast()) } {
-        return;
-    }
-    let Some((owner, sequence, nodes)) = statistics_print_facts() else { return; };
-    let info = native_process_info();
-    // SAFETY: no allocator projection is live; the caller supplies `out`.
-    unsafe {
-        crate::diagnostic_output::render_statistics(
-            crate::diagnostic_output::StatisticsOutput::source(owner, out, argument),
-            b"subproc", sequence, image.final_output_snapshot(), info, nodes,
-        )
+    // SAFETY: current membership retains the child through these callbacks.
+    unsafe { native_subproc_stats_print_out(crate::source_heap_api::subproc_current(), out, argument) };
+}
+
+/// Prints the selected Heap's source snapshot, with null selecting the
+/// calling thread's subprocess main Heap.
+///
+/// # Safety
+/// The selected Heap and caller-thread roots remain live through selection;
+/// the output callback and argument remain callable throughout rendering.
+#[doc(hidden)]
+pub unsafe fn native_heap_stats_print_out(
+    heap: *mut core::ffi::c_void,
+    out: Option<unsafe extern "C" fn(*const core::ffi::c_char, *mut core::ffi::c_void)>,
+    argument: *mut core::ffi::c_void,
+) {
+    let snapshot = {
+        let Some(_operation) = NativeSubprocessOperation::enter() else { return; };
+        let heap = if heap.is_null() { crate::source_heap_api::heap_main() } else { heap };
+        let Some(heap) = core::ptr::NonNull::new(heap.cast::<crate::types::Heap>()) else { return; };
+        // SAFETY: caller retains the selected Heap and all source peek roots.
+        unsafe { crate::types::Heap::statistics_for_print_at(heap, crate::compiler_tls::default_theap()) }
     };
+    let Some((owner, _, nodes)) = statistics_print_facts() else { return; };
+    let info = native_process_info();
+    // SAFETY: source snapshots borrow no Heap/Theap field across callbacks.
+    unsafe { crate::diagnostic_output::render_statistics(
+        crate::diagnostic_output::StatisticsOutput::source(owner, out, argument),
+        b"heap", snapshot.0, snapshot.1, info, nodes) };
 }
 
 /// Pinned `mi_subproc_heap_stats_print_out`: print each listed Heap, then
@@ -11410,6 +11485,40 @@ pub unsafe fn native_stats_json(stats: *const u8, size: usize, buffer: *mut u8) 
             let _ = unsafe { native_free(block) };
         }
     })
+}
+
+/// Renders a selected subprocess aggregate into a fixed or owned JSON
+/// buffer, after all child-record and Heap-list locks have been released.
+///
+/// # Safety
+/// The selected child remains live through its snapshot; `buffer` is null
+/// or writable for `size` bytes. The caller frees any owned result.
+#[doc(hidden)]
+pub unsafe fn native_subproc_stats_json(id: *mut core::ffi::c_void, size: usize, buffer: *mut u8) -> *mut u8 {
+    let mut image = crate::statistics::HeapTheapStatistics::new();
+    // SAFETY: caller retains the selected id, and this local image is exclusive.
+    if !unsafe { native_subproc_stats_get(id, core::ptr::from_mut(&mut image).cast(), false) } {
+        return core::ptr::null_mut();
+    }
+    // SAFETY: the local image remains live and the buffer contract is forwarded.
+    unsafe { native_stats_json(core::ptr::from_ref(&image).cast(), size, buffer) }
+}
+
+/// Renders the selected Heap's full source image; null selects the current
+/// subprocess main Heap. Growth allocates through the calling thread's Heap.
+///
+/// # Safety
+/// The selected Heap and caller-Theap roots stay live during the snapshot.
+/// `buffer` is null or writable for `size` bytes; owned results require free.
+#[doc(hidden)]
+pub unsafe fn native_heap_stats_json(heap: *mut core::ffi::c_void, size: usize, buffer: *mut u8) -> *mut u8 {
+    let mut image = crate::statistics::HeapTheapStatistics::new();
+    // SAFETY: caller retains the source Heap; this local image is exclusive.
+    if !unsafe { native_heap_stats_get(heap, core::ptr::from_mut(&mut image).cast()) } {
+        return core::ptr::null_mut();
+    }
+    // SAFETY: the local image remains live and the buffer contract is forwarded.
+    unsafe { native_stats_json(core::ptr::from_ref(&image).cast(), size, buffer) }
 }
 
 /// Pinned `mi_thread_stats_print_out(out, arg)` (`src/stats.c:532-538`):

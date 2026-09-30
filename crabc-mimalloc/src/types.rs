@@ -235,9 +235,54 @@ impl Heap {
     /// projection live; that thread retains its Theap/TLD list for the call.
     /// The returned scalars borrow none of those images.
     pub(crate) unsafe fn statistics_for_print_at(
+        heap: NonNull<Self>, current: NonNull<Theap>,
+    ) -> (usize, crate::statistics::FinalStatisticsSnapshot) {
+        // SAFETY: the caller retains both the requested and source-selected
+        // Heap; the projection is consumed before any output callback.
+        let (sequence, statistics) = unsafe { Self::selected_statistics_at(heap, current) };
+        (sequence, unsafe { &*statistics }.final_output_snapshot())
+    }
+
+    /// Copies the full source-selected Heap image after merging its existing
+    /// current-thread Theap. Selection precedes output-header validation.
+    ///
+    /// # Safety
+    /// The requested Heap, the calling thread's cached/default Theap and its
+    /// actual owning Heap remain live and stable through the short projection.
+    /// `destination` is null or an exclusively writable complete source image.
+    pub(crate) unsafe fn copy_selected_statistics_into_source_image_at(
+        heap: NonNull<Self>, current: NonNull<Theap>, destination: *mut u8,
+    ) -> bool {
+        // SAFETY: the caller retains the source-selected statistics image.
+        let (_, statistics) = unsafe { Self::selected_statistics_at(heap, current) };
+        if destination.is_null() { return false; }
+        // SAFETY: only synchronized statistics are projected; the destination
+        // satisfies the caller's complete image contract.
+        unsafe { (&*statistics).copy_into_source_image(destination) }
+    }
+
+    /// Adds the full source-selected Heap image to a validated caller image.
+    ///
+    /// # Safety
+    /// As for the copy operation, with a previously validated destination.
+    pub(crate) unsafe fn add_selected_statistics_into_source_image_at(
+        heap: NonNull<Self>, current: NonNull<Theap>, destination: *mut u8,
+    ) {
+        // SAFETY: the caller retains the selected source and validated output.
+        let (_, statistics) = unsafe { Self::selected_statistics_at(heap, current) };
+        unsafe { (&*statistics).add_into_source_image(destination) };
+    }
+
+    /// Resolves the existing calling-thread Theap and merges into its actual
+    /// owning Heap, preserving the source's shared main-Heap fast key.
+    ///
+    /// # Safety
+    /// The caller retains all selected Heap/Theap images and excludes changes
+    /// to its thread-local roots through the returned pointer's immediate use.
+    unsafe fn selected_statistics_at(
         heap: NonNull<Self>,
         current: NonNull<Theap>,
-    ) -> (usize, crate::statistics::FinalStatisticsSnapshot) {
+    ) -> (usize, *const HeapTheapStatistics) {
         // SAFETY: immutable sequence and atomic statistics of the live Heap.
         let sequence = unsafe { core::ptr::addr_of!((*heap.as_ptr()).heap_seq).read() };
         let statistics = unsafe { &*core::ptr::addr_of!((*heap.as_ptr()).statistics) };
@@ -281,10 +326,10 @@ impl Heap {
                 let destination = unsafe { &*core::ptr::addr_of!((*owning_heap.as_ptr()).statistics) };
                 let source = unsafe { &*core::ptr::addr_of!((*theap.as_ptr()).statistics) };
                 destination.merge_from_and_reset(source);
-                return (sequence, destination.final_output_snapshot());
+                return (sequence, core::ptr::from_ref(destination));
             }
         }
-        (sequence, statistics.final_output_snapshot())
+        (sequence, core::ptr::from_ref(statistics))
     }
 
     /// `mi_heap_stat_decrease` of `page_bins[bin]` and `pages` for a page
@@ -385,6 +430,22 @@ impl Heap {
         unsafe { subprocess.as_ref() }
             .statistics()
             .merge_heap_and_reset(&self.statistics);
+        true
+    }
+
+    /// Moves this Heap's statistics directly into its owning subprocess and
+    /// clears the Heap record, without merging any current-thread Theap.
+    ///
+    /// # Safety
+    /// The Heap and its initialized subprocess stay live through the call;
+    /// the caller supplies the source exclusion for this merge/reset.
+    pub(crate) unsafe fn merge_statistics_into_owning_subprocess_at(heap: NonNull<Self>) -> bool {
+        // SAFETY: the caller retains immutable membership and atomic statistics.
+        let subprocess = unsafe { core::ptr::addr_of!((*heap.as_ptr()).subprocess).read() };
+        let Some(subprocess) = NonNull::new(subprocess) else { return false; };
+        let statistics = unsafe { &*core::ptr::addr_of!((*heap.as_ptr()).statistics) };
+        // SAFETY: only synchronized subprocess statistics are projected.
+        unsafe { subprocess.as_ref() }.statistics().merge_heap_and_reset(statistics);
         true
     }
 

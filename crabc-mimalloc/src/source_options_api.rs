@@ -157,6 +157,48 @@ pub unsafe fn stats_get(stats: *mut c_void) -> bool {
     unsafe { crate::runtime_lifecycle::native_stats_get(stats.cast()) }
 }
 
+/// Copies a selected subprocess's own statistics, excluding its Heaps.
+///
+/// # Safety
+/// `id` is null, the main id, or a retained live child. `stats` is null or an
+/// exclusively readable/writable complete source statistics image.
+pub unsafe fn subproc_stats_get_exclusive(id: *mut c_void, stats: *mut c_void) -> bool {
+    // SAFETY: forwarded retained identity and complete output image contracts.
+    unsafe { crate::runtime_lifecycle::native_subproc_stats_get(id, stats.cast(), true) }
+}
+
+/// Copies subprocess statistics plus its listed Heaps, after each existing
+/// calling-thread Theap merge. Metadata-Theap statistics stay excluded.
+///
+/// # Safety
+/// As for the exclusive getter; the calling thread retains its existing
+/// Theaps and their owning Heaps through the synchronous traversal.
+pub unsafe fn subproc_stats_get(id: *mut c_void, stats: *mut c_void) -> bool {
+    // SAFETY: forwarded retained identity, roots and complete image contracts.
+    unsafe { crate::runtime_lifecycle::native_subproc_stats_get(id, stats.cast(), false) }
+}
+
+/// Renders a selected subprocess aggregate into a fixed or owned JSON buffer.
+///
+/// # Safety
+/// `id` is null, the main id, or a live child retained during the snapshot.
+/// `buffer` is null or writable for `size` bytes; free any owned result.
+pub unsafe fn subproc_stats_json(id: *mut c_void, size: usize, buffer: *mut c_char) -> *mut c_char {
+    // SAFETY: forwarded selected identity and writable buffer contracts.
+    unsafe { crate::runtime_lifecycle::native_subproc_stats_json(id, size, buffer.cast()) }.cast()
+}
+
+/// Prints a selected subprocess aggregate after releasing its Heap-list lock.
+///
+/// # Safety
+/// `id` is null, the main id, or a child retained through all callbacks.
+/// `out` and `argument` stay callable; callbacks may allocate but cannot
+/// destroy the selected subprocess during rendering.
+pub unsafe fn subproc_stats_print_out(id: *mut c_void, out: Option<OutputFunction>, argument: *mut c_void) {
+    // SAFETY: forwarded selected identity and synchronous callback contracts.
+    unsafe { crate::runtime_lifecycle::native_subproc_stats_print_out(id, out, argument) };
+}
+
 pub use crate::diagnostic_output::SourceProcessInfo;
 
 /// `mi_stats_print_out`; a null `out` is the process default route.
