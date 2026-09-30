@@ -265,6 +265,11 @@ impl SubprocessHeapList {
     }
 
     #[cfg(test)]
+    pub(crate) fn test_counter_values_relaxed(&self) -> (usize, usize) {
+        (self.live.load(Ordering::Relaxed), self.total.load(Ordering::Relaxed))
+    }
+
+    #[cfg(test)]
     pub(crate) fn test_counts(&self) -> (usize, usize, bool) {
         let guard = self.lock.lock().expect("source Heap audit lock");
         let counts = (self.live.load(Ordering::Relaxed), self.total.load(Ordering::Relaxed), unsafe { (*self.head.get()).is_null() });

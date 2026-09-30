@@ -18,7 +18,9 @@ An ordinary managed arena with OS fallback disabled also refuses Heap-image
 allocation before list publication. Key-bitmap refusal controls exercise the
 first publication and the first real growth boundary with old keys and a
 Heap/Theap/client still owned; retry preserves those keys and advances only
-the successful claim's generation.
+the successful claim's generation. Barrier-held Heap visitors also retain
+list membership across live-client owner exit and contended delete/destroy
+on process-main and child subprocess paths.
 """
 
 from pathlib import Path
@@ -44,6 +46,7 @@ MAIN_FIELD_COUNT = 32
 LATER_TEST = "subproc::main_heaps::tests::source_ordered_main_subprocess_later_thread_heap_trace"
 LATER_FIELD_COUNT = 21
 FAULT_TEST = "managed_commit_refusal_preserves_heap_theap_and_caller_until_retry"
+LOCK_TEST = "runtime_lifecycle::tests::heap_list_visitor_pins_members_across_owner_exit_and_contended_release"
 KEY_FAULT_TEST = "runtime_lifecycle::tests::heap_key_bitmap_refusal_frees_unpublished_image_and_retries_original_generation"
 FAULT_BRANCHES = (
     "later-main-tld-metadata-allocation-failure",
@@ -185,6 +188,13 @@ def run_faults(*, replay: bool = False) -> None:
     c_key = trace(c_key_output, "key_fault", 32)
     rust_key = trace(rust_key_output, "key_fault", 32)
     compare("key_fault", c_key, rust_key)
+    c_lock_output = execute(c_product, ["locks"], f"c-lock-{suffix}.log")
+    rust_lock_output = execute(unit_product, [LOCK_TEST, "--exact", "--nocapture", "--test-threads=1"], f"rust-lock-{suffix}.log")
+    if harness.parse_rust_test_count(rust_lock_output) != 1:
+        raise harness.HarnessError("Heap lock overlap control did not execute one test")
+    c_lock = trace(c_lock_output, "lock", 64)
+    rust_lock = trace(rust_lock_output, "lock", 64)
+    compare("lock", c_lock, rust_lock)
     products = [c_product, key_product, native_product, unit_product]
     rows = []
     for branch in FAULT_BRANCHES:
@@ -207,7 +217,8 @@ def run_faults(*, replay: bool = False) -> None:
             raise harness.HarnessError(f"Heap fault unit did not execute one test: {unit}")
     observed = {"c_trace": c_trace, "rust_trace": native_trace,
                 "c_image_trace": c_image, "rust_image_trace": native_image,
-                "c_key_trace": c_key, "rust_key_trace": rust_key, "branches": rows}
+                "c_key_trace": c_key, "rust_key_trace": rust_key,
+                "c_lock_trace": c_lock, "rust_lock_trace": rust_lock, "branches": rows}
     if replay:
         if observed != {key: recorded[key] for key in observed}:
             raise harness.HarnessError("Retained Heap fault physical traces changed")
@@ -220,7 +231,7 @@ def run_faults(*, replay: bool = False) -> None:
             "seal": integrated.source_seal(), "git": engine.git_provenance(), "image_id": image_id,
             "inputs": [engine.file_record(path) for path in inputs],
             "products": [engine.file_record(path) for path in products]}})
-    print(f"Heap fault controls: 28 public C/native and 32 key-bitmap ownership observations, two paired metadata-publication refusals, three isolated retry/TLS controls passed; {artifacts}")
+    print(f"Heap fault controls: 28 public C/native and 32 key-bitmap ownership observations, 64 lock-overlap fields, two paired metadata-publication refusals, three isolated retry/TLS controls passed; {artifacts}")
 
 
 def main() -> None:

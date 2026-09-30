@@ -159,6 +159,9 @@ int main(void) {
 #else
 #include "static.c"
 #include <pthread.h>
+#include <stdatomic.h>
+#include <time.h>
+#include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -344,6 +347,131 @@ static bool visit_count(mi_heap_t* heap, void* arg) {
   (void)heap;
   (*(size_t*)arg)++;
   return true;
+}
+
+typedef struct {
+  mi_subproc_t* subproc;
+  mi_heap_t* heap;
+  unsigned char* client;
+  bool destroy;
+  pthread_barrier_t ready;
+  pthread_barrier_t owner_go;
+  pthread_barrier_t owner_done;
+  pthread_barrier_t release_go;
+  _Atomic(bool) complete;
+  size_t before_total;
+  size_t observed[5];
+  size_t visited;
+} heap_lock_state_t;
+
+static void heap_lock_barrier(pthread_barrier_t* barrier) {
+  int result = pthread_barrier_wait(barrier);
+  require(result == 0 || result == PTHREAD_BARRIER_SERIAL_THREAD);
+}
+
+static void* heap_lock_owner(void* argument) {
+  heap_lock_state_t* state = argument;
+  mi_subproc_add_current_thread(_mi_subproc_to_id(state->subproc));
+  state->heap = mi_heap_new();
+  require(state->heap != NULL);
+  state->client = mi_heap_malloc(state->heap, 64);
+  require(state->client != NULL);
+  memset(state->client, 0x6b, 64);
+  heap_lock_barrier(&state->ready);
+  heap_lock_barrier(&state->owner_go);
+  mi_thread_done();
+  heap_lock_barrier(&state->owner_done);
+  return NULL;
+}
+
+static void* heap_lock_release(void* argument) {
+  heap_lock_state_t* state = argument;
+  mi_subproc_add_current_thread(_mi_subproc_to_id(state->subproc));
+  heap_lock_barrier(&state->release_go);
+  if (state->destroy) mi_heap_destroy(state->heap);
+  else mi_heap_delete(state->heap);
+  atomic_store_explicit(&state->complete, true, memory_order_release);
+  mi_thread_done();
+  return NULL;
+}
+
+static bool heap_lock_visitor(mi_heap_t* heap, void* argument) {
+  heap_lock_state_t* state = argument;
+  state->visited++;
+  if (heap == state->heap) {
+    heap_lock_barrier(&state->owner_go);
+    heap_lock_barrier(&state->owner_done);
+    state->observed[0] = 1;
+    state->observed[1] = mi_atomic_load_relaxed(&state->subproc->heap_count);
+    heap_lock_barrier(&state->release_go);
+    /* The source count decrement precedes the locked unlink. Waiting for it
+       establishes real release progress while this visitor retains the list. */
+    struct timespec start, now;
+    require(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+    while (mi_atomic_load_relaxed(&state->subproc->heap_count) != 1) {
+      require(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
+      require(now.tv_sec - start.tv_sec < 10);
+      sched_yield();
+    }
+    state->observed[2] = mi_atomic_load_relaxed(&state->subproc->heap_count);
+    state->observed[3] = mi_atomic_load_relaxed(&state->subproc->heap_total_count) - state->before_total;
+    state->observed[4] = atomic_load_explicit(&state->complete, memory_order_acquire);
+  }
+  return true;
+}
+
+static void heap_lock_controls(void) {
+  unsigned char* caller = mi_malloc(64);
+  require(caller != NULL);
+  memset(caller, 0x59, 64);
+  for (size_t case_index = 0; case_index < 4; case_index++) {
+    bool child = case_index >= 2;
+    mi_subproc_t* subproc = child ? _mi_subproc_from_id(mi_subproc_new()) : _mi_subproc_main();
+    require(subproc != NULL);
+    size_t baseline_total = mi_atomic_load_relaxed(&subproc->heap_total_count);
+    heap_lock_state_t state = {.subproc = subproc, .destroy = (case_index % 2 != 0)};
+    require(pthread_barrier_init(&state.ready, NULL, 2) == 0);
+    require(pthread_barrier_init(&state.owner_go, NULL, 2) == 0);
+    require(pthread_barrier_init(&state.owner_done, NULL, 2) == 0);
+    require(pthread_barrier_init(&state.release_go, NULL, 2) == 0);
+    pthread_t owner, releaser;
+    require(pthread_create(&owner, NULL, heap_lock_owner, &state) == 0);
+    heap_lock_barrier(&state.ready);
+    state.before_total = mi_atomic_load_relaxed(&subproc->heap_total_count);
+    size_t values[16] = {child, state.destroy,
+      mi_atomic_load_relaxed(&subproc->heap_count), state.before_total - baseline_total};
+    require(values[2] == 2 && values[3] == 1);
+    require(pthread_create(&releaser, NULL, heap_lock_release, &state) == 0);
+    bool visited = mi_subproc_visit_heaps(_mi_subproc_to_id(subproc), heap_lock_visitor, &state);
+    for (size_t i = 0; i < 5; i++) values[4 + i] = state.observed[i];
+    values[9] = state.visited;
+    values[10] = visited;
+    require(pthread_join(owner, NULL) == 0);
+    require(pthread_join(releaser, NULL) == 0);
+    require(atomic_load_explicit(&state.complete, memory_order_acquire));
+    values[11] = mi_atomic_load_relaxed(&subproc->heap_count);
+    values[12] = list_length(subproc);
+    mi_heap_t* expected[] = {subproc->heap_main};
+    values[13] = list_is(subproc, expected, 1);
+    require(values[11] == 1 && values[12] == 1 && values[13]);
+    require(mi_atomic_load_relaxed(&subproc->heap_total_count) == state.before_total);
+    if (!state.destroy) {
+      values[14] = mi_heap_of(state.client) == subproc->heap_main;
+      for (size_t i = 0; i < 64; i++) values[14] &= state.client[i] == 0x6b;
+      require(values[14]);
+      mi_free(state.client);
+    }
+    values[15] = 1;
+    for (size_t i = 0; i < 64; i++) values[15] &= caller[i] == 0x59;
+    require(values[15]);
+    for (size_t i = 0; i < 16; i++) printf("m6.heap.lock.%zu=%zu\n", case_index * 16 + i, values[i]);
+    require(pthread_barrier_destroy(&state.ready) == 0);
+    require(pthread_barrier_destroy(&state.owner_go) == 0);
+    require(pthread_barrier_destroy(&state.owner_done) == 0);
+    require(pthread_barrier_destroy(&state.release_go) == 0);
+    if (child) mi_subproc_destroy(_mi_subproc_to_id(subproc));
+  }
+  mi_free(caller);
 }
 
 /* The Heap and block that outlive the worker thread. */
@@ -694,6 +822,7 @@ static void main_subprocess_later_thread_heaps(void) {
 
 int main(int argc, char** argv) {
   mi_process_init();
+  if (argc > 1 && strcmp(argv[1], "locks") == 0) { heap_lock_controls(); return 0; }
   if (argc > 1 && strcmp(argv[1], "faults") == 0) { heap_faults(false); }
   if (argc > 1 && strcmp(argv[1], "image-faults") == 0) { heap_faults(true); }
   if (argc > 1 && strcmp(argv[1], "main") == 0) {
