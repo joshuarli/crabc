@@ -7,6 +7,7 @@ provenance JSON; this document explains the durable source boundary.
 | Surface | Source oracle | License | crabc production path | Intentional difference |
 | --- | --- | --- | --- | --- |
 | `__muldc3` | LLVM compiler-rt 22.1.3, `lib/builtins/muldc3.c` | Apache-2.0 WITH LLVM-exception | `src/lib.rs::multiply_complex_double` | Direct Rust translation preserves the four-product and NaN/infinity recovery sequence; Rust `f64` classification methods replace C macros. |
+| x86 `__divdc3` | LLVM compiler-rt 22.1.3, `lib/builtins/divdc3.c` and the binary64 `logb`, `scalbn`, and `fmax` helpers in `lib/builtins/fp_lib.h` | Apache-2.0 WITH LLVM-exception | `src/lib.rs::{divide_complex_double,complex_division_normalize,complex_division_logb,complex_division_scalbn}` | Direct Rust translation preserves divisor scaling and the zero/NaN/infinity recovery order. Bit representations replace C unions; x86 quiet floating classifications preserve the source macros' observable denormal-operand flags and ordered NaN comparison effects. Scaling uses floating-point products for rounding and underflow, without libc or libm calls. The export is x86-only. |
 | x86 private `math.complex` `__mulsc3`/`__muldc3`/`__mulxc3` support | LLVM compiler-rt 22.1.3, `lib/builtins/{mulsc3,muldc3,mulxc3}.c` | Apache-2.0 WITH LLVM-exception | `compat/x86_64/complex_mul_support.c` is translated into local symbols in `libc/src/c_abi/x86_64/math_complex_complete_musl_x86_64.S` | Direct C source translation retains the four-product and NaN/infinity recovery sequence. The generated symbols are local implementation details of the x86 static `math.complex` leaf; this does not link a compiler-runtime archive or add a production dependency. |
 | x86 binary64/integer128 conversions | `compiler_builtins` 0.1.160 from pinned `nightly-2026-09-15` rust-src, `compiler-builtins/src/float/conv.rs` (SHA-256 `1ec3627f95be4a4e6b0e25c0ecaff9040e4ef68222a4df7398a422fb55a61ac8`) | MIT AND Apache-2.0 WITH LLVM-exception AND (MIT OR Apache-2.0) | `src/lib.rs::{uint128_to_binary64_bits,binary64_to_uint128}` and the four x86-only cast entries | Faithful specialization of `int_to_float::u128_to_f64_bits`, `signed`, and `float_to_int_inner` with `Uint128` shifts and limbs replacing native 128-bit operations. Nearest-even rounding, truncation, saturation, sign handling, and NaN-to-zero source branches remain intact. No new package or prebuilt runtime is consumed. |
 | Existing `__int128`, byte, and bit helpers | narrow crabc-owned Rust implementations in `src/lib.rs` | MIT OR Apache-2.0 | direct `rustc --emit=obj` object | These preserve the pre-existing explicit AAPCS64 two-word representation and do not use a prebuilt compiler runtime. |
@@ -36,3 +37,14 @@ Cargo source build, extraction of only `compiler_builtins-*.o`, deterministic
 `llvm-ar rcsD` construction, and archive-surface audit. The provenance file
 stores the command record's exact filename and SHA-256, so an assembler cannot
 declare a substituted archive verified by presenting only a feature summary.
+
+The double-complex division oracle is retained byte-for-byte under
+`fixtures/llvm22_divdc3`, including its headers, license, and SHA-256 input
+roster. It is the LLVM `llvmorg-22.1.3` source snapshot:
+`divdc3.c` SHA-256 `f6ebfa99e5a208078e998cf87e539f25a92d86e4e316fe983f4031f1745d938a`
+and `fp_lib.h` SHA-256 `cf3a5301c95986a9b392edba32dfe7ac27d3352d266e284e528a09413f84f6cc`.
+These C files are test-only inputs, excluded from the production archive.
+`run_x86_64_divdc3.sh` proves a compiler-emitted call in a closed freestanding
+image and compares output components and floating-point exception flags against
+the renamed C oracle under all four rounding modes. NaN payload selection is
+not compared; finite values, infinity signs, and signed zeros are bit-exact.

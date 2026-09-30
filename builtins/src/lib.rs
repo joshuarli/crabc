@@ -38,7 +38,7 @@ pub struct Uint128 {
 ///
 /// The compiler helper ABI passes the real and imaginary components in the
 /// same floating-point registers as this two-`f64` C layout. It exists only
-/// for `__muldc3`; it is not a general complex-number API.
+/// for the complex compiler helpers; it is not a general complex-number API.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComplexDouble {
@@ -100,6 +100,167 @@ fn multiply_complex_double(mut a: f64, mut b: f64, mut c: f64, mut d: f64) -> Co
         if recalculate {
             real = f64::INFINITY * (a * c - b * d);
             imaginary = f64::INFINITY * (a * d + b * c);
+        }
+    }
+    ComplexDouble { real, imaginary }
+}
+
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// Adapted from LLVM compiler-rt 22.1.3 binary64 complex division.
+// LLVM compiler-rt's binary64 scaling avoids libc calls and preserves the
+// target rounding and underflow behavior through floating-point products.
+#[cfg(target_arch = "x86_64")]
+fn complex_division_normalize(significand: &mut u64) -> i32 {
+    let shift = significand.leading_zeros() as i32 - (1_u64 << 52).leading_zeros() as i32;
+    *significand <<= shift;
+    1 - shift
+}
+
+#[cfg(target_arch = "x86_64")]
+fn complex_division_logb(value: f64) -> f64 {
+    let mut representation = value.to_bits();
+    let exponent = ((representation >> 52) & 0x7ff) as i32;
+    if exponent == 0x7ff {
+        if representation >> 63 == 0 || value.is_nan() { value } else { -value }
+    } else if value == 0.0 {
+        f64::NEG_INFINITY
+    } else if exponent != 0 {
+        (exponent - 1023) as f64
+    } else {
+        representation &= 0x7fff_ffff_ffff_ffff;
+        let shift = 1 - complex_division_normalize(&mut representation);
+        let normalized_exponent = ((representation >> 52) & 0x7ff) as i32;
+        (normalized_exponent - 1023 - shift) as f64
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn complex_division_scalbn(value: f64, scale: i32) -> f64 {
+    let representation = value.to_bits();
+    let mut exponent = ((representation >> 52) & 0x7ff) as i32;
+    if value == 0.0 || exponent == 0x7ff {
+        return value;
+    }
+    let mut significand = representation & 0x000f_ffff_ffff_ffff;
+    if exponent == 0 {
+        exponent += complex_division_normalize(&mut significand);
+        significand &= !(1_u64 << 52);
+    }
+    exponent = exponent.saturating_add(scale);
+    let sign = representation & (1_u64 << 63);
+    if exponent >= 0x7ff {
+        f64::from_bits(sign | (0x7fe_u64 << 52)) * 2.0
+    } else if exponent <= 0 {
+        let mut temporary = f64::from_bits(sign | (1_u64 << 52) | significand);
+        exponent = exponent.saturating_add(1022).max(1);
+        temporary *= f64::from_bits((exponent as u64) << 52);
+        temporary
+    } else {
+        f64::from_bits(sign | ((exponent as u64) << 52) | significand)
+    }
+}
+
+// Floating classification is observable through x86's denormal-operand
+// status bit. Integer bit tests would omit that source comparison effect.
+// Ordered comparison also keeps the source's NaN branch ahead of MAXSD-like
+// speculation, so a first-operand quiet NaN is propagated without invalid.
+#[cfg(target_arch = "x86_64")]
+fn complex_division_is_nan(value: f64) -> bool {
+    let unordered: u8;
+    // SAFETY: register-only comparison and byte output access no memory or
+    // stack. The floating exception state is deliberately observable.
+    unsafe {
+        core::arch::asm!(
+            "ucomisd {value}, {value}", "setp {unordered}",
+            value = in(xmm_reg) value, unordered = lateout(reg_byte) unordered,
+            options(nomem, nostack)
+        );
+    }
+    unordered != 0
+}
+
+#[cfg(target_arch = "x86_64")]
+fn complex_division_is_finite(value: f64) -> bool {
+    let within: u8;
+    let ordered: u8;
+    // SAFETY: all operands and outputs reside in registers; no memory is
+    // accessed. Quiet comparison retains the source classification flags.
+    unsafe {
+        core::arch::asm!(
+            "ucomisd {value}, {maximum}", "setbe {within}", "setnp {ordered}",
+            value = in(xmm_reg) value.abs(), maximum = in(xmm_reg) f64::MAX,
+            within = lateout(reg_byte) within, ordered = lateout(reg_byte) ordered,
+            options(nomem, nostack)
+        );
+    }
+    within != 0 && ordered != 0
+}
+
+#[cfg(target_arch = "x86_64")]
+fn complex_division_is_infinite(value: f64) -> bool {
+    let above: u8;
+    // SAFETY: this register-only comparison accesses no memory or stack.
+    // An unordered operand clears the ordered-above condition.
+    unsafe {
+        core::arch::asm!(
+            "ucomisd {value}, {maximum}", "seta {above}",
+            value = in(xmm_reg) value.abs(), maximum = in(xmm_reg) f64::MAX,
+            above = lateout(reg_byte) above, options(nomem, nostack)
+        );
+    }
+    above != 0
+}
+
+#[cfg(target_arch = "x86_64")]
+fn complex_division_ordered_less(left: f64, right: f64) -> bool {
+    let below: u8;
+    let ordered: u8;
+    // SAFETY: register-only comparison and byte outputs access no memory.
+    // The ordered source comparison raises invalid for a NaN right operand.
+    unsafe {
+        core::arch::asm!(
+            "comisd {left}, {right}", "setb {below}", "setnp {ordered}",
+            left = in(xmm_reg) left, right = in(xmm_reg) right,
+            below = lateout(reg_byte) below, ordered = lateout(reg_byte) ordered,
+            options(nomem, nostack)
+        );
+    }
+    below != 0 && ordered != 0
+}
+
+// Scaling the divisor first keeps its squared magnitude representable.
+// The recovery branches distinguish zero divisors, infinite numerators, and
+// infinite divisors only when both ordinary result components are NaN.
+#[cfg(target_arch = "x86_64")]
+fn divide_complex_double(mut a: f64, mut b: f64, mut c: f64, mut d: f64) -> ComplexDouble {
+    let abs_c = c.abs();
+    let abs_d = d.abs();
+    let maximum = if complex_division_is_nan(abs_c) ||
+        complex_division_ordered_less(abs_c, abs_d) { abs_d } else { abs_c };
+    let logbw = complex_division_logb(maximum);
+    let mut ilogbw = 0;
+    if complex_division_is_finite(logbw) {
+        ilogbw = logbw as i32;
+        c = complex_division_scalbn(c, -ilogbw);
+        d = complex_division_scalbn(d, -ilogbw);
+    }
+    let denominator = c * c + d * d;
+    let mut real = complex_division_scalbn((a * c + b * d) / denominator, -ilogbw);
+    let mut imaginary = complex_division_scalbn((b * c - a * d) / denominator, -ilogbw);
+    if complex_division_is_nan(real) && complex_division_is_nan(imaginary) {
+        if denominator == 0.0 && (!complex_division_is_nan(a) || !complex_division_is_nan(b)) {
+            real = f64::INFINITY.copysign(c) * a;
+            imaginary = f64::INFINITY.copysign(c) * b;
+        } else if (complex_division_is_infinite(a) || complex_division_is_infinite(b)) && complex_division_is_finite(c) && complex_division_is_finite(d) {
+            a = (if complex_division_is_infinite(a) { 1.0_f64 } else { 0.0_f64 }).copysign(a);
+            b = (if complex_division_is_infinite(b) { 1.0_f64 } else { 0.0_f64 }).copysign(b);
+            real = f64::INFINITY * (a * c + b * d);
+            imaginary = f64::INFINITY * (b * c - a * d);
+        } else if complex_division_is_infinite(logbw) && logbw > 0.0 && complex_division_is_finite(a) && complex_division_is_finite(b) {
+            c = (if complex_division_is_infinite(c) { 1.0_f64 } else { 0.0_f64 }).copysign(c);
+            d = (if complex_division_is_infinite(d) { 1.0_f64 } else { 0.0_f64 }).copysign(d);
+            real = 0.0 * (a * c + b * d);
+            imaginary = 0.0 * (b * c - a * d);
         }
     }
     ComplexDouble { real, imaginary }
@@ -408,6 +569,13 @@ pub extern "C" fn __muldc3(a: f64, b: f64, c: f64, d: f64) -> ComplexDouble {
     multiply_complex_double(a, b, c, d)
 }
 
+/// Return `(a + ib) / (c + id)` using the compiler's binary64 complex ABI.
+#[cfg(target_arch = "x86_64")]
+#[unsafe(no_mangle)]
+pub extern "C" fn __divdc3(a: f64, b: f64, c: f64, d: f64) -> ComplexDouble {
+    divide_complex_double(a, b, c, d)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn __udivti3(numerator: Uint128, denominator: Uint128) -> Uint128 {
     Uint128::divmod_unsigned(numerator, denominator).0
@@ -649,6 +817,43 @@ mod tests {
         ComplexDouble, Uint128, __ashlti3, __ashrti3, __divti3, __lshrti3, __modti3, __muldc3,
         __multi3, __udivti3, __umodti3,
     };
+
+    #[cfg(target_arch = "x86_64")]
+    use super::{__divdc3, complex_division_scalbn};
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn double_complex_division_scales_subnormal_divisors_without_losing_the_quotient() {
+        assert_eq!(__divdc3(3.0, 4.0, 1.0, 2.0),
+            ComplexDouble { real: 2.2, imaginary: -0.4 });
+        for value in [f64::MIN_POSITIVE, f64::from_bits(1), f64::from_bits(0x000f_ffff_ffff_ffff)] {
+            assert_eq!(__divdc3(value, 0.0, value, 0.0),
+                ComplexDouble { real: 1.0, imaginary: 0.0 });
+        }
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn double_complex_division_recovers_zero_and_infinite_divisor_signs() {
+        let zero_divisor = __divdc3(3.0, 4.0, -0.0, 0.0);
+        assert_eq!(zero_divisor.real, f64::NEG_INFINITY);
+        assert_eq!(zero_divisor.imaginary, f64::NEG_INFINITY);
+        let infinite_divisor = __divdc3(3.0, 4.0, f64::NEG_INFINITY, f64::INFINITY);
+        assert_eq!(infinite_divisor.real.to_bits(), 0.0_f64.to_bits());
+        assert_eq!(infinite_divisor.imaginary.to_bits(), (-0.0_f64).to_bits());
+        let infinite_numerator = __divdc3(f64::INFINITY, f64::INFINITY, 1.0, 0.0);
+        assert_eq!(infinite_numerator.real, f64::INFINITY);
+        assert_eq!(infinite_numerator.imaginary, f64::INFINITY);
+    }
+
+    #[test]
+    #[cfg(target_arch = "x86_64")]
+    fn complex_division_scaling_preserves_ieee_boundary_representations() {
+        assert_eq!(complex_division_scalbn(f64::MIN_POSITIVE, -52).to_bits(), 1);
+        assert_eq!(complex_division_scalbn(f64::from_bits(1), 1074), 1.0);
+        assert_eq!(complex_division_scalbn(-0.0, 1024).to_bits(), (-0.0_f64).to_bits());
+        assert_eq!(complex_division_scalbn(f64::MAX, 1), f64::INFINITY);
+    }
 
     fn words(value: u128) -> Uint128 {
         Uint128 {
