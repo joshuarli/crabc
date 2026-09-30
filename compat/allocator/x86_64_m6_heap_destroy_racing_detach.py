@@ -184,6 +184,11 @@ def read_cohort(profiles, replay=False):
         raise harness.HarnessError("Heap destroy receipt profile or causal rendezvous parameters differ")
     execution = harness.require_native_x86_64(require_image_identity=True)
     products = receipt.path.parent / "products"
+    declared_work = Path(harness.read_json(receipt.path)["work"])
+    work = harness.ROOT / declared_work
+    if (declared_work.is_absolute() or ".." in declared_work.parts or
+            work.parent != ARTIFACTS or not work.name.startswith("run-") or work.name == "run-"):
+        raise harness.HarnessError("Heap destroy receipt work differs from the cohort output root")
     for profile in profiles:
         expected = [f"{profile}-c-build"]
         expected += [f"{profile}-c-run-{attempt:02d}" for attempt in range(REPETITIONS)]
@@ -206,7 +211,11 @@ def read_cohort(profiles, replay=False):
         harness.validate_native_execution_provenance(
             harness.read_json(products / f"{profile}-native-execution-provenance.json"),
             expected_image_id=execution["image_id"])
-        binary_outputs = {}
+        output = profile_output(profile, work)
+        binary_outputs = {side: str(output / f"heap-destroy-racing-detach-{side}") for side in ("c", "rust")}
+        target = output / "cargo-target"
+        retained_driver = output / DRIVER.name
+        source = None
         for label in ("c-build", "rust-build", "rust-link"):
             case = next(row for row in receipt.cases if row["id"] == f"{profile}-{label}")
             path = next(receipt.path.parent / "logs" / name for name in case["logs"] if name.endswith(".json"))
@@ -215,19 +224,37 @@ def read_cohort(profiles, replay=False):
             command = record["command"]
             if label == "rust-build":
                 prefix = [harness.require_tool("cargo"), "build", "--locked", "--release",
-                          "--target", m4.RUST_TARGET, "-p", m4.ADAPTER_PACKAGE, "--target-dir"]
+                          "--target", m4.RUST_TARGET, "-p", m4.ADAPTER_PACKAGE, "--target-dir", str(target)]
                 suffix = ["--features", f"crabc-mimalloc/mi-{profile}"] if profile != "release" else []
-                if command[:len(prefix)] != prefix or command[len(prefix) + 1:] != suffix:
+                if command != prefix + suffix:
                     raise harness.HarnessError(f"{profile} Heap destroy adapter command differs")
             else:
-                binary_outputs["c" if label == "c-build" else "rust"] = command[-1]
                 prefix = [harness.require_tool("musl-gcc"), "-std=c11", "-D_GNU_SOURCE"]
                 if label == "c-build":
                     prefix += ["-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1"]
                 prefix += [*m4.api_profile_flags(profile), "-UNDEBUG"]
                 prefix += (["-DCRABC_C_THREAD_DONE_INTERLEAVE=1"] if label == "c-build" else
                            ["-DCRABC_NATIVE_THREAD_DONE_AUDIT=1", "-DCRABC_NATIVE_THREAD_DONE_INTERLEAVE=1"])
-                if command[:len(prefix)] != prefix or command[-3:-1] != ["-pthread", "-o"]:
+                if label == "c-build":
+                    if len(command) != len(prefix) + 9:
+                        raise harness.HarnessError(f"{profile} Heap destroy compiler command differs")
+                    source = Path(command[len(prefix) + 1]).parent
+                    temporary = source.parent.parent
+                    # The extraction is disposable. Bind its declared location to
+                    # the pinned archive layout without requiring removed files.
+                    if (".." in source.parts or temporary.parent != harness.TEMP_ROOT or
+                            not temporary.name.startswith("crabc-mimalloc-m6-heap-destroy-racing-detach-") or
+                            source != temporary / "source" / harness.load_pin()["archive_root"]):
+                        raise harness.HarnessError(f"{profile} Heap destroy declared pinned source differs")
+                    middle = ["-I", str(source / "include"), "-I", str(source / "src"),
+                              str(retained_driver), str(source / "src/static.c")]
+                    side = "c"
+                else:
+                    middle = ["-I", str(source / "include"), str(retained_driver),
+                              str(target / m4.RUST_TARGET / "release" / m4.ADAPTER_STATICLIB)]
+                    side = "rust"
+                expected_command = prefix + middle + ["-pthread", "-o", binary_outputs[side]]
+                if command != expected_command:
                     raise harness.HarnessError(f"{profile} Heap destroy compiler command differs")
         records = {side: [] for side in ("c", "rust")}
         for side in ("c", "rust"):
