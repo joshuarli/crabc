@@ -9,7 +9,7 @@ ordered, address-free `m2.arena.lifecycle.N=V` fields, and every field must
 match, except that scenario 23's default-option reservations carry the
 recorded `CRABC-MI-ARENA-RESERVATION-NO-THP` advice (`expected_rust`). The aggregate `allocator-m2` gate calls `run_evidence` with its one
 prebuilt test binary; `allocator-m2-arena-lifecycle` runs `main` for focused
-development without producing a milestone receipt.
+development without producing an aggregate receipt.
 
 The differential covers arena creation, OS reservation, and caller-owned
 external callback commitment/purge, refusal/retry, bitmap transitions, registry
@@ -17,22 +17,28 @@ retirement, and caller release. Real private managed arenas additionally cover
 small, medium, and large regular-page abandonment, a foreign held-owner claim
 refusal with bitmap/count restoration, retry and same-owner reassociation,
 foreign remote-free publication, owner collection, and terminal span/map release.
-This does not qualify cross-thread owner reassociation or hardware memory policy.
+The cross-thread caller additionally exercises natural owner exit, a distinct
+replacement owner, held-claim restoration, reassociation, and terminal page
+release. Hardware memory policy remains a separate condition.
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 from pathlib import Path
 import re
 import sys
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 
 FIXTURE = Path(__file__).with_suffix(".c").resolve()
 CHECK_ID = "arena-reservation-lifecycle-c-rust-differential"
 TARGET = "arena::owned::tests::emit_native_arena_lifecycle_trace"
+PROFILES = ("release", "debug-1", "stat-1", "stat-2")
+PROFILE_FEATURES = {"release": [], "debug-1": ["mi-debug-1", "mi-stat-1", "mi-stat-2"],
+                    "stat-1": ["mi-stat-1"], "stat-2": ["mi-stat-1", "mi-stat-2"]}
 FIELD = re.compile(r"m2\.arena\.lifecycle\.([0-9]+)=(-?[0-9]+)")
 # libtest's `--nocapture` output places the first field after this delimiter.
 RUST_INLINE_PREFIX = f"test {TARGET} ... "
@@ -66,7 +72,7 @@ def parse_trace(output: str, *, source: str) -> list[int]:
 def expected_rust(c_trace: list[int]) -> list[int]:
     """The pinned C trace with the one recorded divergence applied.
 
-    `CRABC-MI-ARENA-RESERVATION-NO-THP` (known-differences.md): at the
+    At the
     default allow_thp=1 without large OS pages, a Rust arena reservation is
     advised MADV_NOHUGEPAGE where pinned C advises MADV_HUGEPAGE or nothing.
     Only scenario 23's advice records change; every other field, including
@@ -97,12 +103,18 @@ def compare(c_trace: list[int], rust_trace: list[int]) -> dict[str, Any]:
     raise ValueError("native x86 arena lifecycle differs from pinned C: " + "; ".join(mismatches))
 
 
-def run_oracle(harness: Any, *, offline: bool) -> tuple[list[str], list[int]]:
+def run_oracle(harness: Any, *, offline: bool, profile: str = "release") -> tuple[list[str], list[int]]:
     """Build the fixture against the pinned archive and return its trace."""
+
+    if profile not in PROFILES:
+        raise harness.HarnessError("unsupported arena lifecycle configuration")
+    import x86_64_m4_gate as profiles
 
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
     artifacts = harness.ARTIFACT_ROOT / "x86_64/m2-arena-lifecycle"
+    if profile != "release":
+        artifacts /= profile
     artifacts.mkdir(parents=True, exist_ok=True)
     binary = artifacts / "oracle"
     with harness.temporary_directory(prefix="crabc-mimalloc-m2-arena-lifecycle-") as directory:
@@ -112,13 +124,17 @@ def run_oracle(harness: Any, *, offline: bool) -> tuple[list[str], list[int]]:
             "-DMI_SHARED_LIB", "-DMI_SHARED_LIB_EXPORT", "-DMI_LIBC_MUSL=1",
             "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
             "-I", str(source / "include"), "-I", str(source / "src"),
-            *harness.CONFIGURATION_PROFILES["release"],
+            *(harness.CONFIGURATION_PROFILES["release"] if profile == "release"
+              else profiles.api_profile_flags(profile)),
             # The fixture includes `static.c`, the single pinned translation unit.
             str(FIXTURE), "-Wl,--wrap=mmap", "-Wl,--wrap=mprotect", "-Wl,--wrap=madvise", "-Wl,--wrap=munmap", "-pthread", "-o", str(binary),
         ]
         build = harness.command_record(command, cwd=source, timeout_seconds=300)
+        harness.write_json(artifacts / "c-build.json", build)
         harness.require_success(build, "pinned C native x86 arena lifecycle oracle build")
         run = harness.command_record([str(binary)], cwd=source, timeout_seconds=180)
+        harness.write_json(artifacts / "c-execute.json", run)
+        (artifacts / "c.log").write_text(str(run["stdout"]), encoding="utf-8")
         harness.require_success(run, "pinned C native x86 arena lifecycle oracle")
     (artifacts / "c.log").write_text(str(run["stdout"]), encoding="utf-8")
     return command, parse_trace(str(run["stdout"]), source="pinned C")
@@ -155,25 +171,76 @@ def run_evidence(
     return evidence
 
 
-def main() -> int:
+def native_program(harness: Any, profile: str, artifacts: Path) -> dict[str, Any]:
+    """Build and retain the matching Cargo-emitted native test executable."""
+    if profile not in PROFILES:
+        raise harness.HarnessError("unsupported arena lifecycle configuration")
+    manifest = harness.ROOT / "crabc-mimalloc/Cargo.toml"
+    command = [harness.require_tool("cargo"), "test", "--manifest-path", str(manifest),
+               "--locked", "--offline", "--target", "x86_64-unknown-linux-musl",
+               "--lib", "--no-default-features"]
+    if profile != "release":
+        command.extend(("--features", "mi-" + profile))
+    command.extend(("--no-run", "--message-format=json"))
+    build = harness.command_record(command, cwd=harness.ROOT, timeout_seconds=3600)
+    harness.write_json(artifacts / "rust-build.json", build)
+    harness.require_success(build, "native arena lifecycle test product build")
+    candidates = []
+    for line in str(build["stdout"]).splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if (isinstance(event, Mapping) and event.get("reason") == "compiler-artifact"
+                and event.get("manifest_path") == str(manifest)
+                and event.get("target", {}).get("name") == "crabc_mimalloc"
+                and event.get("target", {}).get("src_path") == str(manifest.parent / "src/lib.rs")
+                and event.get("target", {}).get("kind") == ["lib"]
+                and event.get("profile", {}).get("test") is True
+                and event.get("features") == PROFILE_FEATURES[profile]
+                and isinstance(event.get("executable"), str)):
+            candidates.append(event)
+    if len(candidates) != 1 or not Path(candidates[0]["executable"]).is_file():
+        raise harness.HarnessError("native arena lifecycle compiler executable authority differs")
+    import shutil
+    binary = artifacts / "native-program"
+    shutil.copy2(candidates[0]["executable"], binary)
+    harness.write_json(artifacts / "compiler-artifact.json", candidates[0])
+    return {"path": binary, "execution": {"test_threads": 1, "timeout_seconds": 180}}
+
+
+def main(arguments: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--profile", choices=(*PROFILES, "all"), default="release")
+    arguments = parser.parse_args(arguments)
     import run as harness  # this script's directory is first on sys.path
 
     harness.require_native_x86_64()
-    try:
-        _, c_trace = run_oracle(harness, offline=True)
-        rust = harness.command_record(
-            ["python3", "compat/allocator/run_unit_x86_64.py", TARGET],
-            cwd=harness.ROOT, timeout_seconds=1800,
-        )
-        harness.require_success(rust, "Rust arena lifecycle trace")
+    status = 0
+    for profile in (PROFILES if arguments.profile == "all" else (arguments.profile,)):
         artifacts = harness.ARTIFACT_ROOT / "x86_64/m2-arena-lifecycle"
-        (artifacts / "rust.log").write_text(str(rust["stdout"]), encoding="utf-8")
-        comparison = compare(c_trace, parse_trace(str(rust["stdout"]), source="Rust"))
-    except (ValueError, harness.HarnessError) as error:
-        print(f"ERROR: {error}", file=sys.stderr)
-        return 1
-    print(f"arena lifecycle: pinned C/Rust matched {comparison['compared_value_count']} fields; {artifacts}")
-    return 0
+        if profile != "release":
+            artifacts /= profile
+        artifacts.mkdir(parents=True, exist_ok=True)
+        try:
+            _, c_trace = run_oracle(harness, offline=True, profile=profile)
+            program = native_program(harness, profile, artifacts)
+            command = harness._x86_64_program_check_command(
+                program, TARGET, nocapture=True, gate_name="native arena lifecycle")
+            rust = harness.command_record(command, cwd=harness.ROOT, timeout_seconds=180)
+            harness.write_json(artifacts / "rust-execute.json", rust)
+            (artifacts / "rust.log").write_text(str(rust["stdout"]) + str(rust["stderr"]), encoding="utf-8")
+            harness.require_success(rust, "native arena lifecycle trace")
+            output = str(rust["stdout"]) + "\n" + str(rust["stderr"])
+            if harness.parse_rust_test_count(output) != 1:
+                raise harness.HarnessError("exact arena lifecycle selection did not execute one passing test")
+            comparison = compare(c_trace, parse_trace(output, source="Rust"))
+        except (ValueError, harness.HarnessError) as error:
+            print(f"ERROR: {profile}: {error}", file=sys.stderr)
+            status = 1
+            continue
+        print(f"arena lifecycle {profile}: pinned C/Rust matched {comparison['compared_value_count']} fields; {artifacts}")
+    return status
 
 
 if __name__ == "__main__":
