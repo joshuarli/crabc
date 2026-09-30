@@ -34,7 +34,9 @@ only its exact source, configuration, image, products, and execution context.
   none missing. Public x86 support and allocator promotion remain disabled;
   selected C mimalloc and paused AArch64 behavior are preserved. Every Codex lane
   uses `gpt-6.1-sol` at medium; the target is 16 concurrent lanes, subject to the
-  tool's actual capacity.
+  tool's actual capacity. Executable completion selects correctness: 25 active
+  families and seven ordered gates; the frozen 26-family inventory and full
+  eight-gate performance chain remain intact. Launchers default to this scope.
 - **Runtime and ABI:** native signal masks, descriptor reads, synchronous waits,
   alternate stacks and process/thread queues have pinned-musl controls. Exact
   `e30070ce8` qualifies 183 CRT obligations and all 32 compiler helpers in four
@@ -118,7 +120,8 @@ only its exact source, configuration, image, products, and execution context.
   allocator switch, cleanup, final qualification and public-x86 promotion.
   Hardware permissions and host qualification remain external conditions.
   Exact `b2a903880` passes the full owned static product gate, reproducible
-  packages, all installed/extracted cases and its independent read-only reader.
+  packages, all installed/extracted cases, the complete 219-execution dynamic
+  qualification and separate full54 matrix, each with independent read-only readers.
   Full combined qualification remains open after a disk-exhausted attempt.
   Retire integrated, stopped worktrees promptly after retaining exact source/raw
   inputs and verifying their owning readers. Git owns history.
@@ -164,10 +167,6 @@ Default behavior matches pinned musl's defaults (user decision, 2026-09-25):
   recorded divergence from mimalloc v3.5.0 and carries a
   `known-differences.md` entry and a pinned-C correctness differential.
   Comparative performance evidence is deferred.
-- **CPU governor.** Qualified measurements run on the host's configured
-  governor (`powersave`). Candidate and reference interleave under the same
-  governor, so it is recorded and must be one consistent governor for the
-  whole run; it is not forced to `performance`.
 
 The accepted `libmimalloc-sys` 0.1.49 backend bundles mimalloc v3.3.2; it is
 **not** the exact v3.5.0 engine oracle. Preserve separate candidate, accepted-C
@@ -674,6 +673,11 @@ results, and explicitly states that performance was deferred.
 These retained directions are **not active x86 completion gates**. They do not
 resume AArch64 or enlarge the frozen consumer roster. Activating them requires
 new direction consistent with the target pause and scope.
+
+- **CPU governor.** Qualified measurements run on the host's configured
+  governor (`powersave`). Candidate and reference interleave under the same
+  governor, so it is recorded and must be one consistent governor for the
+  whole run; it is not forced to `performance`.
 
 **Allocator and runtime performance qualification.** The following retained
 criteria belong to later work. They are not scheduled or required by the active
