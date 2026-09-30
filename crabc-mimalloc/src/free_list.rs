@@ -34,8 +34,6 @@ use core::ptr::{self, NonNull};
 
 use crate::types::{Block, Page, PageFreeListState, PageLocalCollectState};
 
-const MAX_EXTEND_SIZE: usize = 8 * 1024;
-const MIN_EXTEND: usize = 1;
 const LINK_SIZE: usize = size_of::<*mut u8>();
 const LINK_ALIGN: usize = align_of::<*mut u8>();
 
@@ -63,6 +61,8 @@ pub(super) fn decode_page_link(page_address: usize, keys: [usize; 2], encoded: u
 pub(crate) enum FreeListError {
     /// The caller did not supply a valid scalar page geometry.
     InvalidPage,
+    /// The owning thread supplied no initialized, nonzero source random word.
+    RandomSourceUnavailable,
     /// The caller-owned storage does not cover the reserved block range.
     InsufficientStorage,
     /// The source extension precondition requires no deferred local frees.
@@ -310,41 +310,16 @@ impl LocalFreeList {
 
     /// Returns the source-defined next extension count before any link write.
     ///
-    /// This is the default `MI_SECURE < 2` arithmetic from
-    /// `mi_page_extend_free`; on-demand commitment belongs to the OS/page
-    /// lifecycle slice and cannot change this frozen profile's scalar count.
+    /// This uses the selected `mi_page_extend_free` minimum; on-demand
+    /// commitment belongs to the OS/page lifecycle and is already complete
+    /// for this local-list entrypoint.
     #[inline]
     pub(crate) const fn page_extend_count(
         capacity: u16,
         reserved: u16,
         block_size: usize,
     ) -> Option<u16> {
-        if reserved == 0 || capacity > reserved || block_size == 0 {
-            return None;
-        }
-        let available = (reserved - capacity) as usize;
-        if available == 0 {
-            return Some(0);
-        }
-
-        let mut max_extend = if block_size >= MAX_EXTEND_SIZE {
-            MIN_EXTEND
-        } else {
-            MAX_EXTEND_SIZE / block_size
-        };
-        if max_extend < MIN_EXTEND {
-            max_extend = MIN_EXTEND;
-        }
-        let extend = if available < max_extend {
-            available
-        } else {
-            max_extend
-        };
-        if extend == 0 || extend > u16::MAX as usize {
-            None
-        } else {
-            Some(extend as u16)
-        }
+        crate::page::page_extend_count(capacity, reserved, block_size, 0)
     }
 
     /// Initializes the next sequential source span and prepends it to `free`.
@@ -423,6 +398,106 @@ impl LocalFreeList {
         // SAFETY: this owner has exclusive access to the ordinary field.
         unsafe { ptr::write(self.capacity.as_ptr(), next_capacity) };
         Ok(extend)
+    }
+
+    /// Initializes the source secure slice permutation after backing commitment.
+    /// The random projection must not allocate or mutate this page. Existing
+    /// immediate and deferred heads remain owned; only the new suffix is linked.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn extend_count_randomized(
+        &mut self,
+        extend: u16,
+        random_word: impl FnOnce() -> Option<usize>,
+    ) -> Result<u16, FreeListError> {
+        let capacity = self.capacity_value();
+        let next_capacity = capacity.checked_add(extend)
+            .filter(|next| extend != 0 && *next <= self.reserved)
+            .ok_or(FreeListError::InvalidPage)?;
+        // Validate the entire writable suffix before consuming thread randomness
+        // or changing a link. Construction guarantees uniform block geometry.
+        let first = self.block_at(capacity as usize)?;
+        let last = self.block_at(next_capacity as usize - 1)?;
+        if extend == 1 {
+            // SAFETY: this is the sole new block in the accessible owner suffix.
+            unsafe { self.write_next(last, self.free()) };
+            self.set_free(first.as_ptr());
+        } else {
+            let random = random_word().filter(|word| *word != 0)
+                .ok_or(FreeListError::RandomSourceUnavailable)?;
+            let mut slice_count = 1usize;
+            while slice_count < 64 && slice_count * 2 <= extend as usize {
+                slice_count *= 2;
+            }
+            let slice_extend = extend as usize / slice_count;
+            let mut blocks = [0usize; 64];
+            let mut counts = [0usize; 64];
+            for index in 0..slice_count {
+                blocks[index] = capacity as usize + index * slice_extend;
+                counts[index] = slice_extend;
+            }
+            counts[slice_count - 1] += extend as usize % slice_count;
+            let mut current = random % slice_count;
+            counts[current] -= 1;
+            let start = self.block_at(blocks[current])?;
+            let mut shuffled = crate::random::shuffle(random | 1);
+            for index in 1..extend as usize {
+                let round = index % size_of::<usize>();
+                if round == 0 {
+                    shuffled = crate::random::shuffle(shuffled);
+                }
+                let mut next = (shuffled >> (8 * round)) & (slice_count - 1);
+                while counts[next] == 0 {
+                    next = (next + 1) & (slice_count - 1);
+                }
+                counts[next] -= 1;
+                let block = self.block_at(blocks[current])?;
+                blocks[current] += 1;
+                // Advance first: the source may choose the same slice again.
+                let successor = self.block_at(blocks[next])?;
+                // SAFETY: both nodes belong to the validated new suffix, and
+                // the slice counts ensure each node receives exactly one link.
+                unsafe { self.write_next(block, successor.as_ptr()) };
+                current = next;
+            }
+            let tail = self.block_at(blocks[current])?;
+            // SAFETY: the final new node retains the previous immediate head.
+            unsafe { self.write_next(tail, self.free()) };
+            self.set_free(start.as_ptr());
+        }
+        // SAFETY: publication follows all initialized suffix links under the
+        // caller's exclusive owner-field authority.
+        unsafe { ptr::write(self.capacity.as_ptr(), next_capacity) };
+        Ok(extend)
+    }
+
+    /// Selects the configured source extension without drawing in default mode.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn extend_count_with_random(
+        &mut self,
+        extend: u16,
+        random_word: impl FnOnce() -> Option<usize>,
+    ) -> Result<u16, FreeListError> {
+        if crate::config::SECURE_LEVEL >= 2 {
+            self.extend_count_randomized(extend, random_word)
+        } else {
+            self.extend_count(extend)
+        }
+    }
+
+    /// Computes the selected source bound before drawing thread randomness.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn extend_with_random(
+        &mut self,
+        random_word: impl FnOnce() -> Option<usize>,
+    ) -> Result<u16, FreeListError> {
+        if crate::config::SECURE_LEVEL < 2 {
+            return self.extend();
+        }
+        let count = crate::page::page_extend_count(
+            self.capacity_value(), self.reserved, self.block_size, 0,
+        ).ok_or(FreeListError::InvalidPage)?;
+        if count == 0 { return Ok(0); }
+        self.extend_count_randomized(count, random_word)
     }
 
     /// Pops one available block as `mi_page_malloc_zero` does on its fast path.
@@ -953,6 +1028,77 @@ mod tests {
             used: NonNull::from(&mut state.used),
             free_is_zero: NonNull::from(&mut state.free_is_zero),
         }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn secure_slice_extension_preserves_immediate_and_deferred_heads() {
+        let mut storage = Page([0; 4096]);
+        let mut state = TestPageState::fresh(true);
+        let mut list = list_for(&mut state, &mut storage, size_of::<usize>(), 512);
+        assert_eq!(list.extend_count(3).unwrap(), 3);
+        let clients = [list.pop(false).unwrap().unwrap(), list.pop(false).unwrap().unwrap(),
+            list.pop(false).unwrap().unwrap()];
+        // SAFETY: these three distinct popped blocks return exactly once;
+        // the first two become immediately available and the third stays deferred.
+        unsafe {
+            list.push_local(clients[1]).unwrap();
+            list.push_local(clients[0]).unwrap();
+        }
+        assert!(list.collect_local(false).unwrap());
+        unsafe { list.push_local(clients[2]).unwrap(); }
+        let deferred = list.local_free();
+        let used = list.used_value();
+        assert_eq!(list.extend_count_randomized(65, || Some(0x1122334455667788)).unwrap(), 65);
+        assert_eq!(list.local_free(), deferred);
+        assert_eq!(list.used_value(), used);
+        assert_eq!(list.capacity(), 68);
+        // Pinned source slice threading for the staged full random word
+        // 0x1122334455667788, including the 65th block in the final slice.
+        let expected = [11, 36, 64, 29, 13, 55, 40, 18, 24, 12, 23, 25, 15, 26,
+            45, 14, 53, 60, 4, 42, 16, 9, 38, 46, 5, 58, 17, 56, 19, 63,
+            34, 20, 33, 65, 57, 22, 21, 43, 27, 10, 54, 44, 28, 30, 31, 41,
+            32, 66, 59, 67, 35, 3, 62, 6, 37, 7, 39, 47, 48, 49, 50, 51,
+            8, 52, 61, 0, 1];
+        for index in expected {
+            let block = list.pop(false).unwrap().unwrap();
+            assert_eq!((block.as_ptr().addr() - list.base.as_ptr().addr()) / size_of::<usize>(), index);
+        }
+        assert!(list.pop(false).unwrap().is_none());
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn secure_extension_refuses_missing_random_before_any_page_write() {
+        let mut storage = Page([0xa5; 64]);
+        let mut state = TestPageState::fresh(false);
+        let mut list = list_for(&mut state, &mut storage, 16, 4);
+        for random in [None, Some(0)] {
+            assert_eq!(list.extend_count_randomized(3, || random),
+                Err(FreeListError::RandomSourceUnavailable));
+            assert_eq!(list.capacity(), 0);
+            assert!(list.free().is_null());
+            assert!(list.local_free().is_null());
+            // SAFETY: the owner buffer remains fully live; rejected extension
+            // creates no initialized links or client allocations.
+            assert!(unsafe { core::slice::from_raw_parts(list.base.as_ptr(), list.bytes) }
+                .iter().all(|byte| *byte == 0xa5));
+        }
+        assert_eq!(list.extend_count_randomized(5, || panic!("invalid geometry drew")),
+            Err(FreeListError::InvalidPage));
+        assert_eq!(list.extend_count_randomized(1, || panic!("single block drew")), Ok(1));
+        assert!(list.pop(false).unwrap().is_some());
+        assert!(list.pop(false).unwrap().is_none());
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn default_extension_does_not_consume_thread_randomness() {
+        let mut storage = Page([0; 64]);
+        let mut state = TestPageState::fresh(true);
+        let mut list = list_for(&mut state, &mut storage, 16, 4);
+        assert_eq!(list.extend_count_with_random(2, || panic!("default mode drew")), Ok(2));
+        assert_eq!(list.extend_with_random(|| panic!("available list drew")), Ok(0));
     }
 
     #[test]

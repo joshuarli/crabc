@@ -195,7 +195,7 @@ pub(crate) const fn page_counts_are_valid(capacity: u16, reserved: u16) -> bool 
 }
 
 /// Returns the next number of objects initialized by `mi_page_extend_free` in
-/// the frozen default profile, before any free-list writes occur.
+/// the selected build profile, before any free-list writes occur.
 ///
 /// `slice_pcommitted` is the source count of committed OS pages relative to
 /// the slice start (`mi_page_slice_committed`), where zero means fully
@@ -210,6 +210,21 @@ pub(crate) const fn page_extend_count(
     block_size: usize,
     slice_pcommitted: u16,
 ) -> Option<u16> {
+    page_extend_count_at_secure_level(capacity, reserved, block_size, slice_pcommitted,
+        crate::config::SECURE_LEVEL)
+}
+
+/// Applies the source-selected minimum while retaining commitment bounds.
+#[inline]
+pub(crate) const fn page_extend_count_at_secure_level(
+    capacity: u16,
+    reserved: u16,
+    block_size: usize,
+    slice_pcommitted: u16,
+    secure_level: usize,
+) -> Option<u16> {
+    if secure_level > 5 { return None; }
+    let minimum = if secure_level >= 2 { 8 * secure_level } else { PAGE_MIN_EXTEND };
     if !page_counts_are_valid(capacity, reserved) || block_size == 0 {
         return None;
     }
@@ -220,12 +235,12 @@ pub(crate) const fn page_extend_count(
     }
 
     let mut max_extend = if block_size >= PAGE_MAX_EXTEND_SIZE {
-        PAGE_MIN_EXTEND
+        minimum
     } else {
         PAGE_MAX_EXTEND_SIZE / block_size
     };
-    if max_extend < PAGE_MIN_EXTEND {
-        max_extend = PAGE_MIN_EXTEND;
+    if max_extend < minimum {
+        max_extend = minimum;
     }
 
     let mut extend = if available < max_extend {
@@ -523,6 +538,21 @@ mod tests {
             Some(1),
         );
         assert_eq!(page_extend_count(0, 2, usize::MAX, 1), None);
+    }
+
+    #[test]
+    fn secure_extension_minimum_still_obeys_reserved_and_commit_limits() {
+        for level in 0..=5 {
+            let minimum = if level < 2 { 1 } else { 8 * level };
+            assert_eq!(page_extend_count_at_secure_level(0, 100, 8192, 0, level),
+                Some(minimum as u16));
+            assert_eq!(page_extend_count_at_secure_level(0, 3, 8192, 0, level),
+                Some(core::cmp::min(minimum, 3) as u16));
+            assert_eq!(page_extend_count_at_secure_level(0, 100, 8192, 1, level),
+                Some(core::cmp::min(minimum, ARENA_SLICE_SIZE / 8192) as u16));
+            assert_eq!(page_extend_count_at_secure_level(100, 100, 8192, 0, level), Some(0));
+        }
+        assert_eq!(page_extend_count_at_secure_level(0, 100, 8192, 0, 6), None);
     }
 
     #[test]
