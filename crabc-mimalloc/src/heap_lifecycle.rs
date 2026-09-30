@@ -159,21 +159,24 @@ pub(crate) unsafe fn child_heap_new_in_arena(
     #[cfg(not(target_arch = "x86_64"))]
     let image_size = size_of::<NonMainHeapImage>();
     // SAFETY: forwarded current-thread obligation.
-    let block = unsafe {
+    let (block, extent_invalid) = unsafe {
         member.with_page_engine(binding, |_child, engine| {
-            engine.allocate(image_size, true)
+            let block = engine.allocate(image_size, true)?;
+            // The allocating engine owns this PageMap. A process-global
+            // usable-size query cannot observe an independent child binding.
+            #[cfg(target_arch = "x86_64")]
+            // SAFETY: this engine just returned the exact live private block.
+            let extent_invalid = unsafe { engine.usable_size(block) }
+                .is_none_or(|usable| usable < image_size);
+            #[cfg(not(target_arch = "x86_64"))]
+            let extent_invalid = false;
+            Some((block, extent_invalid))
         })
     }
     .map_err(HeapNewError::ImageAllocation)?
     .ok_or(HeapNewError::ImageAllocation(ChildMetadataPageEngineError::SessionNotReady))?;
     let image = block.cast::<NonMainHeapImage>();
     // heap.c:139-144 `_mi_thread_local_create`; failure frees the image.
-    #[cfg(target_arch = "x86_64")]
-    // SAFETY: the new exact ordinary block remains private until publication.
-    let extent_invalid = unsafe { crate::runtime_lifecycle::native_usable_size(block) }
-        .is_none_or(|usable| usable < image_size);
-    #[cfg(not(target_arch = "x86_64"))]
-    let extent_invalid = false;
     let slot = if image.as_ptr().addr() % align_of::<NonMainHeapImage>() != 0
         || extent_invalid
     {
@@ -1179,6 +1182,18 @@ mod tests {
                     // and the scoped worker is the only child operation.
                     let first = unsafe { child_heap_new(child, &mut member, binding, keys) }
                         .expect("the first Heap is created");
+                    // The Heap image must retain its ordinary allocation in
+                    // this child's PageMap through publication and deletion.
+                    let usable = unsafe {
+                        member.with_page_engine(binding, |_child, engine| {
+                            unsafe { engine.usable_size(first.cast()) }
+                        })
+                    }.expect("the allocating engine remains available")
+                        .expect("the live Heap image is in its allocating PageMap");
+                    assert!(usable >= size_of::<NonMainHeapImage>());
+                    #[cfg(target_arch = "x86_64")]
+                    assert!(usable >= crate::source_heap_api::SOURCE_HEAP_IMAGE_REQUEST_SIZE);
+                    assert_eq!(first.as_ptr().addr() % align_of::<NonMainHeapImage>(), 0);
                     push_heap(&mut trace, child, first);
                     let second = unsafe { child_heap_new(child, &mut member, binding, keys) }
                         .expect("the second Heap is created");
