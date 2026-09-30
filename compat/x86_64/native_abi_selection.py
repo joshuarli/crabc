@@ -4365,8 +4365,104 @@ def attach_public_data_declaration_runtime(
     }]
 
 
+def _compiler_helper_installed_links(installed_links: Mapping[str, Path] | None, *,
+                                     crt_startup_report: Path | None, paths: Mapping[str, Path],
+                                     account: Mapping[str, Any]) -> dict[str, Any]:
+    """Bind ordinary helper consumers to a replayed CRT cohort and linker bytes.
+
+    Archive arithmetic evidence does not supply installed consumer objects or
+    their final calls. Each supplied driver receipt identifies one such object
+    and executable. The CRT owner authenticates the retained linker and the
+    exact products before complete helper bodies and dependencies are read.
+    """
+    if installed_links is None:
+        return {'status': 'pending',
+                'reason': 'Complete installed compiler-helper bodies and calls were not supplied.'}
+    modes = ('static', 'static-pie', 'pie', 'non-pie')
+    require(type(installed_links) is dict and set(installed_links) == set(modes),
+            'compiler-helper installed link modes differ')
+    require(crt_startup_report is not None, 'compiler-helper installed links require the CRT linker anchor')
+    anchor = physical_work_path(crt_startup_report, directory=False)
+    anchor_before = file_identity(anchor)
+    crt_reader = _crt_startup_reader()
+    require(Path(crt_reader.ROOT) == ROOT and Path(crt_reader.__file__).resolve().parent == MODULE_DIR,
+            'compiler-helper CRT linker reader belongs to a different checkout')
+    try:
+        crt = crt_reader.validate_report(ROOT, anchor)
+    except (KeyError, TypeError, ValueError, OSError, crt_reader.StartupEvidenceError) as error:
+        raise SelectionError(f'compiler-helper CRT linker anchor rejected: {error}') from error
+    require(same(anchor_before, file_identity(anchor)), 'compiler-helper CRT linker anchor changed')
+    inputs = crt['inputs_before']
+    require(same(crt['inputs_after'], inputs)
+            and same(crt['collector_source'], account['aggregate_c_abi']['source'])
+            and same(inputs['selected_source'], account['aggregate_c_abi']['source']),
+            'compiler-helper CRT linker source differs')
+    _require_stdio_receipt_path(inputs['preparation'], paths['static_preparation'],
+                                'compiler-helper CRT preparation')
+    _require_stdio_receipt_path(inputs['historical_facts'], paths['elf_report'],
+                                'compiler-helper CRT complete ELF facts')
+    _require_stdio_product_root(inputs['static_preparation']['primary']['path'], paths['static_product'],
+                               'compiler-helper CRT static product')
+    _require_stdio_product_root(inputs['dynamic_product']['path'], paths['dynamic_product'],
+                               'compiler-helper CRT dynamic product')
+    original = crt['tools']['linker']['original']
+    retained = crt['tools']['linker']['retained']
+    retained_path = physical_work_path(anchor.parent / retained['path'], directory=False)
+    require(file_identity(retained_path)['sha256'] == original['sha256'] == retained['sha256'],
+            'compiler-helper retained linker bytes differ')
+    linker = {key: original[key] for key in ('path', 'sha256')}
+    names = set(compiler_helpers.helper_names(compiler_helpers.load_contract(ROOT)))
+    links = {}
+    for mode in modes:
+        product = paths['static_product'] if mode in {'static', 'static-pie'} else paths['dynamic_product']
+        receipt = physical_work_path(installed_links[mode], directory=False)
+        record = read_json(receipt)
+        require(type(record) is dict, 'compiler-helper installed receipt is not an object')
+        output = record.get('output', {}).get('path') if mode in {'static', 'static-pie'} else record.get('output_path')
+        rows = record.get('input_receipts')
+        require(type(rows) is list and type(output) is str, 'compiler-helper installed receipt inputs differ')
+
+        def native_path(value: object) -> Path:
+            require(type(value) is str and value.startswith('/workspace/'),
+                    'compiler-helper installed input leaves the retained source mount')
+            return physical_work_path(ROOT / value.removeprefix('/workspace/'), directory=False)
+
+        executable = native_path(output)
+        if mode in {'static', 'static-pie'}:
+            application = [row.get('path') for row in rows if type(row) is dict and row.get('role') == 'application']
+        else:
+            application = [row.get('path') for row in rows if type(row) is dict
+                           and type(row.get('path')) is str and row['path'].startswith('/workspace/')
+                           and not (ROOT / row['path'].removeprefix('/workspace/')).is_relative_to(product)]
+        require(len(application) == 1, 'compiler-helper installed receipt does not identify one compiler object')
+        workload = native_path(application[0])
+        before = {key: file_identity(path) for key, path in
+                  (('receipt', receipt), ('workload', workload), ('executable', executable))}
+        try:
+            proof = compiler_helpers.retained_compiler_helper_link(
+                root=ROOT, product=product, workload=workload, executable=executable,
+                receipt=receipt, linkage=mode, linker=linker)
+        except (KeyError, TypeError, ValueError, OSError) as error:
+            raise SelectionError(f'compiler-helper installed {mode} link rejected: {error}') from error
+        require(before == {key: file_identity(path) for key, path in
+                           (('receipt', receipt), ('workload', workload), ('executable', executable))},
+                f'compiler-helper installed {mode} inputs changed')
+        placement = 'static-builtins' if mode in {'static', 'static-pie'} else 'dynamic-builtins'
+        require(proof['archive_sha256'] == account['installed_archive_identities'][placement]['sha256']
+                and set(proof['transfers']) == names
+                and all(row['provider_closure']['code'] and row['resolved_calls']
+                        and all(call['target_address'] == row['provider_address'] for call in row['resolved_calls'])
+                        for row in proof['transfers'].values()),
+                f'compiler-helper installed {mode} complete provider/call projection differs')
+        links[mode] = {'inputs': before, 'proof': proof}
+    require(same(anchor_before, file_identity(anchor)), 'compiler-helper CRT linker anchor changed while reading links')
+    return {'status': 'verified', 'crt_report': anchor_before,
+            'linker': {'original': original, 'retained': file_identity(retained_path)}, 'links': links}
+
+
 def compiler_helper_adapter(report_path: Path | None, *, ordinary_report_path: Path | None,
-                            paths: Mapping[str, Path]) -> dict[str, Any] | None:
+                            paths: Mapping[str, Path], installed_links: Mapping[str, Path] | None = None,
+                            crt_startup_report: Path | None = None) -> dict[str, Any] | None:
     """Attach the owning helper reader's aggregate-to-installed archive proof.
 
     The component validates its own supplied products and optional ordinary
@@ -4374,6 +4470,7 @@ def compiler_helper_adapter(report_path: Path | None, *, ordinary_report_path: P
     completion separate from the two installed archive roles.
     """
     if report_path is None:
+        require(installed_links is None, 'compiler-helper installed links require the aggregate')
         return None
     require(paths['measurement_checkout'] == ROOT and Path(compiler_helpers.ROOT) == ROOT,
             'compiler-helper evidence requires the selecting checkout product cohort')
@@ -4393,7 +4490,10 @@ def compiler_helper_adapter(report_path: Path | None, *, ordinary_report_path: P
             and account['aggregate_c_abi'].get('status') == 'joined', 'compiler-helper aggregate is not joined to both archives')
     require(all(account.get(key) is False for key in ('shared_placement_selected', 'family_completion', 'public_support')),
             'compiler-helper component exceeds archive evidence scope')
-    return {'report': before, 'reader': file_identity(Path(compiler_helpers.__file__)), 'account': account}
+    installed = _compiler_helper_installed_links(installed_links, crt_startup_report=crt_startup_report,
+                                                 paths=paths, account=account)
+    return {'report': before, 'reader': file_identity(Path(compiler_helpers.__file__)),
+            'account': account, 'installed_links': installed}
 
 
 def _identity_payload(record: object, description: str) -> dict[str, Any]:
@@ -12367,7 +12467,8 @@ def _compiler_helper_shared_contract(contract: Mapping[str, Any], inputs: Mappin
 
 def _validated_compiler_helper_shared_projection(companion: Mapping[str, Any], helper_contract: Mapping[str, Any]) -> dict[str, Any]:
     """Return the reader-authenticated local libc rows without selecting them yet."""
-    companion = exact(companion, {'report', 'reader', 'account'}, 'compiler-helper companion')
+    require(set(companion) in ({'report', 'reader', 'account'}, {'report', 'reader', 'account', 'installed_links'}),
+            'compiler-helper companion fields differ')
     exact(companion['report'], {'path', 'sha256', 'size', 'mode'}, 'compiler-helper aggregate report identity')
     exact(companion['reader'], {'path', 'sha256', 'size', 'mode'}, 'compiler-helper reader identity')
     account = exact(companion['account'], {
@@ -12841,6 +12942,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   ordinary_declaration_abi_report: Path | None = None,
                   ordinary_link_report: Path | None = None, loader_debug_report: Path | None = None,
                   compiler_helper_aggregate_report: Path | None = None,
+                 compiler_helper_installed_links: Mapping[str, Path] | None = None,
                   loader_runtime_registry_report: Path | None = None,
                   pthread_alias_contract_report: Path | None = None,
                   prepared_worker_tls_report: Path | None = None,
@@ -13022,6 +13124,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     ))
     compiler_helper_companion = _admit(rejected, 'compiler_helper_aggregate_report', lambda: compiler_helper_adapter(
         compiler_helper_aggregate_report, ordinary_report_path=ordinary_link_report, paths=paths,
+        installed_links=compiler_helper_installed_links, crt_startup_report=crt_startup_report,
     ))
     expanded = expand_obligations(contract, inputs)
     fixed_c_producer_metadata_pending = attach_fixed_c_producer_metadata(
@@ -13031,6 +13134,10 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         expanded, compiler_helper_companion, contract, inputs,
     )
     accounting = account_placements(expanded, facts)
+    if compiler_helper_companion is not None and compiler_helper_companion['installed_links']['status'] == 'pending':
+        accounting['blockers'].append({'code': 'compiler-helper-installed-links-pending',
+                                      'owner_group': COMPILER_HELPER_GROUP,
+                                      'reason': compiler_helper_companion['installed_links']['reason']})
     module_private_joins = attach_module_private_symbols(
         accounting, contract['module_private_symbols'],
         fixed_c_producer_metadata_companion['account']['archive_map']['static_rust_members'],
@@ -13329,6 +13436,11 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         declaration_report=declaration_report, ordinary_declaration_abi_report=ordinary_declaration_abi_report,
         ordinary_link_report=ordinary_link_report, errno_storage_lifecycle_report=errno_storage_lifecycle_report,
     )
+    if compiler_helper_companion is not None:
+        require(same(compiler_helper_adapter(
+            compiler_helper_aggregate_report, ordinary_report_path=ordinary_link_report, paths=paths,
+            installed_links=compiler_helper_installed_links, crt_startup_report=crt_startup_report,
+        ), compiler_helper_companion), 'compiler-helper evidence changed during final recheck')
     candidate = measurement['candidate_build']
     source_matches = source_before['clean'] is True and source_before['revision'] == candidate['revision'] and source_before['content_sha256'] == candidate['source_content_sha256']
     blockers = accounting.pop('blockers')
@@ -13454,6 +13566,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  ordinary_declaration_abi_report: Path | None = None,
                  ordinary_link_report: Path | None = None, loader_debug_report: Path | None = None,
                  compiler_helper_aggregate_report: Path | None = None,
+                 compiler_helper_installed_links: Mapping[str, Path] | None = None,
                  loader_runtime_registry_report: Path | None = None,
                  pthread_alias_contract_report: Path | None = None,
                  prepared_worker_tls_report: Path | None = None,
@@ -13492,6 +13605,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            ordinary_declaration_abi_report=ordinary_declaration_abi_report,
                            ordinary_link_report=ordinary_link_report, loader_debug_report=loader_debug_report,
                            compiler_helper_aggregate_report=compiler_helper_aggregate_report,
+                           compiler_helper_installed_links=compiler_helper_installed_links,
                            loader_runtime_registry_report=loader_runtime_registry_report,
                            pthread_alias_contract_report=pthread_alias_contract_report,
                            prepared_worker_tls_report=prepared_worker_tls_report,
@@ -13530,6 +13644,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     ordinary_declaration_abi_report: Path | None = None,
                     ordinary_link_report: Path | None = None, loader_debug_report: Path | None = None,
                     compiler_helper_aggregate_report: Path | None = None,
+                 compiler_helper_installed_links: Mapping[str, Path] | None = None,
                     loader_runtime_registry_report: Path | None = None,
                     pthread_alias_contract_report: Path | None = None,
                     prepared_worker_tls_report: Path | None = None,
@@ -13570,6 +13685,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              ordinary_declaration_abi_report=ordinary_declaration_abi_report,
                              ordinary_link_report=ordinary_link_report, loader_debug_report=loader_debug_report,
                              compiler_helper_aggregate_report=compiler_helper_aggregate_report,
+                             compiler_helper_installed_links=compiler_helper_installed_links,
                              loader_runtime_registry_report=loader_runtime_registry_report,
                              pthread_alias_contract_report=pthread_alias_contract_report,
                              prepared_worker_tls_report=prepared_worker_tls_report,
@@ -13616,6 +13732,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--public-data-ordinary-link-report', type=Path)
     parser.add_argument('--loader-debug-abi-report', type=Path)
     parser.add_argument('--compiler-helper-aggregate-report', type=Path)
+    parser.add_argument('--compiler-helper-installed-link', nargs=2, action='append', metavar=('MODE', 'RECEIPT'))
     parser.add_argument('--loader-runtime-registry-report', type=Path)
     parser.add_argument('--pthread-alias-contract-report', type=Path)
     parser.add_argument('--prepared-worker-tls-report', type=Path)
@@ -13645,7 +13762,8 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--bsd-random-receipt-report', type=Path)
     parser.add_argument('--public-data-declaration-runtime-report', type=Path)
     parser.add_argument('--loader-structural-owner-receipt-report', type=Path)
-    options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')]
+    options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')
+               and arg.split('=', 1)[0] != '--compiler-helper-installed-link']
     if len(options) != len(set(options)):
         parser.error('duplicate options are not accepted')
     args = parser.parse_args(argv)
@@ -13689,6 +13807,15 @@ def main(argv: Sequence[str]) -> int:
                                                 'bsd_random_receipt_report',
                                                 'public_data_declaration_runtime_report',
                                                 'loader_structural_owner_receipt_report')}
+    installed = args.compiler_helper_installed_link
+    if installed is not None:
+        modes = ('static', 'static-pie', 'pie', 'non-pie')
+        if len(installed) != len(modes) or {mode for mode, _path in installed} != set(modes):
+            parser.error('--compiler-helper-installed-link requires each of static, static-pie, pie, and non-pie once')
+        if args.compiler_helper_aggregate_report is None or args.crt_startup_report is None:
+            parser.error('--compiler-helper-installed-link requires aggregate and CRT startup reports')
+    kwargs['compiler_helper_installed_links'] = None if installed is None else {
+        mode: Path(path) for mode, path in installed}
     kwargs['ordinary_link_report'] = kwargs.pop('public_data_ordinary_link_report')
     kwargs['loader_debug_report'] = kwargs.pop('loader_debug_abi_report')
     kwargs.update(contract_path=args.contract, elf_report=args.elf_facts)

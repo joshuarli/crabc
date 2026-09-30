@@ -1,6 +1,10 @@
 """Compose the installed compiler-helper proof without broadening ABI closure."""
 import copy
+import hashlib
+import json
+import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
@@ -90,6 +94,33 @@ class NativeAbiCompilerHelperTests(unittest.TestCase):
             ordinary_link_report=ordinary, aggregate_report=self.report)
         self.assertEqual(result['account'], supplied_account())
         self.assertEqual(result['report'], selection.file_identity(self.report))
+        self.assertEqual(result['installed_links']['status'], 'pending')
+
+    def test_installed_links_cannot_be_supplied_without_the_aggregate(self):
+        with self.assertRaises(selection.SelectionError):
+            selection.compiler_helper_adapter(None, ordinary_report_path=None, paths=self.paths,
+                                              installed_links={'static': self.report})
+
+    def test_cli_forwards_each_installed_receipt_and_rejects_missing_or_duplicate_modes(self):
+        arguments = ['build-report', '--measurement-checkout', str(ROOT), '--base-inventory', str(self.report),
+                     '--elf-facts', str(self.report), '--static-product', str(self.work),
+                     '--dynamic-product', str(self.work), '--static-preparation', str(self.report),
+                     '--compiler-helper-aggregate-report', str(self.report), '--crt-startup-report', str(self.report),
+                     '--output', str(self.work / 'selection.json')]
+        modes = ('static', 'static-pie', 'pie', 'non-pie')
+        installed = [value for mode in modes for value in
+                     ('--compiler-helper-installed-link', mode, str(self.work / (mode + '.json')))]
+        result = {'identities': [], 'occurrences': [], 'closure': {'blockers': [], 'complete': False}}
+        with mock.patch.object(selection, 'build_report', return_value=result) as build:
+            self.assertEqual(selection.main(arguments + installed), 0)
+        self.assertEqual(build.call_args.kwargs['compiler_helper_installed_links'],
+                         {mode: self.work / (mode + '.json') for mode in modes})
+        self.assertEqual(build.call_args.kwargs['crt_startup_report'], self.report)
+        for malformed in (installed[:-3], installed[:-3] + installed[:3]):
+            with self.subTest(arguments=malformed), mock.patch.object(selection, 'build_report') as build:
+                with self.assertRaises(SystemExit):
+                    selection.main(arguments + malformed)
+                build.assert_not_called()
 
     def test_changed_report_and_partial_or_promoted_component_are_rejected(self):
         def mutate(**_):
@@ -154,6 +185,76 @@ class NativeAbiCompilerHelperTests(unittest.TestCase):
                 claim['source_calls'].append(copy.deepcopy(claim['source_calls'][0]))
             with self.subTest(change=change), self.assertRaises(selection.SelectionError):
                 selection.attach_compiler_helper_import(import_accounting(), {'account': account})
+
+
+@unittest.skipUnless(os.environ.get('CRABC_COMPILER_SELECTOR_COHORT'),
+                     'requires a genuine same-source supplied compiler product cohort')
+class SuppliedCompilerHelperAdapterPhysicalTests(unittest.TestCase):
+    def test_complete_installed_calls_and_counterfeit_controls(self):
+        prefix = ROOT / os.environ['CRABC_COMPILER_SELECTOR_COHORT']
+        self.assertTrue(prefix.is_relative_to(ROOT / '.work/x86_64'))
+        paths = {key: Path(str(prefix) + suffix) for key, suffix in (
+            ('base_inventory', '-inventory/report.json'), ('elf_report', '-elf-facts/report.json'),
+            ('static_preparation', '-static/preparation.json'), ('static_product', '-static/products/primary'),
+            ('dynamic_product', '-dynamic'),
+        )}
+        paths['measurement_checkout'] = ROOT
+        links = {mode: Path(str(prefix) + '-links/' + mode +
+                            ('.json' if mode in {'static', 'static-pie'} else '.crabc-link.json'))
+                 for mode in ('static', 'static-pie', 'pie', 'non-pie')}
+        arguments = dict(report_path=Path(str(prefix) + '-aggregate/report.json'),
+                         ordinary_report_path=None, paths=paths, installed_links=links,
+                         crt_startup_report=Path(str(prefix) + '-startup/report.json'))
+        complete = selection.compiler_helper_adapter(**arguments)['installed_links']
+        self.assertEqual(complete['status'], 'verified')
+        names = set(helpers.helper_names(helpers.load_contract(ROOT)))
+        for mode in links:
+            proof = complete['links'][mode]['proof']
+            self.assertEqual(set(proof['transfers']), names)
+            self.assertTrue(all(row['resolved_calls'] and row['provider_closure']['code']
+                                for row in proof['transfers'].values()))
+        for replacement in ({key: value for key, value in links.items() if key != 'non-pie'},
+                            {**links, 'static': links['static-pie']}):
+            with self.subTest(receipts=replacement), self.assertRaises(selection.SelectionError):
+                selection.compiler_helper_adapter(**{**arguments, 'installed_links': replacement})
+        with self.assertRaises(selection.SelectionError):
+            selection.compiler_helper_adapter(**{**arguments, 'crt_startup_report': None})
+
+        parent = ROOT / '.work/x86_64/compiler-selector-controls'
+        parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as temporary:
+            work = Path(temporary)
+            record = json.loads(links['static'].read_text())
+            original = ROOT / record['output']['path'].removeprefix('/workspace/')
+            before = hashlib.sha256(original.read_bytes()).hexdigest()
+            executable = work / 'static'
+            receipt = work / 'static.json'
+            shutil.copy2(original, executable)
+            for key in ('map', 'trace'):
+                shutil.copy2(links['static'].parent / record[key]['path'], work / record[key]['path'])
+            record['output']['path'] = '/workspace/' + executable.relative_to(ROOT).as_posix()
+            receipt.write_text(json.dumps(record))
+            copied = {**links, 'static': receipt}
+            self.assertEqual(selection.compiler_helper_adapter(**{**arguments, 'installed_links': copied})
+                             ['installed_links']['status'], 'verified')
+            binary = executable.read_bytes()
+            elf = helpers.Elf(executable)
+            transfer = complete['links']['static']['proof']['transfers']['__divti3']
+            controls = (('provider-code', transfer['provider_address'], 1, b'\x00', 'provider code bytes'),
+                        ('foreign-call', transfer['resolved_calls'][0]['call_address'] + 1, 4,
+                         b'\x00\x00\x00\x00', 'foreign provider'))
+            for label, address, size, changed, error in controls:
+                segment = next(row for row in elf.programs if row[0] == 1
+                               and row[3] <= address and address + size <= row[3] + row[5])
+                offset = segment[2] + address - segment[3]
+                mutated = bytearray(binary)
+                mutated[offset:offset + size] = changed
+                executable.write_bytes(mutated)
+                record['output']['sha256'] = hashlib.sha256(mutated).hexdigest()
+                receipt.write_text(json.dumps(record))
+                with self.subTest(control=label), self.assertRaisesRegex(selection.SelectionError, error):
+                    selection.compiler_helper_adapter(**{**arguments, 'installed_links': copied})
+            self.assertEqual(hashlib.sha256(original.read_bytes()).hexdigest(), before)
 
 
 if __name__ == '__main__':
