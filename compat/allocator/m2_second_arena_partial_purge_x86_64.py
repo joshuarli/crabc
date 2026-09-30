@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare pinned C and Rust delayed purge beside a second-arena survivor."""
+"""Compare pinned C and Rust arena selection, sibling purge, and exact reuse."""
 
 from __future__ import annotations
 
@@ -17,6 +17,10 @@ FIELDS = (
     "first_survives", "maps_live", "first_purge_calls", "first_purged_bytes",
     "first_arena_purges", "released_slice", "survivor_slice",
     "purge_calls", "purged_bytes", "arena_purges",
+    "occupied_fallback", "survivor_contents", "second_reuse_exact",
+    "second_recommit", "second_zero", "first_reuse_exact", "owners_preserved",
+    "released_all", "exclusive_skipped", "exclusive_requested", "exclusive_reused",
+    "exclusive_sibling_preserved", "exclusive_released",
 )
 LINE = re.compile(r"^m2\.second_purge\.([a-z_]+)=([0-9]+)$")
 
@@ -46,6 +50,11 @@ def parse_trace(output: str, source: str) -> dict[str, int]:
         "first_arena_purges": 1, "released_slice": 9, "survivor_slice": 265,
         "purge_calls": 6, "purged_bytes": 16 * 1024 * 1024 + 64 * 1024,
         "arena_purges": 2,
+        "occupied_fallback": 1, "survivor_contents": 1, "second_reuse_exact": 1,
+        "second_recommit": 1, "second_zero": 1, "first_reuse_exact": 1,
+        "owners_preserved": 1, "released_all": 1, "exclusive_skipped": 1,
+        "exclusive_requested": 1, "exclusive_reused": 1,
+        "exclusive_sibling_preserved": 1, "exclusive_released": 1,
     }
     for field, want in wanted.items():
         if values[field] != want:

@@ -4337,9 +4337,21 @@ mod tests {
         let selected = ArenaSearch { requested: second_id, ..search };
         // SAFETY: the requested parent is published and its backing remains
         // live while the additional one-slice claim is retained.
-        let survivor = unsafe { backing.try_find_free(selected, 1, ARENA_SLICE_SIZE, false) }
+        let survivor = unsafe { backing.try_find_free(selected, 1, ARENA_SLICE_SIZE, true) }
             .expect("one neighboring slice remains in the second arena");
+        // SAFETY: each marker owns one committed slice until explicit release.
+        unsafe { survivor.start().write(0x3e) };
+        let first_id = unsafe { ArenaId::from_arena(core::ptr::from_ref(first).cast_mut()) }.unwrap();
+        let first_selected = ArenaSearch { requested: first_id, ..search };
+        // SAFETY: this fixed process group retains both parents and all spans.
+        let first_marker = unsafe { backing.try_find_free(first_selected, 1, ARENA_SLICE_SIZE, true) }.unwrap();
+        unsafe { first_marker.start().write(0xa7) };
+        let first_marker_index = first_marker.slice_index();
+        let occupied_fallback = claims[..3].iter().all(|claim| claim.memory_id().arena_memory()
+            .is_some_and(|memory| memory.arena == first_id.as_ptr()))
+            && unsafe { backing.try_find_free(first_selected, 256, ARENA_SLICE_SIZE, false) }.is_none();
         let released = claims.pop().unwrap();
+        let released_start = released.start();
         let released_index = released.slice_index();
         let survivor_index = survivor.slice_index();
         let view = unsafe { ArenaView::from_ptr(second_id.as_ptr()) }.unwrap();
@@ -4379,6 +4391,8 @@ mod tests {
             && purge.is_clear_range(survivor_index, 1) == Some(true)
             && first_calls == 5 && first_bytes == (256 * ARENA_SLICE_SIZE) as i64
             && first_visits == 1;
+        // SAFETY: the one-slice survivor is still committed and exclusively owned.
+        let survivor_contents = unsafe { survivor.start().read() } == 0x3e;
         assert!(survivor.release());
         let after_survivor = process.subprocess().vm_statistics().snapshot();
         let later_pending = free.is_set_range(survivor_index, 1) == Some(true)
@@ -4406,6 +4420,36 @@ mod tests {
             && unsafe { crabc_core::mm::mincore_raw(second.start, 4096, &mut residence) }.is_ok()
             && after.vm.reserved_current == before_vm.reserved_current
             && backing.registry().count() == 2;
+        let commit_before = process.subprocess().vm_statistics().snapshot().commit_calls;
+        // SAFETY: generic search may skip the occupied first parent and take
+        // only the returned second-arena span; all neighboring owners live.
+        let second_reuse = unsafe { backing.try_find_free(search, 256, ARENA_SLICE_SIZE, true) }.unwrap();
+        let second_reuse_exact = second_reuse.start() == released_start
+            && second_reuse.memory_id().arena_memory().is_some_and(|memory|
+                memory.arena == second_id.as_ptr() && memory.slice_index as usize == released_index);
+        let second_recommit = second_reuse.memory_id().initially_committed()
+            && unsafe { view.slices_committed() }.unwrap().is_set_range(released_index, 256) == Some(true)
+            && process.subprocess().vm_statistics().snapshot().commit_calls == commit_before + 1;
+        // SAFETY: the returned claim owns all 256 freshly committed slices.
+        let second_zero = unsafe { second_reuse.start().read() } == 0
+            && unsafe { second_reuse.start().add(256 * ARENA_SLICE_SIZE - 1).read() } == 0;
+        unsafe {
+            second_reuse.start().write(0xc7);
+            second_reuse.start().add(256 * ARENA_SLICE_SIZE - 1).write(0x71);
+        }
+        let first_released = claims.pop().unwrap();
+        let first_released_start = first_released.start();
+        let first_released_index = first_released.slice_index();
+        assert!(first_released.release());
+        // SAFETY: only released spans are eligible for this forced purge;
+        // first_marker and second_reuse remain distinct live owners.
+        assert!(unsafe { backing.collect_purge(process, config, true, true, 0) });
+        let first_reuse = unsafe { backing.try_find_free(search, 256, ARENA_SLICE_SIZE, true) }.unwrap();
+        let first_reuse_exact = first_reuse.start() == first_released_start
+            && first_reuse.memory_id().arena_memory().is_some_and(|memory| memory.arena == first_id.as_ptr());
+        let owners_preserved = unsafe { first_marker.start().read() } == 0xa7
+            && unsafe { second_reuse.start().read() } == 0xc7
+            && unsafe { second_reuse.start().add(256 * ARENA_SLICE_SIZE - 1).read() } == 0x71;
         for (field, value) in [
             ("setup", i64::from(setup)), ("pending", i64::from(pending)),
             ("partial", i64::from(partial)),
@@ -4413,6 +4457,13 @@ mod tests {
             ("later_purged", i64::from(later_purged)),
             ("first_survives", i64::from(first_survives)),
             ("maps_live", i64::from(maps_live)),
+            ("occupied_fallback", i64::from(occupied_fallback)),
+            ("survivor_contents", i64::from(survivor_contents)),
+            ("second_reuse_exact", i64::from(second_reuse_exact)),
+            ("second_recommit", i64::from(second_recommit)),
+            ("second_zero", i64::from(second_zero)),
+            ("first_reuse_exact", i64::from(first_reuse_exact)),
+            ("owners_preserved", i64::from(owners_preserved)),
             ("first_purge_calls", first_calls),
             ("first_purged_bytes", first_bytes),
             ("first_arena_purges", first_visits),
@@ -4424,8 +4475,85 @@ mod tests {
         ] {
             std::println!("m2.second_purge.{field}={value}");
         }
+        assert!(first_reuse.release());
+        assert!(second_reuse.release());
+        assert!(first_marker.release());
+        let retained_indices: std::vec::Vec<_> = claims.iter().map(|claim| claim.slice_index()).collect();
+        for claim in claims { assert!(claim.release()); }
+        let released_all = retained_indices.into_iter().chain(core::iter::once(first_released_index))
+            .all(|index| first_free.is_set_range(index, 256) == Some(true))
+            && first_free.is_set_range(first_marker_index, 1) == Some(true)
+            && free.is_set_range(released_index, 256) == Some(true);
+        std::println!("m2.second_purge.released_all={}", i64::from(released_all));
+
+        let mut exclusive_options = VmOptions::uninitialized();
+        exclusive_options.initialize_all(|_| VmOptionEnvironment::Absent);
+        exclusive_options.set(VmOption::AllowLargeOsPages, 0);
+        exclusive_options.set(VmOption::AllowThp, 0);
+        exclusive_options.set(VmOption::ArenaIsNumaLocal, 0);
+        exclusive_options.set(VmOption::PurgeDelay, 100_000);
+        exclusive_options.set(VmOption::ArenaPurgeMult, 1);
+        exclusive_options.set(VmOption::PurgeDecommits, 1);
+        // SAFETY: this independent process pair and its arena group remain
+        // pinned until every returned committed marker is explicitly released.
+        let exclusive_binding = unsafe { ProcessMainInitializationStorage::test_static_owner()
+            .test_prepare_vm_process_backing_binding(config, exclusive_options,
+                MainSubprocess::test_static_owner(), ProcessPageMapStorage::test_static_owner()) }.unwrap();
+        let exclusive_process = exclusive_binding.process();
+        exclusive_process.policy().finish_preloading();
+        let exclusive_backing = exclusive_process.subprocess().arena_backing();
+        // SAFETY: normal regular OS reservations publish their own disjoint
+        // parents to this sole process-owned group, with no competing teardown.
+        let exclusive_id = unsafe { exclusive_backing.reserve_os_memory_for_process(
+            exclusive_process, config, ARENA_MIN_SIZE, crate::os::MapAccess::Reserved, false, true, None,
+        ) }.unwrap();
+        let ordinary_id = unsafe { exclusive_backing.reserve_os_memory_for_process(
+            exclusive_process, config, ARENA_MIN_SIZE, crate::os::MapAccess::Reserved, false, false, None,
+        ) }.unwrap();
+        let explicit_search = ArenaSearch { requested: exclusive_id, ..search };
+        // SAFETY: the generic and explicit searches borrow these live parents
+        // and return distinct committed, exclusively owned marker spans.
+        let ordinary_block = unsafe { exclusive_backing.try_find_free(search, 1, ARENA_SLICE_SIZE, true) }.unwrap();
+        let exclusive_block = unsafe { exclusive_backing.try_find_free(explicit_search, 1, ARENA_SLICE_SIZE, true) }.unwrap();
+        let exclusive_view = unsafe { ArenaView::from_ptr(exclusive_id.as_ptr()) }.unwrap();
+        let ordinary_view = unsafe { ArenaView::from_ptr(ordinary_id.as_ptr()) }.unwrap();
+        let exclusive_skipped = ordinary_block.memory_id().arena_memory()
+            .is_some_and(|memory| memory.arena == ordinary_id.as_ptr())
+            && exclusive_view.arena().is_exclusive && exclusive_backing.registry().count() == 2;
+        let exclusive_requested = exclusive_block.memory_id().arena_memory()
+            .is_some_and(|memory| memory.arena == exclusive_id.as_ptr());
+        let exclusive_start = exclusive_block.start();
+        let exclusive_index = exclusive_block.slice_index();
+        let ordinary_index = ordinary_block.slice_index();
+        // SAFETY: both returned marker spans are live and committed.
+        unsafe { ordinary_block.start().write(0x5f); exclusive_start.write(0x9b); }
+        assert!(exclusive_block.release());
+        // SAFETY: only the released exclusive marker is purge-eligible; the
+        // ordinary marker stays owned and committed throughout the collection.
+        assert!(unsafe { exclusive_backing.collect_purge(exclusive_process, config, true, true, 0) });
+        let exclusive_reuse = unsafe { exclusive_backing.try_find_free(explicit_search, 1, ARENA_SLICE_SIZE, true) }.unwrap();
+        let exclusive_reused = exclusive_reuse.start() == exclusive_start
+            && exclusive_reuse.memory_id().arena_memory().is_some_and(|memory| memory.arena == exclusive_id.as_ptr())
+            && exclusive_reuse.memory_id().initially_committed()
+            && unsafe { exclusive_reuse.start().read() } == 0;
+        let exclusive_sibling_preserved = unsafe { ordinary_block.start().read() } == 0x5f;
+        assert!(exclusive_reuse.release());
+        assert!(ordinary_block.release());
+        let exclusive_released = unsafe { exclusive_view.slices_free() }.unwrap()
+            .is_set_range(exclusive_index, 1) == Some(true)
+            && unsafe { ordinary_view.slices_free() }.unwrap().is_set_range(ordinary_index, 1) == Some(true);
+        for (field, value) in [
+            ("exclusive_skipped", exclusive_skipped),
+            ("exclusive_requested", exclusive_requested),
+            ("exclusive_reused", exclusive_reused),
+            ("exclusive_sibling_preserved", exclusive_sibling_preserved),
+            ("exclusive_released", exclusive_released),
+        ] { std::println!("m2.second_purge.{field}={}", i64::from(value)); }
         assert!(setup && pending && partial && later_pending && later_purged
-            && first_survives && maps_live);
+            && first_survives && maps_live && occupied_fallback && survivor_contents
+            && second_reuse_exact && second_recommit && second_zero && first_reuse_exact
+            && owners_preserved && released_all && exclusive_skipped && exclusive_requested
+            && exclusive_reused && exclusive_sibling_preserved && exclusive_released);
     }
 
     #[cfg(target_arch = "x86_64")]
