@@ -402,7 +402,7 @@ def replay_report(path: Path, *, state_parent: Path = DEFAULT_WORK_ROOT,
         def commands(value: object, replacements: list[tuple[str, str]]) -> object:
             if isinstance(value, dict):
                 result = {}
-                if "command" in value:
+                if isinstance(value.get("command"), list):
                     def normalize(text: str) -> str:
                         for original, replacement in replacements: text = text.replace(original, replacement)
                         return text

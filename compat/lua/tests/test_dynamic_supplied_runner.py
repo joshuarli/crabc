@@ -145,6 +145,8 @@ class SuppliedDynamicLuaTests(unittest.TestCase):
         report["installed"]["work_directory"] = str(path.parent / "installed")
         report["extracted"]["work_directory"] = str(path.parent / "extracted")
         report["installed"]["build"] = {"command": ["cc", "actual.c"], "cwd": str(path.parent)}
+        report["installed"]["shell"] = {"command": {"command": ["ldd", "/bin/sh"],
+                                                   "cwd": str(path.parent)}}
         path.write_text(json.dumps(report))
         seal = report["consumer_source_before"]
         with (
