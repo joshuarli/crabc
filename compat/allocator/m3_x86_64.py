@@ -45,6 +45,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import sys
 import tempfile
 from pathlib import Path
@@ -1473,6 +1474,100 @@ def run_unit_batch(contract: Mapping[str, Any], binary: Path) -> dict[str, Any]:
     }
 
 
+def _miri_compiler_inputs(listing: Mapping[str, Any], miri: Mapping[str, Any]) -> dict[str, Any]:
+    # Cargo emits an interpreter descriptor rather than an executable. Retain
+    # the descriptor it selected and the physical inputs its compiler args name.
+    compiler_output = re.sub(r"\x1b\[[0-9;]*m", "", str(listing["stderr"]))
+    selected_programs = re.findall(r"^\s*Running unittests src/lib\.rs \(([^\r\n]+)\)$", compiler_output, re.MULTILINE)
+    if len(selected_programs) != 1:
+        raise GateError("Miri listing does not identify exactly one compiler-selected library runner")
+    program = (ROOT / selected_programs[0]).resolve(strict=True)
+    if not program.is_relative_to(ROOT / ".work") or program.is_symlink():
+        raise GateError("Miri compiler runner is outside owned artifacts")
+    metadata = run.read_json(program)
+    args = metadata["args"]
+    saved_environment = {os.fsdecode(bytes(key["Unix"])): os.fsdecode(bytes(value["Unix"]))
+                         for key, value in metadata["env"]}
+    if (os.fsdecode(bytes(metadata["current_dir"]["Unix"])) != str(ROOT)
+            or args[args.index("--crate-name") + 1] != "crabc_mimalloc"
+            or "--test" not in args or "crabc-mimalloc/src/lib.rs" not in args
+            or args[args.index("--target") + 1] != miri["target"]):
+        raise GateError("Miri compiler runner does not name the selected source library test")
+    if saved_environment["MIRI_BE_RUSTC"] != "host":
+        raise GateError("Miri compiler runner does not preserve the selected host phase")
+    dep_info = program.with_suffix(".d")
+    dependencies: set[Path] = set()
+    dependency_info: set[Path] = {dep_info}
+    for index, argument in enumerate(args):
+        if argument == "--extern":
+            dependency = (ROOT / args[index + 1].split("=", 1)[1]).resolve(strict=True)
+            dependencies.add(dependency)
+            dependency_info.add(dependency.parent / (dependency.stem.removeprefix("lib") + ".d"))
+        elif argument == "-L":
+            directory = (ROOT / args[index + 1].split("=", 1)[-1]).resolve(strict=True)
+            if not directory.is_relative_to(ROOT / ".work"):
+                raise GateError("Miri compiler search directory is outside owned artifacts")
+            dependencies.update(path for path in directory.iterdir()
+                                if path.suffix in (".rlib", ".rmeta", ".a", ".so"))
+            dependency_info.update(directory.glob("*.d"))
+    sources: set[Path] = {ROOT / "Cargo.lock", ROOT / "Cargo.toml", ROOT / "crabc-mimalloc/Cargo.toml"}
+    for path in sorted(dependency_info):
+        if not path.is_file() or not path.resolve().is_relative_to(ROOT):
+            raise GateError("Miri compiler dependency information is missing or outside the checkout")
+        for line in path.read_text().replace("\\\n", "").splitlines():
+            if line.startswith("#") or ": " not in line:
+                continue
+            for name in shlex.split(line.split(": ", 1)[1]):
+                source = (ROOT / name).resolve(strict=True)
+                if not source.is_relative_to(ROOT) or source.is_symlink():
+                    raise GateError("Miri compiler source input escapes the checkout")
+                sources.add(source)
+    runtime_sysroot = Path(saved_environment["MIRI_SYSROOT"])
+    if runtime_sysroot.is_relative_to(ROOT):
+        sysroot = runtime_sysroot
+    else:
+        if not runtime_sysroot.is_relative_to("/tmp"):
+            raise GateError("Miri sysroot is outside the checkout-local temporary alias")
+        sysroot = run.WORK_ROOT / "tmp" / runtime_sysroot.relative_to("/tmp")
+        if not os.path.samefile(sysroot, runtime_sysroot):
+            raise GateError("Miri sysroot aliases do not name the same retained input")
+    if not sysroot.resolve(strict=True).is_relative_to(ROOT / ".work"):
+        raise GateError("Miri sysroot is outside owned storage")
+    sysroot_files = sorted(path for path in (sysroot / "lib/rustlib" / miri["target"]).rglob("*") if path.is_file())
+    if not sysroot_files:
+        raise GateError("Miri selected sysroot contains no physical target inputs")
+    tools = {}
+    selections = {}
+    for name in ("cargo-miri", "miri", "rustc", "cargo"):
+        selection = run.command_record((run.require_tool("rustup"), "which", name), cwd=ROOT, timeout_seconds=600)
+        run.require_success(selection, f"Miri selected {name}")
+        selections[name] = selection
+    if (saved_environment["RUSTC"] != str(selections["miri"]["stdout"]).strip()
+            or saved_environment["RUSTC_WRAPPER"] != str(selections["cargo-miri"]["stdout"]).strip()):
+        raise GateError("Miri compiler runner names tools outside the selected pinned toolchain")
+    for name, selection in selections.items():
+        path = Path(str(selection["stdout"]).strip())
+        if not path.is_file() or not os.access(path, os.X_OK):
+            raise GateError(f"Miri selected tool is unavailable: {name}")
+        version_command = (str(path), *( ("miri",) if name == "cargo-miri" else ()), "--version")
+        version = run.command_record(version_command, cwd=ROOT, timeout_seconds=600)
+        run.require_success(version, f"Miri {name} version")
+        tools[name] = {"executable_path": str(path), "executable_sha256": run.sha256_file(path),
+                       "executable_bytes": path.stat().st_size, "version": version, "selection": selection}
+    for path in dependencies:
+        if not path.is_relative_to(ROOT / ".work") or path.is_symlink():
+            raise GateError("Miri compiler dependency escapes owned artifacts")
+    return {
+        "program": run.artifact_record(program), "dep_info": run.artifact_record(dep_info),
+        "source_files": [run.artifact_record(path) for path in sorted(sources)],
+        "dependencies": [run.artifact_record(path) for path in sorted(dependencies)],
+        "dependency_info": [run.artifact_record(path) for path in sorted(dependency_info)],
+        "sysroot": {"runtime_path": str(runtime_sysroot), "path": run.relative(sysroot),
+                    "files": [run.artifact_record(path) for path in sysroot_files]},
+        "tools": tools, "phase_environment": {name: saved_environment[name] for name in ("MIRI_BE_RUSTC", "MIRI_SYSROOT")},
+    }
+
+
 def run_miri(contract: Mapping[str, Any]) -> dict[str, Any]:
     miri = contract["miri"]
     probe = run.command_record(("cargo", "miri", "--version"), cwd=ROOT, timeout_seconds=600)
@@ -1509,6 +1604,7 @@ def run_miri(contract: Mapping[str, Any]) -> dict[str, Any]:
     listing = run.command_record(
         (*base, "--list", "--format", "terse"), cwd=ROOT, env=environment, timeout_seconds=7200
     )
+    listing["environment"] = {name: environment[name] for name in ("MIRIFLAGS", "TMPDIR", "XDG_CACHE_HOME")}
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
     if listing["status"] != 0:
         (ARTIFACT_ROOT / "miri.log").write_text(
@@ -1519,11 +1615,17 @@ def run_miri(contract: Mapping[str, Any]) -> dict[str, Any]:
             "unmet": [f"cargo miri test --list exited {listing['status']}"],
             "version": str(probe["stdout"]).strip(),
         }
+    authority: dict[str, Any] = {}
+    authority_unmet: list[str] = []
+    try:
+        authority = _miri_compiler_inputs(listing, miri)
+    except (GateError, run.HarnessError, OSError, ValueError, KeyError, TypeError) as error:
+        authority_unmet.append(f"Miri physical input authority: {error}")
     groups = select_by_prefix(str(listing["stdout"]), miri["module_prefixes"])
     logs: list[str] = [f"### listing\n{json.dumps(listing['command'])}\n{listing['stdout']}\n{listing['stderr']}"]
     commands: dict[str, Any] = {}
     results: dict[str, Any] = {}
-    unmet: list[str] = []
+    unmet: list[str] = list(authority_unmet)
     passed: set[str] = set()
     # Each exact test starts a new isolated interpreter with cold globals.
     # The marked fixture enters directly: querying the native executable or
@@ -1539,6 +1641,10 @@ def run_miri(contract: Mapping[str, Any]) -> dict[str, Any]:
                 env=child_environment,
                 timeout_seconds=7200,
             )
+            record["environment"] = {
+                name: child_environment[name]
+                for name in ("MIRIFLAGS", "TMPDIR", "XDG_CACHE_HOME", FRESH_TEST_CHILD_ENV)
+            }
             records.append(record)
             logs.append(f"### {prefix} {name}\n{json.dumps(record['command'])}\n"
                         f"MIRIFLAGS={child_environment['MIRIFLAGS']}\n"
@@ -1553,13 +1659,26 @@ def run_miri(contract: Mapping[str, Any]) -> dict[str, Any]:
         unmet += [f"{prefix} {item}" for item in results[prefix]["unmet"]]
         output = str(aggregate["stdout"]) + "\n" + str(aggregate["stderr"])
         passed.update(name for name, outcome in TEST_RESULT.findall(output) if outcome == "ok")
+    if authority:
+        records = [authority["program"], authority["dep_info"],
+                   *authority["source_files"], *authority["dependencies"],
+                   *authority["dependency_info"], *authority["sysroot"]["files"]]
+        try:
+            for recorded in records:
+                if run.artifact_record(ROOT / recorded["path"]) != recorded:
+                    raise GateError(f"Miri physical input changed during execution: {recorded['path']}")
+            for tool in authority["tools"].values():
+                if run.sha256_file(Path(tool["executable_path"])) != tool["executable_sha256"]:
+                    raise GateError("Miri selected tool changed during execution")
+        except (GateError, OSError, run.HarnessError) as error:
+            unmet.append(str(error))
     (ARTIFACT_ROOT / "miri.log").write_text("\n".join(logs), encoding="utf-8")
     for name in miri["required_tests"]:
         if name not in passed:
             unmet.append(f"required Miri test did not pass: {name}")
     return {
         "physical_inputs": {
-            "probe": probe, "listing": listing, "commands": commands,
+            **authority, "probe": probe, "listing": listing, "commands": commands,
             "log": run.artifact_record(ARTIFACT_ROOT / "miri.log"),
         },
         "groups": results,

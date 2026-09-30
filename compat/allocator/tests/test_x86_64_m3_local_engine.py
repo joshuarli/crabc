@@ -305,6 +305,43 @@ class LocalEngineSourceTests(unittest.TestCase):
         self.assertFalse(executed)
         self.assertNotIn("milestone", reports[0])
 
+def miri_input_fixture(directory: Path) -> Path:
+    out = directory / "compiled/out"
+    out.mkdir(parents=True)
+    program = out / "crabc_mimalloc-fixture"
+    dependency = out / "libcrabc_core-fixture.rlib"
+    dependency.write_bytes(b"compiler-owned dependency fixture")
+    (out / "crabc_core-fixture.d").write_text(f"{dependency}: crabc-core/src/lib.rs\n")
+    program.with_suffix(".d").write_text(f"{program}: crabc-mimalloc/src/lib.rs\n")
+    sysroot = directory / "miri-sysroot"
+    libraries = sysroot / "lib/rustlib/x86_64-unknown-linux-gnu/lib"
+    libraries.mkdir(parents=True)
+    (libraries / "libstd-fixture.rlib").write_bytes(b"compiler-owned sysroot fixture")
+    toolchain = directory / "toolchain"
+    toolchain.mkdir()
+    for name in ("cargo", "cargo-miri", "miri", "rustc"):
+        tool = toolchain / name
+        tool.write_text("#!/bin/sh\nprintf '%s\\n' 'fixture compiler version'\n")
+        tool.chmod(0o755)
+    selector = directory / "selector"
+    selector.mkdir()
+    rustup = selector / "rustup"
+    rustup.write_text("#!/usr/bin/env python3\nimport sys\nfrom pathlib import Path\n"
+                      "print(Path(__file__).parent.parent / 'toolchain' / sys.argv[-1])\n")
+    rustup.chmod(0o755)
+    def encoded(value):
+        return {"Unix": list(os.fsencode(value))}
+    environment = {"RUSTC": str(toolchain / "miri"), "RUSTC_WRAPPER": str(toolchain / "cargo-miri"),
+                   "MIRI_SYSROOT": str(sysroot), "MIRI_BE_RUSTC": "host"}
+    program.write_text(json.dumps({"args": ["--crate-name", "crabc_mimalloc", "crabc-mimalloc/src/lib.rs",
+        "--test", "--target", "x86_64-unknown-linux-gnu", "--out-dir", str(out),
+        "-C", "incremental=" + str(out / "incremental"), "--extern", "crabc_core=" + str(dependency),
+        "-L", "dependency=" + str(out)],
+        "env": [[encoded(key), encoded(value)] for key, value in environment.items()],
+        "current_dir": encoded(str(ROOT)), "stdin": []}))
+    return program
+
+
 class MiriWorkspaceTests(unittest.TestCase):
     def setUp(self) -> None:
         scratch = ROOT / ".work/tmp"
@@ -312,6 +349,7 @@ class MiriWorkspaceTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="miri-storage-", dir=scratch)
         self.addCleanup(self.temporary.cleanup)
         self.fixture = Path(self.temporary.name)
+        self.program = miri_input_fixture(self.fixture)
         self.boundary = self.fixture / "checkout/.work/allocator-x86_64/tmp"
         self.boundary.mkdir(parents=True)
         self.external = self.fixture / "image-cache"
@@ -344,6 +382,7 @@ for directory, marker in ((cache, "cache-write"), (sysroot, "sysroot-write")):
     with Path(os.environ["MIRI_TEST_CAPTURE"]).open("a") as output:
         output.write(str(directory / marker) + "\\n")
 if "--list" in arguments:
+    print("Running unittests src/lib.rs (" + os.environ["MIRI_TEST_PROGRAM"] + ")", file=sys.stderr)
     print("fixture::allocation: test")
 else:
     print("running 1 test")
@@ -352,8 +391,9 @@ else:
 ''')
         cargo.chmod(0o755)
         self.environment = {
-            "PATH": f"{binary}:{os.environ['PATH']}",
+            "PATH": f"{binary}:{self.fixture / 'selector'}:{os.environ['PATH']}",
             "MIRI_TEST_TMP_MOUNT": str(self.boundary),
+            "MIRI_TEST_PROGRAM": str(self.program),
             "MIRI_TEST_IMAGE_STORAGE": str(self.external),
             "MIRI_TEST_CAPTURE": str(self.capture),
             "XDG_CACHE_HOME": "/image-cache",
@@ -422,6 +462,7 @@ class MiriFreshInterpreterDispatchTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="miri-dispatch-", dir=scratch)
         self.addCleanup(self.temporary.cleanup)
         self.fixture = Path(self.temporary.name)
+        self.program = miri_input_fixture(self.fixture)
         self.capture = self.fixture / "dispatch.jsonl"
         binary = self.fixture / "bin"
         binary.mkdir()
@@ -437,6 +478,7 @@ if arguments == ["miri", "--version"]:
     print("miri fixture")
     sys.exit(0)
 if "--list" in arguments:
+    print("Running unittests src/lib.rs (" + os.environ["MIRI_TEST_PROGRAM"] + ")", file=sys.stderr)
     print("fixture::first: test")
     print("fixture::second: test")
     sys.exit(0)
@@ -450,6 +492,9 @@ if selected != [marker] or flags != ["-Zmiri-strict-provenance", "-Zmiri-env-for
     print("isolated fixture attempted unsupported current_exe/readlink", file=sys.stderr)
     sys.exit(1)
 name = selected[0]
+mutate = os.environ.get("MIRI_DISPATCH_MUTATE_INPUT")
+if mutate:
+    Path(mutate).write_bytes(b"changed after compiler input capture")
 failed = os.environ.get("MIRI_DISPATCH_FAIL") == name
 print("running 1 test")
 print("test " + name + " ... " + ("FAILED" if failed else "ok"))
@@ -459,8 +504,8 @@ print("test result: " + ("FAILED" if failed else "ok") + ". " +
 sys.exit(1 if failed else 0)
 ''')
         cargo.chmod(0o755)
-        self.environment = {"PATH": f"{binary}:{os.environ['PATH']}",
-            "MIRI_DISPATCH_CAPTURE": str(self.capture),
+        self.environment = {"PATH": f"{binary}:{self.fixture / 'selector'}:{os.environ['PATH']}",
+            "MIRI_DISPATCH_CAPTURE": str(self.capture), "MIRI_TEST_PROGRAM": str(self.program),
             "CRABC_MIMALLOC_FRESH_TEST_CHILD": "fixture::wrong-inherited-child",
             "MIRIFLAGS": "-Zmiri-disable-isolation"}
         self.contract = {"miri": {"target": "x86_64-unknown-linux-gnu",
@@ -477,6 +522,57 @@ sys.exit(1 if failed else 0)
         calls = [json.loads(line) for line in self.capture.read_text().splitlines()]
         return result, calls
 
+    def test_missing_compiler_runner_cannot_be_replaced_by_passing_test_labels(self) -> None:
+        self.program.unlink()
+        result, calls = self.execute()
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(result["unmet"])
+        self.assertEqual([call["selected"] for call in calls], [["fixture::first"], ["fixture::second"]])
+        self.assertEqual(result["groups"]["fixture::"]["unreported"], [])
+
+    def test_wrong_compiler_source_or_missing_dependency_cannot_supply_input_authority(self) -> None:
+        original = self.program.read_text()
+        for defect in ("crate", "source", "host", "tool", "dependency"):
+            with self.subTest(defect=defect):
+                metadata = json.loads(original)
+                if defect == "crate":
+                    metadata["args"][1] = "unrelated_library"
+                elif defect == "source":
+                    metadata["args"][2] = "unrelated/src/lib.rs"
+                elif defect in ("host", "tool"):
+                    name = "MIRI_BE_RUSTC" if defect == "host" else "RUSTC"
+                    for key, value in metadata["env"]:
+                        if bytes(key["Unix"]).decode() == name:
+                            value["Unix"] = list(b"wrong_phase_or_tool")
+                else:
+                    metadata["args"][metadata["args"].index("--extern") + 1] = "crabc_core=" + str(self.fixture / "missing.rlib")
+                self.program.write_text(json.dumps(metadata))
+                result, _calls = self.execute()
+                self.assertEqual(result["status"], "failed")
+                self.assertTrue(result["unmet"])
+        self.program.write_text(original)
+
+    def test_changed_physical_dependency_is_not_hidden_by_passing_interpreter_labels(self) -> None:
+        dependency = self.program.parent / "libcrabc_core-fixture.rlib"
+        with mock.patch.dict(os.environ, {"MIRI_DISPATCH_MUTATE_INPUT": str(dependency)}):
+            result, calls = self.execute()
+        self.assertEqual(result["status"], "failed")
+        self.assertTrue(result["unmet"])
+        self.assertEqual([call["selected"] for call in calls], [["fixture::first"], ["fixture::second"]])
+        self.assertEqual(result["groups"]["fixture::"]["unreported"], [])
+
+    def test_compiler_input_records_retain_the_selected_physical_bytes(self) -> None:
+        result, _calls = self.execute()
+        inputs = result["physical_inputs"]
+        self.assertEqual(inputs["program"], gate.run.artifact_record(self.program))
+        self.assertEqual(inputs["dep_info"], gate.run.artifact_record(self.program.with_suffix(".d")))
+        for field in ("source_files", "dependencies", "dependency_info"):
+            for record in inputs[field]:
+                self.assertEqual(record, gate.run.artifact_record(ROOT / record["path"]))
+        for record in inputs["sysroot"]["files"]:
+            self.assertEqual(record, gate.run.artifact_record(ROOT / record["path"]))
+        self.assertEqual(inputs["phase_environment"]["MIRI_BE_RUSTC"], "host")
+
     def test_each_selected_fixture_gets_a_fresh_exact_strict_interpreter(self) -> None:
         result, calls = self.execute()
         self.assertEqual(result["status"], "passed", result)
@@ -487,6 +583,17 @@ sys.exit(1 if failed else 0)
             self.assertIn("--test-threads=1", call["arguments"])
             self.assertEqual(call["flags"], ["-Zmiri-strict-provenance",
                 "-Zmiri-env-forward=CRABC_MIMALLOC_FRESH_TEST_CHILD"])
+
+    def test_retained_commands_bind_the_actual_fresh_interpreter_environment(self) -> None:
+        result, calls = self.execute()
+        records = result["physical_inputs"]["commands"]["fixture::"]
+        for record, observed in zip(records, calls, strict=True):
+            environment = record["environment"]
+            self.assertEqual(environment["MIRIFLAGS"], " ".join(observed["flags"]))
+            self.assertEqual(environment[gate.FRESH_TEST_CHILD_ENV], observed["marker"])
+            self.assertEqual(environment["TMPDIR"], "/tmp")
+            self.assertEqual(environment["XDG_CACHE_HOME"], "/tmp/crabc-m3-miri-cache")
+        self.assertNotIn(gate.FRESH_TEST_CHILD_ENV, result["physical_inputs"]["listing"]["environment"])
 
     def test_a_failed_fixture_does_not_hide_the_remaining_selected_fixture(self) -> None:
         result, calls = self.execute("fixture::first")
