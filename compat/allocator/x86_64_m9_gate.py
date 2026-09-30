@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import json
 import math
 import os
@@ -799,7 +800,7 @@ def m8_evidence_unmet(report: Mapping[str, Any], path: Path, newest: int | None)
 def correctness_evidence_unmet(
     gate: str, report: Mapping[str, Any], artifacts: Path, newest: int | None,
 ) -> list[str]:
-    """Recheck source identity, complete gate coverage, and retained raw evidence."""
+    """Reconstruct contract classification and recheck source and retained raw evidence."""
 
     if not isinstance(report.get("provenance"), Mapping):
         return ["report lacks current evidence provenance"]
@@ -816,6 +817,26 @@ def correctness_evidence_unmet(
         expected_evidence = {name for record in contract["gates"] for name in record["evidence"]}
         if not isinstance(evidence, Mapping) or set(evidence) != expected_evidence:
             return ["report lacks current evidence for every gate"]
+        producer = importlib.import_module(gate_file.stem)
+        pin = harness.load_pin()
+        if gate == "m5":
+            summary = producer.validate_contract(contract, pin, producer.native_test_targets())
+        else:
+            api = harness.read_json(harness.ALLOCATOR_ROOT / "api-v3.5.0.json")
+            if gate == "m6":
+                summary = producer.validate_contract(contract, api, pin)
+            else:
+                summary = producer.validate_contract(
+                    contract, api, pin, producer.sibling_owned_items(contract["inventory"]))
+        if set(evidence) != set(summary["runnable_evidence"]):
+            return ["report lacks executed producers for every gate"]
+        reconstructed = producer.gate_report(contract, summary, evidence)
+        if reconstructed["overall_status"] != "passed":
+            return ["report retains unresolved current gate conditions"]
+        if (report.get("overall_status") != reconstructed["overall_status"]
+                or report["gates"] != reconstructed["gates"]
+                or report["unmet_required"] != reconstructed["unmet_required"]):
+            return ["report differs from current gate classification"]
         provenance = report["provenance"]
         recorded_git = provenance["git"]
         current_git = engine.git_provenance()
@@ -834,6 +855,19 @@ def correctness_evidence_unmet(
         for name, entry in evidence.items():
             if not isinstance(entry, Mapping) or entry.get("status") != "passed":
                 return [f"evidence {name} did not pass"]
+            canonical = summary["runnable_evidence"][name]
+            if gate == "m6":
+                if entry.get("runner") != canonical:
+                    return [f"evidence {name} lacks its executed producer"]
+            elif isinstance(canonical, Mapping):
+                if entry.get("receipt") != canonical:
+                    return [f"evidence {name} lacks its executed producer"]
+            else:
+                scratch = artifacts.resolve() / name.replace(":", "-")
+                command = [argument.replace(producer.SCRATCH_PLACEHOLDER, str(scratch))
+                           for argument in canonical]
+                if entry.get("command") != command:
+                    return [f"evidence {name} lacks its executed producer"]
             log = harness.ROOT / entry["log"]
             if log.parent.resolve() != artifacts.resolve() or log.is_symlink() or not log.is_file():
                 return [f"evidence {name} lacks its retained raw log"]

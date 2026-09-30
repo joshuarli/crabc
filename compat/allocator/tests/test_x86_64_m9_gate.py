@@ -774,37 +774,93 @@ class CorrectnessTests(GateFixture):
         detail = gate.correctness_condition([perf], self.root / "gates")["detail"]
         self.assertTrue(any("M4 gate report lacks current evidence" in item for item in detail), detail)
 
+    def test_passing_statuses_cannot_hide_current_heap_api_conditions(self) -> None:
+        import m6_gate as producer
+
+        contract = gate.harness.read_json(producer.CONTRACT)
+        path = self.root / "gates/m6-gate/report.json"
+        path.parent.mkdir(parents=True)
+        evidence = {}
+        for name, entry in contract["evidence"].items():
+            log = path.parent / f"{name.replace(':', '-')}.log"
+            log.write_text("passed\n", encoding="utf-8")
+            evidence[name] = {"runner": entry["runner"], "log": gate.harness.relative(log), "status": "passed"}
+        summary = producer.validate_contract(contract, gate.harness.read_json(
+            gate.harness.ALLOCATOR_ROOT / "api-v3.5.0.json"), gate.harness.load_pin())
+        report = producer.gate_report(contract, summary, evidence)
+        report["overall_status"] = "passed"
+        report["unmet_required"] = []
+        for row in report["gates"]:
+            row["status"] = "passed"
+            row["blocked_by"] = []
+        with patch.object(gate.engine, "git_provenance", return_value={"head": "fixture", "clean": True}):
+            report["provenance"] = producer.report_provenance(report)
+            unmet = gate.correctness_evidence_unmet("m6", report, path.parent, None)
+        self.assertTrue(unmet, "saved passing statuses hid the source contract's unresolved conditions")
+
+    def test_passing_statuses_cannot_supply_a_missing_concurrency_producer(self) -> None:
+        import x86_64_m5_gate as producer
+
+        contract = gate.harness.read_json(producer.CONTRACT)
+        path = self.root / "gates/m5-gate/report.json"
+        path.parent.mkdir(parents=True)
+        evidence = {}
+        for name in contract["evidence"]:
+            log = path.parent / f"{name.replace(':', '-')}.log"
+            log.write_text("passed\n", encoding="utf-8")
+            evidence[name] = {"log": gate.harness.relative(log), "status": "passed"}
+        summary = producer.validate_contract(contract, gate.harness.load_pin(), producer.native_test_targets())
+        report = producer.gate_report(contract, summary, evidence)
+        report["overall_status"] = "passed"
+        report["unmet_required"] = []
+        for row in report["gates"]:
+            row["status"] = "passed"
+            row["blocked_by"] = []
+            row["missing_evidence"] = []
+        with patch.object(gate.engine, "git_provenance", return_value={"head": "fixture", "clean": True}):
+            report["provenance"] = producer.report_provenance(report)
+            unmet = gate.correctness_evidence_unmet("m5", report, path.parent, None)
+        self.assertTrue(any("executed producers" in reason for reason in unmet), unmet)
+
     def test_current_report_requires_all_gates_and_unchanged_physical_logs(self) -> None:
         git = patch.object(gate.engine, "git_provenance", return_value={"head": "fixture", "clean": True})
         git.start()
         self.addCleanup(git.stop)
         name = "m4"
+        import x86_64_m4_gate as producer
+
         contract = json.loads((gate.harness.ALLOCATOR_ROOT / gate.CORRECTNESS_INPUTS[name][1]).read_text(encoding="utf-8"))
+        summary = producer.validate_contract(contract, gate.harness.read_json(
+            gate.harness.ALLOCATOR_ROOT / "api-v3.5.0.json"), gate.harness.load_pin(),
+            producer.sibling_owned_items(contract["inventory"]))
         path = self.root / "gates/m4-gate/report.json"
         path.parent.mkdir(parents=True)
         evidence = {}
         for evidence_name in {item for record in contract["gates"] for item in record["evidence"]}:
             log = path.parent / f"{evidence_name.replace(':', '-')}.log"
             log.write_text("passed", encoding="utf-8")
-            evidence[evidence_name] = {"log": gate.harness.relative(log), "status": "passed"}
+            command = producer.evidence_command(summary["runnable_evidence"][evidence_name],
+                                                path.parent / evidence_name.replace(":", "-"))
+            evidence[evidence_name] = {"command": command, "log": gate.harness.relative(log), "status": "passed"}
         source, selected_contract = (gate.harness.ALLOCATOR_ROOT / item for item in gate.CORRECTNESS_INPUTS[name])
-        report = {
-            "overall_status": "passed", "unmet_required": [], "evidence": evidence,
-            "gates": [{"id": item["id"], "status": "passed"} for item in contract["gates"]],
-            "provenance": {
-                "git": copy.deepcopy(gate.engine.git_provenance()),
-                "seal": {**gate.integrated.source_seal(), "gate": gate.engine.file_record(source),
-                         "contract": gate.engine.file_record(selected_contract)},
-                "evidence": {item: gate.engine.file_record(gate.harness.ROOT / record["log"])
-                             for item, record in evidence.items()},
-            },
-        }
+        report = producer.gate_report(contract, summary, evidence)
+        report["provenance"] = copy.deepcopy(producer.report_provenance(report))
+        evidence = report["evidence"]
         path.write_text(json.dumps(report), encoding="utf-8")
         self.assertEqual(gate.correctness_evidence_unmet(name, report, path.parent, None), [])
-        report["gates"].pop()
+        self.assertEqual(gate.correctness_evidence_unmet(
+            name, report, path.parent.relative_to(gate.harness.ROOT), None), [])
+        last_gate = report["gates"].pop()
         self.assertIn("complete passing gate roster", gate.correctness_evidence_unmet(name, report, path.parent, None)[0])
-        report["gates"].append({"id": contract["gates"][-1]["id"], "status": "passed"})
+        report["gates"].append(last_gate)
         evidence_name = next(iter(evidence))
+        command = evidence[evidence_name].pop("command")
+        self.assertIn("lacks its executed producer",
+                      gate.correctness_evidence_unmet(name, report, path.parent, None)[0])
+        evidence[evidence_name]["command"] = ["python3", "different-producer.py"]
+        self.assertIn("lacks its executed producer",
+                      gate.correctness_evidence_unmet(name, report, path.parent, None)[0])
+        evidence[evidence_name]["command"] = command
         (gate.harness.ROOT / evidence[evidence_name]["log"]).write_text("changed", encoding="utf-8")
         self.assertIn("differs from its retained raw log",
                       gate.correctness_evidence_unmet(name, report, path.parent, None)[0])
