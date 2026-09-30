@@ -1107,7 +1107,11 @@ impl MainStaticTheapAttachment {
         // Its static allocation skips the later free path, retaining this count.
         subprocess.identity().record_statistics_theap_linked();
 
-        let theap_pointer = NonNull::from(&mut *theap);
+        // Initialization's exclusive field projection has finished. Publish
+        // the static storage's original capability, so later local-field and
+        // atomic-statistics accesses cannot invalidate a narrower mutable
+        // reborrow saved in compiler TLS.
+        let theap_pointer = unsafe { NonNull::new_unchecked(storage.theap.image.get()) };
         // Source `_mi_thread_init_with_heap` writes the default root first and
         // only then writes the main heap's fixed fast-key root. Cached remains
         // the empty static theap and dynamic TLS remains its empty image.
@@ -3917,6 +3921,35 @@ mod tests {
                 // SAFETY: the page was never queued or registered and has no
                 // client or observer; remove its association before storage ends.
                 unsafe { page.as_mut().disassociate_exclusive() };
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn static_theap_statistics_merge_preserves_published_owner_capability() {
+        crate::test_process::run_in_fresh_process(
+            "main_theap::tests::static_theap_statistics_merge_preserves_published_owner_capability",
+            || {
+                static STORAGE: MainStaticAttachmentStorage = MainStaticAttachmentStorage::new();
+                static SUBPROCESS: MainSubprocess = MainSubprocess::new();
+                // SAFETY: the fresh thread exclusively owns these real static
+                // allocator images and keeps their source lifetime retained.
+                let owner = unsafe {
+                    MainStaticTheapAttachment::begin_with_test_storage(&STORAGE, &SUBPROCESS)
+                }.expect("fresh static owner attaches");
+                let session = owner.begin_process_lifetime_page_session()
+                    .expect("static owner grants its permanent page session");
+                let published = default_theap();
+                let original = session.local_field_theap_pointer();
+                // SAFETY: the source collector retains this initialized
+                // Theap/Heap pair; only their atomic statistics are merged/reset.
+                assert!(unsafe { original.as_ref() }.merge_statistics_into_owning_heap_after_collection());
+                // SAFETY: the already-published TLS owner remains the same
+                // live image after its source statistics were merged/reset.
+                let (_, snapshot) = unsafe { Theap::final_statistics_at(published) }
+                    .expect("the published source still names its Heap");
+                assert_eq!(snapshot.pages.current, 0);
             },
         );
     }
