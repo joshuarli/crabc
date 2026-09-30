@@ -101,6 +101,17 @@ FD_REUSE_ESPIPE = re.compile(
     rb"positioned-return=1 pipe-submit=0 pipe-error=29 pipe-return=-1 byte=0 "
     rb"errno=(?P<saved_errno>0|-?[1-9][0-9]*)\n\Z"
 )
+# A completed pipe request may leave its nonseekable queue registered until
+# worker cleanup retires the last reference. Reopening that descriptor as a
+# regular file can then use write/read, advance the offset, and observe EOF.
+FD_REUSE_REGULAR_EOF = re.compile(
+    rb"fd-reuse-failure step=wait-regular-read attempt=(?P<attempt>[1-9][0-9]*) "
+    rb"regular=(?P<regular>[1-9][0-9]*) pipe-read=-1 pipe-write=-1 "
+    rb"positioned-submit=0 positioned-error=0 positioned-return=1 "
+    rb"pipe-submit=-1 pipe-error=-1 pipe-return=-2 byte=0 "
+    rb"regular-wait=0 regular-error=0 regular-return=0 regular-byte=0 "
+    rb"regular-offset=1 errno=(?P<saved_errno>0|-?[1-9][0-9]*)\n\Z"
+)
 SOURCES = tuple(PROBES.values()) + (
     "compat/x86_64/run_owned_aio.sh", "compat/x86_64/owned_aio_evidence.py",
     "compat/x86_64/owned_os_test_aio_suspend_source.py",
@@ -542,15 +553,25 @@ def assert_matched_transcript(root: Path, oracle: Mapping[str, Any], candidate: 
         fail(f"{description} candidate differs from pinned-musl transcript")
 
 def assert_oracle_fd_reuse(root: Path, command: Mapping[str, Any]) -> None:
-    """Accept only the observed success or the pinned stale-queue ESPIPE form."""
+    """Accept success or either fully observed stale descriptor-queue form."""
     status, (stdout, stderr) = _status_text(root, command), _streams(root, command, "pinned musl fd-reuse")
     if status == b"0\n":
         if stdout != FD_REUSE_SUCCESS or stderr != b"":
             fail("pinned musl fd-reuse success transcript differs")
     elif status == b"1\n":
         match = FD_REUSE_ESPIPE.fullmatch(stderr)
+        reciprocal = FD_REUSE_REGULAR_EOF.fullmatch(stderr)
+        if match is None and reciprocal is not None:
+            attempt = int(reciprocal["attempt"])
+            regular = int(reciprocal["regular"])
+            saved_errno = int(reciprocal["saved_errno"])
+            if stdout or not (0 < attempt < FD_REUSE_ATTEMPTS
+                              and regular <= TARGET_C_INT_MAX
+                              and TARGET_C_INT_MIN <= saved_errno <= TARGET_C_INT_MAX):
+                fail("pinned musl fd-reuse reciprocal observation differs")
+            return
         if stdout != b"" or match is None:
-            fail("pinned musl fd-reuse failure is not the stale-queue ESPIPE observation")
+            fail("pinned musl fd-reuse failure is not a complete stale-queue observation")
         attempt = int(match["attempt"])
         regular = int(match["regular"])
         pipe_read = int(match["pipe_read"])
@@ -561,7 +582,7 @@ def assert_oracle_fd_reuse(root: Path, command: Mapping[str, Any]) -> None:
                 and regular <= TARGET_C_INT_MAX and pipe_read <= TARGET_C_INT_MAX
                 and pipe_write <= TARGET_C_INT_MAX
                 and TARGET_C_INT_MIN <= saved_errno <= TARGET_C_INT_MAX):
-            fail("pinned musl fd-reuse failure is not the stale-queue ESPIPE observation")
+            fail("pinned musl fd-reuse failure is not a complete stale-queue observation")
     else:
         fail("pinned musl fd-reuse status differs")
 

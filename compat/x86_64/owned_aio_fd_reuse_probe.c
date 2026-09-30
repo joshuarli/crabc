@@ -5,7 +5,9 @@
  * Immediately after close, pipe(2) should reuse that descriptor number and
  * its AIO read must use read(2), not stale positioned-I/O state. A completed
  * request for the old descriptor incarnation must not cancel the new pipe
- * read, even though both controls carry the same descriptor number. The loop
+ * read, even though both controls carry the same descriptor number. The next
+ * regular-file iteration also checks that a retired pipe queue cannot replace
+ * positioned I/O with offset-advancing write/read operations. The loop
  * intentionally leaves no scheduling gap between completion, close, reuse,
  * and submission. It is shared unchanged by pinned musl and owned products.
  */
@@ -16,6 +18,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 static int wait_for(struct aiocb *control)
@@ -46,17 +49,23 @@ static void close_if_open(int *descriptor)
 static int fail(const char *step, int attempt, int regular_descriptor,
 	int read_descriptor, int write_descriptor, int positioned_submission,
 	int positioned_error, ssize_t positioned_result, int pipe_submission,
-	int pipe_error, ssize_t pipe_result, char byte, int saved_errno)
+	int pipe_error, ssize_t pipe_result, char byte, int regular_wait,
+	int regular_error, ssize_t regular_result,
+	char regular_byte, off_t regular_offset, int saved_errno)
 {
 	fprintf(stderr,
 		"fd-reuse-failure step=%s attempt=%d regular=%d pipe-read=%d "
 		"pipe-write=%d positioned-submit=%d positioned-error=%d "
 		"positioned-return=%zd pipe-submit=%d pipe-error=%d "
-		"pipe-return=%zd byte=%d errno=%d\n",
+		"pipe-return=%zd byte=%d ",
 		step, attempt, regular_descriptor, read_descriptor, write_descriptor,
 		positioned_submission, positioned_error, positioned_result,
-		pipe_submission, pipe_error, pipe_result, (unsigned char)byte,
-		saved_errno);
+		pipe_submission, pipe_error, pipe_result, (unsigned char)byte);
+	if (!strcmp(step, "wait-regular-read"))
+		fprintf(stderr, "regular-wait=%d regular-error=%d regular-return=%zd "
+			"regular-byte=%d regular-offset=%lld ", regular_wait, regular_error,
+			regular_result, (unsigned char)regular_byte, (long long)regular_offset);
+	fprintf(stderr, "errno=%d\n", saved_errno);
 	return 1;
 }
 
@@ -71,6 +80,9 @@ int main(int argc, char **argv)
 		char written = 'R';
 		char read_back = 0;
 		char received = 0;
+		int regular_wait = -1;
+		int regular_error = -1;
+		ssize_t regular_result = -2;
 		int read_descriptor = -1;
 		int write_descriptor = -1;
 		int regular_descriptor = -1;
@@ -118,8 +130,9 @@ int main(int argc, char **argv)
 		if (aio_read(&regular_read))
 			goto failure;
 		step = "wait-regular-read";
-		if (wait_for(&regular_read) || aio_error(&regular_read) != 0
-			|| aio_return(&regular_read) != 1 || read_back != 'R')
+		if ((regular_wait = wait_for(&regular_read))
+			|| (regular_error = aio_error(&regular_read)) != 0
+			|| (regular_result = aio_return(&regular_read)) != 1 || read_back != 'R')
 			goto failure;
 		regular_sync.aio_fildes = regular_descriptor;
 		regular_sync.aio_reqprio = 0;
@@ -198,6 +211,8 @@ pipe_failure:
 failure:
 		{
 			int saved_errno = errno;
+			off_t regular_offset = !strcmp(step, "wait-regular-read")
+				? lseek(regular_descriptor, 0, SEEK_CUR) : -1;
 			int reported_read = read_descriptor;
 			int reported_write = write_descriptor;
 			close_if_open(&regular_descriptor);
@@ -207,7 +222,8 @@ failure:
 			return fail(step, attempt, regular_number, reported_read,
 				reported_write, positioned_submission, positioned_error,
 				positioned_result, pipe_submission, pipe_error, pipe_result,
-				received, saved_errno);
+				received, regular_wait, regular_error, regular_result, read_back,
+				regular_offset, saved_errno);
 		}
 	}
 	puts("fd-reuse-regular-to-pipe-old-request-isolated=ok");

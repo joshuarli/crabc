@@ -313,6 +313,45 @@ class OwnedAioBehaviorObservationTests(unittest.TestCase):
             f"pipe-error=29 pipe-return=-1 byte=0 errno={saved_errno}\n"
         ).encode("ascii")
 
+    def test_fd_reuse_reciprocal_requires_completed_positioned_write_and_eof(self) -> None:
+        observed = (
+            b"fd-reuse-failure step=wait-regular-read attempt=165 regular=3 "
+            b"pipe-read=-1 pipe-write=-1 positioned-submit=0 positioned-error=0 "
+            b"positioned-return=1 pipe-submit=-1 pipe-error=-1 pipe-return=-2 byte=0 "
+            b"regular-wait=0 regular-error=0 regular-return=0 regular-byte=0 "
+            b"regular-offset=1 errno=11\n"
+        )
+        command = self._record("reciprocal-valid", b"", observed, b"1\n")
+        with unittest.mock.patch.object(self.evidence, "SOURCE_MOUNT", str(self.root)):
+            self.evidence.assert_oracle_fd_reuse(self.root, command)
+        invalid = (
+            observed.replace(b"attempt=165", b"attempt=0"),
+            observed.replace(b"attempt=165", b"attempt=512"),
+            observed.replace(b"attempt=165", b"attempt=01"),
+            observed.replace(b"regular=3", b"regular=0"),
+            observed.replace(b"regular=3", b"regular=2147483648"),
+            observed.replace(b"pipe-read=-1", b"pipe-read=3"),
+            observed.replace(b"positioned-return=1", b"positioned-return=0"),
+            observed.replace(b"regular-wait=0", b"regular-wait=-1"),
+            observed.replace(b"regular-error=0", b"regular-error=11"),
+            observed.replace(b"regular-return=0", b"regular-return=1"),
+            observed.replace(b"regular-byte=0", b"regular-byte=82"),
+            observed.replace(b"regular-offset=1", b"regular-offset=0"),
+            observed.replace(b"regular-offset=1 ", b""),
+            observed.replace(b"errno=11", b"errno=2147483648"),
+            observed.replace(b"errno=11", b"errno=01"),
+            observed + b"additional failure\n",
+        )
+        for index, transcript in enumerate(invalid):
+            command = self._record(f"reciprocal-invalid-{index}", b"", transcript, b"1\n")
+            with self.subTest(transcript=transcript), unittest.mock.patch.object(self.evidence, "SOURCE_MOUNT", str(self.root)):
+                with self.assertRaises(self.evidence.EvidenceError):
+                    self.evidence.assert_oracle_fd_reuse(self.root, command)
+        command = self._record("reciprocal-timeout", b"", observed, b"124\n")
+        with unittest.mock.patch.object(self.evidence, "SOURCE_MOUNT", str(self.root)):
+            with self.assertRaises(self.evidence.EvidenceError):
+                self.evidence.assert_oracle_fd_reuse(self.root, command)
+
     def test_fd_reuse_espipe_requires_the_exact_stale_queue_observation(self) -> None:
         for attempt, saved_errno in ((0, 11), (511, 29)):
             with self.subTest(valid_attempt=attempt, saved_errno=saved_errno):

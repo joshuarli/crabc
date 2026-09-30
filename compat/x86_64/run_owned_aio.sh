@@ -190,17 +190,18 @@ run_fd_reuse_source_observation() {
 	python3 -B "$EVIDENCE" record-command --root "$ROOT" --work "$WORK" --label "$label" \
 		--cwd "$ROOT" --stdout "$output" --stderr "${output%.stdout}.stderr" --status "${output%.stdout}.status" -- \
 		/usr/bin/timeout 30 "$@" >/dev/null
-	case "$status" in
-		0)
-			grep -Fxq 'fd-reuse-regular-to-pipe-old-request-isolated=ok' "$output" ||
-				fail "pinned musl fd-reuse success transcript is incomplete"
-			;;
-		1)
-			grep -Eq '^fd-reuse-failure .*pipe-submit=0 .*pipe-error=29 .*pipe-return=-1 ' "${output%.stdout}.stderr" ||
-				fail "pinned musl fd-reuse failure was not the stale seekable-queue ESPIPE witness"
-			;;
-		*) fail "pinned musl fd-reuse probe exited ${status}: $*" ;;
-	esac
+	if ! python3 -B - "$ROOT" "$WORK/commands/$label.json" <<'PYTHON'
+import json
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / "compat/x86_64"))
+import owned_aio_evidence as evidence
+evidence.assert_oracle_fd_reuse(root, json.loads(Path(sys.argv[2]).read_text()))
+PYTHON
+	then
+		fail "pinned musl fd-reuse transcript was not a complete success or stale-queue observation"
+	fi
 }
 
 run_fd_reuse_owned() {

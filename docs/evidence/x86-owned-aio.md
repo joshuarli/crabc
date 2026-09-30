@@ -110,9 +110,19 @@ different source location from the first-descriptor defect below.
   `/workspace/.work/x86_64/tmp/owned-aio.JyQBh7/oracle-fd-reuse.stderr`
   (attempt 103), and the pre-fix owned static witness at
   `/workspace/.work/x86_64/tmp/owned-aio.628s2Q/static-fd-reuse.stderr`
-  (attempt 502). This is a scheduling race, so the runner records either a
-  complete source run or this exact `ESPIPE` transcript rather than treating
-  a source success as parity. After `aio_cancel`, the owned close hook takes
+  (attempt 502). The reverse pipe-to-regular-file transition can retain a
+  nonseekable queue: the completed one-byte write advances the file offset to
+  one, and the subsequent read returns zero at EOF instead of reading the
+  byte at offset zero. A controlled inclusion of the exact pinned `aio.c`
+  holds the pipe worker at final queue retirement after completion publication
+  and observes this tuple; the paired fresh-descriptor control reads `R` with
+  offset zero. The runner accepts a complete source run, the exact `ESPIPE`
+  transcript, or the fully specified reverse-transition observation with a
+  successful write, successful wait, zero read error/result/byte, and offset
+  one. It rejects incomplete diagnostics and unrelated failures; the owned
+  products still must complete the entire positioned-I/O workload. The older
+  regular-read failure without those fields remains unclassified. After
+  `aio_cancel`, the owned close hook takes
   the map write lock, locks the queue currently in that slot, and clears the
   slot before Linux can recycle the descriptor. Workers and canceler pins
   keep the detached old queue alive. Final unref clears a map slot only if it
