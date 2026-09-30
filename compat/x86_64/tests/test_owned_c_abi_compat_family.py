@@ -191,6 +191,29 @@ class ComponentTests(unittest.TestCase):
         self.assertFalse(result["admitted"])
         self.assertIn("do not cover its product modes", result["gap"]["detail"])
 
+    def test_crypt_retained_static_product_must_join_the_primary_pair(self) -> None:
+        component = self.roster.component("crypt-runtime")
+        step = self._step(component)
+        leaf = next((step / "tmp").iterdir())
+        names = {"static": "static", "static-pie": "static-pie",
+                 "pie": "dynamic-pie", "non-pie": "dynamic-non-pie"}
+        for linkage, product in self._all_linkages().items():
+            (leaf / (names[linkage]+"-link-evidence.json")).write_text(json.dumps({
+                "linkage": linkage, "product": self._mounted(product),
+                "product_manifest_sha256": execution.digest(product / "share/crabc/manifest.json"),
+            }), encoding="utf-8")
+        with mock.patch.dict(family.READERS, {"crypt-profile": lambda **kwargs: {"physically_verified": True}}):
+            self.assertTrue(self._result(component)["admitted"])
+            foreign = self._host("reproduction", "static")
+            for linkage in ("static", "static-pie"):
+                (leaf / (names[linkage]+"-link-evidence.json")).write_text(json.dumps({
+                    "linkage": linkage, "product": self._mounted(foreign),
+                    "product_manifest_sha256": execution.digest(foreign / "share/crabc/manifest.json"),
+                }), encoding="utf-8")
+            result = self._result(component)
+        self.assertFalse(result["admitted"])
+        self.assertIn("not the cohort's primary static product", result["gap"]["detail"])
+
     def test_changed_invocation_or_undeclared_scratch_is_rejected(self) -> None:
         component = self.roster.component("error-reporting")
         step = self._step(component)

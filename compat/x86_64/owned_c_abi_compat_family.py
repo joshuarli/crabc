@@ -413,7 +413,10 @@ def _declared_products(root: Path, mount: str, component: Component, command: li
         declared["static"].append(_checkout_relative(command[3], mount, f"{component.identifier} static argument"))
     declared["dynamic"].append(_checkout_relative(command[-1], mount, f"{component.identifier} dynamic argument"))
     linkages = set()
-    for path in sorted(leaf.glob("*.link-identity.json")):
+    # Component readers validate link contents; the family must also join
+    # every retained product spelling, including crypt's link evidence.
+    paths = [*leaf.glob("*.link-identity.json"), *leaf.glob("*-link-evidence.json")]
+    for path in sorted(paths):
         identity = family.read(path)
         require(isinstance(identity, dict) and identity.get("linkage") in PRODUCT_SCOPES["static-and-dynamic"],
                 f"{component.identifier} link identity is malformed: {path.name}")
