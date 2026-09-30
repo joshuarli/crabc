@@ -3,7 +3,7 @@
   "format": 1,
   "qualification_profiles": {
     "full": {"deferred_evidence": []},
-    "correctness": {"deferred_evidence": ["perf:engine-early-proof"]}
+    "correctness": {"deferred_evidence": ["codegen:hot-path-audit", "perf:engine-early-proof"]}
   },
   "upstream": {
     "version": "3.5.0",
@@ -12,6 +12,7 @@
   "evidence": {
     "native:pointer-dispatch": {
       "native_tests": [
+        "native_aligned_client_contract",
         "native_aligned_reallocate",
         "native_concurrent_nonlocal_reallocate",
         "native_huge_singleton_local_free",

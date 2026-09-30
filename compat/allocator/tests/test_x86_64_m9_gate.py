@@ -832,6 +832,71 @@ class CorrectnessTests(GateFixture):
             unmet = gate.correctness_evidence_unmet("m5", report, path.parent, None)
         self.assertTrue(any("executed producers" in reason for reason in unmet), unmet)
 
+    def test_m5_functional_profile_authenticates_active_logs_without_deferred_inputs(self) -> None:
+        import x86_64_m5_gate as producer
+
+        contract = gate.harness.read_json(producer.CONTRACT)
+        summary = producer.validate_contract(contract, gate.harness.load_pin(), producer.native_test_targets())
+        artifacts = self.root / "m5-correctness-gate"
+        artifacts.mkdir()
+        evidence = {}
+        for name, command in summary["runnable_evidence"].items():
+            if name in {"codegen:hot-path-audit", "perf:engine-early-proof"}:
+                continue
+            log = artifacts / f"{name.replace(':', '-')}.log"
+            log.write_text("retained functional output\n")
+            entry = {"log": gate.harness.relative(log), "status": "passed"}
+            if isinstance(command, dict):
+                entry["receipt"] = command
+            else:
+                entry["command"] = [arg.replace(producer.SCRATCH_PLACEHOLDER,
+                                               str(artifacts / name.replace(':', '-'))) for arg in command]
+            evidence[name] = entry
+        with patch.object(gate.engine, "git_provenance", return_value={"head": "fixture", "clean": True}), \
+                patch.object(gate.harness, "ARTIFACT_ROOT", self.root):
+            # Only the existing artifact-directory policy is redirected; gate,
+            # contract, source seal, producer commands and raw hashes are real.
+            expected = self.root / "x86_64/m5-correctness-gate"
+            expected.parent.mkdir()
+            artifacts.rename(expected)
+            artifacts = expected
+            for name, entry in evidence.items():
+                entry["log"] = gate.harness.relative(artifacts / f"{name.replace(':', '-')}.log")
+                if "command" in entry:
+                    entry["command"] = [arg.replace(str(self.root / "m5-correctness-gate"), str(artifacts))
+                                        for arg in entry["command"]]
+            report = producer.gate_report(contract, summary, evidence, qualification_profile="correctness")
+            report["provenance"] = producer.report_provenance(report)
+            self.assertEqual(gate.correctness_evidence_unmet(
+                "m5", report, artifacts, None, qualification_profile="correctness"), [])
+            for name in list(evidence):
+                with self.subTest(missing=name):
+                    missing = copy.deepcopy(report)
+                    del missing["evidence"][name]
+                    self.assertTrue(gate.correctness_evidence_unmet(
+                        "m5", missing, artifacts, None, qualification_profile="correctness"))
+                with self.subTest(failed=name):
+                    failed = copy.deepcopy(report)
+                    failed["evidence"][name]["status"] = "failed"
+                    self.assertTrue(gate.correctness_evidence_unmet(
+                        "m5", failed, artifacts, None, qualification_profile="correctness"))
+            for name in ("codegen:hot-path-audit", "perf:engine-early-proof"):
+                extra = copy.deepcopy(report)
+                extra["evidence"][name] = {"status": "passed"}
+                self.assertTrue(gate.correctness_evidence_unmet(
+                    "m5", extra, artifacts, None, qualification_profile="correctness"))
+            forged = copy.deepcopy(report)
+            forged["provenance"]["seal"]["gate"]["sha256"] = "0" * 64
+            self.assertIn("current gate and contract identity", gate.correctness_evidence_unmet(
+                "m5", forged, artifacts, None, qualification_profile="correctness")[0])
+            changed = next(iter(evidence.values()))
+            (gate.harness.ROOT / changed["log"]).write_text("changed output")
+            self.assertIn("differs from its retained raw log", gate.correctness_evidence_unmet(
+                "m5", report, artifacts, None, qualification_profile="correctness")[0])
+            full = producer.gate_report(contract, summary, evidence)
+            full["provenance"] = report["provenance"]
+            self.assertTrue(gate.correctness_evidence_unmet("m5", full, artifacts, None))
+
     def test_current_report_requires_all_gates_and_unchanged_physical_logs(self) -> None:
         git = patch.object(gate.engine, "git_provenance", return_value={"head": "fixture", "clean": True})
         git.start()

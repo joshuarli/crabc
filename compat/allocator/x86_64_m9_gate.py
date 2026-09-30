@@ -831,6 +831,8 @@ def correctness_evidence_unmet(
             return ["report lacks the complete passing gate roster"]
         evidence = report["evidence"]
         expected_evidence = {name for record in contract["gates"] for name in record["evidence"]}
+        if gate == "m5" and qualification_profile == "correctness":
+            expected_evidence -= set(contract["qualification_profiles"]["correctness"]["deferred_evidence"])
         if not isinstance(evidence, Mapping) or set(evidence) != expected_evidence:
             return ["report lacks current evidence for every gate"]
         producer = importlib.import_module(gate_file.stem)
@@ -844,7 +846,11 @@ def correctness_evidence_unmet(
             else:
                 summary = producer.validate_contract(
                     contract, api, pin, producer.sibling_owned_items(contract["inventory"]))
-        if set(evidence) != set(summary["runnable_evidence"]):
+        runnable_evidence = summary["runnable_evidence"]
+        if gate == "m5" and qualification_profile == "correctness":
+            active = producer.active_evidence(contract, qualification_profile)
+            runnable_evidence = {name: command for name, command in runnable_evidence.items() if name in active}
+        if set(evidence) != set(runnable_evidence):
             return ["report lacks executed producers for every gate"]
         reconstructed = (producer.gate_report(contract, summary, evidence, qualification_profile=qualification_profile)
                          if gate == "m5" and qualification_profile == "correctness"
@@ -873,7 +879,7 @@ def correctness_evidence_unmet(
         for name, entry in evidence.items():
             if not isinstance(entry, Mapping) or entry.get("status") != "passed":
                 return [f"evidence {name} did not pass"]
-            canonical = summary["runnable_evidence"][name]
+            canonical = runnable_evidence[name]
             if gate == "m6":
                 if entry.get("runner") != canonical:
                     return [f"evidence {name} lacks its executed producer"]

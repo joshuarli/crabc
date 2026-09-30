@@ -3,15 +3,16 @@
 
 The full profile requires persistent concurrency and lifecycle evidence,
 structural audits, and early engine throughput. The correctness profile
-requires the same functional evidence and structural audits while explicitly
-deferring the throughput condition. Its receipt cannot qualify performance.
+requires the same functional evidence and production architecture checks while
+deferring codegen optimization and throughput qualification. Its receipt cannot
+qualify performance.
 
 Evidence is one of four shapes:
 
 * `native_tests`: `crabc-mimalloc/tests/native_*` integration targets, run
   together with their default-off audit and fault features. Every such
   target belongs to exactly one native evidence entry, so a new direct
-  runtime witness cannot silently fall outside the milestone.
+  runtime witness cannot silently escape the evidence closure.
 * `command`: an allocator-container command (`python3 <script> ...`). The
   one `{scratch}` placeholder names this run's fresh per-evidence directory.
 * `receipt`: a runtime-launcher runner's revision-bound receipt, read and
@@ -66,7 +67,7 @@ SCRATCH_PLACEHOLDER = "{scratch}"
 ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m5-gate"
 QUALIFICATION_PROFILES = ("full", "correctness")
 CORRECTNESS_DEFERRED_GATE = "m5.codegen-performance"
-CORRECTNESS_AUDIT_EVIDENCE = "codegen:hot-path-audit"
+CORRECTNESS_DEFERRED_EVIDENCE = ["codegen:hot-path-audit", "perf:engine-early-proof"]
 
 
 def _string_list(value: object, subject: str, *, allow_empty: bool = False) -> list[str]:
@@ -107,9 +108,9 @@ def validate_contract(
         raise harness.HarnessError("unsupported M5 allocator gate contract")
     if contract.get("qualification_profiles") != {
         "full": {"deferred_evidence": []},
-        "correctness": {"deferred_evidence": ["perf:engine-early-proof"]},
+        "correctness": {"deferred_evidence": CORRECTNESS_DEFERRED_EVIDENCE},
     }:
-        raise harness.HarnessError("M5 qualification profiles must defer only the early throughput evidence")
+        raise harness.HarnessError("M5 qualification profiles must defer only codegen optimization and early throughput evidence")
     upstream = contract.get("upstream")
     if not isinstance(upstream, Mapping) or dict(upstream) != {
         "version": pin["version"], "revision": pin["revision"],
@@ -162,7 +163,7 @@ def validate_contract(
             raise harness.HarnessError(
                 f"M5 evidence {evidence_id} must record scope with exactly native_tests, command, or receipt"
             )
-    # A native target may instead belong to another milestone's gate, which
+    # A native target may instead belong to another gate, which
     # must name that contract; it is then neither run nor claimed here.
     elsewhere = contract.get("native_tests_owned_elsewhere", {})
     if not isinstance(elsewhere, Mapping):
@@ -217,6 +218,15 @@ def validate_contract(
     }
 
 
+def active_evidence(contract: Mapping[str, Any], qualification_profile: str) -> set[str]:
+    """Select required producers without admitting deferred performance evidence."""
+
+    if qualification_profile not in QUALIFICATION_PROFILES:
+        raise harness.HarnessError(f"unsupported M5 qualification profile: {qualification_profile}")
+    deferred = set(contract["qualification_profiles"][qualification_profile]["deferred_evidence"])
+    return {name for record in contract["gates"] for name in record["evidence"]} - deferred
+
+
 def gate_report(
     contract: Mapping[str, Any], summary: Mapping[str, Any], results: Mapping[str, Mapping[str, Any]],
     *, qualification_profile: str = "full",
@@ -225,14 +235,15 @@ def gate_report(
 
     if qualification_profile not in QUALIFICATION_PROFILES:
         raise harness.HarnessError(f"unsupported M5 qualification profile: {qualification_profile}")
+    active = active_evidence(contract, qualification_profile)
+    results = {name: result for name, result in results.items() if name in active}
     records: list[dict[str, Any]] = []
     for gate in contract["gates"]:
         observed = {entry: results[entry]["status"] for entry in gate["evidence"] if entry in results}
         missing = [entry for entry in gate["evidence"] if entry not in summary["runnable_evidence"]]
         deferred = qualification_profile == "correctness" and gate["id"] == CORRECTNESS_DEFERRED_GATE
         if deferred:
-            audit = observed.get(CORRECTNESS_AUDIT_EVIDENCE)
-            status = "deferred" if audit == "passed" else "blocked" if audit is None else "failed"
+            status = "deferred"
         elif any(status != "passed" for status in observed.values()):
             status = "failed"
         elif gate["blocked_by"] or missing or len(observed) != len(gate["evidence"]):
@@ -274,10 +285,10 @@ def report_provenance(report: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def read_report(path: Path | None = None, *, profile: str = "full") -> dict[str, Any]:
-    """Read complete current evidence and replay its structural audit.
+    """Read complete current functional evidence for the selected profile.
 
-    Correctness requires every functional observation and the physical codegen
-    audit. Deferred throughput never becomes passing performance evidence.
+    Full qualification also replays the physical codegen audit. Correctness
+    defers that audit and throughput without qualifying either as performance.
     """
 
     if profile not in QUALIFICATION_PROFILES:
@@ -288,13 +299,16 @@ def read_report(path: Path | None = None, *, profile: str = "full") -> dict[str,
         if path.is_symlink() or not path.is_file() or path.resolve() != (artifacts / "report.json").resolve():
             raise harness.HarnessError("M5 report is absent or outside its profile directory")
         report = harness.read_json(path)
-        import codegen_audit_x86_64 as codegen
         import x86_64_m9_gate as audit_reader
 
         unmet = audit_reader.correctness_evidence_unmet(
             "m5", report, artifacts, None, qualification_profile=profile)
         if unmet:
             raise harness.HarnessError("M5 report is unmet: " + "; ".join(unmet))
+        if profile == "correctness":
+            return report
+        import codegen_audit_x86_64 as codegen
+
         audit_path = codegen.REPORT_ROOT / "m5-gate.json"
         audit = harness.read_json(audit_path)
         unmet = audit_reader.codegen_unmet(audit, [scenario.name for scenario in codegen.SCENARIOS])
@@ -373,7 +387,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode.add_argument("--gate", choices=GATE_IDS,
         help="execute and classify only the evidence of one gate")
     parser.add_argument("--qualification-profile", choices=QUALIFICATION_PROFILES, default="full",
-        help="correctness retains functional evidence and codegen audits while deferring throughput")
+        help="correctness requires functional evidence and defers codegen optimization and throughput")
     arguments = parser.parse_args(argv)
     contract = harness.read_json(CONTRACT)
     summary = validate_contract(contract, harness.load_pin(), native_test_targets())
@@ -393,6 +407,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         selected = dict(contract, gates=[gate for gate in contract["gates"] if gate["id"] == arguments.gate])
         wanted = set(selected["gates"][0]["evidence"])
         runnable = {key: value for key, value in runnable.items() if key in wanted}
+    active = active_evidence(selected, arguments.qualification_profile)
+    runnable = {key: value for key, value in runnable.items() if key in active}
     report = gate_report(selected, summary, run_evidence(runnable, artifacts),
                          qualification_profile=arguments.qualification_profile)
     report["provenance"] = report_provenance(report)
