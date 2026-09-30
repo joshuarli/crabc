@@ -183,9 +183,21 @@ class PlannedDeclarationCompilerTests(unittest.TestCase):
                 'extern __typeof(target) alias_name __attribute__((weak, alias("target")));\n')
             bad = HeaderCallableProviderLinkageAuditTests.archive(root, "wrong_alias", body +
                 'extern __typeof(other) alias_name __attribute__((weak, alias("other")));\n')
-            AUDIT.planned_binding_definitions(good, good, ("target",), (alias,))
+            AUDIT.planned_binding_definitions(good, good, ("alias_name",), (alias,))
             with self.assertRaisesRegex(AUDIT.ProviderLinkageAuditError, "weak alias"):
-                AUDIT.planned_binding_definitions(good, bad, ("target",), (alias,))
+                AUDIT.planned_binding_definitions(good, bad, ("alias_name",), (alias,))
+
+    @unittest.skipUnless(all(shutil.which(t) for t in ("cc", "ar", "readelf")), "requires native ELF tools")
+    def test_unselected_roster_alias_does_not_require_an_invented_declaration(self):
+        work = ROOT / ".work/x86_64/planned-provider-tests"
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            root = Path(temporary)
+            archive = HeaderCallableProviderLinkageAuditTests.archive(root, "all", "int owner(void) { return 1; }\n"
+                'int internal(void) { return 2; }\nextern __typeof(internal) private_alias __attribute__((weak, alias("internal")));\n')
+            extracted = HeaderCallableProviderLinkageAuditTests.archive(root, "selected", "int owner(void) { return 1; }\n")
+            alias = ROSTER.ArchiveAlias(name="private_alias", target="internal", binding="weak-same-address")
+            self.assertIn("owner", AUDIT.planned_binding_definitions(archive, extracted, ("owner",), (alias,)))
 
     @unittest.skipUnless(shutil.which("clang") and shutil.which("nm"), "requires native Clang and nm")
     def test_selected_cxx_only_declaration_retains_ordinary_c_linkage(self):

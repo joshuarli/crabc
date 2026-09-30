@@ -512,6 +512,8 @@ def planned_binding_definitions(archive: Path, executable: Path, members: Sequen
                          f"planned provider binding changed or missing: {name}")
         result[name] = after[0]
     for alias in aliases:
+        if alias.name not in members:
+            continue
         provider_require(alias.binding == "weak-same-address", f"unsupported planned alias {alias.name}")
         names = (alias.name, alias.target)
         entries = [[r for r in actual.get(n, []) if r["section"] != "UND"
