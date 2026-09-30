@@ -1756,6 +1756,40 @@ unsafe fn run_runtime_startup_tail(
     Ok(())
 }
 
+/// Embedding-owned writer for the calling thread's C errno slot.
+///
+/// This capability carries no borrowed TLS reference. Each invocation resolves
+/// the slot on the calling thread, so retained process policy can publish a
+/// captured syscall error before a diagnostic callback observes it.
+#[cfg(target_arch = "x86_64")]
+#[doc(hidden)]
+#[derive(Clone, Copy)]
+pub struct SourceErrnoStore {
+    store: unsafe fn(core::ffi::c_int),
+}
+
+#[cfg(target_arch = "x86_64")]
+impl SourceErrnoStore {
+    /// Retains an embedding's current-thread errno writer.
+    ///
+    /// # Safety
+    /// The function must remain callable for the process lifetime. It must
+    /// write only the calling thread's C errno slot, retain no TLS reference,
+    /// and neither allocate through this engine nor unwind. Startup must have
+    /// installed that thread's TLS before any policy using this capability.
+    pub const unsafe fn new(store: unsafe fn(core::ffi::c_int)) -> Self {
+        Self { store }
+    }
+
+    /// Publishes a captured positive Linux error on the calling thread.
+    #[inline]
+    pub fn store(self, errno: crabc_core::Errno) {
+        // SAFETY: construction retains the embedding's process-lifetime,
+        // current-thread writer; no TLS reference crosses this call.
+        unsafe { (self.store)(errno.raw()) };
+    }
+}
+
 /// Raw, nonowning process-start facts for the selected x86 native runtime.
 ///
 /// Pinned mimalloc's Unix primitives observe the kernel base page size, the C
@@ -1780,6 +1814,7 @@ pub struct NativeProcessStartupFacts {
     page_size: crate::os::PageSize,
     environment_reader: VmOptionEnvironmentReader,
     stderr_output: crate::diagnostic_output::RuntimeStderrOutput,
+    source_errno_store: Option<SourceErrnoStore>,
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -1809,7 +1844,21 @@ impl NativeProcessStartupFacts {
             page_size: crate::os::PageSize::new(page_size_bytes)?,
             environment_reader,
             stderr_output,
+            source_errno_store: None,
         })
+    }
+
+    /// Adds the embedding's explicit current-thread errno writer.
+    #[inline]
+    pub const fn with_source_errno_store(mut self, store: SourceErrnoStore) -> Self {
+        self.source_errno_store = Some(store);
+        self
+    }
+
+    /// Returns the optional embedding-owned writer without borrowing TLS.
+    #[inline]
+    pub const fn source_errno_store(&self) -> Option<SourceErrnoStore> {
+        self.source_errno_store
     }
 
     #[inline]
