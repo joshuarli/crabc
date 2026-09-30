@@ -11254,6 +11254,80 @@ pub unsafe fn native_stats_print_out(
     };
 }
 
+/// Pinned `mi_subproc_heap_stats_print_out`: print each listed Heap, then
+/// the unmerged metadata Theap if present, then the subprocess statistics.
+/// A null subprocess produces no output.
+///
+/// # Safety
+/// `id` is null, the main id, or a live child id. The caller keeps that
+/// subprocess alive throughout the call. `out` and `argument` are valid for
+/// every synchronous NUL-terminated message; ordinary allocation is allowed,
+/// but the callback must not link/unlink Heaps of the selected subprocess,
+/// destroy it, or otherwise reenter its Heap-list lock. Those operations
+/// are excluded by the source visitation lock as well.
+#[doc(hidden)]
+pub unsafe fn native_subproc_heap_stats_print_out(
+    id: *mut core::ffi::c_void,
+    out: Option<unsafe extern "C" fn(*const core::ffi::c_char, *mut core::ffi::c_void)>,
+    argument: *mut core::ffi::c_void,
+) {
+    let Some(id) = core::ptr::NonNull::new(id) else { return; };
+    let Some((owner, _, nodes)) = statistics_print_facts() else { return; };
+    let identity = {
+        let Some(_operation) = NativeSubprocessOperation::enter() else { return; };
+        let main = crate::subproc::SubprocessIdentity::global();
+        if id.as_ptr() == main.as_ptr().cast() {
+            main.as_ptr()
+        } else {
+            // SAFETY: the caller retains this exact live child identifier.
+            // The record projection and lock end before any callback.
+            let selected = unsafe {
+                crate::subproc::lifecycle::NativeSubprocessId::from_ptr(id).with_owner(|child| {
+                    child.as_mut().and_then(|child| child.identity_pointer())
+                })
+            };
+            let Ok(Some(identity)) = selected else { return; };
+            identity
+        }
+    };
+    // SAFETY: the caller retains the selected subprocess, including across
+    // callbacks. Only its synchronized identity members are projected.
+    let identity = unsafe { &*identity };
+    let Some(sequence) = identity.arena_print_sequence() else { return; };
+    // SAFETY: the caller supplies the synchronous output callback and argument.
+    let output = unsafe { crate::diagnostic_output::StatisticsOutput::source(owner, out, argument) };
+    let _ = identity.heap_list().visit_heaps(|heap| {
+        let snapshot = {
+            let Some(_operation) = NativeSubprocessOperation::enter() else { return false; };
+            // SAFETY: list membership retains the Heap. The calling thread's
+            // Theap/TLD roots remain owned by that thread for this short merge.
+            unsafe { crate::types::Heap::statistics_for_print_at(heap, crate::compiler_tls::default_theap()) }
+        };
+        let info = native_process_info();
+        // SAFETY: the snapshot owns all scalar inputs. No allocator owner,
+        // Heap/Theap projection or child-record lock spans this callback;
+        // the source Heap-list restriction is part of the caller contract.
+        unsafe {
+            crate::diagnostic_output::render_statistics(output, b"heap", snapshot.0, snapshot.1, info, nodes)
+        };
+        true
+    });
+    let metadata = {
+        let Some(_operation) = NativeSubprocessOperation::enter() else { return; };
+        // SAFETY: the caller retains the subprocess and metadata Theap.
+        unsafe { identity.metadata_statistics_for_print() }
+    };
+    if let Some(statistics) = metadata {
+        let info = native_process_info();
+        // SAFETY: owned scalar snapshot; all metadata projections have ended.
+        unsafe { crate::diagnostic_output::render_statistics(output, b"meta", sequence, statistics, info, nodes) };
+    }
+    let statistics = identity.statistics().final_output_snapshot();
+    let info = native_process_info();
+    // SAFETY: owned scalar snapshot, with no allocator projection live.
+    unsafe { crate::diagnostic_output::render_statistics(output, b"subproc", sequence, statistics, info, nodes) };
+}
+
 /// Pinned `mi_process_info_print_out(out, arg)` (`src/stats.c:334-353`).
 ///
 /// # Safety

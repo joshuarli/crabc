@@ -892,6 +892,22 @@ impl SubprocessIdentity {
         !self.theap_meta.load(Ordering::Acquire).is_null()
     }
 
+    /// Owned atomic statistics of the published detached metadata Theap.
+    /// This is the unmerged `subproc->theap_meta->stats` print observation.
+    ///
+    /// # Safety
+    /// The subprocess and its metadata Theap remain initialized and pinned
+    /// for this observation; child destruction is excluded by the caller.
+    /// No whole-Theap projection overlaps these atomic field reads.
+    pub(crate) unsafe fn metadata_statistics_for_print(
+        &self,
+    ) -> Option<crate::statistics::FinalStatisticsSnapshot> {
+        let theap = NonNull::new(self.theap_meta.load(Ordering::Acquire))?;
+        // SAFETY: the published metadata Theap and its Heap remain live by
+        // the caller's subprocess-lifetime contract; no merge/reset occurs.
+        unsafe { Theap::final_statistics_at(theap) }.map(|(_, statistics)| statistics)
+    }
+
     /// The published detached metadata Theap address, for fixture checks.
     #[cfg(test)]
     pub(crate) fn test_published_metadata_theap(&self) -> *mut Theap {

@@ -10,9 +10,8 @@
 // (`mi_register_deferred_free`), `src/stats.c:640-653` (`mi_stats_get`),
 // and `src/init.c:17-19` (`mi_version`).
 
-//! Pinned mimalloc option, callback, and statistics public entries of the
-//! M7 contract over the native runtime's process option table and output
-//! owner.
+//! Pinned mimalloc option, callback, and statistics public entries over the
+//! native runtime's process option table and output owner.
 //!
 //! Each function is the source entry of the same `mi_` name, with a raw
 //! `mi_option_t` value where the source takes one: an out-of-range option
@@ -167,6 +166,18 @@ pub use crate::diagnostic_output::SourceProcessInfo;
 pub unsafe fn stats_print_out(out: Option<OutputFunction>, argument: *mut c_void) {
     // SAFETY: forwarded.
     unsafe { crate::runtime_lifecycle::native_stats_print_out(out, argument) }
+}
+
+/// `mi_subproc_heap_stats_print_out`; null selects no subprocess.
+///
+/// # Safety
+/// `id` is null, the main id, or a live child id retained through the call.
+/// `out` and `argument` remain callable for every NUL-terminated message.
+/// The callback may allocate, but must not mutate the selected Heap list,
+/// destroy the subprocess, or recursively acquire its Heap-list lock.
+pub unsafe fn subproc_heap_stats_print_out(id: *mut c_void, out: Option<OutputFunction>, argument: *mut c_void) {
+    // SAFETY: forwarded subprocess-lifetime and callback restrictions.
+    unsafe { crate::runtime_lifecycle::native_subproc_heap_stats_print_out(id, out, argument) }
 }
 
 /// `mi_thread_stats_print_out`.

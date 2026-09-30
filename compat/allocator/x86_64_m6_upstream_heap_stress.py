@@ -88,12 +88,12 @@ def run_differential() -> int:
             "matrix": MATRIX, "watchdog_seconds": WATCHDOG_SECONDS,
             "execution": execution, "source": seal,
             "boundary": "mi_* native adapter; host musl provides pthreads and C process substrate",
-            "profile": "release", "workload_modified": False}, indent=2) + "\n")
+            "profile": "release", "workload_assertions": True, "workload_modified": False}, indent=2) + "\n")
         compiler = harness.require_tool("musl-gcc")
         fixture = source / "test/test-stress-heaps.c"
         c_driver = temporary / "heap-stress-c"
         common = [compiler, "-std=c11", "-D_GNU_SOURCE", "-ftls-model=initial-exec",
-                  "-DMI_LIBC_MUSL=1", *harness.CONFIGURATION_PROFILES["release"],
+                  "-DMI_LIBC_MUSL=1", *harness.CONFIGURATION_PROFILES["release"], "-UNDEBUG",
                   "-I", str(source / "include"), "-I", str(source / "src")]
         record, logs = record_command(output, "c-build", [*common, str(fixture), str(source / "src/static.c"),
                                                    "-pthread", "-o", str(c_driver)], source)
@@ -114,6 +114,39 @@ def run_differential() -> int:
         require_pass(record, "unmodified Heap stress Rust link")
         cases.append(("rust-link", 0, logs))
         shutil.copy2(rust_driver, output / "heap-stress-rust")
+        control_source = harness.ALLOCATOR_ROOT / "x86_64_m6_subproc_heap_stats_driver.c"
+        products[control_source.name] = control_source
+        expected_controls = {
+            "null": b"null-output=empty\n",
+            "main": b"heap 2\nheap 1\nheap 0\nmeta 0\nsubproc 0\nformat-and-reentry=ok\n",
+            "empty": b"heap 0\nmeta 1\nsubproc 1\nformat-and-reentry=ok\n",
+            "live-child": b"heap 2\nheap 1\nheap 0\nmeta 1\nsubproc 1\nformat-and-reentry=ok\n",
+            "default": b"default-route=stderr\n",
+        }
+        for backend, allocator in (("c", source / "src/static.c"), ("rust", library)):
+            control = temporary / f"heap-stats-{backend}"
+            record, logs = record_command(output, f"stats-{backend}-build",
+                [*common, str(control_source), str(allocator), "-pthread", "-o", str(control)], source)
+            require_pass(record, f"selected-subprocess statistics {backend} build")
+            cases.append((f"stats-{backend}-build", 0, logs))
+            shutil.copy2(control, output / control.name)
+            products[control.name] = output / control.name
+            for mode, expected in expected_controls.items():
+                case = f"stats-{backend}-{mode}"
+                record, logs = record_command(output, case, [str(control), mode], temporary, runtime=True)
+                require_pass(record, case)
+                stdout = stress.byte_record_payload(record["stdout"], case)
+                stderr = stress.byte_record_payload(record["stderr"], case)
+                if stdout != expected:
+                    raise harness.HarnessError(f"{case}: selected Heap/meta/subprocess order or callback differs; raw evidence in {output}")
+                if mode == "default":
+                    headers = [line for line in stderr.splitlines()
+                               if line.startswith((b"heap ", b"meta ", b"subproc "))]
+                    if headers != [b"heap 0", b"meta 1", b"subproc 1"]:
+                        raise harness.HarnessError(f"{case}: process default output route differs")
+                elif stderr:
+                    raise harness.HarnessError(f"{case}: unexpected callback-route diagnostics; raw evidence in {output}")
+                cases.append((case, 0, logs))
         for workers, scale, iterations in MATRIX:
             expected = (f"Using {workers} threads with a {scale}% load-per-thread and {iterations} iterations"
                         " (allow large objects) (using 4 rolling heaps)\n").encode()
@@ -132,7 +165,7 @@ def run_differential() -> int:
             raise harness.HarnessError("source changed during upstream Heap stress execution")
         receipt = receipts.write_receipt(harness.ROOT, RUNNER, ARTIFACTS, products, cases,
             {"workers": "1,2,4,8", "scale-iterations": "1:8,10:8,101:1", "rolling-heaps": "4",
-             "watchdog-seconds": str(WATCHDOG_SECONDS), "boundary": "native-mi-adapter", "profile": "release"}, True)
+             "watchdog-seconds": str(WATCHDOG_SECONDS), "boundary": "native-mi-adapter", "profile": "release", "workload-assertions": "active"}, True)
         receipts.read_receipt(harness.ROOT, RUNNER)
         print(f"unmodified upstream Heap stress: {len(MATRIX)} C/Rust pairs passed; {receipt}")
     return len(MATRIX)

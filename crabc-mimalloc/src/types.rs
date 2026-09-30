@@ -207,6 +207,53 @@ impl Heap {
         unsafe { statistics.add_into_source_image(destination) };
     }
 
+    /// `mi_heap_get_stats` followed by the scalar reads of `_mi_stats_print`.
+    /// Only the calling thread's already initialized Theap for this Heap is
+    /// merged; an absent Theap remains absent.
+    ///
+    /// # Safety
+    /// `heap` is pinned and live under its subprocess Heap-list lock. `current`
+    /// is the calling thread's default Theap, with no owner or whole-image
+    /// projection live; that thread retains its Theap/TLD list for the call.
+    /// The returned scalars borrow none of those images.
+    pub(crate) unsafe fn statistics_for_print_at(
+        heap: NonNull<Self>,
+        current: NonNull<Theap>,
+    ) -> (usize, crate::statistics::FinalStatisticsSnapshot) {
+        // SAFETY: immutable sequence and atomic statistics of the live Heap.
+        let sequence = unsafe { core::ptr::addr_of!((*heap.as_ptr()).heap_seq).read() };
+        let statistics = unsafe { &*core::ptr::addr_of!((*heap.as_ptr()).statistics) };
+        // SAFETY: the calling thread retains its own initialized roots. Empty
+        // default Theaps have no Heap and are not followed into a TLD.
+        let default_heap = unsafe { Theap::heap_at(current) };
+        let mut selected = None;
+        if default_heap == heap.as_ptr() {
+            selected = Some(current);
+        } else if !default_heap.is_null() {
+            // SAFETY: the initialized default Theap retains this thread's TLD.
+            if let Some(tld) = NonNull::new(unsafe { Theap::tld_at(current) }) {
+                // SAFETY: this thread alone changes its auxiliary-Theap list.
+                let mut next = unsafe { ThreadLocalData::theaps_head_at(tld) };
+                while let Some(theap) = NonNull::new(next) {
+                    // SAFETY: the thread retains every listed Theap.
+                    if unsafe { Theap::heap_at(theap) } == heap.as_ptr() {
+                        selected = Some(theap);
+                        break;
+                    }
+                    // SAFETY: the thread retains every listed Theap.
+                    next = unsafe { Theap::tld_next_at(theap) };
+                }
+            }
+        }
+        if let Some(theap) = selected {
+            // SAFETY: only the exact current-thread Theap's atomic statistics
+            // are merged, with no callback or owner projection in progress.
+            let source = unsafe { &*core::ptr::addr_of!((*theap.as_ptr()).statistics) };
+            statistics.merge_from_and_reset(source);
+        }
+        (sequence, statistics.final_output_snapshot())
+    }
+
     /// `mi_heap_stat_decrease` of `page_bins[bin]` and `pages` for a page
     /// leaving this Heap without a Theap (`_mi_arenas_page_free(page, NULL)`,
     /// `src/arena.c:1294-1296`).
@@ -7153,9 +7200,9 @@ impl Theap {
     /// unmerged statistics, or `None` while it is uninitialized.
     ///
     /// # Safety
-    /// `pointer` is the calling thread's current default-Theap root and no
-    /// whole-Theap reference overlaps this call; its initialized Heap
-    /// outlives it.
+    /// `pointer` is a pinned, initialized Theap whose Heap remains live for
+    /// the call. No whole-Theap reference overlaps the atomic field reads;
+    /// concurrent statistics producers use those same relaxed atomics.
     pub(crate) unsafe fn final_statistics_at(
         pointer: NonNull<Self>,
     ) -> Option<(usize, crate::statistics::FinalStatisticsSnapshot)> {

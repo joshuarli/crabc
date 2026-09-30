@@ -1075,6 +1075,21 @@ pub unsafe extern "C" fn mi_stats_print(out: *mut c_void) {
     unsafe { options::stats_print_out(source_output(out), core::ptr::null_mut()) }
 }
 
+/// # Safety
+/// The selected subprocess stays live through every output callback. The
+/// callback may allocate, but must not change that subprocess's Heap list
+/// or destroy it while the source visitation lock is held.
+#[no_mangle]
+pub unsafe extern "C" fn mi_subproc_heap_stats_print_out(
+    id: *mut c_void, out: Option<OutputFunction>, argument: *mut c_void,
+) {
+    register_thread_for_statistics();
+    let out = source_output(out.map_or(core::ptr::null(), |out| out as *const c_void));
+    // SAFETY: the C caller retains the selected subprocess and supplies the
+    // synchronous output callback under the source Heap-list restrictions.
+    unsafe { options::subproc_heap_stats_print_out(id, out, argument) }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn mi_thread_stats_print_out(out: Option<OutputFunction>, argument: *mut c_void) {
     register_thread_for_statistics();
