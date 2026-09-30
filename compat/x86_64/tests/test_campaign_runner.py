@@ -108,6 +108,20 @@ class CampaignRunnerTests(unittest.TestCase):
                 campaign_runner.execute_gate({'gates': {'qualification': gate}}, 'qualification')
             run.assert_not_called()
 
+    def test_promotion_missing_receipt_never_executes_and_explicit_receipt_only_reads(self):
+        gate = {'state': 'ready', 'pass': False, 'machine_gate_defined': True,
+                'machine_gate_command': campaign_report.PROMOTION_RUNNER_COMMAND}
+        value = {'gates': {'promotion': gate}, 'families': []}
+        with mock.patch.object(campaign_runner.subprocess, 'run') as run:
+            with self.assertRaisesRegex(campaign_runner.CampaignRunnerError, 'explicit qualification receipt'):
+                campaign_runner.execute_gate(value, 'promotion')
+            run.assert_not_called()
+            run.return_value = subprocess.CompletedProcess([], 0)
+            receipt = ROOT / '.work/x86_64/qualification-receipts/current/receipt.json'
+            self.assertEqual(campaign_runner.execute_gate(value, 'promotion', receipt), 0)
+        self.assertEqual(run.call_args.args[0],
+                         ['./scripts/dev-x86_64.sh', 'promotion-closure', '--qualification-receipt', str(receipt)])
+
     def test_dynamic_gate_runs_its_pinned_terminal_product_runner(self) -> None:
         report = {
             "families": [

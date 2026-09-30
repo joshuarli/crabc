@@ -187,11 +187,17 @@ def product_machine_gate_command(gate_name: str, gate: Mapping[str, Any]) -> lis
     return verified_command_tokens(expected)
 
 
-def execute_terminal_machine_gate(gate_name: str, gate: Mapping[str, Any]) -> int:
+def execute_terminal_machine_gate(gate_name: str, gate: Mapping[str, Any], qualification_receipt: Path | None = None) -> int:
     """Run the one explicitly registered terminal boundary for a passed gate."""
     if gate_name == "qualification":
         command = qualification_machine_gate_command(gate)
         label = "receipt-pinned machine gate"
+    elif gate_name == "promotion":
+        require(gate.get("machine_gate_command") == campaign_report.PROMOTION_RUNNER_COMMAND,
+                "promotion machine gate is not the pinned closure reader")
+        require(qualification_receipt is not None, "promotion requires an explicit qualification receipt")
+        command = verified_command_tokens(campaign_report.PROMOTION_RUNNER_COMMAND) + ["--qualification-receipt", str(qualification_receipt)]
+        label = "source-bound promotion closure reader"
     elif gate_name in PRODUCT_MACHINE_GATE_COMMANDS:
         command = product_machine_gate_command(gate_name, gate)
         label = "owned product machine gate"
@@ -209,8 +215,10 @@ def execute_terminal_machine_gate(gate_name: str, gate: Mapping[str, Any]) -> in
     return 0
 
 
-def execute_gate(report: Mapping[str, Any], gate_name: str) -> int:
+def execute_gate(report: Mapping[str, Any], gate_name: str, qualification_receipt: Path | None = None) -> int:
     gate = report_gate(report, gate_name)
+    if gate_name == "promotion" and gate.get("state") in {"ready", "passed"} and gate.get("machine_gate_defined") is True:
+        return execute_terminal_machine_gate(gate_name, gate, qualification_receipt)
     if gate.get("pass") is not True:
         print(json.dumps(blocker_payload(gate_name, gate), indent=2, sort_keys=True))
         return 1
@@ -234,10 +242,10 @@ def execute_gate(report: Mapping[str, Any], gate_name: str) -> int:
     return execute_terminal_machine_gate(gate_name, gate)
 
 
-def execute_all(report: Mapping[str, Any]) -> int:
+def execute_all(report: Mapping[str, Any], qualification_receipt: Path | None = None) -> int:
     """Run gates in the contract's required order and stop at the first blocker."""
     for gate_name in ALL_GATE_ORDER:
-        result = execute_gate(report, gate_name)
+        result = execute_gate(report, gate_name, qualification_receipt)
         if result != 0:
             return result
     return 0
@@ -246,12 +254,15 @@ def execute_all(report: Mapping[str, Any]) -> int:
 def main(arguments: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=(*GATE_BY_COMMAND, "all"))
+    parser.add_argument("--qualification-receipt", type=Path, help="explicit current completed receipt for promotion-check or all")
     parsed = parser.parse_args(arguments)
+    if parsed.qualification_receipt is not None and parsed.command not in {"promotion-check", "all"}:
+        parser.error("qualification receipt applies only to promotion-check or all")
     try:
         report = campaign_report.build_report()
         if parsed.command == "all":
-            return execute_all(report)
-        return execute_gate(report, GATE_BY_COMMAND[parsed.command])
+            return execute_all(report, parsed.qualification_receipt)
+        return execute_gate(report, GATE_BY_COMMAND[parsed.command], parsed.qualification_receipt)
     except (CampaignRunnerError, campaign_report.CampaignReportError) as error:
         print(f"x86 campaign: ERROR: {error}", file=sys.stderr)
         return 2

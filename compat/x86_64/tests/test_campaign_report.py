@@ -79,7 +79,7 @@ class CampaignReportTests(unittest.TestCase):
         self.assertFalse(dynamic_gate["pass"])
         promotion_gate = value["gates"]["promotion"]
         self.assertEqual(promotion_gate["contract_status"], "planned")
-        self.assertFalse(promotion_gate["machine_gate_defined"])
+        self.assertTrue(promotion_gate["machine_gate_defined"])
         self.assertFalse(promotion_gate["pass"])
         qualification_gate = value["gates"]["qualification"]
         # Every ordered gate is executable; families still block the gate.
@@ -147,7 +147,7 @@ class CampaignReportTests(unittest.TestCase):
             self.assertNotIn('performance.release', value['gates'][name]['required_families'])
             self.assertFalse(value['gates'][name]['pass'])
         self.assertNotIn('performance.release', [row['id'] for row in value['next_dependency_ready_transitions']])
-        self.assertFalse(value['gates']['promotion']['machine_gate_defined'])
+        self.assertTrue(value['gates']['promotion']['machine_gate_defined'])
 
     def test_full_scope_retains_performance_and_functional_failure_stays_blocked(self):
         with mock.patch.object(qualification, 'load_publication', return_value=None):
@@ -173,12 +173,25 @@ class CampaignReportTests(unittest.TestCase):
             value = report.build_report()
             self.assertTrue(value['gates']['qualification']['pass'])
             self.assertFalse(value['campaign']['promotion_ready'])
-            self.assertFalse(value['gates']['promotion']['machine_gate_defined'])
+            self.assertTrue(value['gates']['promotion']['machine_gate_defined'])
             next(f for f in inputs[1]['family'] if f['id'] == 'libc.text-math-locale-stdio')['status'] = 'planned'
             blocked = report.build_report()
         self.assertFalse(blocked['gates']['qualification']['pass'])
         self.assertIn('libc.text-math-locale-stdio', blocked['gates']['qualification']['incomplete_families'])
         self.assertNotIn('performance.release', blocked['gates']['qualification']['incomplete_families'])
+
+    def test_promotion_has_terminal_reader_but_missing_receipt_cannot_pass(self):
+        with mock.patch.object(qualification, 'load_publication', return_value=None):
+            inputs = copy.deepcopy(report.load_validated_campaign_inputs())
+        for family in inputs[1]['family']:
+            if family['id'] != 'performance.release':
+                family['status'] = report.COMPLETED_STATUS
+        with mock.patch.object(report, 'load_validated_campaign_inputs', return_value=inputs):
+            value = report.build_report()
+        self.assertTrue(value['gates']['promotion']['machine_gate_defined'])
+        self.assertFalse(value['gates']['promotion']['pass'])
+        self.assertFalse(value['campaign']['promotion_ready'])
+        self.assertIn('qualification receipt', value['gates']['promotion']['closure_error'])
 
     def test_scope_mismatch_and_forged_active_gate_ids_fail_closed(self):
         with mock.patch.object(qualification, 'load_publication', return_value=None):

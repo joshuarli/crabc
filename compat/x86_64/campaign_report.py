@@ -66,6 +66,7 @@ QUALIFICATION_MANIFEST_CHECK_COMMAND = (
     "python3 compat/x86_64/generate_qualification_manifest.py --check"
 )
 QUALIFICATION_RUNNER_COMMAND = "./scripts/dev-x86_64.sh qualification-manifest"
+PROMOTION_RUNNER_COMMAND = "./scripts/dev-x86_64.sh promotion-closure"
 STATIC_PRODUCT_RUNNER_COMMAND = "./scripts/dev-x86_64.sh owned-static-sysroot"
 DYNAMIC_PRODUCT_RUNNER_COMMAND = "./scripts/dev-x86_64.sh owned-dynamic-sysroot"
 TLS_RUNTIME_V1_CHECK_COMMAND = (
@@ -447,7 +448,7 @@ def gate_report(
     }
 
 
-def build_report() -> dict[str, Any]:
+def build_report(qualification_receipt: Path | None = None) -> dict[str, Any]:
     """Validate source contracts and derive the complete compact campaign view."""
     # The calls deliberately precede report construction: no status can be
     # emitted from stale AArch64 identity, malformed capability accounting, or
@@ -628,6 +629,16 @@ def build_report() -> dict[str, Any]:
         "promotion_ready": qualification_promotion_ready,
     }
 
+    closure = None
+    closure_error = "promotion requires an explicit complete qualification receipt"
+    if qualification_receipt is not None:
+        import campaign_promotion_closure
+        try:
+            closure = campaign_promotion_closure.validate_promotion_closure(qualification_receipt)
+            closure_error = None
+        except (RuntimeError, OSError, KeyError, ValueError, TypeError) as error:
+            closure_error = str(error)
+
     gates = {
         "static_product": {
             **gate_report(
@@ -675,10 +686,11 @@ def build_report() -> dict[str, Any]:
             "promotion",
             completion_ids,
             families,
-            has_machine_gate=False,
-            contract_status=promotion_product_contract_status,
+            has_machine_gate=True,
+            contract_status=(promotion_product_contract_status if closure is not None else "planned"),
         ),
     }
+    gates["promotion"].update(machine_gate_command=PROMOTION_RUNNER_COMMAND, closure=closure, closure_error=closure_error)
     incomplete_capabilities = [
         row["id"]
         for row in capabilities
@@ -798,10 +810,11 @@ def canonical_json(value: Mapping[str, Any]) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--qualification-receipt", type=Path, help="reread current complete execution and native-default products")
     parser.add_argument("--family", metavar="ID", help="emit one required family")
     parser.add_argument("--output", type=Path, help="write canonical JSON to this path")
     arguments = parser.parse_args()
-    report = build_report()
+    report = build_report(arguments.qualification_receipt)
     if arguments.family is not None:
         report = select_family(report, arguments.family)
     output = canonical_json(report)
