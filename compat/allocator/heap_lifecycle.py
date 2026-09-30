@@ -113,7 +113,12 @@ def run_faults(*, replay: bool = False) -> None:
     if re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None:
         raise harness.HarnessError("Heap fault evidence requires an immutable execution image")
     artifacts = harness.ARTIFACT_ROOT / "x86_64/heap-lifecycle/faults"
-    artifacts.mkdir(parents=True, exist_ok=True)
+    if not replay:
+        artifacts.mkdir(parents=True, exist_ok=True)
+    # Replay lends only execution output to private scratch; the products,
+    # source identities and recorded observations remain immutable inputs.
+    logs = harness.TEMP_ROOT / "heap-lifecycle-fault-replay" if replay else artifacts
+    logs.mkdir(parents=True, exist_ok=True)
     comparison_path = artifacts / "comparison.json"
     if replay:
         recorded = harness.read_json(comparison_path)
@@ -164,7 +169,7 @@ def run_faults(*, replay: bool = False) -> None:
     def execute(product: Path, arguments: list[str], log: str, env: dict[str, str] | None = None) -> str:
         record = harness.command_record([str(product), *arguments], cwd=harness.ROOT, env=env, timeout_seconds=120)
         output = str(record["stdout"]) + str(record["stderr"])
-        (artifacts / log).write_text(output)
+        (logs / log).write_text(output)
         harness.require_success(record, f"Heap fault {log}")
         return output
 
