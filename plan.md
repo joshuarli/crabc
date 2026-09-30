@@ -51,10 +51,17 @@ only its exact source, configuration, image, products, and execution context.
   retained. All 33 retained executables replay successfully; process-specific
   backtrace addresses retain their raw differences and pass the existing
   semantic receiver. This cohort also passes all 206 selected math/fenv entries
-  in eighteen execution cells and its independent reader. Fresh text family
-  assembly is executing. Historical CRT/helper selector rejections remain
-  retained; exact `a7fffb1ab` passes all 183 CRT obligations and 32 compiler
-  helpers. Ordered family and callable-provider closure remain open.
+  in eighteen execution cells and its independent reader. The complete
+  nine-component, sixteen-capability text family producer passes;
+  independent read-only validation is executing. This cohort also passes fresh
+  183-obligation CRT and 32-helper producers and their owning readers. Its
+  historical CRT selector still rejects the older nine-artifact projection
+  against the thirteen-artifact receipt. Static Lua passes both modes on all
+  three sealed roots and independent replay; dynamic Lua passes complete
+  installed/extracted workloads, with independent replay executing. Three fixed
+  pthread worker fixtures pass 54 candidate cells and owning replay. Loader and
+  resolver family assembly is executing. Ordered family and callable-provider
+  closure remain open.
 - **Allocator source geometry:** source-faithful auxiliary and ordinary main
   Theap geometry repairs are integrated with ownership repairs. Their exact
   sources pass four-profile C/native layout comparisons and independent replay.
@@ -74,10 +81,15 @@ only its exact source, configuration, image, products, and execution context.
   statistics, remote ownership and failure evidence remain retained by exact
   source. M6 now requests the supported full-profile producer commands and
   rejects wrong or missing selectors; eight reviewed functional blockers remain.
-  The original M4 four-profile matrix matches 28/32 pairs. Four debug failures
-  require precise source-contract treatment: isolate assertion-invalid calls
-  without waiving valid-program mismatches. The accepted live aligned-offset C
-  debug defect retains its source refusal and separate native correctness proof.
+  The reviewed M4 valid-client four-profile matrix matches all 32 pairs;
+  assertion-invalid calls remain separate retained observations. The complete
+  eleven-gate API producer and independent owning replay pass at `2891812d7`,
+  including rejection of altered nested profile evidence. The accepted live
+  aligned-offset C debug defect retains its source refusal and separate native
+  correctness proof. Full Heap conveniences and Theap visitors pass all four
+  profiles and owning read-only replay at their exact sources. A new real
+  cross-thread arena reassociation regression matches all client observations
+  but refuses final Heap deletion; its isolated production fix is in progress.
   Queue receipts now retain executable/compiler authority and pass independent
   replay. Complete M2/M3/M4 and merged-source qualification remain open.
 - **External correctness:** physical huge-page/NUMA qualification requires two
