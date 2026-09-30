@@ -67,6 +67,18 @@ def run_differential() -> int:
         harness.require_success(rust_run, "nested child Rust run")
         rust_trace = m7.parse_options_trace(str(rust_run["stdout"]), "Rust nested child", BEGIN, END)
         m7.compare_options_traces(c_trace, rust_trace)
+        native = harness.command_record(
+            [harness.require_tool("cargo"), "test", "--locked", "--offline", "--target", m4.RUST_TARGET,
+             "-p", "crabc-mimalloc", "--no-default-features", "--test", "native_subprocess_contract",
+             "production_subprocess_identity_membership_and_nested_lifetime",
+             "--", "--exact", "--nocapture", "--test-threads=1"],
+            cwd=harness.ROOT, timeout_seconds=900,
+        )
+        (ARTIFACTS / "native_subprocess_contract.log").write_text(
+            str(native["stdout"]) + str(native["stderr"]))
+        harness.require_success(native, "native production subprocess contract")
+        if harness.parse_rust_test_count(str(native["stdout"]) + str(native["stderr"])) != 1:
+            raise harness.HarnessError("native subprocess contract did not execute its exact production API test")
         return len(c_trace)
 
 
