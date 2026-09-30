@@ -43,7 +43,7 @@ class CampaignReportTests(unittest.TestCase):
         )
         self.assertEqual(
             value["validation"]["qualification_manifest_check"]["incomplete_gates"],
-            list(report.QUALIFICATION_CHAIN),
+            list(report.qualification_manifest.active_chain("correctness")),
         )
         self.assertEqual(
             value["validation"]["loader_libc_tls_runtime_v1_check"]["command"],
@@ -87,7 +87,7 @@ class CampaignReportTests(unittest.TestCase):
         self.assertEqual(qualification_gate["state"], "blocked")
         self.assertEqual(
             qualification_gate["manifest"]["ready_gate_count"],
-            len(report.QUALIFICATION_CHAIN),
+            len(report.qualification_manifest.active_chain("correctness")),
         )
         self.assertEqual(
             qualification_gate["machine_gate_command"],
@@ -99,7 +99,7 @@ class CampaignReportTests(unittest.TestCase):
         )
         self.assertEqual(
             qualification_gate["manifest"]["incomplete_gates"],
-            list(report.QUALIFICATION_CHAIN),
+            list(report.qualification_manifest.active_chain("correctness")),
         )
         self.assertFalse(qualification_gate["pass"])
         self.assertEqual(
@@ -133,9 +133,65 @@ class CampaignReportTests(unittest.TestCase):
             [
                 family
                 for family in value["families"]
-                if family["readiness"]["state"] == "ready"
+                if family["readiness"]["state"] == "ready" and family["id"] != "performance.release"
             ],
         )
+
+    def test_correctness_defers_performance_without_completing_functional_families(self):
+        value = self.value
+        self.assertEqual(value['campaign']['qualification_profile'], 'correctness')
+        self.assertEqual(value['campaign']['deferred_families'], ['performance.release'])
+        self.assertFalse(value['campaign']['performance_qualified'])
+        self.assertIn('performance.release', [row['id'] for row in value['families']])
+        for name in ('promotion', 'qualification'):
+            self.assertNotIn('performance.release', value['gates'][name]['required_families'])
+            self.assertFalse(value['gates'][name]['pass'])
+        self.assertNotIn('performance.release', [row['id'] for row in value['next_dependency_ready_transitions']])
+        self.assertFalse(value['gates']['promotion']['machine_gate_defined'])
+
+    def test_full_scope_retains_performance_and_functional_failure_stays_blocked(self):
+        with mock.patch.object(qualification, 'load_publication', return_value=None):
+            inputs = list(copy.deepcopy(report.load_validated_campaign_inputs()))
+        inputs[1]['completion'] = {'qualification_profile': 'full', 'deferred_families': []}
+        document = report.qualification_manifest.load_json(report.qualification_manifest.CONTRACT_PATH, 'fixture')
+        document['qualification_profile'] = 'full'
+        inputs[6] = report.qualification_manifest.validate_contract(document)
+        with mock.patch.object(report, 'load_validated_campaign_inputs', return_value=inputs):
+            value = report.build_report()
+        self.assertIn('performance.release', value['gates']['promotion']['required_families'])
+        self.assertIn('performance.release', value['gates']['qualification']['required_families'])
+        self.assertFalse(value['gates']['qualification']['pass'])
+        self.assertFalse(value['campaign']['performance_qualified'])
+
+    def test_deferred_performance_cannot_block_ready_functional_chain_or_hide_failure(self):
+        with mock.patch.object(qualification, 'load_publication', return_value=None):
+            inputs = copy.deepcopy(report.load_validated_campaign_inputs())
+        for family in inputs[1]['family']:
+            if family['id'] != 'performance.release':
+                family['status'] = report.COMPLETED_STATUS
+        with mock.patch.object(report, 'load_validated_campaign_inputs', return_value=inputs):
+            value = report.build_report()
+            self.assertTrue(value['gates']['qualification']['pass'])
+            self.assertFalse(value['campaign']['promotion_ready'])
+            self.assertFalse(value['gates']['promotion']['machine_gate_defined'])
+            next(f for f in inputs[1]['family'] if f['id'] == 'libc.text-math-locale-stdio')['status'] = 'planned'
+            blocked = report.build_report()
+        self.assertFalse(blocked['gates']['qualification']['pass'])
+        self.assertIn('libc.text-math-locale-stdio', blocked['gates']['qualification']['incomplete_families'])
+        self.assertNotIn('performance.release', blocked['gates']['qualification']['incomplete_families'])
+
+    def test_scope_mismatch_and_forged_active_gate_ids_fail_closed(self):
+        with mock.patch.object(qualification, 'load_publication', return_value=None):
+            inputs = list(copy.deepcopy(report.load_validated_campaign_inputs()))
+        inputs[6]['qualification_profile'] = 'full'
+        with mock.patch.object(report, 'load_validated_campaign_inputs', return_value=inputs):
+            with self.assertRaises(report.CampaignReportError):
+                report.build_report()
+        inputs[6]['qualification_profile'] = 'correctness'
+        inputs[6]['active_gate_ids'].append('performance.release')
+        with mock.patch.object(report, 'load_validated_campaign_inputs', return_value=inputs):
+            with self.assertRaises(report.CampaignReportError):
+                report.build_report()
 
     def test_gate_state_is_derived_from_required_family_states(self) -> None:
         families = {
@@ -199,7 +255,7 @@ class CampaignReportTests(unittest.TestCase):
 
     def test_reviewed_product_does_not_complete_prerequisite_families_or_platform(self):
         with mock.patch.object(qualification, "load_publication", return_value=None):
-            inputs = copy.deepcopy(report.load_validated_campaign_inputs())
+            inputs = list(copy.deepcopy(report.load_validated_campaign_inputs()))
         inputs[4]["status"] = "materialized"
         inputs[4]["qualification_source_sha256"] = "a" * 64
         inputs[7]["status"] = "verified"

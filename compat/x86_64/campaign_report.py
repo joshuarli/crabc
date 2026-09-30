@@ -45,9 +45,9 @@ SCHEMA = "crabc.x86_64-campaign-report/v1"
 COMPLETED_STATUS = "foundation-verified"
 
 # Product gates are not yet represented as independent ledger families.  These
-# anchors keep the report honest: the gate remains unconfigured until later
-# phases add a machine-checked product command, while its prerequisite state is
-# still visible from the closed family graph.
+# anchors identify the product owner while its prerequisite state remains
+# visible from the closed family graph. A gate needs both a registered machine
+# command and completed prerequisites to execute.
 DYNAMIC_PRODUCT_GATE_ANCHOR = "sysroot.owned-artifact"
 QUALIFICATION_CHAIN = (
     "compat.abi-differential",
@@ -248,10 +248,13 @@ def validate_qualification_manifest() -> dict[str, Any]:
         tuple(chain_ids) == QUALIFICATION_CHAIN,
         "qualification manifest promotion chain no longer matches the campaign roster",
     )
+    profile = value.get("qualification_profile")
+    active = qualification_manifest.active_chain(profile)
+    require(value.get("active_gate_ids") == list(active) and value.get("deferred_gate_ids") == list(qualification_manifest.deferred_gate_ids(profile)), "qualification manifest profile scope drifted")
     incomplete_gates = value.get("incomplete_gates")
     require(
         isinstance(incomplete_gates, list)
-        and all(isinstance(gate, str) and gate in QUALIFICATION_CHAIN for gate in incomplete_gates),
+        and all(isinstance(gate, str) and gate in active for gate in incomplete_gates),
         "qualification manifest incomplete gate list is invalid",
     )
     require(
@@ -261,7 +264,7 @@ def validate_qualification_manifest() -> dict[str, Any]:
     require(
         isinstance(value.get("ready_gate_count"), int)
         and not isinstance(value.get("ready_gate_count"), bool)
-        and 0 <= value["ready_gate_count"] <= len(QUALIFICATION_CHAIN),
+        and 0 <= value["ready_gate_count"] <= len(active),
         "qualification manifest ready gate count is invalid",
     )
     require(
@@ -473,6 +476,18 @@ def build_report() -> dict[str, Any]:
         require(isinstance(identifier, str) and identifier, "x86 parity ledger family id is invalid")
         families[identifier] = family
     require(list(families) == required_family_ids, "family order no longer matches the promotion roster")
+    profile = qualification_manifest_report.get("qualification_profile")
+    try:
+        active_chain = qualification_manifest.active_chain(profile)
+        completion_ids = ledger.completion_family_ids(data)
+    except (qualification_manifest.QualificationManifestError, ledger.LedgerError) as error:
+        raise CampaignReportError(f"campaign completion scope is invalid: {error}") from error
+    ledger_profile = data.get("completion", {}).get("qualification_profile", "full")
+    require(profile == ledger_profile, "campaign ledger and qualification profiles differ")
+    deferred_families = [identifier for identifier in required_family_ids if identifier not in completion_ids]
+    require(qualification_manifest_report.get("active_gate_ids") == list(active_chain)
+            and qualification_manifest_report.get("deferred_gate_ids") == list(qualification_manifest.deferred_gate_ids(profile)),
+            "qualification manifest profile scope drifted")
 
     capability_rows = inventory_report.get("capabilities")
     require(isinstance(capability_rows, list), "derived parity inventory has no capabilities")
@@ -568,7 +583,7 @@ def build_report() -> dict[str, Any]:
         else "planned"
     )
     qualification_requirements: list[str] = []
-    for family_id in QUALIFICATION_CHAIN:
+    for family_id in active_chain:
         for dependency in transitive_dependencies(family_id, families) + [family_id]:
             if dependency not in qualification_requirements:
                 qualification_requirements.append(dependency)
@@ -583,7 +598,7 @@ def build_report() -> dict[str, Any]:
     # ``promotion_ready`` is permanently false and must not gate execution.
     qualification_contract_status = (
         COMPLETED_STATUS
-        if qualification_ready_count == len(QUALIFICATION_CHAIN)
+        if qualification_ready_count == len(active_chain)
         else "planned"
     )
     promotion_product_contract_status = (
@@ -599,7 +614,12 @@ def build_report() -> dict[str, Any]:
     assert isinstance(qualification_incomplete, list)
     qualification_completed_count = qualification_manifest_report["completed_gate_count"]
     assert isinstance(qualification_completed_count, int)
+    # Declarations and family state do not admit a performance execution receipt.
     qualification_summary = {
+        "qualification_profile": profile,
+        "active_gate_ids": list(active_chain),
+        "deferred_gate_ids": list(qualification_manifest.deferred_gate_ids(profile)),
+        "performance_qualified": False,
         "contract_sha256": qualification_manifest_report.get("contract_sha256"),
         "promotion_chain": [gate["id"] for gate in qualification_chain],
         "ready_gate_count": qualification_ready_count,
@@ -653,7 +673,7 @@ def build_report() -> dict[str, Any]:
         },
         "promotion": gate_report(
             "promotion",
-            required_family_ids,
+            completion_ids,
             families,
             has_machine_gate=False,
             contract_status=promotion_product_contract_status,
@@ -675,7 +695,7 @@ def build_report() -> dict[str, Any]:
     next_transitions = [
         row["id"]
         for row in family_rows
-        if row["readiness"]["state"] == "ready"
+        if row["readiness"]["state"] == "ready" and row["id"] in completion_ids
     ]
     capability_states = Counter(
         str(row.get("contract_state")) for row in capabilities
@@ -684,6 +704,9 @@ def build_report() -> dict[str, Any]:
         "schema": SCHEMA,
         "frozen_baseline": frozen_baseline,
         "campaign": {
+            "qualification_profile": profile,
+            "deferred_families": deferred_families,
+            "performance_qualified": False,
             "target": data.get("target"),
             "platform": data.get("platform"),
             "public_support": data.get("policy", {}).get("public_support"),

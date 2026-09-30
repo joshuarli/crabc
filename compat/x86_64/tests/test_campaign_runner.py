@@ -50,10 +50,10 @@ class CampaignRunnerTests(unittest.TestCase):
         self.assertIn("compat.abi-differential", payload["incomplete_families"])
         self.assertTrue(payload["machine_gate_defined"])
         self.assertEqual(completed.stderr, "")
-        # Every ordered gate names its own unmet conditions, not a milestone.
+        # Every active gate names its own unmet conditions.
         self.assertEqual(
             [row["gate"] for row in payload["chain_conditions"]],
-            list(campaign_report.QUALIFICATION_CHAIN),
+            list(campaign_report.qualification_manifest.active_chain("correctness")),
         )
         for row in payload["chain_conditions"]:
             self.assertIn("prerequisite-families", [condition["id"] for condition in row["unmet"]])
@@ -71,6 +71,7 @@ class CampaignRunnerTests(unittest.TestCase):
                     "pass": True,
                     "required_families": ["complete"],
                     "machine_gate_command": campaign_report.QUALIFICATION_RUNNER_COMMAND,
+                    "manifest": campaign_report.qualification_manifest.load_contract(),
                 }
             },
         }
@@ -79,15 +80,15 @@ class CampaignRunnerTests(unittest.TestCase):
             self.assertEqual(campaign_runner.execute_gate(report, "qualification"), 0)
         self.assertEqual(
             [call.args[0] for call in run.call_args_list],
-            [["./scripts/dev-x86_64.sh", "qualification-manifest"]],
+            [["./scripts/dev-x86_64.sh", "qualification-manifest", "--profile", "correctness"]],
         )
 
     def test_qualification_machine_gate_is_closed_to_its_pinned_runner(self) -> None:
         self.assertEqual(
             campaign_runner.qualification_machine_gate_command(
-                {"machine_gate_command": campaign_report.QUALIFICATION_RUNNER_COMMAND}
+                {"machine_gate_command": campaign_report.QUALIFICATION_RUNNER_COMMAND, "manifest": campaign_report.qualification_manifest.load_contract()}
             ),
-            ["./scripts/dev-x86_64.sh", "qualification-manifest"],
+            ["./scripts/dev-x86_64.sh", "qualification-manifest", "--profile", "correctness"],
         )
         with self.assertRaisesRegex(
             campaign_runner.CampaignRunnerError, "pinned qualification runner"
@@ -95,6 +96,17 @@ class CampaignRunnerTests(unittest.TestCase):
             campaign_runner.qualification_machine_gate_command(
                 {"machine_gate_command": "./scripts/dev-x86_64.sh qualification"}
             )
+
+    def test_terminal_profile_is_explicit_and_forged_scope_never_executes(self):
+        scope = campaign_report.qualification_manifest.load_contract()
+        scope.update(qualification_profile='full', active_gate_ids=list(campaign_report.QUALIFICATION_CHAIN), deferred_gate_ids=[])
+        gate = {'machine_gate_command': campaign_report.QUALIFICATION_RUNNER_COMMAND, 'manifest': scope, 'pass': True}
+        self.assertEqual(campaign_runner.qualification_machine_gate_command(gate)[-2:], ['--profile', 'full'])
+        scope['deferred_gate_ids'] = ['performance.release']
+        with mock.patch.object(campaign_runner.subprocess, 'run') as run:
+            with self.assertRaises(campaign_runner.CampaignRunnerError):
+                campaign_runner.execute_gate({'gates': {'qualification': gate}}, 'qualification')
+            run.assert_not_called()
 
     def test_dynamic_gate_runs_its_pinned_terminal_product_runner(self) -> None:
         report = {

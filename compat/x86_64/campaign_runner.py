@@ -63,11 +63,11 @@ def blocker_payload(gate_name: str, gate: Mapping[str, Any]) -> dict[str, Any]:
         "transition_commands": gate.get("transition_commands"),
     }
     if gate_name == "qualification":
-        payload["chain_conditions"] = qualification_chain_conditions()
+        payload["chain_conditions"] = qualification_chain_conditions(gate["manifest"]["qualification_profile"])
     return payload
 
 
-def qualification_chain_conditions() -> list[dict[str, Any]]:
+def qualification_chain_conditions(profile: str) -> list[dict[str, Any]]:
     """Name every ordered gate's unmet declared conditions without Docker.
 
     Host evaluation covers prerequisite families, reader registration and
@@ -77,7 +77,7 @@ def qualification_chain_conditions() -> list[dict[str, Any]]:
     import qualification_gates
 
     rows = []
-    for result in qualification_gates.evaluate_chain(native=False):
+    for result in qualification_gates.evaluate_chain(native=False, profile=profile):
         rows.append(
             {
                 "gate": result["gate"],
@@ -163,7 +163,17 @@ def qualification_machine_gate_command(gate: Mapping[str, Any]) -> list[str]:
         tokens == ["./scripts/dev-x86_64.sh", "qualification-manifest"],
         "qualification runner command contract drifted",
     )
-    return verified_command_tokens(campaign_report.QUALIFICATION_RUNNER_COMMAND)
+    scope = gate.get("manifest")
+    require(isinstance(scope, Mapping), "qualification gate has no profile scope")
+    profile = scope.get("qualification_profile")
+    try:
+        active = campaign_report.qualification_manifest.active_chain(profile)
+        deferred = campaign_report.qualification_manifest.deferred_gate_ids(profile)
+    except campaign_report.qualification_manifest.QualificationManifestError as error:
+        raise CampaignRunnerError(str(error)) from error
+    require(scope.get("active_gate_ids") == list(active) and scope.get("deferred_gate_ids") == list(deferred),
+            "qualification gate profile scope drifted")
+    return verified_command_tokens(campaign_report.QUALIFICATION_RUNNER_COMMAND) + ["--profile", profile]
 
 
 def product_machine_gate_command(gate_name: str, gate: Mapping[str, Any]) -> list[str]:
