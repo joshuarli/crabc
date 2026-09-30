@@ -343,6 +343,26 @@ pub(crate) unsafe fn child_heap_destroy(
     }
 }
 
+/// `mi_heap_delete` by a caller outside the child's subprocess. Live pages
+/// move to the child's main Heap, while their transfer statistics use the
+/// caller's main Theap selected through the shared main-Heap TLS key.
+///
+/// # Safety
+/// `heap` is a live Heap of `child`, no thread uses it during the call, and
+/// `theap` is the caller's initialized main Theap retained through the
+/// release. The child record lock excludes concurrent lifecycle operations.
+pub(crate) unsafe fn child_heap_delete_foreign(
+    child: &mut ChildMainHeapContextOwner<'_>,
+    binding: ProcessMainBackingBinding,
+    heap: NonNull<Heap>,
+    theap: NonNull<Theap>,
+) -> Result<HeapReleaseOutcome, HeapReleaseError> {
+    let main = child.main_heap_pointer().ok_or(HeapReleaseError::InvalidChild)?;
+    let target = crate::single_thread::NonMainHeapPageTarget { heap: main, theap };
+    // SAFETY: the caller retains this Theap and both child Heap identities.
+    unsafe { child_heap_release_foreign(child, binding, heap, Some(target)) }
+}
+
 /// `mi_heap_destroy` of a child Heap by a thread outside that subprocess.
 /// Its former owner may have exited, so all detached Theaps and Heap-owned
 /// blocks are released through their child backing without a caller TLD.
@@ -355,6 +375,23 @@ pub(crate) unsafe fn child_heap_destroy_foreign(
     child: &mut ChildMainHeapContextOwner<'_>,
     binding: ProcessMainBackingBinding,
     heap: NonNull<Heap>,
+) -> Result<HeapReleaseOutcome, HeapReleaseError> {
+    // SAFETY: no client is used after this destructive release.
+    unsafe { child_heap_release_foreign(child, binding, heap, None) }
+}
+
+/// The source detach, page move or destruction, and Heap-image free for a
+/// foreign caller. Child backing remains the authority for every release;
+/// no temporary caller TLD or subprocess identity is installed.
+///
+/// # Safety
+/// As for the foreign delete or destroy entry; `target`, when present, is
+/// the child's main Heap and the caller's retained main Theap.
+unsafe fn child_heap_release_foreign(
+    child: &mut ChildMainHeapContextOwner<'_>,
+    binding: ProcessMainBackingBinding,
+    heap: NonNull<Heap>,
+    target: Option<crate::single_thread::NonMainHeapPageTarget>,
 ) -> Result<HeapReleaseOutcome, HeapReleaseError> {
     if child.main_heap_pointer() == Some(heap) {
         return Ok(HeapReleaseOutcome::MainHeapRefused);
@@ -394,8 +431,9 @@ pub(crate) unsafe fn child_heap_destroy_foreign(
     if !released {
         return Err(HeapReleaseError::Retained);
     }
-    // SAFETY: every Theap is detached and no block will be used again.
-    unsafe { delete_heap_pages(child, binding, heap, None) }?;
+    // SAFETY: every Theap is detached; live clients move with their pages
+    // on delete and are discarded only on the destructive release.
+    unsafe { delete_heap_pages(child, binding, heap, target) }?;
     // SAFETY: each record remains a live child block until its own free.
     if !unsafe { heap.as_ref() }.take_non_main_arena_pages(|record| unsafe {
         free_foreign_child_block(binding, record)

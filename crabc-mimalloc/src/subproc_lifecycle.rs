@@ -1623,14 +1623,14 @@ pub(crate) unsafe fn native_child_manage_memory(
     }
 }
 
-/// Production `mi_heap_delete` (or, with `destroy`, `mi_heap_destroy`) on
-/// the current child thread; see
-/// `types::heap_registry::lifecycle::child_heap_delete`. `None` when the
-/// current thread is not a child member.
+/// Production child Heap deletion or destruction selected by the Heap's
+/// subprocess identity. A caller outside that child retains its own thread
+/// membership while deletion transfers live pages to the child's main Heap.
 ///
 /// # Safety
-/// `heap` is the current child's main Heap or a Heap created for it that no
-/// thread uses.
+/// `heap` is a live child Heap that no thread uses during the call; after
+/// destruction none of its clients is used again. The caller retains its
+/// runtime thread owner through the release.
 pub(crate) unsafe fn native_child_heap_release(
     heap: core::ptr::NonNull<crate::types::Heap>,
     destroy: bool,
@@ -1643,9 +1643,10 @@ pub(crate) unsafe fn native_child_heap_release(
         NativeSubprocessError,
     >,
 > {
-    // SAFETY: current-thread slot, no other reference live.
-    let current = unsafe { current_child_member() }.as_mut();
-    // Source permits a caller outside the Heap's subprocess to destroy it.
+    // Read only the caller's identity before any selector can borrow its
+    // member slot again. No member projection crosses the target record lock.
+    let current_id = unsafe { current_child_member() }.as_ref().map(|member| member.id);
+    // Source permits a caller outside the Heap's subprocess to release it.
     // The Heap's identity selects its child record; the current thread's
     // membership cannot stand in for a different child's owner.
     let subprocess = unsafe { heap.as_ref().subprocess_pointer() };
@@ -1654,10 +1655,7 @@ pub(crate) unsafe fn native_child_heap_release(
         // the identity is its first field and its record remains published.
         let image = unsafe { &*subprocess.cast::<crate::subproc::ChildSubprocessImage>() };
         let id = NativeSubprocessId(image.native_record()?);
-        if current.as_ref().is_none_or(|member| member.id != id) {
-            if !destroy {
-                return Some(Err(NativeSubprocessError::Gone));
-            }
+        if current_id != Some(id) {
             let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
                 return Some(Err(NativeSubprocessError::Closed));
             };
@@ -1665,13 +1663,28 @@ pub(crate) unsafe fn native_child_heap_release(
                 .ready_child_subprocess_inputs() else {
                 return Some(Err(NativeSubprocessError::NotReady));
             };
+            let target_theap = if destroy {
+                None
+            } else {
+                let Some(theap) = foreign_child_heap_delete_target_theap() else {
+                    return Some(Err(NativeSubprocessError::NotReady));
+                };
+                Some(theap)
+            };
             // SAFETY: the source Heap and record are live; the record lock
             // excludes other child lifecycle operations for the release.
             return Some(unsafe {
                 id.with_owner(|owner| {
                     owner.as_mut()
                         .map(|child| unsafe {
-                            crate::types::heap_registry::lifecycle::child_heap_destroy_foreign(child, binding, heap)
+                            match target_theap {
+                                Some(theap) => crate::types::heap_registry::lifecycle::child_heap_delete_foreign(
+                                    child, binding, heap, theap,
+                                ),
+                                None => crate::types::heap_registry::lifecycle::child_heap_destroy_foreign(
+                                    child, binding, heap,
+                                ),
+                            }
                         })
                         .ok_or(NativeSubprocessError::Gone)
                 })
@@ -1679,7 +1692,8 @@ pub(crate) unsafe fn native_child_heap_release(
             });
         }
     }
-    let current = current?;
+    // SAFETY: the foreign route has returned and no selector borrows this slot.
+    let current = unsafe { current_child_member() }.as_mut()?;
     let Some(_operation) = crate::runtime_lifecycle::NativeSubprocessOperation::enter() else {
         return Some(Err(NativeSubprocessError::Closed));
     };
@@ -1697,6 +1711,21 @@ pub(crate) unsafe fn native_child_heap_release(
             None => Err(NativeSubprocessError::Gone),
         })
     }.and_then(|result| result))
+}
+
+/// Main Heaps share the fast TLS key. Resolving a foreign child's main
+/// Heap therefore selects the caller's main Theap, while page ownership
+/// still moves to that child. Select through the caller's own main Heap
+/// before locking the target record; an auxiliary default remains unchanged.
+fn foreign_child_heap_delete_target_theap() -> Option<core::ptr::NonNull<crate::types::Theap>> {
+    if crate::source_heap_api::theap_get_default().is_null() {
+        return None;
+    }
+    let heap = crate::source_heap_api::heap_main();
+    // SAFETY: initialization retains the caller's main Heap and thread owner
+    // in its own subprocess. The ordinary selector retains the cache reference.
+    core::ptr::NonNull::new(unsafe { crate::source_heap_api::heap_theap(heap) }
+        .cast::<crate::types::Theap>())
 }
 
 /// Production `mi_subproc_visit_heaps` (`subproc.c:303-313`).
