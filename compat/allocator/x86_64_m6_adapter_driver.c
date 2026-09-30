@@ -460,6 +460,9 @@ typedef struct heap_visit_probe_s {
   char area_order[4];
   size_t area_64[5];
   size_t area_256[5];
+  mi_heap_t* reentry_heap;
+  bool reentered;
+  bool reentry_ok;
 } heap_visit_probe_t;
 
 static bool record_heap_block(const mi_heap_t* heap, const mi_heap_area_t* area,
@@ -468,6 +471,14 @@ static bool record_heap_block(const mi_heap_t* heap, const mi_heap_area_t* area,
   if (heap != probe->heap || area == NULL || block_size != area->block_size) probe->matched = 0;
   if (block == NULL) {
     probe->areas++;
+    if (probe->reentry_heap != NULL && !probe->reentered) {
+      probe->reentered = true;
+      mi_theap_t* before = mi_theap_get_default();
+      void* client = mi_heap_malloc(probe->reentry_heap, 33);
+      probe->reentry_ok = client != NULL && mi_heap_of(client) == probe->reentry_heap;
+      mi_free(client);
+      probe->reentry_ok = probe->reentry_ok && mi_theap_get_default() == before;
+    }
     if (probe->areas <= 3) probe->area_order[probe->areas - 1] = area->block_size == 64 ? 'a' :
                                                                  area->block_size == 256 ? 'b' : '?';
     probe->previous_block = 0;
@@ -491,15 +502,28 @@ static bool record_heap_block(const mi_heap_t* heap, const mi_heap_area_t* area,
   return probe->stop_after == 0 || probe->areas + probe->blocks < probe->stop_after;
 }
 
+static void* heap_visit_remote_free(void* block) {
+  mi_free(block);
+  return NULL;
+}
+
 static void heap_visit_section(void) {
   mi_heap_t* heap = mi_heap_new();
+  mi_heap_t* reentry_heap = mi_heap_new();
+  if (reentry_heap == NULL) abort();
   void* first = mi_heap_malloc(heap, 64);
   void* freed = mi_heap_malloc(heap, 64);
   void* second = mi_heap_malloc(heap, 64);
   void* third = mi_heap_malloc(heap, 256);
-  mi_free(freed);
+  pthread_t remote;
+  bool joined = pthread_create(&remote, NULL, heap_visit_remote_free, freed) == 0 &&
+    pthread_join(remote, NULL) == 0;
+  printf("visit.heap.remote_joined=%d\n", joined);
+  if (!joined) abort();
   heap_visit_probe_t probe = { heap, first, second, third, freed, 0, 0, 1, 1, 0, 0 };
+  probe.reentry_heap = reentry_heap;
   bool complete = mi_heap_visit_blocks(heap, true, record_heap_block, &probe);
+  printf("visit.heap.reentry=%d,%d\n", probe.reentered, probe.reentry_ok);
   printf("visit.heap.full=%d,%d,%d,%d,%d\n", complete, probe.areas, probe.blocks,
          probe.matched, probe.area_before_block);
   printf("visit.heap.area_order=%s\n", probe.area_order);
@@ -520,8 +544,18 @@ static void heap_visit_section(void) {
          probe.matched && probe.area_before_block);
   mi_free(first);
   mi_free(second);
+  mi_heap_collect(heap, true);
+  probe = (heap_visit_probe_t){ heap, NULL, NULL, third, freed, 0, 0, 1, 1, 0, 0 };
+  bool collected = mi_heap_visit_blocks(heap, true, record_heap_block, &probe);
+  printf("visit.heap.collected=%d,%d,%d,%zu\n", collected, probe.blocks,
+         probe.matched && probe.area_before_block, probe.area_256[2]);
   mi_free(third);
+  mi_heap_collect(heap, true);
+  probe = (heap_visit_probe_t){ heap, NULL, NULL, NULL, freed, 0, 0, 1, 1, 0, 0 };
+  bool empty = mi_heap_visit_blocks(heap, true, record_heap_block, &probe);
+  printf("visit.heap.empty=%d,%d,%d\n", empty, probe.areas, probe.blocks);
   mi_heap_destroy(heap);
+  mi_heap_destroy(reentry_heap);
 }
 
 static void* main_visit_os_block;
