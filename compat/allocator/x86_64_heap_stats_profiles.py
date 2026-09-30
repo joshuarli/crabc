@@ -51,6 +51,7 @@ def run():
     output.chmod(0o755)
     source = harness.safe_extract(archive, output / "source", pin["archive_root"])
     products, cases = {}, []
+    failures = []
     for original in (DRIVER, source / "include/mimalloc.h", source / "include/mimalloc-stats.h", source / "LICENSE"):
         retained = output / original.name
         shutil.copy2(original, retained)
@@ -87,14 +88,21 @@ def run():
             products[f"{profile}-{backend}"] = binary
             result, logs = record(output, f"{profile}-{backend}-run", [str(binary)], directory, True)
             if result["kind"] != "process" or result["status"] != 0:
-                raise harness.HarnessError(f"{profile}-{backend} runtime failure; see {logs[0]}")
+                failures.append(f"{profile}-{backend} runtime failure; see {logs[0]}")
+                continue
             traces[backend] = stress.byte_record_payload(result["stdout"], backend)
             cases.append((f"{profile}-{backend}-run", 0, logs))
-        if comparable_trace(traces["c"]) != comparable_trace(traces["native"]):
-            raise harness.HarnessError(f"{profile} Heap statistics differ; raw in {output}")
-        print(f"Heap statistics {profile}: C/native PASS", flush=True)
+        if len(traces) != 2:
+            print(f"Heap statistics {profile}: runtime failure retained", flush=True)
+        elif comparable_trace(traces["c"]) != comparable_trace(traces["native"]):
+            failures.append(f"{profile} Heap statistics differ; raw in {output}")
+            print(f"Heap statistics {profile}: differing raw traces retained", flush=True)
+        else:
+            print(f"Heap statistics {profile}: C/native PASS", flush=True)
     if receipts.source_seal(harness.ROOT) != seal:
         raise harness.HarnessError("source changed during Heap statistics matrix")
+    if failures:
+        raise harness.HarnessError("; ".join(failures))
     path = receipts.write_receipt(harness.ROOT, RUNNER, output, products, cases,
         {"profiles": ",".join(PROFILES), "boundary": "native-mi-adapter", "watchdog-seconds": "60",
          "ownership": "main-child; auxiliary/default/null Heap and rejected-output merge order"}, True)

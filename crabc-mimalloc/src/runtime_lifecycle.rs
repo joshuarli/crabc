@@ -11460,13 +11460,13 @@ pub unsafe fn native_stats_json(stats: *const u8, size: usize, buffer: *mut u8) 
         commit_current: info.current_commit,
         commit_peak: info.peak_commit,
     };
-    // `mi_rezalloc`: a reallocation whose new tail is zeroed.
+    // `mi_rezalloc` resolves the caller's default Theap independently of
+    // the Heap or subprocess whose statistics are being rendered. Both the
+    // initial zeroed allocation and later growth must keep that selection.
     let mut grow = |old: *mut u8, new_size: usize| -> *mut u8 {
-        // SAFETY: `old` is null or this buffer's live native block.
-        match unsafe { native_reallocate_source(core::ptr::NonNull::new(old), new_size, true) } {
-            NativePageAllocationResult::Allocated(block) => block.as_ptr(),
-            _ => core::ptr::null_mut(),
-        }
+        // SAFETY: `old` is null or this buffer's exclusively held live client.
+        unsafe { crate::source_api::rezalloc(old, new_size) }
+            .value.map_or(core::ptr::null_mut(), |block| block.as_ptr())
     };
     let mut out = if size > 0 && !buffer.is_null() {
         // SAFETY: the caller's buffer contract.
