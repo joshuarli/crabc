@@ -20337,6 +20337,79 @@ mod tests {
     #[thread_local]
     static mut NATIVE_DEFERRED_FREE_TEST_THREAD_ACTIVE: bool = false;
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn uninitialized_free_charges_page_subprocess_metadata_without_attachment() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::uninitialized_free_charges_page_subprocess_metadata_without_attachment",
+            || {
+                assert!(publish_native_process_startup_facts(host_startup_facts()));
+                assert!(initialize_process());
+                let mut clients = std::vec::Vec::new();
+                let mut normal = 0;
+                let mut huge = 0;
+                for request in [64, 32768, 589824] {
+                    let NativePageAllocationResult::Allocated(client) = native_allocate(request, false) else {
+                        panic!("the live owner can allocate its transferred client");
+                    };
+                    let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation().unwrap();
+                    // SAFETY: this caller exclusively holds the live client.
+                    let allocation = unsafe { page_map.lookup_live_allocation(client) }.unwrap().unwrap();
+                    let physical = allocation.block_size();
+                    let usable = physical - crate::config::PADDING_SIZE;
+                    if usable <= crate::config::LARGE_MAX_OBJ_SIZE { normal += usable; }
+                    else { huge += physical; }
+                    drop(allocation);
+                    clients.push(client.as_ptr().addr());
+                }
+                let identity = crate::subproc::SubprocessIdentity::global();
+                let snapshot = || {
+                    // SAFETY: the process-main identity is permanent. The
+                    // joined freer and quiescent owner exclude every producer;
+                    // its existing source lock also excludes metadata entries.
+                    let identity = identity;
+                    let _lock = identity.lock_metadata_theap().unwrap();
+                    unsafe { identity.metadata_statistics_for_print() }.unwrap()
+                };
+                let before = snapshot();
+                let threads = identity.statistics().source_snapshot();
+                let cold = thread::spawn(move || {
+                    let descriptor = current_native_allocator_thread_descriptor();
+                    // SAFETY: this thread retains its descriptor until exit.
+                    assert!(unsafe { register_current_native_allocator_worker_descriptor(descriptor) });
+                    let before = default_theap();
+                    assert!(unsafe { crate::types::Theap::initialized_default_subprocess_at(before) }.is_none());
+                    for client in clients {
+                        let client = NonNull::new(core::ptr::with_exposed_provenance_mut(client)).unwrap();
+                        // SAFETY: ownership was transferred to this one freer;
+                        // the allocating owner remains live and quiescent.
+                        assert_eq!(unsafe { native_free(client) }, NativePageFreeResult::Freed);
+                    }
+                    let after = default_theap();
+                    assert_eq!(before, after);
+                    assert!(unsafe { crate::types::Theap::initialized_default_subprocess_at(after) }.is_none());
+                });
+                cold.join().unwrap();
+                let after = snapshot();
+                let threads_after = identity.statistics().source_snapshot();
+                assert_eq!(threads_after.threads_total, threads.threads_total);
+                assert_eq!(threads_after.threads_current, threads.threads_current);
+                #[cfg(feature = "mi-stat-1")]
+                {
+                let delta = [after.malloc_normal.current - before.malloc_normal.current,
+                    after.malloc_huge.current - before.malloc_huge.current];
+                std::println!("trace.cold_free.charges={normal},{huge}");
+                std::println!("trace.cold_free.delta={},{}", delta[0], delta[1]);
+                assert_eq!(after.malloc_normal.total, before.malloc_normal.total);
+                assert_eq!(after.malloc_huge.total, before.malloc_huge.total);
+                assert_eq!(after.malloc_normal.peak, before.malloc_normal.peak);
+                assert_eq!(after.malloc_huge.peak, before.malloc_huge.peak);
+                assert_eq!(delta, [-(normal as i64), -(huge as i64)]);
+                }
+            },
+        );
+    }
+
     /// Startup facts naming only the fixture process's own `environ` and
     /// musl `stderr`, exactly as the selected libc bridge publishes them.
     #[cfg(target_arch = "x86_64")]
