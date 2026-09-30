@@ -25,6 +25,7 @@ sys.modules[SPEC.name] = selection
 SPEC.loader.exec_module(selection)
 if str(ROOT / 'compat/x86_64') not in sys.path:
     sys.path.insert(0, str(ROOT / 'compat/x86_64'))
+import validate_parity_ledger as parity_ledger
 import native_data_declarations as data_declarations
 import native_abi_fchdir_import_receipt as fchdir_import_receipt
 
@@ -2189,6 +2190,122 @@ class LedgerFamilyAdmissionTests(unittest.TestCase):
         with self.assertRaisesRegex(selection.SelectionError, 'admission record differs'):
             selection.family_semantic_evidence(self.families, headers_layouts_companion=None,
                                                text_family_companion=None, ledger_admissions=[forged])
+
+
+class CampaignCompletionScopeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.contract = selection.load_contract(selection.CONTRACT_PATH)
+        cls.inputs = selection.load_source_inputs(cls.contract, selection.CONTRACT_PATH)
+        cls.families = cls.inputs['families']
+        cls.parity = selection.tomllib.loads(selection.source_path(cls.contract['inputs']['parity']).read_text())
+        cls.active = parity_ledger.completion_family_ids(cls.parity)
+
+    def test_actual_source_selects_correctness_without_removing_frozen_inventory(self):
+        self.assertEqual(len(self.families), 26)
+        scope = self.inputs['completion_scope']
+        self.assertEqual(scope, {'qualification_profile': 'correctness',
+                                'required_families': self.active,
+                                'deferred_families': ['performance.release']})
+        blockers, _ = selection.family_semantic_evidence(
+            self.families, headers_layouts_companion=None, text_family_companion=None,
+            required_families=scope['required_families'])
+        self.assertEqual({row['family'] for row in blockers}, set(self.active))
+        self.assertNotIn('performance.release', {row['family'] for row in blockers})
+
+    def test_complete_functional_join_still_refuses_strict_full_scope(self):
+        # The join fixture keeps the actual frozen identity/order. Its admitted
+        # statuses model independently replayed family receipts; the public
+        # selector obtains those statuses only from the validated ledger.
+        families = [dict(row, status='foundation-verified' if row['id'] in self.active else 'planned')
+                    for row in self.families]
+        admissions = [{'family': row['id'], 'status': selection.LEDGER_FAMILY_ADMISSION_STATUS,
+                       'ledger_status': 'foundation-verified'}
+                      for row in families if row['id'] in self.active]
+        blockers, evidence = selection.family_semantic_evidence(
+            families, headers_layouts_companion=None, text_family_companion=None,
+            ledger_admissions=admissions, required_families=self.active)
+        self.assertEqual(blockers, [])
+        self.assertEqual({row['family'] for row in evidence}, set(self.active))
+        full, _ = selection.family_semantic_evidence(
+            families, headers_layouts_companion=None, text_family_companion=None,
+            ledger_admissions=admissions)
+        self.assertEqual([row['family'] for row in full], ['performance.release'])
+        data = copy.deepcopy(self.parity)
+        data['completion'] = {'qualification_profile': 'full', 'deferred_families': []}
+        scope = selection.campaign_completion_scope(data)
+        self.assertEqual(scope['required_families'], [row['id'] for row in self.families])
+        self.assertEqual(scope['deferred_families'], [])
+
+    def test_correctness_cannot_hide_a_functional_family_or_accept_forged_admission(self):
+        for family in ('libc.pthread-tls', 'compat.loader-corpus', 'consumer.rust-std-lto'):
+            with self.subTest(family=family):
+                omitted = [name for name in self.active if name != family]
+                with self.assertRaises(selection.SelectionError):
+                    selection.family_semantic_evidence(
+                        self.families, headers_layouts_companion=None, text_family_companion=None,
+                        required_families=omitted)
+        planned = next(row['id'] for row in self.families
+                       if row['status'] == 'planned' and row['id'] in self.active)
+        forged = {'family': planned, 'status': selection.LEDGER_FAMILY_ADMISSION_STATUS,
+                  'ledger_status': 'foundation-verified'}
+        with self.assertRaisesRegex(selection.SelectionError, 'admission record differs'):
+            selection.family_semantic_evidence(
+                self.families, headers_layouts_companion=None, text_family_companion=None,
+                ledger_admissions=[forged], required_families=self.active)
+
+    def test_actual_admissions_leave_every_unproven_functional_family_blocked(self):
+        admissions = selection.ledger_family_admissions(self.contract, self.families)
+        blockers, _ = selection.family_semantic_evidence(
+            self.families, headers_layouts_companion=None, text_family_companion=None,
+            ledger_admissions=admissions, required_families=self.active)
+        admitted = {row['family'] for row in admissions}
+        self.assertEqual({row['family'] for row in blockers}, set(self.active) - admitted)
+        self.assertTrue(blockers)
+
+    def test_public_report_replay_rejects_changed_scope_projection(self):
+        expected = {'source_inputs': self.inputs}
+        work = ROOT / '.work/x86_64/native-abi-selection-tests'
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            report = Path(temporary) / 'report.json'
+            report.write_text(json.dumps(expected))
+            # Isolate the report comparison from executable replay; the real
+            # source projection above supplies the authenticated field values.
+            with mock.patch.object(selection, 'validate_measurement_paths', return_value={}), \
+                    mock.patch.object(selection, '_build_report', return_value=expected):
+                self.assertEqual(selection.validate_report(report), expected)
+                for field, value in (('qualification_profile', 'full'),
+                                     ('required_families', self.active[:-1]),
+                                     ('deferred_families', [])):
+                    changed = copy.deepcopy(expected)
+                    changed['source_inputs']['completion_scope'][field] = value
+                    report.write_text(json.dumps(changed))
+                    with self.subTest(field=field), self.assertRaisesRegex(
+                            selection.SelectionError, 'does not reconstruct exactly'):
+                        selection.validate_report(report)
+
+    def test_validated_ledger_rejects_forged_scope_and_source_changes(self):
+        scope = copy.deepcopy(self.inputs['completion_scope'])
+        scope['required_families'].remove('libc.pthread-tls')
+        with self.assertRaisesRegex(selection.SelectionError, 'scope differs from the validated ledger'):
+            selection.ledger_family_admissions(self.contract, self.families, completion_scope=scope)
+        identity = selection.selecting_source_file_identity(selection.source_path(self.contract['inputs']['parity']))
+        changed = dict(identity, sha256='0' * 64)
+        with mock.patch.object(selection, 'selecting_source_file_identity', side_effect=[identity, changed]):
+            with self.assertRaisesRegex(selection.SelectionError, 'ledger changed'):
+                selection.ledger_family_admissions(
+                    self.contract, self.families, completion_scope=self.inputs['completion_scope'])
+
+    def test_scope_rejects_deferring_functionality_and_absence_keeps_historical_full(self):
+        data = copy.deepcopy(self.parity)
+        data['completion']['deferred_families'].append('libc.pthread-tls')
+        with self.assertRaises(selection.SelectionError):
+            selection.campaign_completion_scope(data)
+        del data['completion']
+        self.assertEqual(selection.campaign_completion_scope(data), {
+            'qualification_profile': 'full', 'required_families': [row['id'] for row in self.families],
+            'deferred_families': []})
 
 
 class PathAndCommandTests(unittest.TestCase):

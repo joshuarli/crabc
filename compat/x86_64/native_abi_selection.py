@@ -1971,8 +1971,23 @@ LEDGER_FAMILY_ADMISSION_STATUS = 'ledger-family-admission-attached'
 LEDGER_ADMITTED_STATUS = 'foundation-verified'
 
 
+def campaign_completion_scope(parity: Mapping[str, Any]) -> dict[str, Any]:
+    """Project the ledger's finite completion scope without changing its inventory."""
+    import validate_parity_ledger as parity_ledger
+
+    try:
+        required = parity_ledger.completion_family_ids(parity)
+    except parity_ledger.LedgerError as error:
+        raise SelectionError(f'parity ledger completion scope rejected: {error}') from error
+    scope = parity.get('completion', {})
+    return {'qualification_profile': scope.get('qualification_profile', 'full'),
+            'required_families': required,
+            'deferred_families': list(scope.get('deferred_families', []))}
+
+
 def ledger_family_admissions(contract: Mapping[str, Any],
-                             families: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+                             families: Sequence[Mapping[str, Any]], *,
+                             completion_scope: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
     """Admit each `foundation-verified` family through the ledger validator.
 
     A family's ledger status is not a caller claim.  `validate_parity_ledger`
@@ -1994,6 +2009,9 @@ def ledger_family_admissions(contract: Mapping[str, Any],
     except (parity_ledger.LedgerError, OSError, ValueError, TypeError) as error:
         raise SelectionError(f'parity ledger family admission rejected: {error}') from error
     require(same(before, selecting_source_file_identity(path)), 'parity ledger changed during family admission')
+    if completion_scope is not None:
+        require(same(completion_scope, campaign_completion_scope(data)),
+                'selection completion scope differs from the validated ledger')
     ledger_families = [{'id': row.get('id'), 'status': row.get('status')} for row in data.get('family', [])]
     require(same(ledger_families, [{'id': row['id'], 'status': row['status']} for row in families]),
             'selection family roster differs from the validated ledger')
@@ -2010,25 +2028,34 @@ def family_semantic_evidence(families: Sequence[Mapping[str, Any]], *,
                              headers_layouts_companion: Mapping[str, Any] | None,
                              text_family_companion: Mapping[str, Any] | None,
                              paths: Mapping[str, Path] | None = None,
-                             ledger_admissions: Sequence[Mapping[str, Any]] = ()) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+                             ledger_admissions: Sequence[Mapping[str, Any]] = (),
+                             required_families: Sequence[str] | None = None) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
     """Name the multi-family selector boundary without hiding old callers.
 
     Component companions discharge only their own family's row; ledger
     admissions (from `ledger_family_admissions`) discharge each admitted
-    family's row.  Every other family keeps its named blocker.
+    family's row. Every required family keeps its named blocker until admitted.
+    Direct callers retain full qualification; correctness may defer performance
+    only, with every functional family still required.
     """
     blockers, evidence = headers_layouts_family_evidence(
         families, headers_layouts_companion, text_family_companion, paths=paths,
     )
-    ids = {family['id'] for family in families}
+    ordered_ids = [family['id'] for family in families]
+    required = ordered_ids if required_families is None else list(required_families)
+    require(required == ordered_ids or required == [name for name in ordered_ids if name != 'performance.release'],
+            'selection completion family scope differs')
+    ids = set(ordered_ids)
+    statuses = {family['id']: family['status'] for family in families}
     admitted = set()
     for record in ledger_admissions:
         require(record.get('status') == LEDGER_FAMILY_ADMISSION_STATUS and record.get('family') in ids
                 and record.get('ledger_status') == LEDGER_ADMITTED_STATUS
+                and statuses.get(record['family']) == LEDGER_ADMITTED_STATUS
                 and record['family'] not in admitted,
                 'ledger family admission record differs')
         admitted.add(record['family'])
-    blockers = [row for row in blockers if row['family'] not in admitted]
+    blockers = [row for row in blockers if row['family'] in required and row['family'] not in admitted]
     evidence.extend(copy.deepcopy(list(ledger_admissions)))
     return blockers, evidence
 
@@ -2382,7 +2409,8 @@ def load_source_inputs(contract: Mapping[str, Any], contract_path: Path) -> dict
             'deferred': deferred, 'provider_disposition': primary, 'abi_only_callables': abi_only,
             'callable_declaration_matrix': callable_matrix,
             'feature_aliases': feature_aliases,
-            'families': [{'id': r['id'], 'status': r['status']} for r in parity['family']]}
+            'families': [{'id': r['id'], 'status': r['status']} for r in parity['family']],
+            'completion_scope': campaign_completion_scope(parity)}
 
 
 def group_members(group: Mapping[str, Any], inputs: Mapping[str, Any]) -> list[str]:
@@ -13492,7 +13520,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     family_evidence_blockers, family_semantic_receipts = family_semantic_evidence(
         inputs['families'], headers_layouts_companion=headers_layouts_aggregate_companion,
         text_family_companion=text_family_semantic_companion, paths=paths,
-        ledger_admissions=ledger_family_admissions(contract, inputs['families']),
+        ledger_admissions=ledger_family_admissions(
+            contract, inputs['families'], completion_scope=inputs['completion_scope']),
+        required_families=inputs['completion_scope']['required_families'],
     )
     headers_layouts_aggregate_evidence = [
         receipt for receipt in family_semantic_receipts
