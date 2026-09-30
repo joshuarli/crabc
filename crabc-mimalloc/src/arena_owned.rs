@@ -4539,6 +4539,11 @@ mod tests {
         // callbacks synchronously without borrowing its allocation context.
         let state = unsafe { &*argument.cast::<LifecycleExternalCallback>() };
         let result = if commit { state.commit_ok.load(Ordering::Acquire) } else { state.needs_recommit };
+        // A true callback result owns a real accessibility transition.
+        // Refusal leaves the existing permissions unchanged.
+        if result {
+            unsafe { crabc_core::mm::mprotect_raw(start, size, if commit { 3 } else { 0 }) }.unwrap();
+        }
         let stats = state.process.subprocess().vm_statistics().snapshot();
         state.events.lock().unwrap().push([
             i64::from(commit), (start as usize - state.base) as i64, size as i64,
@@ -4572,11 +4577,11 @@ mod tests {
         ].into_iter().enumerate() {
             let owner = lifecycle_purge_owner(delay, false);
             let raw_size = ARENA_MIN_SIZE + ARENA_ALIGNMENT;
-            // The fixture itself owns this writable raw extent. Only a lease
+            // The fixture itself owns this initially inaccessible raw extent. Only a lease
             // of its aligned interior is transferred to the external arena;
             // source VM statistics never own this caller's raw mapping.
             let raw = unsafe { crabc_core::mm::mmap_raw(core::ptr::null_mut(), raw_size,
-                3, 0x22, -1, 0) }.unwrap();
+                0, 0x22, -1, 0) }.unwrap();
             let offset = raw.addr().wrapping_neg() & (ARENA_ALIGNMENT - 1);
             let base = unsafe { raw.add(offset) };
             let state = Box::leak(Box::new(LifecycleExternalCallback {
@@ -4614,7 +4619,13 @@ mod tests {
                     state.commit_ok.store(true, Ordering::Release);
                     unsafe { owner.backing.try_find_free(search(id), 2, ARENA_SLICE_SIZE, true) }.unwrap()
                 });
-                trace.emit_bool(retry.start() == start);
+                let recovered = retry.start();
+                unsafe {
+                    recovered.write_volatile(0x3c);
+                    recovered.add(2 * ARENA_SLICE_SIZE - 1).write_volatile(0x6d);
+                }
+                trace.emit_bool(recovered == start && unsafe { recovered.read_volatile() } == 0x3c
+                    && unsafe { recovered.add(2 * ARENA_SLICE_SIZE - 1).read_volatile() } == 0x6d);
                 trace.emit_bool(retry.memory_id().initially_committed());
                 trace.emit_bool(retry.memory_id().initially_zero());
                 emit_lifecycle_external_callback(trace, state);
@@ -4630,8 +4641,10 @@ mod tests {
             trace.emit(unmaps.all().unwrap().1 as i64);
             drop(unmaps);
             emit_lifecycle_external_callback(trace, state);
-            unsafe { base.add(ARENA_MIN_SIZE - 1).write(0x5a); }
-            trace.emit_bool(unsafe { base.add(ARENA_MIN_SIZE - 1).read() } == 0x5a);
+            // The caller retains this entire extent after arena retirement.
+            unsafe { crabc_core::mm::mprotect_raw(raw, raw_size, 3) }.unwrap();
+            unsafe { base.add(ARENA_MIN_SIZE - 1).write_volatile(0x5a); }
+            trace.emit_bool(unsafe { base.add(ARENA_MIN_SIZE - 1).read_volatile() } == 0x5a);
             trace.emit_bool(unsafe { crabc_core::mm::munmap_raw(raw, raw_size) }.is_ok());
             let mut residency = 0;
             trace.emit_bool(unsafe { crabc_core::mm::mincore_raw(base, 4096, &mut residency) } == Err(Errno::NOMEM));

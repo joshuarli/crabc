@@ -465,6 +465,9 @@ static bool external_lifecycle_callback(bool commit, void* start, size_t size,
   external_lifecycle_t* const state = argument;
   require(state != NULL && state->calls < 4);
   const bool result = commit ? state->commit_ok : state->needs_recommit;
+  /* A successful commit must make the actual span writable. A purge that
+     requests recommit removes access until a later successful callback. */
+  if (result) require(__real_mprotect(start, size, commit ? (PROT_READ|PROT_WRITE) : PROT_NONE) == 0);
   int64_t* event = state->events[state->calls++];
   event[0] = commit;
   event[1] = (unsigned char*)start - state->base;
@@ -496,7 +499,7 @@ static void external_callback_lifecycle(void) {
     mi_option_set(mi_option_purge_decommits, 0);
     lifecycle_owner_t* const owner = fresh_owner();
     const size_t raw_size = MI_ARENA_MIN_SIZE + MI_ARENA_ALIGNMENT;
-    unsigned char* raw = __real_mmap(NULL, raw_size, PROT_READ|PROT_WRITE,
+    unsigned char* raw = __real_mmap(NULL, raw_size, PROT_NONE,
                                     MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
     require(raw != MAP_FAILED);
     unsigned char* const base = _mi_align_up_ptr(raw, MI_ARENA_ALIGNMENT);
@@ -545,7 +548,11 @@ static void external_callback_lifecycle(void) {
           true, true, arena, 0, -1, &refused);
       require(retry != NULL);
     }
-    emit(retry == start);
+    volatile unsigned char* const recovered = retry;
+    recovered[0] = 0x3c;
+    recovered[2 * MI_ARENA_SLICE_SIZE - 1] = 0x6d;
+    emit(retry == start && recovered[0] == 0x3c
+        && recovered[2 * MI_ARENA_SLICE_SIZE - 1] == 0x6d);
     emit(refused.initially_committed); emit(refused.initially_zero);
     emit_external_callback(&state);
     emit(mi_bitmap_is_setN(arena->slices_committed, index, 2));
@@ -555,8 +562,10 @@ static void external_callback_lifecycle(void) {
     emit(mi_arenas_get_count(&owner->subproc));
     emit((int64_t)(munmap_calls - unmaps));
     emit_external_callback(&state);
-    base[MI_ARENA_MIN_SIZE-1] = 0x5a;
-    emit(base[MI_ARENA_MIN_SIZE-1] == 0x5a);
+    require(__real_mprotect(raw, raw_size, PROT_READ|PROT_WRITE) == 0);
+    volatile unsigned char* const retained = base;
+    retained[MI_ARENA_MIN_SIZE-1] = 0x5a;
+    emit(retained[MI_ARENA_MIN_SIZE-1] == 0x5a);
     emit(__real_munmap(raw, raw_size) == 0);
     emit(mincore(base, 4096, (unsigned char[1]){0}) != 0 && errno == ENOMEM);
     emit(owner->subproc.stats.purge_calls.total);
