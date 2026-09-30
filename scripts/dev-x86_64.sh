@@ -4218,7 +4218,7 @@ run_candidate_header_closure() {
 }
 
 run_headers_layouts_aggregate() {
-    run_in_container bash /workspace/compat/x86_64/run_headers_layouts_aggregate.sh
+    run_in_container bash /workspace/compat/x86_64/run_headers_layouts_aggregate.sh "$@"
 }
 
 run_installed_header_tree_closure() {
@@ -7827,9 +7827,8 @@ case "$command" in
         run_candidate_header_closure
         ;;
     headers-layouts-aggregate)
-        [ "$#" -eq 0 ] || fail "headers-layouts-aggregate takes no arguments"
         ensure_image
-        run_headers_layouts_aggregate
+        run_headers_layouts_aggregate "$@"
         ;;
     installed-header-tree-closure)
         [ "$#" -eq 0 ] || fail "installed-header-tree-closure takes no arguments"
@@ -9386,7 +9385,7 @@ case "$command" in
         run_in_container cargo test --locked --target x86_64-unknown-linux-musl \
             -p crabc-rs --lib --no-default-features --test fenv --test futex --test x86_64_foundation --test x86_64_fnmatch \
             --test x86_64_memory_mapping --test x86_64_memory_vm --test x86_64_pty_basic --test x86_64_terminal --test x86_64_mount \
-            --test x86_64_epoll --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fcntl_flags --test x86_64_flock --test x86_64_sendfile --test x86_64_copy_file_range --test x86_64_fs --test x86_64_fs_capacity --test x86_64_fs_advice --test x86_64_file_position --test x86_64_sync --test x86_64_syncfs --test x86_64_sync_file_range --test x86_64_ftruncate --test x86_64_futimens --test x86_64_timestamp_paths --test x86_64_path_lifecycle --test x86_64_namespace --test x86_64_xattr --test x86_64_raw_directory --test x86_64_directory --test x86_64_directory_position --test x86_64_temporary_objects --test x86_64_statx --test x86_64_canonicalize --test x86_64_cwd_mutation --test x86_64_ipc --test x86_64_shm --test x86_64_inotify --test x86_64_socket_transport --test x86_64_posix_fallocate --test x86_64_fallocate --test x86_64_fs_credentials --test x86_64_getgroups --test x86_64_getitimer --test x86_64_setitimer --test x86_64_io --test x86_64_memfd --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_setpriority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_rlimit_targeted --test x86_64_setrlimit --test x86_64_umask --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_clock_nanosleep --test x86_64_statat --test x86_64_access --test x86_64_getcwd --test x86_64_current_dir_name --test x86_64_readlink --test x86_64_sched_rr_interval --test x86_64_sched_affinity --test x86_64_sched_setaffinity --test x86_64_system --test x86_64_thread --test x86_64_thread_kill --test x86_64_thread_credentials --test x86_64_time --test time --test calendar_utc --test x86_64_calendar_time --test x86_64_advanced_time --test x86_64_timerfd --test x86_64_times \
+            --test x86_64_epoll --test x86_64_signalfd --test x86_64_eventfd --test x86_64_fcntl_getlk --test x86_64_fcntl_flags --test x86_64_flock --test x86_64_sendfile --test x86_64_copy_file_range --test x86_64_fs --test x86_64_fs_capacity --test x86_64_fs_advice --test x86_64_file_position --test x86_64_sync --test x86_64_syncfs --test x86_64_sync_file_range --test x86_64_ftruncate --test x86_64_futimens --test x86_64_timestamp_paths --test x86_64_path_lifecycle --test x86_64_namespace --test x86_64_xattr --test x86_64_raw_directory --test x86_64_directory --test x86_64_directory_position --test x86_64_temporary_objects --test x86_64_statx --test x86_64_canonicalize --test x86_64_cwd_mutation --test x86_64_ipc --test x86_64_shm --test x86_64_inotify --test x86_64_socket_transport --test x86_64_posix_fallocate --test x86_64_fallocate --test x86_64_fs_credentials --test x86_64_getgroups --test x86_64_getitimer --test x86_64_setitimer --test x86_64_io --test x86_64_memfd --test x86_64_mm --test x86_64_param --test x86_64_pipe --test x86_64_poll --test x86_64_pselect --test x86_64_priority --test x86_64_setpriority --test x86_64_process_identity --test x86_64_process_session --test x86_64_pidfd_open --test x86_64_rand --test x86_64_rlimit --test x86_64_rlimit_targeted --test x86_64_setrlimit --test x86_64_umask --test x86_64_rusage --test x86_64_scheduler_priority_bounds --test x86_64_sleep --test x86_64_clock_nanosleep --test x86_64_statat --test x86_64_access --test x86_64_getcwd --test x86_64_current_dir_name --test x86_64_readlink --test x86_64_sched_rr_interval --test x86_64_sched_affinity --test x86_64_sched_setaffinity --test x86_64_system --test x86_64_thread --test x86_64_thread_kill --test x86_64_thread_credentials --test x86_64_time --test time --test calendar_utc --test x86_64_calendar_time --test x86_64_advanced_time --test x86_64_timerfd --test x86_64_times \
             -- --test-threads=1
         # The allocation-free matcher keeps its separate static no-std archive
         # proof beside the direct facade test.
