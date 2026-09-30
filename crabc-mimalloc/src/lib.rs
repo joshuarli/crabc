@@ -214,6 +214,8 @@ pub mod __crabc_runtime {
         native_runtime_current_owner_theap_trace_test_audit,
     };
     #[cfg(feature = "native-runtime-test-audit")]
+    pub use crate::subproc::lifecycle::child_destroy_finish_test_audit;
+    #[cfg(feature = "native-runtime-test-audit")]
     pub use crate::theap_trace_audit::{
         NativeTheapTraceBlock, NativeTheapTraceDirect, NativeTheapTraceFact, NativeTheapTracePage,
     };

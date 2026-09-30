@@ -2849,3 +2849,82 @@ pub(crate) mod tests {
     }
 
 }
+
+/// Scheduling observations for isolated subprocess ownership regressions.
+/// Ordinary allocator builds contain neither the callback slot nor these calls.
+#[cfg(feature = "native-runtime-test-audit")]
+pub mod child_destroy_finish_test_audit {
+    use core::cell::UnsafeCell;
+    use core::sync::atomic::{AtomicBool, Ordering};
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub enum Event {
+        FinishLeaseBeforeChildLock,
+        DetachClaimBeforeEdgeClear,
+        DetachedBeforeNextMember,
+        DestroyBusyBeforeUnlock,
+        FinishErrorAfterUnlock,
+    }
+
+    type Callback = unsafe fn(Event);
+
+    struct CallbackSlot {
+        locked: AtomicBool,
+        callback: UnsafeCell<Option<Callback>>,
+    }
+
+    // SAFETY: every access to the callback word holds the atomic slot lock.
+    unsafe impl Sync for CallbackSlot {}
+
+    static SLOT: CallbackSlot = CallbackSlot {
+        locked: AtomicBool::new(false),
+        callback: UnsafeCell::new(None),
+    };
+
+    fn with_slot<R>(body: impl FnOnce(&mut Option<Callback>) -> R) -> R {
+        while SLOT.locked.compare_exchange_weak(
+            false, true, Ordering::Acquire, Ordering::Relaxed,
+        ).is_err() {
+            core::hint::spin_loop();
+        }
+        // SAFETY: this holder exclusively owns the callback word. The short
+        // closure only copies or replaces the word and cannot invoke a callback.
+        let result = body(unsafe { &mut *SLOT.callback.get() });
+        SLOT.locked.store(false, Ordering::Release);
+        result
+    }
+
+    #[must_use = "keep the scheduling callback installed until all observed operations join"]
+    pub struct InstalledCallback(());
+
+    impl Drop for InstalledCallback {
+        fn drop(&mut self) {
+            with_slot(|slot| *slot = None);
+        }
+    }
+
+    /// Installs one allocation-free event observer.
+    ///
+    /// # Safety
+    /// The callback must not unwind, reenter the allocator, or inspect allocator
+    /// storage. It may pause a calling thread using test-owned synchronization.
+    /// The caller retains all callback state until every observed operation has
+    /// joined, and drops the returned guard only after those operations finish.
+    /// An event grants no permission to access child, TLD, or TLS marker storage.
+    pub unsafe fn install(callback: Callback) -> Option<InstalledCallback> {
+        with_slot(|slot| {
+            if slot.is_some() { return None; }
+            *slot = Some(callback);
+            Some(InstalledCallback(()))
+        })
+    }
+
+    pub(crate) fn notify(event: Event) {
+        let callback = with_slot(|slot| *slot);
+        if let Some(callback) = callback {
+            // SAFETY: installation retains callback state through all operations;
+            // the slot lock is released before any scheduling rendezvous.
+            unsafe { callback(event) };
+        }
+    }
+}
