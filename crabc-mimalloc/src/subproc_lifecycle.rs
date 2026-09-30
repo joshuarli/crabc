@@ -2860,6 +2860,7 @@ pub mod child_destroy_finish_test_audit {
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub enum Event {
         FinishLeaseBeforeChildLock,
+        FinishWaitingForDetach,
         DetachClaimBeforeEdgeClear,
         DetachedBeforeNextMember,
         DestroyBusyBeforeUnlock,
