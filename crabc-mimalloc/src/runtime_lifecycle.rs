@@ -12313,7 +12313,16 @@ unsafe fn debug_check_native_free(
     let block_size = allocation.block_size();
     // SAFETY: the allocation keeps its page and immutable key live.
     let key = unsafe { crate::types::Page::debug_padding_keys_at(page) };
-    let huge = crate::size_class::bin(block_size) == Some(crate::config::BIN_HUGE);
+    // SAFETY: the exact live allocation retains initialized page geometry
+    // and mapping provenance. This copies immutable fields without borrowing
+    // a page whose owner may concurrently update its queues or free lists.
+    let geometry = unsafe { crate::types::Page::abandonment_state_at(page) };
+    // An OS-aligned singleton is a huge page even when its object size fits
+    // a normal bin. Source huge pages omit padding-byte fill and checks.
+    let huge = geometry.reserved == 1
+        && (geometry.block_size > crate::config::LARGE_MAX_OBJ_SIZE
+            || geometry.memid.os_memory()
+                .is_some_and(|memory| memory.base.addr() < page.as_ptr().addr()));
     // SAFETY: the caller owns the exact live allocation; no other operation
     // may change the trailing record before this source free check finishes.
     let result = unsafe { crate::alloc::check_debug_padding_on_free(
