@@ -3082,6 +3082,39 @@ class OrdinaryDeclarationAbiAttachmentTests(unittest.TestCase):
                 with self.assertRaises(selection.SelectionError):
                     selection._ordinary_declaration_boundary_joins(changed, mismatches)
 
+    def test_ordinary_attachment_binds_reviewed_header_rows_without_erasing_raw_mismatches(self):
+        plans, jobs = self._membarrier_jobs()
+        replayed = self._replayed(plans)
+        replayed['report']['jobs'] = jobs
+        replayed['report']['reviewed_cpp_linkage_boundary'] = {
+            'classification': {
+                **copy.deepcopy(selection.callable_declarations.REVIEWED_CPP_LINKAGE_DIFFERENCE),
+                'disposition': 'oracle-declared-no-provider', 'reference_job_indices': [2, 3],
+            },
+            'jobs': copy.deepcopy(jobs),
+        }
+        replayed['summary']['observation_status_counts'] = {
+            'ordinary-linkage-identity-mismatch': 2, 'ordinary-undefined-reference': 2,
+        }
+        header_companion = selection.headers_layouts_aggregate_adapter(selection.headers_layouts_aggregate.REPORT_PATH)
+        products = {'static_product': self.ordinary_report.parent / 'static',
+                    'dynamic_product': self.ordinary_report.parent / 'dynamic'}
+        with mock.patch.object(selection, '_common_checkout', return_value=ROOT), \
+             mock.patch.object(selection.declaration_abi, 'linkage_jobs_from_callable_account', return_value=plans), \
+             mock.patch.object(selection.declaration_abi, 'validate_report', return_value=replayed):
+            result = selection.ordinary_declaration_abi_adapter(
+                self.ordinary_report, header_report=self.header_report, header_envelope={'fixture': True},
+                callable_account={'groups': []}, selected_objects=list(self.objects.values()),
+                product_paths=products, headers_layouts_companion=header_companion,
+            )
+        boundary = result['reviewed_linkage_boundary']
+        self.assertEqual(len(result['linkage_mismatches']), 2)
+        self.assertEqual(result['unaccounted_linkage_mismatches'], [])
+        self.assertEqual([row['ordinary_job_join']['ordinary_job_ordinal']
+                          for row in boundary['header_aggregate_joins']], [2, 3])
+        self.assertEqual([row['header_difference'] for row in boundary['header_aggregate_joins']],
+                         header_companion['result']['reviewed_cpp_linkage_differences'])
+
     def test_ordinary_reader_receives_selected_products_for_its_physical_boundary(self):
         plans = self._plan()
         replayed = self._replayed(plans)

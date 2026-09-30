@@ -1034,6 +1034,7 @@ def headers_layouts_aggregate_adapter(report_path: Path | None) -> dict[str, Any
             'header_completion': copy.deepcopy(completion),
             'explicit_nonrequirements': copy.deepcopy(completion['explicit_nonrequirements']),
             'downstream_provider_archive_obligations': copy.deepcopy(downstream),
+            'reviewed_cpp_linkage_differences': copy.deepcopy(report['reviewed_cpp_linkage_differences']),
         },
         'limits': list(HEADERS_LAYOUTS_LIMITS),
     }
@@ -1761,7 +1762,7 @@ def headers_layouts_family_evidence(families: Sequence[Mapping[str, Any]],
         result = exact(companion['result'], {
             'schema', 'family', 'target', 'accounting_complete', 'family_completion',
             'promotion_ready', 'public_support', 'header_completion', 'explicit_nonrequirements',
-            'downstream_provider_archive_obligations',
+            'downstream_provider_archive_obligations', 'reviewed_cpp_linkage_differences',
         }, 'headers/layouts aggregate companion result')
         require(result['schema'] == headers_layouts_aggregate.REPORT_SCHEMA
                 and result['family'] == HEADERS_LAYOUTS_FAMILY and result['target'] == TARGET
@@ -3503,6 +3504,94 @@ def _ordinary_declaration_boundary_joins(
         copy.deepcopy(row) for index, row in enumerate(mismatches) if index not in accounted]
 
 
+def reviewed_cpp_header_linkage_joins(
+    header_companion: Mapping[str, Any] | None,
+    ordinary_boundary: Mapping[str, Any] | None,
+) -> list[dict[str, Any]] | None:
+    """Bind raw header differences to the original ordinary object observations.
+
+    Header source forms alone do not establish provider absence. The ordinary
+    boundary already replays that absence and the supplied products' physical
+    links. This join preserves both spellings and independently reads each
+    declaration/prototype row at its retained index, without remapping a symbol
+    or extending either companion's scope.
+    """
+    if header_companion is None or ordinary_boundary is None:
+        return None
+    reviewed = callable_declarations.REVIEWED_CPP_LINKAGE_DIFFERENCE
+    classification = ordinary_boundary['classification']
+    require(same({key: classification.get(key) for key in reviewed}, reviewed)
+            and classification.get('disposition') == 'oracle-declared-no-provider',
+            'header linkage crossjoin ordinary classification differs')
+    differences = header_companion['result']['reviewed_cpp_linkage_differences']
+    jobs = ordinary_boundary['ordinary_job_joins']
+    require(type(differences) is list and type(jobs) is list
+            and [row.get('profile') for row in differences] == reviewed['profiles']
+            and len(jobs) == len(differences), 'header linkage crossjoin profile roster differs')
+    require(same([row.get('boundary_job_index') for row in jobs], classification.get('reference_job_indices')),
+            'header linkage crossjoin boundary indices differ')
+    ordinals = [row.get('ordinary_job_ordinal') for row in jobs]
+    require(all(type(index) is int and index >= 0 for index in ordinals)
+            and len(set(ordinals)) == len(ordinals), 'header linkage crossjoin ordinary indices differ')
+    raw_reports, identities = {}, {}
+    for role, path in (
+        ('declaration_row', ROOT / 'compat/x86_64/generated/header_declaration_macro_visibility_matrix/report.json'),
+        ('prototype_row', ROOT / 'compat/x86_64/generated/header_abi_matrix/report.json'),
+    ):
+        identities[role] = selecting_source_file_identity(path)
+        raw_reports[role] = read_json(path)
+    result = []
+    for difference, job in zip(differences, jobs, strict=True):
+        difference = exact(difference, {'header', 'profile', 'candidate_signature', 'reference_signature',
+                                        'declaration_row', 'prototype_row'}, 'header linkage difference')
+        signatures = {tree + '_signature': reviewed['qual_type'] + '|mangled=' + reviewed[tree + '_symbol']
+                      for tree in ('candidate', 'reference')}
+        require(difference['header'] == reviewed['header']
+                and same({key: difference[key] for key in signatures}, signatures),
+                'header linkage crossjoin declaration signatures differ')
+        for role in raw_reports:
+            retained = exact(difference[role], {'report', 'index', 'row'}, 'header linkage ' + role)
+            index = retained['index']
+            rows = raw_reports[role].get('rows')
+            require(retained['report'] == identities[role]['path']
+                    and type(index) is int and type(rows) is list and 0 <= index < len(rows)
+                    and same(retained['row'], rows[index])
+                    and retained['row'].get('header') == difference['header']
+                    and retained['row'].get('profile') == difference['profile'],
+                    'header linkage crossjoin raw ' + role + ' differs')
+        prototype = difference['prototype_row']['row']
+        declaration = difference['declaration_row']['row']
+        require(prototype.get('comparison') == 'mismatch'
+                and same(prototype.get('difference'), callable_declarations._reviewed_matrix_difference())
+                and declaration.get('comparison') == 'matched'
+                and declaration.get('source_form_comparison') == 'mismatch'
+                and declaration.get('separately_accounted_source_form_difference_count') == 1,
+                'header linkage crossjoin raw difference classification differs')
+        job = exact(job, {'ordinary_job_ordinal', 'boundary_job_index', 'observation'},
+                    'header linkage ordinary job join')
+        observation = job['observation']
+        require(type(observation) is dict and observation.get('ordinal') == job['ordinary_job_ordinal']
+                and observation.get('tree') == 'reference' and observation.get('header') == difference['header']
+                and observation.get('profile') == difference['profile']
+                and observation.get('expected_symbol') == reviewed['candidate_symbol']
+                and observation.get('observed_symbol') == reviewed['reference_symbol']
+                and observation.get('status') == 'ordinary-linkage-identity-mismatch'
+                and observation.get('relocation_type') == 'R_X86_64_64',
+                'header linkage crossjoin original ordinary observation differs')
+        result.append({
+            'header': difference['header'], 'profile': difference['profile'],
+            'header_difference': copy.deepcopy(difference),
+            'ordinary_job_join': copy.deepcopy(job),
+            'classification': copy.deepcopy(classification),
+            'declaration_report': copy.deepcopy(identities['declaration_row']),
+            'prototype_report': copy.deepcopy(identities['prototype_row']),
+        })
+    for role, before in identities.items():
+        require(same(before, selecting_source_file_identity(ROOT / before['path'])),
+                'header linkage crossjoin raw report changed during join: ' + role)
+    return result
+
+
 def ordinary_declaration_abi_adapter(
     report_path: Path | None,
     *,
@@ -3511,6 +3600,7 @@ def ordinary_declaration_abi_adapter(
     callable_account: Mapping[str, Any],
     selected_objects: Sequence[Mapping[str, Any]],
     product_paths: Mapping[str, Path] | None = None,
+    headers_layouts_companion: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Attach ordinary declaration objects to one authenticated header replay.
 
@@ -3562,6 +3652,9 @@ def ordinary_declaration_abi_adapter(
     require(boundary is None or product_paths is not None,
             'ordinary reviewed linkage boundary needs the selected products')
     boundary_joins, unaccounted_mismatches = _ordinary_declaration_boundary_joins(boundary, mismatches)
+    if boundary_joins is not None and headers_layouts_companion is not None:
+        boundary_joins['header_aggregate_joins'] = reviewed_cpp_header_linkage_joins(
+            headers_layouts_companion, boundary_joins)
     summary = exact(replayed['summary'], {
         'cxx_job_count', 'job_count', 'language_counts', 'observation_count', 'observation_status_counts',
         'reference_category_counts', 'reference_count',
@@ -3617,7 +3710,8 @@ def declaration_adapter(report_path: Path | None, *, selected_objects: Sequence[
                         abi_only_callables: Sequence[Mapping[str, Any]],
                         callable_matrix_projection: Mapping[str, Any],
                         ordinary_declaration_abi_report: Path | None = None,
-                        product_paths: Mapping[str, Path] | None = None) -> dict[str, Any] | None:
+                        product_paths: Mapping[str, Path] | None = None,
+                        headers_layouts_companion: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
     if report_path is None:
         require(ordinary_declaration_abi_report is None,
                 'ordinary declaration ABI report requires the public declaration report')
@@ -3686,6 +3780,8 @@ def declaration_adapter(report_path: Path | None, *, selected_objects: Sequence[
         callable_account=typed_callables,
         selected_objects=selected_objects,
         product_paths=product_paths,
+        **({'headers_layouts_companion': headers_layouts_companion}
+           if headers_layouts_companion is not None else {}),
     )
     account['complete'] = False
     require(same(report_before, file_identity(report_path)),
@@ -12735,6 +12831,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         callable_matrix_projection=inputs['callable_declaration_matrix'],
         ordinary_declaration_abi_report=ordinary_declaration_abi_report,
         product_paths=paths,
+        headers_layouts_companion=headers_layouts_aggregate_companion,
     )
     public_data_linkage_companion = _admit(rejected, 'loader_debug_report', lambda: public_data_linkage_adapter(
         ordinary_link_report, loader_debug_report, contract=contract,
