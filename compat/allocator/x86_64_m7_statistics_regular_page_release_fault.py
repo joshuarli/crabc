@@ -21,26 +21,28 @@ TARGET = "x86_64-unknown-linux-musl"
 VM_FIELDS = ("reserved", "committed")
 
 
-def comparable_trace(raw: dict[str, str]) -> dict[str, str]:
+def comparable_trace(raw: dict[str, str], *, level: int = 2, debug: bool = False, faulted: bool = True) -> dict[str, str]:
     """Compare VM transitions while retaining placement-sensitive raw images."""
+    normal = (int(raw.get("geometry.block_size", "64")) - (8 if debug else 0)) if level else 0
+    bin_index = 9 if debug else 8
     expected = {
-        "profile.level": "2",
+        "profile.level": str(level),
         "profile.disallow_arena": "1",
         "allocated.pages": "1,0,1",
-        "allocated.normal": "64,0,64",
-        "allocated.page_bin": "8:1,1",
+        "allocated.normal": f"{normal},0,{normal}",
+        "allocated.page_bin": f"{bin_index}:1,1",
         "allocated.warnings": "0",
         "allocated.failures": "0",
         "freed.pages": "1,0,1",
-        "freed.normal": "64,0,0",
-        "freed.page_bin": "8:1,1",
+        "freed.normal": f"{normal},0,0",
+        "freed.page_bin": f"{bin_index}:1,1",
         "freed.warnings": "0",
         "freed.failures": "0",
         "failed_release.pages": "1,0,0",
-        "failed_release.normal": "64,0,0",
-        "failed_release.page_bin": "8:1,0",
-        "failed_release.warnings": "1",
-        "failed_release.failures": "1",
+        "failed_release.normal": f"{normal},0,0",
+        "failed_release.page_bin": f"{bin_index}:1,0",
+        "failed_release.warnings": str(int(faulted)),
+        "failed_release.failures": str(int(faulted)),
     }
     for key, value in expected.items():
         if raw.get(key) != value:
@@ -65,7 +67,7 @@ def comparable_trace(raw: dict[str, str]) -> dict[str, str]:
             if later == "failed_release" and delta[2] >= 0:
                 raise harness.HarnessError(f"failed page release did not reduce {field} current")
             compared[f"{later}_minus_{earlier}.{field}"] = ",".join(str(value) for value in delta)
-    if raw.get("failed_release.failures") != "1" or raw.get("failed_release.warnings") != "1":
+    if raw.get("failed_release.failures") != str(int(faulted)) or raw.get("failed_release.warnings") != str(int(faulted)):
         raise harness.HarnessError("the OS page release fault did not produce one failure and warning")
     if raw.get("failed_release.pages", "").split(",")[-1] != "0":
         raise harness.HarnessError("forced collection did not release the page count")
@@ -75,7 +77,18 @@ def comparable_trace(raw: dict[str, str]) -> dict[str, str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--offline", action="store_true")
+    from x86_64_m7_statistics_page_extension_fault import PROFILES, run_statistics_fault_matrix
+    parser.add_argument("--matrix", action="store_true")
+    parser.add_argument("--profile", choices=PROFILES)
+    parser.add_argument("--read-matrix", type=Path)
     args = parser.parse_args()
+    if args.matrix or args.read_matrix is not None:
+        if args.matrix and args.read_matrix is not None:
+            parser.error("physical replay cannot produce a matrix")
+        return run_statistics_fault_matrix(DRIVER, TEST, BEGIN, END, REPORT, Path(__file__),
+                                           release=True, selected=args.profile, retained=args.read_matrix)
+    if args.profile is not None:
+        parser.error("--profile requires --matrix or --read-matrix")
     harness.require_native_x86_64()
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, args.offline)

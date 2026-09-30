@@ -8,6 +8,15 @@
 #include <unistd.h>
 #include "mimalloc.h"
 #include "mimalloc-stats.h"
+#ifdef CRABC_STATISTICS_MATRIX
+#include "mimalloc/internal.h"
+#endif
+#ifndef CRABC_STAT_LEVEL
+#define CRABC_STAT_LEVEL 2
+#endif
+#ifndef CRABC_FAULTED
+#define CRABC_FAULTED 1
+#endif
 
 static int fail_next_unmap;
 static int failed_unmaps;
@@ -77,12 +86,18 @@ int main(void) {
   if (block == NULL) abort();
   target_block = (uintptr_t)block;
   printf("CRABC_MI_M7_PAGE_FAILURE_STATS_TRACE_BEGIN\n");
-  printf("profile.level=2\n");
+  printf("profile.level=%d\n", CRABC_STAT_LEVEL);
+#ifdef CRABC_STATISTICS_MATRIX
+  printf("profile.debug=%d\n", MI_DEBUG);
+  printf("profile.faulted=%d\n", CRABC_FAULTED);
+  printf("allocation.usable=%zu\n", mi_usable_size(block));
+  printf("geometry.block_size=%zu\n", mi_page_block_size(_mi_ptr_page(block)));
+#endif
   printf("profile.disallow_arena=%ld\n", mi_option_get(mi_option_disallow_arena_alloc));
   show("allocated");
   mi_free(block);
   show("freed");
-  fail_next_unmap = 1;
+  fail_next_unmap = CRABC_FAULTED;
   mi_collect(true);
   show("failed_release");
   printf("CRABC_MI_M7_PAGE_FAILURE_STATS_TRACE_END\n");

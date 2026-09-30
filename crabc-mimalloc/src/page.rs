@@ -562,7 +562,37 @@ mod tests {
         assert!(initial_page_slice_pcommitted(0, 8192, MEDIUM_PAGE_SIZE, 3).is_none());
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-stat-2"))]
+    #[cfg(target_arch = "x86_64")]
+    #[derive(Clone, Copy)]
+    struct PageFaultAllocationSnapshot {
+        malloc_normal: crate::statistics::FinalStatCount,
+        malloc_requested: crate::statistics::FinalStatCount,
+        malloc_bins: [crate::statistics::FinalStatCount; crate::config::BIN_HUGE + 1],
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn page_fault_allocation_snapshot(image: &crate::statistics::HeapTheapStatistics) -> PageFaultAllocationSnapshot {
+        use crate::atomic::i64_load_relaxed;
+        use crate::statistics::{FinalStatCount, HeapTheapStatistics, StatCount};
+        let records = HeapTheapStatistics::layout_records();
+        let offset = |name| records.iter().find(|(key, _)| *key == name).unwrap().1;
+        let count = |offset: usize| {
+            assert!(offset + core::mem::size_of::<StatCount>() <= core::mem::size_of::<HeapTheapStatistics>());
+            // SAFETY: the initialized source-layout image is exclusively owned
+            // by this fixture. Its layout records identify real StatCount fields,
+            // and no statistics copy or update overlaps these relaxed loads.
+            let field = unsafe { &*core::ptr::from_ref(image).cast::<u8>().add(offset).cast::<StatCount>() };
+            FinalStatCount { total: i64_load_relaxed(&field.total), peak: i64_load_relaxed(&field.peak), current: i64_load_relaxed(&field.current) }
+        };
+        let bins = offset("offsetof.mi_stats_t.malloc_bins");
+        PageFaultAllocationSnapshot {
+            malloc_normal: count(offset("offsetof.mi_stats_t.malloc_normal")),
+            malloc_requested: count(offset("offsetof.mi_stats_t.malloc_requested")),
+            malloc_bins: core::array::from_fn(|index| count(bins + index * core::mem::size_of::<StatCount>())),
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn failed_second_regular_extension_commit_retries_same_page_statistics() {
         crate::test_process::run_in_fresh_process(
@@ -606,21 +636,21 @@ mod tests {
                     }
                 }
 
-                fn stats() -> (FinalStatisticsSnapshot, HeapTheapStatisticsSnapshot) {
+                fn stats() -> (FinalStatisticsSnapshot, HeapTheapStatisticsSnapshot, PageFaultAllocationSnapshot) {
                     let mut image = HeapTheapStatistics::new();
                     // SAFETY: this local source-layout image owns the exact
                     // header and is exclusively mutable until the copy ends.
                     assert!(unsafe { runtime_lifecycle::native_stats_get(core::ptr::from_mut(&mut image).cast()) });
-                    (image.final_output_snapshot(), image.snapshot())
+                    (image.final_output_snapshot(), image.snapshot(), page_fault_allocation_snapshot(&image))
                 }
 
                 fn show(
                     stage: &str,
-                    before: (FinalStatisticsSnapshot, HeapTheapStatisticsSnapshot),
+                    before: (FinalStatisticsSnapshot, HeapTheapStatisticsSnapshot, PageFaultAllocationSnapshot),
                     warnings: usize,
                     failures: usize,
                 ) {
-                    let (now, bins) = stats();
+                    let (now, bins, allocation) = stats();
                     let old = before.0;
                     std::println!("{stage}.pages_extended={}", now.pages_extended - old.pages_extended);
                     std::println!("{stage}.page_committed={},{},{}",
@@ -632,15 +662,15 @@ mod tests {
                         now.pages.peak - old.pages.peak,
                         now.pages.current - old.pages.current);
                     std::println!("{stage}.requested={},{},{}",
-                        now.malloc_requested.total - old.malloc_requested.total,
-                        now.malloc_requested.peak - old.malloc_requested.peak,
-                        now.malloc_requested.current - old.malloc_requested.current);
+                        allocation.malloc_requested.total - before.2.malloc_requested.total,
+                        allocation.malloc_requested.peak - before.2.malloc_requested.peak,
+                        allocation.malloc_requested.current - before.2.malloc_requested.current);
                     std::println!("{stage}.normal={},{},{}",
-                        now.malloc_normal.total - old.malloc_normal.total,
-                        now.malloc_normal.peak - old.malloc_normal.peak,
-                        now.malloc_normal.current - old.malloc_normal.current);
-                    for (index, (current, previous)) in now.malloc_bins.iter()
-                        .zip(old.malloc_bins.iter()).enumerate()
+                        allocation.malloc_normal.total - before.2.malloc_normal.total,
+                        allocation.malloc_normal.peak - before.2.malloc_normal.peak,
+                        allocation.malloc_normal.current - before.2.malloc_normal.current);
+                    for (index, (current, previous)) in allocation.malloc_bins.iter()
+                        .zip(before.2.malloc_bins.iter()).enumerate()
                     {
                         if current.total > previous.total {
                             std::println!("{stage}.bin={index}:{},{},{}",
@@ -676,15 +706,78 @@ mod tests {
                 unsafe { crate::source_options_api::register_output(Some(capture_warning), core::ptr::null_mut()) };
 
                 let before = stats();
-                let mut blocks: [Option<NonNull<u8>>; 130] = [None; 130];
-                for block in blocks.iter_mut().take(128) {
-                    *block = match runtime_lifecycle::native_allocate(64, false) {
+                let matrix = std::env::var_os("CRABC_MI_STATISTICS_MATRIX").is_some();
+                let faulted = std::env::var_os("CRABC_MI_STATISTICS_FAULT_CONTROL") != Some(std::ffi::OsString::from("success"));
+                let mut blocks: [Option<NonNull<u8>>; 256] = [None; 256];
+                blocks[0] = match runtime_lifecycle::native_allocate(64, false) {
+                    NativePageAllocationResult::Allocated(pointer) => Some(pointer),
+                    _ => panic!("first regular allocation failed before fault"),
+                };
+                // SAFETY: this fresh process owns every live client and
+                // serializes all page mutations around the scalar projection.
+                let initial = unsafe {
+                    runtime_lifecycle::native_runtime_live_client_page_geometry_test_audit(blocks[0].unwrap())
+                }.expect("the exact live regular client has stable page geometry");
+                let initial_capacity = usize::from(initial.capacity);
+                let mut filled_capacity = initial_capacity;
+                let mut filled_extensions = 1;
+                let mut allocated = 1;
+                let filled = loop {
+                    assert!(filled_capacity > 0 && filled_capacity + 2 <= blocks.len());
+                    while allocated < filled_capacity {
+                        let pointer = match runtime_lifecycle::native_allocate(64, false) {
+                            NativePageAllocationResult::Allocated(pointer) => pointer,
+                            _ => panic!("regular allocation failed before fault"),
+                        };
+                        assert!(blocks[..allocated].iter().all(|previous| *previous != Some(pointer)));
+                        blocks[allocated] = Some(pointer);
+                        allocated += 1;
+                    }
+                    // SAFETY: every client remains live and exclusively owned
+                    // while this quiescent read copies the source page fields.
+                    let current = unsafe {
+                        runtime_lifecycle::native_runtime_live_client_page_geometry_test_audit(blocks[0].unwrap())
+                    }.unwrap();
+                    assert_eq!(usize::from(current.capacity), filled_capacity);
+                    assert_eq!(current.used, filled_capacity);
+                    assert!(current.free_head_is_null && current.local_free_head_is_null);
+                    let slice_offset = current.page_slice_offset.expect("the controlled regular page belongs to an arena");
+                    let extend = super::page_extend_count(current.capacity, current.reserved,
+                        current.block_size, current.slice_pcommitted).unwrap();
+                    assert!(extend > 0 && current.slice_pcommitted > 0);
+                    let required = crate::invariants::align_up(
+                        slice_offset + (usize::from(current.capacity) + usize::from(extend)) * current.block_size,
+                        crate::config::PAGE_MIN_COMMIT_SIZE.max(4096),
+                    ).unwrap();
+                    if required > usize::from(current.slice_pcommitted) * 4096 { break current; }
+                    blocks[allocated] = match runtime_lifecycle::native_allocate(64, false) {
                         NativePageAllocationResult::Allocated(pointer) => Some(pointer),
-                        _ => panic!("regular allocation failed before fault"),
+                        _ => panic!("accessible next extension failed before fault"),
                     };
-                }
+                    assert!(blocks[..allocated].iter().all(|previous| *previous != blocks[allocated]));
+                    allocated += 1;
+                    // SAFETY: the first exact client remains live throughout
+                    // this owner-only capacity extension and scalar read.
+                    filled_capacity = usize::from(unsafe {
+                        runtime_lifecycle::native_runtime_live_client_page_geometry_test_audit(blocks[0].unwrap())
+                    }.unwrap().capacity);
+                    filled_extensions += 1;
+                };
                 std::println!("CRABC_MI_M7_STATISTICS_PAGE_EXTENSION_FAULT_TRACE_BEGIN");
-                std::println!("profile.level=2");
+                std::println!("profile.level={}", crate::config::STAT_LEVEL);
+                if matrix {
+                    std::println!("profile.debug={}", crate::config::DEBUG_LEVEL);
+                    std::println!("profile.faulted={}", usize::from(faulted));
+                    std::println!("geometry.initial_capacity={initial_capacity}");
+                    std::println!("geometry.filled_capacity={filled_capacity}");
+                    std::println!("geometry.filled_extensions={filled_extensions}");
+                    std::println!("geometry.block_size={}", filled.block_size);
+                    std::println!("geometry.slice_pcommitted={}", filled.slice_pcommitted);
+                    std::println!("geometry.slice_offset={}", filled.page_slice_offset.unwrap());
+                    std::println!("geometry.used={}", filled.used);
+                    std::println!("geometry.reserved={}", filled.reserved);
+                    std::println!("geometry.free_empty={}", usize::from(filled.free_head_is_null && filled.local_free_head_is_null));
+                }
                 std::println!("profile.on_demand={}",
                     crate::source_options_api::option_get(SourceOption::PageCommitOnDemand as c_int));
                 std::println!("profile.eager_arena={}",
@@ -693,34 +786,34 @@ mod tests {
                     crate::source_options_api::option_get(SourceOption::ShowErrors as c_int));
                 show("filled", before, WARNINGS.load(Ordering::Relaxed), 0);
 
-                let fault = fault::install(fault::Plan::at(fault::Point::Commit, 1, crabc_core::Errno::NOMEM));
-                blocks[128] = match runtime_lifecycle::native_allocate(64, false) {
+                let fault = faulted.then(|| fault::install(fault::Plan::at(fault::Point::Commit, 1, crabc_core::Errno::NOMEM)));
+                blocks[filled_capacity] = match runtime_lifecycle::native_allocate(64, false) {
                     NativePageAllocationResult::Allocated(pointer) => Some(pointer),
                     _ => panic!("fallback allocation after one failed page commit failed"),
                 };
                 let first = blocks[0].unwrap().as_ptr().addr() >> 16;
-                std::println!("failed_allocation.same_page={}", usize::from(blocks[128].unwrap().as_ptr().addr() >> 16 == first));
+                std::println!("failed_allocation.same_page={}", usize::from(blocks[filled_capacity].unwrap().as_ptr().addr() >> 16 == first));
                 std::println!("failed_allocation.nonnull=1");
-                assert!(fault.observed() >= 1, "the source direct commit was reached");
-                show("failed_allocation", before, WARNINGS.load(Ordering::Relaxed), 1);
+                if let Some(fault) = &fault { assert!(fault.observed() >= 1, "the source direct commit was reached"); }
+                show("failed_allocation", before, WARNINGS.load(Ordering::Relaxed), usize::from(faulted));
 
                 // SAFETY: this exact fallback allocation is still live and
                 // owned by the current thread; the result consumes it once.
-                assert_eq!(unsafe { runtime_lifecycle::native_free(blocks[128].take().unwrap()) }, NativePageFreeResult::Freed);
+                assert_eq!(unsafe { runtime_lifecycle::native_free(blocks[filled_capacity].take().unwrap()) }, NativePageFreeResult::Freed);
                 runtime_lifecycle::native_collect(true);
-                blocks[129] = match runtime_lifecycle::native_allocate(64, false) {
+                blocks[filled_capacity + 1] = match runtime_lifecycle::native_allocate(64, false) {
                     NativePageAllocationResult::Allocated(pointer) => Some(pointer),
                     _ => panic!("same-page retry allocation failed"),
                 };
-                std::println!("retry.same_page={}", usize::from(blocks[129].unwrap().as_ptr().addr() >> 16 == first));
+                std::println!("retry.same_page={}", usize::from(blocks[filled_capacity + 1].unwrap().as_ptr().addr() >> 16 == first));
                 std::println!("retry.nonnull=1");
-                show("retry", before, WARNINGS.load(Ordering::Relaxed), 1);
+                show("retry", before, WARNINGS.load(Ordering::Relaxed), usize::from(faulted));
                 for block in blocks.into_iter().flatten() {
                     // SAFETY: each pointer names one distinct live local
                     // allocation and is consumed exactly once here.
                     assert_eq!(unsafe { runtime_lifecycle::native_free(block) }, NativePageFreeResult::Freed);
                 }
-                show("freed", before, WARNINGS.load(Ordering::Relaxed), 1);
+                show("freed", before, WARNINGS.load(Ordering::Relaxed), usize::from(faulted));
                 std::println!("CRABC_MI_M7_STATISTICS_PAGE_EXTENSION_FAULT_TRACE_END");
             },
         );
@@ -975,7 +1068,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "mi-stat-2"))]
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn failed_regular_page_release_preserves_source_statistics() {
         crate::test_process::run_in_fresh_process(
@@ -1013,16 +1106,16 @@ mod tests {
                     }
                 }
 
-                fn stats() -> (FinalStatisticsSnapshot, crate::statistics::HeapTheapStatisticsSnapshot) {
+                fn stats() -> (FinalStatisticsSnapshot, crate::statistics::HeapTheapStatisticsSnapshot, PageFaultAllocationSnapshot) {
                     let mut image = HeapTheapStatistics::new();
                     // SAFETY: the local image has the source header and is
                     // exclusively mutable during this snapshot.
                     assert!(unsafe { runtime_lifecycle::native_stats_get(core::ptr::from_mut(&mut image).cast()) });
-                    (image.final_output_snapshot(), image.snapshot())
+                    (image.final_output_snapshot(), image.snapshot(), page_fault_allocation_snapshot(&image))
                 }
 
-                fn show(stage: &str, before: (FinalStatisticsSnapshot, crate::statistics::HeapTheapStatisticsSnapshot), failures: usize) {
-                    let (now, bins) = stats();
+                fn show(stage: &str, before: (FinalStatisticsSnapshot, crate::statistics::HeapTheapStatisticsSnapshot, PageFaultAllocationSnapshot), failures: usize) {
+                    let (now, bins, allocation) = stats();
                     let old = before.0;
                     std::println!("{stage}.pages={},{},{}", now.pages.total - old.pages.total,
                         now.pages.peak - old.pages.peak, now.pages.current - old.pages.current);
@@ -1030,8 +1123,8 @@ mod tests {
                         now.reserved.peak - old.reserved.peak, now.reserved.current - old.reserved.current);
                     std::println!("{stage}.committed={},{},{}", now.committed.total - old.committed.total,
                         now.committed.peak - old.committed.peak, now.committed.current - old.committed.current);
-                    std::println!("{stage}.normal={},{},{}", now.malloc_normal.total - old.malloc_normal.total,
-                        now.malloc_normal.peak - old.malloc_normal.peak, now.malloc_normal.current - old.malloc_normal.current);
+                    std::println!("{stage}.normal={},{},{}", allocation.malloc_normal.total - before.2.malloc_normal.total,
+                        allocation.malloc_normal.peak - before.2.malloc_normal.peak, allocation.malloc_normal.current - before.2.malloc_normal.current);
                     for (index, (current, previous)) in bins.page_bin_total.iter()
                         .zip(before.1.page_bin_total.iter()).enumerate()
                     {
@@ -1066,7 +1159,19 @@ mod tests {
                     _ => panic!("OS-backed regular allocation failed"),
                 };
                 std::println!("CRABC_MI_M7_PAGE_FAILURE_STATS_TRACE_BEGIN");
-                std::println!("profile.level=2");
+                let matrix = std::env::var_os("CRABC_MI_STATISTICS_MATRIX").is_some();
+                let faulted = std::env::var_os("CRABC_MI_STATISTICS_FAULT_CONTROL") != Some(std::ffi::OsString::from("success"));
+                std::println!("profile.level={}", crate::config::STAT_LEVEL);
+                if matrix {
+                    std::println!("profile.debug={}", crate::config::DEBUG_LEVEL);
+                    std::println!("profile.faulted={}", usize::from(faulted));
+                    // SAFETY: the exact live local allocation is read without
+                    // a concurrent free or page metadata mutation.
+                    std::println!("allocation.usable={}", unsafe { runtime_lifecycle::native_usable_size(block) }.expect("live regular usable size"));
+                    // SAFETY: the same exact live client retains its page
+                    // while the independent scalar reports physical block size.
+                    std::println!("geometry.block_size={}", unsafe { runtime_lifecycle::native_block_size(block) }.expect("live regular physical block size"));
+                }
                 std::println!("profile.disallow_arena={}",
                     crate::source_options_api::option_get(SourceOption::DisallowArenaAlloc as c_int));
                 show("allocated", before, 0);
@@ -1074,15 +1179,17 @@ mod tests {
                 // collection later releases its retired page.
                 let free_result = unsafe { runtime_lifecycle::native_free(block) };
                 show("freed", before, 0);
-                let fault = fault::install(fault::Plan::at(fault::Point::Unmap, 1, crabc_core::Errno::NOMEM));
-                let unmaps = fault.capture_unmap_ranges();
+                let fault = faulted.then(|| fault::install(fault::Plan::at(fault::Point::Unmap, 1, crabc_core::Errno::NOMEM)));
+                let unmaps = fault.as_ref().map(|fault| fault.capture_unmap_ranges());
                 runtime_lifecycle::native_collect(true);
-                assert_eq!(fault.observed(), 1, "the page release reached the raw unmap");
-                let (ranges, count) = unmaps.all().expect("bounded raw unmap capture");
-                assert!(count > 0 && ranges[0].0 <= block.as_ptr().addr()
-                    && block.as_ptr().addr() - ranges[0].0 < ranges[0].1,
-                    "the failed unmap must contain the released page");
-                show("failed_release", before, 1);
+                if let Some(fault) = &fault {
+                    assert_eq!(fault.observed(), 1, "the page release reached the raw unmap");
+                    let (ranges, count) = unmaps.as_ref().unwrap().all().expect("bounded raw unmap capture");
+                    assert!(count > 0 && ranges[0].0 <= block.as_ptr().addr()
+                        && block.as_ptr().addr() - ranges[0].0 < ranges[0].1,
+                        "the failed unmap must contain the released page");
+                }
+                show("failed_release", before, usize::from(faulted));
                 std::println!("CRABC_MI_M7_PAGE_FAILURE_STATS_TRACE_END");
                 std::println!("release.retained={}", usize::from(free_result == runtime_lifecycle::NativePageFreeResult::Retained));
             },
