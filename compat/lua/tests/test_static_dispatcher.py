@@ -236,6 +236,38 @@ class SuppliedStaticDispatcherTests(unittest.TestCase):
             DISPATCH.read_supplied(self.arguments)
 
 
+    def test_consistent_failed_workload_cannot_acquire_a_passing_receipt(self) -> None:
+        import source_build_admission as admission
+        seed = self.arguments.archive_seed
+        artifact = {"artifact": DISPATCH.LUA.artifact_record(seed)}
+        failed = DISPATCH.LUA.result_comparison(
+            DISPATCH.LUA.ProcessResult(0, b"reference", b""),
+            DISPATCH.LUA.ProcessResult(0, b"different", b""))
+        row = {role: {"artifacts": {name: artifact for name in ("lua", "luac")}}
+               for role in ("candidate", "reference")}
+        row["workloads"] = {"source": failed, "bytecode": failed}
+        source = {"revision": "consumer"}
+        payload = json.loads(self.receipt.read_text())
+        roots = {label: self.products / label for label in DISPATCH.SUPPLIED_ROOTS}
+        report = {"passed": True, "result": "pass", "consumer_source": source,
+                  "supplied": {"source": payload["source"],
+                               "preparation": DISPATCH.LUA.artifact_record(self.receipt)},
+                  "products": {label: {"passed": True, "environment": {
+                      "sysroot_manifest": {}, "sysroot": str(root)},
+                      "modes": {mode: row for mode in ("static-et-exec", "static-pie")}}
+                      for label, root in roots.items()}}
+        selected = self.state / "false-receipt.json"
+        selected.write_text(json.dumps(report))
+        self.arguments.read = selected
+        with mock.patch.object(DISPATCH.LUA, "current_source_identity", return_value=source), \
+                mock.patch.object(DISPATCH, "supplied_products", return_value=(payload, roots, {"status": 0})), \
+                mock.patch.object(DISPATCH.LUA, "owned_static_sysroot", return_value=(None, None, None, {})), \
+                mock.patch.object(DISPATCH.LUA, "static_elf_record", return_value=artifact), \
+                mock.patch.object(admission, "validate_pinned_input"), \
+                self.assertRaisesRegex(DISPATCH.LUA.RunnerError, "workload did not pass"):
+            DISPATCH.read_supplied(self.arguments)
+
+
     def test_all_three_roots_receive_full_offline_modes_without_producer_or_publication(self) -> None:
         payload = json.loads(self.receipt.read_text())
         roots = {label: self.products / label for label in DISPATCH.SUPPLIED_ROOTS}

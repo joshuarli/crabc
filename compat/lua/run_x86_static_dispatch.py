@@ -142,6 +142,8 @@ def read_supplied(args: argparse.Namespace) -> tuple[dict, Path]:
                         raise LUA.RunnerError("Lua retained tool ELF evidence differs")
             for name in ("source", "bytecode"):
                 admission.validate_result_comparison(row["workloads"][name])
+                if row["workloads"][name].get("passed") is not True:
+                    raise LUA.RunnerError("Lua retained source or bytecode workload did not pass")
             if args.replay:
                 work = state / label / mode.identifier
                 work.mkdir(parents=True)
