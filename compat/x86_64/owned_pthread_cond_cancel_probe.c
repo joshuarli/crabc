@@ -13,26 +13,50 @@
 
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t condition = PTHREAD_COND_INITIALIZER;
-static atomic_int ready, waiter_tid, cleaned, reuse_ready;
+static atomic_int ready, waiter_tid, cleaned, reuse_ready, false_wakes, teardown_order;
 static pthread_t waiter;
+static pthread_key_t teardown_key;
 static int main_waiter, pending_entry, saved_state, signaled;
 #ifdef CRABC_SHARED_CONDITION
 #define CONDITION_FUTEX_OPERATION 0
 #else
 #define CONDITION_FUTEX_OPERATION 128
 #endif
-static void cleanup(void *unused)
+static void cleanup_owned(void *unused)
 {
     (void)unused;
     /* No other task owns this mutex during cleanup: EBUSY proves relock. */
-    if (pthread_mutex_trylock(&mutex) != EBUSY || pthread_mutex_unlock(&mutex)) _Exit(20);
+    int state = -1;
+    if (pthread_mutex_trylock(&mutex) != EBUSY ||
+        pthread_getspecific(teardown_key) != &mutex ||
+        pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &state) ||
+        state != PTHREAD_CANCEL_DISABLE || atomic_load(&teardown_order)) _Exit(20);
+    pthread_testcancel();
+    atomic_store(&teardown_order, 1);
+}
+static void cleanup_release(void *unused)
+{
+    (void)unused;
+    if (atomic_load(&teardown_order) != 1 || pthread_mutex_unlock(&mutex)) _Exit(43);
+    atomic_store(&teardown_order, 2);
     atomic_store(&cleaned, 1);
+}
+/* TSD follows the entire cleanup stack. Join publishes this final observation;
+ * the initial-thread controller observes it before reusing the same objects. */
+static void teardown_destructor(void *value)
+{
+    if (value != &mutex || pthread_getspecific(teardown_key) ||
+        atomic_load(&teardown_order) != 2 || !atomic_load(&cleaned) ||
+        pthread_mutex_trylock(&mutex) || pthread_mutex_unlock(&mutex)) _Exit(44);
+    pthread_testcancel();
+    atomic_store(&teardown_order, 3);
 }
 static void *wait_body(void *unused)
 {
     (void)unused;
-    if (pthread_mutex_lock(&mutex)) _Exit(21);
-    pthread_cleanup_push(cleanup, 0);
+    if (pthread_mutex_lock(&mutex) || pthread_setspecific(teardown_key, &mutex)) _Exit(21);
+    pthread_cleanup_push(cleanup_release, 0);
+    pthread_cleanup_push(cleanup_owned, 0);
     if (saved_state && pthread_setcancelstate(saved_state, 0)) _Exit(22);
     if ((pending_entry || saved_state) && pthread_cancel(pthread_self())) _Exit(23);
     atomic_store(&waiter_tid, (int)syscall(SYS_gettid));
@@ -41,10 +65,20 @@ static void *wait_body(void *unused)
     struct timespec until;
     if (clock_gettime(CLOCK_MONOTONIC, &until)) _Exit(42);
     until.tv_sec += 30;
-    int result = pthread_cond_timedwait(&condition, &mutex, &until);
-#else
-    int result = pthread_cond_wait(&condition, &mutex);
 #endif
+    int result;
+    for (;;) {
+#ifdef CRABC_TIMED_CONDITION
+        result = pthread_cond_timedwait(&condition, &mutex, &until);
+#else
+        result = pthread_cond_wait(&condition, &mutex);
+#endif
+        if (result || pending_entry || saved_state || signaled) break;
+        /* The controller deliberately leaves the predicate false. Keep the
+         * same absolute deadline and prove ownership before reenrollment. */
+        if (pthread_mutex_trylock(&mutex) != EBUSY) _Exit(45);
+        atomic_fetch_add(&false_wakes, 1);
+    }
     if (signaled) {
         /* A consumed signal suppresses cancellation inside cond_wait, but
          * the request remains pending for this next explicit point. */
@@ -60,6 +94,7 @@ static void *wait_body(void *unused)
     } else if (result || observed != PTHREAD_CANCEL_DISABLE) _Exit(27);
     if (pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, 0)) _Exit(28);
     pthread_testcancel();
+    pthread_cleanup_pop(0);
     pthread_cleanup_pop(0);
     _Exit(29);
 }
@@ -81,7 +116,8 @@ static void verify_reuse(void)
         pthread_mutex_unlock(&mutex)) _Exit(33);
     void *result = 0;
     if (pthread_join(thread, &result) || result != (void *)(uintptr_t)42 ||
-        pthread_cond_destroy(&condition) || pthread_mutex_destroy(&mutex)) _Exit(34);
+        pthread_cond_destroy(&condition) || pthread_mutex_destroy(&mutex) ||
+        pthread_key_delete(teardown_key)) _Exit(34);
 }
 static void *controller(void *unused)
 {
@@ -99,13 +135,26 @@ static void *controller(void *unused)
         } else if (saved_state == PTHREAD_CANCEL_DISABLE) {
             if (pthread_mutex_lock(&mutex) || pthread_cond_signal(&condition) ||
                 pthread_mutex_unlock(&mutex)) _Exit(35);
-        } else if (pthread_cancel(waiter)) _Exit(36);
+        } else {
+            /* Locking after each observed return ensures the waiter released
+             * the mutex again; the futex witness proves it actually parked. */
+            for (int round = 0; round != 2; ++round) {
+                if (pthread_mutex_lock(&mutex)) _Exit(46);
+                int target = atomic_load(&false_wakes) + 1;
+                if (pthread_cond_signal(&condition) || pthread_mutex_unlock(&mutex)) _Exit(47);
+                while (atomic_load(&false_wakes) < target) sched_yield();
+                if (pthread_mutex_lock(&mutex) || pthread_mutex_unlock(&mutex)) _Exit(48);
+                witness_pthread_futex_wait(atomic_load(&waiter_tid), CONDITION_FUTEX_OPERATION);
+            }
+            if (pthread_cancel(waiter)) _Exit(36);
+        }
     }
     if (!main_waiter) {
         void *result = 0;
-        if (pthread_join(waiter, &result) || result != PTHREAD_CANCELED) _Exit(37);
+        if (pthread_join(waiter, &result) || result != PTHREAD_CANCELED ||
+            atomic_load(&teardown_order) != 3) _Exit(37);
     }
-    while (!atomic_load(&cleaned)) sched_yield();
+    while (atomic_load(&teardown_order) != 3) sched_yield();
     verify_reuse();
     puts("pthread condition cancellation, mutex reacquisition and reuse: PASS");
     return 0;
@@ -113,6 +162,7 @@ static void *controller(void *unused)
 int main(int argc, char **argv)
 {
     if (argc != 2) return 1;
+    if (pthread_key_create(&teardown_key, teardown_destructor)) return 8;
 #if defined(CRABC_TIMED_CONDITION) || defined(CRABC_SHARED_CONDITION)
     pthread_condattr_t cond_attr;
     if (pthread_condattr_init(&cond_attr)) return 4;
