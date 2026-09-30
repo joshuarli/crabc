@@ -5,6 +5,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import stat
+import subprocess
 import tempfile
 import sys
 import unittest
@@ -170,6 +173,42 @@ class OwnedClassicNetdbComponentReceiptTests(unittest.TestCase):
             record["stdout"] = self.receipt.identity(root, sibling)
             with self.assertRaisesRegex(self.receipt.ReceiptError, "path differs"):
                 self.receipt.execution_artifacts(root, work, "dynamic-pie-direct", "host-numeric", record)
+
+    @unittest.skipUnless(os.getuid() == 0 and Path("/usr/local/bin/crabc-x86_64-musl-gcc").is_file(),
+                         "requires the pinned compiler and an isolated unprivileged child")
+    def test_source_recompile_uses_private_scratch_with_read_only_artifacts(self) -> None:
+        temporary = ROOT / ".work/x86_64/tmp"
+        temporary.mkdir(parents=True, exist_ok=True)
+        original_mode = stat.S_IMODE(temporary.stat().st_mode)
+        with tempfile.TemporaryDirectory(dir=temporary) as directory:
+            work = Path(directory)
+            workload = work / "workload.o"
+            compiler = "/usr/local/bin/crabc-x86_64-musl-gcc"
+            source = work / "probe.c"
+            source.write_text("int retained_probe(void) { return 73; }\n", encoding="utf-8")
+            argv = [compiler, "-std=c11", "-fno-builtin", "-c", str(source), "-o", str(workload)]
+            subprocess.run(argv, check=True, capture_output=True)
+            script = ("from pathlib import Path; import sys,json; "
+                      "sys.path.insert(0, 'compat/x86_64'); "
+                      "import owned_classic_netdb_component_receipt as r; "
+                      "r.validate_source_object(Path('/workspace'), Path(sys.argv[1]), "
+                      "Path(sys.argv[2]), json.loads(sys.argv[3]))")
+            command = [sys.executable, "-B", "-c", script, str(work), str(workload), json.dumps(argv)]
+            rejection = b"classic-netdb workload differs from source compile"
+            before = {item.name: item.read_bytes() for item in work.iterdir()}
+            try:
+                temporary.chmod(0o1777)
+                work.chmod(0o555)
+                result = subprocess.run(command, cwd=ROOT, capture_output=True, user=65534, group=65534)
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
+                self.assertEqual({item.name: item.read_bytes() for item in work.iterdir()}, before)
+                workload.write_bytes(b"substituted object")
+                result = subprocess.run(command, cwd=ROOT, capture_output=True, user=65534, group=65534)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(rejection, result.stderr)
+            finally:
+                work.chmod(0o755)
+                temporary.chmod(original_mode)
 
     def test_self_consistent_workload_identity_requires_source_recompile(self) -> None:
         scratch = ROOT / ".work/x86_64/tmp/classic-netdb-reader-tests"

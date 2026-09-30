@@ -203,7 +203,11 @@ def _source_object(root: Path, work: Path, workload: Path) -> None:
     compiler = physical(producer.MUSL_CC, "pinned musl compiler")
     source = physical(root / producer.PROBE, "protocol probe source")
     physical(root / "include", "project headers", directory=True)
-    with tempfile.TemporaryDirectory(prefix="protocol-source-recompile-", dir=work) as scratch:
+    # Retained artifacts may be mounted read-only.
+    scratch_root = root / ".work/x86_64/tmp"
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    scratch_root = physical(scratch_root, "protocol verifier scratch", directory=True)
+    with tempfile.TemporaryDirectory(prefix="protocol-source-recompile-", dir=scratch_root) as scratch:
         rebuilt = Path(scratch) / "workload.o"
         argv = (compiler, "-std=c11", "-fno-builtin", "-fno-stack-protector", "-I", root / "include",
                 "-c", source, "-o", rebuilt)

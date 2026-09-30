@@ -467,7 +467,11 @@ def command_plan(root: Path, work: Path, static: Path | None, dynamic: Path,
 def validate_source_object(root: Path, work: Path, workload: Path, compile_argv: list[str]) -> None:
     """Bind the retained object bytes to the selected source and installed compiler."""
     require(compile_argv[-2:] == ["-o", mounted(root, workload)], "classic-netdb compile output differs")
-    with tempfile.TemporaryDirectory(prefix="classic-netdb-source-recompile-", dir=work) as scratch:
+    # Retained artifacts may be mounted read-only.
+    scratch_root = root / ".work/x86_64/tmp"
+    scratch_root.mkdir(parents=True, exist_ok=True)
+    scratch_root = physical(scratch_root, "classic-netdb verifier scratch", directory=True)
+    with tempfile.TemporaryDirectory(prefix="classic-netdb-source-recompile-", dir=scratch_root) as scratch:
         rebuilt = Path(scratch) / "workload.o"
         argv = [*compile_argv[:-1], mounted(root, rebuilt)]
         try:

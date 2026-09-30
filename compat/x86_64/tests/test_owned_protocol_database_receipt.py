@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import stat
+import subprocess
 from pathlib import Path
 import shutil
 import sys
@@ -151,6 +154,40 @@ class OwnedProtocolDatabaseReceiptTests(unittest.TestCase):
         entries["installed-static-et-exec"]["stdout"] = producer.artifact(ROOT, drift)  # type: ignore[index]
         with self.assertRaisesRegex(receipt.ReceiptError, "raw outcome differs"):
             receipt._executions(ROOT, entries, roots)
+
+    @unittest.skipUnless(os.getuid() == 0 and Path("/usr/local/bin/crabc-x86_64-musl-gcc").is_file(),
+                         "requires the pinned compiler and an isolated unprivileged child")
+    def test_source_recompile_uses_private_scratch_with_read_only_artifacts(self) -> None:
+        temporary = ROOT / ".work/x86_64/tmp"
+        temporary.mkdir(parents=True, exist_ok=True)
+        original_mode = stat.S_IMODE(temporary.stat().st_mode)
+        with tempfile.TemporaryDirectory(dir=temporary) as directory:
+            work = Path(directory)
+            workload = work / "workload.o"
+            compiler = "/usr/local/bin/crabc-x86_64-musl-gcc"
+            argv = [compiler, "-std=c11", "-fno-builtin", "-fno-stack-protector", "-I", str(ROOT / "include"),
+                    "-c", str(ROOT / producer.PROBE), "-o", str(workload)]
+            subprocess.run(argv, check=True, capture_output=True)
+            script = ("from pathlib import Path; import sys; "
+                      "sys.path.insert(0, 'compat/x86_64'); "
+                      "import owned_protocol_database_receipt as r; "
+                      "r._source_object(Path('/workspace'), Path(sys.argv[1]), Path(sys.argv[2]))")
+            command = [sys.executable, "-B", "-c", script, str(work), str(workload)]
+            rejection = b"protocol receipt object differs from source compile"
+            before = {item.name: item.read_bytes() for item in work.iterdir()}
+            try:
+                temporary.chmod(0o1777)
+                work.chmod(0o555)
+                result = subprocess.run(command, cwd=ROOT, capture_output=True, user=65534, group=65534)
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
+                self.assertEqual({item.name: item.read_bytes() for item in work.iterdir()}, before)
+                workload.write_bytes(b"substituted object")
+                result = subprocess.run(command, cwd=ROOT, capture_output=True, user=65534, group=65534)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(rejection, result.stderr)
+            finally:
+                work.chmod(0o755)
+                temporary.chmod(original_mode)
 
     def test_self_consistent_workload_identity_requires_source_recompile(self) -> None:
         workload = self.work / "workload.o"
