@@ -204,7 +204,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   native-abi-inventory-test  run focused native ABI-inventory parser, replay, and dispatcher tests
   owned-text-math-locale-stdio-family {assemble|validate} ...  assemble or replay text/math/locale/stdio family evidence in the pinned image
   native-abi-elf-facts {collect|validate-report} ...  inspect or replay complete ELF facts supplementing a current v1 inventory
-  native-abi-selection {build-report|validate-report|require-closure} ...  account native ABI selection and replay its retained evidence
+  native-abi-selection {build-report|validate-report|require-closure|require-abi-prerequisite-closure} ...  replay full campaign or ABI prerequisite closure
   abi-differential-evidence {collect-companions|assemble|validate} ...  collect selection companions for, bind, or replay the current-source compat.abi-differential evidence set
   header-declaration-inventory {collect|validate-report} ...  retain or replay compiler declaration and macro occurrences
   public-data-ordinary-link {collect|validate-report} ...  prove or replay ordinary links to selected public data objects
@@ -7217,10 +7217,10 @@ case "$command" in
         [ "$#" -ge 1 ] || fail "native-abi-elf-facts requires collect or validate-report"
         ;;
     native-abi-selection)
-        [ "$#" -ge 1 ] || fail "native-abi-selection requires build-report, validate-report, or require-closure"
+        [ "$#" -ge 1 ] || fail "native-abi-selection requires build-report, validate-report, require-closure, or require-abi-prerequisite-closure"
         case "$1" in
-            build-report|validate-report|require-closure) ;;
-            *) fail "native-abi-selection requires build-report, validate-report, or require-closure" ;;
+            build-report|validate-report|require-closure|require-abi-prerequisite-closure) ;;
+            *) fail "native-abi-selection requires build-report, validate-report, require-closure, or require-abi-prerequisite-closure" ;;
         esac
         ;;
     abi-differential-evidence)
