@@ -40,6 +40,9 @@ class DebugPaddingPageReceiptTests(unittest.TestCase):
             path = self.work / name
             path.write_text(json.dumps(report) if name == "page.json" else '{}\n')
             self.products[name] = path
+        self.execution = {"execution_mode": "native", "host_architecture": "x86_64", "image_id": "sha256:" + "1" * 64}
+        self.products["inputs.json"].write_text(json.dumps({"execution": self.execution}))
+        mock.patch.object(page.harness, "require_native_x86_64", return_value=self.execution).start()
         self.parameters = {"debug": "1", "padding": "1", "stat": "2"}
 
     def publish(self):
@@ -86,6 +89,12 @@ class DebugPaddingPageReceiptTests(unittest.TestCase):
         self.cases[3] = (name, -6, logs)
         self.publish()
         with self.assertRaises(page.receipts.ReceiptError):
+            page.read_and_replay()
+
+    def test_receipt_from_different_compiler_runtime_image_is_rejected(self):
+        self.products["inputs.json"].write_text(json.dumps({"execution": {**self.execution, "image_id": "sha256:" + "2" * 64}}))
+        self.publish()
+        with self.assertRaises(page.harness.HarnessError):
             page.read_and_replay()
 
     def test_disagreeing_native_page_observation_is_rejected(self):

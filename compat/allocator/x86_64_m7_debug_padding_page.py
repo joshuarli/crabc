@@ -50,12 +50,12 @@ def read_and_replay(replay: bool = False) -> None:
                 for case in ("clean", "corrupt")}
     if any(mismatch.values()) or report["mismatch_keys"] != mismatch or report["status"] != "passed":
         raise harness.HarnessError("debug-padding page recorded observations disagree")
-    print("debug-padding page exact-source physical receipt: PASS")
-    if not replay:
-        return
     execution = harness.require_native_x86_64(require_image_identity=True)
     inputs = json.loads((products / "inputs.json").read_text())
     harness.validate_native_execution_provenance(inputs["execution"], expected_image_id=execution["image_id"])
+    print("debug-padding page exact-source physical receipt: PASS")
+    if not replay:
+        return
     harness.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix="debug-padding-page-replay-", dir=harness.TEMP_ROOT))
     for side in ("c", "rust"):
