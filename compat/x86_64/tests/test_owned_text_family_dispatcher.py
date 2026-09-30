@@ -55,7 +55,13 @@ class OwnedTextFamilyDispatcherTests(unittest.TestCase):
             "    log.write(json.dumps(args) + '\\n')\n"
             "if args[:2] == ['image', 'inspect']:\n"
             "    if '--format' in args:\n"
-            "        print('linux/amd64')\n"
+            "        template = args[args.index('--format') + 1]\n"
+            "        if template == '{{.Os}}/{{.Architecture}}':\n"
+            "            print('linux/amd64')\n"
+            "        elif template == '{{.Id}}':\n"
+            "            print(os.environ['EXPECTED_IMAGE_ID'])\n"
+            "        else:\n"
+            "            raise SystemExit(2)\n"
             "    raise SystemExit(0)\n"
             "raise SystemExit(0)\n",
             encoding="utf-8",
@@ -68,6 +74,7 @@ class OwnedTextFamilyDispatcherTests(unittest.TestCase):
         self.environment.update({
             "PATH": str(binaries) + os.pathsep + os.environ["PATH"],
             "DOCKER_ARGUMENT_LOG": str(self.runner_log),
+            "EXPECTED_IMAGE_ID": CORE_IMAGE_ID,
             "PYTHONDONTWRITEBYTECODE": "1",
         })
 
