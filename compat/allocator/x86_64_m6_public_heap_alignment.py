@@ -2,17 +2,23 @@
 """Compare public Heap allocation content, failure, and ownership with pinned source."""
 
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import resource
+import sys
+import tempfile
 import shutil
-import tarfile
 
 import run as harness
 import x86_64_m4_gate as m4
 import x86_64_m7_gate as m7
+from x86_64_m6_upstream_heap_stress import load_module, stress
+
+receipts = load_module("heap_allocation_receipts", harness.ROOT / "compat/x86_64/native_shadow_receipt.py")
+RUNNER = "allocator-public-heap-allocation"
+CONTRACT = "heap_requests_preserve_content_failure_and_legal_release_lifetimes"
 
 DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m6_public_heap_alignment_driver.c"
 ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m6-public-heap-alignment"
@@ -119,149 +125,208 @@ def compare_runs(c_run: dict, rust_run: dict, profile: str) -> int:
     return len(c_trace)
 
 
-def record(artifacts: Path, name: str, result: dict) -> None:
-    (artifacts / f"{name}.json").write_text(json.dumps(result, indent=2) + "\n")
-    (artifacts / f"{name}.log").write_text(str(result["stdout"]) + str(result["stderr"]))
+def record(output, name, argv, cwd, *, runtime=False, timeout=None):
+    result = stress.command_record(argv, cwd=cwd,
+        environment={} if runtime else dict(os.environ),
+        timeout=timeout if timeout is not None else 60 if runtime else 3600)
+    logs = [output / f"{name}.json"]
+    logs[0].write_text(json.dumps(result, indent=2) + "\n")
+    for stream in ("stdout", "stderr"):
+        if stream in result:
+            path = output / f"{name}.{stream}"
+            path.write_bytes(stress.byte_record_payload(result[stream], name))
+            logs.append(path)
+    return result, logs
 
 
-def verify_oracle_source(source: Path) -> None:
-    pin = harness.load_pin()
-    archive = harness.fetch_archive(pin, True)
-    with tarfile.open(archive, "r:gz") as stream:
-        members = {member.name[len(pin["archive_root"]) + 1:]: member
-                   for member in stream.getmembers() if member.isfile()}
-        actual = {str(path.relative_to(source)) for path in source.rglob("*") if path.is_file()}
-        if actual != set(members):
-            raise harness.HarnessError("retained oracle source differs from the pinned archive roster")
-        for name, member in members.items():
-            archived = stream.extractfile(member)
-            if archived is None or hashlib.sha256(archived.read()).hexdigest() != hashlib.sha256((source / name).read_bytes()).hexdigest():
-                raise harness.HarnessError(f"retained oracle source differs from pinned bytes: {name}")
+def decoded(result):
+    return {"status": result.get("status", 1),
+            **{stream: stress.byte_record_payload(result[stream], stream).decode()
+               for stream in ("stdout", "stderr")}}
 
 
-def replay(artifacts: Path, profile: str) -> int:
-    identity = json.loads((artifacts / "artifacts.json").read_text())
-    required = {"public-heap-alignment-c", "public-heap-alignment-rust", "native-adapter.a",
-                "c-build.json", "rust-build.json", "rust-link.json", "c.json", "rust.json",
-                "native_heap_allocation_contract.json", "run-state.json"}
-    if set(identity) != required:
-        raise harness.HarnessError("retained public Heap inputs are incomplete")
-    for name, digest in identity.items():
-        if hashlib.sha256((artifacts / name).read_bytes()).hexdigest() != digest:
-            raise harness.HarnessError(f"retained public Heap bytes changed: {name}")
-    state = json.loads((artifacts / "run-state.json").read_text())
-    current_execution = harness.require_native_x86_64(require_image_identity=True)
-    harness.validate_native_execution_provenance(state["native_execution_provenance"],
-        expected_image_id=current_execution["image_id"])
-    current_source = harness.canonical_current_git_source_state(harness.ROOT)
-    if state["source_before"] != state["source_after"] or state["source_after"] != current_source:
-        raise harness.HarnessError("retained public Heap source differs from the current source")
-    harness.canonical_upstream_stress_clean_git_source(current_source, "public Heap replay")
-    if state["profile"] != profile:
-        raise harness.HarnessError("retained public Heap profile differs")
-    output = artifacts if profile == "release" else artifacts.parent
-    verify_oracle_source(output / "source" / harness.load_pin()["archive_root"])
-    originals = {side: json.loads((artifacts / f"{side}.json").read_text()) for side in ("c", "rust")}
-    count = compare_runs(originals["c"], originals["rust"], profile)
-    for name in ("c-build", "rust-build", "rust-link", "native_heap_allocation_contract"):
-        result = json.loads((artifacts / f"{name}.json").read_text())
-        harness.require_success(result, f"retained {name}")
-        if name == "native_heap_allocation_contract" and harness.parse_rust_test_count(
-                str(result["stdout"]) + str(result["stderr"])) != 1:
-            raise harness.HarnessError("retained native allocation test did not execute exactly one test")
-    fresh = {side: harness.command_record([str(artifacts / f"public-heap-alignment-{side}")],
-             cwd=artifacts, env={}, timeout_seconds=60) for side in ("c", "rust")}
-    if compare_runs(fresh["c"], fresh["rust"], profile) != count:
-        raise harness.HarnessError("retained public Heap observations changed")
-    return count
-
-
-def run_differential(profile: str = "release", *, output: Path = ARTIFACTS, replay_only: bool = False) -> int:
-    harness.require_native_x86_64()
-    expected_observations(profile)
-    artifacts = output if profile == "release" else output / profile
-    if replay_only:
-        return replay(artifacts, profile)
-    artifacts.mkdir(parents=True, exist_ok=True)
-    if (artifacts / "c.json").exists():
-        raise harness.HarnessError("public Heap output already contains a run; preserve the earlier attempt")
-    source_before = harness.canonical_current_git_source_state(harness.ROOT)
-    execution_before = harness.require_native_x86_64(require_image_identity=True)
-    pin = harness.load_pin()
-    source_root = output / "source"
-    source = (source_root / pin["archive_root"] if source_root.exists() else
-              harness.safe_extract(harness.fetch_archive(pin, True), source_root, pin["archive_root"]))
-    verify_oracle_source(source)
-    compiler = harness.require_tool("musl-gcc")
-    client_flags = ("-DCRABC_MI_HEAP_ALLOCATION_CONTRACT_ONLY=1",) if profile != "release" else ()
-    c_driver = artifacts / "public-heap-alignment-c"
-    c_build = harness.command_record(
-        [compiler, "-std=c11", "-D_GNU_SOURCE", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
-         *m4.api_profile_flags(profile), *client_flags, "-I", str(source / "include"),
-         "-I", str(source / "src"), str(DRIVER), str(source / "src/static.c"), "-pthread", "-o", str(c_driver)], cwd=source)
-    record(artifacts, "c-build", c_build)
-    harness.require_success(c_build, "Public Heap alignment C build")
-    c_run = harness.command_record([str(c_driver)], cwd=artifacts, env={}, timeout_seconds=60)
-    record(artifacts, "c", c_run)
-    observations(c_run, profile, "pinned C public Heap allocation")
-    target = output.parent / "public-heap-alignment-shared-build" / "cargo-target"
-    build = harness.command_record(
-        [harness.require_tool("cargo"), "build", "--locked", "--release", "--target", m4.RUST_TARGET,
-         "-p", m4.ADAPTER_PACKAGE, "--target-dir", str(target),
-         *(("--features", f"crabc-mimalloc/mi-{profile}") if profile != "release" else ())],
-        cwd=harness.ROOT, env=dict(os.environ), timeout_seconds=m4.EVIDENCE_TIMEOUT_SECONDS)
-    record(artifacts, "rust-build", build)
-    harness.require_success(build, "public Heap native adapter build")
-    library = artifacts / "native-adapter.a"
-    shutil.copy2(target / m4.RUST_TARGET / "release" / m4.ADAPTER_STATICLIB, library)
-    rust_driver = artifacts / "public-heap-alignment-rust"
-    link = harness.command_record(
-        [compiler, "-std=c11", "-D_GNU_SOURCE", "-O2", f"-DMI_DEBUG={int(profile == 'debug-1')}",
-         *client_flags, "-I", str(source / "include"), str(DRIVER), str(library), "-pthread", "-o", str(rust_driver)], cwd=source)
-    record(artifacts, "rust-link", link)
-    harness.require_success(link, "Public Heap alignment Rust link")
-    rust_run = harness.command_record([str(rust_driver)], cwd=artifacts, env={}, timeout_seconds=60)
-    record(artifacts, "rust", rust_run)
-    count = compare_runs(c_run, rust_run, profile)
-    direct = harness.command_record(
-        [harness.require_tool("cargo"), "test", "--locked", "--offline", "--target", m4.RUST_TARGET,
-         "-p", "crabc-mimalloc", "--no-default-features",
-         *(("--features", f"mi-{profile}") if profile != "release" else ()),
-         "--test", "native_heap_allocation_contract",
-         "heap_requests_preserve_content_failure_and_legal_release_lifetimes",
-         "--", "--exact", "--nocapture", "--test-threads=1"], cwd=harness.ROOT, timeout_seconds=900)
-    record(artifacts, "native_heap_allocation_contract", direct)
-    harness.require_success(direct, "public Heap direct allocation ownership contract")
-    if harness.parse_rust_test_count(str(direct["stdout"]) + str(direct["stderr"])) != 1:
-        raise harness.HarnessError("public Heap direct allocation ownership contract did not execute exactly one test")
-    source_after = harness.canonical_current_git_source_state(harness.ROOT)
-    if source_before != source_after:
-        raise harness.HarnessError("public Heap source changed during execution")
-    (artifacts / "run-state.json").write_text(json.dumps({
-        "profile": profile, "source_before": source_before, "source_after": source_after,
-        "native_execution_provenance": harness.native_execution_attestation(execution_before,
-            harness.require_native_x86_64(require_image_identity=True)),
-    }, indent=2) + "\n")
-    retained = ("public-heap-alignment-c", "public-heap-alignment-rust", "native-adapter.a",
-                "c-build.json", "rust-build.json", "rust-link.json", "c.json", "rust.json",
-                "native_heap_allocation_contract.json", "run-state.json")
-    (artifacts / "artifacts.json").write_text(json.dumps({
-        name: hashlib.sha256((artifacts / name).read_bytes()).hexdigest() for name in retained}, indent=2) + "\n")
-    return count
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=(*PROFILES, "all"), default="release")
-    parser.add_argument("--output", type=Path, default=ARTIFACTS)
-    parser.add_argument("--replay", action="store_true")
-    arguments = parser.parse_args()
-    output = arguments.output.resolve()
+def run_profiles(profiles, output=ARTIFACTS):
+    execution = harness.require_native_x86_64(require_image_identity=True)
+    seal = receipts.source_seal(harness.ROOT)
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    for profile in profiles:
+        expected_observations(profile)
+    output = output.resolve()
     try:
         output.relative_to(harness.ARTIFACT_ROOT.resolve())
     except ValueError as error:
         raise harness.HarnessError("public Heap output must stay inside the owning artifact root") from error
-    for profile in PROFILES if arguments.profile == "all" else (arguments.profile,):
-        count = run_differential(profile, output=output, replay_only=arguments.replay)
-        scope = "entry transaction and legacy alignment" if profile == "release" else "entry transaction only"
-        print(f"Public Heap allocation ({profile}, {scope}): {count} source-built C/Rust observations match", flush=True)
+    output.mkdir(parents=True, exist_ok=True)
+    output = Path(tempfile.mkdtemp(prefix="run-", dir=output))
+    output.chmod(0o755)
+    print(f"Public Heap allocation raw products: {output}", flush=True)
+    pin = harness.load_pin()
+    archive = harness.fetch_archive(pin, True)
+    source = harness.safe_extract(archive, output / "source", pin["archive_root"])
+    products, cases, failures = {}, [], []
+    fixture = output / DRIVER.name
+    for original in (DRIVER, harness.ROOT / "crabc-mimalloc/tests/native_heap_allocation_contract.rs",
+                     source / "include/mimalloc.h", source / "LICENSE", archive):
+        retained = output / original.name
+        shutil.copy2(original, retained)
+        products[retained.name] = retained
+    inputs = output / "inputs.json"
+    scope = {profile: "legacy alignment and entry transactions" if profile == "release"
+             else "entry transactions only" for profile in profiles}
+    inputs.write_text(json.dumps({"source": seal, "execution": execution, "upstream": pin,
+        "profiles": profiles, "scope": scope,
+        "boundary": "public native-mi-adapter over pinned musl; native Rust Heap contract"}, indent=2) + "\n")
+    products[inputs.name] = inputs
+    compiler = harness.require_tool("musl-gcc")
+    for profile in profiles:
+        directory = output / profile
+        directory.mkdir()
+        def passed(name, argv, cwd=source):
+            result, logs = record(output, f"{profile}-{name}", argv, cwd)
+            status = result.get("status", 1) if result["kind"] == "process" else 1
+            cases.append((f"{profile}-{name}", status, logs))
+            if status != 0:
+                raise harness.HarnessError(f"{profile}-{name} failed; see {logs[0]}")
+            return result
+        client_flags = ("-DCRABC_MI_HEAP_ALLOCATION_CONTRACT_ONLY=1",) if profile != "release" else ()
+        common = ["-D_GNU_SOURCE", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+                  *m4.api_profile_flags(profile), "-I", str(source / "include"), "-I", str(source / "src")]
+        oracle = directory / "oracle.o"
+        passed("oracle-build", [compiler, "-std=c11", *common, "-c", str(source / "src/static.c"), "-o", str(oracle)])
+        target = directory / "cargo-target"
+        passed("native-build", [harness.require_tool("cargo"), "build", "--locked", "--offline", "--release",
+            "--target", m4.RUST_TARGET, "-p", m4.ADAPTER_PACKAGE, "--target-dir", str(target),
+            *(("--features", f"crabc-mimalloc/mi-{profile}") if profile != "release" else ())], harness.ROOT)
+        library = directory / "native-adapter.a"
+        shutil.copy2(target / m4.RUST_TARGET / "release" / m4.ADAPTER_STATICLIB, library)
+        products[f"{profile}-native-adapter.a"] = library
+        products[f"{profile}-oracle.o"] = oracle
+        results, runtime_logs = {}, {}
+        for backend, allocator in (("c", oracle), ("native", library)):
+            binary = directory / backend
+            caller = directory / f"{backend}.o"
+            passed(f"{backend}-compile", [compiler, "-std=c11", *common, *client_flags,
+                "-c", str(fixture), "-o", str(caller)])
+            passed(f"{backend}-imports", [harness.require_tool("nm"), "-u", str(caller)])
+            passed(f"{backend}-link", [compiler, str(caller), str(allocator), "-pthread", "-o", str(binary)])
+            products[f"{profile}-{backend}"] = binary
+            products[f"{profile}-{backend}.o"] = caller
+            result, logs = record(output, f"{profile}-{backend}-run", [str(binary)], directory, runtime=True)
+            status = result.get("status", 1) if result["kind"] == "process" else 1
+            cases.append((f"{profile}-{backend}-run", status, logs))
+            results[backend], runtime_logs[backend] = result, logs
+            if status != 0:
+                failures.append(f"{profile}-{backend}: actual runtime status {status}; see {logs[0]}")
+        try:
+            count = compare_runs(decoded(results["c"]), decoded(results["native"]), profile)
+        except (harness.HarnessError, UnicodeError) as error:
+            failures.append(f"{profile}: {error}; raw in {output}")
+            cases.append((f"{profile}-comparison", 1, runtime_logs["c"] + runtime_logs["native"]))
+        else:
+            cases.append((f"{profile}-comparison", 0, runtime_logs["c"] + runtime_logs["native"]))
+            print(f"Public Heap allocation {profile} ({scope[profile]}): {count} actual C/native observations match", flush=True)
+        contract_build = passed("native-contract-build", [harness.require_tool("cargo"), "test",
+            "--locked", "--offline", "--no-run", "--message-format=json", "--target", m4.RUST_TARGET,
+            "--target-dir", str(target), "-p", "crabc-mimalloc", "--no-default-features",
+            *(("--features", f"mi-{profile}") if profile != "release" else ()),
+            "--test", "native_heap_allocation_contract"], harness.ROOT)
+        executables = []
+        for line in stress.byte_record_payload(contract_build["stdout"], profile).decode().splitlines():
+            try:
+                artifact = json.loads(line)
+            except ValueError:
+                continue
+            if (artifact.get("reason") == "compiler-artifact"
+                and artifact.get("target", {}).get("name") == "native_heap_allocation_contract"
+                and artifact.get("executable")):
+                executables.append(Path(artifact["executable"]))
+        if len(executables) != 1:
+            raise harness.HarnessError(f"{profile}: native Heap contract build did not identify one executable")
+        contract = directory / "native-contract"
+        shutil.copy2(executables[0], contract)
+        products[f"{profile}-native-contract"] = contract
+        result, logs = record(output, f"{profile}-native-contract-run",
+            [str(contract), "--exact", CONTRACT, "--nocapture", "--test-threads=1"], directory,
+            runtime=True, timeout=900)
+        status = result.get("status", 1) if result["kind"] == "process" else 1
+        if status == 0 and harness.parse_rust_test_count(decoded(result)["stdout"] + decoded(result)["stderr"]) != 1:
+            status = 1
+        cases.append((f"{profile}-native-contract-run", status, logs))
+        if status != 0:
+            failures.append(f"{profile}: actual native Heap contract failed; see {logs[0]}")
+    if receipts.source_seal(harness.ROOT) != seal:
+        raise harness.HarnessError("source changed during public Heap allocation execution")
+    path = receipts.write_receipt(harness.ROOT, RUNNER, output, products, cases,
+        {"profiles": ",".join(profiles), **{f"scope.{profile}": scope[profile] for profile in profiles}}, True)
+    if failures:
+        for failure in failures:
+            print(f"RED: {failure}", flush=True)
+        raise harness.HarnessError(f"public Heap allocation has {len(failures)} failures; physical receipt {path}")
+    receipts.read_receipt(harness.ROOT, RUNNER)
+    print(f"Public Heap allocation selected scope PASS; {path}")
+    return len(expected_observations(profiles[0]))
+
+
+def read_and_replay(profiles, replay=False):
+    receipt = receipts.read_receipt(harness.ROOT, RUNNER)
+    covered = receipt.parameters["profiles"].split(",")
+    if any(profile not in covered for profile in profiles):
+        raise harness.HarnessError("retained receipt does not cover the selected profiles")
+    print("Public Heap allocation exact-source physical receipt: PASS")
+    if replay:
+        harness.require_native_x86_64(require_image_identity=True)
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        harness.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        scratch = Path(tempfile.mkdtemp(prefix="heap-allocation-replay-", dir=harness.TEMP_ROOT))
+        scratch.chmod(0o755)
+        for profile in profiles:
+            results = {}
+            for backend in ("c", "native", "native-contract"):
+                name = f"{profile}-{backend}"
+                binary = scratch / name
+                shutil.copyfile(receipt.path.parent / "products" / name, binary)
+                binary.chmod(0o755)
+                argv = [str(binary)]
+                if backend == "native-contract":
+                    argv += ["--exact", CONTRACT, "--nocapture", "--test-threads=1"]
+                result, logs = record(scratch, name, argv, scratch, runtime=True,
+                    timeout=900 if backend == "native-contract" else 60)
+                if result["kind"] != "process" or result["status"] != 0:
+                    raise harness.HarnessError(f"retained {name} failed; see {logs[0]}")
+                results[backend] = decoded(result)
+                recorded = next(case for case in receipt.cases if case["id"] == name + "-run")
+                previous = next(log for log in recorded["logs"] if log.endswith(".stdout"))
+                if backend != "native-contract" and stress.byte_record_payload(result["stdout"], name) != (receipt.path.parent / "logs" / previous).read_bytes():
+                    raise harness.HarnessError(f"retained {name} observations differ; see {scratch}")
+            compare_runs(results["c"], results["native"], profile)
+            if harness.parse_rust_test_count(results["native-contract"]["stdout"] + results["native-contract"]["stderr"]) != 1:
+                raise harness.HarnessError(f"retained {profile} native Heap contract did not execute exactly one test")
+            scope = "legacy alignment and entry transactions" if profile == "release" else "entry transactions only"
+            print(f"Public Heap allocation retained {profile} ({scope}) replay PASS")
+    return len(expected_observations(profiles[0]))
+
+
+def run_differential(profile="release", *, output=ARTIFACTS, replay_only=False):
+    return read_and_replay((profile,), replay=True) if replay_only else run_profiles((profile,), output)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--profile", choices=(*PROFILES, "all"), default="release")
+    parser.add_argument("--output", type=Path, default=ARTIFACTS)
+    parser.add_argument("--read", action="store_true")
+    parser.add_argument("--replay", action="store_true")
+    args = parser.parse_args()
+    profiles = PROFILES if args.profile == "all" else (args.profile,)
+    if args.read or args.replay:
+        read_and_replay(profiles, replay=args.replay)
+    else:
+        run_profiles(profiles, args.output)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (harness.HarnessError, stress.EvidenceError, receipts.ReceiptError) as error:
+        print(f"Public Heap allocation failed: {error}", file=sys.stderr)
+        raise SystemExit(1)
