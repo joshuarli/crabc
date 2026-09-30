@@ -552,6 +552,15 @@ sys.exit(1 if failed else 0)
                 self.assertTrue(result["unmet"])
         self.program.write_text(original)
 
+    def test_unused_missing_compiler_search_directory_preserves_input_authority(self) -> None:
+        metadata = json.loads(self.program.read_text())
+        metadata["args"] += ["-L", "dependency=" + str(self.fixture / "unused-host-output")]
+        self.program.write_text(json.dumps(metadata))
+        result, calls = self.execute()
+        self.assertEqual(result["status"], "passed", result["unmet"])
+        self.assertEqual(result["physical_inputs"]["program"], gate.run.artifact_record(self.program))
+        self.assertEqual([call["selected"] for call in calls], [["fixture::first"], ["fixture::second"]])
+
     def test_changed_physical_dependency_is_not_hidden_by_passing_interpreter_labels(self) -> None:
         dependency = self.program.parent / "libcrabc_core-fixture.rlib"
         with mock.patch.dict(os.environ, {"MIRI_DISPATCH_MUTATE_INPUT": str(dependency)}):

@@ -1504,9 +1504,13 @@ def _miri_compiler_inputs(listing: Mapping[str, Any], miri: Mapping[str, Any]) -
             dependencies.add(dependency)
             dependency_info.add(dependency.parent / (dependency.stem.removeprefix("lib") + ".d"))
         elif argument == "-L":
-            directory = (ROOT / args[index + 1].split("=", 1)[-1]).resolve(strict=True)
+            directory = (ROOT / args[index + 1].split("=", 1)[-1]).resolve()
             if not directory.is_relative_to(ROOT / ".work"):
                 raise GateError("Miri compiler search directory is outside owned artifacts")
+            # Rust accepts absent, unused search directories. The original
+            # descriptor retains their names; explicit extern inputs must exist.
+            if not directory.exists():
+                continue
             dependencies.update(path for path in directory.iterdir()
                                 if path.suffix in (".rlib", ".rmeta", ".a", ".so"))
             dependency_info.update(directory.glob("*.d"))
