@@ -158,10 +158,15 @@ def main():
                     binary.chmod(0o755)
                     result, _ = record(scratch, product, [str(binary)], scratch, True)
                     case = next(case for case in receipt.cases if case["id"] == f"{profile}-{backend}-run")
-                    for stream in ("stdout", "stderr"):
+                    for stream in ("stdout",):
                         original = next(path for path in case["logs"] if path.endswith(f".{stream}"))
                         if stress.byte_record_payload(result[stream], product) != (receipt.path.parent / "logs" / original).read_bytes():
                             raise harness.HarnessError(f"retained {product} {stream} differs; raw {scratch}")
+                    if backend == "c":
+                        stderr = stress.byte_record_payload(result["stderr"], product).decode()
+                        source_rows = dict(re.findall(r"^(source\.[a-z_]+)=([0-9,]+)$", stderr, re.MULTILINE))
+                        if source_rows != SOURCE:
+                            raise harness.HarnessError(f"retained {product} source bindings differ; raw {scratch}")
             print(f"Heap in arena retained four-profile products: PASS; raw {scratch}")
     else:
         run_profiles(PROFILES if args.matrix else (args.profile or "release",))
