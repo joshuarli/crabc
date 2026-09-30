@@ -1,5 +1,6 @@
 """Behavioral controls for original aggregate receipt authentication."""
 import sys
+import importlib.util
 import json
 import tempfile
 import unittest
@@ -253,9 +254,13 @@ class RetainedProducerSourceTests(unittest.TestCase):
 class MiriPhysicalReaderTests(unittest.TestCase):
     def setUp(self):
         import m3_x86_64 as local
-        from compat.allocator.tests.test_x86_64_m3_local_engine import MiriFreshInterpreterDispatchTests
+        spec = importlib.util.spec_from_file_location(
+            "miri_producer_test_fixture", Path(__file__).with_name("test_x86_64_m3_local_engine.py"))
+        assert spec is not None and spec.loader is not None
+        fixtures = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fixtures)
         self.local = local
-        self.producer = MiriFreshInterpreterDispatchTests()
+        self.producer = fixtures.MiriFreshInterpreterDispatchTests()
         self.producer.setUp()
         self.addCleanup(self.producer.doCleanups)
         cargo = self.producer.fixture / "bin/cargo"
