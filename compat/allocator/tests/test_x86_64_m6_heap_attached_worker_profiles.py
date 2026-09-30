@@ -11,6 +11,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import x86_64_m6_heap_delete_with_attached_worker as attached
 import x86_64_m6_heap_destroy_with_attached_worker as destroy
+import x86_64_m6_heap_destroy_racing_detach as racing
 
 
 class AttachedWorkerProducerTests(unittest.TestCase):
@@ -125,6 +126,69 @@ class AttachedWorkerProducerTests(unittest.TestCase):
         with mock.patch.object(attached, 'run_fixture', return_value=5) as run:
             self.assertEqual(attached.main(destroy, []), 0)
         self.assertEqual(run.call_args.args, (destroy, ('release',)))
+
+    def test_timing_only_joined_trace_cannot_qualify_lock_contention(self):
+        source = self.output / 'source'
+        source.mkdir()
+        baseline = self.observation(racing)
+        observed = dict(baseline, stdout=baseline['stdout'].replace(racing.END,
+            'race.destroy_before_drain=0\nrace.finish=128,0,0,0,0\n'
+            'race.refusal=0,0,0,0\n' + racing.END))
+        success = {'status': 0, 'stdout': '', 'stderr': ''}
+        with mock.patch.object(racing, 'REPETITIONS', 1), \
+             mock.patch.object(racing, 'ARTIFACTS', self.output / 'race'), \
+             mock.patch.object(racing.harness, 'require_native_x86_64'), \
+             mock.patch.object(racing.harness, 'load_pin', return_value={'archive_root': 'pinned'}), \
+             mock.patch.object(racing.harness, 'fetch_archive', return_value=self.output / 'archive'), \
+             mock.patch.object(racing.harness, 'safe_extract', return_value=source), \
+             mock.patch.object(racing.harness, 'require_tool', side_effect=lambda name: name), \
+             mock.patch.object(racing.harness, 'command_record',
+                               side_effect=[success, baseline, success, success, observed]):
+            with self.assertRaisesRegex(racing.harness.HarnessError, 'contention|rendezvous|overlap'):
+                racing.run_differential(True, True)
+
+    def causal_observation(self, *, waits='1', preserved='1', finish='129,0,0,0,0', side='c'):
+        record = self.observation(racing)
+        fields = f'race.destroy_before_drain=0\nrace.contention_waits={waits}\nrace.preserved_before_retry={preserved}\n'
+        if side == 'rust':
+            fields += f'race.finish={finish}\nrace.refusal=0,0,0,0\n'
+        record['stdout'] = record['stdout'].replace(racing.END, fields + racing.END)
+        return record
+
+    def test_counter_without_failed_try_lock_cannot_release_the_proof(self):
+        for waits in ('0', '-1', 'missing'):
+            with self.subTest(waits=waits):
+                with self.assertRaisesRegex(racing.harness.HarnessError, 'failed try-lock'):
+                    racing.observed_trace(self.causal_observation(waits=waits), 'c', interleave=True)
+
+    def test_failed_lock_must_preserve_live_clients_until_retry(self):
+        with self.assertRaisesRegex(racing.harness.HarnessError, 'observations differ'):
+            racing.observed_trace(self.causal_observation(preserved='0'), 'c', interleave=True)
+
+    def test_joined_refusal_is_not_hidden_by_matching_owner_totals(self):
+        with self.assertRaisesRegex(racing.harness.HarnessError, 'teardown refused'):
+            racing.observed_trace(self.causal_observation(side='rust', finish='128,0,0,1,0'),
+                                  'rust', audit=True, interleave=True)
+
+    def test_scheduling_dependent_retry_totals_remain_raw_and_both_require_contention(self):
+        source = self.causal_observation(waits='2')
+        native = self.causal_observation(waits='37', side='rust')
+        before = [record['stdout'] for record in (source, native)]
+        self.assertEqual(racing.observed_trace(source, 'c', interleave=True),
+                         racing.observed_trace(native, 'rust', audit=True, interleave=True))
+        self.assertEqual(before, [record['stdout'] for record in (source, native)])
+
+    def test_default_preserves_original_uncontrolled_workload_and_requires_all_causal_profiles(self):
+        with mock.patch.object(racing, 'run_differential') as baseline, \
+             mock.patch.object(racing, 'run_cohort', return_value=512) as causal:
+            self.assertEqual(racing.main([]), 0)
+        baseline.assert_called_once_with()
+        causal.assert_called_once_with(racing.PROFILES)
+
+    def test_selected_profile_reader_cannot_silently_expand_or_shrink_its_profile_request(self):
+        with mock.patch.object(racing, 'read_cohort', return_value=0) as reader:
+            self.assertEqual(racing.main(['--profile', 'stat-2', '--replay']), 0)
+        reader.assert_called_once_with(('stat-2',), True)
 
 
 if __name__ == '__main__':
