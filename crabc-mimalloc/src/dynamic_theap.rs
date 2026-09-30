@@ -3855,18 +3855,23 @@ mod tests {
                 for value in receive.recv().unwrap() { emit(value); }
             }
         }
+        prepare_cross_thread_managed_abandoned_lifecycle();
         cross_thread_managed_abandoned_lifecycle_trace(&mut emit);
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
-    fn cross_thread_managed_abandoned_lifecycle_trace(mut emit: impl FnMut(i64)) {
-        use core::sync::atomic::Ordering;
+    fn prepare_cross_thread_managed_abandoned_lifecycle() {
         unsafe extern "C" fn discard_output(_: *const core::ffi::c_char) {}
         assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096,
             unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard_output) }));
         assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
         crate::source_options_api::option_set(crate::config::SourceOption::ArenaReserve as i32, 0);
         crate::source_options_api::option_set(crate::config::SourceOption::PurgeDelay as i32, -1);
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    fn cross_thread_managed_abandoned_lifecycle_trace(mut emit: impl FnMut(i64)) {
+        use core::sync::atomic::Ordering;
         emit(-1027);
         for request in [37, SMALL_SIZE_MAX + 1024, 86699] {
             for blocked in [false, true] {
@@ -4050,6 +4055,11 @@ mod tests {
             std::println!("m2.arena.retention.{cycle}.ranges={ranges}");
             std::println!("m2.arena.retention.{cycle}.bytes={bytes}");
         }
+        // The embedding runtime prepares the first owner once, before any
+        // public child operation. Repeating this integration transition after
+        // child Heap allocations retires an active initial-owner engine; it is
+        // not part of the ordinary C caller's create/destroy cycle.
+        prepare_cross_thread_managed_abandoned_lifecycle();
         cross_thread_managed_abandoned_lifecycle_trace(|_| {});
         snapshot(0);
         for cycle in 1..=32 {
