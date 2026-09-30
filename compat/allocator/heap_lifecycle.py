@@ -262,3 +262,4 @@ if __name__ == "__main__":
         run_faults(replay=arguments.replay)
     else:
         main()
+        run_faults()

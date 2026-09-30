@@ -167,8 +167,8 @@
       "scope": "Source-built pinned-C/native-adapter child-subprocess arena Heap with a block abandoned by its exited owner, then a forked child and the surviving parent independently free the inherited block, destroy the Heap from the process main thread, and destroy their copy of the subprocess. A second fork destroys a child subprocess under a worker still live in the parent but vanished in the fork child, then joins and destroys the parent's copy."
     },
     "fault:heap-lifecycle": {
-      "runner": null,
-      "scope": "Deterministic failure injection for Heap, Theap, TLD, TLS-slot, arena-page metadata, and arena allocation with unique-owner audit."
+      "runner": "compat/allocator/heap_lifecycle.py",
+      "scope": "Bounded pinned C/native Heap-image, first-Theap and live-page commit refusal/retry observations, paired TLD/Theap metadata refusal and isolated TLS-slot rollback controls. Thread-local key creation refusal and the complete fault matrix remain unproved."
     },
     "unit:heap-lifecycle": {
       "runner": "compat/allocator/x86_64_m6_heap_lifecycle_unit.py",
@@ -203,7 +203,7 @@
       "scope": "Unmodified test-api.c heap-os1, heap-os2, heap-many, and arena_reserve."
     },
     "upstream:test-stress-heaps": {
-      "runner": null,
+      "runner": "compat/allocator/x86_64_m6_upstream_heap_stress.py",
       "scope": "Unmodified test-stress-heaps.c (MI_USE_HEAPS=4) at 1, 2, 4, and 8 workers."
     },
     "upstream:test-stress-subprocs": {

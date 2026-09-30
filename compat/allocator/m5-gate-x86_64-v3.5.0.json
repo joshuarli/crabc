@@ -465,6 +465,7 @@
     "native_subprocess_contract": "compat/allocator/x86_64_m6_nested_child.py",
     "native_arena_contract": "compat/allocator/x86_64_m6_public_arena.py",
     "native_heap_allocation_contract": "compat/allocator/x86_64_m6_public_heap_alignment.py",
+    "native_heap_lifecycle_faults": "compat/allocator/heap_lifecycle.py",
     "native_persistent_owner_local_trace": "compat/allocator/m3-local-engine-x86_64-v3.5.0.json"
   }
 }

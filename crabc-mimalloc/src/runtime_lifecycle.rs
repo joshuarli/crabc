@@ -12831,8 +12831,8 @@ fn native_free_pointer_first_nonlocal(
     } else {
         // A page of a non-main Heap of the process main subprocess takes the
         // Heap-owned route with the process registry.
-        // SAFETY: the exact live allocation holds the page. This lookup compares
-        // the raw Heap identity with linked registry entries before using it.
+        // SAFETY: the exact live allocation retains its stable page identity.
+        // Deleted OS owners are excluded before immutable Heap fields are read.
         if let Some(heap) = unsafe { crate::subproc::main_heaps::heap_of_page(allocation.page()) } {
             // SAFETY: forwarded exact-live-allocation contract.
             return unsafe { crate::subproc::main_heaps::native_free_nonlocal(heap, allocation) };
