@@ -43,31 +43,33 @@ only its exact source, configuration, image, products, and execution context.
   static, dynamic and full54 aggregate readers also pass. These results qualify
   that exact source, not newer merged source or the native allocator.
 - **Runtime families:** the same `b2a903880` cohort passes the complete native
-  POSIX five-component producer, its read-only reader and the pthread component;
-  POSIX family admission passes, with its admission reader and pthread join in
-  progress. Fresh Rust std/LTO executes all four frozen gates and installed/
-  extracted cleanup and cross-DSO consumers, but six provider controls fail
-  because derived Cargo lockfiles were mounted read-only. The original failure
-  is retained; a precise private-lockfile mount correction is proved and a fresh
-  whole consumer awaits disk space. Exact `e30070ce8` text evidence passes nine
-  components, sixteen capabilities and its owning selector; the selector retains
-  historical CRT/helper adapter rejections. Exact `a7fffb1ab` independently
-  passes all 183 CRT obligations and 32 compiler helpers through the current
-  selector. Ordered family and callable-provider closure remain open.
-- **Allocator source geometry:** ordinary auxiliary Theap allocation now has a
-  coherent source-faithful repair with full ten-workload, four-profile C/native
-  geometry evidence and independent read-only replay. It is awaiting integration
-  with the ownership repairs. Child main-Heap birth requests the source's
-  6,464-byte allocation. Child creation still adds 131,072 committed bytes
-  against C's 65,536 in all four profiles: remove the separate child control
-  allocation while preserving explicit ownership, failure retry and TLS lifetime.
-- **Allocator ownership:** strict Miri now reaches real environment/TLS startup.
-  It exposed mutable operations through shared-derived fast-owner pointers,
-  deferred-source pointers, fresh-page publication and initializer-derived TLS
-  statistics pointers. Four isolated regressions pass after repairs; the latest
-  clean repair passes the original strict startup fixture. Integration, final
-  compiler checks and a fresh complete seventeen-test strict roster remain open.
-  Prior full-roster failures remain unqualified and retained.
+  POSIX five-component producer, pthread component, POSIX family admission,
+  and independent read-only admission and pthread-join readers. Fresh Rust
+  std/LTO passes the unchanged whole consumer and owning read-only reader:
+  four frozen gates, installed/extracted cleanup and cross-DSO execution,
+  and all provider controls. The earlier private-lockfile mount failure remains
+  retained. All 33 retained executables replay successfully; process-specific
+  backtrace addresses retain their raw differences and pass the existing
+  semantic receiver. This cohort also passes all 206 selected math/fenv entries
+  in eighteen execution cells and its independent reader. Fresh text family
+  assembly is executing. Historical CRT/helper selector rejections remain
+  retained; exact `a7fffb1ab` passes all 183 CRT obligations and 32 compiler
+  helpers. Ordered family and callable-provider closure remain open.
+- **Allocator source geometry:** source-faithful auxiliary and ordinary main
+  Theap geometry repairs are integrated with ownership repairs. Their exact
+  sources pass four-profile C/native layout comparisons and independent replay.
+  Child main-Heap birth requests the source's 6,464-byte allocation. Child
+  creation still adds 131,072 committed bytes against C's 65,536 in all four
+  profiles: remove the separate child control allocation while preserving
+  explicit ownership, failure retry and live-thread destruction semantics.
+- **Allocator ownership:** fourteen coherent pointer/capability repairs are
+  integrated. Both original strict environment/TLS startup fixtures and five
+  isolated strict regressions pass at their exact repaired sources; all nine
+  merged Rust compiler profiles pass. Compiler-selected Miri descriptors,
+  dependencies, source files, tools, sysroot and exact phase environments are
+  now retained. A fresh clean-source complete seventeen-test strict roster and
+  its independent physical receiver are in progress. Prior full-roster
+  failures remain unqualified and retained.
 - **Allocator gates:** existing Heap/subprocess stress, visitation, callbacks,
   statistics, remote ownership and failure evidence remain retained by exact
   source. M6 now requests the supported full-profile producer commands and
@@ -83,8 +85,9 @@ only its exact source, configuration, image, products, and execution context.
   and no such pages; no alternate host is available. Continue independent
   correctness work and retain this unmet requirement. Performance is outside
   this plan's scope and cannot delay or qualify functional completion.
-- **Next:** integrate the coherent allocator ownership and geometry repairs,
-  close the remaining functional families and source/API/profile conditions,
+- **Next:** qualify the merged ownership and geometry repairs, finish child
+  control lifetime parity, and close remaining functional families and
+  source/API/profile conditions,
   replay the seven ordered gates on merged source, then perform the isolated
   default switch, fresh native qualification and correctness-backed public
   promotion. Retire integrated, stopped worktrees promptly after preserving
