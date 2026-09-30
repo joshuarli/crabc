@@ -252,9 +252,10 @@ int main(void) {
      identities. The conservative aligned range bound makes crossed PageMap
      indices visible; these diagnostics do not adjust any counter. */
   const size_t span = CRABC_INITIAL_ALIGNMENT + usable + 65536;
-  if (client_address > UINTPTR_MAX - span) abort();
+  if (client_address > UINTPTR_MAX - span || client_address < CRABC_INITIAL_ALIGNMENT + 65536) abort();
   fprintf(stderr, "placement.warm_index=%zu\n", (size_t)(warm_address >> 29));
   fprintf(stderr, "placement.client_index=%zu\n", (size_t)(client_address >> 29));
+  fprintf(stderr, "placement.client_lower_bound_index=%zu\n", (size_t)((client_address - CRABC_INITIAL_ALIGNMENT - 65536) >> 29));
   fprintf(stderr, "placement.client_bound_index=%zu\n", (size_t)((client_address + span - 1) >> 29));
   for (unsigned stage = 0; stage < STAGE_COUNT; stage++) {
     fprintf(stderr, "placement.%s.mmap_calls=%lld\n", stages[stage],

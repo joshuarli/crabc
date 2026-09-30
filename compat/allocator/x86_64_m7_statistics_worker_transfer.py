@@ -43,7 +43,7 @@ INITIAL_REQUESTS = {"small": (64, 0), "medium": (32768, 0),
 INITIAL_ARTIFACTS = REPORT.parent / "initial-attachment"
 
 
-def validate_initial(trace: dict[str, str], level: int, request: str, side: str) -> None:
+def validate_initial(trace: dict[str, str], level: int, request: str, side: str, stderr: str = "") -> dict[str, str]:
     size, alignment = INITIAL_REQUESTS[request]
     expected = {"profile.level", "allocation.request", "allocation.alignment", "allocation.usable"}
     fields = (*ALIGNED_COUNTS, "malloc_bins", "page_bins", "normal_count", "huge_count")
@@ -94,6 +94,50 @@ def validate_initial(trace: dict[str, str], level: int, request: str, side: str)
                 raise harness.HarnessError(f"{side} changed printed {stage}.{field} label")
             if level == 2 and field == "requested" and not row:
                 raise harness.HarnessError(f"{side} lost printed requested total")
+
+
+    accounted = dict(trace)
+    if request == "os-aligned-small":
+        # The cold worker's OS mapping can require a new two-level PageMap
+        # submap. It retains that 64 KiB charge after the client is freed.
+        # Compare source transitions only after proving the address-dependent
+        # charge in each execution; leave the recorded raw counts unchanged.
+        placement = {}
+        for line in stderr.splitlines():
+            if line.startswith("placement."):
+                key, separator, value = line.partition("=")
+                if not separator or key in placement:
+                    raise harness.HarnessError(f"{side} has ambiguous PageMap placement")
+                try:
+                    placement[key] = int(value)
+                except ValueError as error:
+                    raise harness.HarnessError(f"{side} has invalid PageMap placement") from error
+        expected_placement = {"placement.warm_index", "placement.client_index", "placement.client_lower_bound_index", "placement.client_bound_index"}
+        expected_placement.update(f"placement.{stage}.mmap_calls" for stage in INITIAL_STAGES)
+        if set(placement) != expected_placement or any(value < 0 for value in placement.values()):
+            raise harness.HarnessError(f"{side} lost its PageMap placement witness")
+        target = placement["placement.client_index"]
+        if target != placement["placement.client_bound_index"] or target != placement["placement.client_lower_bound_index"]:
+            raise harness.HarnessError(f"{side} spans multiple PageMap submaps")
+        new_submap = int(target != placement["placement.warm_index"])
+        charge = new_submap * 65536
+        for stage in INITIAL_STAGES:
+            active = stage not in ("before", "untouched")
+            if placement[f"placement.{stage}.mmap_calls"] != (1 + new_submap if active else 0):
+                raise harness.HarnessError(f"{side} lost source {stage} PageMap mapping charge")
+            for field in ("reserved", "committed"):
+                if not active:
+                    base = (0, 0, 0)
+                elif field == "reserved":
+                    # The aligned OS reserve is alignment plus one 64 KiB slice.
+                    base = (1114112, 1114112, 0 if stage in ("freed", "collected") else 1114112)
+                else:
+                    base = (131072, 131072, 65536 if stage in ("freed", "collected") else 131072)
+                expected_count = tuple(value + (charge if active else 0) for value in base)
+                if count(trace, stage, field) != expected_count:
+                    raise harness.HarnessError(f"{side} lost source {stage}.{field} PageMap charge")
+                accounted[f"{stage}.{field}"] = ",".join(str(value) for value in base)
+    return accounted
 
 
 def validate_aligned(trace: dict[str, str], level: int, fresh: bool, side: str) -> None:
@@ -183,7 +227,7 @@ def run_worker_transfer_matrix(offline: bool, selected: str | None = None, freei
             library = target / TARGET / "release/libcrabc_mimalloc_native_mi_adapter.a"
             archive_product = retained / library.name
             shutil.copy2(library, archive_product)
-            worker_cases = ((request,) if request else ("small", "medium", "huge")) if initial else ((freeing_worker,) if freeing_worker else ("attached", "fresh"))
+            worker_cases = ((request,) if request else tuple(INITIAL_REQUESTS)) if initial else ((freeing_worker,) if freeing_worker else ("attached", "fresh"))
             for case_name in worker_cases:
                 fresh = case_name == "fresh"
                 case = retained / case_name
@@ -192,7 +236,7 @@ def run_worker_transfer_matrix(offline: bool, selected: str | None = None, freei
                           "-DMI_LIBC_MUSL=1", *flags, f"-DCRABC_STAT_LEVEL={level}",
                           *(["-DCRABC_INITIAL_ATTACHMENT=1", f"-DCRABC_INITIAL_REQUEST={INITIAL_REQUESTS[case_name][0]}",
                              f"-DCRABC_INITIAL_ALIGNMENT={INITIAL_REQUESTS[case_name][1]}",
-                             *(["-DCRABC_INITIAL_PLACEMENT_DIAGNOSTIC=1"] if placement_diagnostic else [])] if initial else [f"-DCRABC_FRESH_FREE={int(fresh)}"]),
+                             *(["-DCRABC_INITIAL_PLACEMENT_DIAGNOSTIC=1"] if placement_diagnostic or case_name == "os-aligned-small" else [])] if initial else [f"-DCRABC_FRESH_FREE={int(fresh)}"]),
                           "-I", str(source / "include"), str(fixture)]
                 builds = {}
                 executions = {}
@@ -220,10 +264,15 @@ def run_worker_transfer_matrix(offline: bool, selected: str | None = None, freei
                     traces[side] = parse_options_trace(execution["stdout"], side, begin, end)
                 report["traces"] = traces
                 harness.write_json(report_path, report)
+                compared_traces = {}
                 for side, trace in traces.items():
-                    (validate_initial if initial else validate_aligned)(trace, level, case_name if initial else fresh, side)
+                    if initial:
+                        compared_traces[side] = validate_initial(trace, level, case_name, side, executions[side]["stderr"])
+                    else:
+                        validate_aligned(trace, level, fresh, side)
+                        compared_traces[side] = trace
                 mismatch = {key: {side: traces[side][key] for side in traces}
-                            for key in traces["c"] if traces["c"][key] != traces["rust"][key]}
+                            for key in traces["c"] if compared_traces["c"][key] != compared_traces["rust"][key]}
                 report.update(mismatch=mismatch, compared_key_count=len(traces["c"]),
                               status="failed" if mismatch else "passed")
                 harness.write_json(report_path, report)
@@ -242,7 +291,7 @@ def replay_worker_transfer_matrix(root: Path, *, initial: bool = False) -> int:
     harness.require_native_x86_64()
     fixture = FIXTURE if initial else ALIGNED_FIXTURE
     begin, end = (INITIAL_BEGIN, INITIAL_END) if initial else (ALIGNED_BEGIN, ALIGNED_END)
-    cases = ("small", "medium", "huge") if initial else ("fresh", "attached")
+    cases = tuple(INITIAL_REQUESTS) if initial else ("fresh", "attached")
     summary = json.loads((root / "report.json").read_text())
     expected = {f"{profile}/{worker}" for profile in ALIGNED_PROFILES for worker in cases}
     if summary.get("status") != "passed" or set(summary.get("profiles", {})) != expected:
@@ -278,10 +327,21 @@ def replay_worker_transfer_matrix(root: Path, *, initial: bool = False) -> int:
                 execution = harness.command_record([str(binary.resolve())], cwd=root, env={}, timeout_seconds=60)
                 harness.require_success(execution, f"retained {profile}/{worker}/{side} physical replay")
                 trace = parse_options_trace(execution["stdout"], side, begin, end)
-                (validate_initial if initial else validate_aligned)(trace, level, worker if initial else worker == "fresh", side)
-                if trace != report["traces"][side]:
+                retained_execution = report["executions"][side]
+                harness.require_success(retained_execution, f"retained {profile}/{worker}/{side} original execution")
+                retained_trace = parse_options_trace(retained_execution["stdout"], side, begin, end)
+                if retained_trace != report["traces"][side]:
+                    raise harness.HarnessError(f"retained {profile}/{worker}/{side} changed its raw trace")
+                if initial:
+                    retained_accounted = validate_initial(retained_trace, level, worker, side, retained_execution["stderr"])
+                    accounted = validate_initial(trace, level, worker, side, execution["stderr"])
+                else:
+                    validate_aligned(retained_trace, level, worker == "fresh", side)
+                    validate_aligned(trace, level, worker == "fresh", side)
+                    retained_accounted, accounted = retained_trace, trace
+                if accounted != retained_accounted:
                     raise harness.HarnessError(f"retained {profile}/{worker}/{side} changed observable statistics")
-                traces[side] = trace
+                traces[side] = accounted
             if traces["c"] != traces["rust"]:
                 raise harness.HarnessError(f"retained {profile}/{worker} has a source statistics difference")
             compared += len(traces["c"])

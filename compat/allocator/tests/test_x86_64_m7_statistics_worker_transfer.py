@@ -1,6 +1,7 @@
 """Validate the observable aligned-transfer statistics boundary."""
 
 import sys
+import json
 from unittest import mock
 import unittest
 from pathlib import Path
@@ -86,6 +87,64 @@ class InitialAttachmentStatisticsTests(unittest.TestCase):
                 trace[f"{stage}.huge"] = "589824,589824,589824"
                 trace[f"{stage}.huge_count"] = "1"
         return trace
+
+    def os_trace(self, new_submap):
+        trace = self.trace(request="os-aligned-small")
+        witness = {"warm_index": 7, "client_index": 8 if new_submap else 7,
+                   "client_lower_bound_index": 8 if new_submap else 7,
+                   "client_bound_index": 8 if new_submap else 7}
+        for stage in worker.INITIAL_STAGES:
+            active = stage not in ("before", "untouched")
+            witness[f"{stage}.mmap_calls"] = 1 + new_submap if active else 0
+            for field in ("reserved", "committed"):
+                if not active:
+                    values = (0, 0, 0)
+                elif field == "reserved":
+                    values = (1114112, 1114112, 0 if stage in ("freed", "collected") else 1114112)
+                else:
+                    values = (131072, 131072, 65536 if stage in ("freed", "collected") else 131072)
+                charge = 65536 * new_submap if active else 0
+                trace[f"{stage}.{field}"] = ",".join(str(value + charge) for value in values)
+        return trace, witness
+
+    def placement(self, witness):
+        return "\n".join(f"placement.{key}={value}" for key, value in witness.items())
+
+    def test_os_page_map_charge_is_proved_without_rewriting_raw_trace(self):
+        previous = None
+        for new_submap in (0, 1):
+            trace, witness = self.os_trace(new_submap)
+            raw = dict(trace)
+            accounted = worker.validate_initial(trace, 2, "os-aligned-small", "C", self.placement(witness))
+            self.assertEqual(trace, raw)
+            if previous is not None:
+                self.assertEqual(accounted, previous)
+            previous = accounted
+
+    def test_os_page_map_charge_rejects_missing_multiindex_or_wrong_counter(self):
+        trace, witness = self.os_trace(1)
+        for key, value in (("client_bound_index", 9), ("client_lower_bound_index", 7), ("allocated.mmap_calls", 1)):
+            with self.subTest(key=key):
+                changed = dict(witness, **{key: value})
+                with self.assertRaises(harness.HarnessError):
+                    worker.validate_initial(trace, 2, "os-aligned-small", "C", self.placement(changed))
+        with self.assertRaises(harness.HarnessError):
+            worker.validate_initial(trace, 2, "os-aligned-small", "C")
+        trace["collected.reserved"] = "1179648,1179648,0"
+        with self.assertRaisesRegex(harness.HarnessError, "PageMap charge"):
+            worker.validate_initial(trace, 2, "os-aligned-small", "C", self.placement(witness))
+
+    def test_canonical_reader_rejects_old_matrix_without_os_aligned_small(self):
+        root = mock.MagicMock(spec=Path)
+        root.__truediv__.return_value.read_text.return_value = json.dumps({
+            "status": "passed", "profiles": {
+                f"{profile}/{request}": "passed" for profile in worker.ALIGNED_PROFILES
+                for request in ("small", "medium", "huge")
+            },
+        })
+        with mock.patch.object(harness, "require_native_x86_64"), \
+             self.assertRaisesRegex(harness.HarnessError, "matrix is incomplete"):
+            worker.replay_worker_transfer_matrix(root, initial=True)
 
     def test_untouched_statistics_query_does_not_attach_or_charge_vm(self):
         worker.validate_initial(self.trace(), 2, "small", "C")
