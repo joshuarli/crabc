@@ -78,6 +78,10 @@
       "runner": "compat/allocator/x86_64_m6_heap_destroy_racing_detach.py",
       "scope": "Source-built pinned-C/native-adapter thirty-two independent 64-round races between non-main Heap destruction and the second worker's thread exit after the creating worker has exited: every creator page retires and Heap/Theap counts return to baseline."
     },
+    "differential:heap-numa-affinity": {
+      "runner": "compat/allocator/x86_64_heap_numa_affinity.py",
+      "scope": "Pinned-C/native public Heap NUMA affinity across all 36 main and child subprocess cases with three logical nodes. Exact-source physical receipt and replay bind the execution image; this is logical policy evidence, separate from physical NUMA hardware qualification."
+    },
     "differential:deleted-heap-remote-exit": {
       "runner": "compat/allocator/x86_64_m6_deleted_heap_remote_exit.py",
       "scope": "Source-built pinned-C/native-adapter deleted process-main Heap with an aligned OS-backed live block, remote final free before or after the owner exits, Heap and region identity, errno, collection, and page/Theap statistics."
@@ -233,6 +237,7 @@
       "acceptance": "First-class Heaps follow src/heap.c: parent-main-Heap-allocated Heap images with a dynamic thread-local slot and subprocess list/count membership, lazy per-thread Theap creation, main-Heap delete/destroy refusal warnings, `mi_heap_delete` moving live pages to the main Heap as abandoned pages, `mi_heap_destroy` releasing every page, and exclusive-arena binding.",
       "evidence": [
         "differential:public-heap-lifecycle",
+        "differential:heap-numa-affinity",
         "differential:heap-in-arena",
         "differential:child-heap-in-arena",
         "differential:child-arena-fork-owner",
@@ -247,7 +252,7 @@
         "unit:heap-lifecycle"
       ],
       "blocked_by": [
-        "Non-main Heaps exist for threads of the process main subprocess (`subproc::main_heaps`, exported as mi_heap_new/mi_heap_main/mi_heap_delete/mi_heap_destroy/mi_heap_collect) and of child subprocesses (`types::heap_registry::lifecycle`). Process-main and child-subprocess mi_heap_theap have bounded source-built evidence. Heaps selected from one live exclusive parent have source-built allocation, delete, destroy, and failure traces in both subprocesses. A deleted process-main Heap's remote final free matches pinned C in both owner-exit orders. Deleting a worker-created Heap after that owner exits matches pinned C for regular and aligned singleton pages through page movement, remote final free, and collection. Destroying a Heap used by two exited workers matches pinned C for regular and aligned live pages. Source-built destroy and delete now also cover a still-attached second worker after creator exit, and thirty-two 64-round processes race worker exit with destruction. mi_heap_set_numa_affinity, deterministic lock-contention overlap, and failure coverage remain unproved or absent."
+        "Non-main Heaps exist for threads of the process main subprocess (`subproc::main_heaps`, exported as mi_heap_new/mi_heap_main/mi_heap_delete/mi_heap_destroy/mi_heap_collect) and of child subprocesses (`types::heap_registry::lifecycle`). Process-main and child-subprocess mi_heap_theap have bounded source-built evidence. Heaps selected from one live exclusive parent have source-built allocation, delete, destroy, and failure traces in both subprocesses. A deleted process-main Heap's remote final free matches pinned C in both owner-exit orders. Deleting a worker-created Heap after that owner exits matches pinned C for regular and aligned singleton pages through page movement, remote final free, and collection. Destroying a Heap used by two exited workers matches pinned C for regular and aligned live pages. Source-built destroy and delete now also cover a still-attached second worker after creator exit, and thirty-two 64-round processes race worker exit with destruction. Deterministic lock-contention overlap and failure coverage remain unproved or absent."
       ]
     },
     {

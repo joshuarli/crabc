@@ -533,7 +533,7 @@ ABI_EVIDENCE_ROWS = {
     "./scripts/dev-x86_64.sh header-declaration-inventory": "header_declaration_inventory",
     "./scripts/dev-x86_64.sh native-abi-selection": "native_abi_selection",
     "./scripts/dev-x86_64.sh public-data-ordinary-link": "public_data_ordinary_link",
-    "./scripts/dev-x86_64.sh native-abi-selection require-closure": "native_abi_selection_closure",
+    "./scripts/dev-x86_64.sh native-abi-selection require-abi-prerequisite-closure": "native_abi_selection_closure",
 }
 
 
