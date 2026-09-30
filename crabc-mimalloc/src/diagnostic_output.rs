@@ -792,6 +792,34 @@ impl SourceFormattedMessage {
         Self { bytes, length }
     }
 
+    /// The guarded allocation keeps its valid client after a protection
+    /// refusal. The primitive's own warning precedes this object warning.
+    pub(crate) fn guarded_protect_failure(block_address: usize, block_size: usize) -> Self {
+        let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
+        let mut length = 0;
+        append_mbind_bytes(&mut bytes, &mut length,
+            b"failed to set a guard page behind an object (object ");
+        append_source_pointer(&mut bytes, &mut length, block_address);
+        append_mbind_bytes(&mut bytes, &mut length, b" of size ");
+        append_mbind_unsigned_decimal(&mut bytes, &mut length, block_size as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b")\n");
+        Self { bytes, length }
+    }
+
+    /// Pinned memory or an unsuitable guard address skips the protection
+    /// syscall while preserving the object and reporting the unavailable guard.
+    pub(crate) fn guarded_pinned_memory(block_address: usize, block_size: usize) -> Self {
+        let mut bytes = [0; SOURCE_FORMAT_STORAGE_BYTES];
+        let mut length = 0;
+        append_mbind_bytes(&mut bytes, &mut length,
+            b"unable to set a guard page behind an object due to pinned memory (large OS pages?) (object ");
+        append_source_pointer(&mut bytes, &mut length, block_address);
+        append_mbind_bytes(&mut bytes, &mut length, b" of size ");
+        append_mbind_unsigned_decimal(&mut bytes, &mut length, block_size as u64);
+        append_mbind_bytes(&mut bytes, &mut length, b")\n");
+        Self { bytes, length }
+    }
+
     /// `"unable to allocate aligned OS memory directly, fall back to
     /// over-allocation (size: 0x%zx bytes, address: %p, alignment: 0x%zx,
     /// commit: %d)\n"` from `mi_os_prim_alloc_aligned` (`src/os.c:376-378`).
@@ -3887,6 +3915,23 @@ mod tests {
         let bounded = SourceFormattedMessage::from_source_formatted(source);
 
         assert_eq!(bounded.as_c_str().to_bytes().len(), 990);
+    }
+
+    #[test]
+    fn guarded_warning_bodies_preserve_source_pointer_width_and_decimal_size() {
+        for (address, pointer) in [(0, "0x00000000"), (0xABCD, "0x0000ABCD"),
+                                   (0x1234_5678_ABCD, "0x12345678ABCD")] {
+            for size in [0, 81, usize::MAX] {
+                let protect = SourceFormattedMessage::guarded_protect_failure(address, size);
+                let pinned = SourceFormattedMessage::guarded_pinned_memory(address, size);
+                assert_eq!(protect.as_c_str().to_bytes(), std::format!(
+                    "failed to set a guard page behind an object (object {pointer} of size {size})\n"
+                ).as_bytes());
+                assert_eq!(pinned.as_c_str().to_bytes(), std::format!(
+                    "unable to set a guard page behind an object due to pinned memory (large OS pages?) (object {pointer} of size {size})\n"
+                ).as_bytes());
+            }
+        }
     }
 
     #[test]
