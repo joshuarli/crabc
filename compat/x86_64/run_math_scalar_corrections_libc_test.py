@@ -39,7 +39,8 @@ def main():
     source_contract.generate_options_header(compiler=source_contract.ORACLE_CC,
         environment=dict(os.environ), include=product / 'usr/include',
         source=prepared / 'src/common/options.h.in', output=options / 'options.h',
-        trace=options / 'options.headers.stderr')
+        trace=options / 'options.headers.stderr',
+        translation=source_contract.installed_translation_flags(product))
     common = []
     def command(argv, prefix):
         result = subprocess.run([str(x) for x in argv], capture_output=True, cwd=prefix.parent)
