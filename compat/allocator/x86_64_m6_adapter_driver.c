@@ -510,7 +510,7 @@ static void* heap_visit_remote_free(void* block) {
 static void heap_visit_section(void) {
   mi_heap_t* heap = mi_heap_new();
   mi_heap_t* reentry_heap = mi_heap_new();
-  if (reentry_heap == NULL) abort();
+  if (reentry_heap == NULL) _exit(2);
   void* first = mi_heap_malloc(heap, 64);
   void* freed = mi_heap_malloc(heap, 64);
   void* second = mi_heap_malloc(heap, 64);
@@ -519,7 +519,7 @@ static void heap_visit_section(void) {
   bool joined = pthread_create(&remote, NULL, heap_visit_remote_free, freed) == 0 &&
     pthread_join(remote, NULL) == 0;
   printf("visit.heap.remote_joined=%d\n", joined);
-  if (!joined) abort();
+  if (!joined) _exit(2);
   heap_visit_probe_t probe = { heap, first, second, third, freed, 0, 0, 1, 1, 0, 0 };
   probe.reentry_heap = reentry_heap;
   bool complete = mi_heap_visit_blocks(heap, true, record_heap_block, &probe);
