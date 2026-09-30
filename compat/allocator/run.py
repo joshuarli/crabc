@@ -12799,7 +12799,7 @@ def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
     private x86 adapter baseline as well as the exact foundations C/Rust witnesses.
     """
 
-    require_native_x86_64()
+    execution_before = require_native_x86_64(require_image_identity=True)
     source_before = m1_foundations_source_state()
     pin = load_pin()
     contract = read_json(M1_X86_64_FOUNDATIONS_CONTRACT)
@@ -12933,6 +12933,9 @@ def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
         bounded_source_evidence
     )
     report["source_contracts"] = source_contract_evidence
+    report["native_execution_provenance"] = native_execution_attestation(
+        execution_before, require_native_x86_64(require_image_identity=True)
+    )
     write_json(M1_X86_64_FOUNDATIONS_REPORT, report)
     return report
 
@@ -16717,7 +16720,7 @@ def m2_x86_64_memory_substrate_report(
 def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
     """Run PageMap, bitmap, and bounded VM evidence; six components remain partial."""
 
-    require_native_x86_64()
+    execution_before = require_native_x86_64(require_image_identity=True)
     source_before = m2_memory_substrate_source_state()
     pin = load_pin()
     contract = read_json(M2_X86_64_MEMORY_SUBSTRATE_CONTRACT)
@@ -16975,6 +16978,9 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
         initialization_teardown_evidence=initialization_teardown_evidence,
         exclusive_arena_theap_evidence=exclusive_arena_theap_evidence,
         tld_retry_evidence=tld_retry_evidence,
+    )
+    report["native_execution_provenance"] = native_execution_attestation(
+        execution_before, require_native_x86_64(require_image_identity=True)
     )
     write_json(M2_X86_64_MEMORY_SUBSTRATE_REPORT, report)
     return report
@@ -20072,14 +20078,16 @@ def require_native_aarch64() -> None:
         raise HarnessError("allocator C oracle requires the pinned native Linux/AArch64 development image")
 
 
-def require_native_x86_64() -> dict[str, str]:
+def require_native_x86_64(*, require_image_identity: bool = False) -> dict[str, str]:
     """Refuse x86 evidence unless the canonical launcher attests a native host.
 
     A Docker guest can report x86-64 while QEMU translates it on a different
     host.  The dispatcher computes and passes these two values before the
     container starts, so require them in addition to the guest ELF/runtime
     facts.  Direct `--check` remains source-only; direct x86 execution must
-    deliberately use the canonical native launcher provenance.
+    deliberately use the canonical native launcher provenance. Full aggregate
+    qualification also requests the immutable image inspected by that launcher.
+    Development leaf guards keep their established host-only record.
     """
 
     execution_mode = os.environ.get("CRABC_EXECUTION_MODE")
@@ -20095,10 +20103,58 @@ def require_native_x86_64() -> dict[str, str]:
             "x86-64 allocator C oracle requires the native Linux/x86-64 development image; "
             "emulation is not accepted"
         )
-    return {
+    result = {
         "execution_mode": execution_mode,
         "host_architecture": host_architecture,
     }
+    if require_image_identity:
+        image_id = os.environ.get("CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID")
+        result["image_id"] = _immutable_native_evidence_image_id(image_id)
+        return validate_native_execution_provenance(result, expected_image_id=result["image_id"])
+    return result
+
+
+def _immutable_native_evidence_image_id(value: object) -> str:
+    """Accept only the immutable Docker identity inspected by the launcher."""
+    if not isinstance(value, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", value) is None:
+        raise HarnessError(
+            "native allocator qualification requires an immutable image identity in "
+            "CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID; use the canonical native launcher"
+        )
+    return value
+
+
+def validate_native_execution_provenance(
+    value: object, *, expected_image_id: str,
+) -> dict[str, str]:
+    """Admit a native aggregate only against the current launcher's image.
+
+    Linux/x86-64 host attestation alone does not identify compiler or oracle
+    bytes. Missing image fields remain historical host evidence; mutable tags
+    and a different immutable image cannot qualify the supplied prerequisite.
+    """
+    expected_image_id = _immutable_native_evidence_image_id(expected_image_id)
+    if not isinstance(value, Mapping) or set(value) != {"execution_mode", "host_architecture", "image_id"}:
+        raise HarnessError("native execution provenance lacks its exact host and image identity")
+    if (value["execution_mode"] != "native" or not isinstance(value["host_architecture"], str)
+            or value["host_architecture"] not in {"x86_64", "amd64"}):
+        raise HarnessError("native execution provenance does not attest a native x86-64 host")
+    image_id = _immutable_native_evidence_image_id(value["image_id"])
+    if image_id != expected_image_id:
+        raise HarnessError("native execution image differs from the current launcher identity")
+    return {"execution_mode": "native", "host_architecture": value["host_architecture"], "image_id": image_id}
+
+
+def native_execution_attestation(before: object, after: object) -> dict[str, str]:
+    """Keep one qualified native host and image fixed across the full execution."""
+    if not isinstance(before, Mapping):
+        raise HarnessError("native execution provenance before collection is missing")
+    expected_image_id = _immutable_native_evidence_image_id(before.get("image_id"))
+    execution_before = validate_native_execution_provenance(before, expected_image_id=expected_image_id)
+    execution_after = validate_native_execution_provenance(after, expected_image_id=expected_image_id)
+    if execution_before != execution_after:
+        raise HarnessError("native execution provenance changed during collection")
+    return execution_before
 
 
 def require_native_architecture(architecture: str) -> None:

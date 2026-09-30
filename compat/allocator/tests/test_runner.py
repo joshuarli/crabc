@@ -638,6 +638,60 @@ class InventoryTests(unittest.TestCase):
                     {"execution_mode": "native", "host_architecture": "amd64"},
                 )
 
+    def test_full_native_foundations_and_substrate_refuse_missing_image_before_source_capture(self):
+        for execute, source_capture in (
+            (RUNNER.run_x86_64_m1_foundations, 'm1_foundations_source_state'),
+            (RUNNER.run_x86_64_m2_memory_substrate, 'm2_memory_substrate_source_state'),
+        ):
+            with self.subTest(gate=execute.__name__), mock.patch.dict(
+                os.environ, {'CRABC_EXECUTION_MODE': 'native', 'CRABC_HOST_ARCH': 'x86_64'}, clear=True,
+            ), mock.patch.object(RUNNER.platform, 'system', return_value='Linux'), \
+                 mock.patch.object(RUNNER.platform, 'machine', return_value='x86_64'), \
+                 mock.patch.object(RUNNER, source_capture, side_effect=AssertionError(
+                     'source capture reached without immutable launcher image')):
+                with self.assertRaisesRegex(RUNNER.HarnessError, 'image'):
+                    execute(offline=True)
+
+    def test_qualified_native_provenance_carries_only_the_actual_immutable_launcher_image(self):
+        image = 'sha256:' + 'a' * 64
+        expected = {'execution_mode': 'native', 'host_architecture': 'amd64', 'image_id': image}
+        with mock.patch.dict(os.environ, {
+            'CRABC_EXECUTION_MODE': 'native', 'CRABC_HOST_ARCH': 'amd64',
+            'CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID': image,
+        }, clear=True), mock.patch.object(RUNNER.platform, 'system', return_value='Linux'), \
+             mock.patch.object(RUNNER.platform, 'machine', return_value='x86_64'):
+            record = RUNNER.require_native_x86_64(require_image_identity=True)
+            self.assertEqual(record, expected)
+            self.assertEqual(RUNNER.validate_native_execution_provenance(record, expected_image_id=image), expected)
+            for value in ('', 'crabc-dev:x86_64', 'sha256:short', 'sha256:' + 'A' * 64):
+                with self.subTest(image=value), mock.patch.dict(os.environ, {'CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID': value}):
+                    with self.assertRaisesRegex(RUNNER.HarnessError, 'image'):
+                        RUNNER.require_native_x86_64(require_image_identity=True)
+            for field, value in (('image_id', 'sha256:' + 'b' * 64), ('host_architecture', 'aarch64'),
+                                 ('execution_mode', 'emulated')):
+                changed = {**record, field: value}
+                with self.subTest(field=field), self.assertRaises(RUNNER.HarnessError):
+                    RUNNER.validate_native_execution_provenance(changed, expected_image_id=image)
+            with self.assertRaises(RUNNER.HarnessError):
+                RUNNER.validate_native_execution_provenance({key: value for key, value in record.items()
+                                                             if key != 'image_id'}, expected_image_id=image)
+
+    def test_full_native_execution_attestation_rejects_changed_or_historical_identity(self):
+        image = 'sha256:' + 'a' * 64
+        before = {'execution_mode': 'native', 'host_architecture': 'x86_64', 'image_id': image}
+        self.assertEqual(RUNNER.native_execution_attestation(before, dict(before)), before)
+        for after in (
+            {**before, 'image_id': 'sha256:' + 'b' * 64},
+            {**before, 'host_architecture': 'amd64'},
+            {key: value for key, value in before.items() if key != 'image_id'},
+            {**before, 'host_architecture': []},
+            {**before, 'extra': 'unreviewed'},
+        ):
+            with self.subTest(after=after), self.assertRaises(RUNNER.HarnessError):
+                RUNNER.native_execution_attestation(before, after)
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER.validate_native_execution_provenance(before, expected_image_id='mutable:tag')
+
     def test_x86_quick_rejects_emulated_provenance_before_oracle_work(self) -> None:
         with mock.patch.dict(
             os.environ,
