@@ -937,6 +937,32 @@ impl HeapTheapStatistics {
         self.malloc_requested.update_owner_local(bytes_to_i64(requested_size));
     }
 
+    /// Records a returned guarded client allocation on its resolved Theap
+    /// owner, including allocations whose guard protection warned or was
+    /// skipped. The generic allocation already charged the internal request;
+    /// its correction precedes the client-size increase so peak and total
+    /// match the source's two distinct operations.
+    #[inline]
+    pub(crate) fn malloc_guarded_allocated(&self, internal_request: usize, original_request: usize) {
+        if STAT_LEVEL > 0 {
+            self.malloc_guarded_count.increase_owner_local(1);
+        }
+        if STAT_LEVEL > 1 {
+            let amount = -bytes_to_i64(internal_request);
+            if amount != 0 {
+                let count = &self.malloc_requested;
+                i64_store_relaxed(&count.current, i64_load_relaxed(&count.current).wrapping_add(amount));
+                let total = i64_load_relaxed(&count.total);
+                let peak = i64_load_relaxed(&count.peak);
+                if total == peak {
+                    i64_store_relaxed(&count.peak, peak.wrapping_add(amount));
+                }
+                i64_store_relaxed(&count.total, total.wrapping_add(amount));
+            }
+            self.malloc_requested.update_owner_local(bytes_to_i64(original_request));
+        }
+    }
+
     /// Pinned `mi_stat_free` decrements the usable block's bin; its requested
     /// size decrement is disabled in the source, so that count stays live.
     #[cfg(feature = "mi-stat-2")]
@@ -1741,6 +1767,27 @@ mod tests {
         process.merge_from_and_reset(&heap);
         assert_eq!(i64_load_relaxed(&process.malloc_normal.total), 64);
         assert_eq!(i64_load_relaxed(&process.malloc_normal.current), 0);
+    }
+
+    #[test]
+    fn guarded_allocation_adjusts_internal_request_before_counting_client_bytes() {
+        let owner = HeapTheapStatistics::new();
+        owner.malloc_requested.update_owner_local(8192);
+        owner.malloc_guarded_allocated(8192, 17);
+        assert_eq!(i64_load_relaxed(&owner.malloc_guarded_count.total), if STAT_LEVEL > 0 { 1 } else { 0 });
+        let expected = if STAT_LEVEL > 1 { 17 } else { 8192 };
+        assert_eq!(final_stat_count(&owner.malloc_requested), FinalStatCount {
+            total: expected, peak: expected, current: expected,
+        });
+        let heap = HeapTheapStatistics::new();
+        heap.merge_from_and_reset(&owner);
+        assert_eq!(i64_load_relaxed(&owner.malloc_guarded_count.total), 0);
+        assert_eq!(i64_load_relaxed(&heap.malloc_guarded_count.total), if STAT_LEVEL > 0 { 1 } else { 0 });
+        if STAT_LEVEL > 1 {
+            assert_eq!(final_stat_count(&heap.malloc_requested), FinalStatCount {
+                total: 17, peak: 17, current: 17,
+            });
+        }
     }
 
     #[test]
