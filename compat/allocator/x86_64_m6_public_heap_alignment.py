@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare public Heap aligned zero allocation with pinned source."""
+"""Compare public Heap allocation content, failure, and ownership with pinned source."""
 
 from pathlib import Path
 import re
@@ -32,6 +32,12 @@ EXPECTED = {
     "alignment.second_block": "1",
     "alignment.second_destroyed": "1",
     "alignment.destroy": "1,1",
+    "contract.growth": "1",
+    "contract.allocations": "1",
+    "contract.strings": "1",
+    "contract.failures": "1",
+    "contract.replacements": "1",
+    "contract.lifetime": "1",
 }
 
 
