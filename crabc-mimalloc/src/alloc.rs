@@ -21,10 +21,9 @@ use crate::invariants;
 use crate::process_page_map::LiveAllocationPointer;
 use crate::types::Heap;
 
-/// Source `mi_padding_t` at the end of each block in the debug profile.
+/// Source `mi_padding_t` at the end of each padding-enabled block.
 /// The requested end is recovered from `delta`; the record itself stays at
 /// the fixed page usable block boundary.
-#[cfg(feature = "mi-debug-1")]
 #[repr(C)]
 struct DebugPadding {
     canary: u32,
@@ -36,7 +35,6 @@ const _: [(); crate::config::PADDING_SIZE] = [(); size_of::<DebugPadding>()];
 
 /// The source distinguishes a previously freed canary from an overwritten
 /// record, and reports the first modified padding byte separately.
-#[cfg(feature = "mi-debug-1")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DebugPaddingError {
     DoubleFree,
@@ -47,7 +45,6 @@ pub(crate) enum DebugPaddingError {
 /// Encodes a page/block pair with its source page key. The low byte and bit
 /// nine are clear so a one-byte overrun cannot accidentally form a valid
 /// canary or the reserved freed marker.
-#[cfg(any(feature = "mi-debug-1", test))]
 #[inline]
 fn debug_padding_canary(page_address: usize, block_address: usize, page_keys: [usize; 2]) -> u32 {
     let address = if block_address == 0 { page_address } else { block_address };
@@ -55,6 +52,16 @@ fn debug_padding_canary(page_address: usize, block_address: usize, page_keys: [u
         .rotate_left(page_keys[0] as u32)
         .wrapping_add(page_keys[0]);
     (encoded as u32) & 0xFFFF_FE00
+}
+
+/// Source padding policies keep debug initialization distinct from hardening.
+/// Record-only mode is used by secure levels three and four; level five checks
+/// padding bytes without filling client bytes with the debug sentinel.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SourcePaddingPolicy {
+    RecordOnly,
+    ByteChecked,
+    Debug,
 }
 
 /// Initializes requested bytes and the trailing source padding record after
@@ -75,10 +82,35 @@ pub(crate) unsafe fn initialize_debug_padding(
     zero: bool,
     huge: bool,
 ) -> Option<usize> {
-    let usable_block_size = block_size.checked_sub(crate::config::PADDING_SIZE)?;
+    // SAFETY: the existing debug caller supplies the full block and stable
+    // page encoding inputs required by the policy-aware primitive.
+    unsafe { initialize_source_padding(block, block_size, request_size,
+        page_address, page_keys, zero, huge, SourcePaddingPolicy::Debug) }
+}
+
+/// Initializes the source record and only the bytes selected by its policy.
+///
+/// # Safety
+///
+/// `block` must be exclusively writable for `block_size` bytes, including the
+/// trailing eight-byte record. `request_size` must fit before that record.
+/// The page encoding tag and keys must remain stable through size observation
+/// and the exactly-once free check. Client zeroing has already completed when
+/// `zero` is true; this function does not perform allocation or zeroing.
+pub(crate) unsafe fn initialize_source_padding(
+    block: NonNull<u8>,
+    block_size: usize,
+    request_size: usize,
+    page_address: usize,
+    page_keys: [usize; 2],
+    zero: bool,
+    huge: bool,
+    policy: SourcePaddingPolicy,
+) -> Option<usize> {
+    let usable_block_size = block_size.checked_sub(size_of::<DebugPadding>())?;
     let delta = usable_block_size.checked_sub(request_size)?;
     let delta32 = u32::try_from(delta).ok()?;
-    if !huge && !zero {
+    if policy == SourcePaddingPolicy::Debug && !huge && !zero {
         // SAFETY: the caller's unique block covers the source usable extent.
         unsafe { core::ptr::write_bytes(block.as_ptr(), 0xD0, usable_block_size) };
     }
@@ -89,7 +121,7 @@ pub(crate) unsafe fn initialize_debug_padding(
         canary: debug_padding_canary(page_address, block.as_ptr().addr(), page_keys),
         delta: delta32,
     }) };
-    if !huge {
+    if policy != SourcePaddingPolicy::RecordOnly && !huge {
         // SAFETY: the checked delta is within the usable part of the block.
         unsafe { core::ptr::write_bytes(block.as_ptr().add(request_size), 0xDE, delta.min(16)) };
     }
@@ -109,7 +141,23 @@ pub(crate) unsafe fn debug_padding_usable_size(
     page_address: usize,
     page_keys: [usize; 2],
 ) -> usize {
-    let Some(usable_block_size) = block_size.checked_sub(crate::config::PADDING_SIZE) else {
+    // SAFETY: the wrapper preserves the complete live-block obligation.
+    unsafe { source_padding_usable_size(block, block_size, page_address, page_keys) }
+}
+
+/// Decodes a live source padding record without marking it freed.
+///
+/// # Safety
+///
+/// The full block, including its initialized trailing record, must remain
+/// readable with the same page encoding tag and key pair used at allocation.
+pub(crate) unsafe fn source_padding_usable_size(
+    block: NonNull<u8>,
+    block_size: usize,
+    page_address: usize,
+    page_keys: [usize; 2],
+) -> usize {
+    let Some(usable_block_size) = block_size.checked_sub(size_of::<DebugPadding>()) else {
         return 0;
     };
     // SAFETY: the caller retains the full block and source page key.
@@ -138,7 +186,27 @@ pub(crate) unsafe fn check_debug_padding_on_free(
     page_keys: [usize; 2],
     huge: bool,
 ) -> Result<usize, DebugPaddingError> {
-    let Some(usable_block_size) = block_size.checked_sub(crate::config::PADDING_SIZE) else {
+    // SAFETY: the wrapper preserves the live-block and unique-free duties.
+    unsafe { check_source_padding_on_free(block, block_size, page_address,
+        page_keys, huge, SourcePaddingPolicy::Debug) }
+}
+
+/// Marks a valid record freed and checks bytes only for a byte-checking policy.
+///
+/// # Safety
+///
+/// The full block and initialized trailing record must remain exclusively
+/// readable and writable with their original page encoding inputs. This is
+/// the allocation's exactly-once free check, before any free-list publication.
+pub(crate) unsafe fn check_source_padding_on_free(
+    block: NonNull<u8>,
+    block_size: usize,
+    page_address: usize,
+    page_keys: [usize; 2],
+    huge: bool,
+    policy: SourcePaddingPolicy,
+) -> Result<usize, DebugPaddingError> {
+    let Some(usable_block_size) = block_size.checked_sub(size_of::<DebugPadding>()) else {
         return Err(DebugPaddingError::CorruptRecord { usable_size: 0 });
     };
     // SAFETY: the caller retains the complete block and source page key.
@@ -157,7 +225,7 @@ pub(crate) unsafe fn check_debug_padding_on_free(
     // SAFETY: `padding` is the caller-owned trailing record. Marking it before
     // the byte check matches source double-free detection after corruption.
     unsafe { core::ptr::write_unaligned(padding.cast::<u32>(), 0x00DE_AD00) };
-    if !huge {
+    if policy != SourcePaddingPolicy::RecordOnly && !huge {
         for offset in 0..(record.delta as usize).min(16) {
             // SAFETY: the checked delta remains within the usable block span.
             if unsafe { core::ptr::read(block.as_ptr().add(usable_size + offset)) } != 0xDE {
@@ -664,6 +732,41 @@ mod tests {
     use std::boxed::Box;
     use std::cell::RefCell;
     use std::vec::Vec;
+
+    #[test]
+    fn source_padding_policy_preserves_secure_client_bytes_and_logical_extent() {
+        #[repr(align(16))]
+        struct Storage([u8; 32]);
+        for policy in [SourcePaddingPolicy::RecordOnly, SourcePaddingPolicy::ByteChecked,
+            SourcePaddingPolicy::Debug] {
+            let mut storage = Storage([0x55; 32]);
+            storage.0[..size_of::<usize>()].fill(0);
+            let block = NonNull::from(&mut storage.0).cast::<u8>();
+            let keys = [0x11223344, 0x55667788];
+            // SAFETY: this uniquely owned initialized buffer covers the full
+            // popped block. The encoding tag and key pair stay fixed until
+            // the single owner-side free check finishes.
+            assert_eq!(unsafe { initialize_source_padding(block, 32, 19, 0x1000,
+                keys, false, false, policy) }, Some(19));
+            let expected_client = if policy == SourcePaddingPolicy::Debug {
+                [0xd0; 19]
+            } else {
+                let mut bytes = [0x55; 19];
+                bytes[..size_of::<usize>()].fill(0);
+                bytes
+            };
+            assert_eq!(&storage.0[..19], &expected_client);
+            assert_eq!(&storage.0[19..24], &[if policy == SourcePaddingPolicy::RecordOnly {
+                0x55
+            } else { 0xde }; 5]);
+            // SAFETY: the complete block and stable encoding parameters remain
+            // exclusively owned; size observation does not consume its record.
+            assert_eq!(unsafe { source_padding_usable_size(block, 32, 0x1000, keys) }, 19);
+            // SAFETY: this is the one free check on the still-live block.
+            assert_eq!(unsafe { check_source_padding_on_free(block, 32, 0x1000, keys,
+                false, policy) }, Ok(19));
+        }
+    }
 
     #[test]
     fn debug_padding_canary_uses_independent_page_keys() {
