@@ -1696,6 +1696,41 @@ pub(crate) fn native_reserve_os_memory(
 pub(crate) mod tests {
     use super::*;
 
+    /// A joined remote free can remain queued on the creating thread's
+    /// arena page until Heap deletion collects it during target abandonment.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn heap_delete_retires_page_emptied_by_joined_remote_free() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::heap_delete_retires_page_emptied_by_joined_remote_free",
+            || {
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                let heap = native_heap_new().expect("a non-main Heap");
+                let block = unsafe { native_heap_allocate(heap, 80, None, false) }.expect("an arena block");
+                let address = block.as_ptr().addr();
+                std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    // SAFETY: the fresh worker registers its own descriptor.
+                    assert!(unsafe {
+                        crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor)
+                    });
+                    assert_eq!(crate::runtime_lifecycle::attach_current_thread(), crate::runtime_lifecycle::ThreadAttachResult::Attached);
+                    // SAFETY: the join protocol transfers the sole client to
+                    // this worker and keeps its Heap and page live until join.
+                    let block = NonNull::new(address as *mut u8).unwrap();
+                    assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                    assert_eq!(crate::runtime_lifecycle::finish_current_thread_native_after_user_destructors(), crate::runtime_lifecycle::ThreadFinishResult::Finished);
+                }).join().expect("the freeing worker joins");
+                // SAFETY: no worker or live client remains. Source deletion
+                // must collect the queued free and retire the moved empty page.
+                assert_eq!(unsafe { native_heap_release(heap, false) }, Ok(HeapReleaseOutcome::Released));
+                assert!(unsafe { binding().unwrap().page_map().lookup_live_allocation(NonNull::new(address as *mut u8).unwrap()) }.unwrap().is_none());
+            },
+        );
+    }
+
     /// Membership follows the registered page through an ordinary Heap
     /// delete, which moves live pages to the subprocess main Heap.
     #[cfg(all(target_arch = "x86_64", not(miri)))]

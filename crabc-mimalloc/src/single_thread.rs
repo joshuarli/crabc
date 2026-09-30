@@ -1885,8 +1885,38 @@ pub(crate) unsafe fn delete_non_main_heap_pages(
                     None => abandoned::abandon_owned_abandoned_page(page, None::<&MainArenaMappedAbandonedPage<'_>>),
                 }
             };
-            if !matches!(abandoned, Ok(abandoned::AbandonResult::UnownedMapped | abandoned::AbandonResult::UnownedUnmapped)) {
-                return false;
+            match abandoned {
+                Ok(abandoned::AbandonResult::UnownedMapped | abandoned::AbandonResult::UnownedUnmapped) => {}
+                Ok(abandoned::AbandonResult::Empty) => {
+                    // Source unown collected the last queued remote free and
+                    // consumed any abandoned-map publication. Its low owner
+                    // bit remains held, so retire the moved page from the
+                    // target Heap's ordinary bitmap and target Theap's stats.
+                    let clear_ordinary = |arena: &ArenaView<'static>, slice_index| {
+                        clear_child_heap_ordinary_bit(target.heap, arena, slice_index)
+                    };
+                    let record_statistics = |page: &Page| {
+                        let Some(bin) = page_statistics_bin(page) else { return false };
+                        // SAFETY: this current-thread target registered the
+                        // moved page above and remains live through retirement.
+                        unsafe { Theap::record_page_released_at(target.theap, bin) }
+                    };
+                    // SAFETY: unown retained the claimed, queue-detached,
+                    // empty page and removed its mapped abandoned identity.
+                    let released = unsafe {
+                        if singleton {
+                            release_claimed_process_arena_singleton_page_with_ordinary_clear_and_statistics(
+                                page_map, backing, page, memory, clear_ordinary, record_statistics,
+                            )
+                        } else {
+                            release_claimed_process_regular_arena_page_with_ordinary_clear_and_statistics(
+                                page_map, backing, page, memory, clear_ordinary, record_statistics,
+                            )
+                        }
+                    };
+                    if released != ClaimedProcessArenaTerminalRelease::Released { return false; }
+                }
+                Err(_) => return false,
             }
         }
     }
@@ -2415,9 +2445,26 @@ unsafe fn release_claimed_process_regular_arena_page(
 unsafe fn release_claimed_process_regular_arena_page_with_ordinary_clear(
     page_map: &PageMap,
     backing: &impl PageBacking<'static>,
+    page: NonNull<Page>,
+    expected_memory: MemoryId,
+    clear_ordinary: impl FnOnce(&ArenaView<'static>, usize) -> bool,
+) -> ClaimedProcessArenaTerminalRelease {
+    // SAFETY: forwarded; ordinary abandoned release charges the page's Heap.
+    unsafe { release_claimed_process_regular_arena_page_with_ordinary_clear_and_statistics(
+        page_map, backing, page, expected_memory, clear_ordinary, record_claimed_page_released,
+    ) }
+}
+
+// A moved page emptied during source unown charges its target Theap, while
+// an ordinary abandoned release charges the Heap. Both share the exact
+// PageMap, ordinary-bitmap, metadata and backing retirement sequence.
+unsafe fn release_claimed_process_regular_arena_page_with_ordinary_clear_and_statistics(
+    page_map: &PageMap,
+    backing: &impl PageBacking<'static>,
     mut page: NonNull<Page>,
     expected_memory: MemoryId,
     clear_ordinary: impl FnOnce(&ArenaView<'static>, usize) -> bool,
+    record_statistics: impl FnOnce(&Page) -> bool,
 ) -> ClaimedProcessArenaTerminalRelease {
     // SAFETY: the W07 terminal claim retains this exact arena MemoryId.
     let Some(arena) = (unsafe { backing.arena_for_memory(expected_memory) }) else {
@@ -2498,7 +2545,7 @@ unsafe fn release_claimed_process_regular_arena_page_with_ordinary_clear(
             return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
         }
     }
-    if !record_claimed_page_released(page_ref) {
+    if !record_statistics(page_ref) {
         return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
     }
     // SAFETY: the preceding exact-range check proves the source PageMap
@@ -2555,9 +2602,26 @@ unsafe fn release_claimed_process_arena_singleton_page(
 unsafe fn release_claimed_process_arena_singleton_page_with_ordinary_clear(
     page_map: &PageMap,
     backing: &impl PageBacking<'static>,
+    page: NonNull<Page>,
+    expected_memory: MemoryId,
+    clear_ordinary: impl FnOnce(&ArenaView<'static>, usize) -> bool,
+) -> ClaimedProcessArenaTerminalRelease {
+    // SAFETY: forwarded; ordinary abandoned release charges the page's Heap.
+    unsafe { release_claimed_process_arena_singleton_page_with_ordinary_clear_and_statistics(
+        page_map, backing, page, expected_memory, clear_ordinary, record_claimed_page_released,
+    ) }
+}
+
+// A moved page emptied during source unown charges its target Theap, while
+// an ordinary abandoned release charges the Heap. Both share the exact
+// PageMap, ordinary-bitmap, metadata and backing retirement sequence.
+unsafe fn release_claimed_process_arena_singleton_page_with_ordinary_clear_and_statistics(
+    page_map: &PageMap,
+    backing: &impl PageBacking<'static>,
     mut page: NonNull<Page>,
     expected_memory: MemoryId,
     clear_ordinary: impl FnOnce(&ArenaView<'static>, usize) -> bool,
+    record_statistics: impl FnOnce(&Page) -> bool,
 ) -> ClaimedProcessArenaTerminalRelease {
     // SAFETY: the W07 terminal claim retains this exact arena MemoryId.
     let Some(arena) = (unsafe { backing.arena_for_memory(expected_memory) }) else {
@@ -2624,7 +2688,7 @@ unsafe fn release_claimed_process_arena_singleton_page_with_ordinary_clear(
             return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
         }
     }
-    if !record_claimed_page_released(page_ref) {
+    if !record_statistics(page_ref) {
         return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
     }
     // Source terminal order is PageMap unregister, one ordinary main-arena
