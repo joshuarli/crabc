@@ -13181,21 +13181,7 @@ pub unsafe fn native_usable_size(block: core::ptr::NonNull<u8>) -> Option<usize>
         // registry, scheduler, session, or terminal lifecycle path.
         Ok(None) | Err(_) => return None,
     };
-    #[cfg(not(feature = "mi-debug-1"))]
     let usable_size = allocation.usable_size();
-    #[cfg(feature = "mi-debug-1")]
-    let usable_size = {
-        let page = allocation.page();
-        let canonical = allocation.canonical_block();
-        // SAFETY: this live allocation retains its page and immutable key.
-        let key = unsafe { crate::types::Page::debug_padding_keys_at(page) };
-        // SAFETY: the exact live allocation retains the complete block while
-        // the read-only usable-size query decodes its trailing record.
-        let canonical_usable = unsafe { crate::alloc::debug_padding_usable_size(
-            canonical, allocation.block_size(), page.as_ptr().addr(), key,
-        ) };
-        canonical_usable.saturating_sub(block.as_ptr().addr() - canonical.as_ptr().addr())
-    };
     drop(allocation);
     Some(usable_size)
 }

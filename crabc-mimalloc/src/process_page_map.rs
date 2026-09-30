@@ -147,6 +147,9 @@ pub(crate) struct LiveAllocationPointer {
     page_flags: PageFlags,
     page_state: LiveAllocationPageState,
     has_interior_pointers: bool,
+    // Only a root-backed observation carries the process-wide OS page size;
+    // isolated metadata fixtures have no process initialization authority.
+    os_page_size: Option<usize>,
 }
 
 /// One nonlocal-reallocation source derived from a current live allocation.
@@ -241,6 +244,19 @@ impl LiveAllocationPointer {
     /// the nonzero block size. Ordinary free does not need this extent.
     #[inline]
     pub(crate) fn usable_size(&self) -> usize {
+        self.usable_size_with_guarded_page_size(if crate::config::GUARDED {
+            self.os_page_size
+        } else { None })
+    }
+
+    fn usable_size_with_guarded_page_size(&self, os_page_size: Option<usize>) -> usize {
+        if let Some(os_page_size) = os_page_size {
+            if self.is_guarded() {
+                return self.block_size.saturating_sub(os_page_size).saturating_sub(
+                    self.client.as_ptr().addr() - self.canonical_block.as_ptr().addr(),
+                );
+            }
+        }
         #[cfg(not(feature = "mi-debug-1"))]
         let canonical_usable = self.block_size;
         #[cfg(feature = "mi-debug-1")]
@@ -257,6 +273,45 @@ impl LiveAllocationPointer {
             ) }
         };
         canonical_usable.saturating_sub(self.client.as_ptr().addr() - self.canonical_block.as_ptr().addr())
+    }
+
+    /// Recognizes only the source guarded tag of an exact live adjusted client.
+    /// The live-client contract makes the canonical word readable and excludes
+    /// concurrent client mutation; this is never an arbitrary-pointer check.
+    #[inline]
+    pub(crate) fn is_guarded(&self) -> bool {
+        if !self.has_interior_pointers
+            || self.client.as_ptr().addr() - self.canonical_block.as_ptr().addr()
+                < core::mem::size_of::<usize>()
+        {
+            return false;
+        }
+        // SAFETY: canonical recovery stays inside this exact live block,
+        // whose source alignment permits the first-word tag read.
+        unsafe { self.canonical_block.cast::<usize>().as_ptr().read() == usize::MAX }
+    }
+
+    /// Copies the source tail-page address without changing its protection.
+    /// The original block provenance remains attached to the returned pointer.
+    pub(crate) fn guarded_tail_page(&self, os_page_size: usize) -> Option<NonNull<u8>> {
+        if !self.is_guarded() || os_page_size == 0 { return None; }
+        let offset = self.block_size.checked_sub(os_page_size)?;
+        if offset == 0 { return None; }
+        // SAFETY: the source tail page is contained in the live block stride.
+        Some(unsafe { NonNull::new_unchecked(self.canonical_block.as_ptr().add(offset)) })
+    }
+
+    /// Marks the live page for source interior-client recovery, without
+    /// borrowing its concurrently mutable ordinary metadata.
+    pub(crate) fn mark_page_has_interior_pointers(&mut self) {
+        let geometry = self.page.as_ptr().cast::<PagePointerGeometry>();
+        // SAFETY: this observation's exact live client retains the initialized
+        // atomic prefix through publication of the source interior bit.
+        let word = unsafe { &*core::ptr::addr_of!((*geometry).xthread_id) };
+        word.fetch_or(PAGE_HAS_INTERIOR_POINTERS, Ordering::Relaxed);
+        self.xthread_id |= PAGE_HAS_INTERIOR_POINTERS;
+        self.page_flags |= PAGE_HAS_INTERIOR_POINTERS;
+        self.has_interior_pointers = true;
     }
 
     /// Consumes this observation into a bounded source for one replacement.
@@ -376,6 +431,7 @@ pub(crate) unsafe fn classify_live_allocation_in_page(
         page_flags,
         page_state,
         has_interior_pointers,
+        os_page_size: None,
     })
 }
 
@@ -1343,7 +1399,11 @@ impl ProcessPageMapRoot {
         // SAFETY: the same live source block keeps the selected PageMap entry
         // and metadata stable while immutable geometry plus the source atomic
         // ownership word are copied without forming `&Page`.
-        Ok(unsafe { classify_live_allocation_in_page(page, client) })
+        let mut allocation = unsafe { classify_live_allocation_in_page(page, client) };
+        if let Some(allocation) = allocation.as_mut() {
+            allocation.os_page_size = Some(self.storage.config().page_size().bytes());
+        }
+        Ok(allocation)
     }
 
     /// Starts the one explicit mutable PageMap lifecycle for this process
@@ -2025,6 +2085,13 @@ mod tests {
     fn with_live_pointer_remote_fixture(
         operation: impl FnOnce(ProcessPageMapRoot, NonNull<Page>, NonNull<u8>),
     ) {
+        with_live_pointer_fixture_block_size(48, operation);
+    }
+
+    fn with_live_pointer_fixture_block_size(
+        block_size: usize,
+        operation: impl FnOnce(ProcessPageMapRoot, NonNull<Page>, NonNull<u8>),
+    ) {
         let storage = ProcessPageMapStorage::test_static_owner();
         let subprocess = MainSubprocess::test_static_owner();
         let lease = storage
@@ -2038,11 +2105,10 @@ mod tests {
         let mut theap = Theap::empty();
         assert!(theap.bind_exclusive_single_thread(&mut heap, &mut tld));
 
-        const BLOCK_SIZE: usize = 48;
         const RESERVED: u16 = 4;
         let metadata_size =
             (size_of::<Page>() + align_of::<usize>() - 1) & !(align_of::<usize>() - 1);
-        let page_offset = ARENA_SLICE_SIZE + metadata_size;
+        let page_offset = if block_size >= 4096 { ARENA_SLICE_SIZE } else { ARENA_SLICE_SIZE + metadata_size };
         let layout = Layout::from_size_align(2 * ARENA_SLICE_SIZE, ARENA_SLICE_SIZE)
             .expect("the separated-metadata fixture layout is valid");
         // SAFETY: the matching exact-range unregistration and deallocation
@@ -2058,7 +2124,7 @@ mod tests {
                 &mut theap,
                 &heap,
                 thread_id,
-                BLOCK_SIZE,
+                block_size,
                 page_offset,
                 RESERVED,
                 0,
@@ -2087,7 +2153,7 @@ mod tests {
             .expect("the process map serves the fixture range");
         unsafe {
             page_map
-                .register_range(block.as_ptr(), usize::from(RESERVED) * BLOCK_SIZE, page)
+                .register_range(block.as_ptr(), usize::from(RESERVED) * block_size, page)
                 .expect("the fixture block range registers before lookup");
         }
 
@@ -2097,11 +2163,55 @@ mod tests {
         // discharged any source low-bit ownership before this exact clear.
         unsafe {
             page_map
-                .unregister_range(block.as_ptr(), usize::from(RESERVED) * BLOCK_SIZE)
+                .unregister_range(block.as_ptr(), usize::from(RESERVED) * block_size)
                 .expect("the fixture registration clears before metadata release");
             core::ptr::drop_in_place(page.as_ptr());
             dealloc(base.as_ptr(), layout);
         }
+    }
+
+    #[test]
+    fn guarded_live_client_usable_extent_excludes_the_exact_tail_page() {
+        with_live_pointer_fixture_block_size(8192, |lease, page, canonical| {
+            store_source_xthread_id_for_pointer_test(page, 16 | PAGE_HAS_INTERIOR_POINTERS);
+            // SAFETY: the fixture owns the complete live canonical block and
+            // publishes the source marker before its adjusted client lookup.
+            unsafe { canonical.cast::<usize>().as_ptr().write(usize::MAX); }
+            let client = unsafe { NonNull::new_unchecked(canonical.as_ptr().add(4096 - 81)) };
+            let allocation = unsafe { lease.lookup_live_allocation(client) }.unwrap().unwrap();
+            assert_eq!(allocation.canonical_block(), canonical);
+            assert_eq!(allocation.guarded_tail_page(4096).unwrap().as_ptr(),
+                unsafe { canonical.as_ptr().add(4096) });
+            assert_eq!(allocation.usable_size_with_guarded_page_size(Some(4096)), 81);
+            #[cfg(not(feature = "mi-debug-1"))]
+            assert_eq!(allocation.usable_size_with_guarded_page_size(None), 4177);
+            // An ordinary aligned block with a different first word has no
+            // guard; its usable extent still includes the complete stride.
+            #[cfg(feature = "mi-debug-1")]
+            unsafe {
+                crate::alloc::initialize_debug_padding(
+                    canonical, 8192, 8192 - crate::config::PADDING_SIZE,
+                    page.as_ptr().addr(), Page::debug_padding_keys_at(page), false, false,
+                ).unwrap();
+            }
+            unsafe { canonical.cast::<usize>().as_ptr().write(0); }
+            assert_eq!(allocation.usable_size_with_guarded_page_size(Some(4096)),
+                4177 - crate::config::PADDING_SIZE);
+            assert_eq!(allocation.guarded_tail_page(4096), None);
+            unsafe { canonical.cast::<usize>().as_ptr().write(usize::MAX); }
+            let canonical_client = unsafe { lease.lookup_live_allocation(canonical) }.unwrap().unwrap();
+            assert!(!canonical_client.is_guarded());
+            let short_client = unsafe { NonNull::new_unchecked(canonical.as_ptr().add(1)) };
+            let short = unsafe { lease.lookup_live_allocation(short_client) }.unwrap().unwrap();
+            assert!(!short.is_guarded());
+            store_source_xthread_id_for_pointer_test(page, 16 | PAGE_IN_FULL_QUEUE);
+            let mut unmarked = unsafe { lease.lookup_live_allocation(canonical) }.unwrap().unwrap();
+            unmarked.mark_page_has_interior_pointers();
+            let marked = unsafe { lease.lookup_live_allocation(client) }.unwrap().unwrap();
+            assert_eq!(marked.xthread_id(), 16 | PAGE_IN_FULL_QUEUE | PAGE_HAS_INTERIOR_POINTERS);
+            assert_eq!(marked.canonical_block(), canonical);
+            assert_eq!(marked.os_page_size, Some(4096));
+        });
     }
 
     #[test]
