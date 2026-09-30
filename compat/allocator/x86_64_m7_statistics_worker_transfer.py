@@ -331,6 +331,7 @@ def replay_worker_transfer_matrix(root: Path, *, initial: bool = False) -> int:
                 if binary.stat().st_size != record["bytes"] or source_hash(binary) != record["sha256"]:
                     raise harness.HarnessError(f"retained {profile}/{worker}/{side} changed product bytes")
                 execution = harness.command_record([str(binary.resolve())], cwd=root, env={}, timeout_seconds=60)
+                print(json.dumps(execution, sort_keys=True), flush=True)
                 harness.require_success(execution, f"retained {profile}/{worker}/{side} physical replay")
                 trace = parse_options_trace(execution["stdout"], side, begin, end)
                 retained_execution = report["executions"][side]
