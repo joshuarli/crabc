@@ -600,8 +600,56 @@ def source_api_case_ids():
              "native-link", "native-elf", "native-execute")]
 
 
+
+def source_api_commands(root, work, source, profile, tools, m4):
+    """Fixed command roles shared by the producer and physical reader."""
+    directory = work / profile
+    common = ["-std=c11", "-D_GNU_SOURCE", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+              *m4.api_profile_flags(profile), "-UNDEBUG", "-I", str(source / "include")]
+    commands = {
+        "oracle-build": [tools["musl-gcc"], *common, "-c", str(source / "src/static.c"), "-o", str(directory / "oracle.o")],
+        "native-build": [tools["cargo"], "build", "--locked", "--offline", "--release", "--target", m4.RUST_TARGET,
+            "-p", m4.ADAPTER_PACKAGE, "--target-dir", str(directory / "cargo-target"),
+            *(("--features", f"crabc-mimalloc/mi-{profile}") if profile != "release" else ())],
+        "caller-build": [tools["musl-gcc"], *common, "-c", str(root / "compat/allocator/native-aligned-realloc-x86_64.c"),
+                         "-o", str(directory / "caller.o")],
+    }
+    for backend, allocator in (("c", "oracle.o"), ("native", "native-mi-adapter.a")):
+        commands[f"{backend}-link"] = [tools["musl-gcc"], str(directory / "caller.o"), str(directory / allocator),
+                                       "-pthread", "-o", str(directory / backend)]
+        commands[f"{backend}-elf"] = [tools["readelf"], "-h", str(directory / backend)]
+        commands[f"{backend}-execute"] = [str(directory / backend), "--valid-offset-client"]
+    return commands
+
+
+def validate_source_api_command(step, command, commands):
+    if not isinstance(command, list) or command != commands.get(step):
+        raise EvidenceError(f"source API {step} command authority differs")
+
+
+def source_api_recorded_root(command, work):
+    """Recover only the checkout prefix; validate every operand role afterward."""
+    if not isinstance(command, list) or not command or not isinstance(command[0], str):
+        raise EvidenceError("source API execution command missing")
+    executable, relative = Path(command[0]), Path(work)
+    if (not executable.is_absolute() or relative.is_absolute() or not relative.parts or relative.parts[0] != ".work" or
+        executable.as_posix() != command[0] or relative.as_posix() != work or
+        any(part in (".", "..") for part in command[0].split("/")) or
+        any(part in (".", "..") for part in work.split("/"))):
+        raise EvidenceError("source API command path escapes its checkout")
+    suffix, parts = relative.parts, executable.parts
+    if len(parts) <= len(suffix) + 2 or tuple(parts[-len(suffix)-2:-2]) != suffix:
+        raise EvidenceError("source API execution path is unrelated to retained work")
+    return Path(*parts[:-len(suffix)-2])
+
+
+def source_api_physical_product(path, retained):
+    if (path.is_symlink() or not path.is_file() or path.resolve() != path.absolute() or
+        sha256_file(path) != sha256_file(retained)):
+        raise EvidenceError(f"source API original artifact differs from retained product: {path}")
+
 def read_source_api_control(*, replay=False):
-    _, record, stress, receipts = source_api_helpers()
+    m4, record, stress, receipts = source_api_helpers()
     receipt = receipts.read_receipt(ROOT, SOURCE_API_RUNNER, expected_statuses=SOURCE_API_NEGATIVE)
     if receipt.parameters != SOURCE_API_PARAMETERS or receipt.case_ids() != source_api_case_ids():
         raise EvidenceError("source API parameters or ordered roster differ")
@@ -613,16 +661,51 @@ def read_source_api_control(*, replay=False):
         raise EvidenceError("source API input binding differs")
     if sha256_file(products / SOURCE_API_FIXTURE.name) != sha256_file(SOURCE_API_FIXTURE):
         raise EvidenceError("source API caller differs")
-    expected_products = {"inputs.json", SOURCE_API_FIXTURE.name, "mimalloc.h", "LICENSE"} | {
+    expected_products = {"inputs.json", SOURCE_API_FIXTURE.name, "mimalloc.h", "LICENSE", "static.c", "mimalloc-3.5.0.tar.gz"} | {
         f"{profile}-{name}" for profile in SOURCE_API_PROFILES for name in
         ("oracle.o", "caller.o", "native-mi-adapter.a", "c", "native")}
     if set(receipt.products) != expected_products:
         raise EvidenceError("source API retained products differ")
+    published = json.loads(receipt.path.read_text())
+    work_relative = published["work"]
+    original_work = ROOT / work_relative
+    first_execute = next(case for case in receipt.cases if case["id"] == "release-c-execute")
+    first_log = next(path for path in first_execute["logs"] if path.endswith(".json"))
+    first_command = json.loads((receipt.path.parent / "logs" / first_log).read_text())["command"]
+    recorded_root = source_api_recorded_root(first_command, work_relative)
+    recorded_work = recorded_root / work_relative
+    pin = run.load_pin()
+    archive = products / "mimalloc-3.5.0.tar.gz"
+    if sha256_file(archive) != pin["sha256"]:
+        raise EvidenceError("source API retained archive differs from current pin")
+    run.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="aligned-offset-source-read-", dir=run.TEMP_ROOT) as scratch:
+        pinned_source = run.safe_extract(archive, Path(scratch) / "source", pin["archive_root"])
+        original_source = original_work / "source" / pin["archive_root"]
+        members = [path.relative_to(pinned_source).as_posix() for path in pinned_source.rglob("*") if path.is_file()]
+        original_members = [path.relative_to(original_source).as_posix() for path in original_source.rglob("*") if path.is_file()]
+        if (set(members) != set(original_members) or any(path.is_symlink() for path in original_source.rglob("*")) or
+            run.source_file_records(original_source, members) != run.source_file_records(pinned_source, members)):
+            raise EvidenceError("source API original oracle source differs from pinned archive")
+        for member, name in (("include/mimalloc.h", "mimalloc.h"), ("src/static.c", "static.c"), ("LICENSE", "LICENSE")):
+            source_api_physical_product(products / name, pinned_source / member)
+            source_api_physical_product(original_work / "source" / pin["archive_root"] / member, pinned_source / member)
+    source_api_physical_product(original_work / archive.name, archive)
+    source_api_physical_product(original_work / SOURCE_API_FIXTURE.name, SOURCE_API_FIXTURE)
+    tools = {name: run.require_tool(name) for name in ("musl-gcc", "cargo", "readelf")}
+    commands = {profile: source_api_commands(recorded_root, recorded_work,
+        recorded_work / "source" / pin["archive_root"], profile, tools, m4) for profile in SOURCE_API_PROFILES}
+    for profile in SOURCE_API_PROFILES:
+        for name in ("oracle.o", "caller.o", "native-mi-adapter.a", "c", "native"):
+            source_api_physical_product(original_work / profile / name, products / f"{profile}-{name}")
     for case in receipt.cases:
+        profile = next(p for p in SOURCE_API_PROFILES if case["id"].startswith(p + "-"))
+        step = case["id"][len(profile) + 1:]
         paths = {Path(path).suffix: receipt.path.parent / "logs" / path for path in case["logs"]}
         if set(paths) != {".json", ".stdout", ".stderr"}:
             raise EvidenceError("source API command raw streams missing")
         raw = json.loads(paths[".json"].read_text())
+        validate_source_api_command(step, raw.get("command"), commands[profile])
         if raw["kind"] != "process" or type(raw["status"]) is not int or raw["status"] != case["status"]:
             raise EvidenceError("source API command status differs from receipt")
         for stream in ("stdout", "stderr"):
@@ -686,7 +769,7 @@ def run_source_api_control():
     output = Path(tempfile.mkdtemp(prefix="run-", dir=parent))
     source = run.safe_extract(archive, output / "source", pin["archive_root"])
     products, cases = {}, []
-    for original in (SOURCE_API_FIXTURE, source / "include/mimalloc.h", source / "LICENSE"):
+    for original in (SOURCE_API_FIXTURE, source / "include/mimalloc.h", source / "LICENSE", source / "src/static.c", archive):
         retained = output / original.name
         shutil.copy2(original, retained)
         products[retained.name] = retained
@@ -695,7 +778,7 @@ def run_source_api_control():
         "parameters": SOURCE_API_PARAMETERS}, indent=2) + "\n")
     products[inputs.name] = inputs
     print(f"source API control original raw: {output}", flush=True)
-    compiler = run.require_tool("musl-gcc")
+    tools = {name: run.require_tool(name) for name in ("musl-gcc", "cargo", "readelf")}
     for profile in SOURCE_API_PROFILES:
         directory = output / profile
         directory.mkdir()
@@ -704,27 +787,24 @@ def run_source_api_control():
             if result["kind"] != "process" or result["status"] != 0:
                 raise EvidenceError(f"{profile}-{step} failed; raw: {logs[0]}")
             cases.append((f"{profile}-{step}", result["status"], logs))
-        common = ["-std=c11", "-D_GNU_SOURCE", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
-                  *m4.api_profile_flags(profile), "-UNDEBUG", "-I", str(source / "include")]
+        commands = source_api_commands(ROOT, output, source, profile, tools, m4)
         oracle = directory / "oracle.o"
-        passed("oracle-build", [compiler, *common, "-c", str(source / "src/static.c"), "-o", str(oracle)])
+        passed("oracle-build", commands["oracle-build"])
         target = directory / "cargo-target"
-        passed("native-build", [run.require_tool("cargo"), "build", "--locked", "--offline", "--release",
-            "--target", m4.RUST_TARGET, "-p", m4.ADAPTER_PACKAGE, "--target-dir", str(target),
-            *(("--features", f"crabc-mimalloc/mi-{profile}") if profile != "release" else ())], ROOT)
+        passed("native-build", commands["native-build"], ROOT)
         library = directory / "native-mi-adapter.a"
         shutil.copy2(target / m4.RUST_TARGET / "release" / m4.ADAPTER_STATICLIB, library)
         caller = directory / "caller.o"
-        passed("caller-build", [compiler, *common, "-c", str(SOURCE_API_FIXTURE), "-o", str(caller)])
+        passed("caller-build", commands["caller-build"])
         for name, path in (("oracle.o", oracle), ("caller.o", caller), ("native-mi-adapter.a", library)):
             products[f"{profile}-{name}"] = path
         for backend, allocator in (("c", oracle), ("native", library)):
             binary = directory / backend
-            passed(f"{backend}-link", [compiler, str(caller), str(allocator), "-pthread", "-o", str(binary)])
-            passed(f"{backend}-elf", [run.require_tool("readelf"), "-h", str(binary)])
+            passed(f"{backend}-link", commands[f"{backend}-link"])
+            passed(f"{backend}-elf", commands[f"{backend}-elf"])
             products[f"{profile}-{backend}"] = binary
             case_id = f"{profile}-{backend}-execute"
-            result, logs = record(output, case_id, [str(binary), "--valid-offset-client"], directory, True)
+            result, logs = record(output, case_id, commands[f"{backend}-execute"], directory, True)
             validate_source_api_observation(profile, backend, result["kind"], result["status"],
                 stress.byte_record_payload(result["stdout"], case_id), stress.byte_record_payload(result["stderr"], case_id))
             cases.append((case_id, result["status"], logs))

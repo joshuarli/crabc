@@ -4,6 +4,11 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import io
+import shutil
+import tarfile
+from contextlib import contextmanager
 import importlib.util
 import json
 import sys
@@ -171,6 +176,9 @@ class SourceApiControlTests(unittest.TestCase):
             (source / "include").mkdir(parents=True)
             (source / "include/mimalloc.h").write_text("header")
             (source / "LICENSE").write_text("license")
+            (source / "src").mkdir()
+            (source / "src/static.c").write_text("static source")
+            (directory / "archive").write_bytes(b"archive")
             with mock.patch.object(evidence.run, "ARTIFACT_ROOT", directory / "products"), \
                  mock.patch.object(evidence.run, "require_native_x86_64", return_value={}), \
                  mock.patch.object(evidence.run, "load_pin", return_value={"archive_root": "mimalloc-3.5.0"}), \
@@ -195,6 +203,143 @@ class SourceApiControlTests(unittest.TestCase):
                         original.replace(b"free_returned=1\n", b"")):
             with self.assertRaises(evidence.EvidenceError):
                 evidence.validate_source_api_observation("release", "native", "process", 0, changed, b"")
+
+
+class SourceApiCommandAuthorityTests(unittest.TestCase):
+    def test_wrong_profile_features_flags_link_and_execution_are_rejected(self):
+        m4, _, _, _ = evidence.source_api_helpers()
+        root, work = Path("/checkout"), Path("/checkout/.work/control/run-one")
+        source = work / "source/mimalloc-3.5.0"
+        tools = {"musl-gcc": "/tools/musl-gcc", "cargo": "/tools/cargo", "readelf": "/tools/readelf"}
+        commands = evidence.source_api_commands(root, work, source, "debug-1", tools, m4)
+        for step, mutate in (
+            ("native-build", lambda c: c.__setitem__(c.index("crabc-mimalloc/mi-debug-1"), "crabc-mimalloc/mi-stat-2")),
+            ("oracle-build", lambda c: c.__setitem__(c.index("-DMI_DEBUG=1"), "-DMI_DEBUG=0")),
+            ("caller-build", lambda c: c.__setitem__(c.index("-DMI_PADDING=1"), "-DMI_PADDING=0")),
+            ("native-link", lambda c: c.__setitem__(2, str(work / "release/native-mi-adapter.a"))),
+            ("c-link", lambda c: c.__setitem__(1, str(work / "release/caller.o"))),
+            ("native-execute", lambda c: c.__setitem__(0, str(work / "release/native"))),
+            ("c-execute", lambda c: c.__setitem__(0, "/unrelated/c")),
+            ("c-elf", lambda c: c.__setitem__(0, "/untrusted/readelf")),
+        ):
+            changed = list(commands[step]); mutate(changed)
+            with self.subTest(step=step):
+                with self.assertRaises(evidence.EvidenceError):
+                    evidence.validate_source_api_command(step, changed, commands)
+        for step, command in commands.items():
+            evidence.validate_source_api_command(step, command, commands)
+
+    def test_normalization_accepts_checkout_move_but_rejects_escape_or_role_change(self):
+        work = ".work/control/run-one"
+        self.assertEqual(evidence.source_api_recorded_root(["/image/checkout/" + work + "/debug-1/c", "--valid-offset-client"], work), Path("/image/checkout"))
+        for argv in (["/unrelated/c", "--valid-offset-client"],
+                     ["/image/checkout/" + work + "/../debug-1/c", "--valid-offset-client"]):
+            with self.assertRaises(evidence.EvidenceError):
+                evidence.source_api_recorded_root(argv, work)
+
+
+class SourceApiSealedAuthorityTests(unittest.TestCase):
+    @contextmanager
+    def sealed_control(self):
+        m4, record, stress, receipts = evidence.source_api_helpers()
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as temporary:
+            root = Path(temporary)
+            work = root / ".work/control/run-one"
+            work.mkdir(parents=True)
+            archive = work / "mimalloc-3.5.0.tar.gz"
+            with tarfile.open(archive, "w:gz") as stream:
+                for name in ("include/mimalloc.h", "src/static.c", "src/alloc.c", "LICENSE"):
+                    data = ("pinned fixture " + name).encode()
+                    member = tarfile.TarInfo("mimalloc-3.5.0/" + name)
+                    member.size = len(data)
+                    stream.addfile(member, io.BytesIO(data))
+            pin = {"archive_root": "mimalloc-3.5.0", "sha256": hashlib.sha256(archive.read_bytes()).hexdigest()}
+            source = evidence.run.safe_extract(archive, work / "source", pin["archive_root"])
+            fixture = root / "compat/allocator/native-aligned-realloc-x86_64.c"
+            fixture.parent.mkdir(parents=True)
+            shutil.copy2(evidence.SOURCE_API_FIXTURE, fixture)
+            products = {"mimalloc-3.5.0.tar.gz": archive}
+            for original in (fixture, source / "include/mimalloc.h", source / "src/static.c", source / "LICENSE"):
+                retained = work / original.name
+                shutil.copy2(original, retained)
+                products[original.name] = retained
+            seal = {"revision": "a" * 40, "worktree_sha256": hashlib.sha256(b"").hexdigest()}
+            execution = {"execution_mode": "native", "host_architecture": "x86_64", "image_id": "sha256:" + "1" * 64}
+            inputs = work / "inputs.json"
+            inputs.write_text(json.dumps({"source": seal, "execution": execution, "upstream": pin,
+                                         "parameters": evidence.SOURCE_API_PARAMETERS}))
+            products["inputs.json"] = inputs
+            tools = {name: "/tools/" + name for name in ("musl-gcc", "cargo", "readelf")}
+            cases = []
+            observations = SourceApiControlTests()
+            for profile in evidence.SOURCE_API_PROFILES:
+                directory = work / profile
+                directory.mkdir()
+                for name in ("oracle.o", "caller.o", "native-mi-adapter.a", "c", "native"):
+                    path = directory / name
+                    path.write_bytes((profile + "/" + name).encode())
+                    products[profile + "-" + name] = path
+                commands = evidence.source_api_commands(root, work, source, profile, tools, m4)
+                for case_id in evidence.source_api_case_ids():
+                    if not case_id.startswith(profile + "-"):
+                        continue
+                    step = case_id[len(profile) + 1:]
+                    refused = case_id == "debug-1-c-execute"
+                    stdout = observations.observation(refused) if step.endswith("-execute") else b""
+                    stderr = observations.diagnostic() if refused else b""
+                    if step.endswith("-elf"):
+                        stdout = b"ELF64 little endian Advanced Micro Devices X86-64"
+                    raw = {"command": commands[step], "kind": "process", "status": int(refused),
+                           "stdout": stress.bytes_record(stdout), "stderr": stress.bytes_record(stderr)}
+                    paths = [work / (case_id + suffix) for suffix in (".json", ".stdout", ".stderr")]
+                    paths[0].write_text(json.dumps(raw))
+                    paths[1].write_bytes(stdout); paths[2].write_bytes(stderr)
+                    cases.append((case_id, int(refused), paths))
+            with mock.patch.object(evidence, "ROOT", root), \
+                 mock.patch.object(evidence, "SOURCE_API_FIXTURE", fixture), \
+                 mock.patch.object(evidence, "source_api_helpers", return_value=(m4, record, stress, receipts)), \
+                 mock.patch.object(evidence.run, "TEMP_ROOT", root / ".work/reader"), \
+                 mock.patch.object(evidence.run, "load_pin", return_value=pin), \
+                 mock.patch.object(evidence.run, "require_tool", side_effect=lambda name: tools[name]), \
+                 mock.patch.object(evidence.run, "require_native_x86_64", return_value=execution), \
+                 mock.patch.object(receipts, "source_seal", return_value=seal):
+                def publish():
+                    return receipts.write_receipt(root, evidence.SOURCE_API_RUNNER, work, products, cases,
+                                                  evidence.SOURCE_API_PARAMETERS, True)
+                publish()
+                yield root, work, products, cases, receipts, publish
+
+    def test_valid_sealed_profile_control_is_readable(self):
+        with self.sealed_control():
+            self.assertEqual(len(evidence.read_source_api_control().cases), 36)
+
+    def test_resealed_wrong_commands_fail_despite_valid_statuses_and_runtime(self):
+        for case_id, mutate in (
+            ("debug-1-native-build", lambda c: c.__setitem__(c.index("crabc-mimalloc/mi-debug-1"), "crabc-mimalloc/mi-stat-2")),
+            ("debug-1-oracle-build", lambda c: c.__setitem__(c.index("-DMI_DEBUG=1"), "-DMI_DEBUG=0")),
+            ("debug-1-native-link", lambda c: c.__setitem__(2, c[2].replace("debug-1", "release"))),
+            ("debug-1-native-execute", lambda c: c.__setitem__(0, c[0].replace("debug-1", "release"))),
+        ):
+            with self.subTest(case_id=case_id), self.sealed_control() as (root, work, products, cases, receipts, publish):
+                path = work / (case_id + ".json")
+                raw = json.loads(path.read_text()); mutate(raw["command"]); path.write_text(json.dumps(raw))
+                publish()
+                receipts.read_receipt(root, evidence.SOURCE_API_RUNNER, expected_statuses=evidence.SOURCE_API_NEGATIVE)
+                with self.assertRaisesRegex(evidence.EvidenceError, "command authority"):
+                    evidence.read_source_api_control()
+
+    def test_resealed_source_or_original_artifact_drift_is_rejected(self):
+        for name in ("mimalloc.h", "LICENSE", "static.c", "debug-1-native"):
+            with self.subTest(product=name), self.sealed_control() as (_, _, products, _, _, publish):
+                original = products[name]
+                if name == "debug-1-native":
+                    # The newly sealed receipt still cites the executed copy;
+                    # its original command operand has drifted independently.
+                    products[name] = evidence.source_api_helpers()[3].receipt_directory(evidence.ROOT, evidence.SOURCE_API_RUNNER) / "products" / name
+                original.write_bytes(b"changed authentic-looking product")
+                publish()
+                with self.assertRaises(evidence.EvidenceError):
+                    evidence.read_source_api_control()
 
 
 if __name__ == "__main__":
