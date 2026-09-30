@@ -198,13 +198,14 @@ def functional_milestones(m0: Mapping[str, Any]) -> dict[str, Any]:
     """Read current functional producers without accepting historical status alone."""
     import x86_64_m9_gate as physical
     import x86_64_m5_gate as lifecycle
+    import x86_64_foundation_gate_receipts as foundations
 
     unmet = [] if m0.get("status") == 0 else [f"M0: run.py --check exited {m0.get('status')}"]
     for milestone in ("M1", "M2", "M3"):
-        reason = report_passed(PRIOR_REPORTS[milestone])
-        if reason:
-            unmet.append(f"{milestone}: {reason}")
-        unmet.append(f"{milestone}: current-source physical receipt reader is unavailable")
+        try:
+            foundations.read_report(milestone.lower(), PRIOR_REPORTS[milestone])
+        except Exception as error:
+            unmet.append(f"{milestone}: {type(error).__name__}: {error}")
     for milestone in ("M4", "M5", "M6", "M7", "M8"):
         try:
             if milestone == "M5":
@@ -317,15 +318,19 @@ def evaluate(*, m0: Mapping[str, Any], receipt: Path | None, head: Mapping[str, 
     prerequisites = ([prior_milestones(m0), promotion_gates(receipt)] if profile == "full" else
                      [prior_milestones(m0, profile="correctness"), functional_convergence(),
                       _condition("m10.performance-deferred", [], "performance qualification is outside this profile")])
-    conditions = [*prerequisites, native_artifacts(head), oracle_retained(),
+    preconditions = [*prerequisites, native_artifacts(head), oracle_retained()]
+    ready = all(row["met"] for row in preconditions)
+    conditions = [*preconditions,
                   _condition("m10.promotion-rerun", ["the required native commands have not been rerun at a "
                                                      "promotion revision (it exists only once the switch is committed)"], "")]
     record = switch_record()
-    conditions.append(switch_condition(record, all(row["met"] for row in conditions)))
+    conditions.append(switch_condition(record, ready))
     unmet = [row["id"] for row in conditions if not row["met"]]
     return {"schema": "crabc-mimalloc-x86_64-m10-gate/v1", "qualification_profile": profile,
             **({"performance_qualified": False, "deferred_prerequisites": ["M9", "performance.release"]}
                if profile == "correctness" else {}),
+            "pre_switch_ready": ready,
+            "phase": "post-switch-qualification" if record["default"] == PRODUCTION_BACKEND else "pre-switch",
             "git": dict(head), "conditions": conditions,
             "switch": record, "unmet": unmet, "overall_status": "passed" if not unmet else "unmet"}
 

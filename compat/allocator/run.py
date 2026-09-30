@@ -11674,9 +11674,11 @@ def _m1_foundations_test_program(
 ) -> dict[str, Any]:
     """Preserve the foundations-facing wrapper for its native test binary builder."""
 
-    return _x86_64_unit_test_program(
+    program = _x86_64_unit_test_program(
         execution, cargo_target, gate_name="M1 foundations"
     )
+    program["artifact"] = artifact_record(program["path"])
+    return program
 
 
 def _x86_64_unit_test_names(
@@ -12365,6 +12367,7 @@ def m1_foundations_report(
     component_status_key: str = "completion_status",
     completion_ready_statuses: frozenset[str] = frozenset({"complete"}),
     dependency_graph_key: str = "production_dependency_graph",
+    unit_program: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Render a current-commit foundations evidence report without changing its status."""
 
@@ -12672,6 +12675,11 @@ def m1_foundations_report(
             "scope": bit_arithmetic_differential["scope"],
             "status": bit_arithmetic_differential["status"],
         }
+    if unit_program is not None:
+        report["physical_inputs"] = {"unit_program": {
+            key: dict(unit_program[key]) if isinstance(unit_program[key], Mapping) else unit_program[key]
+            for key in ("artifact", "build", "build_command", "cargo_target", "execution")
+        }}
     return report
 
 
@@ -12972,6 +12980,7 @@ def run_x86_64_m1_foundations(*, offline: bool) -> dict[str, Any]:
         component_status_key="native_status",
         completion_ready_statuses=frozenset({M1_X86_64_FOUNDATIONS_COMPONENT_STATUS}),
         dependency_graph_key="x86_64_normal_engine_dependency_graph",
+        unit_program=test_program,
     )
     report["shared_evidence"]["x86-64-source-contract-inventories"] = source_contract_evidence
     report["shared_evidence"]["x86-64-bounded-source-definitions"] = (
@@ -16756,6 +16765,18 @@ def m2_x86_64_memory_substrate_report(
             "x86-64-initialization-automatic-teardown-and-fork-repair": dict(
                 initialization_teardown_evidence
             ) if initialization_teardown_evidence is not None else {},
+        },
+        "producer_evidence": {
+            "source_contract_evidence": dict(source_contract_evidence),
+            "bounded_source_evidence": dict(bounded_source_evidence),
+            **{name: dict(value) if value is not None else None for name, value in (
+                ("bitmap_evidence", bitmap_evidence), ("vm_evidence", vm_evidence),
+                ("metadata_evidence", metadata_evidence), ("metadata_ownership_evidence", metadata_ownership_evidence),
+                ("runtime_thp_evidence", runtime_thp_evidence), ("thp_process_evidence", thp_process_evidence),
+                ("process_vm_evidence", process_vm_evidence), ("initialization_evidence", initialization_evidence),
+                ("fault_evidence", fault_evidence), ("initialization_teardown_evidence", initialization_teardown_evidence),
+                ("exclusive_arena_theap_evidence", exclusive_arena_theap_evidence), ("tld_retry_evidence", tld_retry_evidence),
+            )},
         },
         "source": dict(source_attestation),
         "target": dict(summary["target"]),

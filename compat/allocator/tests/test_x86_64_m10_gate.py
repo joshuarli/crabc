@@ -169,6 +169,21 @@ class ConditionTests(unittest.TestCase):
         with self.assertRaisesRegex(gate.harness.HarnessError, "unknown M10 profile"):
             gate.evaluate(m0={}, receipt=None, head={}, profile="other")
 
+    def test_post_switch_reruns_do_not_make_pre_switch_readiness_circular(self) -> None:
+        met = lambda name: gate._condition(name, [], "validated actual producer")
+        with (mock.patch.object(gate, "prior_milestones", return_value=met("m10.prior-milestones")),
+              mock.patch.object(gate, "functional_convergence", return_value=met("m10.source-convergence")),
+              mock.patch.object(gate, "native_artifacts", return_value=met("m10.native-artifacts")),
+              mock.patch.object(gate, "oracle_retained", return_value=met("m10.oracle-retained")),
+              mock.patch.object(gate, "switch_record", return_value=dict(gate.switch_record(), default="native"))):
+            result = gate.evaluate(m0={"status": 0}, receipt=None, head={"head": "fixture", "clean": True},
+                                   profile="correctness")
+        self.assertTrue(result["pre_switch_ready"])
+        self.assertEqual(result["phase"], "post-switch-qualification")
+        self.assertEqual(result["overall_status"], "unmet")
+        self.assertIn("m10.promotion-rerun", result["unmet"])
+        self.assertNotIn("m10.switch", result["unmet"])
+
     def test_the_gate_fails_closed_today(self) -> None:
         result = gate.evaluate(m0={"status": 0}, receipt=None, head={"head": "none", "clean": True})
         self.assertEqual(result["overall_status"], "unmet")

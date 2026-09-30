@@ -39,6 +39,7 @@ public ``mi_*``, libc integration, backend promotion, or AArch64 behavior.
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import hashlib
 import importlib.util
 import json
@@ -539,6 +540,12 @@ def build_c_driver(contract: Mapping[str, Any], work: Path, offline: bool) -> di
     return {
         "archive_sha256": run.sha256_file(archive),
         "binary": binary,
+        "build": record,
+        "artifact": run.artifact_record(binary),
+        "source_files": run.source_file_records(source, [
+            *contract["c_oracle"]["release_source_set"],
+            "include/mimalloc.h", "include/mimalloc/internal.h", "include/mimalloc/types.h",
+        ]),
         "driver_sha256": run.sha256_file(C_DRIVER_PATH),
         "source": source,
     }
@@ -592,7 +599,12 @@ def rust_test_binary() -> Path:
             executables.append(message["executable"])
     if len(executables) != 1:
         raise GateError(f"expected one crabc-mimalloc unit test executable, found {executables}")
-    return Path(executables[0])
+    binary = Path(executables[0])
+    ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
+    run.write_json(ARTIFACT_ROOT / "rust-unit-build.json", {
+        "artifact": run.artifact_record(binary), "build": record, "build_command": command,
+    })
+    return binary
 
 
 def run_rust_trace(binary: Path, workload: Path, output: Path) -> None:
@@ -850,7 +862,8 @@ def run_differential(contract: Mapping[str, Any], *, offline: bool) -> dict[str,
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
     workloads = generate_workloads(contract)
     results: list[dict[str, Any]] = []
-    with run.temporary_directory(prefix="crabc-mimalloc-m3-local-trace-") as temporary_name:
+    # Keep the original C inputs and repeated trace for independent replay.
+    with nullcontext(tempfile.mkdtemp(prefix="local-c-inputs-", dir=ARTIFACT_ROOT)) as temporary_name:
         work = Path(temporary_name)
         c_build = build_c_driver(contract, work, offline)
         rust_binary = rust_test_binary()
@@ -879,6 +892,10 @@ def run_differential(contract: Mapping[str, Any], *, offline: bool) -> dict[str,
                 )
             results.append(
                 {
+                    "physical_inputs": {
+                        "workload": run.artifact_record(workload), "c_trace": run.artifact_record(c_output),
+                        "c_repeat": run.artifact_record(c_repeat), "rust_trace": run.artifact_record(rust_output),
+                    },
                     "c_repeat_identical": repeat_matches,
                     "c_trace_sha256": run.sha256_file(c_output),
                     "coverage": trace_coverage(c_lines),
@@ -892,6 +909,10 @@ def run_differential(contract: Mapping[str, Any], *, offline: bool) -> dict[str,
                 }
             )
         report = {
+            "physical_inputs": {
+                **{key: c_build[key] for key in ("artifact", "build", "source_files")},
+                "rust_program": run.read_json(ARTIFACT_ROOT / "rust-unit-build.json"),
+            },
             "archive_sha256": c_build["archive_sha256"],
             "c_driver_sha256": c_build["driver_sha256"],
             "coverage": merge_coverage(result["coverage"] for result in results),
@@ -946,7 +967,7 @@ def run_queue_reorder_differential(
         "rust_source_sha256": run.sha256_file(ROOT / "crabc-mimalloc/src/page_queue.rs"),
     }
     unmet: list[str] = []
-    with run.temporary_directory(prefix="crabc-mimalloc-m3-queue-reorder-") as temporary_name:
+    with nullcontext(tempfile.mkdtemp(prefix="queue-reorder-inputs-", dir=ARTIFACT_ROOT)) as temporary_name:
         work = Path(temporary_name)
         pin = run.load_pin()
         archive = run.fetch_archive(pin, offline)
@@ -969,6 +990,10 @@ def run_queue_reorder_differential(
         if build["status"] != 0:
             unmet.append(f"pinned C queue fixture build exited {build['status']}")
         else:
+            receipt["physical_inputs"] = {
+                "c_program": run.artifact_record(c_binary),
+                "rust_program": run.artifact_record(rust_binary),
+            }
             c = run.command_record((str(c_binary),), cwd=ROOT, timeout_seconds=600)
             rust = run.command_record(
                 (str(rust_binary), rust_test, "--exact", "--nocapture", "--test-threads=1"),
@@ -1016,6 +1041,8 @@ def run_queue_reorder_differential(
 
     run.write_json(receipt_path, receipt)
     return {
+        "physical_inputs": {"receipt": run.artifact_record(receipt_path),
+                            **receipt.get("physical_inputs", {})},
         "archive_sha256": receipt.get("archive_sha256"),
         "c_fixture_sha256": receipt["c_fixture_sha256"],
         "c_trace_sha256": run.sha256_file(c_trace_path) if c_trace_path.is_file() else None,
@@ -1240,7 +1267,12 @@ def owner_rust_test_binary(contract: Mapping[str, Any]) -> Path:
             executables.append(message["executable"])
     if len(executables) != 1:
         raise GateError(f"expected one {rust['target']} test executable, found {executables}")
-    return Path(executables[0])
+    binary = Path(executables[0])
+    ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
+    run.write_json(ARTIFACT_ROOT / "rust-owner-build.json", {
+        "artifact": run.artifact_record(binary), "build": record, "build_command": command,
+    })
+    return binary
 
 
 def run_owner_rust_trace(
@@ -1296,7 +1328,8 @@ def run_owner_differential(contract: Mapping[str, Any], *, offline: bool) -> dic
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
     workloads = generate_owner_workloads(contract)
     results: list[dict[str, Any]] = []
-    with run.temporary_directory(prefix="crabc-mimalloc-m3-owner-trace-") as temporary_name:
+    # Keep the original C inputs and repeated trace for independent replay.
+    with nullcontext(tempfile.mkdtemp(prefix="owner-c-inputs-", dir=ARTIFACT_ROOT)) as temporary_name:
         work = Path(temporary_name)
         c_build = build_c_driver(contract, work, offline)
         rust_binary = owner_rust_test_binary(contract)
@@ -1317,6 +1350,10 @@ def run_owner_differential(contract: Mapping[str, Any], *, offline: bool) -> dic
                 divergence = first_divergence(c_lines, rust_lines)
                 results.append(
                     {
+                        "physical_inputs": {
+                            "workload": run.artifact_record(workload), "c_trace": run.artifact_record(c_output),
+                            "c_repeat": run.artifact_record(c_repeat), "rust_trace": run.artifact_record(rust_output),
+                        },
                         "c_repeat_identical": repeat_matches,
                         "c_trace_sha256": run.sha256_file(c_output),
                         "coverage": trace_coverage(c_lines),
@@ -1330,6 +1367,10 @@ def run_owner_differential(contract: Mapping[str, Any], *, offline: bool) -> dic
                     }
                 )
         report: dict[str, Any] = {
+            "physical_inputs": {
+                **{key: c_build[key] for key in ("artifact", "build", "source_files")},
+                "rust_program": run.read_json(ARTIFACT_ROOT / "rust-owner-build.json"),
+            },
             "archive_sha256": c_build["archive_sha256"],
             "c_driver_sha256": c_build["driver_sha256"],
             "rust_driver_sha256": run.sha256_file(OWNER_RUST_DRIVER_PATH),
@@ -1402,6 +1443,7 @@ def run_unit_batch(contract: Mapping[str, Any], binary: Path) -> dict[str, Any]:
     run.require_success(listing, "Rust M3 unit test listing")
     groups = select_by_prefix(str(listing["stdout"]), prefixes)
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
+    commands: dict[str, Any] = {}
     logs: list[str] = []
     results: dict[str, Any] = {}
     unmet: list[str] = []
@@ -1411,12 +1453,19 @@ def run_unit_batch(contract: Mapping[str, Any], binary: Path) -> dict[str, Any]:
             cwd=ROOT,
             timeout_seconds=7200,
         ) if selected else {"status": 0, "stdout": "", "stderr": ""}
+        commands[prefix] = record
         logs.append(f"### {prefix}\n{record['stdout']}\n{record['stderr']}")
         results[prefix] = summarize_group(prefix, selected, record)
         unmet += [f"{prefix} {item}" for item in results[prefix]["unmet"]]
     (ARTIFACT_ROOT / "rust-unit-batch.log").write_text("\n".join(logs), encoding="utf-8")
     return {
         "binary": str(binary),
+        "physical_inputs": {
+            "binary": run.artifact_record(binary),
+            "build": run.read_json(ARTIFACT_ROOT / "rust-unit-build.json"),
+            "listing": listing, "commands": commands,
+            "log": run.artifact_record(ARTIFACT_ROOT / "rust-unit-batch.log"),
+        },
         "groups": results,
         "passed": sum(group["passed"] for group in results.values()),
         "status": "passed" if not unmet else "failed",
@@ -1472,6 +1521,7 @@ def run_miri(contract: Mapping[str, Any]) -> dict[str, Any]:
         }
     groups = select_by_prefix(str(listing["stdout"]), miri["module_prefixes"])
     logs: list[str] = [f"### listing\n{json.dumps(listing['command'])}\n{listing['stdout']}\n{listing['stderr']}"]
+    commands: dict[str, Any] = {}
     results: dict[str, Any] = {}
     unmet: list[str] = []
     passed: set[str] = set()
@@ -1493,6 +1543,7 @@ def run_miri(contract: Mapping[str, Any]) -> dict[str, Any]:
             logs.append(f"### {prefix} {name}\n{json.dumps(record['command'])}\n"
                         f"MIRIFLAGS={child_environment['MIRIFLAGS']}\n"
                         f"{FRESH_TEST_CHILD_ENV}={name}\n{record['stdout']}\n{record['stderr']}")
+        commands[prefix] = records
         aggregate = {
             "status": next((record["status"] for record in records if record["status"] != 0), 0),
             "stdout": "\n".join(str(record["stdout"]) for record in records),
@@ -1507,6 +1558,10 @@ def run_miri(contract: Mapping[str, Any]) -> dict[str, Any]:
         if name not in passed:
             unmet.append(f"required Miri test did not pass: {name}")
     return {
+        "physical_inputs": {
+            "probe": probe, "listing": listing, "commands": commands,
+            "log": run.artifact_record(ARTIFACT_ROOT / "miri.log"),
+        },
         "groups": results,
         "miriflags": miriflags,
         "passed": len(passed),
