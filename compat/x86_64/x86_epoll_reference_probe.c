@@ -228,6 +228,167 @@ static int eventfd_composition(void)
     return 0;
 }
 
+/* Linux x86 siginfo keeps its payload union eight-byte aligned after the
+ * three 32-bit discriminator words. Descriptor records have another layout. */
+_Static_assert(sizeof(siginfo_t) == 128, "x86 siginfo size");
+_Static_assert(_Alignof(siginfo_t) == 8, "x86 siginfo alignment");
+_Static_assert(offsetof(siginfo_t, si_signo) == 0, "x86 siginfo signo");
+_Static_assert(offsetof(siginfo_t, si_errno) == 4, "x86 siginfo errno");
+_Static_assert(offsetof(siginfo_t, si_code) == 8, "x86 siginfo code");
+_Static_assert(offsetof(siginfo_t, si_pid) == 16, "x86 siginfo pid");
+_Static_assert(offsetof(siginfo_t, si_uid) == 20, "x86 siginfo uid");
+_Static_assert(offsetof(siginfo_t, si_value) == 24, "x86 siginfo value");
+_Static_assert(offsetof(siginfo_t, si_status) == 24, "x86 siginfo child status");
+_Static_assert(sizeof(struct timespec) == 16, "x86 wait timeout size");
+_Static_assert(offsetof(struct timespec, tv_nsec) == 8, "x86 timeout nanoseconds");
+
+static volatile sig_atomic_t synchronous_wait_interrupted;
+
+static void synchronous_wait_handler(int signal_number)
+{
+    (void)signal_number;
+    synchronous_wait_interrupted = 1;
+}
+
+struct synchronous_wait_send {
+    pid_t tid;
+    int queued;
+};
+
+static void *synchronous_wait_sender(void *argument)
+{
+    const struct synchronous_wait_send *send = argument;
+    pid_t tid = send->tid;
+    char path[96], observed[256];
+    const struct timespec delay = { 0, 1000000 };
+    int attempt;
+    snprintf(path, sizeof(path), "/proc/self/task/%d/syscall", (int)tid);
+    for (attempt = 0; attempt < 3000; ++attempt) {
+        int fd = open(path, O_RDONLY | O_CLOEXEC);
+        ssize_t length;
+        if (fd < 0)
+            return (void *)1;
+        length = read(fd, observed, sizeof(observed));
+        close(fd);
+        if (length >= 4 && memcmp(observed, "128 ", 4) == 0) {
+            if (send->queued) {
+                union sigval value = { .sival_int = 7654321 };
+                return sigqueue(getpid(), SIGRTMAX, value) ? (void *)1 : NULL;
+            }
+            return syscall(SYS_tgkill, getpid(), tid, SIGUSR2) ? (void *)1 : NULL;
+        }
+        nanosleep(&delay, NULL);
+    }
+    return (void *)1;
+}
+
+static int synchronous_wait_composition(void)
+{
+    sigset_t selected, previous, realtime, only_usr1, current, interrupt;
+    siginfo_t info;
+    struct sigaction action = { 0 }, old_action;
+    struct timespec zero = { 0, 0 }, invalid = { 0, 1000000000 }, timeout = { 5, 0 };
+    union sigval value;
+    pthread_t sender;
+    void *sender_result;
+    pid_t child;
+    struct synchronous_wait_send send;
+    unsigned long raw_mask;
+    int status, result, result_errno;
+    if (sigemptyset(&selected) || sigaddset(&selected, SIGUSR1) ||
+        sigaddset(&selected, SIGRTMIN) || sigaddset(&selected, SIGRTMAX) ||
+        sigaddset(&selected, SIGCHLD) || sigprocmask(SIG_BLOCK, &selected, &previous) ||
+        sigemptyset(&only_usr1) || sigaddset(&only_usr1, SIGUSR1) ||
+        sigemptyset(&realtime) || sigaddset(&realtime, SIGRTMIN) ||
+        sigaddset(&realtime, SIGRTMAX))
+        return 1;
+    errno = 0;
+    if (!expect_error(sigtimedwait(&only_usr1, &info, &zero), EAGAIN) || kill(getpid(), SIGUSR1))
+        return 2;
+    errno = 0;
+    if (!expect_error(sigtimedwait(&only_usr1, &info, &invalid), EINVAL))
+        return 3;
+    invalid.tv_nsec = -1;
+    errno = 0;
+    if (!expect_error(sigtimedwait(&only_usr1, &info, &invalid), EINVAL))
+        return 3;
+    invalid.tv_sec = -1;
+    invalid.tv_nsec = 0;
+    errno = 0;
+    if (!expect_error(sigtimedwait(&only_usr1, &info, &invalid), EINVAL))
+        return 3;
+    errno = ERANGE;
+    if (sigtimedwait(&only_usr1, &info, &zero) != SIGUSR1 || info.si_signo != SIGUSR1 ||
+        info.si_code != SI_USER || info.si_pid != getpid() || info.si_uid != getuid() ||
+        info.si_errno != 0 || errno != ERANGE)
+        return 4;
+    value.sival_int = 1234567;
+    if (sigqueue(getpid(), SIGRTMIN, value))
+        return 5;
+    value.sival_int = -1234567;
+    if (sigqueue(getpid(), SIGRTMIN, value))
+        return 5;
+    value.sival_int = INT32_MIN;
+    if (sigqueue(getpid(), SIGRTMAX, value))
+        return 5;
+    errno = ERANGE;
+    if (sigwaitinfo(&realtime, &info) != SIGRTMIN || info.si_value.sival_int != 1234567 ||
+        info.si_code != SI_QUEUE || info.si_pid != getpid() || errno != ERANGE ||
+        sigwaitinfo(&realtime, &info) != SIGRTMIN || info.si_value.sival_int != -1234567 ||
+        sigwaitinfo(&realtime, &info) != SIGRTMAX || info.si_value.sival_int != INT32_MIN)
+        return 6;
+    memset(&info, 0, sizeof(info));
+    info.si_signo = SIGRTMIN;
+    info.si_code = SI_QUEUE;
+    info.si_pid = -7;
+    info.si_uid = getuid();
+    info.si_value.sival_int = 7;
+    if (syscall(SYS_rt_sigqueueinfo, getpid(), SIGRTMIN, &info) ||
+        sigwaitinfo(&realtime, &info) != SIGRTMIN || info.si_pid != -7 ||
+        info.si_value.sival_int != 7)
+        return 7;
+    send = (struct synchronous_wait_send){ .tid = (pid_t)syscall(SYS_gettid), .queued = 1 };
+    if (pthread_create(&sender, NULL, synchronous_wait_sender, &send))
+        return 13;
+    result = sigtimedwait(&realtime, &info, &timeout);
+    if (pthread_join(sender, &sender_result) || sender_result || result != SIGRTMAX ||
+        info.si_code != SI_QUEUE || info.si_value.sival_int != 7654321)
+        return 14;
+    child = fork();
+    if (child == 0)
+        _Exit(42);
+    if (child < 0 || waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
+        WEXITSTATUS(status) != 42)
+        return 8;
+    sigemptyset(&only_usr1);
+    sigaddset(&only_usr1, SIGCHLD);
+    if (sigtimedwait(&only_usr1, &info, &zero) != SIGCHLD || info.si_pid != child ||
+        info.si_code != CLD_EXITED || info.si_status != 42)
+        return 9;
+    action.sa_handler = synchronous_wait_handler;
+    if (sigemptyset(&action.sa_mask) || sigaction(SIGUSR2, &action, &old_action) ||
+        sigemptyset(&interrupt) || sigaddset(&interrupt, SIGUSR2) ||
+        sigprocmask(SIG_UNBLOCK, &interrupt, NULL))
+        return 10;
+    synchronous_wait_interrupted = 0;
+    send = (struct synchronous_wait_send){ .tid = (pid_t)syscall(SYS_gettid), .queued = 0 };
+    memcpy(&raw_mask, &realtime, sizeof(raw_mask));
+    if (pthread_create(&sender, NULL, synchronous_wait_sender, &send))
+        return 11;
+    errno = ERANGE;
+    result = (int)syscall(SYS_rt_sigtimedwait, &raw_mask, &info, &timeout, sizeof(raw_mask));
+    result_errno = errno;
+    if (pthread_join(sender, &sender_result) || sender_result || result != -1 ||
+        result_errno != EINTR || !synchronous_wait_interrupted ||
+        timeout.tv_sec != 5 || timeout.tv_nsec != 0 ||
+        sigprocmask(SIG_SETMASK, NULL, &current) ||
+        sigismember(&current, SIGUSR1) != 1 || sigismember(&current, SIGRTMIN) != 1 ||
+        sigismember(&current, SIGRTMAX) != 1 || sigismember(&current, SIGCHLD) != 1 ||
+        sigaction(SIGUSR2, &old_action, NULL) || sigprocmask(SIG_SETMASK, &previous, NULL))
+        return 12;
+    return 0;
+}
+
 static void *signal_mask_worker(void *unused)
 {
     sigset_t inherited, selected, pending, changed;
@@ -321,6 +482,8 @@ static int signalfd_composition(void)
 
     if (signal_mask_composition())
         return 129;
+    if (synchronous_wait_composition())
+        return 130;
     if (sigemptyset(&selected) || sigaddset(&selected, SIGUSR1) ||
         sigemptyset(&empty) || sigprocmask(SIG_BLOCK, &selected, &previous))
         return 120;

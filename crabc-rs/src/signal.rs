@@ -3,7 +3,8 @@
 //! Linux/AArch64 exposes the complete typed mask, waiting, queue, descriptor,
 //! and alternate-stack families. The staged x86-64 surface is deliberately
 //! narrower: one-argument handler actions, delivery to the current or a
-//! known thread in the calling process, typed signal masks, and descriptors.
+//! known thread in the calling process, typed masks, synchronous waits,
+//! and signal descriptors.
 //! Handler installation is unsafe because the kernel can later enter supplied
 //! code at an arbitrary interruption point. This module uses `crabc-core`'s
 //! direct kernel seams exclusively; it never calls the public C ABI or reads
@@ -23,7 +24,7 @@ use bitflags::bitflags;
 
 #[cfg(target_arch = "aarch64")]
 use crate::process::{self, Pid};
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use crate::time::Timespec;
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use crate::{AsFd, Errno, OwnedFd};
@@ -233,17 +234,17 @@ const SS_ONSTACK: i32 = 1;
 const SS_DISABLE: i32 = 2;
 #[cfg(target_arch = "aarch64")]
 const SI_QUEUE: i32 = -1;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGINFO_SIGNO_OFFSET: usize = 0;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGINFO_ERRNO_OFFSET: usize = 4;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGINFO_CODE_OFFSET: usize = 8;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGINFO_PID_OFFSET: usize = 16;
 #[cfg(target_arch = "aarch64")]
 const SIGINFO_UID_OFFSET: usize = 20;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGINFO_VALUE_OFFSET: usize = 24;
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGNALFD_SIGNO_OFFSET: usize = 0;
@@ -789,12 +790,16 @@ impl fmt::Debug for SigAction {
 }
 
 /// The kernel's 128-byte signal-information record.
-#[cfg(target_arch = "aarch64")]
+///
+/// The payload union begins at byte 16 on the supported 64-bit Linux targets.
+/// Interpret its fields according to `raw_code`; typed projections reject
+/// reserved signal numbers and non-positive sender process identifiers.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct SigInfo(crabc_core::signal::SigInfo);
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 impl SigInfo {
     /// Returns the raw `si_signo` value.
     #[inline]
@@ -854,6 +859,7 @@ impl SigInfo {
         unsafe { ptr::read_unaligned(self.0.bytes.as_ptr().add(offset).cast()) }
     }
 
+    #[cfg(target_arch = "aarch64")]
     #[inline]
     fn queue(signal: Signal, value: i32) -> Self {
         let mut info = crabc_core::signal::SigInfo::zeroed();
@@ -880,7 +886,7 @@ impl SigInfo {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 impl fmt::Debug for SigInfo {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -1060,14 +1066,27 @@ pub fn suspend(mask: &SignalSet) -> Result<Infallible> {
 }
 
 /// Waits indefinitely for one member of `set`, returning its signal metadata.
-#[cfg(target_arch = "aarch64")]
+///
+/// Selected signals should already be blocked in all threads which could
+/// otherwise receive them. The wait consumes one signal without installing
+/// a handler or changing the calling thread's signal mask. An unblocked
+/// signal handler can interrupt the wait with `EINTR`.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 pub fn wait_info(set: &SignalSet) -> Result<(Signal, SigInfo)> {
     timed_wait(set, None)
 }
 
 /// Waits for one member of `set` until the optional relative timeout expires.
-#[cfg(target_arch = "aarch64")]
+///
+/// A missing timeout waits indefinitely; a zero timeout consumes a pending
+/// selected signal or returns `EAGAIN`. Negative seconds or nanoseconds outside
+/// `0..1_000_000_000` return `EINVAL`. The timeout remains unchanged.
+///
+/// As with `wait_info`, callers arrange blocked delivery before waiting. This
+/// direct native operation preserves kernel `EINTR` rather than retrying it,
+/// and never reads or changes the C runtime's thread-local `errno`.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 pub fn timed_wait(set: &SignalSet, timeout: Option<&Timespec>) -> Result<(Signal, SigInfo)> {
     let mut info = MaybeUninit::<crabc_core::signal::SigInfo>::uninit();
