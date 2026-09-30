@@ -3,6 +3,7 @@
 import contextlib
 import importlib.util
 import io
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -34,7 +35,8 @@ class HeapNumaReceiptTests(unittest.TestCase):
             patch.start(); self.addCleanup(patch.stop)
         patch = mock.patch.object(runner, "ARTIFACTS", self.root / ".work/artifacts/numa")
         patch.start(); self.addCleanup(patch.stop)
-        patch = mock.patch.object(runner.harness, "require_native_x86_64")
+        self.execution = {"execution_mode": "native", "host_architecture": "x86_64", "image_id": "sha256:" + "4" * 64}
+        patch = mock.patch.object(runner.harness, "require_native_x86_64", return_value=self.execution)
         patch.start(); self.addCleanup(patch.stop)
 
     def publish(self):
@@ -49,6 +51,9 @@ class HeapNumaReceiptTests(unittest.TestCase):
             self.assertEqual(runner.stress.byte_record_payload(result["stdout"], side), b"3,1\n")
             products[binary.name] = binary
             cases.append((f"{side}-run", 0, logs))
+        inputs = work / "inputs.json"
+        inputs.write_text(json.dumps({"execution": self.execution}))
+        products[inputs.name] = inputs
         return runner.receipts.write_receipt(self.root, runner.RUNNER, work, products, cases,
                                              runner.ENVIRONMENT, True)
 
@@ -79,6 +84,15 @@ class HeapNumaReceiptTests(unittest.TestCase):
         (path.parent / "products/numa-c").write_bytes(b"changed actual product")
         with self.assertRaisesRegex(runner.receipts.ReceiptError, "does not match its digest"):
             runner.read(True)
+
+    def test_replay_rejects_a_different_execution_image_before_starting_callers(self):
+        self.publish()
+        wrong = dict(self.execution, image_id="sha256:" + "3" * 64)
+        with mock.patch.object(runner.harness, "require_native_x86_64", return_value=wrong), \
+             mock.patch.object(runner, "record") as execute:
+            with self.assertRaisesRegex(runner.harness.HarnessError, "image"):
+                runner.read(True)
+        execute.assert_not_called()
 
     def test_changed_recorded_stderr_is_rejected_by_the_public_reader(self):
         path = self.publish()

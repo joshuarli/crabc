@@ -137,7 +137,10 @@ def read(replay=False, output=None):
     print("Heap NUMA exact-source physical receipt: PASS")
     if not replay:
         return
-    harness.require_native_x86_64(require_image_identity=True)
+    execution = harness.require_native_x86_64(require_image_identity=True)
+    inputs = json.loads((receipt.path.parent / "products/inputs.json").read_text())
+    harness.validate_native_execution_provenance(
+        inputs["execution"], expected_image_id=execution["image_id"])
     harness.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix="heap-numa-replay-", dir=harness.TEMP_ROOT))
     print(f"Heap NUMA reader executions: {scratch}", flush=True)
