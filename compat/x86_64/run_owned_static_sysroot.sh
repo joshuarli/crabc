@@ -548,7 +548,7 @@ assert_final_static_image() {
     local symbols="$6"
     local relocations="$7"
     local minimum_tls_alignment="${8:-4096}"
-    local tls_count tls_filesz tls_memsz tls_alignment
+    local tls_count tls_filesz tls_memsz tls_alignment unresolved
 
     grep -Eq 'Machine:[[:space:]]+Advanced Micro Devices X86-64' "$file_header" ||
         fail "${mode} candidate is not EM_X86_64"
@@ -599,27 +599,8 @@ PY
     if (( tls_alignment < minimum_tls_alignment || (tls_alignment & (tls_alignment - 1)) != 0 )); then
         fail "${mode} candidate TLS lost the fixture's required alignment"
     fi
-    # The authenticated owned link recipe rejects unresolved strong live
-    # references. TLS relaxation can nevertheless leave an inert regular
-    # symbol row after replacing its call with a local-exec access. Inspect
-    # every relocation and dynamic symbol exposure before accepting that
-    # residue; a regular symbol name alone is not a runtime import.
-    python3 -B - "$ROOT_DIR" "$candidate" <<'PY' ||
-        fail "${mode} candidate retains unresolved runtime bindings"
-import json
-from pathlib import Path
-import sys
-
-sys.path.insert(0, sys.argv[1] + "/compat/x86_64")
-from owned_static_link_authority import static_undefined_bindings
-
-proof = static_undefined_bindings(sys.argv[2])
-Path(sys.argv[2] + ".undefined-bindings.json").write_text(
-    json.dumps(proof, indent=2, sort_keys=True) + "\n"
-)
-if proof["required_bindings"]:
-    raise SystemExit("unresolved runtime bindings: " + json.dumps(proof["required_bindings"]))
-PY
+    unresolved="$(awk '$7 == "UND" && NF >= 8 { print }' "$symbols")"
+    [ -z "$unresolved" ] || fail "${mode} candidate retains unresolved symbols: $unresolved"
     grep -Eq '[[:space:]]__udivti3$' "$symbols" ||
         fail "${mode} candidate lacks the owned __udivti3 helper"
     if grep -Eq 'R_X86_64_(GLOB_DAT|JUMP_SLOT|TLSGD|TLSLD|TLSDESC|DTPMOD|DTPOFF)' \
@@ -627,7 +608,7 @@ PY
         fail "${mode} candidate retains a dynamic relocation or dynamic TLS form"
     fi
     if [ "$mode" = -static-pie ]; then
-        if grep -Eq 'R_X86_64_GOTTPOFF|__tls_get_addr' "$relocations"; then
+        if grep -Eq 'R_X86_64_GOTTPOFF|__tls_get_addr' "$relocations" "$symbols"; then
             fail "static PIE candidate retained an unrelaxed initial-TLS access"
         fi
         awk '$3 ~ /^R_X86_64_/ && $3 != "R_X86_64_RELATIVE" { exit 1 }' "$relocations" ||
