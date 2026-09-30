@@ -208,8 +208,9 @@ impl Heap {
     }
 
     /// `mi_heap_get_stats` followed by the scalar reads of `_mi_stats_print`.
-    /// Only the calling thread's already initialized Theap for this Heap is
-    /// merged; an absent Theap remains absent.
+    /// Only the cached/TLS-selected existing Theap is merged, into its own
+    /// Heap. A foreign main Heap shares the calling thread's fast slot in
+    /// release builds; an absent Theap remains absent.
     ///
     /// # Safety
     /// `heap` is pinned and live under its subprocess Heap-list lock. `current`
@@ -223,33 +224,48 @@ impl Heap {
         // SAFETY: immutable sequence and atomic statistics of the live Heap.
         let sequence = unsafe { core::ptr::addr_of!((*heap.as_ptr()).heap_seq).read() };
         let statistics = unsafe { &*core::ptr::addr_of!((*heap.as_ptr()).statistics) };
-        // SAFETY: the calling thread retains its own initialized roots. Empty
-        // default Theaps have no Heap and are not followed into a TLD.
-        let default_heap = unsafe { Theap::heap_at(current) };
+        // `_mi_heap_theap_peek` first checks the cache, then the selected
+        // Heap's TLS key. Main Heaps of different subprocesses deliberately
+        // share the fast key; its returned Theap may own another main Heap.
+        let cached = crate::compiler_tls::cached_theap();
+        // SAFETY: the calling thread retains its cache and default roots.
+        let cached_heap = unsafe { Theap::heap_at(cached) };
+        // SAFETY: the selected live Heap's TLS key is immutable.
+        let slot = unsafe { core::ptr::addr_of!((*heap.as_ptr()).theap_slot).read() };
         let mut selected = None;
-        if default_heap == heap.as_ptr() {
-            selected = Some(current);
-        } else if !default_heap.is_null() {
-            // SAFETY: the initialized default Theap retains this thread's TLD.
-            if let Some(tld) = NonNull::new(unsafe { Theap::tld_at(current) }) {
-                // SAFETY: this thread alone changes its auxiliary-Theap list.
-                let mut next = unsafe { ThreadLocalData::theaps_head_at(tld) };
-                while let Some(theap) = NonNull::new(next) {
-                    // SAFETY: the thread retains every listed Theap.
-                    if unsafe { Theap::heap_at(theap) } == heap.as_ptr() {
-                        selected = Some(theap);
-                        break;
+        if cached_heap == heap.as_ptr() {
+            selected = Some(cached);
+        } else if slot == crate::thread_local::TLS_FAST_KEY_RAW as usize {
+            selected = crate::compiler_tls::fast_slot_peek().map(|theap| theap.cast::<Theap>());
+        } else {
+            // SAFETY: an initialized default Theap retains the current TLD;
+            // an empty root is not followed into any thread-owned image.
+            let default_heap = unsafe { Theap::heap_at(current) };
+            if !default_heap.is_null() {
+                if let Some(tld) = NonNull::new(unsafe { Theap::tld_at(current) }) {
+                    // SAFETY: this thread alone changes its auxiliary list.
+                    let mut next = unsafe { ThreadLocalData::theaps_head_at(tld) };
+                    while let Some(theap) = NonNull::new(next) {
+                        // SAFETY: the current thread retains each listed Theap.
+                        if unsafe { Theap::heap_at(theap) } == heap.as_ptr() {
+                            selected = Some(theap);
+                            break;
+                        }
+                        // SAFETY: the current thread retains each listed Theap.
+                        next = unsafe { Theap::tld_next_at(theap) };
                     }
-                    // SAFETY: the thread retains every listed Theap.
-                    next = unsafe { Theap::tld_next_at(theap) };
                 }
             }
         }
         if let Some(theap) = selected {
-            // SAFETY: only the exact current-thread Theap's atomic statistics
-            // are merged, with no callback or owner projection in progress.
-            let source = unsafe { &*core::ptr::addr_of!((*theap.as_ptr()).statistics) };
-            statistics.merge_from_and_reset(source);
+            // SAFETY: the source-selected current-thread Theap retains its
+            // actual owning Heap, even for a foreign main Heap's fast key.
+            if let Some(owning_heap) = NonNull::new(unsafe { Theap::heap_at(theap) }) {
+                let destination = unsafe { &*core::ptr::addr_of!((*owning_heap.as_ptr()).statistics) };
+                let source = unsafe { &*core::ptr::addr_of!((*theap.as_ptr()).statistics) };
+                destination.merge_from_and_reset(source);
+                return (sequence, destination.final_output_snapshot());
+            }
         }
         (sequence, statistics.final_output_snapshot())
     }

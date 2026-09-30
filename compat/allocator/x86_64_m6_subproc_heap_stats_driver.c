@@ -12,6 +12,7 @@ struct output {
   size_t used;
   size_t calls;
   bool reenter;
+  mi_theap_t* merge_theap;
 };
 
 static void capture(const char* message, void* argument) {
@@ -22,6 +23,12 @@ static void capture(const char* message, void* argument) {
   memcpy(output->text + output->used, message, length + 1);
   output->used += length;
   output->calls++;
+  if (output->merge_theap != NULL) {
+    mi_stats_t_decl(stats);
+    assert(mi_theap_stats_get(output->merge_theap, &stats));
+    assert(stats.pages.total == 0 && stats.pages.current == 0);
+    output->merge_theap = NULL;
+  }
   if (output->reenter) {
     output->reenter = false;
     unsigned char* block = mi_malloc(37);
@@ -124,9 +131,11 @@ int main(int argc, char** argv) {
       mi_subproc_heap_stats_print_out(child, NULL, NULL);
       puts("default-route=stderr");
     } else {
-      struct output output = {.reenter = true};
+      mi_theap_t* selected = require_unmerged_pages(mi_heap_main());
+      struct output output = {.reenter = true, .merge_theap = selected};
       mi_subproc_heap_stats_print_out(child, capture, &output);
-      show_headers(&output, false);
+      assert(output.merge_theap == NULL);
+      show_headers(&output, true);
     }
     mi_subproc_destroy(child);
   } else {
