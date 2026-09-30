@@ -2466,11 +2466,11 @@ unsafe fn release_claimed_process_regular_arena_page_with_ordinary_clear_and_sta
     clear_ordinary: impl FnOnce(&ArenaView<'static>, usize) -> bool,
     record_statistics: impl FnOnce(&Page) -> bool,
 ) -> ClaimedProcessArenaTerminalRelease {
-    // SAFETY: the W07 terminal claim retains this exact arena MemoryId.
+    // SAFETY: the caller's low-bit page claim retains this exact arena MemoryId.
     let Some(arena) = (unsafe { backing.arena_for_memory(expected_memory) }) else {
         return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
     };
-    // SAFETY: W07 retained this exact page's low owner bit through the
+    // SAFETY: the caller retained this exact page's low owner bit through the
     // all-free result, so its source ordinary fields are stable here.
     let page_ref = unsafe { page.as_ref() };
     let memory = page_ref.memid();
@@ -2554,7 +2554,7 @@ unsafe fn release_claimed_process_regular_arena_page_with_ordinary_clear_and_sta
         return ClaimedProcessArenaTerminalRelease::RetainedDuringPageMapMutation;
     }
     // The ordinary arena bit is separate from the mapped-abandoned identity
-    // W07's source tail may already have cleared.
+    // the source unown tail may already have cleared.
     if !clear_ordinary(&arena, slice_index) {
         return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease;
     }
@@ -2623,11 +2623,11 @@ unsafe fn release_claimed_process_arena_singleton_page_with_ordinary_clear_and_s
     clear_ordinary: impl FnOnce(&ArenaView<'static>, usize) -> bool,
     record_statistics: impl FnOnce(&Page) -> bool,
 ) -> ClaimedProcessArenaTerminalRelease {
-    // SAFETY: the W07 terminal claim retains this exact arena MemoryId.
+    // SAFETY: the caller's low-bit page claim retains this exact arena MemoryId.
     let Some(arena) = (unsafe { backing.arena_for_memory(expected_memory) }) else {
         return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
     };
-    // SAFETY: W07's release wrapper retains the same low-bit claim while the
+    // SAFETY: the caller retains the same low-bit page claim while the
     // terminal callback validates the exact arena singleton.
     let page_ref = unsafe { page.as_ref() };
     let memory = page_ref.memid();
@@ -2682,7 +2682,7 @@ unsafe fn release_claimed_process_arena_singleton_page_with_ordinary_clear_and_s
         let Some(address) = slice_start.addr().checked_add(offset) else {
             return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
         };
-        // SAFETY: the W07 terminal owner serializes this exact singleton map
+        // SAFETY: the low-bit page owner serializes this exact singleton map
         // range; all source-visible slices must still identify this page.
         if unsafe { page_map.checked_lookup(address as *const u8) } != page.as_ptr() {
             return ClaimedProcessArenaTerminalRelease::RetainedBeforePageMap;
@@ -2699,8 +2699,8 @@ unsafe fn release_claimed_process_arena_singleton_page_with_ordinary_clear_and_s
     if !clear_ordinary(&arena, slice_index) {
         return ClaimedProcessArenaTerminalRelease::RetainedAfterPageMapRelease;
     }
-    // SAFETY: all queue/list/map predecessors completed under the exact W07
-    // release wrapper; retirement cannot inspect a departed Theap.
+    // SAFETY: all queue/list/map predecessors completed under the exact page-release
+    // claim; retirement cannot inspect a departed Theap.
     let committed = usize::from(unsafe { page.as_ref().slice_pcommitted() })
         * page_map.memory_config().page_size().bytes();
     if !unsafe { backing.account_page_commit_before_release(expected_memory, committed) } {
