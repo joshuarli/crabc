@@ -64,7 +64,11 @@ only its exact source, configuration, image, products, and execution context.
   replay. Loader-family assembly and independent read-only validation pass.
   Resolver component producers and assembly pass, but the original read-only
   reader fails on two writes into retained inputs. The scratch repairs are
-  integrated; a fresh same-source resolver cohort is running. Ordered family
+  integrated. Fresh `d13ce0ffe` static preparation and its owning reader pass;
+  the subsequent full installed suite fails on a pinned musl AIO descriptor-reuse
+  defect. A causal source control proves that defect, and the integrated receiver
+  accepts only its complete signature. The failed cohort remains unqualified;
+  fresh dynamic and resolver qualification is still required. Ordered family
   and callable-provider closure remain open.
 - **Allocator source geometry:** source-faithful auxiliary and ordinary main
   Theap geometry repairs are integrated with ownership repairs. Their exact
@@ -82,8 +86,10 @@ only its exact source, configuration, image, products, and execution context.
   completions: both remaining interpreter runs exit successfully, but their
   startup markers interleave with libtest output. The strict parser repair is
   integrated. One fresh clean-source six-program/seventeen-test run at
-  `1c22908bf` is executing, followed by its independent physical receiver.
-  Prior full-roster failures remain unqualified and retained.
+  `1c22908bf` completes all six programs and all seventeen strict tests. Its
+  independent physical receiver follows canonical retention; the whole gate
+  remains unmet pending M1/M2. Prior full-roster failures remain unqualified
+  and retained.
 - **Allocator gates:** existing Heap/subprocess stress, visitation, callbacks,
   statistics, remote ownership and failure evidence remain retained by exact
   source. M6 now requests the supported full-profile producer commands and
@@ -98,15 +104,23 @@ only its exact source, configuration, image, products, and execution context.
   cross-thread arena reassociation regression matches all client observations;
   its source-faithful noncollecting metadata free repairs Heap deletion. The
   subsequent child-destroy refusal exposes direct OS metadata pages that pinned
-  C retains. A source-faithful terminal repair passes the unchanged release
-  lifecycle judge; four-profile qualification and memory-retention measurement
-  remain open. Heap destroy/finish contention now has causal retry evidence,
+  C retains. The coherent source-faithful repair at `12d00301e` passes the
+  unchanged lifecycle judge in all four profiles and owning read-only replay.
+  A separate 32-cycle child teardown diagnostic also completes all four
+  profiles and owning replay. Both allocators retain about 245 MB of virtual
+  mappings across those cycles; bounded-memory/leak qualification remains open.
+  The original repeated fixture's startup error and its once-only repair remain
+  retained. Heap destroy/finish contention now has causal retry evidence,
   complete compiler-command authentication and four-profile read-only replay.
   All nineteen Heap fault controls pass and replay without writing retained
   inputs. Queue receipts retain executable/compiler authority and replay.
-  M7 secure, guarded, abort-on-failure, debug-applicability and physical-option
-  conditions remain open; ISA correctness passes separately from deferred
-  throughput. Complete M2/M3/M4 and merged-source qualification remain open.
+  M7 abort-on-failure passes original C/native production, compiler/provider
+  authentication and owning read-only replay at its exact source. Public and
+  child visitation pass the four implemented profiles and owning replay.
+  Secure shuffle and free-list primitives pass source controls; complete secure
+  and guarded profiles, debug applicability and physical options remain open.
+  ISA correctness passes separately from deferred throughput. Complete M2/M3/M4
+  and merged-source qualification remain open.
 - **External correctness:** physical huge-page/NUMA qualification requires two
   allowed NUMA nodes with a free 1-GiB huge page on each. This host has one node
   and no such pages; no alternate host is available. Continue independent

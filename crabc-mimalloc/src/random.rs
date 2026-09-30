@@ -1,6 +1,6 @@
 // Copyright (c) 2019-2021, Microsoft Research, Daan Leijen
 // This is free software; you can redistribute it and/or modify it under the
-// terms of the MIT license. A copy of the license is recorded in `UPSTREAM.md`.
+// terms of the MIT license.
 // SPDX-License-Identifier: MIT
 //
 // Semantic port of pinned mimalloc v3.5.0 `src/random.c`: original-ChaCha

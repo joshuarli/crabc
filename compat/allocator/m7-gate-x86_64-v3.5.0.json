@@ -242,8 +242,24 @@
       "scope": "Pinned C and native Rust MI_STAT=2 public snapshots compare 8 KiB regular-page extension count, touched bytes, page and page-bin lifetime, normal bytes, allocation bin, and retained requested bytes at 1, 8, 16, 32, and 48 live blocks and after all frees. Every eight blocks fill a page, and the source retains one empty page after the final free."
     },
     "differential:visitation-profiles": {
-      "command": null,
-      "scope": "Pinned-C/Rust area/block visitation traces under the debug-padding, secure, and guarded profiles."
+      "command": ["python3", "compat/allocator/x86_64_m6_heap_visit_profiles.py", "--offline"],
+      "scope": "Pinned-C/Rust public Heap area/block visitation under release, debug-padding, statistics level one, and statistics level two. The existing owning reader physically replays each retained C/native product. Secure and guarded profile visitation remain required separately."
+    },
+    "differential:child-main-visitation-profiles": {
+      "command": ["python3", "compat/allocator/x86_64_m6_child_main_heap_visitor.py", "--offline", "--matrix"],
+      "scope": "Pinned-C/Rust child main-Heap area/block visitation under the four implemented profiles, including callback behavior; the owning reader physically replays all retained C/native products."
+    },
+    "differential:child-abandoned-visitation-profiles": {
+      "command": ["python3", "compat/allocator/x86_64_m6_child_abandoned_visitor.py", "--offline", "--matrix"],
+      "scope": "Pinned-C/Rust abandoned child-page area/block visitation under the four implemented profiles, including callback behavior; the owning reader physically replays all retained C/native products."
+    },
+    "differential:xmalloc-profile": {
+      "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--xmalloc-profile-differential"],
+      "scope": "Pinned C MI_XMALLOC and native mi-xmalloc compare real allocation failures, default SIGABRT, registered-handler priority, quiet count-overflow behavior, and successful allocation. The source-adapter abort delegates to its selected C runtime; owned target products must resolve their own abort provider."
+    },
+    "replay:xmalloc-profile": {
+      "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--xmalloc-profile-replay"],
+      "scope": "The existing exact-source owning reader authenticates original compiler, Cargo, archive and link arguments, then physically executes retained pinned-C/native products and compares natural status and output."
     },
     "differential:debug-profile": {
       "command": null,
@@ -410,10 +426,12 @@
         "differential:error-reporting-sites",
         "differential:thread-init-failure",
         "differential:startup-page-map-failure",
-        "differential:adapter"
+        "differential:adapter",
+        "differential:xmalloc-profile",
+        "replay:xmalloc-profile"
       ],
       "blocked_by": [
-        "Under the selected release flags (`-DMI_DEBUG=0 -DMI_SECURE=0 -DMI_GUARDED=0 -DMI_STAT=0`), the pinned preprocessor keeps 19 of the 37 `_mi_error_message` sites outside src/options.c; the other 18 (os.c:195, heap.c:51, arena.c:290,1047, alloc-posix.c:73, free.c:177,188,207,318,323,570,582,724,727, alloc.c:701,918, alloc-aligned.c:38, page-map.c:68) are compiled out and belong to the debug, secure, and guarded profiles. The error-site differential covers page.c:953,1063, alloc-aligned.c:83,165,192, and arena.c:1892 (the startup `reserve_os_memory` reservation). Of the rest, alloc.c:745 (`mi_try_new_handler`), reached through the adapter's `mi_new` family, and heap.c:79,138 and threadlocal.c:138 (first-class Heaps, owned by M6) are unported. The valid-program failure paths are ported: page-map.c:304 (a startup page-map reservation failure) leaves a started process whose every allocation fails with ENOMEM, as in C, covered by the startup-page-map-failure differential, with its unreproduced page-map commit warnings recorded as CRABC-MI-STARTUP-PAGE-MAP-FAILURE in `known-differences.md`; init.c:268 and theap.c:328 (thread-local-data and Theap metadata failures) follow C's lazy retry, covered by the thread-init-failure differential. libc.c:148 (`pthread_key_create` for the thread-done key) is not applicable: crabc libc drives thread finish directly and has no key to create. page.c:166,171 and arena.c:1457,1463,1476 are not applicable: they are reached only by an invalid program, and `known-differences.md` records the stricter Rust response as CRABC-MI-INVALID-PROGRAM-ERROR-SITES. libc keeps musl's errno for native allocation failures by the ABI decision, so the error handler and default errno are observable only through the native adapter.",
+        "Under the selected release flags (`-DMI_DEBUG=0 -DMI_SECURE=0 -DMI_GUARDED=0 -DMI_STAT=0`), the pinned preprocessor keeps 19 of the 37 `_mi_error_message` sites outside src/options.c; the other 18 (os.c:195, heap.c:51, arena.c:290,1047, alloc-posix.c:73, free.c:177,188,207,318,323,570,582,724,727, alloc.c:701,918, alloc-aligned.c:38, page-map.c:68) are compiled out and belong to the debug, secure, and guarded profiles. The error-site differential covers page.c:953,1063, alloc-aligned.c:83,165,192, and arena.c:1892 (the startup `reserve_os_memory` reservation). Of the rest, alloc.c:745 (`mi_try_new_handler`), reached through the adapter's `mi_new` family, and heap.c:79,138 and threadlocal.c:138 (first-class Heaps, owned by M6) still need complete selected error-site differential qualification. The valid-program failure paths are ported: page-map.c:304 (a startup page-map reservation failure) leaves a started process whose every allocation fails with ENOMEM, as in C, covered by the startup-page-map-failure differential, with its unreproduced page-map commit warnings recorded as CRABC-MI-STARTUP-PAGE-MAP-FAILURE in `known-differences.md`; init.c:268 and theap.c:328 (thread-local-data and Theap metadata failures) follow C's lazy retry, covered by the thread-init-failure differential. libc.c:148 (`pthread_key_create` for the thread-done key) is not applicable: crabc libc drives thread finish directly and has no key to create. page.c:166,171 and arena.c:1457,1463,1476 are not applicable: they are reached only by an invalid program, and `known-differences.md` records the stricter Rust response as CRABC-MI-INVALID-PROGRAM-ERROR-SITES. libc keeps musl's errno for native allocation failures by the ABI decision, so the error handler and default errno are observable only through the native adapter.",
 
         "The `MI_XMALLOC` abort-on-allocation-failure profile is absent."
       ]
@@ -485,10 +503,12 @@
       "compile_time_modes": [],
       "acceptance": "Heap, abandoned-page, Theap, and subprocess visitation (interfaces owned by M6) enumerate the source areas and blocks under every M7 profile, including debug padding, secure encoding, and guard pages, and visitor callbacks run outside owner/engine/TLD/Theap projections.",
       "evidence": [
-        "differential:visitation-profiles"
+        "differential:visitation-profiles",
+        "differential:child-main-visitation-profiles",
+        "differential:child-abandoned-visitation-profiles"
       ],
       "blocked_by": [
-        "No area or block visitation exists, and no M7 profile exists to visit under."
+        "The four implemented release, debug-padding and statistics profiles have public, child main-Heap and abandoned-child visitation with owning physical replay. Secure and guarded profile visitation remains unqualified."
       ]
     },
     {

@@ -146,6 +146,8 @@ pub use test_context::{
 // source-shaped owners without depending on libc or public pthread APIs.
 #[doc(hidden)]
 pub mod __crabc_runtime {
+    #[cfg(target_arch = "x86_64")]
+    pub use crate::process_init::SourceErrnoStore;
     pub use crate::runtime_lifecycle::{
         NativeAllocatorThreadDescriptor, NativeAllocatorPinnedThreadRegistry,
         NativeAllocatorDescriptorRetirement, native_allocator_descriptor_retirement,

@@ -81,8 +81,10 @@ MIT OR Apache-2.0 and its published archive has SHA-256
 `662effc7698e08ea324d3acccf8d9d7f7bf79b9785e270a174ea36e56900c91d`.
 
 The source adapter uses one caller-owned eight-byte state and the dependency's
-inline output operation; it does not maintain a local PRNG core. Exact source
-shuffle vectors and production integration remain required. ChaCha20 remains
+inline output operation; it does not maintain a local PRNG core. Eleven exact
+LP64 source shuffle vectors match pinned C across secure levels zero through
+five, including zero-to-seventeen substitution; the page free-list extension
+uses this adapter. Complete secure-profile qualification remains required. ChaCha20 remains
 the allocator's random stream; the shuffle does not acquire entropy. LTO can
 see the dependency's Rust implementation. This declaration supplies neither
 secure-profile qualification nor performance evidence.
