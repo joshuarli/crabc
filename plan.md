@@ -1,12 +1,12 @@
-# Complete crabc's native x86-64 runtime
+# Complete crabc's native x86-64 functionality
 
 ## Goal
 
 Implement this plan through integrated, qualified completion: reproduce the
 frozen selected runtime on native Linux/x86-64, finish the faithful Rust
-mimalloc port, make it the qualified x86 default, and promote public x86
-support. “Implement plan.md” authorizes the necessary in-scope implementation,
-tests, integration, performance work, and local promotion changes—not merely
+mimalloc port, make it the correctness-qualified x86 default, and promote public x86
+support after complete functional evidence. “Implement plan.md” authorizes the necessary in-scope implementation,
+tests, integration, and correctness-backed local promotion changes—not merely
 another plan, private fixture, or intermediate handoff.
 
 `AGENTS.md` owns scope and working rules. This file owns the complete active
@@ -15,6 +15,14 @@ supply exact inventories and evidence requirements; technical guides explain
 implementation and runner details, not additional independent plans. Continue
 while useful independent work remains. A genuinely external blocker must remain
 explicit, never be converted into a pass or a smaller completion claim.
+
+Performance measurement, optimization campaigns, benchmark thresholds, and
+performance qualification are outside this plan's active scope. Stop at complete
+functionality and correctness, including the allocator default and public x86
+transitions. Keep ABI, source fidelity, production architecture, lifetime,
+fault/model/stress/soak, bounded-memory/leak, installed-product, reproducibility,
+and applicable physical hardware correctness requirements. Deferred performance
+reports remain unqualified and cannot supply correctness evidence.
 
 ## Progress status
 
@@ -57,7 +65,7 @@ only its exact source, configuration, image, products, and execution context.
   is now closed by the unchanged API and both full stress workloads. The current
   contract also closes source convenience callers across four profiles and
   retains eight gate conditions. The same frozen source passes nine M5 correctness gates and
-  their independent readers; qualifying performance remains blocked. Exact
+  their independent readers; performance qualification is deferred. Exact
   `1b814` passes all 33 statistics rows. Canonical M2 remains partial; exact
   `a836` passes eight local M3 components, 328 native tests and 15 strict Miri
   tests but lacks M2. Exact `5b981fe3b` passes all 24 public deferred-callback
@@ -73,7 +81,7 @@ only its exact source, configuration, image, products, and execution context.
   Exact `1b4bb605d` passes the unchanged full Heap statistics matrix across
   four profiles and independent read-only replay. Physical huge-page/NUMA
   qualification requires another host: this host exposes one allowed node
-  and no free 1-GiB huge pages. Performance remains open.
+  and no free 1-GiB huge pages. Performance is outside the active scope.
 - **Runtime qualification:** accepted-C `5bd807aa7` qualifies the complete 219
   executions and separate full54 aggregate with independent read-only readers.
   Its complete installed header/layout and bounded loader and math/fenv evidence
@@ -106,7 +114,7 @@ only its exact source, configuration, image, products, and execution context.
   qualifies newer source or substitutes for ordered merged-source gates.
 - **Remaining:** finish planned runtime families and allocator source/API/mode
   conditions; replay ordered merged-source gates; obtain physical huge-page and
-  NUMA evidence and an uncontended performance matrix; then execute the isolated
+  NUMA correctness evidence; then execute the isolated
   allocator switch, cleanup, final qualification and public-x86 promotion.
   Hardware permissions and host qualification remain external conditions.
   Exact `b2a903880` passes the full owned static product gate, reproducible
@@ -125,8 +133,8 @@ capacity. Every Codex lane uses only `gpt-6.1-sol` with `medium` reasoning effor
 set both explicitly when spawning. Each lane has one bounded, unique deliverable and an
 exclusive write boundary in `.work/worktrees/lane-<id>`. The parent session
 alone integrates to `main`. A failure outside a lane's boundary goes to one
-owner. Nobody uses `git stash`. Qualifying performance measurements wait for an
-uncontended host.
+owner. Nobody uses `git stash`. Do not schedule performance measurement or
+optimization lanes in this campaign.
 
 Validators check structure, cross-references, and runtime receipts; they do not
 restate ledger prose, owner lists, or counts. Tests exercise behavior; they do
@@ -148,14 +156,14 @@ Default behavior matches pinned musl's defaults (user decision, 2026-09-25):
 
 - **Loader validation.** At load time the loader rejects what musl rejects.
   Up-front checks musl does not perform are not required and must not keep a
-  startup or `dlopen` row off the 0.90× CPU gate.
+  startup or `dlopen` functional row open; performance comparison is deferred.
 - **Transparent huge pages.** The runtime leaves the process THP policy as
   musl does (no `PR_SET_THP_DISABLE`; upstream `allow_thp` stays 1). The
   native allocator's own arena reservations opt out of huge pages with
   `MADV_NOHUGEPAGE`, so first-allocation residency is musl-like. This is a
   recorded divergence from mimalloc v3.5.0 and carries a
-  `known-differences.md` entry, a pinned-C differential, and performance
-  evidence.
+  `known-differences.md` entry and a pinned-C correctness differential.
+  Comparative performance evidence is deferred.
 - **CPU governor.** Qualified measurements run on the host's configured
   governor (`powersave`). Candidate and reference interleave under the same
   governor, so it is recorded and must be one consistent governor for the
@@ -301,12 +309,12 @@ bootstrap. Keep errno and C ABI policy in libc.
 
 Port complete source transitions rather than test-shaped routes. Maintain
 exact file/function mappings, configuration/layout probes, applicable API/mode
-inventory, intentional differences, and unit/differential/integration/stress/
-performance evidence in the existing contracts. Each applicable Linux/x86-64
+inventory, intentional differences, and unit/differential/integration/stress
+evidence in the existing contracts. Each applicable Linux/x86-64
 interface and mode must be implemented and verified; inapplicability requires
 source-backed reasons, not unavailable hardware or an inconvenient test.
 Upstream changes require separately reviewed source/inventory/map diffs and
-correctness, model, stress, and performance requalification.
+correctness, model, and stress requalification; performance requalification is deferred.
 
 ### Production architecture
 
@@ -350,7 +358,7 @@ correctness, model, stress, and performance requalification.
    scans, per-call park/resume, global ordinary-operation schedulers, and
    top-level fixture-geometry route products. Keep useful witnesses test-only.
    A constant-size page-local lifetime aid needs a documented source invariant,
-   model and performance proof; it cannot recreate a side ledger.
+   model and lifetime proof; it cannot recreate a side ledger. Performance proof is deferred.
 
 The architecture ratchet requires zero local-path global scheduler operations,
 structural PageMap leases, owner/client scans, remote owner-registry scans,
@@ -410,15 +418,15 @@ can be declared complete.
 | M2 | All eight components: VM, metadata, scalar bitmaps, PageMap, arenas, initialization, fault injection, and no allocator recursion; full ownership and failure conditions, including required physical hardware evidence. |
 | M3 | Heap/Theap bootstrap, page queues, local allocation/free, retirement/reuse, complete selected bin/page-class matrix, deterministic differential traces, and Miri-compatible execution. |
 | M4 | calloc, realloc, aligned operations, usable size, medium/large/singleton, collection, OOM/failure preservation, C adapter, and applicable upstream operation tests. |
-| M5 | General persistent concurrency/lifecycle: pointer dispatch, remote publication, generic exit, abandonment/reclaim/release, no forbidden scaffolding, selected libc shadow, state auditing, deterministic and soak churn, upstream pthread stress, and early codegen/performance proof. |
+| M5 | General persistent concurrency/lifecycle: pointer dispatch, remote publication, generic exit, abandonment/reclaim/release, no forbidden scaffolding, selected libc shadow, state auditing, deterministic and soak churn, upstream pthread stress, and structural architecture/purity checks; early performance proof is deferred. |
 | M6 | All applicable Heap, Theap, arena, managed-memory and subprocess APIs, including destruction, cross-thread lifetime, and failure behavior. |
 | M7 | All applicable options/environment, callbacks/deferred free, statistics, visitation, debug, secure, guarded and optional ISA profiles, without raising the baseline. |
 | M8 | Complete owned-libc integration: startup/constructors, pthread/TSD/cleanup/cancellation/fork, errno/C ABI, weak/interposed symbols, static/dynamic products, DSOs/loader, Rust std, Lua, and the selected real-program corpus. |
-| M9 | Full equivalent C/Rust performance/memory matrix, codegen audit, source-faithful convergence and at least three agreeing qualified full reports; correctness stays green. |
-| M10 | Isolated qualified x86 default switch; C mimalloc absent from target production dependencies and artifacts, exact C v3.5.0 retained only as oracle, and required native commands rerun at the promotion revision. |
+| M9 | Deferred outside active scope: performance/memory comparisons, optimization codegen audit and three agreeing qualified full reports. Source-faithful convergence and correctness remain required through the active milestones. |
+| M10 | Isolated correctness-qualified x86 default switch, without an M9 or performance-release prerequisite; C mimalloc absent from target production dependencies and artifacts, exact C v3.5.0 retained only as oracle, and required native commands rerun at the promotion revision. |
 | M11 | Remove obsolete x86 transitional code/features, preserve anything required by paused AArch64, retain oracles/regressions, finalize v3.5.0 parity and the upstream-update procedure, and requalify the final simplified product. |
 
-### Allocator verification and performance
+### Allocator correctness verification
 
 Run real production entry points, not privileged test-only pointer routes.
 Keep the permanent legal-C regression in which a worker allocates, exits, is
@@ -454,30 +462,11 @@ participation, reclaim, constructors, cleanup/TSD, normal return,
 counts, page distribution, final liveness, and metadata/PageMap/arena/abandoned/
 TLD high-water. Equivalent thread churn must not cause unbounded growth.
 
-Measure architecture early: local allocation/free/realloc, remote publication
-and collection, scaling, churn, exit/reclaim, TLS codegen, syscalls/faults,
-memory, and code size. Before broad optional-API expansion the persistent local
-engine must reach at least **0.25× pinned-C single-thread throughput** and show
-real independent four-thread scaling. This is an architecture sanity gate,
-not final non-inferiority. Remove structural costs before micro-optimization.
-
-Final allocator comparisons use equivalent opaque C/Rust boundaries and fully
-integrated products on a qualified uncontended native x86 host:
-
-| Metric | Promotion gate against exact C mimalloc v3.5.0 |
-| --- | --- |
-| Throughput | Suite geometric-mean lower 95% bound >= **0.95**; no critical workload lower bound < **0.90** without a separately reviewed exception. |
-| Tail latency | Critical p99 upper ratio bound <= **1.10**. |
-| Memory | Geometric-mean peak RSS/PSS upper ratio <= **1.05**; no critical workload > **1.10** without explanation; no unbounded metadata/mapping growth. |
-| System and size | No material unexplained syscall/page-fault amplification or leak; investigate allocator-attributable code-size growth > **10%**. |
-| Repeatability | At least **three qualified full reports** agree, with source/configuration/host identity and raw data. |
-
-Audit optimized allocation, free, remote publication, PageMap/bin/TLS lookup,
-realloc and alignment paths for spurious helpers, checks, fences, division,
-formatting, zeroing and missed inlining. Preserve source memory orderings.
-Threshold changes are independent decisions, never repairs to make a failing
-implementation pass. Allocator parity does not waive the separate runtime
-performance scorecard below.
+Keep structural architecture and correctness checks active: persistent owners,
+source memory orderings, PageMap lifetime, zero forbidden scaffolding, bounded
+metadata growth, leak checks, and dependency/artifact purity. Throughput,
+latency, scaling speed, comparative memory/size ratios, and optimization-oriented
+codegen audits are deferred; they cannot block functional qualification.
 
 ## Allocator/runtime integration and Rust consumers
 
@@ -546,7 +535,7 @@ Likewise reproduce the frozen Lua/source-build and real-software compatibility
 rosters through owned products; do not substitute version probes for required
 workloads or silently expand the active corpus.
 
-## Runtime performance and qualification
+## Runtime correctness qualification
 
 Close runtime/products and family prerequisites, then execute the ordered
 qualification chain. Independent diagnostics may run earlier; they do not
@@ -560,8 +549,162 @@ compat.abi-differential
   -> consumer.rust-std-lto
   -> consumer.source-build
   -> capability.accounting
-  -> performance.release
 ```
+
+This active chain ends at `capability.accounting`. Performance release remains
+a separately retained, deferred family; it is not an active prerequisite for
+the allocator default switch, public x86 support, or completion of this plan.
+Do not label deferred benchmark requirements passed or performance qualified.
+
+## Commands and evidence
+
+The active runtime dispatcher owns these aggregate commands:
+
+```sh
+./scripts/dev-x86_64.sh campaign-status
+./scripts/dev-x86_64.sh campaign-family FAMILY
+./scripts/dev-x86_64.sh campaign-static
+./scripts/dev-x86_64.sh campaign-dynamic
+./scripts/dev-x86_64.sh campaign-qualification
+./scripts/dev-x86_64.sh campaign-promotion-check
+./scripts/dev-x86_64.sh campaign-all
+```
+
+Use `--help` and the owning manifests for focused commands. In particular,
+`materialized-dynamic-sysroot` is an executing installed-product gate; do not
+confuse a plan-only seed with execution. Admission/replay must use the pinned
+qualification dispatcher and its actual reader-enforced prerequisites.
+
+The allocator has a separate contained native lane:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator --quick
+./compat/allocator/run-x86_64.sh allocator-m1
+./compat/allocator/run-x86_64.sh allocator-m2
+python3 compat/allocator/run.py --check --architecture x86_64 --offline
+```
+
+Use its current help/manifests and finish any missing native command capability
+for full correctness, exact upstream tests, installed shadow integration,
+seeded soak and post-promotion
+repository checks. Do not present paused AArch64 command spellings as native
+x86 implementations. A full gate must name actual unmet conditions and fail
+closed while incomplete, then pass at completion—not permanently report an
+unspecified future milestone.
+
+Keep each proving command and its raw/machine-readable report at the existing
+predictable target-qualified location. Allocator M1/M2 reports live beneath
+`.work/allocator-x86_64/reports/allocator/x86_64/`; runtime work uses
+`.work/x86_64/` and the established ignored report paths. A host replay verifies
+retained facts, not native execution by itself. Never hand-edit generated
+measurements or infer a pass from a missing report.
+
+## External qualification
+
+The existing huge-page/NUMA job needs native x86 Linux with **two distinct
+online allowed memory nodes (IDs <= 62), one free 1-GiB hugetlb page per node,
+at least 2 GiB hugetlb cgroup headroom, readable `numa_maps`, the launcher's
+canonical capabilities, and authorized `mbind(MPOL_PREFERRED, flags=0)`**.
+Keep **RLIMIT_AS=unlimited**: existing composed simulated prerequisites may
+reserve **36 GiB + 96 MiB** of virtual address space, separate from physical
+huge pages and ordinary compiler/runtime RAM.
+
+A prior private-mapping probe returned `EPERM`. Preserve its diagnostic;
+do not infer the policy origin from a seccomp flag, repeat an unchanged denied
+operation, or route around it through another agent/tool. After authorized
+provisioning and validation of the pinned image, run:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-huge-numa-qualification
+```
+
+This proves its bounded native hardware contract, not all of M2. Simulated
+fault paths cannot substitute for physical huge-page success and placement.
+Do not rent resources, change shared pools/security policy, or reboot without
+permission. Record a blocker once with the affected gate, evidence and clearing
+action; revisit when those facts change, not after every commit.
+
+## Correctness promotion and definition of done
+
+Promote through evidence-backed, isolated changes: qualify native allocator
+functionality and owned integration, switch the x86 default while preserving
+AArch64, then enable public x86 support after the functional readiness check.
+Performance receipts and thresholds are not prerequisites. Each transition
+still requires its post-change correctness reruns.
+
+Finish stabilization before selecting the final clean committed candidate.
+Rebuild and qualify all installed modes with the native allocator, including
+independent reproducibility builds and extracted consumers. Run the complete
+native functional aggregate, active allocator milestones, ordered correctness
+chain, model/fault/stress/soak, ABI/interposition/TLS/fork/loader/DSO,
+std/LTO/source/corpus, source-convergence and dependency/artifact purity checks.
+Different-revision or C-backend evidence cannot satisfy native reruns.
+
+The active goal is complete only when all of the following hold together:
+
+- The frozen baseline and all digests validate; all 223 capabilities are complete
+  exactly once. All functional families are verified in dependency order; the
+  retained `performance.release` family remains explicitly deferred and is
+  excluded from functional readiness, without altering the frozen inventory.
+- Both owned products cover all four link modes, reproduce independently, and
+  pass the same installed and extracted suites without ambient inputs.
+- Allocator M0–M8 and M10–M11 functionality, applicable APIs/modes, source fidelity,
+  production architecture, lifetime, fault/model, upstream/stress/soak and bounded
+  metadata/leak requirements pass. M5 numerical performance and M9 are deferred.
+- Rust mimalloc is the correctness-qualified x86 default. C mimalloc is absent
+  from the x86 production dependency/build/artifact graph and survives only in
+  isolated oracle/comparison inputs. Paused AArch64 remains unchanged.
+- Functional `promotion_ready` is computed from complete correctness evidence
+  before public support is enabled. `public_support = true`, documentation,
+  `campaign-promotion-check` and the functional `campaign-all` agree.
+- Final reports bind the same clean committed source, target, pinned inputs and
+  declared configurations, including post-switch and post-promotion products.
+  Applicable physical hardware correctness requirements are satisfied.
+
+Keep performance readiness separate and false until a later explicitly scoped
+performance campaign proves it. Preserve existing benchmark contracts and raw
+results without treating them as active blockers or successful measurements.
+Put final results in ignored reports. A necessary source change selects a new
+candidate and requires affected correctness requalification. The final response
+names the candidate, commands/reports, parity/purity and functional promotion
+results, and explicitly states that performance was deferred.
+
+## Deferred work
+
+These retained directions are **not active x86 completion gates**. They do not
+resume AArch64 or enlarge the frozen consumer roster. Activating them requires
+new direction consistent with the target pause and scope.
+
+**Allocator and runtime performance qualification.** The following retained
+criteria belong to later work. They are not scheduled or required by the active
+functionality plan, and correctness-backed default/public promotion does not
+claim they have passed. Revisit their policy and feasibility when performance
+work is explicitly resumed.
+
+Measure architecture early: local allocation/free/realloc, remote publication
+and collection, scaling, churn, exit/reclaim, TLS codegen, syscalls/faults,
+memory, and code size. Before broad optional-API expansion the persistent local
+engine must reach at least **0.25× pinned-C single-thread throughput** and show
+real independent four-thread scaling. This is an architecture sanity gate,
+not final non-inferiority. Remove structural costs before micro-optimization.
+
+Final allocator comparisons use equivalent opaque C/Rust boundaries and fully
+integrated products on a qualified uncontended native x86 host:
+
+| Metric | Promotion gate against exact C mimalloc v3.5.0 |
+| --- | --- |
+| Throughput | Suite geometric-mean lower 95% bound >= **0.95**; no critical workload lower bound < **0.90** without a separately reviewed exception. |
+| Tail latency | Critical p99 upper ratio bound <= **1.10**. |
+| Memory | Geometric-mean peak RSS/PSS upper ratio <= **1.05**; no critical workload > **1.10** without explanation; no unbounded metadata/mapping growth. |
+| System and size | No material unexplained syscall/page-fault amplification or leak; investigate allocator-attributable code-size growth > **10%**. |
+| Repeatability | At least **three qualified full reports** agree, with source/configuration/host identity and raw data. |
+
+Audit optimized allocation, free, remote publication, PageMap/bin/TLS lookup,
+realloc and alignment paths for spurious helpers, checks, fences, division,
+formatting, zeroing and missed inlining. Preserve source memory orderings.
+Threshold changes are independent decisions, never repairs to make a failing
+implementation pass. Allocator parity does not waive the separate runtime
+performance scorecard below.
 
 Use the existing finite native performance definition and preserve all
 mandatory rows: startup/lifecycle and dependency graphs; clocks/identity;
@@ -604,124 +747,6 @@ with native x86 evidence; if the lower bound still precludes the requirement,
 retain that precise acceptance-policy blocker for an explicit user decision
 while completing independent work. The authorized faithful allocator port
 supersedes old instructions forbidding all allocator work, not this scorecard.
-
-## Commands and evidence
-
-The active runtime dispatcher owns these aggregate commands:
-
-```sh
-./scripts/dev-x86_64.sh campaign-status
-./scripts/dev-x86_64.sh campaign-family FAMILY
-./scripts/dev-x86_64.sh campaign-static
-./scripts/dev-x86_64.sh campaign-dynamic
-./scripts/dev-x86_64.sh campaign-qualification
-./scripts/dev-x86_64.sh campaign-promotion-check
-./scripts/dev-x86_64.sh campaign-all
-```
-
-Use `--help` and the owning manifests for focused commands. In particular,
-`materialized-dynamic-sysroot` is an executing installed-product gate; do not
-confuse a plan-only seed with execution. Admission/replay must use the pinned
-qualification dispatcher and its actual reader-enforced prerequisites.
-
-The allocator has a separate contained native lane:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator --quick
-./compat/allocator/run-x86_64.sh allocator-m1
-./compat/allocator/run-x86_64.sh allocator-m2
-python3 compat/allocator/run.py --check --architecture x86_64 --offline
-```
-
-Use its current help/manifests and finish any missing native command capability
-for full correctness, exact upstream tests, installed shadow integration,
-seeded soak, performance smoke, qualified performance, and post-promotion
-repository checks. Do not present paused AArch64 command spellings as native
-x86 implementations. A full gate must name actual unmet conditions and fail
-closed while incomplete, then pass at completion—not permanently report an
-unspecified future milestone.
-
-Keep each proving command and its raw/machine-readable report at the existing
-predictable target-qualified location. Allocator M1/M2 reports live beneath
-`.work/allocator-x86_64/reports/allocator/x86_64/`; runtime work uses
-`.work/x86_64/` and the established ignored report paths. A host replay verifies
-retained facts, not native execution by itself. Never hand-edit generated
-measurements or infer a pass from a missing report.
-
-## External qualification
-
-The existing huge-page/NUMA job needs native x86 Linux with **two distinct
-online allowed memory nodes (IDs <= 62), one free 1-GiB hugetlb page per node,
-at least 2 GiB hugetlb cgroup headroom, readable `numa_maps`, the launcher's
-canonical capabilities, and authorized `mbind(MPOL_PREFERRED, flags=0)`**.
-Keep **RLIMIT_AS=unlimited**: existing composed simulated prerequisites may
-reserve **36 GiB + 96 MiB** of virtual address space, separate from physical
-huge pages and ordinary compiler/runtime RAM.
-
-A prior private-mapping probe returned `EPERM`. Preserve its diagnostic;
-do not infer the policy origin from a seccomp flag, repeat an unchanged denied
-operation, or route around it through another agent/tool. After authorized
-provisioning and validation of the pinned image, run:
-
-```sh
-./compat/allocator/run-x86_64.sh allocator-huge-numa-qualification
-```
-
-This proves its bounded native hardware contract, not all of M2. Simulated
-fault paths cannot substitute for physical huge-page success and placement.
-Do not rent resources, change shared pools/security policy, or reboot without
-permission. Record a blocker once with the affected gate, evidence and clearing
-action; revisit when those facts change, not after every commit.
-
-## Final promotion and definition of done
-
-Promote only through evidence-backed, isolated changes: first qualify the
-native allocator and its owned integration, switch the x86 default without
-changing AArch64, then complete the runtime/public-support transition when
-its validator computes readiness. Each transition requires its post-change
-reruns; neither can infer the other's completion.
-
-Finish all applicable stabilization before selecting the final clean committed
-candidate. Rebuild/requalify installed static and dynamic products with the
-promoted allocator, including independent reproducibility builds and extracted
-consumers. Run the complete native aggregate, allocator commands, ordered
-qualification, model/fault/stress/soak, ABI/interposition/TLS/fork/loader/DSO,
-std/LTO/source/corpus, dependency purity, and both performance contracts.
-Former C-backend or different-revision evidence cannot satisfy this rerun.
-
-The active goal is complete only when **all** of the following hold together:
-
-- The frozen baseline and all digests validate; all 223 capabilities are
-  complete exactly once, all 26 required families are `foundation-verified`
-  in dependency order, and no required product or qualification remains open.
-- Both owned products cover all four link modes, reproduce independently,
-  and pass the same installed and extracted suites without ambient inputs.
-- All native allocator M0–M11 gates, applicable APIs/modes, production
-  architecture, correctness, lifetime, fault/model, upstream/stress/soak, and
-  performance requirements pass; no remaining condition is hidden or waived.
-- Rust mimalloc is the qualified x86 default. C mimalloc is absent from its
-  target production dependency/build/artifact graph and survives only in
-  explicitly isolated oracle/comparison inputs. AArch64 is not falsely promoted.
-- `promotion_ready` is computed from complete evidence **before** public x86
-  support is enabled; `public_support = true` and public documentation agree,
-  and `campaign-promotion-check` plus `campaign-all` pass after that change.
-- Final reports bind the same clean committed source, target, pinned inputs,
-  and declared configurations, including post-promotion products. All required
-  external qualification and runtime performance-policy issues are resolved.
-
-Put final results in ignored reports. Do not create a new source commit merely
-to write its own SHA into a file being hashed. A necessary source change selects
-a successor candidate and requires affected requalification. The final response
-names the commit, proving commands/reports, parity and purity results, measured
-performance, and permitted limitations. Stop short only for explicit user
-interruption or a precise external/policy condition after independent work is
-exhausted; report that as incomplete, not as completion.
-
-## Deferred work
-
-These retained directions are **not active x86 completion gates**. They do not
-resume AArch64 or enlarge the frozen consumer roster. Activating them requires
-new direction consistent with the target pause and scope.
 
 **Sustained software-corpus performance.** After the focused scorecard passes,
 retain the C0–C4 progression: measurable pinned-corpus substrate; sustained C
