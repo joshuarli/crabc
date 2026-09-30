@@ -10202,7 +10202,7 @@ PY
         lua_admission_static_seen=false
         lua_admission_dynamic_seen=false
         while [ "$#" -gt 0 ]; do
-            [ "$#" -ge 2 ] || fail "lua-source-build-admission requires a value for $1"
+            [ "$#" -ge 2 ] || fail "lua-source-build-admission takes --output, --static-report and --dynamic-report with values"
             case "$1" in
                 --output)
                     [ "$lua_admission_output_seen" = false ] || fail "duplicate --output"
