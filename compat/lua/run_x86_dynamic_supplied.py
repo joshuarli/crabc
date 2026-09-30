@@ -209,6 +209,13 @@ def validate_cohort(
     extracted = _cohort_path(checkout, extracted, "supplied Lua extracted root", directory=True)
     require((installed.stat().st_dev, installed.stat().st_ino) != (extracted.stat().st_dev, extracted.stat().st_ino),
             "supplied Lua installed and extracted roots must be distinct")
+    payload = _read_qualification_receipt(receipt)
+    work = payload.get("work")
+    require(isinstance(work, str) and work and not Path(work).is_absolute()
+            and ".." not in Path(work).parts, "supplied Lua cohort has an invalid work root")
+    qualified_work = _cohort_path(checkout, checkout / work, "supplied Lua qualified work root", directory=True)
+    require(installed == qualified_work / "installed", "supplied Lua installed root is not the qualified installed arm")
+    require(extracted == qualified_work / "extracted", "supplied Lua extracted root is not the qualified extraction arm")
     reader = LUA.require_physical_regular_file(
         checkout / "compat/x86_64/owned_dynamic_qualification.py", "supplied Lua cohort receipt reader"
     )
@@ -219,7 +226,6 @@ def validate_cohort(
     )
     LUA.write_json_atomic(state / "cohort-validation.json", validation)
     DYNAMIC.require_success(validation, "supplied Lua cohort receipt reader")
-    payload = _read_qualification_receipt(receipt)
     products = payload["products"]
     assert isinstance(products, dict)
     roots = {

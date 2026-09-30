@@ -250,9 +250,16 @@ class SuppliedDynamicCohortIdentityTests(unittest.TestCase):
         (checkout / "compat/x86_64/owned_dynamic_qualification.py").write_text("reader")
         state = self.temporary / "failed-reader"
         state.mkdir()
-        installed = self.temporary / "installed"
-        extracted = self.temporary / "extracted"
-        installed.mkdir(); extracted.mkdir()
+        installed = checkout / ".work/products/installed"
+        extracted = checkout / ".work/products/extracted"
+        installed.mkdir(parents=True); extracted.mkdir()
+        receipt = checkout / ".work/products/receipt.json"
+        receipt.write_text(json.dumps({
+            "work": ".work/products", "status": "qualified-pending-review",
+            "source_sha256": "a" * 64,
+            "products": {label: "b" * 64 for label in ("installed", "second", "extracted")},
+            **{field: False for field in RUNNER._NONPROMOTING},
+        }))
         validation = {"command": ["python3", "reader"], "status": "TIMEOUT",
                       "stdout": {"text": "partial raw output"}, "stderr": {"text": ""}}
         with (
@@ -261,9 +268,36 @@ class SuppliedDynamicCohortIdentityTests(unittest.TestCase):
             mock.patch.object(RUNNER.LUA, "command_record", return_value=validation),
         ):
             with self.assertRaisesRegex(RUNNER.LUA.RunnerError, "TIMEOUT"):
-                RUNNER.validate_cohort(checkout=checkout, receipt=checkout / "receipt.json",
+                RUNNER.validate_cohort(checkout=checkout, receipt=receipt,
                                        installed=installed, extracted=extracted, state=state, timeout=5)
         self.assertEqual(json.loads((state / "cohort-validation.json").read_text()), validation)
+
+    def test_rebuilt_root_cannot_replace_the_qualified_extraction_arm(self) -> None:
+        checkout = self.temporary / "cohort"
+        work = checkout / ".work/products"
+        for label in ("installed", "second", "extracted"):
+            (work / label).mkdir(parents=True)
+        reader = checkout / "compat/x86_64/owned_dynamic_qualification.py"
+        reader.parent.mkdir(parents=True)
+        reader.write_text("reader")
+        receipt = work / "qualification.json"
+        receipt.write_text(json.dumps({
+            "work": ".work/products", "status": "qualified-pending-review",
+            "source_sha256": "a" * 64,
+            "products": {label: "b" * 64 for label in ("installed", "second", "extracted")},
+            **{field: False for field in RUNNER._NONPROMOTING},
+        }))
+        state = self.temporary / "role-reader"
+        state.mkdir()
+        with (
+            mock.patch.object(RUNNER, "_cohort_git_context", return_value=({}, {})),
+            mock.patch.object(RUNNER.LUA, "command_record", return_value={"status": 0}),
+            mock.patch.object(RUNNER, "_supplied_root_identity", return_value={}),
+        ):
+            with self.assertRaisesRegex(RUNNER.LUA.RunnerError, "extracted root"):
+                RUNNER.validate_cohort(checkout=checkout, receipt=receipt,
+                                       installed=work / "installed", extracted=work / "second",
+                                       state=state, timeout=5)
 
     def test_independent_frozen_clone_reader_uses_its_own_physical_git_directory(self) -> None:
         checkout = self.temporary / "retained-source"
