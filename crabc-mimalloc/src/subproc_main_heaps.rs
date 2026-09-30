@@ -107,13 +107,13 @@ const _: [(); 1] = [(); (size_of::<MainHeapTheapImage>() <= crate::config::ARENA
 /// The calling thread's state for its auxiliary allocated Theaps.
 ///
 /// Source keeps the slot array and the cached Theap in thread-local roots.
-/// The runtime's main-Heap owner requires the compiler-TLS dynamic-backing
-/// root to hold the empty image and the cached root to hold the empty Theap
-/// whenever it operates (it reaches the main-Heap Theap through the fast
-/// slot). This module therefore keeps both values here: the slot array is
-/// published in the compiler-TLS root only while one of its own slot
-/// operations runs, and `cached` is the actual source cached Theap pointer,
-/// with null standing only for the empty Theap.
+/// The fixed runtime page owner retains its own metadata capability and
+/// requires empty compiler-TLS backing and cache projections during a page
+/// session. This module retains the source slot backing and cache lifetime:
+/// slot operations publish the backing only for their bounded operation, and
+/// `cached` holds the actual source cached Theap pointer, with null standing
+/// only for the empty Theap. Source fast-slot replacement leaves the fixed
+/// runtime capability pinned independently of the selected sibling.
 struct ThreadHeaps {
     /// The regular thread-local slot array (`mi_thread_locals_t`).
     thread_locals: Option<ThreadLocalBackingOwner>,
@@ -729,7 +729,9 @@ pub(crate) unsafe fn native_heap_new_in_arena(arena: ArenaId) -> Option<NonNull<
 /// thread for a Heap of the process main subprocess.
 ///
 /// # Safety
-/// `heap` is a live Heap from [`native_heap_new`].
+/// `heap` is the permanent process-main Heap or a live Heap from
+/// [`native_heap_new`]. It belongs to the calling thread's subprocess and
+/// remains live through this call.
 pub(crate) unsafe fn native_heap_allocate(
     heap: NonNull<Heap>,
     size: usize,
