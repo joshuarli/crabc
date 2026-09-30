@@ -2,6 +2,7 @@
 """Compare public arena reservation, registration, queries, and ownership with pinned C."""
 
 from pathlib import Path
+import os
 import re
 
 import run as harness
@@ -94,5 +95,28 @@ def run_differential() -> int:
         return len(c_trace)
 
 
+def run_native_contract() -> None:
+    """Exercise public arena ownership through the non-test Rust runtime."""
+    harness.require_native_x86_64()
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    environment = dict(os.environ)
+    environment["CARGO_TARGET_DIR"] = str(ARTIFACTS / "native-contract-cargo")
+    execution = harness.command_record(
+        [harness.require_tool("cargo"), "test", "--locked", "--offline",
+         "--target", "x86_64-unknown-linux-musl", "-p", "crabc-mimalloc",
+         "--no-default-features", "--test", "native_arena_contract",
+         "--", "--test-threads=1", "--nocapture"],
+        cwd=harness.ROOT, env=environment,
+    )
+    output = str(execution["stdout"]) + str(execution["stderr"])
+    (ARTIFACTS / "native-contract.log").write_text(output)
+    harness.require_success(execution, "Public arena native runtime contract")
+    summaries = [line for line in output.splitlines() if line.startswith("test result:")]
+    if len(summaries) != 1 or "test result: ok. 1 passed; 0 failed; 0 ignored;" not in summaries[0]:
+        raise harness.HarnessError("public arena native runtime contract did not execute its ownership test")
+
+
 if __name__ == "__main__":
     print(f"Public arena: {run_differential()} source-built C/Rust keys match")
+    run_native_contract()
+    print("Public arena native runtime contract: 1 test passed")
