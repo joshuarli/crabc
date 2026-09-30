@@ -434,6 +434,13 @@ pub(crate) mod theap_page_session_sealed {
 /// exact stable Theap/Heap pair.
 pub(crate) unsafe trait TheapPageSession: theap_page_session_sealed::Sealed {
     fn theap(&self) -> &Theap;
+    /// Retains the session's original write-capable pointer for short local
+    /// scalar projections. Implementations must use their exclusive owner
+    /// capability, never derive write authority from `theap()`'s shared view.
+    /// The engine separately checks operation and fast-path eligibility.
+    #[cfg(target_arch = "x86_64")]
+    fn local_field_theap_pointer(&self) -> NonNull<Theap>;
+
     fn thread_id(&self) -> Option<LiveThreadId>;
     /// Runs OS placement draws against this session's source random image.
     /// Ordinary sessions use current compiler TLS; detached child metadata
@@ -882,6 +889,9 @@ impl ExclusiveTheapSession<'_> {
 impl theap_page_session_sealed::Sealed for ExclusiveTheapSession<'_> {}
 
 unsafe impl TheapPageSession for ExclusiveTheapSession<'_> {
+    #[cfg(target_arch = "x86_64")]
+    fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.theap_pointer() }
+
     #[inline]
     fn theap(&self) -> &Theap { Self::theap(self) }
     #[inline]

@@ -94,6 +94,9 @@ impl theap_page_session_sealed::Sealed for CanonicalMetadataTheapSession {}
 // separate interior-mutability/lock boundary. References are scoped to a
 // session borrow, so local mutation cannot overlap a returned observation.
 unsafe impl TheapPageSession for CanonicalMetadataTheapSession {
+    #[cfg(target_arch = "x86_64")]
+    fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.theap }
+
     fn theap(&self) -> &Theap { unsafe { self.theap.as_ref() } }
     fn thread_id(&self) -> Option<LiveThreadId> { None }
     fn with_os_random_source<R>(
@@ -454,6 +457,9 @@ impl theap_page_session_sealed::Sealed for ChildOrdinaryTheapPageSession<'_, '_>
 // unique local-field authority for its detached Theap. Child page backing and
 // Heap addresses remain retained by the external owner for the operation.
 unsafe impl TheapPageSession for ChildMetadataTheapPageSession<'_, '_> {
+    #[cfg(target_arch = "x86_64")]
+    fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.theap }
+
     fn theap(&self) -> &Theap { self.theap() }
     fn thread_id(&self) -> Option<LiveThreadId> { None }
 
@@ -561,6 +567,9 @@ unsafe impl TheapPageSession for ChildMetadataTheapPageSession<'_, '_> {
 // operation. The originating thread, or an exclusive sole-child vanished
 // owner continuation, is the only mutator of the local fields.
 unsafe impl TheapPageSession for ChildOrdinaryTheapPageSession<'_, '_> {
+    #[cfg(target_arch = "x86_64")]
+    fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.theap }
+
     fn permits_terminal_process_retirement(&self) -> bool {
         self.vanished_child_drain && self.pending_os_release.is_none()
             && *self.page_engine == crate::meta::ChildPageEngineState::Active

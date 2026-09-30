@@ -2498,6 +2498,9 @@ impl theap_page_session_sealed::Sealed for MainHeapThreadPageDrainSession<'_, '_
 // `MainStaticHeapLease`, while the paired process PageMap lease serializes the
 // source-plain map entries outside this session.
 unsafe impl TheapPageSession for MainHeapThreadPageSession<'_, '_> {
+    #[cfg(target_arch = "x86_64")]
+    fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.local_theap_pointer() }
+
     #[inline]
     fn theap(&self) -> &Theap { Self::theap(self) }
 
@@ -2779,6 +2782,9 @@ unsafe impl TheapPageSession for MainHeapThreadPageSession<'_, '_> {
 // source force collection that precedes all-free release. Its only wrapper
 // exposes draining, not ordinary allocation or fresh publication.
 unsafe impl TheapPageSession for MainHeapThreadPageDrainSession<'_, '_> {
+    #[cfg(target_arch = "x86_64")]
+    fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.local_theap_pointer() }
+
     #[inline]
     fn theap(&self) -> &Theap { Self::theap(self) }
 

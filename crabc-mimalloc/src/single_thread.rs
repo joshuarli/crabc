@@ -4712,6 +4712,9 @@ impl theap_page_session_sealed::Sealed for SourceRetainedTheapSession {}
 // queue before any ordinary mutation. This free-only session has no fresh
 // publication operation and survives only one synchronous engine call.
 unsafe impl TheapPageSession for SourceRetainedTheapSession {
+    #[cfg(target_arch = "x86_64")]
+    fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.theap }
+
     #[inline]
     fn theap(&self) -> &Theap { Self::theap(self) }
 
@@ -5050,6 +5053,9 @@ impl theap_page_session_sealed::Sealed for OwnerLocalMainHeapPageSession {}
 // list identity. The continuously stored engine owns all page state, and the
 // guard clears the erased pointer before the attachment borrow ends.
 unsafe impl TheapPageSession for OwnerLocalMainHeapPageSession {
+    #[cfg(target_arch = "x86_64")]
+    fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.active().local_field_theap_pointer() }
+
     fn permits_terminal_process_retirement(&self) -> bool {
         self.active.is_none() && self.mapped_abandoned_claim_selector.is_none()
             && self.thread_sequence != 0
@@ -20765,6 +20771,9 @@ impl<'main, 'arena> ThreadExitMappedRegularPagesPostExitParts<'main, 'arena> {
         // the selected page's low owner bit.
         let expected_page = NonNull::new(unsafe { target.page_map.checked_lookup(client.as_ptr()) })
             .ok_or(ThreadExitMappedRegularPagesPostExitAdoptError::Unmapped)?;
+        #[cfg(target_arch = "x86_64")]
+        let target_theap = target.session.local_field_theap_pointer();
+        #[cfg(not(target_arch = "x86_64"))]
         let target_theap = NonNull::from(target.session.theap());
         let Some(target_thread) = target.session.thread_id() else {
             return Err(ThreadExitMappedRegularPagesPostExitAdoptError::MissingTargetThread);
@@ -21522,6 +21531,9 @@ impl<'main, 'arena> ThreadExitMappedRegularPostExitParts<'main, 'arena> {
         {
             return Err(ThreadExitMappedRegularPostExitAdoptError::InvalidSpan);
         }
+        #[cfg(target_arch = "x86_64")]
+        let target_theap = target.session.local_field_theap_pointer();
+        #[cfg(not(target_arch = "x86_64"))]
         let target_theap = NonNull::from(target.session.theap());
         let Some(target_thread) = target.session.thread_id() else {
             return Err(ThreadExitMappedRegularPostExitAdoptError::MissingTargetThread);
@@ -36985,6 +36997,9 @@ impl<'attach, 'heap, 'arena, 'map>
                 None => return Err(reject(self, DynamicMappedRemoteFreeError::InvalidBlock)),
             }
         };
+        #[cfg(target_arch = "x86_64")]
+        let target_theap = self.engine.session.local_field_theap_pointer();
+        #[cfg(not(target_arch = "x86_64"))]
         let target_theap = NonNull::from(self.engine.session.theap());
         let result = {
             let Some(map) = self.engine.session.mapped_abandoned_page(
@@ -37058,6 +37073,9 @@ impl<'attach, 'heap, 'arena, 'map>
         if self.terminal {
             return Err(DynamicMappedAdoptFailure::Terminal(self));
         }
+        #[cfg(target_arch = "x86_64")]
+        let target_theap = self.engine.session.local_field_theap_pointer();
+        #[cfg(not(target_arch = "x86_64"))]
         let target_theap = NonNull::from(self.engine.session.theap());
         let Some(target_thread) = self.engine.session.thread_id() else {
             self.terminal = true;
@@ -37409,6 +37427,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 return Declined;
             }
         }
+        #[cfg(target_arch = "x86_64")]
+        let theap = self.session.local_field_theap_pointer();
+        #[cfg(not(target_arch = "x86_64"))]
         let theap = NonNull::from(theap);
         // SAFETY: `theap` is this engine's own Theap for the page's Heap and
         // `thread` its owner; the page is appended to its queue immediately.
@@ -38803,6 +38824,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         let Some(target_thread) = self.session.thread_id() else {
             return Err(GenericPathError::Lifecycle);
         };
+        #[cfg(target_arch = "x86_64")]
+        let target_theap = self.session.local_field_theap_pointer();
+        #[cfg(not(target_arch = "x86_64"))]
         let target_theap = NonNull::from(self.session.theap());
         let page_map = self.page_map;
         let candidates = self.arena.reclaim_arenas(self.requested_arena, self.thread_sequence);
@@ -38899,6 +38923,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             source.retain_root();
             return Err(GenericPathError::Lifecycle);
         };
+        #[cfg(target_arch = "x86_64")]
+        let target_theap = self.session.local_field_theap_pointer();
+        #[cfg(not(target_arch = "x86_64"))]
         let target_theap = NonNull::from(self.session.theap());
         let Some(target_heap) = NonNull::new(self.session.theap().heap()) else {
             source.retain_root();
@@ -40931,7 +40958,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return None;
         }
         Some(crate::local_fast_path::LocalFastOwner {
-            theap: NonNull::from(self.session.theap()),
+            theap: self.session.local_field_theap_pointer(),
             page_map: NonNull::from(self.page_map),
         })
     }
@@ -44283,6 +44310,65 @@ mod tests {
             unsafe { is_zero.write(true) };
         }
         true
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn local_fast_owner_retirement_preserves_session_write_authority() {
+        with_local_fast_owner_allocator(|allocator| {
+            let owner = allocator.local_fast_owner().expect("live engine grants local ownership");
+            // SAFETY: this synchronous engine retains its exclusive session;
+            // only the owner-local retired-bin scalar fields are modified.
+            assert!(unsafe { Theap::note_local_retired_bin_at(owner.theap, 3) });
+            assert_eq!(allocator.session.retired_bounds(), (3, 3));
+        });
+    }
+
+    fn with_local_fast_owner_allocator(test: impl FnOnce(&mut SingleThreadAllocator<'_, '_, '_>)) {
+        let mut region = AlignedRegion::zeroed();
+        let subprocess = MainSubprocess::new();
+        let registry = ArenaRegistry::new(subprocess.as_ptr());
+        let managed = unsafe {
+            manage_external_in_place(
+                &registry,
+                region.as_ptr(),
+                ARENA_MIN_SIZE,
+                PageSize::new(4096).unwrap(),
+                true,
+                true,
+                true,
+                -1,
+                false,
+                None,
+            )
+        }
+        .unwrap();
+        let arena = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }.unwrap();
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).unwrap(),
+            1024 * 1024,
+            false,
+            false,
+        );
+        let mut page_map = PageMap::initialize(config, 0, true).unwrap();
+        let bootstrap = ExclusiveTheapBootstrap::new();
+        let mut bootstrap = core::pin::pin!(bootstrap);
+        let mut allocator = SingleThreadAllocator::activate(
+            bootstrap.as_mut(),
+            LiveThreadId::new(12).unwrap(),
+            arena,
+            ArenaId::none(),
+            &mut page_map,
+            0,
+        )
+        .unwrap();
+
+        test(&mut allocator);
+        assert!(allocator.collect_retired(true));
+        drop(allocator);
+        // SAFETY: force collection removed every page-map entry and all local
+        // users before the explicit page-map destruction boundary.
+        unsafe { page_map.destroy() }.unwrap();
     }
 
     fn with_allocator(test: impl FnOnce(&mut SingleThreadAllocator<'_, '_, '_>)) {

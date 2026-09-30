@@ -1849,6 +1849,14 @@ pub(crate) struct ExclusiveArenaTheapStorage<'arena, 'subprocess> {
 }
 
 impl<'arena, 'subprocess> ExclusiveArenaTheapStorage<'arena, 'subprocess> {
+    /// Retains the original initialized prefix capability without creating a
+    /// whole-image reference. Its local fields may be mutated only by a
+    /// sealed owner-bound session that excludes overlapping local access;
+    /// this pointer grants no independent release or extended lifetime.
+    #[cfg(target_arch = "x86_64")]
+    #[inline]
+    pub(crate) fn prefix_pointer(&self) -> NonNull<Theap> { self.prefix }
+
     #[inline]
     pub(crate) const fn memory_id(&self) -> MemoryId {
         self.reservation.memory_id()

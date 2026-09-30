@@ -279,6 +279,14 @@ enum DynamicTheapStorage<'arena> {
 }
 
 impl DynamicTheapStorage<'_> {
+    #[cfg(target_arch = "x86_64")]
+    fn local_field_theap_pointer(&self) -> Option<NonNull<Theap>> {
+        match self {
+            Self::Malloc(allocation) => allocation.dynamic_theap_pointer(),
+            Self::Arena { storage, .. } => storage.as_ref().map(|s| s.prefix_pointer()),
+        }
+    }
+
     fn memory_id(&self) -> MemoryId {
         match self {
             Self::Malloc(allocation) => allocation.memory_id(),
@@ -2673,6 +2681,9 @@ impl theap_page_session_sealed::Sealed for DynamicTheapPageDrainSession<'_, '_> 
 // That borrow retains the typed metadata, regular key/backing, cached ref,
 // and pinned Heap for every engine/producers' raw page lifetime.
 unsafe impl TheapPageSession for DynamicTheapPageSession<'_, '_> {
+    #[cfg(target_arch = "x86_64")]
+    fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.attachment.theap.as_ref().and_then(DynamicTheapStorage::local_field_theap_pointer).expect("live dynamic session retains its typed Theap") }
+
     #[inline]
     fn theap(&self) -> &Theap { self.dynamic_theap() }
 
@@ -2818,6 +2829,9 @@ unsafe impl TheapPageSession for DynamicTheapPageSession<'_, '_> {
 // precedes abandonment; no ordinary allocation entry point receives this
 // session type.
 unsafe impl TheapPageSession for DynamicTheapPageDrainSession<'_, '_> {
+    #[cfg(target_arch = "x86_64")]
+    fn local_field_theap_pointer(&self) -> NonNull<Theap> { self.attachment.theap.as_ref().and_then(DynamicTheapStorage::local_field_theap_pointer).expect("draining session retains its typed Theap") }
+
     #[inline]
     fn theap(&self) -> &Theap { self.dynamic_theap() }
 

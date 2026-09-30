@@ -3284,6 +3284,13 @@ impl MainStaticTheapPageSession for MainStaticProcessPageSession {}
 // map mutation lease supplies the separate exclusion required for PageMap
 // plain entries; this session selects only the arena's embedded main bitmap.
 unsafe impl TheapPageSession for MainStaticPageSession<'_> {
+    #[cfg(target_arch = "x86_64")]
+    fn local_field_theap_pointer(&self) -> NonNull<Theap> {
+        // SAFETY: the attachment's exclusive session retains this initialized
+        // static image and its local-field authority without a shared retag.
+        unsafe { NonNull::new_unchecked(self.attachment.storage.theap.image.get()) }
+    }
+
     #[inline]
     fn theap(&self) -> &Theap { Self::theap(self) }
 
@@ -3466,6 +3473,13 @@ unsafe impl TheapPageSession for MainStaticPageSession<'_> {
 // Heap access is serialized through `shared_heap_projection_lock`, while the
 // paired process map lease remains the separate plain PageMap exclusion.
 unsafe impl TheapPageSession for MainStaticProcessPageSession {
+    #[cfg(target_arch = "x86_64")]
+    fn local_field_theap_pointer(&self) -> NonNull<Theap> {
+        // SAFETY: the ticket-zero process session retains the initialized
+        // static image; later owners mutate only separately locked links.
+        unsafe { NonNull::new_unchecked(self.storage.theap.image.get()) }
+    }
+
     fn permits_terminal_process_retirement(&self) -> bool {
         self.storage.state.load(Ordering::Acquire) == THREAD_READY
             && self.storage.process_page_session.load(Ordering::Acquire) == PROCESS_PAGE_SESSION_ACTIVE
@@ -3506,7 +3520,7 @@ unsafe impl TheapPageSession for MainStaticProcessPageSession {
     fn deferred_free_source(&self) -> Option<crate::deferred_free::DeferredFreeSource> {
         self.is_current().then(|| {
             crate::deferred_free::DeferredFreeSource::capture(
-                NonNull::from(self.theap()),
+                self.local_field_theap_pointer(),
                 self.thread,
             )
         }).flatten()
@@ -3683,18 +3697,18 @@ unsafe impl TheapPageSession for MainStaticProcessPageSession {
             return None;
         }
         let thread = self.thread;
-        let theap = self.storage.theap.image.get();
-        let published = self.with_heap(|heap| {
-            // SAFETY: this process-lifetime session is the sole mutable
-            // projection of the static ticket-zero Theap. The raw pointer is
-            // formed before the independent short Heap-lock borrow so the
-            // closure never aliases `self` itself.
-            let theap = unsafe { &mut *theap };
-            // SAFETY: the engine forwarded the raw metadata/block-area proof;
-            // this session owns the matching static Theap, and the short heap
-            // lock permits only this shared address association.
+        // SAFETY: this permanent session retains both initialized static
+        // images. Keep their original capabilities: a whole-Theap mutable
+        // borrow would invalidate the owner pointers already stored in TLS
+        // and source lists, even while the independent Heap lock is held.
+        let theap = unsafe { NonNull::new_unchecked(self.storage.theap.image.get()) };
+        let heap = unsafe { NonNull::new_unchecked(self.storage.heap.image.get()) };
+        let published = self.with_heap(|_heap| {
+            // SAFETY: the engine forwards the exclusive metadata/block-area
+            // proof; the session owns local fields and the Heap lock retains
+            // the matching owner association throughout publication.
             unsafe {
-                Page::publish_fresh_exclusive_owner_at(
+                Page::publish_fresh_exclusive_owner_at_with_pointers(
                     metadata,
                     theap,
                     heap,
@@ -3841,6 +3855,70 @@ mod tests {
     use core::sync::atomic::{AtomicUsize, Ordering};
     use std::boxed::Box;
     use std::thread;
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn process_page_session_deferred_source_retains_heartbeat_write_authority() {
+        crate::test_process::run_in_fresh_process(
+            "main_theap::tests::process_page_session_deferred_source_retains_heartbeat_write_authority",
+            || {
+                static STORAGE: MainStaticAttachmentStorage = MainStaticAttachmentStorage::new();
+                static SUBPROCESS: MainSubprocess = MainSubprocess::new();
+                // SAFETY: this isolated thread owns its pristine allocator
+                // roots and the real static images outlive the retained session.
+                let owner = unsafe {
+                    MainStaticTheapAttachment::begin_with_test_storage(&STORAGE, &SUBPROCESS)
+                }.expect("fresh static owner attaches");
+                let session = owner.begin_process_lifetime_page_session()
+                    .expect("static owner grants its permanent page session");
+                let source = session.deferred_free_source().expect("current source is captured");
+                let first = source.begin(false).expect("source heartbeat advances").heartbeat();
+                let second = source.begin(false).expect("same live source remains writable").heartbeat();
+                assert_eq!(second, first.wrapping_add(1));
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn process_page_publication_preserves_published_tls_theap_capability() {
+        crate::test_process::run_in_fresh_process(
+            "main_theap::tests::process_page_publication_preserves_published_tls_theap_capability",
+            || {
+                static STORAGE: MainStaticAttachmentStorage = MainStaticAttachmentStorage::new();
+                static SUBPROCESS: MainSubprocess = MainSubprocess::new();
+                // SAFETY: this fresh thread owns its pristine roots; the
+                // static owner images outlive the permanent page session.
+                let owner = unsafe {
+                    MainStaticTheapAttachment::begin_with_test_storage(&STORAGE, &SUBPROCESS)
+                }.expect("fresh static owner attaches");
+                let mut session = owner.begin_process_lifetime_page_session()
+                    .expect("static owner grants its permanent page session");
+                let tls_theap = default_theap();
+                #[repr(C)]
+                struct FreshPage {
+                    page: core::mem::MaybeUninit<Page>,
+                    area: [u8; 8],
+                }
+                let mut backing = FreshPage {
+                    page: core::mem::MaybeUninit::uninit(), area: [0; 8],
+                };
+                let metadata = NonNull::from(&mut backing.page).cast::<Page>();
+                // SAFETY: aligned uninitialized Page storage is followed by
+                // one exclusive eight-byte block; no queue or map observes it.
+                let mut page = unsafe {
+                    session.publish_fresh_page(metadata, 8, size_of::<Page>(), 1, 0,
+                        true, MemoryId::none())
+                }.expect("fresh page publishes its owner association");
+                // SAFETY: the original compiler-TLS owner remains live;
+                // page publication must preserve that exact owner capability.
+                assert_eq!(unsafe { Theap::heap_at(tls_theap) }, STORAGE.heap.image.get());
+                // SAFETY: the page was never queued or registered and has no
+                // client or observer; remove its association before storage ends.
+                unsafe { page.as_mut().disassociate_exclusive() };
+            },
+        );
+    }
 
     fn fixture() -> (&'static MainStaticAttachmentStorage, &'static MainSubprocess) {
         (
