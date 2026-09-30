@@ -2,8 +2,8 @@
 //!
 //! Linux/AArch64 exposes the complete typed mask, waiting, queue, descriptor,
 //! and alternate-stack families. The staged x86-64 surface is deliberately
-//! narrower: one-argument handler actions and delivery to the current or a
-//! known thread in the calling process.
+//! narrower: one-argument handler actions, delivery to the current or a
+//! known thread in the calling process, and typed signal descriptors.
 //! Handler installation is unsafe because the kernel can later enter supplied
 //! code at an arbitrary interruption point. This module uses `crabc-core`'s
 //! direct kernel seams exclusively; it never calls the public C ABI or reads
@@ -25,7 +25,7 @@ use bitflags::bitflags;
 use crate::process::{self, Pid};
 #[cfg(target_arch = "aarch64")]
 use crate::time::Timespec;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 use crate::{AsFd, Errno, OwnedFd};
 use crate::Result;
 
@@ -245,19 +245,19 @@ const SIGINFO_PID_OFFSET: usize = 16;
 const SIGINFO_UID_OFFSET: usize = 20;
 #[cfg(target_arch = "aarch64")]
 const SIGINFO_VALUE_OFFSET: usize = 24;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGNALFD_SIGNO_OFFSET: usize = 0;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGNALFD_ERRNO_OFFSET: usize = 4;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGNALFD_CODE_OFFSET: usize = 8;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGNALFD_PID_OFFSET: usize = 12;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGNALFD_UID_OFFSET: usize = 16;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGNALFD_STATUS_OFFSET: usize = 40;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIGNALFD_VALUE_OFFSET: usize = 44;
 
 // This is intentionally private and uniquely named so a program may link
@@ -403,7 +403,7 @@ impl SignalSet {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 bitflags! {
     /// Flags accepted by Linux `signalfd4`.
     #[repr(transparent)]
@@ -420,15 +420,15 @@ bitflags! {
 
 /// One fixed-width signal event read from a Linux signal file descriptor.
 ///
-/// This is intentionally distinct from [`SigInfo`]: Linux `signalfd4`
+/// This is intentionally distinct from Linux `siginfo_t`: Linux `signalfd4`
 /// presents a stable descriptor record, not the in-memory `siginfo_t` passed
 /// to handlers and synchronous waits.
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct SignalFdInfo([u8; 128]);
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 impl SignalFdInfo {
     /// Returns the raw signal number reported by the descriptor.
     #[inline]
@@ -494,7 +494,7 @@ impl SignalFdInfo {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 impl fmt::Debug for SignalFdInfo {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -1114,10 +1114,10 @@ pub fn raise(signal: Signal) -> Result<()> {
 /// thread which could otherwise receive them.
 ///
 /// A signal file descriptor does not block the selected signals itself; use
-/// [`block`] or [`set_mask`] before relying on descriptor delivery. The
-/// returned descriptor is an owned native resource and never crosses the C
+/// the calling runtime's signal-mask facility before relying on descriptor
+/// delivery. The returned descriptor is an owned native resource and never crosses the C
 /// ABI.
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 pub fn signalfd(mask: &SignalSet, flags: SignalFdFlags) -> Result<OwnedFd> {
     // SAFETY: `mask` owns the one kernel signal-set word for this invocation;
@@ -1131,8 +1131,9 @@ pub fn signalfd(mask: &SignalSet, flags: SignalFdFlags) -> Result<OwnedFd> {
 /// Replaces the selected mask of an existing Linux signal descriptor.
 ///
 /// As with [`signalfd`], callers must arrange signal masks for all relevant
-/// threads before expecting descriptor delivery.
-#[cfg(target_arch = "aarch64")]
+/// threads before expecting descriptor delivery. Descriptor flags stay unchanged;
+/// a borrowed descriptor of another kind reports the kernel's error.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 pub fn signalfd_update<Fd: AsFd>(fd: Fd, mask: &SignalSet) -> Result<()> {
     let fd = fd.as_fd();
@@ -1142,7 +1143,12 @@ pub fn signalfd_update<Fd: AsFd>(fd: Fd, mask: &SignalSet) -> Result<()> {
 }
 
 /// Reads one complete Linux signal-descriptor record.
-#[cfg(target_arch = "aarch64")]
+///
+/// This consumes one pending selected signal. Nonblocking descriptors return
+/// `EAGAIN` when none is pending. The descriptor stays borrowed for the call;
+/// a read shorter than the fixed 128-byte record reports `EIO` without exposing
+/// partially initialized storage.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 pub fn read_signalfd<Fd: AsFd>(fd: Fd) -> Result<SignalFdInfo> {
     let fd = fd.as_fd();

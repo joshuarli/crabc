@@ -235,7 +235,9 @@ static int signalfd_composition(void)
     struct epoll_event result[2];
     struct pollfd polled[2];
     eventfd_t value;
-    int signal_fd, counter, epoll_fd, descriptor_flags, status_flags;
+    int signal_fd, counter, epoll_fd, descriptor_flags, status_flags, duplicate;
+    unsigned char short_record[127];
+    union sigval queued = { .sival_int = -1234567 };
 
     if (sigemptyset(&selected) || sigaddset(&selected, SIGUSR1) ||
         sigemptyset(&empty) || sigprocmask(SIG_BLOCK, &selected, &previous))
@@ -259,11 +261,20 @@ static int signalfd_composition(void)
         !((result[0].data.u64 == 61 && result[1].data.u64 == 62) ||
           (result[0].data.u64 == 62 && result[1].data.u64 == 61)))
         return 123;
+    errno = 0;
+    if (!expect_error(read(signal_fd, short_record, sizeof(short_record)), EINVAL))
+        return 127;
     if (read(signal_fd, &info, sizeof(info)) != sizeof(info) ||
         info.ssi_signo != SIGUSR1 || info.ssi_pid != (uint32_t)getpid() ||
+        info.ssi_uid != getuid() || info.ssi_code != SI_TKILL || info.ssi_errno != 0 ||
         eventfd_read(counter, &value) || value != 3 || poll(polled, 2, 0) != 0 ||
         !no_ready_events(epoll_fd))
         return 124;
+    if (sigqueue(getpid(), SIGUSR1, queued) ||
+        read(signal_fd, &info, sizeof(info)) != sizeof(info) ||
+        info.ssi_code != SI_QUEUE || info.ssi_int != -1234567 ||
+        info.ssi_pid != (uint32_t)getpid() || info.ssi_uid != getuid())
+        return 128;
     if (signalfd(signal_fd, &empty, 0) != signal_fd || raise(SIGUSR1) ||
         poll(polled, 2, 0) != 0 || !no_ready_events(epoll_fd) ||
         sigpending(&pending) || sigismember(&pending, SIGUSR1) != 1 ||
@@ -278,7 +289,13 @@ static int signalfd_composition(void)
         sigismember(&pending, SIGUSR1) != 0 ||
         descriptor_flags < 0 || !(descriptor_flags & FD_CLOEXEC) ||
         status_flags < 0 || !(status_flags & O_NONBLOCK) ||
-        close(signal_fd) || close(counter) || close(epoll_fd) ||
+        (duplicate = dup(signal_fd)) < 0 || close(signal_fd))
+        return 126;
+    errno = 0;
+    if (!expect_error(fcntl(signal_fd, F_GETFD), EBADF) || raise(SIGUSR1) ||
+        read(duplicate, &info, sizeof(info)) != sizeof(info) ||
+        info.ssi_signo != SIGUSR1 || close(duplicate) ||
+        !no_ready_events(epoll_fd) || close(counter) || close(epoll_fd) ||
         sigprocmask(SIG_SETMASK, &previous, NULL))
         return 126;
     return 0;
