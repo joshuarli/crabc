@@ -6,6 +6,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <unistd.h>
+
+static int diagnostic;
+#define STAGE(text) do { if (diagnostic) { \
+  static const char line[]="stage=" text "\n"; \
+  (void)write(STDERR_FILENO,line,sizeof(line)-1); \
+} } while (0)
 
 static void required(int condition) { if (!condition) exit(2); }
 static void membership(const char* key, mi_heap_t* owner, mi_heap_t* other, const void* p) {
@@ -54,21 +61,30 @@ static void owner_exit_case(int child, mi_heap_t* root_main) {
   pthread_t thread;
   required(pthread_create(&thread,NULL,exiting_owner,&owner)==0);
   required(pthread_join(thread,NULL)==0);
+  STAGE("owner-joined");
   printf("owner%d.identity=%d\n",child,owner.main==root_main);
   char key[80];
   snprintf(key,sizeof key,"owner%d.main",child);
   membership(key,owner.main,owner.auxiliary,owner.main_block);
   snprintf(key,sizeof key,"owner%d.auxiliary",child);
   membership(key,owner.auxiliary,owner.main,owner.auxiliary_block);
+  STAGE("before-auxiliary-delete");
   mi_heap_delete(owner.auxiliary);
+  STAGE("after-auxiliary-delete");
   /* Deletion moves live pages to the subprocess main Heap. The released
    * auxiliary identity is never passed to a later query. */
   snprintf(key,sizeof key,"owner%d.moved",child);
+  STAGE("before-moved-membership");
   membership(key,owner.main,root_main,owner.auxiliary_block);
+  STAGE("after-moved-membership");
   printf("owner%d.content=%d,%d\n",child,
       ((unsigned char*)owner.main_block)[332]==0x39,
       ((unsigned char*)owner.auxiliary_block)[776]==0x73);
-  mi_free(owner.main_block); mi_free(owner.auxiliary_block);
+  STAGE("before-main-free");
+  mi_free(owner.main_block);
+  STAGE("after-main-free");
+  mi_free(owner.auxiliary_block);
+  STAGE("after-moved-free");
   if (child) mi_subproc_destroy(owner.subprocess);
 }
 
@@ -110,8 +126,18 @@ static void utilization_case(mi_heap_t* main) {
   mi_heap_delete(heap);
 }
 
-int main(void) {
+int main(int argc, char** argv) {
   mi_option_set(mi_option_show_errors,0);
+  if (argc==2) {
+    diagnostic=1;
+    mi_heap_t* main=mi_heap_main(); required(main!=NULL);
+    if (!strcmp(argv[1],"owner-main")) owner_exit_case(0,main);
+    else if (!strcmp(argv[1],"owner-child")) owner_exit_case(1,main);
+    else if (!strcmp(argv[1],"utilization-owner-main")) { utilization_case(main); owner_exit_case(0,main); }
+    else return 2;
+    return 0;
+  }
+  if (argc!=1) return 2;
   mi_heap_t* main=mi_heap_main(); mi_heap_t* heap=mi_heap_new(); required(main!=NULL && heap!=NULL);
   int stack=0;
   void* foreign=mmap(NULL,4096,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
