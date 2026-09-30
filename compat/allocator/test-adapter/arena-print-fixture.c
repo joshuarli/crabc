@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #ifdef CRABC_PREFIXED
-#include "crabc-mimalloc-test-adapter.h"
+#include "crabc-mimalloc-test-arena-adapter.h"
 #define allocate crabc_test_malloc
 #define release crabc_test_free
 #define register_output crabc_test_register_output

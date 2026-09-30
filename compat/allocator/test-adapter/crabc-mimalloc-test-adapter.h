@@ -33,15 +33,6 @@ extern "C" {
 int crabc_test_init(void);
 int crabc_test_shutdown(void);
 
-/* Creating-thread, serialized output pair. The callback and argument remain
- * live until replacement or completed shutdown; message fragments may not be
- * retained after delivery. Callbacks may allocate/free, but must not replace
- * the pair, shut down the context, or unwind during a diagnostic traversal.
- * Inactive and foreign-thread diagnostic calls produce no output. */
-void crabc_test_register_output(void (*output)(const char *, void *), void *argument);
-void crabc_test_debug_show_arenas(void);
-void crabc_test_arenas_print(void);
-
 void *crabc_test_malloc(size_t size);
 void *crabc_test_zalloc(size_t size);
 void *crabc_test_calloc(size_t count, size_t size);
