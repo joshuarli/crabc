@@ -41831,12 +41831,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // session's ordinary abandoning option alone. In particular,
             // `mi_page_is_huge` routes an aligned OS singleton through
             // `BIN_HUGE` even when its block size has an ordinary class.
-            let is_os_huge_singleton = unsafe {
-                let page_ref = page.as_ref();
-                page_ref.memid().is_os() && page_is_huge(page_ref)
-            };
-            if is_os_huge_singleton {
-                return self.abandon_selected_main_os_singleton_page_from_full(
+            let is_os = unsafe { page.as_ref().memid().is_os() };
+            if is_os {
+                return self.abandon_selected_main_os_page_from_full(
                     bin,
                     page,
                     popped_block,
@@ -41904,7 +41901,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// Pinned `page.c:mi_page_to_full` gives both regular arena pages and
     /// arena singletons to `_mi_page_abandon`.  The class-specific helpers
     /// below keep their distinct arena publication and later-free contracts;
-    /// this shared preflight proves only the owner, arena provenance, and live
+    /// this shared preflight proves only the owner and live
     /// source-page association that both forms require.
     fn selected_main_arena_full_page_preflight(
         &self,
@@ -41988,30 +41985,35 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         Ok(())
     }
 
-    /// Validates the selected-main non-arena singleton form of
-    /// `page.c:mi_page_to_full`. Unlike an arena singleton it must first
+    /// Validates the selected-owner non-arena form of
+    /// `page.c:mi_page_to_full`. Every OS page must first
     /// become a member of `heap->os_abandoned_pages`; no arena bitmap or
     /// synthetic BIN_FULL route can represent that source ownership.
-    fn selected_main_os_singleton_page_full_preflight(
+    fn selected_main_os_page_full_preflight(
         &self,
         bin: usize,
         page: NonNull<Page>,
     ) -> Result<(), SelectedMainArenaRegularFullPreflightError> {
         self.selected_main_arena_full_page_preflight(page)?;
-        if bin != BIN_HUGE {
-            return Err(SelectedMainArenaRegularFullPreflightError::SingletonQueueIsNotHuge);
-        }
-        // SAFETY: the common preflight above retained the same exclusive page
-        // borrow through this source-provenance read.
+        // SAFETY: the common preflight retained the same exclusive page
+        // borrow through the memory and queue geometry projections.
         let page = unsafe { page.as_ref() };
         if !page.memid().is_os() {
             return Err(SelectedMainArenaRegularFullPreflightError::MemoryIsNotOs);
         }
-        // `mi_page_is_huge` selects `BIN_HUGE` from singleton geometry and
-        // OS mapping placement. Its block size can still be Small, Medium, or
-        // Large, so a request-size class cannot prove or reject this route.
-        if !page_is_huge(page) {
-            return Err(SelectedMainArenaRegularFullPreflightError::SingletonQueueIsNotHuge);
+        // Mapping placement can make an ordinary size class a singleton.
+        // Otherwise the original regular queue is the source detach owner.
+        if page_is_huge(page) {
+            if bin != BIN_HUGE {
+                return Err(SelectedMainArenaRegularFullPreflightError::SingletonQueueIsNotHuge);
+            }
+        } else if bin >= ARENA_BIN_COUNT || size_class::bin(page.block_size()) != Some(bin) {
+            return Err(SelectedMainArenaRegularFullPreflightError::NonArenaQueue);
+        } else if !matches!(
+            size_class::page_kind_for_block_size(page.block_size()),
+            Some(PageKind::Small | PageKind::Medium | PageKind::Large)
+        ) {
+            return Err(SelectedMainArenaRegularFullPreflightError::PageKindIsNotRegular);
         }
         Ok(())
     }
@@ -42236,22 +42238,22 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
     }
 
-    /// Ports the non-arena full-singleton form of `page.c:_mi_page_abandon`.
+    /// Ports the non-arena full-page form of `page.c:_mi_page_abandon`.
     ///
-    /// An ordinary selected Theap still abandons a full OS singleton. Its
+    /// An ordinary selected Theap abandons every full OS-backed page. Its
     /// original OS mapping and alignment provenance remain in the page while
     /// source `_mi_arenas_page_abandon` links the detached member into the
-    /// static Heap's private list before releasing the abandoned low owner
+    /// owning Heap's private list before releasing the abandoned low owner
     /// bit. A later legal client free must remove that exact list member and
     /// consume the existing clipped-map release owner; it never reuses an
     /// arena bitmap, an artificial full queue, or a request-size special case.
-    fn abandon_selected_main_os_singleton_page_from_full(
+    fn abandon_selected_main_os_page_from_full(
         &mut self,
         bin: usize,
         page: NonNull<Page>,
         popped_block: Option<NonNull<u8>>,
     ) -> Result<(), PageToFullError> {
-        if let Err(preflight) = self.selected_main_os_singleton_page_full_preflight(bin, page) {
+        if let Err(preflight) = self.selected_main_os_page_full_preflight(bin, page) {
             self.retain_selected_main_full_preflight_poison(page, popped_block, preflight);
             return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
         }
@@ -42261,7 +42263,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
 
         // Source performs its all-free decision before queue detach. A
-        // joined remote free may have made the one-block singleton empty.
+        // joined remote free may have made the page empty.
         let used = unsafe { Page::owner_used_at(page) };
         if used == 0 {
             if self.release_page(bin, page.as_ptr()) {
@@ -42270,22 +42272,25 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
             return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
         }
-        if used != 1 {
+        if used > usize::from(unsafe { page.as_ref().reserved() })
+            || (unsafe { page_is_huge(page.as_ref()) } && used != 1)
+        {
             self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
             return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
         }
 
-        let huge = match self.session.queue_mut(BIN_HUGE) {
+        let queue = match self.session.queue_mut(bin) {
             Some(queue) => queue as *mut _,
             None => {
                 self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
                 return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
             }
         };
-        // SAFETY: false collection retained this source-live BIN_HUGE member;
+        // SAFETY: false collection retained this source-live queue member;
         // the exact queue/direct/count owner must disappear before the
         // private OS abandoned-list publication.
-        unsafe { page_queue_remove_metadata(&mut *huge, page.as_ptr()) };
+        unsafe { page_queue_remove_metadata(&mut *queue, page.as_ptr()) };
+        self.update_direct_cache(bin);
         if !self.session.note_page_removed() {
             self.retain_page_collect_poison(page, PageCollectError::Lifecycle, popped_block);
             return Err(PageToFullError::Collection(PageCollectError::Lifecycle));
@@ -42376,7 +42381,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     }
 
     /// Returns whether `page` is the exact detached non-arena singleton
-    /// produced by [`Self::abandon_selected_main_os_singleton_page_from_full`].
+    /// produced by [`Self::abandon_selected_main_os_page_from_full`].
     /// Its original Theap pointer is source provenance only; the private OS
     /// abandoned list, not a local queue, owns the page until this free claims
     /// the source low owner bit.
@@ -44411,6 +44416,16 @@ mod tests {
             + Send
             + 'static,
     ) {
+        with_owned_process_page_fixture(move |config, page_map, pair, main_heap, mut session| {
+            operation(config, page_map, pair, main_heap, &mut session);
+            core::mem::forget(session);
+        });
+    }
+
+    fn with_owned_process_page_fixture(
+        operation: impl FnOnce(MemoryConfig, ProcessPageMapRoot, ProcessPageArenaLease,
+            MainStaticHeapLease<'static>, MainStaticProcessPageSession) + Send + 'static,
+    ) {
         thread::spawn(move || {
             let config = w03_memory_config();
             let storage = MainStaticAttachmentStorage::test_static_owner();
@@ -44422,21 +44437,92 @@ mod tests {
                 MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
             }
             .expect("the isolated W03 static owner attaches");
-            let mut session = main
+            let session = main
                 .begin_process_lifetime_page_session()
                 .expect("the empty static owner becomes one permanent page session");
             let main_heap = session.shared_main_heap_lease();
 
-            operation(config, page_map, pair, main_heap, &mut session);
+            operation(config, page_map, pair, main_heap, session);
 
             // The process-lifetime session intentionally has no inverse
             // transition. Keep both fixture owners alive after the direct
             // post-owner-exit operation instead of forging static teardown.
-            core::mem::forget(session);
             core::mem::forget(main);
         })
         .join()
         .expect("the W03 fixture stays on its source current thread");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn regular_os_full_page_abandonment_preserves_clients_and_releases_exact_mapping() {
+        with_owned_process_page_fixture(|_config, page_map, pair, main_heap, session| {
+            let mut options = crate::config::VmOptions::uninitialized();
+            options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+            let policy = std::boxed::Box::leak(std::boxed::Box::new(
+                crate::os::VmPolicy::new(options).unwrap()));
+            let process = crate::os::VmProcess::new(policy, pair.subprocess().unwrap());
+            let backing = crate::page_backing::ProcessMetadataPageBacking::new(process);
+            // SAFETY: this fixture owns every registered page range and keeps
+            // the permanent process/session owners alive after the test.
+            let map = unsafe { pair.page_map_for_owned_ranges() }.unwrap();
+            let mut allocator = unsafe {
+                PageAllocatorEngine::activate_main_static_for_owned_ranges(
+                    session, backing, ArenaId::none(), map)
+            };
+            let request = 8192;
+            let bin = size_class::bin(request).unwrap();
+            let page = allocator.allocate_fresh_os_page(request, 1, false, true).unwrap();
+            assert!(!unsafe { page_is_huge(page.as_ref()) });
+            assert_eq!(unsafe { page.as_ref().slice_pcommitted() }, 0);
+            let reserved = usize::from(unsafe { page.as_ref().reserved() });
+            assert!(reserved > 1);
+            allocator.push_regular_page(bin, page);
+            let mut blocks = Vec::new();
+            for index in 0..reserved {
+                let block = allocator.pop_or_extend(page, request, false).unwrap().unwrap();
+                // SAFETY: each fresh client owns its complete writable block.
+                unsafe { block.as_ptr().write_bytes(index as u8, request) };
+                blocks.push(block);
+            }
+            assert!(allocator.test_move_selected_regular_full_after_source_scan(bin, page));
+            assert_eq!(allocator.queue_count(bin), Some(0));
+            assert_eq!(allocator.queue_count(BIN_FULL), Some(0));
+            assert_eq!(allocator.session.theap().page_count(), 0);
+            let mut heap = main_heap.lock_heap().unwrap();
+            assert_eq!(heap.heap_mut().test_os_abandoned_page_head(), page.as_ptr());
+            heap.unlock().unwrap();
+            for (index, block) in blocks.iter().enumerate() {
+                assert_eq!(unsafe { map.checked_lookup(block.as_ptr()) }, page.as_ptr());
+                // SAFETY: abandonment leaves every still-live client's data
+                // accessible and does not release its mapping or PageMap.
+                assert!(unsafe { core::slice::from_raw_parts(block.as_ptr(), request) }
+                    .iter().all(|byte| *byte == index as u8));
+            }
+            for (index, block) in blocks.iter().copied().enumerate() {
+                // SAFETY: each exact client is consumed once through source
+                // failed-reclaim collection. The backing remains the same
+                // process owner that published this regular OS page.
+                let result = unsafe {
+                    abandoned::free_unmappable_after_failed_reclaim(page, block)
+                }.unwrap();
+                if index + 1 == reserved {
+                    assert_eq!(result, abandoned::UnmappedAbandonedFreeResult::Empty);
+                    assert!(allocator.session.remove_selected_main_os_abandoned_page(page));
+                    assert!(allocator.release_queue_detached_abandoned_os_page(page));
+                } else {
+                    assert_eq!(result, abandoned::UnmappedAbandonedFreeResult::UnownedUnmapped);
+                    assert_eq!(unsafe { map.checked_lookup(block.as_ptr()) }, page.as_ptr());
+                }
+            }
+            assert!(unsafe { map.checked_lookup(blocks[0].as_ptr()) }.is_null());
+            let mut heap = main_heap.lock_heap().unwrap();
+            assert!(heap.heap_mut().test_os_abandoned_page_head().is_null());
+            heap.unlock().unwrap();
+            let (session, state) = allocator.suspend_runtime_ticket_zero();
+            drop(state);
+            core::mem::forget(session);
+        });
     }
 
     /// Creates one current PageMap pointer whose page is deliberately owned
