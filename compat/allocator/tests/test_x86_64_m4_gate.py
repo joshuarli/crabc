@@ -273,5 +273,36 @@ class M4OperationsObservationTests(unittest.TestCase):
                     gate.read_operations_profiles(("release",), ("threads",))
 
 
+    def test_assertion_control_rejects_a_wrong_signal_or_assertion_and_native_payload_loss(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            output = Path(directory)
+            c = {"status": -6, "stdout": gate.OPERATIONS_TRACE_BEGIN + "\ncontrol.input=null,1,1\n",
+                 "stderr": 'mimalloc: assertion failed: mi_reallocarr\n  assertion: "ptrp != NULL"\n'}
+            native = {"status": 0, "stdout": gate.OPERATIONS_TRACE_BEGIN +
+                      "\ncontrol.input=null,1,1\ncontrol.outcome=22,22\n" + gate.OPERATIONS_TRACE_END + "\n",
+                      "stderr": ""}
+            gate.compare_assertion_control("debug-1", "reallocarr-null", c, native)
+            for changed in ({**c, "status": -11}, {**c, "stderr": 'assertion: "size != 0"'}):
+                with self.assertRaises(harness.HarnessError):
+                    gate.compare_assertion_control("debug-1", "reallocarr-null", changed, native)
+            zero = {**native, "stdout": native["stdout"].replace("null,1,1", "63,1,0").replace("22,22", "22,22,0")}
+            zero_c = {**c, "stdout": c["stdout"].replace("null,1,1", "63,1,0"),
+                      "stderr": 'mi_reallocarr\nassertion: "size != 0"'}
+            with self.assertRaisesRegex(harness.HarnessError, "outcome"):
+                gate.compare_assertion_control("debug-1", "reallocarr-zero-size", zero_c, zero)
+
+    def test_nonword_invalid_alignment_control_does_not_admit_word_delegation(self):
+        c = {"status": -6,
+             "stdout": gate.OPERATIONS_TRACE_BEGIN + "\ncontrol.input=100,64;200,24\n",
+             "stderr": 'mi_theap_realloc_zero_aligned_at\nassertion: "mi_alignment_is_valid(alignment)"'}
+        native = {"status": 0, "stdout": gate.OPERATIONS_TRACE_BEGIN +
+                  "\ncontrol.input=100,64;200,24\ncontrol.outcome=1,22,1\n" +
+                  gate.OPERATIONS_TRACE_END + "\n", "stderr": ""}
+        gate.compare_assertion_control("debug-1", "aligned-invalid", c, native)
+        with self.assertRaises(harness.HarnessError):
+            gate.compare_assertion_control("debug-1", "aligned-invalid", c,
+                {**native, "stdout": native["stdout"].replace("200,24", "200,3")})
+
+
 if __name__ == "__main__":
     unittest.main()

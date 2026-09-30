@@ -51,6 +51,18 @@
 
 static uintptr_t id_address[MAX_IDS];
 static int id_count;
+static bool valid_domain;
+
+/* The source debug word-alignment check rejects valid offset clients. In
+   this explicitly selected source-oracle mode, bypass only that check;
+   guarded allocation itself is disabled by the compiler profile. */
+static void set_live_client_precise(bool enabled) {
+#if defined(CRABC_MI_M4_SOURCE_CANARY) && MI_DEBUG >= 1 && MI_GUARDED == 0
+  if (valid_domain) { enabled = true; }
+#endif
+  mi_option_set_enabled(mi_option_guarded_precise, enabled);
+}
+
 
 static void line(const char* key, const char* format, ...) __attribute__((format(printf, 2, 3)));
 static void line(const char* key, const char* format, ...) {
@@ -409,12 +421,14 @@ static void section_realloc(void) {
   q = mi_reallocarray(p, 7, 9);
   note("reallocarray.7x9", q);
   p = q;
-  errno = 0;
-  line("reallocarr.null_pointer", "%d", mi_reallocarr(NULL, 1, 1));
-  note_errno("reallocarr.null_pointer");
-  errno = 0;
-  line("reallocarr.zero_size", "%d", mi_reallocarr(&p, 1, 0));
-  note_errno("reallocarr.zero_size");
+  if (!valid_domain) {
+    errno = 0;
+    line("reallocarr.null_pointer", "%d", mi_reallocarr(NULL, 1, 1));
+    note_errno("reallocarr.null_pointer");
+    errno = 0;
+    line("reallocarr.zero_size", "%d", mi_reallocarr(&p, 1, 0));
+    note_errno("reallocarr.zero_size");
+  }
   errno = 0;
   line("reallocarr.overflow", "%d", mi_reallocarr(&p, SIZE_MAX / 2, 3));
   note_errno("reallocarr.overflow");
@@ -614,10 +628,12 @@ static void section_aligned(void) {
   note("realloc_aligned.too_large", q);
   note_errno("realloc_aligned.too_large");
   line("realloc_aligned.too_large.kept", "%d", has_fill(p, 100, 5));
-  errno = 0;
-  q = mi_realloc_aligned(p, 200, 24);
-  note("realloc_aligned.bad_alignment", q);
-  note_errno("realloc_aligned.bad_alignment");
+  if (!valid_domain) {
+    errno = 0;
+    q = mi_realloc_aligned(p, 200, 24);
+    note("realloc_aligned.bad_alignment", q);
+    note_errno("realloc_aligned.bad_alignment");
+  }
   /* An alignment of at most one word is ordinary realloc, which consumes p. */
   errno = 0;
   q = mi_realloc_aligned(p, 200, 3);
@@ -715,10 +731,12 @@ static void section_aligned_preservation(void) {
   void* failed = mi_realloc_aligned_at(p, SIZE_MAX, alignment, offset);
   line("aligned_preservation.oversize", "%d,%d,%d,%d", failed == NULL, errno,
        mi_usable_size(p) == usable, has_fill(p, usable, 0x43));
-  errno = 0;
-  failed = mi_realloc_aligned_at(p, 150, 3, offset);
-  line("aligned_preservation.bad_offset_alignment", "%d,%d,%d,%d", failed == NULL, errno,
-       mi_usable_size(p) == usable, has_fill(p, usable, 0x43));
+  if (!valid_domain) {
+    errno = 0;
+    failed = mi_realloc_aligned_at(p, 150, 3, offset);
+    line("aligned_preservation.bad_offset_alignment", "%d,%d,%d,%d", failed == NULL, errno,
+         mi_usable_size(p) == usable, has_fill(p, usable, 0x43));
+  }
 
   const size_t half = usable - usable / 2;
   void* reused = mi_realloc_aligned_at(p, half, alignment, offset);
@@ -883,7 +901,7 @@ static void section_api_modes(void) {
       mi_register_error(NULL, NULL);
     }
     const long previous_precise = mi_option_get(mi_option_guarded_precise);
-    mi_option_set_enabled(mi_option_guarded_precise, false);
+    set_live_client_precise(false);
     p = mi_heap_zalloc_aligned_at(heaps[h], 64, 8, 7);
     fill(p, 64, 0x39);
     size_t pre = SIZE_MAX, post = SIZE_MAX;
@@ -896,7 +914,7 @@ static void section_api_modes(void) {
     mi_register_error(NULL, NULL);
     mi_option_set_enabled(mi_option_guarded_precise, true);
     mi_free(q == NULL ? p : q);
-    mi_option_set_enabled(mi_option_guarded_precise, false);
+    set_live_client_precise(false);
     p = mi_heap_zalloc_aligned_at(heaps[h], 64, 8, 7);
     fill(p, 64, 0x39);
     counts = (struct allocation_error_counts){ 0 };
@@ -908,7 +926,7 @@ static void section_api_modes(void) {
     mi_register_error(NULL, NULL);
     mi_option_set_enabled(mi_option_guarded_precise, true);
     mi_free(q == NULL ? p : q);
-    mi_option_set_enabled(mi_option_guarded_precise, false);
+    set_live_client_precise(false);
     p = mi_heap_zalloc_aligned_at(heaps[h], 64, 8, 7);
     counts = (struct allocation_error_counts){ 0 };
     mi_register_error(count_allocation_errors, &counts);
@@ -1345,10 +1363,75 @@ static int run_abort_scenario(const char* name) {
   return 0;
 }
 
+/* These calls deliberately violate source assertion preconditions. Keeping
+   each in a fresh process exposes both the exact debug assertion and the
+   returning error path without interrupting live-client observations. */
+static int run_precondition_control(const char* name) {
+  printf("%s\n", TRACE_BEGIN);
+  if (strcmp(name, "reallocarr-null") == 0) {
+    line("control.input", "null,1,1");
+    errno = 0;
+    const int result = mi_reallocarr(NULL, 1, 1);
+    const int error = errno;
+    line("control.outcome", "%d,%d", result, error);
+  }
+  else if (strcmp(name, "reallocarr-zero-size") == 0) {
+    unsigned char* p = mi_reallocarray(NULL, 7, 9);
+    if (p == NULL) { return 3; }
+    fill(p, 63, 0x39);
+    unsigned char* const original = p;
+    line("control.input", "63,1,0");
+    errno = 0;
+    const int result = mi_reallocarr(&p, 1, 0);
+    const int error = errno;
+    const bool retained = p == original && has_fill(p, 63, 0x39);
+    line("control.outcome", "%d,%d,%d", result, error, retained);
+    mi_free(p);
+  }
+  else if (strcmp(name, "aligned-invalid") == 0) {
+    unsigned char* p = mi_malloc_aligned(100, 64);
+    if (p == NULL) { return 3; }
+    fill(p, 100, 5);
+    void* q = mi_realloc_aligned(p, (size_t)PTRDIFF_MAX, 64);
+    if (q != NULL) { mi_free(q); return 4; }
+    line("control.input", "100,64;200,24");
+    errno = 0;
+    q = mi_realloc_aligned(p, 200, 24);
+    const int error = errno;
+    const bool retained = q == NULL && has_fill(p, 100, 5);
+    line("control.outcome", "%d,%d,%d", q == NULL, error, retained);
+    mi_free(q == NULL ? p : q);
+  }
+  else if (strcmp(name, "aligned-at-invalid") == 0) {
+    unsigned char* p = mi_malloc_aligned_at(73, 64, 7);
+    if (p == NULL) { return 3; }
+    fill(p, 73, 0x43);
+    line("control.input", "73,64,7;150,3,7");
+    errno = 0;
+    void* q = mi_realloc_aligned_at(p, 150, 3, 7);
+    const int error = errno;
+    const bool retained = q == NULL && has_fill(p, 73, 0x43);
+    line("control.outcome", "%d,%d,%d", q == NULL, error, retained);
+    /* The returning control still owns the original live client. */
+    mi_option_set_enabled(mi_option_guarded_precise, true);
+    mi_free(q == NULL ? p : q);
+  }
+  else { return 2; }
+  printf("%s\n", TRACE_END);
+  return 0;
+}
+
 int main(int argc, char** argv) {
   setvbuf(stdout, NULL, _IOLBF, 0);
-  if (argc != 2) { return 2; }
+  if (argc != 2 && argc != 3) { return 2; }
+  valid_domain = argc == 3 && strcmp(argv[2], "--valid-domain") == 0;
+  if (argc == 3 && !valid_domain) { return 2; }
+  if (valid_domain) {
+    set_live_client_precise(false);
+    fprintf(stderr, "valid-domain guarded_precise=%ld\n", mi_option_get(mi_option_guarded_precise));
+  }
   const char* scenario = argv[1];
+  if (strncmp(scenario, "precondition:", 13) == 0) { return run_precondition_control(scenario + 13); }
   if (strncmp(scenario, "abort:", 6) == 0) { return run_abort_scenario(scenario + 6); }
   void (*sections[8])(void) = { NULL };
   if (strcmp(scenario, "operations") == 0) {

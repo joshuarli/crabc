@@ -438,6 +438,45 @@ def compare_operations_traces(c_trace: Mapping[str, str], rust_trace: Mapping[st
     )
 
 
+def compare_assertion_control(profile: str, case: str, c_record: Mapping[str, object],
+                              native_record: Mapping[str, object]) -> None:
+    """Distinguish source assertion preconditions from valid allocation observations.
+
+    A debug source assertion must abort at the selected precondition. The
+    native implementation still has to return the documented error and leave
+    a refused replacement's live payload intact.
+    """
+    controls = {
+        "reallocarr-null": ("null,1,1", "22,22", "ptrp != NULL", "mi_reallocarr"),
+        "reallocarr-zero-size": ("63,1,0", "22,22,1", "size != 0", "mi_reallocarr"),
+        "aligned-invalid": ("100,64;200,24", "1,22,1",
+                            "mi_alignment_is_valid(alignment)", "mi_theap_realloc_zero_aligned_at"),
+        "aligned-at-invalid": ("73,64,7;150,3,7", "1,22,1",
+                               "mi_alignment_is_valid(alignment)", "mi_theap_realloc_zero_aligned_at"),
+    }
+    if profile not in API_PROFILES or case not in controls:
+        raise harness.HarnessError("unknown assertion control profile or case")
+    arguments, outcome, assertion, function = controls[case]
+    expected = {"control.input": arguments, "control.outcome": outcome}
+    if native_record.get("status") != 0:
+        raise harness.HarnessError(f"{case} native control did not return normally")
+    native_trace = parse_operations_trace(str(native_record.get("stdout", "")), f"{case} native control")
+    if native_trace != expected:
+        raise harness.HarnessError(f"{case} native control input or outcome differs: {native_trace}")
+    if profile == "debug-1":
+        partial = f"{OPERATIONS_TRACE_BEGIN}\ncontrol.input={arguments}\n"
+        diagnostic = str(c_record.get("stderr", ""))
+        if (c_record.get("status") != -6 or c_record.get("stdout") != partial
+                or f'assertion: "{assertion}"' not in diagnostic or function not in diagnostic):
+            raise harness.HarnessError(f"{case} source control did not abort at its exact assertion")
+    else:
+        if c_record.get("status") != 0:
+            raise harness.HarnessError(f"{case} source control did not return normally")
+        c_trace = parse_operations_trace(str(c_record.get("stdout", "")), f"{case} source control")
+        if c_trace != expected:
+            raise harness.HarnessError(f"{case} source control input or outcome differs: {c_trace}")
+
+
 def api_profile_flags(profile: str) -> tuple[str, ...]:
     flags = tuple(flag for flag in harness.CONFIGURATION_PROFILES["release"]
                   if not flag.startswith(("-DMI_DEBUG=", "-DMI_STAT=")))

@@ -11,10 +11,21 @@
 #include <sys/resource.h>
 
 #include "mimalloc.h"
+#ifdef CRABC_MI_M4_SOURCE_CANARY
+#include "mimalloc/internal.h"
+#endif
 
 #define MiB ((size_t)1024 * 1024)
 
-int main(void) {
+int main(int argc, char** argv) {
+  if (argc != 1 && argc != 2) return 2;
+  if (argc == 2) {
+    if (strcmp(argv[1], "--valid-domain") != 0) return 2;
+#if defined(CRABC_MI_M4_SOURCE_CANARY) && MI_DEBUG >= 1 && MI_GUARDED == 0
+    mi_option_set_enabled(mi_option_guarded_precise, true);
+#endif
+    fprintf(stderr, "valid-domain guarded_precise=%ld\n", mi_option_get(mi_option_guarded_precise));
+  }
   unsigned char* old = mi_malloc_aligned_at(1000, 4096, 13);
   if (old == NULL) return 10;
   memset(old, 0x71, 1000);
