@@ -3,9 +3,9 @@ mod test_support;
 
 use std::process::{Command, Output};
 
-fn compile_fixture(binary: &std::path::Path, candidate: bool) {
+fn compile_fixture(binary: &std::path::Path, candidate: bool, fixture_name: &str) {
     let root = std::path::Path::new(test_support::REPOSITORY_ROOT);
-    let fixture = root.join("tests/fixtures/native_mimalloc_owner_exit_test.c");
+    let fixture = root.join("tests/fixtures").join(fixture_name);
     let mut command = if candidate {
         Command::new(test_support::crabc_cc())
     } else {
@@ -43,8 +43,8 @@ fn run(binary: &std::path::Path, candidate: bool) -> Output {
 fn native_mimalloc_owner_exit_matches_pinned_musl() {
     let reference = test_support::TempArtifact::new("native-mimalloc-owner-exit-reference");
     let candidate = test_support::TempArtifact::new("native-mimalloc-owner-exit-candidate");
-    compile_fixture(&reference, false);
-    compile_fixture(&candidate, true);
+    compile_fixture(&reference, false, "native_mimalloc_owner_exit_test.c");
+    compile_fixture(&candidate, true, "native_mimalloc_owner_exit_test.c");
 
     let reference_output = run(&reference, false);
     let candidate_output = run(&candidate, true);
@@ -59,6 +59,31 @@ fn native_mimalloc_owner_exit_matches_pinned_musl() {
         candidate_output.status,
         reference_output.status,
         "crabc exit status differs; stderr: {}",
+        String::from_utf8_lossy(&candidate_output.stderr),
+    );
+    assert_eq!(candidate_output.stdout, reference_output.stdout);
+    assert_eq!(candidate_output.stderr, reference_output.stderr);
+}
+
+#[test]
+fn native_mimalloc_four_tsd_passes_preserve_joined_clients() {
+    let reference = test_support::TempArtifact::new("native-mimalloc-tsd-rearm-reference");
+    let candidate = test_support::TempArtifact::new("native-mimalloc-tsd-rearm-candidate");
+    compile_fixture(&reference, false, "native_mimalloc_tsd_rearm_test.c");
+    compile_fixture(&candidate, true, "native_mimalloc_tsd_rearm_test.c");
+
+    let reference_output = run(&reference, false);
+    let candidate_output = run(&candidate, true);
+    assert!(
+        reference_output.status.success(),
+        "pinned musl TSD rearm fixture failed: {}",
+        String::from_utf8_lossy(&reference_output.stderr),
+    );
+    assert_eq!(reference_output.stdout, b"native mimalloc TSD rearm ok\n");
+    assert_eq!(
+        candidate_output.status,
+        reference_output.status,
+        "crabc TSD rearm status differs; stderr: {}",
         String::from_utf8_lossy(&candidate_output.stderr),
     );
     assert_eq!(candidate_output.stdout, reference_output.stdout);
