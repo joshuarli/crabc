@@ -12,8 +12,8 @@
 //! A Heap is a `NonMainHeapImage` allocated from the process main Heap
 //! through the calling thread's source-selected main Theap, on a key of the process-global
 //! thread-local registry, pushed on the main subprocess's Heap list. A
-//! thread's Theap for such a Heap is a [`MainHeapTheapImage`] from process
-//! metadata or its Heap's requested parent arena at the head of
+//! thread's Theap for such a Heap is a source-sized metadata image or a
+//! [`MainHeapTheapImage`] in its Heap's requested parent arena, at the head of
 //! the thread's TLD list, stored on the thread's regular thread-local slot
 //! array (a `ThreadLocalBackingOwner`, also process metadata) and cached with
 //! the source reference counts. It pages like a child thread's Theap for a
@@ -120,10 +120,43 @@ const _: [(); 2] = [(); size_of::<MainHeapTheapLifecycle>()];
 #[cfg(target_arch = "x86_64")]
 const _: [(); 1] = [(); align_of::<MainHeapTheapLifecycle>()];
 
-/// One allocated auxiliary Theap of the process main subprocess:
-/// the source `mi_theap_t` at offset zero, then this Theap's own page-engine
-/// state and the exact metadata or arena claim for this block (so any thread
-/// that drops the last reference can release it).
+/// A page session borrows a local engine state while its source Theap
+/// reference keeps the initialized lifecycle field mapped. The session's
+/// owner is gone before this guard publishes retry or poison state.
+struct MainHeapPageEngineState {
+    theap: NonNull<Theap>,
+    state: ChildPageEngineState,
+}
+
+impl MainHeapPageEngineState {
+    /// # Safety
+    /// The caller owns this Theap's local queues for the whole guard lifetime
+    /// and holds a source reference until after the guard is dropped.
+    unsafe fn new(theap: NonNull<Theap>) -> Self {
+        #[cfg(target_arch = "x86_64")]
+        let state = unsafe { (*Theap::main_heap_lifecycle_at(theap)).engine }.into_engine();
+        #[cfg(not(target_arch = "x86_64"))]
+        let state = unsafe { (*theap.cast::<MainHeapTheapImage>().as_ptr()).page_engine };
+        Self { theap, state }
+    }
+}
+
+impl Drop for MainHeapPageEngineState {
+    fn drop(&mut self) {
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: the guard's source reference and exclusive queue operation
+        // still hold; every page session borrowing state has already ended.
+        unsafe { (*Theap::main_heap_lifecycle_at(self.theap)).engine = MainHeapTheapEngineState::from_engine(self.state); }
+        #[cfg(not(target_arch = "x86_64"))]
+        unsafe { (*self.theap.cast::<MainHeapTheapImage>().as_ptr()).page_engine = self.state; }
+    }
+}
+
+/// An auxiliary Theap placed in a requested arena's minimum-object slice.
+/// The source image is at offset zero; the exact reservation capability fits
+/// within that same reserved slice. Ordinary x86 metadata uses only `Theap`,
+/// with release authority transferred into its source reference lifetime.
+/// Other targets retain their existing metadata wrapper representation.
 #[repr(C)]
 pub(crate) struct MainHeapTheapImage {
     theap: Theap,
@@ -140,7 +173,7 @@ pub(crate) struct MainHeapTheapImage {
 /// source-local page observation and native process admission.
 struct RetainedDeletedHeapTheaps {
     lock: PrivateLock,
-    head: UnsafeCell<*mut MainHeapTheapImage>,
+    head: UnsafeCell<*mut Theap>,
 }
 
 // SAFETY: the lock serializes list links. A listed image has one additional
@@ -152,6 +185,25 @@ static RETAINED_DELETED_HEAP_THEAPS: RetainedDeletedHeapTheaps = RetainedDeleted
     head: UnsafeCell::new(core::ptr::null_mut()),
 };
 
+/// # Safety
+/// The retained-list lock is held, and this exact image has left the Heap
+/// list permanently. The list's source reference keeps its link mapped.
+unsafe fn retained_deleted_next(theap: NonNull<Theap>) -> *mut Theap {
+    #[cfg(target_arch = "x86_64")]
+    return unsafe { Theap::main_heap_retained_next_at(theap) };
+    #[cfg(not(target_arch = "x86_64"))]
+    unsafe { (*theap.cast::<MainHeapTheapImage>().as_ptr()).retained_deleted_next.cast() }
+}
+
+/// # Safety
+/// As for `retained_deleted_next`; the lock also excludes every writer.
+unsafe fn set_retained_deleted_next(theap: NonNull<Theap>, next: *mut Theap) {
+    #[cfg(target_arch = "x86_64")]
+    unsafe { Theap::set_main_heap_retained_next_at(theap, next); }
+    #[cfg(not(target_arch = "x86_64"))]
+    unsafe { (*theap.cast::<MainHeapTheapImage>().as_ptr()).retained_deleted_next = next.cast(); }
+}
+
 #[cfg(test)]
 pub(crate) fn retained_deleted_heap_owner_count_for_test() -> Option<usize> {
     let retained = &RETAINED_DELETED_HEAP_THEAPS;
@@ -162,7 +214,7 @@ pub(crate) fn retained_deleted_heap_owner_count_for_test() -> Option<usize> {
     let mut image = unsafe { *retained.head.get() };
     while !image.is_null() {
         count = count.checked_add(1)?;
-        image = unsafe { (*image).retained_deleted_next };
+        image = unsafe { retained_deleted_next(NonNull::new_unchecked(image)) };
     }
     drop(guard);
     Some(count)
@@ -559,6 +611,47 @@ fn cached_set(theap: NonNull<Theap>) {
     }
 }
 
+/// Takes the metadata capability only after the final source reference has
+/// been consumed. Source provenance remains in the exact image; the claim
+/// marker excludes another inverse if publication is refused.
+///
+/// # Safety
+/// No source list, root, page session, or callback can access this image;
+/// the caller has consumed its final reference and owns release exclusively.
+unsafe fn take_main_heap_theap_allocation(theap: NonNull<Theap>) -> Option<MainHeapTheapAllocation> {
+    #[cfg(target_arch = "x86_64")]
+    if unsafe { Theap::memory_id_at(theap) }.kind() == crate::types::MemoryKind::Malloc {
+        // SAFETY: the prior source transfer and exclusive final decrement
+        // prove this separate inverse's obligations. It validates the exact
+        // provenance before claiming release under the exclusive final reference.
+        let allocation = unsafe {
+            MetaAllocation::recover_last_reference_main_heap_theap(MetaAllocator::global(), theap)
+        };
+        return allocation.map(MainHeapTheapAllocation::Metadata);
+    }
+    let image = theap.cast::<MainHeapTheapImage>().as_ptr();
+    // SAFETY: a requested-arena image (or the preserved non-x86 image) holds
+    // its capability inside the original allocation's reserved extent.
+    unsafe { core::ptr::replace(core::ptr::addr_of_mut!((*image).allocation), None) }
+}
+
+/// Records refused metadata publication while the exact block remains live.
+///
+/// # Safety
+/// Publication failed before releasing this image; the caller holds its
+/// unique rejected capability and no source user can access it.
+unsafe fn retain_refused_main_heap_metadata(theap: NonNull<Theap>, allocation: MetaAllocation<'static>) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        unsafe { (*Theap::main_heap_lifecycle_at(theap)).metadata = MainHeapTheapMetadataOwnership::Terminal; }
+        // This rejected capability is never reconstructed for a retry. Its
+        // source memory ID and terminal state preserve the retained block.
+        core::mem::forget(allocation);
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    unsafe { (*theap.cast::<MainHeapTheapImage>().as_ptr()).allocation = Some(MainHeapTheapAllocation::Metadata(allocation)); }
+}
+
 /// `_mi_theap_decref` with `mi_theap_free_mem` (`theap.c:347-370`) for a
 /// Theap of a non-main main-subprocess Heap (or this thread's default Theap,
 /// whose Heap reference keeps it above zero).
@@ -582,14 +675,16 @@ unsafe fn theap_decref(theap: NonNull<Theap>) {
         }
     }
     let image = theap.cast::<MainHeapTheapImage>().as_ptr();
-    // SAFETY: the image holds its own capability; it is moved out before the
-    // block is released.
-    let allocation = unsafe { core::ptr::replace(core::ptr::addr_of_mut!((*image).allocation), None) };
+    // SAFETY: the final source reference was consumed above; all roots and
+    // lists have relinquished this exact image.
+    let allocation = unsafe { take_main_heap_theap_allocation(theap) };
     match allocation {
         Some(MainHeapTheapAllocation::Metadata(mut allocation)) => {
             // SAFETY: the last Theap reference has left its Heap and TLD lists;
             // no owner can access the image after the remote publication.
-            let _ = unsafe { MetaAllocator::global().free_detached_heap_theap(&mut allocation) };
+            if unsafe { MetaAllocator::global().free_detached_heap_theap(&mut allocation) }.is_err() {
+                unsafe { retain_refused_main_heap_metadata(theap, allocation) };
+            }
         }
         Some(MainHeapTheapAllocation::Arena(reservation)) => {
             // SAFETY: the final reference has left every root and list; the
@@ -620,18 +715,18 @@ unsafe fn release_detached_theap_reference(theap: NonNull<Theap>) -> bool {
 #[cfg(target_arch = "x86_64")]
 unsafe fn free_vanished_theap_metadata(theap: NonNull<Theap>) -> bool {
     let image = theap.cast::<MainHeapTheapImage>().as_ptr();
-    // SAFETY: the image holds its own capability; it is moved out before the
-    // block is released.
-    let allocation = unsafe { core::ptr::replace(core::ptr::addr_of_mut!((*image).allocation), None) };
+    // SAFETY: the final source reference was consumed above; all roots and
+    // lists have relinquished this exact image.
+    let allocation = unsafe { take_main_heap_theap_allocation(theap) };
     match allocation {
         Some(MainHeapTheapAllocation::Metadata(mut allocation)) => {
             // SAFETY: the last Theap reference has left its Heap and TLD lists;
             // no owner can access the image after the remote publication.
             if unsafe { MetaAllocator::global().free_detached_heap_theap(&mut allocation) }.is_err() {
                 // Failed remote publication leaves this exact image mapped.
-                // Retain its terminal capability in place; the child must
-                // fail-stop instead of declaring metadata retirement complete.
-                unsafe { (*image).allocation = Some(MainHeapTheapAllocation::Metadata(allocation)); }
+                // Retain its rejected capability in terminal source ownership;
+                // the child must refuse metadata retirement completion.
+                unsafe { retain_refused_main_heap_metadata(theap, allocation) };
                 return false;
             }
             true
@@ -704,13 +799,14 @@ unsafe fn retain_deleted_theap_if_needed(theap: NonNull<Theap>) -> bool {
     };
     let retained = &RETAINED_DELETED_HEAP_THEAPS;
     let Ok(guard) = retained.lock.lock() else { return false };
-    let image = theap.cast::<MainHeapTheapImage>().as_ptr();
-    // SAFETY: the held lock excludes list mutation, and the extra reference
-    // above keeps this image live after Heap deletion.
+    // SAFETY: Heap detach cleared its links before invoking this callback.
+    // The held retained-list lock and extra source reference protect the
+    // detached link until its final page leaves the source queues.
     unsafe {
-        (*image).retained_deleted_os_pages = needed;
-        (*image).retained_deleted_next = *retained.head.get();
-        *retained.head.get() = image;
+        #[cfg(not(target_arch = "x86_64"))]
+        { (*theap.cast::<MainHeapTheapImage>().as_ptr()).retained_deleted_os_pages = needed; }
+        set_retained_deleted_next(theap, *retained.head.get());
+        *retained.head.get() = theap.as_ptr();
     }
     drop(guard);
     true
@@ -797,8 +893,46 @@ pub(crate) fn native_heap_theap(heap: NonNull<Heap>) -> Option<NonNull<Theap>> {
     heap_theap(thread, heap)
 }
 
-/// `_mi_theap_create(heap, tld)` (`theap.c:307-341`).
+/// `_mi_theap_create(heap, tld)` with the source-sized metadata image.
+#[cfg(target_arch = "x86_64")]
 fn create_theap(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull<Theap>> {
+    // SAFETY: the live Heap retains its selected arena for this operation.
+    if !unsafe { heap.as_ref() }.exclusive_arena_id()?.as_ptr().is_null() {
+        return create_theap_image(thread, heap);
+    }
+    let config = binding()?.page_map().memory_config().ok()?;
+    let mut allocation = MetaAllocator::global()
+        .zalloc_for_main_subprocess(config, MainSubprocess::global(), size_of::<Theap>())
+        .ok()?;
+    let theap = NonNull::from(allocation.initialize_dynamic_theap_metadata()?);
+    // SAFETY: this initialized role is still exclusively held by allocation.
+    // Transfer precedes list publication, so a foreign final decrement cannot
+    // race a surviving Rust capability. The source initializer preserves this
+    // typed administration alongside its concrete memory ID.
+    unsafe { (*Theap::main_heap_lifecycle_at(theap)).metadata = MainHeapTheapMetadataOwnership::SourceOwned; }
+    let theap = allocation.into_source_retained_theap().ok()?;
+    // SAFETY: the current thread owns the fresh transferred image and TLD;
+    // publication takes the source lists' locks. A partial failure retains the
+    // exact source-owned allocation rather than freeing a listed image.
+    let initialized = unsafe {
+        (*theap.as_ptr()).initialize_dynamic_metadata_on_tld(
+            &mut *heap.as_ptr(), &mut *thread.tld.as_ptr(),
+            crate::types::TheapPageMode::OrdinaryAbandoning, true,
+        ).is_ok()
+    };
+    if !initialized { return None; }
+    MainSubprocess::global().identity().record_statistics_theap_linked();
+    Some(theap)
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn create_theap(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull<Theap>> {
+    create_theap_image(thread, heap)
+}
+
+/// The requested arena's source reservation is a minimum-object slice and
+/// retains its exact Rust release capability within that reserved extent.
+fn create_theap_image(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull<Theap>> {
     let binding = binding()?;
     let config = binding.page_map().memory_config().ok()?;
     // SAFETY: this live Heap retains its selected arena for the operation.
@@ -883,7 +1017,8 @@ unsafe fn drain_vanished_auxiliary_theap(
     let Some(binding) = binding() else { return false; };
     let Some(heap) = NonNull::new(unsafe { Theap::heap_at(theap) }) else { return false; };
     let Some(requested_arena) = (unsafe { heap.as_ref() }).exclusive_arena_id() else { return false; };
-    let page_engine = unsafe { &mut (*theap.cast::<MainHeapTheapImage>().as_ptr()).page_engine };
+    let mut engine_state = unsafe { MainHeapPageEngineState::new(theap) };
+    let page_engine = &mut engine_state.state;
     let mut pending = None;
     let backing = crate::page_backing::RuntimeFirstRegularPageBacking::source_registry(binding.process(), thread.numa_node);
     let Ok(page_map) = (unsafe { binding.page_map().page_map_for_owned_ranges() }) else { return false; };
@@ -934,9 +1069,10 @@ fn with_theap_engine<R>(
     // SAFETY: the live Heap's selected parent remains published during this
     // page operation and is fixed for the Heap lifetime.
     let requested_arena = unsafe { heap.as_ref() }.exclusive_arena_id()?;
-    let image = theap.cast::<MainHeapTheapImage>().as_ptr();
-    // SAFETY: the Theap's own state field, used only by its engine.
-    let page_engine = unsafe { &mut (*image).page_engine };
+    // SAFETY: this operation holds the owner's local queue authority and a
+    // live source reference until after the page session is finished.
+    let mut engine_state = unsafe { MainHeapPageEngineState::new(theap) };
+    let page_engine = &mut engine_state.state;
     let mut pending_os_release = None;
     let backing = crate::page_backing::RuntimeFirstRegularPageBacking::source_registry(binding.process(), thread.numa_node);
     // SAFETY: this engine registers and unregisters only its own pages.
@@ -1173,11 +1309,11 @@ pub(crate) unsafe fn retained_deleted_heap_os_page(page: NonNull<Page>) -> Optio
     // reference until it is removed from this list.
     let mut image = unsafe { *retained.head.get() };
     while !image.is_null() {
-        if unsafe { core::ptr::addr_of_mut!((*image).theap) } == source_theap {
+        if image == source_theap {
             drop(guard);
             return Some(true);
         }
-        image = unsafe { (*image).retained_deleted_next };
+        image = unsafe { retained_deleted_next(NonNull::new_unchecked(image)) };
     }
     drop(guard);
     Some(false)
@@ -1207,8 +1343,8 @@ pub(crate) unsafe fn native_free_deleted_heap_local(
     // SAFETY: the held lock protects each list link. Every listed image owns
     // an additional Theap reference until it is unlinked.
     let mut image = unsafe { *retained.head.get() };
-    while !image.is_null() && unsafe { core::ptr::addr_of!((*image).theap).cast_mut() } != source_theap {
-        image = unsafe { (*image).retained_deleted_next };
+    while !image.is_null() && image != source_theap {
+        image = unsafe { retained_deleted_next(NonNull::new_unchecked(image)) };
     }
     drop(guard);
     let theap = NonNull::new(image.cast::<Theap>())?;
@@ -1257,41 +1393,51 @@ pub(crate) unsafe fn native_free_deleted_heap_local(
     let Some(released_pages) = os_pages_before.checked_sub(os_pages_after) else {
         return Some(NativePageFreeResult::Retained);
     };
-    if !release_retained_deleted_os_pages(theap, released_pages) {
+    if !release_retained_deleted_os_pages(theap, released_pages, os_pages_after) {
         return Some(NativePageFreeResult::Retained);
     }
     Some(NativePageFreeResult::Freed)
 }
 
-fn release_retained_deleted_os_pages(theap: NonNull<Theap>, released_pages: usize) -> bool {
+fn release_retained_deleted_os_pages(theap: NonNull<Theap>, _released_pages: usize, remaining_pages: usize) -> bool {
     let retained = &RETAINED_DELETED_HEAP_THEAPS;
     let Ok(guard) = retained.lock.lock() else { return false };
     // SAFETY: the lock protects the intrusive list and this image's extra
     // reference; no queue remains when the caller enters this removal.
-    let mut previous = core::ptr::null_mut::<MainHeapTheapImage>();
+    let mut previous = core::ptr::null_mut::<Theap>();
     let mut current = unsafe { *retained.head.get() };
     while !current.is_null() && current.cast::<Theap>() != theap.as_ptr() {
         previous = current;
-        current = unsafe { (*current).retained_deleted_next };
+        current = unsafe { retained_deleted_next(NonNull::new_unchecked(current)) };
     }
     if current.is_null() {
         drop(guard);
         return false;
     }
-    let Some(remaining) = (unsafe { (*current).retained_deleted_os_pages }).checked_sub(released_pages) else {
-        drop(guard);
-        return false;
+    // The successful local free already counted the exact quiescent source
+    // queues. Keeping another count in an allocation tail would enlarge the
+    // source request and duplicate the queues' ownership state.
+    #[cfg(target_arch = "x86_64")]
+    let remaining = remaining_pages;
+    #[cfg(not(target_arch = "x86_64"))]
+    let remaining = {
+        let image = current.cast::<MainHeapTheapImage>();
+        let Some(remaining) = (unsafe { (*image).retained_deleted_os_pages }).checked_sub(_released_pages) else {
+            drop(guard);
+            return false;
+        };
+        unsafe { (*image).retained_deleted_os_pages = remaining; }
+        remaining
     };
-    unsafe { (*current).retained_deleted_os_pages = remaining };
     if remaining != 0 {
         drop(guard);
         return true;
     }
-    let next = unsafe { (*current).retained_deleted_next };
+    let next = unsafe { retained_deleted_next(NonNull::new_unchecked(current)) };
     unsafe {
         if previous.is_null() { *retained.head.get() = next; }
-        else { (*previous).retained_deleted_next = next; }
-        (*current).retained_deleted_next = core::ptr::null_mut();
+        else { set_retained_deleted_next(NonNull::new_unchecked(previous), next); }
+        set_retained_deleted_next(NonNull::new_unchecked(current), core::ptr::null_mut());
     }
     drop(guard);
     // SAFETY: the list reference is consumed exactly once after no page
@@ -2308,7 +2454,7 @@ pub(crate) mod tests {
                         if !regular_release_failure {
                             // A child-only source-engine refusal cannot free
                             // cache/list metadata while inherited pages live.
-                            unsafe { (*fresh.cast::<MainHeapTheapImage>().as_ptr()).page_engine = ChildPageEngineState::Poisoned; }
+                            unsafe { MainHeapPageEngineState::new(fresh) }.state = ChildPageEngineState::Poisoned;
                         }
                         let continuation = unsafe { interval.into_child_repair().into_unlocked_continuation() }.unwrap();
                         let repaired = if regular_release_failure {

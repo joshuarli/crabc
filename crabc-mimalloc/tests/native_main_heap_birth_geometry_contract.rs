@@ -25,4 +25,40 @@ fn main_auxiliary_theap_birth_preserves_source_metadata_geometry_and_lifetime() 
         assert_eq!(api::free(block.as_ptr()), api::FreeOutcome::Freed);
         assert!(heaps::heap_release(heap, false));
     }
+
+    let heap = heaps::heap_new();
+    assert!(!heap.is_null());
+    let heap_address = heap as usize;
+    let (theap_usable, client_address) = std::thread::spawn(move || {
+        use crabc_mimalloc::__crabc_runtime::{
+            ThreadAttachResult, ThreadFinishResult,
+            finish_current_thread_native_after_user_destructors,
+        };
+        assert_eq!(native_runtime_test_support::attach_current_thread(), ThreadAttachResult::Attached);
+        // SAFETY: the parent retains the Heap through the join. This worker
+        // owns the new client until it hands the address to the joined parent.
+        unsafe {
+            let heap = heap_address as *mut core::ffi::c_void;
+            let block = heaps::heap_malloc(heap, 73).value.unwrap();
+            block.as_ptr().write_bytes(0x51, 73);
+            let theap = heaps::heap_theap(heap);
+            assert!(!theap.is_null());
+            let result = (api::usable_size(theap.cast()), block.as_ptr() as usize);
+            assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+            result
+        }
+    }).join().expect("the source owner finishes before the final Heap reference");
+    // SAFETY: join ended the creator's allocator lifetime and freed its
+    // Theap metadata. Only the observed size and a live client cross the join;
+    // the Heap and abandoned client page remain owned until the free below.
+    unsafe {
+        let client = client_address as *mut u8;
+        assert_eq!(theap_usable, if cfg!(feature = "mi-debug-1") { 8112 } else { 8192 });
+        println!("theap.joined_usable={theap_usable}");
+        for offset in 0..73 { assert_eq!(client.add(offset).read(), 0x51); }
+        assert_eq!(heaps::heap_of(client), heap);
+        assert_eq!(api::free(client), api::FreeOutcome::Freed);
+        assert!(heaps::heap_release(heap, false));
+        println!("theap.joined_client_preserved=1");
+    }
 }
