@@ -6,6 +6,7 @@ import copy
 import hashlib
 import json
 import shutil
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -158,7 +159,9 @@ class HeadersLayoutsAggregateAttachmentTests(unittest.TestCase):
             inventory = {'current_selecting_source': {'matches_retained': True, 'differences': []},
                          'report': {'inputs': {'paths': {'candidate-header-root': '/workspace/' + headers['static']['path']}},
                                     'summary': {'fixture': True}}}
-            linker = {'path': '/opt/pinned/bin/ld.lld', 'sha256': '3' * 64}
+            pin = json.loads((ROOT / 'compat/x86_64/owned_resolver_network_image_inputs.json').read_text())
+            tool = next(record for path, record in pin['files'].items() if Path(path).name == 'ld.lld')
+            linker = {key: tool[key] for key in ('path', 'sha256')}
             links = []
             for mode, linkage, kind in (
                 ('static-et-exec', 'static', 'static'), ('static-pie', 'static-pie', 'static'),
@@ -222,6 +225,33 @@ class HeadersLayoutsAggregateAttachmentTests(unittest.TestCase):
                         with self.assertRaises(selection.SelectionError):
                             selection.headers_layouts_product_pair_adapter(
                                 pair_report, paths=paths, source=source, header_companion=companion)
+
+                forged = copy.deepcopy(receipt)
+                forged_linker = {**linker, 'sha256': '9' * 64}
+                forged['tools_before'] = {'linker': forged_linker}
+                forged['tools_after'] = {'linker': copy.deepcopy(forged_linker)}
+                for link in forged['links']:
+                    path = ROOT / link['receipt']['path']
+                    path.write_text(json.dumps({'resolved_linker': forged_linker, 'link_trace': ['retained input']}))
+                    link['receipt'] = identity(path)
+                write(forged)
+                with self.assertRaisesRegex(selection.SelectionError, 'pinned linker'):
+                    selection.headers_layouts_product_pair_adapter(
+                        pair_report, paths=paths, source=source, header_companion=companion)
+
+    def test_pinned_linker_anchor_matches_actual_native_tool_bytes(self):
+        import core_image
+        pin = json.loads((ROOT / 'compat/x86_64/owned_resolver_network_image_inputs.json').read_text())
+        tool = next(record for path, record in pin['files'].items() if Path(path).name == 'ld.lld')
+        path = Path(tool['path'])
+        if not path.is_file():
+            self.skipTest('requires the declared pinned native tool image')
+        self.assertEqual(pin['image'], core_image.CORE_IMAGE_ID)
+        self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), tool['sha256'])
+        self.assertEqual(path.stat().st_size, tool['size'])
+        self.assertEqual(path.stat().st_mode & 0o777, tool['mode'])
+        sysroot = subprocess.check_output(['rustc', '--print', 'sysroot'], text=True).strip()
+        self.assertEqual(path, Path(sysroot) / 'lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld')
 
     def test_supplied_product_pair_receipt_requires_an_actual_selected_pair(self):
         self.assertIsNone(selection.headers_layouts_product_pair_adapter(

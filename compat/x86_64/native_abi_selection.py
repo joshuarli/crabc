@@ -1147,6 +1147,21 @@ def headers_layouts_product_pair_adapter(
             and Path(linker['path']).name == 'ld.lld'
             and type(linker['sha256']) is str and re.fullmatch('[0-9a-f]{64}', linker['sha256']) is not None,
             'header product pair linker identity differs')
+    # This source-qualified image pin supplies an external tool identity. A
+    # matching before/after roster and matching application receipts alone
+    # could all contain the same invented linker digest.
+    import core_image
+    anchor_path = ROOT / 'compat/x86_64/owned_resolver_network_image_inputs.json'
+    anchor_identity = selecting_source_file_identity(anchor_path)
+    anchor = read_json(anchor_path)
+    require(anchor.get('schema') == 'crabc.x86_64-owned-resolver-network-image-inputs/v1'
+            and anchor.get('image') == core_image.CORE_IMAGE_ID and type(anchor.get('files')) is dict,
+            'header product pair pinned linker image anchor differs')
+    linker_pins = [record for path, record in anchor['files'].items() if Path(path).name == 'ld.lld']
+    require(len(linker_pins) == 1 and type(linker_pins[0]) is dict
+            and same(linker, {key: linker_pins[0].get(key) for key in ('path', 'sha256')}),
+            'header product pair pinned linker identity differs')
+    observed_files[anchor_path] = anchor_identity
     roster = [('static-et-exec', 'static', 'static'), ('static-pie', 'static-pie', 'static'),
               ('dynamic-et-exec', 'non-pie', 'dynamic'), ('dynamic-pie', 'pie', 'dynamic')]
     links = receipt['links']
@@ -1191,7 +1206,8 @@ def headers_layouts_product_pair_adapter(
         'header_declaration_report': copy.deepcopy(receipt['header_declaration_report']),
         'header_declaration_summary': copy.deepcopy(envelope['report']['summary']),
         'reviewed_cpp_linkage_differences': copy.deepcopy(receipt['reviewed_cpp_linkage_differences']),
-        'links': copy.deepcopy(links), 'limits': list(HEADERS_LAYOUTS_LIMITS),
+        'links': copy.deepcopy(links), 'linker_image_inputs': anchor_identity,
+        'limits': list(HEADERS_LAYOUTS_LIMITS),
     }
 
 
