@@ -641,21 +641,19 @@ def run_operations_differential(offline: bool, scenario: str) -> dict[str, Any]:
             for name in (ABORT_SCENARIOS if scenario == "operations" else ())
         }
         mode_traces = {}
+        profile_receipt = None
         if scenario == "aligned-preservation":
-            for profile in ("debug-1", "release", "stat-1", "stat-2"):
-                profile_directory = temporary / profile
-                profile_directory.mkdir()
-                for side, builder in (("c", build_c_driver), ("rust", build_rust_driver)):
-                    driver = builder(source, profile_directory, profile=profile)
-                    execution = run_driver(driver, ("api-modes",))
-                    ARTIFACTS.mkdir(parents=True, exist_ok=True)
-                    (ARTIFACTS / f"api-modes-{profile}.{side}.log").write_text(
-                        str(execution["stdout"]) + str(execution["stderr"])
-                    )
-                    harness.require_success(execution, f"M4 {profile} {side} API driver")
+            # Valid operation clients and invalid source preconditions are
+            # separate observations; whole-trace equality must not mix them.
+            run_operations_profiles(offline, API_PROFILES, ("operations", "api-modes"))
+            receipt = read_operations_profiles(API_PROFILES, ("operations", "api-modes"))
+            profile_receipt = engine.file_record(receipt.path)
+            logs = receipt.path.parent / "logs"
+            for profile in API_PROFILES:
+                for side in ("c", "rust"):
+                    execution = harness.read_json(logs / f"{profile}-api-modes-{side}.json")
                     mode_traces[f"{profile}.{side}"] = parse_operations_trace(
-                        str(execution["stdout"]), f"{profile} {side} API trace",
-                    )
+                        str(execution["stdout"]), f"{profile} {side} API trace")
     # Keep both raw traces beside the report so a mismatch can be located.
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     for side, execution in executions.items():
@@ -678,6 +676,8 @@ def run_operations_differential(offline: bool, scenario: str) -> dict[str, Any]:
         "status": "passed",
         "trace": traces["c"],
     }
+    if profile_receipt is not None:
+        report["operation_profile_receipt"] = profile_receipt
     harness.write_json(ARTIFACTS / f"{scenario}.json", report)
     return report
 

@@ -184,6 +184,49 @@ class M4GateContractTests(unittest.TestCase):
 
 
 class M4OperationsObservationTests(unittest.TestCase):
+    def test_full_gate_profile_commands_execute_the_selected_valid_client_domain(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            output = Path(directory)
+            def build(side):
+                def builder(source, destination, driver_source=None, profile="release"):
+                    destination.mkdir(parents=True, exist_ok=True)
+                    driver = destination / ("model-" + side)
+                    guard = int(profile == "debug-1" and side == "c")
+                    driver.write_text("#!/usr/bin/python3\nimport sys\n"
+                        "valid = '--valid-domain' in sys.argv\n"
+                        "selected = sys.argv[1] == 'api-modes'\n"
+                        "print('CRABC_MI_M4_OPERATIONS_TRACE_BEGIN')\n"
+                        f"print('domain=' + str(1 if valid or not selected or '{side}' == 'c' else 0))\n"
+                        "print('CRABC_MI_M4_OPERATIONS_TRACE_END')\n"
+                        f"print('valid-domain guarded_precise={guard}', file=sys.stderr)\n")
+                    driver.chmod(0o755)
+                    return driver
+                return builder
+            logs = output / "logs"
+            logs.mkdir()
+            receipt_path = output / "receipt.json"
+            receipt_path.write_text("{}")
+            def selected_profiles(offline, profiles, scenarios):
+                self.assertIn("operations", scenarios)
+                self.assertIn("api-modes", scenarios)
+                for profile in profiles:
+                    drivers = {side: build(side)(output, output / profile, profile=profile)
+                               for side in ("c", "rust")}
+                    gate.observe_operations_profile(logs, profile, "api-modes", drivers, [], valid_domain=True)
+                return {"status": "passed"}
+            with (mock.patch.object(gate, "ARTIFACTS", output),
+                  mock.patch.object(harness, "require_native_x86_64"),
+                  mock.patch.object(harness, "fetch_archive", return_value=output / "archive"),
+                  mock.patch.object(harness, "safe_extract", return_value=output),
+                  mock.patch.object(gate, "build_c_driver", side_effect=build("c")),
+                  mock.patch.object(gate, "build_rust_driver", side_effect=build("rust")),
+                  mock.patch.object(gate, "run_operations_profiles", side_effect=selected_profiles),
+                  mock.patch.object(gate, "read_operations_profiles",
+                                    return_value=SimpleNamespace(path=receipt_path))):
+                result = gate.run_operations_differential(True, "aligned-preservation")
+            self.assertEqual(result["status"], "passed")
+            self.assertTrue(result["api_profiles"])
+
     def test_failed_original_workload_retains_both_results_and_revokes_old_pass(self):
         with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
             output = Path(directory)

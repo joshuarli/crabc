@@ -899,6 +899,23 @@ def correctness_evidence_unmet(
                 return [f"evidence {name} differs from its retained raw log"]
             if newest is not None and log.stat().st_mtime_ns < newest:
                 return [f"evidence {name} predates the newest qualified report"]
+        if gate == "m4":
+            stage_path = artifacts / "aligned-preservation.json"
+            if stage_path.is_symlink() or not stage_path.is_file():
+                return ["M4 aligned stage lacks its retained profile receipt"]
+            stage = harness.read_json(stage_path)
+            receipt = producer.read_operations_profiles(producer.API_PROFILES, ("operations", "api-modes"))
+            if (stage.get("status") != "passed" or stage.get("scenario") != "aligned-preservation"
+                    or stage.get("operation_profile_receipt") != engine.file_record(receipt.path)):
+                return ["M4 aligned stage profile receipt identity differs"]
+            traces = {}
+            for profile in producer.API_PROFILES:
+                for side in ("c", "rust"):
+                    record = harness.read_json(receipt.path.parent / "logs" / f"{profile}-api-modes-{side}.json")
+                    traces[f"{profile}.{side}"] = producer.parse_operations_trace(
+                        str(record["stdout"]), f"{profile} {side} API trace")
+            if stage.get("api_profiles") != traces:
+                return ["M4 aligned stage differs from its authenticated valid profiles"]
     except Exception as error:  # noqa: BLE001 - malformed gate evidence must fail closed
         return [f"report lacks current evidence: {type(error).__name__}: {error}"]
     return []

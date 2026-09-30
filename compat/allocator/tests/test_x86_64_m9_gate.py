@@ -922,6 +922,41 @@ class CorrectnessTests(GateFixture):
         report["provenance"] = copy.deepcopy(producer.report_provenance(report))
         evidence = report["evidence"]
         path.write_text(json.dumps(report), encoding="utf-8")
+        # Outer commands and resealed logs cannot substitute for the owned
+        # profile receipt and the valid-client selections it authenticates.
+        self.assertTrue(gate.correctness_evidence_unmet(name, report, path.parent, None))
+        nested = path.parent / "nested/receipt.json"
+        nested.parent.mkdir()
+        nested.write_text("{}")
+        logs = nested.parent / "logs"
+        logs.mkdir()
+        traces = {}
+        for profile in producer.API_PROFILES:
+            for side in ("c", "rust"):
+                raw = producer.OPERATIONS_TRACE_BEGIN + "\nclient=1\n" + producer.OPERATIONS_TRACE_END + "\n"
+                (logs / f"{profile}-api-modes-{side}.json").write_text(json.dumps({"stdout": raw}))
+                traces[f"{profile}.{side}"] = {"client": "1"}
+        stage = {"status": "passed", "scenario": "aligned-preservation", "api_profiles": traces,
+                 "operation_profile_receipt": gate.engine.file_record(nested)}
+        stage_path = path.parent / "aligned-preservation.json"
+        stage_path.write_text(json.dumps(stage))
+        receipt = types.SimpleNamespace(path=nested)
+        profile_reader = patch.object(producer, "read_operations_profiles", return_value=receipt)
+        profile_reader.start()
+        self.addCleanup(profile_reader.stop)
+        for rejected in ("wrong profile", "wrong scenarios", "changed compiler", "changed source"):
+            with patch.object(producer, "read_operations_profiles",
+                              side_effect=gate.harness.HarnessError(rejected)):
+                self.assertIn(rejected, gate.correctness_evidence_unmet(name, report, path.parent, None)[0])
+        changed = copy.deepcopy(stage)
+        changed["operation_profile_receipt"]["sha256"] = "0" * 64
+        stage_path.write_text(json.dumps(changed))
+        self.assertIn("receipt identity differs", gate.correctness_evidence_unmet(name, report, path.parent, None)[0])
+        changed = copy.deepcopy(stage)
+        changed["api_profiles"]["release.c"]["client"] = "0"
+        stage_path.write_text(json.dumps(changed))
+        self.assertIn("authenticated valid profiles", gate.correctness_evidence_unmet(name, report, path.parent, None)[0])
+        stage_path.write_text(json.dumps(stage))
         self.assertEqual(gate.correctness_evidence_unmet(name, report, path.parent, None), [])
         self.assertEqual(gate.correctness_evidence_unmet(
             name, report, path.parent.relative_to(gate.harness.ROOT), None), [])
