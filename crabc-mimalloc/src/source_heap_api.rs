@@ -964,8 +964,10 @@ fn mark_heap_visit_free_block(bitmap: &mut [usize], index: usize) -> bool {
 ///
 /// # Safety
 /// `free` is null or points inside the retained, exclusively owned `blocks`
-/// area; every free-list link is an initialized unencoded block pointer.
+/// area of `page`; its initialized links and immutable encoding keys remain
+/// stable throughout traversal.
 unsafe fn heap_visit_free_map(
+    page: NonNull<Page>,
     mut free: *mut crate::types::Block,
     blocks: *mut u8,
     committed: usize,
@@ -973,6 +975,11 @@ unsafe fn heap_visit_free_map(
     capacity: usize,
     bitmap: &mut [usize],
 ) -> Option<usize> {
+    #[cfg(feature = "mi-debug-1")]
+    // SAFETY: the caller retains the initialized page and its immutable keys.
+    let keys = unsafe { Page::debug_padding_keys_at(page) };
+    #[cfg(not(feature = "mi-debug-1"))]
+    let _ = page;
     let mut free_count = 0usize;
     while !free.is_null() {
         let offset = (free as usize).checked_sub(blocks as usize)?;
@@ -981,8 +988,16 @@ unsafe fn heap_visit_free_map(
         if !mark_heap_visit_free_block(bitmap, index) { return None; }
         free_count += 1;
         // SAFETY: the validated node is in the caller-retained free block
-        // area, whose unencoded next word remains stable during visitation.
-        free = unsafe { core::ptr::read(free.cast::<*mut crate::types::Block>()) };
+        // area, whose initialized next word remains stable during visitation.
+        #[cfg(not(feature = "mi-debug-1"))]
+        { free = unsafe { core::ptr::read(free.cast::<*mut crate::types::Block>()) }; }
+        #[cfg(feature = "mi-debug-1")]
+        {
+            // SAFETY: encoded links occupy the same initialized first word.
+            let encoded = unsafe { core::ptr::read(free.cast::<usize>()) };
+            let address = crate::free_list::decode_page_link(page.as_ptr().addr(), keys, encoded);
+            free = if address == 0 { null_mut() } else { free.map_addr(|_| address) };
+        }
     }
     Some(free_count)
 }
@@ -1006,13 +1021,14 @@ pub(crate) unsafe fn visit_heap_page(
         let page_ref = unsafe { page.as_ref() };
         if page_ref.heap() != heap.as_ptr() { return false; }
         let full_block_size = page_ref.block_size();
+        let Some(block_size) = full_block_size.checked_sub(crate::config::PADDING_SIZE) else { return false };
         let Some(reserved) = full_block_size.checked_mul(page_ref.reserved() as usize) else { return false };
         let Some(committed) = full_block_size.checked_mul(page_ref.capacity() as usize) else { return false };
         // SAFETY: the caller's live page geometry covers the complete area.
         let blocks = unsafe { page_ref.start() };
         let area = HeapArea {
             blocks: blocks.cast(), reserved, committed, used: page_ref.used(),
-            block_size: full_block_size, full_block_size, reserved1: page.as_ptr().cast(),
+            block_size, full_block_size, reserved1: page.as_ptr().cast(),
         };
         (blocks, area, full_block_size)
     };
@@ -1032,7 +1048,7 @@ pub(crate) unsafe fn visit_heap_page(
     let mut free_map = [0usize; MAX_BLOCKS.div_ceil(WORD_BITS)];
     // SAFETY: the caller excludes mutation of every page free-list node.
     let Some(mut free_count) = (unsafe {
-        heap_visit_free_map(page_ref.free_list_head(), blocks, area.committed, full_block_size, capacity, &mut free_map)
+        heap_visit_free_map(page, page_ref.free_list_head(), blocks, area.committed, full_block_size, capacity, &mut free_map)
     }) else { return false };
     // When the immediate free list accounts for every unused block and no
     // remote head is published, forced collection cannot change this page's
@@ -1044,7 +1060,7 @@ pub(crate) unsafe fn visit_heap_page(
         free_map.fill(0);
         // SAFETY: collection left the same page and block area live.
         let Some(collected_count) = (unsafe {
-            heap_visit_free_map(page.as_ref().free_list_head(), blocks, area.committed, full_block_size, capacity, &mut free_map)
+            heap_visit_free_map(page, page.as_ref().free_list_head(), blocks, area.committed, full_block_size, capacity, &mut free_map)
         }) else { return false };
         free_count = collected_count;
     }
@@ -1075,15 +1091,23 @@ mod heap_visit_tests {
         let mut blocks = [0usize; 2];
         let block_size = core::mem::size_of::<usize>();
         let second = blocks.as_mut_ptr().wrapping_add(1);
+        let mut page = crate::types::Page::remote_free_test_page(2, 0);
+        let page = core::ptr::NonNull::from(&mut page);
+        #[cfg(not(feature = "mi-debug-1"))]
+        let link = second.addr();
+        #[cfg(feature = "mi-debug-1")]
+        // SAFETY: this initialized test page remains exclusive through traversal.
+        let link = crate::free_list::encode_page_link(page.as_ptr().addr(),
+            unsafe { crate::types::Page::debug_padding_keys_at(page) }, second.addr());
         // SAFETY: the second block is retained for this call and its next
         // word deliberately points back to itself to model a malformed list.
-        unsafe { second.write(second.addr()) };
+        unsafe { second.write(link) };
         let mut bitmap = [0usize; 1];
         // SAFETY: both blocks and the cyclic next word stay initialized and
         // exclusively owned through the bounded traversal.
         assert_eq!(unsafe {
             super::heap_visit_free_map(
-                second.cast(), blocks.as_mut_ptr().cast(), 2 * block_size,
+                page, second.cast(), blocks.as_mut_ptr().cast(), 2 * block_size,
                 block_size, 2, &mut bitmap,
             )
         }, None);

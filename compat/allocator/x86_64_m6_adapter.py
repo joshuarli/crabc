@@ -79,7 +79,7 @@ def run_adapter_differential(offline: bool = True) -> dict[str, Any]:
     (ARTIFACTS / "native_heap_visit_contract.log").write_text(
         str(direct["stdout"]) + str(direct["stderr"]))
     harness.require_success(direct, "public Heap visitation direct runtime contract")
-    if len(re.findall(r"^test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;",
+    if len(re.findall(r"^test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; [0-9]+ filtered out;",
                       str(direct["stdout"]), re.MULTILINE)) != 1:
         raise harness.HarnessError("public Heap visitation direct runtime contract did not execute exactly one test")
     report = {"compared_key_count": len(traces["c"]), "status": "passed", "trace": traces["c"]}

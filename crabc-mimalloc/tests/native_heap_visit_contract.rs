@@ -83,6 +83,46 @@ unsafe fn visit(heap: *mut c_void, blocks: bool, capture: &mut Visit) -> bool {
     unsafe { heaps::heap_visit_blocks(heap, blocks, Some(observe), (capture as *mut Visit).cast()) }
 }
 
+unsafe extern "C" fn observe_calloc(
+    heap: *const c_void, area: *const heaps::HeapArea, block: *mut c_void,
+    block_size: usize, argument: *mut c_void,
+) -> bool {
+    // SAFETY: the synchronous visitor retains the initialized area and the
+    // capture for this callback; no allocator metadata is mutated.
+    unsafe {
+        let geometry = block_size;
+        let expected = if cfg!(feature = "mi-debug-1") { 104 } else { 96 };
+        (*argument.cast::<Visit>()).valid &= geometry == expected;
+        observe(heap, area, block, block_size, argument)
+    }
+}
+
+#[test]
+fn public_theap_visitation_finds_one_live_calloc_block() {
+    let page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ).unwrap();
+    assert!(native_runtime_test_support::initialize(page_size));
+    let heap = heaps::heap_new();
+    assert!(!heap.is_null());
+    // SAFETY: the test owns this Heap and retains its only live client until
+    // synchronous visitation finishes; the callback never mutates its page.
+    unsafe {
+        let theap = heaps::heap_theap(heap);
+        assert!(!theap.is_null());
+        let client = api::theap_calloc(theap, 7, 13).value.unwrap();
+        assert_eq!(api::usable_size(client.as_ptr()),
+                   if cfg!(feature = "mi-debug-1") { 91 } else { 96 });
+        assert!(core::slice::from_raw_parts(client.as_ptr().cast::<u8>(), 91)
+            .iter().all(|byte| *byte == 0));
+        let mut capture = Visit::new(heap, [(client.as_ptr() as usize, 91), (0, 0), (0, 0)], 0);
+        let completed = api::theap_visit_blocks(theap, true, Some(observe_calloc),
+            (&mut capture as *mut Visit).cast());
+        assert_eq!((completed, capture.areas, capture.blocks, capture.seen, capture.valid),
+                   (true, 1, 1, 1, true));
+        assert_eq!(api::free(client.as_ptr()), api::FreeOutcome::Freed);
+        assert!(heaps::heap_release(heap, true));
+    }
+}
+
 #[test]
 fn public_heap_visitation_tracks_live_population_early_stop_and_collection() {
     let page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ).unwrap();
