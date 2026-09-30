@@ -156,14 +156,22 @@ class SuppliedDynamicLuaTests(unittest.TestCase):
             mock.patch.object(RUNNER, "run_supplied_dynamic", return_value=(report, path)),
         ):
             self.assertEqual(RUNNER.replay_report(path, state_parent=self.state_parent), path)
-            for subject in ("source", "root", "seed", "command"):
+            errors = {
+                "source": "consumer source changed", "source_after": "consumer source changed",
+                "root": "cohort changed", "seed": "seed changed", "command": "retained commands",
+                "passed": "did not pass", "authoritative": "authoritative report moved",
+            }
+            for subject, error in errors.items():
                 changed = json.loads(json.dumps(report))
                 if subject == "source": changed["consumer_source_before"] = {"revision": "0" * 40}
+                elif subject == "source_after": changed["consumer_source_after"] = {"revision": "0" * 40}
                 elif subject == "root": changed["dispatcher"]["cohort"]["roots"]["installed"]["path"] = "/wrong"
                 elif subject == "seed": changed["dispatcher"]["source_cache"]["seed"]["sha256"] = "0" * 64
-                else: changed["installed"]["build"]["command"] = ["cc", "invented.c"]
+                elif subject == "command": changed["installed"]["build"]["command"] = ["cc", "invented.c"]
+                elif subject == "passed": changed["passed"] = False
+                else: changed["dispatcher"]["authoritative_report"] = str(path.parent / "moved.json")
                 path.write_text(json.dumps(changed))
-                with self.subTest(subject=subject), self.assertRaises(RUNNER.LUA.RunnerError):
+                with self.subTest(subject=subject), self.assertRaisesRegex(RUNNER.LUA.RunnerError, error):
                     RUNNER.replay_report(path, state_parent=self.state_parent)
 
 
