@@ -2987,9 +2987,10 @@ impl ThreadLocalData {
     ///
     /// `Theap::initialize_main_static` and
     /// `Theap::initialize_dynamic_metadata` own the complete bounded
-    /// `_mi_theap_init` sequences. They call this after installing the
-    /// TLD/subprocess fields but before random/cookie generation and Release
-    /// heap publication. If there is an existing head, this returns the local
+    /// `_mi_theap_init` sequences call this before random/cookie generation
+    /// and Release heap publication. Insertion touches only links and the
+    /// previous head, so the incoming Theap may retain its TLD pointer after
+    /// this exclusive TLD reborrow ends. If there is an existing head, this returns the local
     /// random-image snapshot made *while the list lock is held*, exactly as
     /// the C `head_random` local does.
     #[inline]
@@ -6321,7 +6322,6 @@ impl Theap {
         // source empty-image copy; initialization must not reset its custody.
         #[cfg(target_arch = "x86_64")]
         { self.main_heap_lifecycle = main_heap_lifecycle; }
-        self.tld = core::ptr::from_mut(tld);
         self.refcount.store(1, Ordering::Release);
         self.subproc.store(heap.subprocess, Ordering::Release);
 
@@ -6344,6 +6344,12 @@ impl Theap {
             self.random.initialize();
         }
         self.cookie = self.random.next() as usize | 1;
+
+        // List attachment takes an exclusive TLD reborrow. Retain its pointer
+        // only after that reborrow ends; no initialized observer exists before
+        // the heap publication below, and list insertion reads only links and
+        // the previous head's random image, never this Theap's TLD field.
+        self.tld = core::ptr::from_mut(tld);
 
         // This Release write is the exact initialized predicate. It must stay
         // after list/random/cookie setup and before the heap-list operation.
@@ -8021,6 +8027,22 @@ const _: [(); 74] = [(); BIN_FULL];
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn metadata_theap_owner_projection_survives_tld_list_attachment() {
+        static PARENT: MainSubprocess = MainSubprocess::new();
+        let mut heap = Heap::bootstrap_empty();
+        heap.initialize_main_static(&PARENT, MemoryId::static_empty());
+        let mut tld = ThreadLocalData::detached();
+        assert!(tld.prepare_detached_static_memid());
+        assert!(tld.initialize_detached_after_static_memid(&PARENT));
+        let mut theap = Theap::empty();
+        assert!(theap.set_detached_main_metadata_static_memid());
+        theap.initialize_metadata_static(&mut heap, &mut tld).unwrap();
+        // All three unlisted fixture owners stay at their final addresses
+        // through this source-owner observation; no allocation or TLS exists.
+        assert!(theap.matches_owner(TheapOwner::Detached));
+    }
+
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn main_heap_lifecycle_occupies_initialized_internal_alignment_gap() {
