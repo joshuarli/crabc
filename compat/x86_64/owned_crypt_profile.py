@@ -388,6 +388,32 @@ def collect_command(reader, label, command, *, raw_stdout=None, environment=ENVI
     return {'invocation': reader.identity(path), **identity}
 
 
+def collect_static_entries(reader):
+    # Dynamic-only runs make no static claim. Once any static evidence is
+    # retained, both installed archive link modes must remain independently
+    # verifiable, including the product outside the observation directory.
+    if not any(reader.leaf.glob('static*')):
+        return {}
+    entries = {}
+    selected = None
+    identities = {mode: native.read_json(reader.leaf/(mode+'-link-evidence.json'))
+                  for mode in ('static', 'static-pie')}
+    for mode, recorded in identities.items():
+        require(isinstance(recorded.get('product'), str), 'crypt static product path missing')
+        manifest = reader.local(recorded['product']+'/share/crabc/manifest.json', within=reader.root/'.work')
+        product = manifest.parents[2]
+        require(not product.is_relative_to(reader.leaf), 'crypt static product must remain outside observations')
+        require(selected is None or product == selected, 'crypt static modes use different products')
+        selected = product
+        linked = products.validate_link(product, reader.leaf/'workload.o',
+            reader.leaf/(mode+'-consumer'), reader.leaf/(mode+'.receipt.json'), mode)
+        linked['product'] = reader.recorded(product)
+        same(recorded, linked, 'crypt independently recorded static product link')
+        entries[mode] = {'link': linked, 'execution': collect_command(reader, mode,
+            runtime_command(Path(reader.recorded(reader.leaf)), mode), raw_stdout=b'crypt ok\n')}
+    return entries
+
+
 def dependency_inputs(reader, path, source, required_headers):
     text = native.read_bytes(path).decode().replace('\\\n',' ')
     require(':' in text, 'crypt installed dependency list missing')
@@ -486,6 +512,7 @@ def collect(root, work, *, product=None):
                     else native.digest(path))
         same(observed, item['sha256'], 'crypt physically retained pinned oracle '+name)
     abi = collect_abi_compile(reader, tools)
+    abi['static_entries'] = collect_static_entries(reader)
     abi['oracle_link'] = collect_command(reader, 'abi-oracle-link', abi_oracle_command(reader.mount, Path(reader.recorded(work))), raw_stdout=b'')
     abi['oracle_elf'] = require_elf(work/'oracle','oracle')
     abi['oracle'] = collect_command(reader, 'oracle', runtime_command(Path(reader.recorded(work)),'oracle'), raw_stdout=b'crypt ok\n')

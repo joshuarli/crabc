@@ -145,6 +145,49 @@ class CryptProfileTests(unittest.TestCase):
         self.assertEqual(json.loads((self.leaf / 'profile-tools-after.json').read_text()), tools)
         self.assertFalse((self.leaf / 'profile-tools-after-error.json').exists())
 
+    def static_reader(self):
+        self.put(self.product / 'share/crabc/manifest.json', {'schema': 1, 'format': native.PRODUCT_FORMAT,
+            'target': 'x86_64-unknown-linux-musl'})
+        reader = native.Reader(self.leaf, str(self.root), self.product, self.root)
+        self.put(self.leaf / 'workload.o', b'retained object')
+        for mode in ('static', 'static-pie'):
+            binary = self.put(self.leaf / (mode+'-consumer'), b'#!/bin/sh\nprintf "crypt ok\\n"\n')
+            binary.chmod(0o755)
+            self.put(self.leaf / (mode+'.receipt.json'), {'retained': mode})
+            self.put(self.leaf / (mode+'-link-evidence.json'), {'product': str(self.product), 'linkage': mode})
+            crypt.run_command(self.root, self.leaf, mode, crypt.runtime_command(self.leaf, mode), crypt.ENVIRONMENT)
+        return reader
+
+    def test_static_entries_recheck_both_physical_product_links_and_runtime_results(self):
+        reader = self.static_reader()
+        def validate(product, obj, binary, receipt, mode):
+            self.assertEqual((product, obj, binary, receipt), (self.product, self.leaf/'workload.o',
+                self.leaf/(mode+'-consumer'), self.leaf/(mode+'.receipt.json')))
+            return {'product': str(product), 'linkage': mode}
+        with patch.object(crypt.products, 'validate_link', side_effect=validate) as checked:
+            self.assertEqual(set(crypt.collect_static_entries(reader)), {'static', 'static-pie'})
+            self.assertEqual(checked.call_count, 2)
+            self.put(self.leaf/'static-pie.stdout', b'wrong result\n')
+            with self.assertRaises(native.NativeObservationError):
+                crypt.collect_static_entries(reader)
+
+    def test_static_entries_propagate_product_mutation_and_reject_incomplete_roster(self):
+        reader = self.static_reader()
+        with patch.object(crypt.products, 'validate_link', side_effect=crypt.products.ProductEvidenceError('changed archive')):
+            with self.assertRaises(crypt.products.ProductEvidenceError):
+                crypt.collect_static_entries(reader)
+        (self.leaf/'static-pie-link-evidence.json').unlink()
+        with self.assertRaises(native.NativeObservationError):
+            crypt.collect_static_entries(reader)
+
+    def test_dynamic_only_leaf_has_no_static_claim(self):
+        reader = self.static_reader()
+        for path in self.leaf.glob('static*'):
+            path.unlink()
+        with patch.object(crypt.products, 'validate_link') as checked:
+            self.assertEqual(crypt.collect_static_entries(reader), {})
+            checked.assert_not_called()
+
     def test_runtime_invocations_bind_each_dynamic_copy_and_observer_role(self):
         for mode in ('pie', 'non-pie'):
             for entry in ('kernel', 'direct'):
