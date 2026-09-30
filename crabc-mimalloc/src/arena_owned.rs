@@ -4520,6 +4520,127 @@ mod tests {
         emit_lifecycle_stats_delta(trace, owner, before);
     }
 
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    struct LifecycleExternalCallback {
+        process: VmProcess<'static>,
+        base: usize,
+        commit_ok: AtomicBool,
+        needs_recommit: bool,
+        // Callback rows retain operation, relative span, zero slot, result,
+        // and the fresh subprocess VM counters observed during delivery.
+        events: std::sync::Mutex<std::vec::Vec<[i64; 10]>>,
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    unsafe extern "C" fn lifecycle_external_callback(
+        commit: bool, start: *mut u8, size: usize, is_zero: *mut bool, argument: *mut c_void,
+    ) -> bool {
+        // The fixture retains this boxed state through retirement and invokes
+        // callbacks synchronously without borrowing its allocation context.
+        let state = unsafe { &*argument.cast::<LifecycleExternalCallback>() };
+        let result = if commit { state.commit_ok.load(Ordering::Acquire) } else { state.needs_recommit };
+        let stats = state.process.subprocess().vm_statistics().snapshot();
+        state.events.lock().unwrap().push([
+            i64::from(commit), (start as usize - state.base) as i64, size as i64,
+            i64::from(!is_zero.is_null()), i64::from(result), stats.reserved_current,
+            stats.committed_current, stats.commit_calls, stats.purge_calls, stats.purged,
+        ]);
+        if !is_zero.is_null() {
+            // This result slot belongs to the synchronous source caller.
+            unsafe { is_zero.write(false); }
+        }
+        result
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    fn emit_lifecycle_external_callback(trace: &mut LifecycleTrace, state: &LifecycleExternalCallback) {
+        let mut events = state.events.lock().unwrap();
+        assert!(events.len() <= 4);
+        trace.emit(events.len() as i64);
+        for i in 0..4 {
+            for value in events.get(i).copied().unwrap_or([-1; 10]) { trace.emit(value); }
+        }
+        events.clear();
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    fn emit_external_callback_lifecycle(trace: &mut LifecycleTrace, fault: &fault::Guard) {
+        trace.marker(24);
+        for (cell, (committed_slices, needs_recommit, delay)) in [
+            (2usize, false, 0), (2, true, 0), (1, false, 0),
+            (1, true, 0), (0, false, 0), (1, true, -1),
+        ].into_iter().enumerate() {
+            let owner = lifecycle_purge_owner(delay, false);
+            let raw_size = ARENA_MIN_SIZE + ARENA_ALIGNMENT;
+            // The fixture itself owns this writable raw extent. Only a lease
+            // of its aligned interior is transferred to the external arena;
+            // source VM statistics never own this caller's raw mapping.
+            let raw = unsafe { crabc_core::mm::mmap_raw(core::ptr::null_mut(), raw_size,
+                3, 0x22, -1, 0) }.unwrap();
+            let offset = raw.addr().wrapping_neg() & (ARENA_ALIGNMENT - 1);
+            let base = unsafe { raw.add(offset) };
+            let state = Box::leak(Box::new(LifecycleExternalCallback {
+                process: owner.process, base: base as usize, commit_ok: AtomicBool::new(true),
+                needs_recommit, events: std::sync::Mutex::new(std::vec::Vec::new()),
+            }));
+            let lease = unsafe { ProcessExternalArenaLease::new(base, ARENA_MIN_SIZE,
+                false, false, false, CommitHook::new(lifecycle_external_callback,
+                    core::ptr::from_ref(state).cast_mut().cast())) }.unwrap();
+            let id = install_external(owner.backing, owner.process, ARENA_MIN_SIZE, lease).arena_id();
+            trace.emit(cell as i64); trace.emit(committed_slices as i64);
+            trace.emit_bool(needs_recommit); trace.emit(delay);
+            emit_lifecycle_external_callback(trace, state);
+            {
+                let claim = unsafe { owner.backing.try_find_free(search(id), 2,
+                    ARENA_SLICE_SIZE, false) }.unwrap();
+                let start = claim.start();
+                let index = claim.slice_index();
+                if committed_slices > 0 {
+                    externally_commit_range(owner.backing, id, &claim, committed_slices);
+                }
+                emit_lifecycle_external_callback(trace, state);
+                assert!(claim.release());
+                emit_lifecycle_external_callback(trace, state);
+                let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+                trace.emit_bool(unsafe { view.slices_committed() }.unwrap().is_set_range(index, 2) == Some(true));
+                trace.emit_bool(unsafe { view.slices_free() }.unwrap().is_set_range(index, 2) == Some(true));
+                state.commit_ok.store(false, Ordering::Release);
+                let retry = unsafe { owner.backing.try_find_free(search(id), 2, ARENA_SLICE_SIZE, true) };
+                trace.emit_bool(retry.is_some());
+                emit_lifecycle_external_callback(trace, state);
+                trace.emit_bool(unsafe { view.slices_committed() }.unwrap().is_set_range(index, 2) == Some(true));
+                trace.emit_bool(unsafe { view.slices_free() }.unwrap().is_set_range(index, 2) == Some(true));
+                let retry = retry.unwrap_or_else(|| {
+                    state.commit_ok.store(true, Ordering::Release);
+                    unsafe { owner.backing.try_find_free(search(id), 2, ARENA_SLICE_SIZE, true) }.unwrap()
+                });
+                trace.emit_bool(retry.start() == start);
+                trace.emit_bool(retry.memory_id().initially_committed());
+                trace.emit_bool(retry.memory_id().initially_zero());
+                emit_lifecycle_external_callback(trace, state);
+                trace.emit_bool(unsafe { view.slices_committed() }.unwrap().is_set_range(index, 2) == Some(true));
+                assert!(retry.release());
+            }
+            let unmaps = fault.capture_unmap_ranges();
+            // All claims and bitmap projections have ended. Retirement clears
+            // this slot without unmapping the caller's external storage.
+            let destroyed = unsafe { owner.backing.destroy_all(&mut []) }.unwrap();
+            assert!(destroyed.is_released());
+            trace.emit(owner.backing.registry().count() as i64);
+            trace.emit(unmaps.all().unwrap().1 as i64);
+            drop(unmaps);
+            emit_lifecycle_external_callback(trace, state);
+            unsafe { base.add(ARENA_MIN_SIZE - 1).write(0x5a); }
+            trace.emit_bool(unsafe { base.add(ARENA_MIN_SIZE - 1).read() } == 0x5a);
+            trace.emit_bool(unsafe { crabc_core::mm::munmap_raw(raw, raw_size) }.is_ok());
+            let mut residency = 0;
+            trace.emit_bool(unsafe { crabc_core::mm::mincore_raw(base, 4096, &mut residency) } == Err(Errno::NOMEM));
+            let stats = owner.process.subprocess().vm_statistics().snapshot();
+            for value in [stats.purge_calls, stats.purged, stats.reset_calls,
+                stats.commit_calls, stats.reserved_current, stats.committed_current] { trace.emit(value); }
+        }
+    }
+
     #[test]
     fn emit_native_arena_lifecycle_trace() {
         let fault = fault::install(fault::Plan::disabled());
@@ -5271,6 +5392,12 @@ mod tests {
             }
             isolated.registry.count.store(0, Ordering::Release);
         }
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
+        {
+            emit_external_callback_lifecycle(&mut trace, &fault);
+            trace.marker(25);
+        }
+        #[cfg(not(all(target_arch = "x86_64", not(miri))))]
         trace.marker(24);
     }
 

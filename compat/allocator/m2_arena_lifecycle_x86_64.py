@@ -11,8 +11,10 @@ recorded `CRABC-MI-ARENA-RESERVATION-NO-THP` advice (`expected_rust`). The aggre
 prebuilt test binary; `allocator-m2-arena-lifecycle` runs `main` for focused
 development without producing a milestone receipt.
 
-The differential covers arena creation and OS reservation. It is not evidence
-for abandonment, abandoned-page reclaim, or cross-thread page lifecycle.
+The differential covers arena creation, OS reservation, and caller-owned
+external callback commitment/purge, refusal/retry, bitmap transitions, registry
+retirement, and caller release. It is not evidence for abandonment, abandoned-
+page reclaim, or cross-thread page lifecycle.
 """
 
 from __future__ import annotations
@@ -31,8 +33,8 @@ TARGET = "arena::owned::tests::emit_native_arena_lifecycle_trace"
 FIELD = re.compile(r"m2\.arena\.lifecycle\.([0-9]+)=(-?[0-9]+)")
 # libtest's `--nocapture` output places the first field after this delimiter.
 RUST_INLINE_PREFIX = f"test {TARGET} ... "
-# Scenario markers are `-1000 - scenario`; the final marker is scenario 24.
-FINAL_MARKER = -1024
+# Scenario markers are `-1000 - scenario`; the final marker is scenario 25.
+FINAL_MARKER = -1025
 THP_SCENARIO = -1023
 # Scenario 23 cells: this sentinel, allow_thp, eager commit, advised, last
 # advice, and whether every advice call carried it.

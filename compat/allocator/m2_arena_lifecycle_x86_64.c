@@ -447,6 +447,127 @@ static void emit_marker(int64_t scenario) {
 
 /* ------------------------------------------------------------------------ */
 
+/* The caller retains the external mapping through arena retirement. Callback
+   return values own commitment; ordinary OS commit accounting is bypassed. */
+typedef struct external_lifecycle_s {
+  lifecycle_owner_t* owner;
+  unsigned char* base;
+  bool commit_ok;
+  bool needs_recommit;
+  size_t calls;
+  /* Each callback records commit, offset, size, zero-result slot, result,
+     then the fresh subprocess reserved/committed/commit/purge/purged fields. */
+  int64_t events[4][10];
+} external_lifecycle_t;
+
+static bool external_lifecycle_callback(bool commit, void* start, size_t size,
+                                        bool* is_zero, void* argument) {
+  external_lifecycle_t* const state = argument;
+  require(state != NULL && state->calls < 4);
+  const bool result = commit ? state->commit_ok : state->needs_recommit;
+  int64_t* event = state->events[state->calls++];
+  event[0] = commit;
+  event[1] = (unsigned char*)start - state->base;
+  event[2] = (int64_t)size;
+  event[3] = (is_zero != NULL);
+  event[4] = result;
+  event[5] = state->owner->subproc.stats.reserved.current;
+  event[6] = state->owner->subproc.stats.committed.current;
+  event[7] = state->owner->subproc.stats.commit_calls.total;
+  event[8] = state->owner->subproc.stats.purge_calls.total;
+  event[9] = state->owner->subproc.stats.purged.total;
+  if (is_zero != NULL) *is_zero = false;
+  return result;
+}
+
+static void emit_external_callback(external_lifecycle_t* state) {
+  emit((int64_t)state->calls);
+  for (size_t i = 0; i < 4; i++)
+  for (size_t j = 0; j < 10; j++) emit(i < state->calls ? state->events[i][j] : -1);
+  state->calls = 0;
+}
+
+static void external_callback_lifecycle(void) {
+  static const int cases[][3] = {{2,0,0}, {2,1,0}, {1,0,0}, {1,1,0}, {0,0,0}, {1,1,-1}};
+  emit_marker(24);
+  for (size_t cell = 0; cell < sizeof(cases)/sizeof(cases[0]); cell++) {
+    configure(true, 32 * 1024, 0, true);
+    mi_option_set(mi_option_purge_delay, cases[cell][2]);
+    mi_option_set(mi_option_purge_decommits, 0);
+    lifecycle_owner_t* const owner = fresh_owner();
+    const size_t raw_size = MI_ARENA_MIN_SIZE + MI_ARENA_ALIGNMENT;
+    unsigned char* raw = __real_mmap(NULL, raw_size, PROT_READ|PROT_WRITE,
+                                    MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
+    require(raw != MAP_FAILED);
+    unsigned char* const base = _mi_align_up_ptr(raw, MI_ARENA_ALIGNMENT);
+    external_lifecycle_t state = { .owner=owner, .base=base, .commit_ok=true,
+                                  .needs_recommit=cases[cell][1] != 0 };
+    mi_memid_t external = _mi_memid_create(MI_MEM_EXTERNAL);
+    external.mem.os.base = base;
+    external.mem.os.size = MI_ARENA_MIN_SIZE;
+    mi_arena_id_t id = _mi_arena_id_none();
+    require(mi_manage_os_memory_ex2(&owner->subproc, base, MI_ARENA_MIN_SIZE,
+        -1, false, external, external_lifecycle_callback, &state, &id));
+    mi_arena_t* const arena = _mi_arena_from_id(id);
+    require(arena != NULL);
+    emit((int64_t)cell);
+    emit(cases[cell][0]); emit(cases[cell][1]); emit(cases[cell][2]);
+    emit_external_callback(&state);  /* metadata commit: null zero argument */
+    mi_memid_t memory = _mi_memid_none();
+    void* start = mi_arenas_try_alloc(&owner->heap, 2, MI_ARENA_SLICE_ALIGN,
+        false, true, arena, 0, -1, &memory);
+    require(start != NULL);
+    const size_t index = memory.mem.arena.slice_index;
+    if (cases[cell][0] > 0) {
+      bool initial_zero = true;
+      require(mi_arena_commit(&owner->subproc, arena, start,
+          mi_size_of_slices(cases[cell][0]), &initial_zero, 0));
+      require(!initial_zero);
+      mi_bitmap_setN(arena->slices_committed, index, cases[cell][0], NULL);
+    }
+    emit_external_callback(&state);
+    _mi_arenas_free(&owner->subproc, start, 2 * MI_ARENA_SLICE_SIZE, memory);
+    emit_external_callback(&state);
+    const bool committed = mi_bitmap_is_setN(arena->slices_committed, index, 2);
+    emit(committed);
+    emit(mi_bbitmap_is_setN(arena->slices_free, index, 2));
+    state.commit_ok = false;
+    mi_memid_t refused = _mi_memid_none();
+    void* retry = mi_arenas_try_alloc(&owner->heap, 2, MI_ARENA_SLICE_ALIGN,
+        true, true, arena, 0, -1, &refused);
+    emit(retry != NULL);
+    emit_external_callback(&state);
+    emit(mi_bitmap_is_setN(arena->slices_committed, index, 2));
+    emit(mi_bbitmap_is_setN(arena->slices_free, index, 2));
+    if (retry == NULL) {
+      state.commit_ok = true;
+      retry = mi_arenas_try_alloc(&owner->heap, 2, MI_ARENA_SLICE_ALIGN,
+          true, true, arena, 0, -1, &refused);
+      require(retry != NULL);
+    }
+    emit(retry == start);
+    emit(refused.initially_committed); emit(refused.initially_zero);
+    emit_external_callback(&state);
+    emit(mi_bitmap_is_setN(arena->slices_committed, index, 2));
+    _mi_arenas_free(&owner->subproc, retry, 2 * MI_ARENA_SLICE_SIZE, refused);
+    const size_t unmaps = munmap_calls;
+    _mi_arenas_unsafe_destroy_all(&owner->subproc);
+    emit(mi_arenas_get_count(&owner->subproc));
+    emit((int64_t)(munmap_calls - unmaps));
+    emit_external_callback(&state);
+    base[MI_ARENA_MIN_SIZE-1] = 0x5a;
+    emit(base[MI_ARENA_MIN_SIZE-1] == 0x5a);
+    emit(__real_munmap(raw, raw_size) == 0);
+    emit(mincore(base, 4096, (unsigned char[1]){0}) != 0 && errno == ENOMEM);
+    emit(owner->subproc.stats.purge_calls.total);
+    emit(owner->subproc.stats.purged.total);
+    emit(owner->subproc.stats.reset_calls.total);
+    emit(owner->subproc.stats.commit_calls.total);
+    emit(owner->subproc.stats.reserved.current);
+    emit(owner->subproc.stats.committed.current);
+  }
+}
+
 int main(void) {
   _mi_auto_process_init();
 
@@ -1154,6 +1275,7 @@ int main(void) {
       emit((int64_t)mi_arenas_get_count(&policy_owner.subproc));
     }
   }
-  emit_marker(24);
+  external_callback_lifecycle();
+  emit_marker(25);
   return 0;
 }
