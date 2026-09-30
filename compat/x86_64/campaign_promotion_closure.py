@@ -100,8 +100,14 @@ def validate_promotion_closure(receipt_path: Path | None) -> dict:
                 "static product native dependency ownership differs")
         require(provenance['allocator_backend']['upstream_sha256'] == static.digest(ROOT / 'crabc-mimalloc/UPSTREAM.md'),
                 "static native allocator source differs")
-        definitions = static_builder.archive_defined_symbols(nm, tree / 'usr/lib/libc.a')
-        require(not any(name.startswith(('mi_', '_mi_')) for name in definitions)
+        archive = tree / 'usr/lib/libc.a'
+        definitions = static_builder.archive_defined_symbols(nm, archive)
+        # Dormant members can import a foreign allocator without being extracted
+        # by a workload, so native ownership covers unresolved symbols too.
+        output = static_builder.run([nm, '--undefined-only', '--extern-only', str(archive)])
+        imports = {line.split()[-1] for line in output.decode('utf-8', errors='replace').splitlines()
+                   if len(line.split()) >= 2 and not line.endswith(':')}
+        require(not any(name.startswith(('mi_', '_mi_')) for name in definitions | imports)
                 and {'malloc', 'free'} <= definitions, "static allocator symbol ownership differs")
     work = dynamic.evidence_path(ROOT / dynamic_receipt['work'])
     for product in ('installed', 'second', 'extracted'):

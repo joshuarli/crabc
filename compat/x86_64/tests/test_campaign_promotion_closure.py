@@ -166,6 +166,33 @@ class PromotionClosureTests(unittest.TestCase):
         with self.assertRaisesRegex(dynamic_builder.common.BuildError, 'native allocator ownership violated'):
             closure.validate_promotion_closure(path)
 
+    def test_dormant_static_c_allocator_imports_reject_native_promotion(self):
+        path = self.complete()
+        tree = self.root / '.work/static-tree'
+        assembly = self.root / 'dormant.S'
+        object_path = self.root / 'dormant.o'
+        for symbol in ('__crabc_private_projection', 'mi_foreign', '_mi_foreign'):
+            with self.subTest(imported_symbol=symbol):
+                assembly.write_text('.text\n.globl dormant_native_member\n'
+                                    f'dormant_native_member: call {symbol}; ret\n'
+                                    '.section .note.GNU-stack,"",@progbits\n')
+                subprocess.run(['gcc', '-c', str(assembly), '-o', str(object_path)], check=True)
+                archive = tree / 'usr/lib/libc.a'
+                subprocess.run(['ar', 'rcs', str(archive), str(object_path)], check=True)
+                imports = subprocess.check_output(['nm', '--undefined-only', str(archive)]).decode()
+                self.assertIn(symbol, imports)
+                manifest_path = tree / 'share/crabc/manifest.json'
+                document = json.loads(manifest_path.read_text())
+                document['installed']['files']['usr/lib/libc.a'] = hashlib.sha256(archive.read_bytes()).hexdigest()
+                manifest_path.write_text(json.dumps(document))
+                self.archive.unlink()
+                package.create_archive(tree, self.archive)
+                if symbol.startswith(('mi_', '_mi_')):
+                    with self.assertRaisesRegex(closure.PromotionClosureError, 'static allocator symbol ownership'):
+                        closure.validate_promotion_closure(path)
+                else:
+                    self.assertTrue(closure.validate_promotion_closure(path)['functional_readiness'])
+
     def test_functional_family_failure_is_not_hidden_by_complete_receipt(self):
         next(row for row in self.data['family'] if row['id'] == 'libc.resolver')['status'] = 'planned'
         with self.assertRaisesRegex(closure.PromotionClosureError, 'prerequisite families'):
