@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Regression guards for text-family semantic evidence attachment.
 
-The selector may record the current immutable text component coordinator, but
-that receipt is not permission to promote the planned family.  These tests use
-the reader's public result shape so the attachment cannot quietly treat a
-component receipt as a family-completion receipt.
+The selector preserves the completed family's verified result after its
+physical reader replay. That receipt does not promote the runtime or complete
+other ABI obligations. Tests bind the writer's public result shape to the
+selected source and product cohort.
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ import owned_text_math_locale_stdio_family as text_family
 
 
 class TextFamilySemanticAttachmentTests(unittest.TestCase):
-    """Bind a replayed component receipt without changing family admission."""
+    """Bind verified family completion without changing runtime promotion."""
 
     def setUp(self) -> None:
         common_checkout = mock.patch.object(selection, "_common_checkout", return_value=ROOT)
@@ -117,7 +117,7 @@ class TextFamilySemanticAttachmentTests(unittest.TestCase):
             }
         return {
             "schema": text_family.SCHEMA,
-            "status": "immutable-component-coordination-verified",
+            "status": "installed-family-evidence-verified",
             "family": text_family.FAMILY,
             "capabilities": list(text_family.CAPABILITIES),
             "inputs": {
@@ -129,8 +129,8 @@ class TextFamilySemanticAttachmentTests(unittest.TestCase):
                 "roster": selection.selecting_source_file_identity(text_family.ROSTER_PATH),
             },
             "components": components,
-            "component_complete": False,
-            "family_completion": False,
+            "component_complete": True,
+            "family_completion": True,
             "promotion_ready": False,
             "public_support": False,
         }
@@ -189,12 +189,12 @@ class TextFamilySemanticAttachmentTests(unittest.TestCase):
         assert companion is not None
         return companion
 
-    def test_replayed_component_receipt_attaches_only_semantic_availability(self) -> None:
+    def test_replayed_family_receipt_preserves_completion_without_promotion(self) -> None:
         companion = self._adapter()
         self.assertEqual(companion["status"], "text-family-component-semantics-attached")
         self.assertEqual(companion["result"]["capabilities"], list(text_family.CAPABILITIES))
-        self.assertFalse(companion["result"]["component_complete"])
-        self.assertFalse(companion["result"]["family_completion"])
+        self.assertTrue(companion["result"]["component_complete"])
+        self.assertTrue(companion["result"]["family_completion"])
         self.assertFalse(companion["result"]["promotion_ready"])
         self.assertFalse(companion["result"]["public_support"])
         self.assertEqual(companion["product_cohort"]["static_preparation"],
@@ -219,7 +219,7 @@ class TextFamilySemanticAttachmentTests(unittest.TestCase):
             "status": "text-family-component-semantics-attached",
             "capabilities": list(text_family.CAPABILITIES),
             "requirements_discharged": ["family-semantic-evidence-unavailable"],
-            "family_completion": False,
+            "family_completion": True,
         }])
         family = next(row for row in inputs["families"] if row["id"] == text_family.FAMILY)
         self.assertEqual(family["status"], "planned")
@@ -265,7 +265,13 @@ class TextFamilySemanticAttachmentTests(unittest.TestCase):
 
     def test_receipt_rejects_completion_or_roster_substitution(self) -> None:
         cases = (
-            ("completion", lambda record: record.__setitem__("family_completion", True), "completion"),
+            ("completion", lambda record: record.__setitem__("family_completion", False), "completion"),
+            ("component", lambda record: record.__setitem__("component_complete", False), "completion"),
+            ("completion-type", lambda record: record.__setitem__("family_completion", 1), "completion"),
+            ("promotion", lambda record: record.__setitem__("promotion_ready", True), "completion"),
+            ("public", lambda record: record.__setitem__("public_support", True), "completion"),
+            ("status", lambda record: record.__setitem__("status", "immutable-component-coordination-verified"), "completion"),
+            ("source", lambda record: record["inputs"]["source_before"].__setitem__("revision", "c" * 40), "source"),
             ("capability", lambda record: record.__setitem__("capabilities", []), "differs"),
             ("pair", lambda record: record["components"]["math"]["pairs"].pop("primary"), "differs"),
         )
@@ -277,6 +283,22 @@ class TextFamilySemanticAttachmentTests(unittest.TestCase):
                 with mock.patch.object(selection, "_text_family_reader", return_value=self._reader()), \
                         self.assertRaisesRegex(selection.SelectionError, message):
                     selection.text_family_semantic_adapter(self.receipt, paths=self.paths, source=self.source)
+
+    def test_semantic_join_rejects_changed_projected_completion_and_promotion(self) -> None:
+        companion = self._adapter()
+        contract = selection.load_contract(selection.CONTRACT_PATH)
+        inputs = selection.load_source_inputs(contract, selection.CONTRACT_PATH)
+        for flag, value in (("component_complete", False), ("family_completion", False),
+                            ("promotion_ready", True), ("public_support", True)):
+            with self.subTest(flag=flag):
+                changed = copy.deepcopy(companion)
+                changed["result"][flag] = value
+                with self.assertRaisesRegex(selection.SelectionError, "companion boundary differs"):
+                    selection.family_semantic_evidence(
+                        inputs["families"],
+                        headers_layouts_companion=None, text_family_companion=changed,
+                        paths=self.paths,
+                    )
 
     def test_adapter_rejects_a_receipt_changed_during_reader_replay(self) -> None:
         with mock.patch.object(selection, "_text_family_reader", return_value=self._reader(mutate_output=True)), \

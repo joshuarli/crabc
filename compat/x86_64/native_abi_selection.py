@@ -109,9 +109,9 @@ HEADERS_LAYOUTS_LIMITS = [
 ]
 TEXT_FAMILY = 'libc.text-math-locale-stdio'
 TEXT_FAMILY_LIMITS = [
-    'Only the current immutable three-product text/math/locale/stdio component coordinator is attached.',
-    'Its sixteen covered capabilities remain component evidence while the ledger family stays planned.',
-    'The attachment does not complete the family, its required aggregate admission, qualification, promotion, or public support.',
+    'Only the replayed three-product text/math/locale/stdio family evidence is attached.',
+    'Its sixteen covered capabilities retain their verified component and family completion.',
+    'The attachment does not close other ABI obligations, promote the runtime, or establish public support.',
 ]
 TEXT_FOPEN64_STRUCTURAL_REQUIREMENT = 'current source-bound owning component and consumer semantics receipt'
 TEXT_FOPEN64_STRUCTURAL_GROUP = 'largefile-fopen-macro'
@@ -1367,12 +1367,12 @@ def _text_family_receipt_product_cohort(reader: Any, inputs: Mapping[str, Any],
 
 def text_family_semantic_adapter(report_path: Path | None, *, paths: Mapping[str, Path],
                                  source: Mapping[str, Any]) -> dict[str, Any] | None:
-    """Attach one replayed text-family component receipt without admitting its family.
+    """Attach one replayed text-family completion receipt without runtime promotion.
 
     ``owned_text_math_locale_stdio_family`` owns the complete three-product
-    reader replay.  The selector records only the exact capability/component
-    projection after that replay, so a component receipt cannot be mistaken for
-    the still-planned family aggregate required by ``parity.toml``.
+    reader replay. The selector preserves its exact capability and completion
+    projection after that replay. Other ABI obligations and runtime promotion
+    remain independent of this family's completed evidence.
     """
     if report_path is None:
         return None
@@ -1395,12 +1395,12 @@ def text_family_semantic_adapter(report_path: Path | None, *, paths: Mapping[str
         'request', 'family_execution', 'pthread_family', 'source_before', 'source_after', 'roster',
     }, 'text family receipt inputs')
     require(report['schema'] == reader.SCHEMA
-            and report['status'] == 'immutable-component-coordination-verified'
+            and report['status'] == 'installed-family-evidence-verified'
             and report['family'] == reader.FAMILY == TEXT_FAMILY
             and report['capabilities'] == list(reader.CAPABILITIES)
             and inputs['source_before'] == expected_source and inputs['source_after'] == expected_source
             and same(inputs['roster'], selecting_source_file_identity(reader.ROSTER_PATH))
-            and report['component_complete'] is False and report['family_completion'] is False
+            and report['component_complete'] is True and report['family_completion'] is True
             and report['promotion_ready'] is False and report['public_support'] is False,
             'text family receipt completion or source boundary differs')
     product_cohort = _text_family_receipt_product_cohort(reader, inputs, paths)
@@ -1434,7 +1434,7 @@ def text_family_semantic_adapter(report_path: Path | None, *, paths: Mapping[str
             'schema': reader.SCHEMA, 'family': reader.FAMILY,
             'capabilities': list(reader.CAPABILITIES), 'components': component_projection,
             'fopen64_structural': fopen64_component,
-            'component_complete': False, 'family_completion': False,
+            'component_complete': True, 'family_completion': True,
             'promotion_ready': False, 'public_support': False,
         },
         'limits': list(TEXT_FAMILY_LIMITS),
@@ -1473,7 +1473,7 @@ def _text_family_semantic_evidence(companion: Mapping[str, Any], *, paths: Mappi
             and same(result['components'], expected_components)
             and same(result['fopen64_structural'],
                      _text_family_fopen64_component_result(reader, result['fopen64_structural']))
-            and result['component_complete'] is False and result['family_completion'] is False
+            and result['component_complete'] is True and result['family_completion'] is True
             and result['promotion_ready'] is False and result['public_support'] is False
             and companion['limits'] == TEXT_FAMILY_LIMITS,
             'text family semantic companion boundary differs')
@@ -1482,7 +1482,7 @@ def _text_family_semantic_evidence(companion: Mapping[str, Any], *, paths: Mappi
         'status': 'text-family-component-semantics-attached',
         'capabilities': list(reader.CAPABILITIES),
         'requirements_discharged': ['family-semantic-evidence-unavailable'],
-        'family_completion': False,
+        'family_completion': True,
     }
 
 
