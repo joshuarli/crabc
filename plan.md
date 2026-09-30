@@ -29,9 +29,9 @@ only its exact source, configuration, image, products, and execution context.
   tool's actual capacity.
 - **Runtime and ABI:** native signal masks, descriptor reads, synchronous waits,
   alternate stacks and process/thread queues have pinned-musl controls. Exact
-  `0c53e7969` qualifies 183 CRT obligations in four modes. All 32 compiler helpers
-  now have installed four-mode, default-C and shared/interposition qualification
-  on exact `fcdd233a2`. The four binary32/integer128 casts match 1,025,264 oracle
+  `e30070ce8` qualifies 183 CRT obligations and all 32 compiler helpers in four
+  installed modes, default C lowering and shared/interposition controls, with
+  independent read-only readers. The four binary32/integer128 casts match 1,025,264 oracle
   cases; `__divdc3` matches 1,407,104 cases across rounding modes and flags.
 - **Allocator implementation:** auxiliary-owner repair, locked TLD projections,
   full-page abandonment, cached/main-Theap statistics selection and live-Heap
@@ -39,11 +39,16 @@ only its exact source, configuration, image, products, and execution context.
   while draining remote frees and charges its destination Theap. The unchanged
   full Heap stress matrix passes 13 C/Rust pairs; subprocess stress passes 25.
   First Heap-key bitmap allocation and 1,024-key growth refusal/retry match C in
-  32 observations without disturbing live ownership.
+  32 observations without disturbing live ownership. Heap NUMA affinity now
+  selects fresh pages; debug visitation decodes page links and reports usable
+  block geometry. Deterministic Heap birth and release contention match C.
+  A retained child-current statistics regression exposes main-subprocess
+  selection and missing public statistics entries; their repair is active.
 - **Allocator evidence:** exact `fcdd233a2` passes all 45 executable M6 entries;
   its original report retains ten contract blockers. The upstream-only condition
-  is now closed by the unchanged API and both full stress workloads; nine other
-  gate conditions remain. The same source passes nine M5 correctness gates and
+  is now closed by the unchanged API and both full stress workloads. The current
+  contract also closes source convenience callers across four profiles and
+  retains eight gate conditions. The same frozen source passes nine M5 correctness gates and
   their independent readers; qualifying performance remains blocked. Exact
   `1b814` passes all 33 statistics rows. Canonical M2 remains partial; exact
   `a836` passes eight local M3 components, 328 native tests and 15 strict Miri
@@ -56,11 +61,13 @@ only its exact source, configuration, image, products, and execution context.
   resolver, Rust std/LTO/unwind, POSIX and text evidence retain that exact source.
   The text selector's obsolete completion check is repaired; fresh same-source
   family attachment and C ABI closure remain open.
-- **Next qualification:** fresh accepted-C and native cohorts on `e30070ce8`
-  are producing their own immutable products and original independent readers;
+- **Next qualification:** accepted-C `e30070ce8` passes the complete 219
+  executions and separate full54 aggregate with independent read-only readers;
   dependent POSIX, pthread, text, math, resolver and Rust std/LTO lanes share
-  read-only product leases. Native `bed22dc18` retains its signal-handler/fork
-  timeout after 85 successes and remains unqualified. The controlled native/musl
+  immutable product leases. Its three math products pass all 206 entries and
+  18 execution cells. Native `e30070ce8` retains its signal-handler/fork timeout
+  after 12 successes; older `bed22dc18` timed out after 85. Both remain
+  unqualified. The controlled native/musl
   child-counter reproduction does not waive that failure. No historical result
   qualifies newer source or substitutes for ordered merged-source gates.
 - **Remaining:** finish planned runtime families and allocator source/API/mode
