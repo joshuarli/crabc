@@ -660,7 +660,8 @@ def read_operations_profiles(profiles: Sequence[str], scenarios: Sequence[str], 
     if harness.sha256_file(products / "upstream-archive") != harness.load_pin()["sha256"]:
         raise harness.HarnessError("operation receipt pinned archive changed")
     native = harness.read_json(products / "native-execution-provenance.json")
-    harness.validate_native_execution_provenance(native, expected_image_id=inputs["execution"]["image_id"])
+    execution = harness.require_native_x86_64(require_image_identity=True)
+    harness.validate_native_execution_provenance(native, expected_image_id=execution["image_id"])
     if native != inputs["execution"]:
         raise harness.HarnessError("operation receipt initial execution identity changed")
     for fixture in (OPERATIONS_DRIVER, OOM_SURVIVAL_DRIVER):

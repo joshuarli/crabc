@@ -8,6 +8,7 @@ import importlib.util
 import sys
 import tempfile
 from unittest import mock
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
 
@@ -245,6 +246,31 @@ class M4OperationsObservationTests(unittest.TestCase):
         with self.assertRaisesRegex(harness.HarnessError, "compiler authority"):
             gate.validate_operation_build({**valid, "command": changed}, inputs,
                                           "debug-1", "operations", "fixture.c", "c")
+
+
+    def test_profile_reader_rejects_self_consistent_execution_from_a_different_image(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            output = Path(directory)
+            products = output / "products"
+            products.mkdir()
+            pin = harness.load_pin()
+            recorded = {"execution_mode": "native", "host_architecture": "x86_64",
+                        "image_id": "sha256:" + "a" * 64}
+            current = {**recorded, "image_id": "sha256:" + "b" * 64}
+            inputs = {"source": {"revision": "source"}, "upstream": pin, "profiles": ["release"],
+                      "scenarios": ["threads"], "compiler": "/pinned/tool", "cargo": "/pinned/tool",
+                      "execution": recorded}
+            harness.write_json(products / "inputs.json", inputs)
+            harness.write_json(products / "native-execution-provenance.json", recorded)
+            receipt = SimpleNamespace(path=output / "receipt.json", source=inputs["source"],
+                parameters={"profiles": "release", "scenarios": "threads", "workload": "unchanged"})
+            with (mock.patch.object(gate, "operation_receipts", return_value=SimpleNamespace(
+                    read_receipt=mock.Mock(return_value=receipt))),
+                  mock.patch.object(harness, "require_tool", return_value="/pinned/tool"),
+                  mock.patch.object(harness, "sha256_file", return_value=pin["sha256"]),
+                  mock.patch.object(harness, "require_native_x86_64", return_value=current)):
+                with self.assertRaisesRegex(harness.HarnessError, "image differs"):
+                    gate.read_operations_profiles(("release",), ("threads",))
 
 
 if __name__ == "__main__":
