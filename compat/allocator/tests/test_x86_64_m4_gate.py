@@ -6,6 +6,8 @@ from __future__ import annotations
 import copy
 import importlib.util
 import sys
+import tempfile
+from unittest import mock
 import unittest
 from pathlib import Path
 
@@ -178,6 +180,71 @@ class M4GateContractTests(unittest.TestCase):
         ):
             with self.subTest(raw=raw), self.assertRaises(harness.HarnessError):
                 gate.parse_upstream_test_api_checks(raw)
+
+
+class M4OperationsObservationTests(unittest.TestCase):
+    def test_failed_original_workload_retains_both_results_and_revokes_old_pass(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            output = Path(directory)
+            previous = output / "threads.json"
+            previous.write_text('{"status":"passed"}')
+            c = {"status": 1, "stdout": "original C output", "stderr": "original C diagnostic"}
+            rust = {"status": 0, "stdout": "original native output", "stderr": ""}
+            with (mock.patch.object(gate, "ARTIFACTS", output),
+                  mock.patch.object(harness, "require_native_x86_64"),
+                  mock.patch.object(harness, "fetch_archive", return_value=output / "archive"),
+                  mock.patch.object(harness, "safe_extract", return_value=output),
+                  mock.patch.object(gate, "build_c_driver", return_value=output / "c"),
+                  mock.patch.object(gate, "build_rust_driver", return_value=output / "rust"),
+                  mock.patch.object(gate, "run_driver", side_effect=[c, rust])):
+                with self.assertRaises(harness.HarnessError):
+                    gate.run_operations_differential(True, "threads")
+            self.assertFalse(previous.exists(), "a failed rerun must not leave a passed report")
+            self.assertEqual(harness.read_json(output / "threads-c.json"), c)
+            self.assertEqual(harness.read_json(output / "threads-rust.json"), rust)
+            self.assertIn("original C diagnostic", (output / "threads-c.log").read_text())
+            self.assertIn("original native output", (output / "threads-rust.log").read_text())
+
+
+    def test_profile_observation_runs_full_workload_on_both_sides_and_retains_failed_comparison(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            output = Path(directory)
+            c = {"command": ["c", "threads"], "status": 0,
+                 "stdout": gate.OPERATIONS_TRACE_BEGIN + "\nworker.join=1\n" + gate.OPERATIONS_TRACE_END,
+                 "stderr": "source diagnostic"}
+            rust = {**c, "command": ["rust", "threads"],
+                    "stdout": c["stdout"].replace("worker.join=1", "worker.join=0")}
+            cases = []
+            with mock.patch.object(gate, "run_driver", side_effect=[c, rust]) as run:
+                with self.assertRaisesRegex(harness.HarnessError, "mismatch"):
+                    gate.observe_operations_profile(output, "debug-1", "threads",
+                                                     {"c": output / "c", "rust": output / "rust"}, cases)
+            self.assertEqual(run.call_args_list,
+                [mock.call(output / "c", ("threads",)), mock.call(output / "rust", ("threads",))])
+            self.assertEqual([row[0] for row in cases], ["debug-1-threads-c", "debug-1-threads-rust"])
+            self.assertEqual(harness.read_json(output / "debug-1-threads-c.json"), c)
+            self.assertEqual(harness.read_json(output / "debug-1-threads-rust.json"), rust)
+
+
+    def test_retained_compiler_authority_rejects_a_profile_or_fixture_substitution(self):
+        inputs = {"compiler": "/usr/bin/musl-gcc", "cargo": "/usr/local/bin/cargo",
+                  "source_directory": "/own/source", "output_directory": "/own/run"}
+        command = [inputs["compiler"], "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+                   "-DCRABC_MI_M4_SOURCE_CANARY=1", *gate.api_profile_flags("debug-1"),
+                   "-I", "/own/source/include", "/own/run/fixture.c", "/own/source/src/static.c",
+                   "-pthread", "-o", "/own/run/debug-1/operations/operations-c"]
+        valid = {"status": 0, "command": command, "stdout": "", "stderr": ""}
+        gate.validate_operation_build(valid, inputs, "debug-1", "operations", "fixture.c", "c")
+        changed = command[:]
+        changed[changed.index("-DMI_DEBUG=1")] = "-DMI_DEBUG=0"
+        with self.assertRaisesRegex(harness.HarnessError, "compiler authority"):
+            gate.validate_operation_build({**valid, "command": changed}, inputs,
+                                          "debug-1", "operations", "fixture.c", "c")
+        changed = command[:]
+        changed[changed.index("/own/run/fixture.c")] = "/other/fixture.c"
+        with self.assertRaisesRegex(harness.HarnessError, "compiler authority"):
+            gate.validate_operation_build({**valid, "command": changed}, inputs,
+                                          "debug-1", "operations", "fixture.c", "c")
 
 
 if __name__ == "__main__":

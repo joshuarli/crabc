@@ -36,6 +36,9 @@ The evidence checks this module owns:
 from __future__ import annotations
 
 import argparse
+import importlib.util
+import json
+import tempfile
 import os
 import re
 import shutil
@@ -461,6 +464,7 @@ def build_c_driver(source: Path, temporary: Path, driver_source: Path = OPERATIO
         ],
         cwd=source,
     )
+    harness.write_json(temporary / "c-build.json", build)
     harness.require_success(build, "M4 operations C driver build")
     return driver
 
@@ -471,14 +475,18 @@ def build_adapter_library(temporary: Path, profile: str = "release") -> Path:
     target_dir = temporary / "cargo-target"
     build = harness.command_record(
         [
-            harness.require_tool("cargo"), "build", "--locked", "--release", "--target", RUST_TARGET,
+            harness.require_tool("cargo"), "build", "--locked", "--release", "--message-format=json", "--target", RUST_TARGET,
             "-p", ADAPTER_PACKAGE, "--target-dir", str(target_dir),
             *(("--features", f"crabc-mimalloc/mi-{profile}") if profile != "release" else ()),
         ],
         cwd=harness.ROOT, env=dict(os.environ), timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
     )
+    harness.write_json(temporary / "adapter-build.json", build)
     harness.require_success(build, "M4 native adapter build")
-    return target_dir / RUST_TARGET / "release" / ADAPTER_STATICLIB
+    library = target_dir / RUST_TARGET / "release" / ADAPTER_STATICLIB
+    build["artifact"] = harness.artifact_record(library)
+    harness.write_json(temporary / "adapter-build.json", build)
+    return library
 
 
 def build_rust_driver(source: Path, temporary: Path, driver_source: Path = OPERATIONS_DRIVER,
@@ -504,6 +512,8 @@ def run_driver(driver: Path, arguments: Sequence[str] = ()) -> dict[str, Any]:
 
 def run_operations_differential(offline: bool, scenario: str) -> dict[str, Any]:
     harness.require_native_x86_64()
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    (ARTIFACTS / f"{scenario}.json").unlink(missing_ok=True)
     pin = harness.load_pin()
     archive = harness.fetch_archive(pin, offline)
     with harness.temporary_directory("crabc-mimalloc-x86_64-m4-operations-") as name:
@@ -516,6 +526,11 @@ def run_operations_differential(offline: bool, scenario: str) -> dict[str, Any]:
         }
         arguments = () if scenario == "oom-survival" else (scenario,)
         executions = {side: run_driver(driver, arguments) for side, driver in drivers.items()}
+        for side, execution in executions.items():
+            harness.write_json(ARTIFACTS / f"{scenario}-{side}.json", execution)
+            (ARTIFACTS / f"{scenario}-{side}.log").write_text(
+                str(execution["stdout"]) + str(execution["stderr"]))
+            (ARTIFACTS / f"{scenario}-{side}.trace").write_text(str(execution["stdout"]))
         for side, execution in executions.items():
             harness.require_success(execution, f"M4 operations {side} driver")
         traces = {
@@ -566,6 +581,250 @@ def run_operations_differential(offline: bool, scenario: str) -> dict[str, Any]:
     }
     harness.write_json(ARTIFACTS / f"{scenario}.json", report)
     return report
+
+
+API_PROFILES = ("release", "debug-1", "stat-1", "stat-2")
+PROFILE_SCENARIOS = (*DIFFERENTIAL_SCENARIOS, "api-modes")
+OPERATIONS_RUNNER = "allocator-operation-profiles"
+
+
+def operation_receipts():
+    specification = importlib.util.spec_from_file_location(
+        "allocator_operation_receipts", harness.ROOT / "compat/x86_64/native_shadow_receipt.py")
+    module = importlib.util.module_from_spec(specification)
+    sys.modules[specification.name] = module
+    specification.loader.exec_module(module)
+    return module
+
+
+def retain_operation_command(output: Path, name: str, record: Mapping[str, Any], cases: list):
+    raw, log = output / f"{name}.json", output / f"{name}.log"
+    harness.write_json(raw, record)
+    log.write_text(str(record["stdout"]) + str(record["stderr"]))
+    cases.append((name, record["status"], [raw, log]))
+
+
+def observe_operations_profile(output: Path, profile: str, scenario: str, drivers: Mapping[str, Path],
+                               cases: list) -> dict[str, Any]:
+    arguments = () if scenario == "oom-survival" else (scenario,)
+    executions = {side: run_driver(drivers[side], arguments) for side in ("c", "rust")}
+    for side, record in executions.items():
+        retain_operation_command(output, f"{profile}-{scenario}-{side}", record, cases)
+    termination = {}
+    for name in ABORT_SCENARIOS if scenario == "operations" else ():
+        records = {side: run_driver(drivers[side], (f"abort:{name}",)) for side in ("c", "rust")}
+        for side, record in records.items():
+            retain_operation_command(output, f"{profile}-{name}-{side}", record, cases)
+        termination[name] = {side: record["status"] for side, record in records.items()}
+        if records["c"]["status"] != -6 or records["rust"]["status"] != -6:
+            raise harness.HarnessError(f"{profile} {name} did not terminate with the source SIGABRT")
+    for side, record in executions.items():
+        harness.require_success(record, f"{profile} {scenario} {side} workload")
+    traces = {side: parse_operations_trace(str(record["stdout"]), f"{profile} {scenario} {side}")
+              for side, record in executions.items()}
+    compare_operations_traces(traces["c"], traces["rust"])
+    return {"trace": traces["c"], "abort_scenarios": termination}
+
+
+def validate_operation_build(record: Mapping[str, Any], inputs: Mapping[str, Any], profile: str,
+                             family: str, fixture: str, side: str):
+    source, output = Path(inputs["source_directory"]), Path(inputs["output_directory"])
+    directory = output / profile / family
+    if side == "c":
+        expected = [inputs["compiler"], "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+                    "-DCRABC_MI_M4_SOURCE_CANARY=1", *api_profile_flags(profile),
+                    "-I", str(source / "include"), str(output / fixture), str(source / "src/static.c"),
+                    "-pthread", "-o", str(directory / "operations-c")]
+    else:
+        library = output / profile / "cargo-target" / RUST_TARGET / "release" / ADAPTER_STATICLIB
+        expected = [inputs["compiler"], "-std=c11", "-O2", "-I", str(source / "include"),
+                    str(output / fixture), str(library), "-pthread", "-o", str(directory / "operations-rust")]
+    if record.get("status") != 0 or record.get("command") != expected:
+        raise harness.HarnessError(f"{profile} {family} {side} compiler authority changed")
+
+
+def read_operations_profiles(profiles: Sequence[str], scenarios: Sequence[str], *, replay: bool = False):
+    """Reconstruct unchanged commands and comparisons from authenticated products and logs."""
+    receipts = operation_receipts()
+    receipt = receipts.read_receipt(harness.ROOT, OPERATIONS_RUNNER)
+    if dict(receipt.parameters) != {"profiles": ",".join(profiles), "scenarios": ",".join(scenarios),
+                                    "workload": "unchanged"}:
+        raise harness.HarnessError("operation receipt profile or scenario selection changed")
+    products, logs = receipt.path.parent / "products", receipt.path.parent / "logs"
+    inputs = harness.read_json(products / "inputs.json")
+    if (inputs["source"] != dict(receipt.source) or inputs["upstream"] != harness.load_pin()
+            or inputs["profiles"] != list(profiles) or inputs["scenarios"] != list(scenarios)
+            or inputs["compiler"] != harness.require_tool("musl-gcc")
+            or inputs["cargo"] != harness.require_tool("cargo")):
+        raise harness.HarnessError("operation receipt source, tool, or profile authority changed")
+    if harness.sha256_file(products / "upstream-archive") != harness.load_pin()["sha256"]:
+        raise harness.HarnessError("operation receipt pinned archive changed")
+    native = harness.read_json(products / "native-execution-provenance.json")
+    harness.validate_native_execution_provenance(native, expected_image_id=inputs["execution"]["image_id"])
+    if native != inputs["execution"]:
+        raise harness.HarnessError("operation receipt initial execution identity changed")
+    for fixture in (OPERATIONS_DRIVER, OOM_SURVIVAL_DRIVER):
+        if (products / fixture.name).read_bytes() != fixture.read_bytes():
+            raise harness.HarnessError("operation receipt workload fixture changed")
+    original = Path(inputs["output_directory"])
+    if (not original.is_relative_to(ARTIFACTS) or not Path(inputs["source_directory"]).is_relative_to(original)):
+        raise harness.HarnessError("operation receipt compiler outputs escaped owned artifacts")
+    expected_cases = []
+    for profile in profiles:
+        adapter = harness.read_json(products / f"{profile}-adapter-build.json")
+        target = original / profile / "cargo-target"
+        expected = [inputs["cargo"], "build", "--locked", "--release", "--message-format=json",
+                    "--target", RUST_TARGET, "-p", ADAPTER_PACKAGE, "--target-dir", str(target),
+                    *(("--features", f"crabc-mimalloc/mi-{profile}") if profile != "release" else ())]
+        if adapter.get("status") != 0 or adapter.get("command") != expected:
+            raise harness.HarnessError(f"{profile} adapter compiler authority changed")
+        library = target / RUST_TARGET / "release" / ADAPTER_STATICLIB
+        artifacts = [json.loads(line) for line in str(adapter["stdout"]).splitlines() if line.startswith("{")]
+        if not any(item.get("reason") == "compiler-artifact" and str(library) in item.get("filenames", [])
+                   for item in artifacts):
+            raise harness.HarnessError(f"{profile} adapter lacks compiler-emitted static archive authority")
+        record = adapter.get("artifact", {})
+        if (record.get("path") != harness.relative(library)
+                or record.get("sha256") != harness.sha256_file(products / f"{profile}-adapter.a")
+                or record.get("bytes") != (products / f"{profile}-adapter.a").stat().st_size):
+            raise harness.HarnessError(f"{profile} compiler archive differs from the retained product")
+        for family, fixture in (("operations", OPERATIONS_DRIVER), ("oom-survival", OOM_SURVIVAL_DRIVER)):
+            for side in ("c", "rust"):
+                binary = products / f"{profile}-{family}-{side}"
+                header = harness.command_record([harness.require_tool("readelf"), "-h", str(binary)], cwd=products)
+                harness.require_success(header, "operation retained ELF inspection")
+                harness.parse_elf_identity(str(header["stdout"]), "x86_64")
+            validate_operation_build(harness.read_json(products / f"{profile}-{family}-c-build.json"),
+                                     inputs, profile, family, fixture.name, "c")
+            name = f"{profile}-{family}-rust-link"
+            validate_operation_build(harness.read_json(logs / f"{name}.json"),
+                                     inputs, profile, family, fixture.name, "rust")
+            expected_cases.append(name)
+            for scenario in scenarios:
+                if (scenario == "oom-survival") != (family == "oom-survival"):
+                    continue
+                observed = {}
+                for side in ("c", "rust"):
+                    name = f"{profile}-{scenario}-{side}"
+                    expected_cases.append(name)
+                    record = harness.read_json(logs / f"{name}.json")
+                    binary = original / profile / family / f"operations-{side}"
+                    arguments = [] if scenario == "oom-survival" else [scenario]
+                    if record.get("status") != 0 or record.get("command") != [str(binary), *arguments]:
+                        raise harness.HarnessError(f"{name} original execution authority changed")
+                    observed[side] = parse_operations_trace(str(record["stdout"]), name)
+                compare_operations_traces(observed["c"], observed["rust"])
+                for abort in ABORT_SCENARIOS if scenario == "operations" else ():
+                    for side in ("c", "rust"):
+                        name = f"{profile}-{abort}-{side}"
+                        expected_cases.append(name)
+                        record = harness.read_json(logs / f"{name}.json")
+                        binary = original / profile / family / f"operations-{side}"
+                        if record.get("status") != -6 or record.get("command") != [str(binary), f"abort:{abort}"]:
+                            raise harness.HarnessError(f"{name} source termination authority changed")
+    if receipt.case_ids() != expected_cases:
+        raise harness.HarnessError("operation receipt full workload roster changed")
+    if replay:
+        execution = harness.require_native_x86_64(require_image_identity=True)
+        harness.validate_native_execution_provenance(native, expected_image_id=execution["image_id"])
+        harness.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        output = Path(tempfile.mkdtemp(prefix="operation-profiles-replay-", dir=harness.TEMP_ROOT))
+        for profile in profiles:
+            for family in ("operations", "oom-survival"):
+                drivers = {}
+                for side in ("c", "rust"):
+                    binary = output / f"{profile}-{family}-{side}"
+                    shutil.copyfile(products / binary.name, binary)
+                    binary.chmod(0o755)
+                    drivers[side] = binary
+                for scenario in scenarios:
+                    if (scenario == "oom-survival") == (family == "oom-survival"):
+                        observe_operations_profile(output, profile, scenario, drivers, [])
+        print(f"operation profile original product replay retained at {output}")
+    return receipt
+
+
+def run_operations_profiles(offline: bool, profiles: Sequence[str], scenarios: Sequence[str]) -> dict[str, Any]:
+    """Retain full unchanged workloads and compiler authority before admitting a cohort."""
+    receipts = operation_receipts()
+    execution = harness.require_native_x86_64(require_image_identity=True)
+    seal = receipts.source_seal(harness.ROOT)
+    if seal["worktree_sha256"] != __import__("hashlib").sha256(b"").hexdigest():
+        raise harness.HarnessError("operation profile qualification requires a clean frozen source")
+    pin = harness.load_pin()
+    archive = harness.fetch_archive(pin, offline)
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    output = Path(tempfile.mkdtemp(prefix="profiles-", dir=ARTIFACTS))
+    source = harness.safe_extract(archive, output / "source", pin["archive_root"])
+    products, cases, observed, errors = {"upstream-archive": archive}, [], {}, []
+    inputs = {"source": seal, "execution": execution, "upstream": pin,
+              "profiles": list(profiles), "scenarios": list(scenarios), "source_directory": str(source),
+              "output_directory": str(output),
+              "compiler": harness.require_tool("musl-gcc"), "cargo": harness.require_tool("cargo")}
+    for fixture in (OPERATIONS_DRIVER, OOM_SURVIVAL_DRIVER):
+        retained = output / fixture.name
+        shutil.copy2(fixture, retained)
+        products[fixture.name] = retained
+    for profile in profiles:
+        directory = output / profile
+        directory.mkdir()
+        try:
+            library = build_adapter_library(directory, profile)
+            retained_library = directory / "adapter.a"
+            shutil.copy2(library, retained_library)
+            products[f"{profile}-adapter.a"] = retained_library
+            products[f"{profile}-adapter-build.json"] = directory / "adapter-build.json"
+            for family, fixture in (("operations", OPERATIONS_DRIVER), ("oom-survival", OOM_SURVIVAL_DRIVER)):
+                family_directory = directory / family
+                family_directory.mkdir()
+                retained = output / fixture.name
+                c = build_c_driver(source, family_directory, retained, profile)
+                rust = family_directory / "operations-rust"
+                command = [inputs["compiler"], "-std=c11", "-O2", "-I", str(source / "include"),
+                           str(retained), str(library), "-pthread", "-o", str(rust)]
+                link = harness.command_record(command, cwd=source)
+                retain_operation_command(output, f"{profile}-{family}-rust-link", link, cases)
+                harness.require_success(link, f"{profile} {family} native link")
+                products[f"{profile}-{family}-c"] = c
+                products[f"{profile}-{family}-rust"] = rust
+                products[f"{profile}-{family}-c-build.json"] = family_directory / "c-build.json"
+                for scenario in scenarios:
+                    if (scenario == "oom-survival") != (family == "oom-survival"):
+                        continue
+                    try:
+                        observed[f"{profile}.{scenario}"] = observe_operations_profile(
+                            output, profile, scenario, {"c": c, "rust": rust}, cases)
+                        print(f"{profile}.{scenario}: matched unchanged workload", flush=True)
+                    except harness.HarnessError as error:
+                        errors.append(f"{profile}.{scenario}: {error}")
+                        print(f"{profile}.{scenario}: FAILED {error}", flush=True)
+        except harness.HarnessError as error:
+            errors.append(f"{profile} build: {error}")
+        finally:
+            # Compiler products and original command records are retained above;
+            # incremental build caches are disposable after all links finish.
+            shutil.rmtree(directory / "cargo-target", ignore_errors=True)
+    inputs_path = output / "inputs.json"
+    harness.write_json(inputs_path, inputs)
+    products["inputs.json"] = inputs_path
+    native = output / "native-execution-provenance.json"
+    harness.write_json(native, harness.native_execution_attestation(
+        execution, harness.require_native_x86_64(require_image_identity=True)))
+    products["native-execution-provenance.json"] = native
+    result = {"profiles": list(profiles), "scenarios": list(scenarios), "observations": observed,
+              "errors": errors, "status": "failed" if errors else "passed"}
+    harness.write_json(output / "results.json", result)
+    if receipts.source_seal(harness.ROOT) != seal:
+        raise harness.HarnessError("source changed during operation profile cohort")
+    # Abort exits remain raw command records; the comparison is a successful check.
+    positive_cases = [(name, 0 if any(name.endswith(f"-{abort}-{side}")
+                      for abort in ABORT_SCENARIOS for side in ("c", "rust")) else status, logs)
+                      for name, status, logs in cases]
+    receipts.write_receipt(harness.ROOT, OPERATIONS_RUNNER, output, products, positive_cases,
+        {"profiles": ",".join(profiles), "scenarios": ",".join(scenarios), "workload": "unchanged"}, not errors)
+    if errors:
+        raise harness.HarnessError(f"operation profile cohort failed; original raw retained at {output}: " + "; ".join(errors))
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -749,6 +1008,8 @@ def load_summary() -> tuple[dict[str, Any], dict[str, Any]]:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--operations-matrix", action="store_true",
+        help="run every unchanged operation scenario in all four source profiles")
     mode.add_argument("--check", action="store_true",
         help="validate the contract and inventory closure without executing evidence")
     mode.add_argument("--gate", choices=GATE_IDS, help="execute only this gate's runnable evidence")
@@ -760,8 +1021,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run one shared-driver pinned-C/native-adapter differential scenario")
     mode.add_argument("--upstream-test-api", action="store_true",
         help="link the unmodified pinned test-api.c against the native adapter and run it")
+    parser.add_argument("--read", action="store_true", help="authenticate the full operation-profile receipt")
+    parser.add_argument("--replay", action="store_true", help="authenticate and replay retained operation-profile products")
     parser.add_argument("--offline", action="store_true", help="require the verified archive in the local cache")
     arguments = parser.parse_args(argv)
+    if (arguments.read or arguments.replay) and not arguments.operations_matrix:
+        parser.error("--read and --replay require --operations-matrix")
+    if arguments.operations_matrix:
+        if arguments.read or arguments.replay:
+            read_operations_profiles(API_PROFILES, PROFILE_SCENARIOS, replay=arguments.replay)
+            print("M4 full operation profile receipt authenticated")
+            return 0
+        run_operations_profiles(arguments.offline, API_PROFILES, PROFILE_SCENARIOS)
+        print("M4 full operation profile cohort passed")
+        return 0
     if arguments.native_tests:
         report = run_native_tests()
         print(f"M4 native-engine regressions passed: {len(report['targets'])} targets")
