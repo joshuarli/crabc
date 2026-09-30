@@ -1539,7 +1539,7 @@ def _event_bytes(work: Path, events: Sequence[Mapping[str, Any]], label: str, st
 def _ambient_link_input(trace: str) -> bool:
     """Reject a CRT/compiler-runtime input named by the retained link trace."""
 
-    return re.search(r"libgcc|compiler-rt|libc\.a|/crt[^\s]*\.o", trace) is not None
+    return re.search(r"libgcc|compiler-rt|libc\.a|/[Sr]?crt[^/\s]*\.o", trace) is not None
 
 
 def _validate_aggregate_observations(work: Path, contract: Mapping[str, Any], events: Sequence[Mapping[str, Any]],

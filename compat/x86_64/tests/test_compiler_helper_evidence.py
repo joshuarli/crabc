@@ -284,6 +284,10 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
         self.assertTrue(EVIDENCE._ambient_link_input("/opt/toolchain/crt1.o\n"))
         self.assertTrue(EVIDENCE._ambient_link_input("libgcc.a\n"))
         self.assertFalse(EVIDENCE._ambient_link_input("/tmp/crt file.o\n"))
+        self.assertFalse(EVIDENCE._ambient_link_input(
+            "/workspace/.work/x86_64/crtcompose36/aggregate/aggregate-start.o\n"))
+        self.assertTrue(EVIDENCE._ambient_link_input("/opt/toolchain/Scrt1.o\n"))
+        self.assertTrue(EVIDENCE._ambient_link_input("/opt/toolchain/rcrt1.o\n"))
 
     def test_provenance_binds_the_retained_archive_sha256(self) -> None:
         contract = EVIDENCE.load_contract(ROOT)
