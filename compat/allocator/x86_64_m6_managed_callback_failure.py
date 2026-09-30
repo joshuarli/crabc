@@ -199,7 +199,22 @@ def main():
                 recorded = next(c for c in receipt.cases if c["id"] == case)
                 for stream in ("stdout", "stderr"):
                     original = next(p for p in recorded["logs"] if p.endswith("." + stream))
-                    if stress.byte_record_payload(result[stream], case) != (receipt.path.parent / "logs" / original).read_bytes():
+                    actual = stress.byte_record_payload(result[stream], case)
+                    previous = (receipt.path.parent / "logs" / original).read_bytes()
+                    if stream == "stderr":
+                        # The warning carries the current process's thread
+                        # address. Preserve both raw streams and require the
+                        # exact diagnostic and source callback fingerprint;
+                        # a fresh process has a fresh nonzero thread identity.
+                        warning = re.compile(rb"mimalloc: warning: thread 0x([0-9A-Fa-f]+): unable to commit meta-data for OS memory(.*)", re.DOTALL)
+                        current_warning = warning.fullmatch(actual)
+                        prior_warning = warning.fullmatch(previous)
+                        if (current_warning is None or prior_warning is None
+                            or int(current_warning[1], 16) == 0
+                            or int(prior_warning[1], 16) == 0
+                            or current_warning[2] != prior_warning[2]):
+                            raise harness.HarnessError(f"retained caller {case} diagnostic differs; see {scratch}")
+                    elif actual != previous:
                         raise harness.HarnessError(f"retained caller {case} {stream} differs; see {scratch}")
         print(f"{TITLE} retained physical replay: selected C/native pairs PASS")
 
