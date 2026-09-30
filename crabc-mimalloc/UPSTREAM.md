@@ -70,6 +70,23 @@ translated from that file must preserve the latter file-specific notice and
 the MIT permission notice; it must not normalize the two notices into an
 invented third form.
 
+## Dependency-owned allocation shuffle
+
+`rand_xoshiro` is pinned to **0.8.1**, with default features disabled, to supply
+`SplitMix64` for the pinned allocator's page shuffle. Its normal dependency
+graph contains only `rand_core` **0.10.1**, already in the workspace lockfile.
+Both crates are `no_std`; this configuration has no allocation, mutable global
+state, native code, build scripts or procedural macros. The crate is licensed
+MIT OR Apache-2.0 and its published archive has SHA-256
+`662effc7698e08ea324d3acccf8d9d7f7bf79b9785e270a174ea36e56900c91d`.
+
+The source adapter uses one caller-owned eight-byte state and the dependency's
+inline output operation; it does not maintain a local PRNG core. Exact source
+shuffle vectors and production integration remain required. ChaCha20 remains
+the allocator's random stream; the shuffle does not acquire entropy. LTO can
+see the dependency's Rust implementation. This declaration supplies neither
+secure-profile qualification nor performance evidence.
+
 ## Source-to-Rust mapping
 
 The production native zero-offset aligned reallocation entry

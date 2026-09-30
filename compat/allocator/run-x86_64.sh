@@ -80,7 +80,8 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-perf-integrated [--smoke|--full] [options]
   allocator-native-local-trace [--profile initial|worker]
   allocator-huge-registry | allocator-huge-reservation | allocator-huge-numa-qualification [--reader-tests]
-  allocator-arena-destroy | allocator-m2-arena-lifecycle | allocator-m2-metadata-ownership
+  allocator-arena-destroy | allocator-m2-metadata-ownership
+  allocator-m2-arena-lifecycle [--profile release|debug-1|stat-1|stat-2|all]
   allocator-heap-destroy
   allocator-reclaim-on-free
   allocator-subprocess-lifecycle
@@ -1043,9 +1044,8 @@ case "$command" in
         run_in_container python3 compat/allocator/arena_destroy.py
         ;;
     allocator-m2-arena-lifecycle)
-        [ "$#" -eq 0 ] || fail "allocator-m2-arena-lifecycle takes no arguments"
         ensure_image
-        run_in_container python3 compat/allocator/m2_arena_lifecycle_x86_64.py
+        run_in_container python3 compat/allocator/m2_arena_lifecycle_x86_64.py "$@"
         ;;
     allocator-m2-metadata-ownership)
         [ "$#" -eq 0 ] || fail "allocator-m2-metadata-ownership takes no arguments"
