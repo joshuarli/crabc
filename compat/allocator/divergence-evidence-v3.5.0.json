@@ -84,8 +84,17 @@
       }
     },
     "src/free.c:debug-aligned-offset-live-client-validation": {
-      "owner": "debugalignedclosure41",
-      "disposition": "Qualify the reviewed exact-live-client correction on merged source while retaining unchanged pinned-C debug refusal; performance qualification remains deferred."
+      "differential": {
+        "command": [
+          "python3",
+          "compat/allocator/x86_64_aligned_overalloc_realloc_evidence.py",
+          "--source-api-control"
+        ],
+        "scope": "Fixed four-profile source API control: retain the pinned C debug EINVAL/refusal for valid live aligned-offset clients while checking native usable size, ownership and preserved realloc payload; release and statistical profiles match C. The source debug defect and corrected valid-program domain remain recorded as CRABC-MI-DEBUG-ALIGNED-OFFSET-LIVE-CLIENT."
+      },
+      "performance": {
+        "blocked": "Performance qualification is deferred outside the active functionality plan; this functional control supplies no performance evidence."
+      }
     }
   }
 }

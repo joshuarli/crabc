@@ -22543,7 +22543,7 @@ mod tests {
         });
     }
 
-    /// Emits the finite address-independent compiler-TLS M1 record compared
+    /// Emits the finite address-independent compiler-TLS bootstrap record compared
     /// to two pinned C executables: the constructor-suppressed source image,
     /// then the normal regular-backing and cached-root primitives. This is not
     /// a claim that Rust models `src/init.c:mi_thread_theaps_done` as one

@@ -2036,7 +2036,7 @@ impl Drop for RequestedParentArenaTheap<'_, '_, '_> {
     }
 }
 
-/// One test-only failure while constructing or completing the finite M1
+/// One test-only failure while constructing or completing the finite
 /// same-TLD terminal fixture.  This is deliberately separate from the normal
 /// main/static and later/dynamic lifecycle errors: a failure after publication
 /// is retained by the fixture rather than treated as a general recovery path.
@@ -2063,7 +2063,7 @@ enum M1SameTldTerminalError {
     Poisoned,
 }
 
-/// The regular-key portion of the one page-free auxiliary Heap in the M1
+/// The regular-key portion of the one page-free auxiliary Heap in the
 /// same-TLD terminal fixture.  It is intentionally not the production
 /// `DynamicHeapBinding`: the fixture has no independent dynamic TLD owner and
 /// releases this key only as Rust test cleanup after the source trace ends.
@@ -2140,7 +2140,7 @@ struct M1SameTldTerminalTrace {
     return_cached_is_empty: bool,
 }
 
-/// The narrowly source-shaped M1 terminal composite: one static default
+/// The narrowly source-shaped same-TLD terminal composite: one static default
 /// Theap and one Malloc-backed cached auxiliary Theap share the exact
 /// ticket-zero TLD.  The mutable borrow of the main attachment is its linear
 /// proof that no singleton teardown/page session can overlap the two-member
@@ -2276,7 +2276,7 @@ impl<'main, 'heap> M1SameTldTerminalFixture<'main, 'heap> {
     }
 
     /// Exercises the generic queue-half coordinator for exactly one selected
-    /// page-free M1 Theap. The counter advances only after its empty branch
+    /// page-free Theap. The counter advances only after its empty branch
     /// and ordered empty-prepass witnesses complete; it cannot be satisfied
     /// by a descriptive trace ordinal alone.
     #[inline]
@@ -2402,7 +2402,7 @@ impl<'main, 'heap> M1SameTldTerminalFixture<'main, 'heap> {
         // The selected internal C fixture and this Rust fixture both require
         // D/A page count zero. Exercise the generic queue-half coordinator's
         // selected empty branch for A then D; page-bearing collection and the
-        // production deferred/retired prepasses remain outside this M1 proof.
+        // production deferred/retired prepasses remain outside this page-free proof.
         let (collect_default_pages, collect_aux_pages) = {
             let tld = self
                 .main
@@ -3970,7 +3970,7 @@ mod tests {
         )
     }
 
-    /// Emits the address-free M1 same-TLD terminal trace compared with the
+    /// Emits the address-free same-TLD terminal trace compared with the
     /// pinned C fixture's internal page-free `D -> A` setup. The fixture uses
     /// a Rust caller heap only to represent the selected source auxiliary
     /// Heap image; it does not claim public `mi_heap_new` lifecycle parity.
