@@ -137,6 +137,55 @@ mod enabled {
         Some(unsafe { &mut *raw })
     }
 
+    fn active_arena_diagnostic_context() -> Option<NonNull<TestAllocatorContext>> {
+        let raw = CONTEXT.load(Ordering::Acquire);
+        if is_transition_state(raw) { return None; }
+        NonNull::new(raw)
+    }
+
+    /// Installs only the selected private context's diagnostic output pair.
+    ///
+    /// # Safety
+    /// The caller serializes registration on the creating thread. Callback and
+    /// argument remain live until replacement or completed shutdown. A fragment
+    /// is valid only during its callback and must not be retained. Delivery must
+    /// not unwind, replace the pair, or shut down the context. It may allocate/free
+    /// through this adapter without retaining a context borrow.
+    #[no_mangle]
+    pub unsafe extern "C" fn crabc_test_register_output(
+        output: Option<unsafe extern "C" fn(*const core::ffi::c_char, *mut c_void)>,
+        argument: *mut c_void,
+    ) {
+        if let Some(context) = active_arena_diagnostic_context() {
+            // SAFETY: caller retains the registered pair and serialized context.
+            let _ = unsafe { TestAllocatorContext::register_arena_output(context, output, argument) };
+        }
+    }
+
+    /// Prints the selected private arena group; inactive contexts emit nothing.
+    ///
+    /// # Safety
+    /// The caller retains the creating-thread context and output pair, excludes
+    /// concurrent page/registration mutation, and forbids callback shutdown or
+    /// pair replacement. A callback may allocate/free between short projections.
+    #[no_mangle]
+    pub unsafe extern "C" fn crabc_test_debug_show_arenas() {
+        if let Some(context) = active_arena_diagnostic_context() {
+            // SAFETY: no context reference crosses the callback boundary.
+            let _ = unsafe { TestAllocatorContext::debug_show_arenas(context) };
+        }
+    }
+
+    /// Source alias of the selected context's arena diagnostic traversal.
+    ///
+    /// # Safety
+    /// The caller satisfies `crabc_test_debug_show_arenas`'s retained context,
+    /// callback lifetime, and creating-thread serialization obligations.
+    #[no_mangle]
+    pub unsafe extern "C" fn crabc_test_arenas_print() {
+        unsafe { crabc_test_debug_show_arenas() };
+    }
+
     #[cold]
     #[inline(never)]
     fn fail_stop_free_lifecycle() -> ! {

@@ -66,6 +66,36 @@ impl ArenaPrintSnapshot {
     }
 }
 
+/// The two retained lookup owners used by native and private arena groups.
+/// Neither route can substitute another group's PageMap.
+#[derive(Clone, Copy)]
+pub(crate) enum ArenaPrintPageMap<'owner> {
+    Process(crate::process_page_map::ProcessPageMapRoot),
+    Private(&'owner crate::page_map::PageMap),
+}
+impl ArenaPrintPageMap<'_> {
+    /// The caller retains the selected map/page geometry and excludes an
+    /// overlapping entry registration write through this short lookup.
+    unsafe fn lookup(self, address: *const u8) -> Option<NonNull<Page>> {
+        match self {
+            Self::Process(map) => unsafe { map.lookup_registered_page(address) }.ok().flatten(),
+            Self::Private(map) => NonNull::new(unsafe { map.checked_lookup(address) }),
+        }
+    }
+}
+
+/// Retained owners for one selected arena group. No input is resolved through
+/// process globals during rendering; callbacks may change pages between the
+/// short bitmap/geometry projections while retaining these owner allocations.
+pub(crate) struct ArenaPrintInputs<'owner> {
+    pub(crate) registry: &'owner ArenaRegistry,
+    pub(crate) page_map: ArenaPrintPageMap<'owner>,
+    pub(crate) page_size: crate::os::PageSize,
+    pub(crate) metadata_theap_owner: &'owner crate::subproc::SubprocessIdentity,
+    pub(crate) sequence: usize,
+    pub(crate) output: &'owner OutputOwner,
+}
+
 /// The caller retains arenas and map registration, excludes ordinary page
 /// mutations during copying, and serializes callback registration/delivery.
 pub(crate) unsafe fn print(registry: &ArenaRegistry) {
@@ -83,6 +113,24 @@ pub(crate) unsafe fn print(registry: &ArenaRegistry) {
     // initialized sequence; metadata-Theap comparison only observes an atomic.
     let subprocess = unsafe { &*registry.subprocess() };
     let Some(sequence) = subprocess.arena_print_sequence() else { return };
+    let Ok(config) = binding.page_map().memory_config() else { return };
+    // SAFETY: the native admission retains exactly this registry, map and
+    // subprocess metadata identity through synchronous output delivery.
+    unsafe { print_retained(ArenaPrintInputs {
+        registry, page_map: ArenaPrintPageMap::Process(binding.page_map()), page_size: config.page_size(),
+        metadata_theap_owner: subprocess, sequence, output,
+    }) };
+}
+
+/// # Safety
+/// The registry belongs to the supplied metadata identity; the selected map
+/// covers its registered pages and the page size matches that map. The caller
+/// retains every supplied owner and mapped arena backing, excludes page mutation
+/// during each short copy, and serializes output registration.
+/// Callback delivery may allocate/free between projections but must not end
+/// any retained owner's lifetime or replace the registered output pair.
+pub(crate) unsafe fn print_retained(inputs: ArenaPrintInputs<'_>) {
+    let ArenaPrintInputs { registry, page_map, page_size, metadata_theap_owner, sequence, output } = inputs;
     let mut total = 0;
     for index in 0..registry.count() {
         let Some(pointer) = registry.arena_print_pointer(index) else { continue };
@@ -139,23 +187,19 @@ pub(crate) unsafe fn print(registry: &ArenaRegistry) {
                         let start = arena.start.wrapping_add(slice * ARENA_SLICE_SIZE);
                         // SAFETY: caller excludes registration changes for
                         // this lookup and ordinary page mutation during copying.
-                        let page = unsafe { binding.page_map().lookup_registered_page(start) }.ok().flatten();
+                        let page = unsafe { page_map.lookup(start) };
                         let image = page.map(|page| unsafe { Page::arena_print_snapshot_at(page) });
                         let image = image.filter(|image| image.start.addr() & !(ARENA_SLICE_SIZE - 1) == start.addr());
                         let new_page = image.is_some();
                         let mut symbol = b'?';
                         if let Some(image) = image {
                             arena_total += 1;
-                            symbol = if NonNull::new(image.theap).is_some_and(|theap| subprocess.matches_published_detached_metadata_theap(theap)) { b'm' }
+                            symbol = if NonNull::new(image.theap).is_some_and(|theap| metadata_theap_owner.matches_published_detached_metadata_theap(theap)) { b'm' }
                                 else if image.reserved == 1 { b's' } else if image.used == image.reserved { b'f' } else { b'p' };
                             if image.thread_id > THREAD_ID_ABANDONED_MAPPED { symbol = symbol.to_ascii_uppercase(); }
                             let committed_bytes = if image.slice_pcommitted == 0 { image.reserved * image.block_size }
                                 else {
-                                    // A successful retained page lookup proves
-                                    // the map/configuration are live; empty or
-                                    // failed maps require no page-size query.
-                                    let Ok(config) = binding.page_map().memory_config() else { return };
-                                    image.slice_pcommitted * config.page_size().bytes() - (image.start.addr() - start.addr())
+                                    image.slice_pcommitted * page_size.bytes() - (image.start.addr() - start.addr())
                                 };
                             let usage = image.used.wrapping_mul(image.block_size).wrapping_mul(100) / committed_bytes;
                             page_color = if usage < 25 { 31 } else if usage < 50 { 33 } else if usage < 75 { 36 } else { 32 };

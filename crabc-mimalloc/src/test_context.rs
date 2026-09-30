@@ -239,6 +239,10 @@ pub struct TestAllocatorContext {
     // dropped after the allocator, registry, and their live bitmap views.
     _subprocess: Box<crate::subproc::MainSubprocess>,
     root: PageMapRoot,
+    // Diagnostic callbacks retain this separately allocated sink while they
+    // may reenter allocation through the context's raw address.
+    arena_output: Box<crate::diagnostic_output::OutputOwner>,
+    arena_diagnostic_thread: crate::types::LiveThreadId,
     outstanding: usize,
     stage: ShutdownStage,
     // The context derives one `mi_threadid_t`-shaped identity from the creating
@@ -260,6 +264,70 @@ impl TestAllocatorContext {
     /// already live.
     pub fn new() -> core::result::Result<Self, TestContextInitFailure> {
         Self::new_with_thread_source(live_thread_id)
+    }
+
+    /// Registers this context's source-shaped arena diagnostic output pair.
+    ///
+    /// Returns false when the context is closing or the caller is not its
+    /// creating thread; a rejected call leaves the retained pair unchanged.
+    ///
+    /// # Safety
+    /// `context` remains live at the same address and no unrelated operation
+    /// races this call. Callback and argument remain callable through delivery
+    /// until serialized replacement or completed shutdown. Each NUL-terminated
+    /// fragment is valid only during its callback and must not be retained.
+    /// Registration must not occur inside its callback.
+    /// The callback must not unwind or destroy/shut down the context; it may
+    /// allocate/free through its raw address without retaining a context borrow.
+    pub unsafe fn register_arena_output(
+        context: NonNull<Self>,
+        callback: Option<unsafe extern "C" fn(*const core::ffi::c_char, *mut core::ffi::c_void)>,
+        argument: *mut core::ffi::c_void,
+    ) -> bool {
+        if !unsafe { Self::arena_diagnostics_admitted(context) } { return false; }
+        // SAFETY: admission retains the separately allocated output pointee;
+        // the short Box projection ends before callback delivery can reenter.
+        let output = unsafe { (&*core::ptr::addr_of!((*context.as_ptr()).arena_output)).as_ref() as *const crate::diagnostic_output::OutputOwner };
+        unsafe { (&*output).register_output(callback, argument) };
+        true
+    }
+
+    /// Prints only this context's retained arena registry and registered pages.
+    /// Returns false for a closing context or a caller outside its creating thread.
+    ///
+    /// # Safety
+    /// `context` stays live at the same address and no unrelated operation races this traversal.
+    /// Its callback/argument pair remains valid, is not replaced during output,
+    /// and does not unwind or destroy/shut down the context. Callbacks may
+    /// allocate/free through the raw context address between projections; no
+    /// context borrow or page mutation may overlap a geometry projection.
+    pub unsafe fn debug_show_arenas(context: NonNull<Self>) -> bool {
+        if !unsafe { Self::arena_diagnostics_admitted(context) } { return false; }
+        // SAFETY: the active context retains this separately allocated registry.
+        let registry = unsafe { (&*core::ptr::addr_of!((*context.as_ptr())._registry)).as_ref() as *const ArenaRegistry };
+        // SAFETY: the short Box projections retain only pointee addresses;
+        // callback reentry does not overlap a borrow of the context itself.
+        let page_map = unsafe { (&*core::ptr::addr_of!((*context.as_ptr()).page_map)).as_ref().map(|map| map.as_ref() as *const PageMap) };
+        let Some(page_map) = page_map else { return false; };
+        let output = unsafe { (&*core::ptr::addr_of!((*context.as_ptr()).arena_output)).as_ref() as *const crate::diagnostic_output::OutputOwner };
+        let config = unsafe { (&*page_map).memory_config() };
+        // Private contexts own the source main-subprocess image, whose sequence
+        // is zero. They never enter the process-global subprocess registry or
+        // publish a detached metadata Theap; classification still observes
+        // only this retained private identity's atomic metadata slot.
+        unsafe { crate::arena_print::print_retained(crate::arena_print::ArenaPrintInputs {
+            registry: &*registry, page_map: crate::arena_print::ArenaPrintPageMap::Private(&*page_map), page_size: config.page_size(),
+            metadata_theap_owner: &*(*registry).subprocess(), sequence: 0, output: &*output,
+        }) };
+        true
+    }
+
+    unsafe fn arena_diagnostics_admitted(context: NonNull<Self>) -> bool {
+        // SAFETY: the caller retains the context and excludes concurrent writes.
+        // Thread admission precedes any mutable lifecycle/owner projection.
+        let thread = unsafe { core::ptr::addr_of!((*context.as_ptr()).arena_diagnostic_thread).read() };
+        if live_thread_id() != Some(thread) { return false; }
+        unsafe { core::ptr::addr_of!((*context.as_ptr()).stage).read() == ShutdownStage::Active }
     }
 
     /// Returns the exact number of currently live blocks delegated by this
@@ -808,7 +876,13 @@ impl TestAllocatorContext {
         // header until shutdown first clears this root.
         unsafe { root.publish(&page_map) };
 
+        let arena_output = Box::new(crate::diagnostic_output::OutputOwner::new(context_arena_stderr));
+        // SAFETY: this private sink has no callback yet and is initialized once
+        // before context publication, independently of allocator global startup.
+        unsafe { arena_output.post_init() };
         Ok(Self {
+            arena_output,
+            arena_diagnostic_thread: thread_id,
             allocator: Some(allocator),
             _bootstrap: bootstrap,
             page_map: Some(page_map),
@@ -914,6 +988,17 @@ impl TestAllocatorContext {
     fn test_fail_shutdown_once(&mut self, _stage: ShutdownStage) -> bool {
         false
     }
+}
+
+unsafe extern "C" fn context_arena_stderr(message: *const core::ffi::c_char) {
+    unsafe extern "C" {
+        fn fputs(message: *const core::ffi::c_char, stream: *mut core::ffi::c_void) -> i32;
+        static mut stderr: *mut core::ffi::c_void;
+    }
+    // SAFETY: the test-only context is linked to its host C FILE provider.
+    // OutputOwner supplies a NUL-terminated fragment and retains the source
+    // stderr route; the source intentionally ignores fputs's integer result.
+    unsafe { let _ = fputs(message, stderr); }
 }
 
 fn live_thread_id() -> Option<LiveThreadId> {
