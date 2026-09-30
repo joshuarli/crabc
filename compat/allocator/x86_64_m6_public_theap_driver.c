@@ -112,6 +112,20 @@ static bool run_case(const char* name, mi_theap_t* parent_default) {
   printf("%s.still_switched=%d,%d\n", name,
          mi_theap_get_default() == other, mi_heap_theap(heap) == other);
 
+  bool interleaved = true;
+  for (size_t cycle = 0; cycle < 4; cycle++) {
+    interleaved = interleaved && mi_heap_theap(main_heap) == base;
+    void* selected_block = mi_theap_malloc(other, 33);
+    interleaved = interleaved && mi_heap_theap(heap) == other;
+    void* main_block = mi_theap_malloc(base, 33);
+    if (selected_block == NULL || main_block == NULL) return false;
+    interleaved = interleaved && mi_heap_of(selected_block) == heap &&
+      mi_heap_of(main_block) == main_heap && mi_theap_get_default() == other;
+    mi_free(selected_block);
+    mi_free(main_block);
+  }
+  printf("%s.interleaved=%d\n", name, interleaved);
+
   void* count = mi_theap_calloc(other, 7, 13);
   void* small = mi_theap_malloc_small(other, 128);
   void* zero_small = mi_theap_zalloc_small(other, 96);
@@ -120,6 +134,8 @@ static bool run_case(const char* name, mi_theap_t* parent_default) {
   void* csize = mi_theap_malloc_csize(other, 32);
   void* csize_large = mi_theap_malloc_csize(other, 2048);
   void* zero_csize = mi_theap_zalloc_csize(other, 32);
+  // The pinned constant-size wrapper uses ordinary malloc above its small
+  // limit; this large branch has no zero-initialization guarantee.
   void* zero_csize_large = mi_theap_zalloc_csize(other, 2048);
   if (count == NULL || small == NULL || zero_small == NULL || aligned == NULL ||
       zero_aligned == NULL || csize == NULL || csize_large == NULL ||
@@ -265,7 +281,18 @@ static bool run_case(const char* name, mi_theap_t* parent_default) {
   printf("%s.after=%d,%d\n", name, mi_heap_of(after) == main_heap,
          mi_theap_get_default() == base);
   mi_free(after);
+  void* survivor = mi_theap_malloc(other, 57);
+  if (survivor == NULL) return false;
+  memset(survivor, 0x47, 57);
   mi_heap_delete(heap);
+  bool preserved = true;
+  for (size_t index = 0; index < 57; index++) {
+    preserved = preserved && ((unsigned char*)survivor)[index] == 0x47;
+  }
+  printf("%s.delete_live=%d,%d,%d\n", name,
+         mi_heap_of(survivor) == main_heap, preserved,
+         mi_theap_get_default() == base);
+  mi_free(survivor);
   printf("%s.done=%d\n", name, mi_theap_get_default() == base);
   return true;
 }

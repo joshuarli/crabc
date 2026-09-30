@@ -3,6 +3,7 @@
 
 from pathlib import Path
 import re
+import shutil
 
 import run as harness
 import x86_64_m4_gate as m4
@@ -21,6 +22,7 @@ SOURCE_STAGES = {
     "switch": "1,1,1",
     "allocate": "1,1,1,1",
     "still_switched": "1,1",
+    "interleaved": "1",
     "variants": "1,1,1,1,1,1,1,1,1",
     "overflow": "1,1",
     "bad_alignment": "1,1",
@@ -38,6 +40,7 @@ SOURCE_STAGES = {
     "collect": "1,1,1,1",
     "restore": "1,1",
     "after": "1,1",
+    "delete_live": "1,1,1",
     "done": "1",
 }
 SOURCE_TRACE = {
@@ -111,6 +114,21 @@ def main() -> None:
         rust_trace = m7.parse_options_trace(str(rust_run["stdout"]), "rust", BEGIN, END)
         require_trace(rust_trace, "rust")
         m7.compare_options_traces(c_trace, rust_trace)
+        shutil.copy2(c_driver, ARTIFACTS / "public-theap-c")
+        shutil.copy2(rust_driver, ARTIFACTS / "public-theap-rust")
+        direct_test = "public_theap_selection_allocation_collection_and_lifetime"
+        direct = harness.command_record(
+            ["cargo", "test", "--locked", "--target", m4.RUST_TARGET,
+             "-p", "crabc-mimalloc", "--no-default-features", "--test", "native_theap_contract",
+             direct_test, "--", "--exact", "--nocapture", "--test-threads=1"],
+            cwd=harness.ROOT, timeout_seconds=900,
+        )
+        (ARTIFACTS / "native_theap_contract.log").write_text(
+            str(direct["stdout"]) + str(direct["stderr"]))
+        harness.require_success(direct, "public Theap direct runtime contract")
+        if len(re.findall(r"^test result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;",
+                          str(direct["stdout"]), re.MULTILINE)) != 1:
+            raise harness.HarnessError("public Theap direct runtime contract did not execute exactly one test")
         for test in (
             "source_api::tests::switched_default_aligned_allocation_keeps_selected_heap",
             "source_api::tests::switched_default_reallocation_keeps_selected_heap",
@@ -125,7 +143,7 @@ def main() -> None:
             (ARTIFACTS / f"{test.rsplit('::', 1)[-1]}.log").write_text(
                 str(record["stdout"]) + str(record["stderr"]))
             harness.require_success(record, f"public Theap regression {test}")
-        print(f"public Theap allocation and collection: {len(c_trace)} source-built C/Rust keys match; five fresh-process regressions pass")
+        print(f"public Theap allocation and collection: {len(c_trace)} source-built C/Rust keys match; direct runtime contract and five fresh-process regressions pass")
 
 
 if __name__ == "__main__":
