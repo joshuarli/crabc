@@ -2165,7 +2165,7 @@ mod tests {
         // This direct fixture explicitly represents a process after its
         // preload interval; production transition belongs to process_init.
         policy.finish_preloading();
-        VmProcess::new(policy, MainSubprocess::test_static_owner())
+        VmProcess::new_main(policy, MainSubprocess::test_static_owner())
     }
 
     fn process_with_page_commit_on_demand() -> VmProcess<'static> {
@@ -4329,7 +4329,7 @@ mod tests {
             VmPolicy::new(lifecycle_options(reserve_kib, eager, true, false)).unwrap(),
         ));
         policy.finish_preloading();
-        VmProcess::new(policy, owner.process.subprocess())
+        VmProcess::new_main(policy, owner.process.main_subprocess().expect("retained fixture main owner"))
     }
 
     #[derive(Clone, Copy)]
@@ -5051,7 +5051,7 @@ mod tests {
             options.set(VmOption::DisallowArenaAlloc, 1);
             let policy = Box::leak(Box::new(VmPolicy::new(options).unwrap()));
             policy.finish_preloading();
-            let disallowing = VmProcess::new(policy, p.subprocess());
+            let disallowing = VmProcess::new_main(policy, p.main_subprocess().expect("retained fixture main owner"));
             let refused = lifecycle_object(&mut trace, owner, disallowing, min, slice, 0, exclusive, -1);
             assert!(!refused.is_some());
             let mut fill = std::vec::Vec::new();
@@ -5177,7 +5177,7 @@ mod tests {
             options.set(VmOption::DisallowArenaAlloc, 1);
             let policy = Box::leak(Box::new(VmPolicy::new(options).unwrap()));
             policy.finish_preloading();
-            let disallowing = VmProcess::new(policy, p.subprocess());
+            let disallowing = VmProcess::new_main(policy, p.main_subprocess().expect("retained fixture main owner"));
             let disallowed = lifecycle_theap(&mut trace, owner, disallowing, exclusive, 0);
             assert!(disallowed.is_none());
             lifecycle_theap_release(&mut trace, owner, second_pass.unwrap());
@@ -5466,7 +5466,7 @@ mod tests {
                                     let policy = VmPolicy::new(options).unwrap();
                                     policy.finish_preloading();
                                     let subprocess = MainSubprocess::new();
-                                    let process = VmProcess::new(&policy, &subprocess);
+                                    let process = VmProcess::new_main(&policy, &subprocess);
                                     let config = MemoryConfig::from_observations(
                                         PageSize::new(4096).unwrap(), 1 << 20, overcommit, false,
                                     );
