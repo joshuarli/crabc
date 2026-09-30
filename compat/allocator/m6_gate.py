@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
-"""Fail-closed Milestone 6 gate for the native x86-64 mimalloc port.
+"""Fail-closed native x86-64 Heap and subprocess interface gate.
 
-M6 is complete only when every applicable Heap, Theap, arena, managed-memory,
-and subprocess interface of pinned mimalloc v3.5.0 is implemented and its
-destruction, cross-thread lifetime, and failure behavior is verified.  The
-reviewed contract `m6-gate-v3.5.0.json` partitions that interface inventory
-into gates and names the evidence each gate requires.
+Every applicable Heap, Theap, arena, managed-memory, and subprocess interface
+must have verified destruction, cross-thread lifetime, and failure behavior.
+The reviewed evidence registry partitions the selected interfaces into gates.
 
-A gate passes only when it carries no reviewed blocker and every evidence
-entry has a runner that executed successfully.  Evidence without a runner is
-declared missing, and a gate that depends on it must name a blocker, so the
-contract cannot claim completion that no executable check supports.  Runnable
-evidence is always executed; its pass never removes a blocker by itself.
+A gate passes only without a reviewed blocker and with successful execution
+of each producer's canonical command. Runnable evidence always executes;
+a passing process never removes a reviewed blocker by itself.
 """
 
 from __future__ import annotations
@@ -43,6 +39,37 @@ GATE_IDS = (
 # Cross-cutting gates own behavior rather than interface items.
 ITEMLESS_GATE_IDS = frozenset({"m6.destruction-lifetime", "m6.upstream"})
 EVIDENCE_TIMEOUT_SECONDS = 1800
+
+# These public producer interfaces select the full original workload in every
+# configuration they support. Other producers retain their narrower contract.
+PROFILE_MATRIX_RUNNERS = frozenset({
+    "compat/allocator/x86_64_m6_abandoned_visitor.py",
+    "compat/allocator/x86_64_m6_adapter.py",
+    "compat/allocator/x86_64_m6_child_abandoned_visitor.py",
+    "compat/allocator/x86_64_m6_child_arena_fork_owner.py",
+    "compat/allocator/x86_64_m6_child_heap_in_arena.py",
+    "compat/allocator/x86_64_m6_child_main_heap_reuse.py",
+    "compat/allocator/x86_64_m6_child_main_heap_visitor.py",
+    "compat/allocator/x86_64_m6_deleted_heap_remote_exit.py",
+    "compat/allocator/x86_64_m6_heap_delete_after_owner_exit.py",
+    "compat/allocator/x86_64_m6_heap_delete_with_attached_worker.py",
+    "compat/allocator/x86_64_m6_heap_destroy_after_workers.py",
+    "compat/allocator/x86_64_m6_heap_in_arena.py",
+    "compat/allocator/x86_64_m6_main_visitor_population.py",
+    "compat/allocator/x86_64_m6_managed_callback.py",
+    "compat/allocator/x86_64_m6_managed_callback_failure.py",
+    "compat/allocator/x86_64_m6_public_theap.py",
+    "compat/allocator/x86_64_m6_test_stress_subprocs.py",
+})
+
+
+def evidence_command(runner: str) -> list[str]:
+    """Select the producer's canonical profile interface without changing its workload."""
+    if runner in PROFILE_MATRIX_RUNNERS:
+        return ["python3", runner, "--matrix"]
+    if runner == "compat/allocator/x86_64_m6_public_heap_alignment.py":
+        return ["python3", runner, "--profile", "all"]
+    return ["python3", runner]
 
 
 def _string_list(value: object, subject: str, *, allow_empty: bool = False) -> list[str]:
@@ -187,7 +214,11 @@ def gate_report(
 
     records: list[dict[str, Any]] = []
     for gate in contract["gates"]:
-        observed = {entry: results[entry]["status"] for entry in gate["evidence"] if entry in results}
+        observed = {
+            entry: results[entry]["status"] if results[entry].get("command") == evidence_command(
+                summary["runnable_evidence"].get(entry, "")) else "failed"
+            for entry in gate["evidence"] if entry in results
+        }
         missing = [entry for entry in gate["evidence"] if entry not in summary["runnable_evidence"]]
         if any(status != "passed" for status in observed.values()):
             status = "failed"
@@ -232,7 +263,7 @@ def run_evidence(runnable: Mapping[str, str], artifacts: Path) -> dict[str, dict
     for evidence_id, runner in runnable.items():
         if runner not in executions:
             executions[runner] = harness.command_record(
-                ["python3", runner], cwd=harness.ROOT, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
+                evidence_command(runner), cwd=harness.ROOT, timeout_seconds=EVIDENCE_TIMEOUT_SECONDS,
             )
         record = executions[runner]
         log = artifacts / f"{evidence_id.replace(':', '-')}.log"
@@ -240,6 +271,7 @@ def run_evidence(runnable: Mapping[str, str], artifacts: Path) -> dict[str, dict
         results[evidence_id] = {
             "log": harness.relative(log),
             "runner": runner,
+            "command": record["command"],
             "status": "passed" if record["status"] == 0 else "failed",
         }
     return results

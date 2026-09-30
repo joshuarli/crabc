@@ -47,7 +47,7 @@ class M6GateContractTests(unittest.TestCase):
                      "mi_subproc_destroy", "mi_manage_os_memory_ex", "mi_reserve_os_memory_ex",
                      "mi_any_heap_contains", "mi_heap_stl_allocator"):
             self.assertIn(name, owned)
-        # Process-wide debug output and inapplicable declarations stay outside M6.
+        # Process-wide debug output and inapplicable declarations stay outside this interface selection.
         for name in ("mi_arenas_print", "mi_debug_show_arenas", "mi_collect_reduce", "mi_malloc"):
             self.assertNotIn(name, owned)
 
@@ -107,8 +107,9 @@ class M6GateContractTests(unittest.TestCase):
             self.validate(removed)
 
         summary = self.validate()
-        results = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
-        results[row] = {"status": "failed"}
+        results = {entry: {"status": "passed", "command": gate.evidence_command(runner)}
+                   for entry, runner in summary["runnable_evidence"].items()}
+        results[row]["status"] = "failed"
         report = gate.gate_report(self.contract, summary, results)
         arena = self.gate_record(report, "m6.arena")
         self.assertEqual(arena["status"], "failed")
@@ -122,8 +123,9 @@ class M6GateContractTests(unittest.TestCase):
             self.validate(removed)
 
         summary = self.validate()
-        results = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
-        results[row] = {"status": "failed"}
+        results = {entry: {"status": "passed", "command": gate.evidence_command(runner)}
+                   for entry, runner in summary["runnable_evidence"].items()}
+        results[row]["status"] = "failed"
         report = gate.gate_report(self.contract, summary, results)
         allocation = self.gate_record(report, "m6.heap-allocation")
         self.assertEqual(allocation["status"], "failed")
@@ -137,8 +139,9 @@ class M6GateContractTests(unittest.TestCase):
             self.validate(removed)
 
         summary = self.validate()
-        results = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
-        results[row] = {"status": "failed"}
+        results = {entry: {"status": "passed", "command": gate.evidence_command(runner)}
+                   for entry, runner in summary["runnable_evidence"].items()}
+        results[row]["status"] = "failed"
         report = gate.gate_report(self.contract, summary, results)
         arena = self.gate_record(report, "m6.arena")
         self.assertEqual(arena["status"], "failed")
@@ -152,8 +155,9 @@ class M6GateContractTests(unittest.TestCase):
             self.validate(removed)
 
         summary = self.validate()
-        results = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
-        results[row] = {"status": "failed"}
+        results = {entry: {"status": "passed", "command": gate.evidence_command(runner)}
+                   for entry, runner in summary["runnable_evidence"].items()}
+        results[row]["status"] = "failed"
         report = gate.gate_report(self.contract, summary, results)
         arena = self.gate_record(report, "m6.arena")
         self.assertEqual(arena["status"], "failed")
@@ -167,8 +171,9 @@ class M6GateContractTests(unittest.TestCase):
             self.validate(removed)
 
         summary = self.validate()
-        results = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
-        results[row] = {"status": "failed"}
+        results = {entry: {"status": "passed", "command": gate.evidence_command(runner)}
+                   for entry, runner in summary["runnable_evidence"].items()}
+        results[row]["status"] = "failed"
         report = gate.gate_report(self.contract, summary, results)
         arena = self.gate_record(report, "m6.arena")
         self.assertEqual(arena["status"], "failed")
@@ -182,8 +187,9 @@ class M6GateContractTests(unittest.TestCase):
             self.validate(removed)
 
         summary = self.validate()
-        results = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
-        results[row] = {"status": "failed"}
+        results = {entry: {"status": "passed", "command": gate.evidence_command(runner)}
+                   for entry, runner in summary["runnable_evidence"].items()}
+        results[row]["status"] = "failed"
         report = gate.gate_report(self.contract, summary, results)
         arena = self.gate_record(report, "m6.arena")
         self.assertEqual(arena["status"], "failed")
@@ -197,7 +203,8 @@ class M6GateContractTests(unittest.TestCase):
             "Live-owner destruction has no matched lifetime evidence."
         ]
         summary = self.validate(contract)
-        passed = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
+        passed = {entry: {"status": "passed", "command": gate.evidence_command(runner)}
+                   for entry, runner in summary["runnable_evidence"].items()}
         report = gate.gate_report(contract, summary, passed)
         self.assertEqual(report["overall_status"], "unmet")
         self.assertEqual(report["unmet_required"], ["m6.destruction-lifetime"])
@@ -212,27 +219,81 @@ class M6GateContractTests(unittest.TestCase):
         for entry in contract["gates"]:
             entry["blocked_by"] = []
         summary = self.validate(contract)
-        results = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
+        results = {entry: {"status": "passed", "command": gate.evidence_command(runner)}
+                   for entry, runner in summary["runnable_evidence"].items()}
         self.assertEqual(gate.gate_report(contract, summary, results)["overall_status"], "passed")
-        results["differential:arena-destroy"] = {"status": "failed"}
+        results["differential:arena-destroy"]["status"] = "failed"
         report = gate.gate_report(contract, summary, results)
         self.assertEqual(report["overall_status"], "unmet")
         arena = next(entry for entry in report["gates"] if entry["id"] == "m6.arena")
         self.assertEqual(arena["status"], "failed")
 
 
+    def test_passed_labels_cannot_replace_current_profile_command_authority(self) -> None:
+        contract = copy.deepcopy(self.contract)
+        for record in contract["gates"]:
+            record["blocked_by"] = []
+        summary = self.validate(contract)
+        honest = {entry: {"status": "passed", "command": gate.evidence_command(runner)}
+                  for entry, runner in summary["runnable_evidence"].items()}
+        row = "differential:public-heap-adapter"
+        for command in (None, ["python3", summary["runnable_evidence"][row]],
+                        ["python3", summary["runnable_evidence"][row], "--profile", "debug-1"],
+                        ["python3", "compat/allocator/heap_destroy.py"]):
+            with self.subTest(command=command):
+                results = copy.deepcopy(honest)
+                if command is None:
+                    del results[row]["command"]
+                else:
+                    results[row]["command"] = command
+                report = gate.gate_report(contract, summary, results)
+                self.assertEqual(report["overall_status"], "unmet")
+                self.assertEqual(self.gate_record(report, "m6.heap-allocation")["evidence"][row], "failed")
+
+
 class M6EvidenceExecutionTests(unittest.TestCase):
+    def test_registered_profile_producers_receive_their_complete_cli_selection(self) -> None:
+        runnable = {
+            "differential:public-heap-adapter": "compat/allocator/x86_64_m6_adapter.py",
+            "upstream:test-stress-subprocs": "compat/allocator/x86_64_m6_test_stress_subprocs.py",
+            "differential:public-heap-alignment": "compat/allocator/x86_64_m6_public_heap_alignment.py",
+        }
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as name:
+            with mock.patch.object(harness, "command_record", side_effect=lambda command, **kwargs: {
+                "command": command, "status": 0, "stdout": "whole original workload complete", "stderr": "",
+            }) as execute:
+                results = gate.run_evidence(runnable, Path(name))
+        expected = [
+            ["python3", runnable["differential:public-heap-adapter"], "--matrix"],
+            ["python3", runnable["upstream:test-stress-subprocs"], "--matrix"],
+            ["python3", runnable["differential:public-heap-alignment"], "--profile", "all"],
+        ]
+        self.assertEqual([call.args[0] for call in execute.call_args_list], expected)
+        self.assertEqual([entry["command"] for entry in results.values()], expected)
+
+    def test_real_nonzero_profile_producer_keeps_its_raw_failure(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as name:
+            work = Path(name)
+            runner = work / "profile-producer.py"
+            runner.write_text("import sys\nprint('original profile refusal', file=sys.stderr)\nsys.exit(1)\n")
+            runnable = {"differential:profile": harness.relative(runner)}
+            results = gate.run_evidence(runnable, work)
+            entry = results["differential:profile"]
+            self.assertEqual(entry["status"], "failed")
+            self.assertEqual(entry["command"], ["python3", harness.relative(runner)])
+            self.assertEqual((harness.ROOT / entry["log"]).read_text(), "original profile refusal\n")
+
     def test_shared_producer_runs_once_and_failure_reaches_both_evidence_rows(self) -> None:
         for status in (0, 1):
-            with self.subTest(status=status), tempfile.TemporaryDirectory() as name:
+            with self.subTest(status=status), tempfile.TemporaryDirectory(dir=ROOT / ".work") as name:
                 artifacts = Path(name)
                 runnable = {
                     "differential:shared": "compat/allocator/heap_destroy.py",
                     "unit:shared": "compat/allocator/heap_destroy.py",
                     "differential:other": "compat/allocator/arena_destroy.py",
                 }
-                with mock.patch.object(gate.harness, "command_record", return_value={
-                    "status": status, "stdout": "observations\n", "stderr": "diagnostic\n",
+                with mock.patch.object(gate.harness, "command_record", side_effect=lambda command, **kwargs: {
+                    "command": command, "status": status, "stdout": "observations\n", "stderr": "diagnostic\n",
                 }) as execute:
                     results = gate.run_evidence(runnable, artifacts)
                 self.assertEqual(execute.call_count, 2)
