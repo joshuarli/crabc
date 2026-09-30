@@ -104,6 +104,21 @@ class HeaderDeclarationInventoryDispatcherTests(unittest.TestCase):
         self.assertFalse(self.docker_log.exists())
         self.assertEqual(json.loads(self.reader_log.read_text()), ['--validate-report', str(report)])
 
+    def test_full_header_aggregate_passes_resolved_image_identity_to_collection(self) -> None:
+        result = subprocess.run(
+            ['bash', str(self.checkout / 'scripts/dev-x86_64.sh'), 'headers-layouts-aggregate'],
+            cwd=self.checkout, env=self.environment, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [json.loads(line) for line in self.docker_log.read_text().splitlines()]
+        runs = [call for call in calls if call[0] == 'run']
+        self.assertEqual(len(runs), 1)
+        args = runs[0]
+        self.assertIn('CRABC_X86_HEADER_DECLARATION_IMAGE_ID=crabc-core-evidence@' + IMAGE_ID, args)
+        self.assertEqual(args[args.index(IMAGE_ID) + 1:],
+                         ['bash', '/workspace/compat/x86_64/run_headers_layouts_aggregate.sh'])
+
     def test_bad_arguments_and_unsafe_paths_fail_before_execution(self) -> None:
         existing = self.evidence / 'existing'
         existing.mkdir()

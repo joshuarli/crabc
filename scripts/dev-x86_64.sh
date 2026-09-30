@@ -3674,6 +3674,9 @@ ensure_image() {
 
 run_in_container() {
     prepare_work_dir
+    local image_id
+    image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+    [ -n "$image_id" ] || fail "cannot resolve native runtime image identity"
     # Older fixtures spell /tmp explicitly. This compatibility bind contains
     # their writes too; new runners use the repository-local TMPDIR directly.
     docker run --rm --init \
@@ -3684,6 +3687,7 @@ run_in_container() {
         --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
         --env TMPDIR=/workspace/.work/x86_64/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
+        --env CRABC_X86_HEADER_DECLARATION_IMAGE_ID="crabc-core-evidence@$image_id" \
         --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
@@ -3692,7 +3696,7 @@ run_in_container() {
         --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
         --volume "$TARGET_VOLUME:/workspace/target" \
         --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
-        "$IMAGE" "$@"
+        "$image_id" "$@"
 }
 
 # The supplied sysroots and provider vendor are immutable development inputs.

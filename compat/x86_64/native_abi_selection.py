@@ -1137,7 +1137,7 @@ def headers_layouts_product_pair_adapter(
     except (ValueError, OSError) as error:
         raise SelectionError(f'header product pair compiler inventory rejected: {error}') from error
     require(same(envelope['current_selecting_source'], {'matches_retained': True, 'differences': []})
-            and envelope['report']['inputs']['paths']['candidate-header-root']
+            and envelope['report']['inputs']['origin_roots']['candidate-header-root']
                 == '/workspace/' + installed['static']['path'],
             'header product pair compiler inventory does not bind installed headers')
     tools = exact(receipt['tools_before'], {'linker'}, 'header product pair tools')

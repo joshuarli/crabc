@@ -157,7 +157,7 @@ class HeadersLayoutsAggregateAttachmentTests(unittest.TestCase):
             raw_header = work / 'header-report.json'
             raw_header.write_text('{}')
             inventory = {'current_selecting_source': {'matches_retained': True, 'differences': []},
-                         'report': {'inputs': {'paths': {'candidate-header-root': '/workspace/' + headers['static']['path']}},
+                         'report': {'inputs': {'origin_roots': {'candidate-header-root': '/workspace/' + headers['static']['path']}},
                                     'summary': {'fixture': True}}}
             pin = json.loads((ROOT / 'compat/x86_64/owned_resolver_network_image_inputs.json').read_text())
             tool = next(record for path, record in pin['files'].items() if Path(path).name == 'ld.lld')
@@ -204,6 +204,13 @@ class HeadersLayoutsAggregateAttachmentTests(unittest.TestCase):
                 self.assertEqual(result['links'], links)
                 self.assertEqual([call.args[6] for call in link_reader.call_args_list], ['static', 'static-pie', 'non-pie', 'pie'])
                 header_reader.assert_called_once_with(raw_header, project_include=paths['static_product'] / 'usr/include')
+                crossed_inventory = copy.deepcopy(inventory)
+                crossed_inventory['report']['inputs']['origin_roots']['candidate-header-root'] = (
+                    '/workspace/' + headers['dynamic']['path'])
+                with mock.patch.object(selection.declaration_inventory, 'validate_report', return_value=crossed_inventory):
+                    with self.assertRaisesRegex(selection.SelectionError, 'does not bind installed headers'):
+                        selection.headers_layouts_product_pair_adapter(
+                            pair_report, paths=paths, source=source, header_companion=companion)
                 for mutation in ('source', 'product', 'allocator', 'headers', 'raw inventory', 'link mode',
                                  'missing link', 'malformed link', 'link output', 'link result', 'tool', 'reviewed rows', 'map'):
                     with self.subTest(mutation=mutation):
