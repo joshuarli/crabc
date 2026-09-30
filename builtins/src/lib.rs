@@ -811,6 +811,74 @@ pub extern "C" fn __fixunsdfti(value: f64) -> Uint128 {
     binary64_to_uint128(value, false)
 }
 
+// Compress only the bits discarded by the binary32 mantissa. The low 96
+// normalized bits contribute a sticky bit, preserving ties-to-even without
+// an intermediate floating conversion or a recursively emitted cast helper.
+#[cfg(target_arch = "x86_64")]
+fn uint128_to_binary32_bits(value: Uint128) -> u32 {
+    let leading = __clzti2(value) as u32;
+    let normalized = value.shl(leading);
+    let base = normalized.shr(104).lo as u32;
+    let dropped_high = normalized.shr(72).lo as u32;
+    let sticky = (normalized.lo != 0 || normalized.hi & 0xffff_ffff != 0) as u32;
+    let dropped = dropped_high | sticky;
+    let adjustment = dropped.wrapping_sub((dropped >> 31) & !base) >> 31;
+    let exponent = if value.is_zero() { 0 } else { 253 - leading };
+    // Addition permits a rounded mantissa to carry into the exponent,
+    // including rounding the largest unsigned integers to positive infinity.
+    (exponent << 23) + base + adjustment
+}
+
+// These total compiler-helper branches truncate in-range values, saturate
+// overflow and infinities, and map NaNs to zero. They do not extend the valid
+// domain of C casts. Keeping the unsigned sign bit maps negatives to zero.
+#[cfg(target_arch = "x86_64")]
+fn binary32_to_uint128(value: f32, signed: bool) -> Uint128 {
+    let original = value.to_bits();
+    let negative = original >> 31 != 0;
+    let bits = if signed { original & 0x7fff_ffff } else { original };
+    let limit = if signed { 254_u32 } else { 255_u32 };
+    if bits < 0x3f80_0000 {
+        Uint128::ZERO
+    } else if bits < limit << 23 {
+        let mantissa = Uint128 { lo: bits as u64, hi: 0 }.shl(104);
+        let mantissa = Uint128 { lo: mantissa.lo, hi: mantissa.hi | (1 << 63) };
+        let magnitude = mantissa.shr(254 - (bits >> 23));
+        if signed && negative { magnitude.negate() } else { magnitude }
+    } else if bits <= 0x7f80_0000 {
+        if !signed { Uint128 { lo: u64::MAX, hi: u64::MAX } }
+        else if negative { Uint128 { lo: 0, hi: 1 << 63 } }
+        else { Uint128 { lo: u64::MAX, hi: (1 << 63) - 1 } }
+    } else {
+        Uint128::ZERO
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[unsafe(no_mangle)]
+pub extern "C" fn __floatuntisf(value: Uint128) -> f32 {
+    f32::from_bits(uint128_to_binary32_bits(value))
+}
+
+#[cfg(target_arch = "x86_64")]
+#[unsafe(no_mangle)]
+pub extern "C" fn __floattisf(value: Uint128) -> f32 {
+    let magnitude = if value.negative() { value.negate() } else { value };
+    f32::from_bits(uint128_to_binary32_bits(magnitude) | ((value.hi >> 32) as u32 & (1 << 31)))
+}
+
+#[cfg(target_arch = "x86_64")]
+#[unsafe(no_mangle)]
+pub extern "C" fn __fixsfti(value: f32) -> Uint128 {
+    binary32_to_uint128(value, true)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[unsafe(no_mangle)]
+pub extern "C" fn __fixunssfti(value: f32) -> Uint128 {
+    binary32_to_uint128(value, false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
