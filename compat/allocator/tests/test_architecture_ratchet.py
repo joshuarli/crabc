@@ -1132,15 +1132,98 @@ pub enum NativePostExitFreeRoute {
         )
         self.assertEqual(report["test_only_audits"]["selected_in_production"], {})
 
+    def test_feature_selection_rejects_missing_unknown_and_incomplete_implications(self) -> None:
+        for mutation, message in (
+            ("missing", "feature closure differs"),
+            ("unknown", "feature closure differs"),
+            ("debug", "mi-debug-1 requires mi-stat-2"),
+            ("statistics", "mi-stat-2 requires mi-stat-1"),
+        ):
+            with self.subTest(mutation=mutation):
+                policy = copy.deepcopy(self.manifest)
+                features = policy["phase_bc_call_graph"]["cfg_environment"]["features"]
+                if mutation == "missing":
+                    del features["mi-debug-1"]
+                elif mutation == "unknown":
+                    features["mi-guarded"] = False
+                elif mutation == "debug":
+                    features["mi-debug-1"] = True
+                else:
+                    features["mi-stat-2"] = True
+                with self.assertRaisesRegex(RATCHET.RatchetError, message):
+                    RATCHET.validate_production_feature_selection(ROOT, policy)
+
+    def test_supported_profiles_keep_current_production_graph_free_of_scaffolding(self) -> None:
+        profiles = (
+            (), ("mi-stat-1",), ("mi-stat-1", "mi-stat-2"),
+            ("mi-debug-1", "mi-stat-1", "mi-stat-2"),
+            ("mi-show-errors",), ("mi-opt-simd",),
+        )
+        for enabled in profiles:
+            with self.subTest(features=enabled):
+                policy = copy.deepcopy(self.manifest)
+                features = policy["phase_bc_call_graph"]["cfg_environment"]["features"]
+                features.update({name: True for name in enabled})
+                RATCHET.validate_production_feature_selection(ROOT, policy)
+                report = RATCHET.phase_bc_selected_production_reachability(ROOT, policy)
+                self.assertEqual(report["regressions"], [])
+                reachable = {item["function"] for item in report["reachable_functions"]}
+                self.assertTrue({
+                    "native_allocate_aligned", "native_free", "native_reallocate", "native_usable_size",
+                    "activate_page_engine", "current_thread_native_persistent_owner_cell",
+                    "with_current_thread_native_persistent_allocator",
+                }.issubset(reachable))
+                for name in ("per_call_scheduler_park_resume", "long_pagemap_mutation_lease", "ledger_owner_registry_scans"):
+                    self.assertEqual(report["ratchets"][name]["matches"], [])
+                self.assertEqual(RATCHET.collect_forbidden_scaffolding(ROOT, policy)["found"], {})
+                self.assertFalse(RATCHET.phase_ef_forbidden_scaffolding(ROOT, policy)["production_retains_forbidden_surface"])
+
+    def test_debug_cfg_reachable_scaffolding_is_detected_only_when_selected(self) -> None:
+        policy = copy.deepcopy(self.manifest)
+        graph = policy["phase_bc_call_graph"]
+        graph["sources"] = ["runtime.rs"]
+        graph["entry_points"] = [{"path": "runtime.rs", "function": "native_free", "public": True}]
+        for rule in graph["ratchets"].values():
+            rule.pop("entry_points", None)
+        source = '\n' + """pub fn native_free() {
+    #[cfg(feature = "mi-debug-1")]
+    debug_path();
+}
+#[cfg(feature = "mi-debug-1")]
+fn debug_path() { parked.resume(attachment); }
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "runtime.rs").write_text(source)
+            release = RATCHET.phase_bc_selected_production_reachability(root, policy)
+            self.assertEqual(release["ratchets"]["per_call_scheduler_park_resume"]["matches"], [])
+            graph["cfg_environment"]["features"].update({"mi-debug-1": True, "mi-stat-1": True, "mi-stat-2": True})
+            debug = RATCHET.phase_bc_selected_production_reachability(root, policy)
+            matches = debug["ratchets"]["per_call_scheduler_park_resume"]["matches"]
+            self.assertTrue(matches)
+            self.assertEqual(matches[0]["function"], "debug_path")
+            self.assertTrue(matches[0]["call_chain"])
+
+    def test_default_profile_excludes_supported_debug_branch(self) -> None:
+        source = '\n#[cfg(feature = "mi-debug-1")]\nfn debug_padding() {}\n#[cfg(not(feature = "mi-debug-1"))]\nfn release_layout() {}\n'
+        selected = RATCHET.production_rust_source(
+            source, self.manifest["phase_bc_call_graph"]["cfg_environment"]
+        )
+        self.assertNotIn("fn debug_padding", selected)
+        self.assertIn("fn release_layout", selected)
+
     def test_unknown_production_cfg_fails_closed(self) -> None:
         source = """\
 #[cfg(allocator_magic)]
 fn hidden_or_selected() {}
 """
-        with self.assertRaisesRegex(RATCHET.RatchetError, "unknown production cfg"):
-            RATCHET.production_rust_source(
-                source, self.manifest["phase_bc_call_graph"]["cfg_environment"]
-            )
+        for predicate in ("allocator_magic", 'feature = "mi-guarded"'):
+            with self.subTest(predicate=predicate):
+                with self.assertRaisesRegex(RATCHET.RatchetError, "unknown production cfg"):
+                    RATCHET.production_rust_source(
+                        source.replace("allocator_magic", predicate),
+                        self.manifest["phase_bc_call_graph"]["cfg_environment"],
+                    )
 
     def test_default_production_cfg_excludes_optional_statistics(self) -> None:
         source = '''\

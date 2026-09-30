@@ -2981,9 +2981,39 @@ def gate_unmet(report: Mapping[str, Any]) -> list[str]:
     return sorted(set(unmet))
 
 
+def validate_production_feature_selection(root: Path, manifest: Mapping[str, Any]) -> None:
+    """Keep source selection closed over the allocator's declared Cargo features.
+
+    Explicit false entries distinguish reviewed default-off branches from
+    unknown cfg names. Enabled Cargo features must include their additive
+    local implications, so the source graph cannot silently mask a compiled
+    statistics or debug branch.
+    """
+    path = root / "crabc-mimalloc/Cargo.toml"
+    with path.open("rb") as handle:
+        declared = tomllib.load(handle)["features"]
+    selected = phase_bc_policy(manifest)["cfg_environment"]["features"]
+    names = set(declared) - {"default"}
+    if set(selected) != names:
+        raise RatchetError(
+            "production cfg feature closure differs from Cargo: missing="
+            + repr(sorted(names - set(selected)))
+            + " unknown=" + repr(sorted(set(selected) - names))
+        )
+    for name in ["default", *sorted(names)]:
+        if name != "default" and not selected[name]:
+            continue
+        for implication in declared[name]:
+            if implication in names and not selected[implication]:
+                raise RatchetError(
+                    f"production cfg feature {name} requires {implication}"
+                )
+
+
 def evaluate(root: Path, manifest_path: Path, runtime_evidence_path: Path | None) -> dict[str, object]:
     manifest = read_json(manifest_path)
     validate_manifest(manifest)
+    validate_production_feature_selection(root, manifest)
     selected = selected_source_metadata(root, manifest)
     signals = collect_static_signals(root, manifest)
     metrics = metric_statuses(manifest, signals)

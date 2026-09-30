@@ -41,6 +41,7 @@
     "runtime_source": "crabc-mimalloc/src/runtime_lifecycle.rs",
     "sources": [
       "libc/Cargo.toml",
+      "crabc-mimalloc/Cargo.toml",
       "libc/src/c_abi.rs",
       "libc/src/allocator_native_mimalloc.rs",
       "crabc-mimalloc/src/lib.rs",
@@ -84,11 +85,16 @@
         "test": false
       },
       "features": {
+        "loom": false,
+        "mi-debug-1": false,
+        "mi-opt-simd": false,
+        "mi-show-errors": false,
         "mi-stat-1": false,
         "mi-stat-2": false,
         "native-runtime-test-audit": false,
         "native-runtime-test-fault": false,
-        "test-adapter": false
+        "test-adapter": false,
+        "tls-codegen-probe": false
       },
       "key_values": {
         "target_arch": "x86_64",
