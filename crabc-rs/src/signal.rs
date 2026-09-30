@@ -3,7 +3,7 @@
 //! Linux/AArch64 exposes the complete typed mask, waiting, queue, descriptor,
 //! and alternate-stack families. The staged x86-64 surface is deliberately
 //! narrower: one-argument handler actions, delivery to the current or a
-//! known thread in the calling process, and typed signal descriptors.
+//! known thread in the calling process, typed signal masks, and descriptors.
 //! Handler installation is unsafe because the kernel can later enter supplied
 //! code at an arbitrary interruption point. This module uses `crabc-core`'s
 //! direct kernel seams exclusively; it never calls the public C ABI or reads
@@ -217,11 +217,11 @@ fn calling_uid_raw() -> u32 {
     process::getuid().as_raw()
 }
 
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIG_BLOCK: i32 = 0;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIG_UNBLOCK: i32 = 1;
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 const SIG_SETMASK: i32 = 2;
 const SIG_DFL: usize = 0;
 const SIG_IGN: usize = 1;
@@ -521,7 +521,7 @@ impl fmt::Debug for SignalSet {
 }
 
 /// Selects how a signal set changes the calling thread's mask.
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[repr(i32)]
 pub enum SigmaskHow {
@@ -980,7 +980,12 @@ impl Stack {
 }
 
 /// Changes the calling thread's signal mask and returns the previous mask.
-#[cfg(target_arch = "aarch64")]
+///
+/// A missing `set` queries the mask without changing it for any `how` value.
+/// Linux ignores `SIGKILL` and `SIGSTOP` in an input set. Application-visible
+/// results exclude musl's reserved signals 32, 33, and 34. Newly created
+/// threads inherit the calling thread's mask; existing threads keep their own.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 pub fn sigprocmask(how: SigmaskHow, set: Option<&SignalSet>) -> Result<SignalSet> {
     let mut old = MaybeUninit::<u64>::uninit();
@@ -996,35 +1001,38 @@ pub fn sigprocmask(how: SigmaskHow, set: Option<&SignalSet>) -> Result<SignalSet
 }
 
 /// Returns the calling thread's signal mask.
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 pub fn current_mask() -> Result<SignalSet> {
     sigprocmask(SigmaskHow::SetMask, None)
 }
 
 /// Blocks all signals in `set` and returns the previous mask.
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 pub fn block(set: &SignalSet) -> Result<SignalSet> {
     sigprocmask(SigmaskHow::Block, Some(set))
 }
 
 /// Unblocks all signals in `set` and returns the previous mask.
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 pub fn unblock(set: &SignalSet) -> Result<SignalSet> {
     sigprocmask(SigmaskHow::Unblock, Some(set))
 }
 
 /// Replaces the calling thread's mask and returns its previous mask.
-#[cfg(target_arch = "aarch64")]
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 pub fn set_mask(set: &SignalSet) -> Result<SignalSet> {
     sigprocmask(SigmaskHow::SetMask, Some(set))
 }
 
-/// Returns signals pending for the calling thread.
-#[cfg(target_arch = "aarch64")]
+/// Returns blocked application-visible signals pending for the calling thread.
+///
+/// This includes pending process-directed signals as well as signals directed
+/// to this thread. Querying does not consume them or change the thread's mask.
+#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 pub fn pending() -> Result<SignalSet> {
     let mut set = MaybeUninit::<u64>::uninit();

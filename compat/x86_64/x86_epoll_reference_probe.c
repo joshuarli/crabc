@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <poll.h>
+#include <pthread.h>
 #include <sys/eventfd.h>
 #include <sys/signalfd.h>
 #include <stddef.h>
@@ -227,6 +228,85 @@ static int eventfd_composition(void)
     return 0;
 }
 
+static void *signal_mask_worker(void *unused)
+{
+    sigset_t inherited, selected, pending, changed;
+    struct signalfd_siginfo info;
+    int fd;
+    (void)unused;
+    if (sigprocmask(SIG_SETMASK, NULL, &inherited) ||
+        sigismember(&inherited, SIGUSR1) != 1 ||
+        sigismember(&inherited, SIGUSR2) != 1 ||
+        sigismember(&inherited, SIGRTMAX) != 1 ||
+        sigemptyset(&selected) || sigaddset(&selected, SIGUSR1))
+        return (void *)1;
+    fd = signalfd(-1, &selected, SFD_NONBLOCK);
+    if (fd < 0 || raise(SIGUSR1) || sigpending(&pending) ||
+        sigismember(&pending, SIGUSR1) != 1 ||
+        read(fd, &info, sizeof(info)) != sizeof(info) ||
+        info.ssi_signo != SIGUSR1 || sigpending(&pending) ||
+        sigismember(&pending, SIGUSR1) != 0 || close(fd) ||
+        sigprocmask(SIG_UNBLOCK, &selected, NULL) ||
+        sigprocmask(SIG_SETMASK, NULL, &changed) ||
+        sigismember(&changed, SIGUSR1) != 0 ||
+        sigprocmask(SIG_SETMASK, &inherited, NULL))
+        return (void *)1;
+    return NULL;
+}
+
+static int signal_mask_composition(void)
+{
+    sigset_t previous, selected, current, full, remaining, pending;
+    struct signalfd_siginfo info;
+    pthread_t worker;
+    void *worker_result;
+    unsigned long canary[3] = { 0x11223344, 0, 0x55667788 };
+    const unsigned long reserved = (1UL << 31) | (1UL << 32) | (1UL << 33);
+    const unsigned long unmaskable = (1UL << 8) | (1UL << 18);
+    int fd;
+    if (sigfillset(&full) || sigprocmask(SIG_SETMASK, &full, &previous) ||
+        syscall(SYS_rt_sigprocmask, SIG_SETMASK, NULL, &canary[1], 8) ||
+        sigprocmask(SIG_SETMASK, &previous, NULL) ||
+        canary[0] != 0x11223344 || canary[2] != 0x55667788 ||
+        canary[1] != (~0UL & ~reserved & ~unmaskable))
+        return 1;
+    if (sigemptyset(&selected) || sigaddset(&selected, SIGUSR1) ||
+        sigaddset(&selected, SIGUSR2) || sigaddset(&selected, SIGRTMAX) ||
+        sigprocmask(SIG_BLOCK, &selected, &previous) ||
+        pthread_create(&worker, NULL, signal_mask_worker, NULL) ||
+        pthread_join(worker, &worker_result) || worker_result ||
+        sigprocmask(SIG_SETMASK, NULL, &current) ||
+        sigismember(&current, SIGUSR1) != 1 ||
+        sigismember(&current, SIGUSR2) != 1 ||
+        sigismember(&current, SIGRTMAX) != 1)
+        return 2;
+    if (raise(SIGUSR1) || raise(SIGUSR2) || raise(SIGRTMAX) ||
+        sigpending(&pending) || sigismember(&pending, SIGUSR1) != 1 ||
+        sigismember(&pending, SIGUSR2) != 1 || sigismember(&pending, SIGRTMAX) != 1 ||
+        sigemptyset(&remaining) || sigaddset(&remaining, SIGUSR1))
+        return 3;
+    fd = signalfd(-1, &remaining, SFD_NONBLOCK);
+    if (fd < 0 || read(fd, &info, sizeof(info)) != sizeof(info) ||
+        info.ssi_signo != SIGUSR1 || sigpending(&pending) ||
+        sigismember(&pending, SIGUSR1) != 0 ||
+        sigismember(&pending, SIGUSR2) != 1 || sigismember(&pending, SIGRTMAX) != 1)
+        return 4;
+    if (sigemptyset(&remaining) || sigaddset(&remaining, SIGUSR2) ||
+        sigaddset(&remaining, SIGRTMAX) || signalfd(fd, &remaining, 0) != fd ||
+        read(fd, &info, sizeof(info)) != sizeof(info) || info.ssi_signo != SIGUSR2 ||
+        read(fd, &info, sizeof(info)) != sizeof(info) || info.ssi_signo != (uint32_t)SIGRTMAX ||
+        sigpending(&pending) || sigismember(&pending, SIGUSR2) != 0 ||
+        sigismember(&pending, SIGRTMAX) != 0 || close(fd))
+        return 5;
+    if (sigemptyset(&remaining) || sigaddset(&remaining, SIGUSR1) ||
+        sigprocmask(SIG_UNBLOCK, &remaining, NULL) ||
+        sigprocmask(SIG_SETMASK, NULL, &current) || sigismember(&current, SIGUSR1) != 0 ||
+        sigismember(&current, SIGUSR2) != 1 || sigismember(&current, SIGRTMAX) != 1 ||
+        sigprocmask(SIG_SETMASK, &previous, NULL))
+        return 6;
+    return 0;
+}
+
 static int signalfd_composition(void)
 {
     sigset_t selected, previous, empty, pending;
@@ -239,6 +319,8 @@ static int signalfd_composition(void)
     unsigned char short_record[127];
     union sigval queued = { .sival_int = -1234567 };
 
+    if (signal_mask_composition())
+        return 129;
     if (sigemptyset(&selected) || sigaddset(&selected, SIGUSR1) ||
         sigemptyset(&empty) || sigprocmask(SIG_BLOCK, &selected, &previous))
         return 120;
