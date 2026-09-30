@@ -49,6 +49,77 @@ use crate::thread_local::{ThreadLocalBackingOwner, ThreadLocalKey, ThreadLocalSl
 use crate::types::heap_registry::lifecycle::{HeapKeySource, HeapReleaseError, HeapReleaseOutcome, NonMainHeapImage};
 use crate::types::{Heap, LiveThreadId, MemoryId, Page, Theap, ThreadLocalData, ThreadSequence};
 
+/// Native administration in the source Theap's internal alignment gap.
+/// These are initialized fields, carried by whole-image moves; neither
+/// allocator padding after the requested extent nor uninitialized Rust
+/// padding is used as storage.
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct MainHeapTheapLifecycle {
+    pub(crate) engine: MainHeapTheapEngineState,
+    pub(crate) metadata: MainHeapTheapMetadataOwnership,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl MainHeapTheapLifecycle {
+    pub(crate) const fn empty() -> Self {
+        Self { engine: MainHeapTheapEngineState::Active, metadata: MainHeapTheapMetadataOwnership::Unowned }
+    }
+}
+
+/// A page session owns this state while the Theap's local queues are held.
+/// Retry and failure states remain attached to the exact source image after
+/// the creating thread exits; a new caller cannot reset them to active.
+#[cfg(target_arch = "x86_64")]
+#[repr(u8)]
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) enum MainHeapTheapEngineState {
+    Active,
+    RetryPending,
+    RetryComplete,
+    Poisoned,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl MainHeapTheapEngineState {
+    fn from_engine(state: ChildPageEngineState) -> Self {
+        match state {
+            ChildPageEngineState::Active => Self::Active,
+            ChildPageEngineState::RetryPending => Self::RetryPending,
+            ChildPageEngineState::RetryComplete => Self::RetryComplete,
+            ChildPageEngineState::Poisoned => Self::Poisoned,
+        }
+    }
+
+    fn into_engine(self) -> ChildPageEngineState {
+        match self {
+            Self::Active => ChildPageEngineState::Active,
+            Self::RetryPending => ChildPageEngineState::RetryPending,
+            Self::RetryComplete => ChildPageEngineState::RetryComplete,
+            Self::Poisoned => ChildPageEngineState::Poisoned,
+        }
+    }
+}
+
+/// The source reference owns a transferred metadata capability until its
+/// final decrement. Claiming release requires that exclusive last reference
+/// and detached source lists; a failed publication stays terminally owned.
+#[cfg(target_arch = "x86_64")]
+#[repr(u8)]
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) enum MainHeapTheapMetadataOwnership {
+    Unowned,
+    SourceOwned,
+    ReleaseClaimed,
+    Terminal,
+}
+
+#[cfg(target_arch = "x86_64")]
+const _: [(); 2] = [(); size_of::<MainHeapTheapLifecycle>()];
+#[cfg(target_arch = "x86_64")]
+const _: [(); 1] = [(); align_of::<MainHeapTheapLifecycle>()];
+
 /// One allocated auxiliary Theap of the process main subprocess:
 /// the source `mi_theap_t` at offset zero, then this Theap's own page-engine
 /// state and the exact metadata or arena claim for this block (so any thread
