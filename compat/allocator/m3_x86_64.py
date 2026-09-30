@@ -1396,7 +1396,17 @@ def run_owner_differential(contract: Mapping[str, Any], *, offline: bool) -> dic
 # Rust unit batch and Miri execution.
 # ---------------------------------------------------------------------------
 
-TEST_RESULT = re.compile(r"^test (\S+) \.\.\. (ok|FAILED|ignored)$", re.MULTILINE)
+# Direct isolated fixtures can print their exact startup marker after libtest's
+# partial result line. Accept that split only with the same test name and the
+# complete successful one-test summary; a bare later "ok" proves no completion.
+TEST_RESULT = re.compile(
+    r"^test (\S+) \.\.\. "
+    r"(?:CRABC_MIMALLOC_FRESH_TEST_CHILD_STARTED=\1\n"
+    r"(?=ok\n\ntest result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; "
+    r"[0-9]+ filtered out; finished in [0-9]+(?:\.[0-9]+)?s\n(?:\n|$)))?"
+    r"(ok|FAILED|ignored)$",
+    re.MULTILINE,
+)
 TEST_LISTING = re.compile(r"^(\S+): test$", re.MULTILINE)
 
 
@@ -1414,14 +1424,18 @@ def select_by_prefix(listing: str, prefixes: Sequence[str]) -> dict[str, list[st
 
 def summarize_group(prefix: str, selected: Sequence[str], record: Mapping[str, Any]) -> dict[str, Any]:
     output = str(record["stdout"]) + "\n" + str(record["stderr"])
-    outcomes = dict(TEST_RESULT.findall(output))
+    reported = TEST_RESULT.findall(output)
+    counts = {name: sum(reported_name == name for reported_name, _ in reported) for name in selected}
+    outcomes = {name: outcome for name, outcome in reported if counts.get(name) == 1}
     passed = sorted(name for name in selected if outcomes.get(name) == "ok")
     failed = sorted(name for name in selected if outcomes.get(name) == "FAILED")
     # A test that never reported (for example after Miri aborted the process
     # on undefined behaviour) is unmet, never silently skipped.
-    unreported = sorted(name for name in selected if name not in outcomes)
+    unreported = sorted(name for name in selected if counts[name] == 0)
+    duplicated = sorted(name for name in selected if counts[name] > 1)
     unmet = [f"test failed: {name}" for name in failed]
     unmet += [f"test did not complete: {name}" for name in unreported]
+    unmet += [f"test reported more than once: {name}" for name in duplicated]
     if record["status"] != 0 and not unmet:
         unmet.append(f"{prefix} group exited {record['status']}")
     if not selected:

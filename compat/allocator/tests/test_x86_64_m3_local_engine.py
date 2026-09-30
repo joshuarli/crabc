@@ -342,6 +342,64 @@ def miri_input_fixture(directory: Path) -> Path:
     return program
 
 
+class MiriFreshCompletionTests(unittest.TestCase):
+    name = "page::tests::failed_regular_page_release_preserves_source_statistics"
+
+    def record(self):
+        return {
+            "status": 0,
+            "stdout": (
+                "\nrunning 1 test\n"
+                f"test {self.name} ... CRABC_MIMALLOC_FRESH_TEST_CHILD_STARTED={self.name}\n"
+                "ok\n\n"
+                "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; "
+                "1312 filtered out; finished in 28.61s\n\n"
+            ),
+            "stderr": "",
+        }
+
+    def test_exact_started_fixture_with_complete_libtest_summary_is_reported(self):
+        record = self.record()
+        original = copy.deepcopy(record)
+        result = gate.summarize_group("page::tests::", [self.name], record)
+        self.assertEqual(result["passed"], 1)
+        self.assertEqual(result["unmet"], [])
+        self.assertEqual(gate.TEST_RESULT.findall(record["stdout"]), [(self.name, "ok")])
+        self.assertEqual(record, original)
+
+    def test_started_fixture_cannot_complete_with_wrong_or_incomplete_framing(self):
+        mutations = {
+            "wrong marker": (f"STARTED={self.name}", "STARTED=page::tests::other"),
+            "missing outcome": ("\nok\n", "\n"),
+            "missing summary": ("test result: ok. 1 passed;", "missing result: ok. 1 passed;"),
+            "no pass": ("1 passed", "0 passed"),
+            "multiple passes": ("1 passed", "2 passed"),
+            "failure": ("0 failed", "1 failed"),
+            "ignored": ("0 ignored", "1 ignored"),
+            "measured": ("0 measured", "1 measured"),
+            "truncated summary": ("finished in 28.61s", "finished in"),
+        }
+        for label, (before, after) in mutations.items():
+            with self.subTest(label=label):
+                record = self.record()
+                record["stdout"] = record["stdout"].replace(before, after)
+                result = gate.summarize_group("page::tests::", [self.name], record)
+                self.assertEqual(result["passed"], 0)
+                self.assertTrue(result["unmet"])
+
+    def test_successful_framing_does_not_hide_nonzero_process_status(self):
+        record = self.record()
+        record["status"] = 101
+        self.assertTrue(gate.summarize_group("page::tests::", [self.name], record)["unmet"])
+
+    def test_duplicate_fixture_completions_are_not_one_selected_test(self):
+        record = self.record()
+        record["stdout"] *= 2
+        result = gate.summarize_group("page::tests::", [self.name], record)
+        self.assertEqual(result["passed"], 0)
+        self.assertTrue(result["unmet"])
+
+
 class MiriWorkspaceTests(unittest.TestCase):
     def setUp(self) -> None:
         scratch = ROOT / ".work/tmp"
