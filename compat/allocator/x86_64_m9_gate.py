@@ -798,10 +798,24 @@ def m8_evidence_unmet(report: Mapping[str, Any], path: Path, newest: int | None)
 
 
 def correctness_evidence_unmet(
-    gate: str, report: Mapping[str, Any], artifacts: Path, newest: int | None,
+    gate: str, report: Mapping[str, Any], artifacts: Path, newest: int | None, *,
+    qualification_profile: str = "full",
 ) -> list[str]:
     """Reconstruct contract classification and recheck source and retained raw evidence."""
 
+    if qualification_profile not in {"full", "correctness"} or (gate != "m5" and qualification_profile != "full"):
+        return ["unsupported correctness evidence profile"]
+    if gate == "m5":
+        if report.get("qualification_profile", "full") != qualification_profile:
+            return (["report lacks the complete passing gate roster"] if qualification_profile == "full"
+                    else ["report qualification profile differs from the requested profile"])
+        if qualification_profile == "correctness":
+            expected = harness.ARTIFACT_ROOT / "x86_64/m5-correctness-gate"
+            if artifacts.resolve() != expected.resolve():
+                return ["correctness report is outside its dedicated artifact directory"]
+            if (report.get("performance_qualified") is not False
+                    or report.get("deferred_gate_ids") != ["m5.codegen-performance"]):
+                return ["correctness profile has invalid performance or deferred gate claims"]
     if not isinstance(report.get("provenance"), Mapping):
         return ["report lacks current evidence provenance"]
     try:
@@ -810,7 +824,9 @@ def correctness_evidence_unmet(
         expected_gates = [record["id"] for record in contract["gates"]]
         observed = report["gates"]
         if ([record["id"] for record in observed] != expected_gates
-                or any(record["status"] != "passed" for record in observed)
+                or any(record["status"] != ("deferred" if gate == "m5" and qualification_profile == "correctness"
+                                           and record["id"] == "m5.codegen-performance" else "passed")
+                       for record in observed)
                 or report["unmet_required"] != []):
             return ["report lacks the complete passing gate roster"]
         evidence = report["evidence"]
@@ -830,7 +846,9 @@ def correctness_evidence_unmet(
                     contract, api, pin, producer.sibling_owned_items(contract["inventory"]))
         if set(evidence) != set(summary["runnable_evidence"]):
             return ["report lacks executed producers for every gate"]
-        reconstructed = producer.gate_report(contract, summary, evidence)
+        reconstructed = (producer.gate_report(contract, summary, evidence, qualification_profile=qualification_profile)
+                         if gate == "m5" and qualification_profile == "correctness"
+                         else producer.gate_report(contract, summary, evidence))
         if reconstructed["overall_status"] != "passed":
             return ["report retains unresolved current gate conditions"]
         if (report.get("overall_status") != reconstructed["overall_status"]

@@ -102,13 +102,28 @@ class ConditionTests(unittest.TestCase):
     def test_the_audit_must_be_passing_clean_and_for_this_head(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "audit.json"
-            path.write_text(json.dumps({"git": {"head": "a", "clean": True}, "unmet": []}), encoding="utf-8")
+            path.write_text(json.dumps({"git": {"head": "a", "clean": True}, "unmet": [], "passed": True,
+                                       "products": {kind: {"built": True, "unmet": []} for kind in ("static", "dynamic")}}), encoding="utf-8")
             self.assertTrue(gate.native_artifacts({"head": "a"}, path)["met"])
             detail = gate.native_artifacts({"head": "b"}, path)["detail"]
             self.assertIn("not HEAD b", detail[0])
-            path.write_text(json.dumps({"git": {"head": "a", "clean": False}, "unmet": ["x"]}), encoding="utf-8")
+            path.write_text(json.dumps({"git": {"head": "a", "clean": False}, "unmet": ["x"], "passed": True,
+                                       "products": {kind: {"built": True, "unmet": []} for kind in ("static", "dynamic")}}), encoding="utf-8")
             self.assertEqual(len(gate.native_artifacts({"head": "a"}, path)["detail"]), 2)
             self.assertIn("--build-audit", gate.native_artifacts({"head": "a"}, Path(directory) / "absent")["detail"][0])
+
+    def test_artifact_audit_requires_both_actual_built_products_and_a_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "audit.json"
+            complete = {"git": {"head": "a", "clean": True}, "passed": True,
+                        "products": {kind: {"built": True, "unmet": []} for kind in ("static", "dynamic")},
+                        "unmet": []}
+            for change in ({"passed": False}, {"products": {}},
+                           {"products": {"static": {"built": True, "unmet": []}}},
+                           {"products": {kind: {"built": False, "unmet": []} for kind in ("static", "dynamic")}}):
+                with self.subTest(change=change):
+                    path.write_text(json.dumps(dict(complete, **change)), encoding="utf-8")
+                    self.assertFalse(gate.native_artifacts({"head": "a"}, path)["met"])
 
     def test_milestone_reports_must_have_passed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -132,6 +147,27 @@ class ConditionTests(unittest.TestCase):
                 self.assertTrue(gate.prior_milestones({"status": 0})["met"])
                 report.write_text(json.dumps({"overall_status": "unmet"}), encoding="utf-8")
                 self.assertIn("M8: report status is 'unmet'", gate.prior_milestones({"status": 0})["detail"])
+
+    def test_correctness_profile_defers_timing_and_retains_switch_and_purity(self) -> None:
+        met = lambda name: gate._condition(name, [], "validated fixture")
+        with (mock.patch.object(gate, "prior_milestones", return_value=met("m10.prior-milestones")) as prior,
+              mock.patch.object(gate, "functional_convergence", return_value=met("m10.source-convergence")),
+              mock.patch.object(gate, "promotion_gates") as timing,
+              mock.patch.object(gate, "native_artifacts", return_value=gate._condition(
+                  "m10.native-artifacts", ["wrong source"], ""))):
+            result = gate.evaluate(m0={"status": 0}, receipt=None, head={"head": "fixture", "clean": True},
+                                   profile="correctness")
+            prior.assert_called_once_with({"status": 0}, profile="correctness")
+            timing.assert_not_called()
+            self.assertFalse(result["performance_qualified"])
+            self.assertIn("m10.native-artifacts", result["unmet"])
+            self.assertIn("m10.promotion-rerun", result["unmet"])
+            self.assertIn("m10.switch", result["unmet"])
+            self.assertEqual(result["qualification_profile"], "correctness")
+        with self.assertRaisesRegex(gate.harness.HarnessError, "does not consume performance"):
+            gate.evaluate(m0={"status": 0}, receipt=Path("timed.json"), head={}, profile="correctness")
+        with self.assertRaisesRegex(gate.harness.HarnessError, "unknown M10 profile"):
+            gate.evaluate(m0={}, receipt=None, head={}, profile="other")
 
     def test_the_gate_fails_closed_today(self) -> None:
         result = gate.evaluate(m0={"status": 0}, receipt=None, head={"head": "none", "clean": True})

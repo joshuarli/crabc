@@ -765,6 +765,16 @@ class CorrectnessTests(GateFixture):
             detail = gate.correctness_condition([perf], self.root / "gates", report_path)["detail"]
             self.assertTrue(any("M8 gate" in item and "receipt" in item for item in detail), detail)
 
+    def test_functional_m5_reports_cannot_cross_profile_or_artifact_boundaries(self) -> None:
+        report = {"qualification_profile": "correctness", "performance_qualified": False,
+                  "deferred_gate_ids": ["m5.codegen-performance"], "provenance": {}}
+        path = self.root / "gates/m5-correctness-gate"
+        self.assertIn("passing gate roster", gate.correctness_evidence_unmet("m5", report, path, None)[0])
+        self.assertIn("artifact", gate.correctness_evidence_unmet(
+            "m5", report, path, None, qualification_profile="correctness")[0])
+        self.assertIn("profile", gate.correctness_evidence_unmet(
+            "m4", report, path, None, qualification_profile="correctness")[0])
+
     def test_copied_status_only_reports_do_not_prove_current_correctness(self) -> None:
         perf = self.root / "perf.json"
         perf.write_text("{}", encoding="utf-8")

@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -63,6 +64,35 @@ class SourceConvergenceTests(unittest.TestCase):
                 performance_qualified=False, differential_verified=True)))
         self.assertEqual(result["intentional-differences"]["detail"], [
             "src/alloc.c:a states an algorithmic divergence without performance_qualified"])
+
+    def test_correctness_defers_only_performance_and_retains_source_obligations(self) -> None:
+        complete = port_map(row(intentional_difference="CRABC-MI-ONE", difference_kind="algorithmic",
+                                performance_qualified=False))
+        result = {item["id"]: item for item in convergence.conditions(
+            complete, REGISTER, "a" * 40, PIN, profile="correctness")}
+        self.assertTrue(all(item["met"] for item in result.values()), result)
+        for change, rejected in (({"differential_verified": False}, "implemented"),
+                                 ({"rust_item": "partial: allocation"}, "transitional")):
+            damaged = port_map(row(intentional_difference="CRABC-MI-ONE", difference_kind="algorithmic",
+                                   performance_qualified=False, **change))
+            result = {item["id"]: item for item in convergence.conditions(
+                damaged, REGISTER, "a" * 40, PIN, profile="correctness")}
+            self.assertFalse(result[rejected]["met"])
+        with self.assertRaises(ValueError):
+            convergence.conditions(complete, REGISTER, "a" * 40, PIN, profile="unknown")
+
+    def test_functional_convergence_requires_actual_differential_receipts(self) -> None:
+        manifest = {"rows": {"src/alloc.c:a": {"differential": {"command": ["python3", "fixture.py"]},
+                                                "performance": {"blocked": "timing deferred"}}}}
+        with mock.patch("x86_64_m9_gate.convergence_differential_unmet", return_value="wrong source"):
+            result = convergence.functional_differential_condition(manifest)
+            self.assertFalse(result["met"])
+            self.assertIn("wrong source", result["detail"][0])
+        with mock.patch("x86_64_m9_gate.convergence_differential_unmet", return_value=None) as reader:
+            self.assertTrue(convergence.functional_differential_condition(manifest)["met"])
+            reader.assert_called_once()
+        manifest["rows"]["src/alloc.c:a"] = {"owner": "unimplemented producer"}
+        self.assertFalse(convergence.functional_differential_condition(manifest)["met"])
 
     def test_an_admitted_not_applicable_entry_stands_in_for_the_evidence_flags(self) -> None:
         manifest = port_map(row(name="a", intentional_difference="CRABC-MI-ONE", difference_kind="algorithmic",

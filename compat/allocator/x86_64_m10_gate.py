@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Fail-closed allocator default promotion gate for native x86-64.
+"""Fail-closed native x86-64 allocator default qualification.
 
-The accepted C backend remains selected until the prior evidence, release
-performance, native product purity, and promotion reruns pass. The build
-audit constructs native static and dynamic products and checks their archives,
-symbols, headers, provenance, and resolved Cargo graphs for C mimalloc. Its
-report is sealed to the Git revision that supplied the products.
+The full profile requires release performance evidence as well as functional
+correctness, source convergence, native product purity, and switch reruns.
+The explicit correctness profile defers performance evidence while retaining
+current physical functional and differential checks. Its report is separate
+and carries no performance qualification claim.
 
-The check builds nothing. It reports every unmet condition and records the
-default setting and explicit accepted-C selections for review. A default
-switch before the other conditions pass is an error.
+The build audit constructs native static and dynamic products and checks
+archives, symbols, headers, provenance, and resolved Cargo graphs for C
+mimalloc. The check builds nothing, records the selected default and explicit
+accepted-C selections, and rejects a switch before its prerequisites pass.
 """
 
 from __future__ import annotations
@@ -182,13 +183,56 @@ def report_passed(path: Path) -> str | None:
     return None if status in {"passed", "complete"} else f"report status is {status!r}"
 
 
-def prior_milestones(m0: Mapping[str, Any]) -> dict[str, Any]:
+def prior_milestones(m0: Mapping[str, Any], *, profile: str = "full") -> dict[str, Any]:
     unmet = [] if m0.get("status") == 0 else [f"M0: run.py --check exited {m0.get('status')}"]
+    if profile == "correctness":
+        return functional_milestones(m0)
     for milestone, path in PRIOR_REPORTS.items():
         reason = report_passed(path)
         if reason:
             unmet.append(f"{milestone}: {reason}")
     return _condition("m10.prior-milestones", unmet, "M0-M9 passed")
+
+
+def functional_milestones(m0: Mapping[str, Any]) -> dict[str, Any]:
+    """Read current functional producers without accepting historical status alone."""
+    import x86_64_m9_gate as physical
+    import x86_64_m5_gate as lifecycle
+
+    unmet = [] if m0.get("status") == 0 else [f"M0: run.py --check exited {m0.get('status')}"]
+    for milestone in ("M1", "M2", "M3"):
+        reason = report_passed(PRIOR_REPORTS[milestone])
+        if reason:
+            unmet.append(f"{milestone}: {reason}")
+        unmet.append(f"{milestone}: current-source physical receipt reader is unavailable")
+    for milestone in ("M4", "M5", "M6", "M7", "M8"):
+        try:
+            if milestone == "M5":
+                lifecycle.read_report(profile="correctness")
+                continue
+            path = PRIOR_REPORTS[milestone]
+            report = harness.read_json(path)
+            if report.get("overall_status") != "passed":
+                unmet.append(f"{milestone}: report did not pass")
+            if milestone == "M8":
+                reasons = physical.m8_evidence_unmet(report, path, None)
+            else:
+                reasons = physical.correctness_evidence_unmet(milestone.lower(), report, path.parent, None)
+            unmet.extend(f"{milestone}: {reason}" for reason in reasons)
+        except Exception as error:
+            unmet.append(f"{milestone}: {type(error).__name__}: {error}")
+    return _condition("m10.prior-milestones", unmet, "current functional producers passed")
+
+
+def functional_convergence() -> dict[str, Any]:
+    import source_convergence
+
+    try:
+        rows = source_convergence.evaluate(ROOT, profile="correctness")
+        unmet = [f"{row['id']}: {reason}" for row in rows if not row["met"] for reason in row["detail"]]
+    except Exception as error:
+        unmet = [f"{type(error).__name__}: {error}"]
+    return _condition("m10.source-convergence", unmet, "source and physical differential obligations passed")
 
 
 def promotion_gates(receipt: Path | None) -> dict[str, Any]:
@@ -209,6 +253,17 @@ def native_artifacts(head: Mapping[str, Any], path: Path = AUDIT_REPORT) -> dict
         return _condition("m10.native-artifacts", ["no native artifact audit (allocator-m10 --build-audit)"], "")
     report = json.loads(path.read_text(encoding="utf-8"))
     unmet = list(report.get("unmet", []))
+    if report.get("passed") is not True:
+        unmet.append("native artifact audit did not pass")
+    products = report.get("products")
+    if not isinstance(products, Mapping) or set(products) != set(BUILDERS):
+        unmet.append("native artifact audit lacks both static and dynamic products")
+    else:
+        for kind, product in products.items():
+            if not isinstance(product, Mapping) or product.get("built") is not True:
+                unmet.append(f"native artifact audit {kind} product was not built")
+            elif product.get("unmet") != []:
+                unmet.append(f"native artifact audit {kind} product purity did not pass")
     if report.get("git", {}).get("head") != head.get("head"):
         unmet.append(f"native artifact audit is for {report.get('git', {}).get('head')}, not HEAD {head.get('head')}")
     if not report.get("git", {}).get("clean"):
@@ -253,14 +308,25 @@ def switch_condition(record: Mapping[str, Any], others_met: bool) -> dict[str, A
     return _condition("m10.switch", [], "default is native")
 
 
-def evaluate(*, m0: Mapping[str, Any], receipt: Path | None, head: Mapping[str, Any]) -> dict[str, Any]:
-    conditions = [prior_milestones(m0), promotion_gates(receipt), native_artifacts(head), oracle_retained(),
+def evaluate(*, m0: Mapping[str, Any], receipt: Path | None, head: Mapping[str, Any],
+             profile: str = "full") -> dict[str, Any]:
+    if profile not in {"full", "correctness"}:
+        raise harness.HarnessError(f"unknown M10 profile: {profile!r}")
+    if profile == "correctness" and receipt is not None:
+        raise harness.HarnessError("correctness profile does not consume performance receipts")
+    prerequisites = ([prior_milestones(m0), promotion_gates(receipt)] if profile == "full" else
+                     [prior_milestones(m0, profile="correctness"), functional_convergence(),
+                      _condition("m10.performance-deferred", [], "performance qualification is outside this profile")])
+    conditions = [*prerequisites, native_artifacts(head), oracle_retained(),
                   _condition("m10.promotion-rerun", ["the required native commands have not been rerun at a "
                                                      "promotion revision (it exists only once the switch is committed)"], "")]
     record = switch_record()
     conditions.append(switch_condition(record, all(row["met"] for row in conditions)))
     unmet = [row["id"] for row in conditions if not row["met"]]
-    return {"schema": "crabc-mimalloc-x86_64-m10-gate/v1", "git": dict(head), "conditions": conditions,
+    return {"schema": "crabc-mimalloc-x86_64-m10-gate/v1", "qualification_profile": profile,
+            **({"performance_qualified": False, "deferred_prerequisites": ["M9", "performance.release"]}
+               if profile == "correctness" else {}),
+            "git": dict(head), "conditions": conditions,
             "switch": record, "unmet": unmet, "overall_status": "passed" if not unmet else "unmet"}
 
 
@@ -270,6 +336,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode.add_argument("--check", action="store_true", help="name every unmet M10 condition; builds nothing")
     mode.add_argument("--build-audit", action="store_true", help="build and audit the native static and dynamic products")
     parser.add_argument("--performance-receipt", type=Path, default=None)
+    parser.add_argument("--profile", choices=("full", "correctness"), default="full")
     arguments = parser.parse_args(argv)
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     if arguments.build_audit:
@@ -284,14 +351,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if report["passed"] else 1
     m0 = harness.command_record(["python3", "compat/allocator/run.py", "--check", "--architecture", "x86_64",
                                  "--offline"], cwd=ROOT, timeout_seconds=900)
-    result = evaluate(m0={"status": m0["status"]}, receipt=arguments.performance_receipt, head=git_head())
-    harness.write_json(ARTIFACTS / "report.json", result)
+    result = evaluate(m0={"status": m0["status"]}, receipt=arguments.performance_receipt, head=git_head(), profile=arguments.profile)
+    report_path = ARTIFACTS / ("report.json" if arguments.profile == "full" else "correctness-report.json")
+    harness.write_json(report_path, result)
     for row in result["conditions"]:
         print(f"{row['id']}: {'met' if row['met'] else 'unmet'}")
         if not row["met"]:
             for item in row["detail"]:
                 print(f"  - {item}")
-    print(f"M10 {result['overall_status']}; switch record in {harness.relative(ARTIFACTS / 'report.json')}")
+    print(f"M10 {result['overall_status']}; switch record in {harness.relative(report_path)}")
     return 0 if result["overall_status"] == "passed" else 1
 
 

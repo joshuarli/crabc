@@ -1,35 +1,12 @@
 #!/usr/bin/env python3
-"""Structural reader for source-faithful convergence of the Rust mimalloc port.
+"""Read source-fidelity convergence with explicit qualification profiles.
 
-plan.md's M9 row requires "source-faithful convergence"; AGENTS.md requires
-the port to preserve source algorithms, data structures, ownership, memory
-ordering and lifecycle, and gives any algorithmic divergence "a durable
-rationale plus differential and performance evidence". This reader turns
-that into conditions over the existing manifests only, never over prose:
-
-* ``pin``: ``compat/allocator/port-map.toml`` names the pinned upstream
-  version and revision of ``compat/upstreams.toml``, and
-  ``crabc-mimalloc/UPSTREAM.md`` records that revision.
-* ``implemented``: every port-map unit and item is implemented,
-  unit-verified and differential-verified.
-* ``transitional``: no port-map row's ``rust_item`` is ``unimplemented`` or
-  ``partial: ...``.
-* ``intentional-differences``: every row whose ``difference_kind`` is
-  ``algorithmic`` (its ``intentional_difference`` is the rationale) is also
-  differential-verified and performance-qualified, unless its validated
-  ``divergence-evidence`` entry is ``not_applicable`` because pinned C faults
-  there (``divergence_evidence.not_applicable_unmet``); ``run.py --check`` owns
-  the field's schema. ``boundary`` rows are scope, representation,
-  integration-owner or fail-closed notes and need no such evidence.
-* ``known-differences``: every ``### `` entry of ``known-differences.md``
-  has a stable backticked identifier and one of the register's closed
-  statuses (``accepted`` or ``rejected``; ``observed`` and ``pending`` are
-  open by the register's own entry requirements). Each accepted identifier
-  is carried by at least one port-map row, whose flags are its evidence:
-  either the row's ``intentional_difference`` names it, or the entry's one
-  ``- **Port map:** `upstream:name`, ...`` line names existing rows.
-
-Each condition names every failing row or entry; ``--summary`` prints counts.
+Both profiles require the pinned revision, complete implemented and verified
+rows, no transitional implementations, and a closed register of carried
+intentional differences. The full profile also requires algorithmic
+performance flags. The correctness profile defers only those flags and
+independently requires current physical differential receipts for applicable
+algorithmic differences; an unresolved producer remains a blocker.
 """
 
 from __future__ import annotations
@@ -84,7 +61,11 @@ def known_difference_entries(text: str) -> list[dict[str, Any]]:
 
 
 def conditions(port_map: Mapping[str, Any], known_differences: str, upstream: str,
-               pin: Mapping[str, str], not_applicable: set[str] = frozenset()) -> list[dict[str, Any]]:
+               pin: Mapping[str, str], not_applicable: set[str] = frozenset(), *,
+               profile: str = "full") -> list[dict[str, Any]]:
+    if profile not in {"full", "correctness"}:
+        raise ValueError(f"unknown convergence profile: {profile!r}")
+    evidence_flags = DIFFERENCE_EVIDENCE_FLAGS if profile == "full" else ("differential_verified",)
     rows = port_map_rows(port_map)
     metadata = port_map.get("metadata", {})
 
@@ -102,10 +83,10 @@ def conditions(port_map: Mapping[str, Any], known_differences: str, upstream: st
     differences = [f"{row_label(row)} has no difference_kind" for row in rows if "difference_kind" not in row]
     differences += [
         f"{row_label(row)} states an algorithmic divergence without "
-        f"{', '.join(flag for flag in DIFFERENCE_EVIDENCE_FLAGS if row.get(flag) is not True)}"
+        f"{', '.join(flag for flag in evidence_flags if row.get(flag) is not True)}"
         for row in rows
         if row.get("difference_kind") == "algorithmic"
-        and not all(row.get(flag) is True for flag in DIFFERENCE_EVIDENCE_FLAGS)
+        and not all(row.get(flag) is True for flag in evidence_flags)
         and (row["upstream"] if row["kind"] == "unit" else f"{row['upstream']}:{row.get('name')}") not in not_applicable
     ]
 
@@ -148,7 +129,24 @@ def load_pin() -> dict[str, str]:
     return {"version": str(mimalloc["version"]).removeprefix("v"), "revision": mimalloc["revision"]}
 
 
-def evaluate(root: Path = ROOT) -> list[dict[str, Any]]:
+def functional_differential_condition(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Require the existing current-source physical reader for every divergence."""
+    import x86_64_m9_gate as gate
+
+    unmet = []
+    for key, entry in sorted(manifest["rows"].items()):
+        if "owner" in entry:
+            unmet.append(f"{key}: differential evidence is still owned by {entry['owner']}")
+        elif "command" in entry["differential"]:
+            reason = gate.convergence_differential_unmet(
+                entry["differential"]["command"], gate.harness.ARTIFACT_ROOT / "x86_64", None)
+            if reason:
+                unmet.append(f"{key}: {reason}")
+    return {"id": "physical-differentials", "met": not unmet,
+            "detail": unmet or "every applicable divergence has current physical differential evidence"}
+
+
+def evaluate(root: Path = ROOT, *, profile: str = "full") -> list[dict[str, Any]]:
     if Path(root).resolve() != ROOT.resolve():
         raise RuntimeError(f"source convergence must be read by the checkout that owns this reader: {root}")
     with PORT_MAP.open("rb") as stream:
@@ -159,16 +157,20 @@ def evaluate(root: Path = ROOT) -> list[dict[str, Any]]:
     # recorded known difference) stands in for the row's evidence flags.
     manifest = json.loads(divergence_evidence.MANIFEST.read_text(encoding="utf-8"))
     divergence_evidence.validate_manifest(manifest, port_map)
-    return conditions(port_map, KNOWN_DIFFERENCES.read_text(encoding="utf-8"),
-                      UPSTREAM.read_text(encoding="utf-8"), load_pin(),
-                      divergence_evidence.accepted_not_applicable(manifest))
+    result = conditions(port_map, KNOWN_DIFFERENCES.read_text(encoding="utf-8"),
+                        UPSTREAM.read_text(encoding="utf-8"), load_pin(),
+                        divergence_evidence.accepted_not_applicable(manifest), profile=profile)
+    if profile == "correctness":
+        result.append(functional_differential_condition(manifest))
+    return result
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--summary", action="store_true", help="print one count per condition")
+    parser.add_argument("--profile", choices=("full", "correctness"), default="full")
     arguments = parser.parse_args(argv)
-    result = evaluate()
+    result = evaluate(profile=arguments.profile)
     if arguments.summary:
         for row in result:
             print(f"{row['id']}: {'met' if row['met'] else f'unmet ({len(row['detail'])})'}")
