@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -28,7 +29,7 @@ SPEC.loader.exec_module(RUNNER)
 class SuppliedDynamicLuaTests(unittest.TestCase):
     """Keep supplied products immutable while the Lua consumer uses both arms."""
 
-    scratch_root = ROOT / ".work" / "lua-dynamic-supplied-host-tests"
+    scratch_root = ROOT / ".work/x86_64" / "lua-dynamic-supplied-host-tests"
 
     def setUp(self) -> None:
         self.scratch_root.mkdir(parents=True, exist_ok=True)
@@ -139,6 +140,31 @@ class SuppliedDynamicLuaTests(unittest.TestCase):
         self.assertTrue(report_path.is_file())
 
 
+    def test_reader_rejects_changed_source_root_seed_and_command(self) -> None:
+        report, path, _ = self.dispatch([self.lane("same"), self.lane("same")])
+        report["installed"]["work_directory"] = str(path.parent / "installed")
+        report["extracted"]["work_directory"] = str(path.parent / "extracted")
+        report["installed"]["build"] = {"command": ["cc", "actual.c"], "cwd": str(path.parent)}
+        path.write_text(json.dumps(report))
+        seal = report["consumer_source_before"]
+        with (
+            mock.patch.object(RUNNER, "consumer_source_seal", return_value=seal),
+            mock.patch.object(RUNNER.ADMISSION, "validate_report_records"),
+            mock.patch.object(RUNNER.ADMISSION, "validate_pinned_input"),
+            mock.patch.object(RUNNER, "run_supplied_dynamic", return_value=(report, path)),
+        ):
+            self.assertEqual(RUNNER.replay_report(path, state_parent=self.state_parent), path)
+            for subject in ("source", "root", "seed", "command"):
+                changed = json.loads(json.dumps(report))
+                if subject == "source": changed["consumer_source_before"] = {"revision": "0" * 40}
+                elif subject == "root": changed["dispatcher"]["cohort"]["roots"]["installed"]["path"] = "/wrong"
+                elif subject == "seed": changed["dispatcher"]["source_cache"]["seed"]["sha256"] = "0" * 64
+                else: changed["installed"]["build"]["command"] = ["cc", "invented.c"]
+                path.write_text(json.dumps(changed))
+                with self.subTest(subject=subject), self.assertRaises(RUNNER.LUA.RunnerError):
+                    RUNNER.replay_report(path, state_parent=self.state_parent)
+
+
 class SuppliedDynamicCohortIdentityTests(unittest.TestCase):
     """The supplied roots must match the immutable cohort receipt exactly."""
 
@@ -215,6 +241,23 @@ class SuppliedDynamicCohortIdentityTests(unittest.TestCase):
         self.assertEqual(context["git_work_tree"], str(checkout))
         self.assertEqual(context["worktree_pointer"]["sha256"], RUNNER.LUA.sha256_file(pointer))
         self.assertEqual(context["metadata_pointer"]["sha256"], RUNNER.LUA.sha256_file(metadata_pointer))
+
+    def test_independent_frozen_clone_reader_uses_its_own_physical_git_directory(self) -> None:
+        checkout = self.temporary / "retained-source"
+        subprocess.run(["git", "init", str(checkout)], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(checkout), "-c", "user.name=Test",
+                        "-c", "user.email=test@example.invalid", "commit", "--allow-empty",
+                        "-m", "frozen source"], check=True, capture_output=True)
+        expected = subprocess.check_output(["git", "-C", str(checkout), "rev-parse", "HEAD"])
+
+        with mock.patch.object(RUNNER, "ROOT", self.temporary / "consumer"):
+            environment, context = RUNNER._cohort_git_context(checkout, self.temporary / "state")
+
+        actual = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=checkout,
+                                         env=environment)
+        self.assertEqual(actual, expected)
+        self.assertEqual(environment["GIT_DIR"], str(checkout / ".git"))
+        self.assertEqual(context["git_work_tree"], str(checkout))
 
     def test_linked_cohort_reader_rejects_metadata_for_another_checkout(self) -> None:
         checkout = self.temporary / ".work/worktrees/frozen-cohort"

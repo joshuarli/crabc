@@ -24,6 +24,7 @@ from typing import Any, Mapping, Sequence
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run as LUA  # noqa: E402
 import run_x86_dynamic as DYNAMIC  # noqa: E402
+import source_build_admission as ADMISSION  # noqa: E402
 
 
 ROOT = LUA.ROOT
@@ -32,6 +33,7 @@ SOURCE_INPUTS = (
     Path(__file__).resolve(),
     ROOT / "compat/lua/run.py",
     ROOT / "compat/lua/run_x86_dynamic.py",
+    ROOT / "compat/lua/source_build_admission.py",
     ROOT / "compat/lua/manifest.toml",
 )
 _NONPROMOTING = ("runtime_v1_published", "family_completion", "promotion_ready", "public_support")
@@ -88,7 +90,7 @@ def _cohort_path(checkout: Path, path: Path, description: str, *, directory: boo
 
 
 def _cohort_git_context(checkout: Path, state: Path) -> tuple[dict[str, str], dict[str, object]]:
-    """Bind the frozen worktree reader to its mounted Git metadata.
+    """Bind the frozen checkout reader to its mounted Git metadata.
 
     A linked worktree stores host-absolute paths in both of its Git pointer
     files.  The supplied consumer runs in a container where the primary
@@ -98,6 +100,17 @@ def _cohort_git_context(checkout: Path, state: Path) -> tuple[dict[str, str], di
     beneath this consumer checkout's ``.git/worktrees`` directory, preserve
     the frozen pointer files, and let Git use that read-only context.
     """
+
+    git_directory = checkout / ".git"
+    if git_directory.is_dir():
+        metadata = LUA.require_physical_directory(git_directory, "supplied Lua cohort Git metadata")
+        head = LUA.require_physical_regular_file(metadata / "HEAD", "supplied Lua cohort Git HEAD")
+        environment = DYNAMIC.dynamic_environment(state)
+        environment.update({"GIT_DIR": str(metadata), "GIT_WORK_TREE": str(checkout)})
+        return environment, {
+            "git_dir": str(metadata), "git_work_tree": str(checkout),
+            "git_head": LUA.artifact_record(head),
+        }
 
     try:
         relative_checkout = checkout.relative_to(ROOT)
@@ -329,15 +342,24 @@ def run_supplied_dynamic(
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cohort-checkout", type=Path, required=True)
-    parser.add_argument("--cohort-receipt", type=Path, required=True)
-    parser.add_argument("--installed-sysroot", type=Path, required=True)
-    parser.add_argument("--extracted-sysroot", type=Path, required=True)
-    parser.add_argument("--archive-seed", type=Path, required=True)
+    parser.add_argument("--read", type=Path, help="revalidate and replay a retained supplied report")
+    parser.add_argument("--cohort-checkout", type=Path)
+    parser.add_argument("--cohort-receipt", type=Path)
+    parser.add_argument("--installed-sysroot", type=Path)
+    parser.add_argument("--extracted-sysroot", type=Path)
+    parser.add_argument("--archive-seed", type=Path)
     parser.add_argument("--work-root", type=Path, default=DEFAULT_WORK_ROOT)
     parser.add_argument("--jobs", type=int, default=LUA.DEFAULT_JOBS)
     parser.add_argument("--timeout", type=float, default=180.0)
     args = parser.parse_args(argv)
+    if args.read is None and any(getattr(args, name) is None for name in (
+        "cohort_checkout", "cohort_receipt", "installed_sysroot", "extracted_sysroot", "archive_seed"
+    )):
+        parser.error("production requires cohort checkout, receipt, installed/extracted sysroots and archive seed")
+    if args.read is not None and any(getattr(args, name) is not None for name in (
+        "cohort_checkout", "cohort_receipt", "installed_sysroot", "extracted_sysroot", "archive_seed"
+    )):
+        parser.error("--read derives immutable inputs from the retained report")
     if args.jobs < 1 or args.jobs > LUA.MAX_JOBS:
         parser.error(f"--jobs must be an integer from 1 through {LUA.MAX_JOBS}")
     if not math.isfinite(args.timeout) or args.timeout <= 0 or args.timeout > 300:
@@ -345,9 +367,74 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return args
 
 
+def replay_report(path: Path, *, state_parent: Path = DEFAULT_WORK_ROOT,
+                  jobs: int = LUA.DEFAULT_JOBS, timeout: float = 180.0) -> Path:
+    """Check retained inputs and raw results, then reproduce both consumer arms."""
+
+    path = LUA.require_physical_regular_file(Path(os.path.abspath(path)), "supplied Lua report")
+    require(path.is_relative_to(ROOT / ".work/x86_64"), "supplied Lua report is outside private work")
+    try:
+        report = json.loads(path.read_text())
+        require(report["runner"] == "crabc-lua-native-x86-dynamic-supplied-cohort"
+                and report["passed"] is True and report["result"] == "pass", "supplied Lua report did not pass")
+        dispatcher = report["dispatcher"]
+        require(dispatcher["authoritative_report"] == str(path)
+                and dispatcher["state_root"] == str(path.parent), "supplied Lua authoritative report moved")
+        require(report["consumer_source_before"] == consumer_source_seal()
+                and report["consumer_source_after"] == report["consumer_source_before"],
+                "supplied Lua consumer source changed")
+        ADMISSION.validate_report_records(report)
+        for label in ("installed", "extracted"):
+            ADMISSION.validate_pinned_input(report[label])
+        cohort = dispatcher["cohort"]
+        seed = dispatcher["source_cache"]["seed"]
+        require(seed == LUA.artifact_record(Path(seed["path"])), "supplied Lua seed changed")
+        fresh, fresh_path = run_supplied_dynamic(
+            cohort_checkout=Path(cohort["checkout"]), cohort_receipt=Path(cohort["receipt"]["path"]),
+            installed_sysroot=Path(cohort["roots"]["installed"]["path"]),
+            extracted_sysroot=Path(cohort["roots"]["extracted"]["path"]),
+            archive_seed=Path(seed["path"]), jobs=jobs, timeout=timeout, state_parent=state_parent,
+        )
+        require(fresh.get("passed") is True, "supplied Lua physical replay failed")
+        require(fresh["dispatcher"]["cohort"] == cohort, "supplied Lua cohort changed")
+
+        def commands(value: object, replacements: list[tuple[str, str]]) -> object:
+            if isinstance(value, dict):
+                result = {}
+                if "command" in value:
+                    def normalize(text: str) -> str:
+                        for original, replacement in replacements: text = text.replace(original, replacement)
+                        return text
+                    result["argv"] = [normalize(argument) for argument in value["command"]]
+                    result["cwd"] = normalize(value["cwd"])
+                for key, child in value.items():
+                    nested = commands(child, replacements)
+                    if nested: result[key] = nested
+                return result
+            if isinstance(value, list):
+                return [nested for child in value if (nested := commands(child, replacements))]
+            return None
+
+        def locations(value: dict[str, object]) -> list[tuple[str, str]]:
+            return [(value[label]["work_directory"], f"<{label}>") for label in ("installed", "extracted")] + [
+                (value["dispatcher"]["state_root"], "<state>")]
+
+        require(commands(report, locations(report)) == commands(fresh, locations(fresh)),
+                "supplied Lua retained commands differ from physical replay")
+        require(report["reproducibility"] == fresh["reproducibility"],
+                "supplied Lua application artifacts differ from physical replay")
+        return fresh_path
+    except (KeyError, TypeError, ValueError) as error:
+        raise LUA.RunnerError(f"supplied Lua retained report is malformed: {error}") from error
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
+        if args.read is not None:
+            replay = replay_report(args.read, state_parent=args.work_root, jobs=args.jobs, timeout=args.timeout)
+            print(f"x86 supplied Lua dynamic physical replay: PASS; {replay}")
+            return 0
         report, report_path = run_supplied_dynamic(
             cohort_checkout=args.cohort_checkout, cohort_receipt=args.cohort_receipt,
             installed_sysroot=args.installed_sysroot, extracted_sysroot=args.extracted_sysroot,
