@@ -90,17 +90,28 @@ class DivergenceEvidenceTests(unittest.TestCase):
         self.assertIn("no qualified integrated report measures", results["src/random.c"]["detail"][0])
         self.assertTrue(results["src/arena.c:os-fallback-commit-on-demand-initially-committed-correction"]["met"])
 
+    @staticmethod
+    def functional_profile_manifest() -> dict:
+        differential = {"command": ["python3", "compat/allocator/run.py", "--m1", "--offline"],
+                        "scope": "selected source differential"}
+        return {"rows": {
+            "src/random.c": {"differential": copy.deepcopy(differential),
+                             "performance": {"integrated_rows": ["static/startup_first_alloc"]}},
+            "src/random.c:shared-differential": {"differential": copy.deepcopy(differential),
+                                                "performance": {"blocked": "timing deferred"}},
+        }}
+
     def test_correctness_defers_timing_but_keeps_every_differential(self) -> None:
         calls = []
         results = {row["row"]: row for row in evidence.evaluate(
-            self.manifest, profile="correctness",
+            self.functional_profile_manifest(), profile="correctness",
             run=lambda command: calls.append(command) or {"status": 0})}
         self.assertTrue(all(row["met"] for row in results.values()), results)
         self.assertEqual(sum("--m1" in command for command in calls), 1)
         self.assertTrue(all("performance deferred" in row["detail"][-1]
                             for row in results.values()))
         failed = {row["row"]: row for row in evidence.evaluate(
-            self.manifest, profile="correctness", run=lambda command: {"status": 7})}
+            self.functional_profile_manifest(), profile="correctness", run=lambda command: {"status": 7})}
         self.assertFalse(failed["src/random.c"]["met"])
         self.assertIn("failed (7)", failed["src/random.c"]["detail"][0])
         owned = {"rows": {"source": {"owner": "unfinished", "disposition": "missing lifetime proof"}}}
@@ -128,7 +139,7 @@ class DivergenceEvidenceTests(unittest.TestCase):
     def test_correctness_cli_does_not_import_or_read_performance_reports(self) -> None:
         # Poisoning these modules proves the functional route never even
         # imports the timing readers, regardless of available report paths.
-        with mock.patch.object(evidence, "load", return_value=(self.manifest, self.port_map)), \
+        with mock.patch.object(evidence, "load", return_value=(self.functional_profile_manifest(), self.port_map)), \
              mock.patch.object(evidence, "run_command", return_value={"status": 0}) as run, \
              mock.patch.dict(sys.modules, {"perf_engine_x86_64": None, "perf_integrated_x86_64": None}), \
              mock.patch("sys.stdout", new=io.StringIO()) as output:
@@ -140,7 +151,7 @@ class DivergenceEvidenceTests(unittest.TestCase):
         gate = mock.Mock()
         gate.discover_integrated.return_value = []
         gate.discover_reports.return_value = []
-        with mock.patch.object(evidence, "load", return_value=(self.manifest, self.port_map)), \
+        with mock.patch.object(evidence, "load", return_value=(self.functional_profile_manifest(), self.port_map)), \
              mock.patch.object(evidence, "run_command", return_value={"status": 0}), \
              mock.patch.dict(sys.modules, {"perf_engine_x86_64": mock.Mock(),
                                           "perf_integrated_x86_64": mock.Mock(),
