@@ -242,6 +242,27 @@ class SuppliedDynamicCohortIdentityTests(unittest.TestCase):
         self.assertEqual(context["worktree_pointer"]["sha256"], RUNNER.LUA.sha256_file(pointer))
         self.assertEqual(context["metadata_pointer"]["sha256"], RUNNER.LUA.sha256_file(metadata_pointer))
 
+    def test_failed_cohort_reader_keeps_its_actual_command_and_raw_status(self) -> None:
+        checkout = self.temporary / "cohort"
+        (checkout / "compat/x86_64").mkdir(parents=True)
+        (checkout / "compat/x86_64/owned_dynamic_qualification.py").write_text("reader")
+        state = self.temporary / "failed-reader"
+        state.mkdir()
+        installed = self.temporary / "installed"
+        extracted = self.temporary / "extracted"
+        installed.mkdir(); extracted.mkdir()
+        validation = {"command": ["python3", "reader"], "status": "TIMEOUT",
+                      "stdout": {"text": "partial raw output"}, "stderr": {"text": ""}}
+        with (
+            mock.patch.object(RUNNER, "_cohort_path", side_effect=lambda root, path, *a, **kw: path),
+            mock.patch.object(RUNNER, "_cohort_git_context", return_value=({}, {})),
+            mock.patch.object(RUNNER.LUA, "command_record", return_value=validation),
+        ):
+            with self.assertRaisesRegex(RUNNER.LUA.RunnerError, "TIMEOUT"):
+                RUNNER.validate_cohort(checkout=checkout, receipt=checkout / "receipt.json",
+                                       installed=installed, extracted=extracted, state=state, timeout=5)
+        self.assertEqual(json.loads((state / "cohort-validation.json").read_text()), validation)
+
     def test_independent_frozen_clone_reader_uses_its_own_physical_git_directory(self) -> None:
         checkout = self.temporary / "retained-source"
         subprocess.run(["git", "init", str(checkout)], check=True, capture_output=True)

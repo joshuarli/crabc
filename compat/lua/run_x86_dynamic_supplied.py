@@ -217,6 +217,7 @@ def validate_cohort(
         [sys.executable, "-B", str(reader), "validate", "--receipt", str(receipt.relative_to(checkout))],
         cwd=checkout, environment=environment, timeout=timeout,
     )
+    LUA.write_json_atomic(state / "cohort-validation.json", validation)
     DYNAMIC.require_success(validation, "supplied Lua cohort receipt reader")
     payload = _read_qualification_receipt(receipt)
     products = payload["products"]
