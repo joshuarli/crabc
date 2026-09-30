@@ -120,6 +120,8 @@ impl RuntimeStderrOutput {
 pub(crate) struct ProcessDiagnosticInputs {
     environment_reader: VmOptionEnvironmentReader,
     default_stderr_output: DefaultStderrOutput,
+    #[cfg(target_arch = "x86_64")]
+    source_errno_store: Option<crate::process_init::SourceErrnoStore>,
 }
 
 impl ProcessDiagnosticInputs {
@@ -139,7 +141,23 @@ impl ProcessDiagnosticInputs {
         environment_reader: VmOptionEnvironmentReader,
         default_stderr_output: DefaultStderrOutput,
     ) -> Self {
-        Self { environment_reader, default_stderr_output }
+        Self { environment_reader, default_stderr_output,
+            #[cfg(target_arch = "x86_64")]
+            source_errno_store: None,
+        }
+    }
+
+    /// Retains the embedding process's current-thread errno setter for a
+    /// source warning that follows a failed primitive before returning a client.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) const fn with_source_errno_store(mut self, store: crate::process_init::SourceErrnoStore) -> Self {
+        self.source_errno_store = Some(store);
+        self
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) const fn source_errno_store(&self) -> Option<crate::process_init::SourceErrnoStore> {
+        self.source_errno_store
     }
 
     #[inline]
