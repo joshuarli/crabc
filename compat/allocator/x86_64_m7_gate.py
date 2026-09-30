@@ -1091,6 +1091,47 @@ def run_xmalloc_profile_differential(offline: bool, *, replay: bool = False) -> 
             raise harness.HarnessError("xmalloc source, image, or pinned oracle differs")
         if inputs["c-flags"] != list(flags) or inputs["rust-feature"] != parameters["rust-feature"]:
             raise harness.HarnessError("xmalloc retained compiler selectors differ")
+        compiler = harness.require_tool("musl-gcc")
+        if inputs["compiler"] != engine.file_record(Path(compiler)):
+            raise harness.HarnessError("xmalloc retained compiler authority differs")
+        raw = harness.read_json(receipt.path)
+        original = harness.ROOT / raw["work"]
+        if not original.is_relative_to(harness.ROOT / ".work") or ".." in Path(raw["work"]).parts:
+            raise harness.HarnessError("xmalloc original output escaped owned scratch")
+        source = original / "source" / pin["archive_root"]
+        build = receipt.cases[0]
+        records = {Path(name).name: harness.read_json(receipt.path.parent / "logs" / name)
+                   for name in build["logs"]}
+        native_target = original / "native/cargo-target"
+        library = native_target / m4.RUST_TARGET / "release" / m4.ADAPTER_STATICLIB
+        commands = {
+            "oracle-build.json": [compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+                *flags, "-I", str(source / "include"), "-c", str(source / "src/static.c"),
+                "-o", str(original / "oracle.o")],
+            "adapter-build.json": [harness.require_tool("cargo"), "build", "--locked", "--release",
+                "--message-format=json", "--target", m4.RUST_TARGET, "-p", m4.ADAPTER_PACKAGE,
+                "--target-dir", str(native_target), "--features", parameters["rust-feature"]],
+        }
+        for group, driver in (("controls", harness.ALLOCATOR_ROOT / "x86_64_m7_xmalloc_driver.c"),
+                              ("oom", m4.OPERATIONS_DRIVER)):
+            caller = original / f"{group}.o"
+            commands[f"{group}-caller-build.json"] = [compiler, "-std=c11", "-DCRABC_MI_M4_SOURCE_CANARY=1",
+                *flags, "-I", str(source / "include"), "-c", str(driver), "-o", str(caller)]
+            for side, provider in (("c", original / "oracle.o"), ("native", library)):
+                commands[f"{group}-{side}-link.json"] = [compiler, str(caller), str(provider), "-pthread",
+                                                       "-o", str(original / f"{group}-{side}")]
+        if (len(records) != len(build["logs"]) or set(records) != set(commands)
+                or any(records[name].get("status") != 0 or records[name].get("command") != command
+                       for name, command in commands.items())):
+            raise harness.HarnessError("xmalloc original compiler or provider link command differs")
+        adapter = records["adapter-build.json"]
+        emitted = [json.loads(line) for line in str(adapter["stdout"]).splitlines() if line.startswith("{")]
+        retained_library = receipt.path.parent / "products/native-library"
+        if (not any(item.get("reason") == "compiler-artifact" and str(library) in item.get("filenames", [])
+                    for item in emitted)
+                or adapter.get("artifact") != {"path": harness.relative(library),
+                    "sha256": harness.sha256_file(retained_library), "bytes": retained_library.stat().st_size}):
+            raise harness.HarnessError("xmalloc compiler-emitted native archive authority differs")
         harness.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
         output = Path(tempfile.mkdtemp(prefix="xmalloc-replay-", dir=harness.TEMP_ROOT))
         for role in ("controls-c", "controls-native", "oom-c", "oom-native"):
@@ -1157,6 +1198,9 @@ def run_xmalloc_profile_differential(offline: bool, *, replay: bool = False) -> 
                 case = next(case for case in receipt.cases if case["id"] == scenario)
                 original = next(name for name in case["logs"] if name.endswith(f"{scenario}-{side}.json"))
                 retained = json.loads((receipt.path.parent / "logs" / original).read_text())
+                original_output = harness.ROOT / raw["work"]
+                if retained.get("command") != [str(original_output / f"{group}-{side}"), scenario]:
+                    raise harness.HarnessError(f"xmalloc retained {scenario}/{side} original invocation differs")
                 if any(record[key] != retained[key] for key in ("status", "stdout", "stderr")):
                     raise harness.HarnessError(f"xmalloc retained {scenario}/{side} execution differs; raw {output}")
         if any(record["status"] != expected_status for record in records.values()):

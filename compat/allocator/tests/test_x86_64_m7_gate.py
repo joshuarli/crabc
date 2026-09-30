@@ -72,6 +72,54 @@ class M7GateContractTests(unittest.TestCase):
                 self.assertEqual(gate.main([option, "--offline"]), 0)
                 run.assert_called_once_with(True, replay=replay)
 
+    def test_xmalloc_replay_rejects_missing_native_build_authority(self) -> None:
+        import tempfile
+        import types
+        import x86_64_m4_gate as m4
+        execution = {"image_id": "selected-image"}
+        seal = {"revision": "selected-source"}
+        flags = [*m4.api_profile_flags("release"), "-DMI_XMALLOC=1"]
+        parameters = {"profile": "mi-xmalloc", "c-flags": ",".join(flags),
+                      "rust-feature": "crabc-mimalloc/mi-xmalloc", "image": "selected-image"}
+        scenarios = {"oversized": -6, "bad-alignment": -6, "count-overflow": 0,
+                     "handler": 0, "success": 0, "oom": -6}
+        inputs = {"source": seal, "execution": execution, "pin": self.pin,
+                  "c-flags": flags, "rust-feature": parameters["rust-feature"], "compiler": {}}
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            root = Path(directory)
+            products = root / "products"
+            products.mkdir()
+            (products / "inputs").write_text(json.dumps(inputs))
+            logs = root / "logs"
+            logs.mkdir()
+            cases = [{"id": "build", "logs": {}}]
+            for scenario, status in scenarios.items():
+                observed = {"status": status, "stdout": "oom.setrlimit=1\n" if scenario == "oom"
+                            else f"xmalloc.entered={scenario}\n", "stderr": ""}
+                names = [f"{scenario}-{side}.json" for side in ("c", "native")]
+                for name in names:
+                    (logs / name).write_text(json.dumps(observed))
+                cases.append({"id": scenario, "logs": dict.fromkeys(names)})
+            (root / "receipt.json").write_text(json.dumps({"work": ".work/xmalloc-original"}))
+            roles = {"inputs", "native-library", "oracle-object", "controls-caller", "oom-caller",
+                     "controls-c", "controls-native", "oom-c", "oom-native"}
+            receipt = types.SimpleNamespace(path=root / "receipt.json", parameters=parameters,
+                products=dict.fromkeys(roles), cases=cases, case_ids=lambda: ["build", *scenarios])
+            receipts = types.SimpleNamespace(source_seal=lambda _: seal, read_receipt=lambda *_: receipt)
+            def run(binary, arguments):
+                scenario = arguments[0]
+                return json.loads((logs / f"{scenario}-c.json").read_text())
+            with mock.patch.object(m4, "operation_receipts", return_value=receipts), \
+                    mock.patch.object(harness, "require_native_x86_64", return_value=execution), \
+                    mock.patch.object(gate.engine, "git_provenance", return_value={"clean": True}), \
+                    mock.patch.object(harness, "require_tool", return_value="/compiler"), \
+                    mock.patch.object(gate.engine, "file_record", return_value={}), \
+                    mock.patch.object(harness, "TEMP_ROOT", root / "scratch"), \
+                    mock.patch.object(gate.shutil, "copyfile"), mock.patch.object(Path, "chmod"), \
+                    mock.patch.object(m4, "run_driver", side_effect=run):
+                with self.assertRaisesRegex(harness.HarnessError, "compiler or provider link command"):
+                    gate.run_xmalloc_profile_differential(True, replay=True)
+
     def test_optional_isa_rejects_incomplete_or_heterogeneous_cpu_features(self) -> None:
         haswell = ("abm aes avx avx2 bmi1 bmi2 cx16 erms f16c fma fxsr lahf_lm "
                    "movbe pclmulqdq pni popcnt rdrand sse sse2 sse4_1 sse4_2 ssse3 xsave xsaveopt")
