@@ -11,6 +11,8 @@
  *     owner is still attached, for return, pthread_exit and cancellation;
  *     after join the owner is gone and libc has released its TLS/control
  *     mappings, one reclaimed descriptor per joined worker;
+ *   - all four TSD destructor passes retain their owner; worker-born and
+ *     last-pass clients remain live until the joining thread frees them;
  *   - a refused pthread_create leaves no owner, and creation then succeeds;
  *   - the final worker's ordinary-exit callbacks run on a fresh owner that
  *     has not allocated, never on the finished owner reopened;
@@ -134,6 +136,69 @@ static void exit_modes(void) {
         require_joined(1);
         dprintf(1, "%s: cleanup %d destructors %d\n", names[mode], cleanup_calls, destructor_calls);
     }
+}
+
+/* Four TSD passes leave both worker-born clients live until join. */
+struct four_pass_round {
+    unsigned int calls, cleanup_calls;
+    int explicit_exit;
+    unsigned char *start_client, *last_client;
+};
+static pthread_key_t four_pass_key;
+static void four_pass_cleanup(void *opaque) {
+    struct four_pass_round *round = opaque;
+    require_owner(1);
+    CHECK(round->calls == 0);
+    release(filled(73, 0x29), 73, 0x29);
+    ++round->cleanup_calls;
+}
+static void four_pass_destructor(void *opaque) {
+    struct four_pass_round *round = opaque;
+    require_owner(1);
+    CHECK(++round->calls <= 4);
+    CHECK(pthread_getspecific(four_pass_key) == NULL);
+    CHECK(!round->explicit_exit || round->cleanup_calls == 1);
+    unsigned char byte = (unsigned char)(0x40 + round->calls);
+    unsigned char *block = filled(97, byte);
+    block = realloc(block, 241);
+    CHECK(block);
+    for (size_t index = 0; index < 97; ++index) CHECK(block[index] == byte);
+    memset(block, byte, 241);
+    if (round->calls < 4) {
+        release(block, 241, byte);
+        CHECK(pthread_setspecific(four_pass_key, round) == 0);
+    } else {
+        round->last_client = block;
+    }
+}
+static void *four_pass_worker(void *opaque) {
+    struct four_pass_round *round = opaque;
+    require_owner(0);
+    round->start_client = filled(113, 0x71);
+    require_owner(1);
+    CHECK(pthread_setspecific(four_pass_key, round) == 0);
+    pthread_cleanup_push(four_pass_cleanup, round);
+    if (round->explicit_exit) pthread_exit(round);
+    pthread_cleanup_pop(0);
+    return round;
+}
+static void four_tsd_passes(void) {
+    CHECK(pthread_key_create(&four_pass_key, four_pass_destructor) == 0);
+    for (int mode = 0; mode < 2; ++mode) {
+        struct four_pass_round round = { .explicit_exit = mode };
+        pthread_t thread;
+        void *result;
+        mark_baseline();
+        CHECK(pthread_create(&thread, NULL, four_pass_worker, &round) == 0);
+        CHECK(pthread_join(thread, &result) == 0 && result == &round);
+        CHECK(round.calls == 4 && round.cleanup_calls == (unsigned int)mode);
+        CHECK(round.start_client && round.last_client);
+        require_joined(1);
+        release(round.start_client, 113, 0x71);
+        release(round.last_client, 241, 0x44);
+    }
+    CHECK(pthread_key_delete(four_pass_key) == 0);
+    dprintf(1, "TSD four passes: return and pthread_exit joined clients\n");
 }
 
 /* Refusal with subsequent valid use in a worker. */
@@ -265,6 +330,10 @@ static void *deferred_worker(void *argument) {
 
 int main(int argc, char **argv) {
     CHECK(argc == 2);
+    if (!strcmp(argv[1], "tsd-four")) {
+        four_tsd_passes();
+        return 0;
+    }
     CHECK(pthread_key_create(&key, destructor) == 0);
     pthread_t thread;
     void *result;

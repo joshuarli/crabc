@@ -3,7 +3,8 @@
 #
 # One probe runs through the musl oracle and through audit-enabled native-shadow
 # static, static-PIE and dynamic PIE/non-PIE (kernel and direct loader)
-# products, for ordinary main return and for final-worker exit. Product builds
+# products, for main return, final-worker exit and four TSD destructor passes.
+# Product builds
 # add the scalar worker-owner audit checks; every transcript must equal the
 # oracle's. Without supplied products the runner builds both; supplied ones
 # must record the native-shadow backend and the lifecycle test audit.
@@ -12,7 +13,7 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly probe="$ROOT/compat/x86_64/owned_native_worker_lifecycle_probe.c"
-readonly scenarios=(main final deferred)
+readonly scenarios=(main final deferred tsd-four)
 
 usage() {
     printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
@@ -165,4 +166,4 @@ receipt_products=(
     "dynamic-pie=$work/dynamic-pie"
     "dynamic-non-pie=$work/dynamic-non-pie"
 )
-printf 'owned native-worker lifecycle: PASS (musl + audited native-shadow static/static-PIE/dynamic PIE/non-PIE kernel/direct; main return, final-worker exit, and deferred final-worker exit); evidence: %s\n' "$work"
+printf 'owned native-worker lifecycle: PASS (musl + audited native-shadow static/static-PIE/dynamic PIE/non-PIE kernel/direct; main return, final-worker exit, deferred final-worker exit, and four TSD passes with joined clients); evidence: %s\n' "$work"
