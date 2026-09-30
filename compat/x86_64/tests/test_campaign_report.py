@@ -193,6 +193,49 @@ class CampaignReportTests(unittest.TestCase):
         self.assertFalse(value['campaign']['promotion_ready'])
         self.assertIn('qualification receipt', value['gates']['promotion']['closure_error'])
 
+    def test_physical_terminal_closure_drives_readiness_independently_of_structural_policy(self):
+        import test_campaign_promotion_closure as closure_tests
+
+        with mock.patch.object(qualification, 'load_publication', return_value=None):
+            inputs = list(copy.deepcopy(report.load_validated_campaign_inputs()))
+        fixture = closure_tests.PromotionClosureTests(methodName='runTest')
+        try:
+            fixture.setUp()
+            inputs[1] = fixture.data
+            inputs[2] = fixture.capabilities
+            inputs[3]['qualification']['status'] = report.static_product.QUALIFIED_STATUS
+            inputs[4]['status'] = 'materialized'
+            inputs[4]['qualification_source_sha256'] = fixture.source['content_sha256']
+            inputs[7]['status'] = 'verified'
+            inputs[7]['runtime_v1_published'] = True
+            inputs[7]['qualification_source_sha256'] = fixture.source['content_sha256']
+            self.assertFalse(inputs[6]['promotion_ready'])
+            receipt = fixture.complete()
+            with mock.patch.object(report, 'load_validated_campaign_inputs', return_value=inputs):
+                without_receipt = report.build_report()
+                self.assertFalse(without_receipt['campaign']['promotion_ready'])
+                for public in (False, True):
+                    with self.subTest(public_support=public):
+                        fixture.data['policy']['public_support'] = public
+                        value = report.build_report(receipt)
+                        self.assertTrue(value['campaign']['promotion_ready'])
+                        self.assertEqual(value['campaign']['public_support'], public)
+                        self.assertTrue(value['gates']['promotion']['closure']['functional_readiness'])
+                        self.assertFalse(value['validation']['qualification_manifest_check']['promotion_ready'])
+                        self.assertFalse(value['campaign']['performance_qualified'])
+                        self.assertNotIn('performance.release', value['gates']['promotion']['required_families'])
+                next(row for row in fixture.data['family'] if row['id'] == 'libc.resolver')['status'] = 'planned'
+                blocked = report.build_report(receipt)
+                self.assertFalse(blocked['campaign']['promotion_ready'])
+                self.assertIn('functional prerequisite', blocked['gates']['promotion']['closure_error'])
+                next(row for row in fixture.data['family'] if row['id'] == 'libc.resolver')['status'] = report.COMPLETED_STATUS
+                fixture.capabilities['capabilities'][0]['contract_state'] = 'selected-private'
+                blocked = report.build_report(receipt)
+                self.assertFalse(blocked['campaign']['promotion_ready'])
+                self.assertIn('capability implementation', blocked['gates']['promotion']['closure_error'])
+        finally:
+            fixture.doCleanups()
+
     def test_scope_mismatch_and_forged_active_gate_ids_fail_closed(self):
         with mock.patch.object(qualification, 'load_publication', return_value=None):
             inputs = list(copy.deepcopy(report.load_validated_campaign_inputs()))
