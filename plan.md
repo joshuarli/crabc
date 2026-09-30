@@ -42,7 +42,9 @@ only its exact source, configuration, image, products, and execution context.
   fresh sibling allocation/reclamation now follow the source; fixed copied-owner
   repair passes scoped controls. Copied auxiliary siblings and qualifying
   performance remain open. The private diagnostic header preserves the frozen
-  allocation adapter ABI; all 198 merged runner tests pass.
+  allocation adapter ABI through an explicit diagnostic feature; all 199 merged
+  runner tests pass. Default and diagnostic native export surfaces are separately
+  validated; fresh ordered foundation prerequisites are being rerun.
 - **Allocator evidence:** exact `f7f2dba074` passes all eleven API/mode gates,
   ten evidence classes, and its independent physical reader; each of four modes
   matches 983 C/Rust fields. The existing runner deletes temporary driver binaries;
