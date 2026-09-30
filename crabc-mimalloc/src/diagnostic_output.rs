@@ -1113,6 +1113,23 @@ pub(crate) enum SourceErrorDisposition {
     DefaultErrno(Errno),
 }
 
+/// `mi_error_default` runs only after the registered-handler branch and
+/// after every allocator projection has ended. The optional allocation-error
+/// profile delegates process termination to the embedding libc's own ABI.
+pub(crate) fn source_default_error_disposition(error: Errno) -> SourceErrorDisposition {
+    #[cfg(all(target_arch = "x86_64", feature = "mi-xmalloc"))]
+    if crate::config::XMALLOC && matches!(error, Errno::NOMEM | Errno::OVERFLOW | Errno::INVAL) {
+        unsafe extern "C" {
+            fn abort() -> !;
+        }
+        // SAFETY: abort has no arguments or memory obligations. It is the
+        // embedding libc's process-terminal operation, reached without an
+        // allocator projection or callback delivery in progress.
+        unsafe { abort() }
+    }
+    SourceErrorDisposition::DefaultErrno(if error == Errno::INVAL { Errno::INVAL } else { Errno::NOMEM })
+}
+
 /// The public pointer-validation entry whose name is carried in a debug
 /// diagnostic. The spelling remains tied to the source operation.
 #[cfg(feature = "mi-debug-1")]
@@ -1306,13 +1323,9 @@ impl SourceErrorReport {
         message
     }
 
-    /// `mi_error_default`'s errno for this code in the selected release
-    /// profile: `EINVAL` stays `EINVAL`, every other code is `ENOMEM`.
-    pub(crate) const fn default_disposition(self) -> SourceErrorDisposition {
-        SourceErrorDisposition::DefaultErrno(match self.error() {
-            Errno::INVAL => Errno::INVAL,
-            _ => Errno::NOMEM,
-        })
+    /// The default handler's effect when no output owner has been installed.
+    pub(crate) fn default_disposition(self) -> SourceErrorDisposition {
+        source_default_error_disposition(self.error())
     }
 
     /// The aligned entry's checks that fail before any allocation, in the
@@ -2354,7 +2367,7 @@ impl OutputOwner {
         unsafe { pending.deliver(self) };
         let handler = self.error_handler.load(Ordering::Acquire);
         if handler.is_null() {
-            return SourceErrorDisposition::DefaultErrno(if error == Errno::INVAL { Errno::INVAL } else { Errno::NOMEM });
+            return source_default_error_disposition(error);
         }
         // SAFETY: only `register_error` stores a non-null `ErrorCallback`.
         let handler: ErrorCallback = unsafe { core::mem::transmute(handler) };

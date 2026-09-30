@@ -1671,6 +1671,71 @@ mod tests {
     use super::SourceErrno;
     use crabc_core::Errno;
 
+    #[cfg(all(feature = "mi-xmalloc", target_arch = "x86_64"))]
+    #[test]
+    fn xmalloc_oversized_allocation_aborts_in_a_fresh_process() {
+        use std::os::unix::process::ExitStatusExt;
+        const CHILD: &str = "CRABC_MI_XMALLOC_ALLOCATION_CHILD";
+        const TEST: &str = "source_api::tests::xmalloc_oversized_allocation_aborts_in_a_fresh_process";
+        if std::env::var_os(CHILD).is_some() {
+            unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+            assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+                4096, unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard) },
+            ));
+            std::println!("xmalloc.allocation.entered");
+            let failed = super::malloc(usize::MAX);
+            assert!(failed.value.is_none());
+            std::process::exit(0);
+        }
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([TEST, "--exact", "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1")
+            .output().expect("run isolated oversized allocation");
+        let stdout = std::string::String::from_utf8_lossy(&child.stdout);
+        assert!(stdout.contains("xmalloc.allocation.entered"), "{stdout}");
+        assert_eq!(child.status.signal(), Some(6), "child status {:?}, stderr {:?}",
+            child.status, std::string::String::from_utf8_lossy(&child.stderr));
+    }
+
+    #[cfg(all(feature = "mi-xmalloc", target_arch = "x86_64"))]
+    #[test]
+    fn xmalloc_registered_handler_and_release_count_overflow_return() {
+        crate::test_process::run_in_fresh_process(
+            "source_api::tests::xmalloc_registered_handler_and_release_count_overflow_return",
+            || {
+                unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
+                    4096, unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard) },
+                ));
+                unsafe extern "C" fn observe(code: core::ffi::c_int, argument: *mut core::ffi::c_void) {
+                    // SAFETY: the synchronous test retains this atomic until
+                    // the allocation report and callback have returned.
+                    let seen = unsafe { &*argument.cast::<core::sync::atomic::AtomicI32>() };
+                    seen.store(code, core::sync::atomic::Ordering::Relaxed);
+                }
+                let seen = core::sync::atomic::AtomicI32::new(0);
+                // SAFETY: the callback's one context outlives this report.
+                unsafe { crate::source_options_api::register_error(Some(observe),
+                    core::ptr::from_ref(&seen).cast_mut().cast()) };
+                let failed = super::malloc(usize::MAX);
+                assert!(failed.value.is_none());
+                assert_eq!(seen.load(core::sync::atomic::Ordering::Relaxed), Errno::NOMEM.raw());
+                assert_eq!(failed.errno.apply(0), 0);
+                unsafe { crate::source_options_api::register_error(None, core::ptr::null_mut()) };
+                #[cfg(not(feature = "mi-debug-1"))]
+                {
+                    // The release source does not report multiplication
+                    // overflow, so the default error handler never runs.
+                    let failed = super::calloc(usize::MAX, 2);
+                    assert!(failed.value.is_none());
+                    assert_eq!(failed.errno, super::SourceErrno::Unchanged);
+                }
+                let live = super::malloc(64).value.expect("valid allocation after handled failure");
+                assert_eq!(unsafe { super::free(live.as_ptr()) }, super::FreeOutcome::Freed);
+            },
+        );
+    }
+
     #[cfg(feature = "mi-debug-1")]
     #[test]
     fn debug_unaligned_client_validation_preserves_live_contract_and_domain_refusal() {

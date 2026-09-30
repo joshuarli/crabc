@@ -28,6 +28,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -1057,6 +1058,123 @@ def run_trace_differential(
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     harness.write_json(ARTIFACTS / report_name, report)
     return report
+
+
+def run_xmalloc_profile_differential(offline: bool, *, replay: bool = False) -> None:
+    """Retain and replay public allocation errors without changing their raw exits."""
+
+    import x86_64_m4_gate as m4
+
+    receipts = m4.operation_receipts()
+    runner = "allocator-m7-xmalloc"
+    execution = harness.require_native_x86_64(require_image_identity=True)
+    seal = receipts.source_seal(harness.ROOT)
+    if not engine.git_provenance().get("clean"):
+        raise harness.HarnessError("xmalloc evidence requires a clean checkout")
+    pin = harness.load_pin()
+    flags = (*m4.api_profile_flags("release"), "-DMI_XMALLOC=1")
+    parameters = {"profile": "mi-xmalloc", "c-flags": ",".join(flags),
+                  "rust-feature": "crabc-mimalloc/mi-xmalloc", "image": execution["image_id"]}
+    scenarios = {"oversized": -6, "bad-alignment": -6, "count-overflow": 0,
+                 "handler": 0, "success": 0, "oom": -6}
+    products = {}
+    cases = []
+    if replay:
+        receipt = receipts.read_receipt(harness.ROOT, runner)
+        expected = {"inputs", "native-library", "oracle-object",
+                    "controls-caller", "oom-caller", "controls-c", "controls-native", "oom-c", "oom-native"}
+        if (dict(receipt.parameters) != parameters or set(receipt.products) != expected
+                or receipt.case_ids() != ["build", *scenarios]):
+            raise harness.HarnessError("xmalloc receipt profile, product roles, or case selection differs")
+        inputs = json.loads((receipt.path.parent / "products/inputs").read_text())
+        if inputs["source"] != seal or inputs["execution"] != execution or inputs["pin"] != pin:
+            raise harness.HarnessError("xmalloc source, image, or pinned oracle differs")
+        if inputs["c-flags"] != list(flags) or inputs["rust-feature"] != parameters["rust-feature"]:
+            raise harness.HarnessError("xmalloc retained compiler selectors differ")
+        harness.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+        output = Path(tempfile.mkdtemp(prefix="xmalloc-replay-", dir=harness.TEMP_ROOT))
+        for role in ("controls-c", "controls-native", "oom-c", "oom-native"):
+            binary = output / role
+            shutil.copyfile(receipt.path.parent / "products" / role, binary)
+            binary.chmod(0o755)
+            products[role] = binary
+    else:
+        ARTIFACTS.mkdir(parents=True, exist_ok=True)
+        output = Path(tempfile.mkdtemp(prefix="xmalloc-", dir=ARTIFACTS))
+        source = harness.safe_extract(harness.fetch_archive(pin, offline), output / "source", pin["archive_root"])
+        compiler = harness.require_tool("musl-gcc")
+        build_logs = []
+        oracle = output / "oracle.o"
+        command = [compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+                   *flags, "-I", str(source / "include"), "-c", str(source / "src/static.c"), "-o", str(oracle)]
+        result = harness.command_record(command, cwd=source)
+        path = output / "oracle-build.json"
+        harness.write_json(path, result)
+        build_logs.append(path)
+        harness.require_success(result, "xmalloc pinned C build")
+        native = output / "native"
+        native.mkdir()
+        library = m4.build_adapter_library(native, "xmalloc")
+        build_logs.append(native / "adapter-build.json")
+        products.update({"native-library": library, "oracle-object": oracle})
+        for group, driver in (("controls", harness.ALLOCATOR_ROOT / "x86_64_m7_xmalloc_driver.c"),
+                              ("oom", m4.OPERATIONS_DRIVER)):
+            caller = output / f"{group}.o"
+            result = harness.command_record([compiler, "-std=c11", "-DCRABC_MI_M4_SOURCE_CANARY=1",
+                *flags, "-I", str(source / "include"), "-c", str(driver), "-o", str(caller)], cwd=source)
+            path = output / f"{group}-caller-build.json"
+            harness.write_json(path, result)
+            build_logs.append(path)
+            harness.require_success(result, f"xmalloc {group} caller build")
+            products[f"{group}-caller"] = caller
+            for side, provider in (("c", oracle), ("native", library)):
+                role = f"{group}-{side}"
+                binary = output / role
+                result = harness.command_record([compiler, str(caller), str(provider), "-pthread", "-o", str(binary)], cwd=source)
+                path = output / f"{role}-link.json"
+                harness.write_json(path, result)
+                build_logs.append(path)
+                harness.require_success(result, f"xmalloc {role} link")
+                products[role] = binary
+        inputs = output / "inputs.json"
+        harness.write_json(inputs, {"source": seal, "execution": execution, "pin": pin,
+            "c-flags": list(flags), "rust-feature": parameters["rust-feature"],
+            "compiler": engine.file_record(Path(compiler)),
+            "oracle-tree": engine.tree_digest((source / "src", source / "include"))})
+        products["inputs"] = inputs
+        cases.append(("build", 0, build_logs))
+    for scenario, expected_status in scenarios.items():
+        records = {}
+        logs = []
+        group = "oom" if scenario == "oom" else "controls"
+        for side in ("c", "native"):
+            record = m4.run_driver(products[f"{group}-{side}"], (scenario,))
+            path = output / f"{scenario}-{side}.json"
+            harness.write_json(path, record)
+            logs.append(path)
+            records[side] = record
+            if replay:
+                case = next(case for case in receipt.cases if case["id"] == scenario)
+                original = next(name for name in case["logs"] if name.endswith(f"{scenario}-{side}.json"))
+                retained = json.loads((receipt.path.parent / "logs" / original).read_text())
+                if any(record[key] != retained[key] for key in ("status", "stdout", "stderr")):
+                    raise harness.HarnessError(f"xmalloc retained {scenario}/{side} execution differs; raw {output}")
+        if any(record["status"] != expected_status for record in records.values()):
+            raise harness.HarnessError(f"xmalloc {scenario} has the wrong natural termination; raw {output}")
+        if any(records["c"][key] != records["native"][key] for key in ("stdout", "stderr")):
+            raise harness.HarnessError(f"xmalloc {scenario} C/native output differs; raw {output}")
+        witness = "oom.setrlimit=1\n" if scenario == "oom" else f"xmalloc.entered={scenario}\n"
+        if witness not in records["c"]["stdout"]:
+            raise harness.HarnessError(f"xmalloc {scenario} lacks its actual entered-case witness; raw {output}")
+        cases.append((scenario, 0, logs))
+    if receipts.source_seal(harness.ROOT) != seal:
+        raise harness.HarnessError("source changed during xmalloc evidence")
+    if not replay:
+        path = receipts.write_receipt(harness.ROOT, runner, output, products, cases, parameters, True)
+        receipts.read_receipt(harness.ROOT, runner)
+        print(f"xmalloc exact-source C/native receipt: {path}")
+    else:
+        print(f"xmalloc retained C/native replay: PASS; raw {output}")
 
 
 def run_optional_isa_differential(offline: bool) -> dict[str, Any]:
@@ -2469,11 +2587,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="build and inspect the default native allocator release artifact")
     mode.add_argument("--private-context-arena-print", action="store_true",
         help="execute independent private-context arena diagnostic integration")
+    mode.add_argument("--xmalloc-profile-differential", action="store_true",
+        help="compare source allocation-error termination and returning controls")
+    mode.add_argument("--xmalloc-profile-replay", action="store_true",
+        help="authenticate and replay retained source allocation-error controls")
     mode.add_argument("--optional-isa-differential", action="store_true",
         help="compare scalar, arch-only, and AVX2 bitmap allocation paths with pinned C")
     parser.add_argument("--offline", action="store_true", help="require the verified archive in the local cache")
     parser.add_argument("--scratch", type=Path, help="fresh output directory for the default baseline audit")
     arguments = parser.parse_args(argv)
+    if arguments.xmalloc_profile_differential or arguments.xmalloc_profile_replay:
+        run_xmalloc_profile_differential(arguments.offline, replay=arguments.xmalloc_profile_replay)
+        return 0
     if arguments.private_context_arena_print:
         execution = rust_trace(
             "native_test_context_arena_print", "private-context arena diagnostics",

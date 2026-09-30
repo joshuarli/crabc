@@ -48,6 +48,9 @@ const SOURCE_ENVIRONMENT_ENTRY_LIMIT: usize = 10_000;
 // `CMakeLists.txt` Release defaults plus `types.h` defaults. An unset C
 // preprocessor option evaluates to zero in the upstream `#if` expressions.
 pub(crate) const SECURE_LEVEL: usize = 0;
+/// Defined `MI_XMALLOC` affects only the default allocation-error handler.
+/// The optional x86 profile leaves the AArch64 default handler unchanged.
+pub(crate) const XMALLOC: bool = cfg!(all(target_arch = "x86_64", feature = "mi-xmalloc"));
 #[cfg(feature = "mi-debug-1")]
 pub(crate) const DEBUG_LEVEL: usize = 1;
 #[cfg(not(feature = "mi-debug-1"))]

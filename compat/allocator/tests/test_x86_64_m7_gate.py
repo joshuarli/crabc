@@ -64,6 +64,14 @@ class M7GateContractTests(unittest.TestCase):
         self.assertIn("MI_GUARDED", modes)
         self.assertNotIn("MI_OVERRIDE", modes)
 
+    def test_xmalloc_cli_selects_the_existing_profile_producer_and_replay(self) -> None:
+        for option, replay in (("--xmalloc-profile-differential", False),
+                               ("--xmalloc-profile-replay", True)):
+            with self.subTest(option=option), mock.patch.object(
+                    gate, "run_xmalloc_profile_differential", create=True) as run:
+                self.assertEqual(gate.main([option, "--offline"]), 0)
+                run.assert_called_once_with(True, replay=replay)
+
     def test_optional_isa_rejects_incomplete_or_heterogeneous_cpu_features(self) -> None:
         haswell = ("abm aes avx avx2 bmi1 bmi2 cx16 erms f16c fma fxsr lahf_lm "
                    "movbe pclmulqdq pni popcnt rdrand sse sse2 sse4_1 sse4_2 ssse3 xsave xsaveopt")

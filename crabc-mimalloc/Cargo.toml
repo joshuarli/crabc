@@ -252,6 +252,9 @@ mi-debug-1 = ["mi-stat-2"]
 # Pinned MI_SHOW_ERRORS changes the initial show_errors descriptor while
 # retaining release allocation layout and algorithms.
 mi-show-errors = []
+# Pinned MI_XMALLOC selects abort for unhandled allocation error reports.
+# The default profile retains the ordinary returning allocation contract.
+mi-xmalloc = []
 # Selects the pinned AVX2 bitmap searches when the whole crate is built for
 # a Haswell-class x86-64 CPU. The default and arch-only profiles remain scalar.
 mi-opt-simd = []
