@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Invocation regressions for the focused installed scalar math tests."""
 
+import hashlib
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -23,9 +25,19 @@ class ScalarCorrectionsLibcTestTests(unittest.TestCase):
                 product = root / '.work/product'
                 include = product / 'usr/include'
                 include.mkdir(parents=True)
-                installed_helper = product / 'share/crabc/crabc_cc_static.py'
+                installed_helper = product / 'bin/crabc-cc'
                 installed_helper.parent.mkdir(parents=True)
                 installed_helper.write_text(f'HOSTED_TRANSLATION_FLAGS = {flags!r}\n')
+                installed_helper.chmod(0o755)
+                manifest = product / 'share/crabc/manifest.json'
+                manifest.parent.mkdir(parents=True)
+                manifest.write_text(json.dumps({
+                    'schema': 1, 'format': 'crabc-x86-64-owned-static-sysroot-v1',
+                    'target': 'x86_64-unknown-linux-musl',
+                    'installed': {'files': {'bin/crabc-cc': hashlib.sha256(installed_helper.read_bytes()).hexdigest()}},
+                    'sealed_static_driver': {'format': 'crabc-x86-64-sealed-static-driver-v1',
+                                             'path': 'bin/crabc-cc'},
+                }))
                 evidence = root / '.work/evidence'
                 invocations = []
 

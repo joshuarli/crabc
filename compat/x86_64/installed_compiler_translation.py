@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Read the installed drivers' hosted C translation flags from a product.
 
-Both installed drivers prepend ``HOSTED_TRANSLATION_FLAGS`` from the product's
-copied ``share/crabc/crabc_cc_static.py`` to every application translation.
+Dynamic products carry ``HOSTED_TRANSLATION_FLAGS`` in their copied compiler
+helper; static products carry it in their self-contained sealed driver.
 Runners and receipt readers that replay or audit that translation (header
 traces, dependency audits, byte-identical replays) take the tuple from the
 same product through ``hosted_translation_flags`` instead of restating it, so
@@ -14,10 +14,15 @@ shell runners.
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
+import os
 from pathlib import Path
 import sys
 
 HELPER = Path("share/crabc/crabc_cc_static.py")
+STATIC_DRIVER = Path("bin/crabc-cc")
+MANIFEST = Path("share/crabc/manifest.json")
 NAME = "HOSTED_TRANSLATION_FLAGS"
 
 
@@ -26,18 +31,44 @@ class TranslationFlagsError(RuntimeError):
 
 
 def hosted_translation_flags(product: Path) -> tuple[str, ...]:
-    """Parse the product helper's literal ``HOSTED_TRANSLATION_FLAGS`` tuple.
+    """Parse the installed compiler's literal ``HOSTED_TRANSLATION_FLAGS`` tuple.
 
-    The helper is parsed, never imported: host-side receipt replays must not
-    execute product-supplied Python. The assignment must be one top-level
-    literal tuple of option strings.
+    The compiler is parsed, never imported: host-side receipt replays must not
+    execute product-supplied Python. A self-contained static driver must have
+    the exact path and bytes attested by its static-product manifest. The
+    assignment must be one top-level literal tuple of option strings.
     """
 
     helper = Path(product) / HELPER
-    if helper.is_symlink() or not helper.is_file():
-        raise TranslationFlagsError(f"installed compiler helper is not a regular file: {helper}")
     try:
-        tree = ast.parse(helper.read_bytes(), filename=str(helper))
+        if helper.is_symlink():
+            raise TranslationFlagsError(f"installed compiler helper is not a regular file: {helper}")
+        if helper.is_file():
+            source = helper.read_bytes()
+        else:
+            manifest = Path(product) / MANIFEST
+            if manifest.is_symlink() or not manifest.is_file():
+                raise TranslationFlagsError(f"installed static compiler manifest is not a regular file: {manifest}")
+            record = json.loads(manifest.read_bytes())
+            if (not isinstance(record, dict) or record.get("schema") != 1
+                    or record.get("format") != "crabc-x86-64-owned-static-sysroot-v1"
+                    or record.get("target") != "x86_64-unknown-linux-musl"):
+                raise TranslationFlagsError(f"installed compiler does not declare a static product: {manifest}")
+            driver = record.get("sealed_static_driver")
+            if (not isinstance(driver, dict)
+                    or driver.get("format") != "crabc-x86-64-sealed-static-driver-v1"
+                    or driver.get("path") != STATIC_DRIVER.as_posix()):
+                raise TranslationFlagsError(f"installed static compiler declaration differs: {manifest}")
+            helper = Path(product) / STATIC_DRIVER
+            if helper.is_symlink() or not helper.is_file() or not os.access(helper, os.X_OK):
+                raise TranslationFlagsError(f"installed static compiler is not an executable regular file: {helper}")
+            source = helper.read_bytes()
+            installed = record.get("installed")
+            files = installed.get("files") if isinstance(installed, dict) else None
+            if (not isinstance(files, dict)
+                    or files.get(STATIC_DRIVER.as_posix()) != hashlib.sha256(source).hexdigest()):
+                raise TranslationFlagsError(f"installed static compiler bytes differ from its manifest: {helper}")
+        tree = ast.parse(source, filename=str(helper))
     except (OSError, SyntaxError, ValueError) as error:
         raise TranslationFlagsError(f"installed compiler helper cannot be parsed: {helper}") from error
     values = [
