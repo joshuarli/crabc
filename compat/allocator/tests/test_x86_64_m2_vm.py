@@ -1506,7 +1506,15 @@ class NativeVmAssemblyTests(unittest.TestCase):
             return []
 
         with (
-            mock.patch.object(RUNNER, "require_native_x86_64"),
+            mock.patch.object(
+                RUNNER,
+                "require_native_x86_64",
+                return_value={
+                    "execution_mode": "native",
+                    "host_architecture": "x86_64",
+                    "image_id": "sha256:" + "a" * 64,
+                },
+            ),
             mock.patch.object(
                 RUNNER,
                 "m2_memory_substrate_source_state",
@@ -1606,7 +1614,14 @@ class NativeVmAssemblyTests(unittest.TestCase):
         ):
             self.assertEqual(
                 RUNNER.run_x86_64_m2_memory_substrate(offline=True),
-                {"status": "captured"},
+                {
+                    "status": "captured",
+                    "native_execution_provenance": {
+                        "execution_mode": "native",
+                        "host_architecture": "x86_64",
+                        "image_id": "sha256:" + "a" * 64,
+                    },
+                },
             )
 
         self.assertEqual(observed["gate_name"], "native x86 M2 focused source evidence")

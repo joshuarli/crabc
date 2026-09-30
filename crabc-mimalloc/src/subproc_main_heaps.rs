@@ -1431,7 +1431,6 @@ pub(crate) unsafe fn destroy_all_terminal() -> bool {
     true
 }
 
-/// `mi_thread_theaps_done` (`init.c:377-421`) and
 // Auxiliary refusal codes: regular backing teardown, failed page drain,
 // missing session with retained list membership, and locked list detach.
 #[cfg(crabc_native_thread_done_audit)]
@@ -1444,7 +1443,7 @@ fn record_thread_done_branch(code: usize) {
     unsafe { crabc_test_record_thread_done_branch(code) };
 }
 
-/// `_mi_thread_locals_thread_done` for the calling thread's Theaps of
+/// `mi_thread_theaps_done` and `_mi_thread_locals_thread_done` for the calling thread's Theaps of
 /// non-main Heaps of the process main subprocess, before the thread's own
 /// finish: the slot array is freed, each such Theap is collected with its
 /// live pages abandoned to its Heap, the cached Theap is reset, and each
