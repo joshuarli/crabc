@@ -29,8 +29,8 @@ def trace(output: str) -> list[int]:
 
 def slot_trace(output: str) -> list[int]:
     rows = re.findall(r"^(?:test \S+ \.\.\. )?m6\.subproc\.destroy_slots\.(\d+)=(-?\d+)$", output, re.MULTILINE)
-    if [int(index) for index, _ in rows] != list(range(33)):
-        raise harness.HarnessError("subprocess destroy-slot trace requires 33 ordered fields")
+    if [int(index) for index, _ in rows] != list(range(36)):
+        raise harness.HarnessError("subprocess destroy-slot trace requires 36 ordered fields")
     return [int(value) for _, value in rows]
 
 
@@ -85,7 +85,7 @@ def main() -> None:
         raise harness.HarnessError(
             "pinned C/Rust subprocess destroy slots differ: " + ", ".join(differences)
         )
-    print(f"subprocess lifecycle: {FIELD_COUNT} lifecycle and 33 destroy-slot pinned C/Rust values match; {artifacts}")
+    print(f"subprocess lifecycle: {FIELD_COUNT} lifecycle and 36 destroy-slot pinned C/Rust values match; {artifacts}")
 
 
 if __name__ == "__main__":

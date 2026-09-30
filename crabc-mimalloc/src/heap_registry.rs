@@ -568,8 +568,11 @@ impl super::ThreadLocalData {
     /// contention, so opposing detach traversals cannot deadlock.
     ///
     /// # Safety
-    /// `tld` and `main` belong to the finishing thread. The caller has
-    /// drained every auxiliary Theap, cleared its cached root, and retains
+    /// `tld` and `main` belong to the finishing thread, or to a vanished
+    /// worker under a prepared-fork sole-child continuation which pins their
+    /// original mappings and excludes every producer, callback and observation.
+    /// The caller has drained every auxiliary Theap (also the fixed owner in
+    /// the sole child), cleared its actual cached root, and retains
     /// each returned Theap until it drops the Heap-list reference exactly
     /// once. No other thread adds a Theap to this TLD.
     pub(crate) unsafe fn take_next_auxiliary_theap_for_thread_done(

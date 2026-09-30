@@ -438,7 +438,7 @@ impl ThreadLocalSlot {
     };
 
     /// Returns the source `(version, value-is-null)` image only for the
-    /// finite M1 compiler-TLS differential. Production callers must use the
+    /// finite compiler-TLS differential. Production callers must use the
     /// typed key lookup rather than inspect a raw slot image.
     #[cfg(test)]
     #[inline]
@@ -1318,6 +1318,57 @@ impl ThreadLocalBackingOwner {
         match slots.set(key, value) {
             Ok(()) => Ok(()),
             Err(_) => Err(ThreadLocalBackingError::BackingProjection),
+        }
+    }
+
+    /// Releases the regular slot image of a vanished worker without reading
+    /// or publishing the survivor's compiler TLS.
+    ///
+    /// # Safety
+    /// A prepared-fork sole-child continuation excludes native entry, hooks,
+    /// signals and every former observation. This exact owner and its original
+    /// TLS image remain pinned, and `backing` is the original published image
+    /// retained by that owner's lifecycle. Clear that foreign root immediately
+    /// after success. Failure retains this owner and requires child fail-stop.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn teardown_vanished_child(
+        &mut self,
+        backing: Option<NonNull<DynamicThreadLocalBacking>>,
+    ) -> Result<(), ThreadLocalBackingError> {
+        if self.state != ThreadLocalBackingState::Active
+            || current_thread_identity() == Some(self.thread)
+        { return Err(ThreadLocalBackingError::RootChanged); }
+        if self.count == 0 {
+            if self.allocation.is_some() || backing.is_some_and(|image| !is_empty_dynamic_backing(image)) {
+                return Err(ThreadLocalBackingError::RootChanged);
+            }
+            self.state = ThreadLocalBackingState::TornDown;
+            return Ok(());
+        }
+        let allocation = self.allocation.as_ref().ok_or(ThreadLocalBackingError::BackingProjection)?;
+        if backing.map(NonNull::cast::<u8>) != Some(allocation.pointer()) {
+            return Err(ThreadLocalBackingError::RootChanged);
+        }
+        let allocation = self.allocation.take().ok_or(ThreadLocalBackingError::BackingProjection)?;
+        match MetaRelease::Malloc(allocation).release() {
+            Ok(()) => {
+                self.count = 0;
+                self.state = ThreadLocalBackingState::TornDown;
+                Ok(())
+            }
+            Err(MetaReleaseFailure::MallocRetryable { error, allocation }) => {
+                self.allocation = Some(allocation);
+                Err(ThreadLocalBackingError::Metadata(error))
+            }
+            Err(MetaReleaseFailure::MallocTerminal { error, allocation }) => {
+                self.allocation = Some(allocation);
+                self.state = ThreadLocalBackingState::Poisoned;
+                Err(ThreadLocalBackingError::Metadata(error))
+            }
+            Err(MetaReleaseFailure::RegularOs { .. }) => {
+                self.state = ThreadLocalBackingState::Poisoned;
+                Err(ThreadLocalBackingError::ReleaseOwnerMismatch)
+            }
         }
     }
 

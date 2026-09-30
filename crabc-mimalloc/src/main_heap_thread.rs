@@ -751,7 +751,12 @@ impl<'main> MainHeapThreadAttachment<'main> {
             self.tld.as_mut().ok_or(MainHeapThreadAttachmentError::Poisoned)?
                 .vanished_child_mut()
         }.map_err(MainHeapThreadAttachmentError::ThreadLocalData)?;
+        #[cfg(not(target_arch = "x86_64"))]
         if !unsafe { tld.has_exact_theap_member(pointer.as_ptr()) } {
+            return Err(MainHeapThreadAttachmentError::ListOwnership);
+        }
+        #[cfg(target_arch = "x86_64")]
+        if unsafe { crate::types::ThreadLocalData::has_linked_theap_member_blocking(NonNull::from(tld), pointer.as_ptr()) } != Ok(true) {
             return Err(MainHeapThreadAttachmentError::ListOwnership);
         }
         Ok((pointer, self.thread, self.main_heap))
@@ -773,13 +778,28 @@ impl<'main> MainHeapThreadAttachment<'main> {
             return Err(MainHeapThreadAttachmentError::PageCountNonZero);
         }
         // The fixed Theap owns one Heap-list reference and at most one
-        // source cache reference. The vanished thread's copied TLS cache is
-        // unreachable; after its page drain, release that reference before
-        // unlinking the Heap-list owner, as ordinary thread teardown does.
+        // source cache reference. For the existing non-x86 child path, the
+        // vanished thread's copied TLS cache is unreachable; release that
+        // reference after page drain and before Heap-list detach.
+        #[cfg(not(target_arch = "x86_64"))]
         if unsafe { pointer.as_ref().refcount() } == 2 {
             // SAFETY: the copied Heap-list owner retains the fixed image;
             // this releases only the vanished thread's cache reference.
             if unsafe { Theap::decref_at(pointer) } {
+                return Err(MainHeapThreadAttachmentError::ListOwnership);
+            }
+        }
+        #[cfg(target_arch = "x86_64")]
+        {
+            // Every auxiliary image has already drained and left both lists;
+            // the actual foreign source cache was cleared under its pinned TLS
+            // capability. The fixed owner now holds exactly its Heap reference.
+            if unsafe { pointer.as_ref().refcount() } != 1 {
+                return Err(MainHeapThreadAttachmentError::ListOwnership);
+            }
+            let tld = unsafe { self.tld.as_mut().ok_or(MainHeapThreadAttachmentError::Poisoned)?
+                .vanished_child_mut() }.map_err(MainHeapThreadAttachmentError::ThreadLocalData)?;
+            if !unsafe { tld.has_exact_theap_member(pointer.as_ptr()) } {
                 return Err(MainHeapThreadAttachmentError::ListOwnership);
             }
         }

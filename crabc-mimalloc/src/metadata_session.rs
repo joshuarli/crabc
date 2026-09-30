@@ -182,6 +182,9 @@ pub(crate) struct ChildMetadataTheapPageSession<'session, 'image> {
 /// publishes pages as `TheapOwner::Live`; only the child context owner can
 /// retain its exact TLD/Theap metadata blocks through the operation.
 pub(crate) struct ChildOrdinaryTheapPageSession<'session, 'image> {
+    /// Only the explicit sole-child constructor grants foreign page drain;
+    /// ordinary sessions keep terminal retirement disabled.
+    vanished_child_drain: bool,
     theap: NonNull<Theap>,
     heap: NonNull<Heap>,
     child: NonNull<crate::subproc::SubprocessIdentity>,
@@ -228,6 +231,7 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
             return None;
         }
         Some(Self {
+            vanished_child_drain: false,
             theap,
             heap,
             child: NonNull::from(identity),
@@ -276,6 +280,59 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
             return None;
         }
         Some(Self {
+            vanished_child_drain: false,
+            theap,
+            heap,
+            child: NonNull::from(identity),
+            thread,
+            pending_os_release,
+            page_engine,
+            non_main_arena_pages: if heap_ref.is_subprocess_main() { None } else { Some(arena_pages) },
+            _image: PhantomData,
+        })
+    }
+
+    /// A retained auxiliary Theap session for a vanished worker in the sole
+    /// child. The original thread identity remains the page owner; this
+    /// constructor gives the child exclusive traversal authority without
+    /// adopting the survivor's compiler-TLS identity.
+    ///
+    /// # Safety
+    /// Native entry, signals and hooks remain excluded after the prepared
+    /// fork; every copied outer lock has been released. The vanished worker's
+    /// exact TLD, Theap, Heap and backing mappings remain pinned. No producer,
+    /// callback or source observation can resume. The session may only drain
+    /// inherited pages and must end before source lists or metadata retire.
+    /// `arena_pages` must refuse fresh allocation; drain uses existing records.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn new_for_vanished_main_subprocess_heap(
+        subprocess: &'static crate::subproc::MainSubprocess,
+        tld: NonNull<ThreadLocalData>,
+        theap: NonNull<Theap>,
+        heap: NonNull<Heap>,
+        thread: LiveThreadId,
+        sequence: crate::types::ThreadSequence,
+        pending_os_release: &'session mut Option<OsAlignedPageOwner>,
+        page_engine: &'session mut crate::meta::ChildPageEngineState,
+        arena_pages: &'session mut dyn FnMut(usize, usize) -> Option<NonNull<u8>>,
+    ) -> Option<Self> {
+        let identity = subprocess.identity();
+        // SAFETY: the caller retains all images for this bounded projection.
+        let (tld_ref, theap_ref, heap_ref) = unsafe { (tld.as_ref(), theap.as_ref(), heap.as_ref()) };
+        if !matches!(crate::compiler_tls::current_thread_identity(), Some(current) if current != thread)
+            || !core::ptr::eq(heap_ref.subprocess_pointer(), identity.as_ptr())
+            || !tld_ref.matches_subprocess_attached_lifecycle(thread, sequence, identity)
+            || !core::ptr::eq(theap_ref.heap.load(Ordering::Acquire), heap.as_ptr())
+            || !core::ptr::eq(theap_ref.tld, tld.as_ptr())
+            || theap_ref.is_detached()
+            || !theap_ref.is_initialized()
+            || pending_os_release.is_some()
+            || *page_engine != crate::meta::ChildPageEngineState::Active
+        {
+            return None;
+        }
+        Some(Self {
+            vanished_child_drain: true,
             theap,
             heap,
             child: NonNull::from(identity),
@@ -322,6 +379,7 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
             return None;
         }
         Some(Self {
+            vanished_child_drain: false,
             theap,
             heap,
             child: NonNull::from(identity),
@@ -500,8 +558,13 @@ unsafe impl TheapPageSession for ChildMetadataTheapPageSession<'_, '_> {
 
 // SAFETY: construction validates the live child TLD/Theap pair and the
 // enclosing child-thread owner retains both exact metadata blocks for the
-// operation. Only this OS thread mutates the ordinary Theap's local fields.
+// operation. The originating thread, or an exclusive sole-child vanished
+// owner continuation, is the only mutator of the local fields.
 unsafe impl TheapPageSession for ChildOrdinaryTheapPageSession<'_, '_> {
+    fn permits_terminal_process_retirement(&self) -> bool {
+        self.vanished_child_drain && self.pending_os_release.is_none()
+            && *self.page_engine == crate::meta::ChildPageEngineState::Active
+    }
     fn theap(&self) -> &Theap { self.theap() }
     fn thread_id(&self) -> Option<LiveThreadId> { Some(self.thread) }
 

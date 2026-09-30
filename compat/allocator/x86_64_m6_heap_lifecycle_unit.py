@@ -69,6 +69,13 @@ def main() -> None:
     )
     (ARTIFACTS / "fork.log").write_text(str(fork["stdout"]) + str(fork["stderr"]))
     harness.require_success(fork, "cached main Theap copied-owner page drain and retirement")
+    fresh_fork = harness.command_record(
+        ["python3", "compat/allocator/run_unit_x86_64.py",
+         "subproc::main_heaps::tests::fresh_main_theap_siblings_retire_vanished_fork_owner_after_page_drain"],
+        cwd=harness.ROOT, timeout_seconds=900,
+    )
+    (ARTIFACTS / "fresh-fork.log").write_text(str(fresh_fork["stdout"]) + str(fresh_fork["stderr"]))
+    harness.require_success(fresh_fork, "fresh main sibling copied-owner regular/OS drain, cache release and metadata retirement")
     print(f"child Heap lifecycle unit: {len(c_trace)} pinned-C/private-Rust ownership transitions match; {ARTIFACTS}")
 
 

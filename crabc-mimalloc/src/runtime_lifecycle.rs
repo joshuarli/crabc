@@ -7926,8 +7926,16 @@ impl NativePersistentThreadOwner {
 
     /// The child invokes this only for a vanished owner under its exclusive
     /// retained-graph continuation, after all copied outer locks are released.
-    unsafe fn retire_vanished_child_owner(&mut self) -> Result<(), ()> {
+    unsafe fn retire_vanished_child_owner(
+        &mut self,
+        #[cfg(target_arch = "x86_64")] tls: crate::subproc::main_heaps::CopiedThreadHeapTls,
+    ) -> Result<(), ()> {
         if !unsafe { self.permits_child_source_retirement() } { return Err(()); }
+        #[cfg(target_arch = "x86_64")]
+        {
+            let (fixed, thread, heap) = unsafe { self.attachment.vanished_child_source() }.map_err(|_| ())?;
+            if !unsafe { tls.drain_vanished_auxiliary_theaps(fixed, thread, heap) } { return Err(()); }
+        }
         match &mut self.state {
             NativePersistentThreadOwnerExitState::PreDrain(engine) => {
                 if !unsafe { engine.collect_abandon_vanished_child(&mut self.attachment) } { return Err(()); }
@@ -7937,6 +7945,11 @@ impl NativePersistentThreadOwner {
             NativePersistentThreadOwnerExitState::RetainedTerminalEngine(_) => return Err(()),
         }
         self.state = NativePersistentThreadOwnerExitState::AttachmentOnly;
+        #[cfg(target_arch = "x86_64")]
+        {
+            let (fixed, _, _) = unsafe { self.attachment.vanished_child_source() }.map_err(|_| ())?;
+            if !unsafe { tls.retire_vanished_auxiliary_theaps(fixed) } { return Err(()); }
+        }
         unsafe { self.attachment.retire_vanished_child_after_page_drain() }.map_err(|_| ())
     }
 
@@ -8721,6 +8734,11 @@ enum NativeInitialPersistentThreadOwnerAccessError {
 /// failed lifecycle transition and could free state before the main Heap list
 /// had been detached.
 struct ThreadLifecycleSlot {
+    /// Exact originating source TLS addresses, published before this slot
+    /// enters the pinned descriptor registry. Fork repair uses them only for
+    /// a vanished worker under sole-child exclusion, never survivor TLS.
+    #[cfg(target_arch = "x86_64")]
+    source_heap_tls: Option<crate::subproc::main_heaps::CopiedThreadHeapTls>,
     state: ThreadLifecycleState,
     /// A successful admission remains claimed from child attach through the
     /// complete post-destructor finish. Retained states intentionally keep
@@ -8883,11 +8901,21 @@ unsafe fn retire_vanished_child_slot(
     let initial = unsafe { core::ptr::addr_of!((*slot).initial_native_persistent_owner_installed).read() };
     let later = unsafe { core::ptr::addr_of!((*slot).native_persistent_owner_installed).read() };
     let has_attachment = unsafe { (&*core::ptr::addr_of!((*slot).attachment)).is_some() };
+    #[cfg(target_arch = "x86_64")]
+    let source_tls = unsafe { core::ptr::addr_of!((*slot).source_heap_tls).read() };
+    #[cfg(target_arch = "x86_64")]
+    if later || has_attachment {
+        let Some(tls) = source_tls else { return false; };
+        // Source regular TLS backing is released before statistics and all
+        // page drains. The published capability names this vanished worker.
+        if !unsafe { tls.release_vanished_regular_backing() } { return false; }
+    }
     if initial || later || has_attachment {
         let Some(process) = RUNTIME_PROCESS.active_vm_process() else { return false; };
         // The vanished owner's TLS roots are permanently inaccessible in
-        // this sole child. Mirror init.c:471's thread-done accounting prefix
-        // before collect-abandon, never by clearing the survivor's fast root.
+        // this sole child. The source thread-done accounting prefix follows
+        // regular backing release and precedes every collect-abandon; it
+        // never clears the survivor's fast root.
         // Failure after this point retains the exact owner and cannot retry.
         process.subprocess().record_statistics_thread_detached();
     }
@@ -8904,13 +8932,22 @@ unsafe fn retire_vanished_child_slot(
         unsafe { core::ptr::addr_of_mut!((*slot).initial_native_persistent_owner_installed).write(false); }
     } else if later {
         let cell = unsafe { Pin::new_unchecked(&*core::ptr::addr_of!((*slot).native_persistent_owner)) };
-        if unsafe { cell.retire_vanished_child_owner(|owner| owner.get_mut().retire_vanished_child_owner()) }.is_err() {
+        if unsafe { cell.retire_vanished_child_owner(|owner| owner.get_mut().retire_vanished_child_owner(
+            #[cfg(target_arch = "x86_64")] source_tls.unwrap(),
+        )) }.is_err() {
             return false;
         }
         unsafe { core::ptr::addr_of_mut!((*slot).native_persistent_owner_installed).write(false); }
     } else {
         let attachment = unsafe { &mut *core::ptr::addr_of_mut!((*slot).attachment) };
         if let Some(owner) = attachment.as_mut() {
+            #[cfg(target_arch = "x86_64")]
+            {
+                let Ok((fixed, thread, heap)) = (unsafe { owner.vanished_child_source() }) else { return false; };
+                if unsafe { fixed.as_ref().page_count() } != 0 { return false; }
+                if !unsafe { source_tls.unwrap().drain_vanished_auxiliary_theaps(fixed, thread, heap) }
+                    || !unsafe { source_tls.unwrap().retire_vanished_auxiliary_theaps(fixed) } { return false; }
+            }
             if unsafe { owner.retire_vanished_child_after_page_drain() }.is_err() { return false; }
         }
         drop(attachment.take());
@@ -8929,6 +8966,8 @@ unsafe fn retire_vanished_child_slot(
 impl ThreadLifecycleSlot {
     const fn new() -> Self {
         Self {
+            #[cfg(target_arch = "x86_64")]
+            source_heap_tls: None,
             state: ThreadLifecycleState::Fresh,
             admission: None,
             #[cfg(test)]
@@ -9215,7 +9254,19 @@ fn current_thread_slot_pointer() -> core::ptr::NonNull<ThreadLifecycleSlot> {
     // access to its slot. Native foreign-pointer operations resolve their
     // target from persistent PageMap state and never transfer this TLS
     // identity between threads.
-    unsafe { core::ptr::NonNull::new_unchecked(THREAD_LIFECYCLE.get()) }
+    unsafe {
+        let pointer = core::ptr::NonNull::new_unchecked(THREAD_LIFECYCLE.get());
+        #[cfg(target_arch = "x86_64")]
+        {
+            let projection = core::ptr::addr_of_mut!((*pointer.as_ptr()).source_heap_tls);
+            // Publish once while this thread owns its TLS, before the descriptor
+            // release-store makes the slot reachable to the pinned registry.
+            if (*projection).is_none() {
+                projection.write(Some(crate::subproc::main_heaps::current_thread_heap_tls()));
+            }
+        }
+        pointer
+    }
 }
 
 #[inline]

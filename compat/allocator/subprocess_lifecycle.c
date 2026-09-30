@@ -23,6 +23,9 @@ typedef struct fresh_worker_s {
   bool finished;
   bool cache_hit;
   size_t cached_refs;
+  size_t fixed_refs_after_miss;
+  size_t sibling_refs;
+  size_t linked_theaps;
 } fresh_worker_t;
 
 static void* fresh_main_worker(void* argument) {
@@ -50,6 +53,10 @@ static void* fresh_main_worker(void* argument) {
   mi_free(temporary);
   mi_heap_destroy(auxiliary);
   mi_theap_set_default(sibling);
+  state->fixed_refs_after_miss = mi_atomic_load_relaxed(&original->refcount);
+  state->sibling_refs = mi_atomic_load_relaxed(&sibling->refcount);
+  for (mi_theap_t* current = sibling->tld->theaps; current != NULL; current = current->tnext) state->linked_theaps++;
+  require(state->fixed_refs_after_miss == 1 && state->sibling_refs == 2 && state->linked_theaps == 2);
   mi_thread_done();
   state->finished = !mi_theap_is_initialized(_mi_theap_default()) && mi_slot_fast_peek() == NULL;
   return NULL;
@@ -419,5 +426,8 @@ int main(void) {
   printf("m6.subproc.destroy_slots.30=%d\n", fresh_worker_state.cache_hit);
   printf("m6.subproc.destroy_slots.31=%zu\n", fresh_worker_state.cached_refs);
   printf("m6.subproc.destroy_slots.32=%zu\n", initial_cached_refs);
+  printf("m6.subproc.destroy_slots.33=%zu\n", fresh_worker_state.fixed_refs_after_miss);
+  printf("m6.subproc.destroy_slots.34=%zu\n", fresh_worker_state.sibling_refs);
+  printf("m6.subproc.destroy_slots.35=%zu\n", fresh_worker_state.linked_theaps);
   return 0;
 }

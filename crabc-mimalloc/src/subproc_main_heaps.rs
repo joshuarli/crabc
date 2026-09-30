@@ -151,6 +151,120 @@ unsafe fn thread_heaps() -> &'static mut ThreadHeaps {
     unsafe { &mut *THREAD_HEAPS.get() }
 }
 
+/// Actual source TLS addresses published while the originating worker runs.
+/// The lifecycle registry pins these exact mappings across a prepared fork;
+/// the child never reconstructs TLS offsets or borrows the survivor's roots.
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy)]
+pub(crate) struct CopiedThreadHeapTls {
+    state: NonNull<ThreadHeaps>,
+    roots: [crate::runtime_lifecycle::NativeAllocatorTlsSpan; 5],
+}
+
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn current_thread_heap_tls() -> CopiedThreadHeapTls {
+    CopiedThreadHeapTls {
+        // SAFETY: the current compiler-TLS image is non-null and remains at
+        // this address until its registered owner completes teardown.
+        state: unsafe { NonNull::new_unchecked(THREAD_HEAPS.get()) },
+        roots: crate::compiler_tls::native_timer_tls_spans(),
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+impl CopiedThreadHeapTls {
+    /// Source regular-backing release precedes the thread statistics prefix
+    /// and all Theap drains. Source fast/default/cache remain distinct roots.
+    ///
+    /// # Safety
+    /// The prepared-fork child retains the vanished worker's published TLS
+    /// mapping with entry, signals and hooks excluded and all outer locks
+    /// released. No former observer or callback may resume, even on failure.
+    pub(crate) unsafe fn release_vanished_regular_backing(self) -> bool {
+        // SAFETY: sole-child ownership of the pinned originating TLS field.
+        let state = unsafe { self.state.as_ptr().as_mut() }.unwrap();
+        if state.pending_os_release.is_some() { return false; }
+        if let Some(owner) = state.thread_locals.as_mut() {
+            // The image is parked in this exact lifecycle outside a bounded
+            // slot operation, rather than installed in the survivor's TLS.
+            if unsafe { owner.teardown_vanished_child(state.backing) }.is_err() { return false; }
+        } else if state.backing.is_some() { return false; }
+        state.thread_locals = None;
+        state.backing = None;
+        // SAFETY: these are actual root-field addresses published by this
+        // worker before the registry pinned its descriptor, not TLS offsets.
+        unsafe {
+            (self.roots[0].start as *mut *mut DynamicThreadLocalBacking).write(core::ptr::null_mut());
+            (self.roots[1].start as *mut *mut ()).write(core::ptr::null_mut());
+        }
+        true
+    }
+
+    /// Collect auxiliary Theaps in source TLD order before the oldest fixed
+    /// owner. Every image remains linked and cache references stay live.
+    ///
+    /// # Safety
+    /// The exact authority of `release_vanished_regular_backing` continues;
+    /// the fixed source engine is retained until its following drain.
+    pub(crate) unsafe fn drain_vanished_auxiliary_theaps(
+        self, fixed: NonNull<Theap>, thread: LiveThreadId,
+        main_heap: crate::main_theap::MainStaticHeapLease<'static>,
+    ) -> bool {
+        let Some(tld) = NonNull::new(unsafe { Theap::tld_at(fixed) }) else { return false; };
+        let Some((identity, sequence, numa_node)) = (unsafe {
+            ThreadLocalData::attached_thread_identity_at(tld, MainSubprocess::global().identity())
+        }) else { return false; };
+        if identity != thread { return false; }
+        let source = MainThread { theap: fixed, tld, thread, sequence, numa_node };
+        let mut current = unsafe { ThreadLocalData::theaps_head_at(tld) };
+        while let Some(theap) = NonNull::new(current) {
+            current = unsafe { Theap::tld_next_at(theap) };
+            if theap == fixed { continue; }
+            if !unsafe { drain_vanished_auxiliary_theap(source, theap, main_heap, self.state) } { return false; }
+        }
+        true
+    }
+
+    /// Release the actual cache only after every Theap page drain, then
+    /// unlink and free auxiliary metadata while retaining the fixed owner.
+    ///
+    /// # Safety
+    /// The sole-child authority continues. All auxiliary and fixed page
+    /// drains succeeded, and no former observer, callback or producer resumes.
+    pub(crate) unsafe fn retire_vanished_auxiliary_theaps(
+        self, fixed: NonNull<Theap>,
+    ) -> bool {
+        let Some(tld) = NonNull::new(unsafe { Theap::tld_at(fixed) }) else { return false; };
+        // All pages have moved to the retained source Heap graph. Empty the
+        // foreign roots before any list reference can release its metadata.
+        let empty = crate::bootstrap::empty_default_theap_ptr();
+        let state = unsafe { &mut *self.state.as_ptr() };
+        let cached = core::mem::replace(&mut state.cached, core::ptr::null_mut());
+        unsafe {
+            (self.roots[2].start as *mut *mut Theap).write(empty);
+            (self.roots[3].start as *mut *mut Theap).write(empty);
+        }
+        if let Some(cached) = NonNull::new(cached) {
+            // Its Heap-list reference still retains this exact cached image.
+            if unsafe { Theap::decref_at(cached) } { return false; }
+        }
+        loop {
+            let theap = match unsafe {
+                ThreadLocalData::take_next_auxiliary_theap_for_thread_done(tld, fixed, MainSubprocess::global().identity())
+            } {
+                Ok(Some(theap)) => theap,
+                Ok(None) => break,
+                Err(_) => return false,
+            };
+            if unsafe { theap.as_ref().refcount() } != 1 { return false; }
+            // SAFETY: all source roots and lists have relinquished this
+            // drained image, leaving the one returned Heap-list reference.
+            if !unsafe { release_detached_theap_reference(theap) } { return false; }
+        }
+        true
+    }
+}
+
 /// The calling thread's identity in the process main subprocess.
 #[derive(Clone, Copy)]
 struct MainThread {
@@ -408,6 +522,57 @@ unsafe fn theap_decref(theap: NonNull<Theap>) {
     }
 }
 
+
+/// # Safety
+/// The drained image has left every source root and list, and the caller
+/// owns its sole remaining reference under exclusive lifecycle authority.
+#[cfg(target_arch = "x86_64")]
+unsafe fn release_detached_theap_reference(theap: NonNull<Theap>) -> bool {
+    if !unsafe { Theap::decref_at(theap) } { return false; }
+    if !unsafe { Theap::is_detached_at(theap) } {
+        MainSubprocess::global().identity().record_statistics_theap_unlinked();
+    }
+    unsafe { free_vanished_theap_metadata(theap) }
+}
+
+/// # Safety
+/// The caller has consumed the last source reference after page drain and
+/// all root/list detach. No TLS access is needed to release this capability.
+#[cfg(target_arch = "x86_64")]
+unsafe fn free_vanished_theap_metadata(theap: NonNull<Theap>) -> bool {
+    let image = theap.cast::<MainHeapTheapImage>().as_ptr();
+    // SAFETY: the image holds its own capability; it is moved out before the
+    // block is released.
+    let allocation = unsafe { core::ptr::replace(core::ptr::addr_of_mut!((*image).allocation), None) };
+    match allocation {
+        Some(MainHeapTheapAllocation::Metadata(mut allocation)) => {
+            // SAFETY: the last Theap reference has left its Heap and TLD lists;
+            // no owner can access the image after the remote publication.
+            if unsafe { MetaAllocator::global().free_detached_heap_theap(&mut allocation) }.is_err() {
+                // Failed remote publication leaves this exact image mapped.
+                // Retain its terminal capability in place; the child must
+                // fail-stop instead of declaring metadata retirement complete.
+                unsafe { (*image).allocation = Some(MainHeapTheapAllocation::Metadata(allocation)); }
+                return false;
+            }
+            true
+        }
+        Some(MainHeapTheapAllocation::Arena(reservation)) => {
+            // SAFETY: the final reference has left every root and list; the
+            // typed Rust image must be dropped before its slice is returned.
+            unsafe { core::ptr::drop_in_place(core::ptr::addr_of_mut!((*image).theap)) };
+            match reservation.release() {
+                Ok(released) => released,
+                Err(reservation) => {
+                    unsafe { (*image).allocation = Some(MainHeapTheapAllocation::Arena(reservation)); }
+                    false
+                }
+            }
+        }
+        None => false
+    }
+}
+
 /// Whether a still-linked Theap queue contains an OS page that Heap deletion
 /// cannot reach through the Heap's abandoned OS-page list.
 ///
@@ -625,6 +790,46 @@ fn allocate_main_heap_image(thread: MainThread, size: usize, alignment: usize) -
     } else {
         allocate_on_theap(thread, theap, size, Some((alignment, 0)), true)
     }
+}
+
+/// # Safety
+/// The sole-child continuation pins this vanished thread's complete source
+/// graph, excludes all observations and callbacks, and retains failed owners.
+#[cfg(target_arch = "x86_64")]
+unsafe fn drain_vanished_auxiliary_theap(
+    thread: MainThread, theap: NonNull<Theap>,
+    main_heap: crate::main_theap::MainStaticHeapLease<'static>,
+    state: NonNull<ThreadHeaps>,
+) -> bool {
+    let Some(binding) = binding() else { return false; };
+    let Some(heap) = NonNull::new(unsafe { Theap::heap_at(theap) }) else { return false; };
+    let Some(requested_arena) = (unsafe { heap.as_ref() }).exclusive_arena_id() else { return false; };
+    let page_engine = unsafe { &mut (*theap.cast::<MainHeapTheapImage>().as_ptr()).page_engine };
+    let mut pending = None;
+    let backing = crate::page_backing::RuntimeFirstRegularPageBacking::source_registry(binding.process(), thread.numa_node);
+    let Ok(page_map) = (unsafe { binding.page_map().page_map_for_owned_ranges() }) else { return false; };
+    // Source collect-abandon only traverses existing page/arena records.
+    // Refusing fresh storage prevents a survivor TLS allocation fallback.
+    let mut no_allocation = |_: usize, _: usize| None;
+    let Some(session) = (unsafe {
+        crate::types::metadata_session::ChildOrdinaryTheapPageSession::new_for_vanished_main_subprocess_heap(
+            MainSubprocess::global(), thread.tld, theap, heap, thread.thread, thread.sequence,
+            &mut pending, page_engine, &mut no_allocation,
+        )
+    }) else { return false; };
+    let mut engine = unsafe {
+        crate::single_thread::PageAllocatorEngine::activate_owned_session(
+            session, backing, page_map, thread.sequence, requested_arena,
+        )
+    };
+    let drained = unsafe { engine.collect_abandon_vanished_child(theap, thread.thread, main_heap) };
+    let finished = engine.finish_owned_session().map_err(drop).is_ok();
+    if let Some(owner) = pending.take() {
+        let retained = unsafe { &mut (*state.as_ptr()).pending_os_release };
+        if retained.is_none() { *retained = Some((Some(theap), owner)); }
+        else { core::mem::forget(owner); *page_engine = ChildPageEngineState::Poisoned; }
+    }
+    drained && finished
 }
 
 /// Runs one page operation on `theap`, this thread's Theap for a non-main
@@ -1607,7 +1812,8 @@ pub(crate) mod tests {
                 assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
                 assert_eq!(unsafe { native_heap_release(heap, true) }, Ok(HeapReleaseOutcome::Released));
                 let threads_before = MainSubprocess::global().identity().live_thread_count();
-                let (worker_regular, worker_second, worker_os, worker_finished, worker_cached_hit, worker_cached_refs) = std::thread::spawn(|| {
+                let (worker_regular, worker_second, worker_os, worker_finished, worker_cached_hit, worker_cached_refs,
+                    worker_fixed_refs_after_miss, worker_sibling_refs, worker_linked_theaps) = std::thread::spawn(|| {
                     let descriptor = crate::runtime_lifecycle::current_native_allocator_thread_descriptor();
                     // SAFETY: this worker retains its own allocator TLS until
                     // it completes the source thread finalizer below.
@@ -1640,9 +1846,20 @@ pub(crate) mod tests {
                     assert_eq!(unsafe { native_free(temporary) }, NativePageFreeResult::Freed);
                     assert_eq!(unsafe { native_heap_release(auxiliary, true) }, Ok(HeapReleaseOutcome::Released));
                     unsafe { crate::source_heap_api::theap_set_default(sibling.as_ptr().cast()) };
+                    let fixed_refs_after_miss = unsafe { original.as_ref() }.refcount();
+                    let sibling_refs = unsafe { sibling.as_ref() }.refcount();
+                    let tld = NonNull::new(unsafe { Theap::tld_at(sibling) }).unwrap();
+                    let mut linked_theaps = 0;
+                    let mut current = unsafe { ThreadLocalData::theaps_head_at(tld) };
+                    while let Some(theap) = NonNull::new(current) {
+                        linked_theaps += 1;
+                        current = unsafe { Theap::tld_next_at(theap) };
+                    }
+                    assert_eq!((fixed_refs_after_miss, sibling_refs, linked_theaps), (1, 2, 2));
                     let finished = matches!(crate::runtime_lifecycle::finish_current_thread_native_after_user_destructors(),
                         crate::runtime_lifecycle::ThreadFinishResult::Finished);
-                    (regular.as_ptr() as usize, second.as_ptr() as usize, os.as_ptr() as usize, finished, cached_hit, cached_refs)
+                    (regular.as_ptr() as usize, second.as_ptr() as usize, os.as_ptr() as usize, finished, cached_hit, cached_refs,
+                        fixed_refs_after_miss, sibling_refs, linked_theaps)
                 }).join().unwrap();
                 assert!(worker_finished, "fresh sibling teardown leaves the fixed runtime owner finishable");
                 let worker_count_restored = MainSubprocess::global().identity().live_thread_count() == threads_before;
@@ -1673,6 +1890,9 @@ pub(crate) mod tests {
                 }
                 std::println!("m6.subproc.destroy_slots.31={worker_cached_refs}");
                 std::println!("m6.subproc.destroy_slots.32={initial_cached_refs}");
+                std::println!("m6.subproc.destroy_slots.33={worker_fixed_refs_after_miss}");
+                std::println!("m6.subproc.destroy_slots.34={worker_sibling_refs}");
+                std::println!("m6.subproc.destroy_slots.35={worker_linked_theaps}");
             },
         );
     }
@@ -1791,6 +2011,282 @@ pub(crate) mod tests {
                 worker.join().unwrap();
                 assert_eq!(MainSubprocess::global().identity().live_thread_count(), 1);
                 std::println!("cached main Theap fork: copied owner pages drained, cache released, metadata detached; parent preserved");
+            },
+        );
+    }
+
+    /// A vanished worker retains both its fixed runtime owner and a fresh
+    /// main sibling with live regular and OS pages until child repair drains them.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn fresh_main_theap_siblings_retire_vanished_fork_owner_after_page_drain() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::fresh_main_theap_siblings_retire_vanished_fork_owner_after_page_drain",
+            || {
+                use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+                use std::sync::Arc;
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let main = crate::source_heap_api::heap_main();
+                let selected = NonNull::new(unsafe { crate::source_heap_api::heap_theap(main) }.cast::<Theap>()).unwrap();
+                assert_eq!(unsafe { selected.as_ref() }.refcount(), 1);
+                let ready = Arc::new(AtomicBool::new(false));
+                let finish = Arc::new(AtomicBool::new(false));
+                let regular = Arc::new(AtomicUsize::new(0));
+                let os = Arc::new(AtomicUsize::new(0));
+                let descriptor_address = Arc::new(AtomicUsize::new(0));
+                let copied_tls = Arc::new([const { AtomicUsize::new(0) }; 6]);
+                let worker_theaps = Arc::new([const { AtomicUsize::new(0) }; 2]);
+                let source_theaps = || {
+                    let heap = NonNull::new(MainSubprocess::global().ready_main_heap_pointer()).unwrap();
+                    let mut count = 0;
+                    // SAFETY: the worker waits without entry and this sole
+                    // fixture controls every source list mutation.
+                    assert!(unsafe { heap.as_ref().visit_theaps_quiescent(|_, _| { count += 1; true }) });
+                    count
+                };
+                let source_theaps_before = source_theaps();
+                let worker = {
+                    let ready = ready.clone();
+                    let finish = finish.clone();
+                    let regular = regular.clone();
+                    let os = os.clone();
+                    let descriptor_address = descriptor_address.clone();
+                    let copied_tls = copied_tls.clone();
+                    let worker_theaps = worker_theaps.clone();
+                    std::thread::spawn(move || {
+                        let descriptor = crate::runtime_lifecycle::current_native_allocator_thread_descriptor();
+                        // SAFETY: this worker's descriptor remains mapped
+                        // through its source finalizer and the fork snapshot.
+                        assert!(unsafe { crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(descriptor) });
+                        assert_eq!(crate::runtime_lifecycle::attach_current_thread(), crate::runtime_lifecycle::ThreadAttachResult::Attached);
+                        let main = crate::source_heap_api::heap_main();
+                        let cached = NonNull::new(unsafe { crate::source_heap_api::heap_theap(main) }.cast::<Theap>()).unwrap();
+                        assert_eq!(unsafe { cached.as_ref() }.refcount(), 2);
+                        let auxiliary = native_heap_new().unwrap();
+                        let temporary = unsafe { native_heap_allocate(auxiliary, 32, None, false) }.unwrap();
+                        let child = crate::source_heap_api::subproc_new();
+                        assert!(!child.is_null());
+                        assert!(unsafe { crate::source_heap_api::subproc_destroy(child) });
+                        assert!(crate::compiler_tls::fast_slot_peek().is_none());
+                        unsafe { native_heap_theap(auxiliary) }.unwrap();
+                        let fresh = NonNull::new(unsafe { crate::source_heap_api::heap_theap(main) }.cast::<Theap>()).unwrap();
+                        assert_ne!(fresh, cached);
+                        assert_eq!(unsafe { cached.as_ref() }.refcount(), 1);
+                        assert_eq!(unsafe { fresh.as_ref() }.refcount(), 2);
+                        assert_eq!(unsafe { native_free(temporary) }, NativePageFreeResult::Freed);
+                        assert_eq!(unsafe { native_heap_release(auxiliary, true) }, Ok(HeapReleaseOutcome::Released));
+                        unsafe { crate::source_heap_api::theap_set_default(fresh.as_ptr().cast()) };
+                        worker_theaps[0].store(cached.as_ptr() as usize, Ordering::Relaxed);
+                        worker_theaps[1].store(fresh.as_ptr() as usize, Ordering::Relaxed);
+                        let cached = fresh;
+                        let block = unsafe { crate::source_heap_api::theap_malloc(cached.as_ptr().cast(), 64, false) }.value.unwrap();
+                        let large = unsafe { crate::source_api::theap_malloc_aligned_at(cached.as_ptr().cast(), 2 * 1024 * 1024, 4096, 0, false) }.value.unwrap();
+                        unsafe { block.as_ptr().write(0x5a); large.as_ptr().write(0xa5); }
+                        let tls = current_thread_heap_tls();
+                        for (index, root) in tls.roots.iter().enumerate() {
+                            copied_tls[index].store(root.start, Ordering::Relaxed);
+                        }
+                        copied_tls[5].store(tls.state.as_ptr() as usize, Ordering::Relaxed);
+                        regular.store(block.as_ptr() as usize, Ordering::Relaxed);
+                        os.store(large.as_ptr() as usize, Ordering::Relaxed);
+                        descriptor_address.store(descriptor.as_ptr() as usize, Ordering::Relaxed);
+                        ready.store(true, Ordering::Release);
+                        while !finish.load(Ordering::Acquire) { std::thread::yield_now(); }
+                        assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                        assert_eq!(unsafe { native_free(large) }, NativePageFreeResult::Freed);
+                        assert!(matches!(crate::runtime_lifecycle::finish_current_thread_native_after_user_destructors(), crate::runtime_lifecycle::ThreadFinishResult::Finished));
+                    })
+                };
+                while !ready.load(Ordering::Acquire) { std::thread::yield_now(); }
+                let regular = NonNull::new(regular.load(Ordering::Relaxed) as *mut u8).unwrap();
+                let os = NonNull::new(os.load(Ordering::Relaxed) as *mut u8).unwrap();
+                assert_eq!(MainSubprocess::global().identity().live_thread_count(), 2);
+                assert_eq!(source_theaps(), source_theaps_before + 2);
+                struct PinnedForkDescriptors([NonNull<crate::runtime_lifecycle::NativeAllocatorThreadDescriptor>; 2]);
+                // SAFETY: exactly these two registered descriptors remain mapped;
+                // the worker waits without allocator entry, and the initial
+                // thread holds this fixture's publication/removal boundary.
+                unsafe impl crate::runtime_lifecycle::NativeAllocatorPinnedThreadRegistry for PinnedForkDescriptors {
+                    fn visit_descriptors(&self, visitor: &mut dyn FnMut(NonNull<crate::runtime_lifecycle::NativeAllocatorThreadDescriptor>)) {
+                        for descriptor in self.0 { visitor(descriptor); }
+                    }
+                }
+                // SAFETY: the sole child retains the exact same two mappings,
+                // visits without locks, and consumes repair before hooks or entry.
+                unsafe impl crate::runtime_lifecycle::NativeAllocatorChildRetainedThreadRegistry for PinnedForkDescriptors {
+                    fn visit_descriptors(&self, visitor: &mut dyn FnMut(NonNull<crate::runtime_lifecycle::NativeAllocatorThreadDescriptor>)) {
+                        for descriptor in self.0 { visitor(descriptor); }
+                    }
+                }
+                let registry = PinnedForkDescriptors([
+                    crate::runtime_lifecycle::current_native_allocator_thread_descriptor(),
+                    NonNull::new(descriptor_address.load(Ordering::Relaxed) as *mut crate::runtime_lifecycle::NativeAllocatorThreadDescriptor).unwrap(),
+                ]);
+                let blocked_signals = !0u64;
+                let fixed = NonNull::new(worker_theaps[0].load(Ordering::Relaxed) as *mut Theap).unwrap();
+                let fresh = NonNull::new(worker_theaps[1].load(Ordering::Relaxed) as *mut Theap).unwrap();
+                for regular_release_failure in [true, false] {
+                    let mut previous_signals = 0u64;
+                    // SAFETY: all signals remain blocked while this pinned
+                    // registry crosses the prepared source interval.
+                    unsafe { crabc_core::signal::rt_sigprocmask_raw(0, &blocked_signals, &mut previous_signals) }.unwrap();
+                    let interval = unsafe { crate::runtime_lifecycle::begin_native_allocator_source_fork_quiescence(&registry) }.unwrap();
+                    let child = crabc_core::process::fork_raw().unwrap();
+                    if child == 0 {
+                        let state = copied_tls[5].load(Ordering::Relaxed) as *const ThreadHeaps;
+                        let root_addresses = [
+                            copied_tls[0].load(Ordering::Relaxed), copied_tls[1].load(Ordering::Relaxed),
+                            copied_tls[2].load(Ordering::Relaxed), copied_tls[3].load(Ordering::Relaxed),
+                        ];
+                        // SAFETY: the child retains the exact original TLS
+                        // fields with all observations excluded by the epoch.
+                        let before = root_addresses.map(|address| unsafe { (address as *const usize).read() });
+                        let metadata_before = MetaAllocator::global().test_allocation_audit();
+                        if !regular_release_failure {
+                            // A child-only source-engine refusal cannot free
+                            // cache/list metadata while inherited pages live.
+                            unsafe { (*fresh.cast::<MainHeapTheapImage>().as_ptr()).page_engine = ChildPageEngineState::Poisoned; }
+                        }
+                        let continuation = unsafe { interval.into_child_repair().into_unlocked_continuation() }.unwrap();
+                        let repaired = if regular_release_failure {
+                            // Existing test-only metadata entry authority
+                            // exercises a real pre-claim recursive rejection.
+                            // The guard is created after fork, then released
+                            // before observing the refused child transition.
+                            MetaAllocator::global().test_with_held_backing_entry(|| unsafe {
+                                continuation.repair_source_owners(&registry)
+                            }).unwrap()
+                        } else {
+                            unsafe { continuation.repair_source_owners(&registry) }
+                        };
+                        let after = root_addresses.map(|address| unsafe { (address as *const usize).read() });
+                        let entry_closed = crate::runtime_lifecycle::NativeSubprocessOperation::enter().is_none();
+                        let metadata_after = MetaAllocator::global().test_allocation_audit();
+                        let metadata_retained = metadata_after.high_water_capability_count == metadata_before.high_water_capability_count
+                            && metadata_after.live_capability_count + usize::from(!regular_release_failure)
+                                == metadata_before.live_capability_count;
+                        let retained = source_theaps() == source_theaps_before + 2
+                            && MainSubprocess::global().identity().live_thread_count() == 2
+                            && unsafe { fixed.as_ref() }.refcount() == 1
+                            && unsafe { fresh.as_ref() }.refcount() == 2
+                            && unsafe { fresh.as_ref() }.page_count() > 0
+                            && unsafe { (*state).cached } == fresh.as_ptr()
+                            && unsafe { regular.as_ptr().read() == 0x5a && os.as_ptr().read() == 0xa5 };
+                        let roots = if regular_release_failure {
+                            before == after && unsafe { (*state).thread_locals.is_some() && (*state).backing.is_some() }
+                        } else {
+                            after[0] == 0 && after[1] == 0 && after[2..] == before[2..]
+                                && unsafe { (*state).thread_locals.is_none() && (*state).backing.is_none() }
+                        };
+                        crabc_core::process::exit_immediately(if repaired.is_ok() { 88 }
+                            else if !entry_closed { 89 } else if !retained { 90 } else if !roots { 91 }
+                            else if !metadata_retained { 92 } else { 0 });
+                    }
+                    // SAFETY: no parent source state changed while its raw
+                    // copy was closed; the worker continues waiting untouched.
+                    unsafe { interval.resume_parent() }.unwrap();
+                    unsafe { crabc_core::signal::rt_sigprocmask_raw(2, &previous_signals, core::ptr::null_mut()) }.unwrap();
+                    let mut status = 0;
+                    assert_eq!(unsafe { crabc_core::process::wait4_raw(child, &mut status, 0) }.unwrap(), child);
+                    assert_eq!(status, 0, "refused child repair retains exact backing/pages/cache/list owners with source closed");
+                    assert_eq!(source_theaps(), source_theaps_before + 2);
+                    assert_eq!(unsafe { fixed.as_ref() }.refcount(), 1);
+                    assert_eq!(unsafe { fresh.as_ref() }.refcount(), 2);
+                }
+                let mut previous_signals = 0u64;
+                // SAFETY: both mask buffers are live, and this thread restores
+                // its mask only after the copied allocator interval completes.
+                unsafe { crabc_core::signal::rt_sigprocmask_raw(0, &blocked_signals, &mut previous_signals) }.unwrap();
+                // SAFETY: both descriptors and the exact owner graph are pinned
+                // until the parent resumes or the sole child consumes repair.
+                let interval = unsafe { crate::runtime_lifecycle::begin_native_allocator_source_fork_quiescence(&registry) }.unwrap();
+                let child = crabc_core::process::fork_raw().expect("the prepared native fork");
+                if child == 0 {
+                    // SAFETY: first after the raw copy, before any allocator
+                    // operation, with the copied pinned graph unchanged.
+                    let repaired = unsafe { interval.into_child_repair().into_unlocked_continuation() }
+                        .and_then(|continuation| unsafe { continuation.repair_source_owners(&registry) });
+                    if repaired.is_err() { crabc_core::process::exit_immediately(72); }
+                    // SAFETY: source repair ended before restoring handlers.
+                    unsafe { crabc_core::signal::rt_sigprocmask_raw(2, &previous_signals, core::ptr::null_mut()) }.unwrap();
+                    let count = MainSubprocess::global().identity().live_thread_count() == 1;
+                    let graph = source_theaps() == source_theaps_before;
+                    let state = copied_tls[5].load(Ordering::Relaxed) as *const ThreadHeaps;
+                    // SAFETY: the child registry still pins the vanished
+                    // worker's inline TLS; no freed TLD/Theap is projected.
+                    let roots = unsafe {
+                        (*state).thread_locals.is_none() && (*state).backing.is_none()
+                            && (*state).cached.is_null() && (*state).pending_os_release.is_none()
+                            && (copied_tls[0].load(Ordering::Relaxed) as *const *mut DynamicThreadLocalBacking).read().is_null()
+                            && (copied_tls[1].load(Ordering::Relaxed) as *const *mut ()).read().is_null()
+                            && (copied_tls[2].load(Ordering::Relaxed) as *const *mut Theap).read() == crate::bootstrap::empty_default_theap_ptr()
+                            && (copied_tls[3].load(Ordering::Relaxed) as *const *mut Theap).read() == crate::bootstrap::empty_default_theap_ptr()
+                    };
+                    let inherited = unsafe { regular.as_ptr().read() == 0x5a && os.as_ptr().read() == 0xa5 };
+                    let survivor_roots = crate::compiler_tls::default_theap() == selected
+                        && cached_theap() == selected
+                        && crate::compiler_tls::fast_slot_peek() == Some(selected.cast());
+                    let refs = unsafe { selected.as_ref() }.refcount() == 1;
+                    let allocation = unsafe { crate::source_heap_api::heap_malloc(main, 80) }.value;
+                    let regular_freed = unsafe { native_free(regular) } == NativePageFreeResult::Freed;
+                    let os_freed = unsafe { native_free(os) } == NativePageFreeResult::Freed;
+                    let allocated = allocation.is_some_and(|block| unsafe { native_free(block) } == NativePageFreeResult::Freed);
+                    unsafe { crate::source_heap_api::heap_collect(main, true) };
+                    let pages_released = unsafe { heap_of_block(regular) }.is_none() && unsafe { heap_of_block(os) }.is_none();
+                    // A second prepared fork sees the copied worker's finished
+                    // slot, without repeating cache release or thread uncount.
+                    // SAFETY: the same registry still pins both descriptor/TLS
+                    // mappings, and signals stay blocked across the new copy.
+                    unsafe { crabc_core::signal::rt_sigprocmask_raw(0, &blocked_signals, core::ptr::null_mut()) }.unwrap();
+                    let Ok(next_interval) = (unsafe {
+                        crate::runtime_lifecycle::begin_native_allocator_source_fork_quiescence(&registry)
+                    }) else { crabc_core::process::exit_immediately(83); };
+                    let Ok(next_child) = crabc_core::process::fork_raw() else {
+                        crabc_core::process::exit_immediately(84);
+                    };
+                    if next_child == 0 {
+                        // SAFETY: first in the sole grandchild with its exact
+                        // retained registry and no source entry or outer hook.
+                        let repaired = unsafe { next_interval.into_child_repair().into_unlocked_continuation() }
+                            .and_then(|continuation| unsafe { continuation.repair_source_owners(&registry) });
+                        let stable = repaired.is_ok() && source_theaps() == source_theaps_before
+                            && MainSubprocess::global().identity().live_thread_count() == 1
+                            && unsafe { selected.as_ref() }.refcount() == 1;
+                        crabc_core::process::exit_immediately(if stable { 0 } else { 85 });
+                    }
+                    // SAFETY: only the raw syscall crossed this closed interval.
+                    if unsafe { next_interval.resume_parent() }.is_err() { crabc_core::process::exit_immediately(86); }
+                    let mut next_status = 0;
+                    // SAFETY: the child owns the exact grandchild wait and
+                    // writable output; no other thread or waiter can overlap.
+                    let waited = unsafe { crabc_core::process::wait4_raw(next_child, &mut next_status, 0) };
+                    let reentered = waited == Ok(next_child) && next_status == 0;
+                    unsafe { crabc_core::signal::rt_sigprocmask_raw(2, &previous_signals, core::ptr::null_mut()) }.unwrap();
+                    crabc_core::process::exit_immediately(if !count { 73 } else if !refs { 74 }
+                        else if !allocated { 75 } else if !regular_freed { 76 } else if !os_freed { 77 }
+                        else if !graph { 78 } else if !roots { 79 } else if !inherited { 80 }
+                        else if !survivor_roots { 81 } else if !pages_released { 82 } else if !reentered { 87 } else { 0 });
+                }
+                // SAFETY: only the raw syscall crossed the closed interval.
+                unsafe { interval.resume_parent() }.unwrap();
+                // SAFETY: parent completion reopened ordinary entry.
+                unsafe { crabc_core::signal::rt_sigprocmask_raw(2, &previous_signals, core::ptr::null_mut()) }.unwrap();
+                let mut status = 0;
+                // SAFETY: the local status output stays writable until the
+                // exact child is reaped; no other waiter handles this child.
+                assert_eq!(unsafe { crabc_core::process::wait4_raw(child, &mut status, 0) }.unwrap(), child);
+                assert_eq!(status, 0, "copied fresh sibling pages drain before cache release and metadata detach");
+                assert_eq!(MainSubprocess::global().identity().live_thread_count(), 2);
+                assert_eq!(unsafe { selected.as_ref() }.refcount(), 1);
+                assert_eq!(source_theaps(), source_theaps_before + 2);
+                finish.store(true, Ordering::Release);
+                worker.join().unwrap();
+                assert_eq!(MainSubprocess::global().identity().live_thread_count(), 1);
+                assert_eq!(source_theaps(), source_theaps_before);
+                std::println!("fresh main sibling fork: regular/OS pages drained and retired, source TLS roots cleared, literal cache/list references released; refused children remain closed and retained; fork reentry, survivor and parent preserved");
             },
         );
     }
