@@ -101,6 +101,12 @@ class NativeAbiCompilerHelperTests(unittest.TestCase):
             selection.compiler_helper_adapter(None, ordinary_report_path=None, paths=self.paths,
                                               installed_links={'static': self.report})
 
+    def test_product_reader_rejection_stays_at_the_selection_boundary(self):
+        error = selection.product_evidence.ProductEvidenceError('retained linkage differs')
+        with mock.patch.object(helpers, 'validate_supplied_product_evidence', side_effect=error):
+            with self.assertRaisesRegex(selection.SelectionError, 'retained linkage differs'):
+                self.adapter(self.report)
+
     def test_cli_forwards_each_installed_receipt_and_rejects_missing_or_duplicate_modes(self):
         arguments = ['build-report', '--measurement-checkout', str(ROOT), '--base-inventory', str(self.report),
                      '--elf-facts', str(self.report), '--static-product', str(self.work),

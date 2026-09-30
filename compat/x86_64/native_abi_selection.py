@@ -4442,7 +4442,7 @@ def _compiler_helper_installed_links(installed_links: Mapping[str, Path] | None,
             proof = compiler_helpers.retained_compiler_helper_link(
                 root=ROOT, product=product, workload=workload, executable=executable,
                 receipt=receipt, linkage=mode, linker=linker)
-        except (KeyError, TypeError, ValueError, OSError) as error:
+        except (KeyError, TypeError, ValueError, OSError, product_evidence.ProductEvidenceError) as error:
             raise SelectionError(f'compiler-helper installed {mode} link rejected: {error}') from error
         require(before == {key: file_identity(path) for key, path in
                            (('receipt', receipt), ('workload', workload), ('executable', executable))},
@@ -4483,7 +4483,7 @@ def compiler_helper_adapter(report_path: Path | None, *, ordinary_report_path: P
                          ('base_inventory', 'elf_report', 'static_preparation', 'static_product', 'dynamic_product')},
             ordinary_link_report=ordinary_report_path, aggregate_report=report_path,
         )
-    except (ValueError, OSError) as error:
+    except (ValueError, OSError, product_evidence.ProductEvidenceError) as error:
         raise SelectionError(f'compiler-helper component rejected: {error}') from error
     require(file_identity(report_path) == before, 'compiler-helper aggregate report changed during replay')
     require(type(account) is dict and type(account.get('aggregate_c_abi')) is dict
