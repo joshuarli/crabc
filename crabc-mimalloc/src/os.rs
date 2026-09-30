@@ -3559,32 +3559,9 @@ impl Mapping {
         let Some(range) = self.page_range(offset, length, PageAlignment::Contained)? else {
             return Ok(false);
         };
-        let protection = if protect {
-            PROT_NONE
-        } else {
-            PROT_READ | PROT_WRITE
-        };
-        #[cfg(any(test, feature = "native-runtime-test-fault"))]
-        fault::record_protection_range(range.address, range.length, protection);
-        let result = fault_before(if protect {
-            FaultPoint::Protect
-        } else {
-            FaultPoint::Unprotect
-        }).and_then(|()| {
-            // SAFETY: `range` is a complete-page subrange of this live mapping.
-            // Callers receive no Rust reference from `Mapping`, so the boundary
-            // cannot leave an existing reference usable across PROT_NONE.
-            unsafe { crabc_core::mm::mprotect_raw(range.address, range.length, protection) }
-        });
-        if let Err(error) = result {
-            if let Some(process) = process {
-                process.policy.source_warning(SourceFormattedMessage::os_protect_failure(
-                    error, range.address.addr(), range.length, protect));
-            }
-            return Err(error);
-        }
-
-        Ok(true)
+        // SAFETY: containment above proves the complete live-page range;
+        // Mapping exposes no byte references across this transition.
+        unsafe { protect_live_range(range.address, range.length, protect, process) }
     }
 
     #[inline]
@@ -3651,6 +3628,53 @@ impl Mapping {
             length: end - start,
         }))
     }
+}
+
+/// Changes accessibility of a caller-owned complete base-page span.
+///
+/// Protection changes never transfer mapping ownership or adjust reserved or
+/// committed accounting. A failed syscall preserves the owner and reports the
+/// source OS warning through the supplied process after the syscall returns.
+/// An empty span is not a protection operation and returns false.
+///
+/// # Safety
+/// For a nonempty span, `address` retains provenance for a live mapping and
+/// both its address and `length` are aligned to the active OS base-page size.
+/// The entire span remains owned and mapped throughout this call and any
+/// warning callback. The caller excludes references observing the span's bytes
+/// while accessibility changes, and ends Page, Heap and Theap projections
+/// before entering this function because a warning callback may reenter the
+/// allocator. `process`, when supplied, is the VM pair owning this mapping.
+#[inline]
+pub(crate) unsafe fn protect_live_range(
+    address: *mut u8, length: usize, protect: bool, process: Option<VmProcess<'_>>,
+) -> Result<bool> {
+    if length == 0 { return Ok(false); }
+    let protection = if protect {
+        PROT_NONE
+    } else {
+        PROT_READ | PROT_WRITE
+    };
+    #[cfg(any(test, feature = "native-runtime-test-fault"))]
+    fault::record_protection_range(address, length, protection);
+    let result = fault_before(if protect {
+        FaultPoint::Protect
+    } else {
+        FaultPoint::Unprotect
+    }).and_then(|()| {
+        // SAFETY: the caller retains the complete live-page span and
+        // excludes byte references throughout the protection transition.
+        unsafe { crabc_core::mm::mprotect_raw(address, length, protection) }
+    });
+    if let Err(error) = result {
+        if let Some(process) = process {
+            process.policy.source_warning(SourceFormattedMessage::os_protect_failure(
+                error, address.addr(), length, protect));
+        }
+        return Err(error);
+    }
+
+    Ok(true)
 }
 
 /// One source `MI_MEM_OS_HUGE` allocation assembled from 1-GiB primitive maps.
@@ -11369,6 +11393,60 @@ mod tests {
         assert_eq!(mapping.base(), Err(Errno::INVAL));
         assert_eq!(mapping.commit(0, page), Err(Errno::INVAL));
         assert_eq!(mapping.unmap(), Err(Errno::INVAL));
+    }
+
+    #[test]
+    fn live_guard_span_protection_preserves_owner_on_refusal_and_faults_only_guard_page() {
+        crate::test_process::run_in_fresh_process(
+            "os::tests::live_guard_span_protection_preserves_owner_on_refusal_and_faults_only_guard_page",
+            || {
+                unsafe extern "C" {
+                    fn fork() -> i32;
+                    fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
+                    fn _exit(status: i32) -> !;
+                }
+                let fault = fault::install(fault::Plan::disabled());
+                let startup = current_startup();
+                let page = startup.page_size().bytes();
+                let mut mapping = Mapping::map_anonymous(startup, 3 * page, MapAccess::Committed).unwrap();
+                let base = mapping.base().unwrap();
+                let guard = base.wrapping_add(2 * page);
+                // SAFETY: this test owns the live mapping and excludes byte references
+                // while its exact final page changes accessibility.
+                unsafe {
+                    core::ptr::write_volatile(base, 0x51);
+                    core::ptr::write_volatile(guard, 0x59);
+                    fault.set(fault::Plan::at(fault::Point::Protect, 1, Errno::PERM));
+                    assert_eq!(protect_live_range(guard, page, true, None), Err(Errno::PERM));
+                    assert_eq!(mapping.base(), Ok(base));
+                    assert_eq!(mapping.length(), Ok(3 * page));
+                    assert_eq!(core::ptr::read_volatile(guard), 0x59);
+                    fault.set(fault::Plan::disabled());
+                    assert_eq!(protect_live_range(guard, page, true, None), Ok(true));
+                    assert_eq!(core::ptr::read_volatile(base), 0x51);
+                    // The child observes the inherited mapping permission without
+                    // writing allocator metadata or changing the parent's lifetime.
+                    let child = fork();
+                    assert!(child >= 0);
+                    if child == 0 {
+                        core::ptr::write_volatile(guard, 0x6b);
+                        _exit(0);
+                    }
+                    let mut status = 0;
+                    assert_eq!(waitpid(child, &mut status, 0), child);
+                    assert_eq!(status & 0x7f, 11, "only the guard page must fault");
+                    fault.set(fault::Plan::at(fault::Point::Unprotect, 1, Errno::PERM));
+                    assert_eq!(protect_live_range(guard, page, false, None), Err(Errno::PERM));
+                    assert_eq!(mapping.base(), Ok(base));
+                    fault.set(fault::Plan::disabled());
+                    assert_eq!(protect_live_range(guard, page, false, None), Ok(true));
+                    assert_eq!(core::ptr::read_volatile(guard), 0x59);
+                }
+                mapping.unmap().unwrap();
+                assert_eq!(mapping.base(), Err(Errno::INVAL));
+                assert_eq!(mapping.unmap(), Err(Errno::INVAL));
+            },
+        );
     }
 
     #[test]
