@@ -1163,8 +1163,10 @@ pub(crate) enum SourceErrorDisposition {
 /// after every allocator projection has ended. The optional allocation-error
 /// profile delegates process termination to the embedding libc's own ABI.
 pub(crate) fn source_default_error_disposition(error: Errno) -> SourceErrorDisposition {
-    #[cfg(all(target_arch = "x86_64", feature = "mi-xmalloc"))]
-    if crate::config::XMALLOC && matches!(error, Errno::NOMEM | Errno::OVERFLOW | Errno::INVAL) {
+    #[cfg(all(target_arch = "x86_64", any(feature = "mi-xmalloc", feature = "mi-secure-1")))]
+    if (crate::config::XMALLOC && matches!(error, Errno::NOMEM | Errno::OVERFLOW | Errno::INVAL))
+        || (crate::config::SECURE_LEVEL > 0 && error == Errno::FAULT)
+    {
         unsafe extern "C" {
             fn abort() -> !;
         }
@@ -1216,6 +1218,8 @@ pub(crate) enum SourceErrorReport {
     UnalignedPointer { operation: SourcePointerOperation, pointer: usize },
     /// `mi_find_page`, `src/page.c:951-954` (EOVERFLOW).
     AllocationTooLarge { size: usize },
+    /// Guarded request rounding checks the original size before allocating.
+    GuardedAllocationTooLarge { size: usize },
     /// An overflowing count product reports its two original operands before
     /// the public allocation entry returns; release profiles remain quiet.
     #[cfg(feature = "mi-debug-1")]
@@ -1258,6 +1262,7 @@ impl SourceErrorReport {
             #[cfg(feature = "mi-debug-1")]
             Self::CountSizeOverflow { .. } => Errno::OVERFLOW,
             Self::AllocationTooLarge { .. }
+            | Self::GuardedAllocationTooLarge { .. }
             | Self::AlignedLargeAlignmentOffset { .. }
             | Self::ReservationTooLarge { .. } => Errno::OVERFLOW,
             Self::OutOfMemory { .. }
@@ -1285,6 +1290,11 @@ impl SourceErrorReport {
                 message.append(b": invalid (unaligned) pointer: ");
                 append_source_pointer(&mut message.bytes, &mut message.length, pointer);
                 message.append(b"\n");
+            }
+            Self::GuardedAllocationTooLarge { size } => {
+                message.append(b"(guarded) allocation request is too large (");
+                decimal(&mut message, size);
+                message.append(b" bytes)\n");
             }
             Self::AllocationTooLarge { size } => {
                 message.append(b"allocation request is too large (");
@@ -3915,6 +3925,60 @@ mod tests {
         let bounded = SourceFormattedMessage::from_source_formatted(source);
 
         assert_eq!(bounded.as_c_str().to_bytes().len(), 990);
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "mi-secure-1"))]
+    #[test]
+    fn secure_default_fault_aborts_after_registered_handler_priority() {
+        const CHILD: &str = "CRABC_MI_SECURE_FAULT_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let entries = environment_entries(&[b"mimalloc_show_errors=0"]);
+            install_option_trace_environment(&entries);
+            let capture = Capture::new();
+            let owner = initialized_option_owner(&capture);
+            let code = AtomicUsize::new(0);
+            unsafe extern "C" fn error(code: core::ffi::c_int, argument: *mut c_void) {
+                // SAFETY: registration retains this stack atomic through the
+                // synchronous report and ends before its lifetime finishes.
+                unsafe { &*argument.cast::<AtomicUsize>() }.store(code as usize, Ordering::Relaxed);
+            }
+            // SAFETY: this child serializes registration and report delivery;
+            // its stack callback argument outlives both operations.
+            unsafe {
+                owner.register_error(Some(error), (&code as *const AtomicUsize).cast_mut().cast());
+                assert_eq!(owner.error_message(Errno::FAULT, source_message(b"registered\n\0")),
+                           SourceErrorDisposition::Handled);
+                assert_eq!(code.load(Ordering::Relaxed), Errno::FAULT.raw() as usize);
+                owner.register_error(None, core::ptr::null_mut());
+            }
+            std::println!("secure.error.handled={}", code.load(Ordering::Relaxed));
+            std::println!("secure.error.default.entered");
+            // SAFETY: the owner is private to this child and has no live
+            // callback registration or allocator projection.
+            unsafe { owner.error_message(Errno::FAULT, source_message(b"default\n\0")) };
+            return;
+        }
+        use std::os::unix::process::ExitStatusExt;
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "diagnostic_output::tests::secure_default_fault_aborts_after_registered_handler_priority",
+                   "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1").output().unwrap();
+        let stdout = std::string::String::from_utf8_lossy(&result.stdout);
+        assert!(stdout.contains("secure.error.handled=14"), "{stdout}");
+        assert!(stdout.contains("secure.error.default.entered"), "{stdout}");
+        assert_eq!(result.status.signal(), Some(6), "{stdout}");
+    }
+
+    #[test]
+    fn guarded_oversize_error_preserves_source_code_and_request() {
+        use super::SourceErrorReport;
+        for size in [crate::config::MAX_ALLOC_SIZE, usize::MAX] {
+            let report = SourceErrorReport::GuardedAllocationTooLarge { size };
+            assert_eq!(report.error(), Errno::OVERFLOW);
+            assert_eq!(report.message().as_c_str().to_bytes(), std::format!(
+                "(guarded) allocation request is too large ({size} bytes)\n"
+            ).as_bytes());
+        }
     }
 
     #[test]
