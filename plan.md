@@ -28,53 +28,44 @@ only its exact source, configuration, image, products, and execution context.
   only `gpt-6.1-sol` with medium reasoning; the target is 16 concurrent lanes,
   subject to the tool's actual capacity.
 - **Runtime and ABI:** native Rust signal masks, descriptor reads, synchronous
-  waits, and process queues have pinned-musl controls and facade checks. Header
-  replay now uses actual inventory origins and the immutable linker image.
-  All 27 compiler helpers have complete bodies, private dependencies, constants,
-  and actual installed calls; the four-mode complete and pending selectors pass.
-  Crypt readers replay both static modes, and family admission binds their exact
-  retained product pair. Resolver admission compares the validated alias summary.
-  These corrections still require fresh complete family admissions.
-- **Allocator implementation:** atomic owner checks precede page borrows; local
-  allocation preserves subword sizes and source padding/page keys. Arena reserve
-  arithmetic, debug realloc refusal, aligned reuse, and failure diagnostics have
-  source controls. Attached TLDs use locked projections. Main-Theap cache and
-  fresh sibling allocation/reclamation now follow the source; fixed copied-owner
-  repair passes scoped controls. Copied auxiliary siblings and qualifying
-  performance remain open. The private diagnostic header preserves the frozen
-  allocation adapter ABI through an explicit diagnostic feature; all 199 merged
-  runner tests pass. Default and diagnostic native export surfaces are separately
-  validated; fresh ordered foundation prerequisites are being rerun.
-- **Allocator evidence:** exact `f7f2dba074` passes all eleven API/mode gates,
-  ten evidence classes, and its independent physical reader; each of four modes
-  matches 983 C/Rust fields. The existing runner deletes temporary driver binaries;
-  retained source, traces, reports, and logs remain physically verified. All 37
-  scoped Heap/Theap executable rows pass, while ten gates retain conditions and
-  eight missing runner classes. Fresh plain-worker statistics pass 12 profiles
-  and 984 fields; placement-sensitive OS-aligned differences remain raw.
-  External arena callback tests now exercise actual protection transitions and
-  match 184,010 fields; canonical M2 remains partial. M1 passes with immutable
-  image provenance. All eight M3 local components, native 327 and strict Miri 15
-  pass; its aggregate still lacks M2. M3 now rejects stale-source or wrong-image
-  prerequisites. Hardware obligations remain open.
-- **Runtime qualification:** the accepted-C `c7f6d8bef` cohort passes all 219
-  executions and its retained physical reader. Its Rust std/LTO/unwind consumer
-  and independent physical replay pass with no unmet conditions. Resolver's full
-  command passes, but final admission exposed the now-corrected alias-summary
-  comparison; no admission is transferred to newer source. A separate POSIX
-  cohort passes all 54 rows, with final admission reconstruction continuing.
-  The corresponding native `c7f6d8bef` cohort retains an extracted signal-handler
-  timeout and remains unqualified. Native and musl both reproduce the workload's
-  child-counter window under controlled scheduling; that does not waive failures.
-- **Next qualification:** fresh accepted-C and native cohorts each have one
-  producer. Family lanes consume their authenticated same-source products through
-  existing supplied-product interfaces. Complete header, compiler/CRT, text,
-  math/fenv, resolver, pthread, C ABI, and Rust-consumer composition remains open.
-  Dynamic 219-case qualification and the full libc-test aggregate are distinct
-  workloads. Original numeric corroboration, signal, AIO, compiler, resolver,
-  and corpus failures remain retained. The corrected text reader needs a fresh
-  family run. A full 34-case corpus and its independent physical reader pass on
-  their historical source, which does not qualify newer merges.
+  waits, alternate stacks, and process/thread queues have pinned-musl controls.
+  Header replay uses inventory origins and the immutable linker image. Exact
+  `0c53e7969` qualifies 27 installed compiler helpers and 183 CRT obligations in
+  four modes. The merged 28th helper, `__divdc3`, matches 1,407,104 oracle cases
+  across four rounding modes and exception flags; its installed aggregate is
+  pending. Four binary32/integer128 cast helpers remain missing.
+- **Allocator implementation:** copied auxiliary-owner repair, locked TLD
+  projections, and regular OS full-page abandonment are integrated with focused
+  regressions. Statistics use the source's cached/main-Theap selection; live-page
+  Heap classification avoids the visitor lock and excludes stale deleted Heap
+  identities. Public allocation, visitation, subprocess, arena ownership, and
+  fault rollback receivers execute real native tests. Unchanged upstream Heap
+  stress still aborts on a legal Heap deletion; its failure remains retained.
+- **Allocator evidence:** exact `f7f2dba074` passes eleven API/mode gates with
+  983 C/Rust fields per mode. Exact `102b1ad27` passes all 37 scoped Heap/Theap
+  executable rows and its retained physical reader. Current M6 has 45 runnable
+  entries and no missing runners; all ten gates retain unmet conditions. Exact
+  `1b814` statistics evidence passes all 33 runnable rows. External arena
+  protection controls match 184,010 fields; canonical M2 remains partial.
+  Exact `a836` passes all eight local M3 components, 328 native tests and 15
+  strict Miri tests; its aggregate still lacks M2. M1 has immutable image
+  provenance. Hardware and qualifying performance obligations remain open.
+- **Runtime qualification:** accepted-C `0c53e7969` qualifies 219 executions,
+  the separate 54-row aggregate, pthread composition, resolver, Rust std/LTO/
+  unwind, complete headers, and their bounded independent readers. POSIX
+  admission and its independent reader pass for nine capabilities and 149
+  symbols. Complete text admission passes nine components and 16 capabilities;
+  its canonical evidence paths were read-only, but scratch aliases were writable.
+  The compiler selector's stale text adapter is being reproduced and repaired.
+  C ABI remains partial. These results do not qualify newer merged source.
+- **Next qualification:** native `bed22dc18` retains a signal-handler/fork
+  timeout after 85 successful executions and remains unqualified. Native and
+  musl reproduce the workload's child-counter window under controlled scheduling;
+  that does not waive the failure. Fresh source qualification must bind its own
+  products, exact image and independent readers. Complete math/fenv, compiler
+  composition, C ABI, allocator mode/lifetime conditions, and ordered merged-source
+  gates remain open. Original failures and the historical 34-case corpus remain
+  retained without transferring admission to newer merges.
 - **Remaining:** finish planned runtime families and allocator source/API/mode
   conditions; replay ordered gates on merged source; obtain physical huge-page
   and NUMA evidence and an uncontended performance matrix; then execute the
