@@ -4582,21 +4582,21 @@ impl RuntimeProcessStorage {
         // This static owner retains ticket zero for the process lifetime, and
         // no competing runtime lifecycle call can pass the INITIALIZING state
         // above.
+        // SAFETY: `NativeProcessStartupFacts::new` required this reader and
+        // FILE provider to satisfy the diagnostic input obligations for this
+        // exact process lifetime.
+        let diagnostic_inputs = unsafe {
+            ProcessDiagnosticInputs::new(facts.environment_reader(), default_stderr_output)
+        };
+        #[cfg(target_arch = "x86_64")]
+        let diagnostic_inputs = if let Some(store) = facts.source_errno_store() {
+            diagnostic_inputs.with_source_errno_store(store)
+        } else {
+            diagnostic_inputs
+        };
         let owner = unsafe {
             ProcessMainInitializationStorage::global()
-                .prepare_from_source_environment(
-                    config,
-                    // SAFETY: `NativeProcessStartupFacts::new` required this
-                    // reader and FILE provider to satisfy the diagnostic
-                    // input obligations for this exact process lifetime.
-                    unsafe {
-                        ProcessDiagnosticInputs::new(
-                            facts.environment_reader(),
-                            default_stderr_output,
-                        )
-                    },
-                    entry,
-                )
+                .prepare_from_source_environment(config, diagnostic_inputs, entry)
         };
         let (owner, startup) = match owner {
             Ok(prepared) => prepared,
