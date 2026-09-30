@@ -2216,9 +2216,12 @@ pub(crate) struct PublishedMappingView { mapping: Mapping }
 
 impl PublishedMappingView {
     /// # Safety
-    /// `memory` describes one live mapping transferred with `into_published`.
-    /// The caller retains its published owner and excludes terminal release
-    /// throughout this projection and each page/bitmap transition.
+    /// `memory` is unchanged provenance for one live mapping. Its unique
+    /// release owner is either retained by the synchronous publishing caller
+    /// or has been transferred to the source-published arena token. The caller
+    /// keeps that owner live and excludes terminal release throughout this
+    /// projection and every page/bitmap transition. This view never acquires
+    /// the owner's release right, including during registry publication.
     pub(crate) unsafe fn new(memory: MemoryId, page_size: PageSize) -> Result<Self> {
         // The private image only stores checked geometry; this wrapper
         // exposes transitions and never its terminal release edge.

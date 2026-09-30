@@ -1287,6 +1287,10 @@ impl ProcessArenaBacking {
                 },
                 exclusive, hook, metadata_hook, memory,
                 |arena| {
+                    // Readers may observe this entry before the synchronous
+                    // call returns. The local owner still retains the live
+                    // mapping; reserve_lock and the active preparation prevent
+                    // terminal release until its token transfer below finishes.
                     if self.registry.insert(arena) {
                         Ok(())
                     } else {
@@ -1343,6 +1347,10 @@ impl ProcessArenaBacking {
         let base = NonNull::new(span.base)?;
         let allocation = match memory.kind() {
             MemoryKind::Os => ArenaBacking::PublishedRegular(unsafe {
+                // SAFETY: registry publication retains exact live provenance.
+                // Before the publisher returns, its local owner and active
+                // preparation prevent release; afterward the registry token
+                // retains that right until quiescent destruction.
                 PublishedMappingView::new(memory, binding.config.page_size()).ok()?
             }),
             MemoryKind::OsHuge => ArenaBacking::PublishedHuge { base, size: span.size },
