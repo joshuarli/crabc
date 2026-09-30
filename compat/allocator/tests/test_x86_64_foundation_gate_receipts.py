@@ -220,6 +220,13 @@ class RetainedProducerSourceTests(unittest.TestCase):
             with reader.receipt_source(self.producer_root):
                 self.assertEqual(reader.harness.ROOT, self.producer_root)
 
+    def test_output_publication_cannot_dirty_receiver_after_final_source_check(self):
+        output = self.receiver_root / "compat"
+        with mock.patch.object(reader, "__file__", str(self.receiver_file)),              mock.patch.dict(reader.os.environ, {"CRABC_RECEIPT_REPLAY_OUTPUT": str(output)}):
+            with self.assertRaisesRegex(reader.RECEIPT_ERROR, "receiver source changed"):
+                with reader.receipt_source(self.producer_root):
+                    pass
+
     def test_dirty_producer_is_refused_before_helper_loading(self):
         self.producer_file.write_text(self.producer_file.read_text() + "modified = True\n")
         original = reader.harness

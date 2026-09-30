@@ -323,14 +323,14 @@ def receipt_source(source_root: Path):
         sys.path.insert(0, str(source_root / "compat/allocator"))
         yield receiver_identity, producer_identity
         require(not cache_prefix.exists(), "producer helper bytecode namespace changed during replay")
-        require(seals.source_seal(receiver_root) == receiver_identity, "executing receiver source changed during replay")
-        require(seals.source_seal(source_root) == producer_identity, "retained producer source changed during replay")
         destination = os.environ.get("CRABC_RECEIPT_REPLAY_OUTPUT")
         if destination:
             receiver.write_json(Path(destination) / "source-identities.json", {
                 "executing_receiver": receiver_identity, "retained_producer": producer_identity,
                 "scope": "local physical components; prerequisite admission unchanged",
             })
+        require(seals.source_seal(receiver_root) == receiver_identity, "executing receiver source changed during replay")
+        require(seals.source_seal(source_root) == producer_identity, "retained producer source changed during replay")
     except Exception as error:
         receipts = sys.modules.get("native_shadow_receipt")
         receipt_error = getattr(receipts, "ReceiptError", RECEIPT_ERROR)
