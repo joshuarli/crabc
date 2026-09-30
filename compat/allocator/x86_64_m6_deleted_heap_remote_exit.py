@@ -86,6 +86,14 @@ def ownership_matrix(driver, artifacts, runner, profiles, modes, begin, end, exp
         receipt = receipts.read_receipt(harness.ROOT, selected_runner)
         if dict(receipt.parameters) != parameters:
             raise harness.HarnessError("ownership receipt profile or workload selection differs")
+        expected_cases = []
+        for profile in profiles:
+            expected_cases.extend(f"{profile}-{name}" for name in ("oracle-build", "native-build"))
+            for backend in ("c", "native"):
+                expected_cases.extend(f"{profile}-{backend}-{step}" for step in ("compile", "link", *modes))
+            expected_cases.extend(f"{profile}-{mode}-observations" for mode in modes)
+        if receipt.case_ids() != expected_cases:
+            raise harness.HarnessError("ownership receipt lacks the ordered full build/runtime/observation roster")
         print("Heap ownership exact-source physical receipt: PASS", flush=True)
         if replay:
             execution = harness.require_native_x86_64(require_image_identity=True)
