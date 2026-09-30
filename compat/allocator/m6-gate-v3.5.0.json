@@ -308,7 +308,7 @@
         "unit:heap-allocation"
       ],
       "blocked_by": [
-        "Every Heap-scoped allocation entry is exported for main-subprocess threads and follows its source path through the Heap's Theap; selected child-subprocess plain, zeroing, aligned through 128 MiB, owned-block, and same-child cross-Heap paths match pinned C, including the 256 MiB alignment refusal. Public aligned-at zeroing, offsets, failure errno, and one OS-backed live block across Heap deletion now have a direct differential. The required Heap allocation unit runner and complete per-entry failure and lifetime coverage remain open."
+        "Every Heap-scoped allocation entry is exported for main-subprocess threads and follows its source path through the selected Theap. Selected child and aligned-at paths have pinned C differentials; the independent production unit covers 28 live 8 KiB allocations, content, failure retention, replacement, deletion transfer and subsequent Heap allocation. Complete per-entry failure, debug-mode and concurrent lifetime coverage remain open."
       ]
     },
     {
@@ -364,7 +364,7 @@
         "upstream:test-api-heaps"
       ],
       "blocked_by": [
-        "The conveniences expand only to Heap entry points that do not exist yet."
+        "Heap convenience expansions now have the underlying exported allocation entries and an independent production allocation unit. Complete macro/inline caller coverage and per-entry boundaries across all required configurations remain unproved."
       ]
     },
     {
@@ -397,7 +397,7 @@
         "unit:theap"
       ],
       "blocked_by": [
-        "Process-main mi_theap_get_default/set_default and direct mi_theap_malloc/zalloc have source-built evidence across main, worker, and fork contexts. A child thread has source-built evidence for direct non-main Theap allocation, default substitution/restoration on one TLD, ownership, cache preservation, oversized errno, and teardown. The remaining direct allocation variants, collection, statistics, visitation, guarded setters, and broader cross-thread lifetime cases are absent or unproved."
+        "Pinned C/native direct Theap observations and an independent production integration cover default selection, direct allocation variants, cache behavior, live-client deletion, collection and release in main, worker, child and fork contexts. Guarded setters, complete statistics/visitation configurations and broader cross-thread lifetime evidence remain unproved."
       ]
     },
     {
@@ -467,7 +467,7 @@
         "unit:subprocess"
       ],
       "blocked_by": [
-        "mi_subproc_main, mi_subproc_current, mi_subproc_new, mi_subproc_destroy, mi_subproc_add_current_thread, and mi_subproc_visit_heaps are exported for root and nested children. A source-built public nested-child creation, allocation, Heap visit, owner-exit, and inner-before-outer teardown trace matches pinned C, including allocation of the inner record and main Heap image from the outer child. Complete Heap entry and failure coverage and subprocess statistics entries remain absent."
+        "Public root and nested subprocess entries have a pinned C/native receiver and independent production integration covering admission refusal, Heap list order, nested metadata, owner exit and client lifetime through destruction. Heap and metadata statistics printing preserves source selection and callback allocation in scoped controls. Complete per-entry failure, all statistics configurations and concurrent lifetime coverage remain open."
       ]
     },
     {
@@ -506,7 +506,7 @@
         "upstream:test-stress-subprocs"
       ],
       "blocked_by": [
-        "The native adapter binds the Heap and reservation entries test-api.c uses, whose checks pass; test-stress-heaps.c and test-stress-subprocs.c need the subprocess entries and the remaining Heap entries, which the adapter does not export."
+        "The native adapter exports the entries required by both unchanged upstream stress workloads. Subprocess stress passes 25 C/Rust cases on its exact retained source. Assert-active rolling Heap stress still aborts at 1 worker, scale 1, 8 iterations when legal Heap deletion is refused; the full required Heap matrix remains unqualified."
       ]
     }
   ]
