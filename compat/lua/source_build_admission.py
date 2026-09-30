@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Admit current native Lua static and dynamic source-build reports.
 
-Without arguments this validates both latest lane reports and prints the
-admission. ``--output NEW_DIR`` also retains that admission as
+Without arguments this validates both conventional latest lane reports and
+prints the admission. ``--static-report`` and ``--dynamic-report`` select the
+physical latest paths recorded by their dispatchers. Nondefault paths are
+retained as checkout-relative locators and authenticated again on replay.
+``--output NEW_DIR`` also retains that admission as
 ``NEW_DIR/admission.json``: the receipt the ``consumer.source-build``
 qualification gate selects through its ``lua-source-build`` publication.
 The receipt asserts nothing by itself; ``validate_receipt`` reruns the
@@ -172,7 +175,7 @@ def read_report(path: Path, expected_runner: str) -> dict[str, Any]:
         == hashlib.sha256(report_path.read_bytes()).digest(),
         "published Lua source-build report differs from its authoritative report",
     )
-    latest = Path(str(dispatcher.get("latest_report", ""))).resolve(strict=True)
+    latest = physical_file(Path(str(dispatcher.get("latest_report", ""))), "Lua dispatcher latest report")
     require(latest == report_path, "Lua source-build report is not the selected latest report")
     require(
         dispatcher.get("source_identity") == LUA.current_source_identity(),
@@ -213,8 +216,9 @@ def validate_pinned_input(value: Mapping[str, Any]) -> None:
     )
 
 
-def admit_static() -> dict[str, str]:
-    report = read_report(STATIC_REPORT, "crabc-lua-native-x86-static-source-build")
+def admit_static(report_path: Path | None = None) -> dict[str, str]:
+    selected = Path(os.path.abspath(ROOT / report_path)) if report_path is not None else STATIC_REPORT
+    report = read_report(selected, "crabc-lua-native-x86-static-source-build")
     dispatcher = report["dispatcher"]
     state = Path(str(dispatcher["state_root"]))
     environment = report.get("environment")
@@ -240,11 +244,15 @@ def admit_static() -> dict[str, str]:
                 isinstance(result, Mapping) and result.get("passed") is True,
                 f"static Lua {name} {workload} comparison did not pass",
             )
-    return {"report_sha256": LUA.sha256_file(STATIC_REPORT), "product_sha256": LUA.sha256_file(sysroot[0] / "share/crabc/manifest.json")}
+    admission = {"report_sha256": LUA.sha256_file(selected), "product_sha256": LUA.sha256_file(sysroot[0] / "share/crabc/manifest.json")}
+    if selected != STATIC_REPORT:
+        admission["report_path"] = str(selected.relative_to(ROOT))
+    return admission
 
 
-def admit_dynamic() -> dict[str, str]:
-    report = read_report(DYNAMIC_REPORT, "crabc-lua-native-x86-dynamic-source-build-dispatch")
+def admit_dynamic(report_path: Path | None = None) -> dict[str, str]:
+    selected = Path(os.path.abspath(ROOT / report_path)) if report_path is not None else DYNAMIC_REPORT
+    report = read_report(selected, "crabc-lua-native-x86-dynamic-source-build-dispatch")
     dispatcher = report["dispatcher"]
     state = Path(str(dispatcher["state_root"]))
     manifests: dict[str, str] = {}
@@ -277,24 +285,27 @@ def admit_dynamic() -> dict[str, str]:
         and artifacts["installed"] == artifacts["extracted"],
         "dynamic Lua installed/extracted products are not reproducible",
     )
-    return {"report_sha256": LUA.sha256_file(DYNAMIC_REPORT), **manifests}
+    admission = {"report_sha256": LUA.sha256_file(selected), **manifests}
+    if selected != DYNAMIC_REPORT:
+        admission["report_path"] = str(selected.relative_to(ROOT))
+    return admission
 
 
-def validate() -> dict[str, object]:
+def validate(*, static_report: Path | None = None, dynamic_report: Path | None = None) -> dict[str, object]:
     """Require physical, passing, current-source receipts for both lanes."""
 
     source = LUA.current_source_identity()
-    return {"source_identity": source, "static": admit_static(), "dynamic": admit_dynamic()}
+    return {"source_identity": source, "static": admit_static(static_report), "dynamic": admit_dynamic(dynamic_report)}
 
 
-def write_receipt(output: Path) -> Path:
+def write_receipt(output: Path, *, static_report: Path | None = None, dynamic_report: Path | None = None) -> Path:
     """Admit both lanes now and retain that admission below a fresh directory."""
 
     output = Path(os.path.abspath(output))
     require(output.is_relative_to(ROOT / ".work"), "Lua admission output must be below this checkout's .work")
     require(not output.exists() and not output.is_symlink(), f"Lua admission output is not fresh: {output}")
     LUA.require_physical_directory(output.parent, "Lua admission output parent")
-    receipt = {"schema": RECEIPT_SCHEMA, "gate": GATE, "admission": validate()}
+    receipt = {"schema": RECEIPT_SCHEMA, "gate": GATE, "admission": validate(static_report=static_report, dynamic_report=dynamic_report)}
     output.mkdir()
     path = output / RECEIPT_NAME
     LUA.write_json_atomic(path, receipt)
@@ -319,7 +330,22 @@ def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
         and record["gate"] == GATE,
         "Lua admission receipt does not match its schema",
     )
-    current = validate()
+    admission = record.get("admission")
+    require(isinstance(admission, Mapping), "Lua admission receipt has invalid admission fields")
+    selections: dict[str, Path] = {}
+    for lane in ("static", "dynamic"):
+        fields = admission.get(lane)
+        require(isinstance(fields, Mapping), f"Lua admission receipt has invalid {lane} fields")
+        if "report_path" in fields:
+            locator = fields["report_path"]
+            require(isinstance(locator, str) and bool(locator), f"Lua {lane} report locator is invalid")
+            relative = Path(locator)
+            require(not relative.is_absolute() and ".." not in relative.parts and str(relative) == locator,
+                    f"Lua {lane} report locator must be checkout-relative")
+            # A locator selects bytes to authenticate; it does not waive the
+            # report's physical latest path, source or product validation.
+            selections[f"{lane}_report"] = physical_file(ROOT / relative, f"Lua {lane} selected report")
+    current = validate(**selections)
     require(
         record["admission"] == current,
         "Lua admission receipt differs from a fresh admission of the current source, reports and products",
@@ -330,13 +356,15 @@ def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--output", type=Path, help="fresh .work directory that retains admission.json")
+    parser.add_argument("--static-report", type=Path, help="physical static report selected by its dispatcher; defaults to the conventional latest report")
+    parser.add_argument("--dynamic-report", type=Path, help="physical dynamic report selected by its dispatcher; defaults to the conventional latest report")
     arguments = parser.parse_args(argv)
     try:
         if arguments.output is not None:
-            receipt = write_receipt(arguments.output)
+            receipt = write_receipt(arguments.output, static_report=arguments.static_report, dynamic_report=arguments.dynamic_report)
             report = json.loads(receipt.read_text(encoding="utf-8"))["admission"]
         else:
-            report = validate()
+            report = validate(static_report=arguments.static_report, dynamic_report=arguments.dynamic_report)
     except (LUA.RunnerError, QUALIFICATION.QualificationError, OSError, ValueError) as error:
         print(f"Lua source-build admission: FAIL: {error}", file=sys.stderr)
         return 1
