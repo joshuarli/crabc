@@ -3291,5 +3291,51 @@ class AbiPrerequisiteClosureTests(unittest.TestCase):
             self.assertEqual(selection.main(arguments), 2)
 
 
+
+class CrtStartupProductRosterTests(unittest.TestCase):
+    def setUp(self):
+        import installed_crt_startup_evidence as owner
+        self.owner = owner
+        parent = ROOT / '.work/x86_64/native-abi-selection-crt-roster-tests'
+        parent.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=parent)
+        self.addCleanup(temporary.cleanup)
+        self.work = Path(temporary.name)
+        self.paths = {'static_product': self.work / 'static', 'dynamic_product': self.work / 'dynamic'}
+        inputs = {'static_preparation': {'primary': {'path': self.paths['static_product'].relative_to(ROOT).as_posix()}},
+                  'dynamic_product': {'path': self.paths['dynamic_product'].relative_to(ROOT).as_posix()}}
+        self.owner_paths = owner.product_paths(ROOT, inputs)
+        for name, path in self.owner_paths.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(('retained startup input ' + name).encode())
+        self.receipt = {name: owner.ident(ROOT, path) for name, path in self.owner_paths.items()}
+
+    def test_current_owner_products_and_relocation_boundary_match_selected_inputs(self):
+        products = selection._crt_startup_product_identities(self.paths)
+        self.assertEqual(set(products), set(self.receipt))
+        for name, observed in self.receipt.items():
+            selection._require_stdio_receipt_identity(observed, products[name], name)
+            self.assertEqual(products[name]['path'], str(self.owner_paths[name]))
+        self.assertEqual(selection._crt_startup_relocation_artifacts(products),
+                         set(self.owner_paths) - {'candidate-static'})
+
+    def test_frame_fragment_byte_changes_cannot_match_retained_owner_identities(self):
+        fragments = [name for name, path in self.owner_paths.items() if path.name in {'crti.o', 'crtn.o'}]
+        for name in fragments:
+            with self.subTest(artifact=name):
+                path = self.owner_paths[name]
+                original = path.read_bytes()
+                path.write_bytes(original + b'changed')
+                products = selection._crt_startup_product_identities(self.paths)
+                with self.assertRaisesRegex(selection.SelectionError, 'bytes differ'):
+                    selection._require_stdio_receipt_identity(self.receipt[name], products[name], name)
+                path.write_bytes(original)
+
+    def test_missing_frame_fragment_is_not_an_omitted_artifact(self):
+        path = next(path for path in self.owner_paths.values() if path.name == 'crtn.o')
+        path.unlink()
+        with self.assertRaises((selection.SelectionError, selection.inventory.InventoryError, OSError)):
+            selection._crt_startup_product_identities(self.paths)
+
 if __name__ == '__main__':
     unittest.main()

@@ -6444,9 +6444,13 @@ def _crt_startup_product_identities(paths: Mapping[str, Path]) -> dict[str, dict
         'static-crt1.o': static / 'crt1.o',
         'static-Scrt1.o': static / 'Scrt1.o',
         'static-rcrt1.o': static / 'rcrt1.o',
+        'static-crti.o': static / 'crti.o',
+        'static-crtn.o': static / 'crtn.o',
         'dynamic-crt1.o': dynamic / 'usr/lib/crt1.o',
         'dynamic-Scrt1.o': dynamic / 'usr/lib/Scrt1.o',
         'dynamic-crabc-dynamic-attach.o': dynamic / 'usr/lib/crabc-dynamic-attach.o',
+        'dynamic-crti.o': dynamic / 'usr/lib/crti.o',
+        'dynamic-crtn.o': dynamic / 'usr/lib/crtn.o',
     }
     return {name: file_identity(path) for name, path in records.items()}
 
