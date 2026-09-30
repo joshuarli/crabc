@@ -7,6 +7,7 @@ import copy
 import contextlib
 import importlib.util
 import io
+import json
 import os
 import subprocess
 import tempfile
@@ -104,7 +105,14 @@ class LocalEngineSourceTests(unittest.TestCase):
         self.git("add", "source-file")
         self.git("commit", "--quiet", "--no-verify", "-m", "source fixture")
 
-    def execute(self, mutation=None, arguments=None):
+    def native_environment(self):
+        return {
+            "CRABC_EXECUTION_MODE": "native",
+            "CRABC_HOST_ARCH": "x86_64",
+            "CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID": "sha256:" + "4" * 64,
+        }
+
+    def execute(self, mutation=None, arguments=None, environment=None):
         reports = []
         executed = []
 
@@ -118,7 +126,11 @@ class LocalEngineSourceTests(unittest.TestCase):
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
             stack.enter_context(mock.patch.object(gate.run, "ROOT", self.fixture))
-            stack.enter_context(mock.patch.object(gate.run, "require_native_x86_64", return_value={"execution_mode": "native", "host_architecture": "x86_64"}))
+            native_environment = self.native_environment() if environment is None else environment
+            inherited = {key: value for key, value in os.environ.items() if key not in self.native_environment()}
+            stack.enter_context(mock.patch.dict(os.environ, {**inherited, **native_environment}, clear=True))
+            stack.enter_context(mock.patch.object(gate.run.platform, "system", return_value="Linux"))
+            stack.enter_context(mock.patch.object(gate.run.platform, "machine", return_value="x86_64"))
             stack.enter_context(mock.patch.object(gate.run, "write_json", side_effect=lambda path, report: reports.append(report)))
             stack.enter_context(mock.patch.object(gate, "rust_test_binary", return_value=self.fixture / "test-binary"))
             stack.enter_context(mock.patch.object(gate, "prerequisite_status", return_value={"milestones": {}, "unmet": []}))
@@ -171,6 +183,127 @@ class LocalEngineSourceTests(unittest.TestCase):
         revision = subprocess.check_output(("git", "rev-parse", "HEAD"), cwd=self.fixture, text=True).strip()
         self.assertEqual(source["before"]["revision"], revision)
 
+
+    def source_state(self):
+        with mock.patch.object(gate.run, "ROOT", self.fixture):
+            return gate.run.runtime_ticket_zero_soak_source_state()
+
+    def prerequisite_receipt(self):
+        source = self.source_state()
+        return {
+            "milestone": {"status": "complete"},
+            "source": gate.run.runtime_ticket_zero_soak_source_attestation(source, source),
+            "native_execution_provenance": {
+                "execution_mode": "native", "host_architecture": "x86_64",
+                "image_id": self.native_environment()["CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID"],
+            },
+        }
+
+    def read_prerequisites(self, receipt, second=None):
+        with tempfile.TemporaryDirectory(prefix="m3-prerequisites-", dir=ROOT / ".work/tmp") as directory:
+            work = Path(directory)
+            contract = gate.load_contract()
+            for requirement, record in zip(contract["milestone"]["prerequisites"], (receipt, receipt if second is None else second)):
+                path = work / requirement["report"]
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(record))
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.object(gate.run, "ROOT", self.fixture))
+                stack.enter_context(mock.patch.object(gate.run, "WORK_ROOT", work))
+                stack.enter_context(mock.patch.dict(os.environ, self.native_environment()))
+                stack.enter_context(mock.patch.object(gate.run.platform, "system", return_value="Linux"))
+                stack.enter_context(mock.patch.object(gate.run.platform, "machine", return_value="x86_64"))
+                return gate.prerequisite_status(contract)
+
+    def test_current_clean_native_prerequisites_can_qualify(self) -> None:
+        self.assertFalse(self.read_prerequisites(self.prerequisite_receipt())["unmet"])
+
+    def test_a_complete_receipt_from_a_previous_commit_cannot_qualify(self) -> None:
+        receipt = self.prerequisite_receipt()
+        self.source.write_text("new source\n")
+        self.commit_source()
+        result = self.read_prerequisites(receipt)
+        self.assertTrue(any("source" in item for item in result["unmet"]))
+        self.assertEqual(result["milestones"]["m1"]["status"], "complete")
+
+    def test_complete_status_cannot_replace_a_clean_unchanged_source_attestation(self) -> None:
+        for mutation in ("absent", "dirty", "changed", "unstable", "corrupt-status"):
+            with self.subTest(mutation=mutation):
+                receipt = self.prerequisite_receipt()
+                if mutation == "absent":
+                    del receipt["source"]
+                elif mutation == "dirty":
+                    for state in (receipt["source"]["before"], receipt["source"]["after"]):
+                        state["worktree_clean"] = False
+                        state["worktree_status"] = gate.run.source_byte_record(b" M source-file\0")
+                elif mutation == "changed":
+                    receipt["source"]["after"]["revision"] = "0" * 40
+                elif mutation == "unstable":
+                    receipt["source"]["unchanged_during_execution"] = False
+                else:
+                    receipt["source"]["before"]["worktree_status"]["sha256"] = "0" * 64
+                result = self.read_prerequisites(receipt)
+                self.assertTrue(any("source" in item for item in result["unmet"]))
+                self.assertEqual(result["milestones"]["m1"]["status"], "complete")
+
+    def test_complete_status_cannot_replace_current_native_image_provenance(self) -> None:
+        for mutation in ("absent", "different", "mutable", "emulated", "foreign-host"):
+            with self.subTest(mutation=mutation):
+                receipt = self.prerequisite_receipt()
+                if mutation == "absent":
+                    del receipt["native_execution_provenance"]
+                elif mutation == "different":
+                    receipt["native_execution_provenance"]["image_id"] = "sha256:" + "5" * 64
+                elif mutation == "mutable":
+                    receipt["native_execution_provenance"]["image_id"] = "allocator:current"
+                elif mutation == "emulated":
+                    receipt["native_execution_provenance"]["execution_mode"] = "emulated"
+                else:
+                    receipt["native_execution_provenance"]["host_architecture"] = "aarch64"
+                result = self.read_prerequisites(receipt)
+                self.assertTrue(any("native execution" in item for item in result["unmet"]))
+                self.assertEqual(result["milestones"]["m1"]["status"], "complete")
+
+    def test_current_partial_prerequisite_stays_partial(self) -> None:
+        first = self.prerequisite_receipt()
+        second = copy.deepcopy(first)
+        second["milestone"]["status"] = "partial"
+        result = self.read_prerequisites(first, second)
+        self.assertEqual(result["milestones"]["m2"]["status"], "partial")
+        self.assertEqual(result["unmet"], ["prerequisite M2 is partial, not complete"])
+
+    def test_missing_image_cannot_start_qualification(self) -> None:
+        environment = self.native_environment()
+        del environment["CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID"]
+        status, reports, executed = self.execute(environment=environment)
+        self.assertEqual(status, 2)
+        self.assertFalse(reports)
+        self.assertFalse(executed)
+
+    def test_image_changes_during_execution_cannot_publish_a_gate_receipt(self) -> None:
+        def mutate():
+            os.environ["CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID"] = "sha256:" + "5" * 64
+        status, reports, executed = self.execute(mutate)
+        self.assertEqual(status, 2)
+        self.assertFalse(reports)
+        self.assertEqual(executed, ["differential"])
+
+    def test_gate_receipt_attests_the_current_native_image(self) -> None:
+        status, reports, _ = self.execute()
+        self.assertEqual(status, 0)
+        self.assertEqual(reports[0]["native_execution_provenance"], {
+            "execution_mode": "native", "host_architecture": "x86_64",
+            "image_id": self.native_environment()["CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID"],
+        })
+
+    def test_development_subset_does_not_require_an_image_attestation(self) -> None:
+        environment = self.native_environment()
+        del environment["CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID"]
+        self.source.write_text("work in progress\n")
+        status, reports, executed = self.execute(arguments=["--miri-only"], environment=environment)
+        self.assertEqual(status, 0)
+        self.assertFalse(executed)
+        self.assertNotIn("milestone", reports[0])
 
 class MiriWorkspaceTests(unittest.TestCase):
     def setUp(self) -> None:

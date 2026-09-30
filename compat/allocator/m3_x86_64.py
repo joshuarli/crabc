@@ -6,8 +6,10 @@ allocation/free, retirement/reuse, the selected bin/page-class matrix,
 deterministic differential traces, and Miri-compatible execution. The gate
 executes each selected check and completes only after its prerequisites and
 every component pass; otherwise it names the unmet conditions and exits 3.
-The qualification receipt binds the checks to one clean Git revision before
-and after execution. Dirty or changed source cannot publish that receipt.
+The qualification receipt binds the checks to one clean Git revision and one
+immutable native image before and after execution. Prerequisite receipts must
+attest that same source and image. Dirty or changed source, or changed native
+execution provenance, cannot publish the qualification receipt.
 
 The differential generates deterministic workloads (logical allocation IDs,
 seeded operation mixes, and a complete reachable-bin sweep), runs each one
@@ -1504,19 +1506,46 @@ def run_miri(contract: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def prerequisite_status(contract: Mapping[str, Any]) -> dict[str, Any]:
+    # A completed historical receipt cannot qualify the source and compiler
+    # selected for this execution. Keep its reported status while admitting
+    # only clean, unchanged source and native image identities that match.
+    source_state = run.runtime_ticket_zero_soak_source_state()
+    execution = run.require_native_x86_64(require_image_identity=True)
     results: dict[str, Any] = {}
     unmet: list[str] = []
     for prerequisite in contract["milestone"]["prerequisites"]:
         path = run.WORK_ROOT / prerequisite["report"]
         status = "absent"
+        receipt = None
         if path.is_file():
             try:
-                status = str(json.loads(path.read_text(encoding="utf-8"))["milestone"]["status"])
+                receipt = json.loads(path.read_text(encoding="utf-8"))
+                status = str(receipt["milestone"]["status"])
             except (OSError, KeyError, TypeError, json.JSONDecodeError):
                 status = "unreadable"
         results[prerequisite["milestone"]] = {"report": prerequisite["report"], "status": status}
+        subject = f"prerequisite {prerequisite['milestone'].upper()}"
         if status != "complete":
-            unmet.append(f"prerequisite {prerequisite['milestone'].upper()} is {status}, not complete")
+            unmet.append(f"{subject} is {status}, not complete")
+        if status in {"absent", "unreadable"}:
+            continue
+        try:
+            source = receipt["source"]
+            if not isinstance(source, Mapping):
+                raise run.HarnessError("source attestation is absent or invalid")
+            attestation = run.runtime_ticket_zero_soak_source_attestation(source["before"], source["after"])
+            if source != attestation:
+                raise run.HarnessError("source attestation does not establish unchanged clean execution")
+            if attestation["before"] != source_state:
+                raise run.HarnessError("source differs from the current clean Git source")
+        except (KeyError, TypeError, run.HarnessError) as error:
+            unmet.append(f"{subject} source cannot qualify: {error}")
+        try:
+            run.validate_native_execution_provenance(
+                receipt.get("native_execution_provenance"), expected_image_id=execution["image_id"]
+            )
+        except run.HarnessError as error:
+            unmet.append(f"{subject} native execution cannot qualify: {error}")
     return {"milestones": results, "unmet": unmet}
 
 
@@ -1608,12 +1637,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
     options = parser.parse_args(arguments)
     try:
         # Development subsets can inspect work in progress. Qualification
-        # binds every local-engine observation to one clean committed source.
-        source_before = run.runtime_ticket_zero_soak_source_state() if not any((
+        # binds every local-engine observation to clean committed source and
+        # the immutable compiler/oracle image selected by the native launcher.
+        qualification = not any((
             options.queue_reorder_only, options.miri_only, options.owner_only, options.differential_only,
-        )) else None
+        ))
+        source_before = run.runtime_ticket_zero_soak_source_state() if qualification else None
         contract = load_contract()
-        provenance = run.require_native_x86_64()
+        provenance = run.require_native_x86_64(require_image_identity=qualification)
         lockfile = run.sha256_file(LOCKFILE)
         if options.queue_reorder_only:
             queue = run_queue_reorder_differential(
@@ -1669,6 +1700,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         source = run.runtime_ticket_zero_soak_source_attestation(
             source_before, run.runtime_ticket_zero_soak_source_state()
         )
+        native_execution = run.native_execution_attestation(
+            provenance, run.require_native_x86_64(require_image_identity=True)
+        )
         gate = evaluate_gate(contract, checks)
         report = {
             "checks": checks,
@@ -1677,7 +1711,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
             "kind": "mimalloc-x86_64-m3-local-engine-gate",
             "milestone": {"id": "m3", "status": gate["status"]},
             "gate": gate,
-            "provenance": provenance,
+            "provenance": {key: provenance[key] for key in ("execution_mode", "host_architecture")},
+            "native_execution_provenance": native_execution,
             "source": source,
             "upstream": contract["upstream"],
         }
