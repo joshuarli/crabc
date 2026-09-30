@@ -2,7 +2,8 @@
 """Execute the ordered x86 qualification chain as a source-bound receipt.
 
 Ready declarations pin case manifests and runner bytes. The no-argument form
-executes the complete chain; ``--through GATE`` executes the contiguous prefix
+executes the correctness profile; ``--profile full`` includes performance.
+``--through GATE`` executes the contiguous prefix
 ending at that gate. Every selected predecessor runs again in the same
 invocation, execution stops at the first failing case, and a receipt binding
 the clean revision, tool/runtime inputs and raw case logs is written for the
@@ -1169,15 +1170,16 @@ def run_private_admission(report: Mapping[str, object]) -> Path:
 
 
 
-def select_promotion_prefix(report: Mapping[str, object], through: str) -> list[Mapping[str, object]]:
+def select_promotion_prefix(report: Mapping[str, object], through: str, *, profile: str | None = None) -> list[Mapping[str, object]]:
     """Select exactly the first N gates, with no skipped or imported dependency.
 
     All predecessors execute again in this invocation. A ready gate after a
     planned predecessor cannot be selected independently or inherit a private
     admission result as its missing dependency.
     """
-    if through not in manifest.CHAIN:
-        raise QualificationRunError(f"unknown qualification prefix endpoint: {through}")
+    profile = report.get("qualification_profile", "full") if profile is None else profile
+    if through not in manifest.active_chain(profile):
+        raise QualificationRunError(f"qualification endpoint {through} is outside {profile} profile")
     gates = report.get("promotion_chain")
     if not isinstance(gates, list) or tuple(gate.get("id") for gate in gates) != manifest.CHAIN:
         raise QualificationRunError("qualification prefix gate roster or order drifted")
@@ -1209,6 +1211,8 @@ CHAIN_RECEIPT_FIELDS = frozenset({
     "outcome",
     "error",
 })
+PROFILE_RECEIPT_FIELDS = frozenset({"qualification_profile", "active_gate_ids", "deferred_gate_ids", "complete_profile"})
+
 CHAIN_CASE_FIELDS = frozenset({
     "order",
     "gate",
@@ -1373,9 +1377,10 @@ def chain_gate_records(selected: Sequence[Mapping[str, object]]) -> list[dict[st
     ]
 
 
-def run_chain(report: Mapping[str, object], through: str) -> tuple[Path, dict[str, object]]:
+def run_chain(report: Mapping[str, object], through: str, *, profile: str | None = None) -> tuple[Path, dict[str, object]]:
     """Execute one ordered prefix (or the whole chain) and seal its receipt."""
-    selected = select_promotion_prefix(report, through)
+    profile = report.get("qualification_profile", "full") if profile is None else profile
+    selected = select_promotion_prefix(report, through, profile=profile)
     roster = chain_roster(selected)
     require_pinned_native_execution()
     source_before = source_identity()
@@ -1409,6 +1414,10 @@ def run_chain(report: Mapping[str, object], through: str) -> tuple[Path, dict[st
     value: dict[str, object] = {
         "schema": manifest.RECEIPT_SCHEMA,
         "kind": CHAIN_RECEIPT_KIND,
+        "qualification_profile": profile,
+        "active_gate_ids": list(manifest.active_chain(profile)),
+        "deferred_gate_ids": list(manifest.deferred_gate_ids(profile)),
+        "complete_profile": outcome == "passed" and through == manifest.active_chain(profile)[-1],
         "target": manifest.TARGET,
         "through": through,
         "contract_sha256": report["contract_sha256"],
@@ -1484,7 +1493,8 @@ def validate_chain_receipt(path: Path) -> dict[str, object]:
     transaction = path.parent
     evidence_path(transaction)
     receipt = read_json(path, "qualification chain receipt", transaction)
-    if set(receipt) != CHAIN_RECEIPT_FIELDS:
+    legacy = set(receipt) == CHAIN_RECEIPT_FIELDS
+    if not legacy and set(receipt) != CHAIN_RECEIPT_FIELDS | PROFILE_RECEIPT_FIELDS:
         raise QualificationRunError("qualification chain receipt fields drifted")
     if receipt["schema"] != manifest.RECEIPT_SCHEMA or receipt["kind"] != CHAIN_RECEIPT_KIND or receipt["target"] != manifest.TARGET:
         raise QualificationRunError("qualification chain receipt contract drifted")
@@ -1494,7 +1504,11 @@ def validate_chain_receipt(path: Path) -> dict[str, object]:
     report = manifest.load_contract()
     if receipt["contract_sha256"] != report["contract_sha256"]:
         raise QualificationRunError("qualification chain receipt was produced for a different contract")
-    selected = select_promotion_prefix(report, through)
+    profile = "full" if legacy else receipt["qualification_profile"]
+    if not legacy:
+        if receipt["active_gate_ids"] != list(manifest.active_chain(profile)) or receipt["deferred_gate_ids"] != list(manifest.deferred_gate_ids(profile)):
+            raise QualificationRunError("qualification chain receipt profile scope drifted")
+    selected = select_promotion_prefix(report, through, profile=profile)
     if receipt["gates"] != chain_gate_records(selected):
         raise QualificationRunError("qualification chain receipt gate roster or case manifests drifted")
     timing = (receipt["started_at_unix_ns"], receipt["finished_at_unix_ns"], receipt["duration_ns"])
@@ -1535,6 +1549,8 @@ def validate_chain_receipt(path: Path) -> dict[str, object]:
         raise QualificationRunError("qualification chain receipt outcome is invalid")
     if receipt["qualified_gates"] != qualified_gate_ids(selected, records):
         raise QualificationRunError("qualification chain receipt qualified-gate list drifted")
+    if not legacy and receipt["complete_profile"] is not (receipt["outcome"] == "passed" and through == manifest.active_chain(profile)[-1]):
+        raise QualificationRunError("qualification chain receipt profile completion drifted")
     if receipt["complete_chain"] is not (receipt["outcome"] == "passed" and through == manifest.CHAIN[-1]):
         raise QualificationRunError("qualification chain receipt completion flag drifted")
     return receipt
@@ -1555,11 +1571,11 @@ def failed_case_stdout(receipt_path: Path, receipt: Mapping[str, object]) -> byt
     return (receipt_path.parent / stdout["path"]).read_bytes()
 
 
-def run_status() -> int:
+def run_status(profile: str) -> int:
     """Evaluate every gate natively and independently; never a chain result."""
     require_pinned_native_execution()
     gates = gate_conditions_module()
-    results = gates.evaluate_chain(native=True)
+    results = gates.evaluate_chain(native=True, profile=profile)
     print(json.dumps(results, indent=2, sort_keys=True))
     for result in results:
         state = "PASS" if result["passed"] else "UNMET (" + ", ".join(result["unmet"]) + ")"
@@ -1571,6 +1587,7 @@ def argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check-contract", action="store_true", help="validate planning and pins without native execution")
     parser.add_argument("--private-admission", action="store_true", help="execute and retain the fixed non-promoting private admission receipt")
+    parser.add_argument("--profile", choices=("correctness", "full"), help="select correctness or the explicit full performance scope")
     parser.add_argument("--through", choices=manifest.CHAIN, help="execute and receipt the ordered prefix ending at this gate")
     parser.add_argument("--validate-receipt", type=Path, help="revalidate one ignored chain or private-admission receipt in the pinned native image")
     parser.add_argument("--status", action="store_true", help="evaluate every gate's conditions independently (diagnostic; no receipt)")
@@ -1592,6 +1609,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
             parsed.publish,
         )
     )
+    if parsed.profile is not None and (parsed.validate_receipt or parsed.private_admission or parsed.publish):
+        parser.error("profile selection applies only to ordered execution, status, or contract checks")
     if operation_count > 1:
         parser.error("select exactly one qualification operation")
     report = manifest.load_contract()
@@ -1599,6 +1618,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     # a caller cannot execute a source contract while ignoring stale generated
     # state consumed by the campaign report.
     manifest.write_or_check(manifest.GENERATED_PATH, report, check=True)
+    profile = parsed.profile or report["qualification_profile"]
     if parsed.check_contract:
         print(f"x86 qualification manifest contract: PASS ({len(report['promotion_chain'])} ordered gates; {report['ready_gate_count']} ready; no execution-completion claim)")
         return 0
@@ -1622,7 +1642,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         print(f"x86 qualification private admission receipt: PASS ({receipt}; non-promoting)")
         return 0
     if parsed.status:
-        return run_status()
+        return run_status(profile)
     if parsed.publish:
         require_pinned_native_execution()
         gate, publication, receipt_path = parsed.publish
@@ -1633,8 +1653,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
             raise QualificationRunError(str(error)) from error
         print(f"x86 qualification evidence published: {gate} {publication} -> {pointer}")
         return 0
-    through = parsed.through or manifest.CHAIN[-1]
-    receipt_path, receipt = run_chain(report, through)
+    through = parsed.through or manifest.active_chain(profile)[-1]
+    receipt_path, receipt = run_chain(report, through, profile=profile)
     if receipt["outcome"] != "passed":
         sys.stderr.buffer.write(failed_case_stdout(receipt_path, receipt))
         print(f"x86 qualification chain: FAILED ({receipt['error']}); receipt: {receipt_path}", file=sys.stderr)
@@ -1642,6 +1662,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     validate_chain_receipt(receipt_path)
     print(
         f"x86 qualification chain: PASS (through {through}; qualified {', '.join(receipt['qualified_gates'])}; "
+        f"profile={receipt['qualification_profile']}; complete_profile={receipt['complete_profile']}; "
         f"complete_chain={receipt['complete_chain']}); receipt: {receipt_path}"
     )
     return 0

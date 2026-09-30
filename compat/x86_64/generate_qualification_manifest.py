@@ -2,7 +2,8 @@
 """Validate executable x86 qualification declarations without claiming results.
 
 ``private_admission`` remains non-promoting. The eight ordered qualification
-entries are planned or ready to execute; readiness pins cases and runners,
+entries remain available. The selected correctness or full profile determines
+the active readiness scope; readiness pins cases and runners,
 not a pre-existing success receipt. Actual qualification requires subsequent
 source/tool/runtime/artifact-bound execution receipts outside tracked source.
 """
@@ -56,6 +57,16 @@ CHAIN = (
     "capability.accounting",
     "performance.release",
 )
+
+def active_chain(profile: str) -> tuple[str, ...]:
+    """Return the closed ordered scope selected for this qualification."""
+    require(isinstance(profile, str) and profile in {"correctness", "full"}, "unknown qualification profile")
+    return CHAIN[:-1] if profile == "correctness" else CHAIN
+
+
+def deferred_gate_ids(profile: str) -> tuple[str, ...]:
+    return tuple(gate for gate in CHAIN if gate not in active_chain(profile))
+
 PRIVATE_ADMISSION = (
     (
         "posix-abi-admission",
@@ -270,7 +281,7 @@ def validate_ready_cases(gate: Mapping[str, object], location: str) -> dict[str,
 
 
 def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
-    exact_keys(document, {"schema", "id", "target", "policy", "execution", "private_admission", "promotion_chain"}, "qualification contract")
+    exact_keys(document, {"schema", "id", "target", "policy", "execution", "private_admission", "promotion_chain", "qualification_profile"}, "qualification contract")
     require(document.get("schema") == SCHEMA, "qualification contract schema drifted")
     require(document.get("id") == "x86_64-native-qualification", "qualification contract id drifted")
     require(document.get("target") == TARGET, "qualification contract target drifted")
@@ -282,6 +293,8 @@ def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
         document.get("execution") == EXECUTION_CONTRACT,
         "qualification execution boundary drifted",
     )
+    profile = document.get("qualification_profile")
+    active = active_chain(profile)
     admission = validate_private_admission(document.get("private_admission"))
     gates = document.get("promotion_chain")
     require(isinstance(gates, list) and len(gates) == len(CHAIN), "qualification promotion chain roster drifted")
@@ -308,17 +321,18 @@ def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
         )
         row: dict[str, object] = {"id": identifier, "state": state, **fields, "timeout_seconds": timeout}
         row["depends_on"] = list(CHAIN[:index])
-        incomplete.append(identifier)
+        if identifier in active:
+            incomplete.append(identifier)
         if state == "planned":
             prefix_open = False
         else:
             row.update(validate_ready_cases(gate, location))
-            ready_count += 1
-            if prefix_open:
+            ready_count += identifier in active
+            if prefix_open and identifier in active:
                 runnable_prefix.append(identifier)
         normalized.append(row)
     require(not set(item["id"] for item in admission) & set(CHAIN), "private admission cannot be a promotion gate")
-    return {"schema": SCHEMA, "contract_sha256": sha256_file(CONTRACT_PATH), "target": TARGET, "policy": dict(policy), "execution": dict(EXECUTION_CONTRACT), "private_admission": admission, "promotion_chain": normalized, "completed_gate_count": 0, "ready_gate_count": ready_count, "runnable_prefix": runnable_prefix, "incomplete_gates": incomplete, "promotion_ready": False}
+    return {"qualification_profile": profile, "active_gate_ids": list(active), "deferred_gate_ids": list(deferred_gate_ids(profile)), "schema": SCHEMA, "contract_sha256": sha256_file(CONTRACT_PATH), "target": TARGET, "policy": dict(policy), "execution": dict(EXECUTION_CONTRACT), "private_admission": admission, "promotion_chain": normalized, "completed_gate_count": 0, "ready_gate_count": ready_count, "runnable_prefix": runnable_prefix, "incomplete_gates": incomplete, "promotion_ready": False}
 
 
 def load_contract(path: Path | None = None) -> dict[str, object]:

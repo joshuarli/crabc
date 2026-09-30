@@ -38,6 +38,23 @@ class QualificationManifestTests(unittest.TestCase):
     def document(self) -> dict[str, object]:
         return json.loads(qualification.CONTRACT_PATH.read_text(encoding="utf-8"))
 
+    def test_profiles_keep_full_roster_and_close_only_selected_readiness(self):
+        document = self.document()
+        document['qualification_profile'] = 'full'
+        full = qualification.validate_contract(document)
+        self.assertEqual(full['active_gate_ids'], list(qualification.CHAIN))
+        self.assertEqual(full['deferred_gate_ids'], [])
+        document['qualification_profile'] = 'correctness'
+        correctness = qualification.validate_contract(document)
+        self.assertEqual(correctness['promotion_chain'], full['promotion_chain'])
+        self.assertEqual(correctness['active_gate_ids'], list(qualification.CHAIN[:-1]))
+        self.assertEqual(correctness['deferred_gate_ids'], ['performance.release'])
+        self.assertFalse(correctness['promotion_ready'])
+        for invalid in ('partial', '', None, []):
+            document['qualification_profile'] = invalid
+            with self.assertRaises(qualification.QualificationManifestError):
+                qualification.validate_contract(document)
+
     def test_checked_in_contract_declares_every_ordered_gate_executable(self) -> None:
         report = qualification.load_contract()
         self.assertEqual(report["execution"], qualification.EXECUTION_CONTRACT)
@@ -46,10 +63,10 @@ class QualificationManifestTests(unittest.TestCase):
             qualification.CHAIN,
         )
         # Ready means executable and pinned, never completed.
-        self.assertEqual(report["ready_gate_count"], len(qualification.CHAIN))
-        self.assertEqual(report["runnable_prefix"], list(qualification.CHAIN))
+        self.assertEqual(report["ready_gate_count"], len(qualification.active_chain("correctness")))
+        self.assertEqual(report["runnable_prefix"], list(qualification.active_chain("correctness")))
         self.assertEqual(report["completed_gate_count"], 0)
-        self.assertEqual(report["incomplete_gates"], list(qualification.CHAIN))
+        self.assertEqual(report["incomplete_gates"], list(qualification.active_chain("correctness")))
         self.assertFalse(report["promotion_ready"])
         gate_runner = ROOT / "compat/x86_64/run_qualification_gate.py"
         for gate in report["promotion_chain"]:
@@ -295,8 +312,8 @@ class QualificationManifestTests(unittest.TestCase):
                 report = qualification.validate_contract(document)
                 self.assertFalse(report["promotion_ready"])
                 self.assertEqual(report["completed_gate_count"], 0)
-                self.assertEqual(report["ready_gate_count"], len(qualification.CHAIN))
-                self.assertEqual(report["runnable_prefix"], list(qualification.CHAIN))
+                self.assertEqual(report["ready_gate_count"], len(qualification.active_chain("correctness")))
+                self.assertEqual(report["runnable_prefix"], list(qualification.active_chain("correctness")))
 
                 first_case = root / chain[0]["case_manifest"]
                 case = json.loads(first_case.read_text(encoding="utf-8"))

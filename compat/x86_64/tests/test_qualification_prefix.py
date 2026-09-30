@@ -116,7 +116,7 @@ class QualificationPrefixTests(unittest.TestCase):
             ), patch.object(runner, 'execution_inputs', return_value={'inputs': 1}), patch.object(
                 runner, 'ensure_physical_receipt_directory', return_value=receipts
             ), patch.object(runner, 'execute_chain_case', side_effect=case_result):
-                path, receipt = runner.run_chain(report, manifest.CHAIN[-1])
+                path, receipt = runner.run_chain(report, manifest.CHAIN[-1], profile="full")
                 self.assertEqual(json.loads(path.read_text()), receipt)
         self.assertEqual(executed, list(manifest.CHAIN[:4]))
         self.assertEqual(receipt['outcome'], 'failed')
@@ -546,7 +546,71 @@ class ChainReceiptRoundTripTests(unittest.TestCase):
             self.addCleanup(patcher.stop)
 
     def run_chain(self, through=manifest.CHAIN[-1]):
-        return runner.run_chain(manifest.load_contract(), through)
+        return runner.run_chain(manifest.load_contract(), through, profile="full")
+
+    def test_default_dispatch_executes_correctness_profile(self):
+        with patch.object(manifest, 'write_or_check'):
+            self.assertEqual(runner.main([]), 0)
+        paths = list(self.receipts.glob('*/receipt.json'))
+        self.assertEqual(len(paths), 1)
+        receipt = runner.validate_chain_receipt(paths[0])
+        self.assertEqual(receipt['through'], 'capability.accounting')
+        self.assertTrue(receipt['complete_profile'])
+        self.assertFalse(receipt['complete_chain'])
+        self.assertNotIn('performance.release', receipt['qualified_gates'])
+
+    def test_correctness_executes_functional_cases_and_replays_without_performance(self):
+        path, receipt = runner.run_chain(manifest.load_contract(), 'capability.accounting')
+        self.assertEqual(receipt['qualification_profile'], 'correctness')
+        self.assertTrue(receipt['complete_profile'])
+        self.assertFalse(receipt['complete_chain'])
+        self.assertNotIn('performance.release', [case['gate'] for case in receipt['cases']])
+        self.assertEqual(receipt['deferred_gate_ids'], ['performance.release'])
+        self.assertEqual(runner.validate_chain_receipt(path), receipt)
+
+    def test_correctness_failure_cannot_complete_profile(self):
+        self.environment['QUALIFICATION_FIXTURE_FAIL'] = 'capability.accounting'
+        path, receipt = runner.run_chain(manifest.load_contract(), 'capability.accounting')
+        self.assertEqual(receipt['outcome'], 'failed')
+        self.assertFalse(receipt['complete_profile'])
+        self.assertNotIn('performance.release', receipt['qualified_gates'])
+        self.assertEqual(runner.validate_chain_receipt(path), receipt)
+
+    def test_full_profile_still_executes_and_requires_performance(self):
+        self.environment['QUALIFICATION_FIXTURE_FAIL'] = 'performance.release'
+        path, receipt = runner.run_chain(manifest.load_contract(), 'performance.release', profile='full')
+        self.assertEqual(receipt['qualification_profile'], 'full')
+        self.assertEqual(receipt['cases'][-1]['gate'], 'performance.release')
+        self.assertFalse(receipt['complete_profile'])
+        self.assertFalse(receipt['complete_chain'])
+        self.assertEqual(runner.validate_chain_receipt(path), receipt)
+
+    def test_correctness_cannot_select_deferred_performance_or_forge_scope(self):
+        report = manifest.load_contract()
+        with self.assertRaisesRegex(runner.QualificationRunError, 'outside correctness'):
+            runner.run_chain(report, 'performance.release')
+        path, receipt = runner.run_chain(report, 'capability.accounting')
+        receipt['deferred_gate_ids'] = []
+        path.chmod(0o644)
+        path.write_text(json.dumps(receipt))
+        with self.assertRaisesRegex(runner.QualificationRunError, 'profile scope drifted'):
+            runner.validate_chain_receipt(path)
+
+    def test_legacy_full_receipt_still_requires_all_eight_for_complete_chain(self):
+        path, receipt = self.run_chain()
+        for field in runner.PROFILE_RECEIPT_FIELDS:
+            receipt.pop(field)
+        path.chmod(0o644)
+        path.write_text(json.dumps(receipt))
+        self.assertTrue(runner.validate_chain_receipt(path)['complete_chain'])
+        path, receipt = runner.run_chain(manifest.load_contract(), 'capability.accounting')
+        for field in runner.PROFILE_RECEIPT_FIELDS:
+            receipt.pop(field)
+        receipt['complete_chain'] = True
+        path.chmod(0o644)
+        path.write_text(json.dumps(receipt))
+        with self.assertRaisesRegex(runner.QualificationRunError, 'completion flag drifted'):
+            runner.validate_chain_receipt(path)
 
     def test_passing_chain_receipt_is_reread_from_physical_logs(self):
         path, receipt = self.run_chain()

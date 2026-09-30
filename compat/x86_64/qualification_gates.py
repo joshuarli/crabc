@@ -14,7 +14,7 @@ passes only when all of the following hold in the pinned native image:
 An evidence command without a registered reader, including a prose
 placeholder, is an unmet condition. The owning lane closes it by making the
 ledger command executable and registering one reader below; there is no
-"future milestone" state. Readers never replace a leaf's own validator: they
+implicit completion state. Readers never replace a leaf's own validator: they
 select the retained evidence and call that validator.
 
 Retained receipts written to caller-chosen directories are selected through a
@@ -840,9 +840,9 @@ def evaluate(gate: str, *, native: bool) -> dict[str, Any]:
     }
 
 
-def evaluate_chain(*, native: bool) -> list[dict[str, Any]]:
+def evaluate_chain(*, native: bool, profile: str = "correctness") -> list[dict[str, Any]]:
     """Evaluate every gate independently; this is a diagnostic, not a chain."""
-    return [evaluate(gate, native=native) for gate in CHAIN]
+    return [evaluate(gate, native=native) for gate in manifest.active_chain(profile)]
 
 
 def main(arguments: Sequence[str] | None = None) -> int:
