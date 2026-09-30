@@ -160,6 +160,7 @@ pub(crate) const SYS_RT_SIGPROCMASK: usize = 14;
 pub(crate) const SYS_RT_SIGPENDING: usize = 127;
 pub(crate) const SYS_RT_SIGTIMEDWAIT: usize = 128;
 pub(crate) const SYS_RT_SIGQUEUEINFO: usize = 129;
+pub(crate) const SYS_RT_TGSIGQUEUEINFO: usize = 297;
 pub(crate) const SYS_MOUNT: usize = 165;
 pub(crate) const SYS_UMOUNT2: usize = 166;
 pub(crate) const SYS_GETPGID: usize = 121;

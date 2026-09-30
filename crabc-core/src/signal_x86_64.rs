@@ -20,7 +20,7 @@
 use crate::Result;
 use crate::syscall::{
     decode, decode_i32, syscall2, syscall3, syscall4, SYS_RT_SIGACTION, SYS_RT_SIGPENDING,
-    SYS_RT_SIGPROCMASK, SYS_RT_SIGQUEUEINFO, SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT,
+    SYS_RT_SIGPROCMASK, SYS_RT_SIGQUEUEINFO, SYS_RT_SIGSUSPEND, SYS_RT_SIGTIMEDWAIT, SYS_RT_TGSIGQUEUEINFO,
     SYS_SIGALTSTACK, SYS_SIGNALFD4,
 };
 
@@ -217,6 +217,38 @@ pub unsafe fn rt_sigqueueinfo_raw(pid: i32, signal: i32, info: *const SigInfo) -
         syscall3(
             SYS_RT_SIGQUEUEINFO,
             pid as usize,
+            signal as usize,
+            info as usize,
+        )
+    })
+    .map(|_| ())
+}
+
+/// Queues one signal-information record to a specific Linux/x86-64 thread.
+///
+/// Linux validates that `tid` belongs to `tgid`. A caller restricting delivery
+/// to its own process supplies its current process ID as `tgid`.
+///
+/// # Safety
+///
+/// `info` must point to a readable, fully initialized 128-byte Linux signal-
+/// information record for the duration of the call. Its payload must use the
+/// layout selected by its signal and delivery code. The kernel copies this
+/// record during the call; it retains no pointer into the caller's storage.
+#[inline]
+pub unsafe fn rt_tgsigqueueinfo_raw(
+    tgid: i32,
+    tid: i32,
+    signal: i32,
+    info: *const SigInfo,
+) -> Result<()> {
+    // SAFETY: The caller owns the initialized signal-information pointer;
+    // Linux validates the scalar thread-group, thread, and signal selectors.
+    decode(unsafe {
+        syscall4(
+            SYS_RT_TGSIGQUEUEINFO,
+            tgid as usize,
+            tid as usize,
             signal as usize,
             info as usize,
         )

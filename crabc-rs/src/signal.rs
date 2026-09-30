@@ -884,14 +884,14 @@ impl SigInfo {
 
     #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
     #[inline]
-    fn queue(signal: Signal, value: i32) -> Self {
+    fn queue(signal: Signal, value: i32, sender_pid: i32) -> Self {
         let mut info = crabc_core::signal::SigInfo::zeroed();
         write_i32(&mut info.bytes, SIGINFO_SIGNO_OFFSET, signal.as_raw());
         write_i32(&mut info.bytes, SIGINFO_CODE_OFFSET, SI_QUEUE);
         write_i32(
             &mut info.bytes,
             SIGINFO_PID_OFFSET,
-            calling_pid_raw(),
+            sender_pid,
         );
         write_i32(
             &mut info.bytes,
@@ -1134,10 +1134,39 @@ pub fn timed_wait(set: &SignalSet, timeout: Option<&Timespec>) -> Result<(Signal
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 pub fn queue_process(pid: Pid, signal: Signal, value: i32) -> Result<()> {
-    let info = SigInfo::queue(signal, value);
+    let info = SigInfo::queue(signal, value, calling_pid_raw());
     // SAFETY: `SigInfo::queue` initialized the exact Linux queued-signal
     // layout, including the sender identity and `SI_QUEUE` discriminator.
     unsafe { crabc_core::signal::rt_sigqueueinfo_raw(pid.as_raw_pid(), signal.as_raw(), &info.0) }
+}
+
+/// Queues an integer-valued signal for a known thread in the calling process.
+///
+/// Linux `rt_tgsigqueueinfo` places the record in that thread's pending queue,
+/// so another thread cannot consume it with a synchronous signal wait. The
+/// target should block the selected signal before queued delivery if it will
+/// consume the record with [`wait_info`] or [`timed_wait`]. Realtime values
+/// retain their order within each signal number; ordinary signals can coalesce.
+///
+/// The thread-group selector is always the calling process ID. A missing
+/// thread returns `ESRCH`; this operation cannot target another process.
+/// Callers coordinate the target's lifetime because Linux can reuse a TID
+/// after its thread exits. The metadata carries `SI_QUEUE` and the sender's
+/// process ID and user ID, rather than the sender's thread ID. Kernel errors
+/// are returned directly without reading or changing C `errno`.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub fn queue_thread(tid: Pid, signal: Signal, value: i32) -> Result<()> {
+    let tgid = calling_pid_raw();
+    let info = SigInfo::queue(signal, value, tgid);
+    // SAFETY: The owned record has all 128 bytes initialized with the Linux
+    // SI_QUEUE layout and current sender identity. Linux copies it before the
+    // local storage expires and restricts `tid` to this calling process.
+    unsafe {
+        crabc_core::signal::rt_tgsigqueueinfo_raw(
+            tgid, tid.as_raw_pid(), signal.as_raw(), &info.0,
+        )
+    }
 }
 
 /// Sends `signal` to a known thread in the calling process.
