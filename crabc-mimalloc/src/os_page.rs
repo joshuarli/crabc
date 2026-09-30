@@ -1707,7 +1707,7 @@ mod tests {
         options.set(VmOption::DisallowOsAlloc, i64::from(disallow_os));
         let policy = std::boxed::Box::leak(std::boxed::Box::new(crate::os::VmPolicy::new(options).unwrap()));
         policy.finish_preloading();
-        VmProcess::new(policy, crate::subproc::MainSubprocess::test_static_owner())
+        VmProcess::new_main(policy, crate::subproc::MainSubprocess::test_static_owner())
     }
 
     #[test]
@@ -2313,7 +2313,7 @@ mod tests {
         let policy = std::boxed::Box::leak(std::boxed::Box::new(
             unsafe { crate::os::VmPolicy::from_process_options(output) }));
         policy.finish_preloading();
-        let process = VmProcess::new(policy, subprocess);
+        let process = VmProcess::new_main(policy, subprocess);
         let mut map = PageMap::initialize_for_process(config(4 * KIB), 0, true, process).unwrap();
         let mut bootstrap = std::boxed::Box::pin(ExclusiveTheapBootstrap::new());
         let mut session = bootstrap.as_mut().activate_detached_for_main_subprocess(
@@ -2430,7 +2430,7 @@ mod tests {
         let policy = std::boxed::Box::leak(std::boxed::Box::new(
             unsafe { crate::os::VmPolicy::from_process_options(output) }));
         policy.finish_preloading();
-        let process = VmProcess::new(policy, subprocess);
+        let process = VmProcess::new_main(policy, subprocess);
         let mut map = PageMap::initialize_for_process(config(4 * KIB), 0, true, process).unwrap();
         let mut bootstrap = std::boxed::Box::pin(ExclusiveTheapBootstrap::new());
         let mut session = bootstrap.as_mut().activate_detached_for_main_subprocess(
@@ -2563,7 +2563,7 @@ mod tests {
         let policy = std::boxed::Box::leak(std::boxed::Box::new(
             unsafe { crate::os::VmPolicy::from_process_options(output) }));
         policy.finish_preloading();
-        let process = VmProcess::new(policy, subprocess);
+        let process = VmProcess::new_main(policy, subprocess);
         let mut map = PageMap::initialize_for_process(config(4 * KIB), 0, true, process).unwrap();
         let mut bootstrap = std::boxed::Box::pin(ExclusiveTheapBootstrap::new());
         let mut session = bootstrap.as_mut().activate_detached_for_main_subprocess(
@@ -2963,7 +2963,7 @@ mod tests {
         let policy = std::boxed::Box::leak(std::boxed::Box::new(
             unsafe { crate::os::VmPolicy::from_process_options(output) }));
         policy.finish_preloading();
-        let process = VmProcess::new(policy, subprocess);
+        let process = VmProcess::new_main(policy, subprocess);
         let memory_config = config(4 * KIB);
         let mut map = PageMap::initialize_for_process(memory_config, 0, true, process).unwrap();
         let mut bootstrap = std::boxed::Box::pin(ExclusiveTheapBootstrap::new());
@@ -3187,7 +3187,7 @@ mod tests {
         let policy = std::boxed::Box::leak(std::boxed::Box::new(
             unsafe { crate::os::VmPolicy::from_process_options(output) }));
         policy.finish_preloading();
-        let process = VmProcess::new(policy, subprocess);
+        let process = VmProcess::new_main(policy, subprocess);
         let memory_config = config(4 * KIB);
         let mut map = PageMap::initialize_for_process(memory_config, 0, true, process).unwrap();
         let mut bootstrap = std::boxed::Box::pin(ExclusiveTheapBootstrap::new());
