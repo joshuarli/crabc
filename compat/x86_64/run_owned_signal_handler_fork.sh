@@ -3,20 +3,74 @@
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-[ "$#" -le 1 ] || { printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2; exit 2; }
-provided_dynamic="${1:-}"
-if [ -n "$provided_dynamic" ]; then provided_dynamic="$(realpath -e "$provided_dynamic")"; fi
-python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_dynamic" <<'PY'
+usage() {
+    printf 'usage: %s [[--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT]\n' "$0" >&2
+    exit 2
+}
+provided_static=''
+provided_dynamic=''
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --static-sysroot)
+            [ "$#" -ge 2 ] && [ -z "$provided_static" ] && [ -n "$2" ] && [[ "$2" != -* ]] || usage
+            provided_static="$2"
+            shift 2
+            ;;
+        -*|'') usage ;;
+        *)
+            [ -z "$provided_dynamic" ] || usage
+            provided_dynamic="$1"
+            shift
+            ;;
+    esac
+done
+[ -z "$provided_static" ] || [ -n "$provided_dynamic" ] || usage
+python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_static" "$provided_dynamic" <<'PY_INPUTS'
 from pathlib import Path
 import sys
-root, temporary = map(Path, sys.argv[1:3])
-if not temporary.is_dir() or temporary.resolve() != temporary or not temporary.is_relative_to(root / '.work'):
-    raise SystemExit('signal-handler fork TMPDIR must be a physical checkout .work directory')
-if sys.argv[3]:
-    product=Path(sys.argv[3])
-    if not product.is_dir() or not product.is_relative_to(root / '.work'):
-        raise SystemExit('signal-handler fork product must be a checkout .work directory')
-PY
+root = Path(sys.argv[1])
+for value, name in ((sys.argv[2], 'TMPDIR'), (sys.argv[3], 'static product'), (sys.argv[4], 'dynamic product')):
+    if not value and name != 'TMPDIR':
+        continue
+    path = Path(value).absolute()
+    if ('..' in path.parts or not path.is_dir() or path.resolve() != path
+            or not path.is_relative_to(root / '.work')):
+        raise SystemExit(f'signal-handler fork {name} must be a physical checkout .work directory')
+PY_INPUTS
+if [ -n "$provided_static" ]; then provided_static="$(realpath "$provided_static")"; fi
+if [ -n "$provided_dynamic" ]; then provided_dynamic="$(realpath "$provided_dynamic")"; fi
+# A supplied pair shares one clean source and allocator selection. An isolated
+# pass cannot qualify a previous failed cohort or another product's source.
+if [ -n "$provided_static" ]; then
+    python3 -B - "$ROOT" "$provided_static" "$provided_dynamic" <<'PY_PAIR'
+from pathlib import Path
+import json
+import sys
+root, static, dynamic = map(Path, sys.argv[1:])
+sys.path.insert(0, str(root / 'compat/x86_64'))
+from owned_posix_product_evidence import ProductEvidenceError, _validate_static_product, _validate_dynamic_product
+from owned_dynamic_qualification import QualificationError, product_identity, read
+from static_product_contract import git, source_digest
+for product, name, validate in ((static, 'static', _validate_static_product), (dynamic, 'dynamic', _validate_dynamic_product)):
+    try:
+        manifest, _ = validate(product)
+    except ProductEvidenceError as error:
+        raise SystemExit(f'signal-handler fork {name} product payload is invalid: {error}') from error
+    if name == 'static':
+        static_manifest = json.loads(manifest.read_text())
+if git('status', '--porcelain', '--untracked-files=all'):
+    raise SystemExit('signal-handler fork supplied pair requires clean source')
+try:
+    product_identity(dynamic)
+except QualificationError as error:
+    raise SystemExit(f'signal-handler fork dynamic product identity is invalid: {error}') from error
+state = read(dynamic / 'share/crabc/dynamic-product-state.json')
+if static_manifest.get('source_sha256') != state['source_sha256'] or state['source_sha256'] != source_digest():
+    raise SystemExit('signal-handler fork supplied product source identities differ')
+if static_manifest.get('allocator_backend') != state['allocator_backend']:
+    raise SystemExit('signal-handler fork supplied product allocator selections differ')
+PY_PAIR
+fi
 readonly work="$(mktemp -d "$TMPDIR/owned-signal-handler-fork.XXXXXX")"
 chmod a+rx "$work"
 printf 'owned signal-handler fork evidence: %s\n' "$work"
@@ -40,10 +94,12 @@ for name in ['COPYRIGHT','AUTHORS','src/common/test.h','src/common/print.c','src
 (work/'upstream-source.json').write_text(json.dumps({'source':provenance,'files':records},indent=2)+'\n')
 PY
 build_static=0
+if [ -n "$provided_static" ]; then build_static=1; fi
 if [ -z "$provided_dynamic" ]; then
     build_static=1
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$work/static-sysroot" >"$work/static-build.json"
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
+    provided_static="$work/static-sysroot"
     provided_dynamic="$work/dynamic-sysroot"
 fi
 "$provided_dynamic/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin -c "$ROOT/compat/x86_64/owned_signal_handler_fork_probe.c" -o "$work/workload.o"
@@ -80,8 +136,8 @@ for scenario in "${cases[@]}"; do observe "oracle-$scenario" /oracle "$scenario"
 observe oracle-raise-race /oracle-raise-race
 if [ "$build_static" -eq 1 ]; then
     for mode in static static-pie; do
-        "$work/static-sysroot/bin/crabc-cc" "-$mode" "$work/workload.o" -o "$work/root/$mode"
-        "$work/static-sysroot/bin/crabc-cc" "-$mode" "$work/raise-race.o" "$work/print.o" -o "$work/root/$mode-raise-race"
+        "$provided_static/bin/crabc-cc" "-$mode" --link-receipt "$work/root/$mode.crabc-link.json" "$work/workload.o" -o "$work/root/$mode"
+        "$provided_static/bin/crabc-cc" "-$mode" "$work/raise-race.o" "$work/print.o" -o "$work/root/$mode-raise-race"
         compare "$mode" "/$mode" "/$mode-raise-race"
     done
 fi
