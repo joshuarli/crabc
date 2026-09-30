@@ -249,13 +249,17 @@ int main(void) {
   printf("CRABC_MI_M7_STATISTICS_INITIAL_TRANSFER_TRACE_END\n");
 #if CRABC_INITIAL_PLACEMENT_DIAGNOSTIC
   /* These are integers copied from live client pointers, not metadata
-     identities. The conservative aligned range bound makes crossed PageMap
-     indices visible; these diagnostics do not adjust any counter. */
-  const size_t span = CRABC_INITIAL_ALIGNMENT + usable + 65536;
-  if (client_address > UINTPTR_MAX - span || client_address < CRABC_INITIAL_ALIGNMENT + 65536) abort();
+     identities. The OS-aligned singleton starts its data at the client;
+     PageMap registers one data slice plus its one-slice page offset, from
+     that data start. Earlier alignment overmapping is not registered there.
+     These diagnostics leave every statistics counter unchanged. */
+  const int os_small = CRABC_INITIAL_ALIGNMENT == 1048576 && CRABC_INITIAL_REQUEST == 17;
+  if (os_small && (usable > 65536 || (client_address & (1048576 - 1)) != 0)) abort();
+  const size_t span = os_small ? 2 * 65536 : CRABC_INITIAL_ALIGNMENT + usable + 65536;
+  if (client_address > UINTPTR_MAX - span) abort();
   fprintf(stderr, "placement.warm_index=%zu\n", (size_t)(warm_address >> 29));
   fprintf(stderr, "placement.client_index=%zu\n", (size_t)(client_address >> 29));
-  fprintf(stderr, "placement.client_lower_bound_index=%zu\n", (size_t)((client_address - CRABC_INITIAL_ALIGNMENT - 65536) >> 29));
+  fprintf(stderr, "placement.client_lower_bound_index=%zu\n", (size_t)(client_address >> 29));
   fprintf(stderr, "placement.client_bound_index=%zu\n", (size_t)((client_address + span - 1) >> 29));
   for (unsigned stage = 0; stage < STAGE_COUNT; stage++) {
     fprintf(stderr, "placement.%s.mmap_calls=%lld\n", stages[stage],
