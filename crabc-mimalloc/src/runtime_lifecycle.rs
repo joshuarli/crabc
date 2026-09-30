@@ -19591,6 +19591,183 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
 
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "native-runtime-test-fault"))]
+    #[test]
+    fn heap_key_bitmap_refusal_frees_unpublished_image_and_retries_original_generation() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::heap_key_bitmap_refusal_frees_unpublished_image_and_retries_original_generation",
+            || {
+                use crate::source_heap_api as heaps;
+                unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
+                unsafe extern "C" fn count_client(
+                    _: *const core::ffi::c_void, _: *const heaps::HeapArea,
+                    block: *mut core::ffi::c_void, _: usize, argument: *mut core::ffi::c_void,
+                ) -> bool {
+                    if !block.is_null() {
+                        // SAFETY: the synchronous test visitor owns this output.
+                        unsafe { *argument.cast::<usize>() += 1 };
+                    }
+                    true
+                }
+                let emit = |index, value: bool| {
+                    assert!(value, "Heap key ownership observation {index}");
+                    std::println!("m6.heap.key_fault.{index}={}", usize::from(value));
+                };
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    RuntimeStderrOutput::new(no_output)
+                }));
+                let caller = crate::source_api::malloc(64).value.expect("the retained main client");
+                // SAFETY: this test exclusively owns the requested client extent.
+                unsafe { caller.as_ptr().write_bytes(0x59, 64) };
+                let main = MainSubprocess::global().ready_main_heap_pointer();
+                assert!(!main.is_null());
+                let roots = || {
+                    // SAFETY: this fresh process serializes every Heap/Theap
+                    // transition; this projection ends before the next call.
+                    (default_theap(), unsafe { (&*main).test_theaps_head() })
+                };
+                let clients = || {
+                    let mut count = 0usize;
+                    // SAFETY: the main Heap and its live pages remain stable
+                    // throughout this synchronous read-only visitor.
+                    assert!(unsafe { heaps::heap_visit_blocks(main.cast(), true,
+                        Some(count_client), (&mut count as *mut usize).cast()) });
+                    count
+                };
+                let intact = || {
+                    // SAFETY: the retained caller client stays live and exclusive.
+                    unsafe { core::slice::from_raw_parts(caller.as_ptr(), 64) }
+                        .iter().all(|byte| *byte == 0x59)
+                };
+                let identity = MainSubprocess::global().identity();
+                let before = identity.heap_list().test_counts();
+                let before_roots = roots();
+                let before_clients = clients();
+                let keys = crate::owned_tls_key_registry::OwnedThreadLocalKeyRegistry::global();
+                let metadata_before = MetaAllocator::global().test_allocation_audit().live_capability_count;
+                emit(0, keys.test_live_lease_count() == 0);
+                for attempt in 0..2 {
+                    keys.test_fail_next_bitmap_allocation();
+                    let first = 1 + attempt * 6;
+                    emit(first, heaps::heap_new().is_null());
+                    emit(first + 1, identity.heap_list().test_counts() == before);
+                    emit(first + 2, keys.test_live_lease_count() == 0
+                        && MetaAllocator::global().test_allocation_audit().live_capability_count == metadata_before);
+                    emit(first + 3, clients() == before_clients);
+                    emit(first + 4, roots() == before_roots);
+                    emit(first + 5, intact());
+                }
+                let retry = heaps::heap_new();
+                assert!(!retry.is_null());
+                let counts = identity.heap_list().test_counts();
+                // SAFETY: the quiescent registry head is this newly published
+                // Heap; no opaque identity is cast to construct this projection.
+                let head = NonNull::new(identity.heap_list().test_head()).expect("the published Heap head");
+                assert_eq!(head.as_ptr().cast::<core::ffi::c_void>(), retry);
+                let facts = unsafe { head.as_ref() }.test_non_main_facts();
+                emit(13, counts.0 == before.0 + 1 && counts.1 == before.1 + 1
+                    && keys.test_live_lease_count() == 1 && facts.4);
+                emit(14, facts.5 & crate::thread_local::TLS_INDEX_MASK == 0
+                    && facts.5 >> crate::thread_local::TLS_INDEX_BITS == 1);
+                emit(15, intact());
+                // SAFETY: the Heap has no clients or Theaps and this thread is
+                // its sole user. Release consumes the exact published Heap.
+                assert!(unsafe { heaps::heap_release(retry, true) });
+                let after = identity.heap_list().test_counts();
+                emit(16, after.0 == before.0 && after.1 == before.1 + 1
+                    && keys.test_live_lease_count() == 0);
+                let bitmap_capabilities = MetaAllocator::global().test_allocation_audit().live_capability_count;
+                let reused = heaps::heap_new();
+                assert!(!reused.is_null());
+                // SAFETY: as above, the registry head is the just-created Heap.
+                let reused_head = NonNull::new(identity.heap_list().test_head()).expect("the reused Heap head");
+                let reused_facts = unsafe { reused_head.as_ref() }.test_non_main_facts();
+                emit(17, reused_facts.5 & crate::thread_local::TLS_INDEX_MASK == 0
+                    && reused_facts.5 >> crate::thread_local::TLS_INDEX_BITS == 2
+                    && keys.test_live_lease_count() == 1 && reused_facts.4);
+                // SAFETY: this second Heap likewise has no clients or Theaps.
+                assert!(unsafe { heaps::heap_release(reused, true) });
+                let after = identity.heap_list().test_counts();
+                emit(18, after.0 == before.0 && after.1 == before.1 + 2
+                    && keys.test_live_lease_count() == 0
+                    && MetaAllocator::global().test_allocation_audit().live_capability_count == bitmap_capabilities);
+                emit(19, roots() == before_roots && intact());
+                let capacity = crate::thread_local::TLS_REGISTRY_EXPANSION_BITS;
+                let mut owned = std::vec::Vec::with_capacity(capacity);
+                for index in 0..capacity {
+                    let heap = crate::subproc::main_heaps::native_heap_new().expect("one real regular key");
+                    // SAFETY: each typed factory result remains live in owned.
+                    let facts = unsafe { heap.as_ref() }.test_non_main_facts();
+                    assert_eq!(facts.5 & crate::thread_local::TLS_INDEX_MASK, index as u64);
+                    assert_eq!(facts.5 >> crate::thread_local::TLS_INDEX_BITS, 3 + index as u64);
+                    owned.push(heap);
+                }
+                // SAFETY: the first retained Heap is owned by this thread.
+                let owned_client = unsafe { heaps::heap_malloc(owned[0].as_ptr().cast(), 64) }
+                    .value.expect("an existing key's live client");
+                // SAFETY: the test owns this requested client extent.
+                unsafe { owned_client.as_ptr().write_bytes(0x59, 64) };
+                // SAFETY: the Heap and its Theap remain live until explicit release.
+                let owned_theap = unsafe { heaps::heap_theap(owned[0].as_ptr().cast()) };
+                let expansion_before = identity.heap_list().test_counts();
+                let expansion_clients = clients();
+                let expansion_metadata = MetaAllocator::global().test_allocation_audit().live_capability_count;
+                emit(20, expansion_before.0 == before.0 + capacity
+                    && expansion_before.1 == before.1 + 2 + capacity
+                    && keys.test_live_lease_count() == capacity);
+                keys.test_fail_next_bitmap_allocation();
+                emit(21, heaps::heap_new().is_null());
+                emit(22, identity.heap_list().test_counts() == expansion_before);
+                emit(23, keys.test_live_lease_count() == capacity
+                    && MetaAllocator::global().test_allocation_audit().live_capability_count == expansion_metadata);
+                emit(24, clients() == expansion_clients && intact());
+                let owned_intact = || {
+                    // SAFETY: this exact client remains retained across key creation.
+                    unsafe { core::slice::from_raw_parts(owned_client.as_ptr(), 64) }
+                        .iter().all(|byte| *byte == 0x59)
+                };
+                // SAFETY: the old Heap, Theap and client remain quiescent and live.
+                emit(25, unsafe { heaps::heap_of(owned_client.as_ptr()) } == owned[0].as_ptr().cast()
+                    && owned_intact() && unsafe { heaps::heap_theap(owned[0].as_ptr().cast()) } == owned_theap);
+                let expanded = heaps::heap_new();
+                assert!(!expanded.is_null());
+                // SAFETY: the registry head is the freshly published expanded Heap.
+                let expanded_head = NonNull::new(identity.heap_list().test_head()).expect("the expanded Heap head");
+                let expanded_facts = unsafe { expanded_head.as_ref() }.test_non_main_facts();
+                emit(26, expanded_facts.5 & crate::thread_local::TLS_INDEX_MASK == capacity as u64
+                    && expanded_facts.5 >> crate::thread_local::TLS_INDEX_BITS == 3 + capacity as u64
+                    && keys.test_live_lease_count() == capacity + 1);
+                emit(27, owned.iter().enumerate().all(|(index, heap)| {
+                    // SAFETY: every prior typed Heap remains live and unchanged.
+                    let facts = unsafe { heap.as_ref() }.test_non_main_facts();
+                    facts.5 & crate::thread_local::TLS_INDEX_MASK == index as u64
+                        && facts.5 >> crate::thread_local::TLS_INDEX_BITS == 3 + index as u64
+                }) && MetaAllocator::global().test_allocation_audit().live_capability_count == expansion_metadata);
+                // SAFETY: same live and quiescent old Heap/Theap/client proof.
+                emit(28, intact() && owned_intact()
+                    && unsafe { heaps::heap_theap(owned[0].as_ptr().cast()) } == owned_theap);
+                // SAFETY: the expanded Heap has no clients or Theaps.
+                assert!(unsafe { heaps::heap_release(expanded, true) });
+                emit(29, keys.test_live_lease_count() == capacity);
+                // SAFETY: the old client stays live until this exact free.
+                unsafe { crate::source_api::free(owned_client.as_ptr()) };
+                for heap in owned {
+                    // SAFETY: all clients are freed and every Heap is released once.
+                    assert!(unsafe { heaps::heap_release(heap.as_ptr().cast(), true) });
+                }
+                // SAFETY: select the retained main Heap to drop the old cache
+                // reference, exactly as the source cached-Theap transition does.
+                let _ = unsafe { heaps::heap_theap(main.cast()) };
+                let after = identity.heap_list().test_counts();
+                emit(30, after.0 == before.0 && after.1 == expansion_before.1 + 1
+                    && keys.test_live_lease_count() == 0);
+                emit(31, roots() == before_roots && intact());
+                // SAFETY: the caller has retained this exact live client.
+                unsafe { crate::source_api::free(caller.as_ptr()) };
+            },
+        );
+    }
+
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     #[test]
     fn live_client_geometry_tracks_initial_arena_capacity_and_os_page() {

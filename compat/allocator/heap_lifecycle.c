@@ -4,6 +4,159 @@
    membership, sequence numbers, counts and statistics, dynamic thread-local
    keys, and main-Heap refusal. Printed in the field order of
    types::heap_registry::lifecycle::tests::source_ordered_empty_heap_lifecycle_trace. */
+#ifdef CRABC_HEAP_KEY_FAULT
+#include "mimalloc.h"
+#include "mimalloc/internal.h"
+#include "mimalloc/prim.h"
+#include "bitmap.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static bool key_bitmap_refuse;
+static size_t key_bitmap_refusals;
+static size_t key_bitmap_expected_size;
+
+static void* key_bitmap_allocate(mi_subproc_t* subproc, size_t size,
+                                 size_t alignment, mi_memid_t* memid) {
+  if (key_bitmap_refuse) {
+    if (subproc != _mi_subproc_main() ||
+        size != key_bitmap_expected_size || alignment != MI_BCHUNK_SIZE) abort();
+    key_bitmap_refusals++;
+    return NULL;
+  }
+  return _mi_meta_zalloc_aligned(subproc, size, alignment, memid);
+}
+
+/* Only the private key-bitmap allocation call is intercepted; Heap creation,
+   metadata ownership, bitmap publication, and key release use pinned bodies. */
+#define _mi_meta_zalloc_aligned(subproc, size, alignment, memid) \
+  key_bitmap_allocate(subproc, size, alignment, memid)
+#include "threadlocal.c"
+#undef _mi_meta_zalloc_aligned
+
+static void key_observe(size_t index, bool value) {
+  if (!value) abort();
+  printf("m6.heap.key_fault.%zu=%d\n", index, value);
+}
+
+static bool key_count_client(const mi_heap_t* heap, const mi_heap_area_t* area,
+                             void* block, size_t size, void* argument) {
+  (void)heap; (void)area; (void)size;
+  if (block != NULL) (*(size_t*)argument)++;
+  return true;
+}
+
+static size_t key_main_clients(mi_heap_t* main) {
+  size_t count = 0;
+  if (!mi_heap_visit_blocks(main, true, key_count_client, &count)) abort();
+  return count;
+}
+
+static bool key_intact(const unsigned char* caller) {
+  for (size_t i = 0; i < 64; i++) if (caller[i] != 0x59) return false;
+  return true;
+}
+
+int main(void) {
+  mi_process_init();
+  unsigned char* caller = mi_malloc(64);
+  if (caller == NULL) abort();
+  memset(caller, 0x59, 64);
+  mi_subproc_t* subproc = _mi_subproc_main();
+  mi_heap_t* main = mi_heap_main();
+  mi_theap_t* base = mi_theap_get_default();
+  mi_theap_t* head = main->theaps;
+  size_t live = mi_atomic_load_relaxed(&subproc->heap_count);
+  size_t total = mi_atomic_load_relaxed(&subproc->heap_total_count);
+  size_t clients = key_main_clients(main);
+  key_observe(0, mi_thread_locals_free == NULL && mi_thread_locals_version == 0);
+  key_bitmap_expected_size = mi_bitmap_size(1024, NULL);
+  for (size_t attempt = 0; attempt < 2; attempt++) {
+    key_bitmap_refuse = true;
+    mi_heap_t* failed = mi_heap_new();
+    key_bitmap_refuse = false;
+    if (key_bitmap_refusals != attempt + 1) abort();
+    size_t first = 1 + attempt * 6;
+    key_observe(first, failed == NULL);
+    key_observe(first + 1, mi_atomic_load_relaxed(&subproc->heap_count) == live &&
+                 mi_atomic_load_relaxed(&subproc->heap_total_count) == total);
+    key_observe(first + 2, mi_thread_locals_free == NULL && mi_thread_locals_version == 0);
+    key_observe(first + 3, key_main_clients(main) == clients);
+    key_observe(first + 4, mi_theap_get_default() == base && main->theaps == head);
+    key_observe(first + 5, key_intact(caller));
+  }
+  mi_heap_t* retry = mi_heap_new();
+  if (retry == NULL) abort();
+  key_observe(13, mi_atomic_load_relaxed(&subproc->heap_count) == live + 1 &&
+              mi_atomic_load_relaxed(&subproc->heap_total_count) == total + 1 && retry->theaps == NULL);
+  key_observe(14, mi_key_index(retry->theap) == 0 && mi_key_version(retry->theap) == 1);
+  key_observe(15, key_intact(caller));
+  mi_heap_destroy(retry);
+  key_observe(16, mi_atomic_load_relaxed(&subproc->heap_count) == live &&
+              mi_atomic_load_relaxed(&subproc->heap_total_count) == total + 1);
+  mi_bitmap_t* bitmap = mi_thread_locals_free;
+  mi_heap_t* reused = mi_heap_new();
+  if (reused == NULL) abort();
+  key_observe(17, mi_key_index(reused->theap) == 0 && mi_key_version(reused->theap) == 2 && reused->theaps == NULL);
+  mi_heap_destroy(reused);
+  key_observe(18, mi_atomic_load_relaxed(&subproc->heap_count) == live &&
+              mi_atomic_load_relaxed(&subproc->heap_total_count) == total + 2 &&
+              mi_thread_locals_free == bitmap);
+  key_observe(19, mi_theap_get_default() == base && main->theaps == head && key_intact(caller));
+  size_t capacity = mi_bitmap_max_bits(mi_thread_locals_free);
+  mi_heap_t** owned = calloc(capacity, sizeof(*owned));
+  if (owned == NULL || capacity != 1024) abort();
+  for (size_t i = 0; i < capacity; i++) {
+    owned[i] = mi_heap_new();
+    if (owned[i] == NULL || mi_key_index(owned[i]->theap) != i) abort();
+  }
+  unsigned char* owned_client = mi_heap_malloc(owned[0], 64);
+  if (owned_client == NULL) abort();
+  memset(owned_client, 0x59, 64);
+  mi_theap_t* owned_theap = mi_heap_theap(owned[0]);
+  size_t expansion_live = mi_atomic_load_relaxed(&subproc->heap_count);
+  size_t expansion_total = mi_atomic_load_relaxed(&subproc->heap_total_count);
+  size_t expansion_version = mi_thread_locals_version;
+  bitmap = mi_thread_locals_free;
+  clients = key_main_clients(main);
+  key_observe(20, expansion_live == live + capacity && expansion_total == total + 2 + capacity);
+  key_bitmap_expected_size = mi_bitmap_size(capacity + 1024, NULL);
+  key_bitmap_refuse = true;
+  mi_heap_t* failed = mi_heap_new();
+  key_bitmap_refuse = false;
+  if (key_bitmap_refusals != 3) abort();
+  key_observe(21, failed == NULL);
+  key_observe(22, mi_atomic_load_relaxed(&subproc->heap_count) == expansion_live &&
+              mi_atomic_load_relaxed(&subproc->heap_total_count) == expansion_total);
+  key_observe(23, mi_thread_locals_free == bitmap && mi_thread_locals_version == expansion_version);
+  key_observe(24, key_main_clients(main) == clients && key_intact(caller));
+  key_observe(25, mi_heap_of(owned_client) == owned[0] && key_intact(owned_client) &&
+              mi_heap_theap(owned[0]) == owned_theap);
+  mi_heap_t* expanded = mi_heap_new();
+  if (expanded == NULL) abort();
+  key_observe(26, mi_key_index(expanded->theap) == capacity &&
+              mi_key_version(expanded->theap) == expansion_version + 1 &&
+              mi_atomic_load_relaxed(&subproc->heap_count) == expansion_live + 1);
+  bool retained_keys = true;
+  for (size_t i = 0; i < capacity; i++) {
+    if (mi_key_index(owned[i]->theap) != i || mi_key_version(owned[i]->theap) != 3 + i) retained_keys = false;
+  }
+  key_observe(27, retained_keys && mi_thread_locals_free != bitmap);
+  key_observe(28, key_intact(caller) && key_intact(owned_client) && mi_heap_theap(owned[0]) == owned_theap);
+  mi_heap_destroy(expanded);
+  key_observe(29, mi_atomic_load_relaxed(&subproc->heap_count) == expansion_live);
+  mi_free(owned_client);
+  for (size_t i = 0; i < capacity; i++) mi_heap_destroy(owned[i]);
+  mi_heap_theap(main);
+  key_observe(30, mi_atomic_load_relaxed(&subproc->heap_count) == live &&
+              mi_atomic_load_relaxed(&subproc->heap_total_count) == expansion_total + 1);
+  key_observe(31, mi_theap_get_default() == base && main->theaps == head && key_intact(caller));
+  free(owned);
+  mi_free(caller);
+  return 0;
+}
+#else
 #include "static.c"
 #include <pthread.h>
 #include <stdio.h>
@@ -594,3 +747,4 @@ int main(int argc, char** argv) {
   }
   return 0;
 }
+#endif

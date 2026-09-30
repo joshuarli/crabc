@@ -15,7 +15,10 @@ Heap's first Theap and before a later page, then retry with the same owners.
 They also reuse isolated pinned metadata-publication refusal comparisons and
 the existing TLD/Theap rollback and regular TLS-slot allocation regressions.
 An ordinary managed arena with OS fallback disabled also refuses Heap-image
-allocation before list publication. Key-creation failure remains unmodeled.
+allocation before list publication. Key-bitmap refusal controls exercise the
+first publication and the first real growth boundary with old keys and a
+Heap/Theap/client still owned; retry preserves those keys and advances only
+the successful claim's generation.
 """
 
 from pathlib import Path
@@ -41,6 +44,7 @@ MAIN_FIELD_COUNT = 32
 LATER_TEST = "subproc::main_heaps::tests::source_ordered_main_subprocess_later_thread_heap_trace"
 LATER_FIELD_COUNT = 21
 FAULT_TEST = "managed_commit_refusal_preserves_heap_theap_and_caller_until_retry"
+KEY_FAULT_TEST = "runtime_lifecycle::tests::heap_key_bitmap_refusal_frees_unpublished_image_and_retries_original_generation"
 FAULT_BRANCHES = (
     "later-main-tld-metadata-allocation-failure",
     "later-main-theap-metadata-allocation-failure",
@@ -78,7 +82,7 @@ def fault_product(target: Path, artifacts: Path, *, integration: bool) -> Path:
                "x86_64-unknown-linux-musl", "--target-dir", str(target),
                "-p", "crabc-mimalloc", "--no-default-features"]
     command += (["--features", "native-runtime-test-audit", "--test", "native_heap_lifecycle_faults"]
-                if integration else ["--lib"])
+                if integration else ["--features", "native-runtime-test-fault", "--lib"])
     record = harness.command_record([*command, "--no-run", "--message-format=json"],
                                     cwd=harness.ROOT, timeout_seconds=900)
     name = "native" if integration else "unit"
@@ -121,6 +125,7 @@ def run_faults(*, replay: bool = False) -> None:
             if engine.file_record(harness.ROOT / row["path"]) != row:
                 raise harness.HarnessError(f"Heap fault product changed: {row['path']}")
         c_product = artifacts / "heap-fault-c"
+        key_product = artifacts / "heap-key-fault-c"
         native_product = artifacts / "heap-fault-native"
         unit_product = artifacts / "heap-fault-unit"
     else:
@@ -137,6 +142,13 @@ def run_faults(*, replay: bool = False) -> None:
             build = harness.command_record(command, cwd=source, timeout_seconds=300)
             (artifacts / "c-build.log").write_text(str(build["stdout"]) + str(build["stderr"]))
             harness.require_success(build, "Heap fault C build")
+            key_product = artifacts / "heap-key-fault-c"
+            key_command = [*command[:-3], "-DCRABC_HEAP_KEY_FAULT=1",
+                *(str(source / item) for item in harness.M1_COMPILER_TLS_ORACLE_SOURCES),
+                "-pthread", "-o", str(key_product)]
+            key_build = harness.command_record(key_command, cwd=source, timeout_seconds=300)
+            (artifacts / "key-c-build.log").write_text(str(key_build["stdout"]) + str(key_build["stderr"]))
+            harness.require_success(key_build, "Heap key bitmap C build")
             for branch in FAULT_BRANCHES:
                 initialization.build_c_branch(harness.require_tool("musl-gcc"), source, artifacts, branch)
         c_product = artifacts / "heap-fault-c"
@@ -166,7 +178,14 @@ def run_faults(*, replay: bool = False) -> None:
     c_image = trace(c_image_output, "image_fault", 12)
     native_image = trace(native_image_output, "image_fault", 12)
     compare("image_fault", c_image, native_image)
-    products = [c_product, native_product, unit_product]
+    c_key_output = execute(key_product, [], f"c-key-{suffix}.log")
+    rust_key_output = execute(unit_product, [KEY_FAULT_TEST, "--exact", "--nocapture", "--test-threads=1"], f"rust-key-{suffix}.log")
+    if harness.parse_rust_test_count(rust_key_output) != 1:
+        raise harness.HarnessError("Heap key bitmap fault did not execute one test")
+    c_key = trace(c_key_output, "key_fault", 32)
+    rust_key = trace(rust_key_output, "key_fault", 32)
+    compare("key_fault", c_key, rust_key)
+    products = [c_product, key_product, native_product, unit_product]
     rows = []
     for branch in FAULT_BRANCHES:
         index = initialization.branch_index(branch)
@@ -187,7 +206,8 @@ def run_faults(*, replay: bool = False) -> None:
         if harness.parse_rust_test_count(output) != 1:
             raise harness.HarnessError(f"Heap fault unit did not execute one test: {unit}")
     observed = {"c_trace": c_trace, "rust_trace": native_trace,
-                "c_image_trace": c_image, "rust_image_trace": native_image, "branches": rows}
+                "c_image_trace": c_image, "rust_image_trace": native_image,
+                "c_key_trace": c_key, "rust_key_trace": rust_key, "branches": rows}
     if replay:
         if observed != {key: recorded[key] for key in observed}:
             raise harness.HarnessError("Retained Heap fault physical traces changed")
@@ -200,7 +220,7 @@ def run_faults(*, replay: bool = False) -> None:
             "seal": integrated.source_seal(), "git": engine.git_provenance(), "image_id": image_id,
             "inputs": [engine.file_record(path) for path in inputs],
             "products": [engine.file_record(path) for path in products]}})
-    print(f"Heap fault controls: 28 public C/native observations, two paired metadata-publication refusals, three isolated retry/TLS controls passed; {artifacts}")
+    print(f"Heap fault controls: 28 public C/native and 32 key-bitmap ownership observations, two paired metadata-publication refusals, three isolated retry/TLS controls passed; {artifacts}")
 
 
 def main() -> None:
