@@ -361,7 +361,8 @@ pub unsafe fn theap_realloc(
 ) -> Sourced<Block> {
     let Some(selected) = NonNull::new(theap.cast::<crate::types::Theap>()) else { return Sourced::quiet(None) };
     #[cfg(feature = "mi-debug-1")]
-    if let Some(errno) = pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::Realloc) {
+    // SAFETY: forwarded exact-live-client and exclusion obligations.
+    if let Some(errno) = unsafe { pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::Realloc) } {
         return Sourced::with(None, errno);
     }
     let mut earlier = SourceErrno::Unchanged;
@@ -508,11 +509,36 @@ pub enum FreeOutcome {
 }
 
 #[cfg(feature = "mi-debug-1")]
-pub(crate) fn pointer_validation_errno(pointer: *const u8, operation: crate::diagnostic_output::SourcePointerOperation) -> Option<SourceErrno> {
+/// Rejects an unregistered unaligned pointer while permitting an exact live
+/// aligned-offset client through its existing PageMap geometry.
+/// The pinned debug word-alignment check also rejects pointers successfully
+/// returned by aligned-offset allocation. The native entry preserves those
+/// clients' allocation/free contract while retaining diagnostic refusal for
+/// unregistered unaligned pointers and the existing padding verification.
+///
+/// # Safety
+/// `pointer` is null, an exact live native client retained for the call, or
+/// unregistered by this allocator. The caller excludes registration changes
+/// for its containing slice and concurrent access that ends a live client's
+/// lifetime. Registration alone does not authenticate an arbitrary interior
+/// pointer; a registered pointer relies on the caller's exact-client proof.
+pub(crate) unsafe fn pointer_validation_errno(pointer: *const u8, operation: crate::diagnostic_output::SourcePointerOperation) -> Option<SourceErrno> {
     if pointer.addr() & (crate::config::WORD_SIZE - 1) == 0
         || crate::source_options_api::option_is_enabled(crate::config::SourceOption::GuardedPrecise as c_int)
     {
         return None;
+    }
+    // SAFETY: the caller retains the exact client or excludes registration
+    // changes for this unregistered address. This query reads only PageMap
+    // registration; it does not read client storage or ordinary page fields.
+    if unsafe { native_pointer_is_mapped(pointer) } {
+        let client = NonNull::new(pointer.cast_mut()).unwrap();
+        // SAFETY: registration plus the caller's exact-live-client obligation
+        // retains the canonical source block during this geometry projection.
+        // Free and usable-size still perform their existing padding checks.
+        if unsafe { native_block_size(client) }.is_some() {
+            return None;
+        }
     }
     let report = crate::diagnostic_output::SourceErrorReport::UnalignedPointer { operation, pointer: pointer.addr() };
     Some(source_error_errno(report))
@@ -524,7 +550,8 @@ pub(crate) fn pointer_validation_errno(pointer: *const u8, operation: crate::dia
 /// The exact live-client and exclusion obligations of [`free`] apply.
 pub unsafe fn free_sourced(block: *mut u8) -> Sourced<FreeOutcome> {
     #[cfg(feature = "mi-debug-1")]
-    if let Some(errno) = pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::Free) {
+    // SAFETY: forwarded exact-live-client and exclusion obligations.
+    if let Some(errno) = unsafe { pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::Free) } {
         return Sourced::with(FreeOutcome::RejectedCorruption, errno);
     }
     // SAFETY: forwarded exact live-client contract.
@@ -536,7 +563,8 @@ pub unsafe fn free_sourced(block: *mut u8) -> Sourced<FreeOutcome> {
 /// # Safety
 ///
 /// `block` is null, unmapped by this allocator, or an exact live native
-/// allocation that no other thread accesses during the call. A `Freed`
+/// allocation that no other thread accesses during the call. For an unmapped
+/// pointer, its containing slice must not be registered during the call. A `Freed`
 /// result consumes it; a debug validation refusal leaves the block live.
 pub unsafe fn free(block: *mut u8) -> FreeOutcome {
     // SAFETY: forwarded exact live-client contract.
@@ -564,7 +592,8 @@ unsafe fn free_validated(block: *mut u8) -> FreeOutcome {
 /// exclusively as required by [`free`].
 pub unsafe fn free_small_sourced(block: *mut u8) -> Sourced<FreeOutcome> {
     #[cfg(feature = "mi-debug-1")]
-    if let Some(errno) = pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::FreeSmall) {
+    // SAFETY: forwarded exact-live-client and exclusion obligations.
+    if let Some(errno) = unsafe { pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::FreeSmall) } {
         return Sourced::with(FreeOutcome::RejectedCorruption, errno);
     }
     // SAFETY: the caller supplies the small exact-live-client contract.
@@ -588,7 +617,8 @@ pub unsafe fn ufree(block: *mut u8) -> (FreeOutcome, usize) {
 /// The exact live-client and exclusion obligations of [`free`] apply.
 pub unsafe fn ufree_sourced(block: *mut u8) -> Sourced<(FreeOutcome, usize)> {
     #[cfg(feature = "mi-debug-1")]
-    if let Some(errno) = pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::UFree) {
+    // SAFETY: forwarded exact-live-client and exclusion obligations.
+    if let Some(errno) = unsafe { pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::UFree) } {
         return Sourced::with((FreeOutcome::RejectedCorruption, 0), errno);
     }
     // SAFETY: a live pointer stays live until the free below.
@@ -630,7 +660,8 @@ pub unsafe fn usable_size(block: *const u8) -> usize {
 /// `block` is null or an exact live native allocation retained for the call.
 pub unsafe fn usable_size_sourced(block: *const u8) -> Sourced<usize> {
     #[cfg(feature = "mi-debug-1")]
-    if let Some(errno) = pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::UsableSize) {
+    // SAFETY: forwarded exact-live-client and exclusion obligations.
+    if let Some(errno) = unsafe { pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::UsableSize) } {
         return Sourced::with(0, errno);
     }
     // SAFETY: forwarded exact live-client contract.
@@ -821,7 +852,8 @@ unsafe fn realloc_zero(block: *mut u8, new_size: usize, zero: bool) -> Sourced<B
 /// Success consumes the old block; failure leaves it live and unchanged.
 pub(crate) unsafe fn realloc_zero_native(block: *mut u8, new_size: usize, zero: bool) -> Sourced<Block> {
     #[cfg(feature = "mi-debug-1")]
-    if let Some(errno) = pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::Realloc) {
+    // SAFETY: forwarded exact-live-client and exclusion obligations.
+    if let Some(errno) = unsafe { pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::Realloc) } {
         return Sourced::with(None, errno);
     }
 
@@ -910,7 +942,8 @@ pub unsafe fn recalloc(block: *mut u8, count: usize, size: usize) -> Sourced<Blo
 /// The obligations of [`realloc`].
 pub unsafe fn urealloc(block: *mut u8, new_size: usize) -> Sourced<(Block, Option<usize>, Option<usize>)> {
     #[cfg(feature = "mi-debug-1")]
-    if let Some(errno) = pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::Realloc) {
+    // SAFETY: forwarded exact-live-client and exclusion obligations.
+    if let Some(errno) = unsafe { pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::Realloc) } {
         return Sourced::with((None, Some(0), Some(0)), errno);
     }
     let before = match NonNull::new(block) {
@@ -1063,7 +1096,8 @@ pub(crate) unsafe fn realloc_zero_aligned_at_native(
     }
     // SAFETY: forwarded exact-live-client contract.
     #[cfg(feature = "mi-debug-1")]
-    if let Some(earlier) = pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::UsableSize) {
+    // SAFETY: forwarded exact-live-client and exclusion obligations.
+    if let Some(earlier) = unsafe { pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::UsableSize) } {
         if new_size == 0 && block.addr().wrapping_add(offset) & (alignment - 1) == 0 {
             return Sourced::with(Some(live), earlier);
         }
@@ -1639,9 +1673,9 @@ mod tests {
 
     #[cfg(feature = "mi-debug-1")]
     #[test]
-    fn debug_unaligned_client_validation_preserves_old_allocation() {
+    fn debug_unaligned_client_validation_preserves_live_contract_and_domain_refusal() {
         crate::test_process::run_in_fresh_process(
-            "source_api::tests::debug_unaligned_client_validation_preserves_old_allocation",
+            "source_api::tests::debug_unaligned_client_validation_preserves_live_contract_and_domain_refusal",
             || {
                 unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
                 assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(
@@ -1649,46 +1683,30 @@ mod tests {
                 ));
                 let original = super::zalloc_aligned_at(64, 8, 7).value.unwrap();
                 assert_eq!(original.as_ptr().addr() & 7, 1);
-                // SAFETY: the fixture exclusively retains this exact live
-                // interior client throughout the rejected source operations.
-                unsafe { original.as_ptr().write_bytes(0xa7, 64) };
-                let size = unsafe { super::usable_size_sourced(original.as_ptr()) };
-                assert_eq!(size.value, 0);
-                assert_eq!(size.errno.apply(0), Errno::INVAL.raw());
-                assert_eq!(size.errno.apply(29), 29);
-                let rejected = unsafe { super::free_sourced(original.as_ptr()) };
-                assert_eq!(rejected.value, super::FreeOutcome::RejectedCorruption);
-                assert_eq!(rejected.errno.apply(0), Errno::INVAL.raw());
-                let refused = unsafe { super::rezalloc(original.as_ptr(), 200) };
+                // SAFETY: this fixture exclusively owns the exact successful
+                // aligned-offset client, including every replacement below.
+                unsafe {
+                    original.as_ptr().write_bytes(0xa7, 64);
+                    let size = super::usable_size_sourced(original.as_ptr());
+                    assert_eq!(size.value, 70);
+                    assert_eq!(size.errno.apply(0), 0);
+                    let failed = super::rezalloc(original.as_ptr(), usize::MAX);
+                    assert!(failed.value.is_none());
+                    assert!(core::slice::from_raw_parts(original.as_ptr(), 64).iter().all(|byte| *byte == 0xa7));
+                    let replacement = super::rezalloc_aligned_at(original.as_ptr(), 200, 16, 0);
+                    assert_eq!(replacement.errno.apply(0), 0);
+                    let replacement = replacement.value.unwrap();
+                    assert!(core::slice::from_raw_parts(replacement.as_ptr(), 64).iter().all(|byte| *byte == 0xa7));
+                    assert!(core::slice::from_raw_parts(replacement.as_ptr().add(64), 136).iter().all(|byte| *byte == 0));
+                    assert_eq!(super::free(replacement.as_ptr()), super::FreeOutcome::Freed);
+                }
+                let outside_domain = core::ptr::without_provenance_mut::<u8>(1);
+                // SAFETY: this low address is unregistered throughout this
+                // fresh process and is never dereferenced by the refusal.
+                let refused = unsafe { super::free_sourced(outside_domain) };
+                assert_eq!(refused.value, super::FreeOutcome::RejectedCorruption);
                 assert_eq!(refused.errno.apply(0), Errno::INVAL.raw());
-                assert!(refused.value.is_none());
-                let refused_sizes = unsafe { super::urealloc(original.as_ptr(), 200) };
-                assert_eq!(refused_sizes.errno.apply(0), Errno::INVAL.raw());
-                assert_eq!(refused_sizes.value, (None, Some(0), Some(0)));
-                let base = crate::source_heap_api::theap_get_default();
-                let refused = unsafe { super::theap_realloc(base, original.as_ptr(), 200, true) };
-                assert_eq!(refused.errno.apply(0), Errno::INVAL.raw());
-                assert!(refused.value.is_none());
-                let heap = crate::source_heap_api::heap_new();
-                assert!(!heap.is_null());
-                let theap = unsafe { crate::source_heap_api::heap_theap(heap) };
-                let refused = unsafe { super::theap_realloc(theap, original.as_ptr(), 200, true) };
-                assert_eq!(refused.errno.apply(0), Errno::INVAL.raw());
-                assert!(refused.value.is_none());
-                let reused = unsafe { super::rezalloc_aligned_at(original.as_ptr(), 0, 8, 7) };
-                assert_eq!(reused.errno.apply(0), Errno::INVAL.raw());
-                assert_eq!(reused.value, Some(original));
-                let replacement = unsafe { super::rezalloc_aligned_at(original.as_ptr(), 200, 16, 0) };
-                assert_eq!(replacement.errno.apply(0), Errno::INVAL.raw());
-                let replacement = replacement.value.unwrap();
-                assert_ne!(replacement, original);
-                assert!(unsafe { core::slice::from_raw_parts(replacement.as_ptr(), 200) }.iter().all(|byte| *byte == 0));
-                assert!(unsafe { core::slice::from_raw_parts(original.as_ptr(), 64) }.iter().all(|byte| *byte == 0xa7));
-                crate::source_options_api::option_set(crate::config::SourceOption::GuardedPrecise as core::ffi::c_int, 1);
-                assert_eq!(unsafe { super::usable_size(original.as_ptr()) }, 70);
-                assert_eq!(unsafe { super::free(original.as_ptr()) }, super::FreeOutcome::Freed);
-                assert_eq!(unsafe { super::free(replacement.as_ptr()) }, super::FreeOutcome::Freed);
-                unsafe { crate::source_heap_api::heap_release(heap, true) };
+                assert_eq!(refused.errno.apply(29), 29);
             },
         );
     }

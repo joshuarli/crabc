@@ -1817,7 +1817,8 @@ fn freed_with(result: Sourced<Block>) -> Sourced<(Block, FreeOutcome)> {
 /// non-null result it is consumed.
 unsafe fn heap_realloc_zero(heap: NonNull<Heap>, block: *mut u8, new_size: usize, zero: bool) -> Sourced<(Block, FreeOutcome)> {
     #[cfg(feature = "mi-debug-1")]
-    if let Some(errno) = crate::source_api::pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::Realloc) {
+    // SAFETY: forwarded null/exact-live-block and exclusion obligations.
+    if let Some(errno) = unsafe { crate::source_api::pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::Realloc) } {
         return Sourced { value: (None, FreeOutcome::RejectedCorruption), errno };
     }
     let Some(live) = NonNull::new(block) else {
