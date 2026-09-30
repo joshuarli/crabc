@@ -474,6 +474,122 @@ static void heap_lock_controls(void) {
   mi_free(caller);
 }
 
+typedef struct {
+  mi_subproc_t* subproc;
+  mi_heap_t* heap;
+  unsigned char* client;
+  pthread_barrier_t attached;
+  pthread_barrier_t birth_go;
+  pthread_barrier_t born;
+  pthread_barrier_t finish_go;
+  pthread_barrier_t finished;
+  _Atomic(bool) returned;
+  size_t baseline_total;
+  size_t counters[3];
+  size_t visited;
+} heap_birth_state_t;
+
+static void* heap_birth_worker(void* argument) {
+  heap_birth_state_t* state = argument;
+  mi_subproc_add_current_thread(_mi_subproc_to_id(state->subproc));
+  heap_lock_barrier(&state->attached);
+  heap_lock_barrier(&state->birth_go);
+  state->heap = mi_heap_new();
+  require(state->heap != NULL);
+  atomic_store_explicit(&state->returned, true, memory_order_release);
+  state->client = mi_heap_malloc(state->heap, 64);
+  require(state->client != NULL);
+  memset(state->client, 0x6b, 64);
+  heap_lock_barrier(&state->born);
+  heap_lock_barrier(&state->finish_go);
+  mi_thread_done();
+  heap_lock_barrier(&state->finished);
+  return NULL;
+}
+
+static bool heap_birth_visitor(mi_heap_t* heap, void* argument) {
+  heap_birth_state_t* state = argument;
+  require(heap == state->subproc->heap_main);
+  state->visited++;
+  heap_lock_barrier(&state->birth_go);
+  /* Sequence reservation precedes the locked list push. Observing it proves
+     factory progress without inspecting the unpublished Heap image. */
+  struct timespec start, now;
+  require(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
+  while (mi_atomic_load_relaxed(&state->subproc->heap_total_count) != state->baseline_total + 1) {
+    require(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
+    require(now.tv_sec - start.tv_sec < 10);
+    sched_yield();
+  }
+  state->counters[0] = mi_atomic_load_relaxed(&state->subproc->heap_total_count) - state->baseline_total;
+  state->counters[1] = mi_atomic_load_relaxed(&state->subproc->heap_count);
+  state->counters[2] = atomic_load_explicit(&state->returned, memory_order_acquire);
+  return true;
+}
+
+static void heap_birth_controls(void) {
+  unsigned char* caller = mi_malloc(64);
+  require(caller != NULL);
+  memset(caller, 0x59, 64);
+  for (size_t case_index = 0; case_index < 2; case_index++) {
+    bool child = case_index != 0;
+    mi_subproc_t* subproc = child ? _mi_subproc_from_id(mi_subproc_new()) : _mi_subproc_main();
+    require(subproc != NULL);
+    heap_birth_state_t state = {.subproc = subproc,
+      .baseline_total = mi_atomic_load_relaxed(&subproc->heap_total_count)};
+    require(pthread_barrier_init(&state.attached, NULL, 2) == 0);
+    require(pthread_barrier_init(&state.birth_go, NULL, 2) == 0);
+    require(pthread_barrier_init(&state.born, NULL, 2) == 0);
+    require(pthread_barrier_init(&state.finish_go, NULL, 2) == 0);
+    require(pthread_barrier_init(&state.finished, NULL, 2) == 0);
+    size_t values[20] = {child, mi_atomic_load_relaxed(&subproc->heap_count)};
+    require(values[1] == 1);
+    pthread_t worker;
+    require(pthread_create(&worker, NULL, heap_birth_worker, &state) == 0);
+    heap_lock_barrier(&state.attached);
+    bool visit_ok = mi_subproc_visit_heaps(_mi_subproc_to_id(subproc), heap_birth_visitor, &state);
+    for (size_t i = 0; i < 3; i++) values[2 + i] = state.counters[i];
+    values[5] = state.visited;
+    values[6] = visit_ok;
+    require(values[2] == 1 && values[3] == 1 && values[4] == 0 && values[5] == 1 && visit_ok);
+    heap_lock_barrier(&state.born);
+    values[7] = atomic_load_explicit(&state.returned, memory_order_acquire);
+    values[8] = mi_atomic_load_relaxed(&subproc->heap_count);
+    values[9] = mi_atomic_load_relaxed(&subproc->heap_total_count) - state.baseline_total;
+    values[10] = list_length(subproc);
+    mi_heap_t* expected[] = {state.heap, subproc->heap_main};
+    values[11] = list_is(subproc, expected, 2);
+    values[12] = state.heap->heap_seq - state.baseline_total;
+    values[13] = mi_heap_of(state.client) == state.heap;
+    require(values[7] == 1 && values[8] == 2 && values[9] == 1 && values[10] == 2 &&
+            values[11] && values[12] == 0 && values[13]);
+    heap_lock_barrier(&state.finish_go);
+    heap_lock_barrier(&state.finished);
+    require(pthread_join(worker, NULL) == 0);
+    values[14] = 1;
+    values[15] = mi_heap_of(state.client) == state.heap;
+    for (size_t i = 0; i < 64; i++) values[15] &= state.client[i] == 0x6b;
+    require(values[15]);
+    mi_heap_destroy(state.heap);
+    values[16] = mi_atomic_load_relaxed(&subproc->heap_count);
+    values[17] = mi_atomic_load_relaxed(&subproc->heap_total_count) - state.baseline_total;
+    values[18] = list_length(subproc);
+    mi_heap_t* final[] = {subproc->heap_main};
+    require(values[16] == 1 && values[17] == 1 && values[18] == 1 && list_is(subproc, final, 1));
+    values[19] = 1;
+    for (size_t i = 0; i < 64; i++) values[19] &= caller[i] == 0x59;
+    require(values[19]);
+    for (size_t i = 0; i < 20; i++) printf("m6.heap.birth.%zu=%zu\n", case_index * 20 + i, values[i]);
+    require(pthread_barrier_destroy(&state.attached) == 0);
+    require(pthread_barrier_destroy(&state.birth_go) == 0);
+    require(pthread_barrier_destroy(&state.born) == 0);
+    require(pthread_barrier_destroy(&state.finish_go) == 0);
+    require(pthread_barrier_destroy(&state.finished) == 0);
+    if (child) mi_subproc_destroy(_mi_subproc_to_id(subproc));
+  }
+  mi_free(caller);
+}
+
 /* The Heap and block that outlive the worker thread. */
 static mi_heap_t* sixth;
 static void* sixth_block;
@@ -822,6 +938,7 @@ static void main_subprocess_later_thread_heaps(void) {
 
 int main(int argc, char** argv) {
   mi_process_init();
+  if (argc > 1 && strcmp(argv[1], "birth") == 0) { heap_birth_controls(); return 0; }
   if (argc > 1 && strcmp(argv[1], "locks") == 0) { heap_lock_controls(); return 0; }
   if (argc > 1 && strcmp(argv[1], "faults") == 0) { heap_faults(false); }
   if (argc > 1 && strcmp(argv[1], "image-faults") == 0) { heap_faults(true); }

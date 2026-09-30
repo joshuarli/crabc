@@ -19593,6 +19593,156 @@ mod tests {
 
     #[cfg(all(target_arch = "x86_64", not(miri), feature = "native-runtime-test-fault"))]
     #[test]
+    fn heap_birth_reserves_sequence_before_contended_publication() {
+        crate::test_process::run_in_fresh_process(
+            "runtime_lifecycle::tests::heap_birth_reserves_sequence_before_contended_publication",
+            || {
+                use crate::source_heap_api as heaps;
+                use crate::subproc::lifecycle::{native_subproc_new, native_subproc_destroy,
+                    native_subproc_add_current_thread, native_child_heap_new, NativeChildThreadAdd};
+                use std::sync::{Arc, Barrier};
+                use std::time::{Duration, Instant};
+                struct BornHeap { heap: NonNull<crate::types::Heap>, client: NonNull<u8> }
+                // SAFETY: the worker pauses after sending these live identities;
+                // the subprocess retains the Heap, and the client is used only
+                // between barriers or after the allocating worker has joined.
+                unsafe impl Send for BornHeap {}
+                unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let caller = crate::source_api::malloc(64).value.unwrap();
+                // SAFETY: the observer owns this exact requested client extent.
+                unsafe { caller.as_ptr().write_bytes(0x59, 64) };
+                for (case, is_child) in [false, true].into_iter().enumerate() {
+                    let child = is_child.then(|| native_subproc_new().unwrap());
+                    let main = if let Some(id) = child {
+                        // SAFETY: the fresh child is retained through all joins.
+                        unsafe { id.with_owner(|owner| owner.as_mut().unwrap().main_heap_pointer().unwrap()) }.unwrap()
+                    } else {
+                        NonNull::new(MainSubprocess::global().ready_main_heap_pointer()).unwrap()
+                    };
+                    // SAFETY: the retained subprocess owns this immutable
+                    // identity; list methods protect membership with its lock.
+                    let identity = unsafe { main.as_ref() }.subprocess_pointer();
+                    let list = unsafe { &*identity }.heap_list();
+                    let baseline = list.test_counts();
+                    assert_eq!(baseline.0, 1);
+                    let birth_go = Arc::new(Barrier::new(2));
+                    let finish_go = Arc::new(Barrier::new(2));
+                    let returned = Arc::new(AtomicUsize::new(0));
+                    let (attached_send, attached_receive) = mpsc::channel();
+                    let (born_send, born_receive) = mpsc::channel();
+                    let (exited_send, exited_receive) = mpsc::channel();
+                    let worker_birth = birth_go.clone();
+                    let worker_finish = finish_go.clone();
+                    let worker_returned = returned.clone();
+                    let worker = std::thread::spawn(move || {
+                        let descriptor = current_native_allocator_thread_descriptor();
+                        // SAFETY: this worker's own descriptor remains live
+                        // until its explicit allocator finish and thread exit.
+                        assert!(unsafe { register_current_native_allocator_worker_descriptor(descriptor) });
+                        if let Some(id) = child {
+                            // SAFETY: the observer retains the child until join.
+                            assert_eq!(unsafe { native_subproc_add_current_thread(id) }, Ok(NativeChildThreadAdd::Added));
+                        } else {
+                            assert_eq!(attach_current_thread(), ThreadAttachResult::Attached);
+                        }
+                        attached_send.send(()).unwrap();
+                        worker_birth.wait();
+                        let heap = if is_child { native_child_heap_new().unwrap().unwrap().unwrap() }
+                            else { crate::subproc::main_heaps::native_heap_new().unwrap() };
+                        worker_returned.store(1, Ordering::Release);
+                        // SAFETY: this worker exclusively owns the new Heap
+                        // operation and the exact requested client extent.
+                        let client = unsafe { heaps::heap_malloc(heap.as_ptr().cast(), 64) }.value.unwrap();
+                        unsafe { client.as_ptr().write_bytes(0x6b, 64) };
+                        born_send.send(BornHeap { heap, client }).unwrap();
+                        worker_finish.wait();
+                        assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                        exited_send.send(()).unwrap();
+                    });
+                    attached_receive.recv_timeout(Duration::from_secs(10)).unwrap();
+                    let mut values = std::vec![is_child as usize, baseline.0];
+                    let mut visited = 0;
+                    let visit_ok = list.visit_heaps(|member| {
+                        assert_eq!(member, main);
+                        visited += 1;
+                        birth_go.wait();
+                        // A reserved sequence is published before source's
+                        // list-lock acquisition. It proves real factory progress
+                        // without exposing the still-unpublished Heap image.
+                        let deadline = Instant::now() + Duration::from_secs(10);
+                        while list.test_counter_values_relaxed().1 != baseline.1 + 1 {
+                            assert!(Instant::now() < deadline, "birth must reach sequence reservation");
+                            std::thread::yield_now();
+                        }
+                        let counters = list.test_counter_values_relaxed();
+                        values.extend([counters.1 - baseline.1, counters.0,
+                            returned.load(Ordering::Acquire)]);
+                        true
+                    }).unwrap();
+                    values.extend([visited, usize::from(visit_ok)]);
+                    assert_eq!(values, [is_child as usize, 1, 1, 1, 0, 1, 1]);
+                    let BornHeap { heap, client } = born_receive.recv_timeout(Duration::from_secs(10)).unwrap();
+                    let after = list.test_counts();
+                    let mut members = std::vec::Vec::new();
+                    assert!(list.visit_heaps(|member| { members.push(member); true }).unwrap());
+                    assert_eq!(members, [heap, main]);
+                    // SAFETY: the worker is paused; both list members and the
+                    // new client's containing page are stable and live.
+                    let links = unsafe { crate::types::Heap::test_links(heap) };
+                    let main_links = unsafe { crate::types::Heap::test_links(main) };
+                    let ordered = links == (core::ptr::null_mut(), main.as_ptr())
+                        && main_links == (heap.as_ptr(), core::ptr::null_mut());
+                    let sequence = unsafe { heap.as_ref() }.test_non_main_facts().0;
+                    let owned = unsafe { heaps::heap_of(client.as_ptr()) } == heap.as_ptr().cast();
+                    values.extend([returned.load(Ordering::Acquire), after.0,
+                        after.1 - baseline.1, members.len(), usize::from(ordered),
+                        sequence - baseline.1, usize::from(owned)]);
+                    assert_eq!(values[7..14], [1, 2, 1, 2, 1, 0, 1]);
+                    finish_go.wait();
+                    exited_receive.recv_timeout(Duration::from_secs(10)).unwrap();
+                    worker.join().unwrap();
+                    values.push(1);
+                    // SAFETY: owner exit preserves this live client and Heap;
+                    // no thread mutates either between this observation and destroy.
+                    let preserved = unsafe { core::slice::from_raw_parts(client.as_ptr(), 64) }
+                        .iter().all(|byte| *byte == 0x6b)
+                        && unsafe { heaps::heap_of(client.as_ptr()) } == heap.as_ptr().cast();
+                    values.push(usize::from(preserved));
+                    assert!(preserved);
+                    // SAFETY: the owner has joined and no client is used again;
+                    // source permits destruction of this retained foreign Heap.
+                    assert!(unsafe { heaps::heap_release(heap.as_ptr().cast(), true) });
+                    let final_counts = list.test_counts();
+                    let mut final_members = std::vec::Vec::new();
+                    assert!(list.visit_heaps(|member| { final_members.push(member); true }).unwrap());
+                    assert_eq!(final_members, [main]);
+                    values.extend([final_counts.0, final_counts.1 - baseline.1, final_members.len()]);
+                    // SAFETY: the independent caller remains live and exclusive.
+                    let intact = unsafe { core::slice::from_raw_parts(caller.as_ptr(), 64) }
+                        .iter().all(|byte| *byte == 0x59);
+                    assert!(intact);
+                    values.push(usize::from(intact));
+                    assert_eq!(values[14..20], [1, 1, 1, 1, 1, 1]);
+                    for (index, value) in values.into_iter().enumerate() {
+                        std::println!("m6.heap.birth.{}={value}", case * 20 + index);
+                    }
+                    if let Some(id) = child {
+                        // SAFETY: every child worker and Heap client is gone.
+                        assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
+                    }
+                }
+                // SAFETY: the independent client is returned exactly once.
+                unsafe { crate::source_api::free(caller.as_ptr()) };
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri), feature = "native-runtime-test-fault"))]
+    #[test]
     fn heap_list_visitor_pins_members_across_owner_exit_and_contended_release() {
         crate::test_process::run_in_fresh_process(
             "runtime_lifecycle::tests::heap_list_visitor_pins_members_across_owner_exit_and_contended_release",
