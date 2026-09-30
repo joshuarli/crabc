@@ -19,7 +19,8 @@ installed `usr/lib/libcrabc-builtins.a` after `libc.so`.
 
 The named definitions live in [`src/lib.rs`](src/lib.rs): `Uint128` is the
 `#[repr(C)]` low-word/high-word carrier for the native C `__int128` ABI;
-`ComplexDouble` is the two-`f64` C complex return carrier for `__muldc3`; and
+`ComplexDouble` is the two-`f64` C complex return carrier for `__muldc3` and
+`__divdc3`; and
 the `divmod` and `*oti4` entries require the writable result slots documented
 at their definitions. The TOML records every exact source signature and C ABI
 role. [`build_x86_64.py`](build_x86_64.py) reads that contract before compiling

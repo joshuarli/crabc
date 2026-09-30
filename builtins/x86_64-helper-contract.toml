@@ -83,6 +83,13 @@ caller_obligation = "two-word Uint128 C ABI carrier; zero retains source count 1
 metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
 
 [[helpers]]
+name = "__divdc3"
+rust_signature = 'pub extern "C" fn __divdc3(a: f64, b: f64, c: f64, d: f64) -> ComplexDouble'
+c_abi = "complex-double"
+caller_obligation = "four f64 inputs and the x86-64 double-complex return convention"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
 name = "__divmodti4"
 rust_signature = 'pub unsafe extern "C" fn __divmodti4( numerator: Uint128, denominator: Uint128, remainder: *mut Uint128, ) -> Uint128'
 c_abi = "u128-divmod-slot"

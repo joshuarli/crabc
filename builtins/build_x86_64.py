@@ -33,7 +33,7 @@ ARCHIVE_NAME = "libcrabc-builtins.a"
 MEMBER_NAME = "crabc-builtins.o"
 REQUIRED_SYMBOLS = frozenset({
     "__addoti4", "__ashlti3", "__ashrti3", "__bswapdi2", "__bswapsi2", "__bswapti2",
-    "__clzti2", "__ctzti2", "__divmodti4", "__divti3", "__ffsti2", "__lshrti3",
+    "__clzti2", "__ctzti2", "__divdc3", "__divmodti4", "__divti3", "__ffsti2", "__lshrti3",
     "__fixdfti", "__fixunsdfti", "__floattidf", "__floatuntidf",
     "__modti3", "__muldc3", "__muloti4", "__multi3", "__parityti2", "__popcountdi2",
     "__popcountti2", "__suboti4", "__udivmodti4", "__udivti3", "__umodti3",

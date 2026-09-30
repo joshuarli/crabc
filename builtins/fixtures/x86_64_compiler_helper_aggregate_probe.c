@@ -26,6 +26,9 @@ static u128 ref_multi3(u128 a, u128 b) { return a * b; }
 static complex_double ref_muldc3(double a, double b, double c, double d) {
     return __builtin_complex(a * c - b * d, a * d + b * c);
 }
+static complex_double ref_divdc3(double a, double b, double c, double d) {
+    return __builtin_complex(a, b) / __builtin_complex(c, d);
+}
 static u128 ref_udivti3(u128 a, u128 b) { return a / b; }
 static u128 ref_umodti3(u128 a, u128 b) { return a % b; }
 static u128 ref_udivmodti4(u128 a, u128 b, u128 *r) { *r = a % b; return a / b; }
@@ -62,6 +65,7 @@ static i128 ref_muloti4(i128 a, i128 b, int *o) { i128 r; *o = __builtin_mul_ove
 #else
 extern u128 __multi3(u128, u128);
 extern complex_double __muldc3(double, double, double, double);
+extern complex_double __divdc3(double, double, double, double);
 extern u128 __udivti3(u128, u128);
 extern u128 __umodti3(u128, u128);
 extern u128 __udivmodti4(u128, u128, u128 *);
@@ -114,6 +118,7 @@ int crabc_x86_64_compiler_helper_aggregate_probe(void) {
 
     if (CALL_BINARY(multi3)(3, 5) != 15) return 1;
     if (!equal_complex(CALL_BINARY(muldc3)(2.0, 3.0, 4.0, -1.0), 11.0, 10.0)) return 2;
+    if (!equal_complex(CALL_BINARY(divdc3)(4.0, 2.0, 2.0, 0.0), 2.0, 1.0)) return 19;
     if (CALL_BINARY(udivti3)(word + 9, 7) != (word + 9) / 7) return 3;
     if (CALL_BINARY(umodti3)(word + 9, 7) != (word + 9) % 7) return 4;
     if (CALL_BINARY(udivmodti4)(word + 9, 7, &remainder) != (word + 9) / 7 || remainder != (word + 9) % 7) return 5;
