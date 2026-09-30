@@ -13244,9 +13244,12 @@ pub fn native_os_page_size() -> Option<usize> {
 /// # Safety
 ///
 /// The caller must exclude a concurrent PageMap registration or
-/// unregistration of the arena slice containing `pointer`: it is an exact
-/// live native allocation, or lies in memory the caller owns that this
-/// allocator never mapped. The answer carries no ownership of the page.
+/// unregistration of the arena slice containing `pointer`. The pointer is
+/// used only as an address and is never dereferenced. An exact live client
+/// or an address in caller-owned never-mapped memory establishes this
+/// exclusion; other addresses require the same exclusion proof. The answer
+/// carries no page or client ownership and does not validate an arbitrary
+/// mapped client.
 #[doc(hidden)]
 pub unsafe fn native_pointer_is_mapped(pointer: *const u8) -> bool {
     #[cfg(target_arch = "x86_64")]
