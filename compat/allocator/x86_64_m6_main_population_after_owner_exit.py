@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Compare accumulated main-Heap pages after worker Heap owners exit."""
+"""Compare accumulated main-Heap populations after every worker owner exits."""
 
 from pathlib import Path
+import sys
 
 import run as harness
-import x86_64_m4_gate as m4
 import x86_64_m7_gate as m7
-
+import x86_64_m6_main_visitor_population as population
 
 DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m6_main_population_after_owner_exit_driver.c"
 ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m6-main-population-after-owner-exit"
@@ -70,43 +70,31 @@ def require_trace(trace: dict[str, str], side: str) -> None:
         raise harness.HarnessError(f"{side} did not populate and release the main Heap")
 
 
+RUNNER = "allocator-main-population-after-owner-exit"
+CASES = ((),)
+WATCHDOG = 120
+SOURCE_INTERNAL = False
+
+
+def validate_population(trace, case, side):
+    require_trace(trace, side)
+
+
+def check_population_diagnostics(c_stderr, native_stderr, case, profile):
+    pass
+
+
 def run_differential() -> int:
-    harness.require_native_x86_64()
-    pin = harness.load_pin()
-    archive = harness.fetch_archive(pin, True)
-    ARTIFACTS.mkdir(parents=True, exist_ok=True)
-    with harness.temporary_directory("crabc-mimalloc-m6-main-population-after-owner-exit-") as name:
-        temporary = Path(name)
-        source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
-        compiler = harness.require_tool("musl-gcc")
-        c_driver = temporary / "main-population-after-owner-exit-c"
-        c_build = harness.command_record(
-            [compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
-             *harness.CONFIGURATION_PROFILES["release"], "-I", str(source / "include"),
-             str(DRIVER), str(source / "src/static.c"), "-pthread", "-o", str(c_driver)],
-            cwd=source,
-        )
-        (ARTIFACTS / "c-build.log").write_text(str(c_build["stdout"]) + str(c_build["stderr"]))
-        harness.require_success(c_build, "main population after owner exit C build")
-        library = m4.build_adapter_library(temporary)
-        rust_driver = temporary / "main-population-after-owner-exit-rust"
-        link = harness.command_record(
-            [compiler, "-std=c11", "-O2", "-I", str(source / "include"),
-             str(DRIVER), str(library), "-pthread", "-o", str(rust_driver)], cwd=source,
-        )
-        (ARTIFACTS / "rust-link.log").write_text(str(link["stdout"]) + str(link["stderr"]))
-        harness.require_success(link, "main population after owner exit Rust link")
-        traces = {}
-        for side, driver in (("c", c_driver), ("rust", rust_driver)):
-            run = harness.command_record([str(driver)], cwd=temporary, env={}, timeout_seconds=120)
-            (ARTIFACTS / f"{side}.log").write_text(str(run["stdout"]) + str(run["stderr"]))
-            harness.require_success(run, f"main population after owner exit {side} run")
-            trace = m7.parse_options_trace(str(run["stdout"]), side, BEGIN, END)
-            require_trace(trace, side)
-            traces[side] = trace
-        m7.compare_options_traces(traces["c"], traces["rust"])
-        return len(traces["c"])
+    return population.run_profiles(sys.modules[__name__], ("release",))
+
+
+def main(arguments=None):
+    return population.dispatch(sys.modules[__name__], arguments)
 
 
 if __name__ == "__main__":
-    print(f"main population after owner exit: {run_differential()} source-built C/Rust keys match")
+    try:
+        main()
+    except (harness.HarnessError, population.receipts.ReceiptError, population.stress.EvidenceError) as error:
+        print(f"main population after owner exit failed: {error}", file=sys.stderr)
+        raise SystemExit(1)
