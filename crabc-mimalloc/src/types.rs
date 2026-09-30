@@ -6718,6 +6718,13 @@ impl Theap {
         if self.is_initialized() {
             return false;
         }
+        #[cfg(target_arch = "x86_64")]
+        if !owner.is_detached() && !tld.theaps.is_null() {
+            // A bounded live bootstrap represents only the fresh-TLD arm.
+            // A pre-existing head needs source snapshot-and-split ownership,
+            // which this exclusive initializer does not provide.
+            return false;
+        }
         if owner.is_detached()
             && (!tld.is_subprocess_attached_no_theap()
                 || !core::ptr::eq(heap.subprocess, tld.subprocess)
@@ -6756,12 +6763,13 @@ impl Theap {
         // introducing mutable option state.
         debug_assert!(page_full_retain == 2 || (page_full_retain == -1 && !owner.is_detached()));
         self.page_full_retain = page_full_retain;
-        if owner.is_detached() {
+        if owner.is_detached() || cfg!(target_arch = "x86_64") {
             // The preceding fresh-TLD guard proves `mi_tld_init`'s null
-            // detached head before `mi_process_theap_meta` enters
-            // `_mi_theap_init`, so this is precisely its normal first-head
-            // random branch. The private bootstrap intentionally does not
-            // model TLD-list insertion or the nonempty-head split route.
+            // head before `_mi_theap_init`, so both the detached and native
+            // live private bootstrap take its normal first-head random
+            // branch. The private bootstrap intentionally does not model
+            // TLD-list insertion or the nonempty-head split route. Initialize
+            // random and its odd cookie before publishing the heap predicate.
             self.random.initialize();
             self.cookie = self.random.next() as usize | 1;
         }
@@ -10276,6 +10284,38 @@ mod tests {
         assert_eq!(head.next, tail_pointer);
         assert_eq!(tail.next, forged_pointer);
         assert!(forged_successor.prev.is_null());
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn live_bootstrap_rejects_existing_random_head_without_mutation() {
+        let thread_id = LiveThreadId::new(12).expect("valid source thread identity");
+        let mut heap = Heap::bootstrap_empty();
+        let mut tld = ThreadLocalData::detached();
+        tld.attach_bootstrap_exclusive(thread_id);
+        let mut head = Theap::empty();
+        assert!(head.bind_exclusive_single_thread(&mut heap, &mut tld));
+        tld.theaps = core::ptr::from_mut(&mut head);
+        for non_abandoning in [false, true] {
+            let mut candidate = Theap::empty();
+            let snapshot = |theap: &Theap| (
+                theap.tld, theap.refcount(), theap.subproc.load(Ordering::Relaxed),
+                theap.allow_page_reclaim, theap.is_detached, theap.page_full_retain,
+                theap.random.test_static_empty_shape(), theap.cookie,
+                theap.allow_page_abandon, theap.heap(),
+            );
+            let before = snapshot(&candidate);
+            let bound = if non_abandoning {
+                candidate.bind_exclusive_single_thread_non_abandoning(&mut heap, &mut tld)
+            } else {
+                candidate.bind_exclusive_single_thread(&mut heap, &mut tld)
+            };
+            assert!(!bound, "an existing TLD head requires the separate split owner");
+            assert_eq!(snapshot(&candidate), before,
+                "rejection must precede every live initializer field write");
+            assert_eq!(tld.theaps, core::ptr::from_mut(&mut head));
+            assert!(head.test_main_static_fields().random_initialized);
+        }
     }
 
     #[test]

@@ -1027,6 +1027,33 @@ mod tests {
         assert_eq!(EMPTY_PAGE_QUEUES.len(), BIN_COUNT);
     }
 
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn live_bootstrap_initializes_source_random_before_allocation() {
+        for non_abandoning in [false, true] {
+            let mut bootstrap = core::pin::pin!(ExclusiveTheapBootstrap::new());
+            let thread_id = LiveThreadId::new(12).expect("valid source-shaped id");
+            let session = if non_abandoning {
+                bootstrap.as_mut().activate_live_non_abandoning(thread_id)
+            } else {
+                bootstrap.as_mut().activate_live(thread_id)
+            }.expect("fresh pinned live activation succeeds");
+            let fields = session.theap().test_main_static_fields();
+            assert!(fields.initialized && fields.random_initialized && fields.cookie_is_odd,
+                "live publication requires the source random image and odd cookie");
+            // SAFETY: derive the mutable field pointer from the session's
+            // original exclusive bootstrap capability, not an immutable view.
+            let pointer = unsafe {
+                NonNull::new_unchecked(core::ptr::addr_of_mut!((*session.state.as_ptr()).theap))
+            };
+            // SAFETY: the sole session owns this pinned Theap and no field
+            // reference survives the projection used by the placement draw.
+            let draw = unsafe { Theap::next_os_reservation_random_at(pointer) };
+            assert!(draw.is_some_and(|value| value != 0),
+                "published live Theap must supply initialized source randomness");
+        }
+    }
+
     #[test]
     fn pinned_activation_binds_stable_owner_addresses_and_publishes_heap_last() {
         let bootstrap = ExclusiveTheapBootstrap::new();
