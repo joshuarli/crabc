@@ -500,8 +500,9 @@ class DispatchTests(unittest.TestCase):
             environment = {**os.environ, "PATH": f"{work}{os.pathsep}{os.environ['PATH']}",
                            "DISPATCH_CAPTURE": str(capture), "CRABC_X86_64_WORK_DIR": str(state)}
             command = ["bash", str(ROOT / "scripts/dev-x86_64.sh"), "owned-c-abi-compat-family"]
-            arguments = ["--static-preparation", str(preparation), "--dynamic-qualification", str(qualification),
-                         "--output", str(state / "family")]
+            arguments = ["--static-preparation", str(preparation.relative_to(ROOT)),
+                         "--dynamic-qualification", str(qualification.relative_to(ROOT)),
+                         "--output", str((state / "family").relative_to(ROOT))]
 
             for invalid in (arguments[:4], arguments + ["--output", str(state / "other")],
                             arguments[:-1] + [str(preparation)]):
