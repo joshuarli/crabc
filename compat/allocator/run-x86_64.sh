@@ -312,7 +312,6 @@ run_in_container() {
         "$WORK_DIR/reports" "$WORK_DIR/allocator-cache"
     linked_worktree_git_mounts
     local -a capability_args=()
-    local -a qualification_identity_args=()
     local execution_image="$IMAGE"
     if [ "${1:-}" = --with-pinned-core-image ]; then
         shift
@@ -336,15 +335,15 @@ run_in_container() {
     if [ "${1:-}" = --with-ipc-lock ]; then
         capability_args=(--cap-add=IPC_LOCK)
         shift
-        local image_id
-        image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")" \
-            || fail "cannot resolve immutable image identity for $IMAGE"
-        [ -n "$image_id" ] || fail "$IMAGE did not provide an immutable image identity"
-        # The hardware qualification must execute exactly the inspected image,
-        # not a tag that can be retargeted between inspection and docker run.
-        execution_image="$image_id"
-        qualification_identity_args=(--env CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID="$image_id")
     fi
+    local image_id
+    image_id="$(docker image inspect --format '{{.Id}}' "$execution_image")" \
+        || fail "cannot resolve immutable image identity for $execution_image"
+    [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] \
+        || fail "$execution_image did not provide an immutable image identity"
+    # Receipts and executions must name the same inspected bytes even if the
+    # development tag changes between inspection and container creation.
+    execution_image="$image_id"
     docker run --rm --init "${capability_args[@]}" "${EXECUTION_BUDGET_ARGS[@]}" \
         --platform "$PLATFORM" \
         --workdir /workspace \
@@ -355,7 +354,7 @@ run_in_container() {
         --env CRABC_ALLOCATOR_EVIDENCE_ARCH=x86_64 \
         --env CRABC_EXECUTION_MODE=native \
         --env CRABC_HOST_ARCH=x86_64 \
-        "${qualification_identity_args[@]}" \
+        --env CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID="$image_id" \
         --env MUSL_REFERENCE_LIBDIR=/opt/musl-1.2.6/lib \
         --env PYTHONDONTWRITEBYTECODE=1 \
         --env GIT_CONFIG_COUNT=1 \

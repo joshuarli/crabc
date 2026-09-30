@@ -42,7 +42,11 @@ printf '%s\\n' "$1" >> "$DOCKER_CAPTURE.calls"
 if [ "$1" = image ]; then
     if [ "${3:-}" = --format ]; then
         if [ "${4:-}" = '{{.Id}}' ]; then
-            printf 'sha256:allocator-evidence-fixture\\n'
+            if [[ "${5:-}" = sha256:* ]]; then
+                printf '%s\\n' "$5"
+            else
+            printf 'sha256:4444444444444444444444444444444444444444444444444444444444444444\\n'
+            fi
         else
             printf 'linux/amd64\\n'
         fi
@@ -101,6 +105,18 @@ fi
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f"{work}:/workspace/.work/allocator-x86_64".encode(),
                       self.capture.read_bytes().split(b"\0"))
+
+    def test_evidence_runs_record_and_execute_the_same_resolved_image(self):
+        for command in (("allocator-m7", "--arena-print"), ("allocator-m7", "--gate", "m7.statistics"),
+                        ("allocator-unit",)):
+            with self.subTest(command=command):
+                result = self.launch(*command)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                args = self.capture.read_bytes().split(b"\0")
+                identity = b"sha256:4444444444444444444444444444444444444444444444444444444444444444"
+                self.assertIn(b"CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID=" + identity, args)
+                self.assertIn(identity, args)
+                self.assertNotIn(b"crabc-allocator-evidence:x86_64", args)
 
     def test_allocator_unit_selects_one_exact_test_inside_the_pinned_container(self):
         name = "os::tests::native_large_page_retry_suppression"
@@ -172,7 +188,7 @@ fi
                 result = self.launch("allocator-m9", option)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 args = self.capture.read_bytes().split(b"\0")
-                self.assertEqual(args[args.index(b"python3") - 1], b"crabc-allocator-evidence:x86_64")
+                self.assertEqual(args[args.index(b"python3") - 1], b"sha256:4444444444444444444444444444444444444444444444444444444444444444")
 
     def test_opt_in_allocator_budget_forwards_cargo_and_caps_the_container(self):
         result = self.launch(
@@ -203,8 +219,8 @@ fi
         self.assertEqual(result.returncode, 0, result.stderr)
         args = self.capture.read_bytes().split(b"\0")
         self.assertIn(b"--cap-add=IPC_LOCK", args)
-        self.assertIn(b"CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID=sha256:allocator-evidence-fixture", args)
-        self.assertIn(b"sha256:allocator-evidence-fixture", args)
+        self.assertIn(b"CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID=sha256:4444444444444444444444444444444444444444444444444444444444444444", args)
+        self.assertIn(b"sha256:4444444444444444444444444444444444444444444444444444444444444444", args)
         self.assertEqual(args[-3:-1], [
             b"python3", b"compat/allocator/x86_64_huge_numa_qualification.py",
         ])
@@ -215,7 +231,7 @@ fi
         self.assertEqual(result.returncode, 0, result.stderr)
         args = self.capture.read_bytes().split(b"\0")
         self.assertNotIn(b"--cap-add=IPC_LOCK", args)
-        self.assertNotIn(b"CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID=sha256:allocator-evidence-fixture", args)
+        self.assertIn(b"CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID=sha256:4444444444444444444444444444444444444444444444444444444444444444", args)
         self.assertEqual(args[-3:-1], [
             b"python3", b"compat/allocator/tests/test_x86_64_huge_numa_qualification.py",
         ])
