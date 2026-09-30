@@ -50,7 +50,8 @@ only its exact source, configuration, image, products, and execution context.
   Heap. Auxiliary Heap birth now requests the pinned 6,464-byte extent, and
   free statistics select the initialized caller's default or the page's locked
   metadata Theap without attaching a fresh caller. All four focused profiles
-  pass; child main-Heap and subprocess metadata allocation geometry remain open.
+  pass. Child main-Heap birth now requests the pinned 6,464-byte parent allocation;
+  subprocess metadata and auxiliary Theap allocation geometry remain open.
 - **Allocator evidence:** exact `fcdd233a2` passes all 45 executable M6 entries;
   its original report retains ten contract blockers. The upstream-only condition
   is now closed by the unchanged API and both full stress workloads. The current
@@ -69,7 +70,10 @@ only its exact source, configuration, image, products, and execution context.
   Fresh strict Miri dispatch reaches selected fixtures in separate interpreters;
   raw-environment startup remains unsupported in reached fixtures. Legacy profile
   failures remain unadmitted.
-  Huge-page/NUMA hardware and performance remain open.
+  Exact `1b4bb605d` passes the unchanged full Heap statistics matrix across
+  four profiles and independent read-only replay. Physical huge-page/NUMA
+  qualification requires another host: this host exposes one allowed node
+  and no free 1-GiB huge pages. Performance remains open.
 - **Runtime qualification:** accepted-C `5bd807aa7` qualifies the complete 219
   executions and separate full54 aggregate with independent read-only readers.
   Its complete installed header/layout and bounded loader and math/fenv evidence
@@ -88,8 +92,9 @@ only its exact source, configuration, image, products, and execution context.
   read-only reader pass; the existing POSIX-to-pthread admission join passes
   twice with all inputs read-only. The complete loader component covers all
   21 synthetic and 34 package cases on three products, with its owning reader;
-  family prerequisites remain open. The text family producer passes nine
-  components and 16 capabilities; its independent reader is pending.
+  family prerequisites remain open. The text family producer and independent reader pass nine
+  components and 16 capabilities. Its original selector admits text and headers;
+  the CRT companion adapter still rejects the installed startup-object roster.
   The compiler-helper owner inventory
   now names all 32 helpers; the older text selector's 27-helper rejection remains
   preserved. A forward exact `a7fffb1ab` compiler/CRT cohort independently
@@ -104,6 +109,9 @@ only its exact source, configuration, image, products, and execution context.
   NUMA evidence and an uncontended performance matrix; then execute the isolated
   allocator switch, cleanup, final qualification and public-x86 promotion.
   Hardware permissions and host qualification remain external conditions.
+  Exact `b2a903880` passes the full owned static product gate, reproducible
+  packages, all installed/extracted cases and its independent read-only reader.
+  Full combined qualification remains open after a disk-exhausted attempt.
   Retire integrated, stopped worktrees promptly after retaining exact source/raw
   inputs and verifying their owning readers. Git owns history.
 
