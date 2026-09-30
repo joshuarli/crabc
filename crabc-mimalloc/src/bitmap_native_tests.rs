@@ -35,6 +35,33 @@ impl Transcript {
         std::println!("m2.bitmap.native.{}={}", self.0, value);
         self.0 += 1;
     }
+    fn query(&mut self, bitmap: &BitmapView<'_>, stage: usize, high: Option<usize>, count: usize) {
+        self.value(bitmap.chunk_count()); self.value(stage);
+        let snapshot = || {
+            let mut words = std::vec::Vec::new();
+            for field in 0..BCHUNK_FIELDS {
+                words.push(word_load_relaxed(bitmap.chunkmap().field(field)));
+            }
+            for chunk in 0..bitmap.chunk_count() {
+                for field in 0..BCHUNK_FIELDS {
+                    words.push(word_load_relaxed(bitmap.chunk(chunk).field(field)));
+                }
+            }
+            words
+        };
+        let before = snapshot();
+        for &word in &before { self.value(word); }
+        for _ in 0..2 {
+            let observed_high = bitmap.highest_set_relaxed();
+            let population = bitmap.popcount_relaxed();
+            assert_eq!(observed_high, high);
+            assert_eq!(population, count);
+            self.value(observed_high.unwrap_or(usize::MAX)); self.value(population);
+        }
+        let after = snapshot();
+        assert_eq!(after, before);
+        for word in after { self.value(word); }
+    }
     fn bitmap(&mut self, bitmap: &BitmapView<'_>, first: usize, last: usize) {
         self.value(bitmap.popcount_relaxed());
         self.value(bitmap.highest_set_relaxed().unwrap_or(usize::MAX));
@@ -242,6 +269,25 @@ fn emit_native_bitmap_component_trace() {
         });
         out.value(result.unwrap_or(usize::MAX));
         out.bitmap(&bitmap, 0, bitmap.max_bits() - 1);
+    }
+    // Stale map entries always name allocated chunks. Querying never repairs
+    // them, and descending selection continues into lower live chunks.
+    for chunks in [3, 65] {
+        let bitmap = storage.bitmap(chunks * BCHUNK_BITS);
+        let indices = [7, (chunks - 2) * BCHUNK_BITS + BFIELD_BITS + 3,
+            chunks * BCHUNK_BITS - 1];
+        out.query(&bitmap, 0, None, 0);
+        bitmap.chunkmap().set_run(1, 1).unwrap();
+        bitmap.chunkmap().set_run(chunks - 1, 1).unwrap();
+        out.query(&bitmap, 1, None, 0);
+        for index in indices { bitmap.set_range(index, 1).unwrap(); }
+        out.query(&bitmap, 2, Some(indices[2]), 3);
+        for remaining in (1..=3).rev() {
+            let index = indices[remaining - 1];
+            bitmap.chunk(index / BCHUNK_BITS).clear_run(index % BCHUNK_BITS, 1).unwrap();
+            let high = if remaining == 1 { None } else { Some(indices[remaining - 2]) };
+            out.query(&bitmap, 6 - remaining, high, remaining - 1);
+        }
     }
     let bitmap = storage.bitmap(512);
     let subprocess = crate::subproc::MainSubprocess::new();

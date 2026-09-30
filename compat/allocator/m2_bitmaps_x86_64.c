@@ -38,6 +38,36 @@ static void bitmap_state(mi_bitmap_t *b, size_t first, size_t last) {
     for (size_t f=first/MI_BFIELD_BITS; f<=last/MI_BFIELD_BITS; ++f)
         value(mi_atomic_load_relaxed(&b->chunks[f/MI_BCHUNK_FIELDS].bfields[f%MI_BCHUNK_FIELDS]));
 }
+/* Query observers must retain both the conservative map and data words. */
+static void query_state(mi_bitmap_t *b, size_t stage, size_t expected_high, size_t expected_count) {
+    size_t before[MI_BCHUNK_FIELDS * 66], count=0;
+    value(mi_bitmap_chunk_count(b)); value(stage);
+    for (size_t f=0; f<MI_BCHUNK_FIELDS; ++f)
+        before[count++]=mi_atomic_load_relaxed(&b->chunkmap.bfields[f]);
+    for (size_t c=0; c<mi_bitmap_chunk_count(b); ++c)
+        for (size_t f=0; f<MI_BCHUNK_FIELDS; ++f)
+            before[count++]=mi_atomic_load_relaxed(&b->chunks[c].bfields[f]);
+    for (size_t i=0; i<count; ++i) value(before[i]);
+    for (size_t repeat=0; repeat<2; ++repeat) {
+        size_t high=SIZE_MAX;
+        bool found=mi_bitmap_bsr(b,&high);
+        size_t population=mi_bitmap_popcount(b);
+        mi_assert(found == (expected_high != SIZE_MAX));
+        mi_assert(!found || high == expected_high);
+        mi_assert(population == expected_count);
+        value(found ? high : SIZE_MAX); value(population);
+    }
+    size_t i=0;
+    for (size_t f=0; f<MI_BCHUNK_FIELDS; ++f) {
+        size_t word=mi_atomic_load_relaxed(&b->chunkmap.bfields[f]);
+        mi_assert(word == before[i++]); value(word);
+    }
+    for (size_t c=0; c<mi_bitmap_chunk_count(b); ++c)
+        for (size_t f=0; f<MI_BCHUNK_FIELDS; ++f) {
+            size_t word=mi_atomic_load_relaxed(&b->chunks[c].bfields[f]);
+            mi_assert(word == before[i++]); value(word);
+        }
+}
 static void binned_state(mi_bbitmap_t *b) {
     for (size_t i=0; i<MI_CBIN_NONE; ++i) {
         value(mi_atomic_load_relaxed(&subprocess.stats.chunk_bins[i].total));
@@ -134,6 +164,25 @@ int main(void) {
         bool claimed=mi_bitmap_try_find_and_claim(b,5,&index,claim,NULL);
         value(claimed?index:SIZE_MAX);
         bitmap_state(b,0,mi_bitmap_max_bits(b)-1);
+    }
+    const size_t query_chunks[] = {3,65};
+    EACH(query_chunks,q) {
+        size_t n=query_chunks[q];
+        mi_bitmap_t *b=ordinary(n*MI_BCHUNK_BITS);
+        size_t indices[]={7,(n-2)*MI_BCHUNK_BITS+MI_BFIELD_BITS+3,n*MI_BCHUNK_BITS-1};
+        query_state(b,0,SIZE_MAX,0);
+        /* These stale entries name allocated chunks, including the second
+         * map field in the 65-chunk image; their data stays empty. */
+        mi_bchunk_setN(&b->chunkmap,1,1,NULL);
+        mi_bchunk_setN(&b->chunkmap,n-1,1,NULL);
+        query_state(b,1,SIZE_MAX,0);
+        EACH(indices,i) mi_bitmap_set(b,indices[i]);
+        query_state(b,2,indices[2],3);
+        for (size_t remaining=3; remaining>0; --remaining) {
+            size_t index=indices[remaining-1];
+            mi_bchunk_clear(&b->chunks[index/MI_BCHUNK_BITS],index%MI_BCHUNK_BITS,NULL);
+            query_state(b,6-remaining,remaining==1 ? SIZE_MAX : indices[remaining-2],remaining-1);
+        }
     }
     mi_bitmap_t *waiting = ordinary(512);
     memset(&subprocess, 0, sizeof subprocess);
