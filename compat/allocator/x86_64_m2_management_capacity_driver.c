@@ -8,6 +8,7 @@
 #include "mimalloc-stats.h"
 #ifdef CRABC_SOURCE_AUDIT
 #include "mimalloc/internal.h"
+#include "bitmap.h"
 #endif
 
 enum { CAPACITY = 160 };
@@ -74,7 +75,8 @@ static void observe(caller_t* caller, const char* label) {
 
 static void* worker(void* argument) {
   caller_t* caller = argument;
-  assert(mi_subproc_add_current_thread(caller->child));
+  mi_subproc_add_current_thread(caller->child);
+  assert(mi_subproc_current()._mi_subproc_id == caller->child._mi_subproc_id);
   observe(caller, "stats.initial");
   size_t accepted = 0;
   for (size_t i = 0; i < CAPACITY - 1; ++i) {
