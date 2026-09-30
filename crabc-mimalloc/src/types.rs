@@ -6062,6 +6062,10 @@ pub(crate) struct Theap {
     allow_page_reclaim: bool,
     allow_page_abandon: bool,
     is_detached: bool,
+    // These initialized administration bytes occupy the source structure's
+    // internal alignment gap; the page queues retain their source offset.
+    #[cfg(target_arch = "x86_64")]
+    main_heap_lifecycle: crate::subproc::main_heaps::MainHeapTheapLifecycle,
     pages: [PageQueue; BIN_COUNT],
     memid: MemoryId,
     statistics: HeapTheapStatistics,
@@ -6112,6 +6116,8 @@ impl Theap {
             allow_page_reclaim: false,
             allow_page_abandon: true,
             is_detached: true,
+            #[cfg(target_arch = "x86_64")]
+            main_heap_lifecycle: crate::subproc::main_heaps::MainHeapTheapLifecycle::empty(),
             pages: EMPTY_PAGE_QUEUES,
             memid: MemoryId::static_empty(),
             statistics: HeapTheapStatistics::new(),
@@ -6306,9 +6312,15 @@ impl Theap {
         // the aligned source copy; the old inert random image is zeroized by
         // its bounded Drop rather than silently retained in static storage.
         let memid = self.memid;
+        #[cfg(target_arch = "x86_64")]
+        let main_heap_lifecycle = self.main_heap_lifecycle;
         let replaced = core::mem::replace(self, Self::empty());
         drop(replaced);
         self.memid = memid;
+        // A transferred metadata capability remains source-owned across the
+        // source empty-image copy; initialization must not reset its custody.
+        #[cfg(target_arch = "x86_64")]
+        { self.main_heap_lifecycle = main_heap_lifecycle; }
         self.tld = core::ptr::from_mut(tld);
         self.refcount.store(1, Ordering::Release);
         self.subproc.store(heap.subprocess, Ordering::Release);
@@ -6407,9 +6419,15 @@ impl Theap {
         }
 
         let memid = self.memid;
+        #[cfg(target_arch = "x86_64")]
+        let main_heap_lifecycle = self.main_heap_lifecycle;
         let replaced = core::mem::replace(self, Self::empty());
         drop(replaced);
         self.memid = memid;
+        // A transferred metadata capability remains source-owned across the
+        // source empty-image copy; initialization must not reset its custody.
+        #[cfg(target_arch = "x86_64")]
+        { self.main_heap_lifecycle = main_heap_lifecycle; }
         self.tld = core::ptr::from_mut(tld);
         self.refcount.store(1, Ordering::Release);
         self.subproc.store(heap.subprocess, Ordering::Release);
@@ -6559,9 +6577,15 @@ impl Theap {
         }
 
         let memid = self.memid;
+        #[cfg(target_arch = "x86_64")]
+        let main_heap_lifecycle = self.main_heap_lifecycle;
         let replaced = core::mem::replace(self, Self::empty());
         drop(replaced);
         self.memid = memid;
+        // A transferred metadata capability remains source-owned across the
+        // source empty-image copy; initialization must not reset its custody.
+        #[cfg(target_arch = "x86_64")]
+        { self.main_heap_lifecycle = main_heap_lifecycle; }
         self.tld = tld_pointer;
         self.refcount.store(1, Ordering::Release);
         self.subproc.store(heap.subprocess, Ordering::Release);
@@ -6631,9 +6655,15 @@ impl Theap {
         }
 
         let memid = self.memid;
+        #[cfg(target_arch = "x86_64")]
+        let main_heap_lifecycle = self.main_heap_lifecycle;
         let replaced = core::mem::replace(self, Self::empty());
         drop(replaced);
         self.memid = memid;
+        // A transferred metadata capability remains source-owned across the
+        // source empty-image copy; initialization must not reset its custody.
+        #[cfg(target_arch = "x86_64")]
+        { self.main_heap_lifecycle = main_heap_lifecycle; }
         self.tld = core::ptr::from_mut(tld);
         self.refcount.store(1, Ordering::Release);
         self.subproc.store(heap.subprocess, Ordering::Release);
@@ -7065,6 +7095,50 @@ impl Theap {
     #[inline]
     pub(crate) const fn memory_id(&self) -> MemoryId {
         self.memid
+    }
+
+    /// Copies only the immutable allocation-provenance field.
+    ///
+    /// # Safety
+    /// The typed image remains live, and no writer changes its memory ID
+    /// during this bounded read. No whole-Theap borrow is created.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn memory_id_at(theap: NonNull<Self>) -> MemoryId {
+        unsafe { core::ptr::addr_of!((*theap.as_ptr()).memid).read() }
+    }
+
+    /// Projects initialized native administration within the source extent.
+    ///
+    /// # Safety
+    /// The caller retains the image and owns exclusive administration access
+    /// or its exact lifecycle lock. The projection must not overlap a mutable
+    /// page session, initialization, release, or another control mutation.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn main_heap_lifecycle_at(theap: NonNull<Self>)
+        -> *mut crate::subproc::main_heaps::MainHeapTheapLifecycle {
+        unsafe { core::ptr::addr_of_mut!((*theap.as_ptr()).main_heap_lifecycle) }
+    }
+
+    /// Reads the source Heap link after it becomes retained-list storage.
+    ///
+    /// # Safety
+    /// Heap detachment has cleared both links and no Heap lifecycle can
+    /// reattach this image. The caller holds the retained-list lock and a live
+    /// source reference; page sessions cannot access or modify this link.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn main_heap_retained_next_at(theap: NonNull<Self>) -> *mut Self {
+        unsafe { core::ptr::addr_of!((*theap.as_ptr()).hnext).cast::<*mut Self>().read() }
+    }
+
+    /// Writes only the detached link under retained-list ownership.
+    ///
+    /// # Safety
+    /// The same detachment, lifetime, and lock obligations as the read apply.
+    /// A non-null successor has its own retained live source reference. Clear
+    /// this link before releasing the list's reference to this image.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn set_main_heap_retained_next_at(theap: NonNull<Self>, next: *mut Self) {
+        unsafe { core::ptr::addr_of_mut!((*theap.as_ptr()).hnext).cast::<*mut Self>().write(next) };
     }
 
     #[inline]
@@ -7947,6 +8021,49 @@ const _: [(); 74] = [(); BIN_FULL];
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn main_heap_lifecycle_occupies_initialized_internal_alignment_gap() {
+        use crate::subproc::main_heaps::{MainHeapTheapLifecycle, MainHeapTheapEngineState, MainHeapTheapMetadataOwnership};
+        assert_eq!(core::mem::size_of::<MainHeapTheapLifecycle>(), 2);
+        assert_eq!(core::mem::align_of::<MainHeapTheapLifecycle>(), 1);
+        let begin = core::mem::offset_of!(Theap, main_heap_lifecycle);
+        let end = begin + core::mem::size_of::<MainHeapTheapLifecycle>();
+        assert_eq!(begin, core::mem::offset_of!(Theap, is_detached) + 1);
+        assert!(end <= core::mem::offset_of!(Theap, pages));
+        let theap = Theap::empty();
+        assert!(theap.main_heap_lifecycle.engine == MainHeapTheapEngineState::Active);
+        assert!(theap.main_heap_lifecycle.metadata == MainHeapTheapMetadataOwnership::Unowned);
+        std::println!("size={}", core::mem::size_of::<Theap>());
+        std::println!("alignment={}", core::mem::align_of::<Theap>());
+        std::println!("offset.pages_free_direct={}", core::mem::offset_of!(Theap, pages_free_direct));
+        std::println!("offset.tld={}", core::mem::offset_of!(Theap, tld));
+        std::println!("offset.heap={}", core::mem::offset_of!(Theap, heap));
+        std::println!("offset.subproc={}", core::mem::offset_of!(Theap, subproc));
+        std::println!("offset.refcount={}", core::mem::offset_of!(Theap, refcount));
+        std::println!("offset.heartbeat={}", core::mem::offset_of!(Theap, heartbeat));
+        std::println!("offset.cookie={}", core::mem::offset_of!(Theap, cookie));
+        std::println!("offset.random={}", core::mem::offset_of!(Theap, random));
+        std::println!("offset.page_count={}", core::mem::offset_of!(Theap, page_count));
+        std::println!("offset.page_retired_min={}", core::mem::offset_of!(Theap, page_retired_min));
+        std::println!("offset.page_retired_max={}", core::mem::offset_of!(Theap, page_retired_max));
+        std::println!("offset.pages_full_size={}", core::mem::offset_of!(Theap, pages_full_size));
+        std::println!("offset.generic_count={}", core::mem::offset_of!(Theap, generic_count));
+        std::println!("offset.generic_collect_count={}", core::mem::offset_of!(Theap, generic_collect_count));
+        std::println!("offset.tnext={}", core::mem::offset_of!(Theap, tnext));
+        std::println!("offset.tprev={}", core::mem::offset_of!(Theap, tprev));
+        std::println!("offset.hnext={}", core::mem::offset_of!(Theap, hnext));
+        std::println!("offset.hprev={}", core::mem::offset_of!(Theap, hprev));
+        std::println!("offset.page_full_retain={}", core::mem::offset_of!(Theap, page_full_retain));
+        std::println!("offset.allow_page_reclaim={}", core::mem::offset_of!(Theap, allow_page_reclaim));
+        std::println!("offset.allow_page_abandon={}", core::mem::offset_of!(Theap, allow_page_abandon));
+        std::println!("offset.is_detached={}", core::mem::offset_of!(Theap, is_detached));
+        std::println!("offset.pages={}", core::mem::offset_of!(Theap, pages));
+        std::println!("offset.memid={}", core::mem::offset_of!(Theap, memid));
+        std::println!("offset.stats={}", core::mem::offset_of!(Theap, statistics));
+        std::println!("gap={}", core::mem::offset_of!(Theap, pages) - core::mem::offset_of!(Theap, is_detached) - 1);
+    }
+
     extern crate std;
 
     use super::*;

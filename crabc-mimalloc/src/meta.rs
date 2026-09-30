@@ -1024,6 +1024,42 @@ impl MetaAllocation<'static> {
         Some(allocation)
     }
 
+    /// Recovers the ordinary main-Heap Theap at its exclusive last source
+    /// reference. Other live process owners remain unaffected.
+    ///
+    /// # Safety
+    /// `pointer` is the initialized, still-live image returned by exactly one
+    /// prior `into_source_retained_theap` belonging to the global metadata
+    /// owner. Its memory ID is unchanged and the transfer was never recovered.
+    /// The caller owns its last source reference, has detached every Heap/TLD
+    /// and retained-list link, and excludes all page sessions, callbacks, TLS
+    /// wrappers and other accesses through recovery and terminal release.
+    /// SourceOwned is a checked marker, not proof of these lifetime rights.
+    /// Rejection retains the source owner and grants no raw release right.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn recover_last_reference_main_heap_theap(
+        owner: Pin<&'static MetaAllocator>, pointer: NonNull<Theap>,
+    ) -> Option<Self> {
+        use crate::subproc::main_heaps::MainHeapTheapMetadataOwnership;
+        if !core::ptr::eq(owner.get_ref(), MetaAllocator::global().get_ref())
+            || pointer.as_ptr().addr() % align_of::<Theap>() != 0 { return None; }
+        // SAFETY: the exclusive last-reference contract grants only these
+        // bounded initialized field reads, without a whole-Theap reference.
+        let lifecycle = unsafe { Theap::main_heap_lifecycle_at(pointer) };
+        if unsafe { (*lifecycle).metadata } != MainHeapTheapMetadataOwnership::SourceOwned {
+            return None;
+        }
+        let memory = unsafe { Theap::memory_id_at(pointer) };
+        let mut allocation = Self::new(owner, pointer.cast(), size_of::<Theap>(),
+            MetaAllocationOrigin::DirectZeroed);
+        if !allocation.matches_memory_id(memory) { return None; }
+        allocation.dynamic_theap_initialized = true;
+        // The successful inverse consumes source custody once. A second
+        // recovery rejects this marker before constructing another capability.
+        unsafe { (*lifecycle).metadata = MainHeapTheapMetadataOwnership::ReleaseClaimed };
+        Some(allocation)
+    }
+
     /// Recovers only a previously transferred TLD capability.
     ///
     /// # Safety
@@ -6705,6 +6741,37 @@ mod tests {
         ], "each published lazy PageMap submap must carry its full VM charge");
         assert!(recovery.iter().any(|row| row[4] != 0),
             "the recovery sequence must exercise lazy PageMap publication");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn main_heap_last_reference_recovers_exact_transferred_metadata_once() {
+        use crate::subproc::main_heaps::MainHeapTheapMetadataOwnership;
+        let allocator = MetaAllocator::global();
+        allocator.prepare_for_main_subprocess(config(), MainSubprocess::global()).unwrap();
+        let mut block = allocator.zalloc(config(), size_of::<Theap>()).unwrap();
+        let memory = block.memory_id();
+        let theap = block.initialize_dynamic_theap_metadata().unwrap();
+        // This test owns the exact capability and its initialized empty image;
+        // no Heap/TLD link, callback, page session or TLS wrapper was published.
+        let pointer = NonNull::from(theap);
+        unsafe {
+            (*Theap::main_heap_lifecycle_at(pointer)).metadata = MainHeapTheapMetadataOwnership::SourceOwned;
+        }
+        let pointer = match block.into_source_retained_theap() {
+            Ok(pointer) => pointer, Err(_) => panic!("initialized exact Theap transfers"),
+        };
+        // SAFETY: the prior transfer above is the sole source reference;
+        // no image user or source list was published, and its global owner lives.
+        let mut recovered = unsafe { MetaAllocation::recover_last_reference_main_heap_theap(allocator, pointer) }.unwrap();
+        assert!(recovered.matches_memory_id(memory));
+        assert!(recovered.matches_memory_id(unsafe { Theap::memory_id_at(pointer) }));
+        assert!(unsafe { (*Theap::main_heap_lifecycle_at(pointer)).metadata }
+            == MainHeapTheapMetadataOwnership::ReleaseClaimed);
+        assert!(recovered.dynamic_theap().is_some());
+        // No Heap was ever published: this recovered capability returns the
+        // ordinary metadata allocation through its exact original owner.
+        allocator.free(&mut recovered).unwrap();
     }
 
     #[test]
