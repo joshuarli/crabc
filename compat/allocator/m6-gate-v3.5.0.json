@@ -505,9 +505,7 @@
         "upstream:test-stress-heaps",
         "upstream:test-stress-subprocs"
       ],
-      "blocked_by": [
-        "The native adapter exports the entries required by both unchanged upstream stress workloads. Subprocess stress passes 25 C/Rust cases on its exact retained source. Assert-active rolling Heap stress still aborts at 1 worker, scale 1, 8 iterations when legal Heap deletion is refused; the full required Heap matrix remains unqualified."
-      ]
+      "blocked_by": []
     }
   ]
 }

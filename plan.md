@@ -24,55 +24,52 @@ only its exact source, configuration, image, products, and execution context.
 - **Campaign:** 9/26 families remain `foundation-verified`; 17 are planned.
   The frozen inventory has 223 capabilities: 180 implemented, 43 selected-private,
   none missing. Public x86 support and allocator promotion remain disabled;
-  selected C mimalloc and paused AArch64 behavior are preserved. Codex lanes use
-  only `gpt-6.1-sol` with medium reasoning; the target is 16 concurrent lanes,
-  subject to the tool's actual capacity.
-- **Runtime and ABI:** native Rust signal masks, descriptor reads, synchronous
-  waits, alternate stacks, and process/thread queues have pinned-musl controls.
-  Header replay uses inventory origins and the immutable linker image. Exact
-  `0c53e7969` qualifies 27 installed compiler helpers and 183 CRT obligations in
-  four modes. The merged 28th helper, `__divdc3`, matches 1,407,104 oracle cases
-  across four rounding modes and exception flags; its installed aggregate is
-  pending. Four binary32/integer128 cast helpers remain missing.
-- **Allocator implementation:** copied auxiliary-owner repair, locked TLD
-  projections, and regular OS full-page abandonment are integrated with focused
-  regressions. Statistics use the source's cached/main-Theap selection; live-page
-  Heap classification avoids the visitor lock and excludes stale deleted Heap
-  identities. Public allocation, visitation, subprocess, arena ownership, and
-  fault rollback receivers execute real native tests. Unchanged upstream Heap
-  stress still aborts on a legal Heap deletion; its failure remains retained.
-- **Allocator evidence:** exact `f7f2dba074` passes eleven API/mode gates with
-  983 C/Rust fields per mode. Exact `102b1ad27` passes all 37 scoped Heap/Theap
-  executable rows and its retained physical reader. Current M6 has 45 runnable
-  entries and no missing runners; all ten gates retain unmet conditions. Exact
-  `1b814` statistics evidence passes all 33 runnable rows. External arena
-  protection controls match 184,010 fields; canonical M2 remains partial.
-  Exact `a836` passes all eight local M3 components, 328 native tests and 15
-  strict Miri tests; its aggregate still lacks M2. M1 has immutable image
-  provenance. Hardware and qualifying performance obligations remain open.
-- **Runtime qualification:** accepted-C `0c53e7969` qualifies 219 executions,
-  the separate 54-row aggregate, pthread composition, resolver, Rust std/LTO/
-  unwind, complete headers, and their bounded independent readers. POSIX
-  admission and its independent reader pass for nine capabilities and 149
-  symbols. Complete text admission passes nine components and 16 capabilities;
-  its canonical evidence paths were read-only, but scratch aliases were writable.
-  The compiler selector's stale text adapter is being reproduced and repaired.
-  C ABI remains partial. These results do not qualify newer merged source.
-- **Next qualification:** native `bed22dc18` retains a signal-handler/fork
-  timeout after 85 successful executions and remains unqualified. Native and
-  musl reproduce the workload's child-counter window under controlled scheduling;
-  that does not waive the failure. Fresh source qualification must bind its own
-  products, exact image and independent readers. Complete math/fenv, compiler
-  composition, C ABI, allocator mode/lifetime conditions, and ordered merged-source
-  gates remain open. Original failures and the historical 34-case corpus remain
-  retained without transferring admission to newer merges.
+  selected C mimalloc and paused AArch64 behavior are preserved. Every Codex lane
+  uses `gpt-6.1-sol` at medium; the target is 16 concurrent lanes, subject to the
+  tool's actual capacity.
+- **Runtime and ABI:** native signal masks, descriptor reads, synchronous waits,
+  alternate stacks and process/thread queues have pinned-musl controls. Exact
+  `0c53e7969` qualifies 183 CRT obligations in four modes. All 32 compiler helpers
+  now have installed four-mode, default-C and shared/interposition qualification
+  on exact `fcdd233a2`. The four binary32/integer128 casts match 1,025,264 oracle
+  cases; `__divdc3` matches 1,407,104 cases across rounding modes and flags.
+- **Allocator implementation:** auxiliary-owner repair, locked TLD projections,
+  full-page abandonment, cached/main-Theap statistics selection and live-Heap
+  classification are integrated. Legal Heap deletion now retires a page emptied
+  while draining remote frees and charges its destination Theap. The unchanged
+  full Heap stress matrix passes 13 C/Rust pairs; subprocess stress passes 25.
+  First Heap-key bitmap allocation and 1,024-key growth refusal/retry match C in
+  32 observations without disturbing live ownership.
+- **Allocator evidence:** exact `fcdd233a2` passes all 45 executable M6 entries;
+  its original report retains ten contract blockers. The upstream-only condition
+  is now closed by the unchanged API and both full stress workloads; nine other
+  gate conditions remain. The same source passes nine M5 correctness gates and
+  their independent readers; qualifying performance remains blocked. Exact
+  `1b814` passes all 33 statistics rows. Canonical M2 remains partial; exact
+  `a836` passes eight local M3 components, 328 native tests and 15 strict Miri
+  tests but lacks M2. Huge-page/NUMA hardware and performance remain open.
+- **Runtime qualification:** accepted-C `5bd807aa7` qualifies the complete 219
+  executions and separate full54 aggregate with independent read-only readers.
+  Its complete installed header/layout and bounded loader and math/fenv evidence
+  are retained; loader family completion remains false. Bounded Lua source-build
+  admission and its relocated read-only reader pass. Older `0c53e7969` pthread,
+  resolver, Rust std/LTO/unwind, POSIX and text evidence retain that exact source.
+  The text selector's obsolete completion check is repaired; fresh same-source
+  family attachment and C ABI closure remain open.
+- **Next qualification:** fresh accepted-C and native cohorts on `e30070ce8`
+  are producing their own immutable products and original independent readers;
+  dependent POSIX, pthread, text, math, resolver and Rust std/LTO lanes share
+  read-only product leases. Native `bed22dc18` retains its signal-handler/fork
+  timeout after 85 successes and remains unqualified. The controlled native/musl
+  child-counter reproduction does not waive that failure. No historical result
+  qualifies newer source or substitutes for ordered merged-source gates.
 - **Remaining:** finish planned runtime families and allocator source/API/mode
-  conditions; replay ordered gates on merged source; obtain physical huge-page
-  and NUMA evidence and an uncontended performance matrix; then execute the
-  isolated allocator switch, cleanup, final qualification, and public-x86
-  promotion. Hardware permissions and host qualification remain external
-  conditions, never passes. Retain exact raw evidence in ignored report locations
-  and replay its owning reader before retiring merged worktrees. Git owns history.
+  conditions; replay ordered merged-source gates; obtain physical huge-page and
+  NUMA evidence and an uncontended performance matrix; then execute the isolated
+  allocator switch, cleanup, final qualification and public-x86 promotion.
+  Hardware permissions and host qualification remain external conditions.
+  Retire integrated, stopped worktrees promptly after retaining exact source/raw
+  inputs and verifying their owning readers. Git owns history.
 
 ## Parallel lanes
 

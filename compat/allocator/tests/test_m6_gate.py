@@ -42,8 +42,6 @@ class M6GateContractTests(unittest.TestCase):
         summary = self.validate()
         self.assertEqual(summary["item_count"], 105)
         self.assertEqual(summary["gate_ids"], list(gate.GATE_IDS))
-        # Every gate still names a reviewed blocker.
-        self.assertEqual(summary["blocked_gate_ids"], list(gate.GATE_IDS))
         owned = {name for entry in self.contract["gates"] for name in entry["items"]}
         for name in ("mi_heap_new", "mi_heap_destroy", "mi_theap_set_default",
                      "mi_subproc_destroy", "mi_manage_os_memory_ex", "mi_reserve_os_memory_ex",
@@ -192,11 +190,17 @@ class M6GateContractTests(unittest.TestCase):
         self.assertEqual(arena["evidence"][row], "failed")
 
     def test_passing_runnable_evidence_never_removes_a_reviewed_blocker(self) -> None:
-        summary = self.validate()
+        contract = copy.deepcopy(self.contract)
+        for entry in contract["gates"]:
+            entry["blocked_by"] = []
+        self.gate_record(contract, "m6.destruction-lifetime")["blocked_by"] = [
+            "Live-owner destruction has no matched lifetime evidence."
+        ]
+        summary = self.validate(contract)
         passed = {entry: {"status": "passed"} for entry in summary["runnable_evidence"]}
-        report = gate.gate_report(self.contract, summary, passed)
+        report = gate.gate_report(contract, summary, passed)
         self.assertEqual(report["overall_status"], "unmet")
-        self.assertEqual(report["unmet_required"], list(gate.GATE_IDS))
+        self.assertEqual(report["unmet_required"], ["m6.destruction-lifetime"])
         destruction = next(entry for entry in report["gates"] if entry["id"] == "m6.destruction-lifetime")
         self.assertEqual(destruction["status"], "blocked")
         self.assertEqual(set(destruction["evidence"].values()), {"passed"})
