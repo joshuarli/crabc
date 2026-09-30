@@ -71,6 +71,29 @@ def check_event_order(stdout: str, mode: str, label: str) -> None:
         raise harness.HarnessError(f"{label} event order changed: {events}")
 
 
+def check_ownership_observations(trace, expected, label):
+    """Check fixed ownership facts while keeping source-dependent region bits.
+
+    A freed aligned block may still occupy a registered source Page in a
+    padding profile. Those boolean components come from the complete C
+    caller; every native byte must still match that caller independently.
+    """
+    if set(trace) != set(expected):
+        raise harness.HarnessError(f"{label}: original ownership observation fields differ")
+    for name, wanted in expected.items():
+        observed = trace[name]
+        if isinstance(wanted, tuple):
+            components = observed.split(",")
+            matches = len(components) == len(wanted) and all(
+                component in ("0", "1") if value is None else component == value
+                for component, value in zip(components, wanted)
+            )
+        else:
+            matches = observed == wanted
+        if not matches:
+            raise harness.HarnessError(f"{label}: original ownership observation {name} differs: {observed}")
+
+
 def ownership_matrix(driver, artifacts, runner, profiles, modes, begin, end, expected,
                      order=None, source_only=False, read=False, replay=False):
     """Retain both ownership workloads without stopping at a failed profile.
@@ -191,23 +214,28 @@ def ownership_matrix(driver, artifacts, runner, profiles, modes, begin, end, exp
             failure = []
             traces = {}
             diagnostics = {}
+            raw_stdout = {}
             for backend, _, _ in backends:
                 result = observations.get((backend, mode))
                 if result is None or result["kind"] != "process" or result["status"] != 0:
                     failure.append(f"{backend}: caller did not complete successfully")
                     continue
-                stdout = stress.byte_record_payload(result["stdout"], backend).decode()
+                raw_stdout[backend] = stress.byte_record_payload(result["stdout"], backend)
+                stdout = raw_stdout[backend].decode()
                 diagnostics[backend] = stress.byte_record_payload(result["stderr"], backend)
+                if diagnostics[backend]:
+                    failure.append(f"{backend}: ownership caller reported allocator diagnostics")
                 try:
                     traces[backend] = m7.parse_options_trace(stdout, backend, begin, end)
                     if order is not None:
                         order(stdout, mode, backend)
-                    if traces[backend] != expected[mode]:
-                        failure.append(f"{backend}: original ownership observations differ: {traces[backend]}")
+                    check_ownership_observations(traces[backend], expected[mode], backend)
                 except harness.HarnessError as error:
                     failure.append(str(error))
             if not source_only and traces.get("c") != traces.get("native"):
                 failure.append("C/native ownership traces differ")
+            if not source_only and raw_stdout.get("c") != raw_stdout.get("native"):
+                failure.append("C/native complete caller stdout differs")
             if not source_only and diagnostics.get("c") != diagnostics.get("native"):
                 failure.append("C/native diagnostics differ")
             verdict = output / f"{profile}-{mode}-observations.json"

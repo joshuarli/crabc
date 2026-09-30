@@ -16,8 +16,8 @@ EXPECTED = {
     "exit.created": "1",
     "exit.live": "1,1,1,1",
     "exit.deleted": "0,0,1,1",
-    "exit.freed": "37,0,0",
-    "exit.collected": "0,0",
+    "exit.freed": ("37", "0", None),
+    "exit.collected": ("0", None),
 }
 
 
