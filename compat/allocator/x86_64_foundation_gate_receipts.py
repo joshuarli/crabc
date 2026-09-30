@@ -423,8 +423,9 @@ def read_m3_components(path: Path | None = None, *, source_root: Path | None = N
                 "Miri selected group observations changed")
     require(miri["passed"] == sum(len(names) for names in groups.values()), "Miri original test total changed")
     logs = [f"### listing\n{json.dumps(listing['command'])}\n{listing['stdout']}\n{listing['stderr']}"]
-    for prefix, rows in physical["commands"].items():
-        for row in rows:
+    # JSON key sorting does not preserve the original group execution order.
+    for prefix in groups:
+        for row in physical["commands"][prefix]:
             name = row["command"][-1]
             logs.append(f"### {prefix} {name}\n{json.dumps(row['command'])}\n"
                         f"MIRIFLAGS={row['environment']['MIRIFLAGS']}\n"

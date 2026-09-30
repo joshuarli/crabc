@@ -360,6 +360,22 @@ class MiriPhysicalReaderTests(unittest.TestCase):
         self.assertEqual(len(observed), 3)
         self.assertEqual(json.loads((ROOT / self.authority["program"]["path"]).read_text()), original)
 
+    def test_raw_group_order_survives_sorted_json_report_keys(self):
+        self.producer.contract["miri"]["module_prefixes"] = ["fixture::second", "fixture::first"]
+        self.contract["miri"] = self.producer.contract["miri"]
+        miri, _calls = self.producer.execute()
+        miri["physical_inputs"].update(self.authority)
+        self.miri = json.loads(json.dumps(miri, sort_keys=True))
+        self.report["checks"]["miri"] = self.miri
+        def replay(command, timeout, **options):
+            if "--list" in command:
+                return self.miri["physical_inputs"]["listing"]
+            return next(row for rows in self.miri["physical_inputs"]["commands"].values()
+                        for row in rows if row["command"][-1] == command[-1])
+        with self.assertRaises(KeyError):
+            self.read(replay)
+        self.assertEqual(len(self.executions), 3)
+
     def test_wrong_pinned_tool_directory_is_rejected_before_interpretation(self):
         self.authority["tools"]["miri"]["executable_path"] = "/ambient/bin/miri"
         with self.assertRaisesRegex(reader.harness.HarnessError, "pinned source toolchain"):
