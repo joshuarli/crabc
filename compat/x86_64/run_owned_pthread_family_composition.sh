@@ -5,14 +5,34 @@ ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly SOURCE="$ROOT/compat/x86_64/owned_pthread_family_composition.c"
 readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 
 usage() {
-    printf 'usage: %s --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT\n' "$0" >&2
+    printf 'usage: %s [--worker-fixture owner-exit|tsd-four|creation-refusal] --static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT\n' "$0" >&2
     exit 2
 }
 
+worker_fixture=''
+source_relative=compat/x86_64/owned_pthread_family_composition.c
+expected_stdout=pthread-family-composition-ok
+if [ "${1:-}" = --worker-fixture ]; then
+    [ "$#" -ge 2 ] && [ -n "$2" ] || usage
+    worker_fixture="$2"
+    selection="$(python3 -B - "$ROOT" "$worker_fixture" <<'PYSELECT'
+from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(sys.argv[1]) / 'compat/x86_64'))
+from owned_pthread_family import worker_fixture_selection
+fixture = worker_fixture_selection(sys.argv[2])
+print(fixture.source)
+print(fixture.stdout.decode('ascii').rstrip('\n'))
+PYSELECT
+)" || usage
+    source_relative="${selection%%$'\n'*}"
+    expected_stdout="${selection#*$'\n'}"
+    shift 2
+fi
+readonly SOURCE="$ROOT/$source_relative"
 [ "$#" -eq 3 ] && [ "$1" = --static-sysroot ] || usage
 [ -n "$2" ] && [ -n "$3" ] || usage
 readonly STATIC_PRODUCT="$(realpath -e "$2")"
@@ -135,12 +155,23 @@ PY
     cp "$WORK/$stem-validate.stdout" "$WORK/$stem.link.json"
 }
 
+if [ -n "$worker_fixture" ]; then
+    python3 -B - "$ROOT" "$WORK" <<'PYORACLE'
+from pathlib import Path
+import json
+import sys
+sys.path.insert(0, str(Path(sys.argv[1]) / 'compat/x86_64'))
+import owned_dynamic_qualification as oracle
+work = Path(sys.argv[2])
+(work / 'worker-oracle.json').write_text(json.dumps(oracle.capture_oracle(work), sort_keys=True) + '\n')
+PYORACLE
+fi
 capture_tools "$WORK/tools-before.json"
 run_capture compile "$DYNAMIC_PRODUCT/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -D_GNU_SOURCE \
     -fno-builtin -c "$SOURCE" -o "$WORK/workload.o"
 run_capture oracle-link "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread "$WORK/workload.o" -o "$WORK/oracle"
 run_capture oracle env -i "$WORK/oracle"
-[ "$(cat "$WORK/oracle.stdout")" = 'pthread-family-composition-ok' ] || fail 'pinned musl composition output differs'
+[ "$(cat "$WORK/oracle.stdout")" = "$expected_stdout" ] || fail 'pinned musl composition output differs'
 [ ! -s "$WORK/oracle.stderr" ] || fail 'pinned musl composition emitted stderr'
 
 for linkage in static static-pie; do
@@ -234,4 +265,8 @@ record = {
 }
 (work / 'composition.json').write_text(json.dumps(record, sort_keys=True, separators=(',', ':')) + '\n', encoding='utf-8')
 PY
+if [ -n "$worker_fixture" ]; then
+    printf 'owned pthread worker caller: PASS (%s; supplied static ET_EXEC/static-PIE and dynamic PIE/non-PIE kernel/direct products)\n' "$worker_fixture"
+else
 printf 'owned pthread family composition: PASS (one installed-header C11 object through supplied static ET_EXEC/static-PIE and dynamic PIE/non-PIE kernel/direct products; TLS, once, TSD, barrier, rwlock, and spin handshakes)\n'
+fi

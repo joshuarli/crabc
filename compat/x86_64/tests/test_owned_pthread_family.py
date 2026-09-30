@@ -5,6 +5,8 @@ from __future__ import annotations
 import copy
 from contextlib import ExitStack
 import json
+import os
+import subprocess
 from pathlib import Path
 import shutil
 import sys
@@ -30,6 +32,64 @@ class PthreadFamilyContractTests(unittest.TestCase):
         (self.root / ".work/posix").mkdir(parents=True)
         self.receipt = self.root / ".work/posix/execution.json"
         self.receipt.write_text("{}\n", encoding="utf-8")
+
+    @unittest.skipUnless(Path("/usr/local/bin/crabc-x86_64-musl-gcc").is_file(),
+                         "requires the pinned native oracle inputs")
+    def test_worker_selector_reaches_only_the_named_caller_compile(self) -> None:
+        static, dynamic = self.root / '.work/static', self.root / '.work/dynamic'
+        for product in (static, dynamic):
+            (product / 'bin').mkdir(parents=True)
+        (dynamic / 'share/crabc').mkdir(parents=True)
+        capture = self.root / 'compiler-argv.json'
+        for product, name in ((static, 'crabc-cc'), (dynamic, 'crabc-cc-dynamic')):
+            driver = product / 'bin' / name
+            driver.write_text(f'#!{sys.executable}\n'
+                              'import json, os, sys\n'
+                              'with open(os.environ["WORKER_COMPILE_CAPTURE"],"w") as out: json.dump(sys.argv[1:],out)\n'
+                              'raise SystemExit(77)\n')
+            driver.chmod(0o755)
+        (dynamic / 'share/crabc/crabc_cc_static.py').write_text(
+            f'def compiler(): return {sys.executable!r}\n'
+            f'def linker(root): return {sys.executable!r}\n')
+        scratch = self.root / '.work/scratch'
+        scratch.mkdir()
+        environment = dict(os.environ, TMPDIR=str(scratch), WORKER_COMPILE_CAPTURE=str(capture))
+        for name, source in (
+            ('owner-exit', 'native_mimalloc_owner_exit_test.c'),
+            ('tsd-four', 'native_mimalloc_tsd_rearm_test.c'),
+            ('creation-refusal', 'native_mimalloc_worker_refusal_test.c'),
+        ):
+            with self.subTest(fixture=name):
+                capture.unlink(missing_ok=True)
+                result = subprocess.run(
+                    ['bash', str(ROOT/'compat/x86_64/run_owned_pthread_family_composition.sh'),
+                     '--worker-fixture', name, '--static-sysroot', str(static), str(dynamic)],
+                    env=environment, capture_output=True, text=True)
+                self.assertTrue(capture.exists(), result.stderr)
+                argv = json.loads(capture.read_text())
+                self.assertIn(str(ROOT/'tests/fixtures'/source), argv)
+                self.assertIn('compile failed with status 77', result.stderr)
+                self.assertNotEqual(result.returncode, 0)
+        capture.unlink(missing_ok=True)
+        result = subprocess.run(
+            ['bash', str(ROOT/'compat/x86_64/run_owned_pthread_family_composition.sh'),
+             '--worker-fixture', 'unsupported', '--static-sysroot', str(static), str(dynamic)],
+            env=environment, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(capture.exists())
+
+    def test_worker_reader_requires_its_selector_before_reading_evidence(self) -> None:
+        command = [sys.executable, str(ROOT/'compat/x86_64/owned_pthread_family.py'),
+                   'worker-read', '--static-sysroot', str(self.root/'.work/absent-static'),
+                   '--dynamic-sysroot', str(self.root/'.work/absent-dynamic'),
+                   '--report', str(self.root/'.work/absent/composition.json')]
+        before = tuple(self.root.rglob('*'))
+        for arguments in ([], ['--fixture', 'unsupported']):
+            with self.subTest(selector=arguments):
+                result = subprocess.run(command+arguments, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('--fixture', result.stderr)
+                self.assertEqual(tuple(self.root.rglob('*')), before)
 
     def test_roster_keeps_exactly_the_three_frozen_capabilities_and_named_cross_cut(self) -> None:
         roster = family.load_roster(ROOT / "compat/x86_64/pthread-family.toml")

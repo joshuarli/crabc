@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 import sys
 import tomllib
@@ -25,6 +26,28 @@ ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = "crabc.x86_64-owned-pthread-family/v1"
 ROSTER_SCHEMA = "crabc.x86_64-owned-pthread-family-roster/v1"
 ROSTER_PATH = ROOT / "compat/x86_64/pthread-family.toml"
+
+@dataclass(frozen=True)
+class WorkerFixture:
+    source: str
+    stdout: bytes
+
+
+WORKER_FIXTURES = {
+    "owner-exit": WorkerFixture("tests/fixtures/native_mimalloc_owner_exit_test.c",
+                                b"native mimalloc owner exit ok\n"),
+    "tsd-four": WorkerFixture("tests/fixtures/native_mimalloc_tsd_rearm_test.c",
+                              b"native mimalloc TSD rearm ok\n"),
+    "creation-refusal": WorkerFixture("tests/fixtures/native_mimalloc_worker_refusal_test.c",
+                                      b"native mimalloc worker refusal ok\n"),
+}
+
+
+def worker_fixture_selection(name: str) -> WorkerFixture:
+    """Select a fixed public caller program without changing the family roster."""
+    require(name in WORKER_FIXTURES, "unsupported worker fixture")
+    return WORKER_FIXTURES[name]
+
 CAPABILITIES = (
     "process.atfork-exit-hooks",
     "thread.pthread-c11",
@@ -839,7 +862,8 @@ def _validate_execution_root(root: Path, leaf: Path, dynamic_product: Path) -> d
 
 
 def _composition_report(root: Path, leaf: Path, static_product: Path, dynamic_product: Path,
-                        roster_entry: dict[str, Any], source_mount: str, oracle: object) -> dict[str, Any]:
+                        roster_entry: dict[str, Any], source_mount: str, oracle: object,
+                        *, expected_stdout: bytes = b"pthread-family-composition-ok\n") -> dict[str, Any]:
     report_path = family.physical(root, leaf / "composition.json")
     report = family.read(report_path)
     require(isinstance(report, dict) and set(report) == {
@@ -898,13 +922,52 @@ def _composition_report(root: Path, leaf: Path, static_product: Path, dynamic_pr
         stdout = _leaf_identity(root, leaf, streams["stdout"], f"{name}.stdout", f"composition {name} stdout")
         stderr = _leaf_identity(root, leaf, streams["stderr"], f"{name}.stderr", f"composition {name} stderr")
         status = _leaf_identity(root, leaf, streams["status"], f"{name}.status", f"composition {name} status")
-        require((root / stdout["path"]).read_bytes() == b"pthread-family-composition-ok\n"
+        require((root / stdout["path"]).read_bytes() == expected_stdout
                 and (root / stderr["path"]).read_bytes() == b""
                 and (root / status["path"]).read_bytes() == b"0\n",
                 "composition raw result differs")
     return {"report": family.file_identity(root, report_path), "leaf": leaf.relative_to(root).as_posix(),
             "workload": workload, "execution": execution,
             "artifact_snapshot_sha256": stable_hash(family.snapshot(leaf))}
+
+
+def read_worker_composition(root: Path, report_path: Path, static_product: Path,
+                            dynamic_product: Path, fixture_name: str, *, replay: bool = False) -> dict[str, Any]:
+    """Authenticate the fixed caller's six cells independently of family admission."""
+    import owned_dynamic_qualification as dynamic
+    import owned_posix_native_execution as native
+
+    fixture = worker_fixture_selection(fixture_name)
+    report_path = family.physical(root, report_path)
+    require(report_path.name == "composition.json", "worker report must be composition.json")
+    leaf = report_path.parent
+    static_product = family.physical(root, static_product)
+    dynamic_product = family.physical(root, dynamic_product)
+    source = family.static_products.source_identity(root)
+    require(root == ROOT, "worker reader root differs from its owning checkout")
+    oracle_path = family.physical(root, leaf / "worker-oracle.json")
+    oracle = family.read(oracle_path)
+    dynamic.validate_oracle(leaf, oracle)
+    entry = {"source": fixture.source}
+    observed = _composition_report(root, leaf, static_product, dynamic_product, entry,
+                                   "/workspace", oracle, expected_stdout=fixture.stdout)
+    if replay:
+        native.require_execution_environment()
+        require(root.as_posix() == "/workspace", "worker replay requires the recorded source mount")
+        dynamic.require_live_oracle(leaf, oracle)
+        plan = _expected_commands(root, leaf, static_product, dynamic_product, entry, "/workspace")
+        for label in RAW_STEMS:
+            try:
+                execution = subprocess.run(plan[label], capture_output=True, timeout=45, check=False)
+            except subprocess.TimeoutExpired as error:
+                raise PthreadFamilyError(f"worker replay {label} timed out after 45 seconds") from error
+            require(execution.returncode == 0 and execution.stdout == fixture.stdout
+                    and execution.stderr == b"", f"worker replay {label} result differs (status {execution.returncode})")
+    after = _composition_report(root, leaf, static_product, dynamic_product, entry,
+                                "/workspace", oracle, expected_stdout=fixture.stdout)
+    require(family.same_json(observed, after), "worker evidence changed during reading or replay")
+    require(source == family.static_products.source_identity(root), "worker reader source changed")
+    return observed
 
 
 def composition_cells(root: Path, work: Path, phase: _ValidatedPthreadInputs,
@@ -1267,10 +1330,20 @@ def main() -> int:
     run.add_argument("--jobs", type=int, default=3)
     validate = commands.add_parser("validate")
     validate.add_argument("receipt", type=Path)
+    worker = commands.add_parser("worker-read")
+    worker.add_argument("--fixture", choices=tuple(WORKER_FIXTURES), required=True)
+    worker.add_argument("--static-sysroot", type=Path, required=True)
+    worker.add_argument("--dynamic-sysroot", type=Path, required=True)
+    worker.add_argument("--report", type=Path, required=True)
+    worker.add_argument("--replay", action="store_true")
     args = parser.parse_args()
     try:
         if args.command == "run":
             print(execute(ROOT, args.family_execution, args.output, args.jobs))
+        elif args.command == "worker-read":
+            read_worker_composition(ROOT, args.report, args.static_sysroot, args.dynamic_sysroot,
+                                    args.fixture, replay=args.replay)
+            print("worker caller valid in six supplied-product modes; family and allocator gates remain independent")
         else:
             validate_receipt(ROOT, args.receipt)
             print("pthread/TLS installed behavior receipt valid; family and platform gates remain independent")
