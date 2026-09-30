@@ -81,6 +81,12 @@ class SourceConvergenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             convergence.conditions(complete, REGISTER, "a" * 40, PIN, profile="unknown")
 
+    def test_evaluate_rejects_unknown_profile_before_reading_inputs(self) -> None:
+        with mock.patch.object(convergence, "PORT_MAP", mock.Mock()) as port:
+            with self.assertRaisesRegex(ValueError, "unknown convergence profile"):
+                convergence.evaluate(profile="partial")
+            port.open.assert_not_called()
+
     def test_functional_convergence_requires_actual_differential_receipts(self) -> None:
         manifest = {"rows": {"src/alloc.c:a": {"differential": {"command": ["python3", "fixture.py"]},
                                                 "performance": {"blocked": "timing deferred"}}}}

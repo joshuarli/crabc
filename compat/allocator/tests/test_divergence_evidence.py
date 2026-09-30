@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import copy
+import io
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -87,6 +89,68 @@ class DivergenceEvidenceTests(unittest.TestCase):
         self.assertTrue(any("performance blocked" in item for item in child), child)
         self.assertIn("no qualified integrated report measures", results["src/random.c"]["detail"][0])
         self.assertTrue(results["src/arena.c:os-fallback-commit-on-demand-initially-committed-correction"]["met"])
+
+    def test_correctness_defers_timing_but_keeps_every_differential(self) -> None:
+        calls = []
+        results = {row["row"]: row for row in evidence.evaluate(
+            self.manifest, profile="correctness",
+            run=lambda command: calls.append(command) or {"status": 0})}
+        self.assertTrue(all(row["met"] for row in results.values()), results)
+        self.assertEqual(sum("--m1" in command for command in calls), 1)
+        self.assertTrue(all("performance deferred" in row["detail"][-1]
+                            for row in results.values()))
+        failed = {row["row"]: row for row in evidence.evaluate(
+            self.manifest, profile="correctness", run=lambda command: {"status": 7})}
+        self.assertFalse(failed["src/random.c"]["met"])
+        self.assertIn("failed (7)", failed["src/random.c"]["detail"][0])
+        owned = {"rows": {"source": {"owner": "unfinished", "disposition": "missing lifetime proof"}}}
+        self.assertFalse(evidence.evaluate(owned, profile="correctness")[0]["met"])
+
+    def test_unknown_profile_is_rejected_before_running_a_differential(self) -> None:
+        run = mock.Mock(return_value={"status": 0})
+        with self.assertRaisesRegex(ValueError, "unknown divergence profile"):
+            evidence.evaluate(self.manifest, profile="partial", run=run)
+        run.assert_not_called()
+
+    def test_correctness_still_rejects_a_missing_differential(self) -> None:
+        manifest = copy.deepcopy(self.manifest)
+        del manifest["rows"]["src/random.c"]["differential"]
+        with self.assertRaisesRegex(evidence.EvidenceError, "differential and performance"):
+            evidence.validate_manifest(manifest, self.port_map)
+
+    def test_cli_profile_selection_is_closed_before_input_loading(self) -> None:
+        with mock.patch.object(evidence, "load") as load, mock.patch("sys.stderr", new=io.StringIO()):
+            with self.assertRaises(SystemExit) as error:
+                evidence.main(["--profile", "partial"])
+            self.assertEqual(error.exception.code, 2)
+            load.assert_not_called()
+
+    def test_correctness_cli_does_not_import_or_read_performance_reports(self) -> None:
+        # Poisoning these modules proves the functional route never even
+        # imports the timing readers, regardless of available report paths.
+        with mock.patch.object(evidence, "load", return_value=(self.manifest, self.port_map)), \
+             mock.patch.object(evidence, "run_command", return_value={"status": 0}) as run, \
+             mock.patch.dict(sys.modules, {"perf_engine_x86_64": None, "perf_integrated_x86_64": None}), \
+             mock.patch("sys.stdout", new=io.StringIO()) as output:
+            self.assertEqual(evidence.main(["--profile", "correctness"]), 0)
+            self.assertIn("performance deferred", output.getvalue())
+            self.assertTrue(run.called)
+
+    def test_default_cli_still_requires_qualified_performance(self) -> None:
+        gate = mock.Mock()
+        gate.discover_integrated.return_value = []
+        gate.discover_reports.return_value = []
+        with mock.patch.object(evidence, "load", return_value=(self.manifest, self.port_map)), \
+             mock.patch.object(evidence, "run_command", return_value={"status": 0}), \
+             mock.patch.dict(sys.modules, {"perf_engine_x86_64": mock.Mock(),
+                                          "perf_integrated_x86_64": mock.Mock(),
+                                          "x86_64_m9_gate": gate}), \
+             mock.patch("sys.stdout", new=io.StringIO()) as output:
+            self.assertEqual(evidence.main([]), 1)
+            gate.discover_integrated.assert_called_once()
+            gate.discover_reports.assert_called_once()
+            self.assertIn("no qualified integrated report", output.getvalue())
+            self.assertIn("performance blocked", output.getvalue())
 
     def test_a_qualified_integrated_measurement_and_passing_differential_meet_a_row(self) -> None:
         commands = []

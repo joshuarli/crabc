@@ -147,6 +147,8 @@ def functional_differential_condition(manifest: Mapping[str, Any]) -> dict[str, 
 
 
 def evaluate(root: Path = ROOT, *, profile: str = "full") -> list[dict[str, Any]]:
+    if profile not in {"full", "correctness"}:
+        raise ValueError(f"unknown convergence profile: {profile!r}")
     if Path(root).resolve() != ROOT.resolve():
         raise RuntimeError(f"source convergence must be read by the checkout that owns this reader: {root}")
     with PORT_MAP.open("rb") as stream:
