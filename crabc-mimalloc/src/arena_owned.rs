@@ -269,6 +269,7 @@ impl ProcessExternalArenaLease {
 struct StoredVmProcess {
     policy: NonNull<crate::os::VmPolicy>,
     subprocess: NonNull<crate::subproc::SubprocessIdentity>,
+    main_subprocess: Option<NonNull<crate::subproc::MainSubprocess>>,
     process_lived: bool,
 }
 
@@ -277,6 +278,7 @@ impl StoredVmProcess {
         Self {
             policy: NonNull::from(process.policy()),
             subprocess: NonNull::from(process.subprocess()),
+            main_subprocess: process.main_subprocess().map(NonNull::from),
             process_lived: true,
         }
     }
@@ -285,11 +287,13 @@ impl StoredVmProcess {
     /// The process policy and subprocess image remain pinned and live until
     /// its arenas are retired by quiescent `destroy_all`. For child use,
     /// the external child context owner must retain both through every page,
-    /// callback, and arena teardown transition.
+    /// callback, and arena teardown transition. A supplied main owner must
+    /// remain equally live; an identity-only input never grants its capability.
     unsafe fn from_retained_process(process: VmProcess<'_>) -> Self {
         Self {
             policy: NonNull::from(process.policy()),
             subprocess: NonNull::from(process.subprocess()),
+            main_subprocess: process.main_subprocess().map(NonNull::from),
             process_lived: false,
         }
     }
@@ -301,7 +305,12 @@ impl StoredVmProcess {
         // SAFETY: every constructor either requires process-static input or
         // has the explicit retained-context obligation above. Binding access is
         // excluded by the backing's quiescent destruction contract.
-        unsafe { VmProcess::new(self.policy.as_ref(), self.subprocess.as_ref()) }
+        unsafe {
+            match self.main_subprocess {
+                Some(owner) => VmProcess::new_main(self.policy.as_ref(), owner.as_ref()),
+                None => VmProcess::new(self.policy.as_ref(), self.subprocess.as_ref()),
+            }
+        }
     }
 
     fn matches(&self, process: VmProcess<'_>) -> bool {
@@ -780,7 +789,12 @@ impl ProcessArenaBacking {
         // SAFETY: the atomic marker is published only from an exact matching
         // VmProcess<'static> constructor. Child retained inputs cannot set it;
         // a live arena or preparing owner excludes replacement of this pair.
-        Some(unsafe { VmProcess::new(binding.process.policy.as_ref(), binding.process.subprocess.as_ref()) })
+        Some(unsafe {
+            match binding.process.main_subprocess {
+                Some(owner) => VmProcess::new_main(binding.process.policy.as_ref(), owner.as_ref()),
+                None => VmProcess::new(binding.process.policy.as_ref(), binding.process.subprocess.as_ref()),
+            }
+        })
     }
 
     /// Claims from existing process-owned arenas with source commitment and
@@ -1826,6 +1840,26 @@ mod tests {
     use crate::subproc::MainSubprocess;
     use crabc_core::Errno;
     use std::boxed::Box;
+
+    #[test]
+    fn stored_process_preserves_only_supplied_main_owner_capabilities() {
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        let policy = VmPolicy::new(options).unwrap();
+        let first = MainSubprocess::new();
+        let second = MainSubprocess::new();
+        let child = crate::subproc::ChildSubprocessImage::new();
+        // SAFETY: each actual owner remains pinned in this scope until all
+        // stored projections have ended; no arena or terminal release exists.
+        let first_stored = unsafe { StoredVmProcess::from_retained_process(VmProcess::new_main(&policy, &first)) };
+        let second_stored = unsafe { StoredVmProcess::from_retained_process(VmProcess::new_main(&policy, &second)) };
+        assert!(core::ptr::eq(first_stored.project().main_subprocess().unwrap(), &first));
+        assert!(core::ptr::eq(second_stored.project().main_subprocess().unwrap(), &second));
+        for identity in [first.identity(), child.identity()] {
+            let identity_only = unsafe { StoredVmProcess::from_retained_process(VmProcess::new(&policy, identity)) };
+            assert!(identity_only.project().main_subprocess().is_none());
+        }
+    }
 
     #[test]
     fn destroy_all_retires_regular_external_and_huge_owners_with_exact_retries() {
