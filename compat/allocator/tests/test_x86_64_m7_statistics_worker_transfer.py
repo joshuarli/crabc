@@ -121,6 +121,25 @@ class InitialAttachmentStatisticsTests(unittest.TestCase):
                 self.assertEqual(accounted, previous)
             previous = accounted
 
+    def test_debug_committed_transition_requires_its_actual_source_profile(self):
+        for new_submap in (0, 1):
+            trace, witness = self.os_trace(new_submap)
+            release = dict(trace)
+            for stage in ("allocated", "owner_exit", "freed", "collected"):
+                current = 131072 if stage in ("freed", "collected") else 196608
+                trace[f"{stage}.committed"] = ",".join(str(value + 65536 * new_submap)
+                    for value in (196608, 131072, current))
+            raw = dict(trace)
+            worker.validate_initial(trace, 2, "os-aligned-small", "C", self.placement(witness), debug=True)
+            self.assertEqual(raw, trace)
+            with self.assertRaisesRegex(harness.HarnessError, "committed PageMap charge"):
+                worker.validate_initial(trace, 2, "os-aligned-small", "C", self.placement(witness))
+            with self.assertRaisesRegex(harness.HarnessError, "committed PageMap charge"):
+                worker.validate_initial(release, 2, "os-aligned-small", "C", self.placement(witness), debug=True)
+            trace["allocated.committed"] = "262144,262144,262144"
+            with self.assertRaisesRegex(harness.HarnessError, "committed PageMap charge"):
+                worker.validate_initial(trace, 2, "os-aligned-small", "C", self.placement(witness), debug=True)
+
     def test_os_page_map_charge_rejects_missing_multiindex_or_wrong_counter(self):
         trace, witness = self.os_trace(1)
         for key, value in (("client_bound_index", 9), ("client_lower_bound_index", 7), ("allocated.mmap_calls", 1)):

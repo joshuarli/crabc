@@ -43,7 +43,7 @@ INITIAL_REQUESTS = {"small": (64, 0), "medium": (32768, 0),
 INITIAL_ARTIFACTS = REPORT.parent / "initial-attachment"
 
 
-def validate_initial(trace: dict[str, str], level: int, request: str, side: str, stderr: str = "") -> dict[str, str]:
+def validate_initial(trace: dict[str, str], level: int, request: str, side: str, stderr: str = "", *, debug: bool = False) -> dict[str, str]:
     size, alignment = INITIAL_REQUESTS[request]
     expected = {"profile.level", "allocation.request", "allocation.alignment", "allocation.usable"}
     fields = (*ALIGNED_COUNTS, "malloc_bins", "page_bins", "normal_count", "huge_count")
@@ -131,6 +131,12 @@ def validate_initial(trace: dict[str, str], level: int, request: str, side: str,
                 elif field == "reserved":
                     # The aligned OS reserve is alignment plus one 64 KiB slice.
                     base = (1114112, 1114112, 0 if stage in ("freed", "collected") else 1114112)
+                elif debug:
+                    # The pinned debug profile has a distinct committed
+                    # total/current transition; its sampled peak delta stays
+                    # lower. Keep that source profile visible independently
+                    # of the address-dependent submap charge.
+                    base = (196608, 131072, 131072 if stage in ("freed", "collected") else 196608)
                 else:
                     base = (131072, 131072, 65536 if stage in ("freed", "collected") else 131072)
                 expected_count = tuple(value + (charge if active else 0) for value in base)
@@ -267,7 +273,7 @@ def run_worker_transfer_matrix(offline: bool, selected: str | None = None, freei
                 compared_traces = {}
                 for side, trace in traces.items():
                     if initial:
-                        compared_traces[side] = validate_initial(trace, level, case_name, side, executions[side]["stderr"])
+                        compared_traces[side] = validate_initial(trace, level, case_name, side, executions[side]["stderr"], debug=debug)
                     else:
                         validate_aligned(trace, level, fresh, side)
                         compared_traces[side] = trace
@@ -333,8 +339,8 @@ def replay_worker_transfer_matrix(root: Path, *, initial: bool = False) -> int:
                 if retained_trace != report["traces"][side]:
                     raise harness.HarnessError(f"retained {profile}/{worker}/{side} changed its raw trace")
                 if initial:
-                    retained_accounted = validate_initial(retained_trace, level, worker, side, retained_execution["stderr"])
-                    accounted = validate_initial(trace, level, worker, side, execution["stderr"])
+                    retained_accounted = validate_initial(retained_trace, level, worker, side, retained_execution["stderr"], debug=debug)
+                    accounted = validate_initial(trace, level, worker, side, execution["stderr"], debug=debug)
                 else:
                     validate_aligned(retained_trace, level, worker == "fresh", side)
                     validate_aligned(trace, level, worker == "fresh", side)
