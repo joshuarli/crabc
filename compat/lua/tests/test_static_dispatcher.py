@@ -152,5 +152,114 @@ class NativeStaticDispatcherTests(unittest.TestCase):
         self.assertEqual(json.loads(report_path.read_text())["result"], "fail")
 
 
+DISPATCH_SPEC = importlib.util.spec_from_file_location(
+    "crabc_lua_static_entry", ROOT / "compat/lua/run_x86_static_dispatch.py")
+assert DISPATCH_SPEC is not None and DISPATCH_SPEC.loader is not None
+DISPATCH = importlib.util.module_from_spec(DISPATCH_SPEC)
+DISPATCH_SPEC.loader.exec_module(DISPATCH)
+
+
+class SuppliedStaticDispatcherTests(unittest.TestCase):
+    def setUp(self) -> None:
+        parent = ROOT / ".work/lua-static-supplied-tests"
+        parent.mkdir(parents=True, exist_ok=True)
+        self.state = Path(tempfile.mkdtemp(dir=parent))
+        self.addCleanup(shutil.rmtree, self.state)
+        self.cohort = self.state / "cohort"
+        self.products = self.cohort / ".work/products"
+        self.products.mkdir(parents=True)
+        reader = self.cohort / "compat/x86_64/owned_posix_static_products.py"
+        reader.parent.mkdir(parents=True)
+        reader.write_text("", encoding="utf-8")
+        records = {}
+        roots = []
+        for label in DISPATCH.SUPPLIED_ROOTS:
+            root = self.products / label
+            root.mkdir()
+            roots.append(root)
+            records[label] = {"path": str(root.relative_to(self.cohort))}
+        self.receipt = self.cohort / ".work/preparation.json"
+        self.receipt.write_text(json.dumps({"products": records, "source": {"revision": "owned"}}))
+        seed = self.state / "lua.tar.gz"
+        seed.write_bytes(b"authenticated seed")
+        self.arguments = DISPATCH.parse_args([
+            "--cohort-checkout", str(self.cohort), "--static-preparation", str(self.receipt),
+            "--installed-sysroot", str(roots[0]), "--rebuilt-sysroot", str(roots[1]),
+            "--extracted-sysroot", str(roots[2]), "--archive-seed", str(seed),
+            "--work-root", str(self.state / "runs")])
+
+    def test_partial_supplied_arguments_fail_before_dispatch(self) -> None:
+        with self.assertRaises(SystemExit), mock.patch.object(DISPATCH.LUA, "run_x86_static_dispatch") as producer:
+            DISPATCH.parse_args(["--installed-sysroot", str(self.products / "primary")])
+        producer.assert_not_called()
+
+    def test_wrong_or_missing_root_is_rejected_before_owner_reader(self) -> None:
+        for selected in (self.products / "wrong", self.products):
+            with self.subTest(selected=selected), mock.patch.object(DISPATCH.LUA, "command_record") as reader:
+                self.arguments.installed_sysroot = selected
+                with self.assertRaises(DISPATCH.LUA.RunnerError):
+                    DISPATCH.supplied_products(self.arguments, self.state)
+                reader.assert_not_called()
+
+    def test_incomplete_receipt_product_roster_is_rejected(self) -> None:
+        record = json.loads(self.receipt.read_text())
+        del record["products"]["reproduction"]
+        self.receipt.write_text(json.dumps(record))
+        with self.assertRaises(DISPATCH.LUA.RunnerError), mock.patch.object(DISPATCH.LUA, "command_record") as reader:
+            DISPATCH.supplied_products(self.arguments, self.state)
+        reader.assert_not_called()
+
+    def test_owner_source_proof_failure_is_not_admitted(self) -> None:
+        rejected = {"status": 1, "stderr": {"text": "source identity mismatch"}}
+        with mock.patch.object(DISPATCH.LUA, "owned_static_sysroot"), \
+                mock.patch.object(DISPATCH.LUA, "command_record", return_value=rejected):
+            with self.assertRaises(DISPATCH.LUA.RunnerError):
+                DISPATCH.supplied_products(self.arguments, self.state)
+
+    def test_retained_reader_rejects_missing_or_extra_product(self) -> None:
+        report = self.state / "retained.json"
+        self.arguments.read = report
+        for products in ({"primary": {}}, {name: {} for name in (*DISPATCH.SUPPLIED_ROOTS, "extra")}):
+            with self.subTest(products=products):
+                report.write_text(json.dumps({"passed": True, "result": "pass", "products": products}))
+                with self.assertRaises(DISPATCH.LUA.RunnerError):
+                    DISPATCH.read_supplied(self.arguments)
+
+    def test_retained_reader_rejects_stale_consumer_source(self) -> None:
+        report = self.state / "retained.json"
+        self.arguments.read = report
+        report.write_text(json.dumps({"passed": True, "result": "pass",
+                                     "products": {name: {} for name in DISPATCH.SUPPLIED_ROOTS},
+                                     "consumer_source": {"revision": "previous"}}))
+        with mock.patch.object(DISPATCH.LUA, "current_source_identity", return_value={"revision": "current"}), \
+                self.assertRaises(DISPATCH.LUA.RunnerError):
+            DISPATCH.read_supplied(self.arguments)
+
+
+    def test_all_three_roots_receive_full_offline_modes_without_producer_or_publication(self) -> None:
+        payload = json.loads(self.receipt.read_text())
+        roots = {label: self.products / label for label in DISPATCH.SUPPLIED_ROOTS}
+        calls = []
+        def execute(arguments):
+            calls.append(arguments)
+            return {"passed": True, "result": "pass"}
+        manifest = {"lua": {"version": "5.4.8", "sha256": DISPATCH.LUA.sha256_file(self.arguments.archive_seed)}}
+        with mock.patch.object(DISPATCH.subprocess, "run", return_value=mock.Mock(stdout=b"")), \
+                mock.patch.object(DISPATCH, "supplied_products", return_value=(payload, roots, {"status": 0})), \
+                mock.patch.object(DISPATCH.LUA, "current_source_identity", return_value={"revision": "consumer"}), \
+                mock.patch.object(DISPATCH.LUA, "load_manifest", return_value=manifest), \
+                mock.patch.object(DISPATCH.LUA, "run_x86_static", side_effect=execute), \
+                mock.patch.object(DISPATCH.LUA, "run_x86_static_dispatch") as producer, \
+                mock.patch.object(DISPATCH.LUA, "publish_x86_static_dispatch_report") as publish:
+            report, path = DISPATCH.run_supplied(self.arguments)
+        self.assertTrue(report["passed"], report)
+        self.assertEqual([args.sysroot for args in calls], list(roots.values()))
+        self.assertTrue(all(args.mode is None and args.offline for args in calls))
+        self.assertEqual(len({args.work_root for args in calls}), 3)
+        self.assertTrue(path.is_file())
+        producer.assert_not_called()
+        publish.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
