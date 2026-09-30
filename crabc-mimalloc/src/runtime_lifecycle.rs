@@ -24,7 +24,7 @@
 //! the same owner only after libc has run user cleanup handlers and pthread TSD
 //! destructors. Historical typed post-exit fixtures are
 //! `#[cfg(test)]` oracles; selected native free, reallocation, and usable-size
-//! paths use pointer-first PageMap/W03 and abandoned-state behavior.
+//! paths use a pointer-first PageMap lookup and abandoned-state remote free.
 //!
 //! It exposes no C symbol, does not select a backend, creates no public pthread
 //! key, and claims no general fork recovery. A failed process setup leaves
@@ -290,7 +290,8 @@ const fn page_owner_session_begin_is_retryable(state: usize) -> bool {
 }
 
 // The retired exact-client registry remains only in unit-test compilation so
-// legacy route witnesses stay isolated from the production PageMap/W03 path.
+// legacy route witnesses stay isolated from the production PageMap remote-free
+// path.
 #[cfg(test)]
 const NATIVE_POST_EXIT_ROUTE_EMPTY: u8 = 0;
 #[cfg(test)]
@@ -3538,7 +3539,7 @@ impl RuntimeProcessStorage {
     ///
     /// Only the `cfg(test)` historical route fixtures can create such a
     /// route; production post-owner-exit frees reach their page-local
-    /// abandoned/W03 terminal state at the free boundary and leave no
+    /// abandoned remote-free terminal state at the free boundary and leave no
     /// runtime-level route, token, or admission behind.
     #[inline]
     fn has_retired_post_exit_route_state(&self) -> bool {
@@ -3913,8 +3914,8 @@ impl RuntimeProcessStorage {
                 let page_owner = unsafe { (&mut *self.page_owner.get()).assume_init_mut() };
                 page_owner.prepare_quiescent_for_held_fork_gate()
             }
-            // The static staging slot is vacant after W01's one-time
-            // ticket-zero promotion. Do not read it here: the source owner
+            // The static staging slot is vacant after the one-time ticket-zero
+            // promotion. Do not read it here: the source owner
             // now lives only in the original thread's pinned compiler-TLS
             // cell. `before_fork_with` invokes this preparation while the
             // admission gate is held at count zero, so no later owner can
@@ -6597,7 +6598,7 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
     Some(NativeRuntimeLifecycleAudit {
         process_active: usize::from(process_active),
         // The audit's scalar "ready" means the initial source owner can
-        // accept its ordinary current-thread operation. Once W01 has moved
+        // accept its ordinary current-thread operation. Once publication moves
         // the static staging image into compiler TLS, that direct owner has
         // the same externally observable readiness without being a legacy
         // scheduler `READY` slot.
@@ -7778,8 +7779,8 @@ pub fn native_runtime_test_arm_owner_exit_collection_rendezvous(
 /// This deliberately exposes neither a generic fault plan nor any allocator
 /// route, page, client, scheduler, or PageMap capability. The sole native
 /// post-exit regression uses it after A's source owner exits and immediately
-/// before B offers the exact OS-aligned client to pointer-first PageMap/W03
-/// release. Dropping the guard clears the one test process's injection.
+/// before remote release offers the exact OS-aligned client to the
+/// pointer-first PageMap continuation. Dropping the guard clears the one test process's injection.
 #[cfg(feature = "native-runtime-test-fault")]
 #[doc(hidden)]
 pub struct NativeRuntimeTestUnmapFailure {
@@ -12118,8 +12119,8 @@ fn native_reallocate_release_unpublished_replacement(replacement: core::ptr::Non
 /// The replacement becomes visible only when that tail reports `Freed`.
 ///
 /// The generic tail currently has source-consuming transitions for the states
-/// supplied by W03. A PageMap-proven state without such a transition (notably
-/// detached until its own producer/continuation lands) rolls the unpublished
+/// supplied by the remote-free tail. A PageMap-proven state without such a
+/// transition (notably detached until its own producer/continuation lands) rolls the unpublished
 /// replacement back and fails closed. No former owner, route, client ledger,
 /// scheduler, or synthetic target owner participates.
 fn native_reallocate_pointer_first_nonlocal(
@@ -12550,9 +12551,9 @@ unsafe fn native_reallocate_inner(
 /// freeing thread. A matching source owner uses only its current local
 /// engine. Every other live, abandoned, or mapped-abandoned source state,
 /// including a page of the permanent initial owner, takes the one
-/// `mi_free_block_mt(..., allow_collect=true)` publication in W03, which
-/// consumes W07's exact claim internally when the CAS claims an abandoned
-/// head. A detached PageMap observation remains a typed source refusal and is
+/// `mi_free_block_mt(..., allow_collect=true)` publication in the remote-free
+/// tail, which consumes the exact page claim internally when the CAS claims
+/// an abandoned head. A detached PageMap observation remains a typed source refusal and is
 /// fail-closed as retained; it never revives a former owner through a route,
 /// registry, client ledger, scheduler bridge, or geometry selector.
 /// Inlining the entry lets C-facing callers share admission and local dispatch
@@ -12770,8 +12771,8 @@ unsafe fn native_free_pointer_first(block: core::ptr::NonNull<u8>) -> NativePage
 /// new worker source-local to a page whose original Rust owner wrapper was
 /// discarded after `mi_process_done_once` deleted the automatic destructor
 /// key. The held [`LiveAllocationPointer`] remains the sole page/block proof;
-/// this path never performs a second lookup, selects W03, or substitutes the
-/// new worker's Theap.
+/// this path never performs a second lookup, selects the remote-free
+/// continuation, or substitutes the new worker's Theap.
 fn native_free_pointer_first_process_done_local(
     allocation: LiveAllocationPointer,
     current: LiveThreadId,
@@ -12933,9 +12934,9 @@ unsafe fn record_uninitialized_nonlocal_free_statistics(
     unsafe { identity.record_metadata_client_free_statistics(allocation.block_size()) }.is_ok()
 }
 
-/// Consumes one nonlocal PageMap observation through W03's source-state tail.
+/// Consumes one nonlocal PageMap observation through the source remote-free tail.
 ///
-/// This is the only nonlocal free continuation. W03 performs the source
+/// This is the only nonlocal free continuation. It performs the source
 /// `mi_free_block_mt(..., allow_collect=true)` CAS with only the page's
 /// atomic fields; it asks for the process PageMap/arena and static-main Heap
 /// facts only after that CAS claims an abandoned head, as pinned
@@ -12943,8 +12944,8 @@ unsafe fn record_uninitialized_nonlocal_free_statistics(
 /// never borrows that owner's TLD, Theap, or engine, nor any process lease.
 /// A claimed, still-used page is offered to the freeing thread's own engine
 /// by `mi_abandoned_page_try_reclaim` before it is reabandoned or unowned.
-/// W03 invokes W07's linear source claim internally and owns any post-CAS
-/// retained capability; this dispatcher receives only scalar
+/// The continuation invokes the linear abandoned-page claim internally and
+/// owns any post-CAS retained capability; this dispatcher receives only scalar
 /// disposition/rejection values.
 fn native_free_pointer_first_nonlocal(
     allocation: LiveAllocationPointer,
@@ -13001,7 +13002,7 @@ fn native_free_pointer_first_nonlocal(
     };
     // A page of a child subprocess takes that child's own `mi_free_block_mt`
     // route: its abandoned pages belong to the child main Heap and arenas,
-    // never to the process-main W03 tail below.
+    // never to the process-main remote-free tail below.
     // SAFETY: the retained deleted process-main Theap has already been
     // excluded, and the exact live allocation holds the remaining page.
     let child_identity = if deleted_main_os_page { None } else {
@@ -13053,8 +13054,8 @@ fn native_free_pointer_first_nonlocal(
     }
     // SAFETY: `allocation` is the exact current PageMap-derived source
     // pointer. The facts callback returns the matching process-wide
-    // PageMap/arena and static-Heap facts required by a claimed W03 tail.
-    // W03 consumes any W07 claim rather than exposing or rebuilding it here.
+    // PageMap/arena and static-Heap facts required by a claimed page tail.
+    // The continuation consumes the abandoned-page claim internally.
     match unsafe {
         crate::single_thread::continue_post_owner_exit_live_allocation_with_process_page_facts(
             allocation,
@@ -13083,8 +13084,8 @@ fn native_free_pointer_first_nonlocal(
             crate::remote_free::RemoteFreeError::NotOwnerAssociated,
         )) if detached => {
             // Detached is a valid PageMap observation but has no source
-            // producer. W03 rejected it before any CAS or terminal marker;
-            // retain this scalar result without poisoning the process.
+            // producer. The continuation rejected it before any CAS or terminal
+            // marker; retain this scalar result without poisoning the process.
             NativePageFreeResult::Retained
         }
         Err(_) => {
@@ -18683,7 +18684,7 @@ pub fn reinitialize_current_thread_native_owner_for_final_process_exit(
 
 /// Finishes one attached worker after libc's cleanup-handler and TSD phases.
 ///
-/// A pointer-first post-owner-exit free reaches its PageMap/W03 terminal state
+/// A pointer-first post-owner-exit free reaches its terminal page state
 /// at the free boundary. This worker therefore finishes only its own
 /// attachment and admission; it never completes an exited owner's release.
 #[doc(hidden)]
@@ -20687,7 +20688,7 @@ mod tests {
     /// only for its own ranges; no allocation waits for, or fails on, another
     /// thread's unrelated registration change. A dormant initial owner that
     /// reactivates for an ordinary allocation must therefore succeed while a
-    /// worker's post-exit terminal release holds its short W03 boundary.
+    /// worker's post-exit terminal release holds its short remote-free boundary.
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn dormant_initial_owner_allocates_while_a_terminal_page_release_holds_its_boundary() {
@@ -20707,7 +20708,7 @@ mod tests {
                 let (held_sender, held_receiver) = mpsc::sync_channel(0);
                 let (release_sender, release_receiver) = mpsc::sync_channel::<()>(0);
                 let releaser = thread::spawn(move || {
-                    // SAFETY: this models one claimed W03 terminal callback
+                    // SAFETY: this models one claimed abandoned-page terminal callback
                     // that has not yet touched a PageMap entry; it releases
                     // the untouched boundary without any page operation.
                     let mutation = unsafe { page_map.begin_blocking_exact_post_owner_exit_mutation() }
