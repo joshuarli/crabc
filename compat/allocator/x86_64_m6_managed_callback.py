@@ -171,7 +171,14 @@ def run_profile_matrix(client):
             stderr = stress.byte_record_payload(result["stderr"], backend)
             check_diagnostics(client, backend, stderr)
             trace = m7.parse_options_trace(stdout.decode(), backend, client.BEGIN, client.END)
-            if trace != client.EXPECTED:
+            # Debug and statistics change source metadata sizes. The pinned C
+            # client's complete event bytes supply the geometry for that profile;
+            # rejection, lifecycle and source ownership assertions stay fixed.
+            expected = client.EXPECTED
+            if profile != "release":
+                trace = {key: value for key, value in trace.items() if ".event" not in key}
+                expected = {key: value for key, value in expected.items() if ".event" not in key}
+            if trace != expected:
                 raise harness.HarnessError(f"{profile}-{backend}: callback trace differs: {trace}; raw in {output}")
             traces[backend] = stdout
         if traces["c"] != traces["native"]:
