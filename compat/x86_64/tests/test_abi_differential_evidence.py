@@ -273,6 +273,61 @@ class AbiDifferentialEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.EvidenceError, "must be its source report"):
             evidence.load(self.write())
 
+    def selection_report(self, scoped_blockers: list[dict[str, str]]) -> dict:
+        import native_abi_selection
+        contract = native_abi_selection.load_contract()
+        scoped = native_abi_selection.abi_prerequisite_closure(contract, scoped_blockers, [])
+        report = {"identities": [{"name": "dlopen"}], "occurrences": [],
+                  "abi_prerequisite_closure": scoped,
+                  "closure": {"complete": False, "blockers": [
+                      {"code": "family-semantic-evidence-unavailable", "family": "compat.abi-differential"},
+                      {"code": "family-semantic-evidence-unavailable", "family": "compat.loader-corpus"}]}}
+        self.reports["native_abi_selection"].write_text(json.dumps(report))
+        self.record["reports"]["native_abi_selection"]["sha256"] = evidence._sha256(self.reports["native_abi_selection"])
+        return report
+
+    def test_gate_uses_real_scoped_reader_while_whole_campaign_remains_blocked(self) -> None:
+        import native_abi_selection
+        report = self.selection_report([])
+        loaded = evidence.load(self.write())
+        with mock.patch.object(native_abi_selection, "validate_report", return_value=report) as replay:
+            detail = evidence.read_selection_closure(loaded)
+            self.assertIn("ABI prerequisite", detail)
+            replay.assert_called_once_with(self.reports["native_abi_selection"], **loaded.selection_arguments())
+            with self.assertRaises(native_abi_selection.SelectionError):
+                native_abi_selection.require_selection_closure(self.reports["native_abi_selection"], **loaded.selection_arguments())
+        self.assertFalse(report["closure"]["complete"])
+
+    def test_gate_diagnostics_keep_missing_upstream_and_provider_blockers(self) -> None:
+        import native_abi_selection
+        for blocker in ({"code": "family-semantic-evidence-unavailable", "family": "ldso.dynamic-runtime"},
+                        {"code": "unresolved-provider", "subject": "dlopen"}):
+            with self.subTest(blocker=blocker):
+                report = self.selection_report([blocker])
+                loaded = evidence.load(self.write())
+                with mock.patch.object(native_abi_selection, "validate_report", return_value=report):
+                    with self.assertRaisesRegex(evidence.EvidenceError, "1 blockers") as raised:
+                        evidence.read_selection_closure(loaded)
+                self.assertIn(blocker["code"], str(raised.exception))
+
+    def test_gate_rejects_missing_scoped_field_and_public_input_rejection(self) -> None:
+        import native_abi_selection
+        report = self.selection_report([])
+        del report["abi_prerequisite_closure"]
+        self.reports["native_abi_selection"].write_text(json.dumps(report))
+        self.record["reports"]["native_abi_selection"]["sha256"] = evidence._sha256(self.reports["native_abi_selection"])
+        loaded = evidence.load(self.write())
+        with mock.patch.object(native_abi_selection, "validate_report", return_value=report):
+            with self.assertRaisesRegex(evidence.EvidenceError, "ABI prerequisite closure"):
+                evidence.read_selection_closure(loaded)
+        report = self.selection_report([])
+        loaded = evidence.load(self.write())
+        for reason in ("product identity differs", "upstream receipt changed", "provider companion rejected"):
+            with self.subTest(reason=reason), mock.patch.object(native_abi_selection, "validate_report",
+                 side_effect=native_abi_selection.SelectionError(reason)):
+                with self.assertRaisesRegex(evidence.EvidenceError, reason):
+                    evidence.read_selection_closure(loaded)
+
     def test_every_companion_keyword_has_one_producer_or_named_owner(self) -> None:
         producers = [producer.keyword for producer in evidence.PRODUCERS]
         self.assertEqual(len(producers), len(set(producers)))

@@ -340,15 +340,15 @@ def read_declarations(evidence: EvidenceSet) -> str:
     return "compiler declaration and macro roster replays from retained evidence"
 
 
-def _selection(evidence: EvidenceSet, *, closure: bool) -> Mapping[str, Any]:
+def _selection(evidence: EvidenceSet, *, abi_prerequisites: bool) -> Mapping[str, Any]:
     import native_abi_selection
 
-    replay = native_abi_selection.require_selection_closure if closure else native_abi_selection.validate_report
+    replay = native_abi_selection.require_abi_prerequisite_closure if abi_prerequisites else native_abi_selection.validate_report
     return replay(evidence.reports["native_abi_selection"], **evidence.selection_arguments())
 
 
 def read_selection(evidence: EvidenceSet) -> str:
-    report = _selection(evidence, closure=False)
+    report = _selection(evidence, abi_prerequisites=False)
     return (
         f"selection replays: {len(report['identities'])} identities, {len(report['occurrences'])} occurrences, "
         f"{len(report['closure']['blockers'])} closure blockers"
@@ -356,13 +356,21 @@ def read_selection(evidence: EvidenceSet) -> str:
 
 
 def read_selection_closure(evidence: EvidenceSet) -> str:
+    """Require ABI admission prerequisites, preserving whole-campaign closure."""
     import native_abi_selection
 
     try:
-        report = _selection(evidence, closure=True)
+        report = _selection(evidence, abi_prerequisites=True)
     except native_abi_selection.SelectionError as error:
-        # The replay already reconstructed the report; name what stays open.
-        blockers = inventory.read_json(evidence.reports["native_abi_selection"], "selection report")["closure"]["blockers"]
+        # Retained fields are diagnostics only. The public reader's rejection
+        # remains authoritative even when the recorded blocker list is empty.
+        retained = inventory.read_json(evidence.reports["native_abi_selection"], "selection report")
+        scoped = retained.get("abi_prerequisite_closure") if isinstance(retained, Mapping) else None
+        if not isinstance(scoped, Mapping) or not isinstance(scoped.get("blockers"), list):
+            raise EvidenceError(f"{error}: selection report has no valid ABI prerequisite closure") from error
+        blockers = scoped["blockers"]
+        if not all(isinstance(blocker, Mapping) for blocker in blockers):
+            raise EvidenceError(f"{error}: ABI prerequisite closure blockers are invalid") from error
         codes: dict[str, int] = {}
         for blocker in blockers:
             codes[str(blocker.get("code"))] = codes.get(str(blocker.get("code")), 0) + 1
@@ -375,7 +383,8 @@ def read_selection_closure(evidence: EvidenceSet) -> str:
             + ", ".join(f"{code}={count}" for code, count in sorted(codes.items()))
             + f"); family semantic evidence unavailable for {len(families)} families"
         ) from error
-    return f"selection closure holds for {len(report['identities'])} identities"
+    return (f"ABI prerequisite selection closure holds for {len(report['identities'])} identities; "
+            f"whole-campaign closure complete={report['closure']['complete']}")
 
 
 def read_public_data(evidence: EvidenceSet) -> str:
