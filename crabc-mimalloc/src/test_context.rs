@@ -231,8 +231,8 @@ pub struct TestAllocatorContext {
     allocator: Option<SingleThreadAllocator<'static, 'static, 'static>>,
     _bootstrap: Pin<Box<ExclusiveTheapBootstrap>>,
     page_map: Option<Box<PageMap>>,
-    // The registry stores raw addresses inside `arena_mapping`; its leading
-    // underscore marks this intentionally lifetime-only ownership edge.
+    // The registry stores raw addresses inside `arena_mapping`; it must remain
+    // live for allocation and for the retained diagnostic projections.
     _registry: Box<ArenaRegistry>,
     arena_mapping: Option<Mapping>,
     // Stable source statistics owner; no shared process singleton. It is
