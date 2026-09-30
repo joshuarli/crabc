@@ -451,6 +451,8 @@ class NativeCrtStartupCohortRecheckTests(unittest.TestCase):
             (self.static / 'usr/lib/crt1.o', b'static crt1\n'),
             (self.static / 'usr/lib/Scrt1.o', b'static Scrt1\n'),
             (self.static / 'usr/lib/rcrt1.o', b'static rcrt1\n'),
+            (self.static / 'usr/lib/crti.o', b'static crti\n'),
+            (self.static / 'usr/lib/crtn.o', b'static crtn\n'),
             (self.dynamic / 'share/crabc/manifest.json', b'dynamic manifest\n'),
             (self.dynamic / 'share/crabc/dynamic-product-state.json', b'dynamic state\n'),
             (self.dynamic / 'share/crabc/libc-shared.provenance.json', b'dynamic provenance\n'),
@@ -459,6 +461,8 @@ class NativeCrtStartupCohortRecheckTests(unittest.TestCase):
             (self.dynamic / 'usr/lib/crt1.o', b'dynamic crt1\n'),
             (self.dynamic / 'usr/lib/Scrt1.o', b'dynamic Scrt1\n'),
             (self.dynamic / 'usr/lib/crabc-dynamic-attach.o', b'dynamic attach\n'),
+            (self.dynamic / 'usr/lib/crti.o', b'dynamic crti\n'),
+            (self.dynamic / 'usr/lib/crtn.o', b'dynamic crtn\n'),
             (self.dynamic / 'lib/ld-crabc-x86_64.so.1', b'dynamic loader\n'),
         ):
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -535,6 +539,87 @@ class NativeCrtStartupCohortRecheckTests(unittest.TestCase):
                     )
                 path.write_bytes(original_bytes)
                 os.chmod(path, original_mode)
+
+    def test_crt_recheck_seals_installed_fragment_bytes_and_rejects_missing_files(self) -> None:
+        for mode, product in (('static', self.static), ('dynamic', self.dynamic)):
+            for basename in ('crti.o', 'crtn.o'):
+                artifact = f'{mode}-{basename}'
+                path = product / 'usr/lib' / basename
+                original = path.read_bytes()
+                companion = self._companion()
+                try:
+                    with self.subTest(artifact=artifact, change='bytes'):
+                        path.write_bytes(original + b'changed fragment\n')
+                        with mock.patch.object(selection, 'selection_source', return_value=self.source), \
+                             self.assertRaisesRegex(selection.SelectionError,
+                                                    f'public ELF CRT startup {artifact}'):
+                            selection._recheck_runtime_receipt_cohort(
+                                paths=self.paths, facts=self.facts, measurement=self.measurement,
+                                source=self.source, registry=None, pthread=None, crt_startup=companion,
+                            )
+                    with self.subTest(artifact=artifact, change='missing'):
+                        path.unlink()
+                        with mock.patch.object(selection, 'selection_source', return_value=self.source), \
+                             self.assertRaisesRegex(selection.inventory.InventoryError,
+                                                    'recorded input is unreadable'):
+                            selection._recheck_runtime_receipt_cohort(
+                                paths=self.paths, facts=self.facts, measurement=self.measurement,
+                                source=self.source, registry=None, pthread=None, crt_startup=companion,
+                            )
+                finally:
+                    path.write_bytes(original)
+
+    def test_crt_recheck_requires_each_installed_fragment_in_public_elf_facts(self) -> None:
+        companion = self._companion()
+        for mode in ('static', 'dynamic'):
+            for basename in ('crti.o', 'crtn.o'):
+                artifact = f'{mode}-{basename}'
+                facts = copy.deepcopy(self.facts)
+                del facts['artifacts'][artifact]
+                with self.subTest(artifact=artifact), \
+                     mock.patch.object(selection, 'selection_source', return_value=self.source), \
+                     self.assertRaisesRegex(selection.SelectionError,
+                                            f'public ELF facts omit CRT startup {artifact}'):
+                    selection._recheck_runtime_receipt_cohort(
+                        paths=self.paths, facts=facts, measurement=self.measurement, source=self.source,
+                        registry=None, pthread=None, crt_startup=companion,
+                    )
+
+    def test_crt_recheck_keeps_fragment_receipt_seals_when_public_elf_facts_are_refreshed(self) -> None:
+        for mode, product in (('static', self.static), ('dynamic', self.dynamic)):
+            for basename in ('crti.o', 'crtn.o'):
+                artifact = f'{mode}-{basename}'
+                path = product / 'usr/lib' / basename
+                original = path.read_bytes()
+                companion = self._companion()
+                try:
+                    path.write_bytes(original + b'changed after owner replay\n')
+                    facts = copy.deepcopy(self.facts)
+                    facts['artifacts'][artifact]['identity'] = selection.file_identity(path)
+                    with self.subTest(artifact=artifact), \
+                         mock.patch.object(selection, 'selection_source', return_value=self.source), \
+                         self.assertRaisesRegex(selection.SelectionError,
+                                                f'CRT startup {artifact} changed during attachment'):
+                        selection._recheck_runtime_receipt_cohort(
+                            paths=self.paths, facts=facts, measurement=self.measurement, source=self.source,
+                            registry=None, pthread=None, crt_startup=companion,
+                        )
+                finally:
+                    path.write_bytes(original)
+
+    def test_crt_recheck_rejects_changed_source_before_owner_replay(self) -> None:
+        companion = self._companion()
+        for field, value in (('revision', 'c' * 40), ('content_sha256', 'd' * 64)):
+            changed = {**self.source, field: value}
+            with self.subTest(field=field), \
+                 mock.patch.object(selection, 'selection_source', return_value=changed), \
+                 mock.patch.object(selection, 'native_crt_startup_adapter') as replay, \
+                 self.assertRaisesRegex(selection.SelectionError, 'selection source changed'):
+                selection._recheck_runtime_receipt_cohort(
+                    paths=self.paths, facts=self.facts, measurement=self.measurement, source=self.source,
+                    registry=None, pthread=None, crt_startup=companion,
+                )
+            replay.assert_not_called()
 
     def test_paired_runtimev1_recheck_replays_both_owners_after_all_joins(self) -> None:
         crt = self._companion()
