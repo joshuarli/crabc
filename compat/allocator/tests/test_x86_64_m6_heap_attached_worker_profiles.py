@@ -185,6 +185,53 @@ class AttachedWorkerProducerTests(unittest.TestCase):
         baseline.assert_called_once_with()
         causal.assert_called_once_with(racing.PROFILES)
 
+    def test_retained_reader_binds_each_run_to_its_profile_compiler_output(self):
+        profile = 'release'
+        labels = ['c-build', 'c-run-00', 'rust-build', 'rust-link', 'rust-run-00']
+        receipt = SimpleNamespace(path=self.output / 'receipt.json', source={},
+            parameters=racing.parameters((profile,)),
+            cases=[{'id': f'{profile}-{label}', 'logs': [f'{label}.json']} for label in labels],
+            case_ids=lambda prefix: [f'{profile}-{label}' for label in labels])
+        flags = list(racing.m4.api_profile_flags(profile))
+        inputs = {'source': {}, 'upstream': {}, 'archive_sha256': 'hash',
+            'profile': profile, 'allocator_flags': flags, 'execution': {'image_id': 'image'},
+            'driver_sha256': 'hash', 'parameters': racing.parameters((profile,)),
+            'rustflags': racing.AUDIT_RUSTFLAGS, 'compiler_sha256': 'hash'}
+        receipt.parameters['repetitions'] = '1'
+        inputs['parameters']['repetitions'] = '1'
+        records = {}
+        for label, side in [('c-build', 'c'), ('rust-link', 'rust')]:
+            prefix = ['musl-gcc', '-std=c11', '-D_GNU_SOURCE']
+            if side == 'c':
+                prefix += ['-ftls-model=initial-exec', '-DMI_LIBC_MUSL=1']
+            prefix += flags + ['-UNDEBUG']
+            prefix += (['-DCRABC_C_THREAD_DONE_INTERLEAVE=1'] if side == 'c' else
+                ['-DCRABC_NATIVE_THREAD_DONE_AUDIT=1', '-DCRABC_NATIVE_THREAD_DONE_INTERLEAVE=1'])
+            records[label + '.json'] = {'status': 0, 'command': prefix + ['driver.c', '-pthread', '-o', side]}
+        records['rust-build.json'] = {'status': 0, 'command': ['cargo', 'build', '--locked',
+            '--release', '--target', racing.m4.RUST_TARGET, '-p', racing.m4.ADAPTER_PACKAGE,
+            '--target-dir', 'private-target']}
+        for side in ('c', 'rust'):
+            records[f'{side}-run-00.json'] = dict(self.causal_observation(side=side), command=[side])
+        def read(path):
+            if path.name == 'release-inputs.json':
+                return inputs
+            if path.name == 'release-native-execution-provenance.json':
+                return {}
+            return records[path.name]
+        with mock.patch.object(racing, 'REPETITIONS', 1), \
+             mock.patch.object(racing.receipts, 'read_receipt', return_value=receipt), \
+             mock.patch.object(racing.harness, 'require_native_x86_64', return_value={'image_id': 'image'}), \
+             mock.patch.object(racing.harness, 'load_pin', return_value={}), \
+             mock.patch.object(racing.harness, 'sha256_file', return_value='hash'), \
+             mock.patch.object(racing.harness, 'require_tool', side_effect=lambda name: name), \
+             mock.patch.object(racing.harness, 'validate_native_execution_provenance'), \
+             mock.patch.object(racing.harness, 'read_json', side_effect=read):
+            self.assertEqual(racing.read_cohort((profile,)), 0)
+            records['rust-run-00.json']['command'] = ['c']
+            with self.assertRaisesRegex(racing.harness.HarnessError, 'executable differs'):
+                racing.read_cohort((profile,))
+
     def test_selected_profile_reader_cannot_silently_expand_or_shrink_its_profile_request(self):
         with mock.patch.object(racing, 'read_cohort', return_value=0) as reader:
             self.assertEqual(racing.main(['--profile', 'stat-2', '--replay']), 0)

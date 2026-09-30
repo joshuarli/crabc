@@ -157,7 +157,6 @@ def run_cohort(profiles):
         native = output / "native-execution-provenance.json"
         harness.write_json(native, harness.native_execution_attestation(
             execution, harness.require_native_x86_64(require_image_identity=True)))
-        binary_outputs = {}
         cases.append((f"{profile}-c-build", 0, [output / "c-build.json", output / "c-build.log"]))
         for side in ("c", "rust"):
             if side == "rust":
@@ -207,6 +206,7 @@ def read_cohort(profiles, replay=False):
         harness.validate_native_execution_provenance(
             harness.read_json(products / f"{profile}-native-execution-provenance.json"),
             expected_image_id=execution["image_id"])
+        binary_outputs = {}
         for label in ("c-build", "rust-build", "rust-link"):
             case = next(row for row in receipt.cases if row["id"] == f"{profile}-{label}")
             path = next(receipt.path.parent / "logs" / name for name in case["logs"] if name.endswith(".json"))
