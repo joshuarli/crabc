@@ -132,7 +132,9 @@ def main():
         for profile in PROFILES:
             for backend in ("c", "native"):
                 product = f"{profile}-{backend}"
-                binary = receipt.path.parent / "products" / product
+                binary = scratch / product
+                shutil.copyfile(receipt.path.parent / "products" / product, binary)
+                binary.chmod(0o755)
                 for mode in MODES:
                     case = f"{product}-{mode}"
                     result, logs = record(scratch, case, [str(binary), mode], scratch, True)
