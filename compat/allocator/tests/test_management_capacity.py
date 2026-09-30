@@ -151,6 +151,25 @@ typedef enum mi_chunkbin_e { MI_CBIN_SMALL, MI_CBIN_OTHER, MI_CBIN_MEDIUM, MI_CB
                 self.publish()
                 with self.assertRaises(capacity.receipts.ReceiptError): self.read()
 
+    def test_omitted_manifest_cannot_authorize_unbound_compiler_checkout(self):
+        self.cohort()
+        event = self.events["release-native-build"]
+        if "--manifest-path" in event["command"]:
+            index = event["command"].index("--manifest-path")
+            del event["command"][index:index + 2]
+        self.publish()
+        with self.assertRaises(capacity.receipts.ReceiptError): self.read()
+
+    def test_other_manifest_cannot_authorize_foreign_compiler_checkout(self):
+        self.cohort()
+        event = self.events["release-native-build"]
+        if "--manifest-path" in event["command"]:
+            event["command"][event["command"].index("--manifest-path") + 1] = "/foreign/Cargo.toml"
+        else:
+            event["command"] += ["--manifest-path", "/foreign/Cargo.toml"]
+        self.publish()
+        with self.assertRaises(capacity.receipts.ReceiptError): self.read()
+
     def test_rehashed_profile_caller_and_pinned_header_forgeries_are_rejected(self):
         self.cohort()
         for name in ("inputs.json", capacity.DRIVER.name, "mimalloc-stats.h"):

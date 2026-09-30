@@ -38,7 +38,8 @@ def c_command(source, binary, profile, compiler):
 
 
 def native_build_command(target, profile, cargo):
-    return [cargo, "build", "--locked", "--offline", "--release", "--target", m4.RUST_TARGET,
+    return [cargo, "build", "--manifest-path", "/workspace/compat/allocator/native-mi-adapter/Cargo.toml",
+        "--locked", "--offline", "--release", "--target", m4.RUST_TARGET,
         "-p", m4.ADAPTER_PACKAGE, "--target-dir", str(target),
         *(("--features", f"crabc-mimalloc/mi-{profile}") if profile != "release" else ())]
 
