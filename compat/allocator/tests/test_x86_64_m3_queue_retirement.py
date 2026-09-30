@@ -24,6 +24,11 @@ class QueueRetirementRetentionTests(unittest.TestCase):
             archive.write_bytes(b"pinned source fixture")
             compiler = root / "compiler"
             compiler.write_bytes(b"compiler fixture")
+            tools = {}
+            for name in ("musl-gcc", "cargo", "rustc"):
+                tools[name] = root / name
+                tools[name].symlink_to(compiler.name)
+            invocations = []
             built = []
             extracted = []
             traces = {queue.RUST_TEST: "M3R source-shaped observation\n",
@@ -40,6 +45,7 @@ class QueueRetirementRetentionTests(unittest.TestCase):
                 return source
 
             def command(argv, **_options):
+                invocations.append(list(argv))
                 if "-o" in argv:
                     binary = Path(argv[argv.index("-o") + 1])
                     binary.write_bytes(b"original C program")
@@ -60,7 +66,7 @@ class QueueRetirementRetentionTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(queue.run, "load_pin", return_value={"archive_root": "source"}))
                 stack.enter_context(mock.patch.object(queue.run, "fetch_archive", return_value=archive))
                 stack.enter_context(mock.patch.object(queue.run, "safe_extract", side_effect=extract))
-                stack.enter_context(mock.patch.object(queue.run, "require_tool", return_value=str(compiler)))
+                stack.enter_context(mock.patch.object(queue.run, "require_tool", side_effect=lambda name: str(tools[name])))
                 stack.enter_context(mock.patch.object(queue.run, "command_record", side_effect=command))
                 program = root / "unit-program"
                 program.write_bytes(b"original Rust program")
@@ -68,6 +74,7 @@ class QueueRetirementRetentionTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(queue.run, "native_execution_attestation"))
                 stack.enter_context(mock.patch.object(queue.receipts, "write_receipt"))
                 self.assertEqual(queue.main(), 0)
+            self.assertIn([str(tools["rustc"]), "-vV"], invocations, "compiler proxies need their original invocation name")
             self.assertTrue(built[0].is_file(), "a receipt must retain the actual C executable")
             self.assertTrue((extracted[0] / "src/static.c").is_file(), "the original compiler input must remain physical")
 

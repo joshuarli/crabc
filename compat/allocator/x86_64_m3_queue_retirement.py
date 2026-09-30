@@ -82,7 +82,8 @@ def read_report(*, replay: bool = False) -> dict:
     if set(report["tools"]) != {"musl-gcc", "cargo", "rustc"}:
         raise run.HarnessError("queue compiler tool roster changed")
     for name, tool in report["tools"].items():
-        path = Path(run.require_tool(name)).resolve()
+        # Proxy executables dispatch by their invocation name, not their resolved target.
+        path = Path(run.require_tool(name)).absolute()
         if str(path) != tool["path"] or run.sha256_file(path) != tool["sha256"]:
             raise run.HarnessError(f"queue tool changed: {name}")
         command = [str(path), "-vV" if name == "rustc" else "--version"]
@@ -166,7 +167,8 @@ def main(arguments=None) -> int:
     ]
     tools = {}
     for name in ("musl-gcc", "cargo", "rustc"):
-        path = Path(run.require_tool(name)).resolve()
+        # Proxy executables dispatch by their invocation name, not their resolved target.
+        path = Path(run.require_tool(name)).absolute()
         version = run.command_record([str(path), "-vV" if name == "rustc" else "--version"], cwd=ROOT)
         run.require_success(version, f"queue {name} identity")
         tools[name] = {"path": str(path), "sha256": run.sha256_file(path), "version": version}
