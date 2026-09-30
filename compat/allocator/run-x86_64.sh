@@ -86,6 +86,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-subprocess-lifecycle
   allocator-heap-lifecycle | allocator-m6-adapter
   allocator-upstream-subprocess-stress
+  allocator-public-heap-alignment
   allocator-m6 [--check|--reader-tests]
   allocator-unit [--filter module::tests::exact_test_name] | allocator-core-unit
   allocator-native-integration
@@ -985,6 +986,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "allocator-m6-adapter takes no arguments"
         ensure_image
         run_in_container python3 compat/allocator/x86_64_m6_adapter.py
+        ;;
+    allocator-public-heap-alignment)
+        [ "$#" -eq 0 ] || fail "allocator-public-heap-alignment takes no arguments"
+        ensure_image
+        run_in_container python3 compat/allocator/x86_64_m6_public_heap_alignment.py
         ;;
     allocator-upstream-subprocess-stress)
         [ "$#" -eq 0 ] || fail "allocator-upstream-subprocess-stress takes no arguments"

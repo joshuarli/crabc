@@ -461,6 +461,10 @@
     "native_option_profiles": "compat/allocator/x86_64_m7_gate.py",
     "native_test_context_arena_print": "compat/allocator/x86_64_m7_gate.py",
     "native_theap_contract": "compat/allocator/x86_64_m6_public_theap.py",
+    "native_heap_visit_contract": "compat/allocator/x86_64_m6_adapter.py",
+    "native_subprocess_contract": "compat/allocator/x86_64_m6_nested_child.py",
+    "native_arena_contract": "compat/allocator/x86_64_m6_public_arena.py",
+    "native_heap_allocation_contract": "compat/allocator/x86_64_m6_public_heap_alignment.py",
     "native_persistent_owner_local_trace": "compat/allocator/m3-local-engine-x86_64-v3.5.0.json"
   }
 }

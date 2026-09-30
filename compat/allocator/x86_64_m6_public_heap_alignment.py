@@ -3,6 +3,7 @@
 
 from pathlib import Path
 import re
+import shutil
 
 import run as harness
 import x86_64_m4_gate as m4
@@ -83,6 +84,21 @@ def run_differential() -> int:
         rust_errors = re.findall(r"(?:aligned allocation[^\n]*|out of memory[^\n]*)", str(rust_run["stderr"]))
         if c_errors != rust_errors:
             raise harness.HarnessError(f"Heap alignment diagnostics differ: {c_errors!r} != {rust_errors!r}")
+        shutil.copy2(c_driver, ARTIFACTS / "public-heap-alignment-c")
+        shutil.copy2(rust_driver, ARTIFACTS / "public-heap-alignment-rust")
+        direct = harness.command_record(
+            [harness.require_tool("cargo"), "test", "--locked", "--offline", "--target", m4.RUST_TARGET,
+             "-p", "crabc-mimalloc", "--no-default-features",
+             "--test", "native_heap_allocation_contract",
+             "heap_requests_preserve_content_failure_and_legal_release_lifetimes",
+             "--", "--exact", "--nocapture", "--test-threads=1"],
+            cwd=harness.ROOT, timeout_seconds=900,
+        )
+        (ARTIFACTS / "native_heap_allocation_contract.log").write_text(
+            str(direct["stdout"]) + str(direct["stderr"]))
+        harness.require_success(direct, "public Heap direct allocation ownership contract")
+        if harness.parse_rust_test_count(str(direct["stdout"]) + str(direct["stderr"])) != 1:
+            raise harness.HarnessError("public Heap direct allocation ownership contract did not execute exactly one test")
         return len(c_trace)
 
 

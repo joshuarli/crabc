@@ -179,24 +179,24 @@
       "scope": "Exact fresh-process Rust regressions for null, foreign, interior, non-main, and moved-page Heap queries and for quiescent non-head page utilization after a joined remote free."
     },
     "unit:heap-allocation": {
-      "runner": null,
-      "scope": "Focused Rust Heap-scoped allocation regressions."
+      "runner": "compat/allocator/x86_64_m6_public_heap_alignment.py",
+      "scope": "Independent production Rust Heap allocation integration covers live-client growth, alignment, content, realloc refusal and replacement, delete transfer, destruction and subsequent fresh Heap allocation alongside the pinned C/Rust receiver."
     },
     "unit:heap-statistics-visitation": {
-      "runner": null,
-      "scope": "Focused Rust Heap statistics and visitation regressions."
+      "runner": "compat/allocator/x86_64_m6_adapter.py",
+      "scope": "Independent production Rust Heap visitor regression and the pinned C/Rust receiver cover joined remote frees, areas and live blocks, source population, early stop, collection and allocation on a distinct retained Heap from the callback."
     },
     "unit:theap": {
       "runner": "compat/allocator/x86_64_m6_public_theap.py",
       "scope": "Independent native public Theap integration plus five isolated allocation, selection, cache, live-client deletion and release regressions alongside the pinned C/Rust receiver."
     },
     "unit:arena": {
-      "runner": null,
-      "scope": "Focused Rust arena and managed-memory regressions."
+      "runner": "compat/allocator/x86_64_m6_public_arena.py",
+      "scope": "Independent production Rust arena integration covers aligned caller-owned ranges, output reset, query boundaries, main and child membership, selected allocations, callback refusal and retry, joined owners, child destruction and caller final unmap alongside the pinned C/Rust receiver."
     },
     "unit:subprocess": {
-      "runner": null,
-      "scope": "Focused Rust subprocess regressions."
+      "runner": "compat/allocator/x86_64_m6_nested_child.py",
+      "scope": "Independent production Rust subprocess integration covers initialized-thread admission refusal, fresh child membership, Heap list order, nested metadata ownership, owner exit, surviving-client frees and nested-before-parent destruction alongside the pinned C/Rust receiver."
     },
     "upstream:test-api-heaps": {
       "runner": "compat/allocator/x86_64_m6_test_api.py",
