@@ -52,16 +52,20 @@ only its exact source, configuration, image, products, and execution context.
   backtrace addresses retain their raw differences and pass the existing
   semantic receiver. This cohort also passes all 206 selected math/fenv entries
   in eighteen execution cells and its independent reader. The complete
-  nine-component, sixteen-capability text family producer passes;
-  independent read-only validation is executing. This cohort also passes fresh
+  nine-component, sixteen-capability text family producer and independent
+  read-only validator pass. This cohort also passes fresh
   183-obligation CRT and 32-helper producers and their owning readers. Its
   historical CRT selector still rejects the older nine-artifact projection
   against the thirteen-artifact receipt. Static Lua passes both modes on all
   three sealed roots and independent replay; dynamic Lua passes complete
-  installed/extracted workloads, with independent replay executing. Three fixed
-  pthread worker fixtures pass 54 candidate cells and owning replay. Loader and
-  resolver family assembly is executing. Ordered family and callable-provider
-  closure remain open.
+  installed/extracted workloads and independent replay; the original normal
+  Lua dispatchers and source-build admission also pass their owning read-only
+  reader. Three fixed pthread worker fixtures pass 54 candidate cells and owning
+  replay. Loader-family assembly and independent read-only validation pass.
+  Resolver component producers and assembly pass, but the original read-only
+  reader fails on two writes into retained inputs. The scratch repairs are
+  integrated; a fresh same-source resolver cohort is running. Ordered family
+  and callable-provider closure remain open.
 - **Allocator source geometry:** source-faithful auxiliary and ordinary main
   Theap geometry repairs are integrated with ownership repairs. Their exact
   sources pass four-profile C/native layout comparisons and independent replay.
@@ -74,9 +78,12 @@ only its exact source, configuration, image, products, and execution context.
   isolated strict regressions pass at their exact repaired sources; all nine
   merged Rust compiler profiles pass. Compiler-selected Miri descriptors,
   dependencies, source files, tools, sysroot and exact phase environments are
-  now retained. A fresh clean-source complete seventeen-test strict roster and
-  its independent physical receiver are in progress. Prior full-roster
-  failures remain unqualified and retained.
+  now retained. The original complete roster records fifteen of seventeen
+  completions: both remaining interpreter runs exit successfully, but their
+  startup markers interleave with libtest output. The strict parser repair is
+  integrated. One fresh clean-source six-program/seventeen-test run at
+  `1c22908bf` is executing, followed by its independent physical receiver.
+  Prior full-roster failures remain unqualified and retained.
 - **Allocator gates:** existing Heap/subprocess stress, visitation, callbacks,
   statistics, remote ownership and failure evidence remain retained by exact
   source. M6 now requests the supported full-profile producer commands and
@@ -88,10 +95,18 @@ only its exact source, configuration, image, products, and execution context.
   aligned-offset C debug defect retains its source refusal and separate native
   correctness proof. Full Heap conveniences and Theap visitors pass all four
   profiles and owning read-only replay at their exact sources. A new real
-  cross-thread arena reassociation regression matches all client observations
-  but refuses final Heap deletion; its isolated production fix is in progress.
-  Queue receipts now retain executable/compiler authority and pass independent
-  replay. Complete M2/M3/M4 and merged-source qualification remain open.
+  cross-thread arena reassociation regression matches all client observations;
+  its source-faithful noncollecting metadata free repairs Heap deletion. The
+  subsequent child-destroy refusal exposes direct OS metadata pages that pinned
+  C retains. A source-faithful terminal repair passes the unchanged release
+  lifecycle judge; four-profile qualification and memory-retention measurement
+  remain open. Heap destroy/finish contention now has causal retry evidence,
+  complete compiler-command authentication and four-profile read-only replay.
+  All nineteen Heap fault controls pass and replay without writing retained
+  inputs. Queue receipts retain executable/compiler authority and replay.
+  M7 secure, guarded, abort-on-failure, debug-applicability and physical-option
+  conditions remain open; ISA correctness passes separately from deferred
+  throughput. Complete M2/M3/M4 and merged-source qualification remain open.
 - **External correctness:** physical huge-page/NUMA qualification requires two
   allowed NUMA nodes with a free 1-GiB huge page on each. This host has one node
   and no such pages; no alternate host is available. Continue independent

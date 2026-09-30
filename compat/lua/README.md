@@ -25,10 +25,13 @@ python3 -m unittest discover -s compat/lua/tests -p 'test_*.py'
 already sealed dynamic cohort. It takes the frozen cohort checkout and its
 `qualification.json`, the exact installed and extracted roots declared by that
 receipt, and a physical verified `lua-5.4.8.tar.gz` seed. It first runs the
-originating checkout's qualification reader with its matching linked-worktree
-Git metadata exposed read-only through explicit `GIT_DIR` and `GIT_WORK_TREE`,
-then copies that seed into a new private cache and invokes the existing dynamic
-lane twice in offline mode. It never edits the frozen worktree's `.git` file
+originating checkout's qualification reader with its matching standalone-clone
+or linked-worktree Git metadata exposed read-only through explicit `GIT_DIR`
+and `GIT_WORK_TREE`, then copies that seed into a new private cache and invokes
+the existing dynamic lane twice in offline mode. `--read REPORT` authenticates
+and replays a retained report using a new private work root; source, Git metadata,
+and retained products remain read-only. `--timeout 300` selects the existing
+bounded workload timeout. It never edits the frozen worktree's `.git` file
 or invokes the sysroot builder, package tool, extractor, public dynamic
 dispatcher, or latest-report publication. Its report records the consumer's
 own clean source separately from the product cohort; passing it is a live Lua

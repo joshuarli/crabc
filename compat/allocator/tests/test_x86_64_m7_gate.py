@@ -46,10 +46,10 @@ class M7GateContractTests(unittest.TestCase):
         self.assertEqual(set(summary["runnable_evidence"]), {
             name for name, record in self.contract["evidence"].items() if record.get("command")
         })
-        # The options/environment and baseline gates have executable evidence.
+        # Options, baseline and optional ISA correctness have executable evidence.
         self.assertEqual(
             summary["blocked_gate_ids"],
-            [gate_id for gate_id in gate.GATE_IDS if gate_id not in ("m7.options-environment", "m7.baseline")],
+            [gate_id for gate_id in gate.GATE_IDS if gate_id not in ("m7.options-environment", "m7.baseline", "m7.optional-isa")],
         )
         owned = {name for entry in self.contract["gates"] for name in entry["items"]}
         for name in ("mi_option_get", "mi_option_reset_delay", "mi_options_print_out", "mi_version",

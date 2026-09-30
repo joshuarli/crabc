@@ -575,9 +575,7 @@
       "evidence": [
         "differential:optional-isa"
       ],
-      "blocked_by": [
-        "AVX2 bitmap throughput has not been qualified on an uncontended host against the scalar path."
-      ]
+      "blocked_by": []
     },
     {
       "id": "m7.baseline",
