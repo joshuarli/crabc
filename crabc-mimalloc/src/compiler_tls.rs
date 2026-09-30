@@ -163,9 +163,9 @@ pub(crate) fn is_empty_dynamic_backing(backing: NonNull<DynamicThreadLocalBackin
 // These five roots deliberately remain private Rust statics. In a normal
 // build they have no stable ABI spelling or dynamic export. The codegen probe
 // reaches them only through feature-gated witness functions and verifies that
-// every emitted root is an ELF STT_TLS/GLOBAL/HIDDEN symbol. Hidden visibility
-// is rustc's private cross-section representation; the roots never enter
-// dynsym.
+// every emitted root is an ELF STT_TLS/GLOBAL/HIDDEN symbol. Rust privacy alone
+// does not fix ELF visibility for roots reached through inlined functions;
+// the x86 ELF directives below keep those roots out of dynamic symbol scope.
 #[thread_local]
 static mut DYNAMIC_BACKING_ROOT: *mut DynamicThreadLocalBacking =
     empty_dynamic_backing_ptr();
@@ -187,6 +187,18 @@ static mut CACHED_THEAP_ROOT: *mut Theap = empty_default_theap_ptr();
 // route live ownership through it on either selected native profile.
 #[thread_local]
 static mut THREAD_ID_HELPER_ROOT: *mut () = core::ptr::null_mut();
+
+// Bind visibility to the compiler-selected names without adding ABI exports
+// or changing TLS storage, initializers, or the crate's TLS access model.
+#[cfg(target_arch = "x86_64")]
+core::arch::global_asm!(
+    ".hidden {dynamic}, {fast}, {default}, {cached}, {identity}",
+    dynamic = sym DYNAMIC_BACKING_ROOT,
+    fast = sym FAST_SLOT_ROOT,
+    default = sym DEFAULT_THEAP_ROOT,
+    cached = sym CACHED_THEAP_ROOT,
+    identity = sym THREAD_ID_HELPER_ROOT,
+);
 
 /// The five source compiler-TLS roots remain attached across application TLS
 /// reset on a reused timer pthread; losing one would orphan its live Theap.
@@ -414,7 +426,7 @@ fn thread_id_helper_address() -> Option<LiveThreadId> {
     LiveThreadId::new(core::ptr::addr_of_mut!(THREAD_ID_HELPER_ROOT) as usize)
 }
 
-/// Returns the finite constructor-image facts consumed by the M1 C/Rust
+/// Returns the finite constructor-image facts consumed by the C/Rust
 /// compiler-TLS differential. This is deliberately test-only: it exposes no
 /// pointer value or lifecycle authority, only the selected source relations
 /// from `threadlocal.c`, `prim-tls.c`, and `prim-tls.h`.
