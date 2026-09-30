@@ -23,6 +23,22 @@ fail() {
     exit 1
 }
 
+usage() {
+    printf 'usage: %s [--static-sysroot STATIC_SYSROOT DYNAMIC_SYSROOT]\n' "$0" >&2
+    exit 2
+}
+
+provided_static=''
+provided_dynamic=''
+if [ "$#" -ne 0 ]; then
+    [ "$#" -eq 3 ] && [ "$1" = --static-sysroot ] || usage
+    [ -n "$2" ] && [ -n "$3" ] || usage
+    case "$2" in -*) usage ;; esac
+    case "$3" in -*) usage ;; esac
+    provided_static="$2"
+    provided_dynamic="$3"
+fi
+
 require_tool() {
     command -v "$1" >/dev/null 2>&1 || fail "requires $1"
 }
@@ -196,7 +212,12 @@ capture_status() {
         >"$work/$label.stdout" 2>"$work/$label.stderr"
     status=$?
     set -e
-    (( status <= 85 )) || fail "$label exited $status instead of an I/O errno fingerprint"
+    printf '%s\n' "$status" >"$work/$label.status"
+    (( status <= 85 && (status & ~85) == 0 )) ||
+        fail "$label exited $status instead of an I/O errno fingerprint"
+    printf 'kernel-admin-observations-ok\n' | cmp - "$work/$label.stdout" ||
+        fail "$label did not complete every kernel-administration observation"
+    [ ! -s "$work/$label.stderr" ] || fail "$label wrote unexpected diagnostics"
     printf '%s\n' "$status" >"$work/$label.status"
     printf '%s' "$status"
 }
@@ -204,19 +225,38 @@ capture_status() {
 compare_mode() {
     local label="$1"
     shift
-    local status
+    local status comparison_status
 
     status="$(capture_status "$label" "$@")"
     [ "$status" = "$oracle_status" ] ||
         fail "$label fingerprint differs from pinned musl ($status != $oracle_status)"
     cmp "$work/oracle.stdout" "$work/$label.stdout" || fail "$label stdout differs from pinned musl"
-    cmp "$work/oracle.stderr" "$work/$label.stderr" || fail "$label stderr differs from pinned musl"
+    if cmp "$work/oracle.stderr" "$work/$label.stderr"; then
+        comparison_status=$?
+    else
+        comparison_status=$?
+        fail "$label stderr differs from pinned musl (comparison exited $comparison_status)"
+    fi
+    printf '%s\n' "$comparison_status" >"$work/compare-$label.status"
+    receipt_cases+=("compare-$label=$comparison_status:oracle.stdout,oracle.stderr,oracle.status,$label.stdout,$label.stderr,$label.status,compare-$label.status")
 }
 
 require_checkout_work
 for tool in ar cmp gcc grep nm objdump python3 readelf realpath sha256sum timeout; do
     require_tool "$tool"
 done
+if [ -n "$provided_static" ]; then
+    for product in "$provided_static" "$provided_dynamic"; do
+        [ -d "$product" ] || fail "supplied product is not a directory: $product"
+        resolved="$(realpath "$product")"
+        case "$resolved" in
+            "$ROOT"/.work/*) ;;
+            *) fail "supplied product escapes checkout .work: $product" ;;
+        esac
+    done
+    provided_static="$(realpath "$provided_static")"
+    provided_dynamic="$(realpath "$provided_dynamic")"
+fi
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 for path in "$PROBE" "$ARCH_SOURCE" "$IO_SOURCE" "$STATIC_PROVIDER_READER"; do
     [ -f "$path" ] || fail "missing source input: $path"
@@ -225,6 +265,7 @@ done
 bash "$ROOT/compat/x86_64/run_musl_oracle.sh" >/dev/null
 work="$(mktemp -d "$TMPDIR/owned-kernel-admin.XXXXXX")"
 readonly work
+receipt_cases=()
 chmod a+rx "$work"
 mkdir -p "$work/root"
 
@@ -239,19 +280,23 @@ done
 # Both product builders select the owned runtime. Its dependency graph in
 # libc/Cargo.toml includes x86-kernel-admin and the retained x86-io-permissions
 # leaf; the standalone I/O-only archive remains a separate selected profile.
-python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
-    --output "$work/static-sysroot" >"$work/static-build.json"
-python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
-    --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
-
-readonly static_product="$work/static-sysroot"
-readonly dynamic_product="$work/dynamic-sysroot"
+if [ -n "$provided_static" ]; then
+    readonly static_product="$provided_static"
+    readonly dynamic_product="$provided_dynamic"
+else
+    python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
+        --output "$work/static-sysroot" >"$work/static-build.json"
+    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
+        --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
+    readonly static_product="$work/static-sysroot"
+    readonly dynamic_product="$work/dynamic-sysroot"
+fi
 # The sealed installed driver intentionally rejects preprocessing controls.
 # Use GCC only as a no-link header tracer with its builtin and ambient include
 # roots disabled; the installed driver below compiles the one candidate object.
 gcc -std=c11 -nostdinc -isystem "$dynamic_product/usr/include" -H -E "$PROBE" \
     >/dev/null 2>"$work/header-trace"
-for header in errno.h stdint.h sys/io.h sys/syscall.h bits/syscall.h; do
+for header in errno.h stdint.h stdio.h sys/io.h sys/syscall.h bits/syscall.h; do
     grep -Fq "$dynamic_product/usr/include/$header" "$work/header-trace" ||
         fail "installed workload omitted <$header>"
 done
@@ -269,7 +314,8 @@ oracle_status="$(capture_status oracle /oracle)"
 
 for mode in static static-pie; do
     binary="$work/root/$mode"
-    "$static_product/bin/crabc-cc" "-$mode" "$work/workload.o" -o "$binary"
+    (cd "$work" && "$static_product/bin/crabc-cc" "-$mode" --link-receipt "$mode.link.json" \
+        "$work/workload.o" -o "$binary")
     assert_executable_shape "$binary" "$mode"
     compare_mode "$mode" "/$mode"
 done
@@ -284,5 +330,28 @@ for mode in pie non-pie; do
 done
 
 sha256sum -c "$work/input.sha256" >"$work/input-verified.txt"
+provider_status=$?
+receipt_arguments=(--runner owned-kernel-admin --work "$work" --canonical yes
+    --parameter "CORE_IMAGE=$(python3 -B "$ROOT/compat/x86_64/core_image.py")"
+    --parameter "STATIC_PRODUCT=${static_product#"$ROOT/"}"
+    --parameter "DYNAMIC_PRODUCT=${dynamic_product#"$ROOT/"}")
+provider_logs=''
+for file in "$work"/*; do
+    if [ -f "$file" ]; then
+        provider_logs+="${provider_logs:+,}${file#"$work/"}"
+    fi
+done
+receipt_arguments+=(--case "providers=$provider_status:$provider_logs")
+for case in "${receipt_cases[@]}"; do receipt_arguments+=(--case "$case"); done
+receipt_arguments+=(--product "probe=$PROBE" --product "workload=$work/workload.o"
+    --product "oracle=$work/root/oracle" --product "static=$work/root/static"
+    --product "static-pie=$work/root/static-pie" --product "dynamic-pie=$work/root/dynamic-pie"
+    --product "dynamic-non-pie=$work/root/dynamic-non-pie"
+    --product "static-libc=$static_product/usr/lib/libc.a" --product "dynamic-libc=$dynamic_product/usr/lib/libc.so"
+    --product "dynamic-loader=$dynamic_product/lib/ld-crabc-x86_64.so.1"
+    --product "static-provenance=$static_product/share/crabc/libc-static.provenance.json"
+    --product "dynamic-provenance=$dynamic_product/share/crabc/libc-shared.provenance.json")
+python3 -B "$ROOT/compat/x86_64/native_shadow_receipt.py" write "${receipt_arguments[@]}"
+python3 -B "$STATIC_PROVIDER_READER" --read
 printf '%s\n' \
     "x86 owned kernel administration: PASS (same object; pinned musl, static/static-PIE, dynamic PIE/non-PIE kernel/direct; ARCH_GET_FS/GS, non-mutating failures, invalid iopl/ioperm only); evidence: $work"

@@ -13,6 +13,7 @@
 
 #include <errno.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <sys/io.h>
 #include <sys/syscall.h>
 
@@ -114,6 +115,9 @@ int main(void)
     ioperm_count = observe_ioperm_invalid(0UL, 65537UL, 0);
     if (iopl_negative < 0 || iopl_large < 0 ||
         ioperm_start < 0 || ioperm_count < 0)
+        return 127;
+
+    if (puts("kernel-admin-observations-ok") == EOF)
         return 127;
 
     return iopl_negative | (iopl_large << 2) | (ioperm_start << 4) |
