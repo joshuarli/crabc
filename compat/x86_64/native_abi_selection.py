@@ -626,13 +626,20 @@ def source_path(value: str) -> Path:
 
 
 def validate_contract(value: Any) -> dict[str, Any]:
-    result = exact(value, {'schema', 'target', 'inputs', 'profiles', 'owner_groups', 'structural_groups',
+    result = exact(value, {'schema', 'target', 'closure', 'inputs', 'profiles', 'owner_groups', 'structural_groups',
                            'object_contracts', 'private_protocols', 'module_private_symbols',
                            'process_exit_static_imports', 'linker_dynamic_table', 'crt_init_fini_binding',
                            'rust_allocation_handlers', 'private_complex_mul_helpers',
                            'private_float_scanner_helpers',
                            'requirements'},
                    'selection contract')
+    closure = exact(result['closure'], {'admission_family', 'admission_family_scope', 'campaign_family_scope'},
+                    'selection closure contract')
+    require(closure == {
+        'admission_family': 'compat.abi-differential',
+        'admission_family_scope': 'transitive-prerequisites-and-selected-owners',
+        'campaign_family_scope': 'all-ledger-families',
+    }, 'selection closure scopes differ')
     module_private = exact(result['module_private_symbols'], {'id', 'owner', 'family', 'sources', 'reason'},
                            'module-private symbol rule')
     for key in ('id', 'owner', 'family', 'reason'):
@@ -2094,6 +2101,95 @@ def _require_closed_report(report: Mapping[str, Any]) -> None:
     closure = exact(report.get('closure'), {'complete', 'blockers'}, 'closure')
     require(type(closure['complete']) is bool and type(closure['blockers']) is list, 'closure field types invalid')
     require(closure['complete'] is True and not closure['blockers'], 'native ABI selection is incomplete')
+
+
+def abi_prerequisite_closure(contract: Mapping[str, Any], blockers: Sequence[Mapping[str, Any]],
+                             identities: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Project ABI admission without requiring its own downstream consumers.
+
+    Every non-family blocker remains required. Selected providers also keep
+    their family owners even when they are not a declared prerequisite; an
+    owner that depends on ABI admission is a contract cycle, not an exclusion.
+    The whole-campaign closure retains all family blockers separately.
+    """
+    admission = contract['closure']['admission_family']
+    ledger = tomllib.loads(source_path(contract['inputs']['parity']).read_text())
+    rows = ledger.get('family')
+    require(type(rows) is list, 'ABI prerequisite family graph is absent')
+    graph: dict[str, list[str]] = {}
+    for row in rows:
+        require(type(row) is dict, 'ABI prerequisite family row is invalid')
+        name = string(row.get('id'), 'ABI prerequisite family')
+        require(name not in graph, 'ABI prerequisite family is duplicated')
+        dependencies = strings(row.get('depends_on'), 'ABI prerequisite dependencies', empty=True)
+        require(len(dependencies) == len(set(dependencies)), 'ABI prerequisite dependency is duplicated')
+        graph[name] = dependencies
+    require(admission in graph, 'ABI admission family is absent from prerequisite graph')
+    visited: set[str] = set()
+    active: set[str] = set()
+
+    def visit(name: str) -> None:
+        require(name in graph, f'ABI prerequisite family is absent: {name}')
+        require(name not in active, f'ABI prerequisite family graph has a cycle: {name}')
+        if name in visited:
+            return
+        active.add(name)
+        for dependency in graph[name]:
+            visit(dependency)
+        active.remove(name)
+        visited.add(name)
+
+    # Validate the complete bound graph before choosing a subset; malformed
+    # downstream rows must not become hidden merely because they are deferred.
+    for name in graph:
+        visit(name)
+    required: set[str] = set()
+
+    def include(name: str) -> None:
+        require(name != admission, 'selected owner or prerequisite depends on the ABI admission family')
+        if name in required:
+            return
+        required.add(name)
+        for dependency in graph[name]:
+            include(dependency)
+
+    for name in graph[admission]:
+        include(name)
+    owners = {row['family'] for field in ('owner_groups', 'structural_groups', 'object_contracts', 'private_protocols')
+              for row in contract[field] if 'family' in row}
+    owners.add(contract['module_private_symbols']['family'])
+    for record in identities:
+        selected = record.get('selection')
+        if selected is not None:
+            require(isinstance(selected, Mapping), 'selected ABI owner is invalid')
+            if 'family' in selected:
+                owners.add(string(selected['family'], 'selected ABI owner family'))
+    for owner in owners:
+        require(owner in graph, f'selected ABI owner family is absent: {owner}')
+        include(owner)
+    scoped = []
+    for blocker in blockers:
+        require(isinstance(blocker, Mapping), 'ABI prerequisite blocker is invalid')
+        if blocker.get('code') == 'family-semantic-evidence-unavailable':
+            name = blocker.get('family')
+            require(name in graph, 'ABI family blocker is absent from prerequisite graph')
+            if name not in required:
+                continue
+        scoped.append(copy.deepcopy(blocker))
+    return {'family': admission, 'required_families': [name for name in graph if name in required],
+            'complete': not scoped, 'blockers': scoped}
+
+
+def require_abi_prerequisite_closure(report_path: Path, **inputs: Any) -> dict[str, Any]:
+    """Replay every public input before requiring the ABI admission scope."""
+    require(isinstance(report_path, Path), 'ABI prerequisites need a physical report path and public replay')
+    report = validate_report(report_path, **inputs)
+    closure = exact(report.get('abi_prerequisite_closure'),
+                    {'family', 'required_families', 'complete', 'blockers'}, 'ABI prerequisite closure')
+    require(closure['family'] == 'compat.abi-differential'
+            and type(closure['complete']) is bool and type(closure['blockers']) is list
+            and closure['complete'] is True and not closure['blockers'], 'native ABI prerequisites are incomplete')
+    return report
 
 
 def require_selection_closure(report_path: Path, **inputs: Any) -> dict[str, Any]:
@@ -13479,9 +13575,10 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     blockers.extend(family_evidence_blockers)
     blockers.extend({'code': 'companion-rejected', 'companion': name, 'detail': detail}
                     for name, detail in sorted(rejected.items()))
+    blockers = sorted(blockers, key=lambda item: json.dumps(item, sort_keys=True))
+    abi_closure = abi_prerequisite_closure(contract, blockers, accounting['identities'])
     require(same(source_before, selection_source()), 'selection source changed while building report')
     require(same(inputs['bindings'], load_source_inputs(contract, contract_path)['bindings']), 'selection input bytes changed during report')
-    blockers = sorted(blockers, key=lambda item: json.dumps(item, sort_keys=True))
     return {'schema': SCHEMA, 'target': TARGET, 'selection_source': source_before, 'source_inputs': inputs,
             'contract': contract, 'measurement': measurement, 'declaration_companion': declaration,
             'fixed_c_producer_metadata_companion': fixed_c_producer_metadata_companion,
@@ -13555,7 +13652,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'bsd_random_receipt_companion': bsd_random_receipt_companion,
             'bsd_random_receipt_joins': bsd_random_receipt_joins,
             'family_semantic_receipts': family_semantic_receipts,
-            **accounting, 'closure': {'complete': not blockers, 'blockers': blockers}, 'status': dict(STATUS),
+            **accounting, 'closure': {'complete': not blockers, 'blockers': blockers},
+            'abi_prerequisite_closure': abi_closure,
+            'status': dict(STATUS),
             'limits': ['selection audit is not qualification', 'complete raw ELF observations stay with the publicly replayed supplement',
                        'no allocator metadata or unwinder investigation', 'no imported AArch64 execution proof',
                        'public-data linkage is scoped evidence; the text component attaches only its semantic roster and source-only fopen64 structural row while aggregate family admission remains unavailable',
@@ -13721,7 +13820,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
 
 def main(argv: Sequence[str]) -> int:
     parser = argparse.ArgumentParser(allow_abbrev=False, description=__doc__)
-    parser.add_argument('mode', choices=('build-report', 'validate-report', 'require-closure'))
+    parser.add_argument('mode', choices=('build-report', 'validate-report', 'require-closure', 'require-abi-prerequisite-closure'))
     parser.add_argument('report', nargs='?', type=Path)
     for option in ('measurement-checkout', 'elf-facts', 'base-inventory', 'static-product', 'dynamic-product', 'static-preparation'):
         parser.add_argument('--' + option, required=True, type=Path)
@@ -13827,9 +13926,16 @@ def main(argv: Sequence[str]) -> int:
         else:
             if args.report is None or args.output is not None:
                 parser.error('replay requires report and does not accept --output')
-            report = require_selection_closure(args.report, **kwargs) if args.mode == 'require-closure' else validate_report(args.report, **kwargs)
+            if args.mode == 'require-closure':
+                report = require_selection_closure(args.report, **kwargs)
+            elif args.mode == 'require-abi-prerequisite-closure':
+                report = require_abi_prerequisite_closure(args.report, **kwargs)
+            else:
+                report = validate_report(args.report, **kwargs)
         print(f'native ABI selection: {len(report["identities"])} identities, {len(report["occurrences"])} complete occurrences, '
               f'{len(report["closure"]["blockers"])} blockers; complete={report["closure"]["complete"]}; public support=false')
+        if args.mode == 'require-abi-prerequisite-closure':
+            print('native ABI prerequisite closure: complete=true; whole-campaign closure remains independent')
         return 0
     except (SelectionError, inventory.InventoryError, OSError, ValueError) as error:
         print(f'ERROR: native ABI selection: {error}', file=sys.stderr)

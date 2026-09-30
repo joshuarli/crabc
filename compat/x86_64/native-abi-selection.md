@@ -1103,3 +1103,29 @@ collector and product-build identities explicit. Missing selection, unresolved
 placement, changed metadata, unauthorized visibility, absent ordinary
 extraction, or incomplete family evidence prevents closure. Run the dynamic
 ratchet independently; neither check promotes a family or the platform.
+
+### ABI admission and whole-campaign closure
+
+`require-abi-prerequisite-closure` replays the same complete physical selection
+report and every supplied public input as `require-closure`. It checks the
+report's `abi_prerequisite_closure` projection for admission of
+`compat.abi-differential`. The required families come from that family's
+transitive dependencies in the bound parity input, together with the selected
+contract and observed provider owners and their dependencies. Missing graph
+nodes, duplicated dependencies, dependency cycles, and a selected owner that
+requires ABI admission itself reject the projection.
+
+Only unavailable family evidence outside that scope is deferred. Every source,
+provider, extraction, declaration, component, and rejected-companion blocker
+remains required, regardless of any family label on the blocker. In particular,
+planned libc, loader, CRT, and sysroot prerequisite families remain blocking.
+The explicit API is `require_abi_prerequisite_closure(report_path, **inputs)`;
+it cannot accept an unreplayed mapping or a caller's completion flag.
+
+The existing `closure` projection and `require-closure` still require every
+family in the campaign ledger, including ABI admission itself and the later
+loader, Rust consumer, source-build, accounting, and performance gates. A
+complete ABI prerequisite projection can therefore coexist with an incomplete
+whole-campaign closure. It does not admit a family, change a ledger state, or
+claim promotion or public support. Reviewed family admission may consume the
+explicit prerequisite gate; full campaign closure remains a separate condition.

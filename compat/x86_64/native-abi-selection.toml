@@ -2,6 +2,11 @@
 schema = "crabc.x86_64-native-abi-selection/v1"
 target = "x86_64-unknown-linux-musl"
 
+[closure]
+admission_family = "compat.abi-differential"
+admission_family_scope = "transitive-prerequisites-and-selected-owners"
+campaign_family_scope = "all-ledger-families"
+
 [inputs]
 frozen_baseline = "compat/x86_64/aarch64_frozen_baseline.json"
 coverage = "compat/crabc-rs/coverage.toml"

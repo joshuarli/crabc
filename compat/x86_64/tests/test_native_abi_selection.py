@@ -3194,5 +3194,102 @@ def empty_facts():
     return result
 
 
+
+class AbiPrerequisiteClosureTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.contract = selection.load_contract(selection.CONTRACT_PATH)
+        cls.families = selection.load_source_inputs(cls.contract, selection.CONTRACT_PATH)['families']
+
+    def test_actual_graph_excludes_self_and_downstream_but_keeps_missing_loader(self):
+        blockers, _ = selection.family_semantic_evidence(
+            self.families, headers_layouts_companion=None, text_family_companion=None)
+        scoped = selection.abi_prerequisite_closure(self.contract, blockers, [])
+        observed = {row['family'] for row in scoped['blockers']}
+        self.assertNotIn('compat.abi-differential', observed)
+        self.assertNotIn('compat.loader-corpus', observed)
+        self.assertNotIn('consumer.rust-std-lto', observed)
+        self.assertNotIn('performance.release', observed)
+        self.assertIn('ldso.dynamic-runtime', observed)
+        self.assertIn('libc.c-abi-compat', observed)
+        self.assertFalse(scoped['complete'])
+        self.assertIn('sysroot.owned-artifact', scoped['required_families'])
+
+    def test_complete_upstream_scope_preserves_full_campaign_refusal(self):
+        blockers, _ = selection.family_semantic_evidence(
+            self.families, headers_layouts_companion=None, text_family_companion=None)
+        required = selection.abi_prerequisite_closure(self.contract, blockers, [])['required_families']
+        remaining = [row for row in blockers if row['family'] not in required]
+        scoped = selection.abi_prerequisite_closure(self.contract, remaining, [])
+        self.assertTrue(scoped['complete'])
+        self.assertEqual(scoped['blockers'], [])
+        with self.assertRaisesRegex(selection.SelectionError, 'incomplete'):
+            selection._require_closed_report({'closure': {'complete': False, 'blockers': remaining}})
+        provider = {'code': 'unresolved-provider', 'family': 'compat.loader-corpus'}
+        rejected = {'code': 'companion-rejected', 'companion': 'crt_startup_report', 'detail': 'changed raw'}
+        scoped = selection.abi_prerequisite_closure(self.contract, [*remaining, provider, rejected], [])
+        self.assertEqual(scoped['blockers'], [provider, rejected])
+        self.assertFalse(scoped['complete'])
+
+    def test_selected_owner_cannot_be_hidden_by_downstream_filter(self):
+        identity = {'selection': {'family': 'consumer.rust-std-lto'}}
+        with self.assertRaisesRegex(selection.SelectionError, 'admission family'):
+            selection.abi_prerequisite_closure(self.contract, [], [identity])
+
+    def test_explicit_gate_requires_physical_public_replay(self):
+        with self.assertRaises(selection.SelectionError):
+            selection.require_abi_prerequisite_closure({'abi_prerequisite_closure': {'complete': True}})
+        path = ROOT / '.work/x86_64/abi-prerequisite-public-control/report.json'
+        report = {'abi_prerequisite_closure': {'family': 'compat.abi-differential',
+                  'required_families': ['ldso.dynamic-runtime'], 'complete': False,
+                  'blockers': [{'code': 'family-semantic-evidence-unavailable', 'family': 'ldso.dynamic-runtime'}]}}
+        with mock.patch.object(selection, 'validate_report', return_value=report) as replay:
+            with self.assertRaisesRegex(selection.SelectionError, 'ABI prerequisites are incomplete'):
+                selection.require_abi_prerequisite_closure(path)
+            replay.assert_called_once_with(path)
+
+    def test_missing_dependencies_and_cycles_in_actual_graph_reject(self):
+        ledger = selection.tomllib.loads(selection.source_path(self.contract['inputs']['parity']).read_text())
+        for mutation in ('missing', 'cycle'):
+            changed = copy.deepcopy(ledger)
+            owner = next(row for row in changed['family'] if row['id'] == 'ldso.dynamic-runtime')
+            owner['depends_on'].append('absent-family' if mutation == 'missing' else 'compat.abi-differential')
+            with self.subTest(mutation=mutation), mock.patch.object(selection.tomllib, 'loads', return_value=changed):
+                with self.assertRaises(selection.SelectionError):
+                    selection.abi_prerequisite_closure(self.contract, [], [])
+
+    def test_accepted_scoped_public_replay_does_not_accept_full_campaign(self):
+        scoped = selection.abi_prerequisite_closure(self.contract, [], [])
+        report = {'abi_prerequisite_closure': scoped, 'closure': {'complete': False, 'blockers': [
+                  {'code': 'family-semantic-evidence-unavailable', 'family': 'compat.loader-corpus'}]}}
+        path = ROOT / '.work/x86_64/abi-prerequisite-public-control/report.json'
+        with mock.patch.object(selection, 'validate_report', return_value=report) as replay:
+            self.assertIs(selection.require_abi_prerequisite_closure(path), report)
+            replay.assert_called_once_with(path)
+        with mock.patch.object(selection, 'validate_report', return_value=report):
+            with self.assertRaisesRegex(selection.SelectionError, 'incomplete'):
+                selection.require_selection_closure(path)
+
+
+    def test_explicit_cli_replays_inputs_and_names_scoped_success(self):
+        arguments = ['require-abi-prerequisite-closure', '.work/selection/report.json']
+        for flag in ('measurement-checkout', 'elf-facts', 'base-inventory', 'static-product', 'dynamic-product', 'static-preparation'):
+            arguments += ['--' + flag, '.work/not-present']
+        report = {'identities': [], 'occurrences': [], 'closure': {'complete': False, 'blockers': [
+                  {'code': 'family-semantic-evidence-unavailable', 'family': 'compat.loader-corpus'}]},
+                  'abi_prerequisite_closure': selection.abi_prerequisite_closure(self.contract, [], [])}
+        output = io.StringIO()
+        with mock.patch.object(selection, 'validate_report', return_value=report) as replay, contextlib.redirect_stdout(output):
+            self.assertEqual(selection.main(arguments), 0)
+        self.assertEqual(replay.call_args.args, (Path('.work/selection/report.json'),))
+        self.assertEqual(replay.call_args.kwargs['static_product'], Path('.work/not-present'))
+        self.assertIn('complete=False; public support=false', output.getvalue())
+        self.assertIn('prerequisite closure: complete=true', output.getvalue())
+        report['abi_prerequisite_closure'] = selection.abi_prerequisite_closure(self.contract, [
+            {'code': 'family-semantic-evidence-unavailable', 'family': 'ldso.dynamic-runtime'}], [])
+        with mock.patch.object(selection, 'validate_report', return_value=report), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(selection.main(arguments), 2)
+
+
 if __name__ == '__main__':
     unittest.main()
