@@ -1039,6 +1039,10 @@ pub unsafe extern "C" fn mi_stats_get(stats: *mut c_void) -> bool {
 }
 
 #[no_mangle]
+/// # Safety
+/// `id` is null, the main id, or a live child retained during this call.
+/// `stats` is null or an aligned, exclusively readable and writable complete
+/// `mi_stats_t`; the caller retains its existing Theaps and owning Heaps.
 pub unsafe extern "C" fn mi_subproc_stats_get(id: *mut c_void, stats: *mut c_void) -> bool {
     register_thread_for_statistics();
     // SAFETY: the C caller retains the selected id and complete source image.
@@ -1046,6 +1050,10 @@ pub unsafe extern "C" fn mi_subproc_stats_get(id: *mut c_void, stats: *mut c_voi
 }
 
 #[no_mangle]
+/// # Safety
+/// `id` is null, the main id, or a live child retained during this call.
+/// `stats` is null or an aligned, exclusively readable and writable complete
+/// `mi_stats_t`.
 pub unsafe extern "C" fn mi_subproc_stats_get_exclusive(id: *mut c_void, stats: *mut c_void) -> bool {
     register_thread_for_statistics();
     // SAFETY: the C caller retains the selected id and complete source image.
@@ -1053,6 +1061,10 @@ pub unsafe extern "C" fn mi_subproc_stats_get_exclusive(id: *mut c_void, stats: 
 }
 
 #[no_mangle]
+/// # Safety
+/// Retain a non-null child `id` and the calling thread's roots during the
+/// snapshot. `buffer` is null or exclusively writable for `size` bytes.
+/// Release an allocator-owned result with `mi_free`.
 pub unsafe extern "C" fn mi_subproc_stats_get_json(id: *mut c_void, size: usize, buffer: *mut c_char) -> *mut c_char {
     register_thread_for_statistics();
     // SAFETY: the C caller's selected-id and writable-buffer contracts.
@@ -1060,6 +1072,10 @@ pub unsafe extern "C" fn mi_subproc_stats_get_json(id: *mut c_void, size: usize,
 }
 
 #[no_mangle]
+/// # Safety
+/// `id` is null, the main id, or a child retained through every callback.
+/// A selected `out` is callable with each message and `argument`; it may
+/// allocate but must not destroy the selected subprocess during rendering.
 pub unsafe extern "C" fn mi_subproc_stats_print_out(id: *mut c_void, out: Option<OutputFunction>, argument: *mut c_void) {
     register_thread_for_statistics();
     let out = source_output(out.map_or(core::ptr::null(), |out| out as *const c_void));
@@ -1068,6 +1084,10 @@ pub unsafe extern "C" fn mi_subproc_stats_print_out(id: *mut c_void, out: Option
 }
 
 #[no_mangle]
+/// # Safety
+/// `heap` is null or a live Heap. Retain it and the calling thread's selected
+/// Theap and owning Heap through this call. `stats` is null or an aligned,
+/// exclusively readable and writable complete `mi_stats_t`.
 pub unsafe extern "C" fn mi_heap_stats_get(heap: HeapPointer, stats: *mut c_void) -> bool {
     register_thread_for_statistics();
     // SAFETY: the C caller retains the source Heap and complete source image.
@@ -1075,6 +1095,10 @@ pub unsafe extern "C" fn mi_heap_stats_get(heap: HeapPointer, stats: *mut c_void
 }
 
 #[no_mangle]
+/// # Safety
+/// `heap` is null or a live Heap retained with the caller's roots during
+/// the snapshot. `buffer` is null or exclusively writable for `size` bytes.
+/// Release an allocator-owned result with `mi_free`.
 pub unsafe extern "C" fn mi_heap_stats_get_json(heap: HeapPointer, size: usize, buffer: *mut c_char) -> *mut c_char {
     register_thread_for_statistics();
     // SAFETY: the C caller retains the source Heap and writable buffer.
@@ -1082,6 +1106,10 @@ pub unsafe extern "C" fn mi_heap_stats_get_json(heap: HeapPointer, size: usize, 
 }
 
 #[no_mangle]
+/// # Safety
+/// Retain the selected Heap and the caller's roots during the snapshot.
+/// A selected `out` and `argument` remain valid for each synchronous message;
+/// callbacks may allocate but must not destroy the selected Heap.
 pub unsafe extern "C" fn mi_heap_stats_print_out(heap: HeapPointer, out: Option<OutputFunction>, argument: *mut c_void) {
     register_thread_for_statistics();
     let out = source_output(out.map_or(core::ptr::null(), |out| out as *const c_void));
@@ -1090,6 +1118,9 @@ pub unsafe extern "C" fn mi_heap_stats_print_out(heap: HeapPointer, out: Option<
 }
 
 #[no_mangle]
+/// # Safety
+/// `heap` is null or a live Heap retained with its subprocess through this
+/// merge. Exclude concurrent merges and destruction of that Heap.
 pub unsafe extern "C" fn mi_heap_stats_merge_to_subproc(heap: HeapPointer) {
     register_thread_for_statistics();
     // SAFETY: the C caller retains this Heap and owning subprocess.

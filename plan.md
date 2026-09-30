@@ -42,8 +42,11 @@ only its exact source, configuration, image, products, and execution context.
   32 observations without disturbing live ownership. Heap NUMA affinity now
   selects fresh pages; debug visitation decodes page links and reports usable
   block geometry. Deterministic Heap birth and release contention match C.
-  A retained child-current statistics regression exposes main-subprocess
-  selection and missing public statistics entries; their repair is active.
+  Child-current statistics selection, public Heap/subprocess statistics entries,
+  ordinary JSON growth and nested destruction's process-main merge are integrated.
+  Deferred callbacks now permit ordinary nested allocation during collection and
+  worker exit. Full numeric statistics still differ; default-Heap JSON routing,
+  process-info ordering and child metadata allocation geometry are being repaired.
 - **Allocator evidence:** exact `fcdd233a2` passes all 45 executable M6 entries;
   its original report retains ten contract blockers. The upstream-only condition
   is now closed by the unchanged API and both full stress workloads. The current
@@ -52,7 +55,11 @@ only its exact source, configuration, image, products, and execution context.
   their independent readers; qualifying performance remains blocked. Exact
   `1b814` passes all 33 statistics rows. Canonical M2 remains partial; exact
   `a836` passes eight local M3 components, 328 native tests and 15 strict Miri
-  tests but lacks M2. Huge-page/NUMA hardware and performance remain open.
+  tests but lacks M2. Exact `5b981fe3b` passes all 24 public deferred-callback
+  C/Rust pairs across four profiles and independent read-only replay. Four-profile
+  Heap collection, visitation, both unchanged stress workloads and child-arena
+  worker evidence are retained. Legacy profile failures remain unadmitted.
+  Huge-page/NUMA hardware and performance remain open.
 - **Runtime qualification:** accepted-C `5bd807aa7` qualifies the complete 219
   executions and separate full54 aggregate with independent read-only readers.
   Its complete installed header/layout and bounded loader and math/fenv evidence
@@ -65,7 +72,12 @@ only its exact source, configuration, image, products, and execution context.
   executions and separate full54 aggregate with independent read-only readers;
   dependent POSIX, pthread, text, math, resolver and Rust std/LTO lanes share
   immutable product leases. Its three math products pass all 206 entries and
-  18 execution cells. Native `e30070ce8` retains its signal-handler/fork timeout
+  18 execution cells. Header, pthread, resolver, loader, Lua and Rust std/LTO
+  component producers and owning read-only readers pass; ordered family closure
+  remains open. The full POSIX producer passes all five strict components;
+  independent admission replay is pending. The compiler-helper owner inventory
+  now names all 32 helpers; the older text selector's 27-helper rejection remains
+  preserved. Native `e30070ce8` retains its signal-handler/fork timeout
   after 12 successes; older `bed22dc18` timed out after 85. Both remain
   unqualified. The controlled native/musl
   child-counter reproduction does not waive that failure. No historical result
