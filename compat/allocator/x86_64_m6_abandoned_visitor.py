@@ -184,11 +184,27 @@ def run_profiles(profiles, driver, artifacts, runner, compare, source_internal=F
 
 
 
-def read_and_replay(profiles, runner, compare, replay=False):
+def read_and_replay(profiles, runner, compare, replay=False, *, fixture=DRIVER.name):
     receipt = receipts.read_receipt(harness.ROOT, runner)
     covered = tuple(receipt.parameters["profiles"].split(","))
     if any(profile not in covered for profile in profiles):
         raise harness.HarnessError("retained visitor receipt does not cover selected profiles")
+    if covered != tuple(profile for profile in PROFILES if profile in covered):
+        raise harness.HarnessError("retained visitor profiles are not an ordered selected profile set")
+    expected_cases = []
+    expected_products = {fixture, "mimalloc.h", "LICENSE", "mimalloc-3.5.0.tar.gz", "inputs.json"}
+    for profile in covered:
+        expected_cases.extend(f"{profile}-{phase}" for phase in ("oracle-build", "native-build"))
+        for backend in ("c", "native"):
+            expected_cases.extend(f"{profile}-{backend}-{phase}"
+                for phase in ("compile", "imports", "link", "run"))
+        expected_cases.append(f"{profile}-comparison")
+        expected_products.update(f"{profile}-{suffix}"
+            for suffix in ("oracle.o", "native-mi-adapter.a", "c", "native", "c.o", "native.o"))
+    if receipt.case_ids() != expected_cases:
+        raise harness.HarnessError("retained visitor build, caller and comparison phases differ")
+    if set(receipt.products) != expected_products:
+        raise harness.HarnessError("retained visitor inputs and profile products differ")
     print(f"{runner} exact-source physical receipt: PASS")
     if not replay:
         return
@@ -233,7 +249,7 @@ def visitor_main(driver, artifacts, runner, compare, source_internal=False):
     profiles = PROFILES if args.matrix else (args.profile,)
     try:
         if args.read or args.replay:
-            read_and_replay(profiles, runner, compare, args.replay)
+            read_and_replay(profiles, runner, compare, args.replay, fixture=driver.name)
         else:
             run_profiles(profiles, driver, artifacts, runner, compare, source_internal)
     except (harness.HarnessError, stress.EvidenceError, receipts.ReceiptError) as error:

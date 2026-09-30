@@ -2,7 +2,11 @@
 
 from pathlib import Path
 import sys
+import json
+import subprocess
+import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import x86_64_m6_abandoned_visitor as regular
@@ -92,6 +96,103 @@ class AbandonedVisitorProfilesTests(unittest.TestCase):
             regular.compare_runs(output, "", output + "extra observation\n", "", "release")
         with self.assertRaises(regular.harness.HarnessError):
             regular.compare_runs(output, "", output, "unexpected diagnostic\n", "release")
+
+
+class AbandonedVisitorReceiptRosterTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        for argv in (("init", "-q"), ("config", "user.email", "test@example.invalid"),
+                     ("config", "user.name", "test")):
+            subprocess.run(["git", *argv], cwd=self.root, check=True)
+        (self.root / ".gitignore").write_text(".work/\n")
+        (self.root / "fixture.c").write_text("int main(void) { return 0; }\n")
+        subprocess.run(["git", "add", "."], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-qm", "fixture"], cwd=self.root, check=True)
+        self.work = self.root / ".work/run"
+        self.work.mkdir(parents=True)
+        log = self.work / "success.stdout"
+        log.write_text("success\n")
+        self.cases = []
+        self.products = {}
+        for name in (regular.DRIVER.name, "mimalloc.h", "LICENSE", "mimalloc-3.5.0.tar.gz", "inputs.json"):
+            product = self.work / name
+            product.write_bytes(b"retained fixture input\n")
+            self.products[name] = product
+        for profile in regular.PROFILES:
+            for phase in ("oracle-build", "native-build"):
+                self.cases.append((f"{profile}-{phase}", 0, [log]))
+            for backend in ("c", "native"):
+                for phase in ("compile", "imports", "link", "run"):
+                    self.cases.append((f"{profile}-{backend}-{phase}", 0, [log]))
+            self.cases.append((f"{profile}-comparison", 0, [log]))
+            for suffix in ("oracle.o", "native-mi-adapter.a", "c", "native", "c.o", "native.o"):
+                name = f"{profile}-{suffix}"
+                product = self.work / name
+                product.write_bytes(b"retained profile product\n")
+                self.products[name] = product
+        patcher = mock.patch.object(regular.harness, "ROOT", self.root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def publish(self, cases=None, products=None, profiles=None):
+        return regular.receipts.write_receipt(self.root, regular.RUNNER, self.work,
+            self.products if products is None else products,
+            self.cases if cases is None else cases,
+            {"profiles": ",".join(regular.PROFILES if profiles is None else profiles)}, True)
+
+    def read(self):
+        regular.read_and_replay(regular.PROFILES, regular.RUNNER, regular.compare_runs)
+
+    def test_complete_physical_profile_receipt_is_accepted(self):
+        self.publish()
+        self.read()
+
+    def test_missing_native_build_is_not_four_profile_evidence(self):
+        self.publish(cases=[case for case in self.cases if case[0] != "debug-1-native-build"])
+        with self.assertRaises(regular.harness.HarnessError):
+            self.read()
+
+    def test_extra_runtime_case_is_not_the_original_workload(self):
+        cases = [*self.cases, ("stat-2-native-extra-run", 0, self.cases[-1][2])]
+        self.publish(cases=cases)
+        with self.assertRaises(regular.harness.HarnessError):
+            self.read()
+
+    def test_reordered_runtime_and_comparison_phases_are_rejected(self):
+        cases = list(self.cases)
+        native_run = next(i for i, case in enumerate(cases) if case[0] == "release-native-run")
+        comparison = next(i for i, case in enumerate(cases) if case[0] == "release-comparison")
+        cases[native_run], cases[comparison] = cases[comparison], cases[native_run]
+        self.publish(cases=cases)
+        with self.assertRaises(regular.harness.HarnessError):
+            self.read()
+
+    def test_reordered_or_repeated_profiles_are_rejected(self):
+        for profiles in (tuple(reversed(regular.PROFILES)), (*regular.PROFILES, "release")):
+            with self.subTest(profiles=profiles):
+                self.publish(profiles=profiles)
+                with self.assertRaises(regular.harness.HarnessError):
+                    self.read()
+
+    def test_missing_retained_profile_elf_is_rejected(self):
+        products = {name: path for name, path in self.products.items() if name != "stat-1-native"}
+        self.publish(products=products)
+        with self.assertRaises(regular.harness.HarnessError):
+            self.read()
+
+    def test_extra_retained_profile_product_is_rejected(self):
+        self.publish(products={**self.products, "stat-2-other-caller": self.products["stat-2-native"]})
+        with self.assertRaises(regular.harness.HarnessError):
+            self.read()
+
+    def test_product_mapping_order_does_not_change_the_roster(self):
+        path = self.publish()
+        data = json.loads(path.read_text())
+        data["products"] = dict(reversed(list(data["products"].items())))
+        path.write_text(json.dumps(data))
+        self.read()
 
 
 if __name__ == "__main__":
