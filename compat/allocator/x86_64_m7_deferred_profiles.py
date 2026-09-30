@@ -46,7 +46,7 @@ def run():
     output.chmod(0o755)
     print(f"Deferred public caller raw products: {output}", flush=True)
     source = harness.safe_extract(archive, output / "source", pin["archive_root"])
-    products, cases = {}, []
+    products, cases, failures = {}, [], []
     for original in (FIXTURE, source / "include/mimalloc.h", source / "LICENSE", archive):
         retained = output / original.name
         shutil.copy2(original, retained)
@@ -89,18 +89,23 @@ def run():
             for mode in MODES:
                 name = f"{profile}-{backend}-{mode}"
                 result, logs = record(output, name, [str(binary), mode], directory, True)
-                if result["kind"] != "process" or result["status"] != 0:
-                    raise harness.HarnessError(f"{name} failed; actual raw in {logs[0]}")
+                status = result.get("status", 1) if result["kind"] == "process" else 1
+                if status != 0:
+                    failures.append(f"{name}: runtime status {status}; actual raw in {logs[0]}")
                 traces[backend, mode] = stress.byte_record_payload(result["stdout"], name)
-                cases.append((name, 0, logs))
+                cases.append((name, status, logs))
         for mode in MODES:
             if traces["c", mode] != traces["native", mode]:
-                raise harness.HarnessError(f"{profile}-{mode}: actual C/native callback traces differ; raw in {output}")
-        print(f"Deferred public caller {profile}: three C/native pairs PASS", flush=True)
+                failures.append(f"{profile}-{mode}: actual C/native callback traces differ; raw in {output}")
+        print(f"Deferred public caller {profile}: compared all three C/native pairs; failures={len(failures)}", flush=True)
     if receipts.source_seal(harness.ROOT) != seal:
         raise harness.HarnessError("source changed during public deferred caller execution")
     path = receipts.write_receipt(harness.ROOT, RUNNER, output, products, cases,
         {"profiles": ",".join(PROFILES), "contexts": ",".join(MODES), "boundary": "public native-mi-adapter over pinned musl"}, True)
+    if failures:
+        for failure in failures:
+            print(f"RED: {failure}", flush=True)
+        raise harness.HarnessError(f"public deferred caller has {len(failures)} failures; physical receipt {path}")
     receipts.read_receipt(harness.ROOT, RUNNER)
     print(f"Deferred public caller: four profiles PASS; {path}")
 
