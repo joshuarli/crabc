@@ -21,6 +21,24 @@ const OUTPUT_WORDS: usize = 16;
 const OUTPUT_WORDS_I32: i32 = OUTPUT_WORDS as i32;
 const SIGMA: [u32; 4] = [0x6170_7865, 0x3320_646e, 0x7962_2d32, 0x6b20_6574];
 
+/// The source's 64-bit `_mi_random_shuffle` for page slice permutations.
+///
+/// The caller supplies an already generated allocator random word. This
+/// stateless shuffle supplies no entropy and never initializes an allocator
+/// random context. The dependency's generator adds its fixed increment before
+/// applying the source finalizer, so subtract that increment from the seed to
+/// retain the source input exactly, including its zero-to-seventeen rule.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub(crate) fn shuffle(value: usize) -> usize {
+    use rand_xoshiro::{SplitMix64, rand_core::{Rng, SeedableRng}};
+
+    const INCREMENT: u64 = 0x9e37_79b9_7f4a_7c15;
+    let input = if value == 0 { 17 } else { value } as u64;
+    let mut generator = SplitMix64::from_seed(input.wrapping_sub(INCREMENT).to_le_bytes());
+    generator.next_u64() as usize
+}
+
 // This is a domain separator for weak observation expansion, not a random
 // counter or a locally implemented permutation. It keeps the one RustCrypto
 // block used to expand degraded seed observations disjoint from the allocator
@@ -609,6 +627,29 @@ impl WeakObservations {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn page_shuffle_matches_pinned_c_for_zero_and_wrapping_seed_edges() {
+        let vectors = [
+            (0, 0x302b_8631_721c_51be),
+            (1, 0x5692_161d_100b_05e5),
+            (17, 0x302b_8631_721c_51be),
+            (0x9e37_79b9_7f4a_7c15, 0xe220_a839_7b1d_cdaf),
+            (0x9e37_79b9_7f4a_7c14, 0xe4d9_7177_1b65_2c20),
+            (0x9e37_79b9_7f4a_7c16, 0x910a_2dec_8902_5cc1),
+            (usize::MAX, 0xb4d0_55fc_f2cb_bd7b),
+            (usize::MAX - 1, 0xda26_e52f_a373_0902),
+            (0x8000_0000_0000_0000, 0x25c2_6ea5_79ce_a98a),
+            (0x0123_4567_89ab_cdef, 0xb2c0_58e4_ebb5_112c),
+            (0xfedc_ba98_7654_3210, 0xee12_8d82_ce22_fe61),
+        ];
+        for (input, expected) in vectors {
+            let actual = shuffle(input);
+            assert_eq!(actual, expected, "source shuffle input {input:#018x}");
+            std::println!("{input:016x} {actual:016x}");
+        }
+    }
     use core::mem::{align_of, needs_drop, size_of};
 
     const KEY: [u8; 32] = [
