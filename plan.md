@@ -29,102 +29,67 @@ reports remain unqualified and cannot supply correctness evidence.
 Update this section in place when the frontier changes. A retained report qualifies
 only its exact source, configuration, image, products, and execution context.
 
-- **Campaign:** 9/26 families remain `foundation-verified`; 17 are planned.
-  The frozen inventory has 223 capabilities: 180 implemented, 43 selected-private,
-  none missing. Public x86 support and allocator promotion remain disabled;
-  selected C mimalloc and paused AArch64 behavior are preserved. Every Codex lane
-  uses `gpt-6.1-sol` at medium; the target is 16 concurrent lanes, subject to the
-  tool's actual capacity. Executable completion selects correctness: 25 active
-  families and seven ordered gates; the frozen 26-family inventory and full
-  eight-gate performance chain remain intact. Launchers default to this scope.
-- **Runtime and ABI:** native signal masks, descriptor reads, synchronous waits,
-  alternate stacks and process/thread queues have pinned-musl controls. Exact
-  `e30070ce8` qualifies 183 CRT obligations and all 32 compiler helpers in four
-  installed modes, default C lowering and shared/interposition controls, with
-  independent read-only readers. The four binary32/integer128 casts match 1,025,264 oracle
-  cases; `__divdc3` matches 1,407,104 cases across rounding modes and flags.
-- **Allocator implementation:** auxiliary-owner repair, locked TLD projections,
-  full-page abandonment, cached/main-Theap statistics selection and live-Heap
-  classification are integrated. Legal Heap deletion now retires a page emptied
-  while draining remote frees and charges its destination Theap. The unchanged
-  full Heap stress matrix passes 13 C/Rust pairs; subprocess stress passes 25.
-  First Heap-key bitmap allocation and 1,024-key growth refusal/retry match C in
-  32 observations without disturbing live ownership. Heap NUMA affinity now
-  selects fresh pages; debug visitation decodes page links and reports usable
-  block geometry. Deterministic Heap birth and release contention match C.
-  Child-current statistics selection, public Heap/subprocess statistics entries,
-  ordinary JSON growth, default-Heap JSON routing, process-info ordering and
-  nested destruction's process-main merge are integrated.
-  Deferred callbacks now permit ordinary nested allocation during collection and
-  worker exit. Foreign child-Heap deletion selects the destination child main
-  Heap. Auxiliary Heap birth now requests the pinned 6,464-byte extent, and
-  free statistics select the initialized caller's default or the page's locked
-  metadata Theap without attaching a fresh caller. All four focused profiles
-  pass. Child main-Heap birth now requests the pinned 6,464-byte parent allocation;
-  subprocess metadata and auxiliary Theap allocation geometry remain open.
-- **Allocator evidence:** exact `fcdd233a2` passes all 45 executable M6 entries;
-  its original report retains ten contract blockers. The upstream-only condition
-  is now closed by the unchanged API and both full stress workloads. The current
-  contract also closes source convenience callers across four profiles and
-  retains eight gate conditions. The same frozen source passes nine M5 correctness gates and
-  their independent readers; performance qualification is deferred. Exact
-  `1b814` passes all 33 statistics rows. Canonical M2 remains partial; exact
-  `a836` passes eight local M3 components, 328 native tests and 15 strict Miri
-  tests but lacks M2. Exact `5b981fe3b` passes all 24 public deferred-callback
-  C/Rust pairs across four profiles and independent read-only replay. Four-profile
-  Heap collection, visitation, both unchanged stress workloads and child-arena
-  worker evidence are retained. Exact `97fbc8c25` passes the full four-profile
-  membership and Theap workloads. Exact `d28f4bd0d` passes all three full
-  abandoned-page visitor workloads in four profiles and independent read-only
-  replay. The private TLS visibility repair passes its original artifact judge.
-  Fresh strict Miri dispatch reaches selected fixtures in separate interpreters;
-  raw-environment startup remains unsupported in reached fixtures. Legacy profile
-  failures remain unadmitted.
-  Exact `1b4bb605d` passes the unchanged full Heap statistics matrix across
-  four profiles and independent read-only replay. Physical huge-page/NUMA
-  qualification requires another host: this host exposes one allowed node
-  and no free 1-GiB huge pages. Performance is outside the active scope.
-- **Runtime qualification:** accepted-C `5bd807aa7` qualifies the complete 219
-  executions and separate full54 aggregate with independent read-only readers.
-  Its complete installed header/layout and bounded loader and math/fenv evidence
-  are retained; loader family completion remains false. Bounded Lua source-build
-  admission and its relocated read-only reader pass. Older `0c53e7969` pthread,
-  resolver, Rust std/LTO/unwind, POSIX and text evidence retain that exact source.
-  The text selector's obsolete completion check is repaired; fresh same-source
-  family attachment and C ABI closure remain open.
-- **Next qualification:** accepted-C `e30070ce8` passes the complete 219
-  executions and separate full54 aggregate with independent read-only readers;
-  dependent POSIX, pthread, text, math, resolver and Rust std/LTO lanes share
-  immutable product leases. Its three math products pass all 206 entries and
-  18 execution cells. Header, pthread, resolver, loader, Lua and Rust std/LTO
-  component producers and owning read-only readers pass; ordered family closure
-  remains open. Its full five-component POSIX admission and independent
-  read-only reader pass; the existing POSIX-to-pthread admission join passes
-  twice with all inputs read-only. The complete loader component covers all
-  21 synthetic and 34 package cases on three products, with its owning reader;
-  family prerequisites remain open. The text family producer and independent reader pass nine
-  components and 16 capabilities. Its original selector admits text and headers;
-  the CRT companion adapter still rejects the installed startup-object roster.
-  The compiler-helper owner inventory
-  now names all 32 helpers; the older text selector's 27-helper rejection remains
-  preserved. A forward exact `a7fffb1ab` compiler/CRT cohort independently
-  passes all 32 helpers and 183 CRT obligations through the current selector.
-  Native `e30070ce8` retains its signal-handler/fork timeout
-  after 12 successes; older `bed22dc18` timed out after 85. Both remain
-  unqualified. The controlled native/musl
-  child-counter reproduction does not waive that failure. No historical result
-  qualifies newer source or substitutes for ordered merged-source gates.
-- **Remaining:** finish planned runtime families and allocator source/API/mode
-  conditions; replay ordered merged-source gates; obtain physical huge-page and
-  NUMA correctness evidence; then execute the isolated
-  allocator switch, cleanup, final qualification and public-x86 promotion.
-  Hardware permissions and host qualification remain external conditions.
-  Exact `b2a903880` passes the full owned static product gate, reproducible
-  packages, all installed/extracted cases, the complete 219-execution dynamic
-  qualification and separate full54 matrix, each with independent read-only readers.
-  Full combined qualification remains open after a disk-exhausted attempt.
-  Retire integrated, stopped worktrees promptly after retaining exact source/raw
-  inputs and verifying their owning readers. Git owns history.
+- **Campaign:** 9/26 frozen families are `foundation-verified`; 17 remain
+  planned. The inventory retains 223 capabilities: 180 implemented and 43
+  selected-private. Correctness completion requires 25 active families and
+  seven ordered gates; the performance family and full eight-gate chain remain
+  deferred. Every Codex lane uses `gpt-6.1-sol` at medium, with 16 lane slots.
+  Public x86 support and allocator promotion remain disabled pending functional
+  qualification; C mimalloc remains selected and AArch64 qualification is paused.
+- **Owned runtime:** exact accepted-C `b2a903880` passes the complete combined
+  four-mode qualification, independent reproducibility builds, package
+  extraction, both full static suites and all 219 installed/rebuilt/extracted
+  dynamic executions. Its owning independent read-only reader passes. Separate
+  static, dynamic and full54 aggregate readers also pass. These results qualify
+  that exact source, not newer merged source or the native allocator.
+- **Runtime families:** the same `b2a903880` cohort passes the complete native
+  POSIX five-component producer, its read-only reader and the pthread component;
+  POSIX family admission passes, with its admission reader and pthread join in
+  progress. Fresh Rust std/LTO executes all four frozen gates and installed/
+  extracted cleanup and cross-DSO consumers, but six provider controls fail
+  because derived Cargo lockfiles were mounted read-only. The original failure
+  is retained; a precise private-lockfile mount correction is proved and a fresh
+  whole consumer awaits disk space. Exact `e30070ce8` text evidence passes nine
+  components, sixteen capabilities and its owning selector; the selector retains
+  historical CRT/helper adapter rejections. Exact `a7fffb1ab` independently
+  passes all 183 CRT obligations and 32 compiler helpers through the current
+  selector. Ordered family and callable-provider closure remain open.
+- **Allocator source geometry:** ordinary auxiliary Theap allocation now has a
+  coherent source-faithful repair with full ten-workload, four-profile C/native
+  geometry evidence and independent read-only replay. It is awaiting integration
+  with the ownership repairs. Child main-Heap birth requests the source's
+  6,464-byte allocation. Child creation still adds 131,072 committed bytes
+  against C's 65,536 in all four profiles: remove the separate child control
+  allocation while preserving explicit ownership, failure retry and TLS lifetime.
+- **Allocator ownership:** strict Miri now reaches real environment/TLS startup.
+  It exposed mutable operations through shared-derived fast-owner pointers,
+  deferred-source pointers, fresh-page publication and initializer-derived TLS
+  statistics pointers. Four isolated regressions pass after repairs; the latest
+  clean repair passes the original strict startup fixture. Integration, final
+  compiler checks and a fresh complete seventeen-test strict roster remain open.
+  Prior full-roster failures remain unqualified and retained.
+- **Allocator gates:** existing Heap/subprocess stress, visitation, callbacks,
+  statistics, remote ownership and failure evidence remain retained by exact
+  source. M6 now requests the supported full-profile producer commands and
+  rejects wrong or missing selectors; eight reviewed functional blockers remain.
+  The original M4 four-profile matrix matches 28/32 pairs. Four debug failures
+  require precise source-contract treatment: isolate assertion-invalid calls
+  without waiving valid-program mismatches. The accepted live aligned-offset C
+  debug defect retains its source refusal and separate native correctness proof.
+  Queue receipts now retain executable/compiler authority and pass independent
+  replay. Complete M2/M3/M4 and merged-source qualification remain open.
+- **External correctness:** physical huge-page/NUMA qualification requires two
+  allowed NUMA nodes with a free 1-GiB huge page on each. This host has one node
+  and no such pages; no alternate host is available. Continue independent
+  correctness work and retain this unmet requirement. Performance is outside
+  this plan's scope and cannot delay or qualify functional completion.
+- **Next:** integrate the coherent allocator ownership and geometry repairs,
+  close the remaining functional families and source/API/profile conditions,
+  replay the seven ordered gates on merged source, then perform the isolated
+  default switch, fresh native qualification and correctness-backed public
+  promotion. Retire integrated, stopped worktrees promptly after preserving
+  exact source/raw inputs and checking their owning readers. Preserve active
+  product leases; use existing ignored report locations. Git owns history.
 
 ## Parallel lanes
 
@@ -222,8 +187,9 @@ when facts change; keep logs in ignored report paths and history in Git.
 
 ## Runtime completion
 
-All 26 required families must reach `foundation-verified` in their validated
-dependency order. All 223 capabilities must reach their promotion-recognized
+All 25 active correctness families must reach `foundation-verified` in their
+validated dependency order. Preserve the frozen 26-family inventory; the
+performance family is deferred outside this completion scope. All 223 capabilities must reach their promotion-recognized
 completed states, with no `missing` or `selected-private` entries. The following
 contracts describe the integrated outcomes; the frozen mappings define their
 finite selected surface, not all of musl or all of POSIX.
