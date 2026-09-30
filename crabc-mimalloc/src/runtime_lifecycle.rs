@@ -12910,6 +12910,29 @@ fn native_free_pointer_first_local(
     }
 }
 
+/// Charges an ordinary remote free to its page subprocess's metadata Theap
+/// when the freeing caller has no initialized default. Detached metadata
+/// pages keep their existing locked engine accounting.
+///
+/// # Safety
+/// The captured live allocation retains this exact subprocess and its
+/// published metadata Theap through the field update. This operation ends
+/// its metadata lock before the caller performs the source free transition.
+#[cfg(feature = "mi-stat-1")]
+unsafe fn record_uninitialized_nonlocal_free_statistics(
+    allocation: &LiveAllocationPointer,
+    identity: &crate::subproc::SubprocessIdentity,
+) -> bool {
+    if allocation.page_state() == LiveAllocationPageState::Detached { return true; }
+    // SAFETY: only this caller's retained TLS root is projected; no whole
+    // Theap reference overlaps the independently mutable owner fields.
+    if unsafe { crate::types::Theap::initialized_default_subprocess_at(default_theap()) }.is_some() {
+        return true;
+    }
+    // SAFETY: the caller proved the live allocation's exact subprocess.
+    unsafe { identity.record_metadata_client_free_statistics(allocation.block_size()) }.is_ok()
+}
+
 /// Consumes one nonlocal PageMap observation through W03's source-state tail.
 ///
 /// This is the only nonlocal free continuation. W03 performs the source
@@ -12939,6 +12962,11 @@ fn native_free_pointer_first_nonlocal(
         if let Some(heap) = crate::subproc::main_heaps::selected_auxiliary_main_heap() {
             // SAFETY: the exact live main page belongs to this permanent Heap;
             // the source-selected sibling uses its own queue and arena engine.
+            #[cfg(feature = "mi-stat-1")]
+            if !unsafe { record_uninitialized_nonlocal_free_statistics(&allocation, crate::subproc::SubprocessIdentity::global()) } {
+                RUNTIME_PROCESS.retain_page_owner();
+                return NativePageFreeResult::Retained;
+            }
             return unsafe { crate::subproc::main_heaps::native_free_nonlocal(heap, allocation) };
         }
     }
@@ -12951,6 +12979,11 @@ fn native_free_pointer_first_nonlocal(
         // Deleted OS owners are excluded before immutable Heap fields are read.
         if let Some(heap) = unsafe { crate::subproc::main_heaps::heap_of_page(allocation.page()) } {
             // SAFETY: forwarded exact-live-allocation contract.
+            #[cfg(feature = "mi-stat-1")]
+            if !unsafe { record_uninitialized_nonlocal_free_statistics(&allocation, crate::subproc::SubprocessIdentity::global()) } {
+                RUNTIME_PROCESS.retain_page_owner();
+                return NativePageFreeResult::Retained;
+            }
             return unsafe { crate::subproc::main_heaps::native_free_nonlocal(heap, allocation) };
         }
         // A deleted process-main Heap can leave an OS page carrying its freed
@@ -12971,9 +13004,16 @@ fn native_free_pointer_first_nonlocal(
     // never to the process-main W03 tail below.
     // SAFETY: the retained deleted process-main Theap has already been
     // excluded, and the exact live allocation holds the remaining page.
-    if !deleted_main_os_page
-        && unsafe { crate::types::Heap::child_heap_of_page(allocation.page()) }.is_some()
-    {
+    let child_identity = if deleted_main_os_page { None } else {
+        // SAFETY: the exact allocation retains its live Heap and subprocess.
+        unsafe { crate::types::Heap::child_heap_of_page(allocation.page()) }.map(|(_, identity)| identity)
+    };
+    if let Some(identity) = child_identity {
+        #[cfg(feature = "mi-stat-1")]
+        if !unsafe { record_uninitialized_nonlocal_free_statistics(&allocation, identity.as_ref()) } {
+            RUNTIME_PROCESS.retain_page_owner();
+            return NativePageFreeResult::Retained;
+        }
         use crate::single_thread::ChildNonlocalFreeResult;
         let Some((binding, _)) = crate::process_init::ProcessMainInitializationStorage::global()
             .ready_child_subprocess_inputs()
@@ -12988,6 +13028,11 @@ fn native_free_pointer_first_nonlocal(
             Some(ChildNonlocalFreeResult::Freed | ChildNonlocalFreeResult::Released) => NativePageFreeResult::Freed,
             _ => NativePageFreeResult::Retained,
         };
+    }
+    #[cfg(feature = "mi-stat-1")]
+    if !unsafe { record_uninitialized_nonlocal_free_statistics(&allocation, crate::subproc::SubprocessIdentity::global()) } {
+        RUNTIME_PROCESS.retain_page_owner();
+        return NativePageFreeResult::Retained;
     }
     let detached = allocation.page_state() == LiveAllocationPageState::Detached;
     #[cfg(feature = "mi-stat-1")]
@@ -20345,34 +20390,60 @@ mod tests {
             || {
                 assert!(publish_native_process_startup_facts(host_startup_facts()));
                 assert!(initialize_process());
-                let mut clients = std::vec::Vec::new();
-                let mut normal = 0;
-                let mut huge = 0;
-                for request in [64, 32768, 589824] {
-                    let NativePageAllocationResult::Allocated(client) = native_allocate(request, false) else {
-                        panic!("the live owner can allocate its transferred client");
-                    };
-                    let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation().unwrap();
-                    // SAFETY: this caller exclusively holds the live client.
-                    let allocation = unsafe { page_map.lookup_live_allocation(client) }.unwrap().unwrap();
-                    let physical = allocation.block_size();
-                    let usable = physical - crate::config::PADDING_SIZE;
-                    if usable <= crate::config::LARGE_MAX_OBJ_SIZE { normal += usable; }
-                    else { huge += physical; }
-                    drop(allocation);
-                    clients.push(client.as_ptr().addr());
+                fn allocate_clients() -> (std::vec::Vec<usize>, usize, usize) {
+                    let mut clients = std::vec::Vec::new();
+                    let mut normal = 0;
+                    let mut huge = 0;
+                    for request in [64, 32768, 589824] {
+                        let NativePageAllocationResult::Allocated(client) = native_allocate(request, false) else {
+                            panic!("the live owner can allocate its transferred client");
+                        };
+                        let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation().unwrap();
+                        // SAFETY: this caller exclusively holds the live client.
+                        let allocation = unsafe { page_map.lookup_live_allocation(client) }.unwrap().unwrap();
+                        let physical = allocation.block_size();
+                        let usable = physical - crate::config::PADDING_SIZE;
+                        if usable <= crate::config::LARGE_MAX_OBJ_SIZE { normal += usable; }
+                        else { huge += physical; }
+                        drop(allocation);
+                        clients.push(client.as_ptr().addr());
+                    }
+                    (clients, normal, huge)
                 }
-                let identity = crate::subproc::SubprocessIdentity::global();
-                let snapshot = || {
-                    // SAFETY: the process-main identity is permanent. The
-                    // joined freer and quiescent owner exclude every producer;
-                    // its existing source lock also excludes metadata entries.
-                    let identity = identity;
-                    let _lock = identity.lock_metadata_theap().unwrap();
-                    unsafe { identity.metadata_statistics_for_print() }.unwrap()
+                let main_clients = allocate_clients();
+                let child = crate::source_heap_api::subproc_new();
+                assert!(!child.is_null());
+                let child_address = child.addr();
+                let (ready_send, ready_receive) = mpsc::channel();
+                let (finish_send, finish_receive) = mpsc::channel();
+                let owner = thread::spawn(move || {
+                    let descriptor = current_native_allocator_thread_descriptor();
+                    // SAFETY: the worker retains its TLS until explicit finish.
+                    assert!(unsafe { register_current_native_allocator_worker_descriptor(descriptor) });
+                    let child = core::ptr::with_exposed_provenance_mut(child_address);
+                    // SAFETY: the observer keeps this child live until join.
+                    assert_eq!(unsafe { crate::source_heap_api::subproc_add_current_thread(child) },
+                        crate::source_heap_api::SubprocAddCurrentThread::Added);
+                    ready_send.send(allocate_clients()).unwrap();
+                    finish_receive.recv().unwrap();
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                });
+                let child_clients = ready_receive.recv().unwrap();
+                let ids = [crate::source_heap_api::subproc_main(), child];
+                let snapshots = || {
+                    ids.map(|id| {
+                        let _operation = NativeSubprocessOperation::enter().unwrap();
+                        // SAFETY: the observer retains both subprocesses; the
+                        // child owner is paused and the freer has joined.
+                        let identity = unsafe { &*statistics_subprocess_identity(id).unwrap() };
+                        let _lock = identity.lock_metadata_theap().unwrap();
+                        (unsafe { identity.metadata_statistics_for_print() }.unwrap(),
+                            identity.statistics().final_output_snapshot())
+                    })
                 };
-                let before = snapshot();
-                let threads = identity.statistics().source_snapshot();
+                let before = snapshots();
+                let charges = [(main_clients.1, main_clients.2), (child_clients.1, child_clients.2)];
+                let clients: std::vec::Vec<_> = main_clients.0.into_iter().chain(child_clients.0).collect();
                 let cold = thread::spawn(move || {
                     let descriptor = current_native_allocator_thread_descriptor();
                     // SAFETY: this thread retains its descriptor until exit.
@@ -20382,29 +20453,103 @@ mod tests {
                     for client in clients {
                         let client = NonNull::new(core::ptr::with_exposed_provenance_mut(client)).unwrap();
                         // SAFETY: ownership was transferred to this one freer;
-                        // the allocating owner remains live and quiescent.
+                        // both allocating owners remain live and quiescent.
                         assert_eq!(unsafe { native_free(client) }, NativePageFreeResult::Freed);
                     }
                     let after = default_theap();
                     assert_eq!(before, after);
                     assert!(unsafe { crate::types::Theap::initialized_default_subprocess_at(after) }.is_none());
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::NotAttached);
                 });
                 cold.join().unwrap();
-                let after = snapshot();
-                let threads_after = identity.statistics().source_snapshot();
-                assert_eq!(threads_after.threads_total, threads.threads_total);
-                assert_eq!(threads_after.threads_current, threads.threads_current);
+                let after = snapshots();
+                let current = default_theap();
+                assert!(unsafe { crate::types::Theap::initialized_default_subprocess_at(current) }.is_some());
+                // SAFETY: the initialized process owner is permanent and its
+                // immutable ready configuration is retained through this test.
+                let config = unsafe { RUNTIME_PROCESS.active_owner() }.unwrap().ready().unwrap().memory_config().unwrap();
+                let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+                    .ready_child_subprocess_inputs().unwrap();
+                // SAFETY: the child remains live until its owner joins below.
+                let child_id = unsafe { crate::subproc::lifecycle::NativeSubprocessId::from_ptr(NonNull::new(child).unwrap()) };
+                let parents = [crate::meta::ChildParentMetadata::Process {
+                    allocator: MetaAllocator::global(), main: MainSubprocess::global(), config,
+                }, crate::meta::ChildParentMetadata::Child { id: child_id, binding }];
+                let mut metadata = parents.map(|parent| parent.allocate(64).unwrap());
+                let metadata_charges = metadata.each_ref().map(|client| {
+                    let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation().unwrap();
+                    // SAFETY: this exact metadata capability remains live.
+                    let allocation = unsafe { page_map.lookup_live_allocation(client.pointer()) }.unwrap().unwrap();
+                    assert_eq!(allocation.page_state(), LiveAllocationPageState::Detached);
+                    allocation.block_size() - crate::config::PADDING_SIZE
+                });
+                let metadata_before = snapshots();
+                // SAFETY: only the initialized caller's atomic statistics
+                // tail is read; its owning Heap and TLS remain live.
+                let caller_before = unsafe { crate::types::Theap::final_statistics_at(current) }.unwrap().1;
+                for (parent, client) in parents.into_iter().zip(metadata.iter_mut()) {
+                    // Free outside every snapshot lock: the exact capability
+                    // route acquires its own source metadata engine locks.
+                    parent.free(client).unwrap();
+                }
+                let metadata_after = snapshots();
+                let caller_after = unsafe { crate::types::Theap::final_statistics_at(current) }.unwrap().1;
+                assert_eq!(default_theap(), current);
+                assert!(unsafe { crate::types::Theap::initialized_default_subprocess_at(current) }.is_some());
                 #[cfg(feature = "mi-stat-1")]
                 {
-                let delta = [after.malloc_normal.current - before.malloc_normal.current,
-                    after.malloc_huge.current - before.malloc_huge.current];
-                std::println!("trace.cold_free.charges={normal},{huge}");
-                std::println!("trace.cold_free.delta={},{}", delta[0], delta[1]);
-                assert_eq!(after.malloc_normal.total, before.malloc_normal.total);
-                assert_eq!(after.malloc_huge.total, before.malloc_huge.total);
-                assert_eq!(after.malloc_normal.peak, before.malloc_normal.peak);
-                assert_eq!(after.malloc_huge.peak, before.malloc_huge.peak);
-                assert_eq!(delta, [-(normal as i64), -(huge as i64)]);
+                    assert_eq!(caller_before.malloc_normal, caller_after.malloc_normal);
+                    assert_eq!(caller_before.malloc_huge, caller_after.malloc_huge);
+                    for i in 0..2 {
+                        let before = &metadata_before[i].0;
+                        let after = &metadata_after[i].0;
+                        let delta = after.malloc_normal.current - before.malloc_normal.current;
+                        std::println!("trace.initialized_meta.owner{i}.charge={}", metadata_charges[i]);
+                        std::println!("trace.initialized_meta.owner{i}.delta={delta}");
+                        assert_eq!(delta, -(metadata_charges[i] as i64));
+                        assert_eq!(after.malloc_normal.total, before.malloc_normal.total);
+                        assert_eq!(after.malloc_normal.peak, before.malloc_normal.peak);
+                        assert_eq!(after.malloc_huge, before.malloc_huge);
+                        #[cfg(feature = "mi-stat-2")]
+                        assert_eq!(after.malloc_bins.iter().map(|bin| bin.current).sum::<i64>()
+                            - before.malloc_bins.iter().map(|bin| bin.current).sum::<i64>(), -1);
+                    }
+                }
+                // Finish and destroy before assertions: failure preserves no
+                // borrowed owner or source lock and all clients were freed.
+                finish_send.send(()).unwrap();
+                owner.join().unwrap();
+                // SAFETY: the child owner joined and its clients are gone.
+                assert!(unsafe { crate::source_heap_api::subproc_destroy(child) });
+                for i in 0..2 {
+                    let (normal, huge) = charges[i];
+                    std::println!("trace.cold_free.owner{i}.charges={normal},{huge}");
+                    assert_eq!(after[i].1.threads, before[i].1.threads);
+                    assert_eq!(after[i].1.theaps, before[i].1.theaps);
+                    assert_eq!(after[i].0.threads, before[i].0.threads);
+                    assert_eq!(after[i].0.theaps, before[i].0.theaps);
+                    #[cfg(feature = "mi-stat-1")]
+                    {
+                        let before = &before[i].0;
+                        let after = &after[i].0;
+                        let delta = [after.malloc_normal.current - before.malloc_normal.current,
+                            after.malloc_huge.current - before.malloc_huge.current];
+                        std::println!("trace.cold_free.owner{i}.delta={},{}", delta[0], delta[1]);
+                        assert_eq!(after.malloc_normal.total, before.malloc_normal.total);
+                        assert_eq!(after.malloc_huge.total, before.malloc_huge.total);
+                        assert_eq!(after.malloc_normal.peak, before.malloc_normal.peak);
+                        assert_eq!(after.malloc_huge.peak, before.malloc_huge.peak);
+                        #[cfg(feature = "mi-stat-2")]
+                        {
+                            let current = |snapshot: &crate::statistics::FinalStatisticsSnapshot| snapshot.malloc_bins.iter().map(|bin| bin.current).sum::<i64>();
+                            assert_eq!(current(after) - current(before), -2);
+                            for (before, after) in before.malloc_bins.iter().zip(after.malloc_bins.iter()) {
+                                assert_eq!(after.total, before.total);
+                                assert_eq!(after.peak, before.peak);
+                            }
+                        }
+                        assert_eq!(delta, [-(normal as i64), -(huge as i64)]);
+                    }
                 }
             },
         );
