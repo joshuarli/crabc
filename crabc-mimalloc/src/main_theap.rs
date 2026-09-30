@@ -3520,7 +3520,8 @@ unsafe impl TheapPageSession for MainStaticProcessPageSession {
     fn deferred_free_source(&self) -> Option<crate::deferred_free::DeferredFreeSource> {
         self.is_current().then(|| {
             crate::deferred_free::DeferredFreeSource::capture(
-                self.local_field_theap_pointer(),
+                NonNull::new(self.storage.theap.image.get())
+                    .expect("the retained static Theap has a stable address"),
                 self.thread,
             )
         }).flatten()
