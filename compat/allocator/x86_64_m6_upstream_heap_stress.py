@@ -72,10 +72,13 @@ def run_differential() -> int:
     output = Path(tempfile.mkdtemp(prefix="run-", dir=ARTIFACTS))
     output.chmod(0o755)
     cases = []
+    control_source = harness.ALLOCATOR_ROOT / "x86_64_m6_subproc_heap_stats_driver.c"
+    retained_control = output / control_source.name
+    shutil.copyfile(control_source, retained_control)
+    products = {control_source.name: retained_control}
     with harness.temporary_directory("crabc-mimalloc-upstream-heap-stress-") as name:
         temporary = Path(name)
         source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
-        products = {}
         for relative, expected in SOURCE_HASHES.items():
             path = source / relative
             if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
@@ -86,6 +89,7 @@ def run_differential() -> int:
         provenance = output / "inputs.json"
         provenance.write_text(json.dumps({"upstream": pin, "source_hashes": SOURCE_HASHES,
             "matrix": MATRIX, "watchdog_seconds": WATCHDOG_SECONDS,
+            "control_source_sha256": hashlib.sha256(retained_control.read_bytes()).hexdigest(),
             "execution": execution, "source": seal,
             "boundary": "mi_* native adapter; host musl provides pthreads and C process substrate",
             "profile": "release", "workload_assertions": True, "workload_modified": False}, indent=2) + "\n")
@@ -114,8 +118,6 @@ def run_differential() -> int:
         require_pass(record, "unmodified Heap stress Rust link")
         cases.append(("rust-link", 0, logs))
         shutil.copy2(rust_driver, output / "heap-stress-rust")
-        control_source = harness.ALLOCATOR_ROOT / "x86_64_m6_subproc_heap_stats_driver.c"
-        products[control_source.name] = control_source
         expected_controls = {
             "null": b"null-output=empty\n",
             "main": b"heap 2\nheap 1\nheap 0\nmeta 0\nsubproc 0\nformat-and-reentry=ok\n",
@@ -126,7 +128,7 @@ def run_differential() -> int:
         for backend, allocator in (("c", source / "src/static.c"), ("rust", library)):
             control = temporary / f"heap-stats-{backend}"
             record, logs = record_command(output, f"stats-{backend}-build",
-                [*common, str(control_source), str(allocator), "-pthread", "-o", str(control)], source)
+                [*common, str(retained_control), str(allocator), "-pthread", "-o", str(control)], source)
             require_pass(record, f"selected-subprocess statistics {backend} build")
             cases.append((f"stats-{backend}-build", 0, logs))
             shutil.copy2(control, output / control.name)
