@@ -2467,11 +2467,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="run the pinned-C/Rust `_mi_error_message` site differential")
     mode.add_argument("--default-baseline-audit", action="store_true",
         help="build and inspect the default native allocator release artifact")
+    mode.add_argument("--private-context-arena-print", action="store_true",
+        help="execute independent private-context arena diagnostic integration")
     mode.add_argument("--optional-isa-differential", action="store_true",
         help="compare scalar, arch-only, and AVX2 bitmap allocation paths with pinned C")
     parser.add_argument("--offline", action="store_true", help="require the verified archive in the local cache")
     parser.add_argument("--scratch", type=Path, help="fresh output directory for the default baseline audit")
     arguments = parser.parse_args(argv)
+    if arguments.private_context_arena_print:
+        execution = rust_trace(
+            "native_test_context_arena_print", "private-context arena diagnostics",
+            integration_test=True, rust_features=("test-adapter",),
+        )
+        ARTIFACTS.mkdir(parents=True, exist_ok=True)
+        harness.write_json(ARTIFACTS / "private-context-arena-print.json", execution)
+        print("Private-context arena diagnostic integration: passed")
+        return 0
     if arguments.optional_isa_differential:
         report = run_optional_isa_differential(arguments.offline)
         print(f"M7 optional ISA differential passed: {report['compared_key_count']} keys in {len(report['profiles'])} modes")
