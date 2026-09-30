@@ -1731,12 +1731,28 @@ unsafe fn run_runtime_startup_tail(
         // because both callers first claim `runtime_startup_tail`.
         unsafe { output.post_init() };
     }
+    let report_retry = |result: crate::random::RandomReinitialization| {
+        if result.attempted && result.remains_weak {
+            if let Some(output) = output {
+                // SAFETY: the startup caller retains this output route; both
+                // the random projection and any metadata entry lock ended
+                // before delivery, so a foreign callback may reenter.
+                unsafe { output.warning_from_source_options(
+                    crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(
+                        c"unable to use secure randomness\n",
+                    ),
+                ) };
+            }
+        }
+    };
     // SAFETY: the current default Theap belongs to this initial source
     // thread, and no projection of it is live across this field access.
-    unsafe { crate::types::Theap::reinitialize_random_if_weak_at(crate::compiler_tls::default_theap()) };
-    metadata
+    let current = unsafe { crate::types::Theap::reinitialize_random_if_weak_at(crate::compiler_tls::default_theap()) };
+    report_retry(current);
+    let detached = metadata
         .reinitialize_detached_metadata_random_if_weak(subprocess)
         .map_err(ProcessMainInitError::Metadata)?;
+    report_retry(detached);
     Ok(())
 }
 
@@ -3967,6 +3983,82 @@ mod tests {
         std::println!("CRABC_MI_LOADER_TAIL_RUST_TRACE_END");
         assert!(trace.iter().all(|(_, value)| *value),
             "process initialization must release once before loader-tail output: {trace:?}");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn startup_failed_entropy_retry_warns_after_random_projection_ends() {
+        std::thread_local! {
+            static WARNINGS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+            static METADATA: core::cell::Cell<Option<(core::pin::Pin<&'static MetaAllocator>, &'static MainSubprocess)>> =
+                const { core::cell::Cell::new(None) };
+        }
+        unsafe extern "C" fn observe(message: *const core::ffi::c_char) {
+            // SAFETY: the output owner supplies a live NUL-terminated fragment.
+            let bytes = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            if bytes.windows(b"unable to use secure randomness\n".len())
+                .any(|window| window == b"unable to use secure randomness\n")
+            {
+                // SAFETY: the callback runs on the source initial thread;
+                // warning delivery must have ended its random projection.
+                let draw = unsafe { Theap::next_os_reservation_random_at(default_theap()) };
+                assert!(draw.is_some_and(|value| value != 0));
+                METADATA.with(|slot| {
+                    let (metadata, subprocess) = slot.get().unwrap();
+                    assert!(metadata.test_detached_metadata_random_is_weak(subprocess).is_some(),
+                        "the source metadata entry lock ends before warning callback reentry");
+                });
+                WARNINGS.with(|count| count.set(count.get() + 1));
+            }
+        }
+        for detached in [false, true] {
+            thread::spawn(move || {
+                let (storage, main_static, subprocess, metadata, page_map) = fixture();
+                let output = std::boxed::Box::leak(std::boxed::Box::new(OutputOwner::new(observe)));
+                // SAFETY: this thread retains the isolated option table and its
+                // callback; an absent environment leaves no foreign borrow.
+                unsafe {
+                    output.initialize_source_options(|| core::ptr::null());
+                    output.option_set(crate::config::SourceOption::ShowErrors, 1).unwrap();
+                }
+                let (mut owner, startup) = unsafe {
+                    storage.prepare_with_test_components_and_vm_options(
+                        memory_config(), resolved_vm_options(), main_static, subprocess,
+                        metadata, page_map, Some(output),
+                    )
+                }.expect("the actual source owner attaches before the loader tail");
+                METADATA.with(|slot| slot.set(Some((metadata, subprocess))));
+                if detached {
+                    let _guard = subprocess.identity().lock_metadata_theap().unwrap();
+                    let pointer = NonNull::new(subprocess.identity().test_published_metadata_theap()).unwrap();
+                    // SAFETY: the source metadata lock retains exclusive access
+                    // to this initialized detached image until the block ends.
+                    unsafe { Theap::with_os_reservation_random_at(pointer, |random| {
+                        random.unwrap().initialize_weak();
+                    }) };
+                } else {
+                    // SAFETY: this source initial thread owns the random field,
+                    // and its projection ends before startup completion.
+                    unsafe { Theap::with_os_reservation_random_at(default_theap(), |random| {
+                        random.unwrap().initialize_weak();
+                    }) };
+                }
+                let fault = fault::install(fault::Plan::at(
+                    fault::Point::Entropy, 1, crabc_core::Errno::NOMEM,
+                ));
+                startup.complete().expect("failed entropy continues through weak initialization");
+                assert!(fault.observed() >= 1, "the source retry reaches the entropy fault");
+                WARNINGS.with(|count| assert_eq!(count.get(), 1));
+                if detached {
+                    assert_eq!(metadata.test_detached_metadata_random_is_weak(subprocess), Some(true));
+                } else {
+                    assert_eq!(unsafe { Theap::test_random_is_weak_at(default_theap()) }, Some(true));
+                }
+                METADATA.with(|slot| slot.set(None));
+                drop(fault);
+                owner.teardown().expect("the source owner retains normal teardown");
+            }).join().expect("the entropy warning source control completes");
+        }
     }
 
     #[test]

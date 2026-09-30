@@ -39,6 +39,16 @@ pub(crate) fn shuffle(value: usize) -> usize {
     generator.next_u64() as usize
 }
 
+/// Facts retained after a weak-context retry releases its random projection.
+/// A failed retry still initializes a usable weak stream; its diagnostic may
+/// be delivered only after any enclosing allocator ownership lock is released.
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct RandomReinitialization {
+    pub(crate) attempted: bool,
+    pub(crate) remains_weak: bool,
+}
+
 // This is a domain separator for weak observation expansion, not a random
 // counter or a locally implemented permutation. It keeps the one RustCrypto
 // block used to expand degraded seed observations disjoint from the allocator

@@ -7071,16 +7071,24 @@ impl Theap {
 
     /// Pinned `_mi_random_reinit_if_weak(&theap->random)` on an initialized
     /// source Theap; the immutable empty image is never written. Returns
-    /// whether the weak image retried entropy.
+    /// whether entropy was retried and whether the resulting image is weak,
+    /// so the caller can report failure after every projection and lock ends.
     ///
     /// # Safety
     /// The caller retains this live Theap and excludes every overlapping
     /// whole-Theap or random-field reference for this call.
     #[cfg(target_arch = "x86_64")]
-    pub(crate) unsafe fn reinitialize_random_if_weak_at(pointer: NonNull<Self>) -> bool {
+    pub(crate) unsafe fn reinitialize_random_if_weak_at(
+        pointer: NonNull<Self>,
+    ) -> crate::random::RandomReinitialization {
         // SAFETY: the caller supplies the same field-level owner contract.
         unsafe { Self::with_os_reservation_random_at(pointer, |random| {
-            random.is_some_and(|random| random.reinitialize_if_weak())
+            random.map_or_else(crate::random::RandomReinitialization::default, |random| {
+                crate::random::RandomReinitialization {
+                    attempted: random.reinitialize_if_weak(),
+                    remains_weak: random.is_weak(),
+                }
+            })
         }) }
     }
 

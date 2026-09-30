@@ -5085,11 +5085,12 @@ impl<'owner> MetadataEngine<'owner> {
     /// Pinned `_mi_auto_process_init`'s metadata reseed: while holding
     /// `subproc->theap_meta_lock`, `_mi_random_reinit_if_weak` on the
     /// subprocess metadata Theap (`src/init.c:526-531`). Returns whether the
-    /// weak image retried entropy.
+    /// weak image retried entropy and whether it remains weak. The source
+    /// metadata lock is released before these facts reach a diagnostic caller.
     #[cfg(target_arch = "x86_64")]
     pub(crate) fn reinitialize_detached_metadata_random_if_weak(
         self: Pin<&'static Self>, subprocess: &'static MainSubprocess,
-    ) -> Result<bool, MetaError> {
+    ) -> Result<crate::random::RandomReinitialization, MetaError> {
         let _entry = self.enter_for_main_subprocess(subprocess)?;
         self.validate_bound_detached_metadata_theap(subprocess)?;
         let pointer = NonNull::new(self.get_ref().detached_metadata_theap.load(Ordering::Acquire))
