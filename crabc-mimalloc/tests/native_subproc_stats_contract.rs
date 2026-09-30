@@ -89,6 +89,14 @@ fn current_subprocess_statistics_include_its_live_page() {
             let json = options::subproc_stats_json(child, 0, core::ptr::null_mut());
             assert!(!json.is_null());
             assert_eq!(heaps::heap_of(json.cast()), heaps::heap_main());
+            let length = core::ffi::CStr::from_ptr(json).to_bytes().len();
+            let mut capacity = api::good_size(12 * 1024);
+            while capacity <= length { capacity *= 2; }
+            // The growing JSON buffer uses ordinary zeroed reallocation.
+            // Its usable extent must match the same source allocation size.
+            let ordinary = api::rezalloc(core::ptr::null_mut(), capacity).value.unwrap();
+            assert_eq!(api::usable_size(json.cast()), api::usable_size(ordinary.as_ptr()));
+            assert_eq!(api::free(ordinary.as_ptr()), api::FreeOutcome::Freed);
             assert_eq!(api::free(json.cast()), api::FreeOutcome::Freed);
             assert_eq!(api::free(extra_client.as_ptr()), api::FreeOutcome::Freed);
             assert!(heaps::heap_release(extra, true));

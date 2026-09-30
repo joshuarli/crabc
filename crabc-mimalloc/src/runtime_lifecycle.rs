@@ -11463,7 +11463,7 @@ pub unsafe fn native_stats_json(stats: *const u8, size: usize, buffer: *mut u8) 
     // `mi_rezalloc`: a reallocation whose new tail is zeroed.
     let mut grow = |old: *mut u8, new_size: usize| -> *mut u8 {
         // SAFETY: `old` is null or this buffer's live native block.
-        match unsafe { native_reallocate_zeroed(core::ptr::NonNull::new(old), new_size) } {
+        match unsafe { native_reallocate_source(core::ptr::NonNull::new(old), new_size, true) } {
             NativePageAllocationResult::Allocated(block) => block.as_ptr(),
             _ => core::ptr::null_mut(),
         }
