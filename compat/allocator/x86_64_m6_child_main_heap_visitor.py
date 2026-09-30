@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
-"""Compare child main-Heap visitation across owner exit against pinned C."""
+"""Compare child Heap visitation with pinned mimalloc in selected profiles."""
 
+import argparse
+import json
+import os
 from pathlib import Path
 import re
+import shutil
+import sys
+import tempfile
 
 import run as harness
 import x86_64_m4_gate as m4
 import x86_64_m7_gate as m7
-
+from x86_64_m6_upstream_heap_stress import load_module, stress
 
 DRIVER = harness.ALLOCATOR_ROOT / "x86_64_m6_child_main_heap_visitor_driver.c"
 ARTIFACTS = harness.ARTIFACT_ROOT / "x86_64/m6-child-main-heap-visitor"
@@ -44,48 +50,150 @@ def require_trace(trace: dict[str, str], side: str) -> None:
         raise harness.HarnessError(f"pinned C child main Heap visitor image changed: {trace}")
 
 
-def main() -> None:
-    harness.require_native_x86_64()
+PROFILES = ("release", "debug-1", "stat-1", "stat-2")
+RUNNER = "allocator-child-main-heap-visitor"
+receipts = load_module("child_main_heap_visitor_receipts", harness.ROOT / "compat/x86_64/native_shadow_receipt.py")
+
+
+def record(output, name, argv, cwd, runtime=False):
+    result = stress.command_record(argv, cwd=cwd,
+        environment={} if runtime else dict(os.environ), timeout=60 if runtime else 3600)
+    logs = [output / f"{name}.json"]
+    logs[0].write_text(json.dumps(result, indent=2) + "\n")
+    for stream in ("stdout", "stderr"):
+        if stream in result:
+            path = output / f"{name}.{stream}"
+            path.write_bytes(stress.byte_record_payload(result[stream], name))
+            logs.append(path)
+    if result["kind"] != "process" or result["status"] != 0:
+        raise harness.HarnessError(f"{name} failed; actual process record: {logs[0]}")
+    return result, logs
+
+
+def run_profiles(profiles):
+    execution = harness.require_native_x86_64(require_image_identity=True)
+    seal = receipts.source_seal(harness.ROOT)
     pin = harness.load_pin()
-    archive = harness.fetch_archive(pin, True)
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
-    with harness.temporary_directory("crabc-mimalloc-m6-child-main-heap-visitor-") as name:
-        temporary = Path(name)
-        source = harness.safe_extract(archive, temporary / "source", pin["archive_root"])
-        compiler = harness.require_tool("musl-gcc")
-        c_driver = temporary / "child-main-heap-visitor-c"
-        build = harness.command_record(
-            [compiler, "-std=c11", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
-             "-DCRABC_M6_SOURCE_INTERNAL=1", *harness.CONFIGURATION_PROFILES["release"],
-             "-I", str(source / "include"), str(DRIVER), str(source / "src/static.c"),
-             "-pthread", "-o", str(c_driver)], cwd=source,
-        )
-        (ARTIFACTS / "c-build.log").write_text(str(build["stdout"]) + str(build["stderr"]))
-        harness.require_success(build, "child main Heap visitor C build")
-        c_run = harness.command_record([str(c_driver)], cwd=temporary, env={}, timeout_seconds=60)
-        (ARTIFACTS / "c.log").write_text(str(c_run["stdout"]) + str(c_run["stderr"]))
-        harness.require_success(c_run, "child main Heap visitor C run")
-        if re.findall(r"^source\.child_main=([01]),([01]),([01]),([01])$",
-                      str(c_run["stderr"]), re.MULTILINE) != [("1", "1", "1", "1")]:
-            raise harness.HarnessError("pinned C child main pages did not retain their owners")
-        c_trace = m7.parse_options_trace(str(c_run["stdout"]), "c", BEGIN, END)
+    output = Path(tempfile.mkdtemp(prefix="run-", dir=ARTIFACTS))
+    output.chmod(0o755)
+    source = harness.safe_extract(harness.fetch_archive(pin, True), output / "source", pin["archive_root"])
+    products, cases = {}, []
+    for original in (DRIVER, source / "include/mimalloc.h", source / "LICENSE"):
+        retained = output / original.name
+        shutil.copy2(original, retained)
+        products[retained.name] = retained
+    inputs = output / "inputs.json"
+    inputs.write_text(json.dumps({"source": seal, "execution": execution, "upstream": pin,
+        "profiles": profiles, "source_internal_checks": True,
+        "boundary": "explicit mi_* native adapter; pinned musl provides pthreads",
+        "runtime_watchdog_seconds": 60}, indent=2) + "\n")
+    products[inputs.name] = inputs
+    compiler = harness.require_tool("musl-gcc")
+    print(f"child main heap visitor raw products: {output}", flush=True)
+    for profile in profiles:
+        directory = output / profile
+        directory.mkdir()
+
+        def passed(name, argv, cwd=source, runtime=False):
+            result, logs = record(output, f"{profile}-{name}", argv, cwd, runtime)
+            cases.append((f"{profile}-{name}", 0, logs))
+            return result
+
+        common = ["-std=c11", "-D_GNU_SOURCE", "-ftls-model=initial-exec", "-DMI_LIBC_MUSL=1",
+                  *m4.api_profile_flags(profile), "-I", str(source / "include"), "-I", str(source / "src")]
+        c_binary = directory / "c"
+        passed("c-build", [compiler, *common, "-DCRABC_M6_SOURCE_INTERNAL=1",
+            str(DRIVER), str(source / "src/static.c"), "-pthread", "-o", str(c_binary)])
+        products[f"{profile}-c"] = c_binary
+        c_run = passed("c-run", [str(c_binary)], directory, True)
+        c_stdout = stress.byte_record_payload(c_run["stdout"], profile).decode()
+        c_stderr = stress.byte_record_payload(c_run["stderr"], profile).decode()
+        if re.findall(r"^source\.child_main=([01]),([01]),([01]),([01])$", c_stderr, re.MULTILINE) != [("1",) * 4]:
+            raise harness.HarnessError(f"{profile} pinned child page owners changed; raw {output}")
+        c_trace = m7.parse_options_trace(c_stdout, "C child main heap visitor", BEGIN, END)
         require_trace(c_trace, "c")
-        library = m4.build_adapter_library(temporary)
-        rust_driver = temporary / "child-main-heap-visitor-rust"
-        link = harness.command_record(
-            [compiler, "-std=c11", "-O2", "-I", str(source / "include"), str(DRIVER),
-             str(library), "-pthread", "-o", str(rust_driver)], cwd=source,
-        )
-        (ARTIFACTS / "rust-link.log").write_text(str(link["stdout"]) + str(link["stderr"]))
-        harness.require_success(link, "child main Heap visitor Rust link")
-        rust_run = harness.command_record([str(rust_driver)], cwd=temporary, env={}, timeout_seconds=60)
-        (ARTIFACTS / "rust.log").write_text(str(rust_run["stdout"]) + str(rust_run["stderr"]))
-        harness.require_success(rust_run, "child main Heap visitor Rust run")
-        rust_trace = m7.parse_options_trace(str(rust_run["stdout"]), "rust", BEGIN, END)
-        require_trace(rust_trace, "rust")
-        m7.compare_options_traces(c_trace, rust_trace)
-        print(f"child main Heap visitor: {len(c_trace)} source-built C/Rust keys match")
+        target = directory / "cargo-target"
+        passed("native-build", [harness.require_tool("cargo"), "build", "--locked", "--offline", "--release",
+            "--target", m4.RUST_TARGET, "-p", m4.ADAPTER_PACKAGE, "--target-dir", str(target),
+            *(("--features", f"crabc-mimalloc/mi-{profile}") if profile != "release" else ())], harness.ROOT)
+        library = target / m4.RUST_TARGET / "release" / m4.ADAPTER_STATICLIB
+        retained_library = directory / m4.ADAPTER_STATICLIB
+        shutil.copy2(library, retained_library)
+        products[f"{profile}-native-library"] = retained_library
+        native_binary = directory / "native"
+        passed("native-link", [compiler, *common, str(DRIVER), str(retained_library), "-pthread", "-o", str(native_binary)])
+        products[f"{profile}-native"] = native_binary
+        native_run = passed("native-run", [str(native_binary)], directory, True)
+        native_stdout = stress.byte_record_payload(native_run["stdout"], profile).decode()
+        native_trace = m7.parse_options_trace(native_stdout, "native", BEGIN, END)
+        require_trace(native_trace, "native")
+        m7.compare_options_traces(c_trace, native_trace)
+        native_stderr = stress.byte_record_payload(native_run["stderr"], profile).decode()
+        if not re.findall(r"^geometry\..+$", c_stderr, re.MULTILINE) or re.findall(r"^geometry\..+$", c_stderr, re.MULTILINE) != re.findall(r"^geometry\..+$", native_stderr, re.MULTILINE):
+            raise harness.HarnessError(f"{profile} child client geometry differs; raw {output}")
+
+        print(f"child main heap visitor {profile}: {len(c_trace)} C/native keys PASS", flush=True)
+    if receipts.source_seal(harness.ROOT) != seal:
+        raise harness.HarnessError("source changed during child Heap visitation")
+    canonical = tuple(profiles) == PROFILES
+    path = receipts.write_receipt(harness.ROOT, RUNNER, output, products, cases,
+        {"profiles": ",".join(profiles), "boundary": "explicit native-mi-adapter",
+         "source-internal-checks": "true", "geometry": "ordered retained clients and areas", "watchdog-seconds": "60"}, canonical)
+    if canonical:
+        receipts.read_receipt(harness.ROOT, RUNNER)
+    print(f"child main heap visitor {'canonical four-profile' if canonical else 'development-only'} receipt: {path}")
+    return len(STAGES)
+
+
+def run_differential() -> int:
+    return run_profiles(("release",))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--profile", choices=PROFILES, help="development-only selected profile")
+    selection.add_argument("--matrix", action="store_true", help="canonical four-profile visitation comparison")
+    parser.add_argument("--read", action="store_true", help="read exact-source physical receipt")
+    parser.add_argument("--replay", action="store_true", help="read and execute all retained C/native products")
+    args = parser.parse_args()
+    if args.read or args.replay:
+        if args.profile or args.matrix:
+            parser.error("reading a canonical receipt cannot select profiles")
+        receipt = receipts.read_receipt(harness.ROOT, RUNNER)
+        print("child main heap visitor exact-source physical receipt: PASS")
+        if args.replay:
+            harness.require_native_x86_64(require_image_identity=True)
+            harness.TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+            scratch = Path(tempfile.mkdtemp(prefix="child_main_heap_visitor-replay-", dir=harness.TEMP_ROOT))
+            for profile in PROFILES:
+                for backend in ("c", "native"):
+                    product = f"{profile}-{backend}"
+                    binary = scratch / product
+                    shutil.copyfile(receipt.path.parent / "products" / product, binary)
+                    binary.chmod(0o755)
+                    result, _ = record(scratch, product, [str(binary)], scratch, True)
+                    case = next(case for case in receipt.cases if case["id"] == f"{profile}-{backend}-run")
+                    for stream in ("stdout",):
+                        original = next(path for path in case["logs"] if path.endswith(f".{stream}"))
+                        if stress.byte_record_payload(result[stream], product) != (receipt.path.parent / "logs" / original).read_bytes():
+                            raise harness.HarnessError(f"retained {product} {stream} differs; raw {scratch}")
+                    stderr = stress.byte_record_payload(result["stderr"], product).decode()
+                    original = next(path for path in case["logs"] if path.endswith(".stderr"))
+                    recorded_stderr = (receipt.path.parent / "logs" / original).read_text()
+                    if re.findall(r"^geometry\..+$", stderr, re.MULTILINE) != re.findall(r"^geometry\..+$", recorded_stderr, re.MULTILINE):
+                        raise harness.HarnessError(f"retained {product} client geometry differs; raw {scratch}")
+                    if backend == "c" and re.findall(r"^source\.child_main=([01]),([01]),([01]),([01])$", stderr, re.MULTILINE) != [("1",) * 4]:
+                        raise harness.HarnessError(f"retained {product} source owners differ; raw {scratch}")
+            print(f"child main heap visitor retained four-profile products: PASS; raw {scratch}")
+    else:
+        run_profiles(PROFILES if args.matrix else (args.profile or "release",))
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (harness.HarnessError, receipts.ReceiptError, stress.EvidenceError) as error:
+        print(f"child main heap visitor failed: {error}", file=sys.stderr)
+        raise SystemExit(1)

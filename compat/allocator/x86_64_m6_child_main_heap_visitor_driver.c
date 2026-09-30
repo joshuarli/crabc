@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "mimalloc.h"
 #ifdef CRABC_M6_SOURCE_INTERNAL
@@ -14,11 +15,13 @@ typedef struct fixture_s {
   mi_heap_t* main_heap;
   uintptr_t regular[3];
   uintptr_t os;
+  size_t usable[4];
   bool ready;
 } fixture_t;
 
 typedef struct visit_s {
   const fixture_t* fixture;
+  const char* stage;
   unsigned areas;
   unsigned blocks;
   unsigned used;
@@ -38,6 +41,27 @@ static bool in_area(uintptr_t pointer, const mi_heap_area_t* area) {
   return pointer >= start && pointer - start < area->committed;
 }
 
+// Callbacks read retained clients only; the owner has joined before remote
+// observation, and no callback allocates, frees, or changes Heap membership.
+static void geometry(const visit_t* visit, const mi_heap_area_t* area,
+                     const void* block, size_t block_size, char kind) {
+  size_t usable = 0;
+  if (block != NULL && kind != 'F') {
+    unsigned index = kind == '1' ? 0 : kind == '3' ? 2 : 3;
+    size_t requested = index == 3 ? 10 * 1024 + 1 : 128;
+    unsigned char expected = index == 3 ? 0x71 : (unsigned char)(0x61 + index);
+    const unsigned char* bytes = (const unsigned char*)block;
+    for (size_t offset = 0; offset < requested; offset++) {
+      if (bytes[offset] != expected) abort();
+    }
+    usable = visit->fixture->usable[index];
+    if (usable < requested) abort();
+  }
+  fprintf(stderr, "geometry.%s=%c,%zu,%zu,%zu,%zu,%zu,%zu,%zu\n",
+          visit->stage, kind, area->reserved, area->committed, area->used,
+          area->block_size, area->full_block_size, block_size, usable);
+}
+
 static bool observe(const mi_heap_t* heap, const mi_heap_area_t* area,
                     void* block, size_t block_size, void* argument) {
   visit_t* visit = (visit_t*)argument;
@@ -50,12 +74,14 @@ static bool observe(const mi_heap_t* heap, const mi_heap_area_t* area,
     if (in_area(visit->fixture->regular[0], area)) {
       visit->areas++;
       visit->used += (unsigned)area->used;
+      geometry(visit, area, block, block_size, 'R');
       append(visit, 'R');
       return visit->stop != 1;
     }
     if (in_area(visit->fixture->os, area)) {
       visit->areas++;
       visit->used += (unsigned)area->used;
+      geometry(visit, area, block, block_size, 'O');
       append(visit, 'O');
       return true;
     }
@@ -65,20 +91,24 @@ static bool observe(const mi_heap_t* heap, const mi_heap_area_t* area,
   uintptr_t pointer = (uintptr_t)block;
   if (pointer == visit->fixture->regular[0]) {
     visit->blocks++;
+    geometry(visit, area, block, block_size, '1');
     append(visit, '1');
     return visit->stop != 2;
   }
   if (pointer == visit->fixture->regular[1]) {
+    geometry(visit, area, block, block_size, 'F');
     append(visit, 'F');
     return true;
   }
   if (pointer == visit->fixture->regular[2]) {
     visit->blocks++;
+    geometry(visit, area, block, block_size, '3');
     append(visit, '3');
     return true;
   }
   if (pointer == visit->fixture->os) {
     visit->blocks++;
+    geometry(visit, area, block, block_size, 'S');
     append(visit, 'S');
     return true;
   }
@@ -89,7 +119,7 @@ static bool observe(const mi_heap_t* heap, const mi_heap_area_t* area,
 static void print_visit(const char* stage, const fixture_t* fixture,
                         bool abandoned, bool visit_blocks, unsigned stop,
                         bool null_heap) {
-  visit_t visit = { .fixture = fixture, .stop = stop };
+  visit_t visit = { .fixture = fixture, .stage = stage, .stop = stop };
   mi_heap_t* heap = null_heap ? NULL : fixture->main_heap;
   bool complete = abandoned
       ? mi_heap_visit_abandoned_blocks(heap, visit_blocks, observe, &visit)
@@ -119,6 +149,12 @@ static void* owner(void* argument) {
             !!fixture->regular[0], !!fixture->regular[1], !!fixture->regular[2]);
     return NULL;
   }
+  for (unsigned index = 0; index < 3; index++) {
+    memset((void*)fixture->regular[index], 0x61 + index, 128);
+    fixture->usable[index] = mi_usable_size((void*)fixture->regular[index]);
+  }
+  memset((void*)fixture->os, 0x71, 10 * 1024 + 1);
+  fixture->usable[3] = mi_usable_size((void*)fixture->os);
   mi_free((void*)fixture->regular[1]);
   print_visit("owner_ordinary", fixture, false, true, 0, false);
   print_visit("owner_abandoned", fixture, true, true, 0, false);
