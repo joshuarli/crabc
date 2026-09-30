@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -52,6 +53,51 @@ class SubprocessStressDispatchTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in execute.call_args_list],
                          [[str(self.drivers[side]), *map(str, case)] for case in cases for side in self.drivers])
         self.assertTrue(all(call.kwargs['env'] == {} for call in execute.call_args_list))
+
+
+    def test_debug_allocator_mode_does_not_disable_unchanged_workload_assertions(self):
+        translations = stress.build_translations('musl-gcc', self.artifacts,
+            self.artifacts / 'workload.o', self.artifacts / 'allocator.o', 'debug-1')
+        caller = translations['workload']
+        allocator = translations['pinned-allocator']
+        self.assertFalse(any(argument.startswith('-DNDEBUG') for argument in caller))
+        self.assertIn('-DMI_DEBUG=0', caller)
+        self.assertIn('-DMI_STAT=0', caller)
+        self.assertIn('-DMI_DEBUG=1', allocator)
+        self.assertIn('-DMI_STAT=2', allocator)
+        self.assertIn('-DMI_PADDING=1', allocator)
+
+    def test_matrix_stops_at_debug_failure_retains_both_profiles_and_publishes_no_pass(self):
+        smallest = (1, 1, 1)
+        failure = self.observation(smallest, status=-6, stdout='debug assertion before abort\n')
+        def run_profile(profile, receipt_cases):
+            directory = self.artifacts / profile
+            directory.mkdir()
+            drivers = {side: directory / side for side in ('c', 'rust')}
+            records = [self.observation(smallest),
+                       failure if profile == 'debug-1' else self.observation(smallest)]
+            with mock.patch.object(stress.harness, 'command_record', side_effect=records):
+                stress.run_cases(drivers, directory, (smallest,), receipt_cases=receipt_cases, profile=profile)
+            return {}
+        with mock.patch.object(stress.receipts, 'source_seal', return_value={'revision': 'source'}), \
+             mock.patch.object(stress, 'run_profile', side_effect=run_profile) as run, \
+             mock.patch.object(stress.receipts, 'write_receipt') as publish:
+            with self.assertRaises(stress.harness.HarnessError):
+                stress.main(['--matrix'])
+        self.assertEqual([call.args[0] for call in run.call_args_list], ['release', 'debug-1'])
+        publish.assert_not_called()
+        self.assertEqual(json.loads((self.artifacts / 'debug-1/case-1-1-1-rust.json').read_text()), failure)
+        self.assertEqual(json.loads((self.artifacts / 'release/case-1-1-1-rust.json').read_text())['status'], 0)
+        self.assertFalse((self.artifacts / 'stat-1').exists())
+
+    def test_release_receipt_cannot_satisfy_requested_four_profile_cohort(self):
+        receipt = SimpleNamespace(parameters={'profiles': 'release', 'watchdog-seconds': '300',
+            'boundary': 'unprefixed-native-mi-adapter', 'workload-assertions': 'active'})
+        with mock.patch.object(stress.receipts, 'read_receipt', return_value=receipt), \
+             mock.patch.object(stress.harness, 'command_record') as execute:
+            with self.assertRaises(stress.harness.HarnessError):
+                stress.main(['--matrix', '--replay'])
+        execute.assert_not_called()
 
 
 if __name__ == '__main__':
