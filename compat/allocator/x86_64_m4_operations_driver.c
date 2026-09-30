@@ -816,6 +816,57 @@ static void note_heap_aligned_failure(const char* key, mi_heap_t* heap, bool dir
   mi_option_set(mi_option_max_errors, previous_max);
 }
 
+static bool source_client_error;
+
+static void note_interior_api_modes(mi_heap_t* heap, size_t h) {
+  void* p;
+  void* q;
+  char key[128];
+  struct allocation_error_counts counts;
+  const long previous_precise = mi_option_get(mi_option_guarded_precise);
+  set_live_client_precise(false);
+  p = mi_heap_zalloc_aligned_at(heap, 64, 8, 7);
+  fill(p, 64, 0x39);
+  size_t pre = SIZE_MAX, post = SIZE_MAX;
+  counts = (struct allocation_error_counts){ 0 };
+  mi_register_error(count_allocation_errors, &counts);
+  q = mi_urealloc(p, 129, &pre, &post);
+  key_name(key, sizeof key, "api_modes.urealloc_interior", h, 0);
+  line(key, "%d,%zu,%zu,%zu,%d", q == NULL, pre, post, counts.invalid,
+       q == NULL ? has_fill(p, 64, 0x39) : has_fill(q, 64, 0x39));
+  source_client_error |= counts.invalid != 0;
+  mi_register_error(NULL, NULL);
+  mi_option_set_enabled(mi_option_guarded_precise, true);
+  mi_free(q == NULL ? p : q);
+  set_live_client_precise(false);
+  p = mi_heap_zalloc_aligned_at(heap, 64, 8, 7);
+  fill(p, 64, 0x39);
+  counts = (struct allocation_error_counts){ 0 };
+  mi_register_error(count_allocation_errors, &counts);
+  q = mi_heap_rezalloc(heap, p, 129);
+  key_name(key, sizeof key, "api_modes.heap_ordinary_interior", h, 0);
+  line(key, "%d,%zu,%d", q == NULL, counts.invalid,
+       q == NULL ? has_fill(p, 64, 0x39) : has_fill(q, 64, 0x39));
+  source_client_error |= counts.invalid != 0;
+  mi_register_error(NULL, NULL);
+  mi_option_set_enabled(mi_option_guarded_precise, true);
+  mi_free(q == NULL ? p : q);
+  set_live_client_precise(false);
+  p = mi_heap_zalloc_aligned_at(heap, 64, 8, 7);
+  counts = (struct allocation_error_counts){ 0 };
+  mi_register_error(count_allocation_errors, &counts);
+  q = mi_heap_rezalloc_aligned_at(heap, p, 0, 8, 7);
+  key_name(key, sizeof key, "api_modes.heap_aligned_zero_interior", h, 0);
+  line(key, "%d,%zu,%d", q == p, counts.invalid, q != NULL);
+  const bool old_retained = q != NULL && q != p && counts.invalid > 0;
+  source_client_error |= counts.invalid != 0;
+  mi_register_error(NULL, NULL);
+  mi_option_set_enabled(mi_option_guarded_precise, true);
+  mi_free(q == NULL ? p : q);
+  if (old_retained) { mi_free(p); }
+  mi_option_set(mi_option_guarded_precise, previous_precise);
+}
+
 static void section_api_modes(void) {
   static const size_t sizes[] = { 0, 1, 7, 8, 9, 17, 33, 64, 129, 1024, 1025, 4096, 65537, 524288, 524289 };
   static const size_t alignments[] = { 1, 8, 16, 64, 4096, 131072 };
@@ -900,45 +951,7 @@ static void section_api_modes(void) {
       line(key, "%d,%zu,%zu,%zu", p == NULL, counts.overflow, counts.memory, counts.invalid);
       mi_register_error(NULL, NULL);
     }
-    const long previous_precise = mi_option_get(mi_option_guarded_precise);
-    set_live_client_precise(false);
-    p = mi_heap_zalloc_aligned_at(heaps[h], 64, 8, 7);
-    fill(p, 64, 0x39);
-    size_t pre = SIZE_MAX, post = SIZE_MAX;
-    counts = (struct allocation_error_counts){ 0 };
-    mi_register_error(count_allocation_errors, &counts);
-    q = mi_urealloc(p, 129, &pre, &post);
-    key_name(key, sizeof key, "api_modes.urealloc_interior", h, 0);
-    line(key, "%d,%zu,%zu,%zu,%d", q == NULL, pre, post, counts.invalid,
-         q == NULL ? has_fill(p, 64, 0x39) : has_fill(q, 64, 0x39));
-    mi_register_error(NULL, NULL);
-    mi_option_set_enabled(mi_option_guarded_precise, true);
-    mi_free(q == NULL ? p : q);
-    set_live_client_precise(false);
-    p = mi_heap_zalloc_aligned_at(heaps[h], 64, 8, 7);
-    fill(p, 64, 0x39);
-    counts = (struct allocation_error_counts){ 0 };
-    mi_register_error(count_allocation_errors, &counts);
-    q = mi_heap_rezalloc(heaps[h], p, 129);
-    key_name(key, sizeof key, "api_modes.heap_ordinary_interior", h, 0);
-    line(key, "%d,%zu,%d", q == NULL, counts.invalid,
-         q == NULL ? has_fill(p, 64, 0x39) : has_fill(q, 64, 0x39));
-    mi_register_error(NULL, NULL);
-    mi_option_set_enabled(mi_option_guarded_precise, true);
-    mi_free(q == NULL ? p : q);
-    set_live_client_precise(false);
-    p = mi_heap_zalloc_aligned_at(heaps[h], 64, 8, 7);
-    counts = (struct allocation_error_counts){ 0 };
-    mi_register_error(count_allocation_errors, &counts);
-    q = mi_heap_rezalloc_aligned_at(heaps[h], p, 0, 8, 7);
-    key_name(key, sizeof key, "api_modes.heap_aligned_zero_interior", h, 0);
-    line(key, "%d,%zu,%d", q == p, counts.invalid, q != NULL);
-    const bool old_retained = q != NULL && q != p && counts.invalid > 0;
-    mi_register_error(NULL, NULL);
-    mi_option_set_enabled(mi_option_guarded_precise, true);
-    mi_free(q == NULL ? p : q);
-    if (old_retained) { mi_free(p); }
-    mi_option_set(mi_option_guarded_precise, previous_precise);
+    note_interior_api_modes(heaps[h], h);
   }
   mi_theap_set_default(previous);
   mi_heap_delete(auxiliary_heap);
@@ -1363,6 +1376,58 @@ static int run_abort_scenario(const char* name) {
   return 0;
 }
 
+/* A valid offset client is retained throughout each source diagnostic. The
+   temporary option override is used only to release a still-owned client
+   after observing the original debug validation condition. */
+static int run_source_client_control(const char* name) {
+  printf("%s\n", TRACE_BEGIN);
+  set_live_client_precise(false);
+  if (strcmp(name, "interior-api-modes") == 0) {
+    mi_heap_t* main_heap = mi_heap_main();
+    mi_heap_t* auxiliary = mi_heap_new();
+    if (auxiliary == NULL) { return 3; }
+    mi_theap_t* previous = mi_theap_set_default(mi_heap_theap(auxiliary));
+    note_interior_api_modes(main_heap, 0);
+    note_interior_api_modes(auxiliary, 1);
+    mi_theap_set_default(previous);
+    mi_heap_delete(auxiliary);
+  }
+  else if (strcmp(name, "usable-free-73") == 0 || strcmp(name, "usable-free-1000") == 0) {
+    const bool large = strcmp(name, "usable-free-1000") == 0;
+    const size_t size = large ? 1000 : 73;
+    const size_t alignment = large ? 4096 : 64;
+    const size_t offset = large ? 13 : 7;
+    unsigned char* p = mi_malloc_aligned_at(size, alignment, offset);
+    if (p == NULL) { return 3; }
+    fill(p, size, 0x71);
+    line("control.input", "%zu,%zu,%zu", size, alignment, offset);
+    line("control.client", "%d,%d", (((uintptr_t)p + offset) & (alignment - 1)) == 0,
+         has_fill(p, size, 0x71));
+    struct allocation_error_counts counts = { 0 };
+    mi_register_error(count_allocation_errors, &counts);
+    errno = 0;
+    const size_t usable = mi_usable_size(p);
+    const int usable_error = errno;
+    line("control.usable", "%zu,%d,%zu", usable, usable_error, counts.invalid);
+    errno = 0;
+    mi_free(p);
+    const int free_error = errno;
+    line("control.free", "%d,%zu", free_error, counts.invalid);
+    mi_register_error(NULL, NULL);
+    source_client_error = counts.invalid != 0;
+#if defined(CRABC_MI_M4_SOURCE_CANARY) && MI_DEBUG >= 1 && MI_GUARDED == 0
+    if (source_client_error) {
+      /* The rejected free left the exact original client owned and live. */
+      mi_option_set_enabled(mi_option_guarded_precise, true);
+      mi_free(p);
+    }
+#endif
+  }
+  else { return 2; }
+  printf("%s\n", TRACE_END);
+  return source_client_error ? 1 : 0;
+}
+
 /* These calls deliberately violate source assertion preconditions. Keeping
    each in a fresh process exposes both the exact debug assertion and the
    returning error path without interrupting live-client observations. */
@@ -1431,6 +1496,7 @@ int main(int argc, char** argv) {
     fprintf(stderr, "valid-domain guarded_precise=%ld\n", mi_option_get(mi_option_guarded_precise));
   }
   const char* scenario = argv[1];
+  if (strncmp(scenario, "source-client:", 14) == 0) { return run_source_client_control(scenario + 14); }
   if (strncmp(scenario, "precondition:", 13) == 0) { return run_precondition_control(scenario + 13); }
   if (strncmp(scenario, "abort:", 6) == 0) { return run_abort_scenario(scenario + 6); }
   void (*sections[8])(void) = { NULL };

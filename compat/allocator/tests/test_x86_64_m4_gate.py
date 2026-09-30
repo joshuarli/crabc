@@ -263,7 +263,7 @@ class M4OperationsObservationTests(unittest.TestCase):
             harness.write_json(products / "inputs.json", inputs)
             harness.write_json(products / "native-execution-provenance.json", recorded)
             receipt = SimpleNamespace(path=output / "receipt.json", source=inputs["source"],
-                parameters={"profiles": "release", "scenarios": "threads", "workload": "unchanged"})
+                parameters=gate.operation_profile_parameters(("release",), ("threads",)))
             with (mock.patch.object(gate, "operation_receipts", return_value=SimpleNamespace(
                     read_receipt=mock.Mock(return_value=receipt))),
                   mock.patch.object(harness, "require_tool", return_value="/pinned/tool"),
@@ -302,6 +302,40 @@ class M4OperationsObservationTests(unittest.TestCase):
         with self.assertRaises(harness.HarnessError):
             gate.compare_assertion_control("debug-1", "aligned-invalid", c,
                 {**native, "stdout": native["stdout"].replace("200,24", "200,3")})
+
+    def test_valid_workload_observer_binds_the_explicit_oracle_option_on_both_sides(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            output = Path(directory)
+            drivers = {"c": output / "c", "rust": output / "rust"}
+            trace = gate.OPERATIONS_TRACE_BEGIN + "\nclient.payload=1\n" + gate.OPERATIONS_TRACE_END + "\n"
+            records = [{"status": 0, "stdout": trace, "stderr": "valid-domain guarded_precise=1\n"},
+                       {"status": 0, "stdout": trace, "stderr": "valid-domain guarded_precise=0\n"}]
+            with mock.patch.object(gate, "run_driver", side_effect=records) as run:
+                gate.observe_operations_profile(output, "debug-1", "threads", drivers, [], valid_domain=True)
+                self.assertEqual(run.call_args_list,
+                    [mock.call(drivers[side], ("threads", "--valid-domain")) for side in ("c", "rust")])
+            with mock.patch.object(gate, "run_driver", side_effect=[records[0],
+                    {**records[1], "stderr": "valid-domain guarded_precise=1\n"}]):
+                with self.assertRaisesRegex(harness.HarnessError, "oracle option"):
+                    gate.observe_operations_profile(output, "debug-1", "threads", drivers, [], valid_domain=True)
+
+    def test_registered_source_client_control_still_requires_a_valid_native_payload_and_exact_diagnostics(self):
+        def record(trace, status=0, stderr=""):
+            return {"status": status, "stdout": gate.OPERATIONS_TRACE_BEGIN + "\n" + trace +
+                    gate.OPERATIONS_TRACE_END + "\n", "stderr": stderr}
+        good = "control.input=73,64,7\ncontrol.client=1,1\ncontrol.usable=79,0,0\ncontrol.free=0,0\n"
+        bad = good.replace("79,0,0", "0,0,1").replace("control.free=0,0", "control.free=0,2")
+        diagnostic = "mimalloc: error: mi_usable_size: invalid (unaligned) pointer: 0x1001\n" +                      "mimalloc: error: mi_free: invalid (unaligned) pointer: 0x1001\n"
+        original = {"c": record(bad, 1, diagnostic), "rust": record(good)}
+        oracle = {"c": record(good, stderr="valid-domain guarded_precise=1\n"),
+                  "rust": record(good, stderr="valid-domain guarded_precise=0\n")}
+        gate.compare_source_client_control("debug-1", "usable-free-73", original, oracle)
+        with self.assertRaises(harness.HarnessError):
+            gate.compare_source_client_control("debug-1", "usable-free-73",
+                {**original, "rust": record(good.replace("control.client=1,1", "control.client=1,0"))}, oracle)
+        with self.assertRaises(harness.HarnessError):
+            gate.compare_source_client_control("debug-1", "usable-free-73",
+                {**original, "c": record(bad, 1, diagnostic + "mimalloc: error: mi_free: invalid (unaligned) pointer: 0x2001\n")}, oracle)
 
 
 if __name__ == "__main__":

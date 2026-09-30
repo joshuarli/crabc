@@ -477,6 +477,66 @@ def compare_assertion_control(profile: str, case: str, c_record: Mapping[str, ob
             raise harness.HarnessError(f"{case} source control input or outcome differs: {c_trace}")
 
 
+def compare_source_client_control(profile: str, case: str, original: Mapping[str, Mapping[str, Any]],
+                                  oracle: Mapping[str, Mapping[str, Any]]) -> None:
+    """Keep the source debug rejection separate from valid-client equality.
+
+    The positive source oracle and both native invocations must agree on every
+    observation. Only the exact original source word-alignment rejection is
+    accepted as a negative control; payload loss or another diagnostic fails.
+    """
+    if profile not in API_PROFILES or case not in SOURCE_CLIENT_CONTROLS:
+        raise harness.HarnessError("unknown source live-client control")
+    positive = {}
+    for side in ("c", "rust"):
+        record = oracle[side]
+        harness.require_success(record, f"{case} {side} positive live-client control")
+        validate_valid_domain_option(profile, side, record)
+        positive[side] = parse_operations_trace(str(record["stdout"]), f"{case} {side} positive control")
+    compare_operations_traces(positive["c"], positive["rust"])
+    harness.require_success(original["rust"], f"{case} original native live-client control")
+    compare_operations_traces(positive["c"], parse_operations_trace(
+        str(original["rust"]["stdout"]), f"{case} original native control"))
+    if case == "interior-api-modes":
+        expected = {}
+        for heap in (0, 1):
+            urealloc = positive["c"].get(f"api_modes.urealloc_interior.{heap}.0", "").split(",")
+            if (len(urealloc) != 5 or urealloc[0] != "0" or urealloc[3:] != ["0", "1"]
+                    or not urealloc[1].isdigit() or not urealloc[2].isdigit()
+                    or int(urealloc[1]) < 64 or int(urealloc[2]) < 129):
+                raise harness.HarnessError("live-client urealloc did not preserve its payload and extents")
+            for operation in ("heap_ordinary", "heap_aligned_zero"):
+                if positive["c"].get(f"api_modes.{operation}_interior.{heap}.0") != "0,0,1":
+                    raise harness.HarnessError("live-client Heap replacement did not preserve valid behavior")
+            expected[f"api_modes.urealloc_interior.{heap}.0"] = "1,0,0,1,1"
+            expected[f"api_modes.heap_ordinary_interior.{heap}.0"] = "1,1,1"
+            expected[f"api_modes.heap_aligned_zero_interior.{heap}.0"] = "1,1,1"
+        diagnostics = ["mi_realloc", "mi_realloc", "mi_usable_size"] * 2
+    else:
+        size, alignment, offset = (73, 64, 7) if case == "usable-free-73" else (1000, 4096, 13)
+        extent = positive["c"].get("control.usable", "").split(",")
+        if (len(extent) != 3 or not extent[0].isdigit() or int(extent[0]) < size
+                or extent[1:] != ["0", "0"] or positive["c"].get("control.client") != "1,1"
+                or positive["c"].get("control.input") != f"{size},{alignment},{offset}"
+                or positive["c"].get("control.free") != "0,0"):
+            raise harness.HarnessError("live-client usable/free control lost its valid extent or payload")
+        expected = {"control.input": f"{size},{alignment},{offset}", "control.client": "1,1",
+                    "control.usable": "0,0,1", "control.free": "0,2"}
+        diagnostics = ["mi_usable_size", "mi_free"]
+    if list(positive["c"]) != list(expected):
+        raise harness.HarnessError("positive live-client control observation roster changed")
+    source = original["c"]
+    trace = parse_operations_trace(str(source["stdout"]), f"{case} original source control")
+    if profile != "debug-1":
+        harness.require_success(source, f"{case} original source live-client control")
+        compare_operations_traces(positive["c"], trace)
+        return
+    errors = re.findall(r"(mi_[a-z_]+): invalid \(unaligned\) pointer: 0x[0-9a-fA-F]+", str(source["stderr"]))
+    if (source.get("status") != 1 or list(trace) != list(expected) or trace != expected or errors != diagnostics
+            or str(source["stderr"]).count("mimalloc: error:") != len(diagnostics)):
+        raise harness.HarnessError("original source live-client control differs from its exact debug rejection")
+
+
 def api_profile_flags(profile: str) -> tuple[str, ...]:
     flags = tuple(flag for flag in harness.CONFIGURATION_PROFILES["release"]
                   if not flag.startswith(("-DMI_DEBUG=", "-DMI_STAT=")))
@@ -625,6 +685,16 @@ def run_operations_differential(offline: bool, scenario: str) -> dict[str, Any]:
 API_PROFILES = ("release", "debug-1", "stat-1", "stat-2")
 PROFILE_SCENARIOS = (*DIFFERENTIAL_SCENARIOS, "api-modes")
 OPERATIONS_RUNNER = "allocator-operation-profiles"
+ASSERTION_CONTROLS = ("reallocarr-null", "reallocarr-zero-size", "aligned-invalid", "aligned-at-invalid")
+SOURCE_CLIENT_CONTROLS = ("interior-api-modes", "usable-free-73", "usable-free-1000")
+
+
+
+def operation_profile_parameters(profiles: Sequence[str], scenarios: Sequence[str]) -> dict[str, str]:
+    return {"profiles": ",".join(profiles), "scenarios": ",".join(scenarios),
+            "workload": "valid-program-with-isolated-source-preconditions",
+            "debug-source-guarded-precise": "1", "native-guarded-precise": "0",
+            "source-debug-live-client-rejection": "CRABC-MI-DEBUG-ALIGNED-OFFSET-LIVE-CLIENT"}
 
 
 def operation_receipts():
@@ -644,11 +714,54 @@ def retain_operation_command(output: Path, name: str, record: Mapping[str, Any],
 
 
 def observe_operations_profile(output: Path, profile: str, scenario: str, drivers: Mapping[str, Path],
-                               cases: list) -> dict[str, Any]:
+                               cases: list, *, valid_domain: bool = False) -> dict[str, Any]:
     arguments = () if scenario == "oom-survival" else (scenario,)
+    if valid_domain:
+        arguments = (*arguments, "--valid-domain")
     executions = {side: run_driver(drivers[side], arguments) for side in ("c", "rust")}
     for side, record in executions.items():
         retain_operation_command(output, f"{profile}-{scenario}-{side}", record, cases)
+    if valid_domain:
+        for side, record in executions.items():
+            validate_valid_domain_option(profile, side, record)
+    controls, control_errors = {}, []
+    if valid_domain and scenario == "operations":
+        for control in ASSERTION_CONTROLS:
+            records = {side: run_driver(drivers[side], (f"precondition:{control}",))
+                       for side in ("c", "rust")}
+            paths = []
+            for side, record in records.items():
+                name = f"{profile}-precondition-{control}-{side}"
+                retained = []
+                retain_operation_command(output, name, record, retained)
+                paths.extend(retained[0][2])
+            try:
+                compare_assertion_control(profile, control, records["c"], records["rust"])
+            except harness.HarnessError as error:
+                control_errors.append(str(error))
+                cases.append((f"{profile}-precondition-{control}-comparison", 1, paths))
+            else:
+                cases.append((f"{profile}-precondition-{control}-comparison", 0, paths))
+            controls[control] = {side: record["status"] for side, record in records.items()}
+    if valid_domain and scenario == "operations":
+        for control in SOURCE_CLIENT_CONTROLS:
+            records, paths = {}, []
+            for condition in ("original", "oracle"):
+                records[condition] = {}
+                arguments = (f"source-client:{control}",) + (("--valid-domain",) if condition == "oracle" else ())
+                for side in ("c", "rust"):
+                    record = run_driver(drivers[side], arguments)
+                    records[condition][side] = record
+                    retained = []
+                    retain_operation_command(output, f"{profile}-source-client-{control}-{condition}-{side}", record, retained)
+                    paths.extend(retained[0][2])
+            try:
+                compare_source_client_control(profile, control, records["original"], records["oracle"])
+            except harness.HarnessError as error:
+                control_errors.append(str(error))
+                cases.append((f"{profile}-source-client-{control}-comparison", 1, paths))
+            else:
+                cases.append((f"{profile}-source-client-{control}-comparison", 0, paths))
     termination = {}
     for name in ABORT_SCENARIOS if scenario == "operations" else ():
         records = {side: run_driver(drivers[side], (f"abort:{name}",)) for side in ("c", "rust")}
@@ -662,7 +775,16 @@ def observe_operations_profile(output: Path, profile: str, scenario: str, driver
     traces = {side: parse_operations_trace(str(record["stdout"]), f"{profile} {scenario} {side}")
               for side, record in executions.items()}
     compare_operations_traces(traces["c"], traces["rust"])
-    return {"trace": traces["c"], "abort_scenarios": termination}
+    if control_errors:
+        raise harness.HarnessError("; ".join(control_errors))
+    return {"trace": traces["c"], "abort_scenarios": termination, "precondition_controls": controls}
+
+
+def validate_valid_domain_option(profile: str, side: str, record: Mapping[str, Any]) -> None:
+    expected = 1 if profile == "debug-1" and side == "c" else 0
+    markers = re.findall(r"^valid-domain guarded_precise=(\d+)$", str(record.get("stderr", "")), re.MULTILINE)
+    if markers != [str(expected)]:
+        raise harness.HarnessError(f"{profile} {side} valid-client oracle option differs")
 
 
 def validate_operation_build(record: Mapping[str, Any], inputs: Mapping[str, Any], profile: str,
@@ -682,12 +804,24 @@ def validate_operation_build(record: Mapping[str, Any], inputs: Mapping[str, Any
         raise harness.HarnessError(f"{profile} {family} {side} compiler authority changed")
 
 
+def source_debug_option_scope(record: Mapping[str, Any], inputs: Mapping[str, Any]) -> None:
+    source = Path(inputs["source_directory"])
+    command = [inputs["compiler"], "-std=c11", *api_profile_flags("debug-1"), "-DMI_LIBC_MUSL=1",
+               "-I", str(source / "include"), "-E", str(source / "src/static.c")]
+    preprocessed = str(record.get("stdout", ""))
+    # The other two occurrences declare the option and its default descriptor.
+    # A second executable use would change the meaning of the oracle option.
+    if (record.get("status") != 0 or record.get("command") != command
+            or preprocessed.count("mi_option_guarded_precise") != 3
+            or len(re.findall(r"mi_option_is_enabled\s*\(\s*mi_option_guarded_precise\s*\)", preprocessed)) != 1):
+        raise harness.HarnessError("debug source oracle option has an unproved active use or compiler condition")
+
+
 def read_operations_profiles(profiles: Sequence[str], scenarios: Sequence[str], *, replay: bool = False):
-    """Reconstruct unchanged commands and comparisons from authenticated products and logs."""
+    """Reconstruct valid workloads and isolated controls from authenticated commands and products."""
     receipts = operation_receipts()
     receipt = receipts.read_receipt(harness.ROOT, OPERATIONS_RUNNER)
-    if dict(receipt.parameters) != {"profiles": ",".join(profiles), "scenarios": ",".join(scenarios),
-                                    "workload": "unchanged"}:
+    if dict(receipt.parameters) != operation_profile_parameters(profiles, scenarios):
         raise harness.HarnessError("operation receipt profile or scenario selection changed")
     products, logs = receipt.path.parent / "products", receipt.path.parent / "logs"
     inputs = harness.read_json(products / "inputs.json")
@@ -706,6 +840,8 @@ def read_operations_profiles(profiles: Sequence[str], scenarios: Sequence[str], 
     for fixture in (OPERATIONS_DRIVER, OOM_SURVIVAL_DRIVER):
         if (products / fixture.name).read_bytes() != fixture.read_bytes():
             raise harness.HarnessError("operation receipt workload fixture changed")
+    if "debug-1" in profiles:
+        source_debug_option_scope(harness.read_json(products / "debug-source-preprocess.json"), inputs)
     original = Path(inputs["output_directory"])
     if (not original.is_relative_to(ARTIFACTS) or not Path(inputs["source_directory"]).is_relative_to(original)):
         raise harness.HarnessError("operation receipt compiler outputs escaped owned artifacts")
@@ -749,11 +885,37 @@ def read_operations_profiles(profiles: Sequence[str], scenarios: Sequence[str], 
                     expected_cases.append(name)
                     record = harness.read_json(logs / f"{name}.json")
                     binary = original / profile / family / f"operations-{side}"
-                    arguments = [] if scenario == "oom-survival" else [scenario]
+                    arguments = ["--valid-domain"] if scenario == "oom-survival" else [scenario, "--valid-domain"]
+                    validate_valid_domain_option(profile, side, record)
                     if record.get("status") != 0 or record.get("command") != [str(binary), *arguments]:
                         raise harness.HarnessError(f"{name} original execution authority changed")
                     observed[side] = parse_operations_trace(str(record["stdout"]), name)
                 compare_operations_traces(observed["c"], observed["rust"])
+                for control in ASSERTION_CONTROLS if scenario == "operations" else ():
+                    records = {}
+                    for side in ("c", "rust"):
+                        name = f"{profile}-precondition-{control}-{side}"
+                        record = harness.read_json(logs / f"{name}.json")
+                        binary = original / profile / family / f"operations-{side}"
+                        if record.get("command") != [str(binary), f"precondition:{control}"]:
+                            raise harness.HarnessError(f"{name} original precondition command changed")
+                        records[side] = record
+                    compare_assertion_control(profile, control, records["c"], records["rust"])
+                    expected_cases.append(f"{profile}-precondition-{control}-comparison")
+                for control in SOURCE_CLIENT_CONTROLS if scenario == "operations" else ():
+                    records = {}
+                    for condition in ("original", "oracle"):
+                        records[condition] = {}
+                        for side in ("c", "rust"):
+                            name = f"{profile}-source-client-{control}-{condition}-{side}"
+                            record = harness.read_json(logs / f"{name}.json")
+                            binary = original / profile / family / f"operations-{side}"
+                            arguments = [f"source-client:{control}"] + (["--valid-domain"] if condition == "oracle" else [])
+                            if record.get("command") != [str(binary), *arguments]:
+                                raise harness.HarnessError(f"{name} live-client condition command changed")
+                            records[condition][side] = record
+                    compare_source_client_control(profile, control, records["original"], records["oracle"])
+                    expected_cases.append(f"{profile}-source-client-{control}-comparison")
                 for abort in ABORT_SCENARIOS if scenario == "operations" else ():
                     for side in ("c", "rust"):
                         name = f"{profile}-{abort}-{side}"
@@ -779,13 +941,13 @@ def read_operations_profiles(profiles: Sequence[str], scenarios: Sequence[str], 
                     drivers[side] = binary
                 for scenario in scenarios:
                     if (scenario == "oom-survival") == (family == "oom-survival"):
-                        observe_operations_profile(output, profile, scenario, drivers, [])
+                        observe_operations_profile(output, profile, scenario, drivers, [], valid_domain=True)
         print(f"operation profile original product replay retained at {output}")
     return receipt
 
 
 def run_operations_profiles(offline: bool, profiles: Sequence[str], scenarios: Sequence[str]) -> dict[str, Any]:
-    """Retain full unchanged workloads and compiler authority before admitting a cohort."""
+    """Retain every valid observation and isolated precondition before admitting a cohort."""
     receipts = operation_receipts()
     execution = harness.require_native_x86_64(require_image_identity=True)
     seal = receipts.source_seal(harness.ROOT)
@@ -801,6 +963,14 @@ def run_operations_profiles(offline: bool, profiles: Sequence[str], scenarios: S
               "profiles": list(profiles), "scenarios": list(scenarios), "source_directory": str(source),
               "output_directory": str(output),
               "compiler": harness.require_tool("musl-gcc"), "cargo": harness.require_tool("cargo")}
+    if "debug-1" in profiles:
+        command = [inputs["compiler"], "-std=c11", *api_profile_flags("debug-1"), "-DMI_LIBC_MUSL=1",
+                   "-I", str(source / "include"), "-E", str(source / "src/static.c")]
+        preprocessing = harness.command_record(command, cwd=source)
+        path = output / "debug-source-preprocess.json"
+        harness.write_json(path, preprocessing)
+        products[path.name] = path
+        source_debug_option_scope(preprocessing, inputs)
     for fixture in (OPERATIONS_DRIVER, OOM_SURVIVAL_DRIVER):
         retained = output / fixture.name
         shutil.copy2(fixture, retained)
@@ -833,8 +1003,8 @@ def run_operations_profiles(offline: bool, profiles: Sequence[str], scenarios: S
                         continue
                     try:
                         observed[f"{profile}.{scenario}"] = observe_operations_profile(
-                            output, profile, scenario, {"c": c, "rust": rust}, cases)
-                        print(f"{profile}.{scenario}: matched unchanged workload", flush=True)
+                            output, profile, scenario, {"c": c, "rust": rust}, cases, valid_domain=True)
+                        print(f"{profile}.{scenario}: matched valid workload and source controls", flush=True)
                     except harness.HarnessError as error:
                         errors.append(f"{profile}.{scenario}: {error}")
                         print(f"{profile}.{scenario}: FAILED {error}", flush=True)
@@ -861,7 +1031,7 @@ def run_operations_profiles(offline: bool, profiles: Sequence[str], scenarios: S
                       for abort in ABORT_SCENARIOS for side in ("c", "rust")) else status, logs)
                       for name, status, logs in cases]
     receipts.write_receipt(harness.ROOT, OPERATIONS_RUNNER, output, products, positive_cases,
-        {"profiles": ",".join(profiles), "scenarios": ",".join(scenarios), "workload": "unchanged"}, not errors)
+        operation_profile_parameters(profiles, scenarios), not errors)
     if errors:
         raise harness.HarnessError(f"operation profile cohort failed; original raw retained at {output}: " + "; ".join(errors))
     return result
