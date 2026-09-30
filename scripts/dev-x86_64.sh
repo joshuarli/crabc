@@ -188,7 +188,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   campaign-static  run the owned-static product gate when its prerequisites close
   campaign-dynamic  run the owned-dynamic product gate when its prerequisites close
   campaign-qualification  run the ordered qualification gate when it is ready
-  qualification-manifest [--through GATE|--status|--publish GATE PUBLICATION RECEIPT|--validate-receipt PATH|--private-admission]  execute the ordered qualification chain (or a prefix) into a source-bound receipt, report gate conditions, or select gate evidence in the native container
+  qualification-manifest [--profile correctness|full] [--through GATE|--status|--publish GATE PUBLICATION RECEIPT|--validate-receipt PATH|--private-admission]  execute the ordered qualification chain (or a prefix) into a source-bound receipt, report gate conditions, or select gate evidence in the native container
   campaign-promotion-check  run the final promotion gate when it is ready
   campaign-all  run the complete native x86 campaign gate sequence
   qualification-candidate --work DIR [--inputs FILE] [--through STEP] [--dry-run]  build one cohort, run every family aggregate and gate producer, publish and check receipts, run the chain; restartable on the same revision
@@ -10159,6 +10159,27 @@ PY
                 *) return 1 ;;
             esac
         }
+        qualification_profile_arguments=()
+        qualification_operation_arguments=()
+        while [ "$#" -gt 0 ]; do
+            if [ "$1" = --profile ]; then
+                [ "$#" -ge 2 ] || fail "qualification-manifest --profile requires correctness or full"
+                [ "${#qualification_profile_arguments[@]}" -eq 0 ] || fail "qualification-manifest accepts one profile"
+                case "$2" in correctness|full) ;; *) fail "qualification-manifest has an unknown profile" ;; esac
+                qualification_profile_arguments=(--profile "$2")
+                shift 2
+            else
+                qualification_operation_arguments+=("$1")
+                shift
+            fi
+        done
+        set -- "${qualification_operation_arguments[@]}"
+        if [ "${#qualification_profile_arguments[@]}" -gt 0 ] && [ "$#" -gt 0 ]; then
+            case "$1" in
+                --private-admission|--publish|--validate-receipt)
+                    fail "qualification-manifest profile selection applies only to ordered execution or status" ;;
+            esac
+        fi
         if [ "$#" -eq 0 ]; then
             :
         elif [ "$#" -eq 1 ] && { [ "$1" = --private-admission ] || [ "$1" = --status ]; }; then
@@ -10177,7 +10198,7 @@ PY
             fail "qualification-manifest accepts no arguments, --through GATE, --status, --publish GATE PUBLICATION RECEIPT, --private-admission, or --validate-receipt PATH"
         fi
         ensure_image
-        run_in_container python3 /workspace/compat/x86_64/run_qualification_manifest.py "$@"
+        run_in_container python3 /workspace/compat/x86_64/run_qualification_manifest.py "$@" "${qualification_profile_arguments[@]}"
         ;;
     owned-static-sysroot)
         [ "$#" -eq 0 ] || fail "owned-static-sysroot takes no arguments"

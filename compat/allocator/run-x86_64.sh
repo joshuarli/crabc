@@ -33,12 +33,12 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-m2
   allocator-m3 [--differential-only|--owner-only|--miri-only|--queue-reorder-only]
   allocator-m4 [--check|--gate ID|--reader-tests]
-  allocator-m5 [--check|--gate ID|--reader-tests]
+  allocator-m5 [--qualification-profile correctness|full] [--check|--gate ID|--reader-tests]
   allocator-m7 [--check|--gate ID|--reader-tests|--arena-print|--private-context-arena-print]
   allocator-m8 [--check|--gate ID|--reader-tests]
   allocator-m9 [--check|--reader-tests|--report PATH...]
   allocator-divergence-evidence [--check|--reader-tests]
-  allocator-m10 [--check [--performance-receipt PATH]|--build-audit|--reader-tests]
+  allocator-m10 [--profile correctness|full] [--check [--performance-receipt PATH]|--build-audit|--reader-tests]
   allocator-tls | allocator-lifecycle [--only runtime-process-policy-first-arena] | allocator-startup-regular-arena [--reader-tests] | allocator-init-recursion | allocator-concurrent-init | allocator-initialization-tld [--reader-tests] | allocator-fault | allocator-fault-seam-inventory [--os-publication-receiver|--metadata-publication-receiver|--compile-only|--canonical-m2-vm-c-compile-regression|--retry-helper-regression|--timeout-clock-helper-regression|--placement-warning-helper-regression|--mbind-boundary-regression|--huge-branch-diagnosis|--reader-tests]
   allocator-release-evidence | allocator-api-coverage | allocator-cmake-modes
   allocator-header-modes | allocator-static-modes
@@ -442,6 +442,23 @@ case "$command" in
         run_in_container "${m4_command[@]}"
         ;;
     allocator-m5)
+        m5_profile=correctness
+        m5_profile_selected=false
+        m5_arguments=()
+        while [ "$#" -gt 0 ]; do
+            if [ "$1" = --qualification-profile ]; then
+                [ "$#" -ge 2 ] || fail "allocator-m5 --qualification-profile requires correctness or full"
+                [ "$m5_profile_selected" = false ] || fail "allocator-m5 accepts one qualification profile"
+                case "$2" in correctness|full) ;; *) fail "allocator-m5 has an unknown qualification profile" ;; esac
+                m5_profile="$2"
+                m5_profile_selected=true
+                shift 2
+            else
+                m5_arguments+=("$1")
+                shift
+            fi
+        done
+        set -- "${m5_arguments[@]}"
         if [ "$#" -eq 0 ]; then
             m5_command=(python3 compat/allocator/x86_64_m5_gate.py)
         elif [ "$#" -eq 1 ] && [ "$1" = --check ]; then
@@ -452,6 +469,11 @@ case "$command" in
             m5_command=(python3 compat/allocator/x86_64_m5_gate.py --gate "$2")
         else
             fail "allocator-m5 accepts only --check, --gate ID, or --reader-tests"
+        fi
+        if [ "$#" -eq 1 ] && [ "$1" = --reader-tests ]; then
+            [ "$m5_profile_selected" = false ] || fail "allocator-m5 reader-tests does not select a qualification profile"
+        else
+            m5_command+=(--qualification-profile "$m5_profile")
         fi
         ensure_image
         run_in_container "${m5_command[@]}"
@@ -519,6 +541,23 @@ case "$command" in
     allocator-m10)
         # Promotion requires prerequisite qualification and a native artifact
         # audit; this check never edits the default backend line.
+        m10_profile=correctness
+        m10_profile_selected=false
+        m10_arguments=()
+        while [ "$#" -gt 0 ]; do
+            if [ "$1" = --profile ]; then
+                [ "$#" -ge 2 ] || fail "allocator-m10 --profile requires correctness or full"
+                [ "$m10_profile_selected" = false ] || fail "allocator-m10 accepts one qualification profile"
+                case "$2" in correctness|full) ;; *) fail "allocator-m10 has an unknown qualification profile" ;; esac
+                m10_profile="$2"
+                m10_profile_selected=true
+                shift 2
+            else
+                m10_arguments+=("$1")
+                shift
+            fi
+        done
+        set -- "${m10_arguments[@]}"
         if [ "$#" -ge 1 ] && [ "$1" = --check ]; then
             m10_command=(python3 compat/allocator/x86_64_m10_gate.py "$@")
         elif [ "$#" -eq 1 ] && [ "$1" = --build-audit ]; then
@@ -527,6 +566,11 @@ case "$command" in
             m10_command=(python3 compat/allocator/tests/test_x86_64_m10_gate.py)
         else
             fail "allocator-m10 accepts --check [--performance-receipt PATH], --build-audit, or --reader-tests"
+        fi
+        if [ "$#" -eq 1 ] && [ "$1" = --reader-tests ]; then
+            [ "$m10_profile_selected" = false ] || fail "allocator-m10 reader-tests does not select a qualification profile"
+        else
+            m10_command+=(--profile "$m10_profile")
         fi
         ensure_image
         run_in_container "${m10_command[@]}"
