@@ -630,9 +630,120 @@ def _final_symbol(elf: Elf, name: str, binding: str) -> dict[str, Any]:
 INT128_CAST_NAMES = ("__fixdfti", "__fixunsdfti", "__floattidf", "__floatuntidf")
 
 
-def _integer128_cast_transfers(*, root: Path, archive: Path, workload: Path,
+def _owned_helper_bytes(elf: Elf, address: int, size: int, *, executable: bool) -> bytes:
+    matches = [elf.data[row[2] + address - row[3]:row[2] + address - row[3] + size]
+               for row in elf.programs if row[0] == 1 and not row[1] & 2
+               and (not executable or row[1] & 1)
+               and row[3] <= address and address + size <= row[3] + row[5]]
+    require(size > 0 and len(matches) == 1 and len(matches[0]) == size,
+            "compiler-helper provider bytes leave one immutable load segment")
+    return matches[0]
+
+
+def _owned_helper_provider_closure(member: Elf, final: Elf, map_lines: Sequence[str],
+                                   archive: str, original: Mapping[str, Any],
+                                   provider: Mapping[str, Any]) -> dict[str, Any]:
+    """Replay complete owned code and its file-local branch/constant dependencies.
+
+    The selected archive has only direct signed-division branches and binary64
+    constant references. Only their PC-relative relocation forms are admitted.
+    Immutable mergeable constant entries may share equal final storage; their
+    complete source entry bytes must still match. Other operands stay unproved.
+    """
+
+    symbols = [member.symbol_row(index, number)
+               for index, table in enumerate(member.sections) if table[1] == 2
+               for number in range(table[5] // 24)]
+    code: dict[int, dict[str, Any]] = {}
+    constants: dict[tuple[int, int, int], dict[str, Any]] = {}
+
+    def contribution(index: int) -> tuple[int, int]:
+        section = _elf_section_name(member, index)
+        rows = [line for line in map_lines if line.rstrip().endswith(f"{archive}({ARCHIVE_MEMBER}):({section})")]
+        require(len(rows) == 1, "compiler-helper provider contribution is missing or ambiguous")
+        fields = rows[0].split()
+        require(len(fields) >= 5, "compiler-helper provider contribution fields differ")
+        return int(fields[0], 16), int(fields[2], 16)
+
+    def visit(source: Mapping[str, Any], expected: Mapping[str, Any] | None = None) -> None:
+        index = source["section"]
+        require(0 < index < len(member.sections), "compiler-helper provider source section differs")
+        section = member.sections[index]
+        name = _elf_section_name(member, index)
+        require(source["type"] == "FUNC" and source["binding"] in {"GLOBAL", "LOCAL"}
+                and source["visibility"] == "DEFAULT" and source["value"] == 0
+                and source["size"] == section[5] and section[5] > 0
+                and section[1] == 1 and section[2] & 4 and not section[2] & 1,
+                "compiler-helper provider is not one complete owned function section")
+        address, size = contribution(index)
+        observed = final.symbol(source["name"], dynamic=False) if expected is None else expected
+        require(observed["type"] == "FUNC" and observed["binding"] == source["binding"]
+                and observed["visibility"] == "DEFAULT" and observed["value"] == address
+                and observed["size"] == size == source["size"],
+                "compiler-helper final private provider metadata or contribution differs")
+        if index in code:
+            return
+        original_bytes = member.data[section[4]:section[4] + section[5]]
+        final_bytes = _owned_helper_bytes(final, address, size, executable=True)
+        patched = bytearray(original_bytes)
+        record: dict[str, Any] = {"section": name, "address": address, "size": size, "relocations": []}
+        code[index] = record
+        operands: set[int] = set()
+        for relocations in member.sections:
+            if relocations[1] not in {4, 9} or relocations[7] != index or not relocations[5]:
+                continue
+            require(relocations[1] == 4 and relocations[9] == 24 and relocations[5] % 24 == 0,
+                    "compiler-helper provider relocation table differs")
+            for offset in range(0, relocations[5], 24):
+                destination, info, addend = member.unpack("<QQq", relocations[4] + offset)
+                symbol = member.symbol_row(relocations[6], info >> 32)
+                kind = info & 0xffffffff
+                require(kind in {2, 4} and addend == -4 and 1 <= destination
+                        and destination + 4 <= size and not operands.intersection(range(destination, destination + 4))
+                        and 0 < symbol["section"] < len(member.sections),
+                        "compiler-helper provider operand is not an owned PC-relative relocation")
+                operands.update(range(destination, destination + 4))
+                target_index = symbol["section"]
+                target_section = member.sections[target_index]
+                target = address + destination + 4 + struct.unpack_from("<i", final_bytes, destination)[0]
+                if kind == 4:
+                    require(original_bytes[destination - 1] in {0xe8, 0xe9},
+                            "compiler-helper provider branch opcode differs")
+                    candidates = [row for row in symbols if row["section"] == target_index
+                                  and row["type"] == "FUNC" and row["value"] == symbol["value"]]
+                    require(len(candidates) == 1 and target == contribution(target_index)[0] + symbol["value"],
+                            "compiler-helper provider branch resolves to foreign code")
+                    visit(candidates[0])
+                else:
+                    entry = target_section[9]
+                    source_offset = symbol["value"]
+                    require(symbol["binding"] == "LOCAL" and symbol["visibility"] == "DEFAULT"
+                            and symbol["type"] in {"0", "OBJECT"} and target_section[1] == 1
+                            and target_section[2] & 2 and target_section[2] & 16
+                            and not target_section[2] & 5 and entry in {8, 16}
+                            and source_offset % entry == 0 and source_offset + entry <= target_section[5],
+                            "compiler-helper provider constant is not a complete immutable source entry")
+                    # LLD pools mergeable entries and omits their original
+                    # object contribution rows. The code operand must still
+                    # select the complete immutable source entry bytes.
+                    expected_bytes = member.data[target_section[4] + source_offset:target_section[4] + source_offset + entry]
+                    require(_owned_helper_bytes(final, target, entry, executable=False) == expected_bytes,
+                            "compiler-helper provider constant bytes differ from owned source")
+                    constants[(target_index, source_offset, target)] = {
+                        "section": _elf_section_name(member, target_index), "source_offset": source_offset,
+                        "address": target, "size": entry}
+                patched[destination:destination + 4] = final_bytes[destination:destination + 4]
+                record["relocations"].append({"offset": destination, "kind": kind, "target_address": target})
+        require(bytes(patched) == final_bytes, "compiler-helper provider code bytes differ from owned source")
+
+    visit(original, provider)
+    return {"code": list(code.values()), "constants": list(constants.values())}
+
+
+def _compiler_helper_transfers(*, root: Path, archive: Path, workload: Path,
                                executable: Path, map_path: Path, trace_path: Path | None = None,
-                               trace_lines: Sequence[str] | None = None, source_mount: str = "/workspace") -> dict[str, Any]:
+                               trace_lines: Sequence[str] | None = None, source_mount: str = "/workspace",
+                               names: Sequence[str] | None = None) -> dict[str, Any]:
     """Join emitted object relocations to the exact owned archive and final code."""
 
     root = Path(root).absolute()
@@ -640,23 +751,23 @@ def _integer128_cast_transfers(*, root: Path, archive: Path, workload: Path,
     paths = (archive, workload, executable, map_path, *((Path(trace_path),) if trace_path is not None else ()))
     require(all(path.is_absolute() and path.is_relative_to(root) and path.is_file() and not path.is_symlink()
                 for path in paths),
-            "integer128 cast retained inputs escape the physical checkout")
+            "compiler-helper retained inputs escape the physical checkout")
     recorded_archive = source_mount + "/" + archive.relative_to(root).as_posix()
     recorded_workload = source_mount + "/" + workload.relative_to(root).as_posix()
     map_lines = map_path.read_text(encoding="utf-8").splitlines()
-    require((trace_path is None) != (trace_lines is None), "integer128 cast trace authority is ambiguous")
+    require((trace_path is None) != (trace_lines is None), "compiler-helper trace authority is ambiguous")
     trace_lines = Path(trace_path).read_text(encoding="utf-8").splitlines() if trace_path is not None else trace_lines
     require(type(trace_lines) is list and all(type(line) is str for line in trace_lines),
-            "integer128 cast trace rows differ")
+            "compiler-helper trace rows differ")
     require(trace_lines.count(f"{recorded_archive}({ARCHIVE_MEMBER})") == 1,
-            "integer128 cast trace does not extract the exact owned member")
+            "compiler-helper trace does not extract the exact owned member")
     require(trace_lines.count(recorded_workload) == 1,
-            "integer128 cast trace does not name the retained compiler object")
+            "compiler-helper trace does not name the retained compiler object")
     require(re.search(r"libgcc|compiler-rt", "\n".join(trace_lines)) is None,
-            "integer128 cast trace admits an ambient compiler runtime")
+            "compiler-helper trace admits an ambient compiler runtime")
     source = Elf(workload)
     final = Elf(executable)
-    require(source.elf_type == 1 and final.elf_type in {2, 3}, "integer128 cast ELF kinds differ")
+    require(source.elf_type == 1 and final.elf_type in {2, 3}, "compiler-helper ELF kinds differ")
     archive_bytes = _archive_object_bytes(archive, ARCHIVE_MEMBER)
     scratch = root / ".work/x86_64/tmp"
     scratch.mkdir(parents=True, exist_ok=True)
@@ -665,76 +776,105 @@ def _integer128_cast_transfers(*, root: Path, archive: Path, workload: Path,
         member_path.write_bytes(archive_bytes)
         member = Elf(member_path)
         result = {}
-        for name in INT128_CAST_NAMES:
+        selected = helper_names(load_contract(root)) if names is None else tuple(names)
+        require(selected and len(selected) == len(set(selected))
+                and set(selected) <= set(helper_names(load_contract(root))),
+                "compiler-helper selected provider roster differs")
+        for name in selected:
             imports = [source.symbol_row(index, number)
                        for index, table in enumerate(source.sections) if table[1] == 2
                        for number in range(table[5] // 24)
                        if source.symbol_row(index, number)["name"] == name]
             require(len(imports) == 1 and imports[0]["section"] == 0 and imports[0]["binding"] == "GLOBAL",
-                    "integer128 cast compiler object import differs")
+                    "compiler-helper compiler object import differs")
             provider = _final_symbol(final, name, "GLOBAL")
             original = member.symbol(name, dynamic=False)
             require(original["type"] == "FUNC" and original["binding"] == "GLOBAL"
                     and original["visibility"] == "DEFAULT" and original["size"] == provider["size"]
                     and original["section"] > 0,
-                    "integer128 cast owned archive provider metadata differs")
+                    "compiler-helper owned archive provider metadata differs")
             section = _elf_section_name(member, original["section"])
-            require(section == ".text." + name, "integer128 cast archive source section differs")
+            require(section == ".text." + name, "compiler-helper archive source section differs")
             provider_rows = [line for line in map_lines if line.rstrip().endswith(":(" + section + ")")]
             require(len(provider_rows) == 1
                     and provider_rows[0].rstrip().endswith(f"{recorded_archive}({ARCHIVE_MEMBER}):({section})")
                     and int(provider_rows[0].split()[0], 16) + original["value"] == provider["value"]
                     and int(provider_rows[0].split()[2], 16) == member.sections[original["section"]][5],
-                    "integer128 cast final provider does not originate in the owned archive")
-            original_section = member.sections[original["section"]]
-            require(not any(row[1] in {4, 9} and row[7] == original["section"] and row[5]
-                            for row in member.sections),
-                    "integer128 cast source provider contains an unaccounted relocation")
-            source_start = original_section[4] + original["value"]
-            final_section = final.sections[provider["section"]]
-            final_start = final_section[4] + provider["value"] - final_section[3]
-            require(final_section[2] & 4 and 0 <= provider["value"] - final_section[3]
-                    and provider["value"] - final_section[3] + provider["size"] <= final_section[5]
-                    and member.data[source_start:source_start + original["size"]]
-                    == final.data[final_start:final_start + provider["size"]],
-                    "integer128 cast final provider bytes differ from the owned archive")
+                    "compiler-helper final provider does not originate in the owned archive")
+            closure = _owned_helper_provider_closure(member, final, map_lines, recorded_archive, original, provider)
             calls = _direct_source_calls(workload.read_bytes(), name, root, allow_tail_calls=True)
             addresses = {}
             for source_section in {row["section"] for row in calls}:
                 rows = [line for line in map_lines if line.rstrip().endswith(f"{recorded_workload}:({source_section})")]
-                require(len(rows) == 1, "integer128 cast compiler contribution is missing or ambiguous")
+                require(len(rows) == 1, "compiler-helper compiler contribution is missing or ambiguous")
                 fields = rows[0].split()
                 addresses[source_section] = (int(fields[0], 16), int(fields[2], 16))
             result[name] = {"provider_address": provider["value"], "source_section": section,
+                            "provider_closure": closure,
                             **_final_direct_calls(final, calls, addresses, provider["value"])}
     return {"archive_sha256": digest(archive), "workload_sha256": digest(workload),
             "executable_sha256": digest(executable), "transfers": result}
 
 
-def retained_integer128_cast_link(*, root: Path, product: Path, workload: Path,
+def _integer128_cast_transfers(*, root: Path, archive: Path, workload: Path,
+                               executable: Path, map_path: Path, trace_path: Path | None = None,
+                               trace_lines: Sequence[str] | None = None,
+                               source_mount: str = "/workspace") -> dict[str, Any]:
+    """Keep the finite cast projection on the complete owned-provider reader."""
+
+    observations = _compiler_helper_transfers(root=root, archive=archive, workload=workload,
+        executable=executable, map_path=map_path, trace_path=trace_path,
+        trace_lines=trace_lines, source_mount=source_mount, names=INT128_CAST_NAMES)
+    for row in observations["transfers"].values():
+        row.pop("provider_closure")
+    return observations
+
+
+def _retained_compiler_helper_link(*, root: Path, product: Path, workload: Path,
                                   executable: Path, receipt: Path, linkage: str,
-                                  linker: Mapping[str, str]) -> dict[str, Any]:
-    """Authenticate an installed link before admitting its cast origin joins."""
+                                  linker: Mapping[str, str], names: Sequence[str] | None = None) -> dict[str, Any]:
+    """Authenticate an installed link before admitting complete helper origins."""
 
     import owned_posix_product_evidence as products
     identity = products.validate_retained_link(root, "/workspace", product, workload,
                                               executable, receipt, linkage, dict(linker))
-    record = _read_json(receipt, "integer128 cast link receipt")
+    record = _read_json(receipt, "compiler-helper link receipt")
     if linkage in {"static", "static-pie"}:
         map_path = receipt.parent / record["map"]["path"]
         trace_arguments = {"trace_path": receipt.parent / record["trace"]["path"]}
     else:
         import owned_dynamic_elf as dynamic_elf
         sidecar, map_path = dynamic_elf.sidecar_paths(executable)
-        dynamic_elf.validate_record(_read_json(sidecar, "integer128 cast ELF sidecar"), executable,
+        dynamic_elf.validate_record(_read_json(sidecar, "compiler-helper ELF sidecar"), executable,
                                    output_format=products.DYNAMIC_PRODUCT_FORMAT,
                                    fail=lambda message: require(False, message),
                                    recorded_path=lambda path: "/workspace/" + path.relative_to(root).as_posix())
         trace_arguments = {"trace_lines": record["link_trace"]}
-    observations = _integer128_cast_transfers(
+    observations = _compiler_helper_transfers(
         root=root, archive=product / "usr/lib/libcrabc-builtins.a", workload=workload,
-        executable=executable, map_path=map_path, **trace_arguments)
+        executable=executable, map_path=map_path, names=names, **trace_arguments)
     return {"link": identity, **observations}
+
+
+def retained_compiler_helper_link(*, root: Path, product: Path, workload: Path,
+                                  executable: Path, receipt: Path, linkage: str,
+                                  linker: Mapping[str, str]) -> dict[str, Any]:
+    """Admit every selected helper, its complete owned body, and all consumer sites."""
+
+    return _retained_compiler_helper_link(root=root, product=product, workload=workload,
+        executable=executable, receipt=receipt, linkage=linkage, linker=linker)
+
+
+def retained_integer128_cast_link(*, root: Path, product: Path, workload: Path,
+                                  executable: Path, receipt: Path, linkage: str,
+                                  linker: Mapping[str, str]) -> dict[str, Any]:
+    """Preserve the cast caller projection through the complete helper join."""
+
+    observations = _retained_compiler_helper_link(root=root, product=product, workload=workload,
+        executable=executable, receipt=receipt, linkage=linkage, linker=linker, names=INT128_CAST_NAMES)
+    for row in observations["transfers"].values():
+        row.pop("provider_closure")
+    return observations
 
 
 def _popcount_import_from_facts(facts_report: Mapping[str, Any], placements: Mapping[str, Any]) -> dict[str, Any]:

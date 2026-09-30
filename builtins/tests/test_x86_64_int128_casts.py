@@ -73,6 +73,6 @@ class Int128CastPhysicalTests(unittest.TestCase):
                 provider_offset=program[2]+provider-program[3]
                 counterfeit=bytearray(original);counterfeit[provider_offset]^=1
                 binary.write_bytes(counterfeit)
-                with self.assertRaisesRegex(reader.CompilerHelperEvidenceError,'provider bytes'):
+                with self.assertRaisesRegex(reader.CompilerHelperEvidenceError,'provider (?:code )?bytes'):
                     reader._integer128_cast_transfers(**arguments)
                 binary.write_bytes(original)

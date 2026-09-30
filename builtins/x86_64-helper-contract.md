@@ -140,3 +140,14 @@ jump to land at the unique archive provider, and the final helper body to match
 its relocation-free owned source bytes. Missing extraction, a foreign map
 provider, altered final helper bytes, and redirected transfers fail. The
 physical static/PIE regression exercises these controls with real ELF inputs.
+
+`retained_compiler_helper_link` projects the complete producer roster through
+the same installed-driver authentication. Each complete exported code section
+and every selected local code section must match owned bytes after its exact
+PC-relative operands are resolved. The signed-division entries retain their
+private callee; complex multiplication retains each complete immutable
+binary64 constant entry. LLD can pool equal mergeable constants and omit their
+original object map rows, so those data references bind exact entry bytes and
+immutable final storage. Missing code contributions, altered private code or
+constants, redirected internal branches, and unreviewed helper names fail.
+The finite cast projection retains its existing caller interface and results.
