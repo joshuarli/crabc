@@ -27,7 +27,9 @@ RUNNER = "owned-native-allocator-stress"
 
 class NativeShadowReceiptTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory()
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=scratch)
         self.root = Path(self.temporary.name)
         for command in (["init", "-q"], ["config", "user.email", "t@example.invalid"],
                         ["config", "user.name", "t"]):
@@ -143,6 +145,76 @@ class NativeShadowReceiptTests(unittest.TestCase):
         path.write_text(json.dumps(record))
         with self.assertRaisesRegex(receipt.ReceiptError, "schema or runner"):
             receipt.read_receipt(self.root, RUNNER)
+
+    def publish_negative_control(self):
+        log = self.work / "debug-1-c-execute.stdout"
+        control = subprocess.run(
+            [sys.executable, "-c", "print('expected control failure'); raise SystemExit(1)"],
+            capture_output=True, text=True, check=False,
+        )
+        log.write_text(control.stdout + control.stderr)
+        return receipt.write_receipt(
+            self.root, RUNNER, self.work, {"debug-c": self.work / "program"},
+            [("debug-1-c-execute", control.returncode, [log]),
+             ("debug-1-rust-execute", 0, [self.work / "soak-1-static-pie.stdout"])],
+            {}, True,
+        )
+
+    def test_explicit_negative_control_is_authenticated_without_relabelling_its_exit(self) -> None:
+        self.publish_negative_control()
+        with self.assertRaisesRegex(receipt.ReceiptError, "exited 1"):
+            receipt.read_receipt(self.root, RUNNER)
+        read = receipt.read_receipt(self.root, RUNNER, case_prefix="debug-",
+                                    expected_statuses={"debug-1-c-execute": 1})
+        self.assertEqual([case["status"] for case in read.cases], [1, 0])
+        with self.assertRaisesRegex(receipt.ReceiptError, "no 'soak-' case"):
+            receipt.read_receipt(self.root, RUNNER, case_prefix="soak-",
+                                 expected_statuses={"debug-1-c-execute": 1})
+
+    def test_negative_control_policy_rejects_invalid_or_unknown_expected_cases(self) -> None:
+        self.publish_negative_control()
+        for expected in ({"debug-1-c-execute": value} for value in (True, False, 0, 2, -1, 1.0, "1", None)):
+            with self.subTest(expected=expected), self.assertRaises(receipt.ReceiptError):
+                receipt.read_receipt(self.root, RUNNER, expected_statuses=expected)
+        for expected in ({"": 1}, {None: 1}, {1: 1}, [], "debug-1-c-execute"):
+            with self.subTest(expected=expected), self.assertRaises(receipt.ReceiptError):
+                receipt.read_receipt(self.root, RUNNER, expected_statuses=expected)
+        with self.assertRaisesRegex(receipt.ReceiptError, "unknown"):
+            receipt.read_receipt(self.root, RUNNER,
+                                 expected_statuses={"debug-1-c-execute": 1, "absent-control": 1})
+
+    def test_negative_control_policy_does_not_accept_an_unexpected_success_or_other_failure(self) -> None:
+        for case_index, status in ((0, 0), (0, 2), (0, True), (0, 1.0), (1, 1)):
+            with self.subTest(case_index=case_index, status=status):
+                path = self.publish_negative_control()
+                record = json.loads(path.read_text())
+                record["cases"][case_index]["status"] = status
+                path.write_text(json.dumps(record))
+                with self.assertRaises(receipt.ReceiptError):
+                    receipt.read_receipt(self.root, RUNNER, expected_statuses={"debug-1-c-execute": 1})
+
+    def test_negative_control_policy_preserves_source_product_and_log_authentication(self) -> None:
+        expected = {"debug-1-c-execute": 1}
+        path = self.publish_negative_control()
+        (path.parent / "logs/debug-1-c-execute.stdout").write_text("different\n")
+        with self.assertRaisesRegex(receipt.ReceiptError, "digest"):
+            receipt.read_receipt(self.root, RUNNER, expected_statuses=expected)
+        path = self.publish_negative_control()
+        (path.parent / "products/debug-c").write_bytes(b"changed")
+        with self.assertRaisesRegex(receipt.ReceiptError, "digest"):
+            receipt.read_receipt(self.root, RUNNER, expected_statuses=expected)
+        self.publish_negative_control()
+        (self.root / "source.c").write_text("changed source\n")
+        with self.assertRaisesRegex(receipt.ReceiptError, "rerun the runner"):
+            receipt.read_receipt(self.root, RUNNER, expected_statuses=expected)
+
+    def test_negative_control_policy_rejects_duplicate_authenticated_case_ids(self) -> None:
+        path = self.publish_negative_control()
+        record = json.loads(path.read_text())
+        record["cases"].append(record["cases"][0])
+        path.write_text(json.dumps(record))
+        with self.assertRaisesRegex(receipt.ReceiptError, "repeats a case"):
+            receipt.read_receipt(self.root, RUNNER, expected_statuses={"debug-1-c-execute": 1})
 
     def test_republishing_replaces_the_latest_receipt(self) -> None:
         self.publish(stress_status=1)

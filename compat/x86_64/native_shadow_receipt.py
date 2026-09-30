@@ -194,14 +194,26 @@ def read_receipt(
     *,
     case_prefix: str = "",
     seal: Mapping[str, str] | None = None,
+    expected_statuses: Mapping[str, int] | None = None,
 ) -> Receipt:
     """Validate one runner's latest receipt against the current checkout.
 
     `case_prefix` names the case family the consumer needs; at least one such
-    case must exist, and every case must have passed. `seal` defaults to the
-    live checkout seal and exists for the reader's own tests.
+    case must exist. Cases default to exit status zero; a trusted consumer may
+    name specific negative controls with expected exit status one. The policy
+    must name existing cases and never changes the recorded exits or relaxes
+    source, product, or log authentication. `seal` defaults to the live checkout
+    seal and exists for the reader's own tests.
     """
 
+    expected = {} if expected_statuses is None else expected_statuses
+    if not isinstance(expected, Mapping) or not all(
+        isinstance(case_id, str) and case_id and CASE_RE.fullmatch(case_id)
+        and type(status) is int and status == 1
+        for case_id, status in expected.items()
+    ):
+        raise ReceiptError(f"{runner}: expected statuses must name negative-control cases with integer exit one")
+    expected = dict(expected)
     directory = receipt_directory(root, runner)
     path = directory / "receipt.json"
     if not path.is_file():
@@ -254,8 +266,11 @@ def read_receipt(
         if not isinstance(case, dict) or set(case) != {"id", "logs", "status"} or not CASE_RE.match(str(case["id"])):
             raise ReceiptError(f"{runner}: receipt has a malformed case")
         ids.append(case["id"])
-        if case["status"] != 0:
-            raise ReceiptError(f"{runner}: case {case['id']} exited {case['status']}")
+        if type(case["status"]) is not int:
+            raise ReceiptError(f"{runner}: case {case['id']} has a malformed exit status")
+        required_status = expected.get(case["id"], 0)
+        if case["status"] != required_status:
+            raise ReceiptError(f"{runner}: case {case['id']} exited {case['status']}; expected {required_status}")
         if not isinstance(case["logs"], dict) or not case["logs"]:
             raise ReceiptError(f"{runner}: case {case['id']} cites no raw log")
         for relative, record in case["logs"].items():
@@ -266,6 +281,9 @@ def read_receipt(
                 raise ReceiptError(f"{runner}: case {case['id']} log {relative} does not match its digest")
     if len(set(ids)) != len(ids):
         raise ReceiptError(f"{runner}: receipt repeats a case")
+    unknown = sorted(set(expected) - set(ids))
+    if unknown:
+        raise ReceiptError(f"{runner}: expected statuses name unknown cases: {unknown}")
     if not any(case_id.startswith(case_prefix) for case_id in ids):
         raise ReceiptError(f"{runner}: receipt has no {case_prefix!r} case")
     return Receipt(
