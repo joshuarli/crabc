@@ -390,6 +390,54 @@ static int recursive_condition_case(void)
 static mtx_t c11_mutex;
 static atomic_int c11_ready, c11_release;
 
+struct c11_timed_owner {
+    mtx_t *mutex;
+    tss_t key;
+    int expected;
+    int destructor_result;
+    int destructor_calls;
+};
+
+/* Joining publishes the destructor's observation of the same live mutex.
+ * A recursive owner's remaining depth excludes both the worker and its TSS
+ * destructor; after the final unlock both can acquire despite expiration. */
+static void c11_timed_owner_destructor(void *opaque)
+{
+    struct c11_timed_owner *owner = opaque;
+    struct timespec expired = { .tv_sec = 0, .tv_nsec = 0 };
+    errno = EACCES;
+    int result = mtx_timedlock(owner->mutex, &expired);
+    int release = result == thrd_success ? mtx_unlock(owner->mutex) : thrd_success;
+    owner->destructor_result = result == owner->expected &&
+        release == thrd_success && errno == EACCES ? 0 : 1;
+    owner->destructor_calls++;
+}
+
+static int c11_timed_owner_worker(void *opaque)
+{
+    struct c11_timed_owner *owner = opaque;
+    struct timespec expired = { .tv_sec = 0, .tv_nsec = 0 };
+    errno = EACCES;
+    if (tss_set(owner->key, owner) != thrd_success) return 1;
+    int result = mtx_timedlock(owner->mutex, &expired);
+    int release = result == thrd_success ? mtx_unlock(owner->mutex) : thrd_success;
+    return result == owner->expected && release == thrd_success &&
+        errno == EACCES ? 0 : 2;
+}
+
+static int c11_timed_owner_join(mtx_t *object, int expected)
+{
+    struct c11_timed_owner owner = { .mutex = object, .expected = expected,
+                                    .destructor_result = -1 };
+    thrd_t thread;
+    int result = -1;
+    if (tss_create(&owner.key, c11_timed_owner_destructor) != thrd_success ||
+        thrd_create(&thread, c11_timed_owner_worker, &owner) != thrd_success) return 1;
+    if (thrd_join(thread, &result) != thrd_success) return 2;
+    tss_delete(owner.key);
+    return result || owner.destructor_result || owner.destructor_calls != 1;
+}
+
 static int c11_holder(void *unused)
 {
     (void)unused;
@@ -404,9 +452,15 @@ static int c11_case(void)
     mtx_t recursive;
     struct timespec invalid = { .tv_sec = 0, .tv_nsec = -1 };
     struct timespec expired = { .tv_sec = -1, .tv_nsec = 0 };
+    errno = E2BIG;
     if (mtx_init(&recursive, mtx_recursive | mtx_timed) != thrd_success ||
-        mtx_lock(&recursive) != thrd_success || mtx_lock(&recursive) != thrd_success ||
-        mtx_unlock(&recursive) != thrd_success || mtx_unlock(&recursive) != thrd_success) return 62;
+        mtx_lock(&recursive) != thrd_success ||
+        mtx_timedlock(&recursive, &invalid) != thrd_success ||
+        mtx_timedlock(&recursive, &expired) != thrd_success ||
+        mtx_unlock(&recursive) != thrd_success || mtx_unlock(&recursive) != thrd_success ||
+        c11_timed_owner_join(&recursive, thrd_timedout) ||
+        mtx_unlock(&recursive) != thrd_success ||
+        c11_timed_owner_join(&recursive, thrd_success) || errno != E2BIG) return 62;
     mtx_destroy(&recursive);
     if (mtx_init(&c11_mutex, mtx_timed) != thrd_success) return 63;
     errno = E2BIG;
@@ -419,6 +473,11 @@ static int c11_case(void)
     while (!atomic_load(&c11_ready)) thrd_yield();
     if (mtx_timedlock(&c11_mutex, &invalid) != thrd_error || errno != E2BIG ||
         mtx_timedlock(&c11_mutex, &expired) != thrd_timedout || errno != E2BIG) return 66;
+    struct timespec until = realtime_after(20);
+    if (mtx_timedlock(&c11_mutex, &until) != thrd_timedout || errno != E2BIG) return 68;
+    struct timespec after = realtime_after(0);
+    if (after.tv_sec < until.tv_sec ||
+        (after.tv_sec == until.tv_sec && after.tv_nsec < until.tv_nsec)) return 69;
     atomic_store(&c11_release, 1);
     int result = -1;
     if (thrd_join(c11_worker, &result) != thrd_success || result || errno != E2BIG) return 67;
@@ -787,6 +846,86 @@ static int c11_wait_for_waiters(int count)
     return 0;
 }
 
+struct c11_condition_transaction {
+    struct c11_timed_owner owner;
+    cnd_t readiness;
+    int ready;
+    int wakes;
+    int stop;
+};
+
+static int c11_timed_condition_worker(void *opaque)
+{
+    struct c11_condition_transaction *transaction = opaque;
+    struct timespec until = realtime_after(10000);
+    errno = EACCES;
+    if (tss_set(transaction->owner.key, &transaction->owner) != thrd_success ||
+        mtx_lock(&c11_condition_mutex) != thrd_success) _Exit(120);
+    transaction->ready = 1;
+    if (cnd_signal(&transaction->readiness) != thrd_success) _Exit(121);
+    while (!transaction->stop) {
+        if (cnd_timedwait(&c11_condition, &c11_condition_mutex, &until) != thrd_success ||
+            mtx_trylock(&c11_condition_mutex) != thrd_busy || errno != EACCES) _Exit(122);
+        transaction->wakes++;
+        if (cnd_signal(&transaction->readiness) != thrd_success) _Exit(123);
+    }
+    return mtx_unlock(&c11_condition_mutex) == thrd_success ? 0 : 1;
+}
+
+/* A signal can return without publishing the guarded predicate. Each such
+ * return must own the mutex again before the worker reenrolls with the same
+ * absolute deadline. Join also completes TSS teardown while the mutex lives. */
+static int c11_timed_condition_transaction(void)
+{
+    struct c11_condition_transaction transaction = {
+        .owner = { .mutex = &c11_condition_mutex, .expected = thrd_success,
+                   .destructor_result = -1 },
+    };
+    thrd_t thread;
+    int result = -1;
+    if (cnd_init(&transaction.readiness) != thrd_success ||
+        tss_create(&transaction.owner.key, c11_timed_owner_destructor) != thrd_success ||
+        mtx_lock(&c11_condition_mutex) != thrd_success ||
+        thrd_create(&thread, c11_timed_condition_worker, &transaction) != thrd_success) return 124;
+    while (!transaction.ready)
+        if (cnd_wait(&transaction.readiness, &c11_condition_mutex) != thrd_success) return 125;
+    for (int round = 0; round != 2; ++round) {
+        int target = transaction.wakes + 1;
+        if (cnd_signal(&c11_condition) != thrd_success) return 126;
+        while (transaction.wakes < target)
+            if (cnd_wait(&transaction.readiness, &c11_condition_mutex) != thrd_success) return 127;
+    }
+    transaction.stop = 1;
+    if (cnd_signal(&c11_condition) != thrd_success ||
+        mtx_unlock(&c11_condition_mutex) != thrd_success ||
+        thrd_join(thread, &result) != thrd_success || result || transaction.wakes < 3 ||
+        transaction.owner.destructor_result || transaction.owner.destructor_calls != 1 ||
+        errno != E2BIG) return 128;
+    tss_delete(transaction.owner.key);
+    cnd_destroy(&transaction.readiness);
+    return 0;
+}
+
+static int c11_recursive_timed_condition(void)
+{
+    mtx_t recursive;
+    cnd_t timed;
+    struct timespec invalid = { .tv_sec = 0, .tv_nsec = -1 };
+    struct timespec expired = { .tv_sec = 0, .tv_nsec = 0 };
+    if (mtx_init(&recursive, mtx_recursive | mtx_timed) != thrd_success ||
+        cnd_init(&timed) != thrd_success ||
+        mtx_lock(&recursive) != thrd_success || mtx_lock(&recursive) != thrd_success ||
+        cnd_timedwait(&timed, &recursive, &invalid) != thrd_error ||
+        cnd_timedwait(&timed, &recursive, &expired) != thrd_timedout ||
+        mtx_unlock(&recursive) != thrd_success ||
+        c11_timed_owner_join(&recursive, thrd_timedout) ||
+        mtx_unlock(&recursive) != thrd_success ||
+        c11_timed_owner_join(&recursive, thrd_success) || errno != E2BIG) return 129;
+    cnd_destroy(&timed);
+    mtx_destroy(&recursive);
+    return 0;
+}
+
 static int c11_condition_case(void)
 {
     thrd_t waiters[C11_WAITERS];
@@ -818,6 +957,21 @@ static int c11_condition_case(void)
         cnd_timedwait(&c11_condition, &c11_condition_mutex, &expired) != thrd_timedout ||
         mtx_trylock(&c11_condition_mutex) != thrd_busy ||
         mtx_unlock(&c11_condition_mutex) != thrd_success || errno != E2BIG) return 118;
+    struct timespec invalid = { .tv_sec = 0, .tv_nsec = 1000000000 };
+    if (mtx_lock(&c11_condition_mutex) != thrd_success ||
+        cnd_timedwait(&c11_condition, &c11_condition_mutex, &invalid) != thrd_error ||
+        mtx_trylock(&c11_condition_mutex) != thrd_busy || errno != E2BIG) return 130;
+    struct timespec until = realtime_after(20);
+    if (cnd_timedwait(&c11_condition, &c11_condition_mutex, &until) != thrd_timedout ||
+        mtx_trylock(&c11_condition_mutex) != thrd_busy || errno != E2BIG) return 131;
+    struct timespec after = realtime_after(0);
+    if (after.tv_sec < until.tv_sec ||
+        (after.tv_sec == until.tv_sec && after.tv_nsec < until.tv_nsec) ||
+        mtx_unlock(&c11_condition_mutex) != thrd_success) return 132;
+    int timed_result = c11_timed_condition_transaction();
+    if (timed_result) return timed_result;
+    timed_result = c11_recursive_timed_condition();
+    if (timed_result) return timed_result;
     cnd_destroy(&c11_condition);
     mtx_destroy(&c11_condition_mutex);
     puts("C11 condition signal, broadcast, and expired timed wait: PASS");
