@@ -26,13 +26,16 @@ struct StatisticsImage {
     size: usize,
     version: usize,
     pages: Count,
-    remaining: [i64; 541],
+    reserved: Count,
+    committed: Count,
+    remaining: [i64; 535],
 }
 
 impl StatisticsImage {
     fn new() -> Self {
         Self { size: core::mem::size_of::<Self>(), version: 5,
-               pages: Count::default(), remaining: [0; 541] }
+               pages: Count::default(), reserved: Count::default(),
+               committed: Count::default(), remaining: [0; 535] }
     }
 }
 
@@ -100,6 +103,31 @@ fn current_subprocess_statistics_include_its_live_page() {
             assert_eq!(api::free(json.cast()), api::FreeOutcome::Freed);
             assert_eq!(api::free(extra_client.as_ptr()), api::FreeOutcome::Freed);
             assert!(heaps::heap_release(extra, true));
+            let nested = heaps::subproc_new();
+            assert!(!nested.is_null());
+            let nested_address = nested as usize;
+            // The parent keeps the nested identity live through join and
+            // client release; the new thread registers before attachment.
+            let nested_client = std::thread::spawn(move || {
+                assert!(register_current_native_allocator_worker_descriptor(current_native_allocator_thread_descriptor()));
+                let nested = nested_address as *mut c_void;
+                assert_eq!(heaps::subproc_add_current_thread(nested), heaps::SubprocAddCurrentThread::Added);
+                let block = api::malloc(128).value.unwrap();
+                assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                block.as_ptr() as usize
+            }).join().unwrap();
+            let mut nested_image = StatisticsImage::new();
+            assert!(options::subproc_stats_get(nested, (&mut nested_image as *mut StatisticsImage).cast()));
+            assert!(nested_image.committed.total > 0);
+            let mut root_before = StatisticsImage::new();
+            assert!(options::subproc_stats_get_exclusive(heaps::subproc_main(), (&mut root_before as *mut StatisticsImage).cast()));
+            assert_eq!(api::free(nested_client as *mut u8), api::FreeOutcome::Freed);
+            assert!(heaps::subproc_destroy(nested));
+            let mut root_after = StatisticsImage::new();
+            assert!(options::subproc_stats_get_exclusive(heaps::subproc_main(), (&mut root_after as *mut StatisticsImage).cast()));
+            // Nested metadata belongs to its parent Heap, but destroyed
+            // subprocess statistics always accumulate in process main.
+            assert!(root_after.committed.total >= root_before.committed.total + nested_image.committed.total);
             assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
             (client.as_ptr() as usize, pages)
         }

@@ -4474,16 +4474,16 @@ impl<'heap> ChildMainHeapContextOwner<'heap> {
                         ChildMainHeapReleaseError::InvalidTransition);
                 }
             }
-            let parent_metadata = self.context.parent_metadata;
             // SAFETY: the Heap and its only Theap are gone, so no source
             // observer can classify a metadata page through this child.
-            let merged = parent_metadata.with_identity(|parent| {
-                self.context.with_image(|child| unsafe {
-                    let identity = child.identity();
-                    identity.clear_metadata_identity_terminal();
-                    parent.statistics().merge_child_subprocess_and_reset(identity.statistics());
-                })
-            }).ok().flatten().is_some();
+            let merged = self.context.with_image(|child| unsafe {
+                let identity = child.identity();
+                identity.clear_metadata_identity_terminal();
+                // Metadata allocation remains parent-owned; destroyed child
+                // statistics accumulate in the process-main subprocess.
+                MainSubprocess::global().identity().statistics()
+                    .merge_child_subprocess_and_reset(identity.statistics());
+            }).is_some();
             if !merged {
                 self.stage = ChildMainHeapStage::Terminal;
                 return retained(self, ChildMainHeapReleaseStage::Context,
