@@ -231,6 +231,24 @@ class PlannedDeclarationCompilerTests(unittest.TestCase):
             with self.assertRaises(AUDIT.ProviderLinkageAuditError):
                 AUDIT.planned_binding_definitions(hidden, crossed, ("alias_name",), (alias,))
 
+    @unittest.skipUnless(all(shutil.which(t) for t in ("cc", "ar", "readelf")), "requires native ELF tools")
+    def test_weak_source_alias_target_preserves_its_binding(self):
+        work = ROOT / ".work/x86_64/planned-provider-tests"
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            root = Path(temporary)
+            alias_text = 'extern __typeof(target) alias_name __attribute__((weak, alias("target")));\n'
+            weak = HeaderCallableProviderLinkageAuditTests.archive(root, "weak_target",
+                '__attribute__((weak)) int target(void) { return 1; }\n' + alias_text)
+            strong = HeaderCallableProviderLinkageAuditTests.archive(root, "strong_target",
+                'int target(void) { return 1; }\n' + alias_text)
+            alias = ROSTER.ArchiveAlias(name="alias_name", target="target", binding="weak-same-address")
+            result = AUDIT.planned_binding_definitions(weak, weak, ("alias_name",), (alias,))
+            self.assertEqual(result["alias_name"]["archive_target_binding"], "WEAK")
+            self.assertEqual(result["alias_name"]["target_binding"], "WEAK")
+            with self.assertRaises(AUDIT.ProviderLinkageAuditError):
+                AUDIT.planned_binding_definitions(weak, strong, ("alias_name",), (alias,))
+
     @unittest.skipUnless(shutil.which("clang") and shutil.which("nm"), "requires native Clang and nm")
     def test_selected_cxx_only_declaration_retains_ordinary_c_linkage(self):
         work = ROOT / ".work/x86_64/planned-provider-tests"

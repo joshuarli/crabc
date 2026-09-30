@@ -516,7 +516,8 @@ def planned_binding_definitions(archive: Path, executable: Path, members: Sequen
             continue
         provider_require(alias.binding == "weak-same-address", f"unsupported planned alias {alias.name}")
         before_targets = [r for r in expected.get(alias.target, []) if r["section"] != "UND"
-                          and r["binding"] == "GLOBAL" and r["visibility"] in {"DEFAULT", "HIDDEN"}]
+                          and ((r["binding"] == "GLOBAL" and r["visibility"] in {"DEFAULT", "HIDDEN"})
+                               or (r["binding"] == "WEAK" and r["visibility"] == "DEFAULT"))]
         aliases_found = [r for r in actual.get(alias.name, []) if r["section"] != "UND"
                          and r["binding"] == "WEAK" and r["visibility"] == "DEFAULT"]
         targets = [r for r in actual.get(alias.target, []) if r["section"] != "UND"]
@@ -526,7 +527,7 @@ def planned_binding_definitions(archive: Path, executable: Path, members: Sequen
         # The sealed static linker localizes hidden global definitions. Public
         # weak aliases keep their name and default visibility at that same
         # section/address; the target's privacy is retained from the archive.
-        expected_binding = "LOCAL" if before_target["visibility"] == "HIDDEN" else "GLOBAL"
+        expected_binding = "LOCAL" if before_target["visibility"] == "HIDDEN" else before_target["binding"]
         provider_require(target["binding"] == expected_binding
                          and target["visibility"] == before_target["visibility"]
                          and alias_found["value"] == target["value"]
