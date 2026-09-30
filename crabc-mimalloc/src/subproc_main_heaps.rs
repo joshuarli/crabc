@@ -6,11 +6,11 @@
 // src/theap.c:236-445, src/init.c:377-480, src/threadlocal.c:103-202,
 // src/prim/prim-tls.c:211-229, and src/arena.c:1661-1672,2531-2644.
 
-//! Non-main Heaps of the process main subprocess (`mi_heap_new` on an
-//! ordinary thread).
+//! Allocated Theaps of the process main subprocess: ordinary non-main
+//! Heaps and fresh main-Heap siblings after the source fast slot is cleared.
 //!
 //! A Heap is a `NonMainHeapImage` allocated from the process main Heap
-//! through the calling thread's native owner, on a key of the process-global
+//! through the calling thread's source-selected main Theap, on a key of the process-global
 //! thread-local registry, pushed on the main subprocess's Heap list. A
 //! thread's Theap for such a Heap is a [`MainHeapTheapImage`] from process
 //! metadata or its Heap's requested parent arena at the head of
@@ -25,8 +25,10 @@
 //!
 //! The native runtime entry points route here: a local free of a block on
 //! such a Theap's page, a nonlocal free of a block on such a Heap's page,
-//! and thread exit, which collects and abandons the thread's non-main Theaps
-//! before the thread's own teardown.
+//! and thread exit, which collects and abandons allocated siblings before
+//! the stable fixed runtime owner completes its own teardown. Main siblings
+//! use the main Heap's embedded arena bitmap; non-main Heaps own separate
+//! per-arena records. Both retain the existing source TLD and Heap lists.
 //!
 use core::cell::UnsafeCell;
 use core::mem::{align_of, size_of};
@@ -47,7 +49,7 @@ use crate::thread_local::{ThreadLocalBackingOwner, ThreadLocalKey, ThreadLocalSl
 use crate::types::heap_registry::lifecycle::{HeapKeySource, HeapReleaseError, HeapReleaseOutcome, NonMainHeapImage};
 use crate::types::{Heap, LiveThreadId, MemoryId, Page, Theap, ThreadLocalData, ThreadSequence};
 
-/// One thread's Theap for a non-main Heap of the process main subprocess:
+/// One allocated auxiliary Theap of the process main subprocess:
 /// the source `mi_theap_t` at offset zero, then this Theap's own page-engine
 /// state and the exact metadata or arena claim for this block (so any thread
 /// that drops the last reference can release it).
@@ -102,7 +104,7 @@ enum MainHeapTheapAllocation {
 
 const _: [(); 1] = [(); (size_of::<MainHeapTheapImage>() <= crate::config::ARENA_MIN_OBJ_SIZE) as usize];
 
-/// The calling thread's state for its Theaps of non-main Heaps.
+/// The calling thread's state for its auxiliary allocated Theaps.
 ///
 /// Source keeps the slot array and the cached Theap in thread-local roots.
 /// The runtime's main-Heap owner requires the compiler-TLS dynamic-backing
@@ -110,14 +112,14 @@ const _: [(); 1] = [(); (size_of::<MainHeapTheapImage>() <= crate::config::ARENA
 /// whenever it operates (it reaches the main-Heap Theap through the fast
 /// slot). This module therefore keeps both values here: the slot array is
 /// published in the compiler-TLS root only while one of its own slot
-/// operations runs, and `cached` is `_mi_theap_cached` for these Heaps, with
-/// null standing for the main-Heap Theap (or the empty Theap).
+/// operations runs, and `cached` is the actual source cached Theap pointer,
+/// with null standing only for the empty Theap.
 struct ThreadHeaps {
     /// The regular thread-local slot array (`mi_thread_locals_t`).
     thread_locals: Option<ThreadLocalBackingOwner>,
     /// The slot array's current image while it is not published.
     backing: Option<NonNull<DynamicThreadLocalBacking>>,
-    /// `_mi_theap_cached` when it names a Theap of a non-main Heap.
+    /// `_mi_theap_cached`, including the stable fixed runtime owner.
     cached: *mut Theap,
     /// The one retained raw-unmap retry of these Theaps, with the Theap whose
     /// engine it latched (`None` once that Theap is freed).
@@ -159,8 +161,8 @@ struct MainThread {
     numa_node: i32,
 }
 
-/// The calling thread when its main-Heap Theap is installed and it is not a
-/// child member. The default root may name another live Theap of this TLD.
+/// The calling thread with a retained fixed main-Heap owner outside a child.
+/// The default root may name another live Theap of this TLD.
 fn current_main_thread() -> Option<MainThread> {
     if crate::subproc::lifecycle::current_thread_is_child_member() {
         return None;
@@ -170,21 +172,20 @@ fn current_main_thread() -> Option<MainThread> {
     // SAFETY: the default root retains this thread's attached TLD, even
     // after child destruction clears the independently selected fast slot.
     let tld = NonNull::new(unsafe { Theap::tld_at(selected) })?;
-    let theap = match fast_slot_peek() {
-        Some(fast) => fast.cast::<Theap>(),
-        // SAFETY: the initialized default retains this thread's TLD and
-        // every source-linked Theap; no same-thread teardown can run here.
-        None => unsafe {
-            ThreadLocalData::linked_theap_for_heap_at(tld, main.ready_main_heap_pointer())
-        }.ok()??,
-    };
+    // The oldest main-Heap list member is the fixed runtime owner. Source
+    // fast-slot replacement can publish younger siblings without moving it.
+    // SAFETY: the initialized default retains this TLD and all linked
+    // Theaps; same-thread teardown cannot run during this observation.
+    let theap = unsafe {
+        ThreadLocalData::linked_theap_for_heap_at(tld, main.ready_main_heap_pointer())
+    }.ok()??;
     // SAFETY: the initialized default retains this thread's TLD; its
     // identity and NUMA fields stay stable independently of list unlinking.
     let (thread, sequence, numa_node) = unsafe {
         ThreadLocalData::attached_thread_identity_at(tld, main.identity())
     }?;
     if crate::compiler_tls::current_thread_identity() != Some(thread)
-        // SAFETY: the fixed slot must still belong to this subprocess main Heap.
+        // SAFETY: the fixed owner belongs to this subprocess main Heap.
         || unsafe { Theap::heap_at(theap) } != main.ready_main_heap_pointer()
         // SAFETY: a switched default must share this thread's TLD.
         || unsafe { Theap::tld_at(default_theap()) } != tld.as_ptr()
@@ -192,6 +193,19 @@ fn current_main_thread() -> Option<MainThread> {
         return None;
     }
     Some(MainThread { theap, tld, thread, sequence, numa_node })
+}
+
+/// The fixed runtime owner remains independent of the source fast selector.
+pub(crate) fn fixed_main_theap() -> Option<NonNull<Theap>> {
+    current_main_thread().map(|thread| thread.theap)
+}
+
+fn is_process_main_heap(heap: NonNull<Heap>) -> bool {
+    heap.as_ptr() == MainSubprocess::global().ready_main_heap_pointer()
+}
+
+fn is_current_subprocess_heap(heap: NonNull<Heap>) -> bool {
+    is_process_main_heap(heap) || is_main_subprocess_heap(heap)
 }
 
 fn binding() -> Option<ProcessMainBackingBinding> {
@@ -322,15 +336,20 @@ fn set_cached_theap(theap: NonNull<Theap>) {
     unsafe { thread_heaps() }.cached = stored;
 }
 
-/// `_mi_theap_cached_set(theap_main)` for the calling thread's main-Heap
-/// Theap. The main-Heap owner reaches that Theap through the fast slot, so
-/// the empty value stands for "the main-Heap Theap is cached": the previous
-/// cached Theap is released as source releases it, and the default Theap
-/// takes no cached reference.
+/// Cache the stable fixed runtime Theap through the ordinary source reference
+/// transition. Static metadata needs no counted cache reference; allocated
+/// metadata retains one independently of the runtime capability that pins it.
 fn cached_set_main() {
-    // SAFETY: the immutable source empty Theap is process-static.
-    let empty = unsafe { NonNull::new_unchecked(crate::bootstrap::empty_default_theap_ptr()) };
-    cached_set(empty);
+    if let Some(theap) = fixed_main_theap() {
+        cached_set(theap);
+    }
+}
+
+/// Whether the current thread's source cache owns this exact Theap reference.
+/// This scalar root observation does not borrow any metadata or list lock.
+pub(crate) fn is_current_cached_theap(theap: NonNull<Theap>) -> bool {
+    // SAFETY: only the current thread accesses its cached root.
+    unsafe { thread_heaps() }.cached == theap.as_ptr()
 }
 
 /// `_mi_theap_cached_set` (`prim-tls.c:211-229`).
@@ -453,33 +472,65 @@ unsafe fn retain_deleted_theap_if_needed(theap: NonNull<Theap>) -> bool {
     true
 }
 
+/// Observe the source cache and thread slot without creating or republishing
+/// a Theap. Abandoned-page reclaim uses this same cache-first selection.
+fn existing_heap_theap(heap: NonNull<Heap>) -> Option<NonNull<Theap>> {
+    let cached = cached_theap();
+    // SAFETY: the current thread owns this live cached root.
+    if unsafe { Theap::heap_at(cached) } == heap.as_ptr() {
+        return Some(cached);
+    }
+    if is_process_main_heap(heap) {
+        fast_slot_peek().map(|slot| slot.cast::<Theap>())
+    } else {
+        NonNull::new(thread_local_get(heap_key(heap)?).cast::<Theap>())
+    }
+}
+
+/// The source-selected main sibling, when its pages belong to a distinct
+/// engine from the stable fixed runtime owner.
+pub(crate) fn selected_auxiliary_main_heap() -> Option<NonNull<Heap>> {
+    let heap = NonNull::new(MainSubprocess::global().ready_main_heap_pointer())?;
+    let selected = existing_heap_theap(heap)?;
+    (Some(selected) != fixed_main_theap()).then_some(heap)
+}
+
 /// Pinned `_mi_heap_theap` (`prim-tls.h:389-397`, `heap.c:59-99`) on this
-/// thread for a non-main Heap of the process main subprocess.
+/// thread for a Heap of the process main subprocess.
 fn heap_theap(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull<Theap>> {
     let cached = cached_theap();
     // SAFETY: the cached root names a live Theap or the empty Theap.
     if unsafe { Theap::heap_at(cached) } == heap.as_ptr() {
         return Some(cached);
     }
-    let key = heap_key(heap)?;
-    let theap = match NonNull::new(thread_local_get(key).cast::<Theap>()) {
+    let main = is_process_main_heap(heap);
+    let existing = if main {
+        fast_slot_peek().map(|slot| slot.cast::<Theap>())
+    } else {
+        NonNull::new(thread_local_get(heap_key(heap)?).cast::<Theap>())
+    };
+    let theap = match existing {
         Some(theap) => theap,
         None => {
-            // `mi_heap_init_theap`: `mi_thread_init` first.
             if !crate::runtime_lifecycle::prepare_current_thread_native_owner_for_heap_theaps() {
                 return None;
             }
             let theap = create_theap(thread, heap)?;
-            // `_mi_heap_theap_set`.
-            // The source ignores a failed regular-slot expansion here: the
-            // newly linked Theap still serves this call and its cached root
-            // keeps it live. A later call can create another Theap if the
-            // slot remains empty.
-            let _ = thread_local_set(key, theap.as_ptr().cast());
+            if main {
+                crate::compiler_tls::set_fast_slot(Some(theap.cast()));
+            } else {
+                // Source retains the linked Theap even if regular-slot
+                // growth fails; this call and the cache can still use it.
+                let _ = thread_local_set(heap_key(heap)?, theap.as_ptr().cast());
+            }
             theap
         }
     };
-    cached_set(theap);
+    if theap == thread.theap {
+        cached_set_main();
+    } else {
+        cached_set(theap);
+    }
     Some(theap)
 }
 
@@ -498,7 +549,7 @@ pub(crate) fn native_heap_select_theap(heap: NonNull<Heap>) -> bool {
 pub(crate) fn native_heap_theap(heap: NonNull<Heap>) -> Option<NonNull<Theap>> {
     let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
     let thread = current_main_thread()?;
-    is_main_subprocess_heap(heap).then_some(())?;
+    is_current_subprocess_heap(heap).then_some(())?;
     heap_theap(thread, heap)
 }
 
@@ -561,6 +612,21 @@ fn create_theap(thread: MainThread, heap: NonNull<Heap>) -> Option<NonNull<Theap
     Some(block.cast())
 }
 
+/// Allocate metadata through the source-selected main Theap. Its fixed
+/// runtime owner and freshly linked siblings have separate queue engines.
+fn allocate_main_heap_image(thread: MainThread, size: usize, alignment: usize) -> Option<NonNull<u8>> {
+    let heap = NonNull::new(MainSubprocess::global().ready_main_heap_pointer())?;
+    let theap = heap_theap(thread, heap)?;
+    if theap == thread.theap {
+        match native_allocate_aligned(size, alignment, true) {
+            NativePageAllocationResult::Allocated(block) => Some(block),
+            _ => None,
+        }
+    } else {
+        allocate_on_theap(thread, theap, size, Some((alignment, 0)), true)
+    }
+}
+
 /// Runs one page operation on `theap`, this thread's Theap for a non-main
 /// Heap of the process main subprocess, with that Theap's own engine state.
 fn with_theap_engine<R>(
@@ -593,11 +659,7 @@ fn with_theap_engine<R>(
     let page_map = unsafe { binding.page_map().page_map_for_owned_ranges() }.ok()?;
     let mut allocate_arena_pages = |size: usize, alignment: usize| -> Option<NonNull<u8>> {
         // `mi_heap_zalloc_aligned(heap_main)` through `_mi_heap_theap`.
-        cached_set_main();
-        match native_allocate_aligned(size, alignment, true) {
-            NativePageAllocationResult::Allocated(block) => Some(block),
-            _ => None,
-        }
+        allocate_main_heap_image(thread, size, alignment)
     };
     // SAFETY: this thread's live TLD/Theap and the Heap outlive the
     // operation, which runs on this thread only.
@@ -645,14 +707,10 @@ pub(crate) fn native_heap_new() -> Option<NonNull<Heap>> {
 /// until all Theaps and pages of the returned Heap have been released.
 pub(crate) unsafe fn native_heap_new_in_arena(arena: ArenaId) -> Option<NonNull<Heap>> {
     let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
-    current_main_thread()?;
+    let thread = current_main_thread()?;
     let binding = binding()?;
     let config = binding.page_map().memory_config().ok()?;
-    cached_set_main();
-    let block = match native_allocate_aligned(size_of::<NonMainHeapImage>(), align_of::<NonMainHeapImage>(), true) {
-        NativePageAllocationResult::Allocated(block) => block,
-        _ => return None,
-    };
+    let block = allocate_main_heap_image(thread, size_of::<NonMainHeapImage>(), align_of::<NonMainHeapImage>())?;
     let keys = HeapKeySource::global();
     let slot = match keys.registry.claim_for_main_subprocess(config, keys.subprocess, keys.metadata) {
         Ok(slot) => slot,
@@ -668,7 +726,7 @@ pub(crate) unsafe fn native_heap_new_in_arena(arena: ArenaId) -> Option<NonNull<
 }
 
 /// Pinned `mi_heap_malloc` and its zeroing and aligned forms on the calling
-/// thread for a non-main Heap of the process main subprocess.
+/// thread for a Heap of the process main subprocess.
 ///
 /// # Safety
 /// `heap` is a live Heap from [`native_heap_new`].
@@ -680,7 +738,7 @@ pub(crate) unsafe fn native_heap_allocate(
 ) -> Option<NonNull<u8>> {
     let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
     let thread = current_main_thread()?;
-    if !is_main_subprocess_heap(heap) {
+    if !is_current_subprocess_heap(heap) {
         return None;
     }
     let theap = heap_theap(thread, heap)?;
@@ -701,7 +759,7 @@ pub(crate) unsafe fn native_theap_allocate(
     unsafe { native_theap_allocate_variant(theap, size, None, zero) }
 }
 
-/// Allocate on an exact non-main Theap without selecting its Heap or
+/// Allocate on an exact auxiliary Theap without selecting its Heap or
 /// publishing a different cached root.
 ///
 /// # Safety
@@ -717,7 +775,8 @@ pub(crate) unsafe fn native_theap_allocate_variant(
     let thread = current_main_thread()?;
     // SAFETY: caller retains the Theap and its TLD for this thread.
     let heap = NonNull::new(unsafe { Theap::heap_at(theap) })?;
-    if !is_main_subprocess_heap(heap) || unsafe { Theap::tld_at(theap) } != thread.tld.as_ptr() {
+    if !is_current_subprocess_heap(heap) || theap == thread.theap
+        || unsafe { Theap::tld_at(theap) } != thread.tld.as_ptr() {
         return None;
     }
     allocate_on_theap(thread, theap, size, aligned, zero)
@@ -767,7 +826,7 @@ pub(crate) unsafe fn local_heap_theap_of_page(page: NonNull<crate::types::Page>)
     // SAFETY: the caller's live page keeps this raw identity stable. The
     // linked-list check excludes a freed Heap before following its Theap.
     let heap = NonNull::new(unsafe { page.as_ref() }.heap())?;
-    if !is_linked_non_main_heap_identity(heap) {
+    if !is_process_main_heap(heap) && !is_linked_non_main_heap_identity(heap) {
         return None;
     }
     // SAFETY: forwarded; a raw field read of a page this thread owns.
@@ -992,9 +1051,8 @@ fn reclaim_on_free(
     use crate::abandoned::ReclaimOnFreeOutcome::Declined;
     let Some(thread) = current_main_thread() else { return Declined };
     let Some(heap) = NonNull::new(candidate.page_heap()) else { return Declined };
-    let Some(theap) = heap_key(heap).and_then(|key| NonNull::new(thread_local_get(key).cast::<Theap>())) else {
-        return Declined;
-    };
+    let Some(theap) = existing_heap_theap(heap) else { return Declined };
+    if is_process_main_heap(heap) && theap == thread.theap { return Declined; }
     // SAFETY: a Theap on this thread's slots is live.
     if unsafe { Theap::heap_at(theap) } != heap.as_ptr() {
         return Declined;
@@ -1046,8 +1104,8 @@ pub(crate) unsafe fn native_heap_release(heap: NonNull<Heap>, destroy: bool) -> 
         None
     } else {
         // `mi_heap_delete_pages`: `_mi_heap_theap(heap_target)`.
-        cached_set_main();
-        Some(crate::single_thread::NonMainHeapPageTarget { heap: main_heap, theap: thread.theap })
+        let theap = heap_theap(thread, main_heap).ok_or(HeapReleaseError::Retained)?;
+        Some(crate::single_thread::NonMainHeapPageTarget { heap: main_heap, theap })
     };
     let binding = binding().ok_or(HeapReleaseError::InvalidChild)?;
     let backing = crate::page_backing::RuntimeFirstRegularPageBacking::source_registry(binding.process(), thread.numa_node);
@@ -1187,6 +1245,7 @@ pub(crate) fn native_thread_done() -> bool {
             return false;
         }
     }
+    crate::compiler_tls::set_fast_slot(None);
     // SAFETY: this thread's live TLD; only this thread changes its list
     // other than a Heap free, which detaches under the TLD lock.
     let mut current = unsafe { ThreadLocalData::theaps_head_at(thread.tld) };
@@ -1214,6 +1273,9 @@ pub(crate) fn native_thread_done() -> bool {
     }
     // SAFETY: the immutable source empty Theap is process-static.
     let empty = unsafe { NonNull::new_unchecked(crate::bootstrap::empty_default_theap_ptr()) };
+    // Auxiliary default selections must stop naming metadata before that
+    // metadata leaves the lists. The fixed owner completes its own finalizer.
+    crate::compiler_tls::set_default_theap(thread.theap);
     cached_set(empty);
     let identity = MainSubprocess::global().identity();
     loop {
@@ -1304,7 +1366,7 @@ pub(crate) unsafe fn native_heap_collect(heap: NonNull<Heap>, force: bool) {
     collect_on_theap(thread, theap, force);
 }
 
-/// Collect an already selected non-main Theap without reading or replacing
+/// Collect an already selected auxiliary Theap without reading or replacing
 /// the cached Heap selector.
 ///
 /// # Safety
@@ -1315,7 +1377,8 @@ pub(crate) unsafe fn native_theap_collect(theap: NonNull<Theap>, force: bool) {
     let Some(thread) = current_main_thread() else { return };
     // SAFETY: the caller retains this Theap and its current-thread TLD.
     let Some(heap) = NonNull::new(unsafe { Theap::heap_at(theap) }) else { return };
-    if !is_main_subprocess_heap(heap) || unsafe { Theap::tld_at(theap) } != thread.tld.as_ptr() {
+    if !is_current_subprocess_heap(heap) || theap == thread.theap
+        || unsafe { Theap::tld_at(theap) } != thread.tld.as_ptr() {
         return;
     }
     collect_on_theap(thread, theap, force);
@@ -1363,8 +1426,10 @@ pub(crate) unsafe fn merge_current_thread_theap_statistics(heap: NonNull<Heap>) 
 /// subprocess: the thread's main-Heap Theap becomes the cached Theap before a
 /// `mi_heap_*` entry allocates from the main Heap.
 pub(crate) fn select_main_heap_theap() {
-    if current_main_thread().is_some() {
-        cached_set_main();
+    if let Some(thread) = current_main_thread() {
+        if let Some(heap) = NonNull::new(MainSubprocess::global().ready_main_heap_pointer()) {
+            let _ = heap_theap(thread, heap);
+        }
     }
 }
 
@@ -1456,6 +1521,8 @@ pub(crate) mod tests {
                 let child = crate::source_heap_api::subproc_new();
                 assert!(!child.is_null());
                 let default_before = crate::compiler_tls::default_theap();
+                let initial_cached_refs = unsafe { default_before.as_ref() }.refcount();
+                assert_eq!(initial_cached_refs, 1);
                 let cached_before = cached_theap();
                 assert!(crate::compiler_tls::fast_slot_peek().is_some());
                 assert!(unsafe { crate::source_heap_api::subproc_destroy(child) });
@@ -1490,18 +1557,238 @@ pub(crate) mod tests {
                     .is_some_and(|heap| heap.as_ptr() == MainSubprocess::global().ready_main_heap_pointer());
                 let selected_preserved = crate::compiler_tls::default_theap() == selected;
                 assert!(direct_main && selected_preserved);
+                let fresh = NonNull::new(unsafe { crate::source_heap_api::heap_theap(
+                    crate::source_heap_api::heap_main(),
+                ) }.cast::<Theap>()).expect("main lookup creates a fresh Theap after fast-slot clearing");
+                let fresh_main = fresh != default_before;
+                let fresh_fast = crate::compiler_tls::fast_slot_peek() == Some(fresh.cast());
+                let fresh_cached = cached_theap() == fresh;
+                let fresh_default_preserved = crate::compiler_tls::default_theap() == selected;
+                assert!(fresh_main && fresh_fast && fresh_cached && fresh_default_preserved);
+                let page_owner = |block: NonNull<u8>| unsafe {
+                    binding().unwrap().page_map().lookup_registered_page(block.as_ptr())
+                        .unwrap().is_some_and(|page| crate::types::Page::theap_at(page) == fresh.as_ptr())
+                };
+                let fresh_block = unsafe { crate::source_heap_api::theap_malloc(fresh.as_ptr().cast(), 64, false) }
+                    .value.expect("the fresh Theap allocates");
+                let fresh_allocates = page_owner(fresh_block);
+                let aligned = unsafe { crate::source_api::theap_malloc_aligned_at(fresh.as_ptr().cast(), 127, 128, 0, false) }
+                    .value.expect("the fresh Theap aligns");
+                let fresh_aligns = page_owner(aligned) && aligned.as_ptr() as usize % 128 == 0;
+                let grown = unsafe { crate::source_api::theap_realloc(fresh.as_ptr().cast(), fresh_block.as_ptr(), 4096, false) }
+                    .value.expect("the fresh Theap reallocates");
+                let fresh_reallocates = page_owner(grown);
+                assert_eq!(unsafe { crate::source_heap_api::theap_set_default(fresh.as_ptr().cast()) }, selected.as_ptr().cast());
+                let chosen = crate::source_api::malloc(37).value.expect("the fresh default allocates");
+                let fresh_default_allocates = page_owner(chosen);
+                let chosen_aligned = crate::source_api::malloc_aligned(99, 128).value.expect("the fresh default aligns");
+                let fresh_default_aligns = page_owner(chosen_aligned);
+                let chosen_grown = unsafe { crate::source_api::realloc(chosen.as_ptr(), 2048) }
+                    .value.expect("the fresh default reallocates");
+                let fresh_default_reallocates = page_owner(chosen_grown);
+                assert_eq!(unsafe { crate::source_heap_api::theap_set_default(selected.as_ptr().cast()) }, fresh.as_ptr().cast());
+                let second_heap = native_heap_new().expect("another Heap beside the fresh main Theap");
+                let fresh_heap_image = page_owner(second_heap.cast());
+                assert!(fresh_heap_image, "Heap metadata allocation selects the fresh main Theap");
+                assert_eq!(unsafe { native_heap_release(second_heap, true) }, Ok(HeapReleaseOutcome::Released));
+                for block in [aligned, grown, chosen_aligned, chosen_grown] {
+                    assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                }
+                unsafe { crate::source_api::theap_collect(fresh.as_ptr().cast(), true) };
+                let fresh_collected = unsafe { fresh.as_ref() }.page_count() == 0;
+                assert!(fresh_allocates && fresh_aligns && fresh_reallocates
+                    && fresh_default_allocates && fresh_default_aligns && fresh_default_reallocates && fresh_collected);
                 assert_eq!(unsafe { crate::source_heap_api::theap_set_default(default_before.as_ptr().cast()) }, selected.as_ptr().cast());
                 assert_eq!(unsafe { native_free(direct) }, NativePageFreeResult::Freed);
                 assert_eq!(unsafe { native_free(switched_block) }, NativePageFreeResult::Freed);
                 assert_eq!(unsafe { native_free(next) }, NativePageFreeResult::Freed);
                 assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
                 assert_eq!(unsafe { native_heap_release(heap, true) }, Ok(HeapReleaseOutcome::Released));
+                let threads_before = MainSubprocess::global().identity().live_thread_count();
+                let (worker_regular, worker_second, worker_os, worker_finished, worker_cached_hit, worker_cached_refs) = std::thread::spawn(|| {
+                    let descriptor = crate::runtime_lifecycle::current_native_allocator_thread_descriptor();
+                    // SAFETY: this worker retains its own allocator TLS until
+                    // it completes the source thread finalizer below.
+                    assert!(unsafe { crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert_eq!(crate::runtime_lifecycle::attach_current_thread(),
+                        crate::runtime_lifecycle::ThreadAttachResult::Attached);
+                    let original = crate::compiler_tls::default_theap();
+                    let auxiliary = native_heap_new().expect("a worker auxiliary Heap");
+                    let temporary = unsafe { native_heap_allocate(auxiliary, 64, None, false) }.unwrap();
+                    let child = crate::source_heap_api::subproc_new();
+                    assert!(!child.is_null());
+                    assert_eq!(unsafe { crate::source_heap_api::heap_theap(crate::source_heap_api::heap_main()) }, original.as_ptr().cast());
+                    assert!(unsafe { crate::source_heap_api::subproc_destroy(child) });
+                    let cached_hit = unsafe { crate::source_heap_api::heap_theap(crate::source_heap_api::heap_main()) }
+                        == original.as_ptr().cast() && crate::compiler_tls::fast_slot_peek().is_none();
+                    assert!(cached_hit, "a cached main Theap remains usable without republishing the cleared fast slot");
+                    let cached_refs = unsafe { original.as_ref() }.refcount();
+                    assert_eq!(cached_refs, 2, "the fixed Theap owns a Heap-list and a cache reference");
+                    assert!(native_heap_theap(auxiliary).is_some());
+                    let sibling = NonNull::new(unsafe { crate::source_heap_api::heap_theap(
+                        crate::source_heap_api::heap_main(),
+                    ) }.cast::<Theap>()).expect("the worker's fresh main Theap");
+                    assert_ne!(sibling, original);
+                    assert_eq!(fixed_main_theap(), Some(original));
+                    let regular = unsafe { crate::source_heap_api::theap_malloc(sibling.as_ptr().cast(), 64, false) }.value.unwrap();
+                    let second = unsafe { crate::source_heap_api::theap_malloc(sibling.as_ptr().cast(), 64, false) }.value.unwrap();
+                    let os = unsafe { crate::source_api::theap_malloc_aligned_at(
+                        sibling.as_ptr().cast(), 2 * 1024 * 1024, 4096, 0, false,
+                    ) }.value.unwrap();
+                    assert_eq!(unsafe { native_free(temporary) }, NativePageFreeResult::Freed);
+                    assert_eq!(unsafe { native_heap_release(auxiliary, true) }, Ok(HeapReleaseOutcome::Released));
+                    unsafe { crate::source_heap_api::theap_set_default(sibling.as_ptr().cast()) };
+                    let finished = matches!(crate::runtime_lifecycle::finish_current_thread_native_after_user_destructors(),
+                        crate::runtime_lifecycle::ThreadFinishResult::Finished);
+                    (regular.as_ptr() as usize, second.as_ptr() as usize, os.as_ptr() as usize, finished, cached_hit, cached_refs)
+                }).join().unwrap();
+                assert!(worker_finished, "fresh sibling teardown leaves the fixed runtime owner finishable");
+                let worker_count_restored = MainSubprocess::global().identity().live_thread_count() == threads_before;
+                let regular = NonNull::new(worker_regular as *mut u8).unwrap();
+                let second = NonNull::new(worker_second as *mut u8).unwrap();
+                let os = NonNull::new(worker_os as *mut u8).unwrap();
+                let worker_pages_live = unsafe { heap_of_block(second) }.is_some()
+                    && unsafe { heap_of_block(os) }.is_some();
+                assert_eq!(unsafe { native_free(regular) }, NativePageFreeResult::Freed);
+                let worker_reclaimed_fresh = page_owner(second);
+                assert_eq!(unsafe { native_free(second) }, NativePageFreeResult::Freed);
+                assert_eq!(unsafe { native_free(os) }, NativePageFreeResult::Freed);
+                unsafe { crate::source_api::theap_collect(fresh.as_ptr().cast(), true) };
+                let worker_regular_released = unsafe { heap_of_block(second) }.is_none();
+                let worker_os_released = unsafe { heap_of_block(os) }.is_none();
+                assert!(worker_count_restored && worker_pages_live && worker_reclaimed_fresh && worker_regular_released && worker_os_released,
+                    "worker count={worker_count_restored} live={worker_pages_live} reclaimed={worker_reclaimed_fresh} regular_released={worker_regular_released} os_released={worker_os_released}");
                 for (index, value) in [slots_before, slots_released, old_block_live, next_allocation,
                     fast_cleared, default_preserved, cached_preserved,
                     default_allocates, fast_stays_empty,
-                    switched_allocates, direct_main, selected_preserved].iter().enumerate() {
+                    switched_allocates, direct_main, selected_preserved,
+                    fresh_main, fresh_fast, fresh_cached, fresh_default_preserved,
+                    fresh_allocates, fresh_aligns, fresh_reallocates, fresh_default_allocates,
+                    fresh_default_aligns, fresh_default_reallocates, fresh_heap_image, fresh_collected,
+                    worker_finished, worker_count_restored, worker_pages_live, worker_reclaimed_fresh,
+                    worker_regular_released, worker_os_released, worker_cached_hit].iter().enumerate() {
                     std::println!("m6.subproc.destroy_slots.{index}={}", i32::from(*value));
                 }
+                std::println!("m6.subproc.destroy_slots.31={worker_cached_refs}");
+                std::println!("m6.subproc.destroy_slots.32={initial_cached_refs}");
+            },
+        );
+    }
+
+    /// A copied fixed cache owns a distinct reference until the vanished
+    /// worker's page drain completes; child list detach then frees its metadata.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn cached_main_theap_reference_retires_vanished_fork_owner_after_page_drain() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::cached_main_theap_reference_retires_vanished_fork_owner_after_page_drain",
+            || {
+                use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+                use std::sync::Arc;
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(crate::runtime_lifecycle::prepare_native_later_thread_arena());
+                let main = crate::source_heap_api::heap_main();
+                let selected = NonNull::new(unsafe { crate::source_heap_api::heap_theap(main) }.cast::<Theap>()).unwrap();
+                assert_eq!(unsafe { selected.as_ref() }.refcount(), 1);
+                let ready = Arc::new(AtomicBool::new(false));
+                let finish = Arc::new(AtomicBool::new(false));
+                let regular = Arc::new(AtomicUsize::new(0));
+                let os = Arc::new(AtomicUsize::new(0));
+                let descriptor_address = Arc::new(AtomicUsize::new(0));
+                let worker = {
+                    let ready = ready.clone();
+                    let finish = finish.clone();
+                    let regular = regular.clone();
+                    let os = os.clone();
+                    let descriptor_address = descriptor_address.clone();
+                    std::thread::spawn(move || {
+                        let descriptor = crate::runtime_lifecycle::current_native_allocator_thread_descriptor();
+                        // SAFETY: this worker's descriptor remains mapped
+                        // through its source finalizer and the fork snapshot.
+                        assert!(unsafe { crate::runtime_lifecycle::register_current_native_allocator_worker_descriptor(descriptor) });
+                        assert_eq!(crate::runtime_lifecycle::attach_current_thread(), crate::runtime_lifecycle::ThreadAttachResult::Attached);
+                        let main = crate::source_heap_api::heap_main();
+                        let cached = NonNull::new(unsafe { crate::source_heap_api::heap_theap(main) }.cast::<Theap>()).unwrap();
+                        assert_eq!(unsafe { cached.as_ref() }.refcount(), 2);
+                        let block = unsafe { crate::source_heap_api::theap_malloc(cached.as_ptr().cast(), 64, false) }.value.unwrap();
+                        let large = unsafe { crate::source_api::theap_malloc_aligned_at(cached.as_ptr().cast(), 2 * 1024 * 1024, 4096, 0, false) }.value.unwrap();
+                        regular.store(block.as_ptr() as usize, Ordering::Relaxed);
+                        os.store(large.as_ptr() as usize, Ordering::Relaxed);
+                        descriptor_address.store(descriptor.as_ptr() as usize, Ordering::Relaxed);
+                        ready.store(true, Ordering::Release);
+                        while !finish.load(Ordering::Acquire) { std::thread::yield_now(); }
+                        assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                        assert_eq!(unsafe { native_free(large) }, NativePageFreeResult::Freed);
+                        assert!(matches!(crate::runtime_lifecycle::finish_current_thread_native_after_user_destructors(), crate::runtime_lifecycle::ThreadFinishResult::Finished));
+                    })
+                };
+                while !ready.load(Ordering::Acquire) { std::thread::yield_now(); }
+                let regular = NonNull::new(regular.load(Ordering::Relaxed) as *mut u8).unwrap();
+                let os = NonNull::new(os.load(Ordering::Relaxed) as *mut u8).unwrap();
+                assert_eq!(MainSubprocess::global().identity().live_thread_count(), 2);
+                struct PinnedForkDescriptors([NonNull<crate::runtime_lifecycle::NativeAllocatorThreadDescriptor>; 2]);
+                // SAFETY: exactly these two registered descriptors remain mapped;
+                // the worker waits without allocator entry, and the initial
+                // thread holds this fixture's publication/removal boundary.
+                unsafe impl crate::runtime_lifecycle::NativeAllocatorPinnedThreadRegistry for PinnedForkDescriptors {
+                    fn visit_descriptors(&self, visitor: &mut dyn FnMut(NonNull<crate::runtime_lifecycle::NativeAllocatorThreadDescriptor>)) {
+                        for descriptor in self.0 { visitor(descriptor); }
+                    }
+                }
+                // SAFETY: the sole child retains the exact same two mappings,
+                // visits without locks, and consumes repair before hooks or entry.
+                unsafe impl crate::runtime_lifecycle::NativeAllocatorChildRetainedThreadRegistry for PinnedForkDescriptors {
+                    fn visit_descriptors(&self, visitor: &mut dyn FnMut(NonNull<crate::runtime_lifecycle::NativeAllocatorThreadDescriptor>)) {
+                        for descriptor in self.0 { visitor(descriptor); }
+                    }
+                }
+                let registry = PinnedForkDescriptors([
+                    crate::runtime_lifecycle::current_native_allocator_thread_descriptor(),
+                    NonNull::new(descriptor_address.load(Ordering::Relaxed) as *mut crate::runtime_lifecycle::NativeAllocatorThreadDescriptor).unwrap(),
+                ]);
+                let blocked_signals = !0u64;
+                let mut previous_signals = 0u64;
+                // SAFETY: both mask buffers are live, and this thread restores
+                // its mask only after the copied allocator interval completes.
+                unsafe { crabc_core::signal::rt_sigprocmask_raw(0, &blocked_signals, &mut previous_signals) }.unwrap();
+                // SAFETY: both descriptors and the exact owner graph are pinned
+                // until the parent resumes or the sole child consumes repair.
+                let interval = unsafe { crate::runtime_lifecycle::begin_native_allocator_source_fork_quiescence(&registry) }.unwrap();
+                let child = crabc_core::process::fork_raw().expect("the prepared native fork");
+                if child == 0 {
+                    // SAFETY: first after the raw copy, before any allocator
+                    // operation, with the copied pinned graph unchanged.
+                    let repaired = unsafe { interval.into_child_repair().into_unlocked_continuation() }
+                        .and_then(|continuation| unsafe { continuation.repair_source_owners(&registry) });
+                    if repaired.is_err() { crabc_core::process::exit_immediately(72); }
+                    // SAFETY: source repair ended before restoring handlers.
+                    unsafe { crabc_core::signal::rt_sigprocmask_raw(2, &previous_signals, core::ptr::null_mut()) }.unwrap();
+                    let count = MainSubprocess::global().identity().live_thread_count() == 1;
+                    let refs = unsafe { selected.as_ref() }.refcount() == 1;
+                    let allocation = unsafe { crate::source_heap_api::heap_malloc(main, 80) }.value;
+                    let regular_freed = unsafe { native_free(regular) } == NativePageFreeResult::Freed;
+                    let os_freed = unsafe { native_free(os) } == NativePageFreeResult::Freed;
+                    let allocated = allocation.is_some_and(|block| unsafe { native_free(block) } == NativePageFreeResult::Freed);
+                    crabc_core::process::exit_immediately(if !count { 73 } else if !refs { 74 }
+                        else if !allocated { 75 } else if !regular_freed { 76 } else if !os_freed { 77 } else { 0 });
+                }
+                // SAFETY: only the raw syscall crossed the closed interval.
+                unsafe { interval.resume_parent() }.unwrap();
+                // SAFETY: parent completion reopened ordinary entry.
+                unsafe { crabc_core::signal::rt_sigprocmask_raw(2, &previous_signals, core::ptr::null_mut()) }.unwrap();
+                let mut status = 0;
+                // SAFETY: the local status output stays writable until the
+                // exact child is reaped; no other waiter handles this child.
+                assert_eq!(unsafe { crabc_core::process::wait4_raw(child, &mut status, 0) }.unwrap(), child);
+                assert_eq!(status, 0, "copied worker drain releases its cache before list detach");
+                assert_eq!(MainSubprocess::global().identity().live_thread_count(), 2);
+                assert_eq!(unsafe { selected.as_ref() }.refcount(), 1);
+                finish.store(true, Ordering::Release);
+                worker.join().unwrap();
+                assert_eq!(MainSubprocess::global().identity().live_thread_count(), 1);
+                std::println!("cached main Theap fork: copied owner pages drained, cache released, metadata detached; parent preserved");
             },
         );
     }
@@ -1573,8 +1860,7 @@ pub(crate) mod tests {
 
                 // heap-os2.
                 let h2 = native_heap_new().expect("a second Heap");
-                // The empty value stands for the cached main-Heap Theap.
-                trace.push(i64::from(cached_theap().as_ptr() == crate::bootstrap::empty_default_theap_ptr()));
+                trace.push(i64::from(cached_theap() == theap));
                 trace.push(theaps().current - theaps0.current);
                 let mut failed = 0;
                 for _ in 0..10 {
@@ -1874,8 +2160,7 @@ pub(crate) mod tests {
                     trace.push(theaps().current - theaps0.current);
                     trace.push(thread_local_count());
                     let h2 = native_heap_new().expect("a second Heap");
-                    // The empty value stands for the cached main-Heap Theap.
-                    trace.push(i64::from(cached_theap().as_ptr() == crate::bootstrap::empty_default_theap_ptr()));
+                    trace.push(i64::from(cached_theap() == def));
                     trace.push(refcount(ht));
                     let p2 = unsafe { native_heap_allocate(h, 64, None, false) }.expect("a Heap block");
                     trace.push(i64::from(unsafe { h.as_ref() }.test_theaps_head() == ht.as_ptr()

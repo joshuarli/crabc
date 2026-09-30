@@ -430,16 +430,16 @@ pub unsafe fn heap_theap(heap: *mut c_void) -> *mut c_void {
         return unsafe { crate::subproc::lifecycle::native_child_heap_theap(heap) }
             .map_or(null_mut(), |theap| theap.as_ptr().cast());
     }
-    if heap.as_ptr().cast::<c_void>() == heap_main() {
-        let Some(theap) = crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<Theap>()) else {
-            return null_mut();
-        };
-        // SAFETY: the fixed slot and Heap stay live for this thread.
-        if unsafe { Theap::heap_at(theap) } != heap.as_ptr() { return null_mut(); }
-        main_heaps::select_main_heap_theap();
-        return theap.as_ptr().cast();
-    }
     main_heaps::native_heap_theap(heap).map_or(null_mut(), |theap| theap.as_ptr().cast())
+}
+
+/// The persistent runtime page owner differs from a freshly selected sibling.
+pub(crate) fn fixed_runtime_theap() -> Option<NonNull<Theap>> {
+    if crate::subproc::lifecycle::current_thread_is_child_member() {
+        crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast())
+    } else {
+        main_heaps::fixed_main_theap()
+    }
 }
 
 /// Replace this thread's default Theap and return its previous one. Null and
@@ -479,13 +479,13 @@ pub unsafe fn theap_malloc(theap: *mut c_void, size: usize, zero: bool) -> Sourc
     {
         return Sourced { value: None, errno: SourceErrno::Unchanged };
     }
-    // Child destruction may clear the fast root while the original main
-    // Theap remains live. Direct allocation follows that retained Theap's
-    // Heap identity independently of the current default selection.
-    if unsafe { Theap::heap_at(theap) }.cast::<c_void>() == heap_main() {
+    // The retained fixed Theap uses its runtime engine independently of
+    // the default and source fast selector. A main-Heap sibling uses its
+    // own allocated engine image.
+    if fixed_runtime_theap() == Some(theap) {
         return crate::source_api::malloc_zero_native(size, zero);
     }
-    // SAFETY: the current thread retains this non-main Theap and its Heap.
+    // SAFETY: the current thread retains this auxiliary Theap and its Heap.
     let block = if crate::subproc::lifecycle::current_thread_is_child_member() {
         unsafe { crate::subproc::lifecycle::native_child_theap_allocate(theap, size, zero) }.flatten()
     } else {
@@ -505,7 +505,7 @@ pub(crate) fn default_theap_allocate(size: usize, zero: bool) -> Option<Sourced<
     // fast root. An auxiliary default still selects its own Heap.
     // SAFETY: the calling thread retains its default Theap through routing.
     let heap = unsafe { Theap::heap_at(selected) };
-    if heap.is_null() || heap.cast::<c_void>() == heap_main() { return None; }
+    if heap.is_null() || fixed_runtime_theap() == Some(selected) { return None; }
     // SAFETY: only the calling thread changes its default, which must stay
     // live through every allocation until it is restored.
     Some(unsafe { theap_malloc(selected.as_ptr().cast(), size, zero) })
@@ -1224,7 +1224,8 @@ unsafe fn heap_allocate(heap: *mut c_void, size: usize, request: Request, zero: 
         return Sourced { value: None, errno: SourceErrno::Unchanged };
     };
     // SAFETY: this live Heap belongs to the calling thread's subprocess.
-    if unsafe { heap_theap(heap.as_ptr().cast()) }.is_null() {
+    let selected = unsafe { heap_theap(heap.as_ptr().cast()) };
+    if selected.is_null() {
         return Sourced { value: None, errno: SourceErrno::Unchanged };
     }
     if let Request::Aligned { alignment, offset } = request {
@@ -1232,7 +1233,7 @@ unsafe fn heap_allocate(heap: *mut c_void, size: usize, request: Request, zero: 
             return Sourced { value: None, errno: crate::source_api::source_error_errno(report) };
         }
     }
-    if is_main_heap(heap) {
+    if fixed_runtime_theap().is_some_and(|fixed| fixed.as_ptr().cast::<c_void>() == selected) {
         return match (request, zero) {
             (Request::Plain, false) => crate::source_api::malloc_zero_native(size, false),
             (Request::Plain, true) => crate::source_api::malloc_zero_native(size, true),

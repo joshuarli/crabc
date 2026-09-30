@@ -743,7 +743,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
         let valid = allocation.dynamic_theap().is_some_and(|theap| {
             theap.is_initialized() && theap.matches_thread(self.thread)
                 && theap.is_bound_to_main_subprocess(self.main_heap.subprocess())
-                && theap.refcount() == 1 && theap.allows_page_abandon()
+                && matches!(theap.refcount(), 1 | 2) && theap.allows_page_abandon()
         });
         if !valid { return Err(MainHeapThreadAttachmentError::ListOwnership); }
         let pointer = allocation.pointer().cast::<Theap>();
@@ -771,6 +771,17 @@ impl<'main> MainHeapThreadAttachment<'main> {
         let (pointer, _, main_heap) = unsafe { self.vanished_child_source()? };
         if unsafe { pointer.as_ref().page_count() } != 0 {
             return Err(MainHeapThreadAttachmentError::PageCountNonZero);
+        }
+        // The fixed Theap owns one Heap-list reference and at most one
+        // source cache reference. The vanished thread's copied TLS cache is
+        // unreachable; after its page drain, release that reference before
+        // unlinking the Heap-list owner, as ordinary thread teardown does.
+        if unsafe { pointer.as_ref().refcount() } == 2 {
+            // SAFETY: the copied Heap-list owner retains the fixed image;
+            // this releases only the vanished thread's cache reference.
+            if unsafe { Theap::decref_at(pointer) } {
+                return Err(MainHeapThreadAttachmentError::ListOwnership);
+            }
         }
         let result = (|| {
             let mut heap = main_heap.lock_heap().map_err(MainHeapThreadAttachmentError::MainHeap)?;
@@ -841,7 +852,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
     pub(crate) unsafe fn permits_child_source_retirement(&self) -> bool {
         (unsafe { self.permits_terminal_source_transfer() })
             && self.theap.as_ref().and_then(MetaAllocation::dynamic_theap)
-                .is_some_and(|theap| theap.refcount() == 1 && theap.allows_page_abandon())
+                .is_some_and(|theap| matches!(theap.refcount(), 1 | 2) && theap.allows_page_abandon())
     }
 
     /// Transfers both exact metadata capabilities after the terminal engine
@@ -1506,7 +1517,7 @@ impl<'main> MainHeapThreadAttachment<'main> {
         }
         let theap = self.local_theap_pointer()?;
         if !matches!(dynamic_backing_peek(), Some(backing) if is_empty_dynamic_backing(backing))
-            || fast_slot_peek().is_some_and(|fast| fast.cast::<Theap>() != theap)
+            || !self.fast_root_matches_local_owner(theap)
             || !self.default_root_matches_local_owner(theap, true)
             || !core::ptr::eq(cached_theap().as_ptr(), empty_default_theap_ptr())
         {
@@ -1515,9 +1526,19 @@ impl<'main> MainHeapThreadAttachment<'main> {
         Ok(theap)
     }
 
-    /// An attached owner keeps the fixed fast slot while its source default
-    /// may select another initialized Theap sharing this thread's TLD.
-    /// Once the fast owner is removed, only the original default is valid.
+    /// A source fast selector may name a younger same-TLD main-Heap Theap.
+    fn fast_root_matches_local_owner(&self, owner: NonNull<Theap>) -> bool {
+        let Some(fast) = fast_slot_peek().map(|slot| slot.cast::<Theap>()) else { return true };
+        // SAFETY: the attached thread retains the selected fast root and its
+        // fixed owner; only this thread replaces the fast selector.
+        unsafe {
+            Theap::tld_at(fast) == Theap::tld_at(owner)
+                && Theap::heap_at(fast) == Theap::heap_at(owner)
+        }
+    }
+
+    /// The source default may select another initialized Theap of this TLD.
+    /// The fixed owner's final drain accepts only its restored default.
     fn default_root_matches_local_owner(
         &self,
         owner: NonNull<Theap>,
@@ -1655,13 +1676,14 @@ impl<'main> MainHeapThreadAttachment<'main> {
         if require_empty && page_count != 0 {
             return Err(MainHeapThreadAttachmentError::PageCountNonZero);
         }
-        if refcount != 1 || !matches_thread || !bound_to_main_subprocess
+        let cached_reference = NonNull::new(theap_pointer)
+            .is_some_and(crate::subproc::main_heaps::is_current_cached_theap);
+        if refcount != 1 + usize::from(cached_reference) || !matches_thread || !bound_to_main_subprocess
         {
             return Err(MainHeapThreadAttachmentError::ListOwnership);
         }
         let fast_matches = if expect_fast_owner {
-            fast_slot_peek()
-                .is_none_or(|fast| fast.as_ptr().cast::<Theap>() == theap_pointer)
+            NonNull::new(theap_pointer).is_some_and(|owner| self.fast_root_matches_local_owner(owner))
         } else {
             fast_slot_peek().is_none()
         };

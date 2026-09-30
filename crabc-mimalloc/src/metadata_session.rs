@@ -247,8 +247,9 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
     /// per-arena page records); only the arena backing differs.
     ///
     /// # Safety
-    /// As for [`Self::new_for_non_main_heap`], with `heap` a live non-main
-    /// Heap of `subprocess` and `tld` the calling thread's attached TLD.
+    /// As for [`Self::new_for_non_main_heap`], with `heap` a live Heap of
+    /// `subprocess`, `theap` an auxiliary allocated image distinct from the
+    /// fixed runtime owner, and `tld` the calling thread's attached TLD.
     pub(crate) unsafe fn new_for_main_subprocess_heap(
         subprocess: &'static crate::subproc::MainSubprocess,
         tld: NonNull<ThreadLocalData>,
@@ -263,8 +264,7 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
         let identity = subprocess.identity();
         // SAFETY: the caller retains all images for this bounded projection.
         let (tld_ref, theap_ref, heap_ref) = unsafe { (tld.as_ref(), theap.as_ref(), heap.as_ref()) };
-        if heap_ref.is_subprocess_main()
-            || !core::ptr::eq(heap_ref.subprocess_pointer(), identity.as_ptr())
+        if !core::ptr::eq(heap_ref.subprocess_pointer(), identity.as_ptr())
             || !tld_ref.matches_subprocess_attached_lifecycle(thread, sequence, identity)
             || !core::ptr::eq(theap_ref.heap.load(Ordering::Acquire), heap.as_ptr())
             || !core::ptr::eq(theap_ref.tld, tld.as_ptr())
@@ -282,7 +282,7 @@ impl<'session, 'image> ChildOrdinaryTheapPageSession<'session, 'image> {
             thread,
             pending_os_release,
             page_engine,
-            non_main_arena_pages: Some(arena_pages),
+            non_main_arena_pages: if heap_ref.is_subprocess_main() { None } else { Some(arena_pages) },
             _image: PhantomData,
         })
     }

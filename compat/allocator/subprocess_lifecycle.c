@@ -8,7 +8,52 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-static void require(bool condition) { if (!condition) abort(); }
+static void require_at(bool condition, int line) {
+  if (!condition) {
+    fprintf(stderr, "subprocess lifecycle assertion failed at line %d\n", line);
+    abort();
+  }
+}
+#define require(condition) require_at((condition), __LINE__)
+
+typedef struct fresh_worker_s {
+  void* regular;
+  void* second;
+  void* os;
+  bool finished;
+  bool cache_hit;
+  size_t cached_refs;
+} fresh_worker_t;
+
+static void* fresh_main_worker(void* argument) {
+  fresh_worker_t* state = (fresh_worker_t*)argument;
+  mi_theap_t* const original = mi_theap_get_default();
+  mi_heap_t* const auxiliary = mi_heap_new();
+  require(auxiliary != NULL);
+  void* const temporary = mi_heap_malloc(auxiliary, 64);
+  require(temporary != NULL);
+  mi_subproc_id_t const child = mi_subproc_new();
+  require(_mi_subproc_from_id(child) != NULL);
+  require(mi_heap_theap(mi_heap_main()) == original);
+  mi_subproc_destroy(child);
+  state->cache_hit = mi_heap_theap(mi_heap_main()) == original && mi_slot_fast_peek() == NULL;
+  require(state->cache_hit);
+  state->cached_refs = mi_atomic_load_relaxed(&original->refcount);
+  require(state->cached_refs == 2);
+  require(mi_heap_theap(auxiliary) != NULL);
+  mi_theap_t* const sibling = mi_heap_theap(mi_heap_main());
+  require(sibling != NULL && sibling != original);
+  state->regular = mi_theap_malloc(sibling, 64);
+  state->second = mi_theap_malloc(sibling, 64);
+  state->os = mi_theap_malloc_aligned(sibling, 2 * 1024 * 1024, 4096);
+  require(state->regular != NULL && state->second != NULL && state->os != NULL);
+  mi_free(temporary);
+  mi_heap_destroy(auxiliary);
+  mi_theap_set_default(sibling);
+  mi_thread_done();
+  state->finished = !mi_theap_is_initialized(_mi_theap_default()) && mi_slot_fast_peek() == NULL;
+  return NULL;
+}
 
 static size_t member_count(void) {
   size_t count = 0;
@@ -253,6 +298,8 @@ int main(void) {
   mi_subproc_id_t const slots_child = mi_subproc_new();
   require(_mi_subproc_from_id(slots_child) != NULL);
   mi_theap_t* const default_before = mi_theap_get_default();
+  const size_t initial_cached_refs = mi_atomic_load_relaxed(&default_before->refcount);
+  require(initial_cached_refs == 1);
   mi_theap_t* const cached_before = _mi_theap_cached();
   mi_subproc_destroy(slots_child);
   const bool fast_cleared = mi_slot_fast_peek() == NULL;
@@ -277,6 +324,42 @@ int main(void) {
   void* const direct = mi_theap_malloc(default_before, 24);
   const bool direct_main = direct != NULL && mi_heap_of(direct) == mi_heap_main();
   const bool selected_preserved = mi_theap_get_default() == selected;
+  mi_theap_t* const fresh = mi_heap_theap(mi_heap_main());
+  require(fresh != NULL);
+  const bool fresh_main = fresh != default_before;
+  const bool fresh_fast = mi_slot_fast_peek() == fresh;
+  const bool fresh_cached = _mi_theap_cached() == fresh;
+  const bool fresh_default_preserved = mi_theap_get_default() == selected;
+  void* const fresh_block = mi_theap_malloc(fresh, 64);
+  require(fresh_block != NULL);
+  const bool fresh_allocates = _mi_ptr_page(fresh_block)->theap == fresh;
+  void* const aligned = mi_theap_malloc_aligned(fresh, 127, 128);
+  require(aligned != NULL);
+  const bool fresh_aligns = _mi_ptr_page(aligned)->theap == fresh && (uintptr_t)aligned % 128 == 0;
+  void* const grown = mi_theap_realloc(fresh, fresh_block, 4096);
+  require(grown != NULL);
+  const bool fresh_reallocates = _mi_ptr_page(grown)->theap == fresh;
+  require(mi_theap_set_default(fresh) == selected);
+  void* const chosen = mi_malloc(37);
+  require(chosen != NULL);
+  const bool fresh_default_allocates = _mi_ptr_page(chosen)->theap == fresh;
+  void* const chosen_aligned = mi_malloc_aligned(99, 128);
+  require(chosen_aligned != NULL);
+  const bool fresh_default_aligns = _mi_ptr_page(chosen_aligned)->theap == fresh;
+  void* const chosen_grown = mi_realloc(chosen, 2048);
+  require(chosen_grown != NULL);
+  const bool fresh_default_reallocates = _mi_ptr_page(chosen_grown)->theap == fresh;
+  require(mi_theap_set_default(selected) == fresh);
+  mi_heap_t* const second_heap = mi_heap_new();
+  require(second_heap != NULL);
+  const bool fresh_heap_image = _mi_ptr_page(second_heap)->theap == fresh;
+  mi_heap_destroy(second_heap);
+  mi_free(aligned);
+  mi_free(grown);
+  mi_free(chosen_aligned);
+  mi_free(chosen_grown);
+  mi_theap_collect(fresh, true);
+  const bool fresh_collected = fresh->page_count == 0;
   require(mi_theap_set_default(default_before) == selected);
   require(switched_block != NULL && direct != NULL);
   mi_free(direct);
@@ -284,6 +367,21 @@ int main(void) {
   mi_free(next_block);
   mi_free(retained_block);
   mi_heap_destroy(retained_heap);
+  const size_t worker_threads_before = mi_atomic_load_relaxed(&_mi_subproc_main()->thread_count);
+  fresh_worker_t fresh_worker_state = {0};
+  pthread_t fresh_thread;
+  require(pthread_create(&fresh_thread, NULL, fresh_main_worker, &fresh_worker_state) == 0);
+  require(pthread_join(fresh_thread, NULL) == 0);
+  const bool worker_finished = fresh_worker_state.finished;
+  const bool worker_count_restored = mi_atomic_load_relaxed(&_mi_subproc_main()->thread_count) == worker_threads_before;
+  const bool worker_pages_live = mi_heap_of(fresh_worker_state.second) != NULL && mi_heap_of(fresh_worker_state.os) != NULL;
+  mi_free(fresh_worker_state.regular);
+  const bool worker_reclaimed_fresh = _mi_ptr_page(fresh_worker_state.second)->theap == fresh;
+  mi_free(fresh_worker_state.second);
+  mi_free(fresh_worker_state.os);
+  mi_theap_collect(fresh, true);
+  const bool worker_regular_released = mi_heap_of(fresh_worker_state.second) == NULL;
+  const bool worker_os_released = mi_heap_of(fresh_worker_state.os) == NULL;
 
   for (size_t i = 0; i < value_count; i++) {
     printf("m6.subproc.lifecycle.%zu=%lld\n", i, (long long)values[i]);
@@ -300,5 +398,26 @@ int main(void) {
   printf("m6.subproc.destroy_slots.9=%d\n", switched_allocates);
   printf("m6.subproc.destroy_slots.10=%d\n", direct_main);
   printf("m6.subproc.destroy_slots.11=%d\n", selected_preserved);
+  printf("m6.subproc.destroy_slots.12=%d\n", fresh_main);
+  printf("m6.subproc.destroy_slots.13=%d\n", fresh_fast);
+  printf("m6.subproc.destroy_slots.14=%d\n", fresh_cached);
+  printf("m6.subproc.destroy_slots.15=%d\n", fresh_default_preserved);
+  printf("m6.subproc.destroy_slots.16=%d\n", fresh_allocates);
+  printf("m6.subproc.destroy_slots.17=%d\n", fresh_aligns);
+  printf("m6.subproc.destroy_slots.18=%d\n", fresh_reallocates);
+  printf("m6.subproc.destroy_slots.19=%d\n", fresh_default_allocates);
+  printf("m6.subproc.destroy_slots.20=%d\n", fresh_default_aligns);
+  printf("m6.subproc.destroy_slots.21=%d\n", fresh_default_reallocates);
+  printf("m6.subproc.destroy_slots.22=%d\n", fresh_heap_image);
+  printf("m6.subproc.destroy_slots.23=%d\n", fresh_collected);
+  printf("m6.subproc.destroy_slots.24=%d\n", worker_finished);
+  printf("m6.subproc.destroy_slots.25=%d\n", worker_count_restored);
+  printf("m6.subproc.destroy_slots.26=%d\n", worker_pages_live);
+  printf("m6.subproc.destroy_slots.27=%d\n", worker_reclaimed_fresh);
+  printf("m6.subproc.destroy_slots.28=%d\n", worker_regular_released);
+  printf("m6.subproc.destroy_slots.29=%d\n", worker_os_released);
+  printf("m6.subproc.destroy_slots.30=%d\n", fresh_worker_state.cache_hit);
+  printf("m6.subproc.destroy_slots.31=%zu\n", fresh_worker_state.cached_refs);
+  printf("m6.subproc.destroy_slots.32=%zu\n", initial_cached_refs);
   return 0;
 }

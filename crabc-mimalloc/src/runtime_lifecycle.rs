@@ -12616,6 +12616,13 @@ fn native_free_pointer_first_nonlocal(
     // this reads only the raw, immutable Heap identity.
     let process_main_page = !main_heap.is_null()
         && unsafe { crate::types::Page::heap_identity_at(allocation.page()) } == main_heap;
+    if process_main_page {
+        if let Some(heap) = crate::subproc::main_heaps::selected_auxiliary_main_heap() {
+            // SAFETY: the exact live main page belongs to this permanent Heap;
+            // the source-selected sibling uses its own queue and arena engine.
+            return unsafe { crate::subproc::main_heaps::native_free_nonlocal(heap, allocation) };
+        }
+    }
     let deleted_main_os_page = if process_main_page {
         false
     } else {

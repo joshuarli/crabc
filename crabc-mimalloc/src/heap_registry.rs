@@ -340,7 +340,10 @@ impl Heap {
         arena_index: usize,
         pages: core::ptr::NonNull<super::ArenaPages>,
     ) -> bool {
-        if arena_index >= self.arena_pages.len() || !self.is_subprocess_main() || self.memid.kind() == super::MemoryKind::Static {
+        if arena_index >= self.arena_pages.len() || !self.is_subprocess_main()
+            || (self.memid.kind() == super::MemoryKind::Static
+                && !core::ptr::eq(self, crate::subproc::MainSubprocess::global().ready_main_heap_pointer()))
+        {
             return false;
         }
         let current = self.arena_pages[arena_index].load(Ordering::Acquire);

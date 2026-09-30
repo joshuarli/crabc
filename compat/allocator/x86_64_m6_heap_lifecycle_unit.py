@@ -62,6 +62,13 @@ def main() -> None:
     if c_trace != rust_trace:
         raise harness.HarnessError(f"child Heap owner transitions differ: C={c_trace} Rust={rust_trace}")
     subprocess_lifecycle.main()
+    fork = harness.command_record(
+        ["python3", "compat/allocator/run_unit_x86_64.py",
+         "subproc::main_heaps::tests::cached_main_theap_reference_retires_vanished_fork_owner_after_page_drain"],
+        cwd=harness.ROOT, timeout_seconds=900,
+    )
+    (ARTIFACTS / "fork.log").write_text(str(fork["stdout"]) + str(fork["stderr"]))
+    harness.require_success(fork, "cached main Theap copied-owner page drain and retirement")
     print(f"child Heap lifecycle unit: {len(c_trace)} pinned-C/private-Rust ownership transitions match; {ARTIFACTS}")
 
 

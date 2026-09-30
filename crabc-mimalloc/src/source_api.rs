@@ -298,7 +298,7 @@ pub unsafe fn theap_malloc_aligned_at(
     {
         return Sourced::quiet(None);
     }
-    if crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<Theap>()) == Some(theap) {
+    if crate::source_heap_api::fixed_runtime_theap() == Some(theap) {
         return malloc_zero_aligned_at_native(size, alignment, offset, zero);
     }
     let report = if size_class::alignment_is_valid(alignment) && !size_class::request_size_is_valid(size) {
@@ -672,7 +672,7 @@ pub const fn is_redirected() -> bool {
 
 /// `mi_collect`.
 pub fn collect(force: bool) {
-    if let Some(main) = crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<crate::types::Theap>()) {
+    if let Some(main) = crate::source_heap_api::fixed_runtime_theap() {
         let selected = crate::compiler_tls::default_theap();
         if selected != main || crate::subproc::lifecycle::current_thread_is_child_member() {
             // SAFETY: this thread retains its selected default Theap.
@@ -698,7 +698,7 @@ pub unsafe fn theap_collect(theap: *mut core::ffi::c_void, force: bool) {
     if crate::subproc::lifecycle::current_thread_is_child_member() {
         // SAFETY: forwarded retained current-thread Theap contract.
         unsafe { crate::subproc::lifecycle::native_child_theap_collect(theap, force) };
-    } else if crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<crate::types::Theap>()) == Some(theap) {
+    } else if crate::source_heap_api::fixed_runtime_theap() == Some(theap) {
         native_collect(force);
     } else {
         // SAFETY: forwarded retained current-thread Theap contract.
@@ -802,7 +802,7 @@ fn realloc_result(result: NativePageAllocationResult) -> Sourced<Block> {
 /// the entries that call it directly (`mi_urealloc`, low-alignment aligned
 /// realloc).
 unsafe fn realloc_zero(block: *mut u8, new_size: usize, zero: bool) -> Sourced<Block> {
-    if let Some(main) = crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<crate::types::Theap>()) {
+    if let Some(main) = crate::source_heap_api::fixed_runtime_theap() {
         let selected = crate::compiler_tls::default_theap();
         if selected != main {
             // SAFETY: the calling thread retains its substituted Theap and
@@ -959,7 +959,7 @@ fn aligned_failure_errno(size: usize, alignment: usize, offset: usize) -> Source
 
 /// `mi_theap_malloc_zero_aligned_at`.
 fn malloc_zero_aligned_at(size: usize, alignment: usize, offset: usize, zero: bool) -> Sourced<Block> {
-    if let Some(main) = crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<crate::types::Theap>()) {
+    if let Some(main) = crate::source_heap_api::fixed_runtime_theap() {
         let selected = crate::compiler_tls::default_theap();
         if selected != main {
             // SAFETY: the calling thread retains its substituted default
@@ -1088,7 +1088,7 @@ pub(crate) unsafe fn realloc_zero_aligned_at_native(
 /// # Safety
 /// The exact live-client obligations of `realloc` apply.
 unsafe fn realloc_zero_aligned_at(block: *mut u8, new_size: usize, alignment: usize, offset: usize, zero: bool) -> Sourced<Block> {
-    if let Some(main) = crate::compiler_tls::fast_slot_peek().map(|slot| slot.cast::<crate::types::Theap>()) {
+    if let Some(main) = crate::source_heap_api::fixed_runtime_theap() {
         let selected = crate::compiler_tls::default_theap();
         if selected != main {
             // SAFETY: caller retains the exact live client; the calling
