@@ -326,6 +326,23 @@ impl Heap {
         self.theap_slot == crate::thread_local::TLS_FAST_KEY_RAW as usize && !self.subprocess.is_null()
     }
 
+    /// The subprocess identity of a non-main Heap, without borrowing its
+    /// independently mutable list links, page records, or statistics.
+    ///
+    /// # Safety
+    /// `heap` is a live initialized image. Its subprocess and thread-local
+    /// key are immutable, and destruction is excluded for this read.
+    pub(crate) unsafe fn non_main_subprocess_at(
+        heap: core::ptr::NonNull<Self>,
+    ) -> Option<core::ptr::NonNull<SubprocessIdentity>> {
+        // SAFETY: read only the initialized image's immutable identities.
+        let key = unsafe { core::ptr::addr_of!((*heap.as_ptr()).theap_slot).read() };
+        if key == crate::thread_local::TLS_FAST_KEY_RAW as usize {
+            return None;
+        }
+        core::ptr::NonNull::new(unsafe { core::ptr::addr_of!((*heap.as_ptr()).subprocess).read() })
+    }
+
     /// Source `mi_heap_ensure_arena_pages` (`arena.c:699-723`) for the main
     /// Heap of a child subprocess: point its slot for `arena_index` at that
     /// arena's in-place `pages_main`, which the Heap's page, abandoned-page,
@@ -1128,6 +1145,19 @@ impl Heap {
 }
 
 impl super::Page {
+    /// Whether the live page has immutable OS allocation provenance.
+    ///
+    /// # Safety
+    /// `page` is initialized metadata retained by a live allocation; its
+    /// memory identity does not change during this read. Owner-local queues
+    /// and counters may change independently.
+    #[inline]
+    pub(crate) unsafe fn is_os_backed_at(page: core::ptr::NonNull<Self>) -> bool {
+        // SAFETY: read only immutable provenance, without borrowing the
+        // concurrently owned page's ordinary fields.
+        unsafe { core::ptr::addr_of!((*page.as_ptr()).memid).read() }.is_os()
+    }
+
     /// The Theap this page names (`page->theap`).
     ///
     /// # Safety

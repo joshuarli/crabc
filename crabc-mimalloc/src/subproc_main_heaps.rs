@@ -340,25 +340,33 @@ fn is_main_subprocess_heap(heap: NonNull<Heap>) -> bool {
     !heap.is_subprocess_main() && core::ptr::eq(heap.subprocess_pointer(), MainSubprocess::global().identity().as_ptr())
 }
 
-/// Checks a raw page Heap identity before following it. A deleted Heap's
-/// live OS page can still carry its former address after the image has left
-/// the list and been freed; pointer equality under the list lock is safe in
-/// that state, whereas projecting Heap fields is not.
-fn is_linked_non_main_heap_identity(heap: NonNull<Heap>) -> bool {
-    let main = MainSubprocess::global();
-    if heap.as_ptr() == main.ready_main_heap_pointer() {
-        return false;
+/// The live non-main Heap of a page, without taking the subprocess Heap-list
+/// lock. Source `mi_page_heap` reads the page identity directly: deletion
+/// moves surviving arena pages to the main Heap before freeing the old image.
+/// OS pages retained by a deleted Heap are the exception in this engine;
+/// their retained Theap registry must exclude the stale identity first.
+/// This also permits allocation/free in a statistics output callback while
+/// the source visitor holds the Heap-list lock.
+///
+/// # Safety
+/// `page` is held live by an allocation observation, and its Heap identity
+/// cannot move or be destroyed concurrently with this call.
+unsafe fn live_non_main_heap_of_page(page: NonNull<Page>) -> Option<NonNull<Heap>> {
+    // SAFETY: the held allocation retains the immutable page identity;
+    // independently changing counters and remote-free atomics are not borrowed.
+    let heap = NonNull::new(unsafe { Page::heap_identity_at(page) })?;
+    if is_process_main_heap(heap) {
+        return None;
     }
-    let mut found = false;
-    let visited = main.identity().heap_list().visit_heaps(|candidate| {
-        if candidate == heap {
-            found = true;
-            false
-        } else {
-            true
-        }
-    });
-    visited.is_ok() && found
+    // SAFETY: the observation retains the page and the deleted-Heap registry
+    // compares only its raw Theap identity, never the potentially freed Heap.
+    if unsafe { retained_deleted_heap_os_page(page) }? {
+        return None;
+    }
+    // SAFETY: surviving arena pages have moved before Heap release; an OS
+    // page naming a released Heap was excluded above. Valid use excludes
+    // concurrent destruction of the remaining Heap.
+    (unsafe { Heap::non_main_subprocess_at(heap) } == Some(NonNull::from(MainSubprocess::global().identity()))).then_some(heap)
 }
 
 /// Runs one operation on this thread's slot array with its image published
@@ -1030,10 +1038,9 @@ fn allocate_on_theap(
 /// # Safety
 /// `page` is the page of a live block associated with the calling thread.
 pub(crate) unsafe fn local_heap_theap_of_page(page: NonNull<crate::types::Page>) -> Option<NonNull<Theap>> {
-    // SAFETY: the caller's live page keeps this raw identity stable. The
-    // linked-list check excludes a freed Heap before following its Theap.
-    let heap = NonNull::new(unsafe { page.as_ref() }.heap())?;
-    if !is_process_main_heap(heap) && !is_linked_non_main_heap_identity(heap) {
+    // SAFETY: the caller retains this page and excludes an ownership move.
+    let heap = NonNull::new(unsafe { Page::heap_identity_at(page) })?;
+    if !is_process_main_heap(heap) && unsafe { live_non_main_heap_of_page(page) }.is_none() {
         return None;
     }
     // SAFETY: forwarded; a raw field read of a page this thread owns.
@@ -1054,8 +1061,7 @@ pub(crate) unsafe fn local_heap_theap_of_page(page: NonNull<crate::types::Page>)
 pub(crate) unsafe fn retained_deleted_heap_os_page(page: NonNull<Page>) -> Option<bool> {
     // SAFETY: the held allocation keeps the immutable OS provenance and raw
     // Theap identity stable. The latter is compared by value only.
-    let page_ref = unsafe { page.as_ref() };
-    if !page_ref.memid().is_os() {
+    if !unsafe { Page::is_os_backed_at(page) } {
         return Some(false);
     }
     let source_theap = unsafe { Page::theap_at(page) };
@@ -1213,14 +1219,10 @@ pub(crate) unsafe fn native_free_local(theap: NonNull<Theap>, block: NonNull<u8>
 ///
 /// # Safety
 /// `page` is the page of a live block.
-// Expose the common main-Heap identity check to pointer-first free callers;
-// the linked-list validation remains required for a non-main Heap address.
 #[inline]
 pub(crate) unsafe fn heap_of_page(page: NonNull<crate::types::Page>) -> Option<NonNull<Heap>> {
-    // SAFETY: forwarded; the page's raw Heap identity is stable for this
-    // observation, but its old image may already have been freed.
-    let heap = NonNull::new(unsafe { page.as_ref() }.heap())?;
-    is_linked_non_main_heap_identity(heap).then_some(heap)
+    // SAFETY: the caller retains the live block and its stable page identity.
+    unsafe { live_non_main_heap_of_page(page) }
 }
 
 /// `mi_free_block_mt` with `mi_free_try_collect_mt` for a block of such a
@@ -2315,6 +2317,77 @@ pub(crate) mod tests {
     use std::vec::Vec;
 
     unsafe extern "C" fn no_output(_: *const core::ffi::c_char) {}
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn live_page_heap_identity_allows_stats_callback_and_excludes_deleted_heap() {
+        crate::test_process::run_in_fresh_process(
+            "subproc::main_heaps::tests::live_page_heap_identity_allows_stats_callback_and_excludes_deleted_heap",
+            || {
+                struct Callback { heap: NonNull<Heap>, completed: bool }
+                unsafe extern "C" fn output(_: *const core::ffi::c_char, argument: *mut core::ffi::c_void) {
+                    // SAFETY: this synchronous call owns the callback state;
+                    // the Heap remains live and its list membership is unchanged.
+                    let state = unsafe { &mut *argument.cast::<Callback>() };
+                    if state.completed { return; }
+                    let block = unsafe { crate::source_heap_api::heap_malloc(state.heap.as_ptr().cast(), 37) }
+                        .value.expect("the existing non-main Heap allocates in the callback");
+                    // SAFETY: this callback owns all 37 initialized bytes and
+                    // returns its exact live block once through ordinary free.
+                    unsafe { block.as_ptr().write_bytes(0xa7, 37) };
+                    assert_eq!(unsafe { block.as_ptr().add(36).read() }, 0xa7);
+                    assert_eq!(unsafe { native_free(block) }, NativePageFreeResult::Freed);
+                    state.completed = true;
+                }
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                let heap = native_heap_new().expect("an existing non-main Heap");
+                let regular = unsafe { native_heap_allocate(heap, 43, None, false) }.expect("an arena block");
+                let page_of = |block: NonNull<u8>| {
+                    unsafe { binding().unwrap().page_map().lookup_live_allocation(block) }
+                        .unwrap().unwrap().page()
+                };
+                let regular_page = page_of(regular);
+                assert!(!unsafe { Page::is_os_backed_at(regular_page) });
+                assert_eq!(unsafe { heap_of_page(regular_page) }, Some(heap));
+                let mut state = Callback { heap, completed: false };
+                // SAFETY: the public synchronous output keeps this state and
+                // its existing Heap live. The callback does not change the list.
+                unsafe { crate::source_options_api::subproc_heap_stats_print_out(
+                    crate::source_heap_api::subproc_main(), Some(output),
+                    core::ptr::addr_of_mut!(state).cast(),
+                ) };
+                assert!(state.completed);
+                crate::source_options_api::option_set(crate::config::SourceOption::ArenaReserve as i32, 0);
+                // Exclude this Heap's existing arena for the new regular OS
+                // page. A huge OS singleton would instead join the abandoned
+                // list and move to the main Heap during deletion.
+                crate::source_options_api::option_set(crate::config::SourceOption::DisallowArenaAlloc as i32, 1);
+                let os = unsafe { native_heap_allocate(heap, 81, Some((128, 11)), true) }.expect("an OS block");
+                let os_page = page_of(os);
+                assert!(unsafe { Page::is_os_backed_at(os_page) });
+                assert_eq!(unsafe { heap_of_page(os_page) }, Some(heap));
+                // SAFETY: the test excludes all concurrent Heap operations;
+                // deletion preserves both exact live client blocks.
+                assert_eq!(unsafe { native_heap_release(heap, false) }, Ok(HeapReleaseOutcome::Released));
+                assert_eq!(unsafe { Page::heap_identity_at(regular_page) }, MainSubprocess::global().ready_main_heap_pointer());
+                assert_eq!(unsafe { heap_of_page(regular_page) }, None);
+                assert_eq!(unsafe { Page::heap_identity_at(os_page) }, heap.as_ptr());
+                assert_eq!(retained_deleted_heap_owner_count_for_test(), Some(1));
+                // The stale OS Heap address is never projected, even while
+                // another source visitor holds the subprocess Heap-list lock.
+                MainSubprocess::global().identity().heap_list().visit_heaps(|_| {
+                    assert_eq!(unsafe { heap_of_page(os_page) }, None);
+                    assert_eq!(unsafe { local_heap_theap_of_page(os_page) }, None);
+                    true
+                }).unwrap();
+                assert_eq!(unsafe { native_free(regular) }, NativePageFreeResult::Freed);
+                assert_eq!(unsafe { native_free(os) }, NativePageFreeResult::Freed);
+                assert_eq!(retained_deleted_heap_owner_count_for_test(), Some(0));
+            },
+        );
+    }
 
     /// Pinned-C/Rust differential for Heaps of the process main subprocess on
     /// the main thread (`compat/allocator/heap_lifecycle.c` with `main`):
