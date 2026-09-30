@@ -36,6 +36,7 @@ from typing import Any, Mapping, Sequence
 FIXTURE = Path(__file__).with_suffix(".c").resolve()
 CHECK_ID = "arena-reservation-lifecycle-c-rust-differential"
 TARGET = "arena::owned::tests::emit_native_arena_lifecycle_trace"
+RETENTION_TARGET = "dynamic_theap::tests::x86_64_cross_thread_arena_retention_trace"
 PROFILES = ("release", "debug-1", "stat-1", "stat-2")
 PROFILE_FEATURES = {"release": [], "debug-1": ["mi-debug-1", "mi-stat-1", "mi-stat-2"],
                     "stat-1": ["mi-stat-1"], "stat-2": ["mi-stat-1", "mi-stat-2"]}
@@ -67,6 +68,24 @@ def parse_trace(output: str, *, source: str) -> list[int]:
     if not values or values[0] != -1001 or values[-1] != FINAL_MARKER:
         raise ValueError(f"{source} arena lifecycle trace is incomplete")
     return values
+
+
+def parse_retention(output: str, *, source: str) -> list[dict[str, int]]:
+    """Keep each warmed-baseline and post-teardown mapping snapshot exact."""
+    fields = []
+    prefix = f"test {RETENTION_TARGET} ... "
+    for line in output.splitlines():
+        line = line.removeprefix(prefix)
+        if "m2.arena.retention." not in line:
+            continue
+        match = re.fullmatch(r"m2\.arena\.retention\.([0-9]+)\.(ranges|bytes)=([0-9]+)", line)
+        if match is None:
+            raise ValueError(f"{source} retention snapshot malformed")
+        fields.append((int(match[1]), match[2], int(match[3])))
+    roster = [(cycle, kind) for cycle in range(33) for kind in ("ranges", "bytes")]
+    if [(cycle, kind) for cycle, kind, _ in fields] != roster or any(value <= 0 for _, _, value in fields):
+        raise ValueError(f"{source} retention snapshots incomplete or out of order")
+    return [{"ranges": fields[cycle*2][2], "bytes": fields[cycle*2+1][2]} for cycle in range(33)]
 
 
 def expected_rust(c_trace: list[int]) -> list[int]:
@@ -103,7 +122,7 @@ def compare(c_trace: list[int], rust_trace: list[int]) -> dict[str, Any]:
     raise ValueError("native x86 arena lifecycle differs from pinned C: " + "; ".join(mismatches))
 
 
-def run_oracle(harness: Any, *, offline: bool, profile: str = "release") -> tuple[list[str], list[int]]:
+def run_oracle(harness: Any, *, offline: bool, profile: str = "release", repeat_retention: bool = False) -> tuple[list[str], Any]:
     """Build the fixture against the pinned archive and return its trace."""
 
     if profile not in PROFILES:
@@ -116,6 +135,9 @@ def run_oracle(harness: Any, *, offline: bool, profile: str = "release") -> tupl
     if profile != "release":
         artifacts /= profile
     artifacts.mkdir(parents=True, exist_ok=True)
+    if repeat_retention:
+        artifacts /= "retention"
+        artifacts.mkdir(parents=True, exist_ok=True)
     binary = artifacts / "oracle"
     with harness.temporary_directory(prefix="crabc-mimalloc-m2-arena-lifecycle-") as directory:
         source = harness.safe_extract(archive, Path(directory), pin["archive_root"])
@@ -132,12 +154,13 @@ def run_oracle(harness: Any, *, offline: bool, profile: str = "release") -> tupl
         build = harness.command_record(command, cwd=source, timeout_seconds=300)
         harness.write_json(artifacts / "c-build.json", build)
         harness.require_success(build, "pinned C native x86 arena lifecycle oracle build")
-        run = harness.command_record([str(binary)], cwd=source, timeout_seconds=180)
+        run = harness.command_record([str(binary)] + (["--repeat-retention"] if repeat_retention else []), cwd=source, timeout_seconds=180)
         harness.write_json(artifacts / "c-execute.json", run)
         (artifacts / "c.log").write_text(str(run["stdout"]), encoding="utf-8")
         harness.require_success(run, "pinned C native x86 arena lifecycle oracle")
     (artifacts / "c.log").write_text(str(run["stdout"]), encoding="utf-8")
-    return command, parse_trace(str(run["stdout"]), source="pinned C")
+    return command, (parse_retention(str(run["stdout"]), source="pinned C") if repeat_retention
+                     else parse_trace(str(run["stdout"]), source="pinned C"))
 
 
 def run_evidence(
@@ -212,6 +235,7 @@ def native_program(harness: Any, profile: str, artifacts: Path) -> dict[str, Any
 def main(arguments: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=(*PROFILES, "all"), default="release")
+    parser.add_argument("--repeat-retention", action="store_true", help="report 32 post-warmup child cycles; does not qualify bounded memory")
     arguments = parser.parse_args(arguments)
     import run as harness  # this script's directory is first on sys.path
 
@@ -221,12 +245,15 @@ def main(arguments: Sequence[str] | None = None) -> int:
         artifacts = harness.ARTIFACT_ROOT / "x86_64/m2-arena-lifecycle"
         if profile != "release":
             artifacts /= profile
+        if arguments.repeat_retention:
+            artifacts /= "retention"
         artifacts.mkdir(parents=True, exist_ok=True)
         try:
-            _, c_trace = run_oracle(harness, offline=True, profile=profile)
+            _, c_trace = run_oracle(harness, offline=True, profile=profile,
+                                   **({"repeat_retention": True} if arguments.repeat_retention else {}))
             program = native_program(harness, profile, artifacts)
             command = harness._x86_64_program_check_command(
-                program, TARGET, nocapture=True, gate_name="native arena lifecycle")
+                program, RETENTION_TARGET if arguments.repeat_retention else TARGET, nocapture=True, gate_name="native arena lifecycle")
             rust = harness.command_record(command, cwd=harness.ROOT, timeout_seconds=180)
             harness.write_json(artifacts / "rust-execute.json", rust)
             (artifacts / "rust.log").write_text(str(rust["stdout"]) + str(rust["stderr"]), encoding="utf-8")
@@ -234,6 +261,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
             output = str(rust["stdout"]) + "\n" + str(rust["stderr"])
             if harness.parse_rust_test_count(output) != 1:
                 raise harness.HarnessError("exact arena lifecycle selection did not execute one passing test")
+            if arguments.repeat_retention:
+                native_rows = parse_retention(output, source="Rust")
+                for label, rows in (("C", c_trace), ("native", native_rows)):
+                    print(f"arena retention {profile} {label}: ranges {rows[0]['ranges']}->{rows[-1]['ranges']}; bytes {rows[0]['bytes']}->{rows[-1]['bytes']}; exact raw snapshots {artifacts}")
+                continue
             comparison = compare(c_trace, parse_trace(output, source="Rust"))
         except (ValueError, harness.HarnessError) as error:
             print(f"ERROR: {profile}: {error}", file=sys.stderr)

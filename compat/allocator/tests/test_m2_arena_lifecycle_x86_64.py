@@ -70,6 +70,17 @@ class ArenaLifecycleProfiles(unittest.TestCase):
             self.assertEqual(lifecycle.main(["--profile", "all"]), 1)
         self.assertEqual(seen, list(lifecycle.PROFILES))
 
+    def test_retention_diagnostic_preserves_growth_and_requires_every_cycle(self):
+        def output(cycles):
+            return "\n".join(f"m2.arena.retention.{cycle}.{kind}={value}" for cycle in cycles
+                             for kind, value in (("ranges", 100+cycle), ("bytes", 1048576+cycle*4096)))
+        rows = lifecycle.parse_retention(output(range(33)), source="actual source")
+        self.assertEqual(rows[-1]["bytes"]-rows[0]["bytes"], 32*4096)
+        with self.assertRaises(ValueError):
+            lifecycle.parse_retention(output(range(32)), source="incomplete source")
+        with self.assertRaises(ValueError):
+            lifecycle.parse_retention(output([0, 0, *range(1, 33)]), source="duplicate source")
+
     def test_changed_cross_thread_relation_still_rejects(self):
         c = [-1001, -1023, -1027, 37, 1, 1, 1, -1026]
         native = c.copy()

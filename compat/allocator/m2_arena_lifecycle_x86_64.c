@@ -28,8 +28,9 @@
 #include <sys/mman.h>
 
 static size_t field;
+static bool emit_enabled = true;
 static void emit(int64_t value) {
-  printf("m2.arena.lifecycle.%zu=%lld\n", field++, (long long)value);
+  if (emit_enabled) printf("m2.arena.lifecycle.%zu=%lld\n", field++, (long long)value);
 }
 
 static void require_at(bool condition, int line) {
@@ -827,8 +828,36 @@ static void cross_thread_abandoned_lifecycle(void) {
   }
 }
 
-int main(void) {
+static void retention_snapshot(size_t cycle) {
+  FILE* maps = fopen("/proc/self/maps", "r");
+  require(maps != NULL);
+  char line[4096];
+  size_t ranges = 0, bytes = 0;
+  while (fgets(line, sizeof(line), maps) != NULL) {
+    uintptr_t start, end;
+    require(sscanf(line, "%lx-%lx", &start, &end) == 2 && end > start);
+    require(SIZE_MAX - bytes >= end - start);
+    ranges++;
+    bytes += end - start;
+  }
+  require(!ferror(maps) && fclose(maps) == 0);
+  printf("m2.arena.retention.%zu.ranges=%zu\n", cycle, ranges);
+  printf("m2.arena.retention.%zu.bytes=%zu\n", cycle, bytes);
+}
+
+int main(int argc, char** argv) {
   _mi_auto_process_init();
+  if (argc == 2 && strcmp(argv[1], "--repeat-retention") == 0) {
+    emit_enabled = false;
+    cross_thread_abandoned_lifecycle();
+    retention_snapshot(0);
+    for (size_t cycle = 1; cycle <= 32; cycle++) {
+      cross_thread_abandoned_lifecycle();
+      retention_snapshot(cycle);
+    }
+    return 0;
+  }
+  require(argc == 1);
 
   /* 1. Reserved-growth: automatic reservation, registry growth, and the
         exponential arena-count scaling after eight arenas. */

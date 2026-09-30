@@ -3855,6 +3855,12 @@ mod tests {
                 for value in receive.recv().unwrap() { emit(value); }
             }
         }
+        cross_thread_managed_abandoned_lifecycle_trace(&mut emit);
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    fn cross_thread_managed_abandoned_lifecycle_trace(mut emit: impl FnMut(i64)) {
+        use core::sync::atomic::Ordering;
         unsafe extern "C" fn discard_output(_: *const core::ffi::c_char) {}
         assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096,
             unsafe { crate::__crabc_runtime::RuntimeStderrOutput::new(discard_output) }));
@@ -4021,6 +4027,35 @@ mod tests {
             }
         }
 
+    }
+
+    /// Reports actual same-process mappings after joined child teardown. Source
+    /// metadata pages may remain mapped; these observations impose no zero or
+    /// equal-retention assumption on either allocator.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn x86_64_cross_thread_arena_retention_trace() {
+        fn snapshot(cycle: usize) {
+            let maps = std::fs::read_to_string("/proc/self/maps").expect("live process mapping snapshot");
+            let mut ranges = 0usize;
+            let mut bytes = 0usize;
+            for line in maps.lines() {
+                let (start, end) = line.split_whitespace().next().unwrap().split_once('-').unwrap();
+                let start = usize::from_str_radix(start, 16).unwrap();
+                let end = usize::from_str_radix(end, 16).unwrap();
+                assert!(end > start);
+                ranges += 1;
+                bytes = bytes.checked_add(end - start).unwrap();
+            }
+            std::println!("m2.arena.retention.{cycle}.ranges={ranges}");
+            std::println!("m2.arena.retention.{cycle}.bytes={bytes}");
+        }
+        cross_thread_managed_abandoned_lifecycle_trace(|_| {});
+        snapshot(0);
+        for cycle in 1..=32 {
+            cross_thread_managed_abandoned_lifecycle_trace(|_| {});
+            snapshot(cycle);
+        }
     }
 
     #[cfg(target_arch = "x86_64")]
