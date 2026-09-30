@@ -149,7 +149,68 @@ static PROCESS_LOAD: extern "C" fn() = process_load;
 /// `mi_pthread_done`: retire a registered worker after its user destructors.
 unsafe extern "C" fn thread_done(value: *mut c_void) {
     if matches!(value as usize, THREAD_ATTACHED | THREAD_FREE_ONLY) {
-        let _ = finish_current_thread_native_after_user_destructors();
+        let result = finish_current_thread_native_after_user_destructors();
+        #[cfg(crabc_native_thread_done_audit)]
+        {
+            use crabc_mimalloc::__crabc_runtime::ThreadFinishResult;
+            let code = match result {
+                ThreadFinishResult::Finished => 0,
+                ThreadFinishResult::NotAttached => 1,
+                ThreadFinishResult::AlreadyFinished => 2,
+                ThreadFinishResult::Retained => 3,
+                ThreadFinishResult::ProcessDoneFinalTaskDecisionPending => 4,
+            };
+            THREAD_FINISH_RESULTS[code].fetch_add(1, Ordering::Relaxed);
+        }
+        #[cfg(not(crabc_native_thread_done_audit))]
+        let _ = result;
+    }
+}
+
+// Test-only joined-worker observations. Results are Finished, NotAttached,
+// AlreadyFinished, Retained, and process-done decision pending, in that order.
+// Branches describe auxiliary teardown refusal; the native owner is retained
+// after any refusal. These exports are absent from the ordinary adapter.
+#[cfg(crabc_native_thread_done_audit)]
+static THREAD_FINISH_RESULTS: [AtomicUsize; 5] = [const { AtomicUsize::new(0) }; 5];
+#[cfg(crabc_native_thread_done_audit)]
+static THREAD_DONE_BRANCHES: [AtomicUsize; 4] = [const { AtomicUsize::new(0) }; 4];
+
+#[cfg(crabc_native_thread_done_audit)]
+#[no_mangle]
+pub extern "C" fn crabc_test_record_thread_done_branch(code: usize) {
+    if let Some(counter) = THREAD_DONE_BRANCHES.get(code) {
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[cfg(crabc_native_thread_done_audit)]
+#[no_mangle]
+pub extern "C" fn crabc_test_thread_done_observation(kind: usize, code: usize) -> usize {
+    let counters = if kind == 0 { &THREAD_FINISH_RESULTS[..] } else { &THREAD_DONE_BRANCHES[..] };
+    counters.get(code).map_or(0, |counter| counter.load(Ordering::Relaxed))
+}
+
+// A single isolated worker may park after its auxiliary session opens.
+// The driver releases it after observing the competing Heap destroy boundary.
+#[cfg(crabc_native_thread_done_audit)]
+static THREAD_DONE_DRAIN_GATE: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(crabc_native_thread_done_audit)]
+#[no_mangle]
+pub extern "C" fn crabc_test_thread_done_drain_gate_control(action: usize) -> usize {
+    if action == 1 { THREAD_DONE_DRAIN_GATE.store(1, Ordering::Release); }
+    if action == 3 { THREAD_DONE_DRAIN_GATE.store(3, Ordering::Release); }
+    THREAD_DONE_DRAIN_GATE.load(Ordering::Acquire)
+}
+
+#[cfg(crabc_native_thread_done_audit)]
+#[no_mangle]
+pub extern "C" fn crabc_test_thread_done_drain_gate() {
+    if THREAD_DONE_DRAIN_GATE.compare_exchange(1, 2, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+        while THREAD_DONE_DRAIN_GATE.load(Ordering::Acquire) == 2 {
+            core::hint::spin_loop();
+        }
     }
 }
 

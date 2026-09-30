@@ -532,6 +532,40 @@ impl super::Theap {
 }
 
 impl super::ThreadLocalData {
+    /// Drain auxiliary Theaps while their source TLD list lock retains both
+    /// metadata and Heap identity. A Heap destroy cannot detach these owners
+    /// or destroy their pages until this complete traversal releases the lock.
+    ///
+    /// # Safety
+    /// `tld` and `main` belong to the finishing thread and remain live for the
+    /// call. `drain` runs on that owner thread, must not retain the projected
+    /// Theap, mutate either intrusive list, or reenter this TLD lock. It may
+    /// collect that Theap's owned pages, without allocator callbacks. A refusal
+    /// leaves all remaining owners retained for the caller's terminal path.
+    pub(crate) unsafe fn drain_auxiliary_theaps_for_thread_done(
+        tld: core::ptr::NonNull<Self>,
+        main: core::ptr::NonNull<super::Theap>,
+        mut drain: impl FnMut(core::ptr::NonNull<super::Theap>) -> bool,
+    ) -> Result<bool, SourceHeapRegistryError> {
+        let pointer = tld.as_ptr();
+        // SAFETY: the caller retains its own TLD; the held source lock pins
+        // every listed Theap and its Heap through the bounded drain callback.
+        let guard = unsafe { (*pointer).theaps_lock.lock() }
+            .map_err(SourceHeapRegistryError::ListLockAcquire)?;
+        let mut current = unsafe { (*pointer).theaps };
+        let mut drained = true;
+        while let Some(theap) = core::ptr::NonNull::new(current) {
+            // SAFETY: the held list lock retains this member and its link.
+            current = unsafe { (*current).tnext };
+            if theap != main && !drain(theap) {
+                drained = false;
+                break;
+            }
+        }
+        guard.unlock().map_err(SourceHeapRegistryError::ListLockRelease)?;
+        Ok(drained)
+    }
+
     /// Whether a finishing thread's Theap still belongs to its TLD list.
     /// A Heap destroy removes it under this lock before taking over its
     /// pages, so an unavailable owner-side engine needs no retry once absent.

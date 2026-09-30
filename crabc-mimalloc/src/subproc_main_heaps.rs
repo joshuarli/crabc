@@ -1432,6 +1432,18 @@ pub(crate) unsafe fn destroy_all_terminal() -> bool {
 }
 
 /// `mi_thread_theaps_done` (`init.c:377-421`) and
+// Auxiliary refusal codes: regular backing teardown, failed page drain,
+// missing session with retained list membership, and locked list detach.
+#[cfg(crabc_native_thread_done_audit)]
+fn record_thread_done_branch(code: usize) {
+    unsafe extern "C" {
+        fn crabc_test_record_thread_done_branch(code: usize);
+    }
+    // SAFETY: the isolated test adapter supplies this scalar-only observer.
+    // It neither enters the allocator nor accesses the finishing TLS owner.
+    unsafe { crabc_test_record_thread_done_branch(code) };
+}
+
 /// `_mi_thread_locals_thread_done` for the calling thread's Theaps of
 /// non-main Heaps of the process main subprocess, before the thread's own
 /// finish: the slot array is freed, each such Theap is collected with its
@@ -1449,34 +1461,40 @@ pub(crate) fn native_thread_done() -> bool {
         let torn_down = owner.teardown().is_ok();
         install_empty_dynamic_backing();
         if !torn_down {
+            #[cfg(crabc_native_thread_done_audit)]
+            record_thread_done_branch(0);
             return false;
         }
     }
     crate::compiler_tls::set_fast_slot(None);
-    // SAFETY: this thread's live TLD; only this thread changes its list
-    // other than a Heap free, which detaches under the TLD lock.
-    let mut current = unsafe { ThreadLocalData::theaps_head_at(thread.tld) };
-    while let Some(theap) = NonNull::new(current) {
-        // SAFETY: a live list member.
-        current = unsafe { Theap::tld_next_at(theap) };
-        if theap == thread.theap {
-            continue;
-        }
-        let drained = with_theap_engine(thread, theap, |engine| {
-            // SAFETY: this finishing thread's own Theap.
-            (unsafe { engine.collect_abandon_child_thread_done(theap, thread.thread) }) && engine.finish_quiescent_in_place()
-        });
-        if drained != Some(true) {
-            // A concurrent Heap destroy may detach this image before its
-            // owner-side engine can begin. The destroyer then owns the page
-            // transition; the worker must still finish its other Theaps.
-            // An actual failed collection keeps this thread's owner live.
-            if drained.is_some()
-                || unsafe { ThreadLocalData::contains_theap_for_thread_done(thread.tld, theap) } != Ok(false)
-            {
+    // SAFETY: this finishing thread retains its TLD and fixed owner. The
+    // source list lock pins each auxiliary image and Heap throughout its
+    // owner-side collection; callbacks neither detach lists nor reenter TLS.
+    let drained = unsafe { ThreadLocalData::drain_auxiliary_theaps_for_thread_done(
+        thread.tld, thread.theap, |theap| {
+            let drained = with_theap_engine(thread, theap, |engine| {
+                #[cfg(crabc_native_thread_done_audit)]
+                {
+                    unsafe extern "C" { fn crabc_test_thread_done_drain_gate(); }
+                    // SAFETY: the test-only driver parks this exact worker and
+                    // releases it without entering its allocator or TLS owner.
+                    crabc_test_thread_done_drain_gate();
+                }
+                // SAFETY: the source lock retains this finishing thread's
+                // own Theap and Heap for the complete owner-side drain.
+                engine.collect_abandon_child_thread_done(theap, thread.thread)
+                    && engine.finish_quiescent_in_place()
+            });
+            if drained != Some(true) {
+                #[cfg(crabc_native_thread_done_audit)]
+                record_thread_done_branch(if drained.is_some() { 1 } else { 2 });
                 return false;
             }
-        }
+            true
+        },
+    ) };
+    if drained != Ok(true) {
+        return false;
     }
     // SAFETY: the immutable source empty Theap is process-static.
     let empty = unsafe { NonNull::new_unchecked(crate::bootstrap::empty_default_theap_ptr()) };
@@ -1494,7 +1512,11 @@ pub(crate) fn native_thread_done() -> bool {
         } {
             Ok(Some(theap)) => theap,
             Ok(None) => break,
-            Err(_) => return false,
+            Err(_) => {
+                #[cfg(crabc_native_thread_done_audit)]
+                record_thread_done_branch(3);
+                return false;
+            },
         };
         // SAFETY: the Heap's reference, dropped once.
         unsafe { theap_decref(theap) };
