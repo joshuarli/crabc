@@ -923,6 +923,34 @@ pub(crate) unsafe fn native_heap_new_in_arena(arena: ArenaId) -> Option<NonNull<
     let thread = current_main_thread()?;
     let binding = binding()?;
     let config = binding.page_map().memory_config().ok()?;
+    #[cfg(target_arch = "x86_64")]
+    let block = {
+        // Source Heap birth is ordinary zalloc, not aligned over-allocation.
+        // The selected class naturally aligns the entire private image.
+        let size = crate::source_heap_api::SOURCE_HEAP_IMAGE_REQUEST_SIZE;
+        let main = NonNull::new(MainSubprocess::global().ready_main_heap_pointer())?;
+        let theap = heap_theap(thread, main)?;
+        let block = if theap == thread.theap {
+            match crate::runtime_lifecycle::native_allocate(size, true) {
+                NativePageAllocationResult::Allocated(block) => block,
+                _ => return None,
+            }
+        } else {
+            allocate_on_theap(thread, theap, size, None, true)?
+        };
+        // SAFETY: this exact new ordinary block remains exclusively owned
+        // and unpublished while its source extent is checked.
+        let usable = unsafe { crate::runtime_lifecycle::native_usable_size(block) };
+        if block.as_ptr().addr() % align_of::<NonMainHeapImage>() != 0
+            || usable.is_none_or(|usable| usable < size)
+        {
+            // SAFETY: no image or client was published in this live block.
+            let _ = unsafe { native_free(block) };
+            return None;
+        }
+        block
+    };
+    #[cfg(not(target_arch = "x86_64"))]
     let block = allocate_main_heap_image(thread, size_of::<NonMainHeapImage>(), align_of::<NonMainHeapImage>())?;
     let keys = HeapKeySource::global();
     let slot = match keys.registry.claim_for_main_subprocess(config, keys.subprocess, keys.metadata) {

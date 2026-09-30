@@ -125,6 +125,31 @@ pub unsafe fn heap_set_numa_affinity(heap: *mut c_void, numa_node: c_int) {
     unsafe { Heap::set_numa_affinity_at(heap, node) };
 }
 
+/// The pinned Linux x86-64 `mi_heap_t` image occupies 6464 bytes in all
+/// selected debug/statistics profiles. Heap birth makes this ordinary zeroed
+/// request from the subprocess main Heap; private Rust image fields must fit
+/// that extent rather than changing publicly counted requested bytes.
+#[cfg(target_arch = "x86_64")]
+pub(crate) const SOURCE_HEAP_IMAGE_REQUEST_SIZE: usize = 6464;
+
+// Ordinary source class geometry supplies the native image alignment. Keep
+// the layout bound explicit so a future private image cannot underallocate.
+#[cfg(target_arch = "x86_64")]
+const _: () = {
+    type Image = crate::types::heap_registry::lifecycle::NonMainHeapImage;
+    assert!(core::mem::size_of::<Image>() <= SOURCE_HEAP_IMAGE_REQUEST_SIZE);
+    let bin = match crate::size_class::bin_for_request(SOURCE_HEAP_IMAGE_REQUEST_SIZE) {
+        Some(bin) => bin,
+        None => panic!("Heap image request must select an ordinary class"),
+    };
+    let size = match crate::size_class::bin_size(bin) {
+        Some(size) => size,
+        None => panic!("Heap image class must have a block size"),
+    };
+    assert!(size % core::mem::align_of::<Image>() == 0);
+    assert!(crate::config::ARENA_SLICE_SIZE % core::mem::align_of::<Image>() == 0);
+};
+
 /// `mi_heap_new()`: null when the Heap cannot be created.
 pub fn heap_new() -> *mut c_void {
     if let Some(created) = crate::subproc::lifecycle::native_child_heap_new() {

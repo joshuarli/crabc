@@ -154,17 +154,29 @@ pub(crate) unsafe fn child_heap_new_in_arena(
     let main_theap = owner.theap_pointer().ok_or(HeapNewError::InvalidChild)?;
     // SAFETY: forwarded current-thread obligation.
     unsafe { owner.cached_set(child, binding, main_theap) }.map_err(|_| HeapNewError::Retained)?;
+    #[cfg(target_arch = "x86_64")]
+    let image_size = crate::source_heap_api::SOURCE_HEAP_IMAGE_REQUEST_SIZE;
+    #[cfg(not(target_arch = "x86_64"))]
+    let image_size = size_of::<NonMainHeapImage>();
     // SAFETY: forwarded current-thread obligation.
     let block = unsafe {
         member.with_page_engine(binding, |_child, engine| {
-            engine.allocate(size_of::<NonMainHeapImage>(), true)
+            engine.allocate(image_size, true)
         })
     }
     .map_err(HeapNewError::ImageAllocation)?
     .ok_or(HeapNewError::ImageAllocation(ChildMetadataPageEngineError::SessionNotReady))?;
     let image = block.cast::<NonMainHeapImage>();
     // heap.c:139-144 `_mi_thread_local_create`; failure frees the image.
-    let slot = if image.as_ptr().addr() % align_of::<NonMainHeapImage>() != 0 {
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: the new exact ordinary block remains private until publication.
+    let extent_invalid = unsafe { crate::runtime_lifecycle::native_usable_size(block) }
+        .is_none_or(|usable| usable < image_size);
+    #[cfg(not(target_arch = "x86_64"))]
+    let extent_invalid = false;
+    let slot = if image.as_ptr().addr() % align_of::<NonMainHeapImage>() != 0
+        || extent_invalid
+    {
         Err(HeapNewError::Retained)
     } else {
         keys.registry
@@ -185,7 +197,7 @@ pub(crate) unsafe fn child_heap_new_in_arena(
         }
     };
     let key = slot.key().raw();
-    let memory = crate::types::MemoryId::malloc(block.as_ptr(), size_of::<NonMainHeapImage>(), true);
+    let memory = crate::types::MemoryId::malloc(block.as_ptr(), image_size, true);
     // SAFETY: the zeroed block is exclusively owned, large enough, and
     // aligned; the image is written whole before any list publishes it.
     unsafe {
@@ -625,7 +637,8 @@ pub(crate) unsafe fn child_heap_force_destroy_for_subprocess_destroy(
 ///
 /// # Safety
 /// `block` is an exclusively owned zeroed block of at least
-/// `size_of::<NonMainHeapImage>()` bytes; `subprocess` is live. A non-null
+/// the source Heap request extent on x86-64, or `size_of::<NonMainHeapImage>()`
+/// bytes on other targets; `subprocess` is live. A non-null
 /// `exclusive_arena` names a live parent of this subprocess and remains live
 /// for every Theap and page linked to the returned Heap.
 pub(crate) unsafe fn initialize_and_link_non_main_heap(
@@ -638,7 +651,11 @@ pub(crate) unsafe fn initialize_and_link_non_main_heap(
         return Err(HeapNewError::Retained);
     }
     let key = slot.key().raw();
-    let memory = crate::types::MemoryId::malloc(block.as_ptr(), size_of::<NonMainHeapImage>(), true);
+    #[cfg(target_arch = "x86_64")]
+    let image_size = crate::source_heap_api::SOURCE_HEAP_IMAGE_REQUEST_SIZE;
+    #[cfg(not(target_arch = "x86_64"))]
+    let image_size = size_of::<NonMainHeapImage>();
+    let memory = crate::types::MemoryId::malloc(block.as_ptr(), image_size, true);
     let image = block.cast::<NonMainHeapImage>();
     // SAFETY: forwarded; written whole before any list publishes it.
     unsafe { image.as_ptr().write(NonMainHeapImage { heap: Heap::bootstrap_empty(), slot: Some(slot) }) };
