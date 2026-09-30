@@ -40,20 +40,6 @@ readonly ELF64_PROGRAM_HEADER_COUNT_OFFSET=56
 readonly ELF64_PROGRAM_HEADER_OFFSET=32
 readonly ELF64_P_FILESZ_OFFSET=32
 
-# Use the producer's checked checkout-state boundary for compiler scratch and
-# test fixtures too, even when called directly inside the pinned container.
-# The dispatcher still binds legacy /tmp spellings for older runners.
-TMPDIR="$(python3 -B - "$ROOT_DIR" <<'PY'
-import sys
-
-sys.path.insert(0, sys.argv[1] + "/scripts")
-from build_x86_64_owned_sysroot import deterministic_environment
-
-print(deterministic_environment()["TMPDIR"])
-PY
-)"
-export TMPDIR
-
 fail() {
     printf 'ERROR: x86 owned static sysroot: %s\n' "$*" >&2
     exit 1
@@ -548,7 +534,7 @@ assert_final_static_image() {
     local symbols="$6"
     local relocations="$7"
     local minimum_tls_alignment="${8:-4096}"
-    local tls_count tls_filesz tls_memsz tls_alignment unresolved
+    local tls_count tls_filesz tls_memsz tls_alignment
 
     grep -Eq 'Machine:[[:space:]]+Advanced Micro Devices X86-64' "$file_header" ||
         fail "${mode} candidate is not EM_X86_64"
@@ -599,8 +585,29 @@ PY
     if (( tls_alignment < minimum_tls_alignment || (tls_alignment & (tls_alignment - 1)) != 0 )); then
         fail "${mode} candidate TLS lost the fixture's required alignment"
     fi
-    unresolved="$(awk '$7 == "UND" && NF >= 8 { print }' "$symbols")"
-    [ -z "$unresolved" ] || fail "${mode} candidate retains unresolved symbols: $unresolved"
+    # The authenticated owned link recipe rejects unresolved strong live
+    # references. TLS relaxation can nevertheless leave an inert regular
+    # symbol row after replacing its call with a local-exec access. Inspect
+    # every relocation and dynamic symbol exposure before accepting that
+    # residue; a regular symbol name alone is not a runtime import.
+    if ! python3 -B - "$ROOT_DIR" "$candidate" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+sys.path.insert(0, sys.argv[1] + "/compat/x86_64")
+from owned_static_link_authority import static_undefined_bindings
+
+proof = static_undefined_bindings(sys.argv[2])
+Path(sys.argv[2] + ".undefined-bindings.json").write_text(
+    json.dumps(proof, indent=2, sort_keys=True) + "\n"
+)
+if proof["required_bindings"]:
+    raise SystemExit("unresolved runtime bindings: " + json.dumps(proof["required_bindings"]))
+PY
+    then
+        fail "${mode} candidate retains unresolved runtime bindings"
+    fi
     grep -Eq '[[:space:]]__udivti3$' "$symbols" ||
         fail "${mode} candidate lacks the owned __udivti3 helper"
     if grep -Eq 'R_X86_64_(GLOB_DAT|JUMP_SLOT|TLSGD|TLSLD|TLSDESC|DTPMOD|DTPOFF)' \
@@ -608,7 +615,7 @@ PY
         fail "${mode} candidate retains a dynamic relocation or dynamic TLS form"
     fi
     if [ "$mode" = -static-pie ]; then
-        if grep -Eq 'R_X86_64_GOTTPOFF|__tls_get_addr' "$relocations" "$symbols"; then
+        if grep -Eq 'R_X86_64_GOTTPOFF|__tls_get_addr' "$relocations"; then
             fail "static PIE candidate retained an unrelaxed initial-TLS access"
         fi
         awk '$3 ~ /^R_X86_64_/ && $3 != "R_X86_64_RELATIVE" { exit 1 }' "$relocations" ||
@@ -942,7 +949,7 @@ run_static_mode() {
             ;;
         pthread-signal)
             probe=owned_pthread_signal_probe.c
-            expected_output=''
+            expected_output='pthread-signal: blocked SIGUSR2 pending then delivered to worker'
             minimum_tls_alignment=1
             ;;
         pthread-lifecycle)
@@ -1546,6 +1553,26 @@ if primary != extracted:
     raise SystemExit(f"{label} normalized receipt/map/trace differs after extraction")
 PY
 }
+
+# Sourcing exposes the same image checks to isolated regression subshells.
+# It must not start a producer or consumer merely to load those definitions.
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then
+    return 0
+fi
+
+# Use the producer's checked checkout-state boundary for compiler scratch and
+# test fixtures too, even when called directly inside the pinned container.
+# The dispatcher still binds legacy /tmp spellings for older runners.
+TMPDIR="$(python3 -B - "$ROOT_DIR" <<'PY'
+import sys
+
+sys.path.insert(0, sys.argv[1] + "/scripts")
+from build_x86_64_owned_sysroot import deterministic_environment
+
+print(deterministic_environment()["TMPDIR"])
+PY
+)"
+export TMPDIR
 
 if [ "${1:-}" = "--consumer-job" ]; then
     shift

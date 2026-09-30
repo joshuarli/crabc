@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import shutil
 import signal
@@ -453,6 +454,110 @@ print("isolated-output:" + name, flush=True)
             "CRABC_X86_64_OWNED_STATIC_CONSUMER_BENCHMARK=1 requires 4 workers",
             result.stderr,
         )
+
+
+class InstalledStaticTlsConsumerTests(unittest.TestCase):
+    """Run the real installed driver and final audit before TLS/thread execution."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        supplied = os.environ.get("CRABC_X86_64_STATIC_TLS_TEST_SYSROOT")
+        if not supplied:
+            raise unittest.SkipTest("requires an owned installed static sysroot in the pinned image")
+        cls.sysroot = Path(supplied)
+        if not cls.sysroot.is_absolute() or not (cls.sysroot / "bin/crabc-cc").is_file():
+            raise AssertionError("static TLS regression requires an absolute installed owned driver")
+        SCRATCH_ROOT.mkdir(parents=True, exist_ok=True)
+        cls.work = Path(tempfile.mkdtemp(prefix="installed-tls-", dir=SCRATCH_ROOT))
+
+    def test_static_and_static_pie_audit_then_execute_thread_tls(self) -> None:
+        for mode, name in (("-static", "et-exec"), ("-static-pie", "static-pie")):
+            with self.subTest(mode=mode):
+                result = subprocess.run(
+                    ["bash", str(RUNNER), "--consumer-job", str(self.sysroot), mode,
+                     str(self.work / name), "installed TLS regression", "pthread"],
+                    cwd=ROOT, text=True, capture_output=True, timeout=300, check=False,
+                )
+                (self.work / (name + ".stdout")).write_text(result.stdout)
+                (self.work / (name + ".stderr")).write_text(result.stderr)
+                (self.work / (name + ".status")).write_text(str(result.returncode) + "\n")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                candidate = self.work / name / "candidate"
+                proof = json.loads(Path(str(candidate) + ".undefined-bindings.json").read_text())
+                self.assertEqual(proof["image_sha256"], hashlib.sha256(candidate.read_bytes()).hexdigest())
+                self.assertEqual(proof["required_bindings"], [])
+
+    def test_pthread_signal_completion_matches_pinned_fixture(self) -> None:
+        for mode, name in (("-static", "signal-et-exec"), ("-static-pie", "signal-static-pie")):
+            with self.subTest(mode=mode):
+                result = subprocess.run(
+                    ["bash", str(RUNNER), "--consumer-job", str(self.sysroot), mode,
+                     str(self.work / name), "installed signal regression", "pthread-signal"],
+                    cwd=ROOT, text=True, capture_output=True, timeout=300, check=False,
+                )
+                (self.work / (name + ".stdout")).write_text(result.stdout)
+                (self.work / (name + ".stderr")).write_text(result.stderr)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_final_shell_audit_rejects_real_undefined_weak_call(self) -> None:
+        fixture = self.work / "required-binding"
+        fixture.mkdir()
+        (fixture / "tmp").mkdir()
+        source = fixture / "weak.c"
+        source.write_text(
+            "__thread int initialized = 1;\n"
+            "__thread int zero;\n"
+            "extern int optional_unprovided(void) __attribute__((weak));\n"
+            "int retained_call(void) { zero = initialized; return optional_unprovided(); }\n"
+            "void __udivti3(void) {}\n"
+            "void *const anchor __attribute__((section(\".data.rel.ro\"))) = retained_call;\n"
+        )
+        start = fixture / "start.S"
+        start.write_text(
+            ".text\n.globl _start\n.type _start,@function\n"
+            "_start: mov $60,%eax\nxor %edi,%edi\nsyscall\n"
+            ".size _start,.-_start\n.section .note.GNU-stack,\"\",@progbits\n"
+        )
+        commands = []
+
+        def run(argv: list[str]) -> subprocess.CompletedProcess[str]:
+            result = subprocess.run(argv, cwd=ROOT, text=True, capture_output=True, check=False,
+                                    env={**os.environ, "TMPDIR": str(fixture / "tmp")})
+            commands.append({"argv": argv, "status": result.returncode,
+                             "stdout": result.stdout, "stderr": result.stderr})
+            (fixture / "commands.json").write_text(json.dumps(commands, indent=2) + "\n")
+            return result
+
+        for path in (source, start):
+            result = run(["gcc", "-fPIC", "-fasynchronous-unwind-tables", "-c", str(path),
+                          "-o", str(path.with_suffix(".o"))])
+            self.assertEqual(result.returncode, 0, result.stderr)
+        toolchain = Path(subprocess.check_output(["rustc", "--print", "sysroot"], text=True).strip())
+        linker = toolchain / "lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld"
+        for mode, name in (("-static", "et-exec"), ("-static-pie", "static-pie")):
+            with self.subTest(mode=mode):
+                candidate = fixture / name
+                result = run([str(linker), "-static", *(["-pie"] if mode == "-static-pie" else []),
+                              "--no-dynamic-linker", "--no-undefined", "--emit-relocs", "--eh-frame-hdr",
+                              "-z", "relro", "-e", "_start", str(source.with_suffix(".o")),
+                              str(start.with_suffix(".o")), "-o", str(candidate)])
+                self.assertEqual(result.returncode, 0, result.stderr)
+                evidence = []
+                for option, label in (("-hW", "header"), ("-lW", "programs"), ("-dW", "dynamic"),
+                                      ("-sW", "symbols"), ("-rW", "relocations")):
+                    result = run(["readelf", option, str(candidate)])
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    path = fixture / (name + "." + label)
+                    path.write_text(result.stdout)
+                    evidence.append(str(path))
+                result = run(["bash", "-c", 'source "$1" --definitions; '
+                              'assert_final_static_image "$2" "$3" "$4" "$5" "$6" "$7" "$8" 1',
+                              "audit-regression", str(RUNNER), str(candidate), mode, *evidence])
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("candidate retains unresolved runtime bindings", result.stderr)
+                proof = json.loads(Path(str(candidate) + ".undefined-bindings.json").read_text())
+                self.assertEqual(proof["image_sha256"], hashlib.sha256(candidate.read_bytes()).hexdigest())
+                self.assertIn("optional_unprovided", [row["symbol"]["name"] for row in proof["required_bindings"]])
 
 
 if __name__ == "__main__":
