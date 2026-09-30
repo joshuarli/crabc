@@ -515,14 +515,28 @@ def planned_binding_definitions(archive: Path, executable: Path, members: Sequen
         if alias.name not in members:
             continue
         provider_require(alias.binding == "weak-same-address", f"unsupported planned alias {alias.name}")
-        names = (alias.name, alias.target)
-        entries = [[r for r in actual.get(n, []) if r["section"] != "UND"
-                    and r["visibility"] == "DEFAULT"] for n in names]
-        provider_require(all(len(r) == 1 for r in entries)
-                         and entries[0][0]["binding"] == "WEAK"
-                         and entries[1][0]["binding"] == "GLOBAL"
-                         and entries[0][0]["value"] == entries[1][0]["value"],
+        before_targets = [r for r in expected.get(alias.target, []) if r["section"] != "UND"
+                          and r["binding"] == "GLOBAL" and r["visibility"] in {"DEFAULT", "HIDDEN"}]
+        aliases_found = [r for r in actual.get(alias.name, []) if r["section"] != "UND"
+                         and r["binding"] == "WEAK" and r["visibility"] == "DEFAULT"]
+        targets = [r for r in actual.get(alias.target, []) if r["section"] != "UND"]
+        provider_require(len(before_targets) == len(aliases_found) == len(targets) == 1,
                          f"planned weak alias does not match its provider: {alias.name}")
+        before_target, alias_found, target = before_targets[0], aliases_found[0], targets[0]
+        # The sealed static linker localizes hidden global definitions. Public
+        # weak aliases keep their name and default visibility at that same
+        # section/address; the target's privacy is retained from the archive.
+        expected_binding = "LOCAL" if before_target["visibility"] == "HIDDEN" else "GLOBAL"
+        provider_require(target["binding"] == expected_binding
+                         and target["visibility"] == before_target["visibility"]
+                         and alias_found["value"] == target["value"]
+                         and alias_found["section"] == target["section"],
+                         f"planned weak alias does not match its provider: {alias.name}")
+        result[alias.name].update({"alias_target": alias.target,
+            "archive_target_binding": before_target["binding"],
+            "archive_target_visibility": before_target["visibility"],
+            "target_binding": target["binding"], "target_visibility": target["visibility"],
+            "target_value": target["value"], "target_section": target["section"]})
     return result
 
 

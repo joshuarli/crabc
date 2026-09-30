@@ -199,6 +199,38 @@ class PlannedDeclarationCompilerTests(unittest.TestCase):
             alias = ROSTER.ArchiveAlias(name="private_alias", target="internal", binding="weak-same-address")
             self.assertIn("owner", AUDIT.planned_binding_definitions(archive, extracted, ("owner",), (alias,)))
 
+    @unittest.skipUnless(all(shutil.which(t) for t in ("cc", "ar", "readelf")), "requires native ELF tools")
+    def test_hidden_archive_alias_target_keeps_its_local_hidden_final_binding(self):
+        anchor = json.loads((ROOT / "compat/x86_64/owned_resolver_network_image_inputs.json").read_text())
+        linker = next(p for p in anchor["files"] if p.endswith("/gcc-ld/ld.lld"))
+        if not Path(linker).is_file():
+            self.skipTest("requires pinned image linker")
+        work = ROOT / ".work/x86_64/planned-provider-tests"
+        work.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work) as temporary:
+            root = Path(temporary)
+            body = 'int target(void) { return 1; }\n' + \
+                'extern __typeof(target) alias_name __attribute__((weak, alias("target"), visibility("default")));\n' + \
+                '__asm__(".global _start\\n_start: call main; mov %eax,%edi; mov $60,%eax; syscall");\n'
+            hidden = HeaderCallableProviderLinkageAuditTests.archive(root, "hidden_alias",
+                '__attribute__((visibility("hidden"))) int target(void);\n' + body)
+            public = HeaderCallableProviderLinkageAuditTests.archive(root, "public_alias", body)
+            caller = root / "caller.c"
+            caller.write_text("int alias_name(void); int main(void) { return alias_name() != 1; }\n")
+            obj = root / "caller.o"
+            subprocess.run(["cc", "-c", str(caller), "-o", str(obj)], check=True)
+            alias = ROSTER.ArchiveAlias(name="alias_name", target="target", binding="weak-same-address")
+            executable = root / "hidden"
+            subprocess.run([linker, "-static", "-e", "_start", str(obj), str(hidden), "-o", str(executable)], check=True)
+            result = AUDIT.planned_binding_definitions(hidden, executable, ("alias_name",), (alias,))
+            self.assertEqual(result["alias_name"]["target_binding"], "LOCAL")
+            self.assertEqual(result["alias_name"]["target_visibility"], "HIDDEN")
+            self.assertEqual(subprocess.run([str(executable)]).returncode, 0)
+            crossed = root / "crossed"
+            subprocess.run([linker, "-static", "-e", "_start", str(obj), str(public), "-o", str(crossed)], check=True)
+            with self.assertRaises(AUDIT.ProviderLinkageAuditError):
+                AUDIT.planned_binding_definitions(hidden, crossed, ("alias_name",), (alias,))
+
     @unittest.skipUnless(shutil.which("clang") and shutil.which("nm"), "requires native Clang and nm")
     def test_selected_cxx_only_declaration_retains_ordinary_c_linkage(self):
         work = ROOT / ".work/x86_64/planned-provider-tests"
