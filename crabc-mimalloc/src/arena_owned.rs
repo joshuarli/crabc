@@ -29,7 +29,10 @@ use crate::types::{Arena, MemoryId, MemoryKind};
 
 #[path = "arena_purge.rs"]
 mod purge;
-pub(crate) use purge::arena_purge_delay;
+pub(crate) use purge::{arena_purge_delay, PreparedSourceInitializationRelease, SourceInitializationReleaseDecision,
+    SourceInitializationReleaseError, SourceInitializationReleaseOutcome,
+    SourceInitializationReleaseStep, SourceInitializationPurgeTask,
+    CompletedSourceInitializationPurge, SourceInitializationPurgeResult};
 
 #[path = "arena_destroy.rs"]
 mod destroy;
@@ -833,48 +836,60 @@ impl ProcessArenaBacking {
     pub(crate) fn restore_source_initialization_claim(
         &self, custody: super::SourceInitializationClaimCustody,
     ) -> Result<ArenaSliceClaim<'_>, (super::SourceInitializationClaimCustodyError, super::SourceInitializationClaimCustody)> {
+        if let Err(error) = self.validate_source_initialization_custody(&custody) {
+            return Err((error, custody));
+        }
+        Ok(ArenaSliceClaim {
+            arena: custody.arena, start: custody.start, memory: custody.memory,
+            backing: Some(self), _arena: core::marker::PhantomData,
+        })
+    }
+
+    /// Checks original custody without consuming it or running VM policy.
+    /// The independently admitted issuer excludes teardown and address reuse;
+    /// registry membership is checked before projecting any arena fields.
+    fn validate_source_initialization_custody(
+        &self, custody: &super::SourceInitializationClaimCustody,
+    ) -> Result<(), super::SourceInitializationClaimCustodyError> {
         use super::SourceInitializationClaimCustodyError as Error;
-        if custody.issuer != NonNull::from(self) { return Err((Error::WrongBacking, custody)); }
-        if self.destroyed.load(Ordering::Acquire) { return Err((Error::TerminalBacking, custody)); }
+        if custody.issuer != NonNull::from(self) { return Err(Error::WrongBacking); }
+        if self.destroyed.load(Ordering::Acquire) { return Err(Error::TerminalBacking); }
         let Some(published) = self.registry.arena_print_pointer(custody.arena_index) else {
-            return Err((Error::UnpublishedArena, custody));
+            return Err(Error::UnpublishedArena);
         };
-        if published != custody.arena { return Err((Error::UnpublishedArena, custody)); }
+        if published != custody.arena { return Err(Error::UnpublishedArena); }
         if !self.registry.is_bound_to_subprocess(custody.subprocess.as_ptr()) {
-            return Err((Error::SourceIdentityMismatch, custody));
+            return Err(Error::SourceIdentityMismatch);
         }
         // SAFETY: the token came only from an actual claim, its original
         // retained owner excludes teardown/reuse, and the freshly loaded
         // issuing registry slot matched before projecting any arena fields.
         let arena = unsafe { published.as_ref() };
         if arena.arena_index != custody.arena_index || arena.subprocess != custody.subprocess.as_ptr() {
-            return Err((Error::SourceIdentityMismatch, custody));
+            return Err(Error::SourceIdentityMismatch);
         }
         let Some(memory) = custody.memory.arena_memory() else {
-            return Err((Error::InvalidClaimSpan, custody));
+            return Err(Error::InvalidClaimSpan);
         };
         let index = memory.slice_index as usize;
         let count = memory.slice_count as usize;
         if memory.arena != published.as_ptr()
             || !super::arena_slice_range_is_usable(arena, index, count)
             || super::arena_slice_start(arena, index) != Some(custody.start.as_ptr()) {
-            return Err((Error::InvalidClaimSpan, custody));
+            return Err(Error::InvalidClaimSpan);
         }
         // SAFETY: the retained owner and checked issuing slot above make
         // this short published ownership projection live for validation.
         if unsafe { self.allocation_for_arena(arena) }.is_none() {
-            return Err((Error::MissingBackingOwner, custody));
+            return Err(Error::MissingBackingOwner);
         }
         // No callback runs while this short bitmap projection validates the
         // original range. Atomic clear bits still denote its outstanding claim.
         let outstanding = unsafe { super::ArenaView::from_ptr(published.as_ptr()) }
             .and_then(|view| unsafe { view.slices_free() })
             .and_then(|free| free.is_clear_range(index, count));
-        if outstanding != Some(true) { return Err((Error::ClaimNoLongerOutstanding, custody)); }
-        Ok(ArenaSliceClaim {
-            arena: published, start: custody.start, memory: custody.memory,
-            backing: Some(self), _arena: core::marker::PhantomData,
-        })
+        if outstanding != Some(true) { return Err(Error::ClaimNoLongerOutstanding); }
+        Ok(())
     }
 
     /// Publishes one source-sized OS arena and retains its exact mapping.
@@ -2384,6 +2399,241 @@ mod tests {
     }
 
     #[test]
+    fn source_initialization_release_lazy_warnings_preserve_claim_and_purge_order() {
+        use crate::diagnostic_output::OutputOwner;
+        use crate::config::SourceOption;
+        use core::ffi::c_char;
+        use core::sync::atomic::{AtomicPtr, AtomicUsize};
+        static AVAILABLE: AtomicBool = AtomicBool::new(false);
+        struct Environment([*const c_char; 3]);
+        // SAFETY: every entry is an immutable process-lived C string.
+        unsafe impl Sync for Environment {}
+        static ENVIRONMENT: Environment = Environment([
+            c"mimalloc_arena_purge_mult=invalid".as_ptr(),
+            c"mimalloc_purge_decommits=invalid".as_ptr(), core::ptr::null(),
+        ]);
+        unsafe fn environment() -> *const *const c_char {
+            if AVAILABLE.load(Ordering::Acquire) { ENVIRONMENT.0.as_ptr() }
+            else { core::ptr::null() }
+        }
+        unsafe extern "C" fn default_output(_: *const c_char) {}
+        struct Capture {
+            backing: &'static ProcessArenaBacking,
+            arena: AtomicPtr<Arena>, index: AtomicUsize, calls: AtomicUsize,
+            nested: std::sync::Mutex<std::vec::Vec<super::super::SourceInitializationClaimCustody>>,
+        }
+        unsafe extern "C" fn output(message: *const c_char, argument: *mut c_void) {
+            // SAFETY: the pinned capture and original actual backing outlive
+            // registration and all synchronous deliveries in this fixture.
+            let capture = unsafe { &*argument.cast::<Capture>() };
+            let body = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            let multiplier = body.windows(b"mimalloc_arena_purge_mult".len())
+                .any(|part| part == b"mimalloc_arena_purge_mult");
+            let decommits = body.windows(b"mimalloc_purge_decommits".len())
+                .any(|part| part == b"mimalloc_purge_decommits");
+            if !multiplier && !decommits { return; }
+            let arena = capture.arena.load(Ordering::Acquire);
+            let index = capture.index.load(Ordering::Acquire);
+            {
+                // The original claim remains unavailable throughout both
+                // lazy getters. Commitment is observed before the scheduling
+                // getter and after the immediate-purge bitmap transition.
+                let view = unsafe { ArenaView::from_ptr(arena) }.unwrap();
+                assert_eq!(unsafe { view.slices_free() }.unwrap().is_clear_range(index, 2), Some(true));
+                let committed = unsafe { view.slices_committed() }.unwrap();
+                if multiplier { assert_eq!(committed.is_clear_range(index, 2), Some(true)); }
+                if decommits { assert_eq!(committed.is_set_range(index, 2), Some(true)); }
+            }
+            let id = unsafe { ArenaId::from_arena(arena) }.unwrap();
+            let claim = unsafe { capture.backing.try_find_free(search(id), 1, ARENA_SLICE_SIZE, false) }
+                .expect("the warning callback allocates beside the unreleased source span");
+            assert!(claim.slice_index() < index || claim.slice_index() >= index + 2);
+            // The actual backing is pinned through the whole test. Defer the
+            // nested inverse until the outer release ends, so its own purge
+            // cannot initialize the descriptor under observation here.
+            let custody = unsafe { claim.into_source_initialization_custody() }
+                .unwrap_or_else(|_| panic!("the nested source claim has its actual issuer"));
+            capture.nested.lock().unwrap().push(custody);
+            capture.calls.fetch_add(1, Ordering::AcqRel);
+        }
+        let _fault = fault::install(fault::Plan::disabled());
+        for (delay, phased) in [(0, false), (10, false), (0, true), (10, true)] {
+            AVAILABLE.store(false, Ordering::Release);
+            let issuer = backing();
+            let output_owner = Box::leak(Box::new(OutputOwner::new(default_output)));
+            // Unavailable startup leaves the descriptors source-lazy. Only
+            // the release read makes the invalid environment available.
+            unsafe {
+                output_owner.initialize_source_options(environment);
+                output_owner.option_set(SourceOption::ShowErrors, 1).unwrap();
+                output_owner.option_set(SourceOption::PurgeDelay, delay).unwrap();
+            }
+            let policy = Box::leak(Box::new(unsafe { VmPolicy::from_process_options(output_owner) }));
+            policy.finish_preloading();
+            let process = VmProcess::new_main(policy, MainSubprocess::test_static_owner());
+            let id = install(issuer, process, MapAccess::Reserved);
+            let claim = unsafe { issuer.try_find_free(search(id), 2, ARENA_SLICE_SIZE, false) }.unwrap();
+            let index = claim.slice_index();
+            let custody = unsafe { claim.into_source_initialization_custody() }
+                .unwrap_or_else(|_| panic!("the original source claim has its actual issuer"));
+            let capture = Box::leak(Box::new(Capture {
+                backing: issuer, arena: AtomicPtr::new(id.as_ptr()), index: AtomicUsize::new(index),
+                calls: AtomicUsize::new(0), nested: std::sync::Mutex::new(std::vec::Vec::new()),
+            }));
+            unsafe { output_owner.register_output(Some(output), core::ptr::from_ref(capture).cast_mut().cast()); }
+            AVAILABLE.store(true, Ordering::Release);
+            let before = process.subprocess().vm_statistics().snapshot();
+            if phased {
+                let prepared = issuer.prepare_source_initialization_release(custody)
+                    .unwrap_or_else(|_| panic!("the original issuer prepares its release"));
+                // SAFETY: this test retains the exact pinned issuer and VM
+                // owner across all phases; short bitmap projections ended.
+                let decision = unsafe { prepared.read_purge_delay() };
+                let step = issuer.prepare_purge_or_return(decision)
+                    .unwrap_or_else(|_| panic!("the same issuer prepares source purge"));
+                let outcome = match step {
+                    SourceInitializationReleaseStep::Complete(outcome) => outcome,
+                    SourceInitializationReleaseStep::Purge(task) => {
+                        // SAFETY: the same retained issuer excludes teardown,
+                        // and no arena/bitmap projection survives callbacks.
+                        match unsafe { task.run() } {
+                            SourceInitializationPurgeResult::Complete(done) => issuer.finish_release(done),
+                            SourceInitializationPurgeResult::RetainedAfterProgress(error) => {
+                                panic!("valid source VM projection: {error:?}")
+                            }
+                        }
+                    }
+                };
+                assert!(matches!(outcome, SourceInitializationReleaseOutcome::Released));
+            } else {
+                let claim = issuer.restore_source_initialization_claim(custody)
+                    .unwrap_or_else(|_| panic!("the original retained issuer restores its claim"));
+                assert!(claim.release());
+            }
+            let after = process.subprocess().vm_statistics().snapshot();
+            assert_eq!(capture.calls.load(Ordering::Acquire), if delay == 0 { 2 } else { 1 });
+            assert_eq!(after.purge_calls - before.purge_calls, i64::from(delay == 0));
+            {
+                let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+                assert_eq!(unsafe { view.slices_free() }.unwrap().is_set_range(index, 2), Some(true));
+                assert_eq!(unsafe { view.slices_committed() }.unwrap().is_clear_range(index, 2), Some(true));
+                if delay > 0 {
+                    assert_eq!(unsafe { view.slices_purge() }.unwrap().is_set_range(index, 2), Some(true));
+                }
+            }
+            // No callback can retain a test observation beyond this owner.
+            unsafe { output_owner.register_output(None, core::ptr::null_mut()); }
+            for custody in capture.nested.lock().unwrap().drain(..) {
+                let claim = issuer.restore_source_initialization_claim(custody)
+                    .unwrap_or_else(|_| panic!("the nested original span returns to its issuer"));
+                assert!(claim.release());
+            }
+            assert!(unsafe { issuer.destroy_all(&mut []) }.unwrap().is_released());
+        }
+        AVAILABLE.store(false, Ordering::Release);
+    }
+
+    #[test]
+    fn source_initialization_release_wrong_issuer_preserves_retry_only_before_progress() {
+        use super::super::SourceInitializationClaimCustodyError as CustodyError;
+        let _fault = fault::install(fault::Plan::disabled());
+        let issuer = backing();
+        let foreign = backing();
+        let process = purge_process(0, true);
+        let id = install(issuer, process, MapAccess::Reserved);
+        let foreign_id = install(foreign, self::process(), MapAccess::Reserved);
+        let claim = unsafe { issuer.try_find_free(search(id), 2, ARENA_SLICE_SIZE, false) }.unwrap();
+        let index = claim.slice_index();
+        // SAFETY: both actual issuers and VM pairs remain pinned until their
+        // final quiescent teardown; no token escapes this retained scope.
+        let custody = unsafe { claim.into_source_initialization_custody() }
+            .unwrap_or_else(|_| panic!("original process claim"));
+        let custody = match foreign.prepare_source_initialization_release(custody) {
+            Err((CustodyError::WrongBacking, custody)) => custody,
+            _ => panic!("foreign preparation must preserve original custody"),
+        };
+        let prepared = issuer.prepare_source_initialization_release(custody)
+            .unwrap_or_else(|_| panic!("original issuer remains valid"));
+        // SAFETY: short issuer projection ended; actual issuer is retained.
+        let decision = unsafe { prepared.read_purge_delay() };
+        let custody = match foreign.prepare_purge_or_return(decision) {
+            Err((SourceInitializationReleaseError::Custody(CustodyError::WrongBacking), custody)) => custody,
+            _ => panic!("foreign pre-progress stage must return original custody"),
+        };
+        let before = process.subprocess().vm_statistics().snapshot();
+        let prepared = issuer.prepare_source_initialization_release(custody)
+            .unwrap_or_else(|_| panic!("unchanged original custody remains retryable"));
+        // SAFETY: same actual pinned issuer remains independently retained.
+        let decision = unsafe { prepared.read_purge_delay() };
+        let task = match issuer.prepare_purge_or_return(decision) {
+            Ok(SourceInitializationReleaseStep::Purge(task)) => task,
+            _ => panic!("immediate source purge must own its VM task"),
+        };
+        // SAFETY: no short arena/bitmap projection or allocator lock survives.
+        let completed = match unsafe { task.run() } {
+            SourceInitializationPurgeResult::Complete(completed) => completed,
+            _ => panic!("valid original VM task completes"),
+        };
+        let after_vm = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(after_vm.purge_calls, before.purge_calls + 1);
+        assert!(matches!(foreign.finish_release(completed),
+            SourceInitializationReleaseOutcome::RetainedAfterProgress(
+                SourceInitializationReleaseError::Custody(CustodyError::WrongBacking))));
+        assert_eq!(process.subprocess().vm_statistics().snapshot(), after_vm);
+        {
+            let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+            assert_eq!(unsafe { view.slices_free() }.unwrap().is_clear_range(index, 2), Some(true));
+            let view = unsafe { ArenaView::from_ptr(foreign_id.as_ptr()) }.unwrap();
+            assert_eq!(unsafe { view.slices_free() }.unwrap().is_set_range(index, 2), Some(true));
+        }
+        // Terminal retention leaves the original owner to reclaim the whole
+        // arena at quiescent teardown, without replaying the VM/statistics work.
+        assert!(unsafe { issuer.destroy_all(&mut []) }.unwrap().is_released());
+        assert!(unsafe { foreign.destroy_all(&mut []) }.unwrap().is_released());
+    }
+
+    #[test]
+    fn source_initialization_release_advisory_failure_returns_claim_once() {
+        let fault = fault::install(fault::Plan::disabled());
+        let issuer = backing();
+        let process = purge_process(0, true);
+        let id = install(issuer, process, MapAccess::Reserved);
+        let claim = unsafe { issuer.try_find_free(search(id), 2, ARENA_SLICE_SIZE, true) }.unwrap();
+        let index = claim.slice_index();
+        let address = claim.start();
+        // SAFETY: this fixture retains the original pinned issuer and mapping
+        // until phased release and the subsequent reallocation both complete.
+        let custody = unsafe { claim.into_source_initialization_custody() }
+            .unwrap_or_else(|_| panic!("original process claim"));
+        let prepared = issuer.prepare_source_initialization_release(custody)
+            .unwrap_or_else(|_| panic!("original issuer prepares release"));
+        let decision = unsafe { prepared.read_purge_delay() };
+        let task = match issuer.prepare_purge_or_return(decision) {
+            Ok(SourceInitializationReleaseStep::Purge(task)) => task,
+            _ => panic!("immediate source purge owns its VM task"),
+        };
+        let before = process.subprocess().vm_statistics().snapshot();
+        fault.set(fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM));
+        let completed = match unsafe { task.run() } {
+            SourceInitializationPurgeResult::Complete(done) => done,
+            _ => panic!("advisory failure still consumes the source purge"),
+        };
+        assert!(fault.observed() >= 1);
+        let after_vm = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(after_vm.purge_calls, before.purge_calls + 1);
+        assert!(matches!(issuer.finish_release(completed), SourceInitializationReleaseOutcome::Released));
+        assert_eq!(process.subprocess().vm_statistics().snapshot(), after_vm);
+        fault.set(fault::Plan::disabled());
+        let live = unsafe { issuer.try_find_free(search(id), 2, ARENA_SLICE_SIZE, true) }.unwrap();
+        assert_eq!(live.slice_index(), index);
+        assert_eq!(live.start(), address);
+        unsafe { live.start().write(0x7b) };
+        assert_eq!(unsafe { live.start().read() }, 0x7b);
+        assert!(live.release());
+        assert!(unsafe { issuer.destroy_all(&mut []) }.unwrap().is_released());
+    }
+
+    #[test]
     fn source_initialization_claim_custody_validation_refusal_preserves_original_span() {
         use super::super::SourceInitializationClaimCustodyError as Error;
         let _fault = fault::install(fault::Plan::disabled());
@@ -3302,7 +3552,10 @@ mod tests {
     #[test]
     fn external_callback_purge_uses_raw_span_and_tracks_all_true_and_mixed_recommit_bits() {
         let _fault = fault::install(fault::Plan::disabled());
-        for (committed_slices, needs_recommit) in [(2usize, false), (2, true), (1, false)] {
+        for (committed_slices, needs_recommit, phased) in [
+            (2usize, false, false), (2, true, false), (1, false, false),
+            (2, false, true), (2, true, true), (1, false, true),
+        ] {
             let process = purge_process(0, false);
             let backing = backing();
             let trace = Box::leak(Box::new(ExternalCallbackTrace::new()));
@@ -3320,7 +3573,26 @@ mod tests {
             trace.purge_needs_recommit.store(needs_recommit, Ordering::Release);
             trace.clear_observation();
             let before = process.subprocess().vm_statistics().snapshot();
-            assert!(claim.release());
+            if phased {
+                // SAFETY: this isolated fixture pins the original process and
+                // issuer until release completes; no projection crosses a callback.
+                let custody = unsafe { claim.into_source_initialization_custody() }
+                    .unwrap_or_else(|_| panic!("original external process claim"));
+                let prepared = backing.prepare_source_initialization_release(custody)
+                    .unwrap_or_else(|_| panic!("original issuer prepares release"));
+                let decision = unsafe { prepared.read_purge_delay() };
+                let task = match backing.prepare_purge_or_return(decision) {
+                    Ok(SourceInitializationReleaseStep::Purge(task)) => task,
+                    _ => panic!("immediate external purge owns its task"),
+                };
+                let completed = match unsafe { task.run() } {
+                    SourceInitializationPurgeResult::Complete(done) => done,
+                    _ => panic!("the callback response consumes one purge"),
+                };
+                assert!(matches!(backing.finish_release(completed), SourceInitializationReleaseOutcome::Released));
+            } else {
+                assert!(claim.release());
+            }
             let after = process.subprocess().vm_statistics().snapshot();
             assert_eq!(trace.purges.load(Ordering::Acquire), 1);
             assert!(trace.purge_zero_is_null.load(Ordering::Acquire));

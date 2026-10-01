@@ -7,7 +7,8 @@
 //! does not route ordinary OS backing through an external callback policy.
 
 use super::{ArenaBacking, OwnedArenaAllocation, ProcessArenaBacking};
-use crate::arena::{ArenaView, arena_slice_range_is_usable};
+use crate::arena::{ArenaView, arena_slice_range_is_usable,
+    SourceInitializationClaimCustody, SourceInitializationClaimCustodyError};
 use crate::atomic::{AtomicGuardWord, i64_cas_strong_acq_rel, i64_load_relaxed,
     i64_store_release, try_atomic_guard};
 use crate::config::ARENA_SLICE_SIZE;
@@ -25,6 +26,220 @@ pub(super) static PURGE_GUARD: AtomicGuardWord = AtomicGuardWord::new(0);
 /// `arena_purge_mult` descriptors at this read point.
 pub(crate) fn arena_purge_delay(policy: &crate::os::VmPolicy) -> i64 {
     purge_delay(policy.purge_delay_milliseconds(), policy.arena_purge_multiplier())
+}
+
+/// Original source initialization custody with a non-owning VM projection.
+/// This does not retain the issuer: one actual admitted owner must remain
+/// continuously live until release or explicit terminal retention completes.
+/// No arena, bitmap, child image or backing reference escapes preparation.
+#[must_use]
+pub(crate) struct PreparedSourceInitializationRelease {
+    custody: SourceInitializationClaimCustody,
+    owner: OwnedArenaAllocation,
+}
+
+#[must_use]
+pub(crate) struct SourceInitializationReleaseDecision {
+    prepared: PreparedSourceInitializationRelease,
+    delay: i64,
+}
+
+/// A refusal before progress returns original custody separately. Once source
+/// commitment or purge scheduling has progressed, retrying that custody would
+/// duplicate VM/statistics work; the outcome instead retains the span.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SourceInitializationReleaseError {
+    Custody(SourceInitializationClaimCustodyError),
+    BitmapInvariant,
+    VmProjection,
+}
+
+#[must_use]
+pub(crate) enum SourceInitializationReleaseOutcome {
+    Released,
+    RetainedAfterProgress(SourceInitializationReleaseError),
+}
+
+#[must_use]
+pub(crate) enum SourceInitializationReleaseStep {
+    Complete(SourceInitializationReleaseOutcome),
+    Purge(SourceInitializationPurgeTask),
+}
+
+/// A source committed-bitmap transition has already occurred. The task owns
+/// only the original custody and a non-owning published VM projection, never
+/// a borrowed image or bitmap. Dropping it does not free or undo that span.
+#[must_use]
+pub(crate) struct SourceInitializationPurgeTask {
+    prepared: PreparedSourceInitializationRelease,
+    range: PurgeRange,
+}
+
+#[must_use]
+pub(crate) struct CompletedSourceInitializationPurge {
+    custody: SourceInitializationClaimCustody,
+    all_committed: bool,
+    needs_recommit: bool,
+}
+
+#[must_use]
+pub(crate) enum SourceInitializationPurgeResult {
+    Complete(CompletedSourceInitializationPurge),
+    RetainedAfterProgress(SourceInitializationReleaseError),
+}
+
+impl PreparedSourceInitializationRelease {
+    /// Reads the two lazy source descriptors before pinned/preloading gates.
+    ///
+    /// # Safety
+    /// The same actual admitted owner that issued the original claim remains
+    /// retained through this call and every subsequent phase. Its selected
+    /// Heap and current member exclude self-teardown. No backing, arena,
+    /// bitmap, child image projection or allocator lock survives this call:
+    /// descriptor warnings can synchronously reenter the allocator.
+    pub(crate) unsafe fn read_purge_delay(self) -> SourceInitializationReleaseDecision {
+        let delay = arena_purge_delay(self.owner.process().policy());
+        SourceInitializationReleaseDecision { prepared: self, delay }
+    }
+}
+
+impl SourceInitializationPurgeTask {
+    /// Performs the exact paired VM policy after the short bitmap projection.
+    ///
+    /// # Safety
+    /// The original actual admitted issuer and its mapping/VM pair remain
+    /// continuously retained; no short arena, child image, backing projection
+    /// or allocator lock survives entry. Warning and custom purge callbacks
+    /// may allocate. The original range is quiescent and remains claimed;
+    /// custody cannot escape the retained owner scope or be released twice.
+    pub(crate) unsafe fn run(self) -> SourceInitializationPurgeResult {
+        let Some(needs_recommit) = run_purge_vm(&self.prepared.owner, self.range) else {
+            self.prepared.custody.retain_terminal();
+            return SourceInitializationPurgeResult::RetainedAfterProgress(
+                SourceInitializationReleaseError::VmProjection);
+        };
+        SourceInitializationPurgeResult::Complete(CompletedSourceInitializationPurge {
+            custody: self.prepared.custody,
+            all_committed: self.range.all_committed, needs_recommit,
+        })
+    }
+}
+
+impl ProcessArenaBacking {
+    /// Validates original custody under a short projection, before dropping
+    /// an unlinked image. The value-owned publication projection carries no
+    /// destruction right and does not extend the actual issuer lifetime.
+    pub(crate) fn prepare_source_initialization_release(
+        &self, custody: SourceInitializationClaimCustody,
+    ) -> Result<PreparedSourceInitializationRelease,
+        (SourceInitializationClaimCustodyError, SourceInitializationClaimCustody)> {
+        if let Err(error) = self.validate_source_initialization_custody(&custody) {
+            return Err((error, custody));
+        }
+        // SAFETY: original issuer and publication were checked above; its
+        // independent actual admission excludes teardown and replacement.
+        let Some(owner) = (unsafe { self.allocation_for_arena(custody.arena.as_ref()) }) else {
+            return Err((SourceInitializationClaimCustodyError::MissingBackingOwner, custody));
+        };
+        Ok(PreparedSourceInitializationRelease { custody, owner })
+    }
+
+    /// Revalidates the same issuer after lazy reads, then follows source
+    /// scheduling order. No callback-producing policy read occurs here.
+    /// Errors before the first source mutation return original custody;
+    /// errors after progress consume it without rollback or retry.
+    pub(crate) fn prepare_purge_or_return(
+        &self, decision: SourceInitializationReleaseDecision,
+    ) -> Result<SourceInitializationReleaseStep,
+        (SourceInitializationReleaseError, SourceInitializationClaimCustody)> {
+        use SourceInitializationReleaseError as Error;
+        let SourceInitializationReleaseDecision { prepared, delay } = decision;
+        if let Err(error) = self.validate_source_initialization_custody(&prepared.custody) {
+            return Err((Error::Custody(error), prepared.custody));
+        }
+        // SAFETY: fresh original issuer validation precedes this projection.
+        let Some(view) = (unsafe { ArenaView::from_ptr(prepared.custody.arena.as_ptr()) }) else {
+            return Err((Error::BitmapInvariant, prepared.custody));
+        };
+        let memory = prepared.custody.memory.arena_memory().unwrap();
+        let start = memory.slice_index as usize;
+        let count = memory.slice_count as usize;
+        if view.arena().memid.is_pinned() || delay < 0 || prepared.owner.process().is_preloading() {
+            return Ok(SourceInitializationReleaseStep::Complete(
+                finish_source_free(&view, prepared.custody, start, count)));
+        }
+        if delay == 0 {
+            let Some(committed) = (unsafe { view.slices_committed() }) else {
+                return Err((Error::BitmapInvariant, prepared.custody));
+            };
+            // Crossing this atomic transition consumes retry authority even
+            // when every committed bit was already set.
+            let Some(transition) = committed.set_range(start, count) else {
+                return Ok(retain_source_release(prepared.custody, Error::BitmapInvariant));
+            };
+            let Some(range) = purge_range(&view, &prepared.owner, start, count, transition.already_set()) else {
+                return Ok(retain_source_release(prepared.custody, Error::VmProjection));
+            };
+            return Ok(SourceInitializationReleaseStep::Purge(SourceInitializationPurgeTask { prepared, range }));
+        }
+        let now = os::source_clock_now();
+        if let Some(expire) = now.checked_add(delay) {
+            let mut expected = 0;
+            if i64_cas_strong_acq_rel(&view.arena().purge_expire, &mut expected, expire) {
+                let mut global_expected = 0;
+                let _ = i64_cas_strong_acq_rel(&self.purge_expire, &mut global_expected, expire);
+            }
+            if unsafe { view.slices_purge() }.and_then(|purge| purge.set_range(start, count)).is_none() {
+                return Ok(retain_source_release(prepared.custody, Error::BitmapInvariant));
+            }
+        }
+        Ok(SourceInitializationReleaseStep::Complete(
+            finish_source_free(&view, prepared.custody, start, count)))
+    }
+
+    /// Finishes only the original issuer's already-purged span. VM statistics
+    /// and warnings have completed outside short projections. A refusal here
+    /// retains after progress; it cannot recreate original retry authority.
+    pub(crate) fn finish_release(
+        &self, completed: CompletedSourceInitializationPurge,
+    ) -> SourceInitializationReleaseOutcome {
+        use SourceInitializationReleaseError as Error;
+        if let Err(error) = self.validate_source_initialization_custody(&completed.custody) {
+            completed.custody.retain_terminal();
+            return SourceInitializationReleaseOutcome::RetainedAfterProgress(Error::Custody(error));
+        }
+        // SAFETY: exact issuing registry membership was freshly validated.
+        let Some(view) = (unsafe { ArenaView::from_ptr(completed.custody.arena.as_ptr()) }) else {
+            completed.custody.retain_terminal();
+            return SourceInitializationReleaseOutcome::RetainedAfterProgress(Error::BitmapInvariant);
+        };
+        let memory = completed.custody.memory.arena_memory().unwrap();
+        let start = memory.slice_index as usize;
+        let count = memory.slice_count as usize;
+        if completed.needs_recommit || !completed.all_committed {
+            if unsafe { view.slices_committed() }.and_then(|bits| bits.clear_range(start, count)).is_none() {
+                completed.custody.retain_terminal();
+                return SourceInitializationReleaseOutcome::RetainedAfterProgress(Error::BitmapInvariant);
+            }
+        }
+        finish_source_free(&view, completed.custody, start, count)
+    }
+}
+
+fn retain_source_release(custody: SourceInitializationClaimCustody,
+    error: SourceInitializationReleaseError) -> SourceInitializationReleaseStep {
+    custody.retain_terminal();
+    SourceInitializationReleaseStep::Complete(SourceInitializationReleaseOutcome::RetainedAfterProgress(error))
+}
+
+fn finish_source_free(view: &ArenaView<'_>, custody: SourceInitializationClaimCustody,
+    start: usize, count: usize) -> SourceInitializationReleaseOutcome {
+    if unsafe { view.slices_free() }.and_then(|free| free.set_range(start, count)) == Some(true) {
+        SourceInitializationReleaseOutcome::Released
+    } else {
+        custody.retain_terminal();
+        SourceInitializationReleaseOutcome::RetainedAfterProgress(SourceInitializationReleaseError::BitmapInvariant)
+    }
 }
 
 fn purge_delay(delay: i64, multiplier: i64) -> i64 {
@@ -430,11 +645,33 @@ fn purge_claimed(view: &ArenaView<'_>, owner: &OwnedArenaAllocation,
     start: usize, count: usize) -> Option<bool> {
     let committed = unsafe { view.slices_committed() }?;
     let transition = committed.set_range(start, count)?;
-    let all_committed = transition.already_set() == count;
+    let range = purge_range(view, owner, start, count, transition.already_set())?;
+    let needs_recommit = run_purge_vm(owner, range)?;
+    if needs_recommit || !range.all_committed { committed.clear_range(start, count)?; }
+    Some(needs_recommit)
+}
+
+#[derive(Clone, Copy)]
+struct PurgeRange {
+    address: *mut u8,
+    offset: usize,
+    size: usize,
+    stat_size: usize,
+    all_committed: bool,
+}
+
+fn purge_range(view: &ArenaView<'_>, owner: &OwnedArenaAllocation,
+    start: usize, count: usize, already_set: usize) -> Option<PurgeRange> {
     let address = view.slice_start(start)?;
     let offset = (address as usize).checked_sub(owner.allocation.base().ok()? as usize)?;
-    let size = count.checked_mul(ARENA_SLICE_SIZE)?;
-    let stat_size = transition.already_set().checked_mul(ARENA_SLICE_SIZE)?;
+    Some(PurgeRange { address, offset,
+        size: count.checked_mul(ARENA_SLICE_SIZE)?,
+        stat_size: already_set.checked_mul(ARENA_SLICE_SIZE)?,
+        all_committed: already_set == count })
+}
+
+fn run_purge_vm(owner: &OwnedArenaAllocation, range: PurgeRange) -> Option<bool> {
+    let PurgeRange { address, offset, size, stat_size, all_committed } = range;
     let needs_recommit = if owner.has_external_callback() {
         // Pinned src/os.c calls a custom callback before every ordinary
         // no-callback choice. Its raw arena span has already been formed from
@@ -457,6 +694,5 @@ fn purge_claimed(view: &ArenaView<'_>, owner: &OwnedArenaAllocation,
         owner.allocation.regular()?.purge_for_process(owner.process(), offset, size,
             all_committed, stat_size).unwrap_or(false)
     };
-    if needs_recommit || !all_committed { committed.clear_range(start, count)?; }
     Some(needs_recommit)
 }
