@@ -135,7 +135,7 @@
     },
     "differential:statistics-initial-attachment": {
       "command": ["python3", "compat/allocator/x86_64_m7_statistics_worker_transfer.py", "--offline", "--initial-attachment"],
-      "scope": "Pinned C and native Rust compare a fresh worker's first 64-byte, 32768-byte, and 589824-byte plain allocation under MI_STAT=0, 1, 2 and MI_DEBUG=1 with MI_STAT=2. Each profile retains owner output and untouched, allocated, exited, freed, and collected process images, including metadata-Theap, VM, page, bin, count, and requested-size accounting. OS-aligned first allocation remains a separate placement-sensitive diagnostic."
+      "scope": "Pinned C and native Rust compare a fresh worker's first 64-byte, 32768-byte, and 589824-byte plain allocation and one OS-aligned small allocation under MI_STAT=0, 1, 2 and MI_DEBUG=1 with MI_STAT=2. All sixteen cases retain owner output and untouched, allocated, exited, freed, and collected process images, including metadata-Theap, VM, page, bin, count, and requested-size accounting. OS-aligned cases authenticate each side's address-dependent PageMap submap reservation and commit charge while preserving raw VM images; the debug committed-byte branch is selected by its exact source profile."
     },
     "differential:statistics-level-one-output-merge": {
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--statistics-level-one-output-merge-differential"],
@@ -267,7 +267,7 @@
     },
     "unit:private-context-arena-print": {
       "command": ["python3", "compat/allocator/x86_64_m7_gate.py", "--offline", "--private-context-arena-print"],
-      "scope": "Independent private contexts retain their own arena populations and callbacks through reentrant allocation and foreign-thread refusal. Native global diagnostics preserve their separate output and arena identity. This Rust integration test covers context ownership, not pinned-C diagnostic formatting equivalence."
+      "scope": "Default and MI_DEBUG=1 private contexts retain their own arena populations and callbacks through reentrant allocation and foreign-thread refusal. Native global diagnostics preserve their separate output and arena identity. This Rust integration test covers context ownership, not pinned-C diagnostic formatting equivalence."
     },
     "differential:arena-print": {
       "command": ["python3", "compat/allocator/x86_64_m7_arena_print.py", "--offline"],

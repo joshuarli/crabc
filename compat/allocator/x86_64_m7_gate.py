@@ -2672,10 +2672,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_xmalloc_profile_differential(arguments.offline, replay=arguments.xmalloc_profile_replay)
         return 0
     if arguments.private_context_arena_print:
-        execution = rust_trace(
-            "native_test_context_arena_print", "private-context arena diagnostics",
-            integration_test=True, rust_features=("test-adapter",),
-        )
+        execution = {
+            profile: rust_trace(
+                "native_test_context_arena_print", f"{profile} private-context arena diagnostics",
+                integration_test=True, rust_features=features,
+            )
+            for profile, features in (
+                ("default", ("test-adapter",)),
+                ("debug", ("test-adapter", "mi-debug")),
+            )
+        }
         ARTIFACTS.mkdir(parents=True, exist_ok=True)
         harness.write_json(ARTIFACTS / "private-context-arena-print.json", execution)
         print("Private-context arena diagnostic integration: passed")
