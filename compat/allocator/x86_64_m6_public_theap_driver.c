@@ -215,6 +215,11 @@ static bool run_case(const char* name, mi_theap_t* parent_default) {
   mi_heap_t* main_heap = mi_heap_main();
   mi_theap_t* base = mi_theap_get_default();
   if (main_heap == NULL || base == NULL) return false;
+#if MI_GUARDED
+  /* Ordinary visitation uses a canonical ordinary client as its marker.
+     Explicit sampler configuration below exercises guarded clients. */
+  mi_theap_guarded_set_sample_rate(base, 0, 0);
+#endif
   printf("%s.base=%d,%d,%d\n", name, mi_heap_theap(main_heap) == base,
          parent_default == NULL || base != parent_default,
          parent_default != NULL && base == parent_default);
@@ -223,6 +228,9 @@ static bool run_case(const char* name, mi_theap_t* parent_default) {
   if (heap == NULL) return false;
   mi_theap_t* other = mi_heap_theap(heap);
   if (other == NULL) return false;
+#if MI_GUARDED
+  mi_theap_guarded_set_sample_rate(other, 0, 0);
+#endif
 #ifdef CRABC_M6_SOURCE_INTERNAL
   fprintf(stderr, "source.%s=%d,%d,%d\n", name,
           _mi_theap_heap(base) == main_heap,
