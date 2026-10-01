@@ -6243,6 +6243,14 @@ pub(crate) struct Theap {
     // internal alignment gap; the page queues retain their source offset.
     #[cfg(target_arch = "x86_64")]
     main_heap_lifecycle: crate::subproc::main_heaps::MainHeapTheapLifecycle,
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    guarded_size_min: usize,
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    guarded_size_max: usize,
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    guarded_sample_rate: usize,
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    guarded_sample_count: usize,
     pages: [PageQueue; BIN_COUNT],
     memid: MemoryId,
     statistics: HeapTheapStatistics,
@@ -6295,6 +6303,14 @@ impl Theap {
             is_detached: true,
             #[cfg(target_arch = "x86_64")]
             main_heap_lifecycle: crate::subproc::main_heaps::MainHeapTheapLifecycle::empty(),
+            #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+            guarded_size_min: 0,
+            #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+            guarded_size_max: 0,
+            #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+            guarded_sample_rate: 0,
+            #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+            guarded_sample_count: 1,
             pages: EMPTY_PAGE_QUEUES,
             memid: MemoryId::static_empty(),
             statistics: HeapTheapStatistics::new(),
@@ -7206,6 +7222,101 @@ impl Theap {
             Some(unsafe { &mut *core::ptr::addr_of_mut!((*pointer.as_ptr()).random) })
         } else { None };
         operation(random)
+    }
+
+    /// Advances the source guarded sampling countdown without borrowing
+    /// unrelated page queues, links, or allocator ownership fields.
+    ///
+    /// # Safety
+    /// `pointer` retains the calling thread's live source image. The caller
+    /// excludes initialization, teardown, and overlapping accesses to its
+    /// guarded fields. The immutable source empty image has rate zero and
+    /// count one; that exact path performs no write. Every other image must
+    /// carry mutable provenance for its potentially updated countdown.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    pub(crate) unsafe fn guarded_sample_at(pointer: NonNull<Self>, size: usize) -> bool {
+        let raw = pointer.as_ptr();
+        // SAFETY: the caller supplies initialized, exclusively owned fields.
+        unsafe {
+            let count = core::ptr::addr_of!((*raw).guarded_sample_count).read().wrapping_sub(1);
+            if count != 0 {
+                core::ptr::addr_of_mut!((*raw).guarded_sample_count).write(count);
+                return false;
+            }
+            let rate = core::ptr::addr_of!((*raw).guarded_sample_rate).read();
+            if rate == 0 { return false; }
+            let sampled = core::ptr::addr_of!((*raw).guarded_size_min).read() <= size
+                && size <= core::ptr::addr_of!((*raw).guarded_size_max).read();
+            core::ptr::addr_of_mut!((*raw).guarded_sample_count).write(if sampled { rate } else { 1 });
+            sampled
+        }
+    }
+
+    /// Reads the source sampling rate, including a read-only empty image.
+    /// # Safety
+    /// The live image and initialized rate remain stable through this read;
+    /// no overlapping rate write, initialization, or teardown is allowed.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    pub(crate) unsafe fn guarded_sample_rate_at(pointer: NonNull<Self>) -> usize {
+        unsafe { core::ptr::addr_of!((*pointer.as_ptr()).guarded_sample_rate).read() }
+    }
+
+    /// Replaces only the rate for the source aligned-allocation suspension.
+    /// The countdown remains live and is never restored by this operation.
+    /// # Safety
+    /// The caller exclusively owns a writable live sampling-rate field and
+    /// excludes initialization and teardown. An immutable empty image must
+    /// never be passed for a write.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    pub(crate) unsafe fn guarded_replace_sample_rate_at(pointer: NonNull<Self>, rate: usize) -> usize {
+        unsafe { core::ptr::replace(core::ptr::addr_of_mut!((*pointer.as_ptr()).guarded_sample_rate), rate) }
+    }
+
+    /// Applies source rate/count initialization and its optional random seed.
+    /// # Safety
+    /// The caller exclusively owns the live writable guarded fields. When
+    /// `rate > 1 && seed == 0`, it additionally owns the initialized selected
+    /// Theap random field and excludes every overlapping random projection.
+    /// No initializer, teardown, or user callback overlaps these projections.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    pub(crate) unsafe fn guarded_set_sample_rate_at(pointer: NonNull<Self>, rate: usize, mut seed: usize) {
+        let raw = pointer.as_ptr();
+        unsafe {
+            core::ptr::addr_of_mut!((*raw).guarded_sample_rate).write(rate);
+            core::ptr::addr_of_mut!((*raw).guarded_sample_count).write(rate);
+            if rate > 1 {
+                if seed == 0 {
+                    // This projection ends before publishing sampling state;
+                    // the reviewed random core invokes no user callback.
+                    seed = (&mut *core::ptr::addr_of_mut!((*raw).random)).next() as usize;
+                }
+                core::ptr::addr_of_mut!((*raw).guarded_sample_count).write(seed % rate + 1);
+            }
+        }
+    }
+
+    /// Sets the source inclusive bounds, normalizing the upper bound upward.
+    /// # Safety
+    /// The caller exclusively owns both writable guarded bound fields in a
+    /// live image, excluding initialization, teardown, and sampler accesses.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    pub(crate) unsafe fn guarded_set_size_bound_at(pointer: NonNull<Self>, min: usize, max: usize) {
+        unsafe {
+            core::ptr::addr_of_mut!((*pointer.as_ptr()).guarded_size_min).write(min);
+            core::ptr::addr_of_mut!((*pointer.as_ptr()).guarded_size_max).write(max.max(min));
+        }
+    }
+
+    /// Records a completed guarded placement in the selected statistics tail.
+    /// # Safety
+    /// The caller retains the current-thread Theap and excludes statistics
+    /// merge, reset, initialization, and teardown during this projection.
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    pub(crate) unsafe fn record_guarded_allocation_statistics_at(
+        pointer: NonNull<Self>, internal_request: usize, original_request: usize,
+    ) {
+        unsafe { (&*core::ptr::addr_of!((*pointer.as_ptr()).statistics))
+            .malloc_guarded_allocated(internal_request, original_request); }
     }
 
     /// Draws only from an initialized current source random field. The
@@ -8199,9 +8310,9 @@ const _: [(); 8] = [(); align_of::<Page>()];
 const _: [(); 136] = [(); size_of::<TheapRandomImage>()];
 const _: [(); 4] = [(); align_of::<TheapRandomImage>()];
 #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
-const _: [(); 8104] = [(); size_of::<Theap>()];
+const _: [(); 8104 + if crate::config::GUARDED { 32 } else { 0 }] = [(); size_of::<Theap>()];
 #[cfg(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3")))]
-const _: [(); 8112] = [(); size_of::<Theap>()];
+const _: [(); 8112 + if crate::config::GUARDED { 32 } else { 0 }] = [(); size_of::<Theap>()];
 const _: [(); 8] = [(); align_of::<Theap>()];
 #[cfg(not(any(feature = "mi-debug-1", all(target_arch = "x86_64", feature = "mi-secure-3"))))]
 const _: [(); 129] = [(); PAGES_DIRECT];
@@ -8228,6 +8339,42 @@ mod tests {
     }
 
     #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    #[test]
+    fn guarded_sampler_preserves_source_bounds_countdown_and_rate_suspension() {
+        let mut image = Theap::empty();
+        let pointer = NonNull::from(&mut image);
+        // SAFETY: the writable image remains exclusively owned and live;
+        // explicit nonzero seeds avoid any uninitialized random projection.
+        unsafe {
+            assert!(!Theap::guarded_sample_at(pointer, 80));
+            assert_eq!(image.guarded_sample_count, 1);
+            Theap::guarded_set_size_bound_at(pointer, 80, 64);
+            Theap::guarded_set_sample_rate_at(pointer, 3, 1);
+            assert!(!Theap::guarded_sample_at(pointer, 80));
+            assert!(Theap::guarded_sample_at(pointer, 80));
+            assert_eq!(image.guarded_sample_count, 3);
+            assert!(!Theap::guarded_sample_at(pointer, 79));
+            assert!(!Theap::guarded_sample_at(pointer, 79));
+            assert!(!Theap::guarded_sample_at(pointer, 79));
+            assert_eq!(image.guarded_sample_count, 1);
+            assert!(Theap::guarded_sample_at(pointer, 80));
+            assert_eq!(Theap::guarded_replace_sample_rate_at(pointer, 0), 3);
+            assert!(!Theap::guarded_sample_at(pointer, 80));
+            assert_eq!(image.guarded_sample_count, 2);
+            assert_eq!(Theap::guarded_replace_sample_rate_at(pointer, 3), 0);
+            assert!(!Theap::guarded_sample_at(pointer, 80));
+            assert!(Theap::guarded_sample_at(pointer, 80));
+            Theap::guarded_set_sample_rate_at(pointer, 0, 1);
+            assert!(!Theap::guarded_sample_at(pointer, 80));
+            assert_eq!(image.guarded_sample_count, usize::MAX);
+        }
+        assert_eq!((image.guarded_size_min, image.guarded_size_max), (80, 80));
+        std::println!("source guarded sampler PASS size={} align={} guarded={} pages={}",
+            core::mem::size_of::<Theap>(), core::mem::align_of::<Theap>(),
+            core::mem::offset_of!(Theap, guarded_size_min), core::mem::offset_of!(Theap, pages));
+    }
+
     #[test]
     fn main_heap_lifecycle_occupies_initialized_internal_alignment_gap() {
         use crate::subproc::main_heaps::{MainHeapTheapLifecycle, MainHeapTheapEngineState, MainHeapTheapMetadataOwnership};
