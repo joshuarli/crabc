@@ -815,6 +815,8 @@ pub(crate) enum MainStaticTheapError {
     NotFirstTicket,
     MainStaticTld(MainStaticTldError),
     TheapInit(TheapMainStaticInitError),
+    #[cfg(target_arch = "x86_64")]
+    BootstrapOutput(crate::process_init::BootstrapOutputAdmissionError),
     /// A later-thread source Theap remains linked to the process-static main
     /// Heap.  Main-image retirement would leave that live list member with a
     /// dangling heap pointer, so this is a non-mutating refusal.
@@ -979,6 +981,39 @@ impl MainStaticTheapAttachment {
         Ok(attachment)
     }
 
+    /// Initializes the selected initial Theap from the winning startup output.
+    /// Source options and entropy warnings run outside all image projections;
+    /// guarded sample and size getters run after cookie creation and before
+    /// Heap publication, with the actual static TLD and registration retained.
+    ///
+    /// # Safety
+    /// The caller retains the actual foundation, selector, original process
+    /// and winning output scope through this call. No allocator or image
+    /// projection overlaps a getter or warning callback. The returned owner
+    /// retains the original process policy for later generic administration.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn begin_after_heap_foundation_with_bootstrap_output(
+        foundation: MainStaticHeapFoundation,
+        selection: MainStaticBootstrapSelection,
+        process: VmProcess<'static>,
+        output: &crate::process_init::ScopedBootstrapOutput<'_>,
+    ) -> Result<Self, MainStaticTheapError> {
+        if !output.matches_process(&process) || !output.matches_subprocess(foundation.subprocess()) {
+            return Err(MainStaticTheapError::BootstrapOutput(
+                crate::process_init::BootstrapOutputAdmissionError::Invalid));
+        }
+        let mut attachment = unsafe {
+            Self::begin_after_heap_foundation_with_numa_source_impl(foundation, selection,
+                move |_| {
+                    let node = process.current_numa_node();
+                    debug_assert!(node < i32::MAX as usize);
+                    node as i32
+                }, Some(output), #[cfg(test)] None)
+        }?;
+        attachment.generic_collect_policy = Some(process.policy());
+        Ok(attachment)
+    }
+
     /// Shares the selected static attachment with a synchronous private NUMA
     /// source. It carries the source into `MainSubprocess` unchanged so that
     /// static `MemoryId` formation precedes the observation; it never stores
@@ -995,6 +1030,8 @@ impl MainStaticTheapAttachment {
                 foundation,
                 selection,
                 numa_node_source,
+                #[cfg(target_arch = "x86_64")]
+                None,
                 #[cfg(test)]
                 None,
             )
@@ -1021,6 +1058,8 @@ impl MainStaticTheapAttachment {
                 foundation,
                 selection,
                 numa_node_source,
+                #[cfg(target_arch = "x86_64")]
+                None,
                 Some(trace),
             )
         }
@@ -1031,6 +1070,7 @@ impl MainStaticTheapAttachment {
         foundation: MainStaticHeapFoundation,
         mut selection: MainStaticBootstrapSelection,
         numa_node_source: impl FnOnce(MemoryId) -> i32,
+        #[cfg(target_arch = "x86_64")] output: Option<&crate::process_init::ScopedBootstrapOutput<'_>>,
         #[cfg(test)] mut trace: Option<&mut StaticFirstTldCreateTrace>,
     ) -> Result<Self, MainStaticTheapError> {
         if !foundation.matches_selection(&selection) {
@@ -1099,32 +1139,114 @@ impl MainStaticTheapAttachment {
             tld.current_mut().test_inject_busy_theaps_lock();
         }
 
-        // SAFETY: the static state is THREAD_INITIALIZING, the Heap foundation
-        // was initialized in its final slot, and this function has not exposed
-        // a TLD/Theap capability or TLS root. The owner fields have distinct,
-        // independently cache-aligned final static addresses.
-        let (heap, theap) = unsafe { storage.images_mut() };
-        let theap_memid = MemoryId::static_allocation(
-            core::ptr::from_mut(theap).cast(),
-            size_of::<Theap>(),
-        );
-        if !theap.set_main_static_memid(theap_memid) {
-            storage.mark_poisoned();
-            return Err(MainStaticTheapError::TheapInit(
-                TheapMainStaticInitError::InvalidInput,
-            ));
+        #[cfg(target_arch = "x86_64")]
+        let selected = output.is_some();
+        #[cfg(not(target_arch = "x86_64"))]
+        let selected = false;
+        #[cfg(target_arch = "x86_64")]
+        if let Some(output) = output {
+            let result = (|| {
+                let heap = unsafe { NonNull::new_unchecked(storage.heap.image.get()) };
+                let theap = unsafe { NonNull::new_unchecked(storage.theap.image.get()) };
+                let tld_pointer = tld.source_initialization_pointer();
+                // SAFETY: this original static owner is still exclusive and
+                // unpublished. The short provenance write ends before any
+                // prepared phase or callback exists.
+                if !unsafe { (&mut *theap.as_ptr()).set_main_static_memid(
+                    MemoryId::static_allocation(theap.cast(), size_of::<Theap>())) } {
+                    return Err(MainStaticTheapError::TheapInit(TheapMainStaticInitError::InvalidInput));
+                }
+                let phase = unsafe { Theap::prepare_initialization_at(theap, heap, tld_pointer,
+                    crate::types::TheapInitializationKind::ProcessStatic) }
+                    .map_err(MainStaticTheapError::TheapInit)?;
+                let options = unsafe { crate::types::SourceTheapOptions::capture_from_output(
+                    output.output().map_err(MainStaticTheapError::BootstrapOutput)?) };
+                if !output.matches_subprocess(subprocess) {
+                    return Err(MainStaticTheapError::BootstrapOutput(
+                        crate::process_init::BootstrapOutputAdmissionError::Invalid));
+                }
+                let branch = match unsafe { phase.apply_source_options_and_attach_with_failure_owner(options) } {
+                    Ok(branch) => branch,
+                    Err(failure) => {
+                        let error = failure.error();
+                        if let Ok(unattached) = failure.into_unattached() {
+                            // Reset only the actual unattached Theap; its TLD
+                            // mutex may still be held and cannot be replaced.
+                            unsafe { unattached.reset_unattached(); }
+                        }
+                        return Err(MainStaticTheapError::TheapInit(error));
+                    }
+                };
+                let linked = match branch {
+                    crate::types::TheapRandomInitialization::SplitComplete(linked) => linked,
+                    crate::types::TheapRandomInitialization::FirstHead(first) => {
+                        let prepared = crate::random::PreparedRandomInitialization::prepare_normal();
+                        let material = unsafe { output.deliver_prepared_random_warning(prepared) }
+                            .map_err(MainStaticTheapError::BootstrapOutput)?;
+                        unsafe { first.finish_random_initialization(material) }
+                    }
+                };
+                #[cfg(feature = "mi-guarded")]
+                let ready = {
+                    let sample = unsafe { crate::types::GuardedSampleOptions::capture_from_output(
+                        output.output().map_err(MainStaticTheapError::BootstrapOutput)?) };
+                    if !output.matches_subprocess(subprocess) {
+                        return Err(MainStaticTheapError::BootstrapOutput(
+                            crate::process_init::BootstrapOutputAdmissionError::Invalid));
+                    }
+                    let sampled = unsafe { linked.apply_guarded_sample_options(sample) };
+                    let sizes = unsafe { crate::types::GuardedSizeOptions::capture_from_output(
+                        output.output().map_err(MainStaticTheapError::BootstrapOutput)?) };
+                    if !output.matches_subprocess(subprocess) {
+                        return Err(MainStaticTheapError::BootstrapOutput(
+                            crate::process_init::BootstrapOutputAdmissionError::Invalid));
+                    }
+                    unsafe { sampled.apply_guarded_size_options(sizes) }
+                };
+                #[cfg(not(feature = "mi-guarded"))]
+                let ready = linked.finish_without_guarded_options();
+                if !output.matches_subprocess(subprocess) {
+                    return Err(MainStaticTheapError::BootstrapOutput(
+                        crate::process_init::BootstrapOutputAdmissionError::Invalid));
+                }
+                unsafe { ready.publish_heap() }.map_err(MainStaticTheapError::TheapInit)?;
+                Ok(())
+            })();
+            if let Err(error) = result {
+                // This owner retains the registered TLD and any linked prefix;
+                // no failed callback or partial publication permits retry.
+                storage.mark_poisoned();
+                return Err(error);
+            }
         }
-        if let Err(error) = theap.initialize_main_static(heap, tld.current_mut()) {
-            // Initialization has already created the source-static TLD and
-            // live registration, but has no returned attachment capability
-            // that can safely tear either down. A busy fresh list lock, a
-            // post-mutation unlock error, or a later heap-list error requires
-            // invalid concurrency/kernel failure outside the source contract.
-            // This is terminal initialization-invalid-owner state: leave the
-            // TLD/static storage and live count retained, do not invent
-            // rollback, and reject every retry.
-            storage.mark_poisoned();
-            return Err(MainStaticTheapError::TheapInit(error));
+        if !selected {
+            // SAFETY: the static state is THREAD_INITIALIZING, the Heap foundation
+            // was initialized in its final slot, and this function has not exposed
+            // a TLD/Theap capability or TLS root. The owner fields have distinct,
+            // independently cache-aligned final static addresses.
+            let (heap, theap) = unsafe { storage.images_mut() };
+            let theap_memid = MemoryId::static_allocation(
+                core::ptr::from_mut(theap).cast(),
+                size_of::<Theap>(),
+            );
+            if !theap.set_main_static_memid(theap_memid) {
+                storage.mark_poisoned();
+                return Err(MainStaticTheapError::TheapInit(
+                    TheapMainStaticInitError::InvalidInput,
+                ));
+            }
+            if let Err(error) = theap.initialize_main_static(heap, tld.current_mut()) {
+                // Initialization has already created the source-static TLD and
+                // live registration, but has no returned attachment capability
+                // that can safely tear either down. A busy fresh list lock, a
+                // post-mutation unlock error, or a later heap-list error requires
+                // invalid concurrency/kernel failure outside the source contract.
+                // This is terminal initialization-invalid-owner state: leave the
+                // TLD/static storage and live count retained, do not invent
+                // rollback, and reject every retry.
+                storage.mark_poisoned();
+                return Err(MainStaticTheapError::TheapInit(error));
+            }
         }
         // The non-detached static Theap is counted when initialization succeeds.
         // Its static allocation skips the later free path, retaining this count.
