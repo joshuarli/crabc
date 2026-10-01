@@ -215,7 +215,11 @@ def read_m1(path: Path | None = None) -> dict[str, Any]:
     return read_m1_components(path)
 
 
-def authenticate_unit_program(program: Mapping[str, Any], *, target: str = "crabc_mimalloc", kind: str = "lib") -> None:
+def authenticate_unit_program(program: Mapping[str, Any], *, target: str = "crabc_mimalloc", kind: str = "lib",
+                              expected_product: Mapping[str, Any] | None = None) -> None:
+    if expected_product is not None:
+        require(program.get("build_command") == expected_product.get("build_command"),
+                "local unit compiler command changed")
     build = program.get("build")
     require(isinstance(build, Mapping) and build.get("status") == 0,
             "unit compiler build did not succeed")
@@ -239,6 +243,11 @@ def authenticate_unit_program(program: Mapping[str, Any], *, target: str = "crab
     require(Path(candidates[0]).resolve().is_relative_to(Path(program["cargo_target"]).resolve()),
             "compiler unit program escapes its owned Cargo target")
     authenticate_artifacts(artifact, harness.ROOT)
+    if expected_product is not None:
+        # Cold and cached Cargo builds have different observations. Each build
+        # must select the same authenticated physical executable.
+        require(artifact == expected_product.get("artifact"),
+                "local traces used another unit compiler product")
 
 
 def read_m2(path: Path | None = None) -> dict[str, Any]:
@@ -551,7 +560,8 @@ def read_m3_components(path: Path | None = None, *, source_root: Path | None = N
                                           target=driver["target"], kind="test")
                 rust_test = driver["test"]
             else:
-                require(rust == unit_inputs["build"], "local traces used another unit compiler product")
+                authenticate_unit_program({**rust, "cargo_target": str(harness.WORK_ROOT / "target")},
+                                          expected_product=unit_program)
                 rust_test = local.RUST_TRACE_TEST
             rust_binary = str(harness.ROOT / rust["artifact"]["path"])
             workloads = (local.generate_owner_workloads(contract) if owner_profile else local.generate_workloads(contract))

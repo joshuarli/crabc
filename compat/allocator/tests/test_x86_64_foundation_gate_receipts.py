@@ -74,6 +74,61 @@ class FoundationReceiptTests(unittest.TestCase):
             with self.assertRaisesRegex(reader.harness.HarnessError, "does not identify"):
                 reader.authenticate_unit_program(program)
 
+    def test_cold_and_cached_compilers_authenticate_the_same_physical_unit_product(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/tmp") as directory:
+            binary = Path(directory) / "crabc_mimalloc-1234"
+            binary.write_bytes(b"same compiler-selected physical test program")
+            command = ["cargo", "test", "--locked", "--target", "x86_64-unknown-linux-musl",
+                       "-p", "crabc-mimalloc", "--lib", "--no-default-features",
+                       "--no-run", "--message-format=json"]
+            selected = {"reason": "compiler-artifact", "target": {"name": "crabc_mimalloc", "kind": ["lib"]},
+                        "profile": {"test": True}, "executable": str(binary)}
+            dependency = {"reason": "compiler-artifact", "target": {"name": "dependency", "kind": ["lib"]},
+                          "profile": {"test": False}, "executable": None}
+            artifact = reader.harness.artifact_record(binary)
+            programs = []
+            for fresh, events, stderr in (
+                    (False, [dependency, selected], "Compiling dependency\nFinished test profile in 4m 18s\n"),
+                    (True, [selected, dependency], "Finished test profile in 0.30s\n")):
+                build = {"command": command, "status": 0,
+                         "stdout": "\n".join(json.dumps({**event, "fresh": fresh}) for event in events),
+                         "stderr": stderr}
+                programs.append({"artifact": artifact, "build": build, "build_command": command,
+                                 "cargo_target": directory})
+            self.assertNotEqual(programs[0]["build"], programs[1]["build"])
+            for program in programs:
+                reader.authenticate_unit_program(program, expected_product=programs[1])
+            for defect in ("missing-json", "duplicate-json", "wrong-target", "wrong-profile",
+                           "failed-build", "wrong-command", "other-product", "changed-product"):
+                with self.subTest(defect=defect):
+                    program = json.loads(json.dumps(programs[0]))
+                    if defect == "missing-json":
+                        program["build"]["stdout"] = json.dumps(dependency)
+                    elif defect == "duplicate-json":
+                        program["build"]["stdout"] += "\n" + json.dumps(selected)
+                    elif defect in ("wrong-target", "wrong-profile"):
+                        event = json.loads(json.dumps(selected))
+                        if defect == "wrong-target":
+                            event["target"]["name"] = "other"
+                        else:
+                            event["profile"]["test"] = False
+                        program["build"]["stdout"] = json.dumps(event)
+                    elif defect == "failed-build":
+                        program["build"]["status"] = 1
+                    elif defect == "wrong-command":
+                        program["build_command"].append("--features=unselected")
+                        program["build"]["command"] = program["build_command"]
+                    elif defect == "other-product":
+                        other = Path(directory) / "other-test"
+                        other.write_bytes(binary.read_bytes())
+                        program["artifact"] = reader.harness.artifact_record(other)
+                        program["build"]["stdout"] = json.dumps({**selected, "executable": str(other)})
+                    else:
+                        binary.write_bytes(b"changed selected test program")
+                    with self.assertRaises(reader.harness.HarnessError):
+                        reader.authenticate_unit_program(program, expected_product=programs[1])
+                    binary.write_bytes(b"same compiler-selected physical test program")
+
     def test_local_engine_prerequisite_cannot_be_forged_by_a_saved_complete_label(self):
         with mock.patch.object(reader.harness, "read_json", wraps=reader.harness.read_json) as read:
             with self.assertRaisesRegex(reader.harness.HarnessError, "incomplete"):
