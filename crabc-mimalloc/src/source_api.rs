@@ -301,6 +301,12 @@ pub unsafe fn theap_malloc_aligned_at(
     if crate::source_heap_api::fixed_runtime_theap() == Some(theap) {
         return malloc_zero_aligned_at_native(size, alignment, offset, zero);
     }
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    // SAFETY: this validated current-thread Theap remains retained through
+    // sampling, owner admission and the terminal allocation result.
+    if let Some(result) = unsafe { guarded_aligned_allocation_result(theap, size, alignment, offset, zero) } {
+        return result;
+    }
     let report = if size_class::alignment_is_valid(alignment) && !size_class::request_size_is_valid(size) {
         Some(crate::diagnostic_output::SourceErrorReport::AlignedTooLarge { size, alignment })
     } else {
@@ -850,6 +856,13 @@ unsafe fn realloc_zero(block: *mut u8, new_size: usize, zero: bool) -> Sourced<B
 /// `block` is null or an exact live client held exclusively for reallocation.
 /// Success consumes the old block; failure leaves it live and unchanged.
 pub(crate) unsafe fn realloc_zero_native(block: *mut u8, new_size: usize, zero: bool) -> Sourced<Block> {
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    if let Some(theap) = crate::source_heap_api::fixed_runtime_theap() {
+        // SAFETY: the calling thread retains its initialized fixed Theap;
+        // the caller exclusively retains the exact client. The source kernel
+        // samples only when replacement allocation is actually required.
+        return unsafe { theap_realloc(theap.as_ptr().cast(), block, new_size, zero) };
+    }
     #[cfg(feature = "mi-debug-1")]
     // SAFETY: forwarded exact-live-client and exclusion obligations.
     if let Some(errno) = unsafe { pointer_validation_errno(block, crate::diagnostic_output::SourcePointerOperation::Realloc) } {
@@ -1005,6 +1018,18 @@ fn malloc_zero_aligned_at(size: usize, alignment: usize, offset: usize, zero: bo
 /// Aligned allocation on the fixed main-Heap Theap, independent of a
 /// substituted default Theap. Heap-scoped calls use this after selection.
 pub(crate) fn malloc_zero_aligned_at_native(size: usize, alignment: usize, offset: usize, zero: bool) -> Sourced<Block> {
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    {
+        let selected = crate::source_heap_api::fixed_runtime_theap()
+            .unwrap_or_else(crate::compiler_tls::default_theap);
+        // SAFETY: the fixed Theap is retained by this thread, or the raw
+        // compiler-TLS sentinel has immutable rate-zero sampler fields.
+        // Reading that sentinel before native initialization preserves the
+        // source's unsampled first allocation.
+        if let Some(result) = unsafe { guarded_aligned_allocation_result(selected, size, alignment, offset, zero) } {
+            return result;
+        }
+    }
     // The native aligned entry reports these pre-allocation refusals through
     // `_mi_error_message` (`alloc-aligned.c:81-84,163-166,191-193`) and then
     // fails; the errno effect follows each report.
@@ -1021,6 +1046,31 @@ pub(crate) fn malloc_zero_aligned_at_native(size: usize, alignment: usize, offse
             Some(error) => SourceErrno::error_message(error),
             None => aligned_failure_errno(size, alignment, offset),
         }),
+    }
+}
+
+/// Samples an aligned source request after alignment validity and before
+/// ordinary size and offset checks. A sampled refusal is terminal; only an
+/// unsampled request may continue through the ordinary allocation engine.
+///
+/// # Safety
+/// `theap` is retained by the calling thread through the allocation. Its
+/// initialized sampler fields are exclusively owned, or it is the immutable
+/// empty compiler-TLS image on its read-only rate-zero path.
+#[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+unsafe fn guarded_aligned_allocation_result(
+    theap: NonNull<crate::types::Theap>, size: usize, alignment: usize,
+    offset: usize, zero: bool,
+) -> Option<Sourced<Block>> {
+    if !size_class::alignment_is_valid(alignment) { return None; }
+    // SAFETY: forwarded retained Theap and exclusive sampler obligations;
+    // alignment has been validated before the sampling decision.
+    match unsafe { crate::source_heap_api::guarded_allocate_selected(theap, size, Some((alignment, offset)), zero) } {
+        crate::source_heap_api::GuardedAllocationResult::NotSampled => None,
+        crate::source_heap_api::GuardedAllocationResult::Allocated(result) =>
+            Some(Sourced::with(Some(result.value), result.errno)),
+        crate::source_heap_api::GuardedAllocationResult::Refused(errno) =>
+            Some(Sourced::with(None, errno)),
     }
 }
 
@@ -1081,6 +1131,13 @@ pub(crate) unsafe fn realloc_zero_aligned_at_native(
 ) -> Sourced<Block> {
     if !size_class::alignment_is_valid(alignment) {
         return Sourced::with(None, SourceErrno::error_message(Errno::INVAL));
+    }
+    #[cfg(all(target_arch = "x86_64", feature = "mi-guarded"))]
+    if let Some(theap) = crate::source_heap_api::fixed_runtime_theap() {
+        // SAFETY: the calling thread retains this initialized fixed Theap
+        // and the caller exclusively retains the exact client. The source
+        // kernel preserves reuse and samples its replacement allocation.
+        return unsafe { theap_realloc_aligned_at(theap.as_ptr().cast(), block, new_size, alignment, offset, zero) };
     }
     if alignment <= core::mem::size_of::<usize>() && offset == 0 {
         // SAFETY: forwarded contract.
@@ -1689,7 +1746,14 @@ mod tests {
                 // SAFETY: this is the immutable empty compiler-TLS image.
                 assert!(unsafe { crate::types::Theap::heap_at(cold) }.is_null());
                 let first = super::malloc_aligned_at(81, 64, 0).value.unwrap();
+                let initialized = crate::compiler_tls::default_theap();
+                // SAFETY: lazy allocation has retained this thread's live
+                // Theap, and no sampler mutation overlaps these observations.
+                unsafe {
+                    assert!(!crate::types::Theap::heap_at(initialized).is_null());
+                }
                 let second = super::malloc_aligned_at(81, 64, 0).value.unwrap();
+                let plain = super::malloc(81).value.unwrap();
                 let permission = |address| {
                     std::fs::read_to_string("/proc/self/maps").unwrap().lines().find_map(|line| {
                         let mut fields = line.split_whitespace();
@@ -1699,17 +1763,21 @@ mod tests {
                         (start <= address && address < end).then(|| std::string::String::from(fields.next().unwrap()))
                     }).unwrap()
                 };
-                // SAFETY: both successful public clients remain exclusively
+                // SAFETY: all successful public clients remain exclusively
                 // owned through usable-size observations and terminal frees.
                 unsafe {
                     let first_tail = first.as_ptr().addr() + super::usable_size(first.as_ptr());
                     let second_tail = second.as_ptr().addr() + super::usable_size(second.as_ptr());
+                    let plain_tail = plain.as_ptr().addr() + super::usable_size(plain.as_ptr());
                     assert!(permission(first_tail).starts_with("rw"),
                         "the empty source Theap cannot sample its initializing allocation");
                     assert!(permission(second_tail).starts_with("---"),
                         "the initialized source Theap samples the following allocation");
+                    assert!(permission(plain_tail).starts_with("---"),
+                        "the ordinary public entry samples the initialized source Theap");
                     assert_eq!(super::free(first.as_ptr()), super::FreeOutcome::Freed);
                     assert_eq!(super::free(second.as_ptr()), super::FreeOutcome::Freed);
+                    assert_eq!(super::free(plain.as_ptr()), super::FreeOutcome::Freed);
                 }
             },
         );

@@ -127,10 +127,11 @@ fn guarded_public_aligned_growth() {
         old.as_ptr().write_bytes(0x63, usable);
         assert!(api::realloc_aligned_at(old.as_ptr(), usize::MAX, 64, 0).value.is_none());
         assert!(permissions(tail).unwrap().starts_with("---"));
-        let replacement = api::rezalloc_aligned_at(old.as_ptr(), 1024, 64, 0).value.unwrap();
+        let growth_size = usable.checked_add(1024).unwrap();
+        let replacement = api::rezalloc_aligned_at(old.as_ptr(), growth_size, 64, 0).value.unwrap();
         assert_ne!(replacement, old);
         let new_usable = api::usable_size(replacement.as_ptr());
-        assert!(new_usable >= 1024);
+        assert!(new_usable >= growth_size);
         let bytes = core::slice::from_raw_parts(replacement.as_ptr(), new_usable);
         assert!(bytes[..usable].iter().all(|byte| *byte == 0x63));
         assert!(bytes[usable..].iter().all(|byte| *byte == 0));
@@ -139,6 +140,28 @@ fn guarded_public_aligned_growth() {
         assert!(permissions(tail).unwrap().starts_with("rw"), "consumed old client has no protected guard");
         assert_eq!(api::free(replacement.as_ptr()), api::FreeOutcome::Freed);
         assert_eq!(api::free(keeper.as_ptr()), api::FreeOutcome::Freed);
+        let plain = api::malloc(81).value.unwrap();
+        let plain_keeper = api::malloc(81).value.unwrap();
+        let plain_usable = api::usable_size(plain.as_ptr());
+        assert!(plain_usable >= 81);
+        let plain_tail = plain.as_ptr().addr().checked_add(plain_usable).unwrap();
+        assert!(permissions(plain_tail).unwrap().starts_with("---"));
+        plain.as_ptr().write_bytes(0x37, plain_usable);
+        assert!(api::realloc(plain.as_ptr(), usize::MAX).value.is_none());
+        assert!(permissions(plain_tail).unwrap().starts_with("---"));
+        let plain_growth_size = plain_usable.checked_add(1024).unwrap();
+        let plain_replacement = api::rezalloc(plain.as_ptr(), plain_growth_size).value.unwrap();
+        assert_ne!(plain_replacement, plain);
+        let plain_new_usable = api::usable_size(plain_replacement.as_ptr());
+        assert!(plain_new_usable >= plain_growth_size);
+        let plain_bytes = core::slice::from_raw_parts(plain_replacement.as_ptr(), plain_new_usable);
+        assert!(plain_bytes[..plain_usable].iter().all(|byte| *byte == 0x37));
+        assert!(plain_bytes[plain_usable..].iter().all(|byte| *byte == 0));
+        let plain_new_tail = plain_replacement.as_ptr().addr().checked_add(plain_new_usable).unwrap();
+        assert!(permissions(plain_new_tail).unwrap().starts_with("---"));
+        assert!(permissions(plain_tail).unwrap().starts_with("rw"));
+        assert_eq!(api::free(plain_replacement.as_ptr()), api::FreeOutcome::Freed);
+        assert_eq!(api::free(plain_keeper.as_ptr()), api::FreeOutcome::Freed);
         heaps::theap_guarded_set_sample_rate(selected, 0, 0);
     }
 }
