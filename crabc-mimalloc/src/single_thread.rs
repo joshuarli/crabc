@@ -38077,7 +38077,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // that cache here would skip source administration and deferred frees.
         self.begin_deferred_free_generic_allocation(
             DeferredFreeAllocationContinuation::Generic(continuation),
-            generic_request_searches_before_fallback(request),
+            generic_request_searches_before_fallback(source_size),
         )
     }
 
@@ -38433,45 +38433,45 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     ) -> DeferredFreeAllocationPhase {
         #[cfg(target_arch = "x86_64")]
         {
-        match self.session.begin_generic_allocation_administration() {
-            crate::bootstrap::GenericAllocationAdministrationStart::Denied => DeferredFreeAllocationPhase::Complete(None),
-            crate::bootstrap::GenericAllocationAdministrationStart::NotDue => {
-                if search_first {
-                    match self.attempt_deferred_free_allocation(continuation) {
-                        Ok(Some(block)) => return DeferredFreeAllocationPhase::Complete(Some(block)),
-                        Err(_) => return DeferredFreeAllocationPhase::Complete(None),
-                        Ok(None) => {}
+            match self.session.begin_generic_allocation_administration() {
+                crate::bootstrap::GenericAllocationAdministrationStart::Denied => DeferredFreeAllocationPhase::Complete(None),
+                crate::bootstrap::GenericAllocationAdministrationStart::NotDue => {
+                    if search_first {
+                        match self.attempt_deferred_free_allocation(continuation) {
+                            Ok(Some(block)) => return DeferredFreeAllocationPhase::Complete(Some(block)),
+                            Err(_) => return DeferredFreeAllocationPhase::Complete(None),
+                            Ok(None) => {}
+                        }
                     }
+                    self.try_deferred_free_allocation_once(continuation)
                 }
-                self.try_deferred_free_allocation_once(continuation)
+                crate::bootstrap::GenericAllocationAdministrationStart::Frequency(request) => {
+                    DeferredFreeAllocationPhase::GenericFrequency { request, continuation }
+                }
             }
-            crate::bootstrap::GenericAllocationAdministrationStart::Frequency(request) => {
-                DeferredFreeAllocationPhase::GenericFrequency { request, continuation }
-            }
-        }
         }
         #[cfg(not(target_arch = "x86_64"))]
         {
-        match self.session.advance_generic_allocation_administration() {
-            GenericAllocationAdministration::None => {
-                if search_first {
-                    match self.attempt_deferred_free_allocation(continuation) {
-                        Ok(Some(block)) => return DeferredFreeAllocationPhase::Complete(Some(block)),
-                        Err(_) => return DeferredFreeAllocationPhase::Complete(None),
-                        Ok(None) => {}
+            match self.session.advance_generic_allocation_administration() {
+                GenericAllocationAdministration::None => {
+                    if search_first {
+                        match self.attempt_deferred_free_allocation(continuation) {
+                            Ok(Some(block)) => return DeferredFreeAllocationPhase::Complete(Some(block)),
+                            Err(_) => return DeferredFreeAllocationPhase::Complete(None),
+                            Ok(None) => {}
+                        }
                     }
+                    self.try_deferred_free_allocation_once(continuation)
                 }
-                self.try_deferred_free_allocation_once(continuation)
+                GenericAllocationAdministration::Mini => DeferredFreeAllocationPhase::Collect {
+                    collection: GenericAllocationCollection::Mini,
+                    continuation,
+                },
+                GenericAllocationAdministration::Full => DeferredFreeAllocationPhase::Collect {
+                    collection: GenericAllocationCollection::Full,
+                    continuation,
+                },
             }
-            GenericAllocationAdministration::Mini => DeferredFreeAllocationPhase::Collect {
-                collection: GenericAllocationCollection::Mini,
-                continuation,
-            },
-            GenericAllocationAdministration::Full => DeferredFreeAllocationPhase::Collect {
-                collection: GenericAllocationCollection::Full,
-                continuation,
-            },
-        }
         }
     }
 
@@ -44945,8 +44945,8 @@ mod tests {
                     #[cfg(target_arch = "x86_64")]
                     DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                         // SAFETY: this fixture retains its original engine, session
-                            // and backing throughout the source-default frequency phase.
-                            phase = unsafe { allocator.resume_generic_allocation_frequency(request, 10_000, continuation) };
+                        // and backing throughout the source-default frequency phase.
+                        phase = unsafe { allocator.resume_generic_allocation_frequency(request, 10_000, continuation) };
                     }
                     DeferredFreeAllocationPhase::Collect { collection, continuation } => {
                         phase = allocator.resume_deferred_free_allocation(collection, continuation);
@@ -44969,8 +44969,8 @@ mod tests {
                     #[cfg(target_arch = "x86_64")]
                     DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                         // SAFETY: this fixture retains its original engine, session
-                            // and backing throughout the source-default frequency phase.
-                            phase = unsafe { allocator.resume_generic_allocation_frequency(request, 10_000, continuation) };
+                        // and backing throughout the source-default frequency phase.
+                        phase = unsafe { allocator.resume_generic_allocation_frequency(request, 10_000, continuation) };
                     }
                     DeferredFreeAllocationPhase::Collect { collection, continuation } => {
                         phase = allocator.resume_deferred_free_allocation(collection, continuation);
@@ -50985,8 +50985,8 @@ mod tests {
                 #[cfg(target_arch = "x86_64")]
                 DeferredFreeAllocationPhase::GenericFrequency { request, continuation } => {
                     // SAFETY: this fixture retains its original engine, session
-                            // and backing throughout the source-default frequency phase.
-                            phase = unsafe { allocator.resume_generic_allocation_frequency(request, 10_000, continuation) };
+                    // and backing throughout the source-default frequency phase.
+                    phase = unsafe { allocator.resume_generic_allocation_frequency(request, 10_000, continuation) };
                 }
                 DeferredFreeAllocationPhase::Collect { collection, continuation } => {
                     let force = matches!(collection, GenericAllocationCollection::Force);
