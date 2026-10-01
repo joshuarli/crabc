@@ -69,9 +69,13 @@ only its exact source, configuration, image, products, and execution context.
   defect. A causal source control proves that defect, and the integrated receiver
   accepts only its complete signature. The failed cohort remains unqualified;
   fresh `e9de501dd` static preparation and its owning read-only reader pass.
-  The complete 219-case dynamic qualification is running on its independent
-  frozen source; resolver family qualification follows that result. Ordered family
-  and callable-provider closure remain open.
+  The complete 219-case installed/rebuilt/extracted dynamic qualification and
+  its independent read-only reader pass at `e9de501dd`. All five resolver
+  components and the independent whole-family reader also pass. Assembly
+  produced the complete assessment, but disk exhaustion prevented recording
+  its child status; the empty status and wrapper failure remain retained.
+  These results qualify only that frozen source. Ordered family and
+  callable-provider closure remain open.
 - **Allocator source geometry:** source-faithful auxiliary and ordinary main
   Theap geometry repairs are integrated with ownership repairs. Their exact
   sources pass four-profile C/native layout comparisons and independent replay.
@@ -92,8 +96,10 @@ only its exact source, configuration, image, products, and execution context.
   first independent physical replay passes all seventeen strict tests, then
   rejects a cold/cached compiler-record comparison. The authenticated physical
   product comparison is repaired, and omitted original queue inputs are now
-  independently retained. One corrected whole read-only replay is running; the whole gate
-  remains unmet pending M1/M2. Prior full-roster failures remain unqualified
+  independently retained. A complete native-first diagnostic replay passes all retained native
+  boundaries without running Miri. The corrected full read-only replay is
+  running against the unchanged producer, including all seventeen strict
+  tests; the whole gate remains unmet pending M1/M2. Prior full-roster failures remain unqualified
   and retained.
 - **Allocator gates:** existing Heap/subprocess stress, visitation, callbacks,
   statistics, remote ownership and failure evidence remain retained by exact
