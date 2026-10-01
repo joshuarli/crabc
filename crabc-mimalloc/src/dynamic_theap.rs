@@ -4144,13 +4144,15 @@ mod tests {
         fn report_after_destroy(&self, cycle: usize, child: usize) {
             // Read immediately after this child's destroy and caller-region
             // drop, before a later child can reuse any of these addresses.
-            let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
-            for (index, root) in self.entries[..self.len].iter().flatten().enumerate() {
-                let mut covered = 0usize;
-                for line in maps.lines() {
-                    let (start, end) = retention_mapping(line);
-                    covered = covered.checked_add(end.min(root.end).saturating_sub(start.max(root.start))).unwrap();
+            let mut covered = [0usize; 1024];
+            visit_retention_mappings(|start, end| {
+                for (index, root) in self.entries[..self.len].iter().flatten().enumerate() {
+                    covered[index] = covered[index].checked_add(
+                        end.min(root.end).saturating_sub(start.max(root.start))).unwrap();
                 }
+            });
+            for (index, root) in self.entries[..self.len].iter().flatten().enumerate() {
+                let covered = covered[index];
                 assert!(covered <= root.end - root.start);
                 if root.category == RetentionRootCategory::ExternalRaw {
                     assert_eq!(covered, 0, "the caller-owned region was released before this observation");
@@ -4163,12 +4165,92 @@ mod tests {
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
-    fn retention_mapping(line: &str) -> (usize, usize) {
-        let (start, end) = line.split_whitespace().next().unwrap().split_once('-').unwrap();
+    fn retention_mapping(line: &[u8]) -> (usize, usize) {
+        let prefix = line.split(|byte| byte.is_ascii_whitespace()).next().unwrap();
+        let prefix = core::str::from_utf8(prefix).expect("mapping address prefix is ASCII");
+        let (start, end) = prefix.split_once('-').unwrap();
         let start = usize::from_str_radix(start, 16).unwrap();
         let end = usize::from_str_radix(end, 16).unwrap();
         assert!(end > start);
         (start, end)
+    }
+
+    /// Streams each original mapping line without allocating an observer buffer.
+    /// The explicit line bound fails rather than silently dropping a mapping;
+    /// filenames remain opaque bytes because Unix paths need not be UTF-8.
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    fn visit_retention_lines(mut reader: impl std::io::Read, mut visit: impl FnMut(&[u8])) {
+        let mut chunk = [0u8; 4096];
+        let mut line = [0u8; 8192];
+        let mut length = 0usize;
+        loop {
+            let count = match reader.read(&mut chunk) {
+                Ok(count) => count,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => panic!("mapping observation read failed: {error}"),
+            };
+            if count == 0 {
+                if length != 0 { visit(&line[..length]); }
+                return;
+            }
+            for byte in &chunk[..count] {
+                if *byte == b'\n' {
+                    visit(&line[..length]);
+                    length = 0;
+                } else {
+                    assert!(length < line.len(), "mapping observation line exceeded its explicit bound");
+                    line[length] = *byte;
+                    length += 1;
+                }
+            }
+        }
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    fn visit_retention_mappings(mut visit: impl FnMut(usize, usize)) {
+        let maps = std::fs::File::open("/proc/self/maps").unwrap();
+        let mut previous_end = 0usize;
+        visit_retention_lines(maps, |line| {
+            let (start, end) = retention_mapping(line);
+            assert!(start >= previous_end, "kernel mappings are ordered and nonoverlapping");
+            previous_end = end;
+            visit(start, end);
+        });
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn retention_observer_preserves_fragmented_mapping_lines_and_opaque_paths() {
+        struct Fragmented<'a> { bytes: &'a [u8], interrupt: bool }
+        impl std::io::Read for Fragmented<'_> {
+            fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+                if self.interrupt {
+                    self.interrupt = false;
+                    return Err(std::io::ErrorKind::Interrupted.into());
+                }
+                let count = self.bytes.len().min(3).min(output.len());
+                output[..count].copy_from_slice(&self.bytes[..count]);
+                self.bytes = &self.bytes[count..];
+                Ok(count)
+            }
+        }
+        let reader = Fragmented { bytes: b"1000-2000 rw-p 0 00:00 0 /path\xff\n3000-4000 rw-p 0 00:00 0", interrupt: true };
+        let mut rows = [(0usize, 0usize); 2];
+        let mut count = 0usize;
+        visit_retention_lines(reader, |line| {
+            rows[count] = retention_mapping(line);
+            count += 1;
+        });
+        assert_eq!(count, 2);
+        assert_eq!(rows, [(0x1000, 0x2000), (0x3000, 0x4000)]);
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    #[should_panic(expected = "mapping observation line exceeded its explicit bound")]
+    fn retention_observer_rejects_overlong_mapping_instead_of_dropping_it() {
+        let bytes = [b'x'; 8193];
+        visit_retention_lines(&bytes[..], |_| panic!("an incomplete line must not be reported"));
     }
 
     #[cfg(all(target_arch = "x86_64", not(miri)))]
@@ -4230,18 +4312,13 @@ mod tests {
             completed.set(completed.get() + 1);
         });
         assert_eq!(completed.get(), 6);
-        let maps = std::fs::read_to_string("/proc/self/maps").unwrap();
         let mut count = 0usize;
         let mut bytes = 0usize;
-        let mut previous_end = 0usize;
-        for line in maps.lines() {
-            let (start, end) = retention_mapping(line);
-            assert!(start >= previous_end, "kernel mappings are ordered and nonoverlapping");
+        visit_retention_mappings(|start, end| {
             std::println!("m2.arena.retention.map.{cycle}.{count}={start},{end}");
-            previous_end = end;
             count += 1;
             bytes = bytes.checked_add(end - start).unwrap();
-        }
+        });
         std::println!("m2.arena.retention.maps.{cycle}={count}");
         std::println!("m2.arena.retention.{cycle}.ranges={count}");
         std::println!("m2.arena.retention.{cycle}.bytes={bytes}");
