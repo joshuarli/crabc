@@ -89,7 +89,11 @@ impl PreparedRandomInitialization {
     // refusal must cross its admitted diagnostic route before material is
     // available to an enclosing allocator initializer.
     #[inline]
-    fn after_warning(mut self) -> RandomInitializationMaterial {
+    /// # Safety
+    /// A refused normal fill has completed its warning through the admitted
+    /// process owner. Its callback has returned with all allocator projections
+    /// ended. A strong fill needs no warning delivery.
+    pub(crate) unsafe fn after_warning(mut self) -> RandomInitializationMaterial {
         let mut material = RandomInitializationMaterial { key: [0; 32], weak: self.weak };
         core::mem::swap(&mut material.key, &mut self.key);
         material
@@ -1151,7 +1155,9 @@ mod tests {
             c"unable to use secure randomness\n",
         )) };
         OBSERVED.with(|slot| assert_eq!(slot.get(), (1, true, true, true)));
-        context.initialize_prepared(prepared.after_warning());
+        // SAFETY: the actual route returned above without a live random
+        // projection, and its source warning and reentry were observed.
+        context.initialize_prepared(unsafe { prepared.after_warning() });
         assert_eq!(fault.observed(), 1);
         assert_eq!(fault.secondary_observed(), 2);
         assert!(context.is_initialized() && context.is_weak());
@@ -1172,7 +1178,8 @@ mod tests {
         assert!(!prepared.requires_warning());
         assert!(!context.is_initialized());
         let expected_key = prepared.key;
-        context.initialize_prepared(prepared.after_warning());
+        // SAFETY: this complete normal fill requires no warning.
+        context.initialize_prepared(unsafe { prepared.after_warning() });
         assert_eq!(fault.observed(), 1);
         assert!(!context.is_weak());
         assert_eq!(context.nonce(), identity);

@@ -122,6 +122,107 @@ enum ProcessStartupDiagnostics<'owner> {
     Selected(&'owner OutputOwner),
 }
 
+/// Failure to admit or retain the actual source startup diagnostic owner.
+#[cfg(target_arch = "x86_64")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BootstrapOutputAdmissionError {
+    Unavailable,
+    Invalid,
+}
+
+/// A borrowed diagnostic owner inside the winning process initialization.
+/// The completion token and retained VM pair remain live through delivery;
+/// this grants no published Heap, allocation, or process-readiness authority.
+#[cfg(target_arch = "x86_64")]
+pub(crate) struct ScopedBootstrapOutput<'startup> {
+    storage: &'startup ProcessMainInitializationStorage,
+    completion: &'startup AllocatorOnceCompletion<'static>,
+    output: &'startup OutputOwner,
+    process: &'startup VmProcess<'static>,
+    subprocess: &'startup MainSubprocess,
+    _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl ScopedBootstrapOutput<'_> {
+    fn validate(&self) -> Result<(), BootstrapOutputAdmissionError> {
+        let current_thread = current_thread_identity()
+            .ok_or(BootstrapOutputAdmissionError::Invalid)?;
+        let once_thread = OnceThreadId::new(current_thread.get())
+            .ok_or(BootstrapOutputAdmissionError::Invalid)?;
+        if self.storage.state.load(Ordering::Acquire) != INITIALIZING
+            || current_thread.get() != self.storage.initializing_thread.load(Ordering::Relaxed)
+            || !self.completion.matches_active_owner(&self.storage.process_once, once_thread)
+            || !core::ptr::eq(self.storage.diagnostic_output_ptr.load(Ordering::Acquire), self.output)
+            || !core::ptr::eq(self.storage.vm_policy_ptr.load(Ordering::Acquire), self.process.policy())
+            || !self.process.main_subprocess().is_some_and(|owner| core::ptr::eq(owner, self.subprocess))
+        {
+            return Err(BootstrapOutputAdmissionError::Invalid);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn matches_subprocess(&self, subprocess: &MainSubprocess) -> bool {
+        self.validate().is_ok() && core::ptr::eq(self.subprocess, subprocess)
+    }
+
+    /// Delivers normal entropy refusal before making initialization material.
+    ///
+    /// # Safety
+    /// The caller has ended every Heap, Theap, TLD, random, and metadata-entry
+    /// projection or guard. It retains the pending allocation and its original
+    /// initialization phase throughout possible synchronous callback reentry.
+    pub(crate) unsafe fn deliver_prepared_random_warning(
+        &self,
+        prepared: crate::random::PreparedRandomInitialization,
+    ) -> Result<crate::random::RandomInitializationMaterial, BootstrapOutputAdmissionError> {
+        self.validate()?;
+        // SAFETY: this actual startup owner retains its route and completion,
+        // and the caller ended all allocator projections before delivery.
+        let material = unsafe { deliver_prepared_random_warning_core(self.output, prepared) };
+        self.validate()?;
+        Ok(material)
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+impl crate::runtime_lifecycle::NativeAllocationOwner<'_> {
+    /// Completes normal entropy preparation through this admitted owner.
+    ///
+    /// # Safety
+    /// The caller has ended every Heap, Theap, TLD, random, and metadata-entry
+    /// projection or guard. The actual selected owner and pending allocation
+    /// remain retained by the enclosing admission throughout callback reentry.
+    pub(crate) unsafe fn deliver_prepared_random_warning(
+        &self,
+        prepared: crate::random::PreparedRandomInitialization,
+    ) -> crate::random::RandomInitializationMaterial {
+        // SAFETY: the enclosing factory retains actual ready and child-record
+        // admission; this reborrow cannot extend either beyond that scope.
+        unsafe { deliver_prepared_random_warning_core(self.output(), prepared) }
+    }
+}
+
+/// Completes only an already-admitted diagnostic owner's random transition.
+#[cfg(target_arch = "x86_64")]
+unsafe fn deliver_prepared_random_warning_core(
+    output: &OutputOwner,
+    prepared: crate::random::PreparedRandomInitialization,
+) -> crate::random::RandomInitializationMaterial {
+    if prepared.requires_warning() {
+        // SAFETY: the typed caller retains the actual admitted route, and no
+        // allocator projection or record guard spans its callback delivery.
+        unsafe { output.warning_from_source_options(
+            crate::diagnostic_output::SourceFormattedMessage::from_source_formatted(
+                c"unable to use secure randomness\n",
+            ),
+        ) };
+    }
+    // SAFETY: a refused fill completed its admitted warning above; a strong
+    // fill has no warning obligation and reads no diagnostic source option.
+    unsafe { prepared.after_warning() }
+}
+
 /// Final process-lifetime state for the bounded source main-process startup.
 ///
 /// `READY` is published after the `mi_process_init_once` body has completed,
@@ -195,6 +296,27 @@ impl ProcessMainInitializationStorage {
             #[cfg(target_arch = "x86_64")]
             runtime_startup_tail: core::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    // This private issuer is reached only with the completion returned by
+    // this coordinator's winning once entry and its initialized Selected route.
+    #[cfg(target_arch = "x86_64")]
+    fn scoped_bootstrap_output<'startup>(
+        &'startup self,
+        completion: &'startup AllocatorOnceCompletion<'static>,
+        diagnostics: &'startup ProcessStartupDiagnostics<'static>,
+        process: &'startup VmProcess<'static>,
+        subprocess: &'startup MainSubprocess,
+    ) -> Result<ScopedBootstrapOutput<'startup>, BootstrapOutputAdmissionError> {
+        let ProcessStartupDiagnostics::Selected(output) = diagnostics else {
+            return Err(BootstrapOutputAdmissionError::Unavailable);
+        };
+        let scope = ScopedBootstrapOutput {
+            storage: self, completion, output, process, subprocess,
+            _not_send_or_sync: PhantomData,
+        };
+        scope.validate()?;
+        Ok(scope)
     }
 
     /// Returns the one production process coordinator. It remains cold until
@@ -2014,6 +2136,8 @@ pub(crate) enum ProcessMainInitError {
     SubprocessRegistry(crate::subproc::registry::SourceSubprocessRegistryError),
     BootstrapSelection(MainStaticBootstrapSelectionError),
     HeapFoundation(MainStaticHeapFoundationError),
+    #[cfg(target_arch = "x86_64")]
+    BootstrapOutput(BootstrapOutputAdmissionError),
     Metadata(MetaError),
     PageMap(ProcessPageMapError),
     InitialThread(MainStaticTheapError),
@@ -4139,6 +4263,238 @@ mod tests {
         std::println!("CRABC_MI_LOADER_TAIL_RUST_TRACE_END");
         assert!(trace.iter().all(|(_, value)| *value),
             "process initialization must release once before loader-tail output: {trace:?}");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn bootstrap_output_prefix(
+        stderr: crate::diagnostic_output::DefaultStderrOutput,
+    ) -> (
+        &'static ProcessMainInitializationStorage,
+        AllocatorOnceCompletion<'static>,
+        ProcessStartupDiagnostics<'static>,
+        VmProcess<'static>,
+        &'static MainSubprocess,
+    ) {
+        let storage = ProcessMainInitializationStorage::test_static_owner();
+        let subprocess = MainSubprocess::test_static_owner();
+        let thread = current_thread_identity().unwrap();
+        let completion = storage.process_once.enter(OnceThreadId::new(thread.get()).unwrap())
+            .unwrap().unwrap();
+        storage.initializing_thread.store(thread.get(), Ordering::Relaxed);
+        storage.state.store(INITIALIZING, Ordering::Release);
+        // SAFETY: the actual winning once token owns this isolated inline
+        // output slot; its exclusive initialization ends before publication.
+        let pointer = unsafe {
+            (*storage.diagnostic_output.get()).write(OutputOwner::new(stderr));
+            let output = (&mut *storage.diagnostic_output.get()).assume_init_mut();
+            output.initialize_source_options(|| core::ptr::null());
+            output.option_set(crate::config::SourceOption::ShowErrors, 1).unwrap();
+            core::ptr::from_mut(output)
+        };
+        storage.diagnostic_output_ptr.store(pointer, Ordering::Release);
+        // SAFETY: the permanent initialized slot is shared only from here.
+        let output = unsafe { &*pointer };
+        let policy = unsafe { VmPolicy::from_process_options(output) };
+        let process = unsafe { storage.retain_vm_process(
+            policy, subprocess, &mut memory_config(), false, false,
+        ) }.unwrap();
+        (storage, completion, ProcessStartupDiagnostics::Selected(output), process, subprocess)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn bootstrap_entropy_warning_is_buffered_before_weak_expansion() {
+        std::thread_local! {
+            static WARNINGS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+        }
+        unsafe extern "C" fn observe(message: *const core::ffi::c_char) {
+            // SAFETY: the source route supplies a live terminated fragment.
+            let bytes = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+            if bytes.windows(b"unable to use secure randomness\n".len())
+                .any(|window| window == b"unable to use secure randomness\n") {
+                WARNINGS.with(|slot| slot.set(slot.get() + 1));
+            }
+        }
+        unsafe extern "C" fn registered(
+            message: *const core::ffi::c_char, _: *mut core::ffi::c_void,
+        ) {
+            // SAFETY: registration supplies the same live terminated fragment.
+            unsafe { observe(message) };
+        }
+        thread::spawn(|| {
+            let (storage, completion, diagnostics, process, subprocess) = bootstrap_output_prefix(observe);
+            let ProcessStartupDiagnostics::Selected(output) = diagnostics else { unreachable!() };
+            let scope = storage.scoped_bootstrap_output(&completion, &diagnostics, &process, subprocess).unwrap();
+            let injection = fault::install(fault::Plan::at_pair(
+                fault::Point::Entropy, 1, fault::Point::Clock, 1, crabc_core::Errno::NOMEM,
+            ));
+            let mut context = crate::random::TheapRandomImage::empty_weak();
+            let prepared = crate::random::PreparedRandomInitialization::prepare_normal();
+            assert!(prepared.requires_warning());
+            // SAFETY: the actual completion and inline output remain live;
+            // no random projection or metadata entry spans warning admission.
+            let material = unsafe { scope.deliver_prepared_random_warning(prepared) }.unwrap();
+            WARNINGS.with(|slot| assert_eq!(slot.get(), 0));
+            assert!(!context.is_initialized());
+            assert_eq!(injection.secondary_observed(), 0);
+            context.initialize_prepared(material);
+            assert!(context.is_initialized() && context.is_weak());
+            assert_eq!(injection.observed(), 1);
+            assert_eq!(injection.secondary_observed(), 1);
+            assert_eq!(storage.state.load(Ordering::Acquire), INITIALIZING);
+            drop(injection);
+            drop(scope);
+            storage.publish_terminal_state_and_release(completion, RETAINED);
+            // SAFETY: this isolated output owner has no concurrent dispatch.
+            // Actual registration flushes its queued warning; this does not
+            // pretend that the incomplete startup prefix reached its tail.
+            unsafe { output.register_output(Some(registered), core::ptr::null_mut()) };
+            WARNINGS.with(|slot| assert_eq!(slot.get(), 1));
+        }).join().unwrap();
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn published_owner_entropy_warning_precedes_expansion_and_allows_allocation_reentry() {
+        crate::test_process::run_in_fresh_process(
+            "process_init::tests::published_owner_entropy_warning_precedes_expansion_and_allows_allocation_reentry",
+            || {
+                std::thread_local! {
+                    static CONTEXT: core::cell::Cell<*const crate::random::TheapRandomImage> =
+                        const { core::cell::Cell::new(core::ptr::null()) };
+                    static FAULT: core::cell::Cell<*const fault::Guard> =
+                        const { core::cell::Cell::new(core::ptr::null()) };
+                    static OBSERVED: core::cell::Cell<(usize, bool, bool, bool)> =
+                        const { core::cell::Cell::new((0, false, false, false)) };
+                }
+                unsafe extern "C" fn stderr_output(message: *const core::ffi::c_char) {
+                    unsafe extern "C" {
+                        fn fputs(message: *const core::ffi::c_char, stream: *mut core::ffi::c_void)
+                            -> core::ffi::c_int;
+                        static mut stderr: *mut core::ffi::c_void;
+                    }
+                    // SAFETY: the pinned native test runtime retains its actual
+                    // musl FILE transport for this fresh process's lifetime.
+                    unsafe { let _ = fputs(message, stderr); }
+                }
+                unsafe extern "C" fn observe(
+                    message: *const core::ffi::c_char, _: *mut core::ffi::c_void,
+                ) {
+                    // SAFETY: actual synchronous output supplies a live fragment.
+                    let bytes = unsafe { core::ffi::CStr::from_ptr(message) }.to_bytes();
+                    if bytes != b"unable to use secure randomness\n" { return; }
+                    // SAFETY: stack owners remain live and their mutable
+                    // projections end before the admitted callback begins.
+                    let inert = CONTEXT.with(|slot| !unsafe { &*slot.get() }.is_initialized());
+                    let before_clock = FAULT.with(|slot| unsafe { &*slot.get() }.secondary_observed() == 0);
+                    let crate::runtime_lifecycle::NativePageAllocationResult::Allocated(nested) =
+                        crate::runtime_lifecycle::native_allocate(96, false)
+                        else { panic!("the actual published owner permits warning reentry"); };
+                    // SAFETY: this callback exclusively owns its nested client.
+                    let freed = unsafe { crate::runtime_lifecycle::native_free(nested) }
+                        == crate::runtime_lifecycle::NativePageFreeResult::Freed;
+                    OBSERVED.with(|slot| slot.set((slot.get().0 + 1, inert, before_clock, freed)));
+                }
+                // SAFETY: this newly exec'd fixture has not initialized its
+                // process or exposed an environment reader. The actual source
+                // option enables warning output before its table is captured.
+                unsafe { std::env::set_var("mimalloc_show_errors", "1") };
+                // SAFETY: the fresh process retains the exact FILE transport.
+                let transport = unsafe { crate::diagnostic_output::RuntimeStderrOutput::new(stderr_output) };
+                assert!(crate::runtime_lifecycle::test_initialize_process_from_host_environment(4096, transport));
+                let crate::runtime_lifecycle::NativePageAllocationResult::Allocated(seed) =
+                    crate::runtime_lifecycle::native_allocate(32, false)
+                    else { panic!("the real initialized owner retains its selected Theap"); };
+                let output = process_output_owner().unwrap();
+                // SAFETY: startup completed its output tail, and this process
+                // retains its single callback until synchronous delivery ends.
+                unsafe { output.register_output(Some(observe), core::ptr::null_mut()) };
+                let injection = fault::install(fault::Plan::at_pair(
+                    fault::Point::Entropy, 1, fault::Point::Clock, 1, crabc_core::Errno::NOMEM,
+                ));
+                let mut context = crate::random::TheapRandomImage::empty_weak();
+                CONTEXT.with(|slot| slot.set(core::ptr::from_ref(&context)));
+                FAULT.with(|slot| slot.set(core::ptr::from_ref(&injection)));
+                // SAFETY: the seed retains the actual selected owner and no
+                // metadata or allocator projection crosses factory entry.
+                let material = unsafe { crate::runtime_lifecycle::with_native_allocation_owner(
+                    default_theap(), |owner| {
+                        let prepared = crate::random::PreparedRandomInitialization::prepare_normal();
+                        assert!(prepared.requires_warning());
+                        // SAFETY: actual admission remains held and all image
+                        // projections ended before the source warning route.
+                        owner.deliver_prepared_random_warning(prepared)
+                    },
+                ) }.unwrap();
+                OBSERVED.with(|slot| assert_eq!(slot.get(), (1, true, true, true)));
+                assert!(!context.is_initialized());
+                context.initialize_prepared(material);
+                assert!(context.is_initialized() && context.is_weak());
+                assert_eq!(injection.observed(), 1);
+                CONTEXT.with(|slot| slot.set(core::ptr::null()));
+                FAULT.with(|slot| slot.set(core::ptr::null()));
+                drop(injection);
+                // SAFETY: delivery ended before reset; the original seed is
+                // still this fixture's exclusively owned live client.
+                unsafe { output.register_output(None, core::ptr::null_mut()) };
+                assert_eq!(unsafe { crate::runtime_lifecycle::native_free(seed) },
+                    crate::runtime_lifecycle::NativePageFreeResult::Freed);
+            },
+        );
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn bootstrap_output_admission_rejects_unconnected_crossed_and_terminal_owners() {
+        unsafe extern "C" fn discard(_: *const core::ffi::c_char) {}
+        thread::spawn(|| {
+            let (storage, completion, diagnostics, process, subprocess) = bootstrap_output_prefix(discard);
+            assert!(matches!(storage.scoped_bootstrap_output(
+                &completion, &ProcessStartupDiagnostics::Unconnected, &process, subprocess,
+            ), Err(BootstrapOutputAdmissionError::Unavailable)));
+            assert!(matches!(storage.scoped_bootstrap_output(
+                &completion, &diagnostics, &process, MainSubprocess::test_static_owner(),
+            ), Err(BootstrapOutputAdmissionError::Invalid)));
+            let other_gate = std::boxed::Box::leak(std::boxed::Box::new(AllocatorOnce::new()));
+            let other_completion = other_gate.enter(OnceThreadId::new(
+                current_thread_identity().unwrap().get(),
+            ).unwrap()).unwrap().unwrap();
+            assert!(matches!(storage.scoped_bootstrap_output(
+                &other_completion, &diagnostics, &process, subprocess,
+            ), Err(BootstrapOutputAdmissionError::Invalid)));
+            other_completion.complete().unwrap();
+            let other_policy = std::boxed::Box::leak(std::boxed::Box::new(
+                VmPolicy::new(resolved_vm_options()).unwrap(),
+            ));
+            let crossed = VmProcess::new_main(other_policy, subprocess);
+            assert!(matches!(storage.scoped_bootstrap_output(
+                &completion, &diagnostics, &crossed, subprocess,
+            ), Err(BootstrapOutputAdmissionError::Invalid)));
+            for state in [COLD, SOURCE_ATTACHED, READY, RETAINED, TERMINAL_CLOSED] {
+                storage.state.store(state, Ordering::Release);
+                assert!(matches!(storage.scoped_bootstrap_output(
+                    &completion, &diagnostics, &process, subprocess,
+                ), Err(BootstrapOutputAdmissionError::Invalid)));
+            }
+            storage.state.store(INITIALIZING, Ordering::Release);
+            let owner = storage.initializing_thread.load(Ordering::Relaxed);
+            storage.initializing_thread.store(owner.wrapping_add(8), Ordering::Relaxed);
+            assert!(matches!(storage.scoped_bootstrap_output(
+                &completion, &diagnostics, &process, subprocess,
+            ), Err(BootstrapOutputAdmissionError::Invalid)));
+            storage.initializing_thread.store(owner, Ordering::Relaxed);
+            let pointer = storage.diagnostic_output_ptr.load(Ordering::Acquire);
+            storage.diagnostic_output_ptr.store(core::ptr::null_mut(), Ordering::Release);
+            assert!(matches!(storage.scoped_bootstrap_output(
+                &completion, &diagnostics, &process, subprocess,
+            ), Err(BootstrapOutputAdmissionError::Invalid)));
+            storage.diagnostic_output_ptr.store(pointer, Ordering::Release);
+            let scope = storage.scoped_bootstrap_output(&completion, &diagnostics, &process, subprocess).unwrap();
+            assert!(scope.matches_subprocess(subprocess));
+            storage.state.store(RETAINED, Ordering::Release);
+            assert!(!scope.matches_subprocess(subprocess));
+            storage.publish_terminal_state_and_release(completion, RETAINED);
+        }).join().unwrap();
     }
 
     #[cfg(target_arch = "x86_64")]

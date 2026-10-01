@@ -154,6 +154,18 @@ impl AllocatorOnce {
 }
 
 impl AllocatorOnceCompletion<'_> {
+    /// Observes whether this retained completion owns the exact active gate.
+    /// This borrows the existing claim without completing or reopening it.
+    pub(crate) fn matches_active_owner(
+        &self,
+        once: &AllocatorOnce,
+        current_thread: OnceThreadId,
+    ) -> bool {
+        core::ptr::eq(self.once, once)
+            && self.lock.is_some()
+            && word_load_acquire(&self.once.tid) == current_thread.get()
+    }
+
     /// Marks the action complete and releases the retained private lock.
     ///
     /// This is the typed equivalent of `_mi_atomic_once_release`: its Acquire
@@ -240,6 +252,22 @@ mod tests {
 
     fn thread_id(raw: usize) -> OnceThreadId {
         OnceThreadId::new(raw).expect("test identities avoid reserved states")
+    }
+
+    #[test]
+    fn active_completion_matches_only_its_live_gate_and_initializer() {
+        let once = AllocatorOnce::new();
+        let other = AllocatorOnce::new();
+        let owner = thread_id(2);
+        let mut completion = once.enter(owner).unwrap().unwrap();
+        assert!(completion.matches_active_owner(&once, owner));
+        assert!(!completion.matches_active_owner(&other, owner));
+        assert!(!completion.matches_active_owner(&once, thread_id(3)));
+        assert!(once.enter(owner).unwrap().is_none());
+        assert!(completion.matches_active_owner(&once, owner));
+        completion.complete_inner().unwrap();
+        assert!(!completion.matches_active_owner(&once, owner));
+        assert!(once.enter(owner).unwrap().is_none());
     }
 
     #[test]
