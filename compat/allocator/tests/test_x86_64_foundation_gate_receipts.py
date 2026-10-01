@@ -409,7 +409,7 @@ class MiriPhysicalReaderTests(unittest.TestCase):
         unit = {"artifact": h.artifact_record(self.unit_binary), "build_command": command,
                 "build": {"command": command, "status": 0, "stdout": json.dumps({
                     "reason": "compiler-artifact", "target": {"name": "crabc_mimalloc", "kind": ["lib"]},
-                    "profile": {"test": True}, "executable": str(self.unit_binary)}), "stderr": ""}}
+                    "profile": {"test": True}, "executable": str(self.unit_binary), "features": []}), "stderr": ""}}
         self.native_listing = {"command": [str(self.unit_binary), "--list", "--format", "terse"],
                                "status": 0, "stdout": local.RUST_TRACE_TEST + ": test\n", "stderr": ""}
         execution = {"command": [str(self.unit_binary), "--exact", "--test-threads=1", local.RUST_TRACE_TEST],
@@ -633,6 +633,25 @@ class MiriPhysicalReaderTests(unittest.TestCase):
         with self.assertRaisesRegex(reader.harness.HarnessError, "physical input authority changed"):
             self.read(native_only=True)
         self.assertEqual(self.executions, [])
+
+    def test_ordinary_native_program_cannot_import_unselected_guarded_features(self):
+        build = self.report["checks"]["rust-unit-batch"]["physical_inputs"]["build"]["build"]
+        message = json.loads(build["stdout"])
+        message["features"] = ["mi-guarded"]
+        build["stdout"] = json.dumps(message)
+        with self.assertRaisesRegex(reader.harness.HarnessError, "unit features differ"):
+            self.read(native_only=True)
+        self.assertFalse(any(call.args[0][0] == str(self.unit_binary) for call in self.executions))
+
+    def test_local_trace_program_cannot_import_unselected_guarded_features(self):
+        check = self.report["checks"]["local-trace-differential"]
+        program = json.loads(json.dumps(check["physical_inputs"]["rust_program"]))
+        check["physical_inputs"]["rust_program"] = program
+        message = json.loads(program["build"]["stdout"])
+        message["features"] = ["mi-guarded"]
+        program["build"]["stdout"] = json.dumps(message)
+        with self.assertRaisesRegex(reader.harness.HarnessError, "unit features differ"):
+            self.read(native_only=True)
 
     def test_native_page_profile_cannot_erase_compiler_feature_ancestry(self):
         build = self.report["checks"]["rust-page-ownership-batch"]["physical_inputs"]["build"]["build"]

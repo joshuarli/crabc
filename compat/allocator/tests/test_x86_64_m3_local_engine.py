@@ -363,6 +363,32 @@ class LocalEngineSourceTests(unittest.TestCase):
             "image_id": self.native_environment()["CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID"],
         })
 
+    def test_differential_subset_requires_and_retains_the_pinned_image_identity(self) -> None:
+        for image in (None, "allocator:current"):
+            environment = self.native_environment()
+            if image is None:
+                del environment["CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID"]
+            else:
+                environment["CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID"] = image
+            with self.subTest(image=image):
+                status, reports, executed = self.execute(arguments=["--differential-only"], environment=environment)
+                self.assertEqual(status, 2)
+                self.assertFalse(reports)
+                self.assertFalse(executed)
+        status, reports, executed = self.execute(arguments=["--differential-only"])
+        self.assertEqual(status, 0)
+        self.assertEqual(executed, ["differential"])
+        self.assertEqual(reports[0]["provenance"]["image_id"], self.native_environment()["CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID"])
+        self.assertNotIn("gate", reports[0])
+
+    def test_differential_subset_cannot_publish_after_native_image_identity_changes(self) -> None:
+        def mutate():
+            os.environ["CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID"] = "sha256:" + "5" * 64
+        status, reports, executed = self.execute(mutate, arguments=["--differential-only"])
+        self.assertEqual(status, 2)
+        self.assertFalse(reports)
+        self.assertEqual(executed, ["differential"])
+
     def test_development_subset_does_not_require_an_image_attestation(self) -> None:
         environment = self.native_environment()
         del environment["CRABC_ALLOCATOR_EVIDENCE_IMAGE_ID"]

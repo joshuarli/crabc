@@ -1927,7 +1927,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         ))
         source_before = run.runtime_ticket_zero_soak_source_state() if qualification else None
         contract = load_contract()
-        provenance = run.require_native_x86_64(require_image_identity=qualification)
+        provenance = run.require_native_x86_64(require_image_identity=qualification or options.differential_only)
         lockfile = run.sha256_file(LOCKFILE)
         if options.queue_reorder_only:
             queue = run_queue_reorder_differential(
@@ -1972,6 +1972,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         differential = run_differential(contract, offline=options.offline)
         if options.differential_only:
             retirement = run_queue_retirement_differential(contract)
+            provenance = run.native_execution_attestation(
+                provenance, run.require_native_x86_64(require_image_identity=True)
+            )
             report = {"differential": differential, "queue_retirement_differential": retirement, "provenance": provenance}
             run.write_json(DIFFERENTIAL_REPORT_PATH, report)
             print(DIFFERENTIAL_REPORT_PATH)

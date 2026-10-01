@@ -469,8 +469,8 @@ def read_m3_components(path: Path | None = None, *, source_root: Path | None = N
             unit_inputs = unit["physical_inputs"]
             unit_program = {**unit_inputs["build"], "cargo_target": str(harness.WORK_ROOT / "target")}
             require(unit_program["build_command"] == expected_unit_build, "local unit compiler command changed")
-            authenticate_unit_program(unit_program, features=(local.cargo_selected_features(contract[config_name])
-                                                             if check_name == "rust-page-ownership-batch" else None))
+            authenticate_unit_program(unit_program, features=local.cargo_selected_features(
+                contract[config_name] if check_name == "rust-page-ownership-batch" else {}))
             binary = str(harness.ROOT / unit_program["artifact"]["path"])
             require(unit_inputs["binary"] == unit_program["artifact"] and unit["binary"] == binary,
                     "local unit observations name another compiler product")
@@ -539,7 +539,7 @@ def read_m3_components(path: Path | None = None, *, source_root: Path | None = N
                 rust_test = driver["test"]
             else:
                 authenticate_unit_program({**rust, "cargo_target": str(harness.WORK_ROOT / "target")},
-                                          expected_product=unit_program)
+                                          expected_product=unit_program, features=local.cargo_selected_features({}))
                 rust_test = local.RUST_TRACE_TEST
             rust_binary = str(harness.ROOT / rust["artifact"]["path"])
             workloads = (local.generate_owner_workloads(contract) if owner_profile else local.generate_workloads(contract))
