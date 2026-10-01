@@ -18,6 +18,40 @@ pub(crate) struct SourceSubprocessRegistry {
 // terminal removal additionally require the process coordinator's authority.
 unsafe impl Sync for SourceSubprocessRegistry {}
 
+/// Narrow facts borrowed from a linked child's original whole-image
+/// allocation. The source list gate retains the image during this scope;
+/// these facts grant no allocation-release authority.
+#[cfg(target_arch = "x86_64")]
+pub(crate) struct RegisteredChildImage<'list> {
+    pointer: NonNull<ChildSubprocessImage>,
+    _list: core::marker::PhantomData<&'list SourceSubprocessRegistry>,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl RegisteredChildImage<'_> {
+    pub(crate) fn identity_pointer(&self) -> *mut SubprocessIdentity {
+        // SAFETY: this is the retained original whole-image capability. The
+        // bounded projection does not widen a borrowed identity field.
+        unsafe { core::ptr::addr_of_mut!((*self.pointer.as_ptr()).identity) }
+    }
+
+    pub(crate) fn native_record(&self) -> Option<NonNull<lifecycle::NativeChildSubprocess>> {
+        // SAFETY: the source gate retains the initialized whole child image;
+        // only its independently published atomic pointer is observed.
+        NonNull::new(unsafe { &*core::ptr::addr_of!((*self.pointer.as_ptr()).native_record) }
+            .load(Ordering::Acquire))
+    }
+}
+
+/// A failed source gate release keeps any independently acquired result
+/// explicit, so its caller can retain actual custody instead of dropping a
+/// partially completed admission as though nothing happened.
+#[cfg(target_arch = "x86_64")]
+pub(crate) enum RegisteredChildImageLookupError<R> {
+    Registry(SourceSubprocessRegistryError),
+    GateRelease { error: crabc_core::Errno, acquired: R },
+}
+
 pub(super) struct SourceSubprocessMembership {
     registry: AtomicPtr<SourceSubprocessRegistry>,
     initialized: AtomicBool,
@@ -120,6 +154,64 @@ impl SourceSubprocessRegistry {
 
     pub(crate) const fn new() -> Self {
         Self { head: UnsafeCell::new(core::ptr::null_mut()), lock: PrivateLock::new(), total_count: AtomicUsize::new(0) }
+    }
+
+    /// Looks up a child by identity equality while retaining the source list
+    /// gate. The original registered Malloc base supplies the whole-image
+    /// capability; an identity-only tag is never widened to its enclosing image.
+    ///
+    /// # Safety
+    /// The acquisition closure must not allocate, invoke user code, or wait
+    /// for a child record lock. It may try that lock and acquire an independent
+    /// admission lease. No borrowed image facts or views may survive the list
+    /// scope unless that genuine owner admission was acquired. A copied
+    /// MemoryId is never returned and grants no storage-release authority.
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) unsafe fn with_registered_child_image<R>(
+        &'static self,
+        identity: *mut SubprocessIdentity,
+        acquire: impl for<'list> FnOnce(RegisteredChildImage<'list>) -> R,
+    ) -> Result<Option<R>, RegisteredChildImageLookupError<R>> {
+        let guard = self.lock.lock().map_err(|error| RegisteredChildImageLookupError::Registry(SourceSubprocessRegistryError::Lock(error)))?;
+        let mut cursor = unsafe { *self.head.get() };
+        while !cursor.is_null() {
+            // SAFETY: linked nodes remain allocated under the source gate;
+            // this bounded read does not borrow the enclosing subprocess.
+            let membership = unsafe { &(*cursor).source_membership };
+            if cursor == identity {
+                if !membership.initialized.load(Ordering::Acquire)
+                    || membership.registry.load(Ordering::Acquire) != core::ptr::from_ref(self).cast_mut()
+                {
+                    let _ = guard.unlock();
+                    return Err(RegisteredChildImageLookupError::Registry(SourceSubprocessRegistryError::InvalidMembership));
+                }
+                let memory = unsafe { membership.memory.get().read() };
+                if memory.kind() != crate::types::MemoryKind::Malloc {
+                    guard.unlock().map_err(|error| RegisteredChildImageLookupError::Registry(SourceSubprocessRegistryError::Lock(error)))?;
+                    return Ok(None);
+                }
+                // SAFETY: the checked active union is the retained original
+                // whole-image allocation, validated before source publication.
+                let malloc = unsafe { memory.info.malloc };
+                if malloc.base != cursor.cast()
+                    || malloc.size != size_of::<ChildSubprocessImage>()
+                    || malloc.base.addr() % core::mem::align_of::<ChildSubprocessImage>() != 0
+                {
+                    let _ = guard.unlock();
+                    return Err(RegisteredChildImageLookupError::Registry(SourceSubprocessRegistryError::InvalidMembership));
+                }
+                let pointer = NonNull::new(malloc.base.cast::<ChildSubprocessImage>())
+                    .ok_or(RegisteredChildImageLookupError::Registry(SourceSubprocessRegistryError::InvalidMembership))?;
+                let result = acquire(RegisteredChildImage { pointer, _list: core::marker::PhantomData });
+                if let Err(error) = guard.unlock() {
+                    return Err(RegisteredChildImageLookupError::GateRelease { error, acquired: result });
+                }
+                return Ok(Some(result));
+            }
+            cursor = unsafe { membership.next.get().read() };
+        }
+        guard.unlock().map_err(|error| RegisteredChildImageLookupError::Registry(SourceSubprocessRegistryError::Lock(error)))?;
+        Ok(None)
     }
 
     /// Source `_mi_subproc_main_init` before main-Heap initialization.

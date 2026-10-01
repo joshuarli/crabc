@@ -825,10 +825,10 @@ impl Drop for NativeChildCallbackLease {
 /// cannot replace or extend the owner lease.
 ///
 /// # Safety
-/// `heap` is a live Heap of the calling thread's admitted child, retained
-/// while admission is acquired. A foreign child's owner is unavailable here.
-/// The caller retains its selected Heap, Theap, member, and exact live client for
-/// the complete operation, as required by the source allocation contract.
+/// `heap` is a live child Heap retained while admission is acquired. The
+/// selected member may belong to another parked thread. The caller retains
+/// its selected Heap, Theap, member, and exact live client for the complete
+/// operation, as required by the source allocation contract.
 /// The callback must not delete that selected Heap, finish its selected member,
 /// or free its in-flight client. All exclusive page-engine, child and member
 /// projections ended before this call. Other ordinary allocation may reenter.
@@ -838,7 +838,7 @@ pub(crate) unsafe fn with_native_child_callback_owner<R>(
     callback: impl for<'scope> FnOnce(crate::os::VmProcess<'scope>) -> R,
 ) -> Option<R> {
     let _operation = crate::runtime_lifecycle::NativeSubprocessOperation::enter()?;
-    let (binding, _) = crate::process_init::ProcessMainInitializationStorage::global()
+    let (binding, registry) = crate::process_init::ProcessMainInitializationStorage::global()
         .ready_child_subprocess_inputs()?;
     // SAFETY: the caller retains this Heap during acquisition. Its immutable
     // published identity is copied without borrowing its mutable list fields.
@@ -846,29 +846,48 @@ pub(crate) unsafe fn with_native_child_callback_owner<R>(
     if identity.is_null() || identity == crate::subproc::MainSubprocess::global().identity_ptr() {
         return None;
     }
-    // SAFETY: the calling thread owns this membership slot. Copy its actual
-    // retained record capability, ending the member projection before locking
-    // or invoking any callback. An identity-only pointer cannot supply an
-    // enclosing child record, and a foreign child's owner is not substituted.
-    let id = unsafe { current_child_member() }.as_ref()?.id;
-    let record = id.0;
-    // SAFETY: acquisition runs under the published child's real record lock.
-    let retained = unsafe { id.with_owner(|owner| {
+    // SAFETY: this closure only tries the record lock and acquires a checked
+    // admission. It never waits while the source registry gate is held.
+    let retained = unsafe { registry.with_registered_child_image(identity, |image| {
+        let record = image.native_record()?;
+        // The opposite teardown order is record lock then registry gate.
+        // A try-only acquire cannot introduce a waiting lock inversion.
+        let guard = (&*core::ptr::addr_of!((*record.as_ptr()).lock)).try_lock()?;
+        let owner = &mut *(*record.as_ptr()).owner.get();
         let child = owner.as_mut()?;
-        if child.stage() != ChildMainHeapStage::HeapReady || child.identity_pointer() != Some(identity) {
+        if child.stage() != ChildMainHeapStage::HeapReady
+            || child.identity_pointer() != Some(image.identity_pointer())
+            || image.identity_pointer() != identity
+        {
             return None;
         }
         let count = &*core::ptr::addr_of!((*record.as_ptr()).callback_leases);
         count.fetch_update(core::sync::atomic::Ordering::Relaxed,
             core::sync::atomic::Ordering::Relaxed, |value| value.checked_add(1)).ok()?;
-        Some(NativeChildCallbackLease(record))
+        let lease = NativeChildCallbackLease(record);
+        if guard.unlock().is_err() {
+            // Admission already changed. Keep its actual owner retained and
+            // refuse user code rather than advertise a retryable acquisition.
+            core::mem::forget(lease);
+            return None;
+        }
+        Some((lease, image.identity_pointer()))
     }) };
-    // An unlock failure drops the already-acquired admission without invoking
-    // user code; no stack node or unfinished ownership transfer remains.
-    let lease = retained.ok().flatten()?;
+    let (lease, retained_identity) = match retained {
+        Ok(Some(Some(acquired))) => acquired,
+        Err(crate::subproc::registry::RegisteredChildImageLookupError::GateRelease {
+            acquired: Some((lease, _)), ..
+        }) => {
+            // The source gate release failed after actual admission. Keep
+            // the owner pinned and refuse callback execution terminally.
+            core::mem::forget(lease);
+            return None;
+        }
+        _ => return None,
+    };
     // SAFETY: the actual admission now prevents child reclamation. The narrow
     // identity view is valid only for this higher-ranked callback invocation.
-    let process = crate::os::VmProcess::new(binding.process().policy(), unsafe { &*identity });
+    let process = crate::os::VmProcess::new(binding.process().policy(), unsafe { &*retained_identity });
     let result = callback(process);
     drop(lease);
     Some(result)
@@ -2665,6 +2684,79 @@ pub(crate) mod tests {
                 worker.join().unwrap();
                 // SAFETY: all clients and members ended before destruction.
                 assert_eq!(unsafe { native_subproc_destroy(id) }, Ok(()));
+            },
+        );
+    }
+
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    #[test]
+    fn native_child_callback_owner_retains_foreign_heap_from_original_registry_allocation() {
+        use crate::runtime_lifecycle::{
+            finish_current_thread_native_after_user_destructors,
+            prepare_native_later_thread_arena, test_initialize_process_from_host_environment,
+            NativePageFreeResult, ThreadFinishResult,
+        };
+        struct SharedHeap(core::ptr::NonNull<crate::types::Heap>);
+        // SAFETY: the worker retains this Heap and its client while parked;
+        // channels exclude every teardown and client use during observation.
+        unsafe impl Send for SharedHeap {}
+        impl SharedHeap { fn pointer(&self) -> core::ptr::NonNull<crate::types::Heap> { self.0 } }
+        crate::test_process::run_in_fresh_process(
+            "subproc::lifecycle::tests::native_child_callback_owner_retains_foreign_heap_from_original_registry_allocation",
+            || {
+                assert!(test_initialize_process_from_host_environment(4096, unsafe {
+                    crate::__crabc_runtime::RuntimeStderrOutput::new(no_output)
+                }));
+                assert!(prepare_native_later_thread_arena());
+                let child = native_subproc_new().unwrap();
+                let neighbor = native_subproc_new().unwrap();
+                let (ready_send, ready_receive) = std::sync::mpsc::channel();
+                let (resume_send, resume_receive) = std::sync::mpsc::channel();
+                let worker = std::thread::spawn(move || {
+                    let descriptor = crate::__crabc_runtime::current_native_allocator_thread_descriptor();
+                    assert!(unsafe { crate::__crabc_runtime::register_current_native_allocator_worker_descriptor(descriptor) });
+                    assert_eq!(unsafe { native_subproc_add_current_thread(child) }, Ok(NativeChildThreadAdd::Added));
+                    let heap = native_child_heap_new().unwrap().unwrap().unwrap();
+                    let client = unsafe { native_child_heap_allocate(heap, 80) }.unwrap().unwrap();
+                    ready_send.send(SharedHeap(heap)).unwrap();
+                    resume_receive.recv().unwrap();
+                    assert_eq!(unsafe { crate::runtime_lifecycle::native_free(client) }, NativePageFreeResult::Freed);
+                    assert!(unsafe { native_child_heap_release(heap, false) }.unwrap().unwrap().is_ok());
+                    assert_eq!(finish_current_thread_native_after_user_destructors(), ThreadFinishResult::Finished);
+                });
+                let heap = ready_receive.recv().unwrap().pointer();
+                // An existing record operation may hold the child lock. The
+                // registry lookup must refuse without waiting or acquiring a
+                // count, then permit admission once that operation ends.
+                let record_guard = unsafe { child.record() }.lock.lock().unwrap();
+                assert!(unsafe { with_native_child_callback_owner(heap, |_| panic!("contended child is not admitted")) }.is_none());
+                assert_eq!(unsafe { child.record() }.callback_leases.load(core::sync::atomic::Ordering::Acquire), 0);
+                record_guard.unlock().unwrap();
+                // SAFETY: the parked worker retains its real Heap, member and
+                // client; this caller observes only scoped owner facts.
+                assert_eq!(unsafe { with_native_child_callback_owner(heap, |process| {
+                    assert_eq!(process.subprocess() as *const _, crate::types::Heap::subprocess_pointer_at(heap).cast_const());
+                    assert_eq!(child.record().callback_leases.load(core::sync::atomic::Ordering::Acquire), 1);
+                    assert_eq!(neighbor.record().callback_leases.load(core::sync::atomic::Ordering::Acquire), 0);
+                    assert!(child.record().lock.try_lock().is_some());
+                    assert_eq!(destroy_record(child, ChildHeapRelease::Native),
+                        Err(NativeSubprocessError::DestroyRefused(ChildSubprocessDestroyError::CallbackActive)));
+                    // Reentry uses the actual calling thread's process-main
+                    // allocator, without substituting its identity for the child.
+                    let crate::runtime_lifecycle::NativePageAllocationResult::Allocated(nested) =
+                        crate::runtime_lifecycle::native_allocate_aligned(33, 16, false)
+                        else { panic!("the foreign caller reenters its own allocator"); };
+                    assert_eq!(crate::runtime_lifecycle::native_free(nested), NativePageFreeResult::Freed);
+                    11
+                }) }, Some(11));
+                assert_eq!(unsafe { child.record() }.callback_leases.load(core::sync::atomic::Ordering::Acquire), 0);
+                let main_heap = core::ptr::NonNull::new(crate::subproc::MainSubprocess::global().ready_main_heap_pointer()).unwrap();
+                assert!(unsafe { with_native_child_callback_owner(main_heap, |_| panic!("main is not a child owner")) }.is_none());
+                resume_send.send(()).unwrap();
+                worker.join().unwrap();
+                // SAFETY: all members and clients ended before destruction.
+                assert_eq!(unsafe { native_subproc_destroy(child) }, Ok(()));
+                assert_eq!(unsafe { native_subproc_destroy(neighbor) }, Ok(()));
             },
         );
     }
