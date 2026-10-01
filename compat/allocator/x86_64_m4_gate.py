@@ -542,6 +542,11 @@ GUARDED_API_PROFILE_BASES = {
     "guarded-debug-1": "debug-1",
     "guarded-secure-3": "secure-3",
     "guarded-stat-2": "stat-2",
+    "guarded-debug-2": "debug-2",
+    "guarded-debug-3": "debug-3",
+    "guarded-stat-1": "stat-1",
+    "guarded-secure-1": "secure-1",
+    "guarded-secure-2": "secure-2",
 }
 
 

@@ -160,6 +160,24 @@ class TheapProducerTests(unittest.TestCase):
                     theap.cli(['--profiles','guarded-secure-3','--read'])
                 path.write_text(saved)
 
+    def test_guarded_debug_reader_rejects_lower_source_or_native_debug(self):
+        receipt,pin,_=self.receipt_fixture('guarded-debug-3')
+        with mock.patch.object(theap.receipts,'read_receipt',return_value=receipt), \
+             mock.patch.object(theap.harness,'load_pin',return_value=pin), \
+             mock.patch.object(theap.harness,'require_tool',side_effect=lambda name: '/tool/'+name):
+            self.assertEqual(theap.cli(['--profiles','guarded-debug-3','--read']),0)
+            for label,original,replacement in (
+                    ('c-build','-DMI_DEBUG=3','-DMI_DEBUG=2'),
+                    ('adapter-build','crabc-mimalloc/mi-guarded,crabc-mimalloc/mi-debug-3','crabc-mimalloc/mi-guarded,crabc-mimalloc/mi-debug-2'),
+                    ('native_theap_contract','mi-guarded,mi-debug-3','mi-guarded,mi-debug-2')):
+                path=receipt.path.parent/'logs/guarded-debug-3'/f'{label}.json'
+                saved=path.read_text();data=json.loads(saved)
+                data['command'][data['command'].index(original)]=replacement
+                path.write_text(json.dumps(data))
+                with self.subTest(label=label),self.assertRaises(theap.harness.HarnessError):
+                    theap.cli(['--profiles','guarded-debug-3','--read'])
+                path.write_text(saved)
+
     def test_numeric_debug_reader_rejects_lower_c_or_native_selector(self):
         receipt,pin,_=self.receipt_fixture('debug-3')
         with mock.patch.object(theap.receipts,'read_receipt',return_value=receipt), \

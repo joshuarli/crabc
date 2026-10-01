@@ -26,7 +26,10 @@ harness = gate.harness
 class M4GateContractTests(unittest.TestCase):
     def test_guarded_profiles_select_independent_source_and_rust_features(self) -> None:
         for profile, base in (("guarded", "release"), ("guarded-debug-1", "debug-1"),
-                              ("guarded-secure-3", "secure-3"), ("guarded-stat-2", "stat-2")):
+                              ("guarded-secure-3", "secure-3"), ("guarded-stat-2", "stat-2"),
+                              ("guarded-debug-2", "debug-2"), ("guarded-debug-3", "debug-3"),
+                              ("guarded-stat-1", "stat-1"), ("guarded-secure-1", "secure-1"),
+                              ("guarded-secure-2", "secure-2")):
             with self.subTest(profile=profile), tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
                 flags = gate.api_profile_flags(profile)
                 ordinary = gate.api_profile_flags(base)
