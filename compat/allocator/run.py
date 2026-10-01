@@ -2718,6 +2718,118 @@ int main(void) {
   U("offsetof.mi_heap_t.abandoned_count", offsetof(mi_heap_t, abandoned_count));
   U("offsetof.mi_heap_t.arena_pages", offsetof(mi_heap_t, arena_pages));
   U("offsetof.mi_heap_t.stats", offsetof(mi_heap_t, stats));
+  // Preserve complete source owner extents separately from the subset of
+  // fields represented by Rust. The source list locks are pthread mutexes;
+  // a private futex representation must not be mistaken for this byte ABI.
+  #define OWNER_WIDTH(tp, field) U("sizeof." #tp "." #field, sizeof(((tp*)0)->field))
+  #define OWNER_FIELD(tp, field) \
+    U("offsetof." #tp "." #field, offsetof(tp, field)); OWNER_WIDTH(tp, field)
+  OWNER_FIELD(mi_heap_t, subproc);
+  OWNER_FIELD(mi_heap_t, heap_seq);
+  OWNER_FIELD(mi_heap_t, next);
+  OWNER_FIELD(mi_heap_t, prev);
+  OWNER_WIDTH(mi_heap_t, theap);
+  OWNER_FIELD(mi_heap_t, exclusive_arena);
+  OWNER_FIELD(mi_heap_t, numa_node);
+  OWNER_FIELD(mi_heap_t, theaps);
+  OWNER_FIELD(mi_heap_t, theaps_lock);
+  OWNER_WIDTH(mi_heap_t, abandoned_count);
+  OWNER_FIELD(mi_heap_t, os_abandoned_pages);
+  OWNER_FIELD(mi_heap_t, os_abandoned_pages_lock);
+  OWNER_WIDTH(mi_heap_t, arena_pages);
+  OWNER_FIELD(mi_heap_t, arena_pages_lock);
+  OWNER_FIELD(mi_heap_t, memid);
+  OWNER_WIDTH(mi_heap_t, stats);
+  OWNER_WIDTH(mi_theap_t, pages_free_direct);
+  OWNER_FIELD(mi_theap_t, tld);
+  OWNER_FIELD(mi_theap_t, heap);
+  OWNER_FIELD(mi_theap_t, subproc);
+  OWNER_FIELD(mi_theap_t, refcount);
+  OWNER_FIELD(mi_theap_t, heartbeat);
+  OWNER_FIELD(mi_theap_t, cookie);
+  OWNER_FIELD(mi_theap_t, random);
+  OWNER_WIDTH(mi_theap_t, page_count);
+  OWNER_FIELD(mi_theap_t, page_retired_min);
+  OWNER_FIELD(mi_theap_t, page_retired_max);
+  OWNER_FIELD(mi_theap_t, pages_full_size);
+  OWNER_FIELD(mi_theap_t, generic_count);
+  OWNER_FIELD(mi_theap_t, generic_collect_count);
+  OWNER_FIELD(mi_theap_t, tnext);
+  OWNER_FIELD(mi_theap_t, tprev);
+  OWNER_FIELD(mi_theap_t, hnext);
+  OWNER_FIELD(mi_theap_t, hprev);
+  OWNER_FIELD(mi_theap_t, page_full_retain);
+  OWNER_FIELD(mi_theap_t, allow_page_reclaim);
+  OWNER_FIELD(mi_theap_t, allow_page_abandon);
+  OWNER_FIELD(mi_theap_t, is_detached);
+  #if MI_GUARDED
+  OWNER_FIELD(mi_theap_t, guarded_size_min);
+  OWNER_FIELD(mi_theap_t, guarded_size_max);
+  OWNER_FIELD(mi_theap_t, guarded_sample_rate);
+  OWNER_FIELD(mi_theap_t, guarded_sample_count);
+  #endif
+  OWNER_WIDTH(mi_theap_t, pages);
+  OWNER_WIDTH(mi_theap_t, memid);
+  OWNER_WIDTH(mi_theap_t, stats);
+  U("endof.mi_theap_t.is_detached",
+    offsetof(mi_theap_t, is_detached) + sizeof(((mi_theap_t*)0)->is_detached));
+  #if MI_GUARDED
+  U("padding.mi_theap_t.after_is_detached",
+    offsetof(mi_theap_t, guarded_size_min) -
+    (offsetof(mi_theap_t, is_detached) + sizeof(((mi_theap_t*)0)->is_detached)));
+  #else
+  U("padding.mi_theap_t.after_is_detached",
+    offsetof(mi_theap_t, pages) -
+    (offsetof(mi_theap_t, is_detached) + sizeof(((mi_theap_t*)0)->is_detached)));
+  #endif
+  U("sizeof.mi_tld_t", sizeof(mi_tld_t));
+  U("alignof.mi_tld_t", _Alignof(mi_tld_t));
+  OWNER_FIELD(mi_tld_t, thread_id);
+  OWNER_FIELD(mi_tld_t, thread_seq);
+  OWNER_FIELD(mi_tld_t, numa_node);
+  OWNER_FIELD(mi_tld_t, subproc);
+  OWNER_FIELD(mi_tld_t, theaps);
+  OWNER_FIELD(mi_tld_t, theaps_lock);
+  OWNER_FIELD(mi_tld_t, recurse);
+  OWNER_FIELD(mi_tld_t, is_in_threadpool);
+  OWNER_FIELD(mi_tld_t, memid);
+  U("sizeof.mi_lock_t", sizeof(mi_lock_t));
+  U("alignof.mi_lock_t", _Alignof(mi_lock_t));
+  #if defined(MI_USE_PTHREADS)
+  OWNER_FIELD(mi_lock_t, mutex);
+  U("sizeof.pthread_mutex_t", sizeof(pthread_mutex_t));
+  U("alignof.pthread_mutex_t", _Alignof(pthread_mutex_t));
+  #endif
+  // Exercise the source lock helpers on the actual embedded list-lock fields.
+  // The second try is a valid nonblocking attempt while this thread owns a
+  // normal lock; it distinguishes lock custody from a zero-byte layout fact.
+  mi_heap_t owner_heap = { 0 };
+  mi_tld_t owner_tld = { 0 };
+  mi_lock_t* const owner_locks[] = {
+    &owner_heap.theaps_lock, &owner_heap.os_abandoned_pages_lock,
+    &owner_heap.arena_pages_lock, &owner_tld.theaps_lock
+  };
+  const char* const owner_lock_names[] = {
+    "mi_heap_t.theaps_lock", "mi_heap_t.os_abandoned_pages_lock",
+    "mi_heap_t.arena_pages_lock", "mi_tld_t.theaps_lock"
+  };
+  for (size_t index = 0; index < sizeof(owner_locks) / sizeof(owner_locks[0]); index++) {
+    mi_lock_t* const lock = owner_locks[index];
+    mi_lock_init(lock);
+    const bool acquired = mi_lock_try_acquire(lock);
+    const bool second_acquired = acquired && mi_lock_try_acquire(lock);
+    if (second_acquired) { mi_lock_release(lock); }
+    if (acquired) { mi_lock_release(lock); }
+    const bool reacquired = mi_lock_try_acquire(lock);
+    if (reacquired) { mi_lock_release(lock); }
+    mi_lock_done(lock);
+    printf("lock.%s.init_try=%u\n", owner_lock_names[index], (unsigned)acquired);
+    printf("lock.%s.held_try_refused=%u\n", owner_lock_names[index],
+           (unsigned)(acquired && !second_acquired));
+    printf("lock.%s.released_try=%u\n", owner_lock_names[index], (unsigned)reacquired);
+  }
+  #undef OWNER_FIELD
+  #undef OWNER_WIDTH
   U("sizeof.mi_arena_t", sizeof(mi_arena_t));
   U("alignof.mi_arena_t", _Alignof(mi_arena_t));
   U("offsetof.mi_arena_t.memid", offsetof(mi_arena_t, memid));
